@@ -39,8 +39,10 @@ fn run(c: usize, atom: fn(usize) -> Type) {
 
 #[test]
 fn small_unions_are_still_decided() {
-    // The answers `the_parts_scale` times, at a count small enough that unions of diagrams
-    // stay diagrams.
+    // The answers `the_parts_scale` times, at a small count. The kernel has no switch on size:
+    // a union of these parts, neither literals, chains of literals nor exclusive ors, is kept
+    // as an expression at every count (crates/zed-kernel/src/types/bdd.rs, `Connect::zipped`),
+    // so this small union takes the path the large ones take.
     for atom in [morphism as fn(usize) -> Type, pair] {
         let b = union(6, atom);
         assert!(b.subtype(&(&b | &atom(5000))), "{b}");
@@ -814,6 +816,357 @@ fn a_cycle_kept_for_each_type_on_it_gives_each_its_own_lengths() {
                 }
             }
         }
+    }
+}
+
+/// Small instance of `bench::the_parts_scale`: the complement of a union of a few differences
+/// of morphism types, or of tuple types, meets a further one, and the union is a subtype of
+/// itself joined with it.
+#[test]
+fn the_parts_of_small_unions_are_decided() {
+    for atom in [morphism as fn(usize) -> Type, pair] {
+        for c in [1, 2, 6, 16] {
+            run(c, atom);
+        }
+    }
+}
+
+/// Small instance of `bench::a_product_covered_by_its_cells_scales`: a small grid less all its
+/// cells is empty.
+#[test]
+fn a_small_product_is_covered_by_its_cells() {
+    for n in [1, 2, 3, 5] {
+        let (p, cells) = grid(n, 10_000 * (n + 1));
+        assert!(
+            (&p - &cells).is_empty(),
+            "the cells cover the grid at n = {n}"
+        );
+    }
+}
+
+/// Small instance of `bench::passing_over_disjoint_negated_types_scales`: a few decoys, each
+/// missing the product in its second component, leave it inhabited, and the two halves on bit
+/// 0 cover it.
+#[test]
+fn a_few_disjoint_negated_types_are_passed_over() {
+    let bit = &lit(0) | &lit(1);
+    for k in [1, 2, 3, 5] {
+        let b = 1_000_100 + 100 * k;
+        let bits = |i: usize| {
+            Type::tuple(
+                (0..k)
+                    .map(|j| if j == i { lit(1) } else { bit.clone() })
+                    .collect(),
+            )
+        };
+        let p = Type::tuple(vec![Type::tuple(vec![bit.clone(); k]), lit(b)]);
+        let decoys = Type::union_all((0..k).map(|i| Type::tuple(vec![bits(i), lit(b + 1 + i)])));
+        let half = |v: usize| {
+            let mut c = vec![bit.clone(); k];
+            c[0] = lit(v);
+            Type::tuple(vec![Type::tuple(c), lit(b)])
+        };
+        let cover = &(&decoys | &half(0)) | &half(1);
+        assert!(!(&p - &decoys).is_empty(), "k = {k}");
+        assert!((&p - &cover).is_empty(), "k = {k}");
+    }
+}
+
+/// Small instance of `bench::many_negated_types_passed_over_scale`: a product less a few
+/// tuples that miss it in the last component is not empty.
+#[test]
+fn a_product_less_a_few_tuples_passed_over_is_not_empty() {
+    for n in [1, 2, 5, 20] {
+        let b = 100_000 * (n + 1);
+        let meets = |i: usize| (0..5).map(move |k| lit(b + 10_000 * k + i));
+        let p = Type::tuple(
+            (0..5)
+                .map(|k| Type::union_all((0..n).map(|i| lit(b + 10_000 * k + i))))
+                .chain([lit(b)])
+                .collect(),
+        );
+        let decoys =
+            Type::union_all((0..n).map(|i| Type::tuple(meets(i).chain([lit(b - 1)]).collect())));
+        assert!(
+            !(&p - &decoys).is_empty(),
+            "the decoys miss the product at n = {n}"
+        );
+    }
+}
+
+/// Small instance of `bench::nested_tuples_scale`: a tuple nested a few deep is a subtype of
+/// itself joined with a literal, and not of the same nesting on other literals.
+#[test]
+fn shallow_nested_tuples_are_compared() {
+    for d in [1, 2, 20] {
+        let b = 100_000 * (d + 1);
+        let x = nested(d, b);
+        assert!(x.subtype(&(&nested(d, b) | &lit(1))), "at depth {d}");
+        assert!(!x.subtype(&nested(d, b + 1)), "at depth {d}");
+    }
+}
+
+/// Small instance of `bench::literals_and_atoms_joined_one_at_a_time_scale`: literals and atoms
+/// joined one at a time give the union built at once in the other order, and removing all but
+/// the first one at a time leaves the first.
+#[test]
+fn a_few_literals_and_atoms_are_joined_and_removed_one_at_a_time() {
+    let atom = |i: usize| Type::atom(&format!("a{i}"));
+    for n in [1, 2, 7, 40] {
+        let u = (0..n).fold(Type::empty(), |u, i| &u | &lit(i));
+        assert!(lit(n / 2).subtype(&u) && !lit(n).subtype(&u), "n = {n}");
+        assert_eq!(u, Type::union_all((0..n).rev().map(lit)), "n = {n}");
+        let u = (0..n).fold(Type::empty(), |u, i| &u | &atom(i));
+        assert!(atom(n / 2).subtype(&u) && !atom(n).subtype(&u), "n = {n}");
+        assert_eq!(u, Type::union_all((0..n).rev().map(atom)), "n = {n}");
+        let all = &Type::union_all((0..n).map(lit)) | &Type::union_all((0..n).map(atom));
+        let left = (1..n).fold(all, |u, i| &(&u - &lit(i)) - &atom(i));
+        assert_eq!(left, &lit(0) | &atom(0), "n = {n}");
+    }
+}
+
+/// The exclusive or of `c` one-tuples of pairs `((i, i),)`, listed by
+/// `bench::listing_a_diagram_with_exponentially_many_paths_scales`.
+fn nested_parity(c: usize) -> Type {
+    parity((0..c).map(|i| Type::tuple(vec![Type::tuple(vec![lit(i), lit(i)])])))
+}
+
+/// The columns no one kind or length lists, listed by
+/// `bench::listing_a_diagram_with_exponentially_many_paths_scales` (LIST-parity-rest): shape 0
+/// is `(i | (i, i))`, with tuples and integers in one column; shape 1 `((i) | (i, i))`, with
+/// tuples of two lengths; shape 2 `(0..2c)` met with each `(int - (2i + 1))`, tuple types given
+/// by their complements. Shape 4 puts a second column beside each, `(0..2c, 0)` met with each
+/// `(int - (2i + 1), 0)`, and shape 3 puts that pair one level down, `((0..2c, 0),)` met with
+/// each `((int - (2i + 1), 0),)` (LIST-parity-tail). Shapes 0 and 1 list `2c` values, the
+/// others `c`.
+fn listing_shape(c: usize, which: usize) -> Type {
+    let row = |i: usize| -> Type {
+        let pair = Type::tuple(vec![lit(i), lit(i)]);
+        match which {
+            0 => Type::tuple(vec![&lit(i) | &pair]),
+            _ => Type::tuple(vec![&Type::tuple(vec![lit(i)]) | &pair]),
+        }
+    };
+    if which < 2 {
+        return parity((0..c).map(row));
+    }
+    let deeper = |t: Type| match which {
+        2 => t,
+        _ => Type::tuple(vec![t, lit(0)]),
+    };
+    let wrap = |t: Type| match which {
+        4 => t,
+        _ => Type::tuple(vec![t]),
+    };
+    let all = wrap(deeper(Type::union_all((0..2 * c).map(lit))));
+    (0..c).fold(all, |t, i| {
+        &t & &wrap(deeper(&Type::int() - &lit(2 * i + 1)))
+    })
+}
+
+/// `(0..3, 0..=c)` met with the union of each `(int - (2i + 1), i | i + 1)`, listed by
+/// `bench::listing_a_diagram_with_exponentially_many_paths_scales` (LIST-parity-tail).
+fn listing_regions(c: usize) -> Type {
+    let all = Type::tuple(vec![
+        Type::union_all((0..3).map(lit)),
+        Type::union_all((0..=c).map(lit)),
+    ]);
+    let row = |i: usize| Type::tuple(vec![&Type::int() - &lit(2 * i + 1), &lit(i) | &lit(i + 1)]);
+    &all & &Type::union_all((0..c).map(row))
+}
+
+/// Small instance of `bench::listing_a_diagram_with_exponentially_many_paths_scales`: each
+/// exclusive or and meet it lists, at a few tuple types. The loops at `c` 1, 2 and 7 were in the
+/// benchmark until TEST-bench-move-l0123 (author P169) moved them here; the nested parity had
+/// no small instance before.
+#[test]
+fn small_exclusive_ors_and_meets_are_listed() {
+    let count = |t: Type| t.each_value().map(|v| v.count());
+    for c in [1, 2, 7] {
+        assert_eq!(count(odd_tuples(c, 0)), Some(c), "c = {c}");
+        assert_eq!(count(nested_parity(c)), Some(c), "nested, c = {c}");
+        for (which, per) in [(0, 2), (1, 2), (2, 1), (4, 1), (3, 1)] {
+            assert_eq!(
+                count(listing_shape(c, which)),
+                Some(per * c),
+                "shape {which}, c = {c}"
+            );
+        }
+    }
+    // Row `i` takes `x = 2i + 1` out of the first column, which holds only `x = 1` of them:
+    // `y = 0` keeps 2 values and every other `y` 3, but at `c = 1`, where `y = 1` keeps 2.
+    for (c, n) in [(1, 4), (2, 8), (7, 23)] {
+        assert_eq!(count(listing_regions(c)), Some(n), "c = {c}");
+    }
+}
+
+/// `((2i, i),)` for `i < c` met with each `((int - (2k + 1), x),)` for `k < c`, `x` all
+/// integers for `which` 0, the literal 0 for 1, and `int - (c + k)` for 2; listed by
+/// `bench::listing_tuples_that_differ_off_their_first_components_scales`.
+fn pairs_off_first(c: usize, which: usize) -> Type {
+    let firsts = (0..c).map(|i| Type::tuple(vec![Type::tuple(vec![lit(2 * i), lit(i)])]));
+    let x = |k: usize| match which {
+        0 => Type::int(),
+        1 => lit(0),
+        _ => &Type::int() - &lit(c + k),
+    };
+    (0..c).fold(Type::union_all(firsts), |t, k| {
+        &t & &Type::tuple(vec![Type::tuple(vec![
+            &Type::int() - &lit(2 * k + 1),
+            x(k),
+        ])])
+    })
+}
+
+/// Small instance of `bench::listing_tuples_that_differ_off_their_first_components_scales`:
+/// with the second component all integers or a complement every pair is listed, and with the
+/// literal 0 only `((0, 0),)`.
+#[test]
+fn a_few_tuples_that_differ_off_their_first_components_are_listed() {
+    for c in [1, 2, 7] {
+        for which in 0..3 {
+            let want = if which == 1 { 1 } else { c };
+            assert_eq!(
+                pairs_off_first(c, which).each_value().map(|v| v.count()),
+                Some(want),
+                "c = {c}, which = {which}"
+            );
+        }
+    }
+}
+
+/// Small instance of `bench::a_key_past_many_excluded_tuples_is_found_and_scales`: a key is
+/// promised past a few excluded one-tuples, and none when every one-tuple is excluded. The loop
+/// at `c` 1, 2 and 7 was in the benchmark until TEST-bench-move-l0123 (author P169) moved it
+/// here.
+#[test]
+fn a_key_past_a_few_excluded_tuples_is_found() {
+    for c in [1, 2, 7] {
+        let promised = Type::exact(past_excluded(c, Type::int()), Type::empty());
+        assert!(promised.is_empty(), "c = {c}");
+        // When every one-tuple is taken out, no key is promised, and the empty morphism is in it.
+        let all = Type::union_all((0..c).map(lit));
+        assert!(
+            !Type::exact(past_excluded(c, all), Type::empty()).is_empty(),
+            "c = {c}"
+        );
+    }
+}
+
+/// Small instance of `bench::a_union_of_disjoint_pinwheels_is_decided_piece_by_piece`, which
+/// asks `is_empty` where `a_union_of_disjoint_pinwheels_is_decided` asks the verdict: a few
+/// disjoint pinwheels written as their squares less all their boxes are empty without their
+/// middles, with or without a cofinite end, and not empty with them.
+#[test]
+fn a_few_disjoint_pinwheels_are_decided_piece_by_piece() {
+    for k in [1, 2, 3, 5] {
+        for cofinite in [false, true] {
+            let full = squares_less_boxes(true, &plain_ends(k, cofinite));
+            Type::forget_emptiness();
+            assert!(full.is_empty(), "k = {k}, {cofinite}");
+        }
+        let open = squares_less_boxes(false, &plain_ends(k, false));
+        Type::forget_emptiness();
+        assert!(!open.is_empty(), "k = {k}");
+        assert_eq!(open.verdict(), Verdict::Inhabited, "k = {k}");
+    }
+}
+
+/// Small instance of `bench::a_list_of_two_cycles_is_shown_in_the_size_of_its_type`,
+/// `bench::the_members_of_two_cycles_are_decided_in_the_size_of_their_types` and
+/// `bench::the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does`: the lists of
+/// lengths -1 modulo `n` and modulo `n + 1` are each inhabited, and so is their meet, by its
+/// verdict and by its emptiness. At `n = 1` the first is every list of integers.
+#[test]
+fn small_lists_of_two_cycles_are_decided() {
+    for n in [1, 2, 3, 8] {
+        let (a, b) = (period(n, n - 1), period(n + 1, n));
+        let t = &a & &b;
+        Type::forget_emptiness();
+        assert!(!t.is_empty(), "n = {n}");
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "n = {n}");
+        Type::forget_emptiness();
+        assert_eq!(a.verdict(), Verdict::Inhabited, "n = {n}");
+        assert_eq!(b.verdict(), Verdict::Inhabited, "n = {n}");
+    }
+}
+
+/// The program of `bench::a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union`
+/// and `bench::a_tuple_that_no_shapes_hold_is_rejected_in_the_size_of_the_union`: `g` takes
+/// `(#a_i, #c)` for each of `n` atoms, and `h` passes it `(#a_0 | … | #a_n-1, second)`.
+fn shapes_program(n: usize, second: &str) -> String {
+    let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
+    let shapes: Vec<String> = atoms.iter().map(|a| format!("({a}, #c)")).collect();
+    format!(
+        "g(x: {}) = x;\nh(y: ({}, {second})) = g(x: y);\nmain() = 0;\n",
+        shapes.join(" | "),
+        atoms.join(" | ")
+    )
+}
+
+/// Small instance of both benchmarks of [`shapes_program`]: a tuple a few shapes hold only
+/// together is taken, and one whose second component no shape holds is rejected, with the
+/// message naming the call.
+#[test]
+fn a_tuple_held_by_a_few_shapes_together_or_by_none() {
+    for n in [1, 2, 5] {
+        let (stmts, res) = zed_tests::deep::resolved(&shapes_program(n, "#c"));
+        let info = zedc::check::walk::check(&stmts, &res);
+        assert!(info.errors.is_empty(), "n = {n}: {:?}", info.errors);
+        Type::forget_emptiness();
+        let program = shapes_program(n, "#d");
+        let union: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
+        let union = union.join(" | ");
+        // The call `g(x: y)` on line 2, its column counted from 1.
+        let column = program.lines().nth(1).unwrap().find("g(x: y)").unwrap() + 1;
+        match zedc::run::load(program.as_bytes()) {
+            Ok(_) => panic!("n = {n}: taken"),
+            Err(e) => {
+                // The headline, then the derivation: where `y` gets its type and what `g`
+                // takes at the call.
+                let e = e.to_string();
+                assert_eq!(
+                    e.lines().next(),
+                    Some(
+                        format!(
+                            "2:{column}: `g` does not take (({union}, #d)): no arrow of `g` \
+                             takes these types."
+                        )
+                        .as_str()
+                    ),
+                    "n = {n}: {e}"
+                );
+                assert!(
+                    e.contains(&format!("2:3: `y` is declared `({union}, #d)`"))
+                        && e.contains(&format!("2:{column}: `g` takes (x: ")),
+                    "n = {n}: {e}"
+                );
+            }
+        }
+    }
+}
+
+/// Small instance of `bench::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales`, its
+/// chain of unions: the union of a few exclusive ors `((3k | 3k + 1, 0),) ^ ((3k + 1 | 3k + 2,
+/// 0),)` made one at a time is finite and lists `3k` and `3k + 2` of each. Its meets with an
+/// exclusive or have small instances in `listing::finiteness_sees_through_meets_and_exclusive_ors`
+/// and `listing::exclusive_ors_of_meets_and_overlapping_boxes_list_exactly`.
+#[test]
+fn a_short_chain_of_unions_of_exclusive_ors_is_listed() {
+    let one = |t: Type| Type::tuple(vec![t]);
+    let xor = |x: Type, t: Type| &(&x - &t) | &(&t - &x);
+    let pair = |a: usize, b: usize| one(Type::tuple(vec![&lit(a) | &lit(b), lit(0)]));
+    for n in [1, 2, 3, 8] {
+        let chain = (0..n).fold(Type::empty(), |u, k| {
+            &u | &xor(pair(3 * k, 3 * k + 1), pair(3 * k + 1, 3 * k + 2))
+        });
+        assert!(chain.finite(), "n = {n}");
+        assert_eq!(
+            chain.each_value().map(|v| v.count()),
+            Some(2 * n),
+            "n = {n}"
+        );
     }
 }
 

@@ -836,4 +836,119 @@ fn arm_family(fork: bool, m: usize) -> Group {
     Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))
 }
 
+/// Small instance of `bench::a_group_of_closures_is_witnessed_in_its_written_size`: a ring of
+/// `k` closures, each returning the next, is admitted and every member has a value. At `k = 1`
+/// it is the closure that returns itself, `(int) -> Closure0`.
+#[test]
+fn a_small_group_of_closures_is_witnessed() {
+    for k in [1, 2, 5] {
+        let types = Group::new(
+            (0..k)
+                .map(|i| Def {
+                    name: format!("Closure{i}"),
+                    params: vec![],
+                    body: f(r((i + 1) % k)),
+                })
+                .collect(),
+        )
+        .unwrap_or_else(|e| panic!("k = {k}: {}", e.message))
+        .instance(vec![]);
+        Type::forget_emptiness();
+        for t in &types {
+            assert_eq!(t.verdict(), Verdict::Inhabited, "k = {k}");
+        }
+    }
+}
+
+/// Small instance of `bench::many_meets_in_two_orders_scale`, which asks the decider of each
+/// member of the group of [`meets_in_orders`] with every meet written twice. The group holds
+/// more than one morphism type, so the decider leaves each member to the search (`None`), and
+/// the search finds its value, written once or twice. (Values taken from a run, 2026-11-14.)
+#[test]
+fn many_meets_written_in_two_orders_are_decided() {
+    for n in [1, 2, 5] {
+        for twice in [false, true] {
+            let v = verdicts(meets_in_orders(n, twice));
+            assert_eq!(
+                v,
+                vec![(None, Verdict::Inhabited); 3],
+                "n = {n}, twice = {twice}"
+            );
+        }
+    }
+}
+
+/// Small instance of `bench::shared_parts_are_read_once_when_deciding_their_groups`: the group
+/// of [`meets_in_orders`], every meet written twice, under the benchmark's names, has a value
+/// in every member.
+#[test]
+fn small_groups_with_shared_parts_are_inhabited() {
+    for n in [1, 2, 5] {
+        let defs = (["WalkNode", "WalkTree", "WalkThunk"]
+            .into_iter()
+            .zip(meets_in_orders(n, true)))
+        .map(|(name, body)| Def {
+            name: name.into(),
+            params: vec![],
+            body,
+        })
+        .collect();
+        let types = Group::new(defs)
+            .unwrap_or_else(|e| panic!("n = {n}: {}", e.message))
+            .instance(vec![]);
+        Type::forget_emptiness();
+        for t in &types {
+            assert_eq!(t.verdict(), Verdict::Inhabited, "n = {n}");
+        }
+    }
+}
+
+/// Small instance of `bench::shared_morphism_constraints_are_checked_in_the_size_of_the_union`,
+/// `bench::shared_morphism_constraints_scale_without_a_group_query` and
+/// `bench::shared_morphism_constraints_scale_beside_a_refused_member`: the group of
+/// [`arm_family`] is empty in every member, asked by its verdict, by `is_empty`, inside a
+/// tuple and as the result of a morphism type; beside a refused fork, `Node` is refused and
+/// not empty, and the other members are empty. `m = 0` is left out: `Thunk` would then meet an
+/// empty union, another input.
+#[test]
+fn small_shared_morphism_constraints_are_decided() {
+    for m in [1, 2, 4] {
+        let types = arm_family(false, m).instance(vec![]);
+        Type::forget_emptiness();
+        for t in &types {
+            assert_eq!(t.verdict(), Verdict::Empty, "m = {m}");
+        }
+        Type::forget_emptiness();
+        for t in &types {
+            assert!(t.is_empty(), "m = {m}");
+        }
+        Type::forget_emptiness();
+        for t in &types {
+            let tuple = Type::tuple(vec![t.clone()]);
+            assert_eq!(tuple.verdict(), Verdict::Empty, "m = {m}");
+        }
+        Type::forget_emptiness();
+        for t in &types {
+            let value = Type::morphism(Type::int(), Type::int(), t.clone());
+            assert_eq!(value.verdict(), Verdict::Empty, "m = {m}");
+        }
+        let types = arm_family(true, m).instance(vec![]);
+        let want = [
+            Verdict::Refused(Refusal::Fork),
+            Verdict::Empty,
+            Verdict::Empty,
+        ];
+        for empty in [false, true] {
+            Type::forget_emptiness();
+            for (t, want) in types.iter().zip(want) {
+                if empty {
+                    assert_eq!(t.is_empty(), want == Verdict::Empty, "m = {m}");
+                } else {
+                    assert_eq!(t.verdict(), want, "m = {m}");
+                }
+            }
+        }
+    }
+}
+
 mod bench;

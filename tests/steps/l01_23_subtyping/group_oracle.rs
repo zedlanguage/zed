@@ -1333,25 +1333,35 @@ fn seeds_of(
 /// drawn from a generator made with [`Rng::fresh`] and printed (author P169: random tests run
 /// fewer cases, with a new seed each run; `ZED_SEED` repeats a run). Every seed of the range
 /// was swept, and its refusals listed, as of TEST-bench-move-l0123, when each sweep ran all
-/// 1500 seeds in 2 to 13 s.
-fn sweep_seeds(name: &str, listed: &[Listed]) -> Vec<u64> {
-    let (mut rng, _) = Rng::fresh(&format!("{name} sweep"));
+/// 1500 seeds in 2 to 13 s. The seed `both`, whose system has a member shown empty and one
+/// shown inhabited, is asked every run. Returns the seeds and the seed of the generator, for
+/// failure messages.
+fn sweep_seeds(name: &str, listed: &[Listed], both: u64) -> (Vec<u64>, u64) {
+    let (mut rng, seed) = Rng::fresh(&format!("{name} sweep"));
     let mut named: Vec<u64> = listed.iter().map(|&(seed, ..)| seed).collect();
     named.dedup();
     let picks = pick_seeds(&mut rng, "listed", 0..named.len() as u64, 8);
     let mut seeds = pick_seeds(&mut rng, name, 0..1500, 24);
     seeds.extend(picks.iter().map(|&i| named[i as usize]));
+    seeds.push(both);
     seeds.sort();
     seeds.dedup();
-    seeds
+    (seeds, seed)
 }
 
 /// The systems `generate` gives for `seeds`, each against the pool, and every refusal among
 /// their verdicts on `listed` (the entries of `listed` for other seeds are not read). Panics on
 /// a wrong answer, on a refusal not listed, on a listed refusal that is now a verdict or has
 /// another reason or member, so that the lists shrink as the checker decides more, and unless
-/// the systems have members the pool shows empty and members it shows inhabited.
-fn sweep_listed(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: &[u64], listed: &[Listed]) {
+/// the systems have members the pool shows empty and members it shows inhabited. `rng_seed`,
+/// the seed [`sweep_seeds`] drew them with, is named in each message.
+fn sweep_listed(
+    name: &str,
+    generate: fn(&mut Rng) -> Vec<E>,
+    seeds: &[u64],
+    listed: &[Listed],
+    rng_seed: u64,
+) {
     let mut tally = Tally::default();
     let mut got: Vec<Listed> = Vec::new();
     for &seed in seeds {
@@ -1368,13 +1378,13 @@ fn sweep_listed(name: &str, generate: fn(&mut Rng) -> Vec<E>, seeds: &[u64], lis
     eprintln!("{name}: {tally:?}");
     assert!(
         tally.members > 0 && tally.empty > 0 && tally.inhabited > 0,
-        "{name}: {tally:?}"
+        "{name} (ZED_SEED={rng_seed}): {tally:?}"
     );
     let new: Vec<_> = got.iter().filter(|r| !want.contains(r)).collect();
     let gone: Vec<_> = want.iter().filter(|r| !got.contains(r)).collect();
     assert!(
         new.is_empty() && gone.is_empty(),
-        "{name} {seeds:?}: refused and not listed: {new:?}; listed and not refused so: \
+        "{name} {seeds:?} (ZED_SEED={rng_seed}): refused and not listed: {new:?}; listed and not refused so: \
          {gone:?}; the refusals now:\n{}",
         (got.iter())
             .map(|r| format!("    {r:?},"))
@@ -1455,28 +1465,41 @@ const LISTED_LAYER: &[Listed] = &[
 /// inhabited from every choice, refused `Fork`.
 const LISTED_CELLS: &[Listed] = &[(1140, 0, 'I', Refusal::Fork), (1140, 2, 'I', Refusal::Fork)];
 
+// The seed of each family asked every run because its system has both a member the pool shows
+// empty and one it shows inhabited, so that each sweep meets both answers, which
+// `sweep_listed` requires. Of seeds 0 to 300 (2026-11-14), the share of systems with an empty
+// member was 113 of 300 for X14, 75 for partial morphisms, 271 for layered groups and 31 for
+// meets and differences; at 31 of 300, 25 drawn seeds miss every one about 7 times in 100, as
+// a run of `meets_and_differences_seeds_agree_or_are_listed` did (TEST-bench-move-l0123).
+// Seeds and their empty and inhabited members: X14 0 (1, 1), partial morphisms 1 (3, 1),
+// layered 0 (2, 4), meets and differences 13 (2, 3).
+const BOTH_CLAUDE: u64 = 0;
+const BOTH_MIXED: u64 = 1;
+const BOTH_LAYER: u64 = 0;
+const BOTH_CELLS: u64 = 13;
+
 #[test]
 fn x14_family_seeds_agree_or_are_listed() {
-    let seeds = sweep_seeds("claude", LISTED_CLAUDE);
-    sweep_listed("claude", gen_claude, &seeds, LISTED_CLAUDE);
+    let (seeds, seed) = sweep_seeds("claude", LISTED_CLAUDE, BOTH_CLAUDE);
+    sweep_listed("claude", gen_claude, &seeds, LISTED_CLAUDE, seed);
 }
 
 #[test]
 fn partial_morphism_seeds_agree_or_are_listed() {
-    let seeds = sweep_seeds("mixed", LISTED_MIXED);
-    sweep_listed("mixed", gen_mixed, &seeds, LISTED_MIXED);
+    let (seeds, seed) = sweep_seeds("mixed", LISTED_MIXED, BOTH_MIXED);
+    sweep_listed("mixed", gen_mixed, &seeds, LISTED_MIXED, seed);
 }
 
 #[test]
 fn layered_seeds_agree_or_are_listed() {
-    let seeds = sweep_seeds("layer", LISTED_LAYER);
-    sweep_listed("layer", gen_layer, &seeds, LISTED_LAYER);
+    let (seeds, seed) = sweep_seeds("layer", LISTED_LAYER, BOTH_LAYER);
+    sweep_listed("layer", gen_layer, &seeds, LISTED_LAYER, seed);
 }
 
 #[test]
 fn meets_and_differences_seeds_agree_or_are_listed() {
-    let seeds = sweep_seeds("cells", LISTED_CELLS);
-    sweep_listed("cells", gen_cells, &seeds, LISTED_CELLS);
+    let (seeds, seed) = sweep_seeds("cells", LISTED_CELLS, BOTH_CELLS);
+    sweep_listed("cells", gen_cells, &seeds, LISTED_CELLS, seed);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1987,6 +2010,10 @@ fn largest_group(sys: &[E]) -> Vec<usize> {
 /// reads the open member `R0` through `R2` and `R1`; a search of its own that decided `R0`
 /// again called `R3` empty, where the same system with the decider's verdicts called it
 /// inhabited.
+///
+/// Each family asks seeds 0 and 1 and 4 more of 0 to 100, drawn afresh each run; it asked
+/// seeds 0 to 3 and 8 more until TEST-bench-move-l0123 (author P169: correctness tests well
+/// under 1 s alone), when the test took 0.56 to 0.98 s alone on a loaded machine.
 #[test]
 fn readers_of_undecided_groups_agree_with_the_values() {
     let sys = undecided(gen_layer(&mut Rng::new(316)));
@@ -2006,7 +2033,7 @@ fn readers_of_undecided_groups_agree_with_the_values() {
     let (mut rng, _) = Rng::fresh("readers of undecided groups");
     let gens: [fn(&mut Rng) -> Vec<E>; 4] = [gen_claude, gen_mixed, gen_layer, gen_cells];
     for (name, g) in ["claude", "mixed", "layer", "cells"].into_iter().zip(gens) {
-        for seed in seeds_of(&mut rng, name, 0..4, 0..100, 8) {
+        for seed in seeds_of(&mut rng, name, 0..2, 0..100, 4) {
             let sys = undecided(g(&mut Rng::new(seed)));
             let tag = format!("readers-{name}{seed}");
             let types = kernel(&sys, &tag);
@@ -2472,8 +2499,13 @@ fn the_group_that_hung_the_search_is_decided_in_every_order() {
 ///
 /// gets the same verdicts in every order of its questions and of its definitions: the decider
 /// refuses each member, as in [`the_group_that_hung_the_search_is_decided_in_every_order`].
+/// The written placement of the definitions is asked in all 6 orders of the questions and each
+/// other placement in one order drawn afresh each run: 11 runs, where all 6 placements were
+/// asked in all 6 orders, 36 runs and 0.68 to 0.99 s alone on a loaded machine, until
+/// TEST-bench-move-l0123 (author P169: correctness tests well under 1 s alone).
 #[test]
 fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
+    let (mut rng, seed) = Rng::fresh("the group that hung the search, with atoms");
     let body = |q: &dyn Fn(usize) -> Expr| {
         let k = |x: Expr| Expr::Atom("k".into(), vec![x]);
         let and = |a: usize, b: usize| Expr::And(vec![q(a), q(b)]);
@@ -2484,7 +2516,7 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
             ("S", Expr::Union(vec![k(and(0, 1)), k(q(2))])),
         ]
     };
-    for at in permutations(3) {
+    for (p, at) in permutations(3).into_iter().enumerate() {
         let mut defs: Vec<Option<Def>> = vec![None, None, None];
         for (j, (name, body)) in body(&|i| Expr::Ref(at[i], vec![])).into_iter().enumerate() {
             defs[at[j]] = Some(Def {
@@ -2498,13 +2530,19 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
             .map(|d| d.expect("every place filled"))
             .collect();
         let types = (Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))).instance(vec![]);
-        for order in permutations(3) {
+        let orders = if p == 0 {
+            permutations(3)
+        } else {
+            vec![permutations(3)[rng.below(6)].clone()]
+        };
+        for order in orders {
             Type::forget_emptiness();
             for &j in &order {
                 assert_eq!(
                     types[at[j]].verdict(),
                     Verdict::Refused(Refusal::Group),
-                    "{} with the definitions at {at:?}, asked in the order {order:?}",
+                    "{} with the definitions at {at:?}, asked in the order {order:?} \
+                     (ZED_SEED={seed})",
                     ["Q", "R", "S"][j]
                 );
             }
@@ -2513,8 +2551,11 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
 }
 
 /// The verdicts of every member of `k` copies of the group that hung the search, at k and 8k
-/// copies, in a ring when `ring` holds, the groups built before the runs: each member is
-/// refused, as the one copy is.
+/// copies, in a ring when `ring` holds, the groups built before the runs. That each member is
+/// refused, as the one copy is, was checked here at 32 copies until TEST-bench-move-l0123
+/// (author P169); it is checked at 2 and 3 copies by
+/// [`a_few_copies_of_the_group_that_hung_the_search_are_refused`] and at a ring of 3 by
+/// [`a_ring_of_the_group_that_hung_the_search_is_refused`].
 fn verdicts_of_copies_scale(what: &str, ring: bool) {
     let make = |k: usize| -> Vec<Type> {
         (kernel(&hang_copies(k, ring), &format!("hang_{ring}_{k}")).into_iter())
@@ -2522,10 +2563,6 @@ fn verdicts_of_copies_scale(what: &str, ring: bool) {
             .collect()
     };
     let copies = scaling::inputs(32, make);
-    Type::forget_emptiness();
-    for t in &copies[&32] {
-        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
-    }
     scaling::check_order(what, 32, 1, |k| {
         Type::forget_emptiness();
         for t in &copies[&k] {
@@ -2582,13 +2619,20 @@ fn cases_j_and_l() -> Vec<(&'static str, Vec<E>)> {
 }
 
 /// Cases J and L, refused in some orders of their components and inhabited in others before
-/// GROUP-closure-order, are inhabited in all 120 orders of their definitions, with and without
-/// the parts of their tuples reversed.
+/// GROUP-closure-order, are inhabited in the orders of their definitions asked, with and
+/// without the parts of their tuples reversed. Each case asks the written order and 23 more of
+/// its 120 orders, drawn afresh each run; each asked all 120, 0.73 to 0.95 s alone on a loaded
+/// machine, until TEST-bench-move-l0123 (author P169: correctness tests well under 1 s alone).
 #[test]
 fn cases_j_and_l_are_inhabited_in_every_order() {
+    let (mut rng, _) = Rng::fresh("cases J and L");
+    let orders = permutations(5);
     let mut runs = 0;
     for (name, sys) in cases_j_and_l() {
-        for (p, order) in permutations(5).iter().enumerate() {
+        let mut asked = vec![0];
+        asked.extend(pick_seeds(&mut rng, name, 1..120, 23));
+        for p in asked {
+            let order = &orders[p as usize];
             for rev in [false, true] {
                 let mut sys = moved(&sys, order);
                 if rev {
@@ -2605,7 +2649,7 @@ fn cases_j_and_l_are_inhabited_in_every_order() {
             }
         }
     }
-    assert_eq!(runs, 4 * 120 * 2);
+    assert_eq!(runs, 4 * 24 * 2);
 }
 
 /// Groups the stress runs of GROUP-closure-order found inhabited in some orders and refused in
@@ -2830,15 +2874,16 @@ fn other_families_agree_across_orders() {
 /// to the reason of a refusal (item GROUP-search-canon-key). Before it, 13 of these 800 systems
 /// differed between orders, and 172 of the 15,691 seeds of 0..16,000 that finished within 60 s
 /// in the sweep of the item; after it none of the 16,000 differs, and 26 differ only in the
-/// reason of a refusal. Each run asks 8 of the 800 and 32 more chosen afresh
-/// (TEST-bench-move-l0123).
+/// reason of a refusal. Each run asks seeds 0 to 3 of the 800 and 16 more chosen afresh; it
+/// asked seeds 0 to 7 and 32 more, 0.35 to 1.91 s alone on a loaded machine, until
+/// TEST-bench-move-l0123 (author P169: correctness tests well under 1 s alone).
 #[test]
 fn meets_agree_across_orders() {
     let (mut rng, _) = Rng::fresh("meets across orders");
     verdicts_agree_across_orders(
         "meets",
         gen_meets,
-        &seeds_of(&mut rng, "meets", 0..8, 0..800, 32),
+        &seeds_of(&mut rng, "meets", 0..4, 0..800, 16),
         (true, true),
     );
 }
@@ -2987,6 +3032,119 @@ fn a_group_prints_the_same_text_whatever_was_built_before_it() {
     assert_eq!(printed(true, false), fresh);
     assert_eq!(printed(false, true), fresh);
     assert_eq!(printed(true, true), fresh);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Small instances of the benchmarks (TEST-bench-move-l0123, author P169)
+// ---------------------------------------------------------------------------------------------
+
+/// Small instance of `bench::verdicts_of_random_groups_scale`, and the check that systems of
+/// the X14 family are admitted: every definition of the X14 systems of seeds 0 to 7, of a
+/// chain group of 2, 8 and 24 definitions and of one X14 system of as many is admitted, and
+/// each member's verdict is decided when asked alone.
+#[test]
+fn small_random_groups_are_admitted() {
+    let mut systems: Vec<(String, Vec<E>)> = (0..8)
+        .map(|seed| (format!("many_s{seed}"), gen_claude(&mut Rng::new(seed))))
+        .collect();
+    for n in [2, 8, 24] {
+        systems.push((format!("chain_s{n}"), chain_of(&mut Rng::new(7), n)));
+        systems.push((format!("one_s{n}"), claude_of(&mut Rng::new(3), n)));
+    }
+    for (tag, sys) in &systems {
+        let types = kernel(sys, tag);
+        assert!(
+            types.iter().all(Option::is_some),
+            "{tag}: {}",
+            show_system(sys)
+        );
+        assert!(alone(&types).iter().all(Option::is_some), "{tag}");
+    }
+}
+
+/// Small instance of `bench::verdicts_of_undecided_groups_scale`: every definition of an X14
+/// system of 2, 8 and 24 definitions with each body less `#none` is admitted, and the verdicts
+/// of the members of its largest group, asked together, and of every definition alone are
+/// decided.
+#[test]
+fn small_undecided_groups_are_admitted() {
+    for n in [2, 8, 24] {
+        let sys = undecided(claude_of(&mut Rng::new(3), n));
+        let types = kernel(&sys, &format!("oneu_s{n}"));
+        assert!(
+            types.iter().all(Option::is_some),
+            "n = {n}: {}",
+            show_system(&sys)
+        );
+        Type::forget_emptiness();
+        for &i in &largest_group(&sys) {
+            std::hint::black_box(types[i].as_ref().map(Type::verdict));
+        }
+        assert!(alone(&types).iter().all(Option::is_some), "n = {n}");
+    }
+}
+
+/// Small instance of `bench::a_chain_decided_again_scales`, moved out of it: in a key chain of
+/// up to 16, the empty members are exactly those at even places, so `R(m - 1)` is not empty.
+#[test]
+fn every_second_member_of_a_key_chain_is_empty() {
+    for m in 1..=16 {
+        let ts = key_chain(m);
+        let empty: Vec<usize> = (0..=m)
+            .filter(|&k| {
+                Type::forget_emptiness();
+                ts[k].is_empty()
+            })
+            .collect();
+        assert_eq!(
+            empty,
+            (0..=m).step_by(2).collect::<Vec<_>>(),
+            "a key chain of {m}"
+        );
+    }
+}
+
+/// Small instance of `bench::the_groups_of_a_system_are_built_in_its_size`: every group of a
+/// chain of 1, 2 and 16 groups, and of one group of as many definitions, is admitted. At 1 both
+/// systems are one definition that reads itself.
+#[test]
+fn the_groups_of_small_systems_are_built() {
+    for n in [1, 2, 16] {
+        let types = kernel(&chain_of_groups(n, false), &format!("built_chain{n}"));
+        assert!(types.iter().all(Option::is_some), "a chain of {n} groups");
+        let types = kernel(&chain_of(&mut Rng::new(7), n), &format!("built_one{n}"));
+        assert!(types.iter().all(Option::is_some), "one group of {n}");
+    }
+}
+
+/// Small instance of `bench::a_chain_of_shared_tuple_parts_prints_in_its_size`: a marked chain
+/// of 2, 3, 5 and 8 shared tuple parts prints as syntax, with one definition for `#a | #b`, two
+/// for the first pair and the part that names it, and one for each other cycle: n + 2.
+#[test]
+fn a_short_chain_of_shared_tuple_parts_prints() {
+    for n in [2, 3, 5, 8] {
+        let t = shared_chain(n, true, &format!("short_chain{n}"));
+        prints_as_syntax(&t, &format!("a chain of {n}"));
+        assert_eq!(t.surface().defs.len(), n + 2, "a chain of {n}");
+    }
+}
+
+/// Small instance of `bench::verdicts_of_copies_of_the_group_that_hung_the_search_scale`, which
+/// checked this at 32 copies until TEST-bench-move-l0123 (author P169): 2 and 3 copies of the
+/// group that hung the search, each its own group, are admitted, and each member is refused, as
+/// the one copy is, asked in order after one forget.
+#[test]
+fn a_few_copies_of_the_group_that_hung_the_search_are_refused() {
+    for k in [2, 3] {
+        let types = kernel(&hang_copies(k, false), &format!("hang_s{k}"));
+        assert!(types.iter().all(Option::is_some), "k = {k}");
+        let order: Vec<usize> = (0..types.len()).collect();
+        assert_eq!(
+            in_order(&types, &order),
+            vec![Some(Verdict::Refused(Refusal::Group)); 3 * k],
+            "k = {k}"
+        );
+    }
 }
 
 mod bench;

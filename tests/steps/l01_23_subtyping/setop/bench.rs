@@ -20,13 +20,10 @@ fn meets_of_k_members_scale() {
 
 /// The product of `k` parity lists is inhabited (`[k]` is in it), and the search for a value
 /// finds the singleton before following the recursive tuple fork (COMPLEXITY.md K35).
-/// Both the verdict and emptiness are checked in the size of the constraints.
+/// Both the verdict and emptiness are checked in the size of the constraints. Small instance
+/// `the_product_of_a_few_parity_lists_has_a_singleton`.
 #[test]
 fn the_product_of_k_parity_lists_has_a_checked_singleton() {
-    assert_eq!(
-        verdict_and_searched(&parity_meet(2)),
-        (Verdict::Inhabited, 1)
-    );
     let meets = scaling::inputs(4, parity_meet);
     scaling::check("emptiness of the product of k parity lists", 4, |k| {
         Type::forget_emptiness();
@@ -129,21 +126,11 @@ fn shared_integer_columns_scale_with_their_written_dag() {
     shared_integer_columns_check(64, false);
 }
 
+/// Distinct columns at `n` and `8n`. The check that a further finite field keeps the point the
+/// first search checked is in `a_few_shared_integer_columns_are_inhabited`.
 #[test]
 fn distinct_integer_columns_reuse_a_checked_point() {
     shared_integer_columns_check(64, true);
-    // Every column contributes its exclusions. A further finite field leaves
-    // this class and must retain the original search's checked point.
-    let t = &Type::tuple(vec![&Type::int() - &lit(0), &Type::int() - &lit(1)])
-        & &Type::tuple(vec![&Type::int() - &lit(2), &Type::int() - &lit(3)]);
-    Type::forget_emptiness();
-    assert_eq!(t.verdict(), Verdict::Inhabited);
-    let v = Value::tuple(vec![Value::Int(1), Value::Int(0)]);
-    assert!(t.contains(&v));
-    let constrained = &t & &Type::tuple(vec![Type::int(), lit(0)]);
-    Type::forget_emptiness();
-    assert_eq!(constrained.verdict(), Verdict::Inhabited);
-    assert!(constrained.contains(&v));
 }
 
 #[test]
@@ -152,18 +139,13 @@ fn shared_cofinite_boundaries_are_not_enumerated_per_row() {
 }
 
 /// The exponent has n+1 decimal digits; the integer has far more than 2^n
-/// digits. A checked point must keep those powers instead of expanding them.
+/// digits. A checked point must keep those powers instead of expanding them. The types are
+/// [`beside_a_large_power`]; small instance, with the check that each holds `(1,)`:
+/// `cofinite_integer_points_beside_a_few_large_powers`.
 #[test]
 fn cofinite_integer_points_keep_large_powers_symbolic() {
     let n = 8;
-    let inputs = scaling::inputs(n, |k| {
-        let text = format!("1e1{}", "0".repeat(k));
-        let huge = Value::integer(zed_kernel::Rat::decimal(&text).unwrap().unwrap());
-        Type::meet_all([
-            Type::tuple(vec![&Type::int() - &Type::lit(&huge).unwrap()]),
-            Type::tuple(vec![&Type::int() - &lit(0)]),
-        ])
-    });
+    let inputs = scaling::inputs(n, beside_a_large_power);
     scaling::check_order(
         "a cofinite point beyond symbolic integer exclusions",
         n,
@@ -173,7 +155,4 @@ fn cofinite_integer_points_keep_large_powers_symbolic() {
             assert_eq!(inputs[&k].verdict(), Verdict::Inhabited);
         },
     );
-    for t in inputs.values() {
-        assert!(t.contains(&Value::tuple(vec![Value::Int(1)])));
-    }
 }

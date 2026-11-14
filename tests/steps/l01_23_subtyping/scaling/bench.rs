@@ -225,14 +225,8 @@ fn comparing_exclusive_ors_of_tuple_types_scales() {
 
 #[test]
 fn listing_a_diagram_with_exponentially_many_paths_scales() {
-    // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types.
-    for c in [1, 2, 7] {
-        assert_eq!(
-            odd_tuples(c, 0).each_value().map(|v| v.count()),
-            Some(c),
-            "c = {c}"
-        );
-    }
+    // Listing walked every path of the diagram: `2^(c - 1)` at `c` tuple types. Every listing
+    // below has its small instance in `small_exclusive_ors_and_meets_are_listed`.
     let built: std::collections::HashMap<usize, Type> = [512, 4096]
         .into_iter()
         .map(|c| (c, odd_tuples(c, 0)))
@@ -252,10 +246,7 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     // the first components of its tuples.
     let nested: std::collections::HashMap<usize, Type> = [64, 512]
         .into_iter()
-        .map(|c| {
-            let row = |i: usize| Type::tuple(vec![Type::tuple(vec![lit(i), lit(i)])]);
-            (c, parity((0..c).map(row)))
-        })
+        .map(|c| (c, nested_parity(c)))
         .collect();
     scaling::check(
         "listing an exclusive or of nested tuple types, by count",
@@ -264,42 +255,14 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
             assert_eq!(nested[&c].each_value().map(|v| v.count()), Some(c));
         },
     );
-    // Columns no one kind or length lists (LIST-parity-rest): `(i | (i, i))`, with tuples and
-    // integers in one column; `((i) | (i, i))`, with tuples of two lengths; and `(0..2c)` met
-    // with each `(int - (2i + 1))`, tuple types given by their complements. Each tuple type is
-    // filed by its parts, as the class split does (K36); unfiled, each was read for every value
-    // (60.3, 60.3 and 45.7 times the instructions from `c` 64 to 512).
-    let shape = |c: usize, which: usize| -> Type {
-        let row = |i: usize| -> Type {
-            let pair = Type::tuple(vec![lit(i), lit(i)]);
-            match which {
-                0 => Type::tuple(vec![&lit(i) | &pair]),
-                _ => Type::tuple(vec![&Type::tuple(vec![lit(i)]) | &pair]),
-            }
-        };
-        if which < 2 {
-            return parity((0..c).map(row));
-        }
-        // Shape 4 puts a second column beside each, `(0..2c, 0)` met with each `(int - (2i + 1),
-        // 0)`, and shape 3 puts that pair one level down, `((0..2c, 0),)` met with each
-        // `((int - (2i + 1), 0),)` (LIST-parity-tail). Each such row was read for every tuple,
-        // and the meet of the tuple types was made one by one along a path: from `c` 64 to 512,
-        // 50.1 times the instructions and 30.4 times the bytes. Such a row is now filed by its
-        // second column, and the meets along a path are made in balanced runs (`Type::boxes`):
-        // 9.4 and 9.7 times the instructions.
-        let deeper = |t: Type| match which {
-            2 => t,
-            _ => Type::tuple(vec![t, lit(0)]),
-        };
-        let wrap = |t: Type| match which {
-            4 => t,
-            _ => Type::tuple(vec![t]),
-        };
-        let all = wrap(deeper(Type::union_all((0..2 * c).map(lit))));
-        (0..c).fold(all, |t, i| {
-            &t & &wrap(deeper(&Type::int() - &lit(2 * i + 1)))
-        })
-    };
+    // Columns no one kind or length lists ([`listing_shape`], LIST-parity-rest): shapes 0, 1
+    // and 2. Each tuple type is filed by its parts, as the class split does (K36); unfiled,
+    // each was read for every value (60.3, 60.3 and 45.7 times the instructions from `c` 64 to
+    // 512). In shapes 4 and 3 (LIST-parity-tail) each row was read for every tuple, and the
+    // meet of the tuple types was made one by one along a path: from `c` 64 to 512, 50.1 times
+    // the instructions and 30.4 times the bytes. Such a row is now filed by its second column,
+    // and the meets along a path are made in balanced runs (`Type::boxes`): 9.4 and 9.7 times
+    // the instructions.
     for (which, what, per) in [
         (
             0,
@@ -329,38 +292,22 @@ fn listing_a_diagram_with_exponentially_many_paths_scales() {
     ] {
         let built: std::collections::HashMap<usize, Type> = [64, 512]
             .into_iter()
-            .map(|c| (c, shape(c, which)))
+            .map(|c| (c, listing_shape(c, which)))
             .collect();
-        for c in [1, 2, 7] {
-            let small = shape(c, which).each_value().map(|v| v.count());
-            assert_eq!(small, Some(per * c), "{what}, c = {c}");
-        }
         scaling::check(what, 64, |c| {
             assert_eq!(built[&c].each_value().map(|v| v.count()), Some(per * c));
         });
     }
-    // Rows each with keys of their own in a column they could absorb (LIST-parity-tail): `(0..3,
-    // 0..=c)` met with the union of each `(int - (2i + 1), i | i + 1)`. Absorbing every second
-    // column makes a region, and so a class reading every row, per key: order `c²`, 27.5 times
-    // the bytes when it was tried. Such a column is filed by its keys instead.
-    let regions: std::collections::HashMap<usize, Type> = [1, 2, 7, 64, 512]
+    // Rows each with keys of their own in a column they could absorb ([`listing_regions`],
+    // LIST-parity-tail). Absorbing every second column makes a region, and so a class reading
+    // every row, per key: order `c²`, 27.5 times the bytes when it was tried. Such a column is
+    // filed by its keys instead. Row `i` takes `x = 2i + 1` out of the first column, which
+    // holds only `x = 1` of them, so `3c + 2` values are listed for `c > 1`.
+    let regions: std::collections::HashMap<usize, Type> = [64, 512]
         .into_iter()
-        .map(|c| {
-            let all = Type::tuple(vec![
-                Type::union_all((0..3).map(lit)),
-                Type::union_all((0..=c).map(lit)),
-            ]);
-            let row =
-                |i: usize| Type::tuple(vec![&Type::int() - &lit(2 * i + 1), &lit(i) | &lit(i + 1)]);
-            (c, &all & &Type::union_all((0..c).map(row)))
-        })
+        .map(|c| (c, listing_regions(c)))
         .collect();
-    // Row `i` takes `x = 2i + 1` out of the first column, which holds only `x = 1` of them:
-    // `y = 0` keeps 2 values and every other `y` 3, but at `c = 1`, where `y = 1` keeps 2.
     let count = |c: usize| regions[&c].each_value().map(|v| v.count());
-    for (c, n) in [(1, 4), (2, 8), (7, 23)] {
-        assert_eq!(count(c), Some(n), "c = {c}");
-    }
     // Each tuple was checked on the decision list restricted to the smallest range of halves
     // holding the rows with a key of it, and those rows, two per tuple, are in the order of
     // their hashes, so the range held most rows: 20.3 times the instructions from `c` 64 to
@@ -381,26 +328,13 @@ fn listing_tuples_that_differ_off_their_first_components_scales() {
     // `c²` to build and to list, and each tuple was a class of its own, reading every row:
     // from `c` 64 to 256, 16.5 times the instructions for `x` int and 0, and 17.3 times for
     // `x` int - (c + k) (LIST-parity-keys). One-row tuple types now meet column by column, and
-    // the scalars there are read by their regions.
-    let pairs = |c: usize, which: usize| -> Type {
-        let firsts = (0..c).map(|i| Type::tuple(vec![Type::tuple(vec![lit(2 * i), lit(i)])]));
-        let x = |k: usize| match which {
-            0 => Type::int(),
-            1 => lit(0),
-            _ => &Type::int() - &lit(c + k),
-        };
-        (0..c).fold(Type::union_all(firsts), |t, k| {
-            &t & &Type::tuple(vec![Type::tuple(vec![
-                &Type::int() - &lit(2 * k + 1),
-                x(k),
-            ])])
-        })
-    };
+    // the scalars there are read by their regions. The types are [`pairs_off_first`]; small
+    // instance `a_few_tuples_that_differ_off_their_first_components_are_listed`.
     for (which, x) in ["all integers", "one literal", "a complement"]
         .into_iter()
         .enumerate()
     {
-        let built = scaling::inputs(64, |c| pairs(c, which));
+        let built = scaling::inputs(64, |c| pairs_off_first(c, which));
         let what = format!("listing pairs off their first components, the second {x}, by count");
         scaling::check(&what, 64, |c| {
             let want = if which == 1 { 1 } else { c };
@@ -434,17 +368,9 @@ fn a_decision_tree_is_decided_in_polynomial_time() {
 
 #[test]
 fn a_key_past_many_excluded_tuples_is_found_and_scales() {
-    // Each tuple type tried as the key's representative was tested against every other.
+    // Each tuple type tried as the key's representative was tested against every other. Small
+    // instance `a_key_past_a_few_excluded_tuples_is_found`.
     let promised = |c: usize| Type::exact(past_excluded(c, Type::int()), Type::empty());
-    for c in [1, 2, 7] {
-        assert!(promised(c).is_empty(), "c = {c}");
-        // When every one-tuple is taken out, no key is promised, and the empty morphism is in it.
-        let all = Type::union_all((0..c).map(lit));
-        assert!(
-            !Type::exact(past_excluded(c, all), Type::empty()).is_empty(),
-            "c = {c}"
-        );
-    }
     let built: std::collections::HashMap<usize, Type> =
         [512, 4096].into_iter().map(|c| (c, promised(c))).collect();
     scaling::check(
@@ -648,16 +574,9 @@ fn a_list_of_two_cycles_is_shown_in_the_size_of_its_type() {
 fn a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union() {
     // `g` takes `(#a_i, #c)` for each of `n` atoms, and `h` passes it `(#a_0 | … | #a_n-1,
     // #c)`, which no one shape holds: the checker builds each side's kernel type once and
-    // the kernel decides it by splitting the first component.
-    let program = |n: usize| {
-        let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
-        let shapes: Vec<String> = atoms.iter().map(|a| format!("({a}, #c)")).collect();
-        format!(
-            "g(x: {}) = x;\nh(y: ({}, #c)) = g(x: y);\nmain() = 0;\n",
-            shapes.join(" | "),
-            atoms.join(" | ")
-        )
-    };
+    // the kernel decides it by splitting the first component. The program is
+    // [`shapes_program`]; small instance `a_tuple_held_by_a_few_shapes_together_or_by_none`.
+    let program = |n: usize| shapes_program(n, "#c");
     // The checker is timed alone, on statements parsed and resolved before the timing
     // (COMPLEXITY.md F85).
     let units: std::collections::BTreeMap<usize, _> = [64, scaling::FACTOR * 64]
@@ -675,16 +594,9 @@ fn a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union() 
 #[test]
 fn a_tuple_that_no_shapes_hold_is_rejected_in_the_size_of_the_union() {
     // As above, with `#d` for `#c`: the kernel shows a value outside every shape, so the
-    // shapes are not each tried, which costs every shape times the components.
-    let program = |n: usize| {
-        let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
-        let shapes: Vec<String> = atoms.iter().map(|a| format!("({a}, #c)")).collect();
-        format!(
-            "g(x: {}) = x;\nh(y: ({}, #d)) = g(x: y);\nmain() = 0;\n",
-            shapes.join(" | "),
-            atoms.join(" | ")
-        )
-    };
+    // shapes are not each tried, which costs every shape times the components. Small instance,
+    // with the error message: `a_tuple_held_by_a_few_shapes_together_or_by_none`.
+    let program = |n: usize| shapes_program(n, "#d");
     scaling::check("a tuple held by no shape, by n", 64, |n| {
         Type::forget_emptiness();
         assert!(zedc::run::load(program(n).as_bytes()).is_err());
@@ -714,7 +626,10 @@ fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
     // or value, so its verdict decides neither group and does the work `is_empty` does; at n
     // 1024, 13.1M instructions and 0.90M bytes against 13.1M and 0.90M. Deciding every member
     // of both groups first (VERDICT-group-readers) cost 87.5M and 10.5M, 6.7 and 11.7 times
-    // the emptiness (plan item VERDICT-meet-cost).
+    // the emptiness (plan item VERDICT-meet-cost). This is a comparison of two costs at one
+    // size, not a scaling test: it runs no second size and checks no ratio between sizes. It
+    // stays here as a measurement (TEST-bench-move-l0123, author P169); its answers have a small
+    // instance in `small_lists_of_two_cycles_are_decided`.
     let n = 1024;
     let t = &period(n, n - 1) & &period(n + 1, n);
     scaling::compare_costs(

@@ -7,6 +7,7 @@
 use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
 fn def(name: &str, body: Expr) -> Def {
@@ -343,42 +344,44 @@ fn bounded_parity_singletons_obey_further_integer_constraints() {
 /// `0..a` and one integer outside it, by `Type::contains`. Some meets are proved empty by the
 /// reading as a linear system over GF(2), and some fall outside it; the count of each is
 /// printed with `--nocapture`.
+///
+/// Until TEST-bench-move-l0123 (author P169) this ran 400 meets from one fixed seed of its own
+/// generator, 1.1 to 1.4 s alone under load; it now runs 100 from a fresh seed each run,
+/// 0.23 to 0.70 s alone under the same load, the time varying with the meets drawn. Every kind of meet is still drawn: each draw picks among
+/// 1 to 4 integers, 1 to 8 lists, bounded or not, swaps by pairs or by any subset, and stop
+/// sets of none, one or both states. At 400 meets 309 were answered `Empty` with no short
+/// list (77 percent), so at 100 about 77 are, with a standard deviation of about 4.2: the one
+/// count checked, at least one such meet, holds by far more than three of them.
 #[test]
 fn random_parity_meets_answered_empty_hold_no_short_list() {
-    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-    let mut next = |n: u64| {
-        seed = seed
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        (seed >> 33) % n
-    };
+    let (mut g, seed) = Rng::fresh("random parity meets");
     let set = |xs: &[usize]| (xs.iter().map(|&x| lit(x))).fold(Type::empty(), |u, x| &u | &x);
     let mut tally = std::collections::BTreeMap::new();
-    for _ in 0..400 {
-        let a = 1 + next(4) as usize;
-        let k = 1 + next(8) as usize;
-        let bounded = next(2) == 0;
+    for _ in 0..100 {
+        let a = 1 + g.below(4);
+        let k = 1 + g.below(8);
+        let bounded = g.below(2) == 0;
         // In half the meets each integer swaps at most two lists, the class read over GF(2).
         let mut swaps: Vec<Vec<usize>> = vec![vec![]; k];
-        let pairs = next(2) == 0;
+        let pairs = g.below(2) == 0;
         for x in 0..a {
             match pairs {
                 true => {
-                    for _ in 0..next(3) {
-                        let i = next(k as u64) as usize;
+                    for _ in 0..g.below(3) {
+                        let i = g.below(k);
                         if swaps[i].last() != Some(&x) {
                             swaps[i].push(x);
                         }
                     }
                 }
                 false => (0..k)
-                    .filter(|_| next(2) == 0)
+                    .filter(|_| g.below(2) == 0)
                     .for_each(|i| swaps[i].push(x)),
             }
         }
         let mut defs = Vec::new();
         for (i, swaps) in swaps.iter().enumerate() {
-            let stops = next(4);
+            let stops = g.below(4);
             for (state, other_state) in [(2 * i, 2 * i + 1), (2 * i + 1, 2 * i)] {
                 let mut arms = Vec::new();
                 if (stops >> (state % 2)) & 1 == 1 {
@@ -421,14 +424,20 @@ fn random_parity_meets_answered_empty_hold_no_short_list() {
         }
         let v = verdict_and_searched(&t).0;
         if v == Verdict::Empty {
-            assert_eq!(found, None, "a list of a meet answered empty");
+            assert_eq!(
+                found, None,
+                "a list of a meet answered empty (ZED_SEED={seed})"
+            );
         }
         *tally
             .entry((format!("{v:?}"), found.is_some()))
             .or_insert(0) += 1;
     }
     eprintln!("random parity meets, by verdict and whether a short list was found: {tally:?}");
-    assert!(tally.contains_key(&("Empty".to_owned(), false)));
+    assert!(
+        tally.contains_key(&("Empty".to_owned(), false)),
+        "no meet answered empty (ZED_SEED={seed}): {tally:?}"
+    );
 }
 
 fn bounded_parity(k: usize, hi: usize, exclude: Option<usize>) -> Type {
@@ -764,6 +773,153 @@ fn a_parity_meet_with_a_second_link_atom_is_inhabited() {
     Type::forget_emptiness();
     assert_eq!(t.verdict(), Verdict::Inhabited);
     assert!(!t.is_empty());
+}
+
+/// Small instance of `bench::meets_of_k_members_scale`: the meet of a few even-length lists is
+/// settled with no search when an endless list is among them, and searched once otherwise.
+#[test]
+fn meets_of_a_few_members_are_decided() {
+    for k in [1, 2, 3] {
+        assert_eq!(
+            verdict_and_searched(&meet_of_k(k, true)),
+            (Verdict::Empty, 0),
+            "k = {k}"
+        );
+        assert_eq!(
+            verdict_and_searched(&meet_of_k(k, false)),
+            (Verdict::Inhabited, 1),
+            "k = {k}"
+        );
+    }
+}
+
+/// Small instance of `bench::the_product_of_k_parity_lists_has_a_checked_singleton`: the
+/// product of two parity lists is found inhabited with one search (the check at `k = 2` was in
+/// the benchmark until TEST-bench-move-l0123, author P169), and the product of a few is not
+/// empty.
+#[test]
+fn the_product_of_a_few_parity_lists_has_a_singleton() {
+    assert_eq!(
+        verdict_and_searched(&parity_meet(2)),
+        (Verdict::Inhabited, 1)
+    );
+    for k in [1, 2, 3] {
+        Type::forget_emptiness();
+        assert!(!parity_meet(k).is_empty(), "k = {k}");
+    }
+}
+
+/// Small instance of `bench::canonical_blame_settlement_scales`: the first member of a short
+/// chain of members with a split arm is refused for want of a witness.
+#[test]
+fn a_short_chain_with_split_arms_is_refused_for_want_of_a_witness() {
+    for m in [1, 2, 5] {
+        let types = canonical_blame_chain(m);
+        Type::forget_emptiness();
+        assert_eq!(
+            types[0].verdict(),
+            Verdict::Refused(Refusal::NoWitness),
+            "m = {m}"
+        );
+    }
+}
+
+/// Small instance of `bench::bounded_empty_parity_decided_on_another_thread_costs_the_same_here`:
+/// a bounded parity decided empty on another thread, and kept alive, is decided empty here
+/// too. The benchmark measures that the work here is not less; this checks the answer.
+#[test]
+fn bounded_empty_parity_decided_on_another_thread_is_empty_here() {
+    let k = 3;
+    let _decided = std::thread::spawn(move || {
+        let t = bounded_parity(k, k - 1, None);
+        assert_eq!(t.verdict(), Verdict::Empty);
+        t
+    })
+    .join()
+    .unwrap();
+    Type::forget_emptiness();
+    assert_eq!(bounded_parity(k, k - 1, None).verdict(), Verdict::Empty);
+}
+
+/// Small instance of `bench::bounded_empty_parity_is_decided_in_the_size_of_the_constraints`: a
+/// bounded parity whose bound is below its count is empty by its verdict and by `is_empty`,
+/// asked in the benchmark's order and by `is_empty` alone.
+#[test]
+fn small_bounded_empty_parities_are_empty() {
+    for k in [2, 3, 5] {
+        let t = bounded_parity(k, k - 1, None);
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty, "k = {k}");
+        assert!(t.is_empty(), "k = {k}");
+        Type::forget_emptiness();
+        assert!(bounded_parity(k, k - 1, None).is_empty(), "k = {k}");
+    }
+}
+
+/// Small instance of `bench::shared_integer_columns_scale_with_their_written_dag` and
+/// `bench::distinct_integer_columns_reuse_a_checked_point`: a few columns sharing their
+/// boundaries, alike or distinct, are inhabited; and a further finite field keeps the point
+/// the first search checked. That last check was in the benchmark until TEST-bench-move-l0123
+/// (author P169) moved it here.
+#[test]
+fn a_few_shared_integer_columns_are_inhabited() {
+    for k in [1, 2, 5] {
+        for distinct in [false, true] {
+            Type::forget_emptiness();
+            assert_eq!(
+                shared_integer_columns(k, distinct).verdict(),
+                Verdict::Inhabited,
+                "k = {k}, distinct = {distinct}"
+            );
+        }
+    }
+    // Every column contributes its exclusions. A further finite field leaves
+    // this class and must retain the original search's checked point.
+    let t = &Type::tuple(vec![&Type::int() - &lit(0), &Type::int() - &lit(1)])
+        & &Type::tuple(vec![&Type::int() - &lit(2), &Type::int() - &lit(3)]);
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
+    let v = Value::tuple(vec![Value::Int(1), Value::Int(0)]);
+    assert!(t.contains(&v));
+    let constrained = &t & &Type::tuple(vec![Type::int(), lit(0)]);
+    Type::forget_emptiness();
+    assert_eq!(constrained.verdict(), Verdict::Inhabited);
+    assert!(constrained.contains(&v));
+}
+
+/// Small instance of `bench::shared_cofinite_boundaries_are_not_enumerated_per_row`: the meet
+/// of a few one-tuples of integers outside shared and own exclusions is inhabited.
+#[test]
+fn a_few_shared_cofinite_boundaries_are_inhabited() {
+    for k in [1, 2, 5] {
+        Type::forget_emptiness();
+        assert_eq!(cofinite_rows(k).verdict(), Verdict::Inhabited, "k = {k}");
+    }
+}
+
+/// The one-tuples of integers other than `10^(10^k)` and other than 0, measured by
+/// `bench::cofinite_integer_points_keep_large_powers_symbolic`.
+fn beside_a_large_power(k: usize) -> Type {
+    let text = format!("1e1{}", "0".repeat(k));
+    let huge = Value::integer(zed_kernel::Rat::decimal(&text).unwrap().unwrap());
+    Type::meet_all([
+        Type::tuple(vec![&Type::int() - &Type::lit(&huge).unwrap()]),
+        Type::tuple(vec![&Type::int() - &lit(0)]),
+    ])
+}
+
+/// Small instance of `bench::cofinite_integer_points_keep_large_powers_symbolic`: one-tuples of
+/// integers other than `10^10`, `10^100` or `10^1000` and other than 0 are inhabited, and hold
+/// `(1,)`. The `contains` check was in the benchmark, after its runs, until
+/// TEST-bench-move-l0123 (author P169) moved it here.
+#[test]
+fn cofinite_integer_points_beside_a_few_large_powers() {
+    for k in [1, 2, 3] {
+        let t = beside_a_large_power(k);
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "k = {k}");
+        assert!(t.contains(&Value::tuple(vec![Value::Int(1)])), "k = {k}");
+    }
 }
 
 mod bench;

@@ -9,7 +9,8 @@ use super::*;
 /// verdicts of every member of one group of `n` (plan item VERDICT-group-share), of the X14
 /// family and of the chain family, at `n` and `8n`, the groups built before the runs. The first
 /// verdict asked of a member decides the whole group in one search (`Type::verdict`), so the
-/// verdicts of all members cost what one does.
+/// verdicts of all members cost what one does. Small instance
+/// `small_random_groups_are_admitted`.
 #[test]
 fn verdicts_of_random_groups_scale() {
     let many = |n: usize| -> Vec<Type> {
@@ -65,6 +66,7 @@ fn verdicts_of_random_groups_scale() {
 /// with every member as a root decides them all (plan item VERDICT-group-roots), where a search
 /// for each member read the group n times. Then the verdicts of every definition of the X14
 /// system, which read the group by its verdicts and values (plan item VERDICT-group-readers).
+/// Small instance `small_undecided_groups_are_admitted`.
 #[test]
 fn verdicts_of_undecided_groups_scale() {
     let chain = |n: usize| -> Vec<Type> {
@@ -128,23 +130,12 @@ fn verdicts_of_undecided_groups_scale() {
     );
 }
 
+/// `is_empty` of `R(n - 1)` of a key chain of `n`, at `n` and `8n`. The check that the empty
+/// members are exactly those at even places, made here at 1 to 16 until TEST-bench-move-l0123
+/// (author P169), is `every_second_member_of_a_key_chain_is_empty`.
 #[test]
 fn a_chain_decided_again_scales() {
     let chains = scaling::inputs(64, key_chain);
-    for m in 1..=16 {
-        let ts = key_chain(m);
-        let empty: Vec<usize> = (0..=m)
-            .filter(|&k| {
-                Type::forget_emptiness();
-                ts[k].is_empty()
-            })
-            .collect();
-        assert_eq!(
-            empty,
-            (0..=m).step_by(2).collect::<Vec<_>>(),
-            "a key chain of {m}"
-        );
-    }
     for (&m, ts) in &chains {
         Type::forget_emptiness();
         assert!(!ts[m - 1].is_empty(), "R{} of a key chain of {m}", m - 1);
@@ -160,7 +151,8 @@ fn a_chain_decided_again_scales() {
 /// n definitions (`chain_of`), at n and 8n, the systems written before the runs and each run
 /// under names of its own, so no run finds the groups of another. A search from each definition
 /// for what it reaches cost the square of the definitions, and a pass over every definition for
-/// each group built their cube: 1.57 s for a chain of 1000 groups.
+/// each group built their cube: 1.57 s for a chain of 1000 groups. Small instance
+/// `the_groups_of_small_systems_are_built`.
 #[test]
 fn the_groups_of_a_system_are_built_in_its_size() {
     let runs = std::sync::atomic::AtomicUsize::new(0);
@@ -180,7 +172,7 @@ fn the_groups_of_a_system_are_built_in_its_size() {
 
 /// The text of a chain of `n` cycles, each entered at a tuple part that a part kept
 /// unevaluated shares, takes time and bytes of order `n log n`: the parts are ordered by their
-/// contents, a sort.
+/// contents, a sort. Small instance `a_short_chain_of_shared_tuple_parts_prints`.
 #[test]
 fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
     let chains = scaling::inputs(64, |n| {
@@ -202,7 +194,8 @@ fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
 /// The verdicts of every member of n copies of the group that hung the search, each its own
 /// group, at n and 8n: the search takes each function type at most once for each value it
 /// builds, and builds a value again only once a function taken after its build began holds it,
-/// so each copy costs the same.
+/// so each copy costs the same. Small instance
+/// `a_few_copies_of_the_group_that_hung_the_search_are_refused`.
 #[test]
 fn verdicts_of_copies_of_the_group_that_hung_the_search_scale() {
     verdicts_of_copies_scale(
@@ -217,6 +210,7 @@ fn verdicts_of_copies_of_the_group_that_hung_the_search_scale() {
 /// connected group of types, whose trie is made once and placed for each test, a node at a
 /// time where it is read; its types
 /// merge into one node, where a walk over the ring for each test cost n (GROUP-overlaps-unfold).
+/// Small instance `a_ring_of_the_group_that_hung_the_search_is_refused`.
 #[test]
 fn verdicts_of_a_ring_of_the_group_that_hung_the_search_scale() {
     verdicts_of_copies_scale(
@@ -226,7 +220,8 @@ fn verdicts_of_a_ring_of_the_group_that_hung_the_search_scale() {
 }
 
 /// The first 36 tuples of a tuple type of `n` components with six values each, at `n` and `8n`:
-/// the product has `6^n` tuples, and only the 36 kept are built.
+/// the product has `6^n` tuples, and only the 36 kept are built. Small instance
+/// `the_first_tuples_are_those_of_the_whole_product`.
 #[test]
 fn the_first_tuples_of_a_wide_tuple_type_scale() {
     let opts = scaling::inputs(64, |n| vec![(0..6).collect::<Vec<usize>>(); n]);

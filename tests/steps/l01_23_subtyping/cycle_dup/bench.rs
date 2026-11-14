@@ -4,6 +4,8 @@
 
 use super::*;
 
+/// The verdicts of a ring of `n` and `8n` closures, each returning the next; small instance
+/// `a_small_group_of_closures_is_witnessed`.
 #[test]
 fn a_group_of_closures_is_witnessed_in_its_written_size() {
     let n = 64;
@@ -33,7 +35,9 @@ fn a_group_of_closures_is_witnessed_in_its_written_size() {
 /// timed; a run makes a fresh instance, whose group is decided anew. Building the instance
 /// costs about 57k instructions an arm, which hides a quadratic merge of equal arms at small
 /// `n`: one that looks each arm up in a list of the arms before it passed at `n` 1024 (10.2
-/// times) and failed at 2048 and 4096 (12.2 times), against 8.1 times here.
+/// times) and failed at 2048 and 4096 (12.2 times), against 8.1 times here. It asserts nothing;
+/// what the decider answers is checked at small `n` by
+/// `many_arms_written_twice_and_nested_are_read_as_written_once`.
 #[test]
 fn many_arms_scale() {
     let n = 4096;
@@ -57,7 +61,9 @@ fn many_arms_scale() {
 
 /// Deciding the group of [`meets_in_orders`] with every meet written twice, at `n` and `8n`
 /// arms: each part is read once and the operands of a meet are of one color, so building the
-/// canonical form stays within `n log n` (item GROUP-search-canon-key).
+/// canonical form stays within `n log n` (item GROUP-search-canon-key). It asserts nothing;
+/// what the decider answers is checked at small `n` by
+/// `many_meets_written_in_two_orders_are_decided`.
 #[test]
 fn many_meets_in_two_orders_scale() {
     let n = 512;
@@ -82,7 +88,9 @@ fn many_meets_in_two_orders_scale() {
 }
 
 /// Deciding the group of a [`chain`] of `n` and `8n` names: one topological order, two trees
-/// with lowest common ancestors in `log n`, and one sort of the arms, so within `n log n`.
+/// with lowest common ancestors in `log n`, and one sort of the arms, so within `n log n`. It
+/// asserts nothing; what the decider answers is checked at small `n` by
+/// `a_chain_of_names_is_read_as_its_arms`.
 #[test]
 fn a_chain_of_names_scales() {
     let n = 128;
@@ -96,7 +104,8 @@ fn a_chain_of_names_scales() {
 }
 
 /// Deciding [`copies`] of `n` and `8n`: one round of contraction, merging and dropping arms,
-/// within `m log m`.
+/// within `m log m`. It asserts nothing; what the decider answers is checked at small `n` by
+/// `copies_of_parts_equal_once_arms_are_dropped_are_decided`.
 #[test]
 fn copies_of_parts_equal_once_arms_are_dropped_scale() {
     let n = 64;
@@ -110,7 +119,8 @@ fn copies_of_parts_equal_once_arms_are_dropped_scale() {
 }
 
 /// Deciding the group of [`two_chains`] of `n` and `8n` names, with the nodes that play alike
-/// found by the refinement of `names::merged`, within `m log m`.
+/// found by the refinement of `names::merged`, within `m log m`. It asserts nothing; what the
+/// decider answers is checked at small `n` by `two_chains_written_alike_are_decided`.
 #[test]
 fn two_chains_written_alike_scale() {
     let n = 512;
@@ -128,7 +138,7 @@ fn two_chains_written_alike_scale() {
 /// share once for the whole query, not once per member that holds it (item
 /// GROUP-search-canon-key). With a fresh scan per member the larger run took 35.2 times the
 /// work of the smaller, against a limit of 11.7. The groups are built before the work is
-/// counted.
+/// counted. Small instance: `small_groups_with_shared_parts_are_inhabited`.
 #[test]
 fn shared_parts_are_read_once_when_deciding_their_groups() {
     let n = 512;
@@ -160,7 +170,8 @@ fn shared_parts_are_read_once_when_deciding_their_groups() {
 }
 
 /// [`morphisms_met_with_a_union`] at 64 and 512 arms, the groups built before the work is
-/// counted.
+/// counted. Small instance:
+/// `morphism_types_met_with_a_union_of_morphism_types_are_inhabited`.
 #[test]
 fn morphism_types_met_with_a_union_of_morphism_types_scale() {
     let n = 64;
@@ -172,7 +183,8 @@ fn morphism_types_met_with_a_union_of_morphism_types_scale() {
 }
 
 /// Every arm has the same function constraint in its second component. It must be tested
-/// before unfolding each different literal context in its first component.
+/// before unfolding each different literal context in its first component. This benchmark and
+/// the two after it have their small instance in `small_shared_morphism_constraints_are_decided`.
 #[test]
 fn shared_morphism_constraints_are_checked_in_the_size_of_the_union() {
     let inputs = scaling::inputs(16, |m| arm_family(false, m).instance(vec![]));
