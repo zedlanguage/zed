@@ -2186,12 +2186,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | started; worktree from origin/main f2e511526 |
+| CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | reproduced on origin/main f2e511526: (b ^ (2^60)) * (b ^ (2^60)) * (b ^ (2^60)) compiles (zedc run stops at run time, Number too large for memory); also x*x cha |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
 | MSG-never-f64-wording | impl attempt 1 | 2026-11-13 17:20 | reproduced: zedc run of f(x: 1.0f32) at f64 prints 'makes the literal `1.0f32` an `f64`, never `f64`'; cause hard-coded f64 in check::menu; baseline 5 groups 30 |
-| POW-tower-exact-test | impl attempt 1 | 2026-11-13 18:58 | start; load 25.57 |
-| REPAIR-string-compare-offer | running | 2026-11-13 19:03 |  |
+| POW-top-body-agree | running | 2026-11-13 17:20 |  |
+| POW-tower-exact-test | impl attempt 1 | 2026-11-13 18:58 | behavior already exact on 64e07a4f1 (k>0: -125 checks, -126 rejected int[-1..]); 3 new tests in power_repairs; red under a Bernoulli lower bound (3 new + 2 old  |
+| REPAIR-string-compare-offer | impl attempt 1 | 2026-11-13 19:03 | started; worktree from origin/main 23d47ea9e |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | TESTS-defer-leftovers | impl attempt 1 | 2026-11-13 18:38 | started |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | started; worktree from origin/main db415023a |
