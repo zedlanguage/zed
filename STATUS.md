@@ -2355,11 +2355,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | negative control B (each evaluated node spins steps/16, quadratic in steps): 18 of 66 m0_09/m0_10 bench pieces fail (ratios 11.5-60.4 or 20 s timeouts: lets 23. |
-| MSG-range-error-class-spans | impl attempt 1 | 2026-11-14 12:33 | pushed eae04988f + 1e05c2165 (Done); 548 pieces 0 failed (l01_04, l01_16, l01_26, zedc_check, zedc_elab); changed lines all covered / 49.49 41.62 39.72 |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-presburger-unreached-paths | impl attempt 2 | 2026-11-14 10:07 | started in wt/pres-unreached-2 at 12a632824; load 39.92 |
+| TESTS-split | impl attempt 1 | 2026-11-06 23:46 | returned with author question A30 (crate granularity: per-task ~310 crates doubles all-crates rebuild after a zedc edit, 21-26 s -> 45-49 s; lib edit 6-7 s -> 2 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
