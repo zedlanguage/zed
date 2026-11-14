@@ -2188,14 +2188,14 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | baseline l01_29_diagnostics on origin/main source + new tests: 114 pieces, 1 failed (too_large 13 pass, 6 new fail, as expected) |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Codex seat merged 4e52a49fc (catalog of disjoint bases, meet identities, guarded-chain hulls; split_skew R 33.8 -> 8.20, wideik 5,192 -> 21.3); round 6 next; load 48.74 42.61 40.61 |
-| MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
+| CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | after fix: too_large 19/19; scaling products 7.995 (instr) 8.086 (time), divisions 7.978, powers 7.995; negative control (memo cleared per query) fails both cha |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
-| POW-tower-exact-test | impl attempt 1 | 2026-11-13 18:58 | behavior already exact on 64e07a4f1 (k>0: -125 checks, -126 rejected int[-1..]); 3 new tests in power_repairs; red under a Bernoulli lower bound (3 new + 2 old  |
-| REPAIR-grouped-literal-compare | running | 2026-11-13 19:19 |  |
+| POW-tower-exact-test | impl attempt 1 | 2026-11-13 18:58 | /home full (748M free): workspace build after second rebase failed with ENOSPC; not deleting others' files |
+| REPAIR-grouped-literal-compare | repair attempt 1 | 2026-11-13 19:19 | started; worktree from origin/main b7770874f |
 | REPAIR-string-compare-offer | impl attempt 1 | 2026-11-13 19:03 | started; worktree from origin/main 23d47ea9e |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
+| STUDY-release-token | running | 2026-11-13 19:46 |  |
 | TESTS-defer-leftovers | impl attempt 1 | 2026-11-13 18:38 | started |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | started; worktree from origin/main db415023a |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
