@@ -2338,17 +2338,19 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FAIL-check-arm-call-bench-hang | impl attempt 1 | 2026-11-14 11:16 | started in wt/fix-arm-call-hang at 07af08b86, load 51.40 |
+| FAIL-linked-held-wider-seed | running | 2026-11-14 12:52 |  |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
+| FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
+| FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
 | FAIL-types-binds-copied-per-shape | running | 2026-11-14 12:16 |  |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
-| FAIL-types-sub-shared-payloads | running | 2026-11-14 12:37 |  |
 | FAIL-types-three-variable-shapes | running | 2026-11-14 12:16 |  |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | M4 spare vals Vec in Machine::prim (not for Tuple/Path): law_04 1,867.4M->1,841.5M (-1.4%), law_06 -1.0%, law_10 -2.1%, law_20 -1.8%, law_28 -3.3%, law_25 bench |
