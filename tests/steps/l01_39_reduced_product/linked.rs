@@ -1535,29 +1535,32 @@ fn met_with_piling(n: &HoleCounts) -> bool {
     n.trees >= 4 && n.moved > 60 && n.holes > 45 && n.piled > 10 && n.empty > 3
 }
 
-/// The first 4 trees of seed 10423609239771793175 pile holes in two names or more 9 times
-/// (moved 130, holes 67, piled 9, empty 15), so a test that asserted the counts of 4 trees
-/// failed on it (FAIL-linked-piled-holes-count); the trees after them meet the counts.
-#[test]
-fn holes_piled_in_the_trees_of_seed_10423609239771793175() {
-    let first = holes_in_trees(10423609239771793175, true, |n| n.trees == 4);
-    assert_eq!(
-        [first.moved, first.holes, first.piled, first.empty],
-        [130, 67, 9, 15],
-        "{first:?}"
-    );
-    let n = holes_in_trees(10423609239771793175, true, met_with_piling);
+/// The first 4 trees of `seed`, with piling, count `first` (moved, holes, piled, empty), short
+/// of [`met_with_piling`], so a test that asserted the counts of 4 trees failed on it
+/// (FAIL-linked-piled-holes-count); the trees after them meet the counts.
+fn met_after_four_trees(seed: u64, first: [usize; 4]) {
+    let n = holes_in_trees(seed, true, |n| n.trees == 4);
+    assert_eq!([n.moved, n.holes, n.piled, n.empty], first, "{n:?}");
+    let n = holes_in_trees(seed, true, met_with_piling);
     assert!(n.trees > 4 && met_with_piling(&n), "{n:?}");
 }
 
-/// As [`holes_piled_in_the_trees_of_seed_10423609239771793175`], for seed 1226, whose first 4
-/// trees pile no holes (moved 86, holes 22, empty 9).
+/// Piled 9, where more than 10 are asked for.
+#[test]
+fn holes_piled_in_the_trees_of_seed_10423609239771793175() {
+    met_after_four_trees(10423609239771793175, [130, 67, 9, 15]);
+}
+
+/// Empty 2, where more than 3 are asked for (found by FAIL-zir-text-reader-messages).
+#[test]
+fn holes_piled_in_the_trees_of_seed_12717323168360931590() {
+    met_after_four_trees(12717323168360931590, [101, 62, 32, 2]);
+}
+
+/// No holes piled at all, and holes 22, where more than 45 are asked for.
 #[test]
 fn holes_piled_in_the_trees_of_seed_1226() {
-    let first = holes_in_trees(1226, true, |n| n.trees == 4);
-    assert_eq!([first.holes, first.piled], [22, 0], "{first:?}");
-    let n = holes_in_trees(1226, true, met_with_piling);
-    assert!(n.trees > 4 && met_with_piling(&n), "{n:?}");
+    met_after_four_trees(1226, [86, 22, 0, 9]);
 }
 
 /// A star goes when one step both takes a conjunct from its hub and gives one to its leaf:
