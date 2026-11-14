@@ -7,7 +7,10 @@ mod corpus;
 mod fences;
 #[path = "../l01_08_parser/grammar_cases.rs"]
 mod grammar_cases;
+#[path = "../l01_08_parser/head_cases.rs"]
+mod head_cases;
 mod layout;
+mod positions;
 mod prelude;
 mod scaling;
 mod strings;
