@@ -2271,7 +2271,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | red-before-green: on origin/main (ctl tree) too_large::a_product_through_a_part_with_several_roots_is_rejected and main_limits::a_product_through_a_part_with_se |
-| DOC-deferred-refs | impl attempt 2 | 2026-11-14 00:03 | resumed after pause: rebased onto 34055ea99 (COMPLEXITY.md 10 conflicts merged word by word, result = main + the 79 original word changes exactly); rescan 43 fi |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
@@ -2293,8 +2292,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
-| XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
-| XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
+| XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
