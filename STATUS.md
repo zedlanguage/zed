@@ -2184,7 +2184,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-fold-machine | impl attempt 1 | 2026-11-13 16:26 | red-before-green: without fixed_room, fold_machine 3 of 6 fail (child at RLIMIT_DATA+2GiB and parent fold 2^20, +64MiB child refuses; boundary 258112 folds); ne |
 | CONST-too-large-rat-names | impl attempt 1 | 2026-11-13 16:26 | started; worktree from origin/main dc590de7b |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
@@ -2201,6 +2200,7 @@ Merged into local main and not yet pushed (0 commits); the push follows one full
 
 ## Open points
 
+- Found by CONST-fold-machine (2026-11-13), not fixed (plan row CONST-fold-budget-failure): the checker's constant folds are now held to 2^27 bits a step (`FOLD_ASK_BITS`), the same on every machine, but a check that needs a value past the bound rejects the program (`x = (2^64 + 13) ^ (2^20); 2 ^ (x - x)`: "exponent that may be negative"), where DESIGN.md sec:checking_in_zed ("Limits") asks for a budget failure naming the switch; that needs MIX-budget's per-call switch.
 - Found by TEST-ports (2026-11-13), not done: a row reaching a port its clause does not give, and the record value `{ result:, <port>: }` of a row that writes a given port, wait for the ports zedc refuses as not yet (prelude constructors, top-level ports); `main::files` in another function's table is done (MAIN-files), and `main::stdin`, `main::args` and `main::env` there are rejected, since only `main` reads them. With `main`'s positional key, a clause giving `main::stdin` conflicts with every row's key, since each key gives standard input first.
 - Found by WALK-read-image-n2 (2026-11-13), fixed by ST-walk-orders (2026-11-13; COMPLEXITY.md WALK-read-image-n2, point b, and ST-walk-orders): cycle0 and cycle1 in reverse, walk in reverse and at once, and walk without its start at once are under 10.5 at 8n over n; ST-walk-orders-left (2026-11-13) brought chain raise in reverse and walk forward under 10.5. Still open: plan rows ST-churn-at-once (base churn at once 11.1 by bytes), ST-walk-orders-nine (orders from 9 to 10.5), ST-class-case-reverse.
 - Found by ST-walk-checker-admit (2026-11-13), not fixed (COMPLEXITY.md ST-walk-checker-admit, open points; plan rows ST-walk-bound-test and ST-walk-checker-or): through `zedc check`, (a) a test of a name bound to a summary over other names (`w_i >= 0` for `w_i = y + x_i`) under a chain goes to the solver and holds every later link off the paths, 20 times the instructions at 8n; (b) the s4 walk family, whose `||` tests have two names on each side, 76 times.

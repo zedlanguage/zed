@@ -53,7 +53,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::num::{FloatFormat, TooLarge, literal_f32, literal_f64, show_f32};
+use zed_kernel::num::{FloatFormat, TooLarge, fixed_room, literal_f32, literal_f64, show_f32};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
@@ -5610,7 +5610,7 @@ struct OpenTuple<'a> {
 }
 
 fn run(p: Prim, v: &Value) -> Option<Value> {
-    eval(&Term::Prim(p, vec![Term::Lit(v.clone())])).ok()
+    kernel_folded(p, vec![v.clone()])
 }
 
 /// The literal value `v`, under `-` when `neg`.
@@ -6922,10 +6922,67 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
     })
 }
 
+/// The most memory, in bits, one step of a constant fold may ask for ([`kernel_folded`]):
+/// 2^27 bits, 16 MiB. A power asks for eight times its result, so `b ^ k` is folded up to a
+/// result of 2 MiB, about five million decimal digits; past that its value is not known, and
+/// the checker reads the expression by its type and range alone, as it reads one whose
+/// operands are not literals.
+//
+// The bound reads neither the building machine nor its free memory, so a constant's fold, and
+// every type and message that follows from it, is the same on every machine and under every
+// memory limit (DESIGN.md sec:checking_in_zed, "Limits"; plan row CONST-fold-machine).
+// It stands for the per-call partial-evaluation budget of A54 until MIX-budget sets that
+// budget, and is set as A99 set its 250 ms work bound: by the time one step takes at the
+// bound, measured with `zedc run` on the build machine (2026-11-13, 32 cores at load 50):
+// `(2^64 + 13) ^ 258111`, the largest power of that base the bound allows, takes about 0.3 s
+// of processor time beyond the rest of the check, and `(2^64 + 13) ^ (2^22)`, at eight times
+// the bound, several seconds. It also lies far below the address space of every target (2^64
+// bytes on Linux x86_64, `walk::ADDRESS_BYTES_LOG2`), so a fold the bound lets through is one
+// the target could hold.
+//
+// Left open (plan row CONST-fold-budget-failure): DESIGN.md ("Limits", sec:checking_in_zed)
+// has a check that needs a value a budget left to run time fail the build with a budget
+// failure naming the switch, not reject the program. Here, as before where the machine
+// refused the memory, a fold past the bound is read by its type alone, so a check that
+// needed its value rejects the program, as `2 ^ (x - x)` is rejected for an exponent that may
+// be negative. The verdict is now the same on every machine; turning it into a budget failure
+// needs the switch MIX-budget adds and a record of which verdicts read a value cut by it.
+//
+// Alternatives weighed, scored 0 to 10:
+// - The kernel's `room`, the allocator's answer (the method before): 0. The verdict follows
+//   the machine's free memory: `x = (2^64 + 13) ^ (2^24); 2 ^ (x - x)` was accepted with no
+//   limit and rejected under `prlimit --data=1073741824`.
+// - The target's address space as the bound: 1. Deterministic, but a reachable `b ^ (2^50)`
+//   would then make the build allocate petabytes and abort on every machine.
+// - Never building a number wider than 64 bits at check: 3. Deterministic and cheap, but
+//   `2^64 + 13` and every exact constant past a machine word would be unknown.
+// - A bound grown with the size of the source text: 4. Deterministic, but not local: a
+//   comment added anywhere in the file would change what a far line's fold gives.
+// - A budget failure naming the switch for each fold past the bound: 3. `known` reads values
+//   that no check needs, so it would fail builds over folds no verdict uses.
+// - A budget failure only where a verdict reads a fold past the bound: 9, DESIGN's form, but
+//   it needs MIX-budget's switch and that record; left to CONST-fold-budget-failure.
+// - A fixed bound per step (this one): 8. Deterministic and local; the cost is that a fold
+//   over the bound is unknown even on a machine that could compute it.
+const FOLD_ASK_BITS: u64 = 1 << 27;
+
+/// `p` on the values `args` by the kernel's one evaluator ([`eval()`]), every step's memory
+/// held to [`FOLD_ASK_BITS`] by [`fixed_room`] instead of asked of the machine: `None` where
+/// the evaluator fails, as a step over the bound does. Each constant fold of the checker goes
+/// through here, so none depends on the building machine.
+// Complexity tradeoff: the naive method, `eval` asking the allocator for each step, costs a
+// `try_reserve` per step and makes the result machine-dependent; this one costs a thread-local
+// read per step and the same O(M(n) log k) work for a power with an n-bit result (`fast::pow`),
+// and fails at once, without allocating, past the bound.
+fn kernel_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
+    let term = Term::Prim(p, args.into_iter().map(Term::Lit).collect());
+    fixed_room(FOLD_ASK_BITS, || eval(&term)).ok()
+}
+
 /// The operation `p` on the values `args` by the kernel's one evaluator ([`eval()`]), as
 /// [`folded`] folds it: `None` where it gives an atom, as `1 / 0` does.
 fn prim_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
-    let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
+    let v = kernel_folded(p, args)?;
     (!matches!(v, Value::Atom(_))).then_some(v)
 }
 
@@ -7308,8 +7365,7 @@ fn unfixed_comparison(
         let mut all = true;
         for ((x, y), &at) in pairs.iter().zip(ats) {
             let (u, v) = (folded(x, at)?, folded(y, at)?);
-            all &= eval(&Term::Prim(Prim::Eq, vec![Term::Lit(u), Term::Lit(v)])).ok()?
-                == Value::Bool(true);
+            all &= kernel_folded(Prim::Eq, vec![u, v])? == Value::Bool(true);
         }
         Some(if *op == BinaryOp::Eq { all } else { !all })
     };
@@ -8739,7 +8795,7 @@ impl<'a> Ck<'_, 'a> {
     /// expressions [`Ck::reads`] gives.
     fn known_uncached(&self, e: &'a Expr) -> Known {
         let fold = |p: Prim, args: Vec<Value>| -> Option<Known> {
-            let v = eval(&Term::Prim(p, args.into_iter().map(Term::Lit).collect())).ok()?;
+            let v = kernel_folded(p, args)?;
             matches!(v, Value::Int(_) | Value::Big(_)).then(|| Known::of(v))
         };
         match &e.kind {

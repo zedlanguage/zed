@@ -45,7 +45,7 @@ pub use fast::{
 pub use float_text::{FloatFormat, read_f32_ieee, read_f64_ieee, read_float, show_f32, show_f64};
 pub use room::{
     LiteralRounding, TooLarge, about, bits_of_digits, bytes_of, bytes_text, digits_of_bits,
-    machine_memory, memory_clause, room,
+    fixed_room, machine_memory, memory_clause, room,
 };
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes

@@ -3854,3 +3854,9 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 |---|---|---|---|
 | `Tables::target` set by assignment after `Tables::with_text` builds the tables | `elaborate_in` | Mutation (gap 11) | the target passed to the constructor, or a record update `t with target: ...` |
 | `u128::leading_zeros` and `div_ceil` on the bound of the exponent | `Ck::too_large_power` | Bit operations (gap 4, built) | `int` arithmetic: the floor of log₂ by the bit length, the division rounded up written out |
+
+## Entries from CONST-fold-machine (`zed-kernel/src/num/room.rs`, `zedc-check/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A thread-local `Cell<Option<u64>>` holding the fold's memory bound, set for the length of a closure and put back by a drop guard, also on a panic, so `room` deep in `Rat::pow` reads it without a parameter through every arithmetic call | `fixed_room`, `room`, `FIXED`; `kernel_folded` | Mutation, global state | The bound a field of the evaluator's state passed to `eval`, or `room` an effect handled at the fold: the checker's handler answers by the bound, the runtime's by the allocator |

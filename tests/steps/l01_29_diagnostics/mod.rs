@@ -15,6 +15,7 @@ mod derivations;
 mod domain_repairs;
 mod emptied;
 mod explained;
+mod fold_machine;
 mod fresh_names;
 mod group_site;
 mod kernel_names;

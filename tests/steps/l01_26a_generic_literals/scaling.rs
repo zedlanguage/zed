@@ -602,9 +602,14 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power() {
         });
         // The decimal conversion runs on `num::fast` products at both sizes from n = 1000; at
         // n = 500 the smaller runs on num-bigint's Toom-3, of a lower constant, and the ratio
-        // was 14.6 (2026-11-13). At n = 1000 it was over the limit of 10.5, so the sizes are
-        // 8000 and 64,000 (TESTS-scaling-limit-10_5).
-        let n = 8000;
+        // was 14.6 (2026-11-13). At n = 1000 it was over the limit of 10.5 (TESTS-scaling-limit-
+        // 10_5). The larger size is held under the checker's fold bound (`FOLD_ASK_BITS` in
+        // zedc-check, CONST-fold-machine): `3^K` asks 8 * 2 * K bits, so it is folded only up to
+        // K = 2^23, and at n = 8000 the larger size, K = 12,800,000, was past it. So the sizes
+        // are 5000 and 40,000, K = 1,000,000 and 8,000,000: 10.0 times the instructions for both
+        // the checking and `zedc run` (2026-11-13), under the limit but over 9, as
+        // O(n log^2 n) gives 8 * (log 8n / log n)^2, about 10.5 at 1.6M bits.
+        let n = 5000;
         let units = scaling::inputs(n, |m| Resolved::new(&sum(m)));
         scaling::check("the checking of an `if` of 3^(200 n) + 1", n, |m| {
             std::hint::black_box(units[&m].type_errors());

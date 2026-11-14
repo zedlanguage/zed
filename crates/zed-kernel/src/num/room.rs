@@ -4,6 +4,7 @@
 //! uses for those errors are here too: a number's size in digits and in bytes, and the memory
 //! of the machine it is set against.
 
+use std::cell::Cell;
 use std::sync::OnceLock;
 
 use num_bigint::BigUint;
@@ -97,16 +98,45 @@ pub fn bits_of_digits(digits: &BigUint) -> BigUint {
     ((digits * 13607u32) >> 12u32) + 1u32
 }
 
+thread_local! {
+    /// The most bits a step may ask for while [`fixed_room`] runs on this thread, `None`
+    /// outside it, where [`room`] asks the allocator.
+    static FIXED: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
 /// `Ok` when the system gives `ask` bits of memory, asked of the allocator itself and freed at
 /// once, so the answer is the machine's and the evaluator sets no limit; else [`TooLarge`]
 /// naming `size`, the bits of the number the step builds, and `ask`. A build that would ask
 /// for more than the system gives is reported before it starts, where num-bigint would abort
-/// the process.
+/// the process. Inside [`fixed_room`] the answer is that function's bound instead, and the
+/// machine is not asked.
 pub fn room(size: BigUint, ask: BigUint) -> Result<(), TooLarge> {
-    match given(&ask) {
+    let ok = match crate::local::with(&FIXED, Cell::get) {
+        Some(most) => ask <= BigUint::from(most),
+        None => given(&ask),
+    };
+    match ok {
         true => Ok(()),
         false => Err(TooLarge { size, ask }),
     }
+}
+
+/// `f()`, with each step's [`room`] answered by the fixed bound `most` bits, `ask <= most`,
+/// without asking the allocator: what `f` builds, and whether it builds it, is then the same on
+/// every machine (DESIGN.md sec:checking_in_zed, deterministic checking). The checker folds
+/// constants this way (CONST-fold-machine). A machine that cannot give the memory under
+/// `most` aborts the build, the machine's failure, as DESIGN.md has it. The bound in force
+/// before is restored when `f` returns or unwinds.
+pub fn fixed_room<R>(most: u64, f: impl FnOnce() -> R) -> R {
+    /// Sets the bound back to what it was, on return and on unwinding alike.
+    struct Restore(Option<u64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::local::with(&FIXED, |c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(crate::local::with(&FIXED, |c| c.replace(Some(most))));
+    f()
 }
 
 /// Whether the allocator gives `bits` bits at once, asked and freed at once.
@@ -263,6 +293,35 @@ mod tests {
         assert_eq!(d(65), BigUint::from(20u32));
         assert_eq!(d(65537), BigUint::from(19729u32));
         assert_eq!(d(1), BigUint::from(1u32));
+    }
+
+    /// Inside `fixed_room` the answer is the bound's alone: an ask the machine could give is
+    /// refused past it, one no machine gives is never put to the allocator, and the bound
+    /// before is back after a return and after a panic.
+    #[test]
+    fn a_fixed_room_answers_by_its_bound_alone() {
+        let ask = |bits: u64| room(BigUint::from(bits), BigUint::from(bits));
+        assert!(ask(1 << 20).is_ok());
+        fixed_room(1 << 10, || {
+            assert!(ask(1 << 10).is_ok());
+            assert_eq!(
+                ask(1 << 11),
+                Err(TooLarge {
+                    size: BigUint::from(1u32 << 11),
+                    ask: BigUint::from(1u32 << 11)
+                })
+            );
+            // Nested, the inner bound holds until it returns.
+            fixed_room(1 << 63, || assert!(ask(1 << 40).is_ok()));
+            assert!(ask(1 << 11).is_err());
+        });
+        assert!(ask(1 << 20).is_ok());
+        // Past every address space: refused at the bound, never asked of the allocator.
+        let huge = BigUint::from(1u32) << 100u32;
+        assert!(fixed_room(u64::MAX, || room(huge.clone(), huge.clone())).is_err());
+        let unwound = std::panic::catch_unwind(|| fixed_room(1, || panic!("inside")));
+        assert!(unwound.is_err());
+        assert!(ask(1 << 20).is_ok());
     }
 
     /// The machine clause follows the machine's memory; the three cases are set by sizes
