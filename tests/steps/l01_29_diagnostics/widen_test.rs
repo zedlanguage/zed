@@ -2,7 +2,10 @@
 //! them: on standard error, each as `file:line:col: why` with its derivation, in order of
 //! place, before the unit's outcomes, and only for a unit with no rejection.
 
+use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 
 /// A directory of its own for test `name`, under the test target's scratch directory; files
 /// in it are overwritten by each run, never deleted.
@@ -15,9 +18,26 @@ fn dir(name: &str) -> PathBuf {
 }
 
 /// Writes the unit `src` as `file` in test directory `name` and gives its path.
+///
+/// The text goes to a file of this process's own and is renamed over `file`, so a reader sees
+/// the whole of the old text or the whole of the new one. `std::fs::write` empties the file
+/// and then fills it, and two processes of this test binary running the same test, which
+/// share the directory, could check a file the other had just emptied:
+/// `a_batch_prints_what_each_file_prints_alone` failed so (TEST-l01_29-widen-flake; 5 of 50
+/// runs in each of three processes at once, 0 of 50 alone). A rename within one directory
+/// replaces the name in one step (POSIX `rename`), at the cost of one more file created per
+/// write. It does not help a test that writes one name twice with different texts: a second
+/// process can still read the first text after the first process wrote the second.
 pub(super) fn unit(name: &str, file: &str, src: &str) -> String {
+    static WRITES: AtomicU64 = AtomicU64::new(0);
     let path = dir(name).join(file);
-    std::fs::write(&path, src).unwrap();
+    let own = path.with_file_name(format!(
+        ".{file}.{}.{}",
+        std::process::id(),
+        WRITES.fetch_add(1, Relaxed)
+    ));
+    std::fs::write(&own, src).unwrap();
+    std::fs::rename(&own, &path).unwrap();
     path.display().to_string()
 }
 
@@ -360,4 +380,21 @@ fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
     let (status, err) = run(&file);
     assert_eq!(status, 1);
     assert!(!err.contains("widens"), "{err}");
+}
+
+/// A unit written again leaves a reader of the file as it was with the whole old text, and the
+/// name with the whole new one: a second process of this binary checking the file while this
+/// one writes it reads one text or the other, never an emptied file (see [`unit`]). The file
+/// is named by this process, so two processes running this test do not share it.
+#[test]
+fn a_unit_written_again_leaves_a_reader_the_whole_old_text() {
+    let file = format!("{}.zed", std::process::id());
+    let path = unit("rewrite", &file, "main = 1;\n");
+    let mut reader = std::fs::File::open(&path).unwrap();
+    unit("rewrite", &file, "main = 22;\n");
+    let mut read = String::new();
+    reader.read_to_string(&mut read).unwrap();
+    assert_eq!(read, "main = 1;\n");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "main = 22;\n");
+    std::fs::remove_file(&path).unwrap();
 }
