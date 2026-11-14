@@ -2353,7 +2353,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-linked-held-wider-seed | running | 2026-11-14 12:52 |  |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
-| FAIL-pendants-route-parity | impl attempt 2 | 2026-11-14 11:49 | fixed, pushed faf0c362b 24d072140; new row FAIL-tight-corner-shadows-seed; Growth seed 11479163432696490265 logged for FAIL-rewrite-growth-both; load 52.10 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
@@ -2361,7 +2360,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
-| FAIL-whole-projection-parity | impl attempt 2 | 2026-11-14 11:49 | fixed, pushed faf0c362b 24d072140; new row FAIL-tight-corner-shadows-seed; Growth seed 11479163432696490265 logged for FAIL-rewrite-growth-both; load 52.10 |
+| KERNEL-near-limit-benches | running |  |  |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
