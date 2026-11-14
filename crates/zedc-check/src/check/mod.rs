@@ -3942,10 +3942,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// functions that ended ([`Self::generalize`]) alike, and then those of the types its
     /// classes were solved to, so `s`'s own keep their names before a variable of the
     /// function around does. So a call `h(1)` of `h = (y) -> (y, x)` inside `p(x)` is
-    /// `(T) -> (T, U)` inside, though `h`'s variable and `p`'s are both named `T`, and prints
-    /// as `(T) -> (T, _)`, since `U` is not a variable of the signature's own
+    /// `T -> (T, U)` inside, though `h`'s variable and `p`'s are both named `T`, and prints
+    /// as `T -> (T, _)`, since `U` is not a variable of the signature's own
     /// (FAIL-check-finished-names-clash; before, `p`'s class was given its name as `h`'s
-    /// was, and the line read `(T) -> (T, T)`).
+    /// was, and the line read `T -> (T, T)`).
     ///
     /// Complexity tradeoff: none is given up. One pass over the variables of `s` and of the
     /// types bound, with a hash set and map, so linear in their size, as the renaming that

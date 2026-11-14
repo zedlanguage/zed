@@ -105,46 +105,46 @@ fn a_class_merged_after_a_call_is_finished_as_the_class_it_joined() {
         "{got}"
     );
     let call = got.lines().find(|l| l.starts_with("call \"h(x)\" = "));
-    assert_eq!(call, Some("call \"h(x)\" = (T) -> (T, _)"), "{got}");
+    assert_eq!(call, Some("call \"h(x)\" = T -> (T, _)"), "{got}");
     assert!(!got.lines().any(|l| l.starts_with("err ")), "{got}");
 }
 
 /// A call's signature names its own variable and one of the function around apart, though
 /// each function named its own `T` (FAIL-check-finished-names-clash): `h`'s `T` stays `T`,
 /// and `p`'s, which the signature holds but does not bind, prints as `_`. Before, both were
-/// named `T`, and the line read `(T) -> (T, T)`, as if `h` returned its argument twice.
+/// named `T`, and the line read `T -> (T, T)`, as if `h` returned its argument twice.
 #[test]
 fn a_call_keeps_its_own_variable_apart_from_those_of_the_function_around() {
     let calls = |p| lines_of(p, "call ");
     assert_eq!(
         calls("p(x) = { h = (y) -> (y, x); r = h(1); r };\n"),
-        ["call \"h(1)\" = (T) -> (T, _)"]
+        ["call \"h(1)\" = T -> (T, _)"]
     );
     // The same when `p`'s variable sits inside a tuple, or comes through a name bound to it,
     // or `h` is read again after the call.
     assert_eq!(
         calls("p(x) = { h = (y) -> (y, (x, 1)); r = h(1); r };\n"),
-        ["call \"h(1)\" = (T) -> (T, (_, 1))"]
+        ["call \"h(1)\" = T -> (T, (_, 1))"]
     );
     assert_eq!(
         calls("p(x) = { k = x; h = (y) -> (y, k); r = h(1); r };\n"),
-        ["call \"h(1)\" = (T) -> (T, _)"]
+        ["call \"h(1)\" = T -> (T, _)"]
     );
     assert_eq!(
         calls("p(x) = { h = (y) -> (y, x); r = h(x); s = h; r };\n"),
-        ["call \"h(x)\" = (T) -> (T, _)"]
+        ["call \"h(x)\" = T -> (T, _)"]
     );
     // `p` has two variables, `x`'s and `z`'s; the call passes `z`, and `h` holds `x`'s.
     let p = "p(x, z) = { h = (y) -> (y, x); r = h(z); s = x == (z, 1); r };\n";
     assert_eq!(lines_of(p, "sig p = "), ["sig p = (x: T, z: U) -> (U, T)"]);
-    assert_eq!(calls(p), ["call \"h(z)\" = (T) -> (T, _)"]);
+    assert_eq!(calls(p), ["call \"h(z)\" = T -> (T, _)"]);
     // Curried: the first call's signature has two variables of its own, `T` and `U`; the
     // second's has `w`'s, named `T`, and `p`'s, bound in `h(x)`.
     assert_eq!(
         calls("p(x) = { h = (y) -> (w) -> (w, y); r = h(x)((x, 1)); r };\n"),
         [
-            "call \"h(x)\" = (T) -> (U) -> (U, T)",
-            "call \"h(x)((x, 1))\" = (T) -> (T, _)"
+            "call \"h(x)\" = T -> U -> (U, T)",
+            "call \"h(x)((x, 1))\" = T -> (T, _)"
         ]
     );
 }
@@ -156,5 +156,5 @@ fn a_call_keeps_its_own_variable_apart_from_those_of_the_function_around() {
 fn a_call_of_one_variable_keeps_its_name() {
     let p = "p(x) = { h = (y) -> y; r = h(x); r };\n";
     assert_eq!(lines_of(p, "sig p = "), ["sig p = (x: T) -> T"]);
-    assert_eq!(lines_of(p, "call "), ["call \"h(x)\" = (T) -> T"]);
+    assert_eq!(lines_of(p, "call "), ["call \"h(x)\" = T -> T"]);
 }
