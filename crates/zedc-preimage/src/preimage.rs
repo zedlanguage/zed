@@ -11159,10 +11159,12 @@ impl Tag {
 }
 
 /// The value `a * x + b` at the end `x` of a piece: at an infinite end, the infinity the line
-/// tends to there, or `b` when `a` is 0.
+/// tends to there, or `b` when `a` is 0. A finite end is taken whole, not as an `i128`
+/// ([`small`]): `pa_bounds` reads a line at the ends of any domain, which [`in_range`] has not
+/// checked (TEST-bench-move-l0139: an end past `i128` stopped the checker here).
 fn value_at(x: &End, a: &Int, b: &Int) -> Val {
     match x {
-        Fin(v) => Val::Fin(&(a * &Int::from(small(v))) + b),
+        Fin(v) => Val::Fin(&(a * &Int::from(v)) + b),
         _ if a.is_zero() => Val::Fin(b.clone()),
         NegInf if a.is_positive() => Val::Neg,
         PosInf if a.is_negative() => Val::Neg,

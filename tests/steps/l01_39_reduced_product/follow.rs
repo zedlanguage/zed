@@ -576,6 +576,43 @@ fn a_deep_chain_of_summaries_is_formed_and_dropped() {
     assert_eq!(got, "[5..=5]");
 }
 
+/// The bounds of a line's term over a domain with an end past `i128` are read exactly: the
+/// term of `x` in `2 * x + 1 + 3 * y`, `2 * x` (the constant is kept apart), over `x` in
+/// `0..=2^127`, has least value 0 and greatest `2^128`. Until TEST-bench-move-l0139 the checker
+/// stopped on such an end (`value_at` read it as an `i128`), which fresh seeds of
+/// [`random_tests_through_term_bounds_narrow_as_reading_every_input_does`] reached.
+#[test]
+fn a_line_over_a_domain_with_an_end_past_i128_has_exact_bounds() {
+    use zedc::store::int::{Int, Num};
+    let (x, y): (Arc<str>, Arc<str>) = ("x".into(), "y".into());
+    let small = IntervalSet::range(End::from(0i64), End::from(10i64));
+    let doms: Domains = [(x.clone(), small.clone()), (y.clone(), small)]
+        .into_iter()
+        .collect();
+    let lit = |v: i64| Term::Lit(Value::Int(v));
+    let times = |c: i64, n: &Arc<str>| Term::Prim(Prim::Mul, vec![lit(c), Term::Var(n.clone())]);
+    let sum = Term::Prim(
+        Prim::Add,
+        vec![
+            Term::Prim(Prim::Add, vec![times(2, &x), lit(1)]),
+            times(3, &y),
+        ],
+    );
+    let s = let_summary(&sum, &doms, Lets::new()).expect("a summary");
+    let past = &Int::from(i128::MAX) + &Int::from(1i128);
+    let ints = IntervalSet::range(End::from(0i64), End::Fin(Num::from(&past)));
+    let b = format!("{:?}", s.term_bounds("x", &ints));
+    let (lo, hi) = (Int::from(0i128), &past + &past);
+    for want in [
+        format!("lo: {lo:?},"),
+        format!("hi: {hi:?},"),
+        "lo_inf: 0,".into(),
+        "hi_inf: 0,".into(),
+    ] {
+        assert!(b.contains(&want), "{want} not in {b}");
+    }
+}
+
 /// A random domain: one to three pieces with ends in `-40..=40`, an end now and then
 /// unbounded, beyond `i64`, or at an end of `i128`, which a line's inversion does not take.
 fn random_domain(rng: &mut Rng) -> IntervalSet {
