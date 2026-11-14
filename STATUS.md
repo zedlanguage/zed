@@ -2193,7 +2193,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
 | PRES-exact-side | running | 2026-11-13 20:00 |  |
-| REPAIR-string-compare-offer | impl attempt 1 | 2026-11-13 19:03 | started; worktree from origin/main 23d47ea9e |
+| REPAIR-string-compare-offer | merged and pushed (the commit "REPAIR-string-compare-offer: an ordering with a text written as a number offers no comparison of texts" and spec zed "DESIGN sec:diagnostics (REPAIR-string-compare-offer)"); COMPLEXITY.md REPAIR-string-compare-offer; follow-up rows REPAIR-text-number-both-sides, CAST-rat-unreduced-text | 2026-11-13 19:50 | `x < "1/3"` offers no repair; `String(x) < "x8"` stays |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
 | ST-walk-orders-nine | running | 2026-11-13 20:00 |  |
