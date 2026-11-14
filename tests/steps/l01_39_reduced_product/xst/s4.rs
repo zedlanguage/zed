@@ -1350,3 +1350,184 @@ fn split_moved_often_scales() {
         drop(inputs[&m].narrowed(How::Forward));
     });
 }
+
+/// `(x % 2 == 1 && lo <= y && y <= hi) || x % 2 == 0`: the first case holds `y` in
+/// `lo..=hi`, the second any `y`, so the join keeps every `y` and `x` of either class.
+fn odd_at_or_even(lo: i64, hi: i64) -> Term {
+    or(
+        and(
+            class("x", 2, 1),
+            and(
+                prim(Prim::Ge, var("y"), int(lo)),
+                prim(Prim::Le, var("y"), int(hi)),
+            ),
+        ),
+        class("x", 2, 0),
+    )
+}
+
+/// A hole that a later test makes inside `y`'s range, over the whole of a case's `y`, drops
+/// that case: `y != 0`, and `y < 0 || y > 5`, each leave `y`'s least and greatest values as
+/// they were, and `x` is even in each order. A hole that leaves one value of the case drops
+/// nothing: `y < 0 || y > 4` keeps `y = 5` and `x` odd with it.
+#[test]
+fn a_case_a_hole_empties_is_dropped() {
+    let even: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
+    let every: Vec<i64> = (-20..=20).collect();
+    let gap = |lo: i64, hi: i64| {
+        or(
+            prim(Prim::Lt, var("y"), int(lo)),
+            prim(Prim::Gt, var("y"), int(hi)),
+        )
+    };
+    let cases = [
+        (
+            "y != 0",
+            odd_at_or_even(0, 0),
+            prim(Prim::Ne, var("y"), int(0)),
+            &even,
+        ),
+        ("a hole over 0..=5", odd_at_or_even(0, 5), gap(0, 5), &even),
+        ("a hole over 0..=4", odd_at_or_even(0, 5), gap(0, 4), &every),
+    ];
+    for (what, test, hole, want) in cases {
+        let sys = Sys {
+            start: boxed(&["x", "y"], 20),
+            rel: vec![hole, test],
+        };
+        exact(what, &sys, &[("x", -21, 21, want.clone())]);
+    }
+}
+
+/// A written constraint that leaves no point in a case drops it. `x * y == x` holds where
+/// `x == 0` or `y == 1`, so not at `x == 3 && y == 0`: the case of that point goes, whether
+/// the constraint comes before the test or after it; in the case `x % 2 == 0` it narrows
+/// nothing, two names being open there.
+#[test]
+fn a_case_a_written_constraint_empties_is_dropped() {
+    let even: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
+    let written = prim(Prim::Eq, prim(Prim::Mul, var("x"), var("y")), var("x"));
+    let point = and(
+        prim(Prim::Eq, var("x"), int(3)),
+        prim(Prim::Eq, var("y"), int(0)),
+    );
+    let sys = Sys {
+        start: boxed(&["x", "y"], 20),
+        rel: vec![written, or(point, class("x", 2, 0))],
+    };
+    exact(
+        "x * y == x, the point or x even",
+        &sys,
+        &[("x", -21, 21, even)],
+    );
+}
+
+/// A written constraint that a later test fixes the other name of drops a case: with
+/// `(x + y) % 3 != 0`, `x == 3 || x % 2 == 0` and then `y == 0`, the constraint gives
+/// `false` at `x == 3`, the one value of its case, so no order keeps 3. How many multiples
+/// of 3 the even case keeps differs by order (the constraint is enumerated at listed
+/// members only), so only 3 is asserted.
+#[test]
+fn a_case_a_name_fixed_later_empties_is_dropped() {
+    let sum = prim(
+        Prim::Ne,
+        prim(Prim::Mod, prim(Prim::Add, var("x"), var("y")), int(3)),
+        int(0),
+    );
+    let three_or_even = or(prim(Prim::Eq, var("x"), int(3)), class("x", 2, 0));
+    let sys = Sys {
+        start: boxed(&["x", "y"], 20),
+        rel: vec![sum, three_or_even, prim(Prim::Eq, var("y"), int(0))],
+    };
+    for how in HOWS {
+        let s = sys.narrowed(how);
+        let x = kept(&s, "x", -21, 21);
+        assert!(!x.contains(&3) && x.contains(&2), "{how:?}: x in {s}");
+    }
+}
+
+/// `k` disjunctions `(x_i % 2 == 1 && 0 <= y && y <= k + i) || x_i % 2 == 0`, all in
+/// `-b..=b` for `b = 20 + 2k`, then the tests `y != j` for `j` in `0..2k`, one at a time:
+/// each cuts a hole inside `y`'s ends, at the start of every first case's `y`, and the cut
+/// at `k + i` empties the first case of test `i`, so each `x_i` ends even.
+fn holes_cut_one_at_a_time(k: usize) -> Sys {
+    let k = i64::try_from(k).expect("a small size");
+    let xs: Vec<String> = (0..k).map(|i| format!("x{i}")).collect();
+    let mut ns: Vec<&str> = xs.iter().map(String::as_str).collect();
+    ns.push("y");
+    let mut rel: Vec<Term> = (xs.iter().zip(0..))
+        .map(|(x, i)| {
+            or(
+                and(
+                    class(x, 2, 1),
+                    and(
+                        prim(Prim::Ge, var("y"), int(0)),
+                        prim(Prim::Le, var("y"), int(k + i)),
+                    ),
+                ),
+                class(x, 2, 0),
+            )
+        })
+        .collect();
+    rel.extend((0..2 * k).map(|j| prim(Prim::Ne, var("y"), int(j))));
+    Sys {
+        start: boxed(&ns, 20 + 2 * k),
+        rel,
+    }
+}
+
+/// [`holes_cut_one_at_a_time`] in the forward order: each cut looks only at the spans inside
+/// the run of non-members it lengthens, so near linear time, though every case's span starts
+/// at the member each cut takes.
+#[test]
+fn holes_cut_one_at_a_time_scale() {
+    let s = holes_cut_one_at_a_time(5).narrowed(How::Forward);
+    let even: Vec<i64> = (-30i64..=30).filter(|v| v.rem_euclid(2) == 0).collect();
+    for i in 0..5 {
+        assert_eq!(kept(&s, &format!("x{i}"), -31, 31), even, "x{i}: {s}");
+    }
+    let inputs = scaling::inputs(16, holes_cut_one_at_a_time);
+    scaling::check_order("holes cut one at a time, Forward, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::Forward));
+    });
+}
+
+/// `k` tests `(x_i == 3 && y == 0) || x_i % 2 == 0`, then the written constraints
+/// `x_i * y == x_i` (the backward order of the relation as listed): each constraint drops the
+/// first case of its own test alone, and each `x_i` ends even.
+fn points_written_after(k: usize) -> Sys {
+    let xs: Vec<String> = (0..k).map(|i| format!("x{i}")).collect();
+    let mut ns: Vec<&str> = xs.iter().map(String::as_str).collect();
+    ns.push("y");
+    let mut rel: Vec<Term> = (xs.iter())
+        .map(|x| prim(Prim::Eq, prim(Prim::Mul, var(x), var("y")), var(x)))
+        .collect();
+    rel.extend(xs.iter().map(|x| {
+        or(
+            and(
+                prim(Prim::Eq, var(x), int(3)),
+                prim(Prim::Eq, var("y"), int(0)),
+            ),
+            class(x, 2, 0),
+        )
+    }));
+    Sys {
+        start: boxed(&ns, 20),
+        rel,
+    }
+}
+
+/// [`points_written_after`] backward: each constraint looks only at the tests that fix its
+/// name `x_i`, not the `k` that fix `y`, so near linear time.
+#[test]
+fn points_written_after_scale() {
+    let s = points_written_after(5).narrowed(How::Backward);
+    let even: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
+    for i in 0..5 {
+        assert_eq!(kept(&s, &format!("x{i}"), -21, 21), even, "x{i}: {s}");
+    }
+    let inputs = scaling::inputs(16, points_written_after);
+    scaling::check_order("points written after, Backward, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::Backward));
+    });
+}

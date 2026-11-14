@@ -15,6 +15,7 @@ pub mod preimage;
 pub mod preimage_ref;
 pub mod product;
 mod shared_ints;
+mod spans;
 pub mod threshold;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.

@@ -1022,6 +1022,82 @@ impl IntervalSet {
         true
     }
 
+    /// The members of `self` that `other` lacks, as pieces in increasing order (two may touch),
+    /// by one walk of both trees that passes by the subtrees they share, as
+    /// [`IntervalSet::is_subset`] does: for `other` a narrowing of `self`, what the narrowing
+    /// took out.
+    // Complexity tradeoff: naive, `self.minus(other)`, `O(m log(n/m + 1))` for `m <= n`
+    // pieces, which walks both sets whole: `Θ(p)` for one hole cut into a set of `p` pieces,
+    // so `m` holes cut one at a time cost `Θ(m²)`. Used: the walk of `is_subset`, `O(d log p
+    // + r)` for sets that differ on `d` paths of their shared tree and `r` pieces taken out;
+    // two sets that share no subtree cost the naive bound. Test
+    // `l01_39_reduced_product::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
+    pub fn lost_to(&self, other: &Self) -> Vec<(End, End)> {
+        let mut out = Vec::new();
+        let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));
+        // Where the rest of the piece on top of `a` starts, once a piece of `other` has held
+        // its start; `None` at the start of each piece.
+        let mut from: Option<End> = None;
+        while let Some(x) = a.next() {
+            let (xlo, xhi) = x.ends();
+            let xlo = from.as_ref().map_or(xlo, |f| f.max(xlo));
+            let y = b.next();
+            match y.map(Step::ends) {
+                Some((_, yhi)) if yhi < xlo => {
+                    b.pass();
+                    continue;
+                }
+                Some(_) if y.is_some_and(|y| same(x, y)) => {
+                    a.pass();
+                    b.pass();
+                    continue;
+                }
+                Some((ylo, yhi))
+                    if matches!(y, Some(Step::Piece(_))) && ylo <= xlo && xhi <= yhi =>
+                {
+                    a.pass();
+                    from = None;
+                    continue;
+                }
+                _ => {}
+            }
+            match (x, y) {
+                // Nothing of `other` is left at or below `x`'s greatest member.
+                (Step::Tree(_), None) => a.open(),
+                (Step::Piece(_), None) => {
+                    out.push((xlo.clone(), xhi.clone()));
+                    a.pass();
+                    from = None;
+                }
+                (Step::Tree(_), Some(y)) if xhi < y.ends().0 => a.open(),
+                (Step::Piece(_), Some(y)) if xhi < y.ends().0 => {
+                    out.push((xlo.clone(), xhi.clone()));
+                    a.pass();
+                    from = None;
+                }
+                // `x` and `y` overlap and `x` is not inside `y`.
+                (Step::Piece(_), Some(y @ Step::Piece(_))) => {
+                    let (ylo, yhi) = y.ends();
+                    if xlo < ylo {
+                        out.push((xlo.clone(), ylo.pred()));
+                    }
+                    if yhi < xhi {
+                        from = Some(yhi.succ());
+                        b.pass();
+                    } else {
+                        a.pass();
+                        from = None;
+                    }
+                }
+                (Step::Piece(_), Some(Step::Tree(_))) => b.open(),
+                (Step::Tree(_), Some(Step::Piece(_))) => a.open(),
+                (Step::Tree(_), Some(y)) if size(x) >= size(y) => a.open(),
+                (Step::Tree(_), Some(_)) => b.open(),
+            }
+        }
+        out
+    }
+
     /// The members of `self` that are not members of `other`. `O(m log(n/m + 1))` for `m <= n`
     /// pieces, by `difference`.
     pub fn minus(&self, other: &Self) -> Self {
@@ -2013,6 +2089,58 @@ mod tests {
                 agrees(&other.minus(&less), &pair(|x, y| y && !x), w);
             }
         }
+    }
+
+    /// `lost_to` gives what `minus` gives, as pieces in increasing order that do not overlap:
+    /// on random pairs, on a set and the set narrowed (which share all but a few paths of
+    /// their tree), on two narrowings of one set, and on equal and empty sets.
+    #[test]
+    fn lost_to_gives_the_members_minus_gives() {
+        let lost = |a: &IntervalSet, b: &IntervalSet| {
+            let out = a.lost_to(b);
+            for w in out.windows(2) {
+                assert!(w[0].1 < w[1].0, "{a} lost to {b}: {out:?}");
+            }
+            assert!(
+                out.iter().all(|(lo, hi)| lo <= hi),
+                "{a} lost to {b}: {out:?}"
+            );
+            assert_eq!(
+                IntervalSet::from_pieces(out.clone()),
+                a.minus(b),
+                "{a} lost to {b}"
+            );
+        };
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        for (rounds, most, w) in [(4000, 6, 12), (300, 60, 200), (40, 400, 1500)] {
+            for _ in 0..rounds {
+                let (a, b) = (random_set(&mut rng, most, w), random_set(&mut rng, most, w));
+                lost(&a, &b);
+                lost(&b, &a);
+                lost(&a, &a);
+                lost(&a, &IntervalSet::empty());
+                lost(&IntervalSet::empty(), &a);
+                let narrowed = a.meet(&b);
+                lost(&a, &narrowed);
+                let k = rng.int(-w - 2, w + 2);
+                let less = a.minus(&IntervalSet::single(k));
+                lost(&a, &less);
+                let j = rng.int(-w - 2, w + 2);
+                let cut = a.minus(&IntervalSet::of(j, j + rng.int(0, 1 + w / 4)));
+                lost(&a, &cut);
+                lost(&less, &cut);
+                lost(&cut, &less);
+            }
+        }
+        assert!(set(&[(0, 9)]).lost_to(&set(&[(0, 9)])).is_empty());
+        assert_eq!(
+            set(&[(0, 9)]).lost_to(&set(&[(2, 3), (6, 6)])),
+            vec![
+                (End::of(0), End::of(1)),
+                (End::of(4), End::of(5)),
+                (End::of(7), End::of(9))
+            ]
+        );
     }
 
     /// Equal sets built along different paths are equal and hash alike; the hash and the

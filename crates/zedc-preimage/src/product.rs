@@ -60,6 +60,7 @@ use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
     let_narrowing, let_summary, preimage_listed, relations, witness,
 };
+use super::spans::Spans;
 use super::threshold;
 use zedc_int::int::Int;
 use zedc_lattice::affine::Bounds;
@@ -1350,6 +1351,8 @@ struct KeptTests {
     tests: imbl::OrdMap<Address, KeptTest>,
     by: Uses<Address>,
     triggers: imbl::OrdMap<Arc<str>, Triggers>,
+    /// The tests with a case that fixes the name, by name ([`KeptTest::points`]).
+    fixed: Uses<Address>,
 }
 
 /// A test of [`KeptTests`], giving `true`: the names it reads, the premises it was assumed
@@ -1360,6 +1363,10 @@ struct KeptTest {
     free: Vec<Arc<str>>,
     premises: Premises,
     triggers: Vec<(Arc<str>, Trigger)>,
+    /// For each case, the names it fixes to one value and the join does not, with their
+    /// values: a written constraint on those names may give `false` there
+    /// ([`Scope::written_dead`]), as it would in the case had it come first.
+    points: Vec<Vec<(Arc<str>, Value)>>,
 }
 
 /// When a case of a kept test holds no value, by the product of one name: the case's own
@@ -1372,21 +1379,28 @@ enum Trigger {
     Below(Num),
     /// The name's class and this one, `residue mod modulus`, share no value.
     Class(Num, Num),
+    /// The name has no member from the first to the second, the case's least and greatest,
+    /// both inside the join's ends: a hole the name's ends do not show.
+    Inside(Num, Num),
 }
 
 /// The triggers on one name, each with the addresses of the tests kept under it: those of the
 /// ends in the order of their values, so that a move of an end finds the triggers it passes
-/// as a range.
+/// as a range, and the spans of `Inside` in a tree that finds those inside a hole.
 #[derive(Clone, PartialEq, Debug, Default)]
 struct Triggers {
     above: imbl::OrdMap<Num, imbl::OrdSet<Address>>,
     below: imbl::OrdMap<Num, imbl::OrdSet<Address>>,
     classes: imbl::OrdMap<(Num, Num), imbl::OrdSet<Address>>,
+    inside: Spans,
 }
 
 impl Triggers {
     fn is_empty(&self) -> bool {
-        self.above.is_empty() && self.below.is_empty() && self.classes.is_empty()
+        self.above.is_empty()
+            && self.below.is_empty()
+            && self.classes.is_empty()
+            && self.inside.is_empty()
     }
 }
 
@@ -1413,12 +1427,16 @@ impl KeptTests {
         for n in &t.free {
             self.by.add(n, &k);
         }
+        for (n, _) in t.points.iter().flatten() {
+            self.fixed.add(n, &k);
+        }
         for (n, g) in &t.triggers {
             let e = self.triggers.entry(n.clone()).or_default();
             match g {
                 Trigger::Above(v) => add_to(&mut e.above, v, &k),
                 Trigger::Below(v) => add_to(&mut e.below, v, &k),
                 Trigger::Class(m, r) => add_to(&mut e.classes, &(m.clone(), r.clone()), &k),
+                Trigger::Inside(l, h) => e.inside.insert(l, h, &k),
             }
         }
         self.tests.insert(k, t);
@@ -1430,6 +1448,9 @@ impl KeptTests {
         for n in &t.free {
             self.by.remove(n, k);
         }
+        for (n, _) in t.points.iter().flatten() {
+            self.fixed.remove(n, k);
+        }
         for (n, g) in &t.triggers {
             let Some(e) = self.triggers.get_mut(n) else {
                 continue;
@@ -1438,6 +1459,7 @@ impl KeptTests {
                 Trigger::Above(v) => take_from(&mut e.above, v, k),
                 Trigger::Below(v) => take_from(&mut e.below, v, k),
                 Trigger::Class(m, r) => take_from(&mut e.classes, &(m.clone(), r.clone()), k),
+                Trigger::Inside(l, h) => e.inside.remove(l, h, k),
             }
             if e.is_empty() {
                 self.triggers.remove(n);
@@ -1456,11 +1478,37 @@ impl KeptTests {
     // tests narrow it; the classes are each looked at only when the name's class moves,
     // which along one line of tests is a refinement, at most about log2 of the width of the
     // name's range times, O(c) for c classes then. A case left empty inside the name's ends
-    // by a hole is not found, and its test keeps that case, as a join of products would.
-    fn dead(&self, n: &str, p: &Product, class_moved: bool, out: &mut BTreeSet<Address>) {
+    // by a hole: naive, each case's span looked at after each move, Θ(k) a move; used, the
+    // members `before` had and `p` lacks (`IntervalSet::lost_to`, O(d log p + r) for the d
+    // paths of the shared tree that differ and r pieces taken out), and for each piece the
+    // spans inside the run of non-members around it that reach into it
+    // ([`Spans::within`], O((f + 1) log k)): a span found there lost its last member to this
+    // move, so each is found once.
+    fn dead(
+        &self,
+        n: &str,
+        p: &Product,
+        before: Option<&Product>,
+        class_moved: bool,
+        out: &mut BTreeSet<Address>,
+    ) {
         let (Some(e), Some((lo, hi))) = (self.triggers.get(n), p.ints().bounds()) else {
             return;
         };
+        if let Some(q) = before.filter(|_| !e.inside.is_empty()) {
+            let fin = |v: &End| match v {
+                End::Fin(v) => Some(v.clone()),
+                _ => None,
+            };
+            for (a, b) in q.ints().lost_to(p.ints()) {
+                // The greatest member below the piece and the least above it: none of the
+                // name is between them.
+                let after = p.ints().piece_at_or_below(&a).and_then(|(_, h)| fin(h));
+                let next = p.ints().piece_at_or_above(&b).and_then(|(l, _)| fin(l));
+                e.inside
+                    .within(after.as_ref(), fin(&b).as_ref(), next.as_ref(), out);
+            }
+        }
         if let End::Fin(lo) = lo {
             for (_, s) in e.above.range(..lo.clone()) {
                 out.extend(s.iter().cloned());
@@ -1500,8 +1548,9 @@ impl KeptTests {
 
 /// The triggers of a test whose non-empty cases are `cases`, joined in `joined`, on the names
 /// of `free`: for each name and case, each end and class of the case's product of the name
-/// that is narrower than the joined product's. On a test of one name, its classes alone:
-/// the join of intervals is their union, so the ends lose nothing.
+/// that is narrower than the joined product's, and the span of a case inside both of the
+/// joined product's ends. On a test of one name, its classes alone: the join of intervals is
+/// their union, so the ends and the holes lose nothing.
 fn case_triggers(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<(Arc<str>, Trigger)> {
     let mut out = Vec::new();
     for x in free {
@@ -1524,6 +1573,13 @@ fn case_triggers(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<(Arc
                 {
                     out.push((x.clone(), Trigger::Below(v.clone())));
                 }
+                // Inside both ends, so that only a hole empties it before an end passes it.
+                if l > lo
+                    && h < hi
+                    && let (End::Fin(l), End::Fin(h)) = (l, h)
+                {
+                    out.push((x.clone(), Trigger::Inside(l.clone(), h.clone())));
+                }
             }
             if let Congruence::Class { modulus, residue } = &b.cell.congruence.element
                 && *modulus > Num::ONE
@@ -1532,6 +1588,26 @@ fn case_triggers(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<(Arc
                 out.push((x.clone(), Trigger::Class(modulus.clone(), residue.clone())));
             }
         }
+    }
+    out
+}
+
+/// For each of `cases`, the names of `free` it fixes to one value that `joined` does not fix,
+/// with the values ([`KeptTest::points`]); empty when no case fixes one. O(c·v) reads for c
+/// cases and v names.
+fn case_points(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<Vec<(Arc<str>, Value)>> {
+    let open: Vec<&Arc<str>> = (free.iter())
+        .filter(|x| joined.get(x).value().is_none())
+        .collect();
+    let out: Vec<Vec<(Arc<str>, Value)>> = (cases.iter())
+        .map(|c| {
+            (open.iter())
+                .filter_map(|x| Some(((*x).clone(), c.get(x).value()?.clone())))
+                .collect()
+        })
+        .collect();
+    if out.iter().all(Vec::is_empty) {
+        return Vec::new();
     }
     out
 }
@@ -5777,33 +5853,54 @@ impl Scope {
     // products differ, from the diff of two persistent maps (`NameProducts::changed`, near
     // the number of changes), and for each the triggers that fire (`KeptTests::dead`,
     // O(log k + f)); a test is narrowed again only when a case of it is gone, so at most
-    // once per case. A scope with no kept test pays one look at an empty map.
+    // once per case. A scope with no kept test pays one look at an empty map. The written
+    // constraints: see [`Scope::written_dead`]; those looked at are the ones written since
+    // `before` (the diff of two persistent maps) and those on a name fixed since.
     fn narrow_kept_again(&mut self, before: &Scope, reduce: fn(&mut Scope)) {
         let mut since = before.names.clone();
-        while !self.bottom && !self.kept.triggers.is_empty() {
+        let mut since_written = before.written.clone();
+        while !self.bottom
+            && !(self.kept.triggers.is_empty() && self.kept.fixed.names().next().is_none())
+        {
             let moved =
                 !(self.names.paths.ptr_eq(&since.paths) && self.names.ranges.ptr_eq(&since.ranges));
             let vars: imbl::OrdSet<Arc<str>> = if moved {
-                self.kept.triggers.keys().cloned().collect()
+                (self.kept.triggers.keys())
+                    .chain(self.kept.fixed.names())
+                    .cloned()
+                    .collect()
             } else {
                 imbl::OrdSet::new()
             };
-            let names: BTreeSet<Arc<str>> = (self.names.changed(&since, &vars))
-                .filter(|n| self.kept.triggers.contains_key(*n))
-                .cloned()
-                .collect();
+            let names: BTreeSet<Arc<str>> = self.names.changed(&since, &vars).cloned().collect();
             let mut due = BTreeSet::new();
-            for n in &names {
+            for n in names.iter().filter(|n| self.kept.triggers.contains_key(*n)) {
                 let p = self.get(n);
-                let class_moved = since
-                    .product(n)
+                let q = since.product(n);
+                let class_moved = (q.as_ref())
                     .is_none_or(|q| q.cell.congruence.element != p.cell.congruence.element);
-                self.kept.dead(n, &p, class_moved, &mut due);
+                self.kept.dead(n, &p, q.as_ref(), class_moved, &mut due);
+            }
+            if self.kept.fixed.names().next().is_some() {
+                let mut ws: BTreeSet<Address> = BTreeSet::new();
+                for d in since_written.diff(&self.written) {
+                    if let DiffItem::Add(k, _) | DiffItem::Update { new: (k, _), .. } = d {
+                        ws.insert(k.clone());
+                    }
+                }
+                for n in &names {
+                    let now = self.names.read(n).and_then(|p| p.value().cloned());
+                    if now.is_some() && now != since.product(n).and_then(|q| q.value().cloned()) {
+                        ws.extend(self.written_by.of(n).cloned());
+                    }
+                }
+                self.written_dead(&ws, &mut due);
             }
             if due.is_empty() {
                 return;
             }
             since = self.names.clone();
+            since_written = self.written.clone();
             for k in due {
                 let Some(t) = self.kept.forget(&k) else {
                     continue;
@@ -5816,6 +5913,57 @@ impl Scope {
                 }
             }
             reduce(self);
+        }
+    }
+
+    /// Adds to `out` the kept tests with a case that a written constraint of `ws` leaves with
+    /// no value: the case fixes each of its names the scope leaves open ([`KeptTest::points`]),
+    /// and it gives a value other than `true` there, as an enumeration in the case would have
+    /// ([`Scope::enumerate_on`], with no name open). A case that leaves a name of the
+    /// constraint open is not looked at: in the case, enumeration would need that name's
+    /// listed members, which the join does not keep.
+    // Complexity tradeoff: naive, narrow again by every kept test after each write, or each
+    // test reading a name of the constraint, Θ(|t|) a test, Θ(k·m·|t|) for k tests and m
+    // writes. Used: the tests with a case that fixes the open name of the constraint fixed in
+    // the fewest tests (`fixed`, a persistent map by name, O(log k) a name), since a case
+    // must fix them all, and one evaluation of the constraint at each such case's point:
+    // each pair of a case and a constraint is evaluated when the constraint is written, and
+    // again only when one of its names is fixed, as the order that writes the constraint
+    // first evaluates it in each case. A test whose case is found is narrowed again, once
+    // per case. Tradeoff: a test fixed on the chosen name whose case leaves another open name
+    // is looked at and passed over, O(c) for its c cases.
+    fn written_dead(&self, ws: &BTreeSet<Address>, out: &mut BTreeSet<Address>) {
+        for w in ws {
+            let Some(free) = self.written.get(w) else {
+                continue;
+            };
+            if !free.iter().all(|n| self.names.contains_key(n)) {
+                continue;
+            }
+            let statics = self.statics_of(free);
+            let open: Vec<&Arc<str>> = free.iter().filter(|n| !statics.contains_key(*n)).collect();
+            let Some(least) = open.iter().min_by_key(|n| self.kept.fixed.count(n)) else {
+                continue;
+            };
+            for k in self.kept.fixed.of(least) {
+                let Some(t) = self.kept.tests.get(k).filter(|_| !out.contains(k)) else {
+                    continue;
+                };
+                let dead = t.points.iter().any(|ps| {
+                    let mut at = statics.clone();
+                    at.extend((ps.iter()).filter(|(n, _)| free.contains(n)).cloned());
+                    if !open.iter().all(|n| at.contains_key(*n)) {
+                        return false;
+                    }
+                    let c = substitute(w.term(), &at);
+                    stage::ends(&c)
+                        && matches!(Evaluator::new(World::new()).run(&c),
+                            Ok(v) if v != Value::Bool(true))
+                });
+                if dead {
+                    out.insert(k.clone());
+                }
+            }
         }
     }
 
@@ -7751,25 +7899,27 @@ impl Scope {
         let cases = self.case_list(tree, n, value, prem, false, &mut live);
         let test = signed(tree.term_at(n), value);
         let free: Vec<Arc<str>> = stage::free(&test).into_iter().collect();
-        let triggers = if cases.len() > 1 {
+        let (triggers, points) = if cases.len() > 1 {
             let joined = join_cases(cases.clone());
             let t = case_triggers(&cases, &free, &joined);
+            let p = case_points(&cases, &free, &joined);
             *self = joined;
-            t
+            (t, p)
         } else {
             match cases.into_iter().next() {
                 Some(s) => *self = s,
                 None => self.bottom = true,
             }
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         self.in_case = in_case;
-        if !self.bottom && !triggers.is_empty() {
+        if !self.bottom && !(triggers.is_empty() && points.is_empty()) {
             self.kept.keep(KeptTest {
                 test,
                 free,
                 premises: prem.clone(),
                 triggers,
+                points,
             });
         }
     }
