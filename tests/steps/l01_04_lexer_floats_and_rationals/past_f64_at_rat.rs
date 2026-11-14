@@ -64,7 +64,7 @@ fn a_decimal_past_f64_holds_its_exact_value_at_rat() {
         assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
         assert_eq!(value(src, "a"), want, "{src}");
     }
-    assert_eq!(sig("g(positional x) = x + 1e400;\n", "g"), "(rat) -> rat");
+    assert_eq!(sig("g(positional x) = x + 1e400;\n", "g"), "rat -> rat");
 }
 
 const INFINITE: &str = "`1e400` is larger than the largest f64, 1.7976931348623157e308, so as an \

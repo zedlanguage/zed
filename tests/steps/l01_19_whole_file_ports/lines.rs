@@ -23,7 +23,7 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
     assert_eq!(out.status, 1);
     assert!(
         out.stderr.contains(
-            "A `Lines` port takes a `String` or a family of strings: `m.stdout <- m.stdin : (int) -> String | \
+            "A `Lines` port takes a `String` or a family of strings: `m.stdout <- m.stdin : int -> String | \
              #ioError(op: String, path: String, why: String) | #notFound`."
         ),
         "{}",

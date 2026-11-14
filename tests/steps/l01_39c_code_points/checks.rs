@@ -9,13 +9,13 @@ fn an_argument_of_another_kind_is_rejected() {
     for (src, msg) in [
         (
             "x = codePoint(3);\n",
-            "`codePoint` takes (String) -> int | #notScalar",
+            "`codePoint` takes String -> int | #notScalar",
         ),
         (
             "x = scalar(\"a\");\n",
-            "`scalar` takes (int) -> String | #notScalar",
+            "`scalar` takes int -> String | #notScalar",
         ),
-        ("x = utf8(1);\n", "`utf8` takes (String) -> int ->? int"),
+        ("x = utf8(1);\n", "`utf8` takes String -> int ->? int"),
         (
             "x = fromUtf8(\"x\");\n",
             "`fromUtf8` takes (int ->? int) -> String | #badUtf8",

@@ -22,10 +22,10 @@ fn refused(op: &str, x: &str, y: &str, e: &str) -> String {
     format!("`{op}` does not take ({x}, {y}): no arrow of `{op}` takes these types. [{e}]")
 }
 
-const SIG: &str = "((int) -> Never, int, bool, (int) -> int, String) -> Never";
+const SIG: &str = "(int -> Never, int, bool, int -> int, String) -> Never";
 
 /// [`SIG`] where the operand of type `Never` is the second of `&&` or `||`, which is not read.
-const SIG_BOOL: &str = "((int) -> Never, int, bool, (int) -> int, String) -> bool";
+const SIG_BOOL: &str = "(int -> Never, int, bool, int -> int, String) -> bool";
 
 /// Each operator form beside `h(1)`, in either order: the operand it does not take, the type
 /// the message shows for it, and an operand it takes.
@@ -36,11 +36,11 @@ const FORMS: [(&str, &str, &str, &str); 19] = [
     ("*", "u", "true", "w"),
     ("/", "u", "int | true", "1.5f64"),
     ("^", "u", "true", "w"),
-    ("<", "v", "(int) -> int", "w"),
-    (">", "v", "(int) -> int", "u"),
-    ("<=", "v", "(int) -> int", "s"),
-    (">=", "v", "(int) -> int", "w"),
-    ("<", "g", "(int) -> int", "n"),
+    ("<", "v", "int -> int", "w"),
+    (">", "v", "int -> int", "u"),
+    ("<=", "v", "int -> int", "s"),
+    (">=", "v", "int -> int", "w"),
+    ("<", "g", "int -> int", "n"),
     // The operators of one arrow.
     ("div", "true", "true", "n"),
     ("mod", "true", "true", "n"),
@@ -129,7 +129,7 @@ fn the_cases_of_the_item() {
         type_errors(text),
         [refused("+", "Never", "true", "h(1) + true")]
     );
-    assert_eq!(sig(text, "f"), "((int) -> Never) -> Never");
+    assert_eq!(sig(text, "f"), "(int -> Never) -> Never");
 }
 
 /// Beside a tuple, a comparison checks each component that is no tuple against `<`, and `min`
@@ -150,7 +150,7 @@ fn a_tuple_beside_never_is_checked_by_component() {
         ),
         (
             "h(1) < (n, g)",
-            vec![refused("<", "Never", "(int) -> int", "h(1) < (n, g)")],
+            vec![refused("<", "Never", "int -> int", "h(1) < (n, g)")],
         ),
     ] {
         let text = body(e);
@@ -166,17 +166,17 @@ fn an_untyped_parameter_beside_never_takes_what_the_operator_takes() {
     for (e, want) in [
         (
             "h(1) + x",
-            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat",
+            "(int -> Never, T) -> Never for T in int | f32 | f64 | rat",
         ),
         (
             "h(1) < x",
-            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat | bool | String",
+            "(int -> Never, T) -> Never for T in int | f32 | f64 | rat | bool | String",
         ),
         (
             "max(h(1), x)",
-            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat",
+            "(int -> Never, T) -> Never for T in int | f32 | f64 | rat",
         ),
-        ("h(1) ++ x", "((int) -> Never, String) -> Never"),
+        ("h(1) ++ x", "(int -> Never, String) -> Never"),
     ] {
         let text = format!("g(positional h: (int) -> Never, positional x) = {e};\n");
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{e}");
@@ -197,7 +197,7 @@ fn an_operand_beside_loose_atoms_is_checked() {
     );
     let text = format!("{a}a + n }};\n");
     assert_eq!(type_errors(&text), Vec::<String>::new());
-    assert_eq!(sig(&text, "f"), "(int) -> #a | #b");
+    assert_eq!(sig(&text, "f"), "int -> #a | #b");
 }
 
 /// The examples of DOCS-TODO 50 that are accepted, with their signatures, and those rejected.
@@ -208,17 +208,17 @@ fn the_examples_of_the_guide() {
             "f4(positional h: (int) -> Never, positional b: bool) = { w = if b { 1 } else \
              { 1.5f64 }; h(1) + w };\n",
             "f4",
-            "((int) -> Never, bool) -> Never",
+            "(int -> Never, bool) -> Never",
         ),
         (
             "f6(positional h: (int) -> Never, positional x) = h(1) + x;\n",
             "f6",
-            "((int) -> Never, T) -> Never for T in int | f32 | f64 | rat",
+            "(int -> Never, T) -> Never for T in int | f32 | f64 | rat",
         ),
         (
             "f7(positional n: int) = { a = if n > 0 { #a } else { #b }; a + n };\n",
             "f7",
-            "(int) -> #a | #b",
+            "int -> #a | #b",
         ),
     ] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
@@ -232,11 +232,11 @@ fn the_examples_of_the_guide() {
         ),
         (
             "f5(positional h: (int) -> Never, positional g: (int) -> int) = h(1) < (1, g);\n",
-            vec![refused("<", "Never", "(int) -> int", "h(1) < (1, g)")],
+            vec![refused("<", "Never", "int -> int", "h(1) < (1, g)")],
         ),
         (
             "f6(positional h: (int) -> Never, positional x) = h(1) + x;\nr(positional h: (int) -> Never) = f6(h, true);\n",
-            vec![refused("f6", "(int) -> Never", "true", "f6(h, true)")],
+            vec![refused("f6", "int -> Never", "true", "f6(h, true)")],
         ),
     ] {
         assert_eq!(type_errors(text), want, "{text}");

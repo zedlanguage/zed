@@ -17,15 +17,15 @@ fn under(test: &str) -> String {
 #[test]
 fn an_int_a_test_bounds_within_two_to_the_53_casts_exactly() {
     // A count of at most 100, as a fraction's numerator.
-    assert_eq!(under("n >= 0 && n <= 100"), "(int) -> f64");
+    assert_eq!(under("n >= 0 && n <= 100"), "int -> f64");
     // Both bounds of the exact range, each included.
     assert_eq!(
         under("n >= -9007199254740992 && n <= 9007199254740992"),
-        "(int) -> f64"
+        "int -> f64"
     );
     // The arm where the test fails is not bounded, and keeps the atom.
     let src = "f(positional n: int) = if n < 0 || n > 100 { f64(n) } else { 0.0f64 };\n";
-    assert_eq!(sig(src, "f"), "(int) -> f64 | #inexact | #overflow");
+    assert_eq!(sig(src, "f"), "int -> f64 | #inexact | #overflow");
 }
 
 #[test]
@@ -33,15 +33,15 @@ fn one_past_either_bound_keeps_inexact() {
     for (test, want) in [
         (
             "n >= -9007199254740993 && n <= 9007199254740992",
-            "(int) -> f64 | #inexact",
+            "int -> f64 | #inexact",
         ),
         (
             "n >= -9007199254740992 && n <= 9007199254740993",
-            "(int) -> f64 | #inexact",
+            "int -> f64 | #inexact",
         ),
         // Bounded on one side only: beyond the largest `f64` on the other (A36).
-        ("n >= 0", "(int) -> f64 | #inexact | #overflow"),
-        ("n <= 0", "(int) -> f64 | #inexact | #overflow"),
+        ("n >= 0", "int -> f64 | #inexact | #overflow"),
+        ("n <= 0", "int -> f64 | #inexact | #overflow"),
     ] {
         assert_eq!(under(test), want, "{test}");
     }
@@ -51,7 +51,7 @@ fn one_past_either_bound_keeps_inexact() {
 fn an_unbounded_int_keeps_inexact() {
     assert_eq!(
         sig("f(positional n: int) = f64(n);\n", "f"),
-        "(int) -> f64 | #inexact | #overflow"
+        "int -> f64 | #inexact | #overflow"
     );
     // A test on another name says nothing of `n`.
     assert_eq!(
@@ -112,7 +112,7 @@ fn an_exact_cast_runs_to_the_float() {
         !out.is_empty() && out.iter().all(|o| o.failure.is_none()),
         "{src}"
     );
-    assert_eq!(sig(src, "half"), "(int) -> f64");
+    assert_eq!(sig(src, "half"), "int -> f64");
 }
 
 /// Item CHK-f64-bounded-int-menus: a rejection beside an `int` the checker bounds within
@@ -167,33 +167,33 @@ fn a_cast_to_a_float_format_may_overflow() {
     for (src, want) in [
         (
             "f(positional n: int) = f64(n);",
-            "(int) -> f64 | #inexact | #overflow",
+            "int -> f64 | #inexact | #overflow",
         ),
         (
             "f(positional n: int) = f32(n);",
-            "(int) -> f32 | #inexact | #overflow",
+            "int -> f32 | #inexact | #overflow",
         ),
         (
             "f(positional r: rat) = f64(r);",
-            "(rat) -> f64 | #inexact | #overflow",
+            "rat -> f64 | #inexact | #overflow",
         ),
         (
             "f(positional x: f64) = f32(x);",
-            "(f64) -> f32 | #inexact | #overflow",
+            "f64 -> f32 | #inexact | #overflow",
         ),
         // A text is read correctly rounded: never `#inexact`, `#overflow` past the largest.
         (
             "f(positional s: String) = f64(s);",
-            "(String) -> f64 | #invalid | #overflow",
+            "String -> f64 | #invalid | #overflow",
         ),
         (
             "f(positional s: String) = f32(s);",
-            "(String) -> f32 | #invalid | #overflow",
+            "String -> f32 | #invalid | #overflow",
         ),
         // No float format is beyond another's range upward, and `int` and `rat` have none.
-        ("f(positional x: f32) = f64(x);", "(f32) -> f64"),
-        ("f(positional x: f64) = rat(x);", "(f64) -> rat | #invalid"),
-        ("f(positional r: rat) = int(r);", "(rat) -> int | #inexact"),
+        ("f(positional x: f32) = f64(x);", "f32 -> f64"),
+        ("f(positional x: f64) = rat(x);", "f64 -> rat | #invalid"),
+        ("f(positional r: rat) = int(r);", "rat -> int | #inexact"),
     ] {
         assert!(type_errors(src).is_empty(), "{src}");
         assert_eq!(sig(src, "f"), want, "{src}");
@@ -259,7 +259,7 @@ fn an_int_bounded_within_the_largest_float_gives_no_overflow() {
     ] {
         let src = format!("f(positional n: int) = if {test} {{ {c}(n) }} else {{ 0.0{c} }};\n");
         assert!(type_errors(&src).is_empty(), "{src}");
-        assert_eq!(sig(&src, "f"), format!("(int) -> {want}"), "{src}");
+        assert_eq!(sig(&src, "f"), format!("int -> {want}"), "{src}");
     }
 }
 
@@ -434,7 +434,7 @@ fn many_casts_under_tests_are_accepted() {
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
     }
-    assert_eq!(sig(&casts_in_range(1), "g0"), "(int) -> f64 | #inexact");
+    assert_eq!(sig(&casts_in_range(1), "g0"), "int -> f64 | #inexact");
     assert_eq!(sig(&casts_of_literals(3), "g2"), "(x: int) -> f64");
 }
 

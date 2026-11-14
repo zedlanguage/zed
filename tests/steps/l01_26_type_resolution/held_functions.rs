@@ -18,7 +18,7 @@ const SCALE: &str = "scale(positional x) = x * int(2);\n";
 /// The one error `==` on a value that holds `scale` gives, at `at`.
 fn compares_scale(at: &str) -> String {
     format!(
-        "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth. [{at}]"
+        "`==` takes data, and this value may hold a function, `int -> int`: data is a value that holds no function at any depth. [{at}]"
     )
 }
 
@@ -192,7 +192,7 @@ fn a_function_in_atoms_nested_in_atoms_is_refused_by_equality() {
     // A payload may hold a function (DESIGN.md, `#atom(t)`), and `==` compares payloads.
     let at_eq = |at: &str| {
         format!(
-            "`==` takes data, and this value may hold a function, `(int) -> int`: data is a value that holds no function at any depth. [{at}]"
+            "`==` takes data, and this value may hold a function, `int -> int`: data is a value that holds no function at any depth. [{at}]"
         )
     };
     type Family = fn(usize, &str) -> String;
@@ -242,8 +242,8 @@ fn notes_of(text: &str) -> Vec<String> {
 /// The notes on `scale` and the two repairs at `at`, which end each derivation below.
 fn scale_and_repairs(at: &str) -> [String; 4] {
     [
-        "[scale] `scale` is (int) -> int here".into(),
-        "[scale(positional x) = x * int(2);] `scale` is declared here with no type written for `x` or its result; the type the checker found for `scale` is `(int) -> int`".into(),
+        "[scale] `scale` is int -> int here".into(),
+        "[scale(positional x) = x * int(2);] `scale` is declared here with no type written for `x` or its result; the type the checker found for `scale` is `int -> int`".into(),
         format!("[{at}] repair: call the function before the value gets here, so that the value holds its result and not the function"),
         format!("[{at}] repair: keep the function under its own name, out of the value"),
     ]
@@ -387,7 +387,7 @@ fn a_returned_generic_function_fits_a_function_result_by_its_needs() {
             "w(positional k) = 2 ^ k;\nf(x: int) = w;\nh(g: (x: int) -> ((k: int) -> int)) = 1;\ny = h(g: f);\n"
         ),
         [
-            "`f` is `(x: int) -> ((T) -> T for T in int | f32 | f64)`, not `(x: int) -> (k: int) -> int`: it is passed where a function of that type is expected, and its own type does not fit that one. [f]"
+            "`f` is `(x: int) -> (T -> T for T in int | f32 | f64)`, not `(x: int) -> (k: int) -> int`: it is passed where a function of that type is expected, and its own type does not fit that one. [f]"
         ]
     );
 }
@@ -406,7 +406,7 @@ fn failures_holding_functions_that_merge_are_refused() {
     let held = |at: &str| {
         format!(
             "`#errs`, which `+` merges the failures of its operands into, takes data, and this \
-             value may hold a function, `(int) -> int`: data is a value that holds no function \
+             value may hold a function, `int -> int`: data is a value that holds no function \
              at any depth. [{at}]"
         )
     };
@@ -494,7 +494,7 @@ pub(super) fn returned_n_deep(n: usize, c: &str) -> String {
 pub(super) fn returned_by_lambdas(n: usize, c: &str, body: &str) -> String {
     let lambdas: String = (2..=n).map(|i| format!("(x{i}: int) -> ")).collect();
     let expected = (2..=n).fold(format!("(positional k: {c}) -> {c}"), |t, _| {
-        format!("(int) -> ({t})")
+        format!("int -> ({t})")
     });
     format!(
         "w(positional k) = {body};\nr(x1: int) = {lambdas}w;\n\

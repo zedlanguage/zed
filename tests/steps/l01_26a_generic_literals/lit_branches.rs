@@ -19,7 +19,7 @@ fn literal_branches_take_f64_at_a_parameter_of_type_f64() {
          a = f(true);\nb = f(false);\nc = h(if true {{ 2 }} else {{ 1 }});\n"
     );
     assert_eq!(type_errors(&src), Vec::<String>::new());
-    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(sig(&src, "f"), "bool -> f64");
     assert_eq!(value(&src, "a"), "2.0");
     assert_eq!(value(&src, "b"), "1.0");
     assert_eq!(value(&src, "c"), "2.0");
@@ -105,7 +105,7 @@ fn literal_branches_with_nothing_to_fix_them_stay_int() {
     // as an integer literal that nothing fixes is.
     let src = "f(positional c: bool) = (if c { 2 } else { 3 }) + 1;\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(bool) -> int");
+    assert_eq!(sig(src, "f"), "bool -> int");
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn an_operation_beside_an_integer_literal_takes_the_carrier_of_its_use() {
     let src =
         format!("{H}f(positional c: bool) = h(if c {{ 1 + 1 }} else {{ 1 }});\na = f(true);\n");
     assert_eq!(type_errors(&src), Vec::<String>::new());
-    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(sig(&src, "f"), "bool -> f64");
     assert_eq!(value(&src, "a"), "2.0");
 }
 
@@ -182,7 +182,7 @@ fn a_negated_rat_divisor_adds_no_div_by_zero() {
     // was typed `rat`.
     let src = "f(positional x: rat) = x / -3r;\na = f(1r);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(rat) -> rat");
+    assert_eq!(sig(src, "f"), "rat -> rat");
     assert_eq!(value(src, "a"), "-1r/3r");
 }
 
@@ -190,7 +190,7 @@ fn a_negated_rat_divisor_adds_no_div_by_zero() {
 fn a_negated_zero_rat_divisor_keeps_div_by_zero() {
     // Negative control: `-0r` is 0, so the division always fails.
     let src = "f(positional x: rat) = x / -0r;\n";
-    assert_eq!(sig(src, "f"), "(rat) -> rat | #divByZero");
+    assert_eq!(sig(src, "f"), "rat -> rat | #divByZero");
     let errors = type_errors(src);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
@@ -214,5 +214,5 @@ pub(super) fn nest(n: usize) -> String {
 fn an_if_of_many_literal_branches_takes_f64_at_a_parameter() {
     // A small instance of the benchmark `bench::lit_branches::scaling`.
     assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
-    assert_eq!(sig(&nest(3), "f"), "(int) -> f64");
+    assert_eq!(sig(&nest(3), "f"), "int -> f64");
 }

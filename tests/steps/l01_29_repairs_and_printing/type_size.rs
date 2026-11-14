@@ -518,7 +518,7 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
          |               ^ [9]
   [6]  5:5: this expression gives T3
   [7]  5:6: this call of `g` gives (T2, (9, "z")) | (T2, T1)
-  [8]  4:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> (T2, (9, "z")) | (T2, T1)`
+  [8]  4:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> (T2, (9, "z")) | (T2, T1)`
        4 | g(positional c: bool) = if c { (x, b0) } else { (x, a0) };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [9]  5:15: `x` is T2 here
@@ -598,7 +598,7 @@ fn a_union_inside_a_tuple_printed_before_is_named_from_the_first_step_that_uses_
          |                ^ [12]
   [9]  2:6: this expression gives T2
   [10] 2:7: this call of `g` gives T1
-  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> T1`
+  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> T1`
        1 | g(positional c: bool) = if c { 1 } else { 2 };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [12] 2:16: this literal, 3, is 3
@@ -633,11 +633,11 @@ fn a_union_is_written_in_full_until_a_step_uses_it_twice_and_named_in_every_step
        3 | a0 = k(#a);
          |      ^^^^^
   [3]  3:6: this call of `k` gives (#a | #b, 0)
-  [4]  1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `(T1) -> (T1, 0)`
+  [4]  1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `T1 -> (T1, 0)`
        1 | k(positional p: #a | #b) = (p, 0);
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [5]  4:10: this call of `m` gives 0
-  [6]  2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `(T1) -> 0`
+  [6]  2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `T1 -> 0`
        2 | m(positional p: #a | #b) = 0;
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [7]  4:5: `+` takes (int, int) -> int
@@ -663,11 +663,11 @@ fn a_union_the_sentence_uses_twice_is_named_in_every_step() {
         |     ^^^^^ [1]
         |     ^^^^^^^^^^^^^ [5, 6, 7, 8]
         |             ^^^^^ [3]
-  [2] 2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `(T1) -> 0`
+  [2] 2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `T1 -> 0`
       2 | m(positional p: #a | #b) = 0;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [3] 3:13: this call of `k` gives (T1, T1)
-  [4] 1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `(T1) -> (T1, T1)`
+  [4] 1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `T1 -> (T1, T1)`
       1 | k(positional p: #a | #b) = (p, p);
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [5] 3:5: `+` takes (int, int) -> int

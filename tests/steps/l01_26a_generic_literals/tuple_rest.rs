@@ -210,7 +210,7 @@ fn a_decimal_a_called_function_returns_is_rejected() {
     // 2.5`, ... and `y = g(c)` is rejected at the `2.5`, which nothing fixes".
     let g = "g(positional c: bool) = if c { 1 } else { 2.5 };";
     let src = format!("{g}\nc = true;\ny = g(c);\n");
-    assert_eq!(sig(&src, "g"), "(bool) -> 1 | 2.5");
+    assert_eq!(sig(&src, "g"), "bool -> 1 | 2.5");
     let (f64, rat) = (
         "g(positional c: bool) = if c { 1 } else { 2.5f64 };",
         "g(positional c: bool) = if c { 1 } else { 2.5r };",
@@ -331,14 +331,14 @@ fn a_literal_branch_joins_a_class_beside_atoms() {
     // other branch is of a class"; the other branch may also give `#divByZero`.
     assert_eq!(
         sig("f(positional x) = if x > 0 { 1 / x } else { -1.5 };\n", "f"),
-        "(T) -> T | #divByZero for T in f32 | f64 | rat"
+        "T -> T | #divByZero for T in f32 | f64 | rat"
     );
     assert_eq!(
         sig(
             "f(positional x) = if x > 0 { x / x } else { 1 + 1 };\n",
             "f"
         ),
-        "(T) -> T | #divByZero for T in f32 | f64 | rat"
+        "T -> T | #divByZero for T in f32 | f64 | rat"
     );
 }
 

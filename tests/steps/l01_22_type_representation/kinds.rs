@@ -313,12 +313,12 @@ fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
         ),
         (
             Ty::tuple(vec![f.clone(), Ty::set(shared.clone())]),
-            "type T1 = int | #x;\n((int) -> int, (T1, T1))",
+            "type T1 = int | #x;\n(int -> int, (T1, T1))",
             false,
         ),
         (
             Ty::tuple(vec![f, Ty::set(int_or_x.clone()), Ty::set(int_or_x)]),
-            "type T1 = int | #x;\n((int) -> int, T1, T1)",
+            "type T1 = int | #x;\n(int -> int, T1, T1)",
             false,
         ),
         (

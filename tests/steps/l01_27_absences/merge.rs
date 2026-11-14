@@ -163,6 +163,6 @@ fn a_merge_with_an_errs_the_program_wrote_has_unknown_members() {
                 "{t}\n{errors:?}"
             );
         }
-        assert_eq!(sig(&t, "x"), "(bool) -> int | #bad | #errs(..)", "{t}");
+        assert_eq!(sig(&t, "x"), "bool -> int | #bad | #errs(..)", "{t}");
     }
 }

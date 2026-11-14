@@ -455,15 +455,15 @@ fn f32_of_an_int_shown_within_two_to_the_24_is_exact() {
         let src = format!("f(positional n: int) = if {test} {{ f32(n) }} else {{ 0.0f32 }};\n");
         sig(&src, "f")
     };
-    assert_eq!(under("n >= 0 && n <= 100"), "(int) -> f32");
-    assert_eq!(under("n >= -16777216 && n <= 16777216"), "(int) -> f32");
+    assert_eq!(under("n >= 0 && n <= 100"), "int -> f32");
+    assert_eq!(under("n >= -16777216 && n <= 16777216"), "int -> f32");
     assert_eq!(
         under("n >= -16777217 && n <= 16777216"),
-        "(int) -> f32 | #inexact"
+        "int -> f32 | #inexact"
     );
     assert_eq!(
         under("n >= -16777216 && n <= 16777217"),
-        "(int) -> f32 | #inexact"
+        "int -> f32 | #inexact"
     );
 }
 

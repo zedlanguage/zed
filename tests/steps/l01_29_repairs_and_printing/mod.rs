@@ -11,6 +11,7 @@ mod kernel_names;
 mod menu_order;
 mod offered_repairs;
 mod order;
+mod parens;
 mod power_repairs;
 mod printed;
 mod rare;

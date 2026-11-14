@@ -46,7 +46,7 @@ fn not_a_function(shown: &str, arg: &str) -> String {
          \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]\n\
          \x20       |                   ^^^^^^^^^^ [1]\n\
          \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `(_) -> _`\n\
+         type the checker found for `h` is `_ -> _`\n\
          \x20 [3] 2:5: repair: call a function here, or write `p[1]` without the parentheses of the call \
          if its value is meant\n\
          \x20     2 | r = h({arg});\n\
@@ -142,7 +142,7 @@ fn a_callee_that_is_not_a_name_is_named_by_its_code() {
          \x20     2 | r = scale(2)(\"a\");\n\
          \x20       |     ^^^^^^^^^^^^^ [2]\n\
          \x20       |              ^^^ [1]\n\
-         \x20 [2] 2:5: `scale(2)` takes (int) -> int\n"
+         \x20 [2] 2:5: `scale(2)` takes int -> int\n"
     );
     // Arguments that do not fit the parameters of a function a component holds.
     let got = outcome(
@@ -152,7 +152,7 @@ fn a_callee_that_is_not_a_name_is_named_by_its_code() {
     );
     assert!(
         got.contains(
-            "`p[1]` here is a function of type `(T) -> T`, and the arguments of this call do \
+            "`p[1]` here is a function of type `T -> T`, and the arguments of this call do \
              not fit its parameters: this argument is passed by the name `q`, and `p[1]` has no \
              parameter of that name"
         ),
@@ -241,7 +241,7 @@ fn a_first_component_of_another_type_is_rejected() {
          \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]\n\
          \x20       |                   ^^^^ [1]\n\
          \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `(_) -> rat`\n\
+         type the checker found for `h` is `_ -> rat`\n\
          \x20 [3] 2:5: repair: change the argument, so that `h` gives a value of rat here\n\
          \x20     2 | r = h((1.0f64, 2));\n\
          \x20       |     ^^^^^^^^^^^^^^\n"
@@ -353,7 +353,7 @@ fn a_decimal_component_no_use_fixes_is_rejected() {
          \x20     2 | r = h((1.5, 2));\n\
          \x20       |        ^^^\n\
          \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `(_) -> _`\n\
+         type the checker found for `h` is `_ -> _`\n\
          \x20     1 | h(positional p) = p[0];\n\
          \x20       | ^^^^^^^^^^^^^^^^^^^^^^^\n\
          \x20 fixes, each checked here:\n\
@@ -367,7 +367,7 @@ fn a_decimal_component_no_use_fixes_is_rejected() {
          \x20     2 | r = h((1.5, 2.5));\n\
          \x20       |             ^^^\n\
          \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `(_) -> rat`\n\
+         type the checker found for `h` is `_ -> rat`\n\
          \x20     1 | h(positional p) = p[0] + 1r;\n\
          \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\
          \x20 fixes, each checked here:\n\

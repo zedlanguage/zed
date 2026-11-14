@@ -62,7 +62,7 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
                 "inc(positional x: int) = x + 1;\n{}",
                 reading("  m.stdout <- String(inc == inc);")
             ),
-            "4:22: `==` takes data, and this value may hold a function, `(int) -> int`: data is \
+            "4:22: `==` takes data, and this value may hold a function, `int -> int`: data is \
              a value that holds no function at any depth.",
             vec!["repair: call the function before the value gets here"],
         ),
@@ -116,7 +116,7 @@ fn a_lambda_passed_an_argument_by_name_offers_only_repairs_that_need_no_declarat
     );
     assert_eq!(
         rejected(&src),
-        "4:34: this argument is passed by name, as `x: …`, and `x` of `(int) -> int` is \
+        "4:34: this argument is passed by name, as `x: …`, and `x` of `int -> int` is \
          positional, so a call passes it only by position.\n  \
          [1] 4:34: repair: pass `x` by position: remove `x: ` and put the value in `x`'s place \
          among the arguments\n      \

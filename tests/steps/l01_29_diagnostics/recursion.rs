@@ -22,7 +22,7 @@ fn an_error_beside_a_recursion_is_reported_with_it() {
     assert!(
         out.contains(
             "`f` is declared here with no type written for its result; the type the checker \
-             found for `f` is `(int) -> int`"
+             found for `f` is `int -> int`"
         ),
         "{out}"
     );

@@ -139,33 +139,33 @@ fn nested_lambdas_name_their_variables_as_before() {
     for (text, want) in [
         (
             "g(positional a) = (b) -> (c) -> (a, b, c);\n",
-            "(T) -> (U) -> (V) -> (T, U, V)",
+            "T -> U -> V -> (T, U, V)",
         ),
         (
             "g(positional a) = (b) -> (c) -> (d) -> (e) -> (f) -> (h) -> (a, b, c, d, e, f, h);\n",
-            "(T) -> (U) -> (V) -> (W) -> (T5) -> (T6) -> (T7) -> (T, U, V, W, T5, T6, T7)",
+            "T -> U -> V -> W -> T5 -> T6 -> T7 -> (T, U, V, W, T5, T6, T7)",
         ),
         (
             "g(positional a) = (T) -> (b) -> (c) -> a;\n",
-            "(T) -> (_) -> (_) -> (_) -> T",
+            "T -> _ -> _ -> _ -> T",
         ),
         (
             "g(positional f) = (x) -> (y) -> f(x, y) + x;\n",
-            "(_) -> (U) -> (_) -> U for U in int | f32 | f64 | rat",
+            "_ -> U -> _ -> U for U in int | f32 | f64 | rat",
         ),
         (
             "g(positional a, positional b) = ((c) -> (d) -> (c, d), a + b);\n",
-            "(V, V) -> ((T) -> (U) -> (T, U), V) for V in int | f32 | f64 | rat",
+            "(V, V) -> (T -> U -> (T, U), V) for V in int | f32 | f64 | rat",
         ),
         // The results of `h(x)` and `f(x)` are classes of `g`'s level that first appear
         // inside the lambdas, and are named in the order they appear there.
         (
             "g(positional f, positional h) = (x) -> (y) -> (h(y, x), f(x), y);\n",
-            "(_, _) -> (_) -> (T) -> (_, _, T)",
+            "(_, _) -> _ -> T -> (_, _, T)",
         ),
         (
             "g(positional f) = ((x) -> f(x), (y) -> (f(y), y));\n",
-            "(_) -> ((_) -> _, (T) -> (_, T))",
+            "_ -> (_ -> _, T -> (_, T))",
         ),
     ] {
         assert_eq!(sig(text, "g"), want, "{text}");
@@ -573,7 +573,7 @@ fn a_chain_of_functions_takes_the_bound_of_the_one_called() {
     // `bench::scaling::a_chain_of_functions_with_untyped_parameters_scales`.
     assert_eq!(
         sig(&chain(3), "g2"),
-        "(T) -> T for T in int | f32 | f64 | rat"
+        "T -> T for T in int | f32 | f64 | rat"
     );
     let info = Resolved::new(&chain(3)).check();
     assert!(info.errors.is_empty(), "{:?}", info.errors);
@@ -601,7 +601,7 @@ fn needs_replayed_through_a_fan_of_calls_are_met_once() {
     // A small instance of the benchmark
     // `bench::scaling::needs_replayed_through_a_fan_of_calls_scale`.
     let s = sig_of(&fan(3), "g2");
-    assert_eq!(s.to_string(), "(_) -> U for U in int | f32 | f64 | rat");
+    assert_eq!(s.to_string(), "_ -> U for U in int | f32 | f64 | rat");
     assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
 }
 
@@ -620,13 +620,10 @@ fn the_union_of_atoms_with_payloads_keeps_each_payload() {
 fn curried_lambdas_name_their_parameters_and_take_their_carriers() {
     // Small instances of the benchmarks `bench::scaling::curried_lambdas_using_every_parameter_…`
     // and `bench::scaling::curried_lambdas_whose_parameters_take_a_carrier_…`.
-    assert_eq!(
-        sig(&curried(3), "g"),
-        "(T) -> (U) -> (V) -> (W) -> (T, U, V, W)"
-    );
+    assert_eq!(sig(&curried(3), "g"), "T -> U -> V -> W -> (T, U, V, W)");
     assert_eq!(
         sig(&curried_sums(2), "g"),
-        "(int) -> (int) -> (int) -> (int, int, int)"
+        "int -> int -> int -> (int, int, int)"
     );
 }
 
@@ -776,6 +773,6 @@ fn sums_tests_and_never_arguments_give_their_signatures() {
         sig(&sums_of_a_line_or_a_count(3), "r"),
         "(int | #_, bump: int) -> int"
     );
-    assert_eq!(sig(&a_chain_of_tests(4), "f"), "(int) -> 0 | 2 | 5");
-    assert_eq!(sig(&never_arguments(3), "f"), "(Never) -> Never");
+    assert_eq!(sig(&a_chain_of_tests(4), "f"), "int -> 0 | 2 | 5");
+    assert_eq!(sig(&never_arguments(3), "f"), "Never -> Never");
 }

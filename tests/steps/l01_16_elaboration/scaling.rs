@@ -300,7 +300,7 @@ pub(super) fn open(n: usize) -> String {
 /// which it neither binds nor bounds, so it prints `_` there.
 pub(super) fn open_signature_is_h0s(n: usize) {
     use zed_tests::step_helpers::l01_26_type_resolution::sig_of;
-    let t = (Some("int".to_string()), Some("(_) -> _".to_string()));
+    let t = (Some("int".to_string()), Some("_ -> _".to_string()));
     assert_eq!(found(&open(n), n - 1), t);
     let h0 = sig_of(&open(n), "h0");
     let last = sig_of(&open(n), &format!("h{}", n - 1));
@@ -396,7 +396,7 @@ pub(super) fn elaborates_two(u: &Checked, what: &str) {
 fn each_benchmark_input_elaborates_at_small_sizes() {
     let nested_signature = (
         Some("int".to_string()),
-        Some("(T) -> T for T in int | f32 | f64 | rat".to_string()),
+        Some("T -> T for T in int | f32 | f64 | rat".to_string()),
     );
     for n in [1, 2, 9] {
         defaults_stay_short(&checked(&chain(n)));

@@ -75,7 +75,7 @@ fn a_declaration_with_some_types_names_only_the_parameters_written_without_one()
     assert_eq!(
         step,
         "`take` is declared here with no type written for its result; the type the checker found \
-         for `take` is `(int) -> int`"
+         for `take` is `int -> int`"
     );
 }
 
@@ -90,7 +90,7 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
     assert_eq!(
         step,
         "`dbl` is declared here with no type written for `x` or its result; the type the checker \
-         found for `dbl` is `(T) -> T for T in int | f32 | f64 | rat`"
+         found for `dbl` is `T -> T for T in int | f32 | f64 | rat`"
     );
     // A parameter that reaches no other place.
     let step = declared_step(
@@ -100,7 +100,7 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
     assert_eq!(
         step,
         "`f` is declared here with no type written for `h` or its result; the type the checker \
-         found for `f` is `(_) -> 0`"
+         found for `f` is `_ -> 0`"
     );
     // A parameter read only through a use: its variable stands in the use's need, not in
     // another place of the type.
@@ -112,7 +112,7 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
     assert_eq!(
         step,
         "`swap` is declared here with no type written for `p` or its result; the type the \
-         checker found for `swap` is `(_) -> (_, _)`"
+         checker found for `swap` is `_ -> (_, _)`"
     );
 }
 

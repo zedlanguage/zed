@@ -38,7 +38,7 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [7]  2:7: this `else` gives int
   [8]  2:7: this call of `int` gives int | #invalid | #ioError(op: String, path: String, why: String) | #outOfBounds
   [9]  2:11: this expression gives String | #ioError(op: String, path: String, why: String) | #outOfBounds
-  [10] 2:11: `m.stdin` is (int) -> String | #ioError(op: String, path: String, why: String) | #notFound here
+  [10] 2:11: `m.stdin` is int -> String | #ioError(op: String, path: String, why: String) | #notFound here
   [11] 1:9: `m.stdin` is declared `Lines`
        1 | main(m: MainArgs) {
          |         ^^^^^^^^
@@ -183,7 +183,7 @@ main(m: MainArgs) {
             "this expression is \"a\"",
             "this call of `twice` gives int",
             "`twice` is declared here with no type written for `x` or its result; the type the \
-             checker found for `twice` is `(int) -> int`",
+             checker found for `twice` is `int -> int`",
             "`++` takes (String, String) -> String",
             "repair: wrap this in `String(…)`; the checker accepts that",
         ]
@@ -308,7 +308,7 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     let out = rejected("inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert_eq!(
         out,
-        "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
+        "3:8: `==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
   [1] 3:8: `boxed` holds the function here
       3 | same = boxed == boxed;
         |        ^^^^^ [1]
@@ -318,11 +318,11 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
         |         ^^^^^^^^^ [2, 3]
         |              ^^^ [4]
   [3] 2:9: this atom `#box` holds the function in its payload
-  [4] 2:14: `inc` is (T) -> T for T in int | f32 | f64 | rat here
-  [5] 1:7: `inc` is defined as this expression, (T) -> T for T in int | f32 | f64 | rat
+  [4] 2:14: `inc` is T -> T for T in int | f32 | f64 | rat here
+  [5] 1:7: `inc` is defined as this expression, T -> T for T in int | f32 | f64 | rat
       1 | inc = x -> x + 1;
         |       ^^^^^^^^^^
-  [6] 1:7: this expression is (T) -> T for T in int | f32 | f64 | rat
+  [6] 1:7: this expression is T -> T for T in int | f32 | f64 | rat
   [7] 3:8: repair: call the function before the value gets here, so that the value holds its result and not the function
   [8] 3:8: repair: keep the function under its own name, out of the value"
     );
@@ -342,12 +342,12 @@ s = g(h);
     );
     assert_eq!(
         out,
-        "4:5: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
+        "4:5: `==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
   [1] 3:36: `g` needs this of its argument here
       3 | g(positional x) { p = f(x); return p == p; }
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]
         |                                    ^^^^^^ [1]
-  [2] 3:1: `g` is declared here with no type written for `x` or its result; the type the checker found for `g` is `(_) -> bool`
+  [2] 3:1: `g` is declared here with no type written for `x` or its result; the type the checker found for `g` is `_ -> bool`
   [3] 4:5: repair: call the function before the value gets here, so that the value holds its result and not the function
       4 | s = g(h);
         |     ^^^^
@@ -373,7 +373,7 @@ fn a_merge_of_failures_that_hold_a_function_follows_each_to_the_function() {
     for step in [
         "[3]  2:31: `n` is int here",
         "[7]  2:39: this atom `#box` holds the function in its payload",
-        "[8]  2:44: `scale` is (int) -> int here",
+        "[8]  2:44: `scale` is int -> int here",
         "[7]  2:79 to 2:89: this atom `#bag` holds the function in its payload",
     ] {
         assert!(out.contains(step), "{step}:\n{out}");
@@ -390,8 +390,8 @@ fn a_held_tuple_with_a_call_for_its_function_part_shows_the_call() {
     );
     for step in [
         "[3] 3:5: this tuple holds the function",
-        "[4] 3:6: this call of `id` gives (int) -> int",
-        "the type the checker found for `id` is `(T) -> T`",
+        "[4] 3:6: this call of `id` gives int -> int",
+        "the type the checker found for `id` is `T -> T`",
     ] {
         assert!(out.contains(step), "{step}:\n{out}");
     }

@@ -29,7 +29,7 @@ fn drops_div_by_zero(stmt: &str) -> String {
 
 #[test]
 fn a_divisor_of_literals_that_are_not_zero_adds_no_div_by_zero() {
-    assert_eq!(sig(NINE, "nine"), "(bool) -> 1 | 9");
+    assert_eq!(sig(NINE, "nine"), "bool -> 1 | 9");
     let div = format!("{NINE}f(positional c: bool, x: int) = x div nine(c);\n");
     assert_eq!(sig(&div, "f"), "(bool, x: int) -> int");
     let neg = format!("{NEG}f(positional c: bool, x: int) = x div neg(c);\n");

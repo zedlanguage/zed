@@ -35,13 +35,13 @@ fn else_strips_the_loose_atoms_in_each_place_an_expression_stands() {
         (
             "argument",
             format!("g(positional n: int) = n * 2;\nf({LOOKUP}) = g(x else 1);\n"),
-            "(int | #none | #notFound) -> int",
+            "int | #none | #notFound -> int",
             &[("f(#none)", "2"), ("f(#notFound)", "2"), ("f(4)", "8")],
         ),
         (
             "operand",
             format!("f({LOOKUP}) = (x else 0) + 1;\n"),
-            "(int | #none | #notFound) -> int",
+            "int | #none | #notFound -> int",
             &[("f(#none)", "1"), ("f(4)", "5")],
         ),
         (
@@ -63,13 +63,13 @@ fn else_strips_the_loose_atoms_in_each_place_an_expression_stands() {
         (
             "if condition",
             "f(positional b: bool | #notFound) = if (b else false) { 1 } else { 2 };\n".into(),
-            "(bool | #notFound) -> 1 | 2",
+            "bool | #notFound -> 1 | 2",
             &[("f(#notFound)", "2"), ("f(true)", "1"), ("f(false)", "2")],
         ),
         (
             "block statement and export",
             format!("f({LOOKUP}) = {{\n  y = x else 0;\n  y + 1\n}};\n"),
-            "(int | #none | #notFound) -> int",
+            "int | #none | #notFound -> int",
             &[("f(#notFound)", "1"), ("f(6)", "7")],
         ),
         (
@@ -127,13 +127,13 @@ fn a_default_that_may_fail_or_is_an_atom_puts_its_own_atoms_in_the_type() {
     );
     // An atom default is the value the text names.
     let t = format!("f({LOOKUP}) = x else #missing;\n");
-    assert_eq!(sig(&t, "f"), "(int | #none | #notFound) -> int | #missing");
+    assert_eq!(sig(&t, "f"), "int | #none | #notFound -> int | #missing");
     values(&t, &[("f(#none)", "#missing"), ("f(5)", "5")]);
     // The pattern form with an atom default keeps the atoms it does not name.
     let t = format!("f({LOOKUP}) = x else #notFound -> #missing;\n");
     assert_eq!(
         sig(&t, "f"),
-        "(int | #none | #notFound) -> int | #missing | #none"
+        "int | #none | #notFound -> int | #missing | #none"
     );
     values(&t, &[("f(#none)", "#none"), ("f(#notFound)", "#missing")]);
 }
@@ -144,14 +144,14 @@ fn else_on_a_value_with_no_loose_atom_leaves_the_value() {
     // it is no error.
     let t = "f(positional x: int) = x else 0;\n";
     assert!(type_errors(t).is_empty(), "{:?}", type_errors(t));
-    assert_eq!(sig(t, "f"), "(int) -> int");
+    assert_eq!(sig(t, "f"), "int -> int");
     values(t, &[("f(-3)", "-3")]);
 }
 
 #[test]
 fn else_after_safe_navigation_strips_what_it_carried() {
     let t = "f(positional x: int | #notFound) = x?.abs else 0;\n";
-    assert_eq!(sig(t, "f"), "(int | #notFound) -> int");
+    assert_eq!(sig(t, "f"), "int | #notFound -> int");
     values(t, &[("f(#notFound)", "0"), ("f(-4)", "4")]);
 }
 
@@ -221,10 +221,7 @@ fn failures_of_two_arguments_of_a_call_merge_as_those_of_two_operands_do() {
 #[test]
 fn a_unary_operator_passes_its_one_operands_failures_unmerged() {
     let t = format!("f({LOOKUP}) = -x;\n");
-    assert_eq!(
-        sig(&t, "f"),
-        "type T1 = int | #none | #notFound;\n(T1) -> T1"
-    );
+    assert_eq!(sig(&t, "f"), "type T1 = int | #none | #notFound;\nT1 -> T1");
     values(
         &t,
         &[

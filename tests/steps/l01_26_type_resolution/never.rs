@@ -10,14 +10,14 @@ use super::{info, sig, type_errors};
 fn a_function_type_may_declare_the_result_never() {
     let text = "apply(positional h: (int) -> Never, positional n: int) = h(n);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    assert_eq!(sig(text, "apply"), "((int) -> Never, int) -> Never");
+    assert_eq!(sig(text, "apply"), "(int -> Never, int) -> Never");
 }
 
 #[test]
 fn never_in_a_union_adds_nothing() {
     assert_eq!(
         sig("g(positional n: int | Never) = n;\n", "g"),
-        "(int) -> int"
+        "int -> int"
     );
 }
 
@@ -28,7 +28,7 @@ fn a_parameter_of_type_never_takes_no_argument() {
         type_errors(text),
         ["`take` does not take (1): no arrow of `take` takes these types. [take(1)]"]
     );
-    assert_eq!(sig(text, "take"), "(Never) -> Never");
+    assert_eq!(sig(text, "take"), "Never -> Never");
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn a_test_against_never_is_accepted() {
     // checked, and adds nothing to the result (DESIGN.md sec:constraints).
     let text = "h(positional x: int) = if x is Never { 1 } else { 2 };\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    assert_eq!(sig(text, "h"), "(int) -> 2");
+    assert_eq!(sig(text, "h"), "int -> 2");
 }
 
 /// A tuple with an empty component has no value, so its type is `Never`: written as a
@@ -45,27 +45,27 @@ fn a_test_against_never_is_accepted() {
 #[test]
 fn a_tuple_with_an_empty_component_is_never() {
     for (text, want) in [
-        ("f(positional x: (Never, int)) = x;\n", "(Never) -> Never"),
-        ("f(positional x: (int, Never)) = x;\n", "(Never) -> Never"),
+        ("f(positional x: (Never, int)) = x;\n", "Never -> Never"),
+        ("f(positional x: (int, Never)) = x;\n", "Never -> Never"),
         (
             "f(positional x: ((Never, int), bool)) = x;\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "f(positional x: (int, Never) | bool) = x;\n",
-            "(bool) -> bool",
+            "bool -> bool",
         ),
-        ("f(positional x: Never) = (x, 1);\n", "(Never) -> Never"),
+        ("f(positional x: Never) = (x, 1);\n", "Never -> Never"),
         (
             "f(positional x: Never) = { y = ((x, 1), true); y };\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         // An atom whose payload has no value has none either.
-        ("f(positional x: Never) = #a(x);\n", "(Never) -> Never"),
+        ("f(positional x: Never) = #a(x);\n", "Never -> Never"),
         // A function whose result has no value returns no value.
         (
             "f(positional g: (int) -> (Never, int)) = g(1);\n",
-            "((int) -> Never) -> Never",
+            "(int -> Never) -> Never",
         ),
         // The empty tuple has one value, and is no `Never`.
         ("f(positional x: ()) = x;\n", "(()) -> ()"),
@@ -82,47 +82,47 @@ fn an_unreachable_branch_adds_nothing_to_the_result() {
     for (text, want) in [
         (
             "f(positional x: int) = if x is bool { 1 } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: int) = if x is int { 1 } else { 2 };\n",
-            "(int) -> 1",
+            "int -> 1",
         ),
         (
             "f(positional x: int) = if x is not int { 1 } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: int) = if x is not Never { 1 } else { 2 };\n",
-            "(int) -> 1",
+            "int -> 1",
         ),
         (
             "f(positional x: int) = if x is (Never, int) { 1 } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: int | String) = if x is int { 1 } else if x is String { 2 } else \
              { 3 };\n",
-            "(int | String) -> 1 | 2",
+            "int | String -> 1 | 2",
         ),
         // In the unreachable branch `x` is `Never`, so it adds nothing there either.
         (
             "f(positional x: int) = if x is Never { x } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: int) = { y = (x, 1); if x is bool { y } else { (1, 2) } };\n",
-            "(int) -> (1, 2)",
+            "int -> (1, 2)",
         ),
         // A name of type `Never` makes both branches unreachable.
         (
             "f(positional x: Never) = if x is int { 1 } else { 2 };\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         // A test that may hold keeps both branches.
         (
             "f(positional x: int | bool) = if x is int { 1 } else { 2 };\n",
-            "(int | bool) -> 1 | 2",
+            "int | bool -> 1 | 2",
         ),
     ] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
@@ -154,25 +154,25 @@ fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
     for (text, want) in [
         (
             "f(positional x: int) = if x > 0 && x < 0 { 1 } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: int) = if x > 0 { if x < 0 { 1 } else { 2 } } else { 3 };\n",
-            "(int) -> 2 | 3",
+            "int -> 2 | 3",
         ),
         // The test holds of every value, so the second branch is the unreachable one.
         (
             "f(positional x: int) = if x >= 0 || x < 0 { 1 } else { 2 };\n",
-            "(int) -> 1",
+            "int -> 1",
         ),
         (
             "f(positional x: int) = if !(x > 0 || x <= 0) { 1 } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: int) = if x > 5 { 1 } else if x > 3 { 2 } else if x > 4 { 3 } \
              else { 4 };\n",
-            "(int) -> 1 | 2 | 4",
+            "int -> 1 | 2 | 4",
         ),
         (
             "f(positional x: int, positional b: bool) = if b && x > 0 && x < 0 { 1 } else \
@@ -182,12 +182,12 @@ fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
         (
             "f(positional x: int) = if x > 0 && x < 0 { 1 } else if x == 3 { 2 } else \
              { 3 };\n",
-            "(int) -> 2 | 3",
+            "int -> 2 | 3",
         ),
         // `x` is still `int` there, but the branch adds nothing.
         (
             "f(positional x: int) = if x > 0 && x < 0 { x } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         // A test whose type meets the name's in a type with no value, though each lists
         // values: the tuple types meet in components that do not.
@@ -197,7 +197,7 @@ fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
         ),
         (
             "f(positional x: int) = if x is (int, int) & (bool, int) { 1 } else { 2 };\n",
-            "(int) -> 2",
+            "int -> 2",
         ),
         (
             "f(positional x: ((bool, int), int)) = if x is ((int, int), int) { 1 } else \
@@ -207,13 +207,13 @@ fn a_branch_no_value_reaches_adds_nothing_to_the_result() {
         // Tests that may both hold keep both branches.
         (
             "f(positional x: int) = if x > 0 && x < 9 { 1 } else { 2 };\n",
-            "(int) -> 1 | 2",
+            "int -> 1 | 2",
         ),
         // Inside an unreachable branch nothing more is unreachable: it is all unreachable.
         (
             "f(positional x: int) = if x > 0 && x < 0 { if x > 1 { 1 } else { 2 } } else \
              { 3 };\n",
-            "(int) -> 3",
+            "int -> 3",
         ),
     ] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
@@ -349,33 +349,30 @@ fn an_atom_with_a_payload_of_no_value_after_substitution_is_never() {
         )
     };
     for (text, want) in [
-        (call("#a(g(x), 1)"), "((int) -> Never) -> Never"),
-        (call("#a((g(x), 1), 2)"), "((int) -> Never) -> Never"),
-        (call("#a(k: g(x))"), "((int) -> Never) -> Never"),
+        (call("#a(g(x), 1)"), "(int -> Never) -> Never"),
+        (call("#a((g(x), 1), 2)"), "(int -> Never) -> Never"),
+        (call("#a(k: g(x))"), "(int -> Never) -> Never"),
         (
             bool_call("if b { #a(g(x)) } else { #a(2) }"),
-            "((int) -> Never, bool) -> #a(2)",
+            "(int -> Never, bool) -> #a(2)",
         ),
         (
             bool_call("if b { #a(g(x)) } else { #b }"),
-            "((int) -> Never, bool) -> #b",
+            "(int -> Never, bool) -> #b",
         ),
         (
             bool_call("if b { #a } else { #a(g(x)) }"),
-            "((int) -> Never, bool) -> #a",
+            "(int -> Never, bool) -> #a",
         ),
         // In a function's result.
         (
             "app(positional g) = (positional x: int) -> #a(g(x), 1);\nf(positional h: (int) -> \
              Never) = app(h);\n"
                 .to_string(),
-            "((int) -> Never) -> (int) -> Never",
+            "(int -> Never) -> int -> Never",
         ),
         // A payload that keeps a value is kept.
-        (
-            call("#a(g, x)"),
-            "((int) -> Never) -> #a((int) -> Never, 1)",
-        ),
+        (call("#a(g, x)"), "(int -> Never) -> #a(int -> Never, 1)"),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
         assert_eq!(sig(&text, "f"), want, "{text}");
@@ -392,63 +389,63 @@ fn an_argument_of_type_never_binds_its_variable_to_never() {
         // The finding: `(x, 1)` needs `x` to hold no function, and `Never` holds none.
         (
             "pair(positional x) = (x, 1);\nf(positional n: Never) = pair(n);\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         // `Never` in one component of a tuple argument: the tuple is `Never`.
         (
             "pair(positional x) = (x, 1);\nf(positional n: Never) = pair((n, 2));\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "pair(positional x) = (x, 1);\nf(positional n: Never) = pair(pair(n));\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "sw(positional p) = { a, b = p; (b, a) };\nf(positional n: Never) = sw((n, 2));\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         // A call of the argument, and a component of it.
         (
             "app(positional g) = g(1);\nf(positional n: Never) = app(n);\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "first(positional p) = p[0];\nf(positional n: Never) = first(n);\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "ap(positional g, positional y) = g(y);\nf(positional n: Never) = ap(n, 1);\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "ap(positional g, positional y) = g(y);\nf(positional h: (int) -> int, positional \
              n: Never) = ap(h, n);\n",
-            "((int) -> int, Never) -> int",
+            "(int -> int, Never) -> int",
         ),
         // One argument of no value in a tuple the body builds: the tuple is `Never`.
         (
             "two(positional x, positional y) = (x, y);\nf(positional n: Never) = two(n, 1);\n",
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         // An argument that has no value only after a call.
         (
             "pair(positional x) = (x, 1);\nf(positional g: (int) -> Never) = pair(g(1));\n",
-            "((int) -> Never) -> Never",
+            "(int -> Never) -> Never",
         ),
         // A parameter with a declared type takes `Never`, which is below every type. The result is
         // the arrow's: the checker does not ask whether the body reads `x` on every path.
         (
             "g(positional x: int) = x + 1;\nf(positional n: Never) = g(n);\n",
-            "(Never) -> int",
+            "Never -> int",
         ),
         (
             "g(positional x: (int, String)) = x;\nf(positional n: Never) = g(n);\n",
-            "(Never) -> (int, String)",
+            "Never -> (int, String)",
         ),
         // `Never` in a union adds nothing: the variable is bound by the rest.
         (
             "pair(positional x) = (x, 1);\nf(positional n: int | Never) = pair(n);\n",
-            "(int) -> (int, 1)",
+            "int -> (int, 1)",
         ),
     ] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
@@ -468,8 +465,8 @@ fn calls_with_never_and_with_int_do_not_meet() {
         format!("{alone}{int}{never}"),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
-        assert_eq!(sig(&text, "f"), "(Never) -> Never", "{text}");
-        assert_eq!(sig(&text, "h"), "(int) -> (int, 1)", "{text}");
+        assert_eq!(sig(&text, "f"), "Never -> Never", "{text}");
+        assert_eq!(sig(&text, "h"), "int -> (int, 1)", "{text}");
         assert_eq!(sig(&text, "pair"), sig(alone, "pair"), "{text}");
     }
 }
@@ -486,19 +483,19 @@ fn a_call_with_an_argument_of_no_value_has_its_substituted_result() {
         // An unused argument: the result is the other argument's.
         (
             format!("{k}f(positional n: Never) = k(n, 1);\n"),
-            "(Never) -> 1",
+            "Never -> 1",
         ),
         (
             format!("{k}f(positional n: Never) = k(n, #a);\n"),
-            "(Never) -> #a",
+            "Never -> #a",
         ),
         (
             format!("{k}f(positional n: Never) = n.k(1);\n"),
-            "(Never) -> 1",
+            "Never -> 1",
         ),
         (
             "c(positional x: int) = 7;\nf(positional n: Never) = c(n);\n".to_string(),
-            "(Never) -> 7",
+            "Never -> 7",
         ),
         // Used on one branch only: that branch adds nothing.
         (
@@ -508,7 +505,7 @@ fn a_call_with_an_argument_of_no_value_has_its_substituted_result() {
         // Used on every path: the result is `Never`.
         (
             format!("{k}f(positional n: Never) = k(1, n);\n"),
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             format!("{sel}f(positional b: bool, positional n: Never) = sel(b, n, n);\n"),
@@ -517,40 +514,40 @@ fn a_call_with_an_argument_of_no_value_has_its_substituted_result() {
         // Nested calls: each call has its own substituted result.
         (
             format!("{k}f(positional n: Never) = k(k(n, 1), 2);\n"),
-            "(Never) -> 2",
+            "Never -> 2",
         ),
         (
             format!("{k}f(positional n: Never) = k(1, k(2, n));\n"),
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             format!("{k}f(positional n: Never) = 1 + k(n, 2);\n"),
-            "(Never) -> int",
+            "Never -> int",
         ),
         (
             format!("{k}pair(positional x) = (x, 1);\nf(positional n: Never) = pair(k(n, 3));\n"),
-            "(Never) -> (3, 1)",
+            "Never -> (3, 1)",
         ),
         (
             format!("{k}f(positional n: Never) = {{ z = k(n, 1); z + 1 }};\n"),
-            "(Never) -> int",
+            "Never -> int",
         ),
         // `inc` is `(T) -> T for T in …` (bare literals are generic), so its result names the
         // parameter's variable `T`, which the argument binds to `Never`: the call is `Never`.
         (
             "inc(positional x) = x + 1;\nf(positional n: Never) = inc(n);\n".to_string(),
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         // Used on every path but with a result that does not name `x`: the arrow's result
         // `bool`. Sound, as `Never` is below `bool`; finding `Never` here needs a demand analysis.
         (
             "pos(positional x) = x > 0;\nf(positional n: Never) = pos(n);\n".to_string(),
-            "(Never) -> bool",
+            "Never -> bool",
         ),
         // An operator needs every operand; `&&` needs only the first.
         (
             "f(positional n: Never) = n + 1;\n".to_string(),
-            "(Never) -> Never",
+            "Never -> Never",
         ),
         (
             "f(positional b: bool, positional n: Never) = b && n;\n".to_string(),
@@ -568,7 +565,7 @@ fn a_call_with_an_argument_of_no_value_has_its_substituted_result() {
         (
             "f(positional h: ((int) -> int) & ((bool) -> bool), positional n: Never) = h(n);\n"
                 .to_string(),
-            "(((int) -> int) & ((bool) -> bool), Never) -> int",
+            "((int -> int) & (bool -> bool), Never) -> int",
         ),
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
@@ -586,7 +583,7 @@ fn a_call_that_does_not_read_an_argument_of_no_value_keeps_its_value() {
         "{k}f(positional h: (int) -> Never, positional b: bool) = if b {{ k(h(1), 1) }} else {{ 2 }};\n"
     );
     assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
-    assert_eq!(sig(&text, "f"), "((int) -> Never, bool) -> 1 | 2", "{text}");
+    assert_eq!(sig(&text, "f"), "(int -> Never, bool) -> 1 | 2", "{text}");
     let text = format!(
         "{k}take(positional x: int) = x;\nf(positional h: (int) -> Never) = take(k(h(1), \"s\"));\n"
     );
@@ -619,7 +616,7 @@ fn the_rejection_of_a_value_passed_on_past_an_argument_of_no_value_shows_where_i
     assert!(
         notes.contains(
             &"`take` is declared here with no type written for its result; the type the checker \
-              found for `take` is `(int) -> int`"
+              found for `take` is `int -> int`"
         ),
         "{notes:?}"
     );

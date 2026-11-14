@@ -374,14 +374,14 @@ fn a_function_is_not_shown_and_may_be_held_in_a_tuple() {
     rejected(INC, r#""${inc}""#);
     assert_eq!(
         rejected(INC, "String(inc)"),
-        "3:15: `String` takes data, and this value may hold a function, `(T) -> T for T in int \
+        "3:15: `String` takes data, and this value may hold a function, `T -> T for T in int \
          | f32 | f64 | rat`: data is a value that holds no function at any depth.\n  \
-         [1] 3:22: `inc` is (T) -> T for T in int | f32 | f64 | rat here\n      \
+         [1] 3:22: `inc` is T -> T for T in int | f32 | f64 | rat here\n      \
          3 |   m.stdout <- String(inc);\n        \
          |               ^^^^^^^^^^^ [3, 4]\n        \
          |                      ^^^ [1]\n  \
          [2] 1:1: `inc` is declared here with no type written for `x` or its result; the type \
-         the checker found for `inc` is `(T) -> T for T in int | f32 | f64 | rat`\n      \
+         the checker found for `inc` is `T -> T for T in int | f32 | f64 | rat`\n      \
          1 | inc(positional x) = x + 1;\n        \
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
          [3] 3:15: repair: call the function before the value gets here, so that the value \
@@ -866,7 +866,7 @@ fn a_port_takes_an_operation_on_literals_whose_divisor_is_no_zero() {
     // the exponent at `int` and could give `#divByZero` at `0r`.
     let out = rejected("p(positional b) = b ^ -1;", "\"${p(2r)}\"");
     assert!(
-        out.contains("`p` takes (T) -> T for T in int | f32 | f64"),
+        out.contains("`p` takes T -> T for T in int | f32 | f64"),
         "{out}"
     );
 }

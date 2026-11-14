@@ -82,7 +82,7 @@ fn checking_and_ordering_nested_functions_scales() {
             });
             let want = (
                 Some("int".to_string()),
-                Some("(T) -> T for T in int | f32 | f64 | rat".to_string()),
+                Some("T -> T for T in int | f32 | f64 | rat".to_string()),
             );
             assert_eq!(found(&nested(100), 99), want);
         })

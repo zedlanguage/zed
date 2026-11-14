@@ -68,21 +68,21 @@ pub(super) fn writes_back(text: &str) {
 fn a_parameter_any_value_fits_is_printed_as_every_value() {
     // The finding: `(T) -> int` was printed, and `T` is no type a program can write.
     let shown = declared("h(positional p) = p[0] + int(1);\nm(positional n: int) = h(\"a\");\n");
-    assert_eq!(shown, "(_) -> int");
+    assert_eq!(shown, "_ -> int");
     writes_back(&shown);
     // The variable is still the signature's own, which each call binds: the need of `p[0]` is
     // checked again at the call.
     let s = sig("h(positional p) = p[0] + int(1);\n", "h");
     assert_eq!(s.own.len(), 1);
     assert_eq!(s.needs.len(), 1);
-    assert_eq!(s.to_string(), "(_) -> int");
+    assert_eq!(s.to_string(), "_ -> int");
 }
 
 #[test]
 fn a_variable_only_in_the_result_is_printed_as_every_value() {
     // `fn(1)` gives what the call binds: a variable of the result alone.
     let shown = declared("n(positional fn) = fn(1);\nm(positional k: int) = n(k);\n");
-    assert_eq!(shown, "(_) -> _");
+    assert_eq!(shown, "_ -> _");
     writes_back(&shown);
     let s = sig("first(p) = p[0];\n", "first");
     assert_eq!(s.to_string(), "(p: _) -> _");
@@ -130,7 +130,7 @@ fn a_bound_that_takes_other_values_is_printed_as_every_value() {
     // bounds clause can write, and the variable is `_`.
     let src = "lt(positional x) = x < (1, 2);\nmain() = lt((3, 4));\n";
     let s = sig(src, "lt");
-    assert_eq!(s.to_string(), "(_) -> bool");
+    assert_eq!(s.to_string(), "_ -> bool");
     assert_eq!(s.bounds.len(), 1, "the bound is still the signature's");
     writes_back(&s.to_string());
 }
@@ -145,7 +145,7 @@ fn a_bounded_variable_inside_a_function_parameter_is_printed_in_its_own_clause()
     let s = sig(src, "ap");
     assert_eq!(
         s.to_string(),
-        "(((T) -> T for T in int | rat), U, U) -> U for U in int | f32 | f64 | rat"
+        "(T -> T for T in int | rat, U, U) -> U for U in int | f32 | f64 | rat"
     );
     writes_back(&s.to_string());
     // A higher-order parameter that is called: its type is `_`, and so is the call's result.
@@ -170,13 +170,13 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
     // only from a type built of two signatures; the resolver rejects `T` bounded twice, so the
     // printer renames the inner one.
     let text = shadowing("(T) -> T for T in int").to_string();
-    assert_eq!(text, "(((U) -> U for U in int), T) -> T for T in int | rat");
+    assert_eq!(text, "(U -> U for U in int, T) -> T for T in int | rat");
     writes_back(&text);
     // A fresh name avoids the inner signature's other names too: `U` is its own already.
     let text = shadowing("(T, U) -> (T, U) for T in int, U in rat").to_string();
     assert_eq!(
         text,
-        "(((V, U) -> (V, U) for V in int, U in rat), T) -> T for T in int | rat"
+        "((V, U) -> (V, U) for V in int, U in rat, T) -> T for T in int | rat"
     );
     writes_back(&text);
     // An inner signature's own variable that no carriers bound, standing twice, is named apart
@@ -190,7 +190,7 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
     let mut s = shadowing("(int) -> int");
     s.arrows[0].params[0] = Ty::func(Arc::new(inner));
     let text = s.to_string();
-    assert_eq!(text, "((U) -> U, T) -> T for T in int | rat");
+    assert_eq!(text, "(U -> U, T) -> T for T in int | rat");
     writes_back(&text);
 }
 
@@ -259,7 +259,7 @@ fn printing_signatures_of_many_variables() {
     let text = nested(4).to_string();
     assert_eq!(
         text,
-        "(((((((W) -> W for W in int), V) -> V for V in int | rat), U) -> U for U in int | rat), T) -> T for T in int | rat"
+        "(((W -> W for W in int, V) -> V for V in int | rat, U) -> U for U in int | rat, T) -> T for T in int | rat"
     );
     writes_back(&text);
     for depth in [1, 2, 4] {
@@ -308,7 +308,7 @@ fn every_value_in_a_union_absorbs_the_other_members() {
     writes_back(&s.to_string());
     // Written, `int | f64 | _` is read as a union with a variable that stands once.
     let t = parse_type("(int | f64 | _) -> int").unwrap();
-    assert_eq!(t.to_string(), "(_) -> int");
+    assert_eq!(t.to_string(), "_ -> int");
     // A variable that stands twice is no `_`, and absorbs nothing.
     let t = parse_type("(T, int | f64 | T) -> T").unwrap();
     assert_eq!(t.to_string(), "(T, int | f64 | T) -> T");
@@ -325,7 +325,7 @@ fn the_names_skip_a_name_the_program_binds() {
     assert_eq!(shown, "(_, T) -> (T, T)");
     // A lambda's parameter named `T` is bound by the file too.
     let shown = declared("g(positional a) = (T) -> (b) -> (c) -> a;\nm = g + 1;\n");
-    assert_eq!(shown, "(U) -> (_) -> (_) -> (_) -> U");
+    assert_eq!(shown, "U -> _ -> _ -> _ -> U");
     // A signature printed outside a message has no program around it, so its names start at
     // `T` whatever the file binds.
     assert_eq!(sig(src, "h").to_string(), "(_, T) -> (T, T)");

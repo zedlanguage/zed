@@ -307,7 +307,7 @@ fn literals_of_equal_residues_are_different_types() {
             ),
             "c"
         ),
-        format!("(bool) -> 1r | {two_61}r")
+        format!("bool -> 1r | {two_61}r")
     );
 }
 

@@ -56,12 +56,12 @@ fn a_program_that_binds_t_and_u_sees_its_variable_named_v() {
     // …`, and a reader of `T` here could not tell the variable from the program's `T`.
     let defs = "T = 1;\nU = 2;\n";
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
-    assert_eq!(shown, "(V) -> V for V in int | f32 | f64 | rat");
+    assert_eq!(shown, "V -> V for V in int | f32 | f64 | rat");
     assert_eq!(bound_names(&shown), ["V".into()] as [Arc<str>; 1]);
     writes_back_beside(defs, &shown);
     // The same function in a program that binds neither keeps the first name.
     let shown = compared("inc = x -> x + 1;\nsame = inc == inc;\n");
-    assert_eq!(shown, "(T) -> T for T in int | f32 | f64 | rat");
+    assert_eq!(shown, "T -> T for T in int | f32 | f64 | rat");
     writes_back_beside("", &shown);
 }
 
@@ -70,13 +70,11 @@ fn every_derivation_step_of_the_message_uses_the_same_free_name() {
     let out =
         rejected("T = 1;\nU = 2;\ninc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert!(
-        out.contains("`inc` is (V) -> V for V in int | f32 | f64 | rat here"),
+        out.contains("`inc` is V -> V for V in int | f32 | f64 | rat here"),
         "{out}"
     );
     assert!(
-        out.contains(
-            "`inc` is defined as this expression, (V) -> V for V in int | f32 | f64 | rat"
-        ),
+        out.contains("`inc` is defined as this expression, V -> V for V in int | f32 | f64 | rat"),
         "{out}"
     );
     // No step names a variable `T` or `U`: each `T` or `U` of the message is the program's.
@@ -91,7 +89,7 @@ fn the_names_after_w_are_skipped_too() {
     // `T`, `U`, `V`, `W` and `T5` are the program's; the next free name is `T6`.
     let defs = "T = 1;\nU = 2;\nV = 3;\nW = 4;\nT5 = 5;\n";
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
-    assert_eq!(shown, "(T6) -> T6 for T6 in int | f32 | f64 | rat");
+    assert_eq!(shown, "T6 -> T6 for T6 in int | f32 | f64 | rat");
     writes_back_beside(defs, &shown);
 }
 
@@ -138,31 +136,31 @@ fn the_printer_renames_an_inner_signature_apart_from_the_program_names() {
     let s = shadowing("(T) -> T for T in int");
     assert_eq!(
         s.to_string(),
-        "(((U) -> U for U in int), T) -> T for T in int | rat"
+        "(U -> U for U in int, T) -> T for T in int | rat"
     );
     {
         // While a program that binds `U` and `V` is checked, the inner `T` takes `W`.
         let _names = ProgramNames::hold(["U", "V", "x"]);
         assert_eq!(
             s.to_string(),
-            "(((W) -> W for W in int), T) -> T for T in int | rat"
+            "(W -> W for W in int, T) -> T for T in int | rat"
         );
         {
             // A check started inside it holds its own names, and gives the outer ones back.
             let _inner = ProgramNames::hold(["U"]);
             assert_eq!(
                 s.to_string(),
-                "(((V) -> V for V in int), T) -> T for T in int | rat"
+                "(V -> V for V in int, T) -> T for T in int | rat"
             );
         }
         assert_eq!(
             s.to_string(),
-            "(((W) -> W for W in int), T) -> T for T in int | rat"
+            "(W -> W for W in int, T) -> T for T in int | rat"
         );
     }
     assert_eq!(
         s.to_string(),
-        "(((U) -> U for U in int), T) -> T for T in int | rat"
+        "(U -> U for U in int, T) -> T for T in int | rat"
     );
 }
 
@@ -182,10 +180,7 @@ pub(super) fn crowded(n: usize) -> String {
 /// The type the comparison of [`crowded`]`(n)` shows: its variable named past the `n + 4`
 /// names the program binds.
 pub(super) fn first(n: usize) -> String {
-    format!(
-        "(T{m}) -> T{m} for T{m} in int | f32 | f64 | rat",
-        m = n + 5
-    )
+    format!("T{m} -> T{m} for T{m} in int | f32 | f64 | rat", m = n + 5)
 }
 
 /// The rejection of [`crowded`]`(n)` names each function's variable past the program's names.

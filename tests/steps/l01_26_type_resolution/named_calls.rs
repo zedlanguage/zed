@@ -122,7 +122,7 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
         ),
         (
             "inc = x -> x + 1;\ny = inc(x: 3);",
-            vec![positional("x", "(T) -> T for T in int | f32 | f64 | rat", "3")],
+            vec![positional("x", "T -> T for T in int | f32 | f64 | rat", "3")],
         ),
         (
             "k = sub;\ny = k(a: 1);",

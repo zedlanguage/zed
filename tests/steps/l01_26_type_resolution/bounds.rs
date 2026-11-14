@@ -253,14 +253,14 @@ fn a_printed_bounded_type_reads_back() {
     // The printer writes a function type in parentheses only where the grammar needs them
     // (DESIGN.md sec:grammar); what it writes reads back to the same type.
     for (text, want) in [
-        ("(T) -> T for T in int | f64", "(T) -> T for T in int | f64"),
+        ("(T) -> T for T in int | f64", "T -> T for T in int | f64"),
         (
             "(T, U) -> T for T in int, U in String | bool",
             "(T, U) -> T for T in int, U in bool | String",
         ),
         (
             "((T) -> T for T in rat) -> int",
-            "((T) -> T for T in rat) -> int",
+            "(T -> T for T in rat) -> int",
         ),
     ] {
         let first = parse_type(text).unwrap_or_else(|e| panic!("{e}"));
@@ -1050,7 +1050,7 @@ fn a_deep_function_type_prints() {
         .expect("h");
     assert_eq!(
         s.to_string(),
-        "(g: (((T0) -> T0 for T0 in int) -> T1 for T1 in f64) -> T2 for T2 in f64) -> 0"
+        "(g: ((T0 -> T0 for T0 in int) -> T1 for T1 in f64) -> T2 for T2 in f64) -> 0"
     );
 }
 

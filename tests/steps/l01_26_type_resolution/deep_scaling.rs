@@ -72,7 +72,7 @@ pub(super) fn nested_around(n: usize) -> String {
 fn a_variable_nested_in_tuples_is_kept_in_its_result() {
     // A small instance of the benchmark
     // `bench::deep_scaling::a_variable_nested_in_tuples_checks_in_linear_time`.
-    assert_eq!(sig(&nested_around(2), "f"), "(T) -> ((T, 1), 1)");
+    assert_eq!(sig(&nested_around(2), "f"), "T -> ((T, 1), 1)");
     let info = super::info(&nested_around(SMALL)).0;
     assert!(info.errors.is_empty(), "{:?}", info.errors);
 }
@@ -181,11 +181,11 @@ fn curried_refusal(d: usize, uses: usize, at: usize, last: &str) -> String {
 fn curried_refusal_message(d: usize, uses: usize, at: usize, result: &str) -> String {
     let given = (0..d).fold(result.to_string(), |r, i| {
         let p = if d - 1 - i == uses { "int" } else { "_" };
-        format!("({p}) -> {r}")
+        format!("{p} -> {r}")
     });
     let expected = (0..d).fold("(int, int)".to_string(), |r, i| {
         let p = if d - 1 - i == at { "String" } else { "int" };
-        format!("({p}) -> {r}")
+        format!("{p} -> {r}")
     });
     format!(
         "`g` is `{given}`, not `{expected}`: it is passed where a function of that type is \

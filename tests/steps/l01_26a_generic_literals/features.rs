@@ -53,12 +53,12 @@ fn a_literal_beside_an_operation_that_may_give_an_atom_keeps_the_atom() {
     assert!(!type_errors("f(x: int) = x div 0;\n").is_empty());
     // An `if` branch that is an atom beside a literal: the union of both.
     let src = "f(positional c: bool) = if c { 1 } else { #none };\na = f(false);\n";
-    assert_eq!(sig(src, "f"), "(bool) -> 1 | #none");
+    assert_eq!(sig(src, "f"), "bool -> 1 | #none");
     values(src, &[("a", "#none")]);
     // An atom operand gives the atom whatever the literal.
     assert_eq!(
         sig("f(positional x) = x + #none;\n", "f"),
-        "(T) -> #none for T in int | f32 | f64 | rat"
+        "T -> #none for T in int | f32 | f64 | rat"
     );
 }
 
@@ -231,11 +231,11 @@ fn an_operator_that_takes_no_number_rejects_a_literal() {
 fn a_literal_branch_beside_a_branch_of_another_type_keeps_both() {
     let g = "g(positional c: bool) = ";
     for (body, want) in [
-        ("if c { 1 } else { \"s\" }", "(bool) -> 1 | \"s\""),
-        ("if c { 1 } else { true }", "(bool) -> 1 | true"),
-        ("if c { -1 } else { 0x10 }", "(bool) -> -1 | 16"),
-        ("if c { 1.50 } else { 1e2 }", "(bool) -> 1.5 | 100.0"),
-        ("if c { 1 } else { 1 }", "(bool) -> 1"),
+        ("if c { 1 } else { \"s\" }", "bool -> 1 | \"s\""),
+        ("if c { 1 } else { true }", "bool -> 1 | true"),
+        ("if c { -1 } else { 0x10 }", "bool -> -1 | 16"),
+        ("if c { 1.50 } else { 1e2 }", "bool -> 1.5 | 100.0"),
+        ("if c { 1 } else { 1 }", "bool -> 1"),
     ] {
         assert_eq!(sig(&format!("{g}{body};\n"), "g"), want, "{body}");
     }
@@ -276,7 +276,7 @@ fn a_power_takes_the_integer_or_the_float_power_by_its_operands() {
     // `#divByZero`; `-x^2` is `-(x^2)`; `^` is right-associative; an int power with a
     // negative exponent is rejected.
     let src = "f(positional x: rat) = x ^ 2;\na = f(3r/2r);\n";
-    assert_eq!(sig(src, "f"), "(rat) -> rat");
+    assert_eq!(sig(src, "f"), "rat -> rat");
     values(src, &[("a", "9r/4r")]);
     values(
         "a = (2r/3r)^-2;\nb = -2^2;\nc = 2^3^2;\nd = 0r^-1;\n",
@@ -293,10 +293,10 @@ fn a_power_takes_the_integer_or_the_float_power_by_its_operands() {
     // the floats; `x ^ 2.0` the float power alone.
     assert_eq!(
         sig("f(positional x) = x ^ 2;\n", "f"),
-        "(T) -> T for T in int | f32 | f64"
+        "T -> T for T in int | f32 | f64"
     );
     let src = "f(positional x) = x ^ 2.0;\na = f(1.5f64);\n";
-    assert_eq!(sig(src, "f"), "(T) -> T for T in f32 | f64");
+    assert_eq!(sig(src, "f"), "T -> T for T in f32 | f64");
     values(src, &[("a", "2.25")]);
     assert_eq!(
         sig("f(positional x, positional k: int) = x ^ k;\n", "f"),

@@ -257,7 +257,7 @@ fn a_parameter_met_with_a_tuple_takes_the_tuples_each_call_gives() {
     );
     // The result is a variable a call binds to the join of the two operands, which the
     // unknown `_` shows; `(1, 2) | _` is the same set.
-    assert_eq!(sig(g, "g"), "(_) -> _");
+    assert_eq!(sig(g, "g"), "_ -> _");
 }
 
 #[test]
@@ -355,7 +355,7 @@ fn a_call_joins_the_result_of_min_as_min_joins_it() {
     let chain = "g0(positional a) = min(a, (0, 0));\n\
                  g1(positional a) = g0(min(a, (1, 0)));\n\
                  g2(positional a) = g1(min(a, (2, 0)));\n";
-    assert_eq!(sig(chain, "g2"), "(_) -> _");
+    assert_eq!(sig(chain, "g2"), "_ -> _");
     assert_eq!(
         sig(&format!("{chain}h() = g2((5, 9));\n"), "h"),
         "() -> (int, int)"
@@ -389,10 +389,10 @@ fn branches_of_an_if_stay_a_union_through_a_call() {
     // Rule 3 of sec:type_resolution: branch types union, and a call keeps them apart; only
     // the result of `min` or `max` is joined.
     let p = "p(positional c) = if c { (0, 5) } else { (1, 2) };\n";
-    assert_eq!(sig(p, "p"), "(bool) -> (0, 5) | (1, 2)");
+    assert_eq!(sig(p, "p"), "bool -> (0, 5) | (1, 2)");
     assert_eq!(
         sig(&format!("{p}h(positional c) = p(c);\n"), "h"),
-        "(bool) -> (0, 5) | (1, 2)"
+        "bool -> (0, 5) | (1, 2)"
     );
     let g = "g(positional a) = min(a, (1, 2));\n";
     assert_eq!(
@@ -400,12 +400,12 @@ fn branches_of_an_if_stay_a_union_through_a_call() {
             &format!("{g}h(positional c) = if c {{ g((0, 5)) }} else {{ (7, 7) }};\n"),
             "h"
         ),
-        "(bool) -> (int, int) | (7, 7)"
+        "bool -> (int, int) | (7, 7)"
     );
     // An argument that is a union of branches is joined only where `min` takes it.
     assert_eq!(
         sig(&format!("{g}{p}h(positional c) = (p(c), g(p(c)));\n"), "h"),
-        "(bool) -> ((0, 5) | (1, 2), (0 | 1, 2 | 5))"
+        "bool -> ((0, 5) | (1, 2), (0 | 1, 2 | 5))"
     );
 }
 

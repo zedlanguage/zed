@@ -107,15 +107,12 @@ fn min_and_max_take_two_numbers_of_one_kind() {
     );
     assert_eq!(
         sig("f(positional a: f64) = min(a, 0.0);\n", "f"),
-        "(f64) -> f64"
+        "f64 -> f64"
     );
-    assert_eq!(
-        sig("f(positional a: int) = a.max(0);\n", "f"),
-        "(int) -> int"
-    );
+    assert_eq!(sig("f(positional a: int) = a.max(0);\n", "f"), "int -> int");
     assert_eq!(
         sig("f(positional a: rat) = max(a, 0r);\n", "f"),
-        "(rat) -> rat"
+        "rat -> rat"
     );
     assert_eq!(
         errors("x = min(\"a\", \"b\");\n"),

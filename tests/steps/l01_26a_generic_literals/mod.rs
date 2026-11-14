@@ -283,11 +283,11 @@ fn a_literal_survives_an_if() {
     // ascending by value (DESIGN.md sec:diagnostics), whatever order the branches are in.
     assert_eq!(
         sig("g(positional c: bool) = if c { 2 } else { 1 };\n", "g"),
-        "(bool) -> 1 | 2"
+        "bool -> 1 | 2"
     );
     assert_eq!(
         sig("g(positional c: bool) = if c { 1 } else { 2.5 };\n", "g"),
-        "(bool) -> 1 | 2.5"
+        "bool -> 1 | 2.5"
     );
     assert_eq!(
         sig(
@@ -307,7 +307,7 @@ fn literal_branches_take_int_where_the_result_is_used_at_int() {
                f(positional c: bool) = h(g(c));\n\
                a = f(true);\nb = f(false);\nc = h(if true { 2 } else { 1 });\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(bool) -> int");
+    assert_eq!(sig(src, "f"), "bool -> int");
     assert_eq!(value(src, "a"), "2");
     assert_eq!(value(src, "b"), "1");
     assert_eq!(value(src, "c"), "2");
@@ -327,7 +327,7 @@ fn literal_branches_take_f64_where_the_result_is_used_at_f64() {
                f(positional c: bool) = h(g(c));\n\
                a = f(true);\nb = f(false);\nc = h(if true { 2 } else { 1 });\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(bool) -> f64");
+    assert_eq!(sig(src, "f"), "bool -> f64");
     assert_eq!(value(src, "a"), "2.0");
     assert_eq!(value(src, "b"), "1.0");
     assert_eq!(value(src, "c"), "2.0");
@@ -342,7 +342,7 @@ fn an_operation_on_literals_keeps_its_value_in_an_if() {
     // The order zedc prints today, `int` values before `f64` ones. The author's answer B to
     // A92 (2026-11-11) puts numeric literals ascending, `1.5 | 2`; ledger item LIT-print-order
     // changes the printer and this pin with it.
-    assert_eq!(sig(src, "g"), "(bool) -> 1.5 | 2");
+    assert_eq!(sig(src, "g"), "bool -> 1.5 | 2");
 }
 
 #[test]

@@ -62,7 +62,7 @@ fn a_lambda_bound_to_a_name_is_generic_over_the_carriers_its_literal_takes() {
             .get("half")
             .map(ToString::to_string)
             .as_deref(),
-        Some("(T) -> T for T in f32 | f64 | rat")
+        Some("T -> T for T in f32 | f64 | rat")
     );
     // Passed twice through a higher-order function, the literal takes `rat` each time.
     values(
@@ -103,7 +103,7 @@ fn an_integer_literal_bound_to_a_local_name_alone_is_an_int() {
     // DESIGN.md L1.26a: an integer literal bound to a name alone, `y = 1`, is an `int`, so
     // `x + k` fixes `x` to `int` and a call at `f64` is rejected.
     let src = "f(positional x) = { k = 1; x + k };\na = f(2);\n";
-    assert_eq!(sig(src, "f"), "(int) -> int");
+    assert_eq!(sig(src, "f"), "int -> int");
     values(src, &[("a", "3")]);
     assert!(
         !type_errors("f(positional x) = { k = 1; x + k };\na = f(2.5f64);\n").is_empty(),
@@ -150,7 +150,7 @@ fn a_literal_in_a_string_hole_takes_a_carrier_as_it_would_alone() {
     );
     assert_eq!(
         sig("f(positional x) = \"${x + 1}\";\n", "f"),
-        "(T) -> String for T in int | f32 | f64 | rat"
+        "T -> String for T in int | f32 | f64 | rat"
     );
 }
 

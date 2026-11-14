@@ -55,7 +55,7 @@ fn printed_by(text: &str) -> (Vec<(Ty, String)>, String) {
 /// whether its keys are one integer interval are not written in a type. The payloads of atoms
 /// are (L29-print). A type variable is written only with a bound of carriers: one that no
 /// signature around it bounds so, or whose bound holds other values, is `_` (DESIGN.md L1.26).
-fn stated(t: &Ty) -> Ty {
+pub(super) fn stated(t: &Ty) -> Ty {
     stated_in(t, Arc::default())
 }
 
@@ -405,12 +405,12 @@ fn a_bound_clause_reads_back_onto_its_signature() {
     let mask = Carrier::Int.bit() | Carrier::F64.bit() | Carrier::Rat.bit();
     assert_eq!(t.fns.len(), 1);
     assert_eq!(t.fns[0].bounds, [("T".into(), mask)].into());
-    // A signature bounded inside a tuple, before a comma: parenthesized, so the clause ends
-    // where a reader sees it end.
+    // A signature bounded inside a tuple, before a comma, needs no parentheses: the clause
+    // ends at the comma, since what follows it is no `Name in` bound.
     let t = back("(((T) -> T for T in int | rat), int)");
     assert_eq!(t.tuples[0][0].fns[0].bounds.len(), 1);
     let shown = t.to_string();
-    assert_eq!(shown, "(((T) -> T for T in int | rat), int)");
+    assert_eq!(shown, "(T -> T for T in int | rat, int)");
     assert_eq!(mismatch(&t, &shown), None, "{shown}");
 }
 
@@ -441,7 +441,7 @@ fn an_intersection_of_function_types_reads_back_as_one_overload() {
     );
     // One variable may stand in several arrows: they are one function's, which a call binds,
     // as the checker prints a generic function that takes its parameter's atoms.
-    let text = "((T) -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
+    let text = "(T -> \"big\" | \"small\") & (T | #_ -> \"big\" | \"small\" | #_) \
                 for T in int | f64 | rat";
     let r = back(text);
     assert_eq!(r.fns.len(), 1);
@@ -549,9 +549,9 @@ fn arrows_that_bound_one_variable_bound_it_alike() {
 #[test]
 fn the_names_of_positional_parameters_are_not_compared() {
     let t = back("((positional x: int) -> int) & ((positional y: f64) -> f64)");
-    assert_eq!(t.fns[0].to_string(), "((int) -> int) & ((f64) -> f64)");
+    assert_eq!(t.fns[0].to_string(), "(int -> int) & (f64 -> f64)");
     let t = back("((positional x: int) -> int) & ((int) -> f64)");
-    assert_eq!(t.fns[0].to_string(), "((int) -> int) & ((int) -> f64)");
+    assert_eq!(t.fns[0].to_string(), "(int -> int) & (int -> f64)");
 }
 
 #[test]
@@ -681,13 +681,13 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
     for (text, shown) in [
         ("String ->? int", "String ->? int"),
         ("(String) -> int | #notFound", "String ->? int"),
-        ("(String) -> #notFound", "(String) -> #notFound"),
+        ("(String) -> #notFound", "String -> #notFound"),
         ("(String ->? int) | int", "int | (String ->? int)"),
         ("(String ->? int, int)", "(String ->? int, int)"),
         ("int ->? (String ->? int)", "int ->? String ->? int"),
         ("(int ->? int) ->? int", "(int ->? int) ->? int"),
         ("((int, int)) ->? int", "((int, int)) ->? int"),
-        ("((int) -> int) ->? int", "((int) -> int) ->? int"),
+        ("((int) -> int) ->? int", "(int -> int) ->? int"),
         (
             "(k: String) -> int | #notFound",
             "(k: String) -> int | #notFound",
@@ -695,7 +695,7 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
         ("T ->? T for T in int | f64", "T ->? T for T in int | f64"),
         ("int .. int | String -> bool", "int .. int | String -> bool"),
         ("#a .. #a | #b -> int", "#a .. #a | #b -> int"),
-        ("int .. int -> bool", "(int) -> bool"),
+        ("int .. int -> bool", "int -> bool"),
         ("Never .. int -> bool", "int ->? bool"),
         (
             "((int) -> bool) & ((int | String) -> bool | #notFound)",
@@ -703,7 +703,7 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
         ),
         (
             "((int) -> bool) & ((String) -> bool | #notFound)",
-            "((int) -> bool) & ((String) -> bool | #notFound)",
+            "(int -> bool) & (String -> bool | #notFound)",
         ),
         (
             "(int .. int | String -> bool, int)",
@@ -728,73 +728,74 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
 
 /// A function type is printed with the parentheses the grammar needs and no others (DESIGN.md
 /// sec:grammar): bare where a whole type stands, as a tuple component, a parameter, a payload
-/// and an arrow's result; parenthesized as an operand of `|` and `&` and as the key of `->?`,
-/// and as a result when it has a bounds clause. Each text reads back to the type printed.
+/// and an arrow's result; parenthesized as an operand of `|` and `&`, as the key of `->` and
+/// `->?`, and as a result when it has a bounds clause. A single positional parameter is written
+/// bare, `int -> int`. Each text reads back to the type printed.
 #[test]
 fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
     for (text, shown) in [
         // In a tuple.
-        ("(((int) -> int), String)", "((int) -> int, String)"),
-        ("(((int) -> int),)", "((int) -> int,)"),
+        ("(((int) -> int), String)", "(int -> int, String)"),
+        ("(((int) -> int),)", "(int -> int,)"),
         // In a union, alone and inside a tuple.
-        ("((int) -> int) | String", "String | ((int) -> int)"),
+        ("((int) -> int) | String", "String | (int -> int)"),
         (
             "((int) -> int) | ((String) -> String)",
-            "((int) -> int) | ((String) -> String)",
+            "(int -> int) | (String -> String)",
         ),
         (
             "(((int) -> int) | String, bool)",
-            "(String | ((int) -> int), bool)",
+            "(String | (int -> int), bool)",
         ),
         // As a result: `->` groups to the right.
-        ("(int) -> ((String) -> bool)", "(int) -> (String) -> bool"),
-        ("((int) -> (String) -> bool)", "(int) -> (String) -> bool"),
+        ("(int) -> ((String) -> bool)", "int -> String -> bool"),
+        ("((int) -> (String) -> bool)", "int -> String -> bool"),
         // As a parameter, alone, with another, and by name.
-        ("(((int) -> Never)) -> Never", "((int) -> Never) -> Never"),
+        ("(((int) -> Never)) -> Never", "(int -> Never) -> Never"),
         (
             "(((int) -> Never), int) -> Never",
-            "((int) -> Never, int) -> Never",
+            "(int -> Never, int) -> Never",
         ),
-        ("(f: ((int) -> int)) -> int", "(f: (int) -> int) -> int"),
+        ("(f: ((int) -> int)) -> int", "(f: int -> int) -> int"),
         // Nested functions, to the left and to the right.
         (
             "(((((int) -> int)) -> int)) -> int",
-            "(((int) -> int) -> int) -> int",
+            "((int -> int) -> int) -> int",
         ),
         (
             "(((int) -> int)) -> ((int) -> ((int) -> int))",
-            "((int) -> int) -> (int) -> (int) -> int",
+            "(int -> int) -> int -> int -> int",
         ),
         // A union inside a function's result, of plain types and with a function.
-        ("(int) -> (int | String)", "(int) -> int | String"),
+        ("(int) -> (int | String)", "int -> int | String"),
         (
             "(int) -> (((int) -> int) | String)",
-            "(int) -> String | ((int) -> int)",
+            "int -> String | (int -> int)",
         ),
         // A payload.
-        ("#a(((int) -> int))", "#a((int) -> int)"),
-        ("#a(f: ((int) -> int))", "#a(f: (int) -> int)"),
+        ("#a(((int) -> int))", "#a(int -> int)"),
+        ("#a(f: ((int) -> int))", "#a(f: int -> int)"),
         // An intersection of arrows: each arrow parenthesized, the whole bare where it stands.
         (
             "(((int) -> int) & ((String) -> String), bool)",
-            "(((int) -> int) & ((String) -> String), bool)",
+            "((int -> int) & (String -> String), bool)",
         ),
         (
             "(((int) -> int) & ((String) -> String)) | bool",
-            "bool | ((int) -> int) & ((String) -> String)",
+            "bool | (int -> int) & (String -> String)",
         ),
         // A bounds clause: bare where a whole type stands with no comma after it, parenthesized
         // as a result and before a comma.
         (
             "((T) -> T for T in int | f64, int)",
-            "(((T) -> T for T in int | f64), int)",
+            "(T -> T for T in int | f64, int)",
         ),
         (
             "(int) -> ((T) -> T for T in int | f64)",
-            "(int) -> ((T) -> T for T in int | f64)",
+            "int -> (T -> T for T in int | f64)",
         ),
         // The key of `->?`: a function and a tuple of other than one component parenthesized.
-        ("((int) -> int) ->? int", "((int) -> int) ->? int"),
+        ("((int) -> int) ->? int", "(int -> int) ->? int"),
         ("((int, int)) ->? int", "((int, int)) ->? int"),
         ("(int,) ->? int", "(int,) ->? int"),
         ("int ->? (int ->? int)", "int ->? int ->? int"),
@@ -805,16 +806,16 @@ fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
         ),
         (
             "(((int) -> int) | String) ->? int",
-            "String | ((int) -> int) ->? int",
+            "String | (int -> int) ->? int",
         ),
         // A bounds clause as the value of `->?`, and in a list of parameters before another.
         (
             "int ->? ((T) -> T for T in int | f64)",
-            "int ->? ((T) -> T for T in int | f64)",
+            "int ->? (T -> T for T in int | f64)",
         ),
         (
             "(((T) -> T for T in int | f64), int) -> int",
-            "(((T) -> T for T in int | f64), int) -> int",
+            "(T -> T for T in int | f64, int) -> int",
         ),
     ] {
         let t = back(text);
@@ -823,93 +824,92 @@ fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
     }
 }
 
-/// A function type with a bounds clause is parenthesized wherever a comma follows it: as a
-/// tuple component other than the last and as the one component of `(T,)`, as a parameter
-/// other than the last, positional or named, and as a payload other than the last. In `((T) ->
-/// T for T in int, int)` a reader cannot tell at the comma whether another bound, `U in f64`,
-/// follows; the grammar reads it only by looking past the next name. Where a closing
-/// parenthesis follows, the clause ends there and the text stays bare. Each text written either
-/// way reads back to the type printed, and the printed text prints itself again.
+/// A function type with a bounds clause needs no parentheses where a comma follows it: as a
+/// tuple component, the one component of `(T,)`, a parameter, positional or named, or a
+/// payload. After a comma a bounds clause goes on only with `Name in`, and no list item is a
+/// name followed by `in`, so the clause ends at the comma (DESIGN.md sec:grammar, `TypeBounds`).
+/// Each text written either way reads back to the type printed, and the printed text prints
+/// itself again.
 #[test]
-fn a_bounds_clause_before_a_comma_is_parenthesized() {
+fn a_bounds_clause_before_a_comma_needs_no_parentheses() {
     for (text, shown) in [
         // A tuple: first, only and last component, and two bounded components.
         (
             "((T) -> T for T in int | f64, int)",
-            "(((T) -> T for T in int | f64), int)",
+            "(T -> T for T in int | f64, int)",
         ),
         (
             "(((T) -> T for T in int | f64), int)",
-            "(((T) -> T for T in int | f64), int)",
+            "(T -> T for T in int | f64, int)",
         ),
         (
             "(((T) -> T for T in int | f64),)",
-            "(((T) -> T for T in int | f64),)",
+            "(T -> T for T in int | f64,)",
         ),
         (
             "(int, (T) -> T for T in int | f64)",
-            "(int, (T) -> T for T in int | f64)",
+            "(int, T -> T for T in int | f64)",
         ),
         (
             "(int, ((T) -> T for T in int | f64))",
-            "(int, (T) -> T for T in int | f64)",
+            "(int, T -> T for T in int | f64)",
         ),
         (
             "((T) -> T for T in int | f64, (U) -> U for U in String | bool)",
-            "(((T) -> T for T in int | f64), (U) -> U for U in bool | String)",
+            "(T -> T for T in int | f64, U -> U for U in bool | String)",
         ),
         // The same places with no bounds clause: no parentheses added.
-        ("((int) -> int, int)", "((int) -> int, int)"),
-        ("(((int) -> int),)", "((int) -> int,)"),
-        ("((int) -> int, int) -> int", "((int) -> int, int) -> int"),
-        ("#a((int) -> int, int)", "#a((int) -> int, int)"),
+        ("((int) -> int, int)", "(int -> int, int)"),
+        ("(((int) -> int),)", "(int -> int,)"),
+        ("((int) -> int, int) -> int", "(int -> int, int) -> int"),
+        ("#a((int) -> int, int)", "#a(int -> int, int)"),
         // Parameters: before another, last, alone, and by name.
         (
             "((T) -> T for T in int | f64, int) -> int",
-            "(((T) -> T for T in int | f64), int) -> int",
+            "(T -> T for T in int | f64, int) -> int",
         ),
         (
             "(int, (T) -> T for T in int | f64) -> int",
-            "(int, (T) -> T for T in int | f64) -> int",
+            "(int, T -> T for T in int | f64) -> int",
         ),
         (
             "(((T) -> T for T in int | f64)) -> int",
-            "((T) -> T for T in int | f64) -> int",
+            "(T -> T for T in int | f64) -> int",
         ),
         (
             "(f: (T) -> T for T in int | f64, n: int) -> int",
-            "(f: ((T) -> T for T in int | f64), n: int) -> int",
+            "(f: T -> T for T in int | f64, n: int) -> int",
         ),
         (
             "(n: int, f: (T) -> T for T in int | f64) -> int",
-            "(n: int, f: (T) -> T for T in int | f64) -> int",
+            "(n: int, f: T -> T for T in int | f64) -> int",
         ),
         // Payloads: positional and by name, before another and last.
         (
             "#a((T) -> T for T in int | f64, int)",
-            "#a(((T) -> T for T in int | f64), int)",
+            "#a(T -> T for T in int | f64, int)",
         ),
         (
             "#a(int, (T) -> T for T in int | f64)",
-            "#a(int, (T) -> T for T in int | f64)",
+            "#a(int, T -> T for T in int | f64)",
         ),
         (
             "#a(f: (T) -> T for T in int | f64, n: int)",
-            "#a(f: ((T) -> T for T in int | f64), n: int)",
+            "#a(f: T -> T for T in int | f64, n: int)",
         ),
         // Nested: a bounded function whose result is a bounded function, in a tuple, as a
         // parameter, and as the result of one in a tuple.
         (
             "((T) -> ((U) -> U for U in String | bool) for T in int | f64, int)",
-            "(((T) -> ((U) -> U for U in bool | String) for T in int | f64), int)",
+            "(T -> (U -> U for U in bool | String) for T in int | f64, int)",
         ),
         (
             "((T) -> ((U) -> U for U in String | bool) for T in int | f64, int) -> int",
-            "(((T) -> ((U) -> U for U in bool | String) for T in int | f64), int) -> int",
+            "(T -> (U -> U for U in bool | String) for T in int | f64, int) -> int",
         ),
         (
             "((int) -> ((T) -> T for T in int | f64, int), bool)",
-            "((int) -> (((T) -> T for T in int | f64), int), bool)",
+            "(int -> (T -> T for T in int | f64, int), bool)",
         ),
     ] {
         let t = back(text);
@@ -932,7 +932,7 @@ fn the_empty_type_prints_as_never_and_reads_back() {
     assert_eq!(union.to_string(), "int");
     let f = back("(int) -> Never");
     let shown = f.to_string();
-    assert_eq!(shown, "(int) -> Never");
+    assert_eq!(shown, "int -> Never");
     assert_eq!(mismatch(&f, &shown), None, "{shown}");
     assert_eq!(back(&shown), f);
 }
@@ -949,9 +949,9 @@ fn a_rejection_writes_the_empty_type_as_never() {
       2 | r = take(1);
         |     ^^^^^^^ [2]
         |          ^ [1]
-  [2] 2:5: `take` takes (Never) -> Never
+  [2] 2:5: `take` takes Never -> Never
   [3] 1:1: `take` is declared here with no type written for its result; the type the checker found \
-for `take` is `(Never) -> Never`
+for `take` is `Never -> Never`
       1 | take(positional x: Never) = x;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
     );
@@ -985,7 +985,7 @@ fn an_empty_product_prints_as_never_and_reads_back() {
     assert_eq!(union.to_string(), "bool");
     let f = back("(int) -> (Never, int)");
     let shown = f.to_string();
-    assert_eq!(shown, "(int) -> Never");
+    assert_eq!(shown, "int -> Never");
     assert_eq!(mismatch(&f, &shown), None, "{shown}");
     assert_eq!(back(&shown), f);
 }
@@ -1006,9 +1006,9 @@ fn a_rejection_writes_an_empty_product_as_never() {
         |           ^ [3]
   [2] 2:8: this literal, 1, is 1
   [3] 2:11: this literal, 2, is 2
-  [4] 2:5: `f` takes (Never) -> Never
+  [4] 2:5: `f` takes Never -> Never
   [5] 1:1: `f` is declared here with no type written for its result; the type the checker found for \
-`f` is `(Never) -> Never`
+`f` is `Never -> Never`
       1 | f(positional x: (Never, int)) = x;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]
         |                 ^^^^^^^^^^^^ [6]

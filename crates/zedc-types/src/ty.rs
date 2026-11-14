@@ -1388,25 +1388,22 @@ impl Shape {
         parts.push(Print::Text("#"));
         parts.push(Print::Text(name));
         parts.push(Print::Text("("));
-        let n = self.items.len() + self.fields.len();
         let mut first = true;
-        for (i, t) in self.items.iter().enumerate() {
+        for t in &self.items {
             between(parts, &mut first, ", ");
-            let at = PrintAt::item(i + 1 < n);
             // The family of an `#errs` is written bare, `#errs(#a | #b ->? #a | #b)`.
             match &t.fns[..] {
                 [s] if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
-                    parts.push(Print::Family(s, at));
+                    parts.push(Print::Family(s));
                 }
-                _ => parts.push(Print::Ty(t, at)),
+                _ => parts.push(Print::Ty(t, PrintAt::Any)),
             }
         }
-        for (i, (f, t)) in self.fields.iter().enumerate() {
+        for (f, t) in &self.fields {
             between(parts, &mut first, ", ");
             parts.push(Print::Text(f));
             parts.push(Print::Text(": "));
-            let at = PrintAt::item(self.items.len() + i + 1 < n);
-            parts.push(Print::Ty(t, at));
+            parts.push(Print::Ty(t, PrintAt::Any));
         }
         parts.push(Print::Text(")"));
     }
@@ -9412,6 +9409,14 @@ struct Scope {
     /// the program wrote, its bound, and whether a text has written it, so that the message can
     /// say where each one it writes is bound ([`Scope::given_text`]).
     given: BTreeMap<Arc<str>, (Arc<str>, u8, Cell<bool>)>,
+    /// The bounds the member signatures of the unions being written opened and left to the
+    /// end of their union ([`PrintAt::Member`]), innermost union last; [`Print::Closes`]
+    /// writes and closes each union's.
+    hoisted: Vec<Vec<(Arc<str>, u8)>>,
+    /// For each union being written that leaves a bounds clause to its end, innermost last,
+    /// the names the clauses inside it have written so far ([`Print::Opens`]): its own clause
+    /// bounds all of its members, so it may take none of them.
+    unions: Vec<HashSet<Arc<str>>>,
 }
 
 /// How a variable a signature binds is printed ([`Scope`]).
@@ -9453,7 +9458,7 @@ impl Scope {
     /// What a failed test leaves of an unbounded variable (`r else 0`, [`Narrow`]) is printed
     /// as that variable: it holds no value the variable does not, so `g(r) = r else 0` is
     /// `(r: T) -> 0 | T`.
-    fn open(&mut self, sig: &Sig) -> Vec<(Arc<str>, u8)> {
+    fn open(&mut self, sig: &Sig, hoisted: bool) -> Vec<(Arc<str>, u8)> {
         let mut out = Vec::new();
         for (v, &m) in &sig.bounds {
             if m & OTHER != 0 {
@@ -9461,13 +9466,22 @@ impl Scope {
                 self.names.entry(v.clone()).or_default().push(slot);
                 continue;
             }
-            let name = if self.printed.contains(v) {
+            // A clause left to the end of its union ([`PrintAt::Member`]) also bounds the
+            // members before its signature, so it skips each name a clause inside them wrote.
+            let printed = &self.printed;
+            let union = self.unions.last().filter(|_| hoisted);
+            let taken =
+                |name: &str| printed.contains(name) || union.is_some_and(|u| u.contains(name));
+            let name = if taken(v) {
                 fresh_name(Names::Variables, &mut self.fresh, |name| {
-                    self.printed.contains(name) || sig.bounds.contains_key(name)
+                    taken(name) || sig.bounds.contains_key(name)
                 })
             } else {
                 v.clone()
             };
+            if let Some(u) = self.unions.last_mut() {
+                u.insert(name.clone());
+            }
             self.printed.insert(name.clone());
             self.bound.insert(name.clone());
             self.names
@@ -9618,7 +9632,7 @@ impl Ty {
     }
 
     /// Its text, in type syntax, as its Display writes it, or as one operand of a union with
-    /// `union` (a function in it then parenthesized, as in `((int) -> int) | String`, since
+    /// `union` (a function in it then parenthesized, as in `(int -> int) | String`, since
     /// `->` binds looser than `|`), each literal value that `spell` spells written as the
     /// program wrote it, as a message prints a literal (DESIGN.md sec:diagnostics), and any
     /// other in canonical form.
@@ -9698,15 +9712,26 @@ impl Ty {
             + self.tuples.len()
             + self.fns.len()
             + usize::from(!self.vars.is_empty() || self.dynamic);
+        // A union standing where a whole `Type` stands writes the bounds clause of each member
+        // intersection of arrows once, after its last member: `TypeBounds` ends the `Type`
+        // (`Type = Arrow TypeFacet* TypeWhere? TypeBounds?`), so `rat | (T -> T) & (f64 -> _)
+        // for T in int | f64` reads as `rat | ((T -> T) & (f64 -> _) for T in int | f64)`, one
+        // pair fewer (P191). Elsewhere the clause would bound the arrow around the union.
+        let hoist = members >= 2 && at == PrintAt::Any;
+        let hoisting = hoist && self.fns.iter().any(|s| s.hoists());
+        if hoisting {
+            parts.push(Print::Opens);
+        }
         let at = match members {
             0 | 1 => at,
+            _ if hoist => PrintAt::Member,
             _ => PrintAt::Union,
         };
         let place = match at {
-            PrintAt::Any | PrintAt::Listed | PrintAt::Result => TextPlace::Any,
+            PrintAt::Any | PrintAt::Result => TextPlace::Any,
             PrintAt::Key => TextPlace::Key,
             PrintAt::Bound => TextPlace::Bound,
-            PrintAt::Union => TextPlace::Union,
+            PrintAt::Union | PrintAt::Member => TextPlace::Union,
         };
         // Each kernel set is written once the rest is, with the other kernel sets of the text
         // ([`write_parts`]); here its place is kept. A set split into two holes or more is
@@ -9745,13 +9770,9 @@ impl Ty {
             let wrap = at == PrintAt::Key && cs.len() != 1;
             parts.push(Print::Text(if wrap { "((" } else { "(" }));
             let mut one = true;
-            for (i, c) in cs.iter().enumerate() {
+            for c in cs.iter() {
                 between(parts, &mut one, ", ");
-                // The one component of `(T,)` is followed by a comma too.
-                parts.push(Print::Ty(
-                    c,
-                    PrintAt::item(i + 1 < cs.len() || cs.len() == 1),
-                ));
+                parts.push(Print::Ty(c, PrintAt::Any));
             }
             parts.push(Print::Text(match (cs.len() == 1, wrap) {
                 (true, _) => ",)",
@@ -9781,6 +9802,9 @@ impl Ty {
         }
         let others = members > usize::from(!self.vars.is_empty() || self.dynamic);
         parts.push(Print::End(self, others));
+        if hoisting {
+            parts.push(Print::Closes(self));
+        }
     }
 
     /// Writes its type variables to `out`, those printed by name in code-point order, with
@@ -10100,7 +10124,7 @@ enum Print<'a> {
     /// `#notFound`.
     Found(&'a Ty),
     /// A signature written as a family ([`Sig::family_parts`]), standing as a payload.
-    Family(&'a Sig, PrintAt),
+    Family(&'a Sig),
     /// The type variables of a type, with the kernel set `String` it holds, to be written
     /// among them ([`Ty::write_vars`]).
     Vars(&'a Ty, Option<(KType, TextPlace, bool)>),
@@ -10114,22 +10138,28 @@ enum Print<'a> {
     Sep,
     /// The bounds clause of a signature, which closes the variables it opened.
     Bounds(&'a Sig, Vec<(Arc<str>, u8)>),
+    /// The start of a union that leaves a bounds clause to its end ([`Scope::unions`]).
+    Opens,
+    /// One bounds clause for the member signatures of a union that left theirs to its end
+    /// ([`PrintAt::Member`]), which closes the variables they opened.
+    Closes(&'a Ty),
 }
 
 /// Where the text of a type stands, which decides the parentheses it needs to read back as one
-/// type (DESIGN.md sec:grammar, `Type`, `Arrow`, `TypeUnion`).
+/// type (DESIGN.md sec:grammar, `Type`, `Arrow`, `TypeUnion`). A text is parenthesized exactly
+/// where the grammar needs it (author P191): where the rule that produces it is not reachable
+/// from the rule the place expects through `~` alternatives alone, or where PEG ordered choice
+/// would read it otherwise. tests/steps/l01_29_repairs_and_printing/parens.rs checks both, the kernel's
+/// places against the grammar's rules and the printed text by deleting each pair in turn.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PrintAt {
-    /// Where a whole `Type` stands and no comma follows: the last component of a tuple of two
-    /// or more, the last parameter, the last payload, the top.
+    /// Where a whole `Type` stands: the top, a component of a tuple, a parameter, a payload.
+    /// A function with a bounds clause needs no pair before a comma, `(T -> T for T in int,
+    /// int)`: `TypeBounds = 'for' (Name 'in' TypeUnion) % ','` gives back a comma that no
+    /// `Name 'in'` follows.
     Any,
-    /// Where a whole `Type` stands followed by a comma: a component of a tuple other than the
-    /// last, and the one component of `(T,)`, a parameter or a payload other than the last. A
-    /// function with a bounds clause is parenthesized, `(((T) -> T for T in int), int)`, since
-    /// in `((T) -> T for T in int, int)` only the token after the comma tells that it does not
-    /// begin another bound, `U in f64`.
-    Listed,
-    /// An arrow's result, an `Arrow`: a function with a bounds clause is parenthesized.
+    /// An arrow's result, an `Arrow`: a function with a bounds clause is parenthesized, since
+    /// its clause would bound the variables of the arrow around it.
     Result,
     /// The key of `K -> V` or `K ->? V`, a `TypeUnion`: a function is parenthesized, and so is a
     /// tuple of other than one component, which would read as the parameters.
@@ -10138,17 +10168,10 @@ enum PrintAt {
     Bound,
     /// An operand of `|`: a function is parenthesized.
     Union,
-}
-
-impl PrintAt {
-    /// Where an item of a comma-separated list stands: [`PrintAt::Listed`] if a comma follows
-    /// it, [`PrintAt::Any`] if the list's closing bracket does.
-    fn item(comma: bool) -> PrintAt {
-        match comma {
-            true => PrintAt::Listed,
-            false => PrintAt::Any,
-        }
-    }
+    /// An operand of `|` in a union that stands where a whole `Type` stands: as at
+    /// [`PrintAt::Union`], but an intersection of arrows leaves its bounds clause to the end
+    /// of the union ([`Sig::hoists`], [`Print::Closes`]) and needs no pair.
+    Member,
 }
 
 /// A signature written as a morphism type ([`Sig::morphism`]).
@@ -10289,7 +10312,7 @@ fn walk_parts<'a>(
                 }
             }
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
-            Print::Family(s, at) => s.family_parts(scope, &mut stack, at),
+            Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, string) => t.write_vars(string, out, scope, walk, &mut kernel),
             Print::End(t, others) => t.write_end(others, out, scope, walk),
             Print::Set(set, place, apart) => {
@@ -10307,6 +10330,33 @@ fn walk_parts<'a>(
                 }
                 scope.close(s);
             }
+            Print::Closes(t) => {
+                let sigs = t.fns.iter().filter(|s| s.hoists());
+                let own = scope.hoisted.len() - sigs.clone().count();
+                let mut first = true;
+                for (v, m) in scope.hoisted.drain(own..).flatten() {
+                    out.push_str(if first { " for " } else { ", " });
+                    first = false;
+                    out.push_str(&v);
+                    out.push_str(" in ");
+                    out.push_str(&mask_text(m));
+                }
+                for s in sigs.rev() {
+                    scope.close(s);
+                }
+                // The names written inside this union are inside the union around it too.
+                // Complexity tradeoff: naive, each name added to every open union, O(n·d) for
+                // n names under d nested unions; used, the smaller set merged into the larger
+                // when a union ends, so each name moves O(log n) times, O(n log n) in all.
+                let mut names = scope.unions.pop().expect("opened by Print::Opens");
+                if let Some(u) = scope.unions.last_mut() {
+                    if u.len() < names.len() {
+                        std::mem::swap(u, &mut names);
+                    }
+                    u.extend(names);
+                }
+            }
+            Print::Opens => scope.unions.push(HashSet::new()),
         }
         stack[from..].reverse();
     }
@@ -10359,17 +10409,20 @@ impl Sig {
 
     /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order. It
     /// stands at `at`: a text with a bounds clause is parenthesized anywhere but where a whole
-    /// type stands with no comma after it, and an arrow also as a key, a bound or an operand of
-    /// `|`; an intersection of arrows, each parenthesized, binds tighter than `|` and needs
-    /// nothing more.
+    /// type stands, and an arrow also as a key, a bound or an operand of `|`; an intersection
+    /// of arrows, each parenthesized, binds tighter than `|` and needs nothing more.
     fn parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>, at: PrintAt) {
-        let bounds = scope.open(self);
         let morphism = self.morphism();
         let several = morphism.is_none() && self.arrows.len() != 1;
+        let hoisted = at == PrintAt::Member && several;
+        let bounds = scope.open(self, hoisted);
         let wrap = match at {
             PrintAt::Any => false,
-            PrintAt::Listed | PrintAt::Result => !bounds.is_empty(),
-            PrintAt::Key | PrintAt::Bound | PrintAt::Union => !bounds.is_empty() || !several,
+            PrintAt::Result => !bounds.is_empty(),
+            PrintAt::Member if several => false,
+            PrintAt::Key | PrintAt::Bound | PrintAt::Union | PrintAt::Member => {
+                !bounds.is_empty() || !several
+            }
         };
         if wrap {
             parts.push(Print::Text("("));
@@ -10377,19 +10430,36 @@ impl Sig {
         if let Some(m) = morphism {
             m.parts(parts);
         } else {
+            // A function of one positional parameter is written `K -> V`, its key a `TypeUnion`
+            // (`Arrow = … | TypeUnion '->' Arrow`): `(K) -> V` would read the same, the pair a
+            // `GroupType`, which the printer does not write where the grammar does not need it
+            // (P191). The key stands at [`PrintAt::Key`], parenthesized only where it is a
+            // function or a tuple of other than one component.
+            let bare = matches!(&self.params[..], [p] if p.positional);
             let mut first = true;
             for a in &self.arrows {
                 between(parts, &mut first, " & ");
+                if let ([key], true) = (&a.params[..], bare) {
+                    if several {
+                        parts.push(Print::Text("("));
+                    }
+                    parts.push(Print::Ty(key, PrintAt::Key));
+                    parts.push(Print::Text(" -> "));
+                    parts.push(Print::Ty(&a.result, PrintAt::Result));
+                    if several {
+                        parts.push(Print::Text(")"));
+                    }
+                    continue;
+                }
                 parts.push(Print::Text(if several { "((" } else { "(" }));
-                let n = self.params.len().min(a.params.len());
                 let mut one = true;
-                for (i, (p, t)) in self.params.iter().zip(&a.params).enumerate() {
+                for (p, t) in self.params.iter().zip(&a.params) {
                     between(parts, &mut one, ", ");
                     if !p.positional {
                         parts.push(Print::Text(&p.name));
                         parts.push(Print::Text(": "));
                     }
-                    parts.push(Print::Ty(t, PrintAt::item(i + 1 < n)));
+                    parts.push(Print::Ty(t, PrintAt::Any));
                 }
                 parts.push(Print::Text(") -> "));
                 parts.push(Print::Ty(&a.result, PrintAt::Result));
@@ -10398,10 +10468,21 @@ impl Sig {
                 }
             }
         }
-        parts.push(Print::Bounds(self, bounds));
+        match hoisted {
+            true => scope.hoisted.push(bounds),
+            false => parts.push(Print::Bounds(self, bounds)),
+        }
         if wrap {
             parts.push(Print::Text(")"));
         }
+    }
+
+    /// Whether, as a member of a union that stands where a whole `Type` stands, it leaves its
+    /// bounds clause to the end of the union ([`PrintAt::Member`]): an intersection of arrows,
+    /// each in its own parentheses, which the clause after the union bounds as it would
+    /// inside a pair of its own.
+    fn hoists(&self) -> bool {
+        self.morphism().is_none() && self.arrows.len() != 1
     }
 
     /// The morphism type it is written as, if it is one: a function of one unnamed positional
@@ -10458,22 +10539,15 @@ impl Sig {
     /// Opens its variables in `scope` and pushes the parts of its text as a family, a partial
     /// map `K ->? K` (DESIGN.md sec:values_morphisms), to `parts`, in order: its key type, bare,
     /// as [`Sig::is_family`] leaves none that could be read as parameters, twice, since `->?`
-    /// adds the `#notFound` of its lookup (sec:type_language). It stands as a payload at `at`:
-    /// with a bounds clause and a comma after it, it is parenthesized.
-    fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>, at: PrintAt) {
-        let bounds = scope.open(self);
-        let wrap = at == PrintAt::Listed && !bounds.is_empty();
-        if wrap {
-            parts.push(Print::Text("("));
-        }
+    /// adds the `#notFound` of its lookup (sec:type_language). It stands as a payload, where a
+    /// whole type stands, so it needs no parentheses, a bounds clause and all ([`PrintAt::Any`]).
+    fn family_parts<'a>(&'a self, scope: &mut Scope, parts: &mut Vec<Print<'a>>) {
+        let bounds = scope.open(self, false);
         let key = &self.arrows[0].params[0];
         parts.push(Print::Ty(key, PrintAt::Key));
         parts.push(Print::Text(" ->? "));
         parts.push(Print::Ty(key, PrintAt::Result));
         parts.push(Print::Bounds(self, bounds));
-        if wrap {
-            parts.push(Print::Text(")"));
-        }
     }
 }
 

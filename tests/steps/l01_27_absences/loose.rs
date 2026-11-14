@@ -10,7 +10,7 @@ const LOOKUP: &str = "positional x: int | #notFound | #none";
 #[test]
 fn else_defaults_every_loose_atom() {
     let t = format!("f({LOOKUP}) = x else 0;\n");
-    assert_eq!(sig(&t, "f"), "(int | #none | #notFound) -> int");
+    assert_eq!(sig(&t, "f"), "int | #none | #notFound -> int");
     let run = format!("{t}a = f(#none);\nb = f(#notFound);\nc = f(4);\n");
     assert_eq!(value(&run, "a"), "0");
     assert_eq!(value(&run, "b"), "0");
@@ -20,19 +20,19 @@ fn else_defaults_every_loose_atom() {
 #[test]
 fn the_pattern_form_handles_the_atom_it_names_and_keeps_the_rest() {
     let t = format!("f({LOOKUP}) = x else #notFound -> -1;\n");
-    assert_eq!(sig(&t, "f"), "(int | #none | #notFound) -> int | #none");
+    assert_eq!(sig(&t, "f"), "int | #none | #notFound -> int | #none");
     let run = format!("{t}a = f(#none);\nb = f(#notFound);\nc = f(4);\n");
     assert_eq!(value(&run, "a"), "#none");
     assert_eq!(value(&run, "b"), "-1");
     assert_eq!(value(&run, "c"), "4");
     // Two patterns in turn handle both, and the result is the plain number.
     let both = format!("f({LOOKUP}) = (x else #notFound -> -1) else #none -> 0;\n");
-    assert_eq!(sig(&both, "f"), "(int | #none | #notFound) -> int");
+    assert_eq!(sig(&both, "f"), "int | #none | #notFound -> int");
     // A pattern naming an atom the value cannot hold handles nothing.
     let other = format!("f({LOOKUP}) = x else #empty -> 0;\n");
     assert_eq!(
         sig(&other, "f"),
-        "type T1 = int | #none | #notFound;\n(T1) -> T1"
+        "type T1 = int | #none | #notFound;\nT1 -> T1"
     );
 }
 
@@ -70,7 +70,7 @@ fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
     // value can hold is handled, so `_` still sees a loose failure and rejects it.
     let one = "pick(positional c: bool) = if c { #e(code: 1) } else { 3 };\n";
     let bound = format!("{one}f(positional c: bool) = pick(c) else #e(code:) -> code;\n");
-    assert_eq!(sig(&bound, "f"), "(bool) -> 1 | 3 | #e(code: 1)");
+    assert_eq!(sig(&bound, "f"), "bool -> 1 | 3 | #e(code: 1)");
     assert_eq!(value(&format!("{bound}y = f(true);\n"), "y"), "1");
     assert_eq!(
         type_errors(&format!(
@@ -110,7 +110,7 @@ fn the_three_absences_stay_three_facts() {
 #[test]
 fn a_loose_atom_flows_through_safe_navigation() {
     let t = "f(positional x: int | #notFound) = x?.abs;\n";
-    assert_eq!(sig(t, "f"), "type T1 = int | #notFound;\n(T1) -> T1");
+    assert_eq!(sig(t, "f"), "type T1 = int | #notFound;\nT1 -> T1");
     assert!(type_errors(t).is_empty());
     let run = format!("{t}a = f(#notFound);\nb = f(-3);\n");
     assert_eq!(value(&run, "a"), "#notFound");
@@ -123,7 +123,7 @@ fn a_loose_atom_passes_through_a_declared_function_whose_type_omits_it() {
     let t = "g(positional n: int) = n + 1;\n\
              f(positional x: int | #notFound) = g(x);\n";
     assert!(type_errors(t).is_empty());
-    assert_eq!(sig(t, "f"), "type T1 = int | #notFound;\n(T1) -> T1");
+    assert_eq!(sig(t, "f"), "type T1 = int | #notFound;\nT1 -> T1");
     let run = format!("{t}a = f(#notFound);\nb = f(2);\n");
     assert_eq!(value(&run, "a"), "#notFound");
     assert_eq!(value(&run, "b"), "3");
@@ -136,7 +136,7 @@ fn a_loose_atom_passes_through_a_generic_function_bounded_to_carriers() {
     let t = "add(positional a, positional b) = a + b;\n\
              h(positional y: int | #nf) = add(y, 1);\n";
     assert!(type_errors(t).is_empty());
-    assert_eq!(sig(t, "h"), "type T1 = int | #nf;\n(T1) -> T1");
+    assert_eq!(sig(t, "h"), "type T1 = int | #nf;\nT1 -> T1");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");
     assert_eq!(value(&run, "a"), "#nf");
     assert_eq!(value(&run, "b"), "3");
@@ -154,7 +154,7 @@ fn a_call_takes_the_arrow_of_a_generic_function_that_takes_its_atoms() {
         sig(t, "r"),
         "((T, T) -> T) & ((T | #_, T) -> T | #_) for T in int | f32 | f64 | rat"
     );
-    assert_eq!(sig(t, "h"), "(int | #nf) -> int | #_");
+    assert_eq!(sig(t, "h"), "int | #nf -> int | #_");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");
     assert_eq!(value(&run, "a"), "1");
     assert_eq!(value(&run, "b"), "3");
@@ -223,11 +223,11 @@ fn no_is_repair_is_offered_for_a_function_type() {
     assert!(!out.contains(" is ("), "{out}");
     assert!(!out.contains("`v`"), "{out}");
     assert!(
-        out.contains("repair: pass `ap` a value of (int) -> int"),
+        out.contains("repair: pass `ap` a value of int -> int"),
         "{out}"
     );
     assert!(
-        out.contains("repair: handle the values that are not (int) -> int with `else` or `match`"),
+        out.contains("repair: handle the values that are not int -> int with `else` or `match`"),
         "{out}"
     );
     // The control: the test such a repair would write is refused.

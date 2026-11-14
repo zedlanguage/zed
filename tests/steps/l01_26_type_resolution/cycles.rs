@@ -31,7 +31,7 @@ const F: &str = "f(positional c: int) = 1 + c;\n";
 #[test]
 fn a_function_beside_a_recursive_one_is_checked() {
     let text = format!("spin(positional n: int) = spin(n + 1);\n{F}");
-    assert_eq!(sig(&text, "f"), "(int) -> int");
+    assert_eq!(sig(&text, "f"), "int -> int");
     assert_eq!(
         type_errors(&text),
         [recursion(
@@ -75,7 +75,7 @@ fn every_shape_of_cycle_leaves_the_other_definitions_checked() {
         ),
     ] {
         for text in [format!("{cycle}{F}"), format!("{F}{cycle}")] {
-            assert_eq!(sig(&text, "f"), "(int) -> int", "{text}");
+            assert_eq!(sig(&text, "f"), "int -> int", "{text}");
             assert_eq!(type_errors(&text), std::slice::from_ref(&want), "{text}");
         }
     }
@@ -105,7 +105,7 @@ fn a_cycle_inside_a_body_is_rejected_and_the_rest_of_the_body_checked() {
         type_errors(&text),
         [recursion("`inner`", "inner(positional k: int) = inner(k);")]
     );
-    assert_eq!(sig(&text, "f"), "(int) -> int");
+    assert_eq!(sig(&text, "f"), "int -> int");
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn a_function_that_calls_a_recursive_one_is_checked() {
             "`f` does not take (true): no arrow of `f` takes these types. [f(true)]".into(),
         ]
     );
-    assert_eq!(sig(&text, "f"), "(int) -> int");
+    assert_eq!(sig(&text, "f"), "int -> int");
 }
 
 /// `n` cycles of two functions each, and a chain of `n` functions, each calling the one before

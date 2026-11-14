@@ -65,10 +65,7 @@ pub(super) fn calls(n: usize) -> String {
 
 #[test]
 fn generic_literal_arguments_take_the_carrier_of_the_callers_parameter() {
-    assert_eq!(
-        sig(&calls(2), "f"),
-        "(T) -> T for T in int | f32 | f64 | rat"
-    );
+    assert_eq!(sig(&calls(2), "f"), "T -> T for T in int | f32 | f64 | rat");
     let u = checked(&calls(3));
     assert_eq!(u.info.witness.len(), 3);
     assert_eq!(u.info.follows.len(), 3);

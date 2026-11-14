@@ -366,7 +366,7 @@ fn a_type_with_a_function_at_every_place_prints_and_reads_back() {
     // the printer decides each part's parentheses from where it stands, and what it writes
     // reads back as the type it printed.
     let printed = functions(5).to_string();
-    assert_eq!(printed, "(((#z) -> ((#z) -> #z) | #y, #z) | #y) -> #z");
+    assert_eq!(printed, "(#z -> (#z -> #z) | #y, #z) | #y -> #z");
     let again = zedc::check::read::parse_type(&printed).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(again.to_string(), printed);
     assert!(again.subtype(&functions(5)) && functions(5).subtype(&again));

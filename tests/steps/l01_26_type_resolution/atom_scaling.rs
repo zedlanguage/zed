@@ -396,7 +396,7 @@ fn chains_of_tests_that_leave_values_of_their_own_are_accepted() {
         (
             "a chain of n elses",
             chain_of_elses as fn(usize) -> String,
-            Some("(int | #_) -> int"),
+            Some("int | #_ -> int"),
         ),
         ("a chain of n equalities", chain_of_equalities, None),
         ("n functions handling their key", keys_handled, None),

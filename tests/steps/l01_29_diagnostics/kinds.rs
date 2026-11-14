@@ -53,13 +53,13 @@ fn zedc_test_passes_each_kind_row() {
 #[test]
 fn kind_tests_and_their_operands_have_pinned_types() {
     let f = |body: &str| sig(&format!("{NOTHING}f(positional x: int) = {body};\n"), "f");
-    assert_eq!(f("#e(x) is #_"), "(int) -> bool");
-    assert_eq!(f("nothing() is (..)"), "(int) -> bool");
-    assert_eq!(f("#e(x)"), "(int) -> #e(int)");
-    assert_eq!(f("nothing()"), "(int) -> ()");
+    assert_eq!(f("#e(x) is #_"), "int -> bool");
+    assert_eq!(f("nothing() is (..)"), "int -> bool");
+    assert_eq!(f("#e(x)"), "int -> #e(int)");
+    assert_eq!(f("nothing()"), "int -> ()");
     assert_eq!(
         f("if x > 0 { #e(x) } else { nothing() }"),
-        "(int) -> () | #e(int)"
+        "int -> () | #e(int)"
     );
 }
 
@@ -77,15 +77,15 @@ fn a_kind_test_narrows_to_its_kind() {
             "f",
         )
     };
-    assert_eq!(f("#_"), "(int) -> #e(int) | #no");
-    assert_eq!(f("(..)"), "(int) -> () | #no");
+    assert_eq!(f("#_"), "int -> #e(int) | #no");
+    assert_eq!(f("(..)"), "int -> () | #no");
     assert_eq!(
         sig("f(positional v) = if v is #_ { v } else { #no };\n", "f"),
-        "(_) -> #_"
+        "_ -> #_"
     );
     assert_eq!(
         sig("f(positional v) = if v is (..) { v } else { #no };\n", "f"),
-        "(_) -> (..) | #no"
+        "_ -> (..) | #no"
     );
 }
 

@@ -55,7 +55,7 @@ fn a_dropped_lookup_miss_is_rejected_with_its_derivation_and_repairs() {
             "the loose failure #notFound enters here [lookup(3)]",
             "this call of `lookup` gives int | #notFound [lookup(3)]",
             "`lookup` is declared here with no type written for its result; the type the checker \
-             found for `lookup` is `(int) -> int | #notFound` \
+             found for `lookup` is `int -> int | #notFound` \
              [lookup(positional k: int) = if k > 0 { k } else { #notFound };]",
             "repair: write a default for the value, as `_ = … else #ok;`, so the text names what \
              it drops [_ = lookup(3);]",

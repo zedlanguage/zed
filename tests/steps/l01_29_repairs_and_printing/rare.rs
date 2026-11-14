@@ -168,7 +168,7 @@ const FLOW_SHOWN: &str = r#"2:7: `g(1)` gives "s" on the value `x -> "s"`, but o
       3 |   k(positional h = g) = h(2);
         |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ [6]
         |                    ^ [5]
-  [6] 3:3: `k` is declared here with no type written for `h` or its result; the type the checker found for `k` is `(_) -> _`
+  [6] 3:3: `k` is declared here with no type written for `h` or its result; the type the checker found for `k` is `_ -> _`
   [7] 2:7: repair: write `h` with no default, as `k(positional h) = h(2);`, and pass `g` as `h` in each call that leaves `h` out
   [8] 2:7: repair: declare the types of the values this use reads, so that it is checked where it is written"#;
 
@@ -264,7 +264,7 @@ fn a_value_with_one_origin_names_no_default() {
   [3] 3:25 to 3:28: this use needs it here
   [4] 5:9 to 5:16: `x -> "s"` comes from here and reaches `h(2)`
       line 5 is shown above
-  [5] 3:3 to 3:29: `k` is declared here with no type written for `h` or its result; the type the checker found for `k` is `(_) -> _`
+  [5] 3:3 to 3:29: `k` is declared here with no type written for `h` or its result; the type the checker found for `k` is `_ -> _`
   [6] 3:25 to 3:28: repair: declare the types of the values this use reads, so that it is checked where it is written"#
     );
     assert!(

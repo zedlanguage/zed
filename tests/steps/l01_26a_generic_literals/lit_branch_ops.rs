@@ -27,13 +27,13 @@ fn an_operation_on_literals_in_an_if_keeps_its_value() {
     // joined one class, which nothing fixed. Order of the union: A92 answer B.
     let src = "g(positional c: bool) = if c { 2 + 1 } else { 1 };\na = g(true);\nb = g(false);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "g"), "(bool) -> 1 | 3");
+    assert_eq!(sig(src, "g"), "bool -> 1 | 3");
     assert_eq!(value(src, "a"), "3");
     assert_eq!(value(src, "b"), "1");
     let both = "g(positional c: bool) = if c { 2 + 1 } else { 1 + 1 };\n";
-    assert_eq!(sig(both, "g"), "(bool) -> 2 | 3");
+    assert_eq!(sig(both, "g"), "bool -> 2 | 3");
     let negated = "g(positional c: bool) = if c { -(2 + 1) } else { 1 };\n";
-    assert_eq!(sig(negated, "g"), "(bool) -> -3 | 1");
+    assert_eq!(sig(negated, "g"), "bool -> -3 | 1");
 }
 
 #[test]
@@ -44,13 +44,13 @@ fn an_operation_branch_takes_the_carrier_of_the_parameter_it_meets() {
          a = f(true);\nb = f(false);\n"
     );
     assert_eq!(type_errors(&src), Vec::<String>::new());
-    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(sig(&src, "f"), "bool -> f64");
     assert_eq!(value(&src, "a"), "3.0");
     assert_eq!(value(&src, "b"), "2.0");
     let rat = "h(positional z: rat) = z;\nf(positional c: bool) = h(if c { 2 + 1 } else { 1 });\n\
                a = f(true);\n";
     assert_eq!(type_errors(rat), Vec::<String>::new());
-    assert_eq!(sig(rat, "f"), "(bool) -> rat");
+    assert_eq!(sig(rat, "f"), "bool -> rat");
     assert_eq!(value(rat, "a"), "3r");
     let decimal =
         format!("{H}f(positional c: bool) = h(if c {{ 2 + 1 }} else {{ 2.5 }});\na = f(true);\n");
@@ -84,7 +84,7 @@ fn an_operation_branch_that_nothing_fixes_is_an_int() {
     // meets no carrier, so both branches are `int` and so is the sum.
     let src = "g(positional c: bool) = (if c { 2 + 1 } else { 1 }) + 1;\na = g(true);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "g"), "(bool) -> int");
+    assert_eq!(sig(src, "g"), "bool -> int");
     assert_eq!(value(src, "a"), "4");
 }
 
@@ -136,7 +136,7 @@ fn an_operation_holding_a_power_keeps_its_value_in_an_if() {
     // MSG-literal-type-huge-power made `g` `(bool) -> int`; before it and now it is `1 | 8`.
     let src = "g(positional c: bool) = if c { 2 ^ 3 } else { 1 };\na = g(true);\nb = g(false);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "g"), "(bool) -> 1 | 8");
+    assert_eq!(sig(src, "g"), "bool -> 1 | 8");
     assert_eq!(value(src, "a"), "8");
     assert_eq!(value(src, "b"), "1");
     for (branch, ty) in [
@@ -147,17 +147,17 @@ fn an_operation_holding_a_power_keeps_its_value_in_an_if() {
         ("2 ^ 2 ^ 2", "1 | 16"),
     ] {
         let src = format!("g(positional c: bool) = if c {{ {branch} }} else {{ 1 }};\n");
-        assert_eq!(sig(&src, "g"), format!("(bool) -> {ty}"), "{src}");
+        assert_eq!(sig(&src, "g"), format!("bool -> {ty}"), "{src}");
     }
     // A decimal beside it is still read where the result is used.
     let decimal = "g(positional c: bool) = if c { 2 ^ 3 } else { 1.5 };\n";
-    assert_eq!(sig(decimal, "g"), "(bool) -> 1.5 | 8");
+    assert_eq!(sig(decimal, "g"), "bool -> 1.5 | 8");
     // A value beyond 64 bits prints its digits or, where shorter, the power that makes it; the
     // product, built as digits, prints them, and the two are one value.
     let large = "g(positional c: bool) = if c { 4294967296 * 4294967296 } else { 1 };\n";
     let power = "g(positional c: bool) = if c { 2 ^ 64 } else { 1 };\n";
-    assert_eq!(sig(power, "g"), "(bool) -> 1 | 2^64");
-    assert_eq!(sig(large, "g"), "(bool) -> 1 | 18446744073709551616");
+    assert_eq!(sig(power, "g"), "bool -> 1 | 2^64");
+    assert_eq!(sig(large, "g"), "bool -> 1 | 18446744073709551616");
     let same = format!("{power}a = g(true) == 4294967296 * 4294967296;\n");
     assert_eq!(value(&same, "a"), "true");
     // So the call of `g` is read at the `f64` of `h`, as the `if` written at the parameter is.
@@ -289,7 +289,7 @@ fn a_call_of_literal_branches_is_read_at_rat() {
     let src = "g(positional c: bool) = if c { 2 } else { 1 };\nh(positional z: rat) = z;\n\
                f(positional c: bool) = h(g(c));\na = f(true);\nb = f(false);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "f"), "(bool) -> rat");
+    assert_eq!(sig(src, "f"), "bool -> rat");
     assert_eq!(value(src, "a"), "2r");
     assert_eq!(value(src, "b"), "1r");
 }
@@ -301,7 +301,7 @@ fn a_call_of_operation_branches_is_read_at_f64() {
          f(positional c: bool) = h(g(c));\na = f(true);\nb = h(g(false));\n"
     );
     assert_eq!(type_errors(&src), Vec::<String>::new());
-    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(sig(&src, "f"), "bool -> f64");
     assert_eq!(value(&src, "a"), "3.0");
     assert_eq!(value(&src, "b"), "1.0");
 }
@@ -315,7 +315,7 @@ fn a_call_of_an_integer_and_a_decimal_is_read_at_f64() {
          f(positional c: bool) = h(g(c));\na = f(true);\nb = f(false);\n"
     );
     assert_eq!(type_errors(&src), Vec::<String>::new());
-    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(sig(&src, "f"), "bool -> f64");
     assert_eq!(value(&src, "a"), "1.0");
     assert_eq!(value(&src, "b"), "2.5");
 }
@@ -458,7 +458,7 @@ fn a_call_of_literal_values_is_read_at_the_carrier_of_the_other_operand() {
                k(positional c: bool) = g(c);\n\
                f(positional c: bool, x: f64) = x * k(c);\na = f(true, x: 0.5f64);\n";
     assert_eq!(type_errors(two), Vec::<String>::new());
-    assert_eq!(sig(two, "k"), "(bool) -> 1 | 3");
+    assert_eq!(sig(two, "k"), "bool -> 1 | 3");
     assert_eq!(value(two, "a"), "1.5");
     // Through a generic function, whose two parameters share one bounded variable.
     let generic = format!(
@@ -476,7 +476,7 @@ fn a_call_of_literal_values_beside_no_one_carrier_keeps_its_own() {
     // own carrier, `int`.
     let both = format!("{G}f(positional c: bool) = g(c) * g(c);\na = f(true);\n");
     assert_eq!(type_errors(&both), Vec::<String>::new());
-    assert_eq!(sig(&both, "f"), "(bool) -> int");
+    assert_eq!(sig(&both, "f"), "bool -> int");
     assert_eq!(value(&both, "a"), "4");
     let int = at_x("int", "x * g(c)", "3");
     assert_eq!(type_errors(&int), Vec::<String>::new());
@@ -641,7 +641,7 @@ fn an_if_of_literals_in_a_tuple_component_takes_the_carrier_of_the_component() {
     for (t, arg, f, yes, no) in cases {
         let src = at_k(t, arg) + "a = f(true);\nb = f(false);\n";
         assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
-        assert_eq!(sig(&src, "f"), format!("(bool) -> {f}"), "{src}");
+        assert_eq!(sig(&src, "f"), format!("bool -> {f}"), "{src}");
         assert_eq!(value(&src, "a"), yes, "{src}");
         assert_eq!(value(&src, "b"), no, "{src}");
     }
@@ -657,7 +657,7 @@ fn an_if_of_literals_in_a_tuple_component_takes_the_carrier_of_the_component() {
     assert_eq!(value(src, "a"), "(2.0, 1.0)");
     // Where nothing fixes the carrier, the tuple keeps the branches' values.
     let src = "f(positional c: bool) = (if c { 2 + 1 } else { 1 }, 1);\na = f(true);\n";
-    assert_eq!(sig(src, "f"), "(bool) -> (1 | 3, 1)");
+    assert_eq!(sig(src, "f"), "bool -> (1 | 3, 1)");
     assert_eq!(value(src, "a"), "(3, 1)");
 }
 
@@ -700,7 +700,7 @@ fn an_if_of_literals_in_a_tuple_joins_the_class_of_a_generic_component() {
         (
             "",
             "(1, if c { 2 + 1 } else { 1 })",
-            "(bool) -> int",
+            "bool -> int",
             "f(true)",
             "4",
         ),
@@ -756,7 +756,7 @@ fn an_if_of_literals_in_a_tuple_takes_the_carrier_of_the_other_tuple_of_min_and_
     for (body, f, yes, no) in cases {
         let src = format!("f(positional c: bool) = {body};\na = f(true);\nb = f(false);\n");
         assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
-        assert_eq!(sig(&src, "f"), format!("(bool) -> {f}"), "{src}");
+        assert_eq!(sig(&src, "f"), format!("bool -> {f}"), "{src}");
         assert_eq!(value(&src, "a"), yes, "{src}");
         assert_eq!(value(&src, "b"), no, "{src}");
     }
@@ -820,8 +820,8 @@ fn the_probe_programs_of_lit_branch_op_value_keep_their_results() {
     let src = "g(positional c: bool) = if c { 1 } else { 2.5r };\nh(positional z: rat) = z;\n\
                f(positional c: bool) = h(g(c));\na = f(false);\nb = f(true);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "g"), "(bool) -> 1 | 25e-1r");
-    assert_eq!(sig(src, "f"), "(bool) -> rat");
+    assert_eq!(sig(src, "g"), "bool -> 1 | 25e-1r");
+    assert_eq!(sig(src, "f"), "bool -> rat");
     assert_eq!(value(src, "a"), "5r/2r");
     assert_eq!(value(src, "b"), "1r");
     // An operation on literals beside a decimal, read at `f64` through a call.
@@ -830,7 +830,7 @@ fn the_probe_programs_of_lit_branch_op_value_keep_their_results() {
          f(positional c: bool) = h(g(c));\na = f(true);\nb = f(false);\n"
     );
     assert_eq!(type_errors(&src), Vec::<String>::new());
-    assert_eq!(sig(&src, "f"), "(bool) -> f64");
+    assert_eq!(sig(&src, "f"), "bool -> f64");
     assert_eq!(value(&src, "a"), "2.0");
     assert_eq!(value(&src, "b"), "1.5");
     // A negated operation as a branch written at the parameter; another operator beside it.
@@ -839,7 +839,7 @@ fn the_probe_programs_of_lit_branch_op_value_keep_their_results() {
             "{H}f(positional c: bool) = h(if c {{ {branch} }} else {{ 1 }});\na = f(true);\n"
         );
         assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
-        assert_eq!(sig(&src, "f"), "(bool) -> f64", "{src}");
+        assert_eq!(sig(&src, "f"), "bool -> f64", "{src}");
         assert_eq!(value(&src, "a"), v, "{src}");
     }
 }
@@ -856,13 +856,13 @@ fn an_operation_on_literals_past_two_to_the_53_differs_by_where_it_is_fixed() {
          a = f(true);\n"
     );
     assert_eq!(type_errors(&inline), Vec::<String>::new());
-    assert_eq!(sig(&inline, "f"), "(bool) -> f64");
+    assert_eq!(sig(&inline, "f"), "bool -> f64");
     assert_eq!(value(&inline, "a"), "9007199254740992.0");
     let call = format!(
         "g(positional c: bool) = if c {{ 2 + 9007199254740991 }} else {{ 1 }};\n{H}\
          f(positional c: bool) = h(g(c));\n"
     );
-    assert_eq!(sig(&call, "g"), "(bool) -> 1 | 9007199254740993");
+    assert_eq!(sig(&call, "g"), "bool -> 1 | 9007199254740993");
     assert_eq!(
         type_errors(&call),
         vec!["No `f64` equals 9007199254740993, which `g(c)` may give. [h(g(c))]".to_string()]
@@ -897,7 +897,7 @@ fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
                 .to_string()
         ]
     );
-    assert_eq!(sig(src, "f"), "(bool) -> Never");
+    assert_eq!(sig(src, "f"), "bool -> Never");
 }
 
 /// A body of `n` calls `k((if c { 2 + 1 } else { 1 }, 1))`, each `if` read at `f64`.
@@ -943,10 +943,10 @@ pub(super) fn products(n: usize) -> String {
 fn many_operation_branches_take_f64_at_a_parameter_or_through_a_call() {
     // Small instances of the benchmarks `bench::lit_branch_ops`.
     assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
-    assert_eq!(sig(&nest(3), "f"), "(int) -> f64");
+    assert_eq!(sig(&nest(3), "f"), "int -> f64");
     assert_eq!(type_errors(&through_a_call(3)), Vec::<String>::new());
-    assert_eq!(sig(&through_a_call(3), "g"), "(int) -> 1 | 3 | 5 | 7");
-    assert_eq!(sig(&through_a_call(3), "f"), "(int) -> f64");
+    assert_eq!(sig(&through_a_call(3), "g"), "int -> 1 | 3 | 5 | 7");
+    assert_eq!(sig(&through_a_call(3), "f"), "int -> f64");
     assert_eq!(type_errors(&products(3)), Vec::<String>::new());
     assert_eq!(type_errors(&tuple_calls(3)), Vec::<String>::new());
 }

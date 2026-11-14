@@ -255,12 +255,12 @@ fn a_quotient_of_rat_powers_is_exact_in_the_power_form() {
         "1r / (-3r) ^ (2 - 3)",
     ] {
         let src = format!("h(positional c: bool) = {body};\n");
-        assert_eq!(sig(&src, "h"), "(bool) -> rat", "{body}");
+        assert_eq!(sig(&src, "h"), "bool -> rat", "{body}");
     }
     // A base that may be zero still may give `#divByZero`.
     assert_eq!(
         sig("h(positional c: bool) = 1r / 0r ^ (1 + 1);\n", "h"),
-        "(bool) -> rat | #divByZero"
+        "bool -> rat | #divByZero"
     );
     assert_eq!(y("y = 2r ^ (2 ^ 62) / 2r ^ (2 ^ 62 - 1);\n"), "2r");
     assert_eq!(

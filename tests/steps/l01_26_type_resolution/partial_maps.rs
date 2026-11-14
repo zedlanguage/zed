@@ -21,7 +21,7 @@ fn a_lookup_in_a_partial_map_may_be_not_found() {
 fn a_lookup_in_a_total_function_type_is_its_value_alone() {
     assert_eq!(
         sig("price(m: String -> int, k: String) = m[k];", "price"),
-        "(m: (String) -> int, k: String) -> int"
+        "(m: String -> int, k: String) -> int"
     );
 }
 
@@ -172,7 +172,7 @@ fn a_key_not_inside_the_permission_is_a_static_error() {
 fn bounds_that_meet_are_a_total_map_and_an_empty_guarantee_a_partial_one() {
     assert_eq!(
         lookup("int .. int -> bool", "int"),
-        "(m: (int) -> bool, k: int) -> bool"
+        "(m: int -> bool, k: int) -> bool"
     );
     assert_eq!(
         sig("f(m: String ->? int) = m;", "f"),

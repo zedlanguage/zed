@@ -82,7 +82,7 @@ fn a_lambdas_result_must_fit() {
     assert_eq!(
         type_errors("apply(f: (int) -> String) = f(1);\ny = apply(f: n -> n + 1);\n"),
         [
-            "the lambda returns int, and `(int) -> String` returns String: the lambda is passed where a function of type `(int) -> String` is expected, so its result must be String. [n + 1]"
+            "the lambda returns int, and `int -> String` returns String: the lambda is passed where a function of type `int -> String` is expected, so its result must be String. [n + 1]"
         ]
     );
 }

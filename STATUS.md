@@ -2359,7 +2359,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-finished-names-clash | running | 2026-11-14 13:54 |  |
 | FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
-| FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
+| FAIL-print-function-in-union | merged and pushed (the commit "Print types with exactly the parentheses the grammar needs"); spec change in zed (sec:diagnostics) | the zedc-types printer places parentheses by the grammar rule each operand place expects (author rule P191); round-trip and minimality property tests in l01_29_repairs_and_printing parens.rs; 572 expected lines in 63 test files; new row FAIL-print-kernel-parens |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |

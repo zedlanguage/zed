@@ -130,7 +130,7 @@ fn a_parameter_of_any_value_stays_a_type_variable() {
         assert!(a.params[0].as_var().is_some(), "{body}: {}", a.params[0]);
     }
     let text = "r(positional line) = line else \"\";\n";
-    assert_eq!(sig(text, "r"), "(T) -> \"\" | T");
+    assert_eq!(sig(text, "r"), "T -> \"\" | T");
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn a_line_trimmed_without_else_takes_no_atom() {
 #[test]
 fn a_declared_parameter_keeps_its_declared_type() {
     let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
-    assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
+    assert_eq!(sig(text, "r"), "String | #notFound -> String");
 }
 
 #[test]
@@ -274,35 +274,35 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
     // the result has none. A bare `else` takes every loose atom; `else #nf ->`, `is #nf`,
     // `== #nf` and `!= #nf` take `#nf`.
     for (body, want) in [
-        ("trim(line) else \"dflt\"", "(String | #_) -> String"),
+        ("trim(line) else \"dflt\"", "String | #_ -> String"),
         (
             "trim(line) else #nf -> \"dflt\"",
-            "(String | #nf | #nf(..)) -> String",
+            "String | #nf | #nf(..) -> String",
         ),
         (
             "(line + 1) else 0",
-            "(T | #_) -> 0 | T for T in int | f32 | f64 | rat",
+            "T | #_ -> 0 | T for T in int | f32 | f64 | rat",
         ),
-        ("line?.trim() else \"dflt\"", "(String | #_) -> String"),
+        ("line?.trim() else \"dflt\"", "String | #_ -> String"),
         (
             "\"${line + 1}\" else \"dflt\"",
-            "(T | #_) -> String for T in int | f32 | f64 | rat",
+            "T | #_ -> String for T in int | f32 | f64 | rat",
         ),
         (
             "if trim(line) is #nf { \"dflt\" } else { \"s\" }",
-            "(String | #nf) -> \"dflt\" | \"s\"",
+            "String | #nf -> \"dflt\" | \"s\"",
         ),
         (
             "if trim(line) == #nf { \"dflt\" } else { \"s\" }",
-            "(String | #nf) -> \"dflt\" | \"s\"",
+            "String | #nf -> \"dflt\" | \"s\"",
         ),
         (
             "if #nf != trim(line) { \"s\" } else { \"dflt\" }",
-            "(String | #nf) -> \"dflt\" | \"s\"",
+            "String | #nf -> \"dflt\" | \"s\"",
         ),
         (
             "(trim(line) else #nf -> \"dflt\") else \"other\"",
-            "(String | #_) -> String",
+            "String | #_ -> String",
         ),
     ] {
         let text = format!("r(positional line) = {body};\n");
@@ -314,8 +314,8 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
     }
     // Through a helper: `h(x)` passes the atom by just as `trim(x)` does.
     let text = "h(positional y) = trim(y);\nr(positional line) = h(line) else \"dflt\";\n";
-    assert_eq!(sig(text, "r"), "(String | #_) -> String");
-    assert_eq!(sig(text, "h"), "(String) -> String");
+    assert_eq!(sig(text, "r"), "String | #_ -> String");
+    assert_eq!(sig(text, "h"), "String -> String");
 }
 
 #[test]
@@ -452,35 +452,35 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
     for (body, want) in [
         (
             "if line is #notFound { #absent } else { \"s\" }",
-            "(_) -> \"s\" | #absent",
+            "_ -> \"s\" | #absent",
         ),
         (
             "if line is #notFound { #absent } else { line else \"\" }",
-            "(T) -> \"\" | T | #absent",
+            "T -> \"\" | T | #absent",
         ),
         (
             "if line is #notFound { #absent } else { trim(line else \"\") }",
-            "(String | #_) -> String | #absent",
+            "String | #_ -> String | #absent",
         ),
-        ("trim(line else \"\")", "(String | #_) -> String"),
-        ("line else \"\"", "(T) -> \"\" | T"),
-        ("upper(line else \"\")", "(String | #_) -> String"),
-        ("(line else 0) + 1", "(int | #_) -> int"),
-        ("{ s = line else \"\"; trim(s) }", "(String | #_) -> String"),
-        ("{ s = line; trim(s else \"\") }", "(String | #_) -> String"),
+        ("trim(line else \"\")", "String | #_ -> String"),
+        ("line else \"\"", "T -> \"\" | T"),
+        ("upper(line else \"\")", "String | #_ -> String"),
+        ("(line else 0) + 1", "int | #_ -> int"),
+        ("{ s = line else \"\"; trim(s) }", "String | #_ -> String"),
+        ("{ s = line; trim(s else \"\") }", "String | #_ -> String"),
         (
             "if line is #notFound { \"\" } else { trim(line) }",
-            "(String | #notFound) -> String",
+            "String | #notFound -> String",
         ),
         (
             "if line is #a | #b { \"\" } else { trim(line) }",
-            "(String | #a | #b) -> String",
+            "String | #a | #b -> String",
         ),
         (
             "trim(line else #notFound -> \"\")",
-            "(String | #notFound | #notFound(..)) -> String",
+            "String | #notFound | #notFound(..) -> String",
         ),
-        ("trim(line)", "(String) -> String"),
+        ("trim(line)", "String -> String"),
     ] {
         let text = format!("r(positional line) = {body};\n");
         let printed = sig(&text, "r");
@@ -495,7 +495,7 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
         "(T | #_, T) -> T for T in int | f32 | f64 | rat"
     );
     let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
-    assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
+    assert_eq!(sig(text, "r"), "String | #notFound -> String");
 }
 
 #[test]
@@ -507,17 +507,17 @@ fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
         (
             "r(positional line)",
             "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }",
-            "type T1 = String | #_;\n((String) -> String) & ((T1) -> T1)",
+            "type T1 = String | #_;\n(String -> String) & (T1 -> T1)",
         ),
         (
             "r(positional c)",
             "{ d = c else false; if c { \"yes\" } else { \"no\" } }",
-            "((bool) -> \"no\" | \"yes\") & ((bool | #_) -> \"no\" | \"yes\" | #_)",
+            "(bool -> \"no\" | \"yes\") & (bool | #_ -> \"no\" | \"yes\" | #_)",
         ),
         (
             "r(positional n)",
             "{ d = n else 0; if n > 3 { \"big\" } else { \"small\" } }",
-            "((T) -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
+            "(T -> \"big\" | \"small\") & (T | #_ -> \"big\" | \"small\" | #_) \
              for T in int | f32 | f64 | rat",
         ),
     ] {
@@ -540,7 +540,7 @@ fn an_atom_from_elsewhere_stays_on_the_first_arrow() {
         "r(positional line) = if (line else \"\") == \"\" { #absent } else { trim(line) };\n";
     assert_eq!(
         sig(text, "r"),
-        "type T1 = String | #_;\n((String) -> String | #absent) & ((T1) -> T1)"
+        "type T1 = String | #_;\n(String -> String | #absent) & (T1 -> T1)"
     );
 }
 
@@ -554,32 +554,32 @@ fn an_equality_with_an_atom_narrows_the_name_in_each_branch() {
         (
             "f(positional x: String | #nf)",
             "if x == #nf { \"dflt\" } else { trim(x) }",
-            "(String | #nf) -> String",
+            "String | #nf -> String",
         ),
         (
             "f(positional x: String | #nf)",
             "if #nf == x { \"dflt\" } else { trim(x) }",
-            "(String | #nf) -> String",
+            "String | #nf -> String",
         ),
         (
             "f(positional x: String | #nf)",
             "if x != #nf { trim(x) } else { \"dflt\" }",
-            "(String | #nf) -> String",
+            "String | #nf -> String",
         ),
         (
             "f(positional x)",
             "if x == #nf { \"dflt\" } else { trim(x) }",
-            "(String | #nf) -> String",
+            "String | #nf -> String",
         ),
         (
             "f(positional x)",
             "if x != #nf { trim(x) } else { \"dflt\" }",
-            "(String | #nf) -> String",
+            "String | #nf -> String",
         ),
         (
             "f(positional x: String | #nf)",
             "if x == #nf { x } else { \"s\" }",
-            "(String | #nf) -> \"s\" | #nf",
+            "String | #nf -> \"s\" | #nf",
         ),
     ] {
         let text = format!("{head} = {body};\n");
@@ -596,7 +596,7 @@ fn an_equality_with_a_number_compares_an_atom_as_data() {
     // legal"), so `f(#nf)` runs the body and gives "other". Before bare literals were
     // generic, `3` narrowed `x` to `int` and `f(#nf)` passed `#nf` by (part d).
     let text = "f(positional x) = if x == 3 { \"three\" } else { \"other\" };\n";
-    assert_eq!(sig(text, "f"), "(_) -> \"other\" | \"three\"");
+    assert_eq!(sig(text, "f"), "_ -> \"other\" | \"three\"");
     assert_eq!(value(&format!("{text}a = f(#nf);\n"), "a"), "\"other\"");
     assert_eq!(value(&format!("{text}a = f(3);\n"), "a"), "\"three\"");
 }
@@ -611,7 +611,7 @@ fn passing_the_parameter_to_a_function_that_handles_its_atoms_handles_none() {
                 f(positional x) = g(x);\n\
                 l(positional x) = ((y: String | #nf) -> trim(y else \"dflt\"))(x);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    assert_eq!(sig(text, "f"), "(String) -> String");
+    assert_eq!(sig(text, "f"), "String -> String");
     for (call, want) in [("g(#nf)", "\"dflt\""), ("f(#nf)", "#nf"), ("l(#nf)", "#nf")] {
         assert_eq!(value(&format!("{text}a = {call};\n"), "a"), want, "{call}");
     }

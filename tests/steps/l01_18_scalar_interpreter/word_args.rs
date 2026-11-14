@@ -137,8 +137,8 @@ fn an_int_argument_is_rewritten_with_its_cast_where_the_cast_is_exact() {
         |   ^^^^^^^^^^^^^^^^^ [2]                        ^^^^^^^ [3, 4]
         |                                                     ^ [1, 5]
   [2] 1:3: `n` is declared `int`
-  [3] 1:48: `sqrt` takes (f64) -> f64
-  [4] 1:48: `sqrt` takes (f32) -> f32
+  [3] 1:48: `sqrt` takes f64 -> f64
+  [4] 1:48: `sqrt` takes f32 -> f32
   [5] 1:53: repair: write `f64(n)`; the checker accepts that
 "
         ),
@@ -164,8 +164,8 @@ fn an_int_argument_is_rewritten_with_its_cast_where_the_cast_is_exact() {
         |   ^^^^^^^^^^^^^^^^^ [2]     ^ [1, 5]
         |                        ^^^^^^^ [3, 4]
   [2] 1:3: `n` is declared `int`
-  [3] 1:24: `sqrt` takes (f64) -> f64
-  [4] 1:24: `sqrt` takes (f32) -> f32
+  [3] 1:24: `sqrt` takes f64 -> f64
+  [4] 1:24: `sqrt` takes f32 -> f32
   [5] 1:29: repair: change the type of `n` so that `sqrt` takes it
 "
         ),

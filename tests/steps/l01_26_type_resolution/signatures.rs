@@ -105,7 +105,7 @@ fn a_type_variable_used_as_a_tuple_gives_a_variable_each_call_binds() {
 fn a_declared_type_is_kept() {
     assert_eq!(
         sig("apply(positional x, f: (int) -> int) = f(x);\n", "apply"),
-        "(int, f: (int) -> int) -> int"
+        "(int, f: int -> int) -> int"
     );
     assert_eq!(
         sig(
@@ -178,7 +178,7 @@ fn a_parameter_compared_with_a_tuple_may_be_a_tuple() {
         "lt(positional x) = x < (1, 2);\nmain(m: MainArgs) { m.stdout <- String(lt((3, 4))); }\n";
     // No bounds clause can write a bound of other values, so the variable is printed `_`.
     let s = sig_of(src, "lt");
-    assert_eq!(s.to_string(), "(_) -> bool");
+    assert_eq!(s.to_string(), "_ -> bool");
     assert!(s.bounds.values().all(|m| m & OTHER != 0) && s.bounds.len() == 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
 }
@@ -190,7 +190,7 @@ fn a_generic_literal_compared_for_equality_does_not_bound_a_parameter() {
     let src =
         "eq1(positional x) = x == 1;\nmain(m: MainArgs) { m.stdout <- String(eq1(\"a\")); }\n";
     let s = sig_of(src, "eq1");
-    assert_eq!(s.to_string(), "(_) -> bool");
+    assert_eq!(s.to_string(), "_ -> bool");
     assert!(s.bounds.is_empty());
     assert_eq!(s.own.len(), 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));

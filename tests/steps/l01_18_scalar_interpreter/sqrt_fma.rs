@@ -582,7 +582,7 @@ fn a_literal_operand_takes_f64_since_sqrt_and_fma_take_float_formats_alone() {
         "1.4142135623730951 1.4142135623730951 10.0 2.0 5.551115123125783e-17 1.4142135"
     );
     let s = sig("f(positional x) = sqrt(x);\n", "f");
-    assert_eq!(s, "(T) -> T for T in f32 | f64");
+    assert_eq!(s, "T -> T for T in f32 | f64");
 }
 
 /// The first line of the rejection of `src`, which declares a `main` of its own when it needs

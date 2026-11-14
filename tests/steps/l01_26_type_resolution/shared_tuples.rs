@@ -38,7 +38,7 @@ fn a_function_held_twice_at_each_level_is_one_error_per_compared_operand() {
     // data, and each of its operands holds the function, once each, however many paths reach it.
     let at = |site: &str| {
         format!(
-            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [{site}]"
+            "`==` takes data, and this value may hold a function, `T -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [{site}]"
         )
     };
     assert_eq!(

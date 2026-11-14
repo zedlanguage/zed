@@ -71,7 +71,7 @@ fn a_step_that_repeats_an_earlier_one_is_shown_only_the_first_time() {
         [
             "this call of `f` gives String",
             "`f` is declared here with no type written for `a` or its result; the type the \
-             checker found for `f` is `(String) -> String`",
+             checker found for `f` is `String -> String`",
             "this call of `f` gives String",
             "`+` takes (int, int) -> int",
             "`+` takes (f64, f64) -> f64",
