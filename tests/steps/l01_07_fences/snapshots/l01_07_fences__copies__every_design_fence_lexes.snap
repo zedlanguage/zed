@@ -689,7 +689,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  13 | t «with» {
  14 | iflag = t . iflag . bitAnd ( bitNot ( 1515₍10₎ , width : 32₍10₎ ) ) ,
  15 | oflag = t . oflag . bitAnd ( bitNot ( 1₍10₎ , width : 32₍10₎ ) ) ,
- 16 | lflag = t . lflag . bitAnd ( bitNot ( 32843₍10₎ , width : 32₍10₎ ) ) ,
+ 16 | lflag = t . lflag . bitAnd ( bitNot ( 32842₍10₎ , width : 32₍10₎ ) ) ,
  17 | cflag = t . cflag . bitAnd ( bitNot ( 304₍10₎ , width : 32₍10₎ ) ) . bitOr ( 48₍10₎ ) ,
  18 | cc [ 6₍10₎ ] = 1₍10₎ , cc [ 5₍10₎ ] = 0₍10₎ ,
  19 | }

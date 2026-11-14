@@ -2205,9 +2205,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIT-rat-decimal-exponent | impl attempt 1 | 2026-11-13 22:07 | started; worktree from origin/main e92e7e508 |
 | PERF-s22-sliced-regress | running | 2026-11-13 23:11 |  |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
-| SPEC-blocking-default | impl attempt 1 | 2026-11-13 22:19 | started; worktrees spec-blocking-default and -spec from origin/main |
+| SPEC-blocking-default | merged and pushed (zed-impl commit "SPEC-blocking-default"); spec zed dfb7f03 | 2026-11-14 | `@blocking` rejected by the resolver, row "`@blocking` written"; tests l01_19 blocking_word |
 | SPEC-ffi-state-param | impl attempt 1 | 2026-11-13 23:04 | started; reading DESIGN sec:ffi token sections |
-| SPEC-raw-keep-isig | running |  |  |
+| SPEC-raw-keep-isig | merged and pushed (zed-impl commit "SPEC-raw-keep-isig"); spec zed 0677785, c4db03d | 2026-11-14 | ISIG kept, mask 32842; SIGINT default stop stated; SIGINT-in-foreign-call test deferred to STOP-releases-rt |
 | SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |

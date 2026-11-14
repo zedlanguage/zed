@@ -1023,12 +1023,12 @@ main(m: MainArgs) {
   // getchar is MT-Safe (fgetc(3)), so it may run on a thread of its own: waiting for a key leaves the C library's thread free
   @thread(#keys) @foreign("c", "getchar") getKey: (raw: Termios with notPassed(duringStop: #release)) -> i32 with anyThread();
 
-  // glibc's cfmakeraw: no echo, no line editing, no signals from keys, 8-bit bytes, a read waits for one byte
+  // glibc's cfmakeraw except ISIG, which stays set so that Ctrl-C still makes the stop: no echo, no line editing, 8-bit bytes, a read waits for one byte
   makeRaw(t: Termios) -> Termios {
     t with {
       iflag = t.iflag.bitAnd(bitNot(1515, width: 32)),            // IGNBRK BRKINT PARMRK ISTRIP INLCR IGNCR ICRNL IXON
       oflag = t.oflag.bitAnd(bitNot(1, width: 32)),               // OPOST
-      lflag = t.lflag.bitAnd(bitNot(32843, width: 32)),           // ECHO ECHONL ICANON ISIG IEXTEN
+      lflag = t.lflag.bitAnd(bitNot(32842, width: 32)),           // ECHO ECHONL ICANON IEXTEN
       cflag = t.cflag.bitAnd(bitNot(304, width: 32)).bitOr(48),   // CSIZE and PARENB off, CS8 on
       cc[6] = 1, cc[5] = 0,                                       // VMIN 1, VTIME 0
     }
