@@ -15794,28 +15794,33 @@ impl Scope {
 mod tests {
     use super::*;
 
-    /// A relation with a long list of pending conjuncts is dropped with no overflow, on a
-    /// thread with the default stack of a test thread, 2 MiB. Each `Arc<Pending>` dropped the
-    /// next in turn, one frame each, before `Drop for Pending` (TEST-bench-move-l0139, found
-    /// by `chain_put_against_order` at 8192 in l01_39 `linked`); the depth is about a fifth
-    /// above the smallest list that overflowed that stack, 65,312 (65,194 passed), measured
-    /// 2026-11-14.
-    #[test]
-    fn a_long_pending_list_is_dropped_without_overflow() {
-        let k: i64 = 78_000;
-        std::thread::Builder::new()
-            .stack_size(2 << 20)
-            .spawn(move || {
-                let x = Lin::atom(Atom::Sym("x".into()));
-                let mut r = Relation::default();
-                for i in 0..k {
-                    r.defer(Formula::Con(Con::ge(&x, &Lin::constant(i))));
-                }
-                drop(r);
-            })
-            .expect("a thread")
-            .join()
-            .expect("no overflow");
+    /// Tests of unusual sizes (author P178), run apart under `--bench`.
+    mod bench {
+        use super::*;
+
+        /// A relation with a long list of pending conjuncts is dropped with no overflow, on a
+        /// thread with the default stack of a test thread, 2 MiB. Each `Arc<Pending>` dropped the
+        /// next in turn, one frame each, before `Drop for Pending` (TEST-bench-move-l0139, found
+        /// by `chain_put_against_order` at 8192 in l01_39 `linked`); the depth is about a fifth
+        /// above the smallest list that overflowed that stack, 65,312 (65,194 passed), measured
+        /// 2026-11-14.
+        #[test]
+        fn a_long_pending_list_is_dropped_without_overflow() {
+            let k: i64 = 78_000;
+            std::thread::Builder::new()
+                .stack_size(2 << 20)
+                .spawn(move || {
+                    let x = Lin::atom(Atom::Sym("x".into()));
+                    let mut r = Relation::default();
+                    for i in 0..k {
+                        r.defer(Formula::Con(Con::ge(&x, &Lin::constant(i))));
+                    }
+                    drop(r);
+                })
+                .expect("a thread")
+                .join()
+                .expect("no overflow");
+        }
     }
 
     /// The due users of a name are the parts of every set but those of the aggregates that

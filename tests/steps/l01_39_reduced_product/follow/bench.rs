@@ -3,6 +3,23 @@
 
 use super::*;
 
+/// A chain of summaries of 40 000 bindings is formed (`LetPa::sum`) and dropped (`Drop for
+/// LetNode`) on explicit stacks, with no overflow, and reads `n = 5`. It runs on a thread with
+/// the default stack of a test thread, 2 MiB, so that it is the same when libtest runs a test
+/// on the main thread. The depth is about a fifth above the larger of the two overflows of that
+/// stack without the explicit stacks, measured 2026-11-14 with each replaced by recursion:
+/// forming overflows from 32 616 bindings, dropping from 18 750.
+#[test]
+fn a_deep_chain_of_summaries_is_formed_and_dropped() {
+    let got = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| deep_chain(40_000)["n"].to_string())
+        .expect("a thread")
+        .join()
+        .expect("no panic");
+    assert_eq!(got, "[5..=5]");
+}
+
 /// The arms of the two chains are compared at depths 1 to 12 by
 /// `a_chain_of_following_comparisons_reads_as_the_plain_chain`; here only their costs.
 #[test]

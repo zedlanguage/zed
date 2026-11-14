@@ -5,35 +5,20 @@
 //! and a block of 512 bindings overflowed the stack of a scaling run (on a 2 MiB stack the
 //! walk overflowed at about 670 bindings).
 //!
-//! The fixed depths are 1,000 to 1,500, above the 200 to 670 levels at which the old walk
-//! overflowed a default stack, and no more (author P169: the smallest depth that overflows a
-//! default stack; TEST-bench-move-l0139, which cut them from 4,000 and 10,000), because each level
-//! costs the checker's work on a binding or a test whatever the depth: at 100,000 bindings
-//! these tests took 324 billion instructions and up to 45 s each (TEST-deep-let-size). With
-//! the walk and the transfer recursing on the thread's stack again, every test here aborts
-//! with a stack overflow, at 200 to 400 levels.
+//! The tests here check each kind of term at depths 1 to 12 on the test thread's stack. The
+//! tests at depths 1,000 to 1,500 on a 2 MiB stack, above the 200 to 670 levels at which the
+//! old walk overflowed a default stack, are in `bench` (author P178: a depth that overflows a
+//! default stack is an unusual size; TEST-bench-move-l0139, which also cut them from 4,000 and
+//! 10,000): each level costs the checker's work on a binding or a test whatever the depth, and
+//! at 100,000 bindings these tests took 324 billion instructions and up to 45 s each
+//! (TEST-deep-let-size). With the walk and the transfer recursing on the thread's stack again,
+//! each of those aborts with a stack overflow, at 200 to 400 levels.
 
 use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
 use zedc::store::product::{arms, forward};
 
 use super::ints;
-
-/// The default stack of a test thread.
-const STACK: usize = 2 << 20;
-
-/// How deep the terms are.
-const DEEP: usize = 1_500;
-
-/// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
-fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(f)
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 2 MiB stack");
-}
 
 fn var(x: &str) -> Term {
     Term::Var(x.into())
@@ -75,27 +60,22 @@ fn fees(d: usize, every: usize) -> Term {
     })
 }
 
-/// The arms of [`fees`] with `DEEP` days and a fee every 100th, on a 2 MiB stack: two for
-/// each fee and two for the final test, in the order written, the last fee's `2` taken only by
-/// `n > DEEP`. The fee is spaced to keep the test short, not to hide a cost that grows: a
-/// test costs a reduction of the scope and a copy per arm, measured at 165, 181 and 186 µs
-/// with a fee on every day at 1,000, 4,000 and 12,500 days (and [`the_arms_of_a_deep_block_scale`]
-/// checks that cost), and the depth of the walk is the same.
+/// The arms of [`fees`] with 12 days and a fee every third: two for each fee and two for the
+/// final test, in the order written, the last fee's `2` taken only by `n > 12`. The same block
+/// 1,500 days deep, on a 2 MiB stack, is `bench::a_block_of_1500_bindings_has_its_arms_on_a_2_mib_stack`.
 #[test]
-fn a_block_of_1500_bindings_has_its_arms_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let every = 100;
-        let a = arms(&fees(DEEP, every), &ints(&["n".into()]));
-        assert_eq!(a.len(), 2 * (DEEP / every) + 2);
-        let fee = &a[a.len() - 4];
-        assert_eq!(fee.guard, format!("(n > {DEEP})"));
-        assert!(fee.outcome);
-        assert_eq!(
-            fee.scope.get("n").ints().to_string(),
-            format!("[{}..]", DEEP + 1)
-        );
-        assert!(a.iter().all(|a| a.reachable()));
-    });
+fn a_block_of_bindings_has_its_arms() {
+    let (d, every) = (12, 3);
+    let a = arms(&fees(d, every), &ints(&["n".into()]));
+    assert_eq!(a.len(), 2 * (d / every) + 2);
+    let fee = &a[a.len() - 4];
+    assert_eq!(fee.guard, format!("(n > {d})"));
+    assert!(fee.outcome);
+    assert_eq!(
+        fee.scope.get("n").ints().to_string(),
+        format!("[{}..]", d + 1)
+    );
+    assert!(a.iter().all(|a| a.reachable()));
 }
 
 /// `{ a1 = 1 + 1; a2 = a1 + 1; ...; ad = a(d-1) + 1; ad }`, a block whose value is `d + 1`.
@@ -121,21 +101,22 @@ fn bound_to(value: Term, d: usize) -> Term {
     )
 }
 
-/// A binding whose value is a block of [`DEEP`] `let`s, or a sum [`DEEP`] deep: the forward
-/// transfer finds its value, `DEEP + 1`, and the test after it is taken only by its true arm.
+/// A binding whose value is a block of 1, 2 or 5 `let`s, or a sum as deep: the forward transfer
+/// finds its value, the depth plus 1, and the test after it is taken only by its true arm. The
+/// same 1,500 deep, on a 2 MiB stack, is `bench::a_value_nested_1500_deep_is_found_on_a_2_mib_stack`.
 #[test]
-fn a_value_nested_1500_deep_is_found_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let scope = ints(&["n".into()]);
+fn a_nested_value_is_found() {
+    let scope = ints(&["n".into()]);
+    for d in [1, 2, 5] {
         for make in [block, sum] {
-            let value = make(DEEP);
+            let value = make(d);
             let found = forward(&value, &mut scope.clone());
-            assert_eq!(found.value(), Some(&Value::Int(DEEP as i64 + 1)));
-            let a = arms(&bound_to(value, DEEP), &scope);
-            assert_eq!(a.len(), 2);
-            assert!(a[0].reachable() && !a[1].reachable());
+            assert_eq!(found.value(), Some(&Value::Int(d as i64 + 1)), "d = {d}");
+            let a = arms(&bound_to(value, d), &scope);
+            assert_eq!(a.len(), 2, "d = {d}");
+            assert!(a[0].reachable() && !a[1].reachable(), "d = {d}");
         }
-    });
+    }
 }
 
 /// `if n > 1 { if n > 2 { ... if n > d { 1 } else { 0 } ... } else { 0 } } else { 0 }`.
@@ -145,21 +126,20 @@ fn nested_ifs(d: usize) -> Term {
     })
 }
 
-/// `if`s nested 1,000 deep in their first arm, on a 2 MiB stack: the `k`-th test's true arm
-/// holds `n > k`, its false arm `n == k` (`n <= 1` for the first), the arms in the order
-/// written (the true arms outside in, then the false arms inside out), and the value is
-/// 0 or 1. (Each test costs a reduction of the scope; the depth is 1,000, two and a half times
-/// the depth at which the old walk overflowed, to keep the test short.)
+/// `if`s nested 1, 2 and 5 deep in their first arm: the `k`-th test's true arm holds `n > k`,
+/// its false arm `n == k` (`n <= 1` for the first), the arms in the order written (the true
+/// arms outside in, then the false arms inside out), and the value is 0 or 1. The same 1,000
+/// deep, on a 2 MiB stack, is `bench::ifs_nested_1000_deep_have_their_arms_on_a_2_mib_stack`.
 #[test]
-fn ifs_nested_1000_deep_have_their_arms_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let d = 1_000;
+fn nested_ifs_have_their_arms() {
+    for d in [1, 2, 5] {
         let a = arms(&nested_ifs(d), &ints(&["n".into()]));
-        assert_eq!(a.len(), 2 * d);
-        for k in [1, d / 2, d] {
+        assert_eq!(a.len(), 2 * d, "d = {d}");
+        for k in 1..=d {
             assert_eq!(
                 a[k - 1].scope.get("n").ints().to_string(),
-                format!("[{}..]", k + 1)
+                format!("[{}..]", k + 1),
+                "d = {d}"
             );
             assert_eq!(
                 a[2 * d - k].scope.get("n").ints().to_string(),
@@ -167,12 +147,13 @@ fn ifs_nested_1000_deep_have_their_arms_on_a_2_mib_stack() {
                     "[..=1]".to_string()
                 } else {
                     format!("[{k}..={k}]")
-                }
+                },
+                "d = {d}"
             );
         }
         let value = forward(&nested_ifs(d), &mut ints(&["n".into()]));
-        assert_eq!(value.ints().to_string(), "[0..=1]");
-    });
+        assert_eq!(value.ints().to_string(), "[0..=1]", "d = {d}");
+    }
 }
 
 /// `f(arg(1), ..., arg(d))`, each argument the block `{ t = n + j; u = t + 1; u }`: `d`

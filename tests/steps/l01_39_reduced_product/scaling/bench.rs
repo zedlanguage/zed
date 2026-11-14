@@ -4,6 +4,14 @@
 
 use super::*;
 
+/// Runs `f` on a thread with a stack deep enough for the nests of `scaling.rs` (item T2-mid).
+fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    std::thread::scope(|s| {
+        let thread = std::thread::Builder::new().stack_size(1 << 28);
+        thread.spawn_scoped(s, f).unwrap().join().unwrap()
+    })
+}
+
 #[test]
 fn narrowing_by_a_conjunction_of_disjunctions_scales() {
     let s = ints(&["x".into(), "y".into()]);

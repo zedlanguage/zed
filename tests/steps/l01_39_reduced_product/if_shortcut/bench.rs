@@ -3,6 +3,28 @@
 
 use super::*;
 
+/// [`walk_chain`] at [`CHAIN`] links on a thread of [`CHAIN_STACK`] bytes. Neither the walk nor
+/// the drop recurses down the chain: on a thread of [`CHAIN_STACK`] bytes (on 64 KiB it
+/// overflowed at every depth tried, from the stack it takes whatever the depth), the walk
+/// passed at 2,000, 10,000 and 30,000 links, so its stack does not grow with the chain, and a
+/// walk that took over 66 bytes of stack a link overflows at 4,000 links. Until
+/// TEST-bench-move-l0139 the chain was 100,000 links long on the test thread's stack, 9.6 s at
+/// load 30; a chain this deep on a stack this small is an unusual size (author P178).
+#[test]
+fn a_deep_chain_of_bindings_is_walked_and_dropped() {
+    std::thread::Builder::new()
+        .stack_size(CHAIN_STACK)
+        .spawn(|| walk_chain(CHAIN))
+        .expect("a test thread")
+        .join()
+        .expect("the chain is walked and dropped on a 256 KiB stack");
+}
+
+/// The links of the chain of [`a_deep_chain_of_bindings_is_walked_and_dropped`], and the stack
+/// it runs on.
+const CHAIN: i64 = 4_000;
+const CHAIN_STACK: usize = 256 << 10;
+
 /// The walk is linear in the depth of each form of [`nest`]: blocks bound inside bound blocks
 /// (a binding's summary is made when a test reads it, `product::Lazy`), `if`s with blocks in
 /// their arms bound inside each other's arms (the value of an `if` is the join of its arms'

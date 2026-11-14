@@ -126,16 +126,6 @@ fn two_choices_at_each_tier_leave_the_credits_free() {
     }
 }
 
-/// Runs `f` on a thread whose stack holds the recursion over a term nested 2000 deep.
-fn on_a_deep_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(f)
-        .expect("a thread")
-        .join()
-        .expect("the test passes");
-}
-
 /// `x0 >= 0 || (y0 >= 0 && (x1 >= 1 || (y1 >= 1 && … (xd >= d) …)))`: a chain of accounts, each
 /// with its own balance `xi` and credit `yi`, so each level names new symbols.
 fn accounts(d: usize) -> Term {
@@ -458,25 +448,23 @@ fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
 /// Searches `if nest(d) { 1 } else { 2 }` for each nest of [`heavy`] and [`moving`] and each
 /// depth of `depths`, and checks that the search tests from one to 48 parts per level.
 fn parts_tested_per_level(depths: [usize; 2]) {
-    on_a_deep_stack(move || {
-        let scope = ints(&level_names());
-        for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
-            for d in depths {
-                let test = if_(nest(d), lit(1), lit(2));
-                presburger::parts_tested();
-                std::hint::black_box(arms(&test, &scope));
-                let tested = presburger::parts_tested();
-                assert!(
-                    tested >= d as u64,
-                    "{name}, d = {d}: {tested} parts tested, fewer than one per level"
-                );
-                assert!(
-                    tested <= 48 * d as u64,
-                    "{name}, d = {d}: {tested} parts tested, more than 48 per level"
-                );
-            }
+    let scope = ints(&level_names());
+    for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
+        for d in depths {
+            let test = if_(nest(d), lit(1), lit(2));
+            presburger::parts_tested();
+            std::hint::black_box(arms(&test, &scope));
+            let tested = presburger::parts_tested();
+            assert!(
+                tested >= d as u64,
+                "{name}, d = {d}: {tested} parts tested, fewer than one per level"
+            );
+            assert!(
+                tested <= 48 * d as u64,
+                "{name}, d = {d}: {tested} parts tested, more than 48 per level"
+            );
         }
-    });
+    }
 }
 
 #[test]

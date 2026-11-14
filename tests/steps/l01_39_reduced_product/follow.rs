@@ -559,21 +559,15 @@ fn deep_chain(d: usize) -> Domains {
     let_preimage(&test, &inputs, lets, &Demand::Bool(true))
 }
 
-/// A chain of summaries of 40 000 bindings is formed (`LetPa::sum`) and dropped (`Drop for
-/// LetNode`) on explicit stacks, with no overflow, and reads `n = 5`. It runs on a thread with
-/// the default stack of a test thread, 2 MiB, so that it is the same when libtest runs a test
-/// on the main thread. The depth is about a fifth above the larger of the two overflows of that
-/// stack without the explicit stacks, measured 2026-11-14 with each replaced by recursion:
-/// forming overflows from 32 616 bindings, dropping from 18 750.
+/// A chain of summaries of 1, 2 and 5 bindings is formed (`LetPa::sum`) and reads `n = 5`.
+/// The chain 40,000 deep on a 2 MiB stack, past the depths at which forming and dropping it
+/// overflowed that stack when they recursed, is
+/// `bench::a_deep_chain_of_summaries_is_formed_and_dropped` (author P178).
 #[test]
-fn a_deep_chain_of_summaries_is_formed_and_dropped() {
-    let got = std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| deep_chain(40_000)["n"].to_string())
-        .expect("a thread")
-        .join()
-        .expect("no panic");
-    assert_eq!(got, "[5..=5]");
+fn a_chain_of_summaries_is_formed() {
+    for d in [1, 2, 5] {
+        assert_eq!(deep_chain(d)["n"].to_string(), "[5..=5]", "d = {d}");
+    }
 }
 
 /// The bounds of a line's term over a domain with an end past `i128` are read exactly: the

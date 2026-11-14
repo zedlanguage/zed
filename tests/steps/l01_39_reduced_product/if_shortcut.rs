@@ -473,46 +473,36 @@ fn one_pass_and_transfer_agree_on_deep_nests() {
     }
 }
 
-/// A chain of [`CHAIN`] bindings `z_k = z_(k-1) + 1`, read by one test at the end, makes each
-/// summary when the test reads it, the bindings before it first, on an explicit stack; read
-/// by none, it keeps a chain of scopes, which is dropped by a loop (`Lazy` and `Basis` in
-/// `product.rs`). Neither recurses down the chain: on a thread of [`CHAIN_STACK`] bytes (on
-/// 64 KiB it overflowed at every depth tried, from the stack it takes whatever the depth), the
-/// walk passed at 2,000, 10,000 and 30,000 links, so its stack does not grow with the chain,
-/// and a walk that took over 66 bytes of stack a link overflows at 4,000 links. Until
-/// TEST-bench-move-l0139 (author P169) the chain was 100,000 links long on the test thread's
-/// stack, 9.6 s at load 30.
-#[test]
-fn a_deep_chain_of_bindings_is_walked_and_dropped() {
-    std::thread::Builder::new()
-        .stack_size(CHAIN_STACK)
-        .spawn(|| {
-            let scope = ints(&["x".into()]);
-            let d = CHAIN;
-            let z = |k: i64| {
-                if k < 0 {
-                    "x".to_string()
-                } else {
-                    format!("z{k}")
-                }
-            };
-            for read in [&z(d - 1), "x"] {
-                let last = if_(prim(Prim::Gt, vec![var(read), int(3)]), int(1), int(2));
-                let t = (0..d).rev().fold(last, |b, k| {
-                    let_(&z(k), prim(Prim::Add, vec![var(&z(k - 1)), int(1)]), b)
-                });
-                let (arms, _) = arms_and_value(&t, &scope);
-                assert_eq!(arms.len(), 2);
-            }
-        })
-        .expect("a test thread")
-        .join()
-        .expect("the chain is walked and dropped on a 256 KiB stack");
+/// A chain of `d` bindings `z_k = z_(k-1) + 1`, read by one test at the end, then read by none
+/// (the test reads `x`): each has two arms. A binding's summary is made when the test reads it,
+/// the bindings before it first, on an explicit stack; a chain read by none keeps a chain of
+/// scopes, which is dropped by a loop (`Lazy` and `Basis` in `product.rs`).
+fn walk_chain(d: i64) {
+    let scope = ints(&["x".into()]);
+    let z = |k: i64| {
+        if k < 0 {
+            "x".to_string()
+        } else {
+            format!("z{k}")
+        }
+    };
+    for read in [&z(d - 1), "x"] {
+        let last = if_(prim(Prim::Gt, vec![var(read), int(3)]), int(1), int(2));
+        let t = (0..d).rev().fold(last, |b, k| {
+            let_(&z(k), prim(Prim::Add, vec![var(&z(k - 1)), int(1)]), b)
+        });
+        let (arms, _) = arms_and_value(&t, &scope);
+        assert_eq!(arms.len(), 2, "d = {d}, the test reads {read}");
+    }
 }
 
-/// The links of the chain of [`a_deep_chain_of_bindings_is_walked_and_dropped`], and the stack
-/// it runs on.
-const CHAIN: i64 = 4_000;
-const CHAIN_STACK: usize = 256 << 10;
+/// [`walk_chain`] at 1, 2 and 5 links. The chain 4,000 links long on a 256 KiB stack is
+/// `bench::a_deep_chain_of_bindings_is_walked_and_dropped` (author P178).
+#[test]
+fn a_chain_of_bindings_is_walked_and_dropped() {
+    for d in [1, 2, 5] {
+        walk_chain(d);
+    }
+}
 
 mod bench;

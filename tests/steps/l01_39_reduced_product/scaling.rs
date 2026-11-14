@@ -279,14 +279,6 @@ fn nested_helpers(k: usize) -> Term {
     t
 }
 
-/// Runs `f` on a thread with a stack deep enough for the nests above (item T2-mid).
-fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    std::thread::scope(|s| {
-        let thread = std::thread::Builder::new().stack_size(1 << 28);
-        thread.spawn_scoped(s, f).unwrap().join().unwrap()
-    })
-}
-
 /// `xi - yi >= 1`, or with `or` the test `xi - yi >= 1 || yi - xi >= 1`, for `i` below `k`:
 /// tests on names that no other test mentions.
 fn apart(k: usize, or: bool) -> (Vec<std::sync::Arc<str>>, Vec<Term>) {

@@ -3,6 +3,16 @@
 
 use super::*;
 
+/// Runs `f` on a thread whose stack holds the recursion over a term nested 2000 deep.
+fn on_a_deep_stack(f: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(f)
+        .expect("a thread")
+        .join()
+        .expect("the test passes");
+}
+
 #[test]
 fn arms_of_a_deep_test_take_time_near_linear_in_its_depth() {
     // The tests are built before the measurement, so that only `arms` is measured.
@@ -172,5 +182,5 @@ fn the_search_for_a_point_tests_each_part_of_a_deeper_test_a_bounded_number_of_t
     // A count, not a time: at depths 60 and 480 a search without `Parts::failed` tests 516 and
     // 3876 parts per level of `heavy`, far above the bound of 48 (see
     // `the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`).
-    parts_tested_per_level([60, 480]);
+    on_a_deep_stack(|| parts_tested_per_level([60, 480]));
 }
