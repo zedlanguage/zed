@@ -71,6 +71,9 @@ fn checking_functions_of_many_parameters_scales() {
     });
 }
 
-/// The sizes, set so the check of the 1x case runs about 1 s.
-const N_CLEAN: usize = 3000;
-const N_PARAMS: usize = 2000;
+/// The sizes, set so the check of the 1x case runs about 0.15 s alone: `scaling::check` runs
+/// the smaller size 3 times and the larger 2 times, about 19 times the 1x in all, and at 3000
+/// and 2000 (0.27 and 0.24 s timed) the pieces took 16 and 11 s alone, and the first timed out
+/// at 20 s at load 23.
+const N_CLEAN: usize = 1500;
+const N_PARAMS: usize = 1000;

@@ -182,7 +182,7 @@ fn a_nest_of_tests_narrows_each_operand_in_one_step_each() {
     // outermost test at each read, it is O(n²).
     check_alone(
         "checking a nest of n tests, each arm reading a bit word",
-        1500,
+        750,
         1,
         nest_of_tests,
     );
@@ -194,7 +194,7 @@ fn a_chain_of_and_narrows_each_side_in_one_step_each() {
     // read where every side before it holds, its scope the one before narrowed by one side.
     check_alone(
         "checking a chain of n sides of &&, each reading a bit word",
-        2000,
+        1000,
         1,
         chain_of_and,
     );
@@ -212,7 +212,7 @@ fn a_nest_of_or_tests_on_distinct_names_joins_each_in_what_it_changed() {
     // reachable, which differ in `ai` alone, though the scope holds `i` names there.
     check_alone(
         "checking a nest of k || tests on k names, each arm reading a bit word",
-        600,
+        300,
         1,
         |k| nest_of_joins(k, true, or_test),
     );
@@ -325,7 +325,7 @@ fn a_nest_of_rejections_under_weaker_tests_on_one_name_names_the_test_that_bound
 fn a_nest_of_rejections_under_stronger_tests_on_one_name_names_the_test_that_bounds_it() {
     check_notes(
         "checking a nest of k rejections under stronger and stronger tests on n",
-        1000,
+        500,
         1,
         |k| nest_on_one_name(k, &|i| k - i),
     );
@@ -432,7 +432,7 @@ fn tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each() {
     // from names whose bound changed or moved.
     check_alone(
         "checking k tests that equate a reading to one name",
-        450,
+        225,
         1,
         hub_equal,
     );

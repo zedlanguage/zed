@@ -39,13 +39,15 @@ fn a_named_finite_type_reduces_in_time_linear_in_its_form() {
 
 #[test]
 fn the_values_of_a_type_written_as_a_list_become_its_set_in_their_number() {
-    // `(0, 0) | (1, 0) | … | (n - 1, 0)`: `n` tuples written, all of which the set holds.
-    let built = scaling::inputs(20_000, |n| {
+    // `(0, 0) | (1, 0) | … | (n - 1, 0)`: `n` tuples written, all of which the set holds. At
+    // 10,000: at 20,000 the run, with the types built before the timing, took 15 s, near the
+    // 20 s piece limit (0.35 and 3.95 s timed).
+    let built = scaling::inputs(10_000, |n| {
         Type::union_all((0..n).map(|i| lit(&pair(i, 0))))
     });
     scaling::check(
         "the n values of n written tuples made a finite set",
-        20_000,
+        10_000,
         |n| {
             let p = Product::of_type(built[&n].clone());
             assert_eq!(finite(&p).map(|s| s.len()), Some(n));

@@ -354,10 +354,13 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// `m`, each of k/2 parts, and no part holds both, so no part is due by the group (item
 /// LAZY-hub-coarse); the parts of one of the two are read to find that out
 /// (`Block::reframe` in `product.rs`), O(k) reads per test, O(k^2 log k) in all, beside the
-/// projections each test costs. COMPLEXITY.md C52.
+/// projections each test costs. COMPLEXITY.md C52. Sized at 64 (8.9 times the work at 8n,
+/// 0.02 and 0.2 s), not at 256 (8.8 times, 0.06 and 0.54 s), because building the scopes
+/// before the timing grows near `k^2`: the run takes 5.2, 18.9 and 68 s at 64, 128 and 256,
+/// over the 20 s piece limit from 128 (plan row SCOPE-assume-disjunctions-setup).
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
-    let n = 256;
+    let n = 64;
     let inputs = scaling::inputs(n, tightenings_of_a_sum);
     scaling::check(
         "k tightenings of n + m beside k disjunctions each on n or m",

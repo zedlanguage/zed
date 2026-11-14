@@ -291,7 +291,7 @@ fn holes_put_in_a_ladder_built_first_are_linear() {
     // every name stay as they were.
     let p = Premises::new();
     for reverse in [false, true] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [640, 5120]
+        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [320, 2560]
             .into_iter()
             .map(|k| {
                 let n = named(k + 1, "x");
@@ -316,7 +316,7 @@ fn holes_put_in_a_ladder_built_first_are_linear() {
         } else {
             "holes put in a ladder built first"
         };
-        scaling::check_order(name, 640, 1, |k| {
+        scaling::check_order(name, 320, 1, |k| {
             let (s, tests) = &built[&k];
             let s = tests.iter().fold(s.clone(), |s, t| {
                 let mut j = s
