@@ -661,3 +661,41 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power() {
         });
     });
 }
+
+/// `y = 2r * 2^(1 - 1 + … + 1 - 1 + e)`, an exponent of `2n` terms, and
+/// `y = 2r * 2^(1^(1^(… ^ e)))`, an exponent of `n` powers nested: with `e` a decimal, `0.5`,
+/// the power is no `rat` and the line is rejected; with `e = 2` it is a `rat`. At `rat`
+/// the text of each exponent is read once and the exponent folded once at `int`
+/// (`int_exponent`, `Ck::lit_fit`; plan row LIT-rat-decimal-exponent), not once per `^` it
+/// holds.
+#[test]
+fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time() {
+    fn flat(n: usize, e: &str) -> String {
+        format!("y = 2r * 2^({}{e});\n", "1 - 1 + ".repeat(n))
+    }
+    fn deep(n: usize, e: &str) -> String {
+        format!("y = 2r * 2^({}{e}{});\n", "1^(".repeat(n), ")".repeat(n))
+    }
+    scaling::on_a_thread(1 << 29, || {
+        for shape in [flat, deep] {
+            assert!(!type_errors(&shape(3, "0.5")).is_empty());
+            assert_eq!(type_errors(&shape(3, "2")), Vec::<String>::new());
+        }
+        let n = 500;
+        for (shape, what) in [(flat as fn(usize, &str) -> String, "long"), (deep, "deep")] {
+            for (e, ok) in [("0.5", false), ("2", true)] {
+                let units = scaling::inputs(n, |m| Resolved::new(&shape(m, e)));
+                for u in units.values() {
+                    assert_eq!(u.type_errors().is_empty(), ok);
+                }
+                scaling::check(
+                    &format!("checking 2r * 2^(…{e}), an exponent of n terms, {what}"),
+                    n,
+                    |m| {
+                        std::hint::black_box(units[&m].type_errors());
+                    },
+                );
+            }
+        }
+    });
+}

@@ -271,3 +271,67 @@ fn a_top_level_line_of_many_powers_takes_f64_in_linear_time() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn a_power_whose_exponent_is_no_int_takes_no_rat_in_any_place() {
+    // At `rat`, `^` takes an `int` exponent alone (DESIGN.md sec:operators), so a `^` whose
+    // exponent holds a decimal literal, a `/`, a `rat` literal or an `int` power with a
+    // negative exponent is no `rat`, and an operand of `rat` beside it is rejected in every
+    // place (plan row LIT-rat-decimal-exponent). The top level took each as a `rat`: the run
+    // stopped at `^` applied to (`rat`, `f64`), at `/` applied to (`int`, `int`) or at `^`
+    // applied to (`int`, `int`), and `y = 2^0.5 == 2r` gave `false`.
+    let lines = [
+        "2^0.5 + 2r",
+        "2^0.5 < 2r",
+        "2^0.5 == 2r",
+        "2r * 2^-0.5",
+        "2^(1/2) + 2r",
+        "2^(1 + 0.5) - 2r",
+        "2^(2^0.5) + 2r",
+        "2^(1/2 + 1) < 2r",
+        "(2^0.5, 1) == (2r, 1)",
+        "2r * 2^(2^-1)",
+        "2r * 2^(1 - 2^-1)",
+    ];
+    for e in lines {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            assert!(!type_errors(src).is_empty(), "{place}: accepted\n{src}");
+        }
+    }
+    // The same beside a name bound to a `rat`.
+    for e in [
+        "a + 2^0.5",
+        "a == 2^(1/2)",
+        "a < 2^0.5",
+        "a * 2^(1/2)",
+        "a == 2^2r",
+    ] {
+        for (src, place) in [
+            (format!("a = 2r;\ny = {e};\n"), "top"),
+            (format!("g() = {{ a = 2r; {e} }};\n"), "block"),
+        ] {
+            assert!(!type_errors(&src).is_empty(), "{place}: accepted\n{src}");
+        }
+    }
+    // An exponent that is an `int` literal keeps the power a `rat`: the same value in all
+    // three places.
+    let cases = [
+        ("2^2 + 2r", "6r"),
+        ("2^-1 + 2r", "5r/2r"),
+        ("2^-1 == 1r/2r", "true"),
+        ("(1/2)^2 < 2r", "true"),
+    ];
+    let lines: Vec<&str> = cases.iter().map(|(e, _)| *e).collect();
+    let want: Vec<&str> = cases.iter().map(|(_, v)| *v).collect();
+    let want = format!("{}\n", want.join(" "));
+    for (src, place) in places(&lines).iter().zip(["top", "body", "block"]) {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{place}:\n{src}");
+        let out = run(&format!("l01_26a_top_body_agree_rat_{place}"), src, "", &[]);
+        assert_eq!(
+            (out.status, out.stderr.as_str()),
+            (0, ""),
+            "{place}:\n{src}"
+        );
+        assert_eq!(out.stdout, want, "{place}:\n{src}");
+    }
+}

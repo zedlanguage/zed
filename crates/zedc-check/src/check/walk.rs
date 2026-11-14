@@ -3118,8 +3118,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Ck::lit_open`]), and the errors its operations wrote as they were walked dropped
     /// ([`Ck::lit_wrote`]); at `rat` the exponent of each `^`, an integer literal, adopts `int`,
     /// which `^` takes there. `false`, with nothing changed, where `e` holds a `/` or a `^` and
-    /// its value at `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`, or `(3/2)^(1 + 1)`
-    /// at `rat`, whose exponent would be a `rat`: the rejection of the operation stands. It
+    /// its value at `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`, or `(3/2)^0.5`
+    /// at `rat`, whose exponent is no `int`: the rejection of the operation stands. It
     /// costs the size of `e`, twice where it holds a `/` or a `^`; in a repair's trial
     /// ([`Self::tried`]), which changes nothing that lasts, what it finds is read from
     /// [`Self::lit_fit`] instead.
@@ -3270,6 +3270,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                         continue;
                     }
                     match &x.kind {
+                        // At `rat` a `^` takes an `int` exponent alone, so one whose exponent
+                        // is no `int`, as `2^0.5`, `2^(1/2)` or `2^(2^-1)`, is no `rat` and the
+                        // operation does not take it, as in a body: its base is not read. The
+                        // exponent is no `int` where its text is none ([`int_exponent`]) or
+                        // where its value at `int` is no value of `int`.
+                        // Complexity tradeoff: the text alone decides `0.5` and `1/2`, but not
+                        // `2^-1`, an `int` power that is refused, so the exponent is also read
+                        // at `int` by this same fold, kept by operation ([`Ck::lit_fits`]):
+                        // each node of an exponent is read once at `int`, since the walk at
+                        // `rat` does not enter it, O(size of `e`) besides the folds of its
+                        // powers, which the walk of the exponent at `int` makes too. A power
+                        // there whose value is past the fold's bound ([`kernel_folded`]),
+                        // as `3^(3^(2^30))`, has no value, so it is no `int` here, as it takes
+                        // no carrier anywhere in this fold; reading its range instead, as
+                        // [`rat_step`] does at `rat`, would keep such an exponent an `int`.
+                        ExprKind::Binary(BinaryOp::Pow, _, b)
+                            if c == Carrier::Rat
+                                && !(int_exponent(b) && self.lit_fit(b, Carrier::Int).0) =>
+                        {
+                            let fit = LitFit {
+                                value: None,
+                                div: false,
+                                pow: true,
+                                refused: None,
+                            };
+                            self.lit_fits.insert((x.span, c), fit.clone());
+                            fits.push(fit);
+                        }
                         ExprKind::Binary(BinaryOp::Pow, a, b) if c == Carrier::Rat => {
                             todo.extend([
                                 Step::Done(x, Some(Prim::Pow), 2, false, true),

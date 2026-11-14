@@ -7121,6 +7121,35 @@ fn rat_exponent(b: &Expr) -> Option<Value> {
     literal(b, None).and_then(|l| lit_value(&l, Carrier::Int))
 }
 
+/// Whether the text of `b`, the exponent of a `^` at `rat`, is that of an `int`, which `^`
+/// takes there (DESIGN.md sec:operators): each literal in it an `int` as written
+/// ([`lit_value`]), under `+`, `-`, `*`, `^` and a `-`. A decimal, `0.5`, a `/`, as in `1/2`,
+/// or a `rat` literal, `2r`, makes it no `int`, so `2^0.5`, `2^(1/2)` and `2^2r` are no `rat`
+/// (plan row LIT-rat-decimal-exponent). [`Ck::lit_fit`] then folds it at `int`, which finds
+/// the rest, a power in it with a negative exponent, as `2^(2^-1)`. One walk of its text with
+/// its own stack, O(size of `b`).
+fn int_exponent(b: &Expr) -> bool {
+    let mut todo = vec![b];
+    while let Some(x) = todo.pop() {
+        if let Some(l) = literal(x, None) {
+            if lit_value(&l, Carrier::Int).is_none() {
+                return false;
+            }
+            continue;
+        }
+        match &x.kind {
+            ExprKind::Binary(
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow,
+                a,
+                c,
+            ) => todo.extend([&**a, &**c]),
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// The kernel's operation for the operator `op` where [`folded`] folds it: the arithmetic
 /// operators and the comparisons.
 fn binary_prim(op: BinaryOp) -> Option<Prim> {
