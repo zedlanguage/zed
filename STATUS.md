@@ -2221,7 +2221,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-bench-move-crates-b | impl attempt 1 | 2026-11-14 04:47 | started: worktree from origin/main, seeded; crates zedc-lattice, zedc-int, zedc-zir; load 21.08 21.27 20.21 |
-| TEST-bench-move-crates-b | merged | 2026-11-14 05:10 | zedc-int afc0df77f, zedc-lattice c7a89cbcf: 2 benchmarks moved to bench.rs files, 7 tests seeded or shrunk, 9 hole tests added (P188), no FAIL rows; zedc-zir unchanged |
+| TEST-bench-move-crates-b | merged | 2026-11-14 05:10 | zedc-int afc0df77f, zedc-lattice c7a89cbcf: 2 benchmarks moved to bench.rs files, 7 tests seeded or shrunk, 8 hole tests added (P188), no FAIL rows; zedc-zir unchanged |
 | TEST-bench-move-crates-c | impl attempt 1 | 2026-11-14 04:47 | started: worktree from origin/main, crates zed-native, zed-rt, zed-tools, benches/ |
 | TEST-bench-move-crates-d | impl attempt 1 | 2026-11-14 04:49 | started: worktree made from origin/main, crate zedc-solvers |
 | TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
