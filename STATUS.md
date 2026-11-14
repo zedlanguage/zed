@@ -2291,7 +2291,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | committed 3 COMPLETENESS.md + 13 tests, rebased, row Done text and TEST-types-unreached-paths added; plan --fix, tests, clippy next / load 47.10 50.62 49.91 |
 | TEST-m0_03-flake | running |  |  |
 | TEST-m0-layer-label | running |  |  |
-| XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
