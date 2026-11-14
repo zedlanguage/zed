@@ -277,6 +277,8 @@ struct Member<'a> {
     safe: bool,
     member: Span,
     call: Call<'a>,
+    /// Whether `x` is a literal, a value with no fields, so `.f` can only be a call.
+    literal: bool,
 }
 
 /// What a call's arguments fill.
@@ -1413,6 +1415,15 @@ impl<'a> Elab<'a> {
             safe,
             member,
             call,
+            literal: matches!(
+                of.kind,
+                ExprKind::Int { .. }
+                    | ExprKind::Float { .. }
+                    | ExprKind::Rat(_)
+                    | ExprKind::Str(_)
+                    | ExprKind::Bool(_)
+                    | ExprKind::Atom(_)
+            ),
         };
         m.k(Frame::MemberOf(Box::new(mb)));
         m.stack.push(Job::Expr(of));
@@ -1425,6 +1436,7 @@ impl<'a> Elab<'a> {
             safe,
             member,
             call,
+            literal,
         } = mb;
         let (receiver, wrap) = if safe {
             let t = self.temp();
@@ -1458,6 +1470,27 @@ impl<'a> Elab<'a> {
                     return;
                 }
                 Some(_) => not_yet(&format!("the prelude word `{name}`")),
+                // A literal has no fields, so `.name` can only call a function `name`, and
+                // none is in scope: the resolver's short headline, the rule in a note
+                // (DESIGN.md sec:diagnostics, "A short headline, the detail in the notes").
+                None if literal => {
+                    self.errors.push(Error {
+                        menu: String::new(),
+                        row: None,
+                        span: member,
+                        message: zedc_resolve::resolve::undefined(name),
+                        notes: vec![Note {
+                            span: member,
+                            text: format!(
+                                "`.{name}` after a literal calls the function `{name}` with the \
+                                 literal as its first argument, since a literal has no fields, \
+                                 and no function `{name}` is in scope"
+                            ),
+                        }],
+                    });
+                    m.give(None);
+                    return;
+                }
                 None => {
                     format!(
                         "`{name}` is not a function in scope, and reading a field with `.{name}` \
