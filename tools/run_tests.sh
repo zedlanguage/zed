@@ -849,6 +849,66 @@ piece() {
   [ "$rc" = 0 ]
 }
 export -f take_slot piece
+# A test that builds executables (zed_native::link) keeps each one and links it again only when
+# an input of its link changed (crates/zed-native/src/link.rs, `kept`). The runtime archive is
+# one of those inputs, and Cargo builds it again after any change to zed-native or a crate under
+# it, zed-kernel and zedc among them; the next run of such a test then links every executable
+# again, about 1.5 s each, most of it GNU ld reading the 207 MB archive: the l01_36a piece took
+# 13.4 s instead of 2.6 to 3.0 s at load 44 to 51, and once ran past its limit of 24 s
+# (TEST-runtime-build-in-piece). So when the runtime archives beside the test binaries differ
+# from those of the last run in $out, the selected pieces of the step folders whose sources call
+# the linker run first, with no limit, as part of the build: the links are made there, and the
+# pieces run again in the slots, where they find them kept. Their results are not counted; a
+# piece that fails there fails again in the slots and is reported there.
+warm() {
+  name=$1 dir=$2
+  shift 2
+  take_slot
+  start=$(date +%s%N)
+  (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
+    systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
+    "$@" >"$out/warm-$slot.out" 2>&1)
+  rc=$?
+  : >"$out/warm-$slot.out"
+  echo "$name links made before the timed pieces: rc=$rc $((($(date +%s%N) - start) / 1000000))ms"
+  [ "$rc" = 0 ]
+}
+export -f warm
+deps=$(dirname "$(head -1 "$out/pieces" | cut -d ' ' -f 3)")
+runtimes=$(stat -c '%n %s %Y' "$deps"/libzed_native-*.a 2>/dev/null)
+if [ "$runtimes" != "$(cat "$out/runtimes" 2>/dev/null)" ]; then
+  # A piece calls the linker when the source of its module, read from its name (a step folder,
+  # a file or folder in it, or a test in such a file, or in the folder's mod.rs), or the mod.rs
+  # of its step folder, which holds the helpers its modules share, names zed_native::link or the
+  # helpers of step L1.36a. A piece named <target>-<hash>, a test target of zed-native such as
+  # build_binary, calls it when the file its Cargo.toml gives that target does.
+  linker='zed_native::link|step_helpers::l01_36a_executables'
+  declare -A source
+  while read -r t p; do source[$t]=$p; done < <(awk '/^name = / { n = $3 }
+    /^path = / { p = $3; gsub(/"/, "", n); gsub(/"/, "", p); f = FILENAME; sub(/[^\/]*$/, "", f)
+      print n, f p }' crates/*/Cargo.toml tests/Cargo.toml)
+  while read -r name rest; do
+    g=tests/steps/${name%%::*}
+    if [ ! -d "$g" ]; then
+      p=${source[${name%-*}]}
+      if [ -n "$p" ] && [[ $p == *.rs ]] && grep -qsE "$linker" "$p"; then
+        echo "$name $rest"
+      fi
+      continue
+    fi
+    p=tests/steps/${name//:://}
+    while [ ! -e "$p.rs" ] && [ ! -d "$p" ] && [[ $p == tests/steps/*/* ]]; do p=${p%/*}; done
+    [ ! -e "$p.rs" ] || p=$p.rs
+    [ "$p" != "$g" ] || [ "$name" = "${name%%::*}" ] || p=$g/mod.rs
+    if grep -rqsE "$linker" "$p" || grep -qsE "$linker" "$g/mod.rs"; then
+      echo "$name $rest"
+    fi
+  done <"$out/pieces" >"$out/linking"
+  if [ ! -s "$out/linking" ] ||
+    xargs -P "$jobs" -L 1 bash -c 'warm "$@"' _ <"$out/linking"; then
+    printf '%s\n' "$runtimes" >"$out/runtimes"
+  fi
+fi
 xargs -P "$jobs" -L 1 bash -c 'piece "$@"' _ <"$out/pieces" | tee "$out/summary"
 bad=$(grep -vc 'rc=0 ' "$out/summary")
 load=$(awk 'match($0, / load=[0-9.]+/) {
