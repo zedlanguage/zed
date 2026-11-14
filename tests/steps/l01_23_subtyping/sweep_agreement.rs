@@ -424,7 +424,7 @@ fn the_sweep_agrees_on_meets_and_pairs() {
 fn the_sweep_agrees_on_random_chains() {
     let t = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0x5eed_2026);
+        let (mut rng, _) = Rng::fresh("random chains");
         let palette = [
             INT,
             ONE,
@@ -440,7 +440,7 @@ fn the_sweep_agrees_on_random_chains() {
             INT | ATOM,
             ATOM,
         ];
-        for id in 0..3000 {
+        for id in 0..500 {
             let k = 1 + rng.below(6);
             let all = (0..3).fold(0, |a, _| a | palette[rng.below(palette.len())]);
             let mut ds = vec![D {
@@ -482,12 +482,12 @@ fn the_sweep_agrees_on_random_chains() {
 fn the_sweep_agrees_on_random_links() {
     let t = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0x11_2026);
+        let (mut rng, _) = Rng::fresh("random links");
         let sets: [&[u16]; 2] = [
             &[INT, ONE, INT & !ONE, TWO, INT & !TWO, ONE | TWO],
             &[BOOL, TRUE, BOOL & !TRUE],
         ];
-        for id in 0..6000 {
+        for id in 0..400 {
             let palette = sets[rng.below(2)];
             let all = palette[0];
             let k = 1 + rng.below(8);
@@ -582,12 +582,15 @@ fn holes(n: usize, skip: usize, chains: &[(u16, usize)]) -> (Spec, Term) {
 const CHAIN_HEADS: [u16; 6] = [HOLES[0], HOLES[1], HOLES[2], INT, ONE | TWO, TWO];
 
 /// Every front family at n <= 4, every skip, with no, one or two redundant chains, each a head
-/// of [`CHAIN_HEADS`] and a tail `L`, `F1` or `F2`; in both orders.
+/// of [`CHAIN_HEADS`] and a tail `L`, `F1` or `F2`; in both orders. Each run asks every case with
+/// no redundant chain and one in ten of the others, drawn afresh (author P169); every case was
+/// asked, in 5 s, until TEST-bench-move-l0123.
 #[test]
 fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
     let t = big(|| {
         let mut tally = Tally::default();
         let mut id = 0;
+        let (mut rng, _) = Rng::fresh("redundant rows");
         for n in 1..=4 {
             let tails: Vec<usize> = (0..=n.min(2)).collect();
             let opts: Vec<(u16, usize)> = (CHAIN_HEADS.iter())
@@ -600,6 +603,9 @@ fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
             }
             for skip in 0..=n {
                 for chains in &sets {
+                    if !chains.is_empty() && rng.below(10) != 0 {
+                        continue;
+                    }
                     let (spec, term) = holes(n, skip, chains);
                     id += 1;
                     let what = format!("holes n {n} skip {skip} chains {chains:?}");
@@ -614,12 +620,15 @@ fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
 
 /// The `chain` kind: `L`, `G1 = cons(1, L)`, `Gk = sides | cons(int, G{k-1})` with `sides` a
 /// list of rows into `L` or `G1`, and `Mk` as in [`family`]. The terms are `L` less `Gg | Mm`,
-/// and `Gg` less `Mm`, for every `g <= n <= 5` and `m <= n + 1`; in both orders.
+/// and `Gg` less `Mm`, for every `g <= n <= 5` and `m <= n + 1`; in both orders. Each run asks one in
+/// five of these, drawn afresh (author P169); every one was asked, in 2.5 s, until
+/// TEST-bench-move-l0123.
 #[test]
 fn the_sweep_agrees_on_union_links() {
     let t = big(|| {
         let mut tally = Tally::default();
         let mut id = 0;
+        let (mut rng, _) = Rng::fresh("union links");
         let sides: [&[(u16, usize)]; 7] = [
             &[(ONE, 0)],
             &[(TWO, 0)],
@@ -653,6 +662,9 @@ fn the_sweep_agrees_on_union_links() {
                 for g in 1..=n {
                     for m in 1..=n + 1 {
                         for pos in [0, g] {
+                            if rng.below(5) != 0 {
+                                continue;
+                            }
                             let neg = if pos == 0 {
                                 vec![(0, g), (0, n + m)]
                             } else {
@@ -682,7 +694,7 @@ fn the_sweep_agrees_on_union_links() {
 fn the_sweep_agrees_on_random_cofinite_links() {
     let t = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0xc0f1_2026);
+        let (mut rng, _) = Rng::fresh("random cofinite links");
         let palette = [
             INT,
             ONE,
@@ -695,7 +707,7 @@ fn the_sweep_agrees_on_random_cofinite_links() {
             HOLES[0] & !ONE,
             INT & !HOLES[1],
         ];
-        for id in 0..2500 {
+        for id in 0..150 {
             let k = 1 + rng.below(7);
             let mut ds = vec![D {
                 nil: true,
@@ -743,10 +755,13 @@ const STAGGER_HEADS: [u16; 4] = [INT | ATOM, ATOM, HOLES[0] | ATOM, INT];
 /// term is `L` less every nonempty set of the `Yi` and, for each s <= m or none, `N1`; in
 /// both orders.
 /// The carrier's head reads the atom out of the heads when `c` is the integers.
+/// Each run asks every case at m = 1, one in four at m = 2 and one in 32 at m = 3, drawn afresh
+/// (author P169); every case was asked, in 9 to 10 s, until TEST-bench-move-l0123.
 fn staggered(c: u16) -> Tally {
     big(|| {
         let mut tally = Tally::default();
         let mut id = 0;
+        let (mut rng, _) = Rng::fresh(&format!("staggered chains, carrier {c:#b}"));
         for m in 1..=3usize {
             let mut seqs: Vec<Vec<u16>> = vec![vec![]];
             for _ in 0..m {
@@ -786,6 +801,9 @@ fn staggered(c: u16) -> Tally {
                             };
                             let spec = Spec { groups };
                             for set in 1..(1usize << m) {
+                                if rng.below([1, 1, 4, 32][m]) != 0 {
+                                    continue;
+                                }
                                 let mut neg: Vec<(usize, usize)> = (0..m)
                                     .filter(|i| set >> i & 1 == 1)
                                     .map(|i| (g, i + 1))
@@ -835,7 +853,7 @@ fn the_sweep_agrees_on_staggered_chains_with_the_atom() {
 fn the_sweep_agrees_on_random_positive_chains() {
     let t = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0x5ab_2026);
+        let (mut rng, _) = Rng::fresh("random positive chains");
         let palette = [
             INT,
             ONE,
@@ -848,7 +866,7 @@ fn the_sweep_agrees_on_random_positive_chains() {
             INT & !HOLES[0],
             HOLES[0] | ATOM,
         ];
-        for id in 0..3000 {
+        for id in 0..300 {
             let k = 2 + rng.below(6);
             let mut ds = vec![D {
                 nil: true,
@@ -964,7 +982,7 @@ fn the_sweep_agrees_on_disjoint_and_overlapping_hole_spines() {
 fn r6_random_carrier_chains_against_masks() {
     let tally = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0x6c0de2026);
+        let (mut rng, _) = Rng::fresh("R6 carrier chains");
         let palette = [
             INT,
             ONE,
@@ -978,7 +996,7 @@ fn r6_random_carrier_chains_against_masks() {
             INT & !ONE,
             INT & !TWO,
         ];
-        for id in 0..4000 {
+        for id in 0..300 {
             let n = 3 + rng.below(9);
             let mut ds = vec![D {
                 nil: true,
@@ -1020,22 +1038,19 @@ fn r6_random_carrier_chains_against_masks() {
 
 /// Two escaping predicates per root do not imply 2-SAT when holes overlap.
 /// Selector positions choose a literal of each 3-clause. Each implication
-/// selector=j => literal_j holds has just two escaping predicates. Only the formulas `ids` (of
-/// 384) are checked; the generator runs over all of them, so a piece checks the same formulas
-/// whatever the split.
-pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(ids: std::ops::Range<usize>) {
+/// selector=j => literal_j holds has just two escaping predicates. `count` random formulas are
+/// checked, drawn from a generator made with [`Rng::fresh`] (author P169); the 384 formulas of
+/// one fixed seed were checked, in four pieces of 4 to 5 s, until TEST-bench-move-l0123.
+pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(count: usize) {
     big(|| {
-        let mut rng = Rng::new(0x6a705a7);
+        let (mut rng, _) = Rng::fresh("R6 two-predicate selector reduction");
         let domain = ONE | TWO | (1 << 8); // values 1,2,3
-        for id in 0..384 {
+        for id in 0..count {
             let k = 1 + rng.below(4);
             let m = 1 + rng.below(4);
             let clauses: Vec<Vec<(usize, bool)>> = (0..m)
                 .map(|_| (0..3).map(|_| (rng.below(k), rng.below(2) == 0)).collect())
                 .collect();
-            if !ids.contains(&id) {
-                continue;
-            }
             let sat = (0..1usize << k).any(|a| {
                 clauses
                     .iter()
@@ -1097,7 +1112,7 @@ pub(super) fn r6_two_predicate_reduction_matches_boolean_bruteforce(ids: std::op
         }
         eprintln!(
             "R6 two-predicate selector reduction: {} formulas checked",
-            ids.len()
+            count
         );
     });
 }
@@ -1248,7 +1263,7 @@ fn r6_greedy_guard_admits_a_partially_compatible_unused_slot() {
 fn r7_random_optional_spine_choices_against_masks() {
     let tally = big(|| {
         let mut tally = Tally::default();
-        let mut rng = Rng::new(0x70b7_1031);
+        let (mut rng, _) = Rng::fresh("R7 optional spine choices");
         // Cofinite heads for the positive chain, so that it can follow a negative chain past
         // that chain's arrival at `L` or leave it; any head for the negatives.
         let cofinite = [
@@ -1273,7 +1288,7 @@ fn r7_random_optional_spine_choices_against_masks() {
             INT & !ONE,
             INT & !TWO,
         ];
-        for id in 0..3000 {
+        for id in 0..150 {
             let mut ds = vec![D {
                 nil: true,
                 rows: vec![(INT, 0)],
@@ -1976,7 +1991,7 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
     }
 
     big(|| {
-        let mut rng = Rng::new(0x77c0_ffee_2026);
+        let (mut rng, _) = Rng::fresh("R7 carrier plus chains");
         let draw_pred = |rng: &mut Rng| -> Pred {
             match rng.below(7) {
                 0 => Pred { cof: true, mask: 0 }, // int
@@ -2002,7 +2017,7 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
         let mut chain_decided = 0usize;
         let mut chain_empty = 0usize;
         let mut chain_inhab = 0usize;
-        for id in 0..1200 {
+        for id in 0..300 {
             let x31_mode = id % 2 == 1;
             let car_head = if x31_mode || rng.below(3) != 0 {
                 Pred { cof: true, mask: 0 }
@@ -2205,7 +2220,7 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             }
         }
         eprintln!(
-            "R7 random carrier+chains: 1200 cases, chain_decided={chain_decided} (empty={chain_empty}, inhab={chain_inhab})"
+            "R7 random carrier+chains: 300 cases, chain_decided={chain_decided} (empty={chain_empty}, inhab={chain_inhab})"
         );
         assert!(chain_empty > 50 && chain_inhab > 50);
     });
@@ -2365,7 +2380,7 @@ fn r9_run_tokens_against_product_automaton() {
     }
 
     let tally = big(|| {
-        let mut rng = Rng::new(0x9a11_70c3_2026);
+        let (mut rng, _) = Rng::fresh("R9 run tokens");
         let hole = |rng: &mut Rng| Pred {
             cof: true,
             mask: 1u8 << rng.below(4),
@@ -2386,7 +2401,7 @@ fn r9_run_tokens_against_product_automaton() {
             },
         };
         let (mut decided, mut empty, mut inhab, mut exact_empty) = (0usize, 0usize, 0usize, 0usize);
-        for id in 0..600 {
+        for id in 0..300 {
             let car = if rng.below(3) == 0 {
                 hole(&mut rng)
             } else {
@@ -2496,7 +2511,7 @@ fn r9_run_tokens_against_product_automaton() {
         (decided, empty, inhab, exact_empty)
     });
     eprintln!(
-        "R9 run tokens: 600 cases, exact empty={}, chain decided={} (empty={}, inhab={})",
+        "R9 run tokens: 300 cases, exact empty={}, chain decided={} (empty={}, inhab={})",
         tally.3, tally.0, tally.1, tally.2
     );
     assert!(
