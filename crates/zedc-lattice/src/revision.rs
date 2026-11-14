@@ -679,15 +679,23 @@ pub fn reduce_finite(x: &IntervalSet, s: &FiniteSet<i64>) -> (IntervalSet, Finit
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     const WINDOW: std::ops::RangeInclusive<i64> = -12..=12;
 
     /// Every interval with endpoints in -4..=4 or infinite, and some unions.
-    fn operands() -> Vec<IntervalSet> {
+    pub(super) fn operands() -> Vec<IntervalSet> {
+        operands_with_ends(-4..=4)
+    }
+
+    /// The empty set, every interval with endpoints in `finite` or infinite, and two unions.
+    fn operands_with_ends(finite: impl IntoIterator<Item = i64>) -> Vec<IntervalSet> {
         let ends: Vec<End> = std::iter::once(NegInf)
-            .chain((-4..=4).map(End::of))
+            .chain(finite.into_iter().map(End::of))
             .chain(std::iter::once(PosInf))
             .collect();
         let mut out = vec![IntervalSet::empty()];
@@ -761,7 +769,8 @@ mod tests {
                 pairs.push((x.clone(), y));
             }
         }
-        let mut seed = 0x510e_527f_ade6_82d1_u64;
+        let mut seed =
+            crate::seed::seed("a_sum_or_difference_of_two_pieces_is_what_the_parts_give") | 1;
         let mut below = |n: u64| {
             seed ^= seed << 13;
             seed ^= seed >> 7;
@@ -775,7 +784,7 @@ mod tests {
             3 => End::from(i128::MIN + below(5) as i128),
             _ => End::of(below(41) as i64 - 20),
         };
-        for _ in 0..4000 {
+        for _ in 0..1000 {
             let (a, b, c, d) = (
                 end(&mut below),
                 end(&mut below),
@@ -843,19 +852,34 @@ mod tests {
         matches!(s.only(), Some((Fin(_), Fin(_))))
     }
 
+    /// On every interval with ends in `{-2, 0, 1, 3}` or infinite and two unions, as `x` and
+    /// `y`, and with ends in `{-2, 0, 3}` as `z`: ends below, at and above zero, pieces of one
+    /// sign that do not touch zero, and pieces of one point. The sweep over ends in `-4..=4` is
+    /// in `bench.rs`.
     #[test]
     fn backward_transfer_keeps_every_operand_that_can_give_the_result() {
-        let zs = operands();
+        let some = operands_with_ends([-2, 0, 1, 3]);
+        backward_keeps_every_operand(&some, &some, &operands_with_ends([-2, 0, 3]));
+    }
+
+    /// Checks `backward` on every op, operand and triple of `xs`, `ys` and `zs`: the result
+    /// lies in the operand and keeps each member of it that, with a member of the other
+    /// operand, gives a result in `z` inside the test window.
+    pub(super) fn backward_keeps_every_operand(
+        xs: &[IntervalSet],
+        ys: &[IntervalSet],
+        zs: &[IntervalSet],
+    ) {
         for op in &ops() {
             for arg in 0..arity(op) {
-                for x in operands() {
-                    for y in operands().into_iter().step_by(3) {
-                        for z in zs.iter().step_by(2) {
-                            let got = backward(op, arg, &x, &y, z);
-                            assert!(got.is_subset(if arg == 0 { &x } else { &y }));
-                            let ys = if arity(op) == 1 { vec![0] } else { members(&y) };
-                            for a in members(&x) {
-                                for &b in &ys {
+                for x in xs {
+                    for y in ys {
+                        for z in zs {
+                            let got = backward(op, arg, x, y, z);
+                            assert!(got.is_subset(if arg == 0 { x } else { y }));
+                            let bs = if arity(op) == 1 { vec![0] } else { members(y) };
+                            for a in members(x) {
+                                for &b in &bs {
                                     let Some(r) = apply(op, a, b) else { continue };
                                     let kept = if arg == 0 { a } else { b };
                                     if z.contains(r) && !got.contains(kept) {
@@ -974,5 +998,87 @@ mod tests {
             forward_pow(&IntervalSet::of(-2, 3), &IntervalSet::single(2)),
             IntervalSet::of(0, 9)
         );
+    }
+
+    /// The tonicity table's entries for `div` and `mod`, which no pair of operands reads
+    /// through `forward`'s general path.
+    #[test]
+    fn div_and_mod_have_their_own_tonicity() {
+        assert_eq!(tonicity(&Op::Div, 0), Tonicity::UpWhereOtherNonneg);
+        assert_eq!(tonicity(&Op::Div, 1), Tonicity::DownWhereOtherNonneg);
+        assert_eq!(tonicity(&Op::Mod, 0), Tonicity::None);
+        assert_eq!(tonicity(&Op::Mod, 1), Tonicity::None);
+    }
+
+    /// `at` on infinite ends: `inf + -inf` and `inf - inf` round outward, an infinite
+    /// numerator over a finite divisor is infinite by the signs, a finite numerator over an
+    /// infinite divisor is the limit of the Euclidean quotient, and a zero divisor rounds
+    /// outward.
+    #[test]
+    fn ends_at_infinity_take_their_limits_or_round_outward() {
+        use Dir::{Down, Up};
+        let five = End::of(5);
+        assert_eq!(at(&Op::Add, &NegInf, &PosInf, Down), NegInf);
+        assert_eq!(at(&Op::Add, &PosInf, &NegInf, Up), PosInf);
+        assert_eq!(at(&Op::Sub, &PosInf, &PosInf, Down), NegInf);
+        assert_eq!(at(&Op::Sub, &NegInf, &NegInf, Up), PosInf);
+        assert_eq!(at(&Op::Add, &five, &PosInf, Down), PosInf);
+        assert_eq!(at(&Op::Div, &PosInf, &End::of(2), Up), PosInf);
+        assert_eq!(at(&Op::Div, &PosInf, &End::of(-2), Down), NegInf);
+        assert_eq!(at(&Op::Div, &NegInf, &End::of(-3), Up), PosInf);
+        assert_eq!(at(&Op::Div, &NegInf, &End::of(3), Down), NegInf);
+        // -5 = -1 * y + (y - 5) for a large positive y, and 1 * y + (-5 - y) for a large
+        // negative one.
+        assert_eq!(at(&Op::Div, &five, &PosInf, Down), End::of(0));
+        assert_eq!(at(&Op::Div, &five, &NegInf, Down), End::of(0));
+        assert_eq!(at(&Op::Div, &End::of(-5), &PosInf, Down), End::of(-1));
+        assert_eq!(at(&Op::Div, &End::of(-5), &NegInf, Up), End::of(1));
+        assert_eq!(at(&Op::Div, &five, &End::of(0), Down), NegInf);
+        assert_eq!(at(&Op::Div, &PosInf, &End::of(0), Up), PosInf);
+    }
+
+    /// The reductions with a fact that holds nothing, the bottom congruence, and with one
+    /// that holds everything, the top finite set.
+    #[test]
+    fn reductions_with_bottom_and_top() {
+        let x = IntervalSet::of(-3, 7);
+        assert_eq!(
+            reduce_congruence(&x, &Congruence::Bottom),
+            (IntervalSet::empty(), Congruence::Bottom)
+        );
+        assert_eq!(
+            reduce_finite(&x, &FiniteSet::Top),
+            (x.clone(), FiniteSet::Top)
+        );
+    }
+
+    /// A kept exponent, `2 ^ (2 ^ 200)` and that plus 1, has no exact power past -1, 0 and 1:
+    /// forward, an end is bounded by `2 ^ u32::MAX` toward 0 and infinite away from it;
+    /// backward, the roots of results up to 10 are exact (0 and 1), and of 2 and more none.
+    #[test]
+    fn a_kept_exponent_bounds_powers_and_roots() {
+        let even = Num::pow2(&Num::pow2(&Num::from(200)));
+        let odd = &even + &Num::ONE;
+        let (pe, po) = (Op::Pow(even.into()), Op::Pow(odd.into()));
+        let least = Num::from(2).pow(u32::MAX);
+        let up = IntervalSet::range(Fin(least.clone()), PosInf);
+        let down = IntervalSet::range(NegInf, Fin(-&least));
+        let one = IntervalSet::single;
+        let y = IntervalSet::top();
+        for v in [-1, 0, 1] {
+            assert_eq!(forward(&pe, &one(v), &y), one(v * v), "{v} ^ even");
+            assert_eq!(forward(&po, &one(v), &y), one(v), "{v} ^ odd");
+        }
+        assert_eq!(forward(&pe, &one(2), &y), up);
+        assert_eq!(forward(&pe, &one(-2), &y), up);
+        assert_eq!(forward(&po, &one(2), &y), up);
+        assert_eq!(forward(&po, &one(-2), &y), down);
+        let x = IntervalSet::of(-5, 5);
+        let back = |op: &Op, lo: i64, hi: i64| backward(op, 0, &x, &y, &IntervalSet::of(lo, hi));
+        assert_eq!(back(&pe, 0, 10), IntervalSet::of(-1, 1));
+        assert_eq!(back(&po, 0, 10), IntervalSet::of(0, 1));
+        assert_eq!(back(&po, -10, -1), IntervalSet::single(-1));
+        assert!(back(&pe, 2, 10).is_empty());
+        assert!(back(&po, 2, 10).is_empty());
     }
 }

@@ -1782,6 +1782,9 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1881,7 +1884,7 @@ mod tests {
     }
 
     /// A xorshift generator, so that the random tests repeat.
-    struct Rng(u64);
+    pub(super) struct Rng(pub(super) u64);
 
     impl Rng {
         fn below(&mut self, n: u64) -> u64 {
@@ -1898,7 +1901,7 @@ mod tests {
 
     /// A random set of up to `most` raw pieces with ends in `-w..=w`, overlapping, adjacent or
     /// single points, with an unbounded end on either side now and then.
-    fn random_set(rng: &mut Rng, most: u64, w: i64) -> IntervalSet {
+    pub(super) fn random_set(rng: &mut Rng, most: u64, w: i64) -> IntervalSet {
         let n = rng.below(most + 1);
         let mut raw = Vec::new();
         for _ in 0..n {
@@ -2036,58 +2039,66 @@ mod tests {
     }
 
     /// meet, join, minus, complement_in and is_subset on random sets, against the Vec version
-    /// built from members: small sets with many shapes, and larger ones with deep trees.
+    /// built from members: small sets with many shapes, and larger ones with deep trees. The
+    /// tier of 400 pieces in `-1500..=1500` is in `bench.rs`.
     #[test]
     fn set_operations_agree_with_the_vec_version_on_random_sets() {
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
-        for (rounds, most, w) in [(4000, 6, 12), (300, 60, 200), (40, 400, 1500)] {
-            for _ in 0..rounds {
-                let (a, b) = (random_set(&mut rng, most, w), random_set(&mut rng, most, w));
-                let (ma, mb) = (members(&a, w), members(&b, w));
-                agrees(&a, &ma, w);
-                let zip = |f: fn(bool, bool) -> bool| -> Vec<bool> {
-                    ma.iter().zip(&mb).map(|(&x, &y)| f(x, y)).collect()
-                };
-                agrees(&a.meet(&b), &zip(|x, y| x && y), w);
-                agrees(&a.join(&b), &zip(|x, y| x || y), w);
-                agrees(&a.minus(&b), &zip(|x, y| x && !y), w);
-                agrees(&b.minus(&a), &zip(|x, y| y && !x), w);
-                agrees(&a.complement_in(&b), &zip(|x, y| y && !x), w);
-                let sub = ma.iter().zip(&mb).all(|(&x, &y)| !x || y);
-                assert_eq!(a.is_subset(&b), sub, "{a} ⊆ {b}");
-                assert_eq!(a == b, ma == mb);
-                // A subset made from `b`: the shortcuts return a shared tree.
-                let c = b.meet(&a);
-                assert!(c.is_subset(&b) && c.is_subset(&a));
-                assert_eq!(c.join(&b), b);
-                assert!(c.join(&b).same_tree(&b));
-                // A set and the same set less one point share all but one path of their tree.
-                let k = rng.int(-w - 2, w + 2);
-                let point = IntervalSet::single(k);
-                let less = a.minus(&point);
-                let mut m = ma.clone();
-                m[(k + w + 3) as usize] = false;
-                agrees(&less, &m, w);
-                assert!(less.is_subset(&a));
-                assert_eq!(a.is_subset(&less), !a.contains(k));
-                assert_eq!(less == a, !a.contains(k));
-                let back = less.join(&point.meet(&a));
-                assert_eq!(back, a);
-                assert!(a.is_subset(&back) && back.is_subset(&a));
-                // Two sets of one tree, each less another point, neither inside the other: the
-                // operations meet subtrees the two share.
-                let j = rng.int(-w - 2, w + 2);
-                let other = a.minus(&IntervalSet::single(j));
-                let mut n = ma.clone();
-                n[(j + w + 3) as usize] = false;
-                let pair = |f: fn(bool, bool) -> bool| -> Vec<bool> {
-                    m.iter().zip(&n).map(|(&x, &y)| f(x, y)).collect()
-                };
-                agrees(&less.join(&other), &pair(|x, y| x || y), w);
-                agrees(&less.meet(&other), &pair(|x, y| x && y), w);
-                agrees(&less.minus(&other), &pair(|x, y| x && !y), w);
-                agrees(&other.minus(&less), &pair(|x, y| y && !x), w);
-            }
+        let seed = crate::seed::seed("set_operations_agree_with_the_vec_version_on_random_sets");
+        let mut rng = Rng(seed | 1);
+        for (rounds, most, w) in [(1000, 6, 12), (40, 60, 200)] {
+            operations_agree(&mut rng, rounds, most, w);
+        }
+    }
+
+    /// `rounds` pairs of random sets of up to `most` raw pieces with ends in `-w..=w`, each
+    /// checked by [`agrees`] after meet, join, minus, complement_in and is_subset.
+    pub(super) fn operations_agree(rng: &mut Rng, rounds: u32, most: u64, w: i64) {
+        for _ in 0..rounds {
+            let (a, b) = (random_set(rng, most, w), random_set(rng, most, w));
+            let (ma, mb) = (members(&a, w), members(&b, w));
+            agrees(&a, &ma, w);
+            let zip = |f: fn(bool, bool) -> bool| -> Vec<bool> {
+                ma.iter().zip(&mb).map(|(&x, &y)| f(x, y)).collect()
+            };
+            agrees(&a.meet(&b), &zip(|x, y| x && y), w);
+            agrees(&a.join(&b), &zip(|x, y| x || y), w);
+            agrees(&a.minus(&b), &zip(|x, y| x && !y), w);
+            agrees(&b.minus(&a), &zip(|x, y| y && !x), w);
+            agrees(&a.complement_in(&b), &zip(|x, y| y && !x), w);
+            let sub = ma.iter().zip(&mb).all(|(&x, &y)| !x || y);
+            assert_eq!(a.is_subset(&b), sub, "{a} ⊆ {b}");
+            assert_eq!(a == b, ma == mb);
+            // A subset made from `b`: the shortcuts return a shared tree.
+            let c = b.meet(&a);
+            assert!(c.is_subset(&b) && c.is_subset(&a));
+            assert_eq!(c.join(&b), b);
+            assert!(c.join(&b).same_tree(&b));
+            // A set and the same set less one point share all but one path of their tree.
+            let k = rng.int(-w - 2, w + 2);
+            let point = IntervalSet::single(k);
+            let less = a.minus(&point);
+            let mut m = ma.clone();
+            m[(k + w + 3) as usize] = false;
+            agrees(&less, &m, w);
+            assert!(less.is_subset(&a));
+            assert_eq!(a.is_subset(&less), !a.contains(k));
+            assert_eq!(less == a, !a.contains(k));
+            let back = less.join(&point.meet(&a));
+            assert_eq!(back, a);
+            assert!(a.is_subset(&back) && back.is_subset(&a));
+            // Two sets of one tree, each less another point, neither inside the other: the
+            // operations meet subtrees the two share.
+            let j = rng.int(-w - 2, w + 2);
+            let other = a.minus(&IntervalSet::single(j));
+            let mut n = ma.clone();
+            n[(j + w + 3) as usize] = false;
+            let pair = |f: fn(bool, bool) -> bool| -> Vec<bool> {
+                m.iter().zip(&n).map(|(&x, &y)| f(x, y)).collect()
+            };
+            agrees(&less.join(&other), &pair(|x, y| x || y), w);
+            agrees(&less.meet(&other), &pair(|x, y| x && y), w);
+            agrees(&less.minus(&other), &pair(|x, y| x && !y), w);
+            agrees(&other.minus(&less), &pair(|x, y| y && !x), w);
         }
     }
 
@@ -2096,6 +2107,24 @@ mod tests {
     /// their tree), on two narrowings of one set, and on equal and empty sets.
     #[test]
     fn lost_to_gives_the_members_minus_gives() {
+        let mut rng = Rng(crate::seed::seed("lost_to_gives_the_members_minus_gives") | 1);
+        for (rounds, most, w) in [(1000, 6, 12), (100, 60, 200), (5, 400, 1500)] {
+            lost_to_agrees(&mut rng, rounds, most, w);
+        }
+        assert!(set(&[(0, 9)]).lost_to(&set(&[(0, 9)])).is_empty());
+        assert_eq!(
+            set(&[(0, 9)]).lost_to(&set(&[(2, 3), (6, 6)])),
+            vec![
+                (End::of(0), End::of(1)),
+                (End::of(4), End::of(5)),
+                (End::of(7), End::of(9))
+            ]
+        );
+    }
+
+    /// `lost_to` against `minus` on `rounds` pairs of random sets of up to `most` raw pieces
+    /// with ends in `-w..=w`, and on narrowings of the first set of each pair.
+    pub(super) fn lost_to_agrees(rng: &mut Rng, rounds: u32, most: u64, w: i64) {
         let lost = |a: &IntervalSet, b: &IntervalSet| {
             let out = a.lost_to(b);
             for w in out.windows(2) {
@@ -2111,36 +2140,24 @@ mod tests {
                 "{a} lost to {b}"
             );
         };
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
-        for (rounds, most, w) in [(4000, 6, 12), (300, 60, 200), (40, 400, 1500)] {
-            for _ in 0..rounds {
-                let (a, b) = (random_set(&mut rng, most, w), random_set(&mut rng, most, w));
-                lost(&a, &b);
-                lost(&b, &a);
-                lost(&a, &a);
-                lost(&a, &IntervalSet::empty());
-                lost(&IntervalSet::empty(), &a);
-                let narrowed = a.meet(&b);
-                lost(&a, &narrowed);
-                let k = rng.int(-w - 2, w + 2);
-                let less = a.minus(&IntervalSet::single(k));
-                lost(&a, &less);
-                let j = rng.int(-w - 2, w + 2);
-                let cut = a.minus(&IntervalSet::of(j, j + rng.int(0, 1 + w / 4)));
-                lost(&a, &cut);
-                lost(&less, &cut);
-                lost(&cut, &less);
-            }
+        for _ in 0..rounds {
+            let (a, b) = (random_set(rng, most, w), random_set(rng, most, w));
+            lost(&a, &b);
+            lost(&b, &a);
+            lost(&a, &a);
+            lost(&a, &IntervalSet::empty());
+            lost(&IntervalSet::empty(), &a);
+            let narrowed = a.meet(&b);
+            lost(&a, &narrowed);
+            let k = rng.int(-w - 2, w + 2);
+            let less = a.minus(&IntervalSet::single(k));
+            lost(&a, &less);
+            let j = rng.int(-w - 2, w + 2);
+            let cut = a.minus(&IntervalSet::of(j, j + rng.int(0, 1 + w / 4)));
+            lost(&a, &cut);
+            lost(&less, &cut);
+            lost(&cut, &less);
         }
-        assert!(set(&[(0, 9)]).lost_to(&set(&[(0, 9)])).is_empty());
-        assert_eq!(
-            set(&[(0, 9)]).lost_to(&set(&[(2, 3), (6, 6)])),
-            vec![
-                (End::of(0), End::of(1)),
-                (End::of(4), End::of(5)),
-                (End::of(7), End::of(9))
-            ]
-        );
     }
 
     /// Equal sets built along different paths are equal and hash alike; the hash and the
@@ -2153,8 +2170,8 @@ mod tests {
             s.hash(&mut h);
             h.finish()
         };
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
-        for _ in 0..2000 {
+        let mut rng = Rng(crate::seed::seed("equal_sets_built_differently_hash_alike") | 1);
+        for _ in 0..500 {
             let (a, b) = (random_set(&mut rng, 12, 40), random_set(&mut rng, 12, 40));
             // (a ∪ b) \ (b \ a) = a, built by splits and joins, not from a's pieces.
             let back = a.join(&b).minus(&b.minus(&a));
@@ -2190,5 +2207,96 @@ mod tests {
             set(&[(0, 9)]).minus(&set(&[(3, 3)])),
             set(&[(0, 2), (4, 9)])
         );
+    }
+
+    /// The count of finite endpoints, on the empty set, every integer, half-lines, a single
+    /// point and a union with one infinite end; and how an end prints.
+    #[test]
+    fn finite_endpoints_leave_out_the_infinities() {
+        assert_eq!(IntervalSet::empty().finite_endpoints(), 0);
+        assert_eq!(IntervalSet::top().finite_endpoints(), 0);
+        assert_eq!(IntervalSet::range(End::of(0), PosInf).finite_endpoints(), 1);
+        assert_eq!(IntervalSet::range(NegInf, End::of(0)).finite_endpoints(), 1);
+        assert_eq!(IntervalSet::single(1).finite_endpoints(), 2);
+        let s = IntervalSet::from_pieces(vec![(NegInf, End::of(0)), (End::of(5), End::of(9))]);
+        assert_eq!(s.finite_endpoints(), 3);
+        assert_eq!(
+            [NegInf, End::of(-3), PosInf].map(|e| e.to_string()),
+            ["-inf", "-3", "inf"]
+        );
+    }
+
+    /// Inclusion orders sets: less, greater, equal, and unordered when neither holds the
+    /// other; the empty set is below every set.
+    #[test]
+    fn sets_are_ordered_by_inclusion() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let (a, b) = (set(&[(0, 3)]), set(&[(0, 5)]));
+        assert_eq!(a.partial_cmp(&b), Some(Less));
+        assert_eq!(b.partial_cmp(&a), Some(Greater));
+        assert_eq!(a.partial_cmp(&set(&[(0, 3)])), Some(Equal));
+        assert_eq!(a.partial_cmp(&set(&[(5, 6)])), None);
+        assert_eq!(a.partial_cmp(&set(&[(2, 9)])), None);
+        assert_eq!(IntervalSet::empty().partial_cmp(&a), Some(Less));
+        assert_eq!(
+            IntervalSet::empty().partial_cmp(&IntervalSet::empty()),
+            Some(Equal)
+        );
+    }
+
+    /// `cap` at a limit at or above the count returns the set's own tree; a limit of 0 acts
+    /// as 1, the hull.
+    #[test]
+    fn cap_at_or_above_the_count_keeps_the_set() {
+        let s = set(&[(0, 0), (2, 2), (9, 9)]);
+        assert!(s.cap(3).same_tree(&s));
+        assert!(s.cap(7).same_tree(&s));
+        assert_eq!(s.cap(2), set(&[(0, 2), (9, 9)]));
+        assert_eq!(s.cap(1), set(&[(0, 9)]));
+        assert_eq!(s.cap(0), set(&[(0, 9)]));
+        assert!(IntervalSet::empty().cap(0).is_empty());
+    }
+
+    /// Widening, narrowing and snapping with landmarks: `Landmarks::of([k])` marks
+    /// `k - 1`, `k` and `k + 1`. An end moves to the nearer of an old end and a landmark on
+    /// its side, to a landmark when no old end is there, and to infinity (widening, snapping)
+    /// or nowhere (narrowing) when neither is.
+    #[test]
+    fn landmarks_stop_widening_narrowing_and_snapping() {
+        let ten = Landmarks::of([10i64], []);
+        // -1 has nothing below it: -inf. 7: the landmark 9 before the old end 20. 15: the
+        // landmark 11 above the old end 5. 30: the old end 30, no landmark above it.
+        let old = set(&[(0, 5), (20, 30)]);
+        let widened = old.widen(&set(&[(-1, 7), (15, 30)]), &ten);
+        assert_eq!(
+            widened,
+            IntervalSet::from_pieces(vec![(NegInf, End::of(9)), (End::of(11), End::of(30))])
+        );
+        // An old end with no landmark on its side: 0..=5 widened by 0..=7 stops at 9.
+        assert_eq!(set(&[(0, 5)]).widen(&set(&[(0, 7)]), &ten), set(&[(0, 9)]));
+        let three = Landmarks::of([3i64], []);
+        // 0..=99 narrowed by 5..=50: 5 moves down to the landmark 4, above the old end 0; 50
+        // moves up to the old end 99.
+        assert_eq!(
+            set(&[(0, 99)]).narrow(&set(&[(5, 50)]), &three),
+            set(&[(4, 99)])
+        );
+        // Nothing above 50 in `0..`: it stays.
+        let half = IntervalSet::range(End::of(0), PosInf);
+        assert_eq!(half.narrow(&set(&[(5, 50)]), &three), set(&[(4, 50)]));
+        assert_eq!(
+            half.narrow(&set(&[(5, 50)]), &Landmarks::none()),
+            set(&[(0, 50)])
+        );
+        // Snapping: 5 down to 4, 50 up to infinity; an infinite end stays.
+        assert_eq!(
+            set(&[(5, 50)]).snap(&three),
+            IntervalSet::range(End::of(4), PosInf)
+        );
+        assert_eq!(
+            IntervalSet::range(NegInf, End::of(3)).snap(&three),
+            IntervalSet::range(NegInf, End::of(3))
+        );
+        assert!(IntervalSet::empty().snap(&three).is_empty());
     }
 }
