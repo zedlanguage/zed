@@ -76,19 +76,21 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
     assert_eq!(run("branches", src, "no\n", &[]).stdout, "declined\n");
 }
 
-/// `2 ^ 2 ^ 100` is a value, kept as a power of 2, but adding 1 must build its `2^100`
+/// `2 ^ 2 ^ 100` is a value, kept as a power of 2, but adding `n` must build its `2^100`
 /// bits: the run stops with an error naming that size, before anything is written, and the
-/// process does not abort.
+/// process does not abort. `n` is read from the input (1 here), so the checker cannot prove
+/// the sum's size; with `n` written as 1 the sum is rejected at compile time
+/// (l01_29_diagnostics::too_large).
 #[test]
 fn a_number_too_large_to_build_stops_the_run() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- \"start\";\n  \
-               m.stdout <- String(2^2^100 + 1);\n}\n";
+    let src = "main(m: MainArgs) {\n  n = int(m.args[0] else \"\") else 1;\n  \
+               m.stdout <- \"start\";\n  m.stdout <- String(2^2^100 + n);\n}\n";
     let out = run("too_large", src, "", &[]);
     // Running out of memory is a fault of the run, status 3 (MAIN-limits; DESIGN.md sec:ports).
     assert_eq!(out.status, 3, "{}", out.stderr);
     assert!(
         out.stderr.contains(
-            "3:22: Number too large for memory: `2^2^100 + 1` needs a number of about \
+            "4:22: Number too large for memory: `2^2^100 + n` needs a number of about \
              3.8 × 10^29 digits (1.6 × 10^29 bytes)"
         ),
         "{}",
@@ -97,17 +99,19 @@ fn a_number_too_large_to_build_stops_the_run() {
     assert_eq!(out.stdout, "");
 }
 
-/// Printing `2 ^ 2 ^ 100` must build its `2^100` bits: the run stops with an error naming
-/// that size, at once, and the process does not abort.
+/// Printing `2 ^ 2 ^ 100 * n` must build the `2^100` bits of `2 ^ 2 ^ 100`: the run stops
+/// with an error naming that size, at once, and the process does not abort. `n` is read from
+/// the input, as above; `String(2^2^100)` is rejected at compile time.
 #[test]
 fn printing_a_number_too_large_to_build_stops_the_run() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- String(2^2^100);\n}\n";
+    let src = "main(m: MainArgs) {\n  n = int(m.args[0] else \"\") else 1;\n  \
+               m.stdout <- String(2^2^100 * n);\n}\n";
     let out = run("print_too_large", src, "", &[]);
     assert_eq!(out.status, 3, "{}", out.stderr);
     assert!(
         out.stderr.contains(
-            "2:15: Text too large for memory: `String(2^2^100)` would write about 3.8 × 10^29 \
-             digits"
+            "3:15: Text too large for memory: `String(2^2^100 * n)` would write about \
+             3.8 × 10^29 digits"
         ),
         "{}",
         out.stderr

@@ -69,7 +69,7 @@ fn stops(name: &str, src: &str, status: u8, stdout: &str, stderr: &str) {
 fn a_number_too_large_is_placed_at_its_operation() {
     stops(
         "plus",
-        "main(m: MainArgs) {\n    n = 1;\n    m.stdout <- String(2^2^100 + n);\n}\n",
+        "main(m: MainArgs) {\n    n = int(m.args[0] else \"\") else 1;\n    m.stdout <- String(2^2^100 + n);\n}\n",
         3,
         "",
         &format!(

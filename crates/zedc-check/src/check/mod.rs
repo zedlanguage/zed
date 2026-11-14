@@ -59,7 +59,7 @@ use zed_kernel::num::{
     FloatFormat, TooLarge, fixed_room, gcd_uint, literal_f32, literal_f64, show_f32,
 };
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
-use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
+use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
 use zedc_lattice::interval::{
@@ -385,6 +385,17 @@ struct WidePower<'a> {
     built: u64,
     k: Num,
     negative: bool,
+    bits: Num,
+}
+
+/// An operation at `span` on operands the text fixes that builds a number in full, `p`, whose
+/// build the kernel sizes ([`kernel_build`]): the bits it builds, within the address space.
+/// Found by `Ck::too_large_build`, judged against the memory limit of `main` once it is read.
+struct WideBuild {
+    p: Prim,
+    span: Span,
+    /// The operands' spans, whose derivation the rejection prints.
+    args: Vec<Span>,
     bits: Num,
 }
 
@@ -1338,6 +1349,9 @@ struct Ck<'t, 'a> {
     /// by span, with what the walk found of each at its site, judged as [`Self::wide_powers`]
     /// are.
     wide_products: BTreeMap<Span, WideProduct<'a>>,
+    /// The other operations that build a number in full within the address space, by span
+    /// (`Ck::too_large_build`), judged as [`Self::wide_powers`] are.
+    wide_builds: BTreeMap<Span, WideBuild>,
     /// The classes; class `k` is the type variable `$k`.
     classes: Vec<Class>,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
@@ -1622,6 +1636,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             main_memory: None,
             wide_powers: BTreeMap::new(),
             wide_products: BTreeMap::new(),
+            wide_builds: BTreeMap::new(),
             classes: Vec::new(),
             data_checked: HashSet::new(),
             clean: HashMap::new(),
@@ -7227,6 +7242,75 @@ const FOLD_ASK_BITS: u64 = 1 << 27;
 fn kernel_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
     let term = Term::Prim(p, args.into_iter().map(Term::Lit).collect());
     fixed_room(FOLD_ASK_BITS, || eval(&term)).ok()
+}
+
+/// The bits `p` on the values `args` builds in full, by the kernel's one evaluator
+/// ([`eval()`]) run as [`kernel_folded`] runs it (DESIGN.md, the numbers section's list of the
+/// operations that build a value in full): where the evaluator refuses the build under
+/// [`FOLD_ASK_BITS`], the size the refusal names, which is what the run builds at that step on
+/// any machine; where it gives a number, the bits of the parts it built, those wider than 64
+/// bits ([`Rat::built_widths`]), since a part within 64 bits is kept as prime powers or in a
+/// word. For `String` of a number it is the text, a byte a digit, sized before any digit is
+/// written and bounded from below ([`Rat::text_least`]), as a message says it needs at least
+/// that; [`Rat::text_size`], the bound from above that the run asks memory by, overstates the
+/// digits of `5^k` by 29%. A refusal's size is the kernel's bound from above too, the same
+/// overstatement where kept odd primes are built (row CONST-least-refusal-size). `None` where
+/// the evaluator builds nothing it keeps, as a comparison it decides within the bound, an `int`
+/// in a word or an atom.
+//
+// Complexity tradeoff: the naive method computes each operation's build size by a formula of
+// its own in the checker, one per case of DESIGN's list, which would repeat the kernel's
+// accounting and could drift from it. Used: the kernel's own `room` asks, which name the size
+// before anything is built, so a refused step costs what the kernel does before it asks, at
+// most the work of a fold within the bound, and a step past the bound allocates nothing; a
+// result within the bound is measured by its parts' bit lengths, O(1). `String` reads
+// [`Rat::text_least`] alone, O(primes kept), never converting digits to decimal, which within
+// the bound would cost O(M(n) log n) for no verdict.
+fn kernel_build(p: Prim, args: Vec<Value>) -> Option<BigUint> {
+    if p == Prim::Show {
+        let [Value::Big(r) | Value::Rat(r)] = &args[..] else {
+            return None;
+        };
+        return Some(r.text_least() << 3u32);
+    }
+    if matches!(p, Prim::Add | Prim::Sub) {
+        // A sum is sized, not built (`Rat::sum_least`): building it within the bound would
+        // cost its size for no verdict, as for `x = 3^e + 5^e;` read by nothing.
+        let [a, b] = &args[..] else {
+            return None;
+        };
+        fn rat(v: &Value) -> Option<Cow<'_, Rat>> {
+            match v {
+                Value::Rat(r) => Some(Cow::Borrowed(&**r)),
+                _ => v.as_integer(),
+            }
+        }
+        let (a, b) = (rat(a)?, rat(b)?);
+        let bits = match fixed_room(FOLD_ASK_BITS, || a.sum_least(&b)) {
+            Ok(bits) => bits,
+            Err(need) => need.size,
+        };
+        return (bits > BigUint::from(64u32)).then_some(bits);
+    }
+    let term = Term::Prim(p, args.into_iter().map(Term::Lit).collect());
+    match fixed_room(FOLD_ASK_BITS, || eval(&term)) {
+        Err(
+            KernelError::NumberTooLarge { need, .. }
+            | KernelError::OrderTooLarge { need, .. }
+            | KernelError::EqualityTooLarge { need, .. }
+            | KernelError::RoundTooLarge { need, .. },
+        ) => Some(need.size),
+        Ok(Value::Big(r) | Value::Rat(r)) => built_bits(&r),
+        _ => None,
+    }
+}
+
+/// The bits of the parts of `r` built in full, those wider than 64 bits
+/// ([`Rat::built_widths`]); `None` where it has none.
+fn built_bits(r: &Rat) -> Option<BigUint> {
+    let [a, b] = r.built_widths();
+    (a.is_some() || b.is_some())
+        .then(|| BigUint::from(a.unwrap_or(0)) + BigUint::from(b.unwrap_or(0)))
 }
 
 /// The operation `p` on the values `args` by the kernel's one evaluator ([`eval()`]), as

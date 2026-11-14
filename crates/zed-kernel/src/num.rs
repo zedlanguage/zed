@@ -386,7 +386,7 @@ impl Rat {
 
     /// What writing its digits builds: the number, of at most the first many bits, and its
     /// digits, numerator's and denominator's, at most the second many bytes.
-    pub(crate) fn text_size(&self) -> (BigUint, BigUint) {
+    pub fn text_size(&self) -> (BigUint, BigUint) {
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
             width(coef, pows.map(|(p, e)| (*p, e.magnitude())))
@@ -395,6 +395,24 @@ impl Rat {
         // `log10(2) < 1234 / 4096`; a digit is one byte.
         let text = ((&bits * 1234u32) >> 12u32) + 2u32;
         (bits, text)
+    }
+
+    /// At most the bytes of its text: the digits of the numerator and, when it is above 1, of
+    /// the denominator, without the sign. [`Rat::text_size`] bounds the text from above, for
+    /// asking for memory; this bounds it from below, for a claim that writing the text needs
+    /// at least this much (the checker's, sec:checking_in_zed).
+    pub fn text_least(&self) -> BigUint {
+        let side = |coef: &BigInt, sign: Sign| {
+            let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
+            least_log2(coef, pows.map(|(p, e)| (*p, e.magnitude())))
+        };
+        // `x >= 2^l` has at least `floor(l log10 2) + 1` digits, and `1233 / 4096 < log10 2`.
+        let digits = |l: BigUint| ((l * 1233u32) >> 12u32) + 1u32;
+        let den = match self.den.is_one() && self.pows.iter().all(|(_, e)| e.is_positive()) {
+            true => BigUint::zero(),
+            false => digits(side(&self.den, Sign::Minus)),
+        };
+        digits(side(&self.num, Sign::Plus)) + den
     }
 
     /// The denominator's digits, or [`TooLarge`] as for [`Rat::numer_text`].
@@ -644,6 +662,38 @@ impl Rat {
     /// into a copy, so `1 - x` builds only the difference.
     pub fn sub(&self, b: &Rat) -> Result<Rat, TooLarge> {
         self.sum(b, true)
+    }
+
+    /// At most the bits `a + b` or `a - b` builds in full (`Rat::sum`), found without building
+    /// the sum: the wider operand for two integers, the cross products for two plain
+    /// rationals, and, beside kept powers, the wider side of the part above the powers the
+    /// operands share, its powers at `log2` bounded from below (`least_log2`). [`TooLarge`]
+    /// where moving a shared prime out of a coefficient is refused, as in the sum itself.
+    /// Complexity: O(primes kept), plus the copy of the coefficients that alignment makes.
+    pub fn sum_least(&self, b: &Rat) -> Result<BigUint, TooLarge> {
+        if self.is_plain() && b.is_plain() {
+            let [na, da, nb, db] = [&self.num, &self.den, &b.num, &b.den].map(|x| x.bits());
+            return Ok(BigUint::from(match self.den.is_one() && b.den.is_one() {
+                true => na.max(nb),
+                false => (na + db).max(nb + da) + da + db - 2,
+            }));
+        }
+        if self.is_zero() || b.is_zero() {
+            return Ok(BigUint::zero());
+        }
+        let a = self.aligned(&b.pows, true)?;
+        let b = b.aligned(&self.pows, true)?;
+        let mut rest_a = Vec::new();
+        let mut rest_b = Vec::new();
+        for (p, ea, eb) in zip_pows(&a.pows, &b.pows) {
+            let g = (&ea).min(&eb).clone();
+            rest_a.push((p, (ea - &g).magnitude().clone()));
+            rest_b.push((p, (eb - &g).magnitude().clone()));
+        }
+        // `n * prod p^e * d >= 2^(l + bits(d) - 1)`, which has at least `l + bits(d)` bits.
+        let [x, y] = [(&a.num, &rest_a, &b.den), (&b.num, &rest_b, &a.den)]
+            .map(|(n, rest, d)| least_log2(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
+        Ok(x.max(y))
     }
 
     /// `a + b`, or `a - b` when `minus`.
@@ -1665,6 +1715,24 @@ fn width<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> B
     bits
 }
 
+/// An `l` with `coef * prod p^e >= 2^l`, or 0 for a zero `coef`: [`width`] bounds the number's bits
+/// from above, this its `log2` from below, each prime's `log2 p` to within 2^-27.
+fn least_log2<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> BigUint {
+    let mut bits = BigUint::from(coef.bits().saturating_sub(1));
+    for (p, e) in pows {
+        // `log2 p` in units of 2^-32, rounded down: exact for a power of two; otherwise from
+        // the system's `log2`, whose error on `p < 2^64` is far below the 32 units taken off
+        // (a relative error of a few `2^-53` on a `log2 p` of at most 64 is a few 2^-15 units),
+        // as `bound::by_logs` allows for.
+        let units = match p.is_power_of_two() {
+            true => u64::from(p.ilog2()) << 32,
+            false => ((p as f64).log2() * 4294967296.0) as u64 - 32,
+        };
+        bits += (e * units) >> 32u32;
+    }
+    bits
+}
+
 /// Whether `p` divides `m`, read one word at a time with no quotient built, so a wide `m` costs
 /// no memory.
 fn divides(m: &BigUint, p: u64) -> bool {
@@ -2184,6 +2252,99 @@ mod tests {
         assert_eq!(widths(&r), [Some(71), None]);
         let r = Rat::new(BigInt::from(3), (BigInt::one() << 70u32) + 1).unwrap();
         assert_eq!(widths(&r), [None, Some(71)]);
+    }
+
+    #[test]
+    fn the_least_text_is_at_most_the_digits_written() {
+        // CONST-too-large-kept-powers: the checker says writing a number needs at least
+        // `text_least` bytes, so it must not pass the digits written; `text_size`, which asks
+        // for the memory, must not fall below them. `5^1300000` has 908660 digits, which
+        // `text_size` put above 1 MiB.
+        let five = power(5, 1_300_000);
+        assert!(five.text_least() > BigUint::from(908_600u32));
+        assert!(five.text_size().1 > BigUint::from(1u32 << 20));
+        let wide = Rat::int((BigInt::one() << 200u32) + 7);
+        for r in [
+            five,
+            power(2, 1),
+            power(2, 100_000),
+            power(3, 77_777),
+            power(10, 5_000),
+            power(6, 3001).mul(&wide).unwrap(),
+            Rat::int(BigInt::from(7))
+                .div(&power(3, 9_999))
+                .unwrap()
+                .unwrap(),
+            power(7, 12_345).div(&power(11, 2_345)).unwrap().unwrap(),
+            Rat::int(-BigInt::from(999)),
+            Rat::int(BigInt::zero()),
+        ] {
+            let mut digits = r.numer_text().unwrap().trim_start_matches('-').len();
+            if !r.is_integer() {
+                digits += r.denom_text().unwrap().len();
+            }
+            let digits = BigUint::from(digits);
+            assert!(r.text_least() <= digits && digits <= r.text_size().1, "{r}");
+        }
+    }
+
+    #[test]
+    fn the_least_sum_is_at_most_what_the_sum_builds() {
+        // CONST-too-large-kept-powers: the checker says a sum needs at least `sum_least` bits,
+        // so it must not pass the widest part `sum` builds: the wider integer, the cross
+        // products and the denominators' product, or the parts above the shared powers.
+        let bits = |x: &BigInt| BigUint::from(x.bits());
+        let builds = |a: &Rat, b: &Rat| -> BigUint {
+            if a.is_plain() && b.is_plain() {
+                let cross = bits(&(&a.num * &b.den)).max(bits(&(&b.num * &a.den)));
+                return match a.den.is_one() && b.den.is_one() {
+                    true => cross,
+                    false => cross + bits(&(&a.den * &b.den)),
+                };
+            }
+            let (a, b) = (
+                a.aligned(&b.pows, false).unwrap(),
+                b.aligned(&a.pows, false).unwrap(),
+            );
+            let (mut rest_a, mut rest_b) = (Vec::new(), Vec::new());
+            for (p, ea, eb) in zip_pows(&a.pows, &b.pows) {
+                let g = (&ea).min(&eb).clone();
+                rest_a.push((p, (ea - &g).magnitude().clone()));
+                rest_b.push((p, (eb - &g).magnitude().clone()));
+            }
+            let part = |n: &BigInt, rest: &[(u64, BigUint)], d: &BigInt| {
+                bits(&(n * built(rest).unwrap() * d))
+            };
+            part(&a.num, &rest_a, &b.den).max(part(&b.num, &rest_b, &a.den))
+        };
+        let third = Rat::int(BigInt::one())
+            .div(&Rat::int(BigInt::from(3)))
+            .unwrap()
+            .unwrap();
+        let wide = Rat::int((BigInt::one() << 300u32) - 1);
+        let pairs = [
+            (Rat::int(BigInt::from(5)), Rat::int(BigInt::from(-9))),
+            (third.clone(), Rat::int(BigInt::zero())),
+            (third.clone(), wide.clone()),
+            (power(5, 3_000), Rat::int(BigInt::one())),
+            (power(5, 3_000), power(3, 2_000)),
+            (power(6, 1_000).mul(&wide).unwrap(), power(6, 999)),
+            (
+                power(7, 999).div(&power(2, 4_000)).unwrap().unwrap(),
+                third.clone(),
+            ),
+            (power(11, 4_321).mul(&third).unwrap(), power(13, 1_234)),
+        ];
+        for (a, b) in pairs {
+            let least = a.sum_least(&b).unwrap();
+            assert!(least <= builds(&a, &b), "{a} + {b}");
+            assert_eq!(least, b.sum_least(&a).unwrap(), "{a} + {b}");
+        }
+        // The bound is exact here: `5^3000 + 1` builds 6966 bits, `log2 5` read to 2^-27.
+        assert_eq!(
+            power(5, 3_000).sum_least(&Rat::int(BigInt::one())).unwrap(),
+            BigUint::from(6966u32)
+        );
     }
 
     #[test]

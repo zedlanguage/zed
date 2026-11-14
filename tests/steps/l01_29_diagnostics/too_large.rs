@@ -678,3 +678,209 @@ fn bounding_a_chain_of_rat_products_scales() {
         },
     );
 }
+
+// Plan row CONST-too-large-kept-powers: the size checked is the size of what each operation
+// builds, by the list of DESIGN's numbers section. A number is kept as `n/d · ∏ p^e`, so a
+// power of a base within 64 bits costs its exponents and compiles; an operation that writes
+// it out in full (printing, a sum's part above the shared powers, a power of it, the listed
+// `div` and `mod` cases) is rejected where the text fixes its operands and what it builds
+// passes the address space. Before, every operation on a kept power compiled and the run
+// stopped with "Number too large for memory".
+
+/// `main` binding `x = <x>;` and writing `out` to standard output.
+fn x_out(x: &str, out: &str) -> String {
+    format!("main(m: MainArgs) {{\n  x = {x};\n  m.stdout <- {out};\n}}\n")
+}
+
+#[test]
+fn a_kept_power_and_the_operations_that_keep_it_compile() {
+    for (x, out) in [
+        ("2^(2^70)", "String(x > 0)"),
+        ("3^(2^70)", "String(x > 0)"),
+        ("2^(2^70) * 3^(2^70)", "String(x > 0)"),
+        ("2r^(2^70) / 2r^(2^70 - 1)", "String(x)"),
+        ("2^2^200", "String(x < 3^3^150)"),
+        (
+            "2^(2^70)",
+            "String(x == x) ++ String(x + x > 0) ++ String(x * 3 > 0)",
+        ),
+        ("2^2^100", "String(5 mod x)"),
+        // The corners: a base of 1, -1 or 0 builds nothing, whatever the exponent.
+        ("1^(2^70)", "String(x)"),
+        ("(-1)^(2^70)", "String(x)"),
+        ("0^(2^70)", "String(x)"),
+    ] {
+        let src = x_out(x, out);
+        assert_eq!(built(&src), None, "{src}");
+    }
+}
+
+#[test]
+fn printing_a_kept_power_is_rejected_where_the_power_is_not() {
+    // The contrasting pair: `x = 2^(2^70);` compiles, `String(x)` writes its 2^70 * log10(2)
+    // digits, about 3.6 × 10^20 bytes.
+    assert_eq!(built(&x_out("2^(2^70)", "\"kept\"")), None);
+    assert_eq!(
+        rejected(&x_out("2^(2^70)", "String(x)")),
+        r#"3:15: Number too large for any memory of the target: `String(x)` needs at least 308 EiB; Linux x86_64 addresses 16 EiB.
+  [1]  3:22: `x` is int here
+       3 |   m.stdout <- String(x);
+         |               ^^^^^^^^^ [8, 9, 10]
+         |                      ^ [1]
+  [2]  2:7: `x` is defined as this expression, int
+       2 |   x = 2^(2^70);
+         |       ^ [4]
+         |       ^^^^^^^^ [2, 3]
+         |         ^^^^^^ [5]
+         |          ^ [6]
+         |            ^^ [7]
+  [3]  2:7: this `^` gives int
+  [4]  2:7: this literal, 2, is 2
+  [5]  2:9: this `^` gives int
+  [6]  2:10: this literal, 2, is 2
+  [7]  2:12: this literal, 70, is 70
+  [8]  3:15: `String(x)` asks for at least 2^71 bits: printing a number writes all of its digits, a byte each
+  [9]  3:15: or read an operand from the input: the run then stops if no memory holds what it writes out
+  [10] 3:15: or delete `String(x)` if its result is not used"#
+    );
+}
+
+#[test]
+fn each_operation_that_writes_a_kept_power_out_is_rejected() {
+    for (x, out, head, why) in [
+        (
+            "2^(2^70)",
+            "String(x + 1 > 0)",
+            "3:22: Number too large for any memory of the target: `x + 1` needs at least 128 \
+             EiB",
+            "`x + 1` asks for at least 2^70 bits: a sum writes out in full its part above the \
+             powers of primes its operands share",
+        ),
+        (
+            // Printing the sum would build more again; the sum, the one cause, is reported.
+            "2^(2^70)",
+            "String(x + 1)",
+            "3:22: Number too large for any memory of the target: `x + 1` needs at least 128 \
+             EiB",
+            "a sum writes out in full",
+        ),
+        (
+            "2^(2^70)",
+            "String(x - 1 > 0)",
+            "3:22: Number too large for any memory of the target: `x - 1` needs at least 128 \
+             EiB",
+            "a sum writes out in full",
+        ),
+        (
+            "2^2^100",
+            "String(x div 3)",
+            "3:22: Number too large for any memory of the target: `x div 3` needs at least \
+             2^97 bytes",
+            "`div` writes out the divisor, and the dividend less its remainder",
+        ),
+        (
+            "2^2^100",
+            "String((-5 mod x) else 0)",
+            "3:22: Number too large for any memory of the target: `(-5 mod x)` needs at least \
+             2^97 bytes",
+            "`mod` writes out the divisor",
+        ),
+        (
+            "3^2^2^70",
+            "String(x > 0)",
+            "2:7: Number too large for any memory of the target: `3^2^2^70` needs at least \
+             128 EiB",
+            "a power writes out its exponent in full unless the base is 0, 1 or -1",
+        ),
+    ] {
+        let src = x_out(x, out);
+        let out = rejected(&src);
+        assert!(out.starts_with(head) && out.contains(why), "{src}\n{out}");
+        assert_eq!(out.matches("Number too large").count(), 1, "{src}\n{out}");
+    }
+}
+
+#[test]
+fn the_largest_sum_within_the_address_space_compiles() {
+    // `2^k + 1` builds `k + 1` bits, 2^67 bits, 16 EiB, at `k = 2^67 - 1`, and one bit more
+    // at `k = 2^67`.
+    let src = |k: &str| x_out(&format!("2^({k}) + 1"), "String(x > 0)");
+    assert_eq!(built(&src("2^67 - 1")), None);
+    let out = rejected(&src("2^67"));
+    assert!(
+        out.starts_with(
+            "2:7: Number too large for any memory of the target: `2^(2^67) + 1` needs more \
+             than 16 EiB"
+        ),
+        "{out}"
+    );
+}
+
+/// `main` under a 1 MiB memory limit writing `out` to standard output.
+fn limited(out: &str) -> String {
+    format!("@limits(memory: 1048576)\nmain(m: MainArgs) {{\n  m.stdout <- {out};\n}}\n")
+}
+
+#[test]
+fn a_build_past_the_memory_limit_is_rejected_and_the_largest_within_it_compiles() {
+    // `2^(2^23 - 1) + 1` builds `2^23` bits, 1 MiB; `2^(2^23) + 1` one bit more.
+    assert_eq!(built(&limited("String(2^(2^23 - 1) + 1 > 0)")), None);
+    let out = rejected(&limited("String(2^(2^23) + 1 > 0)"));
+    assert!(
+        out.starts_with(
+            "3:22: Number too large for the memory limit of `main`: `2^(2^23) + 1` needs at \
+             least 1 MiB; `@limits(memory: 1048576)`. Try `@limits(memory: 2^21)` instead."
+        ) && out.contains("`2^(2^23) + 1` asks for at least 8388609 bits"),
+        "{out}"
+    );
+    // Printing writes a byte a digit: `2^(2^20)` has 315653 digits, `2^(2^24)` 5050446.
+    assert_eq!(built(&limited("String(2^(2^20))")), None);
+    // `5^1300000` has 908660 digits, within 1 MiB; the kernel's bound from above on its text,
+    // at 3 bits a factor 5, puts it at 1.1 MiB, which the check must not claim it needs.
+    assert_eq!(built(&limited("String(5^1300000)")), None);
+    // `5^3600000 + 1` builds 8358942 bits, within 2^23; at 3 bits a factor 5 it would be past.
+    assert_eq!(built(&limited("String(5^3600000 + 1 > 0)")), None);
+    let out = rejected(&limited("String(2^(2^24))"));
+    assert!(
+        out.starts_with(
+            "3:15: Number too large for the memory limit of `main`: `String(2^(2^24))` needs \
+             at least 4.8 MiB; `@limits(memory: 1048576)`. Try `@limits(memory: 2^23)` instead."
+        ),
+        "{out}"
+    );
+    // Printing a sum past the limit is reported at the sum alone, the one cause.
+    let out = rejected(&limited("String(2^(2^24) + 1)"));
+    assert_eq!(out.matches("Number too large").count(), 1, "{out}");
+    assert!(
+        out.starts_with(
+            "3:22: Number too large for the memory limit of `main`: `2^(2^24) + 1` needs at \
+             least 2 MiB"
+        ),
+        "{out}"
+    );
+}
+
+/// `n` bindings, each a kept power and a sum that writes it out past the address space.
+fn kept_sums(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|i| format!("  x{i} = 2^(2^70 + {i});\n  y{i} = x{i} + 1;\n"))
+        .collect();
+    format!("main(m: MainArgs) {{\n{body}}}\n")
+}
+
+#[test]
+fn judging_many_builds_scales() {
+    // One kernel step per sum, refused before it allocates: O(1) words each, O(n) in all.
+    scaling::check(
+        "n kept powers and n sums past the address space, each sum rejected",
+        800,
+        |n| {
+            let out = rejected(&kept_sums(n));
+            assert_eq!(
+                out.matches("Number too large for any memory of the target")
+                    .count(),
+                n
+            );
+        },
+    );
+}

@@ -99,7 +99,8 @@ fn a_folded_constant_too_large_to_write_out_stops_alike() {
 
 #[test]
 fn the_row_s_program_stops_alike() {
-    let src = "main(m: MainArgs) {\n    n = 1;\n    m.stdout <- String(2^2^100 * n);\n}\n";
+    let src = "main(m: MainArgs) {\n    n = int(m.args[0] else \"\") else 1;\n    \
+               m.stdout <- String(2^2^100 * n);\n}\n";
     let ran = agree("row", src);
     assert_eq!(ran.status, 3);
     assert!(

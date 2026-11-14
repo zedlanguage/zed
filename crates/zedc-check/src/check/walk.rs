@@ -3627,6 +3627,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             self.lit_op_meets(op, &mut x, &mut y, span);
         }
+        // A comparison of numbers the text fixes that agree within their width reads them that
+        // far (DESIGN.md, the numbers section).
+        if let (Some(a), Some(p)) = (x.expr, binary_prim(op))
+            && matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+            )
+        {
+            self.too_large_build(p, &[a, b], span);
+        }
         match op {
             BinaryOp::Eq | BinaryOp::Ne => {
                 if self.level == 0 {
@@ -3799,16 +3814,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let carried = [&x.ty, &y.ty]
                     .iter()
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
+                let mut over_space = false;
                 if op == BinaryOp::Pow {
                     self.exponent(&x, &y, b, span);
                     if let Some(a) = x.expr {
-                        self.too_large_power(a, b, span);
+                        over_space = self.too_large_power(a, b, span);
                     }
                 }
                 if matches!(op, BinaryOp::Mul | BinaryOp::Div)
                     && let Some(a) = x.expr
                 {
-                    self.too_large_product(op, a, b, span);
+                    over_space = self.too_large_product(op, a, b, span);
+                }
+                // What the operation builds on operands the text fixes, past the bound of the
+                // two above: a sum's part above the shared powers, an exponent, `div`, `mod`.
+                let p = match op {
+                    BinaryOp::IntDiv => Some(Prim::IntDiv),
+                    BinaryOp::Mod => Some(Prim::Mod),
+                    _ => binary_prim(op),
+                };
+                if !over_space && let (Some(a), Some(p)) = (x.expr, p) {
+                    self.too_large_build(p, &[a, b], span);
                 }
                 let zero = if divides {
                     self.zero_divisor(op, &x, &y, b)
@@ -4270,6 +4296,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             "f32" => int_cast_sig(Carrier::F32, self.int_cast(&x, Carrier::F32)),
             _ => word_sig(w),
         };
+        // Printing a number the text fixes writes its digits; rounding one to a float reads it
+        // as far as it lies from a boundary (DESIGN.md, the numbers section).
+        let builds = match w {
+            "String" => Some(Prim::Show),
+            "f64" => Some(Prim::CastF64),
+            "f32" => Some(Prim::CastF32),
+            _ => None,
+        };
+        if let (Some(a), Some(p)) = (x.expr, builds) {
+            self.too_large_build(p, &[a], span);
+        }
         let values = self.operand_values(&x);
         let carried = x.ty.atoms();
         let at = x.at.unwrap_or(span);
@@ -8091,12 +8128,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: the naive method builds the base, as the run would, at the cost of
     /// its size; used: the base's bounds, read once by span ([`Self::least_built`]), and the
     /// same O(1) comparison as for a fixed base.
-    fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) {
+    fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) -> bool {
         let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
         let (rat, widths, exact) = match self.fixed_value(a) {
             Some(base) => {
                 let (Value::Big(r) | Value::Rat(r)) = &base else {
-                    return;
+                    return false;
                 };
                 let widths = r.built_widths().map(|l| l.map(u128::from));
                 (matches!(base, Value::Rat(_)), widths, true)
@@ -8105,7 +8142,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let w = self.least_built(a);
                 let room = Num::from(space_bits as i128);
                 if w.parts[0].bits == Num::ZERO || w.size() > room {
-                    return;
+                    return false;
                 }
                 // Each part within the room, so below 2^67 bits.
                 let widths = w.parts.clone().map(|c| match c.bits.to_i128() {
@@ -8119,11 +8156,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let floor_log: u128 = widths.iter().flatten().map(|l| l - 1).sum();
         let built = widths.iter().flatten().count() as u64;
         if built == 0 {
-            return;
+            return false;
         }
         let (ints, _) = self.ints_here(e);
         let Some(k) = least_magnitude(&ints) else {
-            return;
+            return false;
         };
         // The result has more than 2^67 bits, 2^64 bytes, exactly when `k * F + built` does,
         // that is when `k` reaches `(2^67 + 1 - built) / F` rounded up: below 2^61, as
@@ -8151,6 +8188,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // are read ([`Self::powers_over_main_limit`]), from what the walk first found here.
             self.wide_powers.entry(span).or_insert(p);
         }
+        over_space
     }
 
     /// Reads the limits written before the unit's `main` in `unit` into [`Info::limits`]
@@ -8239,16 +8277,41 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         };
         let room = Num::from(i128::from(b) * 8);
+        // Every operation past the limit, as `(start, end)`: an operation is reported only
+        // where no operation inside it is past the limit too, so `String(x * x)` with `x * x`
+        // past the limit is reported at `x * x` alone, the one cause.
+        let mut over: BTreeSet<(usize, usize)> = BTreeSet::new();
         for p in std::mem::take(&mut self.wide_powers).into_values() {
             if p.bits > room {
+                over.insert((p.span.start, p.span.end));
                 self.power_too_large(&p, self.main_memory);
             }
         }
         // A product is judged as at the address space ([`Self::too_large_product`]): an
         // operand past the limit is reported at its own operation, not again here.
         for p in std::mem::take(&mut self.wide_products).into_values() {
-            if p.r.size() > room && p.x.size() <= room && p.y.size() <= room {
-                self.product_too_large(&p, self.main_memory);
+            if p.r.size() > room {
+                over.insert((p.span.start, p.span.end));
+                if p.x.size() <= room && p.y.size() <= room {
+                    self.product_too_large(&p, self.main_memory);
+                }
+            }
+        }
+        let builds: Vec<WideBuild> = std::mem::take(&mut self.wide_builds)
+            .into_values()
+            .filter(|w| w.bits > room)
+            .collect();
+        over.extend(builds.iter().map(|w| (w.span.start, w.span.end)));
+        // Naive: test each build against every operation past the limit, O(b * r). Used: the
+        // spans of the syntax tree nest or are disjoint, so one past the limit lies inside
+        // `(s, e)` exactly when it starts at `s` and ends before `e`, or starts in `s + 1..e`;
+        // two range reads of the ordered set, O(log r) each, O((b + r) log r) in all.
+        for w in builds {
+            let (s, e) = (w.span.start, w.span.end);
+            let inner = over.range((s, 0)..(s, e)).next().is_some()
+                || over.range((s + 1, 0)..(e, 0)).next().is_some();
+            if !inner {
+                self.build_too_large(&w, self.main_memory);
             }
         }
     }
@@ -8514,14 +8577,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Self::least_built`]), and a few additions and comparisons of bit lengths and at most
     /// six gcds of numbers the text fixes ([`product_built`]) per `*` or `/`, plus the size of
     /// the numbers a rejection's message writes.
-    fn too_large_product(&mut self, op: BinaryOp, a: &'a Expr, b: &'a Expr, span: Span) {
+    fn too_large_product(&mut self, op: BinaryOp, a: &'a Expr, b: &'a Expr, span: Span) -> bool {
         let (x, y) = (self.least_built(a), self.least_built(b));
         let Some(r) = product_built(op, &x, &y) else {
-            return;
+            return false;
         };
         let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
         if x.size() > room || y.size() > room {
-            return;
+            return false;
         }
         let p = WideProduct {
             op,
@@ -8532,11 +8595,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             y,
             r,
         };
-        if p.r.size() > room {
+        let over_space = p.r.size() > room;
+        if over_space {
             self.product_too_large(&p, None);
         } else if !self.trying {
             self.wide_products.entry(span).or_insert(p);
         }
+        over_space
     }
 
     /// Rejects the product or quotient `p`, larger than the target's address space, or, with
@@ -8622,6 +8687,176 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.reject(
             Some(Row::NumberOverAddressSpace),
             span,
+            Msg::new(message, fixes),
+            notes,
+        );
+    }
+
+    /// The operation `p` at `span` on the operands `args`, rejected where the text fixes them
+    /// and what the operation builds in full is larger than the target's address space,
+    /// whether or not its branch is taken (DESIGN.md, the numbers section's list of the
+    /// operations that build; sec:diagnostics "Number too large for any memory of the target";
+    /// plan row CONST-too-large-kept-powers). A number is kept as `n/d · ∏ p^e`, so
+    /// `2^(2^70)` costs a few words and is accepted; what builds is a sum's part above the
+    /// powers its operands share (`2^(2^70) + 1`), the exponent of a power whose base is not
+    /// 0, 1 or -1 (`3^(2^(2^70))`), the listed `div` and `mod` cases (`-5 mod 2^(2^70)`),
+    /// printing (`String(2^(2^70))`), and a comparison or a rounding that reads the numbers
+    /// that far. A power whose base has a part wider than 64 bits is
+    /// [`Self::too_large_power`]'s, and a product it proves [`Self::too_large_product`]'s;
+    /// the caller passes those only when neither rejected them.
+    ///
+    /// The size is the kernel's: the operation runs by the kernel's evaluator under the fold
+    /// bound, and a step refused there names the bits it builds, which the run builds at that
+    /// step on every machine, while a number it gives is measured by its parts built in full
+    /// ([`kernel_build`]); a number the checker already folded at the span is measured
+    /// without running the operation again. A size within the address space is kept
+    /// and judged against the memory limit of `main` once it is read
+    /// ([`Self::powers_over_main_limit`]). An operation the text does not fix, as
+    /// `2^(2^70) + n` with `n` read from the input, is left to the run.
+    ///
+    /// Left open: a comparison or a rounding the kernel decides by bounds of growing precision
+    /// is refused at its first step past the fold bound, whose size is that step's, so one that
+    /// would need more than the address space only at a later step is left to the run.
+    ///
+    /// Complexity tradeoff: the naive method builds what the operation builds, as the run
+    /// would, at the cost of its size and depending on the machine's memory. Used: one kernel
+    /// operation on the fixed operands ([`Self::fixed_value`], each expression read once by
+    /// span) under the fold bound, which is refused before it allocates past 16 MiB; an
+    /// operation whose value the checker already folded is not run again. A power whose base
+    /// has a part wider than 64 bits is not run, since its result is the build and the kernel
+    /// would compute it up to the bound for no verdict.
+    fn too_large_build(&mut self, p: Prim, args: &[&'a Expr], span: Span) {
+        // A number the checker already folded at `span` is measured as it stands; `String`
+        // gives a text, so its operand is read instead.
+        let folded = match p {
+            Prim::Show => None,
+            _ => self
+                .known
+                .get(&span)
+                .and_then(|k| k.value.as_ref())
+                .or_else(|| self.fixed.get(&span).and_then(Option::as_ref)),
+        };
+        let bits = match folded {
+            Some(Value::Big(r) | Value::Rat(r)) => built_bits(r),
+            Some(_) => None,
+            None => {
+                let Some(mut vals) = args
+                    .iter()
+                    .map(|a| self.fixed_value(a))
+                    .collect::<Option<Vec<Value>>>()
+                else {
+                    return;
+                };
+                if p == Prim::Pow {
+                    if let Value::Big(r) | Value::Rat(r) = &vals[0]
+                        && r.built_widths().iter().any(Option::is_some)
+                    {
+                        return;
+                    }
+                } else if p == Prim::Div || vals.iter().any(|v| matches!(v, Value::Rat(_))) {
+                    // The run reads both operands of `/`, and an `int` literal beside a `rat`,
+                    // at `rat`.
+                    let Some(at) = vals.into_iter().map(at_rat).collect() else {
+                        return;
+                    };
+                    vals = at;
+                }
+                kernel_build(p, vals)
+            }
+        };
+        let Some(bits) = bits else {
+            return;
+        };
+        let w = WideBuild {
+            p,
+            span,
+            args: args.iter().map(|a| a.span).collect(),
+            bits: Num::from(num_bigint::BigInt::from(bits)),
+        };
+        let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
+        if w.bits > room {
+            self.build_too_large(&w, None);
+            // A power or product judged at this span from its bounds is reported here.
+            self.wide_powers.remove(&span);
+            self.wide_products.remove(&span);
+        } else if !self.trying
+            && !self.wide_powers.contains_key(&span)
+            && !self.wide_products.contains_key(&span)
+        {
+            self.wide_builds.entry(span).or_insert(w);
+        }
+    }
+
+    /// Rejects the operation `w`, which builds more than the target's address space, or, with
+    /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
+    /// `memory:`, than that limit: the message, why the operation builds, and the repairs.
+    fn build_too_large(&mut self, w: &WideBuild, main_limit: Option<(u64, Span, Span)>) {
+        let code = self.code(Some(w.span)).unwrap_or("this operation");
+        let message = match main_limit {
+            Some((_, at, _)) => self.main_limit_headline(code, &w.bits, at),
+            None => self.too_large_headline(code, &w.bits),
+        };
+        // Why the operation builds, in the words of DESIGN's list.
+        let why = match w.p {
+            Prim::Show => "printing a number writes all of its digits, a byte each",
+            Prim::Add | Prim::Sub => {
+                "a sum writes out in full its part above the powers of primes its operands share"
+            }
+            Prim::Pow => {
+                "a power writes out its exponent in full unless the base is 0, 1 or -1, and \
+                 any part of the base wider than 64 bits"
+            }
+            Prim::IntDiv => {
+                "`div` writes out the divisor, and the dividend less its remainder, where the \
+                 quotient is not an integer and the dividend is not smaller than the divisor"
+            }
+            Prim::Mod => {
+                "`mod` writes out the divisor where the quotient is not an integer and the \
+                 dividend is not in `0..<|divisor|`"
+            }
+            Prim::Mul | Prim::Div => "the kernel writes out the parts it multiplies",
+            Prim::CastF64 | Prim::CastF32 => {
+                "the number lies so near a rounding boundary that rounding reads it that far"
+            }
+            _ => "the two numbers agree so far that comparing them reads them that far",
+        };
+        // The operands' derivation: where the text fixes each value.
+        let mut notes = self.derive(&w.args);
+        notes.push(Note {
+            span: w.span,
+            text: format!(
+                "`{code}` asks for at least {} bits: {why}",
+                number_text(&w.bits)
+            ),
+        });
+        if let Some((b, at, _)) = main_limit {
+            notes.push(Self::main_limit_note(b, at));
+        }
+        notes.push(Note {
+            span: w.span,
+            text: match main_limit {
+                Some(_) => {
+                    "or read an operand from the input: the run then stops at the memory limit \
+                     of `main` if the result passes it"
+                }
+                None => {
+                    "or read an operand from the input: the run then stops if no memory holds \
+                     what it writes out"
+                }
+            }
+            .to_string(),
+        });
+        notes.push(Note {
+            span: w.span,
+            text: format!("or delete `{code}` if its result is not used"),
+        });
+        let fixes = match main_limit {
+            Some((_, at, arg)) => vec![self.main_limit_fix(&w.bits, at, arg)],
+            None => Vec::new(),
+        };
+        self.reject(
+            Some(Row::NumberOverAddressSpace),
+            w.span,
             Msg::new(message, fixes),
             notes,
         );

@@ -65,24 +65,26 @@ fn each_argument_of_a_limit_is_a_positive_constant() {
 #[test]
 fn a_power_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
-               m.stdout <- String(b ^ (2^20));\n}\n";
+               m.stdout <- String(b ^ (2^20) > 0);\n}\n";
     let out = rejected(src);
     assert!(
         out.starts_with(
             "4:24: Number too large for the memory limit of `main`: `b ^ (2^20)` needs at least \
-             8 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String(b ^ (2^16))` instead."
+             8 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String(b ^ (2^16) > 0)` instead."
         ),
         "{out}"
     );
     assert!(
         out.contains("the memory limit of `main` lets the run hold 1 MiB")
             && out.ends_with(
-                "  fixes, each checked here:\n    m.stdout <- String(b ^ (2^16));    needs at \
-                 least 512 KiB\n    @limits(memory: 2^24)              lets the run hold 16 MiB"
+                "  fixes, each checked here:\n    m.stdout <- String(b ^ (2^16) > 0);    needs at \
+                 least 512 KiB\n    @limits(memory: 2^24)                  lets the run hold 16 MiB"
             ),
         "{out}"
     );
-    // Without the limit, 8 MiB fits the address space; under it, 2^16 fits the limit.
+    // Without the limit, 8 MiB fits the address space; under it, 2^16 fits the limit. The
+    // power is compared, not printed: printing `b ^ (2^16)` writes about 1.26 million digits,
+    // 1.2 MiB, past the limit (plan row CONST-too-large-kept-powers).
     assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
     assert_eq!(built(&src.replace("2^20", "2^16")), None);
 }
@@ -93,7 +95,7 @@ fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     // the limit, and `x * x` at least `2^23 + 1`, past it. Before, only powers were judged
     // against the limit, and this compiled.
     let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
-               x = b ^ (2^16);\n    m.stdout <- String(x * x);\n}\n";
+               x = b ^ (2^16);\n    m.stdout <- String(x * x > 0);\n}\n";
     let out = rejected(src);
     assert!(
         out.starts_with(
@@ -118,7 +120,8 @@ fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
             ),
         "{out}"
     );
-    // Without the limit, 1 MiB fits the address space; under it, `x * b` fits the limit.
+    // Without the limit, 1 MiB fits the address space; under it, `x * b` fits the limit. The
+    // product is compared, not printed: printing `x * b` writes about 1.2 MiB of digits.
     assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
     assert_eq!(built(&src.replace("x * x", "x * b")), None);
 }
