@@ -3,7 +3,6 @@
 //! read or bound value that asked it, in order of place and then of question, from `zedc run` and `zedc test`
 //! alike, the same in a batch as alone, and only for a unit with no rejection.
 
-use zed_tests::scaling;
 
 /// Writes the unit `src` as `file` in test directory `name`, kept apart from the other tests'.
 pub(super) fn unit(name: &str, file: &str, src: &str) -> String {
@@ -350,7 +349,7 @@ fn each_read_and_each_bound_value_has_its_own_warning() {
 
 /// One [`star`] function with `n` bound values `b0 = a * 2`, ... and a sum of `n` reads of `a`
 /// and one read of each value: `2 n` questions refused in one scope, one at each value and read.
-fn many_placed_refusals(n: usize) -> String {
+pub(super) fn many_placed_refusals(n: usize) -> String {
     let values: String = (0..n).map(|i| format!("      b{i} = a * 2;\n")).collect();
     let reads: Vec<String> = (0..n)
         .map(|i| format!("100 div b{i}"))
@@ -360,27 +359,24 @@ fn many_placed_refusals(n: usize) -> String {
     program(&star("f", &body))
 }
 
-/// `zedc test` on a function whose scope places `2 n` refused questions, at its bound values
-/// and its reads: placing them all is within n log n.
+/// `zedc test` on [`many_placed_refusals`]`(n)` in `file` passes with `2n` placed warnings and
+/// one more.
+pub(super) fn placed_refusals(file: &str, n: usize) {
+    let (status, _, err) = test(&[file]);
+    assert_eq!(status, 0);
+    assert_eq!(firsts(&err).len(), 2 * n + 1);
+}
+
 #[test]
-fn many_placed_refusals_scale() {
-    let n = 40;
-    let files = scaling::inputs(n, |m| {
-        unit("scale", &format!("placed{m}.zed"), &many_placed_refusals(m))
-    });
-    scaling::check(
-        "zedc test on n refused values and n refused reads",
-        n,
-        |m| {
-            let (status, _, err) = test(&[&files[&m]]);
-            assert_eq!(status, 0);
-            assert_eq!(firsts(&err).len(), 2 * m + 1);
-        },
-    );
+fn many_placed_refusals_each_warned() {
+    for n in [1, 3] {
+        let file = unit("scale", &format!("placed{n}.zed"), &many_placed_refusals(n));
+        placed_refusals(&file, n);
+    }
 }
 
 /// A unit of `n` functions, each with a test whose question the checker refuses.
-fn many_refusals(n: usize) -> String {
+pub(super) fn many_refusals(n: usize) -> String {
     program(
         &(0..n)
             .map(|i| guarded(&format!("guard{i}"), GROWTH))
@@ -388,15 +384,16 @@ fn many_refusals(n: usize) -> String {
     )
 }
 
-/// `zedc test` on a unit of `n` refused questions, one in each function: checking, placing
-/// and printing together are within n log n. The files are written before the timing.
+/// `zedc test` on [`many_refusals`]`(n)` in `file` passes with `n` warnings.
+pub(super) fn refusals(file: &str, n: usize) {
+    let (status, _, err) = test(&[file]);
+    assert_eq!(status, 0);
+    assert_eq!(firsts(&err).len(), n);
+}
+
 #[test]
-fn many_refusals_scale() {
-    let n = 40;
-    let files = scaling::inputs(n, |m| unit("scale", &format!("{m}.zed"), &many_refusals(m)));
-    scaling::check("zedc test on a unit of n refused questions", n, |m| {
-        let (status, _, err) = test(&[&files[&m]]);
-        assert_eq!(status, 0);
-        assert_eq!(firsts(&err).len(), m);
-    });
+fn many_refusals_each_warned() {
+    for n in [1, 3] {
+        refusals(&unit("scale", &format!("{n}.zed"), &many_refusals(n)), n);
+    }
 }

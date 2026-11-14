@@ -5,7 +5,7 @@
 //! a `rat` with `n: int`. A cast that narrows is never offered (DESIGN.md sec:diagnostics), so
 //! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#invalid` at NaN and the infinities.
 
-use zed_tests::scaling::{self, Meter, on_a_thread};
+use zed_tests::scaling::on_a_thread;
 use zed_tests::step_helpers::l01_19a_command_line::run;
 
 use super::{rejected, steps};
@@ -26,12 +26,12 @@ fn checks(src: &str) {
 }
 
 /// The menu entry offering the cast `cast`.
-fn offered(cast: &str) -> String {
+pub(super) fn offered(cast: &str) -> String {
     format!("repair: write `{cast}`; the checker accepts that")
 }
 
 /// `body` as the one function of a program.
-fn program(body: &str) -> String {
+pub(super) fn program(body: &str) -> String {
     format!("{body}\nmain(m: MainArgs) {{\n  m.stdout <- \"a\";\n}}\n")
 }
 
@@ -205,7 +205,7 @@ fn a_value_with_no_numeric_cast_is_offered_none() {
 }
 
 /// `n` functions, each adding an `int` and a `rat`.
-fn mixed(n: usize) -> String {
+pub(super) fn mixed(n: usize) -> String {
     (0..n)
         .map(|i| format!("sum{i}(n: int, r: rat) = n + r;\n"))
         .collect()
@@ -213,30 +213,56 @@ fn mixed(n: usize) -> String {
 
 /// `n` functions, each with three rejections of the row: a call of `max`, a `rat` literal
 /// beside an `f64`, and a decimal literal compared with an `int`.
-fn called(n: usize) -> String {
+pub(super) fn called(n: usize) -> String {
     (0..n)
         .map(|i| format!("call{i}(r: rat, x: f64, n: int) = (max(n, r), x * 1r, n == 1.0);\n"))
         .collect()
 }
 
+/// The menus of [`mixed`]`(n)`: each offers `rat(n)`. Each rejection tries four casts at each
+/// of its two operands: a constant per rejection, held at `n` and `8n` by `bench::casts`.
+pub(super) fn the_cast_menus_of_rejections(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(out.matches(&offered("rat(n)")).count(), n);
+}
+
 #[test]
-fn the_cast_menus_of_many_rejections_scale() {
-    // Each rejection tries four casts at each of its two operands: a constant per rejection.
-    scaling::check("the cast menus of n rejected sums", 300, |n| {
-        let out = rejected(&mixed(n));
-        assert_eq!(out.matches(&offered("rat(n)")).count(), n);
-    });
+fn the_cast_menus_of_many_rejections() {
+    for n in [1, 4] {
+        the_cast_menus_of_rejections(&mixed(n), n);
+    }
 }
 
 /// A program of one function giving a tuple of `m` integers and `r` functions each adding an
 /// `int` and a `rat`, parsed and resolved, so that only its check is measured.
-fn padded(m: usize, r: usize) -> (Vec<Stmt>, Resolution) {
+pub(super) fn padded(m: usize, r: usize) -> (Vec<Stmt>, Resolution) {
     padded_with(m, &mixed(r))
+}
+
+/// The number of errors of the check of `stmts` with a repair among their notes: those with a
+/// menu.
+pub(super) fn rejections_with_a_menu(stmts: &[Stmt], res: &Resolution) -> usize {
+    on_a_thread(256 << 20, || zedc::check::walk::check(stmts, res))
+        .errors
+        .iter()
+        .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
+        .count()
+}
+
+#[test]
+fn a_cast_menu_is_offered_beside_a_larger_program() {
+    // `bench::casts` holds the work of these menus to a constant as the program around them
+    // grows; here each of `r` rejections beside `m` expressions has its menu, and the program
+    // around them none.
+    for (m, r) in [(0, 0), (40, 0), (40, 3)] {
+        let (stmts, res) = padded(m, r);
+        assert_eq!(rejections_with_a_menu(&stmts, &res), r, "{m} {r}");
+    }
 }
 
 /// A program of one function giving a tuple of `m` integers and the functions `rest`, parsed
 /// and resolved.
-fn padded_with(m: usize, rest: &str) -> (Vec<Stmt>, Resolution) {
+pub(super) fn padded_with(m: usize, rest: &str) -> (Vec<Stmt>, Resolution) {
     let mut text = String::from("big() = (0");
     text.push_str(&", 1".repeat(m));
     text.push_str(");\n");
@@ -246,62 +272,6 @@ fn padded_with(m: usize, rest: &str) -> (Vec<Stmt>, Resolution) {
     let stmts = zedc::ast::unit(&text, &tokens, &tree).expect("it is a unit");
     let res = zedc::resolve::resolve(&stmts).expect("it resolves");
     (stmts, res)
-}
-
-#[test]
-fn a_cast_menu_costs_the_same_in_a_larger_program() {
-    // The test above holds the work of n rejections to n, but not the cost of one rejection
-    // to a constant: the checker spends about 33,000 instructions on each expression and a
-    // scan of its record of expressions about 16 per entry, so a menu that scanned the whole
-    // record once per offered cast, O(n) per rejection and O(n²) in all, did 8.8 times the
-    // work at 1,000 and 8,000 rejections and passed it. Here the work of the rejections
-    // alone, the check of the program with them less the check without, is held to the
-    // limit of work of order n^0 as the program around them grows from m to 8m expressions.
-    // That scan did 4.1 times the work at m = 60,000 against 480,000; this code 1.00 times.
-    // The difference of two counts needs the count of instructions; a meter of processor time
-    // does not repeat closely enough. With malloc's cache per thread, one check at 8m now and
-    // then took 0.26 billion instructions more in malloc, from what earlier threads left in
-    // its arena, and the difference came out 1.38 to 1.44 times (4 of 18 runs of this step on
-    // 2026-11-09). `tools/run_tests.sh` turns that cache off: the difference then repeats to
-    // within 0.04% when the checks run alone, and beside this step's other tests, which
-    // allocate at the same time, it was 0.97 to 1.02 times in 30 runs. At m = 60,000 this test
-    // took 36 s alone at load 46, so m is now 30,000: a scan of that record once per offered
-    // repair still did 1.88 times the work there, against a limit of 1.32 (TESTS-l01_29-split).
-    const R: usize = 100;
-    let meter = &mut Meter::new();
-    let unit = meter.unit();
-    let mut rejections = |m: usize| {
-        let mut work = |r: usize| {
-            let (stmts, res) = padded(m, r);
-            let mut errors = 0;
-            let units = meter
-                .work(|| {
-                    errors = on_a_thread(256 << 20, || zedc::check::walk::check(&stmts, &res))
-                        .errors
-                        .iter()
-                        .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
-                        .count();
-                })
-                .units;
-            assert_eq!(errors, r, "rejections with a menu among {r}");
-            units
-        };
-        let without = work(0);
-        work(R)
-            .checked_sub(without)
-            .expect("the rejections add work")
-    };
-    let m = 30_000;
-    scaling::hold(
-        &format!(
-            "{R} rejections beside {m} and {} expressions",
-            scaling::FACTOR * m
-        ),
-        unit,
-        rejections(m),
-        rejections(scaling::FACTOR * m),
-        0,
-    );
 }
 
 /// The errors of checking `text`, parsed and resolved.
@@ -484,61 +454,28 @@ fn two_literals_of_different_carriers_compared_show_both() {
     checks(&program("same() = 1 == 1.0f64;"));
 }
 
-#[test]
-fn the_menus_of_calls_literals_and_comparisons_scale() {
-    // Each rejection tries a constant number of casts and literal forms.
-    scaling::check(
-        "the menus of 3n rejected calls, literals and comparisons",
-        200,
-        |n| {
-            let out = rejected(&called(n));
-            assert_eq!(out.matches(&offered("rat(n)")).count(), 2 * n);
-            assert_eq!(out.matches("the literal is then the f64 1.0").count(), n);
-        },
-    );
+/// Each rejection of [`called`]`(n)` tries a constant number of casts and literal forms.
+pub(super) fn the_menus_of_calls_literals_and_comparisons(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(out.matches(&offered("rat(n)")).count(), 2 * n);
+    assert_eq!(out.matches("the literal is then the f64 1.0").count(), n);
 }
 
 #[test]
-fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program() {
-    // As `a_cast_menu_costs_the_same_in_a_larger_program`, for the menus of a call of `max`, a
-    // `rat` literal and a comparison with a literal: the work of R functions of three
-    // rejections each, held to order n^0 as the program around them grows from m to 8m. The
-    // same scan per offered repair did 1.91 times the work at m = 30,000.
-    const R: usize = 100;
-    let meter = &mut Meter::new();
-    let unit = meter.unit();
-    let mut rejections = |m: usize| {
-        let mut work = |r: usize| {
-            let (stmts, res) = padded_with(m, &called(r));
-            let mut errors = 0;
-            let units = meter
-                .work(|| {
-                    errors = on_a_thread(256 << 20, || zedc::check::walk::check(&stmts, &res))
-                        .errors
-                        .iter()
-                        .filter(|e| e.notes.iter().any(|n| n.text.starts_with("repair:")))
-                        .count();
-                })
-                .units;
-            assert_eq!(errors, 3 * r, "rejections with a menu among {r} functions");
-            units
-        };
-        let without = work(0);
-        work(R)
-            .checked_sub(without)
-            .expect("the rejections add work")
-    };
-    let m = 30_000;
-    scaling::hold(
-        &format!(
-            "{R} functions beside {m} and {} expressions",
-            scaling::FACTOR * m
-        ),
-        unit,
-        rejections(m),
-        rejections(scaling::FACTOR * m),
-        0,
-    );
+fn the_menus_of_many_calls_literals_and_comparisons() {
+    for n in [1, 3] {
+        the_menus_of_calls_literals_and_comparisons(&called(n), n);
+    }
+}
+
+#[test]
+fn the_menus_of_calls_literals_and_comparisons_are_offered_beside_a_larger_program() {
+    // As `a_cast_menu_is_offered_beside_a_larger_program`, three rejections of each of `r`
+    // functions.
+    for (m, r) in [(40, 0), (40, 2)] {
+        let (stmts, res) = padded_with(m, &called(r));
+        assert_eq!(rejections_with_a_menu(&stmts, &res), 3 * r, "{m} {r}");
+    }
 }
 
 /// Row MSG-cast-repair-parens: a cast written around an operand in parentheses takes their
@@ -622,7 +559,7 @@ fn a_numeric_cast_takes_the_place_of_the_parentheses_around_its_operand() {
 }
 
 /// `f` comparing `2 + 13` in `d` pairs of parentheses with a string.
-fn nested(d: usize) -> String {
+pub(super) fn nested(d: usize) -> String {
     format!(
         "f() {{ c = {}2 + 13{} < \"a\"; return c; }}\n",
         "(".repeat(d),
@@ -630,21 +567,20 @@ fn nested(d: usize) -> String {
     )
 }
 
-#[test]
-fn a_cast_in_place_of_many_parentheses_scales() {
-    // The parentheses are matched in one pass over the operand's tokens: O(d) for `d` pairs.
-    let programs = scaling::inputs(777, nested);
-    scaling::check(
-        "the cast repair of an operand in n pairs of parentheses",
-        777,
-        |d| {
-            let out = on_a_thread(256 << 20, || rejected(&programs[&d]));
-            assert!(
-                out.contains("Try `String(2 + 13) < \"a\"` instead."),
-                "{out}"
-            );
-        },
+/// The parentheses are matched in one pass over the operand's tokens: O(d) for `d` pairs.
+pub(super) fn a_cast_in_place_of_parentheses(src: &str) {
+    let out = on_a_thread(256 << 20, || rejected(src));
+    assert!(
+        out.contains("Try `String(2 + 13) < \"a\"` instead."),
+        "{out}"
     );
+}
+
+#[test]
+fn a_cast_in_place_of_many_parentheses() {
+    for d in [0, 1, 2, 30] {
+        a_cast_in_place_of_parentheses(&nested(d));
+    }
 }
 
 /// `f`, of one parameter `x: t`, called with the literal `lit`.
@@ -780,7 +716,7 @@ fn a_literal_with_a_suffix_compared_with_a_value_of_another_format_names_its_own
 
 /// The literal `0.5000…0` with `n` zeros and the suffix `suffix`, and the literal
 /// `0.1000…01` with `n` zeros, each passed to a parameter of the other format.
-fn long_suffixed_literals(n: usize) -> String {
+pub(super) fn long_suffixed_literals(n: usize) -> String {
     let zeros = "0".repeat(n);
     format!(
         "f(x: f32) = x;\ng(x: f64) = x;\nmain(m: MainArgs) {{\n  y = f(x: 0.5{zeros}f64);\n  \
@@ -788,22 +724,20 @@ fn long_suffixed_literals(n: usize) -> String {
     )
 }
 
+/// Each literal is read once at `rat` and cast to the format expected, which decides whether
+/// its form without a suffix is offered: O(n log^2 n) in its digits (COMPLEXITY.md K41).
+pub(super) fn the_messages_of_long_literals_with_a_suffix(src: &str) {
+    let out = rejected(src);
+    assert_eq!(out.matches("an `f64`, never `f32`").count(), 1, "{out}");
+    assert_eq!(out.matches("an `f32`, never `f64`").count(), 1, "{out}");
+    assert_eq!(out.matches("the literal is then the f32 0.5").count(), 1);
+}
+
 #[test]
-fn the_message_of_a_long_literal_with_a_suffix_scales() {
-    // Each literal is read once at `rat` and cast to the format expected, which decides
-    // whether its form without a suffix is offered: O(n log^2 n) in its digits (COMPLEXITY.md
-    // K41).
-    let srcs = scaling::inputs(1000, long_suffixed_literals);
-    scaling::check(
-        "the messages of two literals of n digits with a suffix",
-        1000,
-        |n| {
-            let out = rejected(&srcs[&n]);
-            assert_eq!(out.matches("an `f64`, never `f32`").count(), 1, "{out}");
-            assert_eq!(out.matches("an `f32`, never `f64`").count(), 1, "{out}");
-            assert_eq!(out.matches("the literal is then the f32 0.5").count(), 1);
-        },
-    );
+fn the_message_of_a_long_literal_with_a_suffix() {
+    for n in [0, 1, 40] {
+        the_messages_of_long_literals_with_a_suffix(&long_suffixed_literals(n));
+    }
 }
 
 /// Row REPAIR-literal-string-order: an ordering of a number with a text no number cast reads
@@ -972,6 +906,21 @@ fn a_literal_in_another_base_compared_with_its_text_is_offered_the_equal_text() 
     checks(&program(line));
 }
 
+/// `f` ordering the text `"a"` before a literal of `d` digits 7.
+pub(super) fn a_literal_of_digits_ordered_with_a_text(d: usize) -> String {
+    program(&format!(
+        "f() {{ c = \"a\" < {}; return c; }}",
+        "7".repeat(d)
+    ))
+}
+
+/// The literal is written as text, O(d) for d digits, and the ordering checked once with it.
+pub(super) fn a_literal_ordered_with_a_text_is_offered_as_text(src: &str, d: usize) {
+    let out = rejected(src);
+    let want = format!("Try `\"a\" < \"{}\"` instead.", "7".repeat(d));
+    assert!(out.contains(&want), "{out}");
+}
+
 #[test]
 fn a_text_ordered_with_a_literal_of_its_value_is_offered_the_number_the_text_reads() {
     // Row REPAIR-text-cast-spelling. `"8" < 0x08` orders a text with a number; the repair
@@ -1014,21 +963,12 @@ fn a_text_ordered_with_a_literal_of_its_value_is_offered_the_number_the_text_rea
 }
 
 #[test]
-fn a_literal_of_many_digits_ordered_with_a_text_is_offered_as_text_and_scales() {
-    // The literal is written as text, O(d) for d digits, and the ordering checked once with it.
-    let srcs = scaling::inputs(4000, |d| {
-        program(&format!(
-            "f() {{ c = \"a\" < {}; return c; }}",
-            "7".repeat(d)
-        ))
-    });
-    scaling::check(
-        "the text repair of a literal of d digits ordered with a text",
-        4000,
-        |d| {
-            let out = rejected(&srcs[&d]);
-            let want = format!("Try `\"a\" < \"{}\"` instead.", "7".repeat(d));
-            assert!(out.contains(&want), "{out}");
-        },
-    );
+fn a_literal_of_many_digits_ordered_with_a_text_is_offered_as_text() {
+    // 30 digits pass the 64 and 128 bits of a machine word.
+    for d in [1, 30] {
+        a_literal_ordered_with_a_text_is_offered_as_text(
+            &a_literal_of_digits_ordered_with_a_text(d),
+            d,
+        );
+    }
 }

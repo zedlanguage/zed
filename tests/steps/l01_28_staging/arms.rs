@@ -224,7 +224,7 @@ fn a_split_function_called_with_a_value_read_at_run_time_gives_what_the_function
 }
 
 /// A program in which `readers` definitions read one binding, `huge`, whose evaluation stops.
-fn stopped_read_by(readers: usize) -> String {
+pub(super) fn stopped_read_by(readers: usize) -> String {
     let mut s = format!("{}huge = {};\n", zed_tests::TWICE, zed_tests::too_long());
     for i in 0..readers {
         s += &format!("r{i} = huge ++ \"{i}\";\n");
@@ -239,7 +239,7 @@ fn stopped_read_by(readers: usize) -> String {
 
 /// A program in which `readers` definitions each read a binding of their own whose evaluation
 /// stops: `readers` evaluations that stop.
-fn stopped_each(readers: usize) -> String {
+pub(super) fn stopped_each(readers: usize) -> String {
     let mut s = String::from(zed_tests::TWICE);
     for i in 0..readers {
         s += &format!(
@@ -256,7 +256,7 @@ fn stopped_each(readers: usize) -> String {
 }
 
 /// The least work of staging `p` in two runs.
-fn staging_work(meter: &mut Meter, p: &Program) -> u64 {
+pub(super) fn staging_work(meter: &mut Meter, p: &Program) -> u64 {
     (0..2)
         .map(|_| {
             meter
@@ -271,12 +271,10 @@ fn staging_work(meter: &mut Meter, p: &Program) -> u64 {
 
 /// DESIGN step L1.28: an evaluation that stops leaves the term to run whole, and the name it
 /// binds becomes run-stage, so nothing evaluates it twice. Read by two definitions, `huge` is
-/// left once and its readers are left as written. The evaluations are counted by their work:
-/// the stop of `huge` costs about 6.8 million instructions, and 8 readers of it cost about
-/// 0.5 million more than one (measured 2026-11-11); were each reader to evaluate `huge` again,
-/// 7 more readers would cost 7 stops more.
+/// left once and its readers are left as written. `bench::arms` counts the evaluations by
+/// their work.
 #[test]
-fn a_stopped_binding_read_twice_is_evaluated_once() {
+fn a_stopped_binding_read_twice_is_left_once() {
     let (p, s, report) = staged(&stopped_read_by(2));
     assert!(report.built.is_empty(), "{:?}", report.built);
     assert_eq!(report.left.len(), 1, "{:?}", report.left);
@@ -291,21 +289,6 @@ fn a_stopped_binding_read_twice_is_evaluated_once() {
     }
     stopped_at_join(&out(&s, "x\n"));
     assert_eq!(out(&s, "x\n"), out(&p, "x\n"));
-    let mut meter = Meter::new();
-    let [one, eight] = [1, 8].map(|k| load(stopped_read_by(k).as_bytes()).unwrap());
-    let [each_one, each_two] = [1, 2].map(|k| load(stopped_each(k).as_bytes()).unwrap());
-    let (one, eight) = (
-        staging_work(&mut meter, &one),
-        staging_work(&mut meter, &eight),
-    );
-    let stop = staging_work(&mut meter, &each_two) - staging_work(&mut meter, &each_one);
-    assert!(
-        eight - one < stop / 2,
-        "8 readers of one stopped binding cost {} {unit} more than 1 reader; one more stop costs \
-         {stop}",
-        eight - one,
-        unit = meter.unit()
-    );
 }
 
 /// DESIGN step L1.28: a local binding counts as read when its body names it, so a binding
@@ -440,7 +423,7 @@ fn a_cut_read_of_a_definition_that_ends_is_not_kept() {
 
 /// A program of `n` definitions `s{i}` left to run, since their form does not show that they
 /// end, each named by `g{i}` only in a branch the build cuts, and `main` writing every `g{i}`.
-fn cut_reads(n: usize) -> String {
+pub(super) fn cut_reads(n: usize) -> String {
     let mut s = String::from("w(positional f) = f(f);\n");
     for i in 0..n {
         s += &format!("s{i} = w(w);\ng{i} = if false {{ String(s{i}) }} else {{ \"{i}\" }};\n");
@@ -453,36 +436,38 @@ fn cut_reads(n: usize) -> String {
     s
 }
 
-/// Keeping cut reads stays O(N log N) in the unit's size with many roots and many definitions
-/// left to run: every `g{i}` and `main` a root, `n` definitions left, each kept by one read
-/// (COMPLEXITY.md row of `keep_cut_reads`). Units are elaborated before timing.
+/// The unit of [`cut_reads`]`(n)` loaded, and its roots: every `g{i}` and `main`.
+pub(super) fn cut_reads_loaded(n: usize) -> (zedc::elab::Unit, Vec<String>) {
+    let p = load(cut_reads(n).as_bytes()).unwrap();
+    let mut roots: Vec<String> = (0..n).map(|i| format!("g{i}")).collect();
+    roots.push("main".into());
+    (p.unit().clone(), roots)
+}
+
+/// Mixes `u` from `roots`.
+pub(super) fn mixed_from(
+    (u, roots): &(zedc::elab::Unit, Vec<String>),
+) -> (zedc::elab::Unit, zedc::stage::Report) {
+    let all: Vec<&str> = roots.iter().map(String::as_str).collect();
+    zedc::stage::mix(u, &all)
+}
+
+/// Each of 1, 2 and 9 definitions left to run is kept by its one read in a cut branch
+/// (`bench::arms` times 600 and 4800).
 #[test]
-fn cut_reads_are_kept_in_time_that_scales() {
-    let n = 600;
-    let units = zed_tests::scaling::inputs(n, |k| {
-        let p = load(cut_reads(k).as_bytes()).unwrap();
-        let roots: Vec<String> = (0..k).map(|i| format!("g{i}")).collect();
-        (p.unit().clone(), roots)
-    });
-    let (u, roots) = &units[&n];
-    let mut all: Vec<&str> = roots.iter().map(String::as_str).collect();
-    all.push("main");
-    let (mixed, report) = zedc::stage::mix(u, &all);
-    assert_eq!(report.left.len(), n, "{:?}", report.left);
-    for i in [0, n - 1] {
-        let g = mixed
-            .defs
-            .iter()
-            .find(|d| d.name == format!("g{i}"))
-            .unwrap();
-        assert!(g.term.to_string().contains(&format!("s{i}")), "{}", g.term);
+fn cut_reads_are_kept() {
+    for n in [1, 2, 9] {
+        let (mixed, report) = mixed_from(&cut_reads_loaded(n));
+        assert_eq!(report.left.len(), n, "{:?}", report.left);
+        for i in 0..n {
+            let g = mixed
+                .defs
+                .iter()
+                .find(|d| d.name == format!("g{i}"))
+                .unwrap();
+            assert!(g.term.to_string().contains(&format!("s{i}")), "{}", g.term);
+        }
     }
-    zed_tests::scaling::check("keeping the cut reads of n left definitions", n, |k| {
-        let (u, roots) = &units[&k];
-        let mut all: Vec<&str> = roots.iter().map(String::as_str).collect();
-        all.push("main");
-        std::hint::black_box(zedc::stage::mix(u, &all));
-    });
 }
 
 /// Routes: a tuple of a bool and a bare atom, a finite domain whose four values are listed no

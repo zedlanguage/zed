@@ -227,54 +227,55 @@ fn a_value_that_reads_itself_is_offered_the_other_definition_of_its_name() {
     );
 }
 
-/// A cycle of n functions, each calling the next, the last the first: the report of the cycle
-/// at n and 8n, with its n uses, from a unit already resolved. One search with a visited set,
-/// each use placed by binary search, `O(n log n)`.
-#[test]
-fn the_report_of_a_long_cycle_scales() {
-    use zedc::resolve::tables::Tables;
-    let long = |n: usize| -> String {
-        (0..n)
-            .map(|i| format!("c{i}(positional k: int) = c{}(k);\n", (i + 1) % n))
-            .collect()
-    };
-    let units = zed_tests::scaling::inputs(2_000, |n| {
-        let text = long(n);
-        let tokens = zedc::lex::lex_fence(&text).unwrap();
-        let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).unwrap();
-        let stmts = zedc::ast::unit(&text, &tokens, &tree).unwrap();
-        let res = zedc::resolve::resolve(&stmts).unwrap_or_else(|e| panic!("{e:?}"));
-        (text, stmts, res)
-    });
-    zed_tests::scaling::check_order("the report of a cycle of n functions", 2_000, 1, |n| {
-        let (text, stmts, res) = &units[&n];
-        let tables = Tables::with_text(stmts, res, Some(text));
-        let items: Vec<_> = stmts.iter().collect();
-        let (_, cycles) = tables.order_around_cycles(&items);
-        let reports = tables.cycle_reports(&items, &cycles);
-        assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].notes.len(), n + 1);
-        assert!(reports[0].message.starts_with("`c0`, `c1`, "));
-    });
+/// A cycle of `n` functions, each calling the next, the last the first.
+pub(super) fn long(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("c{i}(positional k: int) = c{}(k);\n", (i + 1) % n))
+        .collect()
 }
 
-/// The same cycle through the whole checker, which reports it with its n uses.
+/// A unit's text, statements and resolution.
+pub(super) type Resolved = (
+    String,
+    Vec<zedc::ast::Stmt>,
+    zedc::resolve::Resolution,
+);
+
+/// [`long`]`(n)` resolved.
+pub(super) fn a_long_cycle(n: usize) -> Resolved {
+    let text = long(n);
+    let tokens = zedc::lex::lex_fence(&text).unwrap();
+    let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+    let stmts = zedc::ast::unit(&text, &tokens, &tree).unwrap();
+    let res = zedc::resolve::resolve(&stmts).unwrap_or_else(|e| panic!("{e:?}"));
+    (text, stmts, res)
+}
+
+/// The report of the cycle of [`a_long_cycle`]`(n)`: one, with its `n` uses.
+pub(super) fn the_report_of_a_long_cycle((text, stmts, res): &Resolved, n: usize) {
+    use zedc::resolve::tables::Tables;
+    let tables = Tables::with_text(stmts, res, Some(text));
+    let items: Vec<_> = stmts.iter().collect();
+    let (_, cycles) = tables.order_around_cycles(&items);
+    let reports = tables.cycle_reports(&items, &cycles);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].notes.len(), n + 1);
+    let message = &reports[0].message;
+    assert!(message.starts_with("`c0`") && message.contains("`c1`"), "{message}");
+}
+
+/// The check of [`a_long_cycle`]`(n)` reports the cycle once, with its `n` uses.
+pub(super) fn a_long_cycle_checked((_, stmts, res): &Resolved, n: usize) {
+    let info = zedc::check::walk::check(stmts, res);
+    assert_eq!(info.errors.len(), 1);
+    assert_eq!(info.errors[0].notes.len(), n + 1);
+}
+
 #[test]
-fn checking_a_long_cycle_scales() {
-    let units = zed_tests::scaling::inputs(500, |n| {
-        let text: String = (0..n)
-            .map(|i| format!("c{i}(positional k: int) = c{}(k);\n", (i + 1) % n))
-            .collect();
-        let tokens = zedc::lex::lex_fence(&text).unwrap();
-        let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).unwrap();
-        let stmts = zedc::ast::unit(&text, &tokens, &tree).unwrap();
-        let res = zedc::resolve::resolve(&stmts).unwrap_or_else(|e| panic!("{e:?}"));
-        (stmts, res)
-    });
-    zed_tests::scaling::check_order("checking a cycle of n functions", 500, 1, |n| {
-        let (stmts, res) = &units[&n];
-        let info = zedc::check::walk::check(stmts, res);
-        assert_eq!(info.errors.len(), 1);
-        assert_eq!(info.errors[0].notes.len(), n + 1);
-    });
+fn reporting_and_checking_a_long_cycle() {
+    for n in [2, 3, 12] {
+        let unit = a_long_cycle(n);
+        the_report_of_a_long_cycle(&unit, n);
+        a_long_cycle_checked(&unit, n);
+    }
 }

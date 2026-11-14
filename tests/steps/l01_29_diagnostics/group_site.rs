@@ -5,7 +5,6 @@
 use zed_kernel::Value;
 use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
 fn r(i: usize) -> Expr {
@@ -152,24 +151,21 @@ fn a_refused_check_lists_every_definition_of_the_head_group() {
     );
 }
 
-/// The message of a check that reads groups of n definitions, at n and 8n: the head group
-/// grows with n and is listed whole, so the message grows too. A walk to the head and its
-/// definitions sorted by name and written, `O(n log n)`.
+/// The message of a check that reads groups of n definitions: the head group grows with n and
+/// is listed whole, two types for each definition.
+pub(super) fn the_head_group_named(n: usize) {
+    Type::forget_emptiness();
+    let (a, b) = fork_empty(n);
+    let text = a.refused(&b);
+    assert_eq!(text.matches("\n    type ").count(), 2 * n);
+    std::hint::black_box(text);
+}
+
 #[test]
-fn naming_the_head_group_scales() {
-    let n = 64;
-    scaling::check_order(
-        "the message of a refused check reading n definitions",
-        n,
-        1,
-        |n| {
-            Type::forget_emptiness();
-            let (a, b) = fork_empty(n);
-            let text = a.refused(&b);
-            assert_eq!(text.matches("\n    type ").count(), 2 * n);
-            std::hint::black_box(text);
-        },
-    );
+fn naming_the_head_group() {
+    for n in [1, 2, 7] {
+        the_head_group_named(n);
+    }
 }
 
 /// Item PRINT-group-site-defs: the definitions a refusal lists are declarations a user could

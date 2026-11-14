@@ -9,12 +9,9 @@ use std::sync::Arc;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{Prim, Shared, Term};
-use zed_tests::scaling::{self, FACTOR};
 use zedc::elab::{Def, Unit};
 use zedc::run::load;
 use zedc::stage::{self, ends, reading};
-
-use super::scaling::deep;
 
 fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
@@ -22,7 +19,7 @@ fn prim(p: Prim, args: Vec<Term>) -> Term {
 
 /// `t0 = n; tj = if n >= j { t(j-1) } else { t(j-1) }`: `d` levels whose two arms are one
 /// node, so `2^d` places and `2d + 1` distinct parts.
-fn same_arms(d: usize) -> Term {
+pub(super) fn same_arms(d: usize) -> Term {
     (1..=d as i64).fold(var("n"), |t, j| {
         let t = Shared::new(t);
         let guard = prim(Prim::Ge, vec![var("n"), lit(j)]);
@@ -33,7 +30,7 @@ fn same_arms(d: usize) -> Term {
 #[test]
 fn a_part_held_by_both_arms_of_nested_ifs_is_read_once() {
     // The two arms of each `if` are one node: read by the place it is reached from, the walk
-    // would take 2^d steps.
+    // would take 2^d steps (`bench::ids` times 1000 and 8000 levels).
     let small = reading(&same_arms(3));
     // Per level: the guard, its two operands, and the `if`; and `n` at the bottom.
     assert_eq!(small.len(), 4 * 3 + 1);
@@ -41,24 +38,12 @@ fn a_part_held_by_both_arms_of_nested_ifs_is_read_once() {
     let (_, read) = top;
     assert_eq!(read.len(), 3);
     assert_eq!(read[1], read[2], "both arms are the one part read before");
-    deep(|| {
-        let n = 1000;
-        let terms: BTreeMap<usize, Term> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, same_arms(d)))
-            .collect();
-        scaling::check_order(
-            "stage::ends on d nested ifs whose two arms are one part",
-            n,
-            1,
-            |d| {
-                assert!(ends(&terms[&d]));
-            },
-        );
+    for d in [0, 1, 2, 9] {
+        assert!(ends(&same_arms(d)));
         // Under a binder of `n` the chain still ends.
-        let under = Term::Lam(vec!["n".into()], Shared::new(same_arms(n)));
+        let under = Term::Lam(vec!["n".into()], Shared::new(same_arms(d)));
         assert!(ends(&under));
-    });
+    }
 }
 
 /// A level's parts before they are put together: the guard `n >= j + 1` and the arm

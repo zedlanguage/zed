@@ -2,12 +2,10 @@
 //! (one `Shared` node twice) is read once, and its answer still depends on the names bound around each
 //! place.
 
-use std::collections::BTreeMap;
 use zed_kernel::Shared;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{FixKind, GuardPos, Pattern, Prim, Term};
-use zed_tests::scaling::{self, FACTOR};
 use zedc::stage::{ends, reading};
 
 use super::scaling::deep;
@@ -177,7 +175,7 @@ fn the_smallest_terms_and_the_forms_that_do_not_show_an_end() {
 
 /// `t0 = n; tj = if n >= j { t(j-1) } else { t(j-1) + 1 }`, `k` levels, each arm holding the
 /// same `t(j-1)`: `2^k` paths, `2k + 1` distinct parts. `base` is `t0`.
-fn shared_arms(k: usize, base: Term) -> Term {
+pub(super) fn shared_arms(k: usize, base: Term) -> Term {
     (1..=k as i64).fold(base, |t, j| {
         let t = Shared::new(t);
         let plus = prim(Prim::Add, vec![(*t).clone(), lit(1i64)]);
@@ -186,99 +184,95 @@ fn shared_arms(k: usize, base: Term) -> Term {
     })
 }
 
+/// `k` levels of shared `if` arms on `n`, and the same chain on `step(n)` under
+/// `step = (k) -> k + 1` and under a parameter `step`, the two in the arms of an `if`.
+pub(super) fn shared_arms_terms(k: usize) -> (Term, Term) {
+    let plain = shared_arms(k, var("n"));
+    let called = Shared::new(shared_arms(k, (*calls_step()).clone()));
+    let inc = lam(&["k"], prim(Prim::Add, vec![var("k"), lit(1i64)]));
+    let by_let = Term::Let("step".into(), Shared::new(inc), called.clone());
+    let by_param = Term::Lam(vec!["step".into()], called);
+    (
+        plain,
+        if_(var("c"), Shared::new(by_let), Shared::new(by_param)),
+    )
+}
+
+/// The chain on `n` ends; the `if` of the chain under a `let` function and under a parameter
+/// does not.
+pub(super) fn shared_arms_read((plain, both): &(Term, Term)) {
+    assert!(ends(plain));
+    assert!(!ends(both));
+}
+
+/// The walk read the term as a tree: 2^k steps (`bench::ends` times 1000 and 8000 levels).
 #[test]
-fn a_chain_whose_if_arms_share_their_term_is_read_in_time_near_its_size() {
-    // The walk read the term as a tree: 2^k steps.
+fn a_chain_whose_if_arms_share_their_term_is_read() {
     deep(|| {
-        let n = 1000;
-        let terms: BTreeMap<usize, (Term, Term)> = [n, FACTOR * n]
-            .into_iter()
-            .map(|k| {
-                let plain = shared_arms(k, var("n"));
-                // The chain on `step(n)` under `step = (k) -> k + 1`, and under a parameter
-                // `step`.
-                let called = Shared::new(shared_arms(k, (*calls_step()).clone()));
-                let inc = lam(&["k"], prim(Prim::Add, vec![var("k"), lit(1i64)]));
-                let by_let = Term::Let("step".into(), Shared::new(inc), called.clone());
-                let by_param = Term::Lam(vec!["step".into()], called);
-                (
-                    k,
-                    (
-                        plain,
-                        if_(var("c"), Shared::new(by_let), Shared::new(by_param)),
-                    ),
-                )
-            })
-            .collect();
-        scaling::check("stage::ends on k levels of shared if arms", n, |k| {
-            let (plain, both) = &terms[&k];
-            assert!(ends(plain));
-            assert!(!ends(both));
-        });
-        let (_, both) = &terms[&n];
-        let Term::If(_, by_let, _) = both else {
-            unreachable!("built as an if")
-        };
-        assert!(ends(by_let));
+        for k in [1, 2, 9] {
+            let terms = shared_arms_terms(k);
+            shared_arms_read(&terms);
+            let Term::If(_, by_let, _) = &terms.1 else {
+                unreachable!("built as an if")
+            };
+            assert!(ends(by_let));
+        }
     });
 }
 
+/// `f1 = (x) -> x + 1; …; fk = (x) -> x + k; f1(f2(…fk(0)))`: the names the body needs grow
+/// to k, each binder removing one.
+pub(super) fn let_functions(k: usize) -> Term {
+    let body = (1..=k)
+        .rev()
+        .fold(lit(0i64), |a, i| app(var(&format!("f{i}")), vec![a]));
+    (1..=k).rev().fold(body, |b, i| {
+        let f = lam(&["x"], prim(Prim::Add, vec![var("x"), lit(i as i64)]));
+        let_(&format!("f{i}"), f, b)
+    })
+}
+
+/// `bench::ends` times 1000 and 8000 functions.
 #[test]
-fn many_let_functions_called_at_the_end_are_read_in_time_near_their_number() {
-    // `f1 = (x) -> x + 1; …; fk = (x) -> x + k; f1(f2(…fk(0)))`: the names the body needs
-    // grow to k, each binder removing one.
-    let lets = |k: usize| {
-        let body = (1..=k)
-            .rev()
-            .fold(lit(0i64), |a, i| app(var(&format!("f{i}")), vec![a]));
-        (1..=k).rev().fold(body, |b, i| {
-            let f = lam(&["x"], prim(Prim::Add, vec![var("x"), lit(i as i64)]));
-            let_(&format!("f{i}"), f, b)
-        })
-    };
+fn many_let_functions_called_at_the_end_are_read() {
     deep(move || {
-        let n = 1000;
-        let terms: BTreeMap<usize, Term> =
-            [n, FACTOR * n].into_iter().map(|k| (k, lets(k))).collect();
-        scaling::check("stage::ends on k let functions called at the end", n, |k| {
-            assert!(ends(&terms[&k]));
-        });
+        for k in [0, 1, 2, 9] {
+            assert!(ends(&let_functions(k)));
+        }
         // A parameter `f7` around the chain is shadowed by the `let` of `f7`.
-        assert!(ends(&Term::Lam(vec!["f7".into()], Shared::new(lets(10)))));
+        assert!(ends(&Term::Lam(
+            vec!["f7".into()],
+            Shared::new(let_functions(10))
+        )));
     });
 }
 
+/// `tj = if c { fj(t(j-1)) } else { hj(t(j-1)) }` under `let`s of every `fj` and `hj`: the
+/// names the two arms need differ by one name each and share all the rest, so the sets joined
+/// at each `if` hold up to 2j names.
+pub(super) fn arms_calling_let_functions(k: usize) -> Term {
+    let body = (1..=k).fold(var("n"), |t, j| {
+        let t = Shared::new(t);
+        let f = app(var(&format!("f{j}")), vec![(*t).clone()]);
+        let h = app(var(&format!("h{j}")), vec![(*t).clone()]);
+        if_(var("c"), Shared::new(f), Shared::new(h))
+    });
+    (1..=k).rev().fold(body, |b, j| {
+        let b = let_(&format!("f{j}"), lam(&["x"], var("x")), b);
+        let_(&format!("h{j}"), lam(&["x"], var("x")), b)
+    })
+}
+
+/// `bench::ends` times 1000 and 8000 levels.
 #[test]
-fn arms_that_call_different_let_functions_on_a_shared_part_are_read_in_time_near_their_size() {
-    // `tj = if c { fj(t(j-1)) } else { hj(t(j-1)) }` under `let`s of every `fj` and `hj`: the
-    // names the two arms need differ by one name each and share all the rest, so the sets
-    // joined at each `if` hold up to 2j names.
-    let chain = |k: usize| {
-        let body = (1..=k).fold(var("n"), |t, j| {
-            let t = Shared::new(t);
-            let f = app(var(&format!("f{j}")), vec![(*t).clone()]);
-            let h = app(var(&format!("h{j}")), vec![(*t).clone()]);
-            if_(var("c"), Shared::new(f), Shared::new(h))
-        });
-        (1..=k).rev().fold(body, |b, j| {
-            let b = let_(&format!("f{j}"), lam(&["x"], var("x")), b);
-            let_(&format!("h{j}"), lam(&["x"], var("x")), b)
-        })
-    };
+fn arms_that_call_different_let_functions_on_a_shared_part_are_read() {
     deep(move || {
-        let n = 1000;
-        let terms: BTreeMap<usize, Term> =
-            [n, FACTOR * n].into_iter().map(|k| (k, chain(k))).collect();
-        scaling::check(
-            "stage::ends on k levels of arms calling let functions",
-            n,
-            |k| {
-                assert!(ends(&terms[&k]));
-            },
-        );
+        for k in [1, 2, 9] {
+            assert!(ends(&arms_calling_let_functions(k)));
+        }
         // With the outer `let`, of `h1`, taken out, `h1` is a parameter instead and the chain
         // does not end.
-        let Term::Let(_, _, rest) = &chain(3) else {
+        let Term::Let(_, _, rest) = &arms_calling_let_functions(3) else {
             unreachable!("built as a let")
         };
         assert!(!ends(&Term::Lam(vec!["h1".into()], rest.clone())));
@@ -376,29 +370,32 @@ fn three_allocation_orders_read_alike() {
     drop(held);
 }
 
+/// [`mixed_levels`] of `k` levels built into holes: parts of the same size are allocated and
+/// freed, last first, before each part.
+pub(super) fn built_into_freed_blocks(k: usize) -> Term {
+    let holes = || {
+        let blocks: Vec<Shared> = (0..9).map(|i| Shared::new(lit(i))).collect();
+        blocks.into_iter().rev().step_by(2).for_each(drop);
+    };
+    mixed_levels(k, &mut { holes }).0
+}
+
+/// `t`, a [`mixed_levels`] term, does not end, since `step` as a parameter is called; under
+/// the `let` of `step` it ends.
+pub(super) fn mixed_levels_read(t: &Term) {
+    assert!(!ends(t));
+    let Term::If(_, by_let, _) = t else {
+        unreachable!("built as an if")
+    };
+    assert!(ends(by_let));
+}
+
+/// `bench::ends` times 1000 and 8000 levels; [`three_allocation_orders_read_alike`] reads 64.
 #[test]
-fn reading_a_term_built_into_freed_blocks_scales() {
+fn reading_a_term_built_into_freed_blocks() {
     deep(|| {
-        let n = 1000;
-        let holes = || {
-            let blocks: Vec<Shared> = (0..9).map(|i| Shared::new(lit(i))).collect();
-            blocks.into_iter().rev().step_by(2).for_each(drop);
-        };
-        let terms: BTreeMap<usize, Term> = [n, FACTOR * n]
-            .into_iter()
-            .map(|k| (k, mixed_levels(k, &mut { holes }).0))
-            .collect();
-        scaling::check(
-            "stage::ends on k mixed levels of shared if arms built into freed blocks",
-            n,
-            |k| {
-                let t = &terms[&k];
-                assert!(!ends(t));
-                let Term::If(_, by_let, _) = t else {
-                    unreachable!("built as an if")
-                };
-                assert!(ends(by_let));
-            },
-        );
+        for k in [1, 2, 9] {
+            mixed_levels_read(&built_into_freed_blocks(k));
+        }
     });
 }

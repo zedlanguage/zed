@@ -7,7 +7,6 @@
 
 use std::collections::BTreeMap;
 
-use zed_tests::scaling;
 use zedc::check::ty::printed;
 
 use super::order::{items, units};
@@ -231,33 +230,39 @@ fn printed_types_do_not_move_1() {
 
 /// Unit `i` of a batch: a generic function, its own constant, and a call whose argument it
 /// rejects, so the check prints types both in a signature and in a message.
-fn generic_unit(i: usize) -> String {
+pub(super) fn generic_unit(i: usize) -> String {
     format!(
         "scale{i}(positional x) = x + x;\nlimit{i} = {i};\n\
          main(m: MainArgs) {{\n  m.stdout <- String(scale{i}(\"{i}\"));\n}}\n"
     )
 }
 
-/// The types printed by a batch of `n` units, each checked after the others, then checked again
-/// and with a comment and a binding added, in work linear in the units. The units are built
-/// before the timing.
+/// A batch of `m` units, unit `i` the [`generic_unit`] of `i`.
+pub(super) fn batch(m: usize) -> Vec<String> {
+    (0..m).map(generic_unit).collect()
+}
+
+/// The types printed by each unit of `batch`, checked after the others: the same when checked
+/// again and with a comment added, and two more tops with a binding added.
+pub(super) fn printed_types_stable_over(batch: &[String]) {
+    for text in batch {
+        let once = shown(text);
+        assert_eq!(once, shown(text));
+        assert_eq!(once, shown(&with_comment(text)));
+        assert_eq!(once.tops.len() + 2, shown(&with_binding(text)).tops.len());
+    }
+}
+
+/// The types printed by a batch of one unit and of three (`bench::stable` times 30 and 240).
 #[test]
-fn checking_printed_types_over_a_batch_scales() {
+fn checking_printed_types_over_a_batch() {
     let first = shown(&generic_unit(3));
     assert_eq!(
         first.tops["scale3"],
         ["(T) -> T for T in int | f32 | f64 | rat"]
     );
     assert!(!first.said.is_empty(), "{first:?}");
-    let n = 30;
-    let batch = |m: usize| -> Vec<String> { (0..m).map(generic_unit).collect() };
-    let batches = [batch(n), batch(scaling::FACTOR * n)];
-    scaling::check_order("printed types over a batch of n units", n, 1, |m| {
-        for text in &batches[usize::from(m != n)] {
-            let once = shown(text);
-            assert_eq!(once, shown(text));
-            assert_eq!(once, shown(&with_comment(text)));
-            assert_eq!(once.tops.len() + 2, shown(&with_binding(text)).tops.len());
-        }
-    });
+    for m in [1, 3] {
+        printed_types_stable_over(&batch(m));
+    }
 }

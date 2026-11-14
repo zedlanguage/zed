@@ -3,7 +3,6 @@
 //! empties it, from the innermost part out. A rejection whose types all have values gets no
 //! such step.
 
-use zed_tests::scaling;
 
 use super::{rejected, steps};
 
@@ -235,7 +234,7 @@ fn a_rejection_whose_types_all_have_values_gets_no_such_step() {
 }
 
 /// A parameter whose type is a union of `n` tuples with no value, each on its own line.
-fn wide(n: usize) -> String {
+pub(super) fn wide(n: usize) -> String {
     let mut src = String::from("f(positional x:\n");
     for i in 0..n {
         let bar = if i == 0 { " " } else { "|" };
@@ -244,19 +243,23 @@ fn wide(n: usize) -> String {
     src + ") = x;\nr = f(1);\n"
 }
 
+/// One step for each tuple of [`wide`]`(n)`, then one for the union when `n` is more than 1.
+pub(super) fn a_union_of_empty_tuples_explained(src: &str, n: usize) {
+    let out = rejected(src);
+    // One tuple alone is no union: it gets no step of its own.
+    assert_eq!(why_none(&out).len(), n + usize::from(n > 1));
+}
+
 #[test]
-fn explaining_a_union_of_n_empty_tuples_scales() {
-    let inputs = scaling::inputs(500, wide);
-    scaling::check("explaining a union of n empty tuples", 500, |n| {
-        let out = rejected(&inputs[&n]);
-        // One step for each tuple, then one for the union.
-        assert_eq!(why_none(&out).len(), n + 1);
-    });
+fn explaining_a_union_of_empty_tuples() {
+    for n in [1, 2, 9] {
+        a_union_of_empty_tuples_explained(&wide(n), n);
+    }
 }
 
 /// A parameter whose type nests `n` tuples, each level on its own line, the innermost with
 /// the component `Never`.
-fn deep(n: usize) -> String {
+pub(super) fn deep(n: usize) -> String {
     let mut src = String::from("f(positional x:\n");
     for _ in 0..n {
         src += "  (\n";
@@ -268,15 +271,18 @@ fn deep(n: usize) -> String {
     src + "  )) = x;\nr = f(1);\n"
 }
 
+/// One step for each level of [`deep`]`(n)`, each naming the step before but the innermost.
+pub(super) fn nested_empty_tuples_explained(src: &str, n: usize) {
+    let out = rejected(src);
+    let why = why_none(&out);
+    assert_eq!(why.len(), n);
+    assert!(why[0].contains("`Never`, has none"), "{}", why[0]);
+    assert!(why[n - 1].contains("of the step before"), "{}", why[n - 1]);
+}
+
 #[test]
-fn explaining_n_nested_empty_tuples_scales() {
-    let inputs = scaling::inputs(200, deep);
-    scaling::check("explaining n nested empty tuples", 200, |n| {
-        let out = rejected(&inputs[&n]);
-        // One step for each level, each naming the step before but the innermost.
-        let why = why_none(&out);
-        assert_eq!(why.len(), n);
-        assert!(why[0].contains("`Never`, has none"), "{}", why[0]);
-        assert!(why[n - 1].contains("of the step before"), "{}", why[n - 1]);
-    });
+fn explaining_nested_empty_tuples() {
+    for n in [2, 3, 9] {
+        nested_empty_tuples_explained(&deep(n), n);
+    }
 }

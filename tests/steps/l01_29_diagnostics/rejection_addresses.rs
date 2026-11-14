@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 
-use zed_tests::scaling;
 use zedc::suppress::{InFile, Suppress};
 
 use super::widen_test::unit;
@@ -266,62 +265,68 @@ fn a_unit_a_package_names_and_has_no_file_prints_an_address() {
     }
 }
 
-/// `Package::report_on_disk` on a package with problems in `n` files, each a unit that imports
-/// `PER` names its import does not define, with every address suppressed: placing, addressing
-/// and matching them is within n log n. The package is loaded before the timing. Each problem
-/// costs some 60,000 instructions of its own (placing, hashing, writing), so a cost per pair of
-/// problems shows only when there are thousands: `PER` = 40 gives 8,400 and 67,200 problems,
-/// and a scan of all problems per problem then grows 50 times, not the 24 allowed.
-#[test]
-fn addressing_the_problems_of_a_package_scales() {
-    const PER: usize = 40;
-    let n = 200;
-    let made: Vec<(usize, PathBuf, zedc::unit::Package, Vec<String>)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let mut files = vec![
-                ("zed.manifest".to_string(), String::new()),
-                ("base.zed".to_string(), "b = 1;\n".to_string()),
-            ];
-            let mut main = String::new();
-            for i in 0..m {
-                main.push_str(&format!("import u{i}.{{here{i}}};\n"));
-                files.push((format!("u{i}.zed"), {
-                    let names: Vec<String> = (0..PER).map(|j| format!("gone{i}_{j}")).collect();
-                    format!("import base.{{{}}};\nhere{i} = {i};\n", names.join(", "))
-                }));
-            }
-            main.push_str("main(m: MainArgs) {}\n");
-            files.push(("main.zed".into(), main));
-            let files: Vec<(&str, &str)> = files
-                .iter()
-                .map(|(f, t)| (f.as_str(), t.as_str()))
-                .collect();
-            let d = package(&format!("scale{m}"), &files);
-            let pkg = zedc::unit::load(
-                &mut zedc::query::Db::new(),
-                &zedc::unit::Dir(d.clone()),
-                &["main"],
-            );
-            let lines = pkg.report_on_disk(&d, &mut addressed());
-            assert!(lines.len() >= m, "{}", lines.len());
-            let words = lines
-                .iter()
-                .flat_map(|l| addresses(l))
-                .flat_map(|a| ["--suppress".to_string(), a.to_string()])
-                .collect();
-            (m, d, pkg, words)
-        })
+/// A package with problems in `m` files, each a unit that imports `per` names its import does
+/// not define, loaded, with the words that suppress every problem its report addresses.
+pub(super) type Problems = (PathBuf, zedc::unit::Package, Vec<String>);
+
+/// The package of [`Problems`] for `m` files of `per` problems each, in its own directory.
+pub(super) fn a_package_of_problems(m: usize, per: usize) -> Problems {
+    let mut files = vec![
+        ("zed.manifest".to_string(), String::new()),
+        ("base.zed".to_string(), "b = 1;\n".to_string()),
+    ];
+    let mut main = String::new();
+    for i in 0..m {
+        main.push_str(&format!("import u{i}.{{here{i}}};\n"));
+        files.push((format!("u{i}.zed"), {
+            let names: Vec<String> = (0..per).map(|j| format!("gone{i}_{j}")).collect();
+            format!("import base.{{{}}};\nhere{i} = {i};\n", names.join(", "))
+        }));
+    }
+    main.push_str("main(m: MainArgs) {}\n");
+    files.push(("main.zed".into(), main));
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(f, t)| (f.as_str(), t.as_str()))
         .collect();
-    scaling::check("addressing the problems of a package in n files", n, |m| {
-        let (_, d, pkg, words) = made.iter().find(|(k, ..)| *k == m).expect("a size");
-        let words: Vec<&str> = words.iter().map(String::as_str).collect();
-        let (mut suppress, _) = Suppress::take(&words).unwrap();
-        let lines = pkg.report_on_disk(d, &mut suppress);
-        assert!(suppress.unmatched().is_empty());
-        // Each problem, and the line refusing its suppression.
-        assert_eq!(lines.len(), words.len());
-    });
+    let d = package(&format!("scale{m}_{per}"), &files);
+    let pkg = zedc::unit::load(
+        &mut zedc::query::Db::new(),
+        &zedc::unit::Dir(d.clone()),
+        &["main"],
+    );
+    let lines = pkg.report_on_disk(&d, &mut addressed());
+    assert!(lines.len() >= m, "{}", lines.len());
+    let words = lines
+        .iter()
+        .flat_map(|l| addresses(l))
+        .flat_map(|a| ["--suppress".to_string(), a.to_string()])
+        .collect();
+    (d, pkg, words)
+}
+
+/// `Package::report_on_disk` with every problem of `problems` suppressed: each suppression
+/// matches, and each problem gives one line refusing its suppression.
+pub(super) fn the_problems_of_a_package_addressed((d, pkg, words): &Problems) {
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let (mut suppress, _) = Suppress::take(&words).unwrap();
+    let lines = pkg.report_on_disk(d, &mut suppress);
+    assert!(suppress.unmatched().is_empty());
+    // Each problem, and the line refusing its suppression.
+    assert_eq!(lines.len(), words.len());
+}
+
+/// The problems of a package of one file and of three, each file with one problem and with
+/// three, all suppressed (`bench::rejection_addresses` times 200 and 1600 files of 40).
+#[test]
+fn addressing_the_problems_of_a_package() {
+    for m in [1, 3] {
+        for per in [1, 3] {
+            let problems = a_package_of_problems(m, per);
+            assert!(problems.2.len() >= 2 * m * per, "{:?}", problems.2);
+            the_problems_of_a_package_addressed(&problems);
+        }
+    }
 }
 
 /// `Suppress::refused_at` matches the address it is given, and only that one.
@@ -377,33 +382,34 @@ fn a_root_unit_with_no_file_has_an_address_from_its_name_under_the_root() {
     assert_ne!(InFile::named("gone2.zed"), InFile::named("gone.zed"));
 }
 
-/// The file's part of an address (`InFile::of`) for a file `n` directories deep, with no
-/// manifest above it, so every directory up to the file system's root is probed: within n log n
-/// in instructions and bytes at n and 8n. The directories are made before the timing. Work in
-/// the kernel, which resolves each probe's path, is not counted (`zed_tests::scaling`). At 40 and
-/// 320 directories the bytes grew 12.9 times (169 and 2183 bytes), over the limit of 10.5; at 200
-/// and 1600, 7.0 times the instructions and 6.7 times the bytes (2026-11-13). 8n must keep the path under the
-/// system's limit of 4096 bytes: at 320 and 2560 the file could not be made ("File name too long").
+/// A file `m` directories deep, with no manifest above it, under the test target's scratch
+/// directory; the directories are made, and the file written empty.
+pub(super) fn a_deep_file(m: usize) -> PathBuf {
+    let mut d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join("l01_29_rejection_addresses")
+        .join(format!("deep{m}"));
+    for _ in 0..m {
+        d.push("d");
+    }
+    std::fs::create_dir_all(&d).unwrap();
+    let file = d.join("deep.zed");
+    std::fs::write(&file, "").unwrap();
+    file
+}
+
+/// The file part of an address of a file 1, 2 and 9 directories deep: found, the same on each
+/// call, and distinct for the three files (`bench::rejection_addresses` times 200 and 1600
+/// directories).
 #[test]
-fn the_file_part_of_an_address_scales_with_the_depth_of_the_file() {
-    let n = 200;
-    let files: Vec<(usize, PathBuf)> = [n, scaling::FACTOR * n]
+fn the_file_part_of_an_address_of_a_deep_file() {
+    let parts: Vec<InFile> = [1, 2, 9]
         .into_iter()
         .map(|m| {
-            let mut d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-                .join("l01_29_rejection_addresses")
-                .join(format!("deep{m}"));
-            for _ in 0..m {
-                d.push("d");
-            }
-            std::fs::create_dir_all(&d).unwrap();
-            let file = d.join("deep.zed");
-            std::fs::write(&file, "").unwrap();
-            (m, file)
+            let file = a_deep_file(m);
+            let part = InFile::of(&file).unwrap();
+            assert_eq!(part, InFile::of(&file).unwrap());
+            part
         })
         .collect();
-    scaling::check("the file part of an address, n directories deep", n, |m| {
-        let (_, file) = files.iter().find(|(k, _)| *k == m).expect("a size");
-        InFile::of(file).unwrap();
-    });
+    assert!(parts[0] != parts[1] && parts[1] != parts[2] && parts[0] != parts[2]);
 }

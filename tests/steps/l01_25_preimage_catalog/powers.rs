@@ -7,13 +7,12 @@ use zed_kernel::Shared;
 
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::scaling;
 use zedc::store::interval::IntervalSet;
 use zedc::store::preimage::{Demand, Domains, Preimage, preimage};
 
 use super::{check, doms, shown};
 
-fn var(x: &str) -> Term {
+pub(super) fn var(x: &str) -> Term {
     Term::Var(x.into())
 }
 
@@ -30,7 +29,7 @@ fn bind(x: &str, e: Term, body: Term) -> Term {
 }
 
 /// `f * f * … * f`, `k` factors, multiplied from the left as the parser groups them.
-fn product(f: &Term, k: usize) -> Term {
+pub(super) fn product(f: &Term, k: usize) -> Term {
     (1..k).fold(f.clone(), |p, _| prim(Prim::Mul, p, f.clone()))
 }
 
@@ -55,11 +54,11 @@ fn power(f: &Term, k: usize) -> Term {
     prim(Prim::Pow, f.clone(), int(k as i64))
 }
 
-fn at_most(t: Term, n: i64) -> Term {
+pub(super) fn at_most(t: Term, n: i64) -> Term {
     prim(Prim::Le, t, int(n))
 }
 
-fn pre(t: &Term, ds: &Domains) -> Preimage {
+pub(super) fn pre(t: &Term, ds: &Domains) -> Preimage {
     preimage(t, ds, &Demand::Bool(true))
 }
 
@@ -191,7 +190,7 @@ fn a_product_shared_by_names_counts_each_factor_it_stands_for() {
 
 /// `x1 = i * i; x2 = x1 * x1; …; x<depth> = …; test(x<depth>)`: `i ^ 2^depth` written as
 /// `depth` names, each the square of the one before it.
-fn squares(depth: usize, test: Term) -> Term {
+pub(super) fn squares(depth: usize, test: Term) -> Term {
     let mut body = test;
     for n in (1..=depth).rev() {
         let prev = if n == 1 {
@@ -409,47 +408,10 @@ fn a_product_with_a_different_factor_holds_powers_inside_it() {
     check(&t, &ds, &Demand::Bool(true), &p, (-3, 3));
 }
 
-/// The sizes are a product of 512 factors and one of 4096. The measurement runs on a 2 MiB
-/// stack, as the `long` tests of [`super::scaling`] do; the terms are built before the timing.
-#[test]
-fn reading_a_product_as_a_power_is_linear_in_its_factors() {
-    let measure = || {
-        let ds = doms(&[("i", Some(-50), Some(50)), ("j", Some(-50), Some(50))]);
-        let sizes = [512, scaling::FACTOR * 512];
-        let at = |k: usize| sizes.iter().position(|&s| s == k).expect("a built size");
-        // `i * i * … * i <= 1`.
-        let powers: Vec<Term> = sizes
-            .iter()
-            .map(|&k| at_most(product(&var("i"), k), 1))
-            .collect();
-        scaling::check("`i * i * … * i <= 1` with n factors", sizes[0], |k| {
-            pre(&powers[at(k)], &ds);
-        });
-        // `i * i * j * i * j * … <= 1`: no product but the innermost is a power, and the first
-        // factor of each product lies as deep as the product, so a reading that looks into the
-        // factors of each product again costs the square of their number.
-        let alternating = |k: usize| {
-            (2..k).fold(product(&var("i"), 2), |p, n| {
-                let f = if n % 2 == 0 { "j" } else { "i" };
-                prim(Prim::Mul, p, var(f))
-            })
-        };
-        let mixed: Vec<Term> = sizes.iter().map(|&k| at_most(alternating(k), 1)).collect();
-        scaling::check(
-            "`i * i * j * i * j * … <= 1` with n factors",
-            sizes[0],
-            |k| {
-                pre(&mixed[at(k)], &ds);
-            },
-        );
-    };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
-}
 
 /// `x1 = i * i; x2 = x1 * i; x3 = x2 * x1; …`: the count at depth `d` is the Fibonacci
 /// number `F(d + 2)`, a sum of two earlier counts at each name, as nested squares are.
-fn fibonacci(depth: usize, test: Term) -> Term {
+pub(super) fn fibonacci(depth: usize, test: Term) -> Term {
     let name = |k: usize| {
         if k == 0 {
             "i".to_string()
@@ -469,43 +431,43 @@ fn fibonacci(depth: usize, test: Term) -> Term {
     body
 }
 
-/// `x1 = i * i; …; x<d> <= 0`, and the same over [`fibonacci`] counts, at depths 2048 and
-/// 16384: the count at depth `d` has about `d` bits and is held exactly (COMPLEXITY.md S30b),
-/// so the counts take `O(d^2)` bits in all, the `O(n log N)` of sec:constraints with `N` the
-/// largest count; its time stays within the linear limit at these depths. On a 2 MiB stack;
-/// the terms are built before the timing.
+
+/// `i * i * j * i * j * … ` with `k` factors: no product but the innermost is a power, and
+/// the first factor of each product lies as deep as the product, so a reading that looks into
+/// the factors of each product again costs the square of their number.
+pub(super) fn alternating(k: usize) -> Term {
+    (2..k).fold(product(&var("i"), 2), |p, n| {
+        let f = if n % 2 == 0 { "j" } else { "i" };
+        prim(Prim::Mul, p, var(f))
+    })
+}
+
+/// The terms `bench::powers` times, at small sizes and at the depths where the count of
+/// nested squares passes 64 bits: a product of one factor is read as its power, an alternating
+/// product keeps every point the tree walk meets, and nested squares and [`fibonacci`] counts
+/// stay exact with counts of any width.
 #[test]
-fn reading_nested_squares_as_a_power_is_linear_in_their_depth() {
-    let measure = || {
-        let ds = doms(&[("i", Some(-3), Some(3))]);
-        let sizes = [2048, scaling::FACTOR * 2048];
-        let at = |d: usize| sizes.iter().position(|&s| s == d).expect("a built size");
-        let squared: Vec<Term> = sizes
-            .iter()
-            .map(|&d| squares(d, at_most(var(&format!("x{d}")), 0)))
-            .collect();
-        for t in &squared {
-            assert_eq!(shown(&pre(t, &ds)), "i [0..=0]; exact");
-        }
-        scaling::check_order("`x1 = i * i; …; x<n> <= 0`", sizes[0], 1, |d| {
-            pre(&squared[at(d)], &ds);
-        });
-        let chained: Vec<Term> = sizes
-            .iter()
-            .map(|&d| fibonacci(d, at_most(var(&format!("x{d}")), 0)))
-            .collect();
-        for t in &chained {
-            assert!(pre(t, &ds).exact);
-        }
-        scaling::check_order(
-            "`x1 = i * i; x2 = x1 * i; …; x<n> <= 0`",
-            sizes[0],
-            1,
-            |d| {
-                pre(&chained[at(d)], &ds);
-            },
-        );
-    };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+fn products_and_nested_squares_at_small_sizes_and_past_64_bits() {
+    let ds = doms(&[("i", Some(-50), Some(50)), ("j", Some(-50), Some(50))]);
+    for k in [1, 2, 3, 7] {
+        let t = at_most(product(&var("i"), k), 1);
+        let p = pre(&t, &ds);
+        assert!(p.exact, "k={k}: {}", shown(&p));
+        check(&t, &ds, &Demand::Bool(true), &p, (-4, 4));
+        let t = at_most(alternating(k + 2), 1);
+        let p = pre(&t, &ds);
+        check(&t, &ds, &Demand::Bool(true), &p, (-4, 4));
+    }
+    let ds = doms(&[("i", Some(-3), Some(3))]);
+    for d in [1, 2, 5, 62, 63, 64, 65, 100] {
+        let t = squares(d, at_most(var(&format!("x{d}")), 0));
+        assert_eq!(shown(&pre(&t, &ds)), "i [0..=0]; exact", "d={d}");
+        let t = fibonacci(d, at_most(var(&format!("x{d}")), 0));
+        assert!(pre(&t, &ds).exact, "d={d}");
+    }
+    for d in [1, 2, 5] {
+        let t = fibonacci(d, at_most(var(&format!("x{d}")), 0));
+        let p = pre(&t, &ds);
+        check(&t, &ds, &Demand::Bool(true), &p, (-3, 3));
+    }
 }

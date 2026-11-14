@@ -8,7 +8,6 @@
 use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::preimage::{Demand, Domains, preimage};
 
@@ -155,7 +154,7 @@ fn the_ends_of_i64() {
 
 /// A demand of `n` pieces on each side of zero: `n - 3 - x` keeps `2n` pieces, so the
 /// transfer is linear in the pieces after sorting them.
-fn comb(n: usize) -> (Term, Domains, Demand) {
+pub(super) fn comb(n: usize) -> (Term, Domains, Demand) {
     let n = n as i64;
     let ps: Vec<(i64, i64)> = (-n..n).map(|j| (4 * j, 4 * j + 1)).collect();
     (minus(n - 3, var("x")), any_x(), Demand::Ints(fin(&ps)))
@@ -170,16 +169,6 @@ fn a_comb_of_pieces_is_kept_exactly() {
     assert_eq!(p.domains["x"].len(), 24);
 }
 
-#[test]
-fn a_comb_of_pieces_scales() {
-    let n = 4096;
-    let (a, b) = (comb(n), comb(n * scaling::FACTOR));
-    scaling::check("the preimage of c - x over a demand of n pieces", n, |k| {
-        let (t, ds, d) = if k == n { &a } else { &b };
-        let p = preimage(t, ds, d);
-        assert_eq!(p.domains["x"].len(), 2 * k);
-    });
-}
 
 // Plan item S22b-rest: the summary of a term of one input (`Pa`) reads `c - u` as the affine
 // map `-1 * u + c` for every constant `c`; before, it read only `0 - u`, so an `if` chain with

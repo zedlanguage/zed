@@ -4,10 +4,8 @@
 //! paths through it, and the result does not depend on where or in what order the parts were
 //! allocated.
 
-use std::collections::HashMap;
 
 use zed_kernel::{Prim, Shared, Term, Value};
-use zed_tests::scaling;
 use zedc::store::preimage::{Demand, preimage};
 
 use super::{doms, shown};
@@ -23,7 +21,7 @@ fn ge(k: i64) -> Term {
 /// shared subterm `s`, the level below, and the bottom `i >= 0`: `depth + 1` distinct tests
 /// on `2^depth` paths. `pad` allocates that many unused shared terms before each level, so
 /// the levels lie at other addresses and take other ids.
-fn levels(depth: usize, pad: usize) -> Shared {
+pub(super) fn levels(depth: usize, pad: usize) -> Shared {
     let mut keep = Vec::new();
     let mut s = Shared::new(ge(0));
     for k in 1..=depth as i64 {
@@ -75,21 +73,3 @@ fn shared_terms_have_one_preimage_in_any_allocation_order() {
     );
 }
 
-/// The preimage of a term of `n` levels on `2^n` paths takes time of `n`: each shared level is
-/// numbered and transferred once. The terms are built before the timing.
-#[test]
-fn shared_levels_scale_with_the_distinct_parts() {
-    let n = 64;
-    let terms: HashMap<usize, Shared> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|d| (d, levels(d, 0)))
-        .collect();
-    let ds = doms(&[("i", None, None)]);
-    scaling::check(
-        "the preimage of `n` levels of `if`, each level's branches one shared subterm",
-        n,
-        |d| {
-            preimage(&terms[&d], &ds, &Demand::Bool(true));
-        },
-    );
-}

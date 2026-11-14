@@ -9,7 +9,6 @@ use std::sync::Arc;
 use zed_kernel::types::Type as KType;
 use zed_kernel::types::defs;
 use zed_kernel::{Rat, Value};
-use zed_tests::scaling;
 use zedc::check::read::parse_type;
 use zedc::check::ty::{Carrier, EVERY, OTHER, Shape, Ty, Vars, mask_text, printed};
 
@@ -236,7 +235,7 @@ fn every_type_a_step_writes_parses_back_with_the_message_declarations() {
 }
 
 /// The type `text` reads back to, or why it does not.
-fn back(text: &str) -> Ty {
+pub(super) fn back(text: &str) -> Ty {
     parse_type(text).unwrap_or_else(|why| panic!("{why}"))
 }
 
@@ -599,7 +598,7 @@ fn what_is_no_printed_type_is_an_error() {
 }
 
 /// The printed text of a union of `n` atoms and a tuple of `n` components, built once.
-fn wide(n: usize) -> (String, String) {
+pub(super) fn wide(n: usize) -> (String, String) {
     let union = (0..n)
         .map(|i| format!("#a{i}"))
         .collect::<Vec<_>>()
@@ -608,113 +607,69 @@ fn wide(n: usize) -> (String, String) {
     (union, tuple)
 }
 
-#[test]
-fn reading_a_printed_type_back_scales() {
-    let n = 400;
-    let inputs = [(n, wide(n)), (8 * n, wide(8 * n))];
-    let input = |size: usize| {
-        &inputs
-            .iter()
-            .find(|(m, _)| *m == size)
-            .expect("a built size")
-            .1
-    };
-    scaling::check(
-        "reading back a union of n atoms and a tuple of n components",
-        n,
-        |size| {
-            let (union, tuple) = input(size);
-            assert_eq!(back(union).set.to_string().matches('#').count(), size);
-            assert_eq!(back(tuple).tuples[0].len(), size);
-        },
-    );
+/// The union and the tuple of [`wide`]`(n)` read back with their `n` atoms and components.
+pub(super) fn a_printed_type_read_back((union, tuple): &(String, String), n: usize) {
+    assert_eq!(back(union).set.to_string().matches('#').count(), n);
+    let tuples = back(tuple).tuples;
+    match n {
+        // `(int)` is `int` in parentheses, not a tuple.
+        1 => assert!(tuples.is_empty(), "{tuple}"),
+        _ => assert_eq!(tuples[0].len(), n),
+    }
 }
 
-/// Printing a union of `n` atoms, each with its payload type, and reading the text back, each
-/// timed alone: the printer takes the payload atoms out of the kernel set in one difference.
-#[test]
-fn printing_atoms_with_payloads_scales() {
-    let n = 400;
-    let built = |n: usize| {
-        let text = (0..n)
-            .map(|i| format!("#a{i}(int, f: String)"))
-            .collect::<Vec<_>>()
-            .join(" | ");
-        back(&text)
-    };
-    let inputs = [n, 8 * n].map(|m| {
-        let t = built(m);
-        let text = t.to_string();
-        (m, t, text)
-    });
-    let input = |size: usize| {
-        inputs
-            .iter()
-            .find(|(m, ..)| *m == size)
-            .expect("a built size")
-    };
-    scaling::check("printing a union of n atoms with payloads", n, |size| {
-        let text = input(size).1.to_string();
-        assert_eq!(text.matches("(int, f: String)").count(), size);
-    });
-    scaling::check("reading back a union of n atoms with payloads", n, |size| {
-        let (_, t, text) = input(size);
-        assert_eq!(&back(text), t);
-    });
+/// A union of `n` atoms, each with its payload type, read from its text.
+pub(super) fn atoms_with_payloads(n: usize) -> Ty {
+    let text = (0..n)
+        .map(|i| format!("#a{i}(int, f: String)"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    back(&text)
 }
 
-/// Reading back an intersection of `n` function types of one parameter list: the parameter
-/// lists are compared with the first once each, and the arrows joined into one signature.
-#[test]
-fn reading_an_overload_of_many_arrows_back_scales() {
-    let n = 200;
-    let overload = |m: usize| {
-        (0..m)
-            .map(|i| format!("((x: #a{i}) -> #b{i})"))
-            .collect::<Vec<_>>()
-            .join(" & ")
-    };
-    let inputs = [(n, overload(n)), (8 * n, overload(8 * n))];
-    scaling::check("reading back an overload of n arrows", n, |size| {
-        let text = &inputs
-            .iter()
-            .find(|(m, _)| *m == size)
-            .expect("a built size")
-            .1;
-        let ty = back(text);
-        assert_eq!(ty.fns.len(), 1);
-        assert_eq!(ty.fns[0].arrows.len(), size);
-    });
+/// [`atoms_with_payloads`]`(n)` prints each payload once.
+pub(super) fn atoms_with_payloads_printed(t: &Ty, n: usize) {
+    let text = t.to_string();
+    assert_eq!(text.matches("(int, f: String)").count(), n);
 }
 
-/// Reading back an overload of `n` arrows nested `n` deep in parentheses, to the left and to
-/// the right: each intersection is read once, with the one around it, so the cost is linear
-/// and not a walk of the inner arrows at each depth.
-#[test]
-fn reading_an_overload_nested_in_parentheses_back_scales() {
-    let n = 100;
+/// An intersection of `n` function types of one parameter list.
+pub(super) fn overload(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("((x: #a{i}) -> #b{i})"))
+        .collect::<Vec<_>>()
+        .join(" & ")
+}
+
+/// An overload of `n` arrows nested `n` deep in parentheses, to the left or to the right.
+pub(super) fn nested_overload(n: usize, left: bool) -> String {
     let arrow = |i: usize| format!("((x: #a{i}) -> #b{i})");
-    let left = |m: usize| (1..m).fold(arrow(0), |inner, i| format!("({inner}) & {}", arrow(i)));
-    let right = |m: usize| (1..m).fold(arrow(0), |inner, i| format!("{} & ({inner})", arrow(i)));
-    for (side, build) in [
-        ("left", &left as &dyn Fn(usize) -> String),
-        ("right", &right),
-    ] {
-        let inputs = [(n, build(n)), (8 * n, build(8 * n))];
-        scaling::check(
-            &format!("reading back an overload of n arrows nested n deep to the {side}"),
-            n,
-            |size| {
-                let text = &inputs
-                    .iter()
-                    .find(|(m, _)| *m == size)
-                    .expect("a built size")
-                    .1;
-                let ty = back(text);
-                assert_eq!(ty.fns.len(), 1);
-                assert_eq!(ty.fns[0].arrows.len(), size);
-            },
-        );
+    (1..n).fold(arrow(0), |inner, i| {
+        if left {
+            format!("({inner}) & {}", arrow(i))
+        } else {
+            format!("{} & ({inner})", arrow(i))
+        }
+    })
+}
+
+/// `text` reads back as one overload of `n` arrows.
+pub(super) fn an_overload_read_back(text: &str, n: usize) {
+    let ty = back(text);
+    assert_eq!(ty.fns.len(), 1);
+    assert_eq!(ty.fns[0].arrows.len(), n);
+}
+
+#[test]
+fn reading_wide_printed_types_back() {
+    for n in [1, 3, 12] {
+        a_printed_type_read_back(&wide(n), n);
+        let t = atoms_with_payloads(n);
+        atoms_with_payloads_printed(&t, n);
+        assert_eq!(back(&t.to_string()), t);
+        an_overload_read_back(&overload(n), n);
+        an_overload_read_back(&nested_overload(n, true), n);
+        an_overload_read_back(&nested_overload(n, false), n);
     }
 }
 

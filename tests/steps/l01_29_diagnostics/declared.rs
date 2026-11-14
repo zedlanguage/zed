@@ -6,7 +6,6 @@
 //! the step for `k(x, y) = y` was "`k` is declared here, `(_, _) -> _`"; before
 //! UNDERSCORE-print, it said in words that `y` and the result have the same type.
 
-use zed_tests::scaling;
 
 use super::tyvars::writes_back;
 use super::{rejected, steps};
@@ -120,7 +119,7 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
 
 /// A function of `n` untyped parameters that returns them all in a tuple, and a call of it that
 /// `take` refuses: its declared step names the variable of each parameter.
-fn wide(n: usize) -> String {
+pub(super) fn wide(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
     let args = vec!["1"; n].join(", ");
@@ -143,26 +142,25 @@ fn wide_type(n: usize) -> String {
     format!("({0}) -> ({0})", names.join(", "))
 }
 
+/// The rejection of [`wide`]`(n)` shows the type found for `all`: [`wide_type`]`(n)`.
+pub(super) fn the_declared_step_of_wide(src: &str, n: usize) {
+    let out = rejected(src);
+    let want = format!(
+        "the type the checker found for `all` is `{}`",
+        wide_type(n)
+    );
+    assert!(out.contains(&want), "{n}");
+}
+
 #[test]
-fn the_declared_step_of_a_function_of_many_parameters_scales() {
-    let n = 200;
+fn the_declared_step_of_a_function_of_many_parameters() {
     let step = declared_step(&wide(4), "all");
     assert_eq!(type_shown(&step), "(T, U, V, W) -> (T, U, V, W)");
     let step = declared_step(&wide(6), "all");
     assert_eq!(type_shown(&step), wide_type(6));
     assert_eq!(wide_type(6), "(T, U, V, W, T5, T6) -> (T, U, V, W, T5, T6)");
     writes_back(type_shown(&step));
-    let input = scaling::inputs(n, wide);
-    scaling::check(
-        "the declared step of a function of n parameters",
-        n,
-        |size| {
-            let out = rejected(&input[&size]);
-            let want = format!(
-                "the type the checker found for `all` is `{}`",
-                wide_type(size)
-            );
-            assert!(out.contains(&want), "{size}");
-        },
-    );
+    for n in [2, 5, 12] {
+        the_declared_step_of_wide(&wide(n), n);
+    }
 }

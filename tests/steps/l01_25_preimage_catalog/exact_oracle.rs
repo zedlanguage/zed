@@ -193,16 +193,23 @@ fn check(case: &Case) -> Found {
     }
 }
 
-/// Checks every case of `runs`: no disagreement and exactly `exact` preimages marked exact;
-/// panics showing every disagreement.
-fn check_runs(runs: &[Run], exact: usize) {
+/// Checks the first `each` cases of each run of `runs` (every case when `each` is larger than
+/// the run): no disagreement and, when `exact` is given, exactly that many preimages marked
+/// exact; panics showing every disagreement. The cases after the first `each` of a run are
+/// made and passed over.
+fn check_runs(runs: &[Run], each: usize, exact: Option<usize>) {
     let (mut found, mut exact_now) = (Vec::new(), 0);
     std::thread::scope(|s| {
         let thread = std::thread::Builder::new().stack_size(1 << 28);
         thread
             .spawn_scoped(s, || {
                 for &run in runs {
+                    let mut at = 0;
                     cases(run, |c| {
+                        at += 1;
+                        if at > each {
+                            return;
+                        }
                         let f = check(&c);
                         found.extend(f.disagreements);
                         exact_now += f.exact;
@@ -219,37 +226,32 @@ fn check_runs(runs: &[Run], exact: usize) {
         found.len(),
         found.join("\n")
     );
-    assert_eq!(exact_now, exact, "the number of exact preimages changed");
+    if let Some(exact) = exact {
+        assert_eq!(exact_now, exact, "the number of exact preimages changed");
+    }
 }
 
-/// Runs of mixed terms from the seeds `seeds`, 2000 cases each, every other case a test and
-/// every third term reading through calls.
-fn mixed(seeds: std::ops::Range<u64>) -> Vec<Run> {
-    seeds
-        .map(|seed| Run::Mixed {
-            seed,
-            cases: 2000,
-            test: true,
-            calls: true,
-        })
-        .collect()
+/// A run of mixed terms from `seed`, `cases` cases, every other case a test and every third
+/// term reading through calls.
+fn mixed(seed: u64, cases: usize) -> Run {
+    Run::Mixed {
+        seed,
+        cases,
+        test: true,
+        calls: true,
+    }
 }
 
-/// Runs of terms of depth 4 from the seeds `seeds`.
-fn deep(seeds: std::ops::Range<u64>) -> Vec<Run> {
-    seeds.map(|seed| Run::Deep { seed }).collect()
-}
-
-/// Runs under `@exact` from the seeds `seeds`, tests from the odd ones.
-fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
-    seeds
-        .map(|seed| Run::Exact {
-            seed,
-            test: seed % 2 == 1,
-        })
-        .collect()
-}
-
+// Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a random
+// one takes fewer cases and a new seed each run), these tests ran the seeds 10000 to 10019 of
+// mixed terms (2000 cases each), 2000 to 2199 of terms of depth 4 and 3000 to 3039 under
+// `@exact`, and the 18 runs of `s22.rs`, as eleven tests of 1.2 to 19 s, each with its count of
+// exact preimages pinned. Their counts, and the history of each change below, are those of
+// that sweep: s22_random_terms 2353, 5481 and 4435, more_mixed 36167 and 36064, more_deep
+// 35196 and 35182, more_exact 4764, 4778, 4800 and 4792. One fixed test keeps a pinned count
+// on the first two runs of `s22.rs`; the others take a new seed each run and check that no
+// box of either transfer disagrees with the interpreter.
+//
 // The counts of exact preimages below rose when the solver's hulls became tighter
 // (PRES-pendants-wider, 9992e356): s22_random_terms_match_the_interpreter_2 5477 -> 5479,
 // more_mixed 36144 -> 36149 and 36031 -> 36039, more_deep 35172 -> 35184 and
@@ -327,65 +329,45 @@ fn exact(seeds: std::ops::Range<u64>) -> Vec<Run> {
 // transfer before in all, with no disagreement with the interpreter in either transfer. The
 // transfer itself is unchanged.
 
+
+/// The first two runs of `s22.rs` (500 mixed terms, the second with tests), with their count
+/// of exact preimages pinned, so that a change in precision shows.
 #[test]
-fn s22_random_terms_match_the_interpreter_1() {
-    check_runs(&RUNS[0..4], 2353);
+fn s22_random_terms_match_the_interpreter() {
+    check_runs(&RUNS[0..2], usize::MAX, Some(EXACT_OF_TWO_RUNS));
 }
 
+/// The count of exact preimages of [`s22_random_terms_match_the_interpreter`].
+const EXACT_OF_TWO_RUNS: usize = 915;
+
+/// Mixed terms from a new seed each run, every other case a test and every third term reading
+/// through calls.
 #[test]
-fn s22_random_terms_match_the_interpreter_2() {
-    check_runs(&RUNS[4..6], 5481);
+fn mixed_terms_match_the_interpreter() {
+    let seed = super::run_seed("exact_oracle::mixed_terms_match_the_interpreter");
+    check_runs(&[mixed(seed, 400)], usize::MAX, None);
 }
 
+/// Terms of depth 4, each a test or an integer term, from a new seed each run.
 #[test]
-fn s22_random_terms_match_the_interpreter_3() {
-    check_runs(&RUNS[6..18], 4435);
+fn deep_terms_match_the_interpreter() {
+    let seed = super::run_seed("exact_oracle::deep_terms_match_the_interpreter");
+    check_runs(&[Run::Deep { seed }], usize::MAX, None);
 }
 
+/// Terms under `@exact` over bounded boxes, integer terms from one seed and tests from the
+/// next, a new seed each run.
 #[test]
-fn more_mixed_terms_match_the_interpreter_1() {
-    check_runs(&mixed(10_000..10_010), 36167);
-}
-
-#[test]
-fn more_mixed_terms_match_the_interpreter_2() {
-    check_runs(&mixed(10_010..10_020), 36064);
-}
-
-#[test]
-fn more_deep_terms_match_the_interpreter_1() {
-    check_runs(&deep(2_000..2_100), 35196);
-}
-
-#[test]
-fn more_deep_terms_match_the_interpreter_2() {
-    check_runs(&deep(2_100..2_200), 35182);
-}
-
-// The seeds 3000 to 3039 of `@exact` terms ran as one test of 56.5 s at load 41 (68.8 s at
-// load 71), above the 60 s limit; each seed's 250 cases take 0.6 to 2.6 s, so they are split
-// by seed into four tests, whose counts add up to the whole's 19134 (SPLIT-exact-oracle; the
-// whole also counted 2 cases of `c - e` the transfer before got wrong, none since
-// S22-exact-mislabel).
-
-#[test]
-fn more_exact_terms_match_the_interpreter_1() {
-    check_runs(&exact(3_000..3_010), 4764);
-}
-
-#[test]
-fn more_exact_terms_match_the_interpreter_2() {
-    check_runs(&exact(3_010..3_020), 4778);
-}
-
-#[test]
-fn more_exact_terms_match_the_interpreter_3() {
-    check_runs(&exact(3_020..3_030), 4800);
-}
-
-#[test]
-fn more_exact_terms_match_the_interpreter_4() {
-    check_runs(&exact(3_030..3_040), 4792);
+fn exact_terms_match_the_interpreter() {
+    let seed = super::run_seed("exact_oracle::exact_terms_match_the_interpreter");
+    let runs = [
+        Run::Exact { seed, test: false },
+        Run::Exact {
+            seed: seed.wrapping_add(1),
+            test: true,
+        },
+    ];
+    check_runs(&runs, 100, None);
 }
 
 fn var(x: &str) -> Term {

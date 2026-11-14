@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 
-use zed_tests::scaling;
 
 /// A directory of its own for test `name`, under the test target's scratch directory; files
 /// in it are overwritten by each run, never deleted.
@@ -208,21 +207,24 @@ pub(super) fn many_squares(n: usize) -> String {
     checked_program(&lines)
 }
 
-/// `zedc test` on a unit of `n` warnings, each written once: the run, compilation and
-/// printing together, is within n log n. The files are written before the timing.
+/// The file of a unit of `m` warnings, [`many_squares`], written.
+pub(super) fn a_unit_of_warnings(m: usize) -> String {
+    unit("scale", &format!("{m}.zed"), &many_squares(m))
+}
+
+/// `zedc test` on `file`, a [`a_unit_of_warnings`] of `m`, passes and prints each warning once.
+pub(super) fn many_warnings_printed(file: &str, m: usize) {
+    let (status, _, err) = test(&[file]);
+    assert_eq!(status, 0);
+    assert_eq!(firsts(&err).len(), m, "{err}");
+}
+
+/// Units of 1, 2 and 5 warnings (`bench::widen_test` times 400 and 3200).
 #[test]
-fn printing_many_warnings_scales() {
-    let n = 400;
-    let files: Vec<(usize, String)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, unit("scale", &format!("{m}.zed"), &many_squares(m))))
-        .collect();
-    scaling::check("zedc test on a unit of n warnings", n, |m| {
-        let file = &files.iter().find(|(k, _)| *k == m).expect("a size").1;
-        let (status, _, err) = test(&[file]);
-        assert_eq!(status, 0);
-        assert_eq!(firsts(&err).len(), m);
-    });
+fn printing_many_warnings() {
+    for m in [1, 2, 5] {
+        many_warnings_printed(&a_unit_of_warnings(m), m);
+    }
 }
 
 /// A unit with a table that passes and a `main` that squares a side past the word and pushes
@@ -297,38 +299,42 @@ fn no_rejected_unit_of_the_corpus_prints_a_warning() {
     assert!(rejected >= 5, "{rejected} rejected units");
 }
 
-/// `zedc test` on a batch of `n` units, each with its own side, half rejected and half
-/// repaired: each rejected unit prints its rejection alone and each repaired one its notice,
-/// in work linear in the units. The files are written before the timing.
+/// The files of a batch of `m` units, each with its own side, the even ones rejected and the
+/// odd ones repaired, written.
+pub(super) fn a_batch_of_halves(m: usize) -> Vec<String> {
+    (0..m)
+        .map(|i| {
+            let push = if i % 2 == 0 {
+                REJECTED_PUSH
+            } else {
+                REPAIRED_PUSH
+            };
+            let side = 3037000500 + i as u64;
+            unit(
+                &format!("halves{m}"),
+                &format!("{i}.zed"),
+                &sized_area(side, push),
+            )
+        })
+        .collect()
+}
+
+/// `zedc test` on `files`, a [`a_batch_of_halves`] of an even `m`: it fails, each rejected unit
+/// prints its rejection alone and each repaired one its notice.
+pub(super) fn a_batch_of_halves_printed(files: &[String], m: usize) {
+    let args: Vec<&str> = files.iter().map(String::as_str).collect();
+    let (status, out, err) = test(&args);
+    assert_eq!(status, 1);
+    assert_eq!(firsts(&err).len(), m / 2, "{err}");
+    assert_eq!(out.matches(":5:15: ").count(), m / 2, "{out}");
+}
+
+/// Batches of 2 and 4 units (`bench::widen_test` times 40 and 320).
 #[test]
-fn a_batch_of_rejected_and_repaired_units_scales() {
-    let n = 40;
-    let batch = |m: usize| -> Vec<String> {
-        (0..m)
-            .map(|i| {
-                let push = if i % 2 == 0 {
-                    REJECTED_PUSH
-                } else {
-                    REPAIRED_PUSH
-                };
-                let side = 3037000500 + i as u64;
-                unit(
-                    &format!("halves{m}"),
-                    &format!("{i}.zed"),
-                    &sized_area(side, push),
-                )
-            })
-            .collect()
-    };
-    let batches = [batch(n), batch(scaling::FACTOR * n)];
-    scaling::check_order("zedc test on a batch of n units", n, 1, |m| {
-        let files = &batches[usize::from(m != n)];
-        let args: Vec<&str> = files.iter().map(String::as_str).collect();
-        let (status, out, err) = test(&args);
-        assert_eq!(status, 1);
-        assert_eq!(firsts(&err).len(), m / 2);
-        assert_eq!(out.matches(":5:15: ").count(), m / 2);
-    });
+fn a_batch_of_rejected_and_repaired_units() {
+    for m in [2, 4] {
+        a_batch_of_halves_printed(&a_batch_of_halves(m), m);
+    }
 }
 
 /// A unit whose `main` has a parameter other than `m: MainArgs` is rejected: `zedc test` reports the rejection alone, as `zedc run` does, and no notice.

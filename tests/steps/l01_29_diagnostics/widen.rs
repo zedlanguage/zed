@@ -3,7 +3,6 @@
 //! result may not. It names the value, the operands' widths and the interval the operation
 //! gives, and derives each operand's interval from its literals and bindings.
 
-use zed_tests::scaling;
 use zedc::run::load;
 
 /// The rendered warnings of the accepted program `src`, one after another.
@@ -288,7 +287,7 @@ fn zedc_run_prints_the_warning_and_runs_the_program() {
 }
 
 /// `n` bindings, each squaring a large literal.
-fn many_squares(n: usize) -> String {
+pub(super) fn many_squares(n: usize) -> String {
     let lines: String = (0..n)
         .map(|i| format!("  a{i} = {} * 3037000500;\n", 3037000500 + i))
         .collect();
@@ -296,7 +295,7 @@ fn many_squares(n: usize) -> String {
 }
 
 /// A chain of `n` bindings, each one more than the last, and one square at its end.
-fn long_chain(n: usize) -> String {
+pub(super) fn long_chain(n: usize) -> String {
     let mut lines = String::from("  x0 = 3037000500;\n");
     for i in 1..=n {
         lines.push_str(&format!("  x{i} = x{} + 1;\n", i - 1));
@@ -306,13 +305,13 @@ fn long_chain(n: usize) -> String {
 }
 
 /// A unit parsed, resolved and checked, ready for the widening pass.
-struct Ready {
+pub(super) struct Ready {
     stmts: Vec<zedc::ast::Stmt>,
     res: zedc::resolve::Resolution,
     info: zedc::check::Info,
 }
 
-fn ready(text: &str) -> Ready {
+pub(super) fn ready(text: &str) -> Ready {
     let tokens = zedc::lex::lex_fence(text).unwrap();
     let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
     let stmts = zedc::ast::unit(text, &tokens, &tree).unwrap();
@@ -322,43 +321,31 @@ fn ready(text: &str) -> Ready {
     Ready { stmts, res, info }
 }
 
-/// The widening pass alone on units of `n` built by `unit`, each made before timing, with
-/// `count` checking what each gives.
-fn pass_scales(what: &str, unit: fn(usize) -> String, count: fn(usize, &[zedc::ast::Error])) {
-    let n = 1000;
-    let (small, large) = (ready(&unit(n)), ready(&unit(scaling::FACTOR * n)));
-    let run = |r: &Ready, n: usize| {
-        let ws = zedc::check::widen::of(&r.stmts, &r.res, &r.info);
-        count(n, &ws);
-    };
-    scaling::check(what, n, |size| {
-        if size == n {
-            run(&small, n)
-        } else {
-            run(&large, size)
-        }
-    });
+/// The widening warnings of `r`, the pass run alone.
+fn widened(r: &Ready) -> Vec<zedc::ast::Error> {
+    zedc::check::widen::of(&r.stmts, &r.res, &r.info)
 }
 
-/// n warnings in a unit of O(n) nodes: the derivations share one mark vector, so a pass that
-/// allocated a fresh one per warning would allocate O(n²) bytes, which this test counts.
+/// `r`, [`many_squares`]`(n)` made ready, gives `n` warnings.
+pub(super) fn many_warnings(r: &Ready, n: usize) {
+    assert_eq!(widened(r).len(), n);
+}
+
+/// `r`, [`long_chain`]`(n)` made ready, gives one warning whose derivation passes every link.
+pub(super) fn one_long_derivation(r: &Ready, n: usize) {
+    let ws = widened(r);
+    assert_eq!(ws.len(), 1);
+    assert!(ws[0].notes.len() > 2 * n, "{:?}", ws[0].notes);
+}
+
+/// The pass alone on 1, 2 and 9 bindings that each widen, and on chains of 1, 2 and 9 links
+/// (`bench::widen` times 1000 and 8000 of each).
 #[test]
-fn many_warnings_scale() {
+fn many_warnings_and_a_long_derivation() {
     assert_eq!(messages(&many_squares(3)).len(), 3);
-    pass_scales("n bindings that each widen", many_squares, |n, ws| {
-        assert_eq!(ws.len(), n)
-    });
-}
-
-#[test]
-fn a_long_derivation_scales() {
     assert!(warned(&long_chain(3)).contains("`x0` is defined as this expression, 3037000500"));
-    pass_scales(
-        "a chain of n bindings ending in a widening",
-        long_chain,
-        |n, ws| {
-            assert_eq!(ws.len(), 1);
-            assert!(ws[0].notes.len() > 2 * n);
-        },
-    );
+    for n in [1, 2, 9] {
+        many_warnings(&ready(&many_squares(n)), n);
+        one_long_derivation(&ready(&long_chain(n)), n);
+    }
 }

@@ -40,7 +40,7 @@ pub(super) fn growing(n: usize) -> String {
 
 /// `x0` a tuple of `m` components and `x_i = x_{i-1}` up to `x_n`, then `u = x_n + 1;`: each
 /// step of the chain has the one type.
-fn same(n: usize, m: usize) -> String {
+pub(super) fn same(n: usize, m: usize) -> String {
     let parts: Vec<String> = (0..m).map(|i| i.to_string()).collect();
     let mut src = format!("x0 = ({});\n", parts.join(", "));
     for i in 1..=n {
@@ -386,119 +386,6 @@ fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
     );
 }
 
-/// Checks that the rejection of `make(8n)` is at most about 8 times as long as that of
-/// `make(n)`. [`works`] holds the work to the same order, on the same derivations without the
-/// repair of `+` ([`compared_with_1`]).
-fn scales(what: &str, n: usize, make: fn(usize) -> String) {
-    use zed_tests::scaling;
-    let large = scaling::FACTOR * n;
-    let bytes = |k: usize| rejected(&make(k)).len() as u64;
-    scaling::hold(what, "bytes of the rejection", bytes(n), bytes(large), 1);
-}
-
-#[test]
-fn rejecting_a_tuple_doubled_n_times_writes_a_text_linear_in_n() {
-    scales("rejecting a tuple doubled n times", 40, doubling);
-}
-
-#[test]
-fn rejecting_a_comparison_of_tuples_doubled_n_times_writes_a_text_linear_in_n() {
-    scales(
-        "rejecting a comparison of tuples doubled n times",
-        40,
-        compared,
-    );
-}
-
-#[test]
-fn rejecting_a_chain_of_n_names_each_holding_the_one_before_writes_a_text_linear_in_n() {
-    scales(
-        "rejecting a chain of n names each holding the one before",
-        40,
-        growing,
-    );
-}
-
-#[test]
-fn rejecting_a_chain_of_n_names_of_one_type_writes_a_text_linear_in_n() {
-    // A type of five components at each link. A type as wide as the chain is long is written
-    // whole at each link, n × m in all (COMPLEXITY.md row MSG-derive-same-chain).
-    scales(
-        "rejecting a chain of n names of one type of five components",
-        40,
-        |n| same(n, 5),
-    );
-}
-
-/// Checks that rejecting `make(8n)` does at most about 8 times the work and allocates at most
-/// about 8 times the bytes of rejecting `make(n)`: the derivation prints the parts of its types
-/// once per message, not once per step (MSG-derive-print-per-message).
-fn works(what: &str, n: usize, make: fn(usize) -> String) {
-    use zed_tests::scaling;
-    let srcs = scaling::inputs(n, make);
-    scaling::check(what, n, |k| {
-        rejected(&srcs[&k]);
-    });
-}
-
-/// `src` with its last line's `+ 1` made `< 1`. The derivation is the one `+` gives, but `<`
-/// tries no repair, so these tests measure the derivation alone; the repair of `t_n + 1`, which
-/// lists the values of `t_n` (`Type::values_listed`), is measured by the tests that add 1.
-fn compared_with_1(src: String) -> String {
-    let at = src.rfind(" + 1;").expect("the last line adds 1");
-    src[..at].to_string() + " < 1;\n"
-}
-
-#[test]
-fn rejecting_a_comparison_of_a_tuple_doubled_n_times_with_1_does_work_linear_in_n() {
-    works(
-        "rejecting a comparison of a tuple doubled n times with 1",
-        40,
-        |n| compared_with_1(doubling(n)),
-    );
-}
-
-#[test]
-fn rejecting_a_comparison_of_tuples_doubled_n_times_does_work_linear_in_n() {
-    works(
-        "rejecting a comparison of tuples doubled n times",
-        40,
-        compared,
-    );
-}
-
-#[test]
-fn rejecting_a_comparison_of_a_chain_of_n_names_each_holding_the_one_before_with_1_does_work_linear_in_n()
- {
-    works(
-        "rejecting a comparison of a chain of n names each holding the one before with 1",
-        40,
-        |n| compared_with_1(growing(n)),
-    );
-}
-
-// The repair of `t_n + 1` lists the one value of `t_n`. Its maker files the first components
-// of each type once for the whole listing; before, each level's maker walked every level below
-// it again, O(n²) in a chain of n levels (COMPLEXITY.md row K109, MAKER-file-chain).
-
-#[test]
-fn rejecting_a_tuple_doubled_n_times_with_1_added_does_work_linear_in_n() {
-    works(
-        "rejecting a tuple doubled n times with 1 added",
-        40,
-        doubling,
-    );
-}
-
-#[test]
-fn rejecting_a_chain_of_n_names_each_holding_the_one_before_with_1_added_does_work_linear_in_n() {
-    works(
-        "rejecting a chain of n names each holding the one before with 1 added",
-        40,
-        growing,
-    );
-}
-
 // A part a step takes from an earlier step's print is the text a print anew would give it
 // (MSG-derive-print-per-message). The texts below are those each step printing its type alone
 // gave.
@@ -839,42 +726,6 @@ pub(super) fn unions_inside(n: usize) -> String {
     src + &format!("u = e{n} < 1;\n")
 }
 
-#[test]
-fn rejecting_a_chain_of_n_names_each_holding_a_union_writes_a_text_linear_in_n() {
-    scales(
-        "rejecting a chain of n names each holding a union",
-        40,
-        unions,
-    );
-}
-
-#[test]
-fn rejecting_a_chain_of_n_names_each_holding_a_union_does_work_linear_in_n() {
-    works(
-        "rejecting a chain of n names each holding a union",
-        40,
-        unions,
-    );
-}
-
-#[test]
-fn rejecting_a_chain_of_n_names_each_holding_a_union_of_its_own_does_work_linear_in_n() {
-    works(
-        "rejecting a chain of n names each holding a union of its own",
-        40,
-        unions_each_its_own,
-    );
-}
-
-#[test]
-fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_does_work_linear_in_n() {
-    works(
-        "rejecting a chain of n names each using a union once and twice",
-        40,
-        unions_inside,
-    );
-}
-
 /// `a_n` holds `n` unions once each, `g_i` giving `2i | 2i + 1` in `a_i = (a_{i-1}, g_i(true))`,
 /// and `e_0 = (a_n, 0); e_k = (e_{k-1}, g_k(false))` uses one more of them twice at each link,
 /// then `u = e_n < 1;` (MSG-derive-print-union-names).
@@ -898,20 +749,55 @@ pub(super) fn unions_named_one_by_one(n: usize) -> String {
     src + &format!("u = e{n} < 1;\n")
 }
 
-#[test]
-fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_writes_a_text_linear_in_n() {
-    scales(
-        "rejecting a chain naming one more union of a part at each link",
-        40,
-        unions_named_one_by_one,
-    );
+/// `src` with its last line's `+ 1` made `< 1`. The derivation is the one `+` gives, but `<`
+/// tries no repair, so the tests that use it measure the derivation alone; the repair of
+/// `t_n + 1`, which lists the values of `t_n` (`Type::values_listed`), is measured by the tests
+/// that add 1.
+pub(super) fn compared_with_1(src: String) -> String {
+    let at = src.rfind(" + 1;").expect("the last line adds 1");
+    src[..at].to_string() + " < 1;\n"
 }
 
+/// The `type T… = …;` lines of the rejection `out`, each its right side.
+fn declared_parts(out: &str) -> Vec<&str> {
+    out.lines()
+        .filter_map(|l| l.trim_start().strip_prefix("type T"))
+        .filter_map(|l| Some(l.split_once(" = ")?.1.trim_end_matches(';')))
+        .collect()
+}
+
+/// Each chain of unions of `bench::type_size` at 1, 2 and 3 links: each part is declared once,
+/// each union of [`unions`] and [`unions_named_one_by_one`] is a part of its own, and the text
+/// at 16 links is at most 3 × 8 times the text at 2 (the benchmarks time 40 and 320 links).
 #[test]
-fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_does_work_linear_in_n() {
-    works(
-        "rejecting a chain naming one more union of a part at each link",
-        40,
-        unions_named_one_by_one,
-    );
+fn rejecting_short_chains_of_names_holding_unions() {
+    let makers: [(&str, fn(usize) -> String); 4] = [
+        ("unions", unions),
+        ("unions_each_its_own", unions_each_its_own),
+        ("unions_inside", unions_inside),
+        ("unions_named_one_by_one", unions_named_one_by_one),
+    ];
+    for (name, make) in makers {
+        for n in [1, 2, 3] {
+            let out = rejected(&make(n));
+            let parts = declared_parts(&out);
+            let distinct: std::collections::BTreeSet<&&str> = parts.iter().collect();
+            assert_eq!(distinct.len(), parts.len(), "{name} {n}:\n{out}");
+            let unions: Vec<String> = parts
+                .iter()
+                .filter(|p| !p.starts_with('('))
+                .map(|p| p.to_string())
+                .collect();
+            let want: Vec<String> = match name {
+                "unions" | "unions_inside" => vec!["1 | 2".into()],
+                "unions_named_one_by_one" => (1..=n)
+                    .map(|i| format!("{} | {}", 2 * i, 2 * i + 1))
+                    .collect(),
+                _ => vec![],
+            };
+            assert_eq!(unions, want, "{name} {n}:\n{out}");
+        }
+        let (small, large) = (rejected(&make(2)).len(), rejected(&make(16)).len());
+        assert!(large <= 3 * 8 * small, "{name}: {small} at 2, {large} at 16");
+    }
 }

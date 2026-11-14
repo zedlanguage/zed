@@ -90,7 +90,7 @@ fn the_underline_covers_a_multibyte_span_by_characters() {
 }
 
 /// A diagnostic of the steps `steps`, at the place of the first.
-fn diagnostic(steps: Vec<Step>) -> Diagnostic {
+pub(super) fn diagnostic(steps: Vec<Step>) -> Diagnostic {
     Diagnostic {
         row: None,
         address: zedc::address::ContentAddress([0; 32]),
@@ -104,7 +104,7 @@ fn diagnostic(steps: Vec<Step>) -> Diagnostic {
 
 /// The source line `  total = a0 + a1 + … ;` of `n` terms, and a step on each term, then one
 /// on the whole sum.
-fn terms(n: usize) -> Vec<Step> {
+pub(super) fn terms(n: usize) -> Vec<Step> {
     let names: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
     let source = format!("  total = {};", names.join(" + "));
     let mut col = 11;
@@ -178,57 +178,26 @@ fn wide_characters_tabs_and_combining_marks_are_underlined_under_their_columns()
     );
 }
 
-/// Each line is shown once, and a row of underlines is at most as long as the line and its
-/// numbers, so `n` steps on one line print O(n) bytes, not a copy of the line for each step.
-#[test]
-fn rendering_many_steps_on_one_line_scales() {
-    use zed_tests::scaling;
-    let n = 1000;
-    let large = scaling::FACTOR * n;
-    let made = scaling::inputs(n, |k| diagnostic(terms(k)));
-    let bytes = |k: usize| made[&k].to_string().len();
-    scaling::hold(
-        "rendering n steps on one line",
-        "bytes",
-        bytes(n) as u64,
-        bytes(large) as u64,
-        1,
-    );
-    scaling::check("rendering n steps on one line", n, |k| {
-        std::hint::black_box(made[&k].to_string());
-    });
-}
 
 /// A program whose rejection has a step on each of `n` literals of one line.
-fn literals(n: usize) -> String {
+pub(super) fn literals(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| i.to_string()).collect();
     format!("x = \"all: \" ++ ({});\n", xs.join(", "))
 }
 
 #[test]
-fn rejecting_a_line_of_many_literals_scales() {
-    use zed_tests::scaling;
+fn rejecting_a_line_of_many_literals() {
     let out = super::rejected(&literals(3));
     assert!(out.contains("  [4] 1:20: this literal, 1, is 1\n"), "{out}");
-    assert_eq!(out.matches(" | x = ").count(), 1, "{out}");
-    let n = 300;
-    let bytes = |k: usize| super::rejected(&literals(k)).len();
-    let large = scaling::FACTOR * n;
-    scaling::hold(
-        "rejecting a line of n literals",
-        "bytes",
-        bytes(n) as u64,
-        bytes(large) as u64,
-        1,
-    );
-    scaling::check("rejecting a line of n literals", n, |k| {
-        std::hint::black_box(super::rejected(&literals(k)));
-    });
+    for n in [1, 3, 12] {
+        let out = super::rejected(&literals(n));
+        assert_eq!(out.matches(" | x = ").count(), 1, "{out}");
+    }
 }
 
 /// The source line `  total = a0 + a1 + … ;` of `n` terms, a step on each term, then one on
 /// each sum `a0 + … + ai` from i = 1, so that the sums nest n - 1 deep.
-fn sums(n: usize) -> Vec<Step> {
+pub(super) fn sums(n: usize) -> Vec<Step> {
     let mut steps = terms(n);
     steps.pop();
     let source = steps[0].source.clone();
@@ -367,27 +336,6 @@ fn a_balanced_nesting_is_underlined_in_full() {
     );
 }
 
-/// A sum `a0 + … + an` whose every partial sum is a step nests n deep on one line; drawn by
-/// their ends, the sums take a few rows, not n, so the line's quote costs O(n) bytes, not
-/// O(n²).
-#[test]
-fn rendering_a_line_of_nested_sums_scales() {
-    use zed_tests::scaling;
-    let n = 1000;
-    let large = scaling::FACTOR * n;
-    let made = scaling::inputs(n, |k| diagnostic(sums(k)));
-    let bytes = |k: usize| made[&k].to_string().len();
-    scaling::hold(
-        "rendering n nested sums on one line",
-        "bytes",
-        bytes(n) as u64,
-        bytes(large) as u64,
-        1,
-    );
-    scaling::check("rendering n nested sums on one line", n, |k| {
-        std::hint::black_box(made[&k].to_string());
-    });
-}
 
 /// The source line `  y = a0^a1^…;` of `n` terms, a step on each power `ai^…` from the
 /// outermost, then one on each term: `^` groups from the right, so the powers share their end.
@@ -451,7 +399,7 @@ fn powers_nested_on_one_line_are_drawn_by_their_ends_on_one_rule() {
 
 /// A program whose rejection quotes the line `  total = n + n + … ;` of `n` terms, each of
 /// whose partial sums is a step.
-fn summed(n: usize) -> String {
+pub(super) fn summed(n: usize) -> String {
     format!(
         "main(m: MainArgs) {{\n  n = int(m.stdin[0]) else 0;\n  total = {};\n  \
          m.stdout <- \"total: \" ++ total;\n}}\n",
@@ -460,21 +408,7 @@ fn summed(n: usize) -> String {
 }
 
 #[test]
-fn rejecting_a_line_of_nested_sums_scales() {
-    use zed_tests::scaling;
+fn rejecting_a_line_of_nested_sums() {
     let out = super::rejected(&summed(4));
     assert!(out.contains("|           ^-------^ [5]\n"), "{out}");
-    let n = 200;
-    let bytes = |k: usize| super::rejected(&summed(k)).len();
-    let large = scaling::FACTOR * n;
-    scaling::hold(
-        "rejecting a line of n nested sums",
-        "bytes",
-        bytes(n) as u64,
-        bytes(large) as u64,
-        1,
-    );
-    scaling::check("rejecting a line of n nested sums", n, |k| {
-        std::hint::black_box(super::rejected(&summed(k)));
-    });
 }

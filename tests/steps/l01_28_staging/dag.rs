@@ -4,16 +4,14 @@
 //! time nor the mixed term grows with the number of places. On `d` nested `if`s whose two
 //! arms are one node, which has `2^d` places, the tree walks took `2^d` steps.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{Prim, Shared, Term, Value};
-use zed_tests::scaling::{self, FACTOR};
 use zedc::elab::{Def, Unit};
 use zedc::stage::{self, Stage, color, free, passed};
 
-use super::scaling::deep;
 
 fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
@@ -21,7 +19,7 @@ fn prim(p: Prim, args: Vec<Term>) -> Term {
 
 /// `t0 = bottom; tj = if n >= j + 1 { t(j-1) } else { t(j-1) }`, the two arms one node when
 /// `shared`, else two copies built apart (`2^d` places either way, and `2^d` nodes unshared).
-fn ifs(d: usize, shared: bool, bottom: &Term) -> Term {
+pub(super) fn ifs(d: usize, shared: bool, bottom: &Term) -> Term {
     fn level(j: i64, below: impl Fn() -> Shared, shared: bool) -> Term {
         let bound = prim(Prim::Add, vec![lit(j), lit(1i64)]);
         let guard = Shared::new(prim(Prim::Ge, vec![var("n"), bound]));
@@ -59,7 +57,7 @@ fn def(name: &str, term: Term) -> Def {
 }
 
 /// `f = (x, y) -> x + y; main = (n) -> td` with `t0 = f(n, 1)`.
-fn unit(d: usize, shared: bool) -> Unit {
+pub(super) fn unit(d: usize, shared: bool) -> Unit {
     let f = lam(&["x", "y"], prim(Prim::Add, vec![var("x"), var("y")]));
     let main = Term::Lam(vec!["n".into()], Shared::new(ifs(d, shared, &call())));
     Unit {
@@ -136,6 +134,14 @@ fn mixing_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_gives() {
         assert_eq!(distinct(&mixed_shared.defs[1].term), 2 * d + 2, "d = {d}");
     }
     assert_eq!(free(&ifs(3, true, &call())).len(), 2, "`f` and `n`");
+    // No `lam` or call above or below: the term of names, literals, primitives and `if`s
+    // alone, read without `Frees` (`bench::dag` times it 1000 and 8000 deep).
+    for d in [1, 2, 9] {
+        assert_eq!(free(&ifs(d, true, &var("m"))).len(), 2, "`m` and `n`");
+        assert_eq!(free(&unit(d, true).defs[1].term).len(), 1, "`f`");
+        assert_eq!(color(&unit(d, true))[1].1, Stage::Build);
+        assert_eq!(passed(&unit(d, true), "f", 1).len(), 1);
+    }
     assert_eq!(
         passed(&unit(3, true), "f", 1),
         [Value::Int(1)].into_iter().collect()
@@ -165,67 +171,6 @@ fn the_effects_of_a_part_shared_by_both_arms_are_read() {
     let (mixed, report) = stage::mix(&port, &["main"]);
     assert_eq!(mixed.defs[1].term.to_string(), read.to_string());
     assert!(report.built.is_empty());
-}
-
-#[test]
-fn mixing_nested_ifs_whose_arms_are_one_part_scales() {
-    deep(|| {
-        let n = 1000;
-        let units: BTreeMap<usize, Unit> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, unit(d, true)))
-            .collect();
-        scaling::check_order(
-            "stage::mix on d nested ifs whose two arms are one part",
-            n,
-            1,
-            |d| {
-                let (mixed, _) = stage::mix(&units[&d], &["main"]);
-                assert_eq!(distinct(&mixed.defs[1].term), 2 * d + 2);
-            },
-        );
-    });
-}
-
-#[test]
-fn reading_nested_ifs_whose_arms_are_one_part_scales() {
-    deep(|| {
-        let n = 1000;
-        let units: BTreeMap<usize, Unit> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, unit(d, true)))
-            .collect();
-        scaling::check_order(
-            "stage::free on d nested ifs whose two arms are one part",
-            n,
-            1,
-            |d| assert_eq!(free(&units[&d].defs[1].term).len(), 1, "`f`"),
-        );
-        // No `lam` or call above or below: the term of names, literals, primitives and `if`s
-        // alone, read without `Frees`, each shared node once.
-        let bare: BTreeMap<usize, Term> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, ifs(d, true, &var("m"))))
-            .collect();
-        scaling::check_order(
-            "stage::free on d nested ifs of names alone whose two arms are one part",
-            n,
-            1,
-            |d| assert_eq!(free(&bare[&d]).len(), 2, "`m` and `n`"),
-        );
-        scaling::check_order(
-            "stage::color, free names and effects, on d nested ifs whose two arms are one part",
-            n,
-            1,
-            |d| assert_eq!(color(&units[&d])[1].1, Stage::Build),
-        );
-        scaling::check_order(
-            "stage::passed on d nested ifs whose two arms are one part",
-            n,
-            1,
-            |d| assert_eq!(passed(&units[&d], "f", 1).len(), 1),
-        );
-    });
 }
 
 /// `free` of a term of names, literals, primitives and `if`s, some nodes shared and some terms
@@ -297,7 +242,7 @@ fn the_names_of_a_term_of_primitives_and_ifs_are_those_frees_gives() {
 /// x + 2; n(j-1) }`: the two `let`s are two nodes and, when `shared`, hold one body node, else
 /// two copies built apart. Each `x` the body reads is a binding not known at build, so the
 /// body mixes to the same term under either `let`.
-fn lets(d: usize, shared: bool) -> Unit {
+pub(super) fn lets(d: usize, shared: bool) -> Unit {
     fn level(below: impl Fn() -> Shared) -> Term {
         let step = |k: i64, body: Shared| {
             let e = Shared::new(prim(Prim::Add, vec![var("x"), lit(k)]));
@@ -359,31 +304,11 @@ fn mixing_nested_lets_of_a_parameter_over_one_body_gives_what_the_tree_gives() {
     }
 }
 
-#[test]
-fn mixing_nested_lets_of_a_parameter_over_one_body_scales() {
-    deep(|| {
-        let n = 1000;
-        let units: BTreeMap<usize, Unit> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, lets(d, true)))
-            .collect();
-        scaling::check_order(
-            "stage::mix on d nested ifs whose two arms are lets of a parameter over one body",
-            n,
-            1,
-            |d| {
-                let (mixed, _) = stage::mix(&units[&d], &["main"]);
-                assert_eq!(distinct(&mixed.defs[0].term), 6 * d + 1);
-            },
-        );
-    });
-}
-
 /// `main = (c) -> let x = 0; nd` with `n0 = x` and `nj = if c { let x = x + a; n(j-1) } else
 /// { let x = x + b; n(j-1) }`: the two `let`s are two nodes and, when `shared`, hold one body
 /// node, else two copies built apart. Each `x` is known at build, so the body is mixed once
 /// per value of `x` that reaches it, not once per path: the mixed term is all literals.
-fn built(d: usize, a: i64, b: i64, shared: bool) -> Unit {
+pub(super) fn built(d: usize, a: i64, b: i64, shared: bool) -> Unit {
     fn level(a: i64, b: i64, below: impl Fn() -> Shared) -> Term {
         let step = |k: i64, body: Shared| {
             let e = Shared::new(prim(Prim::Add, vec![var("x"), lit(k)]));
@@ -445,55 +370,12 @@ fn mixing_nested_lets_of_a_built_value_over_one_body_gives_what_the_tree_gives()
 /// The distinct nodes of `built(d, a, b)` mixed: per level the `if` and its guard over one
 /// node below, when `a = b`; else at level `k` from the top one node for each of the `k + 1`
 /// values of `x` there.
-fn nodes(d: usize, same: bool) -> usize {
+pub(super) fn nodes(d: usize, same: bool) -> usize {
     match (d, same) {
         (0, _) => 1,
         (_, true) => 2 * d + 2,
         (_, false) => d * (d + 7) / 2,
     }
-}
-
-// The cases of one built value and of two are two tests: together they took 20 s alone at
-// load 42, a third of the 60 s limit of a test piece.
-#[test]
-fn mixing_nested_lets_of_one_built_value_over_one_body_scales() {
-    deep(|| {
-        let n = 1000;
-        let same: BTreeMap<usize, Unit> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, built(d, 0, 0, true)))
-            .collect();
-        scaling::check_order(
-            "stage::mix on d nested ifs whose two arms are lets of one built value over one body",
-            n,
-            1,
-            |d| {
-                let (mixed, _) = stage::mix(&same[&d], &["main"]);
-                assert_eq!(distinct(&mixed.defs[0].term), nodes(d, true));
-            },
-        );
-    });
-}
-
-#[test]
-fn mixing_nested_lets_of_two_built_values_over_one_body_scales() {
-    deep(|| {
-        // The mixed term has a node for each value of `x` at each level, d(d + 7)/2 in all.
-        let n = 50;
-        let apart: BTreeMap<usize, Unit> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, built(d, 1, 2, true)))
-            .collect();
-        scaling::check_order(
-            "stage::mix on d nested ifs whose two arms are lets of two built values over one body",
-            n,
-            2,
-            |d| {
-                let (mixed, _) = stage::mix(&apart[&d], &["main"]);
-                assert_eq!(distinct(&mixed.defs[0].term), nodes(d, false));
-            },
-        );
-    });
 }
 
 /// `main = (c) -> let f = (y) -> y; nd` with `n0 = f(1)` and `nj = if c { let f = (y) -> f(y)
@@ -616,7 +498,7 @@ fn mixed_nodes_at(x: Term, y: Term) -> usize {
 }
 
 /// [`mixed_nodes_at`] with the call at `arg`: `p = n + f(arg)`.
-fn mixed_nodes_of(arg: Term) -> usize {
+pub(super) fn mixed_nodes_of(arg: Term) -> usize {
     let call = Term::App(Shared::new(var("f")), vec![arg]);
     let part = Shared::new(prim(Prim::Add, vec![var("n"), call]));
     let arm = |f: Term| Shared::new(Term::Let("f".into(), Shared::new(f), part.clone()));
@@ -674,29 +556,23 @@ fn calls_at_a_doubled_tuple_stage_alike() {
 /// n nested pairs, is keyed by its answer at n and 8n: naming the join and the tuples costs
 /// O(n log N) dictionary steps, and the part is still shared by both arms (item
 /// STAGE-joined-eq-build).
-#[test]
-fn keying_a_call_at_a_join_and_a_tuple_of_n_parts_scales() {
-    deep(|| {
-        let n = 1000;
-        let arg = |d: usize| {
-            let join = (0..d).rev().fold(lit(""), |s, i| {
-                prim(Prim::Concat, vec![lit(format!("s{i}").as_str()), s])
-            });
-            let pairs = (0..d as i64)
-                .rev()
-                .fold(lit(0i64), |t, i| prim(Prim::Tuple, vec![lit(i), t]));
-            prim(Prim::Tuple, vec![join, pairs])
-        };
-        let args: BTreeMap<usize, Term> =
-            [n, FACTOR * n].into_iter().map(|d| (d, arg(d))).collect();
-        let at_literal = mixed_nodes_of(lit(1i64));
-        scaling::check_order(
-            "stage::mix of a call at a join and a tuple of n parts",
-            n,
-            1,
-            |d| assert_eq!(mixed_nodes_of(args[&d].clone()), at_literal),
-        );
+pub(super) fn a_join_and_a_tuple(d: usize) -> Term {
+    let join = (0..d).rev().fold(lit(""), |s, i| {
+        prim(Prim::Concat, vec![lit(format!("s{i}").as_str()), s])
     });
+    let pairs = (0..d as i64)
+        .rev()
+        .fold(lit(0i64), |t, i| prim(Prim::Tuple, vec![lit(i), t]));
+    prim(Prim::Tuple, vec![join, pairs])
+}
+
+/// `bench::dag` times 1000 and 8000 parts.
+#[test]
+fn keying_a_call_at_a_join_and_a_tuple_of_n_parts() {
+    let at_literal = mixed_nodes_of(lit(1i64));
+    for d in [0, 1, 2, 9] {
+        assert_eq!(mixed_nodes_of(a_join_and_a_tuple(d)), at_literal, "d = {d}");
+    }
 }
 
 /// `main = (n) -> n + td` with `t0 = w(w)`, `w = (f) -> f(f)`, and `tj = if j >= 1 { t(j-1) }
@@ -707,31 +583,41 @@ fn keying_a_call_at_a_join_and_a_tuple_of_n_parts_scales() {
 /// Before repair 5 the report held `t.to_string()`, 2^d time and text (repair 4, release
 /// build, load 9: 2.3, 36, 143, 589, 2238 ms and 30.7 KB, 492 KB, 1.97 MB, 7.86 MB, 31.5 MB at
 /// d = 10, 14, 16, 18, 20).
+pub(super) fn left_unit(d: usize) -> (Unit, Term) {
+    let w = lam(&["f"], Term::App(Shared::new(var("f")), vec![var("f")]));
+    let bottom = Term::App(Shared::new(var("w")), vec![var("w")]);
+    let t = (1..=d as i64).fold(bottom, |t, j| {
+        let t = Shared::new(t);
+        let guard = Shared::new(prim(Prim::Ge, vec![lit(j), lit(1i64)]));
+        Term::If(guard, t.clone(), t)
+    });
+    let main = Term::Lam(
+        vec!["n".into()],
+        Shared::new(prim(Prim::Add, vec![var("n"), t.clone()])),
+    );
+    let unit = Unit {
+        defs: vec![def("w", w), def("main", main)],
+        tests: Arc::from([]),
+        warnings: Vec::new(),
+        int_params: Default::default(),
+        limits: Default::default(),
+    };
+    (unit, t)
+}
+
+/// The report of mixing `unit`, a [`left_unit`], leaves its `td` to run.
+pub(super) fn the_term_left_reported((unit, t): &(Unit, Term)) {
+    let (_, report) = stage::mix(unit, &["main"]);
+    assert_eq!(report.left.len(), 1, "{report:?}");
+    assert!(*report.left[0].0 == *t, "the term left to run is td");
+    assert_eq!(report.left[0].1, "its form does not show that it ends");
+}
+
+/// `bench::dag` times it 1000 and 8000 deep.
 #[test]
-fn reporting_a_term_left_to_run_whose_arms_are_one_part_scales() {
-    fn unit(d: usize) -> (Unit, Term) {
-        let w = lam(&["f"], Term::App(Shared::new(var("f")), vec![var("f")]));
-        let bottom = Term::App(Shared::new(var("w")), vec![var("w")]);
-        let t = (1..=d as i64).fold(bottom, |t, j| {
-            let t = Shared::new(t);
-            let guard = Shared::new(prim(Prim::Ge, vec![lit(j), lit(1i64)]));
-            Term::If(guard, t.clone(), t)
-        });
-        let main = Term::Lam(
-            vec!["n".into()],
-            Shared::new(prim(Prim::Add, vec![var("n"), t.clone()])),
-        );
-        let unit = Unit {
-            defs: vec![def("w", w), def("main", main)],
-            tests: Arc::from([]),
-            warnings: Vec::new(),
-            int_params: Default::default(),
-            limits: Default::default(),
-        };
-        (unit, t)
-    }
+fn reporting_a_term_left_to_run_whose_arms_are_one_part() {
     // The text on a small input, where it is small: both arms written out.
-    let (small, t) = unit(1);
+    let (small, t) = left_unit(1);
     let (_, report) = stage::mix(&small, &["main"]);
     assert_eq!(report.left.len(), 1, "{report:?}");
     assert_eq!(*report.left[0].0, t);
@@ -740,22 +626,7 @@ fn reporting_a_term_left_to_run_whose_arms_are_one_part_scales() {
         "if (1 >= 1) { w(w) } else { w(w) }"
     );
     assert_eq!(report.left[0].1, "its form does not show that it ends");
-    deep(|| {
-        let n = 1000;
-        let units: BTreeMap<usize, (Unit, Term)> =
-            [n, FACTOR * n].into_iter().map(|d| (d, unit(d))).collect();
-        scaling::check_order(
-            "stage::mix and its report of a term left to run, on d nested ifs whose two arms \
-             are one node",
-            n,
-            1,
-            |d| {
-                let (unit, t) = &units[&d];
-                let (_, report) = stage::mix(unit, &["main"]);
-                assert_eq!(report.left.len(), 1);
-                assert!(*report.left[0].0 == *t, "the term left to run is td");
-                assert_eq!(report.left[0].1, "its form does not show that it ends");
-            },
-        );
-    });
+    for d in [0, 2, 9] {
+        the_term_left_reported(&left_unit(d));
+    }
 }

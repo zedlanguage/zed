@@ -8,9 +8,10 @@
 //!   the points near every end of the input, of main's box and of the new one, and in
 //!   [-60, 60]. The other 182,327 calls give main's answer unchanged; the dump is 126 MB, so
 //!   that replay was run once, outside the tests (COMPLEXITY.md C56);
-//! - the scaling: each of the 48 families of the item's benchmark at n and 8n, held to the
-//!   plan's limit (`scaling::LIMIT`) in instructions and bytes, with no wider limit for any
-//!   family; each answer grows at most 8 times (`output_grid` demands four values, 4n pieces).
+//! - the scaling, in `bench::ref_memo`: each of the 48 families of the item's benchmark at n
+//!   and 8n, held to the plan's limit (`scaling::LIMIT`) in instructions and bytes, with no
+//!   wider limit for any family; each answer grows at most 8 times (`output_grid` demands four
+//!   values, 4n pieces).
 //!   The work of writing out a larger answer is held at one n by
 //!   `output_grid_work_grows_with_its_answer`, and `nested_moduli_eq_4096` with its costly
 //!   constants next to the root at every n is ignored with its plan row,
@@ -22,7 +23,6 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Shared, Term, Value, eval};
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage_ref::{Demand, Domains, Listed, Preimage, preimage, preimage_listed};
 
@@ -278,8 +278,8 @@ struct Kept {
 
 /// Checks the new answer to `line` against main's: inside main's box (or empty), exact where
 /// main's was, with a relation or exact where main's had one, and sound and (when exact)
-/// exact at [`points`]. Counts it in `kept`.
-fn check_line(line: &str, kept: &mut Kept) {
+/// exact at [`points`] when `at_points`. Counts it in `kept`.
+fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
     let c = call(line);
     let p: Preimage = preimage_listed(&c.term, &c.inputs, &c.listed, &c.demand);
     let empty = p.domains.values().any(IntervalSet::is_empty);
@@ -295,7 +295,8 @@ fn check_line(line: &str, kept: &mut Kept) {
         "{line}\nmain's relation lost"
     );
     let names: Vec<Arc<str>> = c.inputs.keys().cloned().collect();
-    for pt in points(&c, &p.domains) {
+    let at = if at_points { points(&c, &p.domains) } else { Vec::new() };
+    for pt in at {
         let hit = names.iter().zip(&pt).all(|(n, v)| {
             p.domains
                 .get(n)
@@ -327,12 +328,21 @@ fn lines(fixture: &str) -> impl Iterator<Item = &str> {
 /// The 226 distinct calls of main's dump (420 with repeats) whose answer the new transfer
 /// changes: each kept or made finer. 85 are made exact, 113 narrower and still inexact; 28
 /// keep main's domains and exactness and differ in a stop, a listing, a relation or a
-/// refusal, which the replay compares and this file does not keep.
+/// refusal, which the replay compares and this file does not keep. Every call is answered
+/// and compared with main's box; the interpreter runs at the [`points`] of 20 calls drawn from
+/// a new seed each run. Until TEST-bench-move-l0125 (author P169: a correctness test runs well
+/// under 1 s, a random one takes fewer cases and a new seed each run) it ran at the points of
+/// every call, 4.6 s.
 #[test]
 fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer() {
+    let mut rng = Rng::new(super::run_seed(
+        "ref_memo::the_changed_answers_of_main_s_dump_are_kept_or_made_finer",
+    ));
+    let n = lines(CHANGED).count();
+    let at: BTreeSet<usize> = (0..20).map(|_| rng.below(n)).collect();
     let kept = on_big_stack(|| {
         let mut kept = Kept::default();
-        lines(CHANGED).for_each(|l| check_line(l, &mut kept));
+        (lines(CHANGED).enumerate()).for_each(|(i, l)| check_line(l, &mut kept, at.contains(&i)));
         kept
     });
     assert_eq!(
@@ -353,7 +363,7 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer() {
 fn calls_22_45_and_86_keep_main_s_answer_or_a_finer_one() {
     let kept = on_big_stack(|| {
         let mut kept = Kept::default();
-        lines(PINNED).for_each(|l| check_line(l, &mut kept));
+        lines(PINNED).for_each(|l| check_line(l, &mut kept, true));
         kept
     });
     assert_eq!(
@@ -486,7 +496,7 @@ fn random_chains(n: usize) -> Vec<(Term, Domains, Demand)> {
 
 /// The cases of the family `name` at size `n`: the families of the item's benchmark (run 3's
 /// `prm_bench`, and the two of cross-review round 3), each a chain of `n` links.
-fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
+pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
     let ni = n as i64;
     let yes = Demand::Bool(true);
     let jmod5 = || chain(n, var("i"), g_mod7, |j, t| sub_c(j % 5, t));
@@ -671,7 +681,7 @@ fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
 /// block, and each demanded value `v` gives the one point `v + (b-1) n` in each of the `n`
 /// blocks. The points are odd places, so no two are adjacent, within a block or across one: the
 /// answer is exactly `k n` pieces.
-fn output_grid(n: usize, k: usize) -> (Term, Domains, Demand) {
+pub(super) fn output_grid(n: usize, k: usize) -> (Term, Domains, Demand) {
     assert!(
         2 * k <= n,
         "output_grid: {k} odd values do not fit in [1, {n}]"
@@ -689,97 +699,13 @@ fn output_grid(n: usize, k: usize) -> (Term, Domains, Demand) {
 }
 
 /// The pieces of every domain of the answer to `case`.
-fn answer_pieces(case: &(Term, Domains, Demand)) -> usize {
+pub(super) fn answer_pieces(case: &(Term, Domains, Demand)) -> usize {
     let (t, ds, d) = case;
     preimage(t, ds, d)
         .domains
         .values()
         .map(IntervalSet::len)
         .sum()
-}
-
-/// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
-/// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. Every
-/// family's answer grows at most 8 times from `n` to `8n`; the work of writing out a larger
-/// answer is held by [`output_grid_work_grows_with_its_answer`], at one `n`.
-fn scales(name: &str, n: usize) {
-    on_big_stack(|| {
-        let large_n = n * scaling::FACTOR;
-        let (small, large) = (family(name, n), family(name, large_n));
-        let run = |cases: &[(Term, Domains, Demand)]| {
-            for (t, ds, d) in cases {
-                std::hint::black_box(preimage(t, ds, d));
-            }
-        };
-        let what = format!("the reference preimage of the family {name}, sizes {n} and {large_n}");
-        scaling::compare(&what, 1, || run(&small), || run(&large));
-    });
-}
-
-/// One test a family, each at the first size the item's scorer used, except where a note says.
-macro_rules! scaling_tests {
-    ($($(#[$meta:meta])* $test:ident: $name:literal at $n:literal;)*) => {
-        $(
-            $(#[$meta])*
-            #[test]
-            fn $test() {
-                scales($name, $n);
-            }
-        )*
-    };
-}
-
-scaling_tests! {
-    const2_narrow_scales: "const2_narrow" at 64;
-    const2_wide_scales: "const2_wide" at 64;
-    const_base_wide_scales: "const_base_wide" at 64;
-    cross_2in_scales: "cross_2in" at 16;
-    div_base_i_le_j_scales: "div_base_i_le_j" at 64;
-    guarded_holes_narrow_scales: "guarded_holes_narrow" at 256;
-    guarded_holes_wide_scales: "guarded_holes_wide" at 64;
-    i_le_j_narrow_scales: "i_le_j_narrow" at 64;
-    i_le_j_wide_scales: "i_le_j_wide" at 64;
-    indep_const2_scales: "indep_const2" at 64;
-    indep_small_scales: "indep_small" at 6;
-    interleaved_wide_scales: "interleaved_wide" at 64;
-    jmod5_mega_scales: "jmod5_mega" at 64;
-    jmod5_narrow_scales: "jmod5_narrow" at 64;
-    jmod5_ne100_scales: "jmod5_ne100" at 64;
-    jmod5_top_scales: "jmod5_top" at 64;
-    jmod5_wide_scales: "jmod5_wide" at 64;
-    lambda_chain_scales: "lambda_chain" at 64;
-    let_chain_scales: "let_chain" at 64;
-    ne_guard_wide_scales: "ne_guard_wide" at 64;
-    nested_moduli_946_eq_scales: "nested_moduli_946_eq" at 2;
-    nested_moduli_eq_scales: "nested_moduli_eq" at 2;
-    // At n = 0 mod 10, so both sizes put the same constants next to the root (they repeat every
-    // 10 links); at 32 and 256 the answer went from 5 pieces to 772, a different question.
-    nested_moduli_eq_4096_scales: "nested_moduli_eq_4096" at 160;
-    nested_moduli_eq_long_scales: "nested_moduli_eq" at 128;
-    nested_moduli_mod7_scales: "nested_moduli_mod7" at 2;
-    normal_add_base_scales: "normal_add_base" at 16;
-    normal_div_chain_scales: "normal_div_chain" at 16;
-    normal_holey_guards_scales: "normal_holey_guards" at 16;
-    normal_incompatible_moduli_16_scales: "normal_incompatible_moduli" at 16;
-    normal_incompatible_moduli_scales: "normal_incompatible_moduli" at 4;
-    normal_min_gap_scales: "normal_min_gap" at 16;
-    normal_mixed_moduli_scales: "normal_mixed_moduli" at 16;
-    normal_mod_chain_scales: "normal_mod_chain" at 16;
-    normal_mul_base_scales: "normal_mul_base" at 16;
-    normal_mul_chain_scales: "normal_mul_chain" at 16;
-    normal_named_scales: "normal_named" at 16;
-    normal_named_modguard_scales: "normal_named_modguard" at 16;
-    normal_named_reflection_scales: "normal_named_reflection" at 16;
-    normal_rel_guard_scales: "normal_rel_guard" at 16;
-    normal_round_down_scales: "normal_round_down" at 16;
-    normal_round_trip_scales: "normal_round_trip" at 16;
-    // Four values demanded: 4n pieces. At 8 the answer-free work was 84% of the run.
-    output_grid_scales: "output_grid" at 64;
-    pathological_2var_scales: "pathological_2var" at 16;
-    pathological_abs_scales: "pathological_abs" at 16;
-    pow2_small_scales: "pow2_small" at 8;
-    pow2_wide_scales: "pow2_wide" at 64;
-    random_chains_scales: "random_chains" at 64;
 }
 
 /// The answer of [`output_grid`] has exactly `k n` pieces, as its comment derives.
@@ -791,27 +717,98 @@ fn output_grid_answers_have_k_n_pieces() {
     }
 }
 
-/// The work of writing out an answer 8 times larger, the term unchanged: [`output_grid`] at 1024
-/// links with 64 and 512 values demanded, `64 n` and `512 n` pieces by the hand count, held to
-/// [`scaling::LIMIT`] as a pass of order n in the pieces. An earlier test held `output_grid`'s
-/// work at `n` and `8n` with all `n / 2` odd values demanded to the limit times the growth of
-/// the answer counted from the code under test (64 times): work quadratic in `n` passed it, and
-/// an answer split into more pieces raised its own limit.
+
+/// The families that `bench::ref_memo` times, each named once.
+pub(super) const FAMILIES: [&str; 44] = [
+    "const2_narrow",
+    "const2_wide",
+    "const_base_wide",
+    "cross_2in",
+    "div_base_i_le_j",
+    "guarded_holes_narrow",
+    "guarded_holes_wide",
+    "i_le_j_narrow",
+    "i_le_j_wide",
+    "indep_const2",
+    "indep_small",
+    "interleaved_wide",
+    "jmod5_mega",
+    "jmod5_narrow",
+    "jmod5_ne100",
+    "jmod5_top",
+    "jmod5_wide",
+    "lambda_chain",
+    "let_chain",
+    "ne_guard_wide",
+    "nested_moduli_946_eq",
+    "nested_moduli_eq",
+    "nested_moduli_eq_4096",
+    "nested_moduli_mod7",
+    "normal_add_base",
+    "normal_div_chain",
+    "normal_holey_guards",
+    "normal_incompatible_moduli",
+    "normal_min_gap",
+    "normal_mixed_moduli",
+    "normal_mod_chain",
+    "normal_mul_base",
+    "normal_mul_chain",
+    "normal_named",
+    "normal_named_modguard",
+    "normal_named_reflection",
+    "normal_rel_guard",
+    "normal_round_down",
+    "normal_round_trip",
+    "output_grid",
+    "pathological_2var",
+    "pathological_abs",
+    "pow2_small",
+    "pow2_wide",
+];
+
+/// Every family `bench::ref_memo` times, at 1 to 4 links (`output_grid` at 8): the reference preimage holds every
+/// point of `[-12, 12]` on each input (within its domain) that meets the demand, and, where
+/// it is marked exact, every point of it there meets the demand, by the interpreter. The
+/// benchmarks time these families at 2 to 1280 links and check only their work.
 #[test]
-fn output_grid_work_grows_with_its_answer() {
+fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
     on_big_stack(|| {
-        let n = 1024;
-        let (small, large) = (output_grid(n, 64), output_grid(n, 512));
-        let run = |(t, ds, d): &(Term, Domains, Demand)| {
-            std::hint::black_box(preimage(t, ds, d));
-        };
-        scaling::compare(
-            "the reference preimage of output_grid at 1024 links, 64 and 512 values demanded",
-            1,
-            || run(&small),
-            || run(&large),
-        );
-        assert_eq!(answer_pieces(&small), 64 * n);
-        assert_eq!(answer_pieces(&large), 512 * n);
+        for name in FAMILIES.iter().chain(&["random_chains"]) {
+            // `output_grid` demands four odd values, so it needs 8 links.
+            let sizes = if *name == "output_grid" { 8..=8 } else { 1..=4 };
+            for n in sizes {
+                for (t, ds, d) in family(name, n) {
+                    let p = preimage(&t, &ds, &d);
+                    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+                    let mut all: Vec<Vec<Num>> = vec![vec![]];
+                    for name in &names {
+                        let axis: Vec<Num> = (-12..=12)
+                            .map(Num::from)
+                            .filter(|v| ds[name].contains_end(&End::Fin(v.clone())))
+                            .collect();
+                        all = all
+                            .into_iter()
+                            .flat_map(|q| {
+                                axis.iter().map(move |v| {
+                                    let mut q = q.clone();
+                                    q.push(v.clone());
+                                    q
+                                })
+                            })
+                            .collect();
+                    }
+                    for pt in &all {
+                        let hit = names.iter().zip(pt).all(|(x, v)| {
+                            p.domains
+                                .get(x)
+                                .is_none_or(|s| s.contains_end(&End::Fin(v.clone())))
+                        });
+                        let meets = meets(&t, &names, pt, &d);
+                        assert!(!meets || hit, "{name} at {n}: {pt:?} meets {d:?} outside {p:?}");
+                        assert!(!p.exact || !hit || meets, "{name} at {n}: {pt:?} in exact {p:?}");
+                    }
+                }
+            }
+        }
     });
 }

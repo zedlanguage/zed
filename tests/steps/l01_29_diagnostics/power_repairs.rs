@@ -9,11 +9,10 @@
 //! 5^3 - 10 = 115, and the headline of one past it shows the derived `int[-1..]`
 //! (POW-tower-exact-test).
 
-use zed_tests::scaling;
 use zedc::run::load;
 
 /// `src` with a `main` added, so that `load` checks its functions.
-fn program(src: &str) -> String {
+pub(super) fn program(src: &str) -> String {
     format!("{src}main(m: MainArgs) {{\n  m.stdout <- \"a\";\n}}\n")
 }
 
@@ -457,7 +456,7 @@ fn a_use_beside_a_fixed_carrier_keeps_the_repairs_of_that_carrier() {
 
 /// A function of `n` names each bound to a power to a negative literal and used twice, and one
 /// name bound to a sum of `n` such powers, one class with `n` powers among its uses.
-fn negative_bound(n: usize) -> String {
+pub(super) fn negative_bound(n: usize) -> String {
     let mut src = String::from("q(n: int) {\n  y = 2^-1");
     for _ in 1..n {
         src += " + 2^-1";
@@ -469,23 +468,30 @@ fn negative_bound(n: usize) -> String {
     src + "  return y;\n}\n"
 }
 
+/// Asserts that `src` is rejected.
+pub(super) fn is_rejected(src: &str) {
+    assert!(load(src.as_bytes()).is_err(), "{src}");
+}
+
+/// Asserts that `src` checks, as [`checks`] does with the program around it.
+pub(super) fn checks_whole(src: &str) {
+    load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
+}
+
 #[test]
-fn checking_bound_powers_to_negative_literals_scales() {
-    let made = scaling::inputs(64, |n| program(&negative_bound(n)));
-    scaling::check(
-        "checking n bound powers to negative literals and n powers in one class",
-        64,
-        |n| {
-            let src = &made[&n];
-            assert!(load(src.as_bytes()).is_err(), "{src}");
-        },
-    );
+fn checking_bound_powers_and_their_repairs_at_uses() {
+    for n in [1, 3] {
+        is_rejected(&program(&negative_bound(n)));
+        is_rejected(&program(&bound_uses(n)));
+        checks_whole(&program(&tower(n)));
+        checks_whole(&program(&narrowed_tower(n)));
+    }
 }
 
 /// A function of `n` rejected powers each bound to a name used twice, as one argument of an
 /// int sum and as both arguments of a product, and one rejected power bound to a name used `n`
 /// times: each repair is checked at every use.
-fn bound_uses(n: usize) -> String {
+pub(super) fn bound_uses(n: usize) -> String {
     let mut src = String::from("q(n: int, k: int) {\n  y = 2^k;\n");
     for i in 0..n {
         src += &format!("  b{i} = 2^k;\n  c{i} = b{i} + n;\n  d{i} = b{i} * b{i};\n");
@@ -494,22 +500,10 @@ fn bound_uses(n: usize) -> String {
     src + "  return y;\n}\n"
 }
 
-#[test]
-fn checking_repairs_at_uses_scales() {
-    let made = scaling::inputs(64, |n| program(&bound_uses(n)));
-    scaling::check(
-        "checking repairs at the uses of n names and n uses of a name",
-        64,
-        |n| {
-            let src = &made[&n];
-            assert!(load(src.as_bytes()).is_err(), "{src}");
-        },
-    );
-}
 
 /// A chain of `n` bindings under `k >= 0`, each a power of 2 to the one before, and each
 /// exponent shown to be at least 1 by the power that gives it.
-fn tower(n: usize) -> String {
+pub(super) fn tower(n: usize) -> String {
     let mut src = String::from("q(k: int) {\n  y0 = if k >= 0 { 2^k } else { 1 };\n");
     for i in 1..n {
         src += &format!("  y{i} = 2^y{p};\n", p = i - 1);
@@ -517,18 +511,10 @@ fn tower(n: usize) -> String {
     src + &format!("  return y{};\n}}\n", n - 1)
 }
 
-#[test]
-fn a_chain_of_powers_scales() {
-    let made = scaling::inputs(64, |n| program(&tower(n)));
-    scaling::check("checking a chain of n powers of powers", 64, |n| {
-        let src = &made[&n];
-        load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
-    });
-}
 
 /// A tower of `n` powers under `k > 0`, each exponent one less than a power of 2 and so at least
 /// 0 only where the test's narrowing of `k` reaches it: `2^(2^(2^k - 1) - 1) ...`.
-fn narrowed_tower(n: usize) -> String {
+pub(super) fn narrowed_tower(n: usize) -> String {
     let mut e = String::from("2^k - 1");
     for _ in 1..n {
         e = format!("2^({e}) - 1");
@@ -536,14 +522,6 @@ fn narrowed_tower(n: usize) -> String {
     format!("q(k: int) = if k > 0 {{ {e} }} else {{ 0 }};\n")
 }
 
-#[test]
-fn a_tower_of_powers_under_a_test_scales() {
-    let made = scaling::inputs(64, |n| program(&narrowed_tower(n)));
-    scaling::check("checking a tower of n powers under a test", 64, |n| {
-        let src = &made[&n];
-        load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
-    });
-}
 
 /// Asserts that `src` is rejected with an int power whose headline shows `power`, its code
 /// annotated with the types the checker derived, as `2 : int ^ (2^k - 3) : int[-1..]`.
@@ -608,7 +586,7 @@ fn the_least_power_of_a_neighboring_tower_is_exact() {
 /// from `2^k`, and `2^(e - 2)` of the top level `e`: each level is at least 2, since
 /// `5^(2 + 1) - 123 = 2`, read exactly at every level, where a bound below the least power
 /// rejects it (Bernoulli's 1 + 3(5 - 1) = 13 gives -110).
-fn least_power_tower(n: usize, minus: usize) -> String {
+pub(super) fn least_power_tower(n: usize, minus: usize) -> String {
     let mut e = String::from("2^k");
     for _ in 0..n {
         e = format!("5^({e} + 1) - 123");
@@ -617,7 +595,7 @@ fn least_power_tower(n: usize, minus: usize) -> String {
 }
 
 #[test]
-fn a_tower_at_its_least_power_checks_and_scales() {
+fn a_tower_at_its_least_power_checks() {
     // The top level is at least 2 and no more: `- 2` checks and `- 3` is rejected.
     for n in [1, 2, 3] {
         checks(&least_power_tower(n, 2));
@@ -629,13 +607,4 @@ fn a_tower_at_its_least_power_checks_and_scales() {
             "{out}"
         );
     }
-    let made = scaling::inputs(64, |n| program(&least_power_tower(n, 2)));
-    scaling::check(
-        "checking a tower of n powers, each at its least power",
-        64,
-        |n| {
-            let src = &made[&n];
-            load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
-        },
-    );
 }

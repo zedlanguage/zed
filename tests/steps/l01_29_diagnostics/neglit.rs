@@ -3,11 +3,10 @@
 //! `-1.abs` parses as `-(1.abs)`, which is `-1`, so it is rejected after parsing with the
 //! chain, the value each grouping gives, and both groupings as repairs.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use zed_kernel::Lookup;
-use zed_tests::scaling;
 use zedc::ast::{Error, unit};
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
@@ -152,28 +151,32 @@ fn a_unit_that_binds_the_word_shows_no_values() {
 }
 
 /// A unit of `n` definitions, each negating a chain of three words on a literal.
-fn many(n: usize) -> String {
+pub(super) fn many(n: usize) -> String {
     (0..n)
         .map(|i| format!("y{i} = -{i}.abs.abs.abs;\n"))
         .collect()
 }
 
 /// A unit with one definition negating a chain of `n` words on a literal.
-fn long(n: usize) -> String {
+pub(super) fn long(n: usize) -> String {
     format!("y = -1{};\n", ".abs".repeat(n))
 }
 
+/// [`many`]`(n)` is rejected by the row.
+pub(super) fn many_chains_rejected(src: &str) {
+    assert_eq!(built(src).unwrap_err().row, Some(Row::PrefixMinus));
+}
+
+/// [`long`]`(n)` is rejected with the value of the chain, -1.
+pub(super) fn one_long_chain_rejected(src: &str) {
+    let err = built(src).unwrap_err();
+    assert!(err.message.contains("which is -1, not"), "{}", err.message);
+}
+
 #[test]
-fn rejecting_many_chains_and_one_long_chain_scales() {
-    // The inputs are built before the timing.
-    let sizes = [400, 400 * scaling::FACTOR];
-    let units: HashMap<usize, (String, String)> =
-        sizes.iter().map(|&n| (n, (many(n), long(n)))).collect();
-    scaling::check("rejecting n negated literal chains in one unit", 400, |n| {
-        assert_eq!(built(&units[&n].0).unwrap_err().row, Some(Row::PrefixMinus));
-    });
-    scaling::check("rejecting one negated literal chain of n words", 400, |n| {
-        let err = built(&units[&n].1).unwrap_err();
-        assert!(err.message.contains("which is -1, not"), "{}", err.message);
-    });
+fn rejecting_many_chains_and_one_long_chain() {
+    for n in [1, 3, 20] {
+        many_chains_rejected(&many(n));
+        one_long_chain_rejected(&long(n));
+    }
 }

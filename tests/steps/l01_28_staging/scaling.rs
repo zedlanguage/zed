@@ -1,12 +1,12 @@
 //! Staging at the rule of low complexity (DESIGN.md Part G). Deciding the stage of a term
 //! read its free names, and `mix` decided it at every node it entered, so a body of `n`
 //! nested definitions was read `O(n)` times, each reading through a scope of `O(n)` names.
+//! The checks at `n` and `8n` are in `bench::scaling`; these tests run the same checks at
+//! small sizes, and each deep shape once at a depth that overflowed a stack of 2 MiB.
 
-use std::collections::BTreeMap;
 use zed_kernel::Shared;
 
 use std::sync::Arc;
-use zed_tests::scaling::{self, FACTOR};
 
 use zed_kernel::term::build::{if_, lam, let_, lit, prim, var};
 use zed_kernel::term::{Prim, Term};
@@ -19,7 +19,7 @@ use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 /// `main` with `n` local definitions in a chain from a port, each read by the next; `all`
 /// writes their sum, so the last term reads every one.
-fn chain(n: usize, all: bool) -> String {
+pub(super) fn chain(n: usize, all: bool) -> String {
     let mut s = String::from("main(m: MainArgs) {\n");
     s += "  x0 = int(m.stdin[0]) else 0;\n";
     for i in 1..=n {
@@ -42,43 +42,37 @@ pub(super) fn deep(f: impl FnOnce() + Send + 'static) {
     t.unwrap().join().unwrap();
 }
 
-/// Checks that staging `chain(n, all)` scales, `what` naming it, with the program loaded
-/// before timing: loading it, which parses, checks and elaborates, did 7 to 9 times the work
-/// of staging, enough to hide a quadratic added to it (COMPLEXITY.md F85). The output of the
-/// staged program of size `n` is checked once, outside the timing, to be `want`.
-fn mixing_scales(what: &'static str, n: usize, all: bool, want: usize) {
-    deep(move || {
-        let progs: BTreeMap<usize, Program> = [n, FACTOR * n]
-            .into_iter()
-            .map(|k| (k, load(chain(k, all).as_bytes()).unwrap()))
-            .collect();
-        let (s, report) = progs[&n].stage();
-        assert!(report.left.is_empty());
-        assert_eq!(out(&s, "1\n"), format!("{want}\n"));
-        scaling::check(what, n, |k| {
-            let (_, report) = progs[&k].stage();
-            assert!(report.left.is_empty());
-        });
-    });
+/// `p`, a loaded [`chain`], stages with nothing left to run.
+pub(super) fn a_chain_staged(p: &Program) -> Program {
+    let (s, report) = p.stage();
+    assert!(report.left.is_empty());
+    s
 }
 
-#[test]
-fn mixing_a_chain_of_local_definitions_scales() {
-    let n = 400;
-    let want = 1 + n * (n + 1) / 2;
-    mixing_scales("mixing a chain of n run-stage definitions", n, false, want);
+/// What the staged program of `chain(n, all)` writes on input 1: `1 + 1 + … + n` for the last
+/// definition, and the sum of every definition's value for `all`.
+fn chain_gives(n: usize, all: bool) -> usize {
+    let x = |i: usize| 1 + i * (i + 1) / 2;
+    match all {
+        true => (0..=n).map(x).sum(),
+        false => x(n),
+    }
 }
 
+/// Chains of 1, 2 and 9 definitions, the last read and all read, staged and run
+/// (`bench::scaling` times 400 and 200 definitions).
 #[test]
-fn mixing_a_term_that_reads_every_definition_scales() {
-    let n = 200;
-    let want = (0..=n).map(|i| 1 + i * (i + 1) / 2).sum();
-    let what = "mixing a chain of n definitions all read at the end";
-    mixing_scales(what, n, true, want);
+fn mixing_a_chain_of_local_definitions() {
+    for n in [1, 2, 9] {
+        for all in [false, true] {
+            let s = a_chain_staged(&load(chain(n, all).as_bytes()).unwrap());
+            assert_eq!(out(&s, "1\n"), format!("{}\n", chain_gives(n, all)));
+        }
+    }
 }
 
 /// `f` and `n` definitions, each calling it with its own literal.
-fn callers(n: usize) -> String {
+pub(super) fn callers(n: usize) -> String {
     let mut s = String::from("f(x: int, y: int) = x + y;\n");
     for i in 0..n {
         s += &format!("z{i}(a: int) = f(x: {i}, y: a);\n");
@@ -86,49 +80,46 @@ fn callers(n: usize) -> String {
     s
 }
 
-#[test]
-fn the_values_passed_by_many_definitions_are_read_in_time_that_scales() {
-    // Each definition was looked for among the names of all of them.
-    let units: BTreeMap<usize, Unit> = [2000, FACTOR * 2000]
-        .into_iter()
-        .map(|n| (n, elab(&callers(n)).unwrap()))
-        .collect();
-    scaling::check("the values passed by n definitions", 2000, |n| {
-        assert_eq!(passed(&units[&n], "f", 0).len(), n);
-    });
+/// `u`, [`callers`]`(n)` elaborated, passes `n` values to `f`'s first parameter.
+pub(super) fn the_values_passed(u: &Unit, n: usize) {
+    assert_eq!(passed(u, "f", 0).len(), n);
 }
 
+/// 0, 1, 2 and 9 definitions calling `f` (`bench::scaling` times 2000 and 16,000).
 #[test]
-fn the_form_rule_on_many_nested_lets_calling_a_prelude_word_scales() {
-    // Each call through a name looked for it among every name bound around the call, and a
-    // prelude word is bound by none of them.
-    use zed_kernel::Term;
-    use zed_kernel::term::build::var;
-    use zedc::stage::ends;
-    let lets = |n: usize| {
-        (1..=n).rev().fold(var(&format!("x{n}")), |b, i| {
-            let e = Term::App(Shared::new(var("len")), vec![var(&format!("x{}", i - 1))]);
-            Term::Let(format!("x{i}").into(), Shared::new(e), Shared::new(b))
-        })
-    };
-    deep(move || {
-        let terms: BTreeMap<usize, Term> = [1000, FACTOR * 1000]
-            .into_iter()
-            .map(|n| (n, lets(n)))
-            .collect();
-        scaling::check("the form rule on n nested lets", 1000, |n| {
-            assert!(ends(&terms[&n]));
-        });
-        let call_f = |b| Term::App(Shared::new(var("f")), vec![b]);
-        let bound_to_param = Term::Lam(vec!["f".into()], Shared::new(lets(3)));
-        assert!(ends(&bound_to_param), "`len` is not `f`");
-        let calls_param = Term::Lam(vec!["f".into()], Shared::new(call_f(lets(3))));
-        assert!(!ends(&calls_param));
-    });
+fn the_values_passed_by_many_definitions_are_read() {
+    for n in [0, 1, 2, 9] {
+        the_values_passed(&elab(&callers(n)).unwrap(), n);
+    }
+}
+
+/// `n` nested lets, each binding `x_i` to `len(x_{i-1})`, around `x_n`.
+pub(super) fn nested_lets_calling_len(n: usize) -> Term {
+    (1..=n).rev().fold(var(&format!("x{n}")), |b, i| {
+        let e = Term::App(Shared::new(var("len")), vec![var(&format!("x{}", i - 1))]);
+        Term::Let(format!("x{i}").into(), Shared::new(e), Shared::new(b))
+    })
+}
+
+/// The form rule on 1, 2 and 9 nested lets calling the prelude word `len`, and on a parameter
+/// `f` around them, called and not (`bench::scaling` times 1000 and 8000 lets).
+#[test]
+fn the_form_rule_on_nested_lets_calling_a_prelude_word() {
+    for n in [1, 2, 9] {
+        assert!(ends(&nested_lets_calling_len(n)));
+    }
+    let call_f = |b| Term::App(Shared::new(var("f")), vec![b]);
+    let bound_to_param = Term::Lam(vec!["f".into()], Shared::new(nested_lets_calling_len(3)));
+    assert!(ends(&bound_to_param), "`len` is not `f`");
+    let calls_param = Term::Lam(
+        vec!["f".into()],
+        Shared::new(call_f(nested_lets_calling_len(3))),
+    );
+    assert!(!ends(&calls_param));
 }
 
 /// `n` functions `h{i}`, each called by a `z{i}` with its own literal.
-fn many_callees(n: usize) -> String {
+pub(super) fn many_callees(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!("h{i}(x: int, y: int) = x * y + {i};\nz{i}(a: int) = h{i}(x: {i}, y: a);\n")
@@ -136,27 +127,28 @@ fn many_callees(n: usize) -> String {
         .collect()
 }
 
-#[test]
-fn splitting_many_functions_of_one_unit_scales() {
-    // Each split mixed the whole unit again to find the values its calls pass, so splitting
-    // each of `n` functions took `O(n²)`; the calls are now read from one mix.
-    let units: BTreeMap<usize, Unit> = [200, FACTOR * 200]
-        .into_iter()
-        .map(|n| (n, elab(&many_callees(n)).unwrap()))
-        .collect();
+/// `u`, [`many_callees`]`(n)` elaborated, splits each of its `n` functions on its first
+/// parameter into a lambda.
+pub(super) fn every_function_split(u: &Unit, n: usize) {
     let d = Domain::Ints(Some(0), Some(1 << 20));
-    scaling::check_order("splitting n functions of a unit", 200, 1, |n| {
-        let mut s = Specializer::new(&units[&n]);
-        for i in 0..n {
-            let (lam, _) = s.split(&format!("h{i}"), 0, &d).unwrap();
-            assert!(matches!(lam, zed_kernel::Term::Lam(..)));
-        }
-    });
+    let mut s = Specializer::new(u);
+    for i in 0..n {
+        let (lam, _) = s.split(&format!("h{i}"), 0, &d).unwrap();
+        assert!(matches!(lam, zed_kernel::Term::Lam(..)));
+    }
+}
+
+/// 1, 2 and 9 functions of one unit, each split (`bench::scaling` times 200 and 1600).
+#[test]
+fn splitting_many_functions_of_one_unit() {
+    for n in [1, 2, 9] {
+        every_function_split(&elab(&many_callees(n)).unwrap(), n);
+    }
 }
 
 /// A run-stage shape of `main`'s body, `n` deep.
 #[derive(Clone, Copy)]
-enum Shape {
+pub(super) enum Shape {
     /// A `let` chain from `p`.
     Chain,
     /// A left-nested sum on `p`.
@@ -168,7 +160,7 @@ enum Shape {
 }
 
 impl Shape {
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Shape::Chain => "a `let` chain",
             Shape::Sum => "a left-nested sum",
@@ -180,7 +172,7 @@ impl Shape {
 
 /// `main(p) = t` for the run-stage `shape` `t`, `n` deep, with the build-stage sum
 /// `0 + 1 + … + 1` of `n` terms whose form shows that it ends.
-fn deep_unit(shape: Shape, n: usize) -> (Unit, Term) {
+pub(super) fn deep_unit(shape: Shape, n: usize) -> (Unit, Term) {
     let x = |i: usize| format!("x{i}");
     let t = match shape {
         Shape::Chain => (0..n).rev().fold(var(&x(n - 1)), |body, i| {
@@ -211,50 +203,51 @@ fn deep_unit(shape: Shape, n: usize) -> (Unit, Term) {
     (unit, ends)
 }
 
-/// Checks that mixing and coloring `shape`, and deciding that the sum ends, take time linear
-/// in the depth, 12,500 and 100,000 deep, on a stack of 2 MiB. Reading the free names, the
-/// effects and whether a term ends, indexing it and mixing it each recursed once per level of
-/// the term, and overflowed this stack near 10,000 levels. One test per shape: the four
-/// together took 28 s alone at load 41, near half the 60 s limit of a test piece.
+/// `u`, a [`deep_unit`] of `shape`, mixes with nothing left to run and no free name.
+pub(super) fn a_deep_unit_mixed(u: &Unit, shape: Shape) {
+    let (mixed, report) = mix(u, &["main"]);
+    assert!(report.left.is_empty(), "{}", shape.name());
+    assert!(free(&mixed.defs[0].term).is_empty(), "{}", shape.name());
+}
+
+/// `u`, a [`deep_unit`], colors `main` build-stage.
+pub(super) fn a_deep_unit_colored(u: &Unit) {
+    assert_eq!(color(u), [("main".to_string(), Stage::Build)]);
+}
+
+/// The depth at which reading the free names, the effects and whether a term ends, indexing it
+/// and mixing it, each of which recursed once per level of the term, overflowed a stack of
+/// 2 MiB: near 10,000 levels.
+const OVERFLOWED: usize = 12_500;
+
+/// Mixes and colors `shape` [`OVERFLOWED`] deep, and decides that the sum ends, on a stack of
+/// 2 MiB (`bench::scaling` times 12,500 and 100,000 deep).
 fn staged_on_a_2_mib_stack(shape: Shape) {
-    let n = 12_500;
-    let deep = 8 * n;
-    let what = shape.name();
     zed_tests::deep::on_small_stack(move || {
-        let (s, se) = deep_unit(shape, n);
-        let (l, le) = deep_unit(shape, deep);
-        let pick = |k: usize| if k == n { (&s, &se) } else { (&l, &le) };
-        scaling::check_order(&format!("mixing {what}"), n, 1, |k| {
-            let (mixed, report) = mix(pick(k).0, &["main"]);
-            assert!(report.left.is_empty(), "{what}");
-            assert!(free(&mixed.defs[0].term).is_empty(), "{what}");
-        });
-        scaling::check_order(&format!("coloring {what}"), n, 1, |k| {
-            assert_eq!(color(pick(k).0), [("main".to_string(), Stage::Build)]);
-        });
-        scaling::check_order("deciding that a sum ends", n, 1, |k| {
-            assert!(ends(pick(k).1));
-        });
+        let (u, ends_term) = deep_unit(shape, OVERFLOWED);
+        a_deep_unit_mixed(&u, shape);
+        a_deep_unit_colored(&u);
+        assert!(ends(&ends_term));
     });
 }
 
 #[test]
-fn a_let_chain_100000_deep_is_staged_on_a_2_mib_stack() {
+fn a_let_chain_12500_deep_is_staged_on_a_2_mib_stack() {
     staged_on_a_2_mib_stack(Shape::Chain);
 }
 
 #[test]
-fn a_left_nested_sum_100000_deep_is_staged_on_a_2_mib_stack() {
+fn a_left_nested_sum_12500_deep_is_staged_on_a_2_mib_stack() {
     staged_on_a_2_mib_stack(Shape::Sum);
 }
 
 #[test]
-fn ifs_100000_deep_are_staged_on_a_2_mib_stack() {
+fn ifs_12500_deep_are_staged_on_a_2_mib_stack() {
     staged_on_a_2_mib_stack(Shape::Ifs);
 }
 
 #[test]
-fn lambdas_100000_deep_are_staged_on_a_2_mib_stack() {
+fn lambdas_12500_deep_are_staged_on_a_2_mib_stack() {
     staged_on_a_2_mib_stack(Shape::Lams);
 }
 

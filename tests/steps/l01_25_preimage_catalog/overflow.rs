@@ -133,7 +133,7 @@ fn the_complement_at_the_ends_of_i64() {
 
 /// `n` pieces from `i64::MIN` to `i64::MAX`, one integer each with gaps of one between them
 /// except a wide gap in the middle.
-fn spread(n: usize) -> IntervalSet {
+pub(super) fn spread(n: usize) -> IntervalSet {
     let n = n as i64;
     let low = (0..n / 2).map(|i| (End::of(MIN + 2 * i), End::of(MIN + 2 * i)));
     let high = (0..n - n / 2).map(|i| (End::of(MAX - 2 * i), End::of(MAX - 2 * i)));
@@ -141,7 +141,7 @@ fn spread(n: usize) -> IntervalSet {
 }
 
 /// `y + 1 + 1 + … + 1` (`k` ones) `!= MAX` over `y` in `[MAX - k - 5, MAX]`.
-fn ones(k: usize) -> (Term, Domains) {
+pub(super) fn ones(k: usize) -> (Term, Domains) {
     let sum = (0..k).fold(var("y"), |t, _| prim(Prim::Add, t, int(1)));
     let lo = MAX - k as i64 - 5;
     (
@@ -150,27 +150,29 @@ fn ones(k: usize) -> (Term, Domains) {
     )
 }
 
+
+/// The sets and terms `bench::overflow` times, at small sizes: the complement of [`spread`]
+/// is the gaps between its pieces and beyond `i64` at both ends, and the preimage of
+/// [`ones`] keeps every `y` but `MAX - k`, the sum passing `MAX` from `MAX - k + 1` up.
 #[test]
-fn the_complement_at_the_ends_scales() {
-    let sets: Vec<(usize, IntervalSet)> = [1024, 8192].map(|n| (n, spread(n))).into();
+fn the_complement_at_the_ends_and_a_sum_passing_max() {
     let top = IntervalSet::top();
-    zed_tests::scaling::check(
-        "the complement of n pieces at both ends of `i64`",
-        1024,
-        |n| {
-            let s = &sets.iter().find(|(m, _)| *m == n).expect("a built set").1;
-            std::hint::black_box(s.complement_in(&top));
-        },
-    );
-    let terms: Vec<(usize, (Term, Domains))> = [64, 512].map(|k| (k, ones(k))).into();
-    zed_tests::scaling::check("`y + 1 + … + 1 != MAX` with k ones", 64, |k| {
-        let (t, ds) = &terms.iter().find(|(m, _)| *m == k).expect("a built term").1;
-        std::hint::black_box(preimage(t, ds, &Demand::Bool(true)));
-    });
-    // Every `y` meets it but `MAX - 64`; from `MAX - 63` up the sum passes `MAX`.
-    let (t, ds) = ones(64);
-    assert_eq!(
-        checked(&t, &ds, &Demand::Bool(true), (MAX - 69, MAX)),
-        format!("y [{}..={}, {}..]; exact", MAX - 69, MAX - 65, MAX - 63)
-    );
+    for n in [1, 2, 5] {
+        let s = spread(n);
+        let c = s.complement_in(&top);
+        for v in [MIN, MIN + 1, MIN + 2, MIN + 3, MAX - 3, MAX - 2, MAX - 1, MAX, 0] {
+            assert_ne!(s.contains(v), c.contains(v), "n={n}, {v}");
+        }
+        assert_eq!(c.complement_in(&top), s, "n={n}");
+    }
+    for k in [1, 2, 64] {
+        let (t, ds) = ones(k);
+        let k = k as i64;
+        let below = MAX - k;
+        assert_eq!(
+            checked(&t, &ds, &Demand::Bool(true), (MAX - k - 5, MAX)),
+            format!("y [{}..={}, {}..]; exact", MAX - k - 5, below - 1, below + 1),
+            "k={k}"
+        );
+    }
 }

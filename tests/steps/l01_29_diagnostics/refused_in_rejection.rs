@@ -6,7 +6,6 @@
 //! add no step.
 
 use super::refused_warning::{GROWTH, LAST, run, unit};
-use zed_tests::scaling;
 
 /// The conditions [`GROWTH`] as the checker prints them.
 const CONDITIONS: &str = "12 * w + 10 * y + 12 * z <= 4 * x + 11 && \
@@ -302,7 +301,7 @@ fn an_inner_name_read_from_a_name_under_a_refused_question_takes_the_question() 
 /// A function of `n` groups of four parameters, each group `xi`, `yi`, `zi`, `wi` under its own
 /// copy of [`GROWTH`], all in one test, whose arm adds `2 ^ xi` for each group: `n` refused
 /// questions in one scope and `n` rejections, each with one question behind it.
-fn many_groups(n: usize) -> String {
+pub(super) fn many_groups(n: usize) -> String {
     let group = |i: usize| {
         GROWTH
             .replace('x', &format!("x{i}"))
@@ -323,23 +322,19 @@ fn many_groups(n: usize) -> String {
     )
 }
 
-/// `zedc run` on `n` rejections under `n` refused questions in one scope, each rejection
-/// naming the one question on its names: finding them is within n log n, where reading every
-/// question of the scope for each rejection would be n².
+/// `zedc run` on [`many_groups`]`(n)` in `file`: `n` rejections, each naming the one question
+/// on its names.
+pub(super) fn rejections_under_refused_tests(file: &str, n: usize) {
+    let (status, err) = run(file, &[]);
+    assert_eq!(status, 1);
+    assert_eq!(err.matches("Int power with an exponent").count(), n);
+    assert_eq!(err.matches("here the conditions").count(), n);
+}
+
 #[test]
-fn many_rejections_under_many_refused_tests_scale() {
-    let n = 20;
-    let files = scaling::inputs(n, |m| {
-        unit("rejection", &format!("groups{m}.zed"), &many_groups(m))
-    });
-    scaling::check(
-        "zedc run on n rejections under n refused questions",
-        n,
-        |m| {
-            let (status, err) = run(&files[&m], &[]);
-            assert_eq!(status, 1);
-            assert_eq!(err.matches("Int power with an exponent").count(), m);
-            assert_eq!(err.matches("here the conditions").count(), m);
-        },
-    );
+fn many_rejections_under_many_refused_tests() {
+    for n in [1, 3] {
+        let file = unit("rejection", &format!("groups{n}.zed"), &many_groups(n));
+        rejections_under_refused_tests(&file, n);
+    }
 }

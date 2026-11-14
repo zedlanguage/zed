@@ -6,7 +6,6 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use zed_tests::scaling;
 use zedc::address::ContentAddress;
 use zedc::front::Diagnostic;
 use zedc::run::{load, load_file};
@@ -391,34 +390,38 @@ fn a_word_after_suppress_that_is_not_an_address_is_a_usage_error() {
     assert_eq!(zedc_test(&["--suppress", "abc", &file]).0, 2);
 }
 
-/// `zedc run` on a unit of `n` warnings with every one suppressed: compiling, addressing and
-/// matching together are within n log n. The files and the words are made before the timing.
+/// The words of `zedc run` on a unit of `m` warnings, [`many_squares`], with every warning
+/// suppressed; the file is written.
+pub(super) fn every_warning_suppressed(m: usize) -> Vec<String> {
+    let src = many_squares(m);
+    let file = unit("suppress", &format!("scale{m}.zed"), &src);
+    let at = InFile::of(Path::new(&file)).unwrap();
+    let mut words = vec!["run".to_string(), file];
+    for w in load(src.as_bytes()).unwrap().warnings() {
+        words.push("--suppress".into());
+        words.push(at.address(w).to_string());
+    }
+    words
+}
+
+/// `zedc run` on `words` succeeds and prints nothing but the result.
+pub(super) fn run_with_every_warning_suppressed(words: &[String]) {
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    assert_eq!(zedc(&words), (0, "0\n".into(), String::new()));
+}
+
+/// A unit of 1 and of 3 warnings, each suppressed (`bench::suppress` times 400 and 3200).
 #[test]
-fn suppressing_every_warning_scales() {
-    let n = 400;
-    let runs: Vec<(usize, Vec<String>)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let src = many_squares(m);
-            let file = unit("suppress", &format!("scale{m}.zed"), &src);
-            let at = InFile::of(Path::new(&file)).unwrap();
-            let mut words = vec!["run".to_string(), file];
-            for w in load(src.as_bytes()).unwrap().warnings() {
-                words.push("--suppress".into());
-                words.push(at.address(w).to_string());
-            }
-            (m, words)
-        })
-        .collect();
-    scaling::check("zedc run suppressing each of n warnings", n, |m| {
-        let words = &runs.iter().find(|(k, _)| *k == m).expect("a size").1;
-        let words: Vec<&str> = words.iter().map(String::as_str).collect();
-        assert_eq!(zedc(&words), (0, "0\n".into(), String::new()));
-    });
+fn suppressing_every_warning() {
+    for m in [1, 3] {
+        let words = every_warning_suppressed(m);
+        assert_eq!(words.len(), 2 + 2 * m, "{words:?}");
+        run_with_every_warning_suppressed(&words);
+    }
 }
 
 /// `n` warnings with distinct addresses, and the words that suppress every one of them.
-fn suppressed(n: usize) -> (Vec<Diagnostic>, Vec<String>) {
+pub(super) fn suppressed(n: usize) -> (Vec<Diagnostic>, Vec<String>) {
     let warnings: Vec<Diagnostic> = (0..n)
         .map(|i| Diagnostic {
             line: i + 1,
@@ -437,17 +440,19 @@ fn suppressed(n: usize) -> (Vec<Diagnostic>, Vec<String>) {
     (warnings, words)
 }
 
-/// Matching `n` suppressions against `n` warnings is O(n): each address is found in a set.
+/// Each of `warnings` is hidden by the suppressions of `words`, and each suppression matches.
+pub(super) fn suppressions_matched((warnings, words): &(Vec<Diagnostic>, Vec<String>)) {
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let (mut suppress, rest) = Suppress::take(&words).unwrap();
+    assert!(rest.is_empty());
+    assert!(warnings.iter().all(|w| suppress.hides(w.address)));
+    assert!(suppress.unmatched().is_empty());
+}
+
+/// 1 and 3 suppressions against as many warnings (`bench::suppress` times 20,000 and 160,000).
 #[test]
-fn matching_suppressions_scales() {
-    let n = 20_000;
-    let sizes = [n, scaling::FACTOR * n].map(|m| (m, suppressed(m)));
-    scaling::check_order("matching n suppressions against n warnings", n, 1, |m| {
-        let (warnings, words) = &sizes.iter().find(|(k, _)| *k == m).expect("a size").1;
-        let words: Vec<&str> = words.iter().map(String::as_str).collect();
-        let (mut suppress, rest) = Suppress::take(&words).unwrap();
-        assert!(rest.is_empty());
-        assert!(warnings.iter().all(|w| suppress.hides(w.address)));
-        assert!(suppress.unmatched().is_empty());
-    });
+fn matching_suppressions() {
+    for n in [1, 3] {
+        suppressions_matched(&suppressed(n));
+    }
 }

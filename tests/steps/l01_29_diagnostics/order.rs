@@ -11,7 +11,6 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::lex::{Tok, lex_with_docs};
 use zedc::parse::{TOP, Tree, parse};
 use zedc::query::Db;
@@ -707,7 +706,7 @@ fn a_doc_comment_at_the_end_of_a_line_goes_with_the_next_item() {
 
 /// `n` items: functions, each odd one calling the one before, a test table on every tenth
 /// odd one, and a `main`. No call goes deeper than two, so the tables cost O(n).
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
         let p = i.saturating_sub(1);
@@ -722,7 +721,7 @@ fn chain(n: usize) -> String {
 
 /// `n` items over seven names, each owning every seventh item, so keeping each name's written
 /// order is exercised on every item.
-fn rates(n: usize) -> String {
+pub(super) fn rates(n: usize) -> String {
     (0..n)
         .map(|i| format!("rate{}(positional x) = x + {i};\n", i % 7))
         .collect()
@@ -730,7 +729,7 @@ fn rates(n: usize) -> String {
 
 /// `n` items, every other one a binding of two names out of eight (`v0` to `v4`, `w0` to
 /// `w2`), the rest functions over seven names, so the joins of the bindings grow and merge.
-fn pairs(n: usize) -> String {
+pub(super) fn pairs(n: usize) -> String {
     (0..n)
         .map(|i| match i % 2 {
             0 => format!("rate{}(positional x) = x + {i};\n", i % 7),
@@ -739,64 +738,45 @@ fn pairs(n: usize) -> String {
         .collect()
 }
 
-/// Cutting a unit into items is O(i): the lex and parse, and one pass over the root's items.
-#[test]
-fn cutting_a_unit_into_items_scales() {
-    let n = 2000;
-    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, rates(k))).collect();
-    scaling::check("cutting n items of seven names", n, |k| {
-        assert_eq!(items(&units[&k]).len(), k);
-    });
+/// [`items`] cuts [`rates`]`(n)` into its `n` items.
+pub(super) fn cut_into_items(text: &str, n: usize) {
+    assert_eq!(items(text).len(), n);
 }
 
-/// Moving the items is O(i): the two orders, each name's written order kept, and the moved
-/// texts. The items are cut before timing, since the lex and parse would hide a quadratic
-/// permutation.
-#[test]
-fn moving_the_items_of_a_unit_scales() {
-    let n = 2000;
-    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, rates(k))).collect();
-    let cut: HashMap<usize, Items> = units.iter().map(|(&k, t)| (k, items(t))).collect();
-    scaling::check("moving n items of seven names", n, |k| {
-        let items = &cut[&k];
-        for order in items.orders() {
-            assert_eq!(items.permuted(&order).text.len(), units[&k].len());
-        }
-    });
+/// Each order of `items`, cut from `text`, gives a text of the same length.
+pub(super) fn moved(text: &str, items: &Items) {
+    for order in items.orders() {
+        assert_eq!(items.permuted(&order).text.len(), text.len());
+    }
 }
 
-/// Keeping the written order of items that declare several names is O(i): the joins of
-/// shared names are found by union-find, with one hash lookup per name.
-#[test]
-fn moving_items_of_several_names_scales() {
-    let n = 2000;
-    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, pairs(k))).collect();
-    let cut: HashMap<usize, Items> = units.iter().map(|(&k, t)| (k, items(t))).collect();
-    assert_eq!(cut[&n].names[1], ["v1", "w1"]);
-    scaling::check("moving n items, every other one of two names", n, |k| {
-        let items = &cut[&k];
-        for order in items.orders() {
-            assert_eq!(items.permuted(&order).text.len(), units[&k].len());
-        }
-    });
+/// [`chain`]`(n)` cut, its items reversed and checked: accepted, with one test table at each item
+/// numbered 1 mod 10, each passing.
+pub(super) fn checked_with_its_items_moved(text: &str, n: usize) {
+    let items = items(text);
+    let [reversed, _] = items.orders();
+    let p = items.permuted(&reversed);
+    let answer = p.answer();
+    assert!(answer.accepted, "{answer:?}");
+    assert_eq!(answer.outcomes.len(), (n + 8) / 10);
+    assert!(answer.outcomes.iter().all(|o| o.1.is_none()), "{answer:?}");
 }
 
 #[test]
-fn checking_a_unit_with_its_items_moved_scales() {
-    let n = 200;
-    let units: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, chain(k))).collect();
-    scaling::check(
-        "cutting, moving and checking n items, with a test on every tenth",
-        n,
-        |k| {
-            let text = &units[&k];
-            let items = items(text);
-            let [reversed, _] = items.orders();
-            let p = items.permuted(&reversed);
-            let answer = p.answer();
-            assert!(answer.accepted, "{answer:?}");
-            assert_eq!(answer.outcomes.len(), k / 10);
-            assert!(answer.outcomes.iter().all(|o| o.1.is_none()), "{answer:?}");
-        },
-    );
+fn cutting_and_moving_the_items_of_a_unit() {
+    for n in [1, 7, 15] {
+        let text = rates(n);
+        cut_into_items(&text, n);
+        moved(&text, &items(&text));
+        let text = pairs(n);
+        moved(&text, &items(&text));
+    }
+    assert_eq!(items(&pairs(2)).names[1], ["v1", "w1"]);
+}
+
+#[test]
+fn checking_a_unit_with_its_items_moved() {
+    for n in [5, 10, 30] {
+        checked_with_its_items_moved(&chain(n), n);
+    }
 }

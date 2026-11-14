@@ -279,7 +279,7 @@ fn copies_of_a_stop_are_two_stops_shown_once() {
 
 /// `s = x + 1 + … + 1` with `n` ones, one shared term, and `hash(let u = s in u) < 0 && … &&
 /// hash(let u = s in u) < n - 1`: `n` stops, each at a term that prints at the size of `s`.
-fn stops_over_one_term(n: usize) -> Term {
+pub(super) fn stops_over_one_term(n: usize) -> Term {
     let s = Shared::new((0..n).fold(var("x"), |a, _| add(a, lit(1))));
     let call = || hash(Term::Let("u".into(), s.clone(), Shared::new(var("u"))));
     (1..n as i64).fold(lt(call(), lit(0)), |a, j| {
@@ -287,18 +287,18 @@ fn stops_over_one_term(n: usize) -> Term {
     })
 }
 
-/// A stop holds its term and makes its text only when read, so `n` stops over one shared term
-/// of size `n` take time of order `n`; printing each stop's term during the transfer took
-/// `n^2`.
+
+/// [`stops_over_one_term`] at small sizes: one stop at each of its `n` calls, each a foreign
+/// name, and the whole domain kept (`bench::stops` times 64 and 512 calls).
 #[test]
-fn many_stops_over_one_shared_term_make_no_text() {
+fn stops_over_one_shared_term_are_each_reported() {
     let ds = doms(&[("x", None, None)]);
-    let ds = &ds;
-    let terms = zed_tests::scaling::inputs(64, stops_over_one_term);
-    zed_tests::scaling::on_a_thread(2 << 20, || {
-        zed_tests::scaling::check("stops over one shared term", 64, |n| {
-            let p = preimage(&terms[&n], ds, &Demand::Bool(true));
-            assert_eq!(p.stops.len(), n);
-        })
-    });
+    for n in [1, 2, 5] {
+        let p = preimage(&stops_over_one_term(n), &ds, &Demand::Bool(true));
+        assert_eq!(p.stops.len(), n, "{}", shown(&p));
+        for s in &p.stops {
+            assert_eq!(s.kind, StopKind::Foreign("hash".into()));
+        }
+        assert!(shown(&p).starts_with("x [..]; necessary; stop: "), "{}", shown(&p));
+    }
 }

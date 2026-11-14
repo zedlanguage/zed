@@ -5,7 +5,6 @@
 //! and `|k|` the types allow, and nothing is built. Before, `b ^ (2^64)` with
 //! `b = 2^64 + 13` compiled and the run stopped with "Number too large for memory".
 
-use zed_tests::scaling;
 use zedc::build::Build;
 use zedc::run::load_for;
 
@@ -142,24 +141,12 @@ fn a_negative_exponent_is_bounded_by_its_magnitude() {
 }
 
 /// `n` bindings, each a power past the address space.
-fn powers(n: usize) -> String {
+pub(super) fn powers(n: usize) -> String {
     (0..n)
         .map(|i| format!("x{i} = (2^64 + 13) ^ (2^64 + {i});\n"))
         .collect()
 }
 
-#[test]
-fn rejecting_many_powers_scales() {
-    // The bound is O(1) words per power: one division and one comparison.
-    scaling::check("n powers past the address space, each rejected", 200, |n| {
-        let out = rejected(&powers(n));
-        assert_eq!(
-            out.matches("Number too large for any memory of the target")
-                .count(),
-            n
-        );
-    });
-}
 
 /// `main` binding `b = 5 * 2^100 + 1` (103 bits) and `x` to `rat`, then the lines `body`
 /// (plan row CONST-too-large-rat-names).
@@ -300,7 +287,7 @@ fn a_rat_base_the_text_does_not_fix_proves_nothing() {
 
 /// `n` names after `x`, each `b` over the one before, so each is `x` or `1 / x` and has
 /// parts of 103 bits, and a power of each past the address space.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let body: String = (0..n)
         .map(|i| {
             let prev = if i == 0 {
@@ -314,23 +301,6 @@ fn chain(n: usize) -> String {
     with_x("rat(b) / rat(b + 1)", &body)
 }
 
-#[test]
-fn reading_a_chain_of_names_and_divisions_scales() {
-    // Each name is read once, however many powers read it: the chain of `n` names costs `n`
-    // divisions of 103-bit numbers and `n` rejections.
-    scaling::check(
-        "a chain of n names and divisions, a power of each rejected",
-        200,
-        |n| {
-            let out = rejected(&chain(n));
-            assert_eq!(
-                out.matches("Number too large for any memory of the target")
-                    .count(),
-                n
-            );
-        },
-    );
-}
 
 // Products and quotients (plan row CONST-too-large-products). `b = 2^64 + 13` has 65 bits,
 // so `b ^ (2^60)` has at least `2^66 + 1` bits, 8 EiB, and a product of two such factors at
@@ -604,7 +574,7 @@ fn a_product_in_a_branch_not_taken_is_rejected() {
 
 /// `n` names, each 7 times the one before, from `x = b ^ (2^59)`, and a product of each with
 /// `x` three times, past the address space.
-fn product_chain(n: usize) -> String {
+pub(super) fn product_chain(n: usize) -> String {
     let body: String = (0..n)
         .map(|i| {
             let prev = if i == 0 {
@@ -618,28 +588,11 @@ fn product_chain(n: usize) -> String {
     format!("main(m: MainArgs) {{\n    b = 2^64 + 13;\n    x = b ^ (2^59);\n{body}}}\n")
 }
 
-#[test]
-fn bounding_a_chain_of_products_scales() {
-    // Each name is read once, however many products read through it: the chain of `n` names
-    // costs O(n) reads of bit lengths and `n` rejections, each at the third `*` of its line.
-    scaling::check(
-        "a chain of n names and products, a product of each rejected",
-        200,
-        |n| {
-            let out = rejected(&product_chain(n));
-            assert_eq!(
-                out.matches("Number too large for any memory of the target")
-                    .count(),
-                n
-            );
-        },
-    );
-}
 
 /// `n` names, each the one before times `rat(b)`, from `x = rat(b) ^ (2^59) / rat(c)`, and
 /// for each a product with `x` three times and the square of a product with `x`, both past
 /// the address space.
-fn rat_product_chain(n: usize) -> String {
+pub(super) fn rat_product_chain(n: usize) -> String {
     let body: String = (0..n)
         .map(|i| {
             let prev = if i == 0 {
@@ -659,25 +612,6 @@ fn rat_product_chain(n: usize) -> String {
     )
 }
 
-#[test]
-fn bounding_a_chain_of_rat_products_scales() {
-    // Plan row CONST-too-large-products-unproved, cases (a) and (c): each name keeps `b` as
-    // the root of its numerator and `c` as that of its denominator, so each `*` costs at most
-    // six gcds of 65-bit numbers, not a gcd of the whole chain's product: O(n) in all, and
-    // `2n` rejections.
-    scaling::check(
-        "a chain of n rat names, a product and a power of each rejected",
-        200,
-        |n| {
-            let out = rejected(&rat_product_chain(n));
-            assert_eq!(
-                out.matches("Number too large for any memory of the target")
-                    .count(),
-                2 * n
-            );
-        },
-    );
-}
 
 // Plan row CONST-too-large-kept-powers: the size checked is the size of what each operation
 // builds, by the list of DESIGN's numbers section. A number is kept as `n/d · ∏ p^e`, so a
@@ -861,26 +795,35 @@ fn a_build_past_the_memory_limit_is_rejected_and_the_largest_within_it_compiles(
 }
 
 /// `n` bindings, each a kept power and a sum that writes it out past the address space.
-fn kept_sums(n: usize) -> String {
+pub(super) fn kept_sums(n: usize) -> String {
     let body: String = (0..n)
         .map(|i| format!("  x{i} = 2^(2^70 + {i});\n  y{i} = x{i} + 1;\n"))
         .collect();
     format!("main(m: MainArgs) {{\n{body}}}\n")
 }
 
-#[test]
-fn judging_many_builds_scales() {
-    // One kernel step per sum, refused before it allocates: O(1) words each, O(n) in all.
-    scaling::check(
-        "n kept powers and n sums past the address space, each sum rejected",
-        800,
-        |n| {
-            let out = rejected(&kept_sums(n));
-            assert_eq!(
-                out.matches("Number too large for any memory of the target")
-                    .count(),
-                n
-            );
-        },
+
+/// `src` is rejected with `count` diagnostics "Number too large for any memory of the target".
+pub(super) fn rejected_times(src: &str, count: usize) {
+    let out = rejected(src);
+    assert_eq!(
+        out.matches("Number too large for any memory of the target")
+            .count(),
+        count,
+        "{out}"
     );
+}
+
+/// The chains and lists of `bench::too_large` at 1, 2 and 5 links or bindings, each rejected
+/// once per power, product or sum past the address space (the bench times 200 and 1600, and 800
+/// and 6400 kept sums).
+#[test]
+fn chains_and_lists_past_the_address_space() {
+    for n in [1, 2, 5] {
+        rejected_times(&powers(n), n);
+        rejected_times(&chain(n), n);
+        rejected_times(&product_chain(n), n);
+        rejected_times(&rat_product_chain(n), 2 * n);
+        rejected_times(&kept_sums(n), n);
+    }
 }

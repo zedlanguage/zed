@@ -4,7 +4,6 @@
 //! refinement such as `is int[0..]`, which this zedc does not compile. Each repair the headline
 //! offers is written into the program, and the program it gives is accepted.
 
-use zed_tests::scaling;
 use zedc::run::load;
 
 /// `src` with a `main` added where it declares none, so that `load` checks its functions.
@@ -344,26 +343,32 @@ fn a_lines_port_repair_writes_the_programs_value() {
     assert!(out.contains("A `Lines` port takes"), "{out}");
 }
 
+/// `t1 = 2^62; t2 = t1 + 1; …; m.stdout <- tn;` pushed to the output.
+pub(super) fn a_pushed_chain(n: usize) -> String {
+    let binds: String = (2..=n)
+        .map(|i| format!("t{i} = t{} + 1; ", i - 1))
+        .collect();
+    pushing(&format!("t1 = 2^62; {binds}t = t{n};"))
+}
+
+/// The push of [`a_pushed_chain`] is repaired by writing `t` into a string. The push reads the
+/// carriers of one class of n merged operations (one find in the union of the classes), and
+/// the message derives `tn` through every name (COMPLEXITY.md, PORT-lines-int-name).
+pub(super) fn a_pushed_chain_rejected(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(tried(&out), Some("m.stdout <- \"${t}\";"), "{n}");
+}
+
 #[test]
-fn a_pushed_chain_of_names_of_literals_is_rejected_in_linear_time() {
-    // `t1 = 2^62; t2 = t1 + 1; …; m.stdout <- tn;`: the push reads the carriers of one class
-    // of n merged operations (one find in the union of the classes), and the message derives
-    // `tn` through every name (COMPLEXITY.md, PORT-lines-int-name).
-    let srcs = scaling::inputs(1000, |n| {
-        let binds: String = (2..=n)
-            .map(|i| format!("t{i} = t{} + 1; ", i - 1))
-            .collect();
-        pushing(&format!("t1 = 2^62; {binds}t = t{n};"))
-    });
-    scaling::check("rejecting the push of a chain of n names", 1000, |n| {
-        let out = rejected(&srcs[&n]);
-        assert_eq!(tried(&out), Some("m.stdout <- \"${t}\";"), "{n}");
-    });
+fn a_pushed_chain_of_names_of_literals_is_rejected() {
+    for n in [1, 2, 20] {
+        a_pushed_chain_rejected(&a_pushed_chain(n), n);
+    }
 }
 
 /// A function that binds `x2` to `x{n+1}` and passes `x` less all of them to `popCount`, so
 /// that the repair's name is the first of `n + 2` numbers the call does not write.
-fn crowded(n: usize) -> String {
+pub(super) fn crowded(n: usize) -> String {
     let names: Vec<String> = (2..n + 2).map(|i| format!("x{i}")).collect();
     let binds: String = names.iter().map(|x| format!("  {x} = 1;\n")).collect();
     format!(
@@ -372,38 +377,50 @@ fn crowded(n: usize) -> String {
     )
 }
 
-#[test]
-fn naming_the_repairs_value_takes_time_linear_in_the_call() {
-    // Each number tried is looked up among the call's words, collected once (COMPLEXITY.md,
-    // `fresh`): trying each against the call's text afresh is quadratic in the names.
-    scaling::check(
-        "the name of a repair among n names the call writes",
-        1000,
-        |n| {
-            let out = rejected(&crowded(n));
-            let first = out.lines().next().expect("a message");
-            assert!(
-                first.contains(&format!("Try `x{} = x - ", n + 2)),
-                "{first}"
-            );
-        },
+/// The repair of [`crowded`]`(n)` names its value by the first number the call does not
+/// write. Each number tried is looked up among the call's words, collected once
+/// (COMPLEXITY.md, `fresh`): trying each against the call's text afresh is quadratic in the
+/// names.
+pub(super) fn the_repairs_value_named(src: &str, n: usize) {
+    let out = rejected(src);
+    let first = out.lines().next().expect("a message");
+    assert!(
+        first.contains(&format!("Try `x{} = x - ", n + 2)),
+        "{first}"
     );
 }
 
 #[test]
-fn a_width_repair_takes_time_linear_in_the_call() {
-    // `bitNot(1 + 1 + … + 1, width: 2)` with n ones: the least width that holds n is the
-    // number of its binary digits, and the rewritten call is cut once around the width
-    // (COMPLEXITY.md, MSG-width-headline): linear in the call's text.
-    scaling::check("the width repair of a call of n terms", 1000, |n| {
-        let sum = vec!["1"; n].join(" + ");
-        let out = rejected(&format!("x = bitNot({sum}, width: 2);\n"));
-        let first = out.lines().next().expect("a message");
-        let digits = usize::BITS - n.leading_zeros();
-        assert!(
-            first.ends_with(&format!(", width: {digits})` instead.")),
-            "{}",
-            &first[first.len().saturating_sub(200)..]
-        );
-    });
+fn naming_the_repairs_value_among_the_names_of_the_call() {
+    for n in [1, 2, 20] {
+        the_repairs_value_named(&crowded(n), n);
+    }
+}
+
+/// `bitNot(1 + 1 + … + 1, width: 2)` with `n` ones.
+pub(super) fn a_wide_bit_not(n: usize) -> String {
+    let sum = vec!["1"; n].join(" + ");
+    format!("x = bitNot({sum}, width: 2);\n")
+}
+
+/// The least width that holds `n` is the number of its binary digits, and the rewritten call
+/// is cut once around the width (COMPLEXITY.md, MSG-width-headline): linear in the call's
+/// text.
+pub(super) fn a_width_repair(src: &str, n: usize) {
+    let out = rejected(src);
+    let first = out.lines().next().expect("a message");
+    let digits = usize::BITS - n.leading_zeros();
+    assert!(
+        first.ends_with(&format!(", width: {digits})` instead.")),
+        "{}",
+        &first[first.len().saturating_sub(200)..]
+    );
+}
+
+#[test]
+fn a_width_repair_of_a_long_call() {
+    // 4 needs 3 binary digits, 8 needs 4 and 31 needs 5, each past the width 2 written.
+    for n in [4, 8, 31] {
+        a_width_repair(&a_wide_bit_not(n), n);
+    }
 }

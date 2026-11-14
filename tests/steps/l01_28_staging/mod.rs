@@ -5,6 +5,7 @@
 //! on a parameter only when the parameter's domain is finite and small.
 
 mod arms;
+mod bench;
 mod cone;
 mod dag;
 mod differential;

@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use zed_tests::scaling;
 use zedc::query::Db;
 use zedc::suppress::Suppress;
 use zedc::unit::{Memory, Package, load};
@@ -301,20 +300,17 @@ fn broken_chain(k: usize) -> Vec<(String, String)> {
     out
 }
 
+/// [`broken_chain`]`(k)` in memory.
+pub(super) fn a_broken_chain(k: usize) -> Memory {
+    let fs = broken_chain(k);
+    let refs: Vec<(&str, &str)> = fs.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
+    memory(&refs)
+}
+
 #[test]
-fn reporting_the_errors_of_a_chain_of_broken_units_scales() {
-    let n = 200;
-    let pkgs: HashMap<usize, Memory> = [n, 8 * n]
-        .into_iter()
-        .map(|k| {
-            let fs = broken_chain(k);
-            let refs: Vec<(&str, &str)> =
-                fs.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
-            (k, memory(&refs))
-        })
-        .collect();
-    for (&k, fs) in &pkgs {
-        let p = load(&mut Db::new(), fs, &["main"]);
+fn reporting_the_errors_of_a_chain_of_broken_units() {
+    for k in [1, 2, 6] {
+        let p = load(&mut Db::new(), &a_broken_chain(k), &["main"]);
         // Each unit's syntax error and its own error (at `u0`, which compiles alone, its type
         // error), nothing for the dropped declarations.
         let h = headlines(&p);
@@ -326,7 +322,4 @@ fn reporting_the_errors_of_a_chain_of_broken_units_scales() {
         assert_eq!(odd.len(), 1, "{odd:?}");
         assert!(h.iter().all(|m| !m.contains("`nosuch`")), "{h:?}");
     }
-    scaling::check_order("a chain of units with syntax errors", n, 1, |k| {
-        std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
-    });
 }

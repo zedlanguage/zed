@@ -3,7 +3,6 @@
 //! reports a failing `+` with the same message and derivation. A component the checker does
 //! not track (`_`) is left to `+`, as in `x.a + 1`, rather than refused by `sum` itself.
 
-use zed_tests::scaling;
 
 use super::{rejected, steps};
 use zedc::run::load;
@@ -169,18 +168,23 @@ fn int_and_f64_or_rat_in_sum_gives_only_the_plus_error() {
 
 /// `f` adding `n` components with `sum`: a field read the checker does not track, then `n - 1`
 /// literals. The first `+` fails on `_`; each later one adds a literal to its result.
-fn untracked_components(n: usize) -> String {
+pub(super) fn untracked_components(n: usize) -> String {
     let literals: String = (1..n).map(|i| format!(", {i}")).collect();
     program("positional x", &format!("sum((x.a{literals}))"))
 }
 
+/// `src`, a [`untracked_components`], is rejected at the first `+` of its `sum`.
+pub(super) fn sum_over_untracked_components_rejected(src: &str) {
+    let out = rejected(src);
+    assert!(out.contains("`+` in `sum` does not take"), "{out}");
+}
+
+/// `sum` of 2, 3 and 9 components, the first `_` (`bench::sum_plus` times 400 and 3200).
 #[test]
-fn checking_sum_over_untracked_components_scales() {
-    let inputs = scaling::inputs(400, untracked_components);
-    scaling::check("checking `sum` of n components, the first `_`", 400, |n| {
-        let out = rejected(&inputs[&n]);
-        assert!(out.contains("`+` in `sum` does not take"), "{out}");
-    });
+fn checking_sum_over_untracked_components() {
+    for n in [2, 3, 9] {
+        sum_over_untracked_components_rejected(&untracked_components(n));
+    }
 }
 
 /// The headline of the first diagnostic of `out`, without its place.

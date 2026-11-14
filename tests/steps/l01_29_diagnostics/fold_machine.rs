@@ -8,7 +8,6 @@
 
 use std::process::Command;
 
-use zed_tests::scaling;
 use zedc::build::Build;
 use zedc::run::load_for;
 
@@ -18,7 +17,7 @@ const MARGIN_VAR: &str = "ZED_FOLD_MACHINE_DATA_MARGIN";
 
 /// The program `src` built for Linux x86_64: its rendered diagnostics, or `None` when it
 /// compiles.
-fn built(src: &str) -> Option<String> {
+pub(super) fn built(src: &str) -> Option<String> {
     let build = Build::default().for_target("x86_64-linux");
     load_for(src.as_bytes(), &build).err()
 }
@@ -176,7 +175,7 @@ fn a_fold_does_not_depend_on_another() {
 
 /// `n` powers within the bound, each folded and read by `2 ^ (x - x)`, or past it, each
 /// refused at once, with no number built.
-fn powers(n: usize, k: &str) -> String {
+pub(super) fn powers(n: usize, k: &str) -> String {
     let mut src = String::from("main(m: MainArgs) {\n    b = 2^64 + 13;\n    s = 0");
     for i in 0..n {
         src += &format!(";\n    x{i} = b ^ ({k})");
@@ -189,17 +188,9 @@ fn powers(n: usize, k: &str) -> String {
 }
 
 #[test]
-fn folding_many_powers_scales() {
-    let inputs = scaling::inputs(50, |n| powers(n, "2^10"));
-    scaling::check("n powers within the fold's bound, each folded", 50, |n| {
-        assert_eq!(built(&inputs[&n]), None);
-    });
-}
-
-#[test]
-fn refusing_many_folds_scales() {
-    let inputs = scaling::inputs(50, |n| powers(n, "2^40"));
-    scaling::check("n powers past the fold's bound, each refused", 50, |n| {
-        assert!(built(&inputs[&n]).is_some());
-    });
+fn many_powers_within_the_bound_are_folded_and_past_it_refused() {
+    for n in [1, 3] {
+        assert_eq!(built(&powers(n, "2^10")), None, "{n}");
+        assert!(built(&powers(n, "2^40")).is_some(), "{n}");
+    }
 }

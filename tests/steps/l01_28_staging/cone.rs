@@ -5,13 +5,11 @@
 //! that it ends, or one at a root held inline, built it from every binding the term needs, so a
 //! chain of `n` functions called at `n` places took time quadratic in `n`.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Family, Pattern, Prim, Shared, Term, Value};
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::elab::{Def, Unit};
 use zedc::stage::{self, Remix, Stage};
 
@@ -85,7 +83,7 @@ pub(super) fn sites(n: usize) -> Term {
 }
 
 /// The chain of `n` functions and `main = (c) -> sites(n)`.
-fn with_main(n: usize, f0: F0, two: bool) -> Unit {
+pub(super) fn with_main(n: usize, f0: F0, two: bool) -> Unit {
     let mut defs = chain(n, f0, two);
     defs.push(def("main", lam(&["c"], sites(n))));
     unit(defs)
@@ -120,57 +118,23 @@ fn calls_of_a_chain_whose_form_does_not_show_it_ends_are_left_to_run() {
     });
 }
 
-/// Checks that mixing `with_main(n, F0::Loops, two)` scales.
-fn mixing_scales(what: &'static str, two: bool) {
-    deep(move || {
-        let n = 400;
-        let units = scaling::inputs(n, |n| with_main(n, F0::Loops, two));
-        scaling::check(what, n, |n| {
-            let (_, report) = stage::mix(&units[&n], &["main"]);
-            assert_eq!(report.left.len(), n);
-        });
-    });
-}
-
-#[test]
-fn mixing_calls_of_a_long_chain_whose_form_does_not_show_it_ends_scales() {
-    mixing_scales(
-        "stage::mix on n calls of a chain of n functions whose form does not show it ends",
-        false,
-    );
-}
-
-#[test]
-fn mixing_calls_of_functions_that_each_call_the_two_before_scales() {
-    mixing_scales(
-        "stage::mix on n calls of n functions, each calling the two before, whose form does \
-         not show it ends",
-        true,
-    );
-}
-
 /// A call of a chain whose every call fails is run with stubs and fails at the stub of the
 /// function below it, whose table keeps the error that call gives as written, so the call is
 /// left to run with that error and is not run again as written: each function's call is run
-/// once, in time linear in the chain over all the calls (COMPLEXITY.md row F43).
+/// once, in time linear in the chain over all the calls (COMPLEXITY.md row F43; `bench::cone`
+/// times it).
 #[test]
-fn failing_calls_of_a_long_chain_are_left_to_run_in_linear_time() {
+fn failing_calls_of_a_long_chain_are_left_to_run() {
     deep(|| {
         let (_, report) = stage::mix(&with_main(2, F0::Fails, false), &["main"]);
         let error =
             zed_kernel::KernelError::Type("`+` applied to `int`, `bool`".into()).to_string();
         let call = |j: usize| format!("{:?}: {error}", app(var(&f(j)), vec![lit(0i64)]));
         assert_eq!(left(&report), vec![call(1), call(2)]);
-        let n = 100;
-        let units = scaling::inputs(n, |n| with_main(n, F0::Fails, false));
-        scaling::check(
-            "stage::mix on n calls of a chain of n functions whose every call fails",
-            n,
-            |n| {
-                let (_, report) = stage::mix(&units[&n], &["main"]);
-                assert_eq!(report.left.len(), n);
-            },
-        );
+        for n in [1, 9] {
+            let (_, report) = stage::mix(&with_main(n, F0::Fails, false), &["main"]);
+            assert_eq!(report.left.len(), n);
+        }
     });
 }
 
@@ -181,7 +145,7 @@ fn identity() -> Term {
 
 /// The chain of `n` functions and `main = (c) -> (f1(i) + c, .., fn(i) + c)`, `i` the lambda
 /// [`identity`].
-fn at_a_lambda(n: usize, f0: F0) -> Unit {
+pub(super) fn at_a_lambda(n: usize, f0: F0) -> Unit {
     let mut defs = chain(n, f0, false);
     let call = |j: usize| app(var(&f(j)), vec![identity()]);
     let site = |j: usize| prim(Prim::Add, vec![call(j), var("c")]);
@@ -197,7 +161,7 @@ fn at_a_lambda(n: usize, f0: F0) -> Unit {
 /// takes constant time and all of them time linear in `n` (COMPLEXITY.md row F43). The
 /// argument was `-0.0` until item STAGE-stub-fast, after which a stub answers it.
 #[test]
-fn failing_calls_no_answer_table_takes_are_run_as_written_in_linear_time() {
+fn failing_calls_no_answer_table_takes_are_run_as_written() {
     deep(|| {
         let (_, report) = stage::mix(&at_a_lambda(2, F0::Fails), &["main"]);
         let error = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
@@ -206,16 +170,10 @@ fn failing_calls_no_answer_table_takes_are_run_as_written_in_linear_time() {
             format!("{t:?}: {error}")
         };
         assert_eq!(left(&report), vec![call(1), call(2)]);
-        let n = 100;
-        let units = scaling::inputs(n, |n| at_a_lambda(n, F0::Fails));
-        scaling::check(
-            "stage::mix on n calls at a lambda of a chain of n functions whose every call fails",
-            n,
-            |n| {
-                let (_, report) = stage::mix(&units[&n], &["main"]);
-                assert_eq!(report.left.len(), n);
-            },
-        );
+        for n in [1, 9] {
+            let (_, report) = stage::mix(&at_a_lambda(n, F0::Fails), &["main"]);
+            assert_eq!(report.left.len(), n);
+        }
     });
 }
 
@@ -273,7 +231,7 @@ fn a_binding_the_trick_cannot_build_is_left_to_run_as_mix_leaves_it() {
 /// `k = 2 + 2`, the chain of `n` functions whose first is `f0 = (y) -> y + k`, and
 /// `g = (x) -> (f1(i) + x, .., fn(i) + x)`, `i` the lambda [`identity`], called by
 /// `main = (c) -> g(1)`.
-fn chain_reading_k(n: usize) -> Unit {
+pub(super) fn chain_reading_k(n: usize) -> Unit {
     let mut defs = vec![def("k", prim(Prim::Add, vec![lit(2i64), lit(2i64)]))];
     defs.extend(chain(n, F0::Ends, false));
     defs[1] = def(
@@ -294,7 +252,7 @@ fn chain_reading_k(n: usize) -> Unit {
 /// runs under the globals and fails at the guard of `fj`, in constant time (COMPLEXITY.md row
 /// F43). The argument was `-0.0` until item STAGE-stub-fast, after which a stub answers it.
 #[test]
-fn calls_reading_a_definition_the_trick_builds_are_split_in_linear_time() {
+fn calls_reading_a_definition_the_trick_builds_are_split() {
     deep(|| {
         let ge = zed_kernel::KernelError::Type("`>=` applied to a function".into()).to_string();
         let (_, report) = stage::split(
@@ -313,42 +271,38 @@ fn calls_reading_a_definition_the_trick_builds_are_split_in_linear_time() {
             .map(|t| format!("{t:?}: {ge}"))
             .collect();
         assert_eq!(left(&report), want);
-        let n = 100;
-        let units = scaling::inputs(n, chain_reading_k);
-        scaling::check(
-            "stage::split of a function of n calls at a lambda of a chain of n functions reading \
-             k = 2 + 2",
-            n,
-            |n| {
-                let d = stage::Domain::Ints(Some(0), Some(9));
-                let (_, report) = stage::split(&units[&n], "g", 0, &d).expect("split");
-                assert_eq!(report.left.len(), n + 1);
-            },
-        );
+        for n in [1, 9] {
+            a_split_of_calls_reading_k(&chain_reading_k(n), n);
+        }
     });
 }
 
+/// `u`, [`chain_reading_k`]`(n)`, splits `g` leaving its tuple and each of its `n` calls.
+pub(super) fn a_split_of_calls_reading_k(u: &Unit, n: usize) {
+    let d = stage::Domain::Ints(Some(0), Some(9));
+    let (_, report) = stage::split(u, "g", 0, &d).expect("split");
+    assert_eq!(report.left.len(), n + 1);
+}
+
+/// `root`, [`sites`]`(n)`, remixed held inline over `u`, `with_main(n, F0::Ends, false)`,
+/// gives a tuple of `n` parts.
+pub(super) fn a_root_remixed((u, root): &(Unit, Term), n: usize) {
+    let (_, mut r) = Remix::new(u);
+    let Term::Prim(Prim::Tuple, sites) = &r.mix(root) else {
+        panic!("a tuple")
+    };
+    assert_eq!(sites.len(), n);
+}
+
+/// `bench::cone` times 400 and 3200 calls.
 #[test]
-fn remixing_a_root_held_inline_over_a_long_chain_scales() {
+fn remixing_a_root_held_inline_over_a_chain() {
     deep(|| {
         let (_, mut r) = Remix::new(&with_main(3, F0::Ends, false));
         assert_eq!(r.mix(&sites(3)).to_string(), "((1 + c), (1 + c), (1 + c))");
-        let n = 400;
-        let inputs: HashMap<usize, (Unit, Term)> =
-            scaling::inputs(n, |n| (with_main(n, F0::Ends, false), sites(n)));
-        scaling::check(
-            "Remix::new and Remix::mix of n calls of a chain of n functions, the root held \
-             inline",
-            n,
-            |n| {
-                let (u, root) = &inputs[&n];
-                let (_, mut r) = Remix::new(u);
-                let Term::Prim(Prim::Tuple, sites) = &r.mix(root) else {
-                    panic!("a tuple")
-                };
-                assert_eq!(sites.len(), n);
-            },
-        );
+        for n in [1, 9] {
+            a_root_remixed(&(with_main(n, F0::Ends, false), sites(n)), n);
+        }
     });
 }
 
@@ -779,7 +733,7 @@ fn calls_through_a_parameter_a_pattern_a_result_or_a_key_are_left_to_run() {
 
 /// `f0 = (y) -> 1.0 / y`, then for k = 1 to n `fk = (y) -> f(k-1)(y) + 1.0`, and
 /// `main = (c) -> (f1(-0.0) + c, .., fn(-0.0) + c)`, each call `-inf`.
-fn float_chain_at_minus_zero(n: usize) -> Unit {
+pub(super) fn float_chain_at_minus_zero(n: usize) -> Unit {
     let mut defs = vec![def(
         &f(0),
         lam(&["y"], prim(Prim::Div, vec![float(1.0), var("y")])),
@@ -810,29 +764,34 @@ fn float_chain_at_minus_zero(n: usize) -> Unit {
 /// the port's key read as `0.0`, and each call ran again as written, through the whole chain
 /// below it, in time quadratic in `n` (COMPLEXITY.md row F83).
 #[test]
-fn calls_at_minus_zero_of_a_long_chain_are_answered_in_linear_time() {
+fn calls_at_minus_zero_of_a_long_chain_are_answered() {
     deep(|| {
         let (mixed, report) = stage::mix(&float_chain_at_minus_zero(2), &["main"]);
         assert!(report.left.is_empty(), "{:?}", left(&report));
         let inf = float(f64::NEG_INFINITY).to_string();
         let want = format!("c -> (({inf} + c), ({inf} + c))");
         assert_eq!(mixed.defs[3].term.to_string(), want);
-        let n = 200;
-        let units = scaling::inputs(n, float_chain_at_minus_zero);
-        scaling::check(
-            "stage::mix on n calls at -0.0 of a chain of n functions over floats",
-            n,
-            |n| {
-                let (_, report) = stage::mix(&units[&n], &["main"]);
-                assert!(report.left.is_empty());
-            },
-        );
+        for n in [1, 9] {
+            nothing_left(&float_chain_at_minus_zero(n));
+        }
     });
+}
+
+/// `u` mixes from `main` with nothing left to run.
+pub(super) fn nothing_left(u: &Unit) {
+    let (_, report) = stage::mix(u, &["main"]);
+    assert!(report.left.is_empty(), "{:?}", left(&report));
+}
+
+/// `u` mixes from `main` leaving `n` calls to run.
+pub(super) fn left_to_run(u: &Unit, n: usize) {
+    let (_, report) = stage::mix(u, &["main"]);
+    assert_eq!(report.left.len(), n);
 }
 
 /// The chain of `n` functions whose first is `f0 = (y) -> y + 1`, `g = (p, y) -> y + 1` and
 /// `main = (c) -> (g(f1, f1(1)) + c, .., g(fn, fn(1)) + c)`, each call `3`.
-fn chain_passing_functions(n: usize) -> Unit {
+pub(super) fn chain_passing_functions(n: usize) -> Unit {
     let mut defs = chain(n, F0::Ends, false);
     let g = lam(&["p", "y"], prim(Prim::Add, vec![var("y"), lit(1i64)]));
     defs.push(def("g", g));
@@ -855,21 +814,14 @@ fn chain_passing_functions(n: usize) -> Unit {
 /// again as written, `fj(1)` through the whole chain below `fj`, in time quadratic in `n`
 /// (COMPLEXITY.md row F83).
 #[test]
-fn calls_passing_functions_of_a_long_chain_are_answered_in_linear_time() {
+fn calls_passing_functions_of_a_long_chain_are_answered() {
     deep(|| {
         let (mixed, report) = stage::mix(&chain_passing_functions(2), &["main"]);
         assert!(report.left.is_empty(), "{:?}", left(&report));
         assert_eq!(mixed.defs[4].term.to_string(), "c -> ((3 + c), (3 + c))");
-        let n = 200;
-        let units = scaling::inputs(n, chain_passing_functions);
-        scaling::check(
-            "stage::mix on n calls g(fj, fj(1)) over a chain of n functions",
-            n,
-            |n| {
-                let (_, report) = stage::mix(&units[&n], &["main"]);
-                assert!(report.left.is_empty());
-            },
-        );
+        for n in [1, 9] {
+            nothing_left(&chain_passing_functions(n));
+        }
     });
 }
 

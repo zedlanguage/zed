@@ -236,52 +236,66 @@ fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
     (stmts, res)
 }
 
-/// A chain of n overloads, each calling the next by its parameter's name, the last the first
-/// (each overload has a type of its own, `int | #t0`, `int | #t1`, …, since a scope declares a
-/// function once for each list of parameter types):
-/// one cycle of n overloads, ordered and reported at n and 8n. Each call is matched to its
-/// overload through an index by argument place and carrier, `O(n log n)` in all; testing each
-/// call against each overload would be `O(n^2)`.
-#[test]
-fn a_cycle_through_n_overloads_scales() {
-    let units = zed_tests::scaling::inputs(1_000, |n| {
-        let text: String = (0..n)
-            .map(|i| format!("f(p{i}: int | #t{i}) = f(p{}: 1);\n", (i + 1) % n))
-            .collect();
-        let (stmts, res) = resolved(&text);
-        (text, stmts, res)
-    });
-    zed_tests::scaling::check_order("a cycle through n overloads", 1_000, 1, |n| {
-        let (text, stmts, res) = &units[&n];
-        let tables = Tables::with_text(stmts, res, Some(text));
-        let items: Vec<_> = stmts.iter().collect();
-        let (_, cycles) = tables.order_around_cycles(&items);
-        assert_eq!(cycles.len(), 1);
-        assert_eq!(cycles[0].len(), n);
-        let reports = tables.cycle_reports(&items, &cycles);
-        assert_eq!(reports[0].notes.len(), n + 1);
-    });
+/// A unit's text, statements and resolution.
+pub(super) type Resolved = (
+    String,
+    Vec<zedc::ast::Stmt>,
+    zedc::resolve::Resolution,
+);
+
+/// A chain of `n` overloads, each calling the next by its parameter's name, the last the
+/// first, resolved.
+pub(super) fn a_cycle_of_overloads(n: usize) -> Resolved {
+    let text: String = (0..n)
+        .map(|i| format!("f(p{i}: int | #t{i}) = f(p{}: 1);\n", (i + 1) % n))
+        .collect();
+    let (stmts, res) = resolved(&text);
+    (text, stmts, res)
 }
 
-/// n overloads and n definitions each calling one of them: a chain with no cycle, ordered at n
-/// and 8n, and n calls that two or more overloads admit, which refer to none.
+/// The cycle of [`a_cycle_of_overloads`]`(n)` is one cycle of `n` overloads, reported with a
+/// note for each and one more.
+pub(super) fn the_cycle_of_overloads_reported((text, stmts, res): &Resolved, n: usize) {
+    let tables = Tables::with_text(stmts, res, Some(text));
+    let items: Vec<_> = stmts.iter().collect();
+    let (_, cycles) = tables.order_around_cycles(&items);
+    assert_eq!(cycles.len(), 1);
+    assert_eq!(cycles[0].len(), n);
+    let reports = tables.cycle_reports(&items, &cycles);
+    assert_eq!(reports[0].notes.len(), n + 1);
+}
+
 #[test]
-fn n_calls_of_n_overloads_scale() {
-    let units = zed_tests::scaling::inputs(1_000, |n| {
-        let mut text: String = (0..n)
-            .map(|i| format!("f(positional a: int, p{i}: int | #t{i} = 0) = a;\n"))
-            .collect();
-        for i in 0..n {
-            text.push_str(&format!("g{i} = f(1, p{i}: 2);\nh{i} = f(1);\n"));
-        }
-        let (stmts, res) = resolved(&text);
-        (text, stmts, res)
-    });
-    zed_tests::scaling::check_order("n calls of n overloads", 1_000, 1, |n| {
-        let (text, stmts, res) = &units[&n];
-        let tables = Tables::with_text(stmts, res, Some(text));
-        let items: Vec<_> = stmts.iter().collect();
-        let order = tables.order(&items).expect("no cycle");
-        assert_eq!(order.len(), 3 * n);
-    });
+fn a_cycle_through_many_overloads() {
+    for n in [2, 3, 9] {
+        the_cycle_of_overloads_reported(&a_cycle_of_overloads(n), n);
+    }
+}
+
+/// `n` overloads and `n` definitions each calling one of them, and `n` calls that two or more
+/// overloads admit, resolved.
+pub(super) fn calls_of_overloads(n: usize) -> Resolved {
+    let mut text: String = (0..n)
+        .map(|i| format!("f(positional a: int, p{i}: int | #t{i} = 0) = a;\n"))
+        .collect();
+    for i in 0..n {
+        text.push_str(&format!("g{i} = f(1, p{i}: 2);\nh{i} = f(1);\n"));
+    }
+    let (stmts, res) = resolved(&text);
+    (text, stmts, res)
+}
+
+/// The `3n` items of [`calls_of_overloads`]`(n)` are ordered with no cycle.
+pub(super) fn the_calls_of_overloads_ordered((text, stmts, res): &Resolved, n: usize) {
+    let tables = Tables::with_text(stmts, res, Some(text));
+    let items: Vec<_> = stmts.iter().collect();
+    let order = tables.order(&items).expect("no cycle");
+    assert_eq!(order.len(), 3 * n);
+}
+
+#[test]
+fn calls_of_many_overloads() {
+    for n in [1, 2, 9] {
+        the_calls_of_overloads_ordered(&calls_of_overloads(n), n);
+    }
 }

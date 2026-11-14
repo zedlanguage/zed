@@ -6,7 +6,6 @@
 //! each limit are in l01_36a_executables/limits_binary.rs, since a limit holds for a whole
 //! process.
 
-use zed_tests::scaling;
 use zedc::build::Build;
 use zedc::run::load_for;
 
@@ -18,7 +17,7 @@ fn built(src: &str) -> Option<String> {
 }
 
 /// The rendered diagnostics of `src`, which the checker rejects.
-fn rejected(src: &str) -> String {
+pub(super) fn rejected(src: &str) -> String {
     built(src).unwrap_or_else(|| panic!("accepted:\n{src}"))
 }
 
@@ -127,7 +126,7 @@ fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
 }
 
 /// `n` powers of about 8 MiB each under a 1 MiB limit.
-fn powers(n: usize) -> String {
+pub(super) fn powers(n: usize) -> String {
     let mut s = String::from("@limits(memory: 1048576)\nmain(m: MainArgs) {\n");
     for i in 0..n {
         s.push_str(&format!(
@@ -137,20 +136,20 @@ fn powers(n: usize) -> String {
     s + "}\n"
 }
 
-#[test]
-fn rejecting_many_powers_past_the_memory_limit_scales() {
-    // Each power is sized once in the walk and compared with the limit once after it: O(1)
-    // words per power.
-    scaling::check(
-        "n powers past the memory limit of main, each rejected",
-        100,
-        |n| {
-            let out = rejected(&powers(n));
-            assert_eq!(
-                out.matches("Number too large for the memory limit of `main`")
-                    .count(),
-                n
-            );
-        },
+/// Each of the `n` powers of [`powers`]`(n)` is rejected. Each power is sized once in the
+/// walk and compared with the limit once after it: O(1) words per power.
+pub(super) fn powers_past_the_memory_limit_rejected(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(
+        out.matches("Number too large for the memory limit of `main`")
+            .count(),
+        n
     );
+}
+
+#[test]
+fn rejecting_many_powers_past_the_memory_limit() {
+    for n in [1, 3] {
+        powers_past_the_memory_limit_rejected(&powers(n), n);
+    }
 }

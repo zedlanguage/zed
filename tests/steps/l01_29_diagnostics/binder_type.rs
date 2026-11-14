@@ -392,7 +392,7 @@ fn every_rule_of_the_grammar_that_writes_a_name_is_classified_and_its_binders_re
 
 /// `n` functions, each with a parameter, a statement target and a lambda parameter that name a
 /// type: `3n` binders the row rejects.
-fn typed_binders(n: usize) -> String {
+pub(super) fn typed_binders(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!(
@@ -402,24 +402,26 @@ fn typed_binders(n: usize) -> String {
         .collect()
 }
 
+/// `text` lexed, parsed and made a unit: its statements, before resolution.
+pub(super) fn statements(text: &str) -> Vec<zedc::ast::Stmt> {
+    let tokens = lex_fence(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    unit(text, &tokens, &tree).unwrap()
+}
+
+/// The resolution of the statements of [`typed_binders`]`(n)` rejects each of its `3n`
+/// binders with the row.
+pub(super) fn binders_that_name_types_rejected(stmts: &[zedc::ast::Stmt], n: usize) {
+    let errors = resolve(stmts).err().unwrap();
+    assert_eq!(errors.len(), 3 * n);
+    assert!(errors.iter().all(|e| e.row == Some(Row::BinderNamingType)));
+}
+
 #[test]
-fn rejecting_many_binders_that_name_types_scales() {
-    // The statements of both sizes are built before timing, so only resolution is measured.
-    let n = 2000;
-    let built: std::collections::HashMap<usize, Vec<zedc::ast::Stmt>> = [n, 8 * n]
-        .into_iter()
-        .map(|k| {
-            let text = typed_binders(k);
-            let tokens = lex_fence(&text).unwrap();
-            let tree = parse(&text, &tokens, "Unit", TOP).unwrap();
-            (k, unit(&text, &tokens, &tree).unwrap())
-        })
-        .collect();
-    zed_tests::scaling::check_order("3n binders that name a type", n, 1, |k| {
-        let errors = resolve(&built[&k]).err().unwrap();
-        assert_eq!(errors.len(), 3 * k);
-        assert!(errors.iter().all(|e| e.row == Some(Row::BinderNamingType)));
-    });
+fn rejecting_many_binders_that_name_types() {
+    for n in [1, 3] {
+        binders_that_name_types_rejected(&statements(&typed_binders(n)), n);
+    }
 }
 
 #[test]

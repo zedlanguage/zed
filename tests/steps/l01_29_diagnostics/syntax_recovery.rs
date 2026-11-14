@@ -5,7 +5,6 @@
 //! once; a name that a broken declaration would define gets no row saying it is not defined, and
 //! each repair offered parses.
 
-use zed_tests::scaling;
 use zedc::run::load;
 
 use super::rejected;
@@ -283,17 +282,20 @@ fn each_unit_gives_the_same_diagnostics_alone_and_in_a_batch() {
 
 /// `n` declarations, each leaving a `(` open, each on a line of its own. No line holds a `=` or
 /// `;`, so a parse restarted at a line reads to the end of the unit before it fails.
-fn left_open(n: usize) -> String {
+pub(super) fn left_open(n: usize) -> String {
     (0..n).map(|i| format!("(x{i} +\n")).collect()
 }
 
-/// Each failing declaration is parsed once more alone, and the table of the parse is shared, so
-/// the parse is linear in the unit; restarting the parse at each declaration on a fresh table
-/// re-reads every declaration after it, O(n²).
+/// `src`, [`left_open`] of `n`, gives one error for each of its `n` declarations.
+pub(super) fn declarations_left_open_recovered(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(headlines(&out).len(), n, "{out}");
+}
+
+/// 1, 2 and 9 declarations left open (`bench::syntax_recovery` times 200 and 1600).
 #[test]
-fn many_declarations_left_open_parse_in_linear_time() {
-    scaling::check_order("recovering from n declarations left open", 200, 1, |n| {
-        let out = rejected(&left_open(n));
-        assert_eq!(headlines(&out).len(), n);
-    });
+fn many_declarations_left_open() {
+    for n in [1, 2, 9] {
+        declarations_left_open_recovered(&left_open(n), n);
+    }
 }

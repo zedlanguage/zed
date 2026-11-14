@@ -163,34 +163,34 @@ fn negatives(n: usize) -> String {
     )
 }
 
+/// [`negatives`]`(n)` resolved: its text, statements and resolution, so that only its check
+/// is measured.
+pub(super) type Resolved = (
+    String,
+    Vec<zedc::ast::Stmt>,
+    zedc::resolve::Resolution,
+);
+
+/// [`negatives`]`(n)`, resolved.
+pub(super) fn resolved_negatives(n: usize) -> Resolved {
+    let src = negatives(n);
+    let stmts = zed_tests::deep::statements(&src);
+    let res = zedc::resolve::resolve(&stmts).unwrap();
+    (src, stmts, res)
+}
+
+/// The check of [`negatives`]`(n)` rejects each of its `2n` literals at its minus.
+pub(super) fn negatives_rejected_at_their_minus((src, stmts, res): &Resolved, n: usize) {
+    let info = zedc::check::walk::check(stmts, res);
+    assert_eq!(info.errors.len(), 2 * n);
+    assert!(info.errors.iter().all(|e| {
+        e.message.contains("the literal `-") && src[e.span.start..].starts_with('-')
+    }));
+}
+
 #[test]
-fn rejecting_negative_literals_at_their_minus_scales() {
-    use zed_tests::deep::statements;
-    use zed_tests::scaling;
-    let n = 256;
-    // The inputs are built before the timing.
-    let units: Vec<_> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let src = negatives(m);
-            let stmts = statements(&src);
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, src, stmts, res)
-        })
-        .collect();
-    scaling::on_a_thread(1 << 29, || {
-        scaling::check_order(
-            "rejecting n negative literals at a parameter and n compared with a class",
-            n,
-            1,
-            |m| {
-                let (_, src, stmts, res) = units.iter().find(|(k, _, _, _)| *k == m).unwrap();
-                let info = zedc::check::walk::check(stmts, res);
-                assert_eq!(info.errors.len(), 2 * m);
-                assert!(info.errors.iter().all(|e| {
-                    e.message.contains("the literal `-") && src[e.span.start..].starts_with('-')
-                }));
-            },
-        );
-    });
+fn rejecting_negative_literals_at_their_minus() {
+    for n in [1, 4] {
+        negatives_rejected_at_their_minus(&resolved_negatives(n), n);
+    }
 }

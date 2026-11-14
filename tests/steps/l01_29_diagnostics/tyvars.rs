@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use zed_tests::scaling;
 use zedc::check::read::parse_type;
 use zedc::check::ty::{Arrow, Sig, Ty};
 
@@ -197,7 +196,7 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
 
 /// A function of `n` untyped parameters, the first `n / 2` multiplied together and the others
 /// returned as they are: one bounded variable and `n - n / 2` that print `_`.
-fn many(n: usize) -> String {
+pub(super) fn many(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
     let product = xs[..n / 2].join(" * ");
@@ -210,7 +209,7 @@ fn many(n: usize) -> String {
 
 /// `depth` signatures each nested as the first parameter of the next, each bounding its own
 /// `T`: every one inside the outermost takes a fresh name.
-fn nested(depth: usize) -> Ty {
+pub(super) fn nested(depth: usize) -> Ty {
     let mut t = parse_type("(T) -> T for T in int").unwrap();
     for _ in 1..depth {
         let mut s = (*parse_type("(int, T) -> T for T in int | rat").unwrap().fns[0]).clone();
@@ -220,48 +219,52 @@ fn nested(depth: usize) -> Ty {
     t
 }
 
+/// The number of distinct capitalized words of `text`: the names of its type variables.
+fn names(text: &str) -> usize {
+    let words: std::collections::HashSet<&str> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.starts_with(|c: char| c.is_ascii_uppercase()))
+        .collect();
+    words.len()
+}
+
+/// `sig`, that of [`many`]`(n)`, prints the bounded `T` and a name for each of the `n - n / 2`
+/// variables of the second half, and no `_`.
+pub(super) fn a_signature_of_many_variables_printed(sig: &Sig, n: usize) {
+    let text = sig.to_string();
+    assert!(!text.contains('_'), "{text}");
+    assert_eq!(names(&text), 1 + (n - n / 2), "{text}");
+    assert!(text.ends_with(" for T in int | f32 | f64 | rat"), "{text}");
+}
+
+/// `ty`, [`nested`]`(depth)`, prints one clause for each of its `depth` signatures.
+pub(super) fn nested_signatures_printed(ty: &Ty, depth: usize) {
+    let text = ty.to_string();
+    assert_eq!(text.matches(" for ").count(), depth, "{text}");
+}
+
+/// Signatures of 4, 6 and 11 variables, and 1, 2 and 4 nested signatures
+/// (`bench::tyvars` times 300 and 2400 of each).
 #[test]
-fn printing_signatures_of_many_variables_scales() {
-    let n = 300;
-    let wide = [n, 8 * n].map(|m| (m, sig(&many(m), "f")));
-    let input = |size: usize| &wide.iter().find(|(m, _)| *m == size).expect("built").1;
+fn printing_signatures_of_many_variables() {
     // The variables of the second half each stand in a parameter and in the result, so each
     // takes a name of its own after the bounded `T`.
     assert_eq!(
         sig(&many(4), "f").to_string(),
         "(T, T, U, V) -> (T, U, V) for T in int | f32 | f64 | rat"
     );
-    let names = |text: &str| -> usize {
-        let words: std::collections::HashSet<&str> = text
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| w.starts_with(|c: char| c.is_ascii_uppercase()))
-            .collect();
-        words.len()
-    };
-    let text = input(n).to_string();
-    assert!(!text.contains('_'), "{text}");
-    assert_eq!(names(&text), 1 + (n - n / 2));
-    assert!(text.ends_with(" for T in int | f32 | f64 | rat"), "{text}");
-    scaling::check("printing a signature of n type variables", n, |size| {
-        let text = input(size).to_string();
-        assert_eq!(names(&text), 1 + (size - size / 2));
-    });
-    let deep = [n, 8 * n].map(|m| (m, nested(m)));
-    let input = |size: usize| &deep.iter().find(|(m, _)| *m == size).expect("built").1;
+    for n in [4, 6, 11] {
+        a_signature_of_many_variables_printed(&sig(&many(n), "f"), n);
+    }
     let text = nested(4).to_string();
     assert_eq!(
         text,
         "(((((((W) -> W for W in int), V) -> V for V in int | rat), U) -> U for U in int | rat), T) -> T for T in int | rat"
     );
     writes_back(&text);
-    scaling::check(
-        "printing n nested signatures that bound one name",
-        n,
-        |size| {
-            let text = input(size).to_string();
-            assert_eq!(text.matches(" for ").count(), size);
-        },
-    );
+    for depth in [1, 2, 4] {
+        nested_signatures_printed(&nested(depth), depth);
+    }
 }
 
 // UNDERSCORE-print (DESIGN.md sec:diagnostics, "The type of a declaration in a message"): a
@@ -353,30 +356,28 @@ fn a_printed_type_with_names_reads_back_as_itself() {
 
 /// `f(positional x0, …) = (x0, …);`: `n` variables, each standing in a parameter and in the
 /// result.
-fn each_twice(n: usize) -> String {
+pub(super) fn each_twice(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
     format!("f({}) = ({});\n", ps.join(", "), xs.join(", "))
 }
 
+/// `sig`, that of [`each_twice`]`(n)` for `n` of 5 or more, names every variable, the last
+/// `T<n>`.
+pub(super) fn variables_that_each_stand_twice_named(sig: &Sig, n: usize) {
+    let text = sig.to_string();
+    assert!(!text.contains('_'), "{text}");
+    assert!(text.ends_with(&format!("T{n})")), "{text}");
+}
+
+/// 5, 6 and 12 variables that each stand twice (`bench::tyvars` times 1000 and 8000).
 #[test]
-fn naming_many_variables_that_each_stand_twice_scales() {
-    // Counting the places of each variable, then naming each in one pass with a hash lookup
-    // per mark, is linear in the text here: these types hold no union (COMPLEXITY.md F169).
+fn naming_many_variables_that_each_stand_twice() {
     assert_eq!(
         sig(&each_twice(5), "f").to_string(),
         "(T, U, V, W, T5) -> (T, U, V, W, T5)"
     );
-    let n = 1000;
-    let built = [n, scaling::FACTOR * n].map(|m| (m, sig(&each_twice(m), "f")));
-    let input = |size: usize| &built.iter().find(|(m, _)| *m == size).expect("built").1;
-    scaling::check("naming n variables that each stand twice", n, |size| {
-        let text = input(size).to_string();
-        assert!(!text.contains('_'));
-        assert!(
-            text.ends_with(&format!("T{size})")),
-            "{}",
-            &text[text.len() - 20..]
-        );
-    });
+    for n in [5, 6, 12] {
+        variables_that_each_stand_twice_named(&sig(&each_twice(n), "f"), n);
+    }
 }

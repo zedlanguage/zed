@@ -21,7 +21,6 @@ use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
@@ -52,7 +51,7 @@ fn ints(lo: i64, hi: i64) -> Demand {
     Demand::Ints(IntervalSet::of(lo, hi))
 }
 
-fn pieces(ps: &[(i64, i64)]) -> IntervalSet {
+pub(super) fn pieces(ps: &[(i64, i64)]) -> IntervalSet {
     IntervalSet::from_pieces(ps.iter().map(|&(a, b)| (End::of(a), End::of(b))).collect())
 }
 
@@ -136,7 +135,7 @@ pub(super) fn bits(k: usize, lo: i64, hi: i64) -> Domains {
 ///   `tk` in `[-3, 7]`, `_live` over `[-k, k]` (plan item S22b-rest: the summary reads `c - t`);
 /// - chains of independent guards on bits, `indep` and `subset`, and the `abs` chain
 ///   `s_j = abs(s_(j-1)) - 2^(k+1-j)`.
-fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
+pub(super) fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
     let ki = k as i64;
     let narrow = || i_in(-50, 50);
     let live = || i_in(-ki, ki);
@@ -335,7 +334,7 @@ fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
     }
 }
 
-fn old(d: &Demand) -> before::Demand {
+pub(super) fn old(d: &Demand) -> before::Demand {
     match d {
         Demand::Ints(z) => before::Demand::Ints(z.clone()),
         Demand::Bool(b) => before::Demand::Bool(*b),
@@ -423,7 +422,7 @@ fn refuted(t: &Term, ds: &Domains, d: &Demand, domains: &Domains, exact: bool) -
 /// The index of a box of `boxes` (each a box and whether it is marked exact) that the
 /// interpreter refutes as [`refuted`] does, if any. The term runs once at each point, whatever
 /// the number of boxes.
-fn first_refuted(t: &Term, ds: &Domains, d: &Demand, boxes: &[(&Domains, bool)]) -> Option<usize> {
+pub(super) fn first_refuted(t: &Term, ds: &Domains, d: &Demand, boxes: &[(&Domains, bool)]) -> Option<usize> {
     let names: Vec<Arc<str>> = ds.keys().cloned().collect();
     super::points(ds, &names, (-60, 60)).iter().find_map(|pt| {
         let meets = super::meets(t, &names, pt, d);
@@ -674,6 +673,22 @@ impl Diffs {
         }
     }
 
+    /// Panics, showing the first differences, when there are any, or when fewer than `least`
+    /// cases were compared. Each counted kind of difference is allowed in any number: the
+    /// tests that take a new seed each run cannot know how many of each their cases give, and
+    /// each counted kind was checked as it was counted (a box refuted by the interpreter is a
+    /// difference found).
+    fn explained(self, least: usize) {
+        assert!(
+            self.found.is_empty(),
+            "{} of {} preimages differ from the transfer before:\n{}",
+            self.found.len(),
+            self.cases,
+            self.found[..self.found.len().min(5)].join("\n")
+        );
+        assert!(self.cases >= least, "only {} cases compared", self.cases);
+    }
+
     /// [`Diffs::none_but`] with no box of `c - x` changed and none made exact.
     fn none(self, least: usize, narrower: usize) {
         self.none_but(least, narrower, 0, 0)
@@ -714,55 +729,6 @@ impl Diffs {
             self.reference_finer, 0,
             "a box before is narrower than the box now"
         );
-    }
-
-    /// Checks that `finer` boxes before are narrower than the boxes now, or exact where they
-    /// are not, or exact without their listing (item PERF-ref-memo-quadratic).
-    fn reference_finer(mut self, finer: usize) -> Diffs {
-        assert_eq!(
-            self.reference_finer, finer,
-            "the number of boxes before narrower than the boxes now changed"
-        );
-        self.reference_finer = 0;
-        self
-    }
-
-    /// Checks that a split over many periods answered `wide` cases with the classes'
-    /// relation, and that the ones whose box is wider than the one before are `wider`, each its
-    /// box now and before.
-    fn split_wide(mut self, wide: usize, wider: &[&str]) -> Diffs {
-        assert_eq!(
-            self.wide, wide,
-            "the number of splits over many periods changed"
-        );
-        assert_eq!(
-            self.wider, wider,
-            "the wider boxes of splits over many periods"
-        );
-        self.wide = 0;
-        self
-    }
-
-    /// Checks that `renamed` results differ from the one before only in the names of the
-    /// variables of their relation or refusal (item S22-transfer-rem).
-    fn renamed(mut self, renamed: usize) -> Diffs {
-        assert_eq!(
-            self.renamed, renamed,
-            "the number of results that differ only in the names of their variables changed"
-        );
-        self.renamed = 0;
-        self
-    }
-
-    /// Checks that `unlisted` exact preimages the transfer before found by listing their points
-    /// are the same set, read without a listing (item PA-plus-if).
-    fn unlisted(mut self, unlisted: usize) -> Diffs {
-        assert_eq!(
-            self.unlisted, unlisted,
-            "the number of exact preimages read without the listing before changed"
-        );
-        self.unlisted = 0;
-        self
     }
 }
 
@@ -855,26 +821,34 @@ fn chain_demand(rng: &mut Rng, t: Term) -> (Term, Demand) {
     }
 }
 
-/// The families in `sets` at sizes on both sides of the domain's width (50), where the hull of
-/// a term starts to merge demands, and each under three more domains of `i`; the extra sizes
-/// of each family follow its name. Checks that exactly `cases` cases were compared.
+/// The sizes of [`chain_families`], on both sides of the domain's width (50), where the hull
+/// of a term starts to merge demands.
+const CHAIN_SIZES: [usize; 17] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 13, 16, 21, 32, 49, 50, 51, 64];
+
+/// The family `name` at size `k`, compared with the transfer before, and, where it reads `i`,
+/// under three more domains of `i` drawn from a seed of `k` and the name.
+fn chain_family(diffs: &mut Diffs, name: &str, k: usize) {
+    let (t, ds, d) = family(name, k);
+    diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+    if !ds.contains_key("i") {
+        return;
+    }
+    let mut rng = Rng::new(k as u64 * 31 + name.len() as u64);
+    for _ in 0..3 {
+        let mut ds = ds.clone();
+        ds.insert("i".into(), chain_domain(&mut rng));
+        diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+    }
+}
+
+/// The families in `sets` at each size of [`CHAIN_SIZES`] and the extra sizes that follow each
+/// name ([`chain_family`]). Checks that exactly `cases` cases were compared.
 fn chain_families(sets: &[(&str, &[usize])], cases: usize) {
     on_big_stack(|| {
-        let wide = (0..=8).chain([13, 16, 21, 32, 49, 50, 51, 64]);
         let mut diffs = Diffs::default();
         for &(name, more) in sets {
-            for k in wide.clone().chain(more.iter().copied()) {
-                let (t, ds, d) = family(name, k);
-                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
-                if !ds.contains_key("i") {
-                    continue;
-                }
-                let mut rng = Rng::new(k as u64 * 31 + name.len() as u64);
-                for _ in 0..3 {
-                    let mut ds = ds.clone();
-                    ds.insert("i".into(), chain_domain(&mut rng));
-                    diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
-                }
+            for k in CHAIN_SIZES.iter().chain(more) {
+                chain_family(&mut diffs, name, *k);
             }
         }
         assert_eq!(diffs.cases, cases, "cases compared");
@@ -916,50 +890,29 @@ const SHARED_FAMILIES: [(&str, &[usize]); 29] = [
     ("neg", &[]),
 ];
 
-/// The parts of [`SHARED_FAMILIES`], one test each: a run of consecutive families and the cases
-/// it compares, four for each size (17 sizes, and the extra ones). As one test, the 2044 cases
-/// took 33.8 s at load about 40 and 27.6 s at load 48, against the 60 s limit on a piece; the
-/// parts take 8.2 to 10.1 s each in a run of the whole step at load 38 to 39 (item
-/// TESTS-split-s22-random).
-const SHARED_FAMILY_PARTS: [(std::ops::Range<usize>, usize); 3] =
-    [(0..9, 656), (9..19, 692), (19..29, 696)];
-
-/// The families of part `part` of [`SHARED_FAMILY_PARTS`].
-fn chains_of_shared_terms(part: usize) {
-    let (families, cases) = SHARED_FAMILY_PARTS[part].clone();
-    chain_families(&SHARED_FAMILIES[families], cases);
-}
-
+/// Each family of [`SHARED_FAMILIES`] at size 1, and at one more of its sizes ([`CHAIN_SIZES`]
+/// and its extra ones) drawn from a new seed each run.
+///
+/// Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a random
+/// one takes fewer cases and a new seed each run), every family ran at every size, 2044 cases
+/// in three tests of 2 to 3.5 s.
 #[test]
-fn chains_of_shared_terms_keep_their_preimages_0() {
-    chains_of_shared_terms(0);
-}
-
-#[test]
-fn chains_of_shared_terms_keep_their_preimages_1() {
-    chains_of_shared_terms(1);
-}
-
-#[test]
-fn chains_of_shared_terms_keep_their_preimages_2() {
-    chains_of_shared_terms(2);
-}
-
-/// The parts of [`SHARED_FAMILY_PARTS`] take each family once, in order, and compare the 2044
-/// cases of the one test they were.
-#[test]
-fn the_parts_of_the_shared_families_take_each_family_once() {
-    let mut next = 0;
-    for (families, _) in SHARED_FAMILY_PARTS {
-        assert_eq!(
-            families.start, next,
-            "the parts leave out or repeat a family"
-        );
-        next = families.end;
-    }
-    assert_eq!(next, SHARED_FAMILIES.len(), "the parts leave out a family");
-    let cases: usize = SHARED_FAMILY_PARTS.iter().map(|(_, n)| n).sum();
-    assert_eq!(cases, 2044, "the cases of the parts");
+fn chains_of_shared_terms_keep_their_preimages() {
+    let seed = super::run_seed("s22::chains_of_shared_terms_keep_their_preimages");
+    let mut rng = Rng::new(seed);
+    on_big_stack(|| {
+        let mut diffs = Diffs::default();
+        for (name, more) in SHARED_FAMILIES {
+            let rest: Vec<usize> = (CHAIN_SIZES.iter().chain(more))
+                .copied()
+                .filter(|&k| k != 1)
+                .collect();
+            for k in [1, rng.pick(&rest)] {
+                chain_family(&mut diffs, name, k);
+            }
+        }
+        diffs.none(2 * SHARED_FAMILIES.len(), 0);
+    });
 }
 
 /// The families whose constants grow with the chain (`c_j = j`), at the sizes above, one test
@@ -985,25 +938,34 @@ fn chains_of_growing_constants_keep_their_preimages_altj_live() {
     chain_families(&[("altj_live", &[24])], 72);
 }
 
-/// Families whose transfer is slow or whose values leave `i64` at larger sizes.
+/// Families whose transfer is slow or whose values leave `i64` at larger sizes: each at its
+/// sizes 0 and 1, and at one more of its sizes up to 13 drawn from a new seed each run (the
+/// families `cross`, `mod7`, `pow2`, `mul` and `t3_gaps` are timed at larger sizes by `bench::s22`).
+/// Until TEST-bench-move-l0125 (author P169) each ran at every size, 83 cases in 10 s; `mod7`
+/// now stops at k = 4 (k = 5 to 8 took 0.5 to 1.5 s each, debug build at load 30) and
+/// `indep_1` at k = 8 (k = 12 took 1.3 s).
 #[test]
 fn chains_of_slow_families_keep_their_preimages() {
+    let seed = super::run_seed("s22::chains_of_slow_families_keep_their_preimages");
+    let mut rng = Rng::new(seed);
     on_big_stack(|| {
         let small = (0..=8).chain([13, 16, 21, 32]);
         let mut diffs = Diffs::default();
         for (name, ks) in [
             ("cross", small.clone().take(10).collect::<Vec<_>>()),
             ("cross_live", small.clone().take(10).collect()),
-            ("mod7", small.clone().take(9).collect()),
+            ("mod7", small.clone().take(5).collect()),
             ("pow2", small.clone().take(10).collect()),
             ("t3", small.clone().take(9).collect()),
             ("mul", small.clone().collect()),
             ("indep_2j", vec![1, 2, 3, 5, 8]),
-            ("indep_1", vec![1, 2, 3, 5, 8, 12]),
+            ("indep_1", vec![1, 2, 3, 5, 8]),
             ("subset", vec![1, 2, 3, 5, 8, 10]),
             ("abs_chain", vec![1, 2, 3, 5, 8]),
         ] {
-            for k in ks {
+            let (few, more): (Vec<usize>, Vec<usize>) =
+                ks.into_iter().filter(|&k| k <= 13).partition(|&k| k <= 1);
+            for k in few.into_iter().chain([rng.pick(&more)]) {
                 let (t, ds, d) = family(name, k);
                 diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
             }
@@ -1012,19 +974,21 @@ fn chains_of_slow_families_keep_their_preimages() {
         // order of their stable colors, and the transfer before shares it) stopped `mod7` at
         // k = 3 to 8 from being refused by its shadows, and LIVE3 (the Omega test decides three
         // live variables) did the same for `mod7 k=2`, so both are exact and alike there.
-        diffs.none_but(83, 0, 0, 0);
+        diffs.none_but(26, 0, 0, 0);
     });
 }
 
 /// Random chains of shared terms, under random domains of one to three pieces and random
 /// demands on the chain or on a comparison of it.
+/// `600` cases from a new seed each run; until TEST-bench-move-l0125 (author P169), 4000 cases
+/// of one fixed seed, 2 s.
 #[test]
 fn random_chains_of_shared_terms_keep_their_preimages() {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
         // Guards `i >= c` and translations, as the summary reads them.
-        let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
-        for _ in 0..4000 {
+        let mut rng = Rng::new(super::run_seed("s22::random_chains_of_shared_terms_keep_their_preimages"));
+        for _ in 0..600 {
             let mut t = var("i");
             for _ in 0..rng.int(0, 12) {
                 let prev = Shared::new(t);
@@ -1045,7 +1009,7 @@ fn random_chains_of_shared_terms_keep_their_preimages() {
             let (t, d) = chain_demand(&mut rng, t);
             diffs.preimage("translations", &t, &ds, &d);
         }
-        diffs.none(4000, 0);
+        diffs.none(600, 0);
     });
 }
 
@@ -1090,21 +1054,14 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     diffs.preimage("the narrowed case", &t, &ds, &d);
     assert_eq!((diffs.cases, diffs.exact, diffs.found.len()), (1, 1, 0));
 }
-
-/// Every kind of guard and arm the summary reads, and some it does not: the cases `from..to`
-/// of one sequence, split in tests of 250 cases each ([`GUARDED`]) so they run in parallel.
-fn random_guarded_chains(
-    from: usize,
-    to: usize,
-    (narrower, reflected, exact): (usize, usize, usize),
-    (wide, wider): (usize, &[&str]),
-    renamed: usize,
-    finer: usize,
-) {
+/// Every kind of guard and arm the summary reads, and some it does not: `cases` cases of the
+/// sequence from `seed`, each compared with the transfer before and both boxes checked against
+/// the interpreter; every difference is of a kind [`Diffs`] counts.
+fn random_guarded_chains(seed: u64, cases: usize) {
     on_big_stack(|| {
         let mut diffs = Diffs::default();
-        let mut rng = Rng::new(22);
-        for i in 0..to {
+        let mut rng = Rng::new(seed);
+        for _ in 0..cases {
             let t = random_chain(&mut rng);
             let ds = over(&[("i", chain_domain(&mut rng))]);
             let (t, d) = if rng.below(3) == 0 {
@@ -1116,125 +1073,27 @@ fn random_guarded_chains(
             } else {
                 (t, int_demand(&mut rng))
             };
-            if i >= from {
-                diffs.preimage("random chain", &t, &ds, &d);
-            }
+            diffs.preimage("random chain", &t, &ds, &d);
         }
-        diffs
-            .split_wide(wide, wider)
-            .renamed(renamed)
-            .reference_finer(finer)
-            .none_but(to - from, narrower, reflected, exact);
+        diffs.explained(cases);
     });
 }
 
-/// The counts of each test of [`random_guarded_chains`]: the first case of its 250, the
-/// narrower, reflected and exact boxes, and the splits over many periods with the wider of
-/// them, the results that differ only in the names of their variables, and the boxes before
-/// narrower than the boxes now (PERF-ref-memo-quadratic). The rows of each half sum to that
-/// half's counts as one test (`random_guarded_chains_sum_to_the_counts_of_each_half`).
-type Counts = (
-    usize,
-    (usize, usize, usize),
-    (usize, &'static [&'static str]),
-    usize,
-    usize,
-);
-
-const GUARDED: [Counts; 16] = [
-    (0, (0, 0, 43), (10, &[]), 0, 0),
-    (
-        250,
-        (0, 0, 28),
-        (
-            9,
-            &["i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]"],
-        ),
-        0,
-        0,
-    ),
-    (500, (0, 0, 35), (7, &[]), 0, 1),
-    (750, (0, 0, 30), (11, &[]), 0, 0),
-    (
-        1000,
-        (0, 0, 45),
-        (
-            14,
-            &["i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]"],
-        ),
-        0,
-        0,
-    ),
-    (
-        1250,
-        (0, 0, 41),
-        (4, &["i [-7..] before i [..=-6, -4..]"]),
-        0,
-        0,
-    ),
-    (
-        1500,
-        (0, 0, 35),
-        (
-            11,
-            &[
-                "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
-            ],
-        ),
-        0,
-        1,
-    ),
-    (1750, (0, 0, 39), (13, &[]), 0, 0),
-    (2000, (0, 0, 37), (16, &[]), 0, 1),
-    (2250, (0, 0, 36), (14, &[]), 0, 1),
-    (2500, (0, 0, 38), (10, &[]), 0, 0),
-    (2750, (0, 0, 41), (5, &[]), 0, 0),
-    (3000, (0, 0, 40), (9, &[]), 0, 1),
-    (3250, (0, 0, 38), (7, &[]), 0, 0),
-    (3500, (0, 0, 38), (5, &[]), 0, 0),
-    (
-        3750,
-        (0, 0, 43),
-        (9, &["i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]"]),
-        0,
-        2,
-    ),
-];
-
-/// One test per row of [`GUARDED`], each under 60 s at load 120.
-macro_rules! guarded_ranges {
-    ($($name:ident $row:literal),* $(,)?) => {
-        $(
-            #[test]
-            fn $name() {
-                let (from, counts, wide, renamed, finer) = GUARDED[$row];
-                random_guarded_chains(from, from + 250, counts, wide, renamed, finer);
-            }
-        )*
-    };
-}
-
-guarded_ranges!(
-    random_guarded_chains_keep_their_preimages_0000 0,
-    random_guarded_chains_keep_their_preimages_0250 1,
-    random_guarded_chains_keep_their_preimages_0500 2,
-    random_guarded_chains_keep_their_preimages_0750 3,
-    random_guarded_chains_keep_their_preimages_1000 4,
-    random_guarded_chains_keep_their_preimages_1250 5,
-    random_guarded_chains_keep_their_preimages_1500 6,
-    random_guarded_chains_keep_their_preimages_1750 7,
-    more_random_guarded_chains_keep_their_preimages_2000 8,
-    more_random_guarded_chains_keep_their_preimages_2250 9,
-    more_random_guarded_chains_keep_their_preimages_2500 10,
-    more_random_guarded_chains_keep_their_preimages_2750 11,
-    more_random_guarded_chains_keep_their_preimages_3000 12,
-    more_random_guarded_chains_keep_their_preimages_3250 13,
-    more_random_guarded_chains_keep_their_preimages_3500 14,
-    more_random_guarded_chains_keep_their_preimages_3750 15,
-);
-
-/// The rows of [`GUARDED`] cover cases 0 to 4000 of the sequence, one after another, and the
-/// rows of each half sum to the counts below.
+/// [`random_guarded_chains`] from a new seed each run.
+///
+/// Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a random
+/// one takes fewer cases and a new seed each run), the cases 0 to 4000 of seed 22 ran as 16
+/// tests of 250 cases, 2 to 4 s each, each with its counts of narrower, reflected and exact
+/// boxes, splits over many periods (with the wider of them), renamed results and boxes before
+/// narrower than the boxes now pinned. The history of those counts follows; the last counts
+/// were, for cases 0 to 2000 and 2000 to 4000: 0 and 0 narrower, 0 and 0 reflected, 296 and
+/// 311 made exact, 79 and 75 splits over many periods, 0 and 0 renamed, 2 and 5 boxes before
+/// narrower; the wider splits were, in the first half, `i [..=-12, -9..=-9, -5..] before i
+/// [..=-11, -9..=1, 3..]`, `i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]`, `i
+/// [-7..] before i [..=-6, -4..]` and `i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18]
+/// before i [..=-11, -9..=0, 3..=4, 6..=18]`, and in the second `i [..=-2, 0..=0, 2..] before
+/// i [..=0, 2..=8, 10..]`.
+///
 ///
 /// The first half, cases 0 to 2000: S22e-wide changes 87 cases here: 40 more are made exact
 /// (79, against 39 on main) by the split over many periods, where its projection lists the
@@ -1473,55 +1332,9 @@ guarded_ranges!(
 /// wider than the one before, listed above until then. No box of the transfer changes, and the
 /// interpreter refutes no box of either.
 #[test]
-fn random_guarded_chains_sum_to_the_counts_of_each_half() {
-    let sum = |rows: &[Counts]| {
-        let mut s = (0, 0, 0, 0, Vec::new(), 0, 0);
-        for &(_, (narrower, reflected, exact), (wide, wider), renamed, finer) in rows {
-            s = (
-                s.0 + narrower,
-                s.1 + reflected,
-                s.2 + exact,
-                s.3 + wide,
-                s.4,
-                s.5 + renamed,
-                s.6 + finer,
-            );
-            s.4.extend_from_slice(wider);
-        }
-        s
-    };
-    for (row, &(from, ..)) in GUARDED.iter().enumerate() {
-        assert_eq!(from, 250 * row, "row {row} does not follow the one before");
-    }
-    assert_eq!(
-        sum(&GUARDED[..8]),
-        (
-            0,
-            0,
-            296,
-            79,
-            vec![
-                "i [..=-12, -9..=-9, -5..] before i [..=-11, -9..=1, 3..]",
-                "i [-10..=-10, -7..=-6, -4..=-4, -2..] before i [-10..=7, 9..]",
-                "i [-7..] before i [..=-6, -4..]",
-                "i [..=0, 6..=7, 9..=10, 12..=13, 15..=16, 18..=18] before i [..=-11, -9..=0, 3..=4, 6..=18]",
-            ],
-            0,
-            2
-        )
-    );
-    assert_eq!(
-        sum(&GUARDED[8..]),
-        (
-            0,
-            0,
-            311,
-            75,
-            vec!["i [..=-2, 0..=0, 2..] before i [..=0, 2..=8, 10..]"],
-            0,
-            5
-        )
-    );
+fn random_guarded_chains_keep_their_preimages() {
+    let seed = super::run_seed("s22::random_guarded_chains_keep_their_preimages");
+    random_guarded_chains(seed, 25);
 }
 
 /// A run of random terms: `Mixed` runs `cases` terms of depth 3 from `seed`, tests (asked true
@@ -1680,52 +1493,62 @@ pub(super) fn cases(run: Run, mut each: impl FnMut(Case)) {
     }
 }
 
-/// The parts of the cases of [`RUNS`], numbered in order from 0 across the runs, one test each
-/// so that each stays well under 60 s (since S22-exact-mislabel every case runs the interpreter
-/// over its points, not only the cases that differ): the cases of each part, and its narrower,
-/// made exact and unlisted counts. As three tests of runs 0 to 4, 5 to 7 and 8 to 17 (cases 0
-/// to 2799, 2800 to 4699 and 4700 to 6799), the first two took 39.7 and 29.1 s at load about
-/// 40, and the three 25.7, 18.3 and 14.6 s at load 48; the parts take 5.3 to 9.9 s each in a run
-/// of the whole step at load 41 to 42 (item TESTS-split-s22-random).
-type PartCounts = (usize, usize, usize, usize, usize);
-
-const RANDOM_TERM_PARTS: [(std::ops::Range<usize>, PartCounts); 7] = [
-    (0..1100, (0, 2, 0, 0, 0)),
-    (1100..1950, (1, 2, 0, 0, 1)),
-    (1950..2800, (0, 3, 0, 0, 0)),
-    (2800..3750, (0, 3, 0, 0, 2)),
-    (3750..4700, (0, 8, 0, 0, 0)),
-    (4700..5750, (2, 8, 0, 0, 1)),
-    (5750..6800, (1, 1, 1, 1, 0)),
-];
-
-/// The random terms of `random.rs`, with its seeds and others, and its exact preimages: the
-/// cases of part `part` of [`RANDOM_TERM_PARTS`], each compared once, with exactly the part's
-/// number of cases and its narrower, made exact and unlisted counts. The cases before the part
-/// in its first run are made and passed over, so that each case is the one the whole sequence
-/// gives at its number.
-fn random_terms(part: usize) {
-    let (numbers, (narrower, exact, unlisted, renamed, finer)) = RANDOM_TERM_PARTS[part].clone();
+/// Random terms of every kind of [`Run`] from `seed` and the three seeds after it, each
+/// compared once with the transfer before and both boxes checked against the interpreter:
+/// `each` mixed integer terms and `each` mixed tests, every third term reading through calls,
+/// and the first `each / 2` terms of depth 4 and under `@exact`. Every difference is of a kind
+/// [`Diffs`] counts.
+fn random_terms(seed: u64, each: usize) {
+    let s = |i: u64| seed.wrapping_add(i);
+    let runs = [
+        (
+            Run::Mixed {
+                seed: s(0),
+                cases: each,
+                test: false,
+                calls: true,
+            },
+            each,
+        ),
+        (
+            Run::Mixed {
+                seed: s(1),
+                cases: each,
+                test: true,
+                calls: true,
+            },
+            each,
+        ),
+        (Run::Deep { seed: s(2) }, each / 2),
+        (
+            Run::Exact {
+                seed: s(3),
+                test: seed % 2 == 1,
+            },
+            each / 2,
+        ),
+    ];
     on_big_stack(|| {
         let mut diffs = Diffs::default();
-        let mut at = 0;
-        for run in RUNS {
-            if at >= numbers.end {
-                break;
-            }
+        for (run, first) in runs {
+            let mut at = 0;
             cases(run, |c| {
-                if numbers.contains(&at) {
-                    match &c.classes {
-                        None => {
-                            diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand)
-                        }
-                        Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
-                    }
-                }
                 at += 1;
+                if at > first {
+                    return;
+                }
+                match &c.classes {
+                    None => diffs.preimage_listed(c.what, &c.term, &c.domains, &c.listed, &c.demand),
+                    Some(cs) => diffs.exact(c.what, &c.term, &c.domains, cs, &c.demand),
+                }
             });
         }
-        assert_eq!(diffs.cases, numbers.len(), "cases compared by part {part}");
+        // Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a
+        // random one takes fewer cases and a new seed each run), the 6800 cases of [`RUNS`]
+        // ran as seven tests of 850 to 1100 cases, 5 to 10 s each, with their counts pinned:
+        // over all of them 4 narrower, 27 made exact, 1 unlisted, 1 renamed and 4 boxes before
+        // narrower than the boxes now. The history of those counts follows.
+        //
         // The one box S22b changes here, `((5 mod (3 - x)) mod abs(5))` with `x` in `[-4, ∞)`
         // and the demand `[-3, 5]`, is now exact (`x` in `[-4, 2] | [4, ∞)`, where `3 - x` is
         // not zero) and was inexact (`[-4, ∞)`), so it counts as made exact, not reflected.
@@ -1767,7 +1590,7 @@ fn random_terms(part: usize) {
         // return.
         //
         // Since TESTS-split-s22-random the three tests are the seven parts of
-        // [`RANDOM_TERM_PARTS`]; the counts of the three, (2, 8, 0), (0, 11, 0) and (3, 9, 1),
+        // `RANDOM_TERM_PARTS`; the counts of the three, (2, 8, 0), (0, 11, 0) and (3, 9, 1),
         // are the sums of the parts' counts within each.
         //
         // Since PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals
@@ -1781,75 +1604,15 @@ fn random_terms(part: usize) {
         // + 2)` is stated on `x` and `y` (`x >= y`, or `y > x` and `y` in `[-9, 5]`, the exact
         // solution set) where the transfer's names the `if` by an auxiliary variable; the box
         // and its exactness are the same, so it counts as renamed.
-        diffs
-            .renamed(renamed)
-            .reference_finer(finer)
-            .unlisted(unlisted)
-            .none_but(numbers.len(), narrower, 0, exact);
+        diffs.explained(2 * each + 2 * (each / 2));
     });
 }
 
+/// [`random_terms`] from a new seed each run.
 #[test]
-fn random_terms_keep_their_preimages_0() {
-    random_terms(0);
-}
-
-#[test]
-fn random_terms_keep_their_preimages_1() {
-    random_terms(1);
-}
-
-#[test]
-fn random_terms_keep_their_preimages_2() {
-    random_terms(2);
-}
-
-#[test]
-fn random_terms_keep_their_preimages_3() {
-    random_terms(3);
-}
-
-#[test]
-fn random_terms_keep_their_preimages_4() {
-    random_terms(4);
-}
-
-#[test]
-fn random_terms_keep_their_preimages_5() {
-    random_terms(5);
-}
-
-#[test]
-fn random_terms_keep_their_preimages_6() {
-    random_terms(6);
-}
-
-/// The parts of [`RANDOM_TERM_PARTS`] take each of the 6800 cases of [`RUNS`] once, in order,
-/// and their counts add up to those of the three tests they were: 5 narrower, 28 made exact
-/// and 1 unlisted; since PERF-ref-memo-quadratic 4 narrower, 27 made exact, 1 unlisted, 1
-/// renamed and 4 boxes before narrower than the boxes now.
-#[test]
-fn the_parts_of_the_random_terms_take_each_case_once() {
-    let mut all = 0;
-    for run in RUNS {
-        cases(run, |_| all += 1);
-    }
-    assert_eq!(all, 6800, "the cases of the runs");
-    let mut next = 0;
-    let mut sums = (0, 0, 0, 0, 0);
-    for (numbers, (narrower, exact, unlisted, renamed, finer)) in RANDOM_TERM_PARTS {
-        assert_eq!(numbers.start, next, "the parts leave out or repeat a case");
-        next = numbers.end;
-        sums = (
-            sums.0 + narrower,
-            sums.1 + exact,
-            sums.2 + unlisted,
-            sums.3 + renamed,
-            sums.4 + finer,
-        );
-    }
-    assert_eq!(next, all, "the parts leave out a case");
-    assert_eq!(sums, (4, 27, 1, 1, 4), "the counts of the parts");
+fn random_terms_keep_their_preimages() {
+    let seed = super::run_seed("s22::random_terms_keep_their_preimages");
+    random_terms(seed, 24);
 }
 
 /// Guards, domains, offsets and demands at the two ends of `i64`, values that leave `i64`
@@ -1878,23 +1641,27 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
             |b| prim(Prim::Le, var("i"), int(b)),
             |b| prim(Prim::Gt, var("i"), int(b)),
         ];
+        // Every end, constant and guard, each under one domain and one demand drawn from a
+        // new seed each run; until TEST-bench-move-l0125 (author P169), under every domain and
+        // demand, 5184 cases, most of the 1.5 s this test took.
+        let mut rng = Rng::new(super::run_seed(
+            "s22::ends_of_i64_and_other_corners_keep_their_preimages",
+        ));
         for b in ends {
             for c in [-2, -1, 1, 2, MAX, MIN] {
-                for (lo, hi) in doms {
-                    for d in &demands {
-                        for g in guards {
-                            let t = chain(1, var("i"), |_| g(b), plus(|_| c));
-                            diffs.preimage("ends", &t, &i_in(lo, hi), d);
-                            // Two levels, the second guard at the other end.
-                            let t = chain(
-                                2,
-                                var("i"),
-                                |j| g(if j == 1 { b } else { -b.saturating_add(1) }),
-                                plus(|_| c),
-                            );
-                            diffs.preimage("ends, two levels", &t, &i_in(lo, hi), d);
-                        }
-                    }
+                for g in guards {
+                    let (lo, hi) = rng.pick(&doms);
+                    let d = &demands[rng.below(demands.len())];
+                    let t = chain(1, var("i"), |_| g(b), plus(|_| c));
+                    diffs.preimage("ends", &t, &i_in(lo, hi), d);
+                    // Two levels, the second guard at the other end.
+                    let t = chain(
+                        2,
+                        var("i"),
+                        |j| g(if j == 1 { b } else { -b.saturating_add(1) }),
+                        plus(|_| c),
+                    );
+                    diffs.preimage("ends, two levels", &t, &i_in(lo, hi), d);
                 }
             }
         }
@@ -1985,7 +1752,7 @@ fn ends_of_i64_and_other_corners_keep_their_preimages() {
         // before is now the exact box of the transfer, without 5. None since
         // PERF-ref-memo-quadratic: the transfer before reads the other one's guarded chain by
         // intervals of `i` and finds the transfer's exact box.
-        diffs.none_but(4000, 0, 0, 0);
+        diffs.none_but(849, 0, 0, 0);
     });
 }
 
@@ -2015,238 +1782,44 @@ fn guarded_translation_chains_match_the_interpreter() {
     }
 }
 
-/// [`scaling::check`] on the preimage of a family, its sizes built before they are timed.
-fn scales(name: &'static str, n: usize) {
-    on_big_stack(|| {
-        let (a, b) = (family(name, n), family(name, n * scaling::FACTOR));
-        scaling::check(
-            &format!("the preimage of the chain family {name}"),
-            n,
-            |k| {
-                let (t, ds, d) = if k == n { &a } else { &b };
-                preimage(t, ds, d);
-            },
-        );
-    });
-}
 
-#[test]
-fn chain_probe_scales() {
-    scales("probe", 256);
-}
 
-#[test]
-fn chain_live_scales() {
-    scales("live", 256);
-}
 
-/// The probe with `i` over all integers: the arm `t + 1` leaves `i64` at `i = i64::MAX`,
-/// where the guard keeps `t`, so the summary checks only the values each arm keeps.
-#[test]
-fn chain_probe_all_scales() {
-    scales("probe_all", 256);
-}
 
-/// The probe with `i` over the half-line `[-100, inf)`.
-#[test]
-fn chain_probe_half_scales() {
-    scales("probe_half", 256);
-}
 
-/// The probe with `i` in `[-100, 2^62]`: an end of the domain plus an end of the demand met
-/// with the hull passes `i64::MAX`. Until S22-WIDE `Tx::fits` turned the summary and the clip
-/// off there and the transfer before ran, at about `k^2.8` (30 s at `k = 2048`); the summary
-/// now holds its values in `i128`, so the clip stays on.
-#[test]
-fn chain_probe_wide_scales() {
-    scales("probe_wide", 256);
-}
 
-/// The probe with `i` in `[-100, i64::MAX]`: the domain's end at the end of `i64`, which the
-/// summary read as an infinity until S22-WIDE, and so gave up on, leaving the transfer before.
-#[test]
-fn chain_probe_max_scales() {
-    scales("probe_max", 256);
-}
 
-#[test]
-fn chain_alt_scales() {
-    scales("alt", 256);
-}
 
-#[test]
-fn chain_cj_scales() {
-    scales("cj", 256);
-}
 
-#[test]
-fn chain_eq0_scales() {
-    scales("eq0", 256);
-}
 
-#[test]
-fn chain_range_scales() {
-    scales("range", 256);
-}
 
-#[test]
-fn chain_gt_scales() {
-    scales("gt", 256);
-}
 
-#[test]
-fn chain_swapped_scales() {
-    scales("swapped", 256);
-}
 
-#[test]
-fn chain_constfirst_scales() {
-    scales("constfirst", 256);
-}
 
-#[test]
-fn chain_sub_scales() {
-    scales("sub", 256);
-}
 
-#[test]
-fn chain_twoin_scales() {
-    scales("twoin", 256);
-}
 
-#[test]
-fn chain_conj_scales() {
-    scales("conj", 256);
-}
 
-#[test]
-fn chain_conj_live_scales() {
-    scales("conj_live", 256);
-}
 
-#[test]
-fn chain_cross_scales() {
-    scales("cross", 256);
-}
 
-#[test]
-fn chain_abs_guard_scales() {
-    scales("abs_guard", 256);
-}
 
-#[test]
-fn chain_ne_guard_scales() {
-    scales("ne_guard", 256);
-}
 
-#[test]
-fn chain_pow2_scales() {
-    scales("pow2", 256);
-}
 
-#[test]
-fn chain_jt_scales() {
-    scales("jt", 256);
-}
 
-#[test]
-fn chain_jt_range_scales() {
-    scales("jt_range", 256);
-}
 
-/// The chain whose else arms reflect, `j - t`, over `[-k, k]` with `tk` in `[-3, 7]`: each
-/// level reflects the demands of the one above about a new constant. The summary reads `c - t`
-/// since plan item S22b-rest and inverts the demand once: 10.6 times the instructions at
-/// `k` = 256 and 2,048, and 8.8 and 21 ms at 256 and 512. Before, the transfer read the chain
-/// level by level: 63.4 times, and 3.36 and 8.64 s at 256 and 512 (load about 85 to 110).
-#[test]
-fn chain_jt_range_live_scales() {
-    scales("jt_range_live", 256);
-}
 
-#[test]
-fn chain_five_range_live_scales() {
-    scales("five_range_live", 256);
-}
 
-#[test]
-fn chain_min_scales() {
-    scales("min", 256);
-}
 
-/// The probe with the guard spelled `j <= i`.
-#[test]
-fn chain_le_scales() {
-    scales("le", 256);
-}
 
-/// The probe asked `tk >= -3 && tk <= 7`: two comparisons of the shared chain under `&&`.
-#[test]
-fn chain_rangeand_scales() {
-    scales("rangeand", 256);
-}
 
-/// The live families, `i` in `[-k, k]`: no demand merges with another.
-#[test]
-fn chain_alt_live_scales() {
-    scales("alt_live", 256);
-}
 
-#[test]
-fn chain_eq0_live_scales() {
-    scales("eq0_live", 256);
-}
 
-#[test]
-fn chain_range_live_scales() {
-    scales("range_live", 256);
-}
 
-/// `c_j = j` over `[-k, k]`: before S22a 28.9 times the instructions at 8 and 64 (cross-review
-/// xs22, VERIFY_CLAUDE.md).
-#[test]
-fn chain_cj_live_scales() {
-    scales("cj_live", 256);
-}
 
-/// `c_j = ±j`, the sign alternating with `j`.
-#[test]
-fn chain_altj_scales() {
-    scales("altj", 256);
-}
 
-/// `c_j = ±j` over `[-k, k]`: before S22a 216 times the instructions at 8 and 64 (cross-review
-/// xs22, VERIFY_CLAUDE.md).
-#[test]
-fn chain_altj_live_scales() {
-    scales("altj_live", 256);
-}
 
-#[test]
-fn chain_ne0_scales() {
-    scales("ne0", 256);
-}
 
-/// Else arm `0 - (t + 1)`, under an integer demand of two pieces on both signs.
-#[test]
-fn chain_neg_scales() {
-    scales("neg", 256);
-}
 
-/// Else arm `-2 * t`, under an integer demand of two pieces on both signs: `tk` reaches
-/// `50 * 2^k`, which passes `i128` from `k = 122`, where the summary's coefficients and values
-/// become big integers (`Int`; COMPLEXITY.md S22, `mul`). From 32 to 256 the chain crosses that
-/// size.
-#[test]
-fn chain_mul_across_i128_scales() {
-    scales("mul", 32);
-}
 
-/// `mul` past `i128` at both sizes, its ends a bit longer at each level.
-#[test]
-fn chain_mul_scales() {
-    scales("mul", 256);
-}
 
 /// `cross` below its domain's width: `m` plus the number of guards `i >= j` that fail, for
 /// `j` up to 40 and both inputs in `[-50, 50]`. The transfer's box is inexact, so the
@@ -2312,11 +1885,6 @@ fn chains_that_stay_in_i64_keep_their_preimages() {
     });
 }
 
-/// The chain that leaves `i64`, with no point meeting `t_k >= 0`.
-#[test]
-fn chain_t3_gaps_scales() {
-    scales("t3_gaps", 256);
-}
 
 /// COMPLEXITY.md S22e. The chain `mod7`, of eleven guards `i mod 7 == j mod 7` with else arm
 /// `t + 1`: each remainder of `i` keeps `t` at one guard in seven, so `t11 = i + 9` for
@@ -2472,14 +2040,10 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
     check(&wide, &ds, &d, &now, (-60, 1060));
 }
 
-#[test]
-fn chain_mod7_scales() {
-    scales("mod7", 256);
-}
 
 /// The chain of `k` guards `i mod 1024 == j`, else `t + 1`, over `i` in `[-5000, 5000]`, asked
 /// `tk >= 0`.
-fn many_remainders(k: usize) -> (Term, Domains, Demand) {
+pub(super) fn many_remainders(k: usize) -> (Term, Domains, Demand) {
     let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(j));
     let t = chain(k, var("i"), g, plus(|_| 1));
     (
@@ -2515,7 +2079,7 @@ fn remainders_many_classes_cost_one_transfer_each() {
 #[test]
 fn chains_on_two_inputs_keep_their_boxes() {
     on_big_stack(|| {
-        for k in [1, 2, 3, 5, 8, 13, 21, 34, 48, 50, 51] {
+        for k in [1, 2, 5, 13, 50, 51] {
             for name in ["cross", "cross_live", "cross_dead"] {
                 if name == "cross_dead" && k < 5 {
                     continue;
@@ -2542,37 +2106,8 @@ fn chains_on_two_inputs_keep_their_boxes() {
     });
 }
 
-/// `cross` with every guard inside the inputs' width, so that the relation is asked at both
-/// sizes (from `k = 100` on, the transfer's box is exact and the relation is not needed).
-#[test]
-fn chain_cross_within_its_width_scales() {
-    scales("cross", 6);
-}
 
-/// `cross` from `k = 12` to `96`: at 96 the formula implies `i >= 47`, and the disjuncts
-/// `i <= j - 1` for `j` up to 47 have no point. Each was refuted by its own full propagation
-/// in `probe`, about `k (k - 50)` settles in all: 99.5 M and 3.98 G bytes, 40.0 times (ledger
-/// LIN-probe-refute). Since then one search over the bounds those disjuncts write finds
-/// `i >= 47` with `O(log k)` propagations and refutes them all: 1.00 G bytes, 10.1 times, and
-/// 3.74 G instructions against 0.30 G at 12, 12.3 times.
-#[test]
-fn chain_cross_above_its_width_scales() {
-    scales("cross", 12);
-}
 
-/// `cross_dead` (`cross` with its inputs two narrower than the chain is long) has its only
-/// point outside the demand at an end, `i = k - 2` and `m = 2 - k`. The greedy search over
-/// disjunctions keeps `i` where the first solution put it and fails, and the failed-literal
-/// search then tests the `2k` disjuncts. It tested each with a full propagation, about `k^2.4`
-/// in all (0.26, 1.40, 7.2 and 39.4 G instructions at `k` = 10, 18, 34, 66); since LIN-probe
-/// it keeps without a propagation each disjunct that a point found so far meets (2.88 G at
-/// `k = 66`). On `cross` from `k = 51` to `99` the `k - 50` guards `j > 50` that no input meets
-/// were each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48), and since
-/// LIN-probe-refute by one search over their bounds (`chain_cross_above_its_width_scales`).
-#[test]
-fn chain_cross_dead_scales() {
-    scales("cross_dead", 8);
-}
 
 /// `cross_dead` at the sizes below 5, where its inputs are at most two wide and its box is
 /// exact or empty of points outside: the preimage agrees with the interpreter on a window.
@@ -2587,26 +2122,10 @@ fn chain_cross_dead_at_small_sizes() {
     });
 }
 
-/// COMPLEXITY.md S22e-quad: the `2k + 1` classes of `k` distinct remainders share one reading
-/// of the chain. Each class runs the transfer from the root to the chain's top `if`, whose
-/// summary in that class is read from one summary of the chain over all classes, built once.
-/// Before, the whole chain was read again in each class: 58.0 times the instructions at 32
-/// and 256 (200,279,152 against 11,615,272,274); now about 8.5 times.
-#[test]
-fn many_remainders_scales() {
-    on_big_stack(|| {
-        let n = 32;
-        let (a, b) = (many_remainders(n), many_remainders(n * scaling::FACTOR));
-        scaling::check("the preimage of the chain of k remainders", n, |k| {
-            let (t, ds, d) = if k == n { &a } else { &b };
-            preimage(t, ds, d);
-        });
-    });
-}
 
 /// The chain of `k` guards `i mod 1024 == j`, else `min(t + 1, 2^40)`, asked `tk >= 0`: the
 /// summary over every class does not read `min`, so each class's run reads the guards itself.
-fn min_remainders(k: usize) -> Term {
+pub(super) fn min_remainders(k: usize) -> Term {
     let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(j));
     let arm = |_, t| prim(Prim::Min, prim(Prim::Add, t, int(1)), int(1 << 40));
     prim(Prim::Ge, chain(k, var("i"), g, arm), int(0))
@@ -2614,7 +2133,7 @@ fn min_remainders(k: usize) -> Term {
 
 /// `i mod 1024 != j` for every `j` in `1..=k`, and `i >= 0`, as a chain of `if`s whose else
 /// arms are `false`: boolean arms, which the summary over every class does not read.
-fn no_remainder_of(k: usize) -> Term {
+pub(super) fn no_remainder_of(k: usize) -> Term {
     (1..=k as i64).fold(ge_i(0), |t, j| {
         let g = prim(Prim::Ne, prim(Prim::Mod, var("i"), int(1024)), int(j));
         Term::If(
@@ -2627,41 +2146,13 @@ fn no_remainder_of(k: usize) -> Term {
 
 /// `k` guards `i >= 7j`, else `t + 1`, above the chain of `many_remainders`, asked `>= 0`: each
 /// class's run reads the `k` guards that are not on the remainder.
-fn above_remainders(k: usize) -> Term {
+pub(super) fn above_remainders(k: usize) -> Term {
     let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(j));
     let t = chain(k, var("i"), g, plus(|_| 1));
     let t = chain(k, t, |j| ge_i(j * 7), plus(|_| 1));
     prim(Prim::Ge, t, int(0))
 }
 
-/// COMPLEXITY.md S22e-quad: over one period the transfer over the box reads every guard on the
-/// remainder exactly, and where a class's run reads a guard by itself the split by classes
-/// costs one transfer of the chain per class. In both the transfer runs first, as before the
-/// split was moved ahead of it. With the split run first, from 8 to 64 the `min` chain took
-/// 45.3 times the instructions, from 16 to 128 the `!=` chain 45.7 times and the tests above
-/// the chain 64.8 times (21.0M against 1361.2M); the transfer alone is linear in all three.
-#[test]
-fn remainders_read_by_each_class_keep_the_transfer_first_scales() {
-    on_big_stack(|| {
-        let ds = i_in(0, 1000);
-        let d = Demand::Bool(true);
-        let n = 8;
-        let (a, b) = (min_remainders(n), min_remainders(n * scaling::FACTOR));
-        scaling::check("the preimage of the min chain of k remainders", n, |k| {
-            preimage(if k == n { &a } else { &b }, &ds, &d);
-        });
-        let n = 16;
-        let (a, b) = (no_remainder_of(n), no_remainder_of(n * scaling::FACTOR));
-        scaling::check("the preimage of k remainders excluded", n, |k| {
-            preimage(if k == n { &a } else { &b }, &ds, &d);
-        });
-        let n = 16;
-        let (a, b) = (above_remainders(n), above_remainders(n * scaling::FACTOR));
-        scaling::check("the preimage of k tests above k remainders", n, |k| {
-            preimage(if k == n { &a } else { &b }, &ds, &d);
-        });
-    });
-}
 
 /// COMPLEXITY.md S22e-quad, the three families of
 /// `remainders_read_by_each_class_keep_the_transfer_first_scales` over one period, and the
@@ -2836,7 +2327,7 @@ fn remainder_chains_outside_the_shared_summary_keep_their_preimages() {
 /// `many_remainders(k)` below `if (i mod 1024 == 0) { false }`: over the whole box a stretch
 /// where some classes keep their points and others do not spans many periods, and the split
 /// over the transfer's box is exact (COMPLEXITY.md S22e-wide).
-fn zero_excluded(k: usize) -> Term {
+pub(super) fn zero_excluded(k: usize) -> Term {
     let (t, _, _) = many_remainders(k);
     let g = prim(Prim::Eq, prim(Prim::Mod, var("i"), int(1024)), int(0));
     Term::If(
@@ -2846,36 +2337,6 @@ fn zero_excluded(k: usize) -> Term {
     )
 }
 
-/// COMPLEXITY.md S22e-wide: the four programs of the plan item over `[-5000, 5000]`, about ten
-/// periods of 1024. On main before it, from `k` to `2k`: the `min` chain about `k^2.7` (26.6M,
-/// 136.8M and 868.8M instructions at `k` = 8, 16 and 32), the tests above the chain `k^2`
-/// (28.3M and 109.1M at 16 and 32), the `!=` chain 249M and 763M at 4 and 8, and the chain
-/// below `i mod 1024 == 0` 1.59G and 5.16G at 4 and 8; main left all but the first inexact.
-/// Now, from `k` to `8k`, 2.24M to 17.6M (`k` = 8), 6.44M to 53.7M (16), 17.3M to 20.6M (4)
-/// and 85.9M to 498M (4), and all four are exact.
-#[test]
-fn remainders_over_many_periods_scale() {
-    on_big_stack(|| {
-        let ds = i_in(-5000, 5000);
-        let d = Demand::Bool(true);
-        let families = [
-            (
-                "the min chain of k remainders",
-                8,
-                min_remainders as fn(usize) -> Term,
-            ),
-            ("k tests above k remainders", 16, above_remainders),
-            ("k remainders excluded", 4, no_remainder_of),
-            ("k remainders below i mod 1024 == 0", 4, zero_excluded),
-        ];
-        for (what, n, family) in families {
-            let (a, b) = (family(n), family(n * scaling::FACTOR));
-            scaling::check(what, n, |k| {
-                preimage(if k == n { &a } else { &b }, &ds, &d);
-            });
-        }
-    });
-}
 
 /// COMPLEXITY.md S22e-wide: the four programs over many periods are exact and agree with the
 /// interpreter.
@@ -2999,7 +2460,7 @@ fn a_stretch_wrapping_past_the_modulus_inside_one_class_is_checked_by_remainder(
 /// the term before by one of `t`, `t + c`, `c - t`, `-t`, `min(t, c)` and `max(t, c)`, drawn
 /// with `seed`: a remainder guard over many periods that the split by remainders does not
 /// answer alone once the term around it reads another input or tests the chain.
-fn moved_remainder_chain(seed: u64, k: usize, x: &str, m: i64) -> Term {
+pub(super) fn moved_remainder_chain(seed: u64, k: usize, x: &str, m: i64) -> Term {
     let mut rng = Rng::new(seed);
     (0..k).fold(var(x), |t, _| {
         let r = rng.int(0, m.abs() - 1);
@@ -3025,7 +2486,7 @@ fn moved_remainder_chain(seed: u64, k: usize, x: &str, m: i64) -> Term {
 /// arms of an `if` reading different inputs (`y >= 0` or `x >= 0` picks `c` or `y`), a test
 /// of `c` (`c >= 1` picks `y` or `-y`), and remainders of two inputs or two moduli (`c <= 2`
 /// and `y mod 2 == 0`, or `x mod 2 == 0`).
-fn remainder_shape(shape: &str, c: Term) -> Term {
+pub(super) fn remainder_shape(shape: &str, c: Term) -> Term {
     let le2 = |t: Term| prim(Prim::Le, t, int(2));
     let pick = |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
     let even = |x: &str| prim(Prim::Eq, prim(Prim::Mod, var(x), int(2)), int(0));
@@ -3052,13 +2513,13 @@ const REMAINDER_SHAPES: [&str; 5] = [
 ];
 
 /// `x` and `y` in `[-w, w]`.
-fn xy_in(w: i64) -> Domains {
+pub(super) fn xy_in(w: i64) -> Domains {
     over(&[("x", IntervalSet::of(-w, w)), ("y", IntervalSet::of(-w, w))])
 }
 
 /// The chain of `k` guards `x mod m == j mod 3`, else `t + 1`. At `m = 3` each `x` misses two
 /// guards in every three, so at `k = 3q` the chain is `x + 2q`.
-fn counted_remainder_chain(k: usize, m: i64) -> Term {
+pub(super) fn counted_remainder_chain(k: usize, m: i64) -> Term {
     let g = |j: i64| prim(Prim::Eq, prim(Prim::Mod, var("x"), int(m)), int(j % 3));
     chain(k, var("x"), g, plus(|_| 1))
 }
@@ -3066,7 +2527,7 @@ fn counted_remainder_chain(k: usize, m: i64) -> Term {
 /// Five programs around the chain `c`, each asked `true`: `if x >= 0 { c } else { y } <= 2`,
 /// `if y >= 0 { c } else { 9 } <= 2`, `if c >= 1 { y } else { 9 } <= 2`,
 /// `c <= 2 && y mod 2 == 0` and `c <= 2 && x mod 2 == 0`.
-fn counted_shapes(c: Term) -> [Term; 5] {
+pub(super) fn counted_shapes(c: Term) -> [Term; 5] {
     let le2 = |t: Term| prim(Prim::Le, t, int(2));
     let pick = |g: Term, a: Term, b: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(b));
     let even = |x: &str| prim(Prim::Eq, prim(Prim::Mod, var(x), int(2)), int(0));
@@ -3255,7 +2716,7 @@ fn wide_remainder_refuted(
 /// is not a box, the box is its projection, marked necessary, and the relation (step L1.38)
 /// holds at every point meeting the demand and, inside the box, only there.
 ///
-/// For each modulus `m` of `moduli`, each count of periods `p` of `periods` and each shape of
+/// For each case `(m, p, s)` of `cases`, at modulus `m`, `p` periods and shape `s` of
 /// [`REMAINDER_SHAPES`], one case seeded by [`wide_remainder_seed`]: a chain of 1 to 13
 /// guards `x mod m == r` with arms drawn at random ([`moved_remainder_chain`]), `x` over
 /// `p * m - e` integers (`e` in `[0, m)`, so the run is longer than `p - 1` periods of `m`
@@ -3263,23 +2724,24 @@ fn wide_remainder_refuted(
 /// in `[-8, 8]`. The interpreter runs at every point of the box and is compared with the
 /// preimage by [`wide_remainder_refuted`]. A failure prints the case's seed and the command
 /// that reruns it alone.
-fn wide_remainders_match_the_interpreter(
-    test: &str,
-    moduli: std::ops::RangeInclusive<i64>,
-    periods: std::ops::RangeInclusive<i64>,
-) {
+fn wide_remainders_match_the_interpreter(test: &str, cases: &[(i64, i64, usize)]) {
     let only: Option<u64> = std::env::var(WIDE_REMAINDER_SEED)
         .ok()
         .map(|s| s.parse().expect("a seed is a number"));
     on_big_stack(|| {
         let d = Demand::Bool(true);
-        for m in moduli {
-            for p in periods.clone() {
-                for (s, shape) in REMAINDER_SHAPES.iter().enumerate() {
-                    let seed = wide_remainder_seed(m, p, s);
-                    if only.is_some_and(|o| o != seed) {
-                        continue;
-                    }
+        let all: Vec<(i64, i64, usize)>;
+        let cases = match only {
+            // The seed names its case, so it runs whether or not this run drew it.
+            Some(o) => {
+                all = vec![((o >> 16) as i64, ((o >> 8) & 0xff) as i64, (o & 0xff) as usize)];
+                &all[..]
+            }
+            None => cases,
+        };
+        for &(m, p, s) in cases {
+            let shape = &REMAINDER_SHAPES[s];
+            let seed = wide_remainder_seed(m, p, s);
                     let mut rng = Rng::new(seed);
                     let k = rng.int(1, 13) as usize;
                     let chain = moved_remainder_chain(rng.next_u64(), k, "x", m);
@@ -3311,45 +2773,30 @@ fn wide_remainders_match_the_interpreter(
                             pre.relation.as_ref().map(|r| r.to_string()),
                         );
                     }
-                }
-            }
         }
     });
 }
 
-/// One test per group of moduli and periods of [`wide_remainders_match_the_interpreter`], each a
-/// piece of its own. The 900 cases in one test took 82.5 s at load 18: 11 s in `preimage` and
-/// the rest in the comparison, most of it the solver's answers on whether the relation holds at
-/// each point of the box, which grow with the modulus and the periods (6 s for the moduli 2 to
-/// 5 together, 12 s for 16 alone). In seven groups each took 18 s to 30 s at load 12 to 16,
-/// six at once; in these fourteen, 8 s to 18 s at load 17 to 19, six at once.
-macro_rules! wide_remainders {
-    ($($name:ident $moduli:expr, $periods:expr);* $(;)?) => {
-        $(
-            #[test]
-            fn $name() {
-                wide_remainders_match_the_interpreter(stringify!($name), $moduli, $periods);
-            }
-        )*
-    };
+/// [`wide_remainders_match_the_interpreter`] at modulus 2 with one period in every shape, and
+/// at one case of modulus 2 to 16, 1 to 12 periods and any shape, drawn from a new seed each
+/// run.
+///
+/// Until TEST-bench-move-l0125 (author P169: a correctness test runs well under 1 s, a random
+/// one takes fewer cases and a new seed each run), all 900 cases ran, as fourteen tests of 3 to
+/// 8 s; the 900 cases in one test took 82.5 s at load 18: 11 s in `preimage` and the rest in
+/// the comparison, most of it the solver's answers on whether the relation holds at each point
+/// of the box, which grow with the modulus, the periods and the number of guards. One case
+/// takes 90 ms on average, from under 1 ms to 1.6 s (modulus 13, 9 periods, the first shape,
+/// in a debug build at load 30). `ZED_REMAINDER_SEED` still reruns any one of the 900 cases.
+#[test]
+fn wide_remainders_match_the_interpreter_at_random_moduli() {
+    let test = "wide_remainders_match_the_interpreter_at_random_moduli";
+    let mut rng = Rng::new(super::run_seed(&format!("s22::{test}")));
+    let shapes = REMAINDER_SHAPES.len();
+    let mut cases: Vec<(i64, i64, usize)> = (0..shapes).map(|s| (2, 1, s)).collect();
+    cases.push((rng.int(2, 16), rng.int(1, 12), rng.below(shapes)));
+    wide_remainders_match_the_interpreter(test, &cases);
 }
-
-wide_remainders!(
-    wide_remainders_match_the_interpreter_moduli_2_to_5 2..=5, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_6 6..=6, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_7 7..=7, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_8 8..=8, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_9 9..=9, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_10 10..=10, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_11 11..=11, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_12 12..=12, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_13 13..=13, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_14 14..=14, 1..=12;
-    wide_remainders_match_the_interpreter_modulus_15_periods_1_to_8 15..=15, 1..=8;
-    wide_remainders_match_the_interpreter_modulus_15_periods_9_to_12 15..=15, 9..=12;
-    wide_remainders_match_the_interpreter_modulus_16_periods_1_to_8 16..=16, 1..=8;
-    wide_remainders_match_the_interpreter_modulus_16_periods_9_to_12 16..=16, 9..=12;
-);
 
 /// The shapes of [`counted_shapes`] at their corners, each agreeing with the interpreter: the
 /// moduli 1, -3, 1024 (one period), `2^62` and `i64::MIN`, whose classes do not fit `i64`, so
@@ -3368,8 +2815,26 @@ fn remainder_reads_outside_a_split_at_their_corners() {
             over(&[("x", pieces(&[(-60, -31), (-9, 50)])), y.clone()]),
             over(&[("x", IntervalSet::empty()), y]),
         ];
-        for m in [1, -3, 1024, 1 << 62, i64::MIN] {
-            for k in [1, 6] {
+        // k = 5, which repeats two guards' classes, runs at one modulus drawn from a new seed
+        // each run; until TEST-bench-move-l0125 (author P169) k = 6 ran at every modulus, 0.7 s
+        // each. Two shapes are slow at sizes this test skips, with `x` unbounded (debug build,
+        // plan row PERF-wide-modulus-cliffs): `if x >= 0 { c } else { y } <= 2` at k = 4 alone
+        // takes 2.4 s at `2^62`, 0.5 s at 1024, 0.2 s at -3 and 2.3 s at `i64::MIN`, where k = 3
+        // and k = 5 take 30 ms and 1 ms; and `c <= 2 && y mod 2 == 0` at a modulus of `-2^62` or
+        // below takes 1.5 s at k = 4 and 4.6 s at k = 6, about 25 times as long as at `2^62`,
+        // with the same box. So `i64::MIN` is drawn at k = 3.
+        let moduli = [1, -3, 1024, 1 << 62, i64::MIN];
+        let mut rng = Rng::new(super::run_seed(
+            "s22::remainder_reads_outside_a_split_at_their_corners",
+        ));
+        let longer = rng.pick(&moduli);
+        for m in moduli {
+            let ks: &[usize] = match m {
+                _ if m != longer => &[1],
+                i64::MIN => &[1, 3],
+                _ => &[1, 5],
+            };
+            for &k in ks {
                 for t in counted_shapes(counted_remainder_chain(k, m)) {
                     for (i, ds) in domains.iter().enumerate() {
                         // The demand `false` on the first domain only, to keep the test short.
@@ -3394,51 +2859,7 @@ fn remainder_reads_outside_a_split_at_their_corners() {
     });
 }
 
-/// COMPLEXITY.md S22-transfer-rem: the three shapes the split by remainders does not answer
-/// alone (arms of an `if` reading different inputs, a test of a term that reads a remainder,
-/// remainders of two inputs), each over a chain of `k` guards `x mod 3 == r` across 40
-/// periods, take work of order `k` from `k` to `8k`.
-#[test]
-fn remainder_reads_outside_a_split_scale() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(60), Demand::Bool(true));
-        for shape in [
-            "arms of x and y",
-            "a test of the chain",
-            "remainders of two inputs",
-        ] {
-            let n = 8;
-            let terms = scaling::inputs(n, |k| {
-                remainder_shape(shape, moved_remainder_chain(1, k, "x", 3))
-            });
-            scaling::check(shape, n, |k| {
-                preimage(&terms[&k], &ds, &d);
-            });
-        }
-    });
-}
 
-/// COMPLEXITY.md S22-linear-rem: the linear stage on what the counted chain of `k` guards
-/// `x mod 3 == j mod 3` leaves, in `c <= 2 && y mod 2 == 0` and `c <= 2 && x mod 2 == 0` over
-/// `x` and `y` in `[-100000, 100000]`, does work of order `k` from `k` to `8k`. Level by
-/// level, one variable for each guard read together by the solver, it took 0.66 s at
-/// `k = 15` and 24.6 s at `k = 120`; written by the chain's summaries over the classes of
-/// `x mod 3`, it is one variable with a case for each piece of each range of classes.
-#[test]
-fn remainder_chains_in_the_linear_stage_scale() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        for (shape, at) in [("c <= 2 && y mod 2 == 0", 3), ("c <= 2 && x mod 2 == 0", 4)] {
-            let n = 5;
-            let terms = scaling::inputs(n, |k| {
-                counted_shapes(counted_remainder_chain(k, 3))[at].clone()
-            });
-            scaling::check(shape, n, |k| {
-                preimage(&terms[&k], &ds, &d);
-            });
-        }
-    });
-}
 
 /// A box of `x` as its pieces `(lo, hi)`.
 type Boxes = &'static [(i64, i64)];
@@ -3565,7 +2986,17 @@ const FARTHER_HOLES: [(i64, usize, u64, usize, Boxes, Boxes); 3] = [
 /// [`FARTHER_HOLES`]. Since row S22-hole-summaries no summary is cut at a hole of the domain
 /// of `x`, which widened 3 boxes at modulus 5 by 2 to 4 points, 6959 points (exact: 5482),
 /// and none at modulus 7. A change that loses more holes raises `points`.
-fn boxes_at_modulus(m: i64, points: usize) {
+///
+/// The interpreter runs at every point of `[-8, 8]` of each box, and at every point of `[-60,
+/// 60]` of one case drawn from a new seed each run. Until TEST-bench-move-l0125 (author
+/// P169: a correctness test runs well under 1 s, a random one takes fewer cases and a new seed
+/// each run) it ran at every point of `[-60, 60]` of every box, 10 s at each modulus.
+fn boxes_at_modulus(test: &str, m: i64, points: usize) {
+    let mut rng = Rng::new(super::run_seed(test));
+    let shapes = REMAINDER_SHAPES.len();
+    let whole: Vec<(usize, u64, usize)> = (0..1)
+        .map(|_| (rng.below(shapes), rng.int(1, 3) as u64, rng.pick(&[1, 2, 5, 13])))
+        .collect();
     on_big_stack(|| {
         let (ds, d) = (xy_in(60), Demand::Bool(true));
         let mut total = 0;
@@ -3574,7 +3005,8 @@ fn boxes_at_modulus(m: i64, points: usize) {
                 for k in [1, 2, 5, 13] {
                     let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
                     let p = preimage(&t, &ds, &d);
-                    check(&t, &ds, &d, &p, (-60, 60));
+                    let window = if whole.contains(&(s, seed, k)) { 60 } else { 8 };
+                    check(&t, &ds, &d, &p, (-window, window));
                     let x = &p.domains["x"];
                     total += (-60..=60).filter(|&v| x.contains(v)).count();
                     let held = FARTHER_HOLES.iter().find(|(fm, fs, fseed, fk, _, _)| {
@@ -3593,12 +3025,12 @@ fn boxes_at_modulus(m: i64, points: usize) {
 
 #[test]
 fn remainder_cases_cut_at_their_neighbors_at_modulus_5() {
-    boxes_at_modulus(5, 6959);
+    boxes_at_modulus("s22::remainder_cases_cut_at_their_neighbors_at_modulus_5", 5, 6959);
 }
 
 #[test]
 fn remainder_cases_cut_at_their_neighbors_at_modulus_7() {
-    boxes_at_modulus(7, 6906);
+    boxes_at_modulus("s22::remainder_cases_cut_at_their_neighbors_at_modulus_7", 7, 6906);
 }
 
 /// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and
@@ -3621,7 +3053,7 @@ fn spread_guard(j: i64) -> Term {
 /// a hole at each of its members in the first period of `[-100000, 2]`, about `k / 2` holes.
 /// Cutting each case at every other range's starts would make `O(k^2)` cases, and so would
 /// cutting each class's summary at every hole (COMPLEXITY.md S22-hole-summaries).
-fn spread_remainder_chain(k: usize) -> Term {
+pub(super) fn spread_remainder_chain(k: usize) -> Term {
     chain(k, var("x"), spread_guard, |j, t| {
         prim(Prim::Max, t, int(spread_constant(j)))
     })
@@ -3631,7 +3063,7 @@ fn spread_remainder_chain(k: usize) -> Term {
 /// -50 { max(t, c(j)) } else { t }`: an `if` on a test that reads no remainder, whose arms
 /// read it in different ways, so that each range of classes is sliced at `-50` by itself
 /// ([`Walk::pa_select`]). The holes are those of [`spread_remainder_chain`].
-fn select_remainder_chain(k: usize) -> Term {
+pub(super) fn select_remainder_chain(k: usize) -> Term {
     chain(k, var("x"), spread_guard, |j, t| {
         let low = prim(Prim::Le, var("x"), int(-50));
         let clamped = prim(Prim::Max, t.clone(), int(spread_constant(j)));
@@ -3640,7 +3072,7 @@ fn select_remainder_chain(k: usize) -> Term {
 }
 
 /// `c <= 2 && y mod 2 == 0` for the chain `c`.
-fn below_three_and_even_y(c: Term) -> Term {
+pub(super) fn below_three_and_even_y(c: Term) -> Term {
     let even = prim(Prim::Eq, prim(Prim::Mod, var("y"), int(2)), int(0));
     prim(Prim::And, prim(Prim::Le, c, int(2)), even)
 }
@@ -3662,12 +3094,13 @@ fn remainder_cases(p: &Preimage) -> usize {
 /// each of their two neighbors, ranges of one piece, cut at its start. The ranges of a
 /// constant are not cut, and no case is cut at a hole of the domain. Cut at every other
 /// range's starts they would be `O(k^2)`, and cut at every hole they were 229 and 953 at
-/// k = 16 and 32. The answer agrees with the interpreter, also at the holes.
+/// k = 16 and 32. The answer agrees with the interpreter, also at the holes. k = 64 ran here
+/// until TEST-bench-move-l0125 (author P169); `bench::s22` times the cases at larger k.
 #[test]
 fn remainder_cases_cut_at_their_neighbors_stay_linear() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        for k in [1, 4, 16, 64] {
+        for k in [1, 4, 16] {
             let t = below_three_and_even_y(spread_remainder_chain(k));
             let p = preimage(&t, &ds, &d);
             let two = (1..=k as i64).filter(|&j| spread_constant(j) <= 1).count();
@@ -3682,12 +3115,13 @@ fn remainder_cases_cut_at_their_neighbors_stay_linear() {
 /// COMPLEXITY.md S22-hole-summaries: the cases of the chain of [`select_remainder_chain`],
 /// whose ranges of classes are each sliced at `-50`, stay within `5k + 1` (21, 78, 306 at
 /// k = 4, 16, 64; cut at every hole of the domain they were 278 and 3798 at k = 16 and 64).
-/// The answer agrees with the interpreter, also at the holes.
+/// The answer agrees with the interpreter, also at the holes. k = 64 ran here until
+/// TEST-bench-move-l0125 (author P169); `bench::s22` times the cases at larger k.
 #[test]
 fn remainder_cases_sliced_by_a_test_stay_linear() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        for k in [1, 4, 16, 64] {
+        for k in [1, 4, 16] {
             let t = below_three_and_even_y(select_remainder_chain(k));
             let p = preimage(&t, &ds, &d);
             let cases = remainder_cases(&p);
@@ -3699,39 +3133,11 @@ fn remainder_cases_sliced_by_a_test_stay_linear() {
     });
 }
 
-/// COMPLEXITY.md S22-case-cuts and S22-hole-summaries: the linear stage on the chain of
-/// [`spread_remainder_chain`], whose cases would be `O(k^2)` cut at every other range's starts
-/// or at every hole of the domain, does work of order `k` from `k` to `8k`.
-#[test]
-fn remainder_cases_cut_at_their_neighbors_scale() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        let n = 8;
-        let terms = scaling::inputs(n, |k| below_three_and_even_y(spread_remainder_chain(k)));
-        scaling::check("cases of a spread remainder chain", n, |k| {
-            preimage(&terms[&k], &ds, &d);
-        });
-    });
-}
 
-/// COMPLEXITY.md S22-hole-summaries: the linear stage on the chain of
-/// [`select_remainder_chain`], whose slices would be `O(k^2)` cut at every hole of the
-/// domain, does work of order `k` from `k` to `8k`.
-#[test]
-fn remainder_cases_sliced_by_a_test_scale() {
-    on_big_stack(|| {
-        let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        let n = 8;
-        let terms = scaling::inputs(n, |k| below_three_and_even_y(select_remainder_chain(k)));
-        scaling::check("cases of a sliced remainder chain", n, |k| {
-            preimage(&terms[&k], &ds, &d);
-        });
-    });
-}
 
 /// `x` in `[-100000, 100000]` with `h` holes of one point, spread evenly, and `y` in
 /// `[-100000, 100000]`.
-fn x_with_holes(h: usize) -> Domains {
+pub(super) fn x_with_holes(h: usize) -> Domains {
     let step = 198000 / h as i64;
     let mut ps = Vec::with_capacity(h + 1);
     let mut lo = -100000;
@@ -3744,39 +3150,6 @@ fn x_with_holes(h: usize) -> Domains {
     over(&[("x", pieces(&ps)), ("y", IntervalSet::of(-100000, 100000))])
 }
 
-/// COMPLEXITY.md S22-fwd-holes: the forward transfer of the levels of
-/// [`spread_remainder_chain`], with `64k` holes in the domain of `x`, in the second program of
-/// [`counted_shapes`], makes integer sets of pieces of order `k`, from `k` to `8k`: the domain
-/// of `x` is shared, not copied, and a join or a `max` keeps its operands and its bounds, so
-/// no set lists the holes again where no reader asks for its pieces. Copying the holes into
-/// each level's set made `O(k * H)` pieces.
-#[test]
-fn forward_sets_of_a_chain_share_the_holes_scale() {
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        let n = 8;
-        let made = |k: usize| {
-            let t = counted_shapes(spread_remainder_chain(k))[1].clone();
-            let ds = x_with_holes(64 * k);
-            forward_pieces();
-            let p = preimage(&t, &ds, &d);
-            assert!(p.exact, "the preimage at k = {k} is exact");
-            forward_pieces()
-        };
-        let (small, large) = (made(n), made(scaling::FACTOR * n));
-        assert!(small > 0, "the forward transfer makes sets");
-        scaling::hold(
-            &format!(
-                "pieces of the forward sets: sizes {n} and {}",
-                scaling::FACTOR * n
-            ),
-            "pieces",
-            small,
-            large,
-            1,
-        );
-    });
-}
 
 /// The cases of [`split_pieces_reach_each_kind_of_touched`]: programs split by the remainder of
 /// `x` over domains whose pieces were placed so that, per modulus, some piece of a class's set
@@ -3926,60 +3299,8 @@ fn split_pieces_reach_each_kind_of_touched() {
     });
 }
 
-/// COMPLEXITY.md S22-shapes-linear: whether the box of the first program of
-/// [`counted_shapes`] over the levels of [`spread_remainder_chain`] is exact, with `64k` holes
-/// in the domain of `x`, costs work of order `k` from 128 holes to 1024: 6.75 times the
-/// instructions and 6.82 times the bytes for 8 times the holes, where probing to the end took
-/// 17.4 times the bytes. The question has points, but the first search for one takes a piece
-/// of `x` that the `if` of the chain cannot follow, and the probe after it
-/// ([`zedc::store::presburger`]'s `has_point`) stops at its first point; probing to the end
-/// found a point for each of the `32k` pieces of `x`, each at the cost of the whole formula,
-/// `O(k^2)`.
-///
-/// Since PROJECT-canon-precision the probe runs whether or not the first search found a point,
-/// and the domain of `x`, a set of values of one atom, is kept untested (`one_atom_set` in
-/// `zedc_presburger`). The probe still asks one search per case of the chain, `k` in all, and
-/// each search read the `64k` pieces of the domain: 9.4, 11.1 and 12.7 times (bytes, limit
-/// 11.73, failed) from 128, 256 and 512 holes to 8 times as many, `O(k^2)`. Testing each piece
-/// of the domain as well took 12.55 times from 128. A search now leaves the domain out and
-/// looks its point up in it by binary search: 7.4, 8.3 and 9.7 times, where the probe only on
-/// a failed search, which main ran, took 7.4, 8.5 and 9.2 times. The second test, at 512, is
-/// the one that failed.
-fn the_box_of_a_chain_over_holes_is_tested_in_linear_work(n: usize) {
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        let make = |holes: usize| {
-            let k = holes / 64;
-            let t = counted_shapes(spread_remainder_chain(k))[0].clone();
-            (t, x_with_holes(holes))
-        };
-        let inputs = scaling::inputs(n, make);
-        for (t, ds) in inputs.values() {
-            assert!(
-                !preimage(t, ds, &d).exact,
-                "the box has points outside the preimage"
-            );
-        }
-        scaling::check(
-            "the exactness test of the box of a chain over the holes of `x`",
-            n,
-            |holes| {
-                let (t, ds) = &inputs[&holes];
-                preimage(t, ds, &d);
-            },
-        );
-    });
-}
 
-#[test]
-fn the_box_of_a_chain_over_many_holes_is_tested_in_linear_work() {
-    the_box_of_a_chain_over_holes_is_tested_in_linear_work(128);
-}
 
-#[test]
-fn the_box_of_a_chain_over_more_holes_is_tested_in_linear_work() {
-    the_box_of_a_chain_over_holes_is_tested_in_linear_work(512);
-}
 
 /// Plan item SOUND-div-exact: `c^0` is 1 where `c` is defined and fails where `c` does
 /// (DESIGN.md sec:failure: a loose atom operand selects no arrow and passes out), so a power 0
@@ -4029,35 +3350,20 @@ fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero()
     }
 }
 
-/// The number of cases that [`reversed_parts_give_the_same_boxes`] compares, and the number of
-/// parts, one test each, they are split into. A part of 1000 cases took 18 to 22 s alone (83
-/// to 104 G instructions, load 42 to 48) and 40 to 59 s when four test binaries ran at once,
-/// near the 60 s limit on a piece; a part of 500 takes about half that (item
-/// TESTS-split-reversed-boxes).
-const REVERSED_CASES: usize = 4000;
-const REVERSED_PARTS: usize = 8;
-const _: () = assert!(REVERSED_CASES.is_multiple_of(REVERSED_PARTS));
-
-/// Part `part` of the [`REVERSED_CASES`] cases of [`random_guarded_chains`]' sequence, split
-/// into [`REVERSED_PARTS`] runs of consecutive cases. Each case is run by the transfer and by
-/// the transfer before it ([`before`]) as written and with the disjunctions of every
+/// `cases` cases of [`random_guarded_chains`]' sequence from `seed`, each run by the transfer
+/// and by the transfer before it ([`before`]) as written and with the disjunctions of every
 /// projection, and the disjuncts of each, read in reverse
 /// ([`zedc::store::presburger::with_parts_reversed`]): the boxes and their exactness are the
 /// same both ways (item PROJECT-canon-precision). Before that item, the transfer before gave
-/// 17 of the 4000 cases different boxes in reverse: a disjunct with no point stayed when the
-/// greedy search found a point first, and a disjunction left with one disjunct did not start
-/// another round of the propagation. Each part checks that it compared exactly its share of
-/// the cases, so the parts together compare each case once.
-fn reversed_parts_give_the_same_boxes(part: usize) {
+/// 17 of the 4000 cases of seed 22 different boxes in reverse: a disjunct with no point stayed
+/// when the greedy search found a point first, and a disjunction left with one disjunct did not
+/// start another round of the propagation.
+fn reversed_boxes_are_the_same(seed: u64, cases: usize) {
     use zedc::store::presburger::with_parts_reversed as reversed;
-    assert!(part < REVERSED_PARTS, "part {part} of {REVERSED_PARTS}");
-    let len = REVERSED_CASES / REVERSED_PARTS;
-    let (from, to) = (part * len, (part + 1) * len);
     on_big_stack(|| {
-        let mut rng = Rng::new(22);
+        let mut rng = Rng::new(seed);
         let mut differ = Vec::new();
-        let mut compared = 0;
-        for i in 0..to {
+        for i in 0..cases {
             let t = random_chain(&mut rng);
             let ds = over(&[("i", chain_domain(&mut rng))]);
             let (t, d) = if rng.below(3) == 0 {
@@ -4069,10 +3375,6 @@ fn reversed_parts_give_the_same_boxes(part: usize) {
             } else {
                 (t, int_demand(&mut rng))
             };
-            if i < from {
-                continue;
-            }
-            compared += 1;
             let (a, b) = (preimage(&t, &ds, &d), reversed(|| preimage(&t, &ds, &d)));
             if a.domains != b.domains || a.exact != b.exact {
                 differ.push(format!(
@@ -4092,7 +3394,6 @@ fn reversed_parts_give_the_same_boxes(part: usize) {
                 ));
             }
         }
-        assert_eq!(compared, len, "cases compared by part {part}");
         assert!(
             differ.is_empty(),
             "boxes that depend on the order:\n{}",
@@ -4101,147 +3402,89 @@ fn reversed_parts_give_the_same_boxes(part: usize) {
     });
 }
 
+/// [`reversed_boxes_are_the_same`] from a new seed each run. Until TEST-bench-move-l0125
+/// (author P169), the 4000 cases of seed 22 ran as eight tests of 500 cases, 6 to 9 s each.
 #[test]
-fn reversed_parts_give_the_same_boxes_0() {
-    reversed_parts_give_the_same_boxes(0);
+fn reversed_parts_give_the_same_boxes() {
+    let seed = super::run_seed("s22::reversed_parts_give_the_same_boxes");
+    reversed_boxes_are_the_same(seed, 20);
 }
 
-#[test]
-fn reversed_parts_give_the_same_boxes_1() {
-    reversed_parts_give_the_same_boxes(1);
-}
 
-#[test]
-fn reversed_parts_give_the_same_boxes_2() {
-    reversed_parts_give_the_same_boxes(2);
-}
 
-#[test]
-fn reversed_parts_give_the_same_boxes_3() {
-    reversed_parts_give_the_same_boxes(3);
-}
 
+/// The probe with `i` in `[-100, 2^62]` and in `[-100, i64::MAX]`, whose sums pass `i64::MAX`
+/// at an end, at the sizes up to 32 that `bench::s22` times at 256 and 2048: each box agrees
+/// with the transfer before and with the interpreter.
 #[test]
-fn reversed_parts_give_the_same_boxes_4() {
-    reversed_parts_give_the_same_boxes(4);
-}
-
-#[test]
-fn reversed_parts_give_the_same_boxes_5() {
-    reversed_parts_give_the_same_boxes(5);
-}
-
-#[test]
-fn reversed_parts_give_the_same_boxes_6() {
-    reversed_parts_give_the_same_boxes(6);
-}
-
-#[test]
-fn reversed_parts_give_the_same_boxes_7() {
-    reversed_parts_give_the_same_boxes(7);
-}
-
-/// `c - i` with `c = 4n + 3` under a demand of `2n` pieces, `n` on each side of zero, by the
-/// transfer before: the reflections of the demand's pieces are all positive, so the forward
-/// image of `{c} - z` caps them to the `n` pieces of one sign region of an operand and has
-/// holes, and the box is exact only because the domain of `i`, the reflection itself, takes no
-/// value in them (S22-exact-mislabel). The check (the reflection of the demand, the image less
-/// it, and the meet with the forward image of `i`) costs `O(n log n)` at most.
-#[test]
-fn constant_minus_holes_scale() {
-    let case = |n: usize| {
-        let n = n as i64;
-        let c = 4 * n + 3;
-        let z = pieces(&(-n..n).map(|j| (4 * j, 4 * j + 1)).collect::<Vec<_>>());
-        let reflected = (-n..n).rev().map(|j| (c - 4 * j - 1, c - 4 * j));
-        let ds = over(&[("i", pieces(&reflected.collect::<Vec<_>>()))]);
-        (prim(Prim::Sub, int(c), var("i")), ds, Demand::Ints(z))
-    };
-    let n = 256;
-    let (a, b) = (case(n), case(n * scaling::FACTOR));
+fn probes_near_the_end_of_i64_keep_their_preimages() {
     on_big_stack(|| {
-        for (t, ds, d) in [&a, &b] {
-            let p = before::preimage(t, ds, &old(d));
-            assert!(p.exact && p.domains == *ds, "{t}: {p:?}");
+        let mut diffs = Diffs::default();
+        for name in ["probe_wide", "probe_max"] {
+            for k in [0, 1, 2, 3, 5, 8, 32] {
+                let (t, ds, d) = family(name, k);
+                diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+            }
         }
-        scaling::check("the transfer before of `c - i` with holes", n, |k| {
-            let (t, ds, d) = if k == n { &a } else { &b };
-            before::preimage(t, ds, &old(d));
-        });
+        diffs.none(14, 0);
     });
 }
 
-/// The chain `t_j = if (i <= j mod 7 - 3) { t } else { (3j + 1) - t }` of `n` levels over `i`
-/// in `[-20, 20]`, asked `t_n != 0`. Every level's `c - t` has holes that meet the forward
-/// image of `t`, and the guards remove them, so the preimage is exact. The transfer before
-/// carries the holes down as one set of doubted values and meets them with the guards' boxes
-/// where `i` is read (S22-guard-exact). Measured with the whole preimage: 63 and 594 ms at 256
-/// and 2,048 (9.4 times); a transfer of the holes at each level as a demand of their own, met
-/// with the guards' boxes (not kept), 9.4 and 511 ms at 32 and 256 (55 times); the check before
-/// (S22-exact-mislabel), which left these boxes not exact, 69 ms and 6.1 s at 8 and 64, all of
-/// it in the stages after the transfer (load about 18).
+/// The chains that `bench::s22` times over `x` with `64k` holes, at small `k`: the box of the
+/// first program of [`counted_shapes`] holds points outside the preimage, and is not exact;
+/// the second is exact, agrees with the interpreter near the holes, and its forward sets
+/// make as many pieces with eight times the holes (S22-fwd-holes: the domain of `x` is
+/// shared, not copied into each level's set).
 #[test]
-fn guarded_holes_scale() {
-    let case = |n: usize| {
-        let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
-        let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(3 * j + 1), t));
-        (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true))
-    };
-    let n = 256;
-    let (a, b) = (case(n), case(n * scaling::FACTOR));
+fn chains_over_the_holes_of_x_at_small_sizes() {
     on_big_stack(|| {
-        for (t, ds, d) in [&a, &b] {
-            let p = before::preimage(t, ds, &old(d));
-            assert!(p.exact && !p.enumerated, "{p:?}");
-            assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
+        let d = Demand::Bool(true);
+        for k in [1, 2, 4] {
+            let boxed = counted_shapes(spread_remainder_chain(k))[0].clone();
+            assert!(!preimage(&boxed, &x_with_holes(64 * k), &d).exact, "k = {k}");
+            let t = counted_shapes(spread_remainder_chain(k))[1].clone();
+            let pieces = |holes: usize| {
+                let ds = x_with_holes(holes);
+                forward_pieces();
+                let p = preimage(&t, &ds, &d);
+                assert!(p.exact, "k = {k}, {holes} holes: {p:?}");
+                check(&t, &ds, &d, &p, (-100000, -99990));
+                forward_pieces()
+            };
+            let few = pieces(64 * k);
+            assert!(few > 0, "the forward transfer makes sets");
+            assert_eq!(pieces(512 * k), few, "k = {k}");
         }
-        scaling::check(
-            "the transfer before of a guarded chain of `c - t` with holes",
-            n,
-            |k| {
-                let (t, ds, d) = if k == n { &a } else { &b };
-                before::preimage(t, ds, &old(d));
-            },
-        );
     });
 }
 
-/// The chain `t_j = if (i <= j mod 7 - 3) { t } else { c - t }` of `n` levels over `i` in
-/// `[-20, 20]`, asked `t_n != 0`, with the constant `c = 2`, or `c = j mod 5`. The transfer
-/// before is exact but for one doubted value of `i`, the point where `t_n` may be 0, and the
-/// linear stage decides that one slice of the relation: the preimage is exact, the box less
-/// that point. Measured with the whole preimage before, `c = 2`: 32.8 M and 263.8 M
-/// instructions at 64 and 512 (8.0 times), 5.3 MB and 42.6 MB (8.0 times), limit 13.2, load
-/// 31 (item PERF-s22-const-chain). Negative control, not kept: the linear stage by the
-/// projection of the relation onto `i` and the decision of its complement leaves the box
-/// `[-20, 20]` inexact, and, with that check skipped, allocates 247 MB and 3.53 GB (14.3
-/// times) and takes 178 ms and 3.3 s, the decision alone up to 418 G instructions at 192
-/// levels. With `c = j mod 5` the preimage is exact too; its transfer is not linear in the
-/// chain (COMPLEXITY.md row C48), so it is checked here at one size only.
+/// The cases of `bench::s22`'s `constant_minus_holes_scale`, `guarded_holes_scale` and
+/// `constant_guarded_chains_scale` at small sizes: `c - i` with holes under a demand of `2n`
+/// pieces is exact with its whole domain by the transfer before, and the guarded chains of
+/// `c - t`, with `c = 3j + 1`, `2` and `j mod 5`, are exact, not listed, and agree with the
+/// interpreter.
 #[test]
-fn constant_guarded_chains_scale() {
-    let case = |n: usize, c: fn(i64) -> i64| {
-        let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
-        let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(c(j)), t));
-        (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true))
-    };
-    let n = 64;
-    let cases = scaling::inputs(n, |m| case(m, |_| 2));
-    let moving = case(n, |j| j % 5);
+fn holes_of_c_minus_t_at_small_sizes() {
     on_big_stack(|| {
-        for (t, ds, d) in cases.values().chain([&moving]) {
-            let p = before::preimage(t, ds, &old(d));
-            assert!(p.exact && !p.enumerated, "{p:?}");
-            assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
+        for n in [1_i64, 2, 5] {
+            let c = 4 * n + 3;
+            let z = pieces(&(-n..n).map(|j| (4 * j, 4 * j + 1)).collect::<Vec<_>>());
+            let reflected = (-n..n).rev().map(|j| (c - 4 * j - 1, c - 4 * j));
+            let ds = over(&[("i", pieces(&reflected.collect::<Vec<_>>()))]);
+            let (t, d) = (prim(Prim::Sub, int(c), var("i")), Demand::Ints(z));
+            let p = before::preimage(&t, &ds, &old(&d));
+            assert!(p.exact && p.domains == ds, "{t}: {p:?}");
         }
-        scaling::check_order(
-            "the transfer and linear stage before of a guarded chain of `2 - t`",
-            n,
-            1,
-            |k| {
-                let (t, ds, d) = &cases[&k];
-                before::preimage(t, ds, &old(d));
-            },
-        );
+        let constants: [fn(i64) -> i64; 3] = [|j| 3 * j + 1, |_| 2, |j| j % 5];
+        for c in constants {
+            for n in [1, 2, 7, 16] {
+                let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
+                let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(c(j)), t));
+                let (t, ds, d) = (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true));
+                let p = before::preimage(&t, &ds, &old(&d));
+                assert!(p.exact && !p.enumerated, "n = {n}: {p:?}");
+                assert_eq!(first_refuted(&t, &ds, &d, &[(&p.domains, true)]), None);
+            }
+        }
     });
 }

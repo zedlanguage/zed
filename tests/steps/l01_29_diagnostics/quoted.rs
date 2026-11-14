@@ -4,14 +4,13 @@
 //! again, so n errors on one line of length O(n) printed O(n²) characters (COMPLEXITY.md
 //! RENDER-line-per-error).
 
-use zed_tests::scaling;
 use zedc::front::{Diagnostic, Quoted, Step};
 
 use super::rejected;
 
 /// `f` adding `n` components with `sum`, each a field read the checker does not track, all on
 /// one line: each `+` of the sum fails, and each is placed over the components it adds.
-fn untracked_sum(n: usize) -> String {
+pub(super) fn untracked_sum(n: usize) -> String {
     let xs = vec!["x.a"; n].join(", ");
     format!("f(positional x) = sum(({xs}));\nmain(m: MainArgs) = 0;\n")
 }
@@ -94,15 +93,18 @@ fn every_step_stays_when_the_line_is_shown_once() {
     );
 }
 
+/// The sum of [`untracked_sum`]`(n)` gives three diagnostics per component, each with a few
+/// steps, and its line is shown once.
+pub(super) fn many_errors_rendered_on_one_line(src: &str) {
+    let out = rejected(src);
+    assert_eq!(shown(&out, "f(positional x) = "), 1);
+}
+
 #[test]
-fn rendering_many_errors_on_one_line_scales() {
-    // The sum gives three diagnostics per component, each with a few steps, so the listing is
-    // O(n) once the line is shown once.
-    let inputs = scaling::inputs(100, untracked_sum);
-    scaling::check("n errors of `sum` on one line of n components", 100, |n| {
-        let out = rejected(&inputs[&n]);
-        assert_eq!(shown(&out, "f(positional x) = "), 1);
-    });
+fn rendering_many_errors_on_one_line() {
+    for n in [1, 2, 9] {
+        many_errors_rendered_on_one_line(&untracked_sum(n));
+    }
 }
 
 fn step(line: usize, col: usize, text: &str, source: &str, width: usize) -> Step {
@@ -204,7 +206,7 @@ fn steps_on_a_line_shown_above_are_given_by_their_ranges_and_a_new_line_is_shown
 
 /// `n` diagnostics on one line of `n` components, as the `+` of a `sum` gives them: the k-th
 /// covers the first k + 1 components, and its second step the (k + 1)-th.
-fn sums(n: usize) -> Vec<Diagnostic> {
+pub(super) fn sums(n: usize) -> Vec<Diagnostic> {
     let line = format!("f(x) = sum(({}));", vec!["x.a"; n].join(", "));
     (1..n)
         .map(|k| {
@@ -228,7 +230,7 @@ fn sums(n: usize) -> Vec<Diagnostic> {
 }
 
 /// `n` diagnostics on one line of `n` operands of `+`, each on one operand.
-fn operands(n: usize) -> Vec<Diagnostic> {
+pub(super) fn operands(n: usize) -> Vec<Diagnostic> {
     let line = format!("f(x) = {};", vec!["x.a"; n].join(" + "));
     (0..n)
         .map(|k| {
@@ -239,7 +241,7 @@ fn operands(n: usize) -> Vec<Diagnostic> {
 }
 
 /// The listing of `ds`, each line shown once.
-fn listing(ds: &[Diagnostic]) -> String {
+pub(super) fn listing(ds: &[Diagnostic]) -> String {
     let mut quoted = Quoted::default();
     ds.iter()
         .map(|d| quoted.show(d))
@@ -247,22 +249,16 @@ fn listing(ds: &[Diagnostic]) -> String {
         .join("\n")
 }
 
+
 #[test]
-fn listing_many_diagnostics_on_one_line_scales() {
-    let n = 1000;
-    let large = scaling::FACTOR * n;
-    for (what, make) in [
-        (
-            "listing n diagnostics of a sum on one line",
-            sums as fn(usize) -> Vec<Diagnostic>,
-        ),
-        ("listing n diagnostics of operands on one line", operands),
-    ] {
-        let made = scaling::inputs(n, make);
-        let bytes = |k: usize| listing(&made[&k]).len();
-        scaling::hold(what, "bytes", bytes(n) as u64, bytes(large) as u64, 1);
-        scaling::check(what, n, |k| {
-            std::hint::black_box(listing(&made[&k]));
-        });
+fn listing_many_diagnostics_on_one_line_shows_it_once() {
+    // `bench::quoted` holds the bytes of these listings to order n; here the line they share
+    // is quoted by the first diagnostic only.
+    for n in [2, 3, 9] {
+        for ds in [sums(n), operands(n)] {
+            let out = listing(&ds);
+            assert_eq!(out.matches("f(x) = ").count(), 1, "{out}");
+            assert_eq!(out.matches("this expression is _").count(), ds.len(), "{out}");
+        }
     }
 }

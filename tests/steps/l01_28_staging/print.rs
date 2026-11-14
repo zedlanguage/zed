@@ -15,15 +15,11 @@
 //! `m log k + k`. A short part is written in place as before, and a term with no shared part
 //! is written as before.
 
-use std::collections::HashMap;
-
 use zed_kernel::print::{pretty_in, written};
 use zed_kernel::term::build::{lit, var};
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
-use zed_tests::scaling::{self, FACTOR};
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
-use super::scaling::deep;
 
 fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
@@ -31,7 +27,7 @@ fn prim(p: Prim, args: Vec<Term>) -> Term {
 
 /// `n -> td`: `t0 = n + 100`, `tj = if n >= j { t(j-1) } else { t(j-1) }`, the two arms of each
 /// `if` one part when `shared`, else two copies (`2^d` places either way).
-fn arms(d: usize, shared: bool) -> Term {
+pub(super) fn arms(d: usize, shared: bool) -> Term {
     fn at(j: usize, shared: bool) -> Shared {
         if j == 0 {
             return Shared::new(prim(Prim::Add, vec![var("n"), lit(100i64)]));
@@ -57,7 +53,7 @@ fn arms(d: usize, shared: bool) -> Term {
 /// `(y0, c) -> t0`: `tj = if c { y(j+1) = yj + 1; t(j+1) } else { y(j+1) = yj + 2; t(j+1) }`
 /// and `td = yd`, the part below each level one node: it reads `yj`, which each of its places
 /// binds anew.
-fn lets(d: usize) -> Term {
+pub(super) fn lets(d: usize) -> Term {
     let y = |j: usize| format!("y{j}");
     let t = (1..=d).rev().fold(Shared::new(var(&y(d))), |below, j| {
         let step = |k: i64| {
@@ -121,7 +117,7 @@ fn none(_: &str) -> bool {
 /// The text for a user, on one line, of a term no name of which is read free. (Broken into
 /// lines, a term nested `d` deep is indented `O(d^2)` in all, a cost of the layout and not of
 /// the parts, which the scaling tests do not measure.)
-fn shown(t: &Term) -> String {
+pub(super) fn shown(t: &Term) -> String {
     pretty_in(t, usize::MAX, &none)
 }
 
@@ -295,60 +291,18 @@ fn debug_writes_a_part_held_twice_once() {
     assert!(!format!("{:?}", arms(3, false)).contains("#1"));
 }
 
-/// The text's length at `d` and at `FACTOR * d` is held to a constant over the factor (a
-/// logarithm included), and the time to the order check.
-fn scales(
-    what: &str,
-    n: usize,
-    make: impl Fn(usize) -> Term,
-    print: impl Fn(&Term) -> String + Sync,
-) {
-    let terms: HashMap<usize, Term> = scaling::inputs(n, make);
-    let lens: HashMap<usize, usize> = terms.iter().map(|(&d, t)| (d, print(t).len())).collect();
-    assert!(
-        lens[&(FACTOR * n)] <= 3 * FACTOR * lens[&n],
-        "{what}: the text is {} long at {n}, {} at {}",
-        lens[&n],
-        lens[&(FACTOR * n)],
-        FACTOR * n
-    );
-    scaling::check(what, n, |d| {
-        assert_eq!(print(&terms[&d]).len(), lens[&d]);
-    });
-}
-
+/// The texts of 2 and 16 levels and of 8 times as many, by both printers: the longer is at most
+/// 3 × 8 times as long (`bench::print` holds it at 400 and 3200 levels and times it). At one
+/// level the names of the parts weigh most: `lets(8)` by `shown` is 32 times `lets(1)`.
 #[test]
-fn writing_nested_ifs_over_one_part_scales() {
-    deep(|| {
-        scales(
-            "pretty_in on d nested ifs over one part",
-            400,
-            |d| arms(d, true),
-            shown,
-        );
-        scales(
-            "Display on d nested ifs over one part",
-            400,
-            |d| arms(d, true),
-            |t| t.to_string(),
-        );
-    });
-}
-
-#[test]
-fn writing_nested_lets_whose_part_reads_a_name_bound_twice_scales() {
-    deep(|| {
-        scales(
-            "pretty_in on d nested ifs binding a name over one part",
-            400,
-            lets,
-            shown,
-        );
-        scales(
-            "Display on d nested ifs binding a name over one part",
-            400,
-            lets,
-            |t| t.to_string(),
-        );
-    });
+fn the_text_of_8_times_the_levels_is_at_most_24_times_as_long() {
+    let printers: [fn(&Term) -> String; 2] = [shown, |t| t.to_string()];
+    for d in [2, 16] {
+        for print in printers {
+            for make in [|d| arms(d, true), lets] {
+                let (small, large) = (print(&make(d)).len(), print(&make(8 * d)).len());
+                assert!(large <= 3 * 8 * small, "{small} at {d}, {large} at {}", 8 * d);
+            }
+        }
+    }
 }

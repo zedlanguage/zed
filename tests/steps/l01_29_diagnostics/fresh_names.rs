@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use zed_tests::scaling;
 use zedc::check::read::parse_type;
 use zedc::check::ty::{ProgramNames, Sig};
 
@@ -169,7 +168,7 @@ fn the_printer_renames_an_inner_signature_apart_from_the_program_names() {
 
 /// A program binding `T`, `U`, `V`, `W` and `T5` to `T(n + 4)`, with `n` generic functions and
 /// one comparison of the first: each function's variable is named `T(n + 5)`.
-fn crowded(n: usize) -> String {
+pub(super) fn crowded(n: usize) -> String {
     let mut src = String::from("T = 0;\nU = 0;\nV = 0;\nW = 0;\n");
     for k in 5..n + 5 {
         src += &format!("T{k} = {k};\n");
@@ -180,32 +179,28 @@ fn crowded(n: usize) -> String {
     src + "same = g0 == g0;\n"
 }
 
+/// The type the comparison of [`crowded`]`(n)` shows: its variable named past the `n + 4`
+/// names the program binds.
+pub(super) fn first(n: usize) -> String {
+    format!(
+        "(T{m}) -> T{m} for T{m} in int | f32 | f64 | rat",
+        m = n + 5
+    )
+}
+
+/// The rejection of [`crowded`]`(n)` names each function's variable past the program's names.
+pub(super) fn variables_named_past_the_program_names(src: &str, n: usize) {
+    let out = rejected(src);
+    assert!(out.contains(&first(n)), "{out}");
+}
+
 #[test]
-fn naming_variables_beside_many_program_names_scales() {
-    // Each of the n functions names its variable past the n names the program binds: a run of
-    // them is stepped over at once, so the whole is linear, where trying each name in turn
-    // would be n². Negative control, not committed (2026-11-09): trying each name in turn took
-    // 18.3 times the work at 600 and 4800, against 8.0 here and a limit of 11.7. At 200 the
-    // check of each binding hides the n² lookups (11.9 times, under the limit of 12.25), so the
-    // size is 600.
-    let n = 600;
-    let inputs = scaling::inputs(n, crowded);
-    let first = |size: usize| {
-        format!(
-            "(T{m}) -> T{m} for T{m} in int | f32 | f64 | rat",
-            m = size + 5
-        )
-    };
-    assert_eq!(compared(&inputs[&n]), first(n));
-    scaling::check_order(
-        "naming the variables of n functions beside n program names",
-        n,
-        1,
-        |size| {
-            let out = rejected(&inputs[&size]);
-            assert!(out.contains(&first(size)), "{out}");
-        },
-    );
+fn naming_variables_beside_many_program_names() {
+    for n in [1, 3, 12] {
+        let src = crowded(n);
+        assert_eq!(compared(&src), first(n));
+        variables_named_past_the_program_names(&src, n);
+    }
 }
 
 /// `ap` takes a pair of two `int | #x`, so a message about it defines that part; the program

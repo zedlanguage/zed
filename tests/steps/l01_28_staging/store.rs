@@ -11,7 +11,6 @@ use std::collections::BTreeSet;
 
 use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Prim, Shared, Term};
-use zed_tests::scaling;
 use zedc::elab::Unit;
 use zedc::stage;
 
@@ -45,14 +44,14 @@ fn ifs(d: usize, body: Term, shared: bool, lets: bool) -> Term {
 
 /// A chain of `n` functions and `main = (c) -> ..` calling each of them once, under `n`
 /// nested `if`s.
-fn family(n: usize, f0: F0, shared: bool, lets: bool) -> Unit {
+pub(super) fn family(n: usize, f0: F0, shared: bool, lets: bool) -> Unit {
     let mut defs = chain(n, f0, false);
     defs.push(def("main", lam(&["c"], ifs(n, sites(n), shared, lets))));
     unit(defs)
 }
 
 /// The distinct nodes of the mixed `main` of `u`, and the number of calls left to run.
-fn mixed(u: &Unit) -> (usize, usize) {
+pub(super) fn mixed(u: &Unit) -> (usize, usize) {
     let (out, report) = stage::mix(u, &["main"]);
     let main = out.defs.iter().find(|d| d.name == "main").expect("main");
     (distinct(&main.term), report.left.len())
@@ -60,55 +59,16 @@ fn mixed(u: &Unit) -> (usize, usize) {
 
 /// What [`mixed`] gives on the shared family of `n`: the calls of a chain whose form shows
 /// that it ends are evaluated, to `1 + c`; the others are left to run, each once.
-fn expected(n: usize, f0: F0) -> (usize, usize) {
+pub(super) fn expected(n: usize, f0: F0) -> (usize, usize) {
     match f0 {
         F0::Ends => (2 * n + 1, 0),
         F0::Loops | F0::Fails => (3 * n + 1, n),
     }
 }
 
-fn mixing_scales(what: &'static str, f0: F0, lets: bool) {
-    deep(move || {
-        let n = 400;
-        let units = scaling::inputs(n, |n| family(n, f0, true, lets));
-        scaling::check(what, n, |n| {
-            assert_eq!(mixed(&units[&n]), expected(n, f0));
-        });
-    });
-}
-
-#[test]
-fn mixing_calls_of_a_chain_under_nested_ifs_whose_arms_are_one_part_scales() {
-    mixing_scales(
-        "stage::mix on n calls of a chain of n functions under n nested ifs whose two arms \
-         are one part",
-        F0::Ends,
-        false,
-    );
-}
-
-#[test]
-fn mixing_calls_left_to_run_under_nested_ifs_whose_arms_are_one_part_scales() {
-    mixing_scales(
-        "stage::mix on n calls of a chain of n functions whose form does not show it ends, \
-         under n nested ifs whose two arms are one part",
-        F0::Loops,
-        false,
-    );
-}
-
-#[test]
-fn mixing_calls_under_nested_ifs_whose_arms_bind_a_name_over_one_part_scales() {
-    mixing_scales(
-        "stage::mix on n calls of a chain of n functions under n nested ifs whose two arms \
-         each bind g over one part",
-        F0::Ends,
-        true,
-    );
-}
-
 /// The shared form mixes to the term the tree form mixes to, leaves each call to run once
-/// rather than once per place, and keeps its parts shared.
+/// rather than once per place, and keeps its parts shared (`bench::store` times 400 and 3200
+/// calls). The tree form doubles at each level, so the sizes stop at 6 (they went to 8).
 #[test]
 fn mixing_calls_under_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_gives() {
     deep(|| {
@@ -125,7 +85,7 @@ fn mixing_calls_under_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_giv
         };
         for f0 in [F0::Ends, F0::Loops, F0::Fails] {
             for lets in [false, true] {
-                for n in 1..=8 {
+                for n in 1..=6 {
                     let (one, tree) = (family(n, f0, true, lets), family(n, f0, false, lets));
                     let what = format!("n = {n}, lets = {lets}");
                     assert_eq!(terms(&one), terms(&tree), "{what}");
