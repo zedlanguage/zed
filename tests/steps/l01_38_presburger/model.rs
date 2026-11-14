@@ -267,16 +267,36 @@ pub(super) fn steps_down(n: usize, f: &Formula) -> usize {
     (0..n).filter(|&i| value(&m, i + 1) < value(&m, i)).count()
 }
 
+/// 80 formulas of a new seed each run, through [`unit_row_disjunctions_agree`]; both answers
+/// occur. The 400 of seed 0x9eed1 (1.46 s at load 25) are in `bench::model`.
 #[test]
 fn satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows() {
-    // Up to five variables, each in `[-3, 3]`, three to eight disjunctions of two or three arms,
-    // each arm one or two unit rows: whenever `decide` answers, `satisfiable` gives the same
-    // answer, and the point it gives meets the formula; both agree with enumeration. Before
-    // `satisfiable` asked the rows the disjunctions imply, as `decide` does, it was refused on
-    // some of these where `decide` answered.
-    let mut rng = Rng::new(0x9e_ed1);
-    let (mut with, mut without) = (0, 0);
-    for _ in 0..400 {
+    let (mut rng, seed) = Rng::fresh("model disjunctions of unit rows");
+    let c = unit_row_disjunctions_agree(&mut rng, 80);
+    assert!(c.with > 12 && c.without > 12, "seed {seed}: {c:?}");
+}
+
+/// The answers of [`unit_row_disjunctions_agree`]: with a point, without one, and refused by
+/// `decide`.
+#[derive(Debug)]
+pub(super) struct UnitRowCounts {
+    pub(super) with: usize,
+    pub(super) without: usize,
+    pub(super) refused: usize,
+}
+
+/// `count` formulas of up to five variables, each in `[-3, 3]`, three to eight disjunctions of
+/// two or three arms, each arm one or two unit rows: whenever `decide` answers, `satisfiable`
+/// gives the same answer, and the point it gives meets the formula; both agree with
+/// enumeration. Before `satisfiable` asked the rows the disjunctions imply, as `decide` does, it
+/// was refused on some of these where `decide` answered.
+pub(super) fn unit_row_disjunctions_agree(rng: &mut Rng, count: usize) -> UnitRowCounts {
+    let mut c = UnitRowCounts {
+        with: 0,
+        without: 0,
+        refused: 0,
+    };
+    for _ in 0..count {
         let n = 2 + rng.below(4);
         let mut rows: Vec<Row> = (0..n)
             .flat_map(|i| [row(&[(i, 1)], 3), row(&[(i, -1)], 3)])
@@ -289,13 +309,13 @@ fn satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows() {
             row(&[(a, ca), (b, cb)], rng.int(-4, 1))
         };
         for _ in 0..rng.below(n) {
-            rows.push(unit(&mut rng));
+            rows.push(unit(rng));
         }
         let mut parts = vec![formula(&rows)];
         let mut ors: Vec<Vec<Vec<Row>>> = Vec::new();
         for _ in 0..3 + rng.below(6) {
             let arms: Vec<Vec<Row>> = (0..2 + rng.below(2))
-                .map(|_| (0..1 + rng.below(2)).map(|_| unit(&mut rng)).collect())
+                .map(|_| (0..1 + rng.below(2)).map(|_| unit(rng)).collect())
                 .collect();
             parts.push(Formula::or(arms.iter().map(|a| formula(a)).collect()));
             ors.push(arms);
@@ -319,6 +339,7 @@ fn satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows() {
             }
         };
         let Ok(decided) = decide(&f) else {
+            c.refused += 1;
             continue;
         };
         assert_eq!(decided, expected, "{f}");
@@ -326,15 +347,12 @@ fn satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows() {
         assert_eq!(found.is_some(), decided, "{f}");
         if let Some(m) = found {
             assert!(f.holds(&m), "{m:?} fails {f}");
-            with += 1;
+            c.with += 1;
         } else {
-            without += 1;
+            c.without += 1;
         }
     }
-    assert!(
-        with > 100 && without > 100,
-        "{with} with a point, {without} without"
-    );
+    c
 }
 
 #[test]
