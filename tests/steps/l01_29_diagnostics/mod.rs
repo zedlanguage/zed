@@ -11,6 +11,7 @@ mod binder_type;
 mod body_display;
 mod bug;
 mod casts;
+mod completeness;
 mod declared;
 mod derivations;
 mod domain_repairs;
