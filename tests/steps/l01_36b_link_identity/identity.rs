@@ -81,6 +81,43 @@ fn the_linker_is_named_by_its_drivers_reports() {
     assert_ne!(reported.key(b"o", &[]), system.key(b"o", &[]));
 }
 
+/// The key names the files the link read and the driver's environment, each read without
+/// linking: no files and one, another file, one more file, the same files in another order,
+/// and a variable unset, set empty and set to a value each give a key of their own.
+#[test]
+fn the_key_names_the_files_read_and_the_environment() {
+    let tools = identity(&with_runtime("inputs", "libzed.a", "a runtime"));
+    let (a, b) = (blake3::hash(b"libc.so"), blake3::hash(b"libm.so"));
+    let object = b"the object file of a program";
+    let keys: Vec<_> = [&[][..], &[a], &[b], &[a, b], &[b, a], &[a, a]]
+        .iter()
+        .map(|inputs| tools.key(object, inputs))
+        .collect();
+    for (i, k) in keys.iter().enumerate() {
+        assert_eq!(
+            keys.iter().filter(|o| *o == k).count(),
+            1,
+            "inputs case {i}"
+        );
+    }
+    assert_eq!(
+        tools.key(object, &[a, b]),
+        keys[3],
+        "the same files, the same key"
+    );
+    let name = zed_native::link::DRIVER_ENV[0];
+    let with = |value: Option<&str>| {
+        let mut changed = tools.clone();
+        changed.env = vec![(name, value.map(Into::into))];
+        changed.key(object, &[])
+    };
+    let env = [with(None), with(Some("")), with(Some("/opt/gcc"))];
+    assert!(
+        env[0] != env[1] && env[1] != env[2] && env[0] != env[2],
+        "{name} unset, empty and set give three keys"
+    );
+}
+
 #[test]
 fn a_driver_that_gives_no_version_is_refused() {
     let d = dir("refused");
