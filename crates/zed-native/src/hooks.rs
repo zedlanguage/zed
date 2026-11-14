@@ -942,6 +942,9 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use std::mem::ManuallyDrop;
 
@@ -952,11 +955,11 @@ mod tests {
 
     use super::*;
 
-    /// How deep the tests go, on the default test stack; each old function overflowed it.
-    const DEPTH: usize = 1_000_000;
-
-    #[test]
-    fn a_chain_of_closures_becomes_a_term() {
+    /// Builds `depth` closures of `(x) -> (y) -> x`'s inner lambda, each capturing the one
+    /// below and the bottom one 7, makes the chain a term, and checks that the term is `depth`
+    /// lambdas around `7`. `bench` runs it at a depth that overflowed the default test stack
+    /// when `term` recursed; the test here at a small one.
+    pub(super) fn a_chain_of_closures_of_depth_becomes_a_term(depth: usize) {
         // `(x) -> (y) -> x`, whose inner lambda captures one value.
         let g = crate::legal::legalize(lower(&lam(&["x"], lam(&["y"], var("x")))).unwrap());
         let (t, _) = Tables::new(&g, &plan(g.graph(), false)).unwrap();
@@ -964,7 +967,7 @@ mod tests {
         let inner = t.lambdas.iter().position(|l| captures(&l)).unwrap();
         let mut s = State::new(Arc::new(t), Evaluator::new(World::new()));
         let mut w = Word::int(7);
-        for _ in 0..DEPTH {
+        for _ in 0..depth {
             w = s.run.heap.alloc(Obj::Clo {
                 lambda: inner,
                 caps: vec![w].into(),
@@ -972,12 +975,22 @@ mod tests {
         }
         // The kernel's terms drop by recursion, so this one is left to the end of the process.
         let made = ManuallyDrop::new(term(&s.t, &mut s.run, w, &mut Lets::default()).unwrap());
-        let (mut at, mut depth) = (&*made, 0);
+        let (mut at, mut levels) = (&*made, 0);
         while let Term::Lam(_, body) = at {
-            (at, depth) = (&**body, depth + 1);
+            (at, levels) = (&**body, levels + 1);
         }
-        assert_eq!(depth, DEPTH);
+        assert_eq!(levels, depth);
         assert_eq!(at.to_string(), "7");
+    }
+
+    #[test]
+    fn a_chain_of_closures_becomes_a_term() {
+        a_chain_of_closures_of_depth_becomes_a_term(3);
+    }
+
+    #[test]
+    fn a_closure_with_no_closure_below_becomes_a_term() {
+        a_chain_of_closures_of_depth_becomes_a_term(1);
     }
 
     /// A run of `(a, b) -> (y) -> if y < 1 { a } else { b(y - 1) }`, and the index of its inner
@@ -1094,10 +1107,13 @@ mod tests {
         assert!(e.contains(SHARED_AFTER_FREE), "{e}");
     }
 
-    #[test]
-    fn binders_of_a_deep_pattern_are_renamed_in_preorder() {
+    /// Renames the binders of `pair { a: a, b: ((…(c)…)) }`, with `c` under `depth` tuples, and
+    /// checks that they are renamed in preorder, `a` to `v1` and `c` to `v2`. `bench` runs it at
+    /// a depth that overflowed the default test stack when `rename` recursed; the test here at a
+    /// small one.
+    pub(super) fn binders_of_a_pattern_of_depth_are_renamed_in_preorder(depth: usize) {
         let bind = |x: &str| Pattern::Bind(x.into());
-        let inner = (0..DEPTH).fold(bind("c"), |p, _| Pattern::Tuple(vec![p]));
+        let inner = (0..depth).fold(bind("c"), |p, _| Pattern::Tuple(vec![p]));
         let mut p = ManuallyDrop::new(Pattern::Fields(
             "pair".into(),
             vec![("a".into(), bind("a")), ("b".into(), inner)],
@@ -1112,10 +1128,51 @@ mod tests {
             unreachable!()
         };
         assert!(matches!(&fs[0].1, Pattern::Bind(x) if &**x == "v1"));
-        let mut at = &fs[1].1;
+        let (mut at, mut levels) = (&fs[1].1, 0);
         while let Pattern::Tuple(ps) = at {
-            at = &ps[0];
+            (at, levels) = (&ps[0], levels + 1);
         }
+        assert_eq!(levels, depth);
         assert!(matches!(at, Pattern::Bind(x) if &**x == "v2"));
+    }
+
+    #[test]
+    fn binders_of_a_nested_pattern_are_renamed_in_preorder() {
+        binders_of_a_pattern_of_depth_are_renamed_in_preorder(3);
+    }
+
+    /// P188: `_`, a literal and `#_` bind nothing and are left as they are, and the binders
+    /// inside an atom pattern are renamed in order, as those of a tuple are.
+    #[test]
+    fn patterns_that_bind_nothing_are_kept_and_atom_payloads_are_renamed() {
+        let bind = |x: &str| Pattern::Bind(x.into());
+        let mut p = Pattern::Tuple(vec![
+            Pattern::Wild,
+            Pattern::Atom(
+                "ok".into(),
+                vec![bind("a"), Pattern::Lit(Value::Int(1)), bind("b")],
+            ),
+            Pattern::AnyAtom,
+            bind("c"),
+        ]);
+        let mut n = 0;
+        rename(&mut p, &mut || {
+            n += 1;
+            format!("v{n}").into()
+        });
+        assert_eq!(n, 3);
+        let Pattern::Tuple(ps) = &p else {
+            unreachable!()
+        };
+        assert!(matches!(ps[0], Pattern::Wild));
+        let Pattern::Atom(name, qs) = &ps[1] else {
+            unreachable!()
+        };
+        assert_eq!(&**name, "ok");
+        assert!(matches!(&qs[0], Pattern::Bind(x) if &**x == "v1"));
+        assert!(matches!(&qs[1], Pattern::Lit(Value::Int(1))));
+        assert!(matches!(&qs[2], Pattern::Bind(x) if &**x == "v2"));
+        assert!(matches!(ps[2], Pattern::AnyAtom));
+        assert!(matches!(&ps[3], Pattern::Bind(x) if &**x == "v3"));
     }
 }
