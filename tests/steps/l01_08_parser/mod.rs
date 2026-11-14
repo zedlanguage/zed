@@ -16,6 +16,7 @@ mod heads;
 mod left_recursion;
 mod lr4_assoc;
 mod plain_names;
+mod recovery_edges;
 mod reserved;
 mod rings;
 mod scaling;

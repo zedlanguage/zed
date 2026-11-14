@@ -221,6 +221,18 @@ fn a_grammar_the_scan_cannot_read_is_reported() {
         ("Item = 'x'?  L1\n", "no tokens"),
         ("Item = Missing  L1\n", "undefined"),
         ("Item = '(' 'x' ']'  L1\n", "closes another kind"),
+        (
+            "Item = [a-z]  L1\n",
+            "a character class in a grammar over tokens",
+        ),
+        (
+            "Item = '(' Inner ')'  L1\nInner = '('  L1\n",
+            "inside brackets, a match leaves a bracket open or closes one",
+        ),
+        (
+            "Item = '(' Inner ')'  L1\nInner = ']'  L1\n",
+            "inside brackets, a match leaves a bracket open or closes one",
+        ),
     ] {
         let g = small(item);
         match Splitter::new(&g, "Item") {

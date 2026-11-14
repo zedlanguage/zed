@@ -87,3 +87,19 @@ fn a_named_type_is_not_compiled_yet() {
         ("span is (lo: int, hi: int)", "syntax"),
     ]);
 }
+
+/// A refinement (`TypeSuffix`, layer L10) is refused at the first suffix of a chain of them,
+/// the first in the order of the text.
+#[test]
+fn a_chain_of_refinements_is_refused_at_its_first() {
+    check(&[
+        (
+            "x is int[v > 0]",
+            concat!("error: ", zed_tests::not_yet!("the refinement `[v > 0]`")),
+        ),
+        (
+            "x is int[v > 0][v < 9]",
+            concat!("error: ", zed_tests::not_yet!("the refinement `[v > 0]`")),
+        ),
+    ]);
+}

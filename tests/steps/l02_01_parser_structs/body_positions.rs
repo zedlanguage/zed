@@ -93,7 +93,8 @@ fn each_kind_of_display_gets_its_repair() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
-/// The part that reads as a display: a top-level comma, or the record field when there is none.
+/// The part that reads as a display: a top-level comma, or the record field or map entry when
+/// there is none.
 #[test]
 fn the_part_that_reads_as_a_display_is_named() {
     let e = refusal("v = r else { x: 1 };");
@@ -101,6 +102,14 @@ fn the_part_that_reads_as_a_display_is_named() {
         e.notes
             .iter()
             .any(|n| n.text == "`x: 1` is a record field, `name: value`, not an expression"),
+        "{:?}",
+        e.notes
+    );
+    let e = refusal("v = r else { 1 -> 2 };");
+    assert!(
+        e.notes
+            .iter()
+            .any(|n| n.text == "`1 -> 2` is a map entry, `key -> value`, not an expression"),
         "{:?}",
         e.notes
     );

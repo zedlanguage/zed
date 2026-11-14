@@ -246,3 +246,25 @@ fn the_checker_reads_nested_rules_at_small_sizes() {
         pair_table_has_the_cores(&nesting(n), n);
     }
 }
+
+/// A grammar the check cannot read as a context-free grammar over tokens is refused, naming the
+/// rule: a character class, or a name no rule defines (read with `read_open`, which allows both).
+#[test]
+fn a_class_or_an_undefined_name_is_refused() {
+    for (item, problem) in [
+        (
+            "Item = [a-z] ';'  L1\n",
+            "rule Item: a character class in a grammar over tokens",
+        ),
+        (
+            "Item = Missing ';'  L1\n",
+            "rule Item: the undefined name Missing",
+        ),
+    ] {
+        let g = small(item);
+        match llp::check(&g, "Unit", &[]) {
+            Err(e) => assert_eq!(e, problem, "{item}"),
+            Ok(_) => panic!("{item}: read"),
+        }
+    }
+}

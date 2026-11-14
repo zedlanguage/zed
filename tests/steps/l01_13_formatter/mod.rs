@@ -10,6 +10,7 @@ mod grammar_cases;
 #[path = "../l01_08_parser/head_cases.rs"]
 mod head_cases;
 mod layout;
+mod main_header;
 mod positions;
 mod prelude;
 mod scaling;

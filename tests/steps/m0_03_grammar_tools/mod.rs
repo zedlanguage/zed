@@ -625,6 +625,28 @@ fn fuzz_gives_the_same_report_for_the_same_seed() {
     assert_ne!(run(5, 8).1, first);
 }
 
+/// `fuzz SPEC_DIR [N [SEED]]`: a count or a seed that is not a number is refused, naming it.
+#[test]
+fn fuzz_refuses_a_count_or_seed_that_is_not_a_number() {
+    let dir = spec_dir("fuzz_args", &design(""), "");
+    for (args, want) in [
+        (vec![dir.root(), "x".into()], "not a number: x"),
+        (vec![dir.root(), "2".into(), "y".into()], "not a number: y"),
+    ] {
+        let mut out = String::new();
+        assert_eq!(
+            fuzz::run(&args, &mut out),
+            Err(want.to_string()),
+            "{args:?}"
+        );
+    }
+    let mut out = String::new();
+    assert_eq!(
+        fuzz::run(&[dir.root(), "2".into(), "1".into()], &mut out),
+        Ok(true),
+        "{out}"
+    );
+}
 /// The fuzz of `spec` with `n` sentences per ring at `seed`: its outcome and what it printed.
 fn fuzz_of(spec: &Spec, n: usize, seed: i64) -> (zed_tools::Outcome, String) {
     let mut out = String::new();
