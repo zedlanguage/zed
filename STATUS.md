@@ -2192,7 +2192,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
-| TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
+| TESTS-defer-failing | merged and pushed (8ad9647bb, f396f53c9 and the commit that adds this row) | 2026-11-13 | 79 failing tests moved to wt/scratch/deferred-tests/<STEP-ID>.rs (36 files), each owning plan row names its file; 2 left in pendants.rs (live PERF-l139-family); 19 zed_probes probes: 14 deferred, 5 moved to zed-benches; no cfg switch remains; touched groups 851 pieces, 2 failed (those two) |
 | XR-ffi-stateful | running |  |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
