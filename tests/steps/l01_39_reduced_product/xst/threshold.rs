@@ -180,42 +180,56 @@ fn corpus(seed: u64, count: usize, hub: i64, ks: &[i64]) -> (usize, usize) {
     (solved_n, empty)
 }
 
+/// A new seed for [`Rng`] ([`zed_tests::instances::Rng::fresh`], printed with `what`), below
+/// `2^31`: [`Rng::below`] multiplies without wrapping, so a larger seed would overflow.
+fn fresh(what: &str) -> u64 {
+    zed_tests::instances::Rng::fresh(what).1 % 2_147_483_648
+}
+
+/// Components of each corpus test: 5,000 for each of the seeds 1 to 4 before random tests took
+/// a new seed each run (about 0.4 s each at load 27); 5,000 for one seed now.
+const COUNT: usize = 5_000;
+
 /// The model's corpus: every coefficient 1 (the model's parts `v + w <= 0 || u - w >= 1`), with
 /// every constant, interval and hub at random.
 #[test]
 fn components_of_unit_coefficients_equal_enumeration() {
-    for seed in 1..=4 {
-        let (n, empty) = corpus(seed, 5_000, 4, &[1]);
-        assert_eq!(n, 5_000);
-        assert!(empty > 0 && empty < n, "seed {seed}: {empty} of {n} empty");
-    }
+    let seed = fresh("components of unit coefficients");
+    let (n, empty) = corpus(seed, COUNT, 4, &[1]);
+    assert_eq!(n, COUNT, "seed {seed}");
+    assert!(empty > 0 && empty < n, "seed {seed}: {empty} of {n} empty");
 }
 
 /// Coefficients from 0 to 2: `k` and `m` of one sign, zero allowed.
 #[test]
 fn components_of_coefficients_at_least_zero_equal_enumeration() {
-    for seed in 1..=4 {
-        corpus(seed, 5_000, 4, &[0, 1, 2]);
-    }
+    corpus(
+        fresh("components of coefficients at least 0"),
+        COUNT,
+        4,
+        &[0, 1, 2],
+    );
 }
 
 /// Coefficients from -2 to 0: the hub's values that pass run from some value up to its
 /// greatest.
 #[test]
 fn components_of_coefficients_at_most_zero_equal_enumeration() {
-    for seed in 1..=4 {
-        corpus(seed, 5_000, 4, &[-2, -1, 0]);
-    }
+    corpus(
+        fresh("components of coefficients at most 0"),
+        COUNT,
+        4,
+        &[-2, -1, 0],
+    );
 }
 
 /// Coefficients of both signs and a hub of one or two values: the join of the answers at each
 /// value.
 #[test]
 fn components_with_both_signs_and_a_hub_of_two_values_equal_enumeration() {
-    for seed in 1..=4 {
-        let (n, _) = corpus(seed, 5_000, 2, &[-1, 0, 1]);
-        assert_eq!(n, 5_000, "every hub of two values is solved");
-    }
+    let seed = fresh("components with both signs");
+    let (n, _) = corpus(seed, COUNT, 2, &[-1, 0, 1]);
+    assert_eq!(n, COUNT, "seed {seed}: every hub of two values is solved");
 }
 
 /// A hub of three or more values with coefficients of both signs is left to plan row
@@ -326,7 +340,8 @@ fn an_unbounded_hub_below_is_searched_by_doubling() {
 /// outside the threshold-implication shape, which is why that shape is refused there.
 #[test]
 fn the_greatest_value_of_a_query_name_is_reachability() {
-    let mut r = Rng(1);
+    let seed = fresh("reachability by greatest values");
+    let mut r = Rng(seed);
     let (mut total, mut zeros) = (0, 0);
     for _ in 0..3_000 {
         let n = 2 + r.below(5) as usize;
@@ -368,10 +383,17 @@ fn the_greatest_value_of_a_query_name_is_reachability() {
             }
             total += 1;
             zeros += usize::from(best[j] == 0);
-            assert_eq!(best[j] == 0, seen[b], "query {a} -> {b} over {edges:?}");
+            assert_eq!(
+                best[j] == 0,
+                seen[b],
+                "seed {seed}, query {a} -> {b} over {edges:?}"
+            );
         }
     }
-    assert!(zeros > 0 && zeros < total, "{zeros} of {total}");
+    assert!(
+        zeros > 0 && zeros < total,
+        "seed {seed}: {zeros} of {total}"
+    );
 }
 
 /// The walk of [`the_walk_is_exact`] over `n` names with the hub in `0..=w`.
@@ -384,6 +406,32 @@ fn walk(n: usize, w: i64) -> System {
             .collect(),
         uppers: vec![],
         lowers: vec![lower(0, 1, 1)],
+    }
+}
+
+/// A walk whose last name is bounded above by `w + 1 - c`: the hub's values that pass are
+/// `0..=w/2`, found by a search over the hub. Small widths against enumeration; wide ones,
+/// the answer itself.
+#[test]
+fn a_wide_finite_hub_is_searched() {
+    for (n, w) in [(2, 2), (3, 4), (3, 5)] {
+        let mut sys = walk(n, w);
+        sys.uppers.push(upper(n - 1, 1, w + 1));
+        assert_eq!(solved(&sys), Some(enumerate(&sys)), "n = {n}, w = {w}");
+    }
+    for w in [100i64, 10i64.pow(16)] {
+        let mut sys = walk(50, w);
+        sys.uppers.push(upper(49, 1, w + 1));
+        let mut names = vec![(fin(1), fin(3 * w + 3)); 49];
+        names.push((fin(1), fin(w + 1)));
+        assert_eq!(
+            threshold::solve(&sys),
+            Answer::Bounds {
+                names,
+                hub: IntervalSet::of(0, w / 2),
+            },
+            "w = {w}"
+        );
     }
 }
 

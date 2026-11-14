@@ -19,6 +19,7 @@
 use std::collections::BTreeSet;
 
 use super::Lcg;
+use zed_tests::instances::Rng;
 
 // ---------------------------------------------------------------------------------------------
 // Claude's two-name model.
@@ -393,9 +394,10 @@ struct Tally {
 }
 
 /// Claude's `corpus`: each triple in the six part orders and `schedules` random schedules,
-/// and `pairs` random nested box pairs for monotonicity of the operator.
-fn corpus(pi: Pi, base: Base, schedules: usize, pairs: usize) -> Tally {
-    let mut g = Lcg(0x5eed);
+/// and `pairs` random nested box pairs for monotonicity of the operator, both drawn from `seed`
+/// (`0x5eed` in Claude's run).
+fn corpus(pi: Pi, base: Base, schedules: usize, pairs: usize, seed: u64) -> Tally {
+    let mut g = Lcg(seed);
     let mut t = Tally::default();
     for ds in &triples() {
         let e = exact(ds);
@@ -418,23 +420,40 @@ fn corpus(pi: Pi, base: Base, schedules: usize, pairs: usize) -> Tally {
     t
 }
 
-/// Claude round 4, `s4model4 corpus 20 20`: the box-only subsumption base is order
-/// independent, sound, a fixpoint of its operator and monotone on every triple, and inexact on
-/// 74 of 5,000 under exact projection and 196 under arc and bounds projection (the inexact
-/// count depends only on the first order, so fewer schedules leave it unchanged).
+/// Claude round 4, `s4model4 corpus 20 20`, under projection `pi`: the box-only subsumption
+/// base is order independent, sound, a fixpoint of its operator and monotone on every triple,
+/// and inexact on `inexact` of the 5,000 triples (the inexact count depends only on the first
+/// order, so fewer schedules leave it unchanged). The triples are Claude's; the schedules and
+/// nested pairs take a new seed each run, one of each per triple (20 under exact projection and
+/// 4 under the others, in one test, before: 4.1 s at load 27).
+fn box_only_base_is_order_independent_and_monotone(pi: Pi, inexact: usize) {
+    let (_, seed) = Rng::fresh(&format!(
+        "schedules and nested boxes of the box-only base, {pi:?}"
+    ));
+    let t = corpus(pi, Base::SubsumptionBox, 1, 1, seed);
+    assert_eq!(
+        t,
+        Tally {
+            inexact,
+            ..Tally::default()
+        },
+        "seed {seed}, {pi:?}"
+    );
+}
+
 #[test]
-fn the_box_only_subsumption_base_is_order_independent_and_monotone() {
-    for (pi, schedules, inexact) in [(Pi::Exact, 20, 74), (Pi::Arc, 4, 196), (Pi::Bounds, 4, 196)] {
-        let t = corpus(pi, Base::SubsumptionBox, schedules, schedules);
-        assert_eq!(
-            t,
-            Tally {
-                inexact,
-                ..Tally::default()
-            },
-            "{pi:?}"
-        );
-    }
+fn the_box_only_subsumption_base_is_order_independent_and_monotone_under_exact_projection() {
+    box_only_base_is_order_independent_and_monotone(Pi::Exact, 74);
+}
+
+#[test]
+fn the_box_only_subsumption_base_is_order_independent_and_monotone_under_arc_projection() {
+    box_only_base_is_order_independent_and_monotone(Pi::Arc, 196);
+}
+
+#[test]
+fn the_box_only_subsumption_base_is_order_independent_and_monotone_under_bounds_projection() {
+    box_only_base_is_order_independent_and_monotone(Pi::Bounds, 196);
 }
 
 /// CONTROL (Claude round 4): with a part that has no live case skipped, the operator is not
@@ -458,9 +477,10 @@ fn control_skipping_a_dead_part_breaks_monotonicity_and_order_independence() {
         f(Base::PromotionSkipDead, b)
     ));
     assert!(sub(f(Base::SubsumptionBox, b2), f(Base::SubsumptionBox, b)));
-    let t = corpus(Pi::Exact, Base::PromotionSkipDead, 4, 4);
-    assert!(t.order_dependent > 0, "{t:?}");
-    assert!(t.monotonicity_failures > 0, "{t:?}");
+    let (_, seed) = Rng::fresh("schedules and nested boxes, a dead part skipped");
+    let t = corpus(Pi::Exact, Base::PromotionSkipDead, 1, 1, seed);
+    assert!(t.order_dependent > 0, "seed {seed}: {t:?}");
+    assert!(t.monotonicity_failures > 0, "seed {seed}: {t:?}");
 }
 
 /// CONTROL (Claude round 4): promotion decided on arrival and never revisited depends on the
@@ -486,9 +506,9 @@ fn control_promotion_on_arrival_depends_on_the_order() {
 /// `o` and not `a`) and `o` is live with `phi`, then `a` is live with `phi`. Counts, over
 /// `count` random draws, the draws where the premises hold and where P fails, for the
 /// implication tested in the box alone with `o` one atom, relative to `phi`, and in the box
-/// alone with `o` two atoms.
-fn pcheck(pi: Pi, count: usize) -> [[usize; 2]; 3] {
-    let mut g = Lcg(0x9c4ec);
+/// alone with `o` two atoms. Claude drew from seed `0x9c4ec`.
+fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 2]; 3] {
+    let mut g = Lcg(seed);
     let mut tally = [[0usize; 2]; 3];
     for _ in 0..count {
         let b = sub_box(FULL, &mut g);
@@ -519,17 +539,24 @@ fn pcheck(pi: Pi, count: usize) -> [[usize; 2]; 3] {
     tally
 }
 
-/// Property P holds for the box-only implication test under each projection, on the first
-/// 200,000 of Claude's 2,000,000 draws (Claude, all 2,000,000: with `o` one atom the premises
-/// held on 266,497 draws under exact projection and 266,499 under arc and bounds, with `o` two
-/// atoms on 198,946 and 198,949, and P failed on none).
+/// Property P holds for the box-only implication test under each projection, on 50,000 draws
+/// from a new seed each run (200,000 of Claude's draws before: 1.4 s at load 27). Claude, all
+/// 2,000,000 draws: with `o` one atom the premises held on 266,497 draws under exact projection
+/// and 266,499 under arc and bounds, with `o` two atoms on 198,946 and 198,949, and P failed on
+/// none.
 #[test]
 fn property_p_holds_for_the_box_only_implication_test() {
+    const DRAWS: usize = 50_000;
+    let (_, seed) = Rng::fresh("draws of property P");
     for pi in PIS {
-        let t = pcheck(pi, 200_000);
-        assert!(t[0][0] > 20_000, "{pi:?}: premises held on {}", t[0][0]);
-        assert_eq!(t[0][1], 0, "{pi:?}: box-only, one atom");
-        assert_eq!(t[2][1], 0, "{pi:?}: box-only, two atoms");
+        let t = pcheck(pi, DRAWS, seed);
+        assert!(
+            t[0][0] > 5_000,
+            "seed {seed}, {pi:?}: premises held on {}",
+            t[0][0]
+        );
+        assert_eq!(t[0][1], 0, "seed {seed}, {pi:?}: box-only, one atom");
+        assert_eq!(t[2][1], 0, "seed {seed}, {pi:?}: box-only, two atoms");
     }
 }
 

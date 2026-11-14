@@ -11,7 +11,7 @@ fn narrowing_by_many_refused_tests_scales() {
     use zedc::store::cell::Premises;
     let none = Premises::new();
     let (names, guards) = (refused_names, refused_guards);
-    let n = 16;
+    let n = 128;
     let inputs = [n, FACTOR * n].map(|k| {
         let ns = names(k);
         (super::super::ints(&ns), guards(&ns))
@@ -34,7 +34,7 @@ fn narrowing_by_many_refused_tests_scales() {
 fn keeping_many_refusals_scales() {
     use zed_tests::scaling::{self, FACTOR};
     let names = refused_names;
-    let n = 4096;
+    let n = 32_768;
     let refused = [n, FACTOR * n].map(|k| -> Vec<(Refused, Kept, Vec<Arc<str>>)> {
         names(k)
             .chunks(4)
@@ -66,7 +66,7 @@ fn keeping_many_refusals_scales() {
 #[test]
 fn finding_the_refusals_on_many_names_scales() {
     use zed_tests::scaling::{self, FACTOR};
-    let n = 4096;
+    let n = 65_536;
     let scopes = [n, FACTOR * n].map(|k| {
         let names = refused_names(k);
         let s = names.chunks(4).fold(super::super::ints(&[]), |mut s, c| {

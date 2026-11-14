@@ -3,19 +3,14 @@
 
 use super::*;
 
+/// The arms of the two chains are compared at depths 1 to 12 by
+/// `a_chain_of_following_comparisons_reads_as_the_plain_chain`; here only their costs.
 #[test]
 fn a_chain_of_following_comparisons_costs_what_the_plain_chain_costs() {
     let d = 48;
     let (ps, follow) = function(&chain(d, false));
-    assert!(follow.to_string().contains("is f64 -> 1.0"));
     let (_, plain) = function(&chain(d, true));
-    assert!(!plain.to_string().contains("is f64"));
     let scope = ints(&ps);
-    let (a, b) = (arms(&follow, &scope), arms(&plain, &scope));
-    assert_eq!(a.len(), b.len());
-    for (x, y) in a.iter().zip(&b) {
-        assert_eq!(x.scope.get("n").ints(), y.scope.get("n").ints());
-    }
     // Finding each compared value again for each test around it cost 2^d; finding it once
     // per test, d times the plain chain. The terms differ by the match of each level only.
     scaling::compare_costs(
@@ -32,13 +27,13 @@ fn following_tests_scale() {
     for (what, n, src) in [
         (
             "a conjunction of following tests of a name",
-            32,
+            256,
             excluded as fn(usize) -> String,
         ),
-        ("a chain of bindings of following tests", 64, bound),
+        ("a chain of bindings of following tests", 1024, bound),
         (
             "a conjunction of following tests of a difference",
-            16,
+            32,
             differences,
         ),
     ] {
@@ -59,22 +54,22 @@ fn nested_sums_of_one_input_scale() {
     for (what, n, src) in [
         (
             "the arms of nested tests of n + n",
-            16,
+            128,
             twice as fn(usize) -> String,
         ),
         (
             "the arms of nested tests of n + n, following",
-            16,
+            128,
             following,
         ),
-        ("the arms of nested tests of n - 3 * n + 4", 16, line),
-        ("the arms of nested tests of n + m", 16, two),
+        ("the arms of nested tests of n - 3 * n + 4", 128, line),
+        ("the arms of nested tests of n + m", 64, two),
         (
             "the arms of nested tests of n + (if n > 0 { n } else { 0 })",
-            16,
+            128,
             with_an_if,
         ),
-        ("the arms of a test of a sum of d ramps", 16, ramps),
+        ("the arms of a test of a sum of d ramps", 256, ramps),
     ] {
         let (scope, terms) = sizes(n, src);
         scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
@@ -90,8 +85,8 @@ fn nested_sums_of_one_input_scale() {
 /// terms; it keeps them on the heap now (item PA-let-stack, `deep_let`).
 #[test]
 fn a_block_of_sums_of_ramps_scales() {
-    let (scope, terms) = sizes(32, let_chain);
-    scaling::check("the arms of a block of d sums of ramps", 32, |k| {
+    let (scope, terms) = sizes(256, let_chain);
+    scaling::check("the arms of a block of d sums of ramps", 256, |k| {
         _ = arms(at(&terms, k), &scope)
     });
 }
@@ -100,7 +95,7 @@ fn a_block_of_sums_of_ramps_scales() {
 /// each a constant added to a line.
 #[test]
 fn a_deep_chain_of_summaries_scales() {
-    scaling::check("forming a chain of d summaries", 10_000, |d| {
+    scaling::check("forming a chain of d summaries", 160_000, |d| {
         _ = deep_chain(d)
     });
 }

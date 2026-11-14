@@ -14,10 +14,10 @@ fn a_cycle_of_differences_with_one_bound_is_exact_in_near_linear_time() {
             assert!(!s.get(x).contains(&Value::Int(11)), "n = {n}: {x}");
         }
     }
-    let inputs = scaling::inputs(16, cyclic_base);
+    let inputs = scaling::inputs(512, cyclic_base);
     scaling::check_order(
         "a cyclic base of n differences, one conjunction",
-        16,
+        512,
         1,
         |m| {
             let (ns, all) = &inputs[&m];
@@ -46,7 +46,7 @@ fn an_open_chain_narrows_in_near_linear_time() {
 fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
     family(
         "walk",
-        5,
+        80,
         |n| walk(n, true),
         |n| {
             let mut w: Vec<_> = (0..n)
@@ -65,7 +65,7 @@ fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
 fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
     family(
         "walk without its start",
-        5,
+        160,
         |n| walk(n + 1, false),
         |n| {
             let mut w: Vec<_> = (0..=n).map(|i| (format!("v{i}"), 0, 3, upto(3))).collect();
@@ -79,12 +79,13 @@ fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
 /// order: near linear time in both, as [`family`] checks in the forward order, where it also
 /// checks the answers in each order (ST-walk-orders: on main 44 to 85 at 8n at once, each row
 /// joined against all the rows before it, and 43 to 81 in reverse). The walk is measured from
-/// 40 rows, where a meet of a threshold row that changed nothing but copied its product made a
+/// 160 rows (40 before; at 40 the walk without its start was measured from 10), at least the
+/// 40 where a meet of a threshold row that changed nothing but copied its product made a
 /// kept block compare every product so copied since (`Scope::meet_own`): 11.0 in reverse.
 /// Each is of `n` rows: the walk without its start has one name more than its rows.
 #[test]
 fn a_walk_narrows_in_near_linear_time_at_once_and_in_reverse() {
-    for (what, n, start) in [("walk", 40, true), ("walk without its start", 10, false)] {
+    for (what, n, start) in [("walk", 160, true), ("walk without its start", 80, false)] {
         let inputs = scaling::inputs(n, |m| walk(m + usize::from(!start), start));
         for how in [How::AtOnce, How::Backward] {
             scaling::check_order(&format!("{what}, {how:?}, n rows"), n, 1, |m| {
@@ -96,12 +97,12 @@ fn a_walk_narrows_in_near_linear_time_at_once_and_in_reverse() {
 
 #[test]
 fn c26_narrows_in_near_linear_time() {
-    unbounded_family("C26", 16, |k| c26(k, false));
+    unbounded_family("C26", 64, |k| c26(k, false));
 }
 
 #[test]
 fn base_churn_narrows_in_near_linear_time() {
-    unbounded_family("base churn", 4, |k| c26(k, true));
+    unbounded_family("base churn", 16, |k| c26(k, true));
 }
 
 #[test]
@@ -118,7 +119,7 @@ fn shifted_ping_pong_is_exact_or_refused_in_near_linear_time() {
 
 #[test]
 fn a_chain_raise_narrows_in_near_linear_time() {
-    family("chain raise", 16, chain_raise, |k| {
+    family("chain raise", 512, chain_raise, |k| {
         let k = k as i64;
         let mut w: Vec<_> = (0..k)
             .map(|i| (format!("x{i}"), k - 1, k + 1, vec![k, k + 1]))
@@ -132,8 +133,8 @@ fn a_chain_raise_narrows_in_near_linear_time() {
 /// (ST-walk-orders: on main 16 to 37 at 8n, each `x0 >= j + 1` raising every `x_i` in turn).
 #[test]
 fn a_chain_raise_given_at_once_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(16, chain_raise);
-    scaling::check_order("chain raise, AtOnce, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(512, chain_raise);
+    scaling::check_order("chain raise, AtOnce, k tests", 512, 1, |m| {
         drop(inputs[&m].narrowed(How::AtOnce));
     });
 }
@@ -144,8 +145,8 @@ fn a_chain_raise_given_at_once_narrows_in_near_linear_time() {
 /// block naming `x0` was projected, O(k) blocks at each of k tests).
 #[test]
 fn a_chain_raise_in_reverse_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(32, chain_raise);
-    scaling::check_order("chain raise, Backward, k tests", 32, 1, |m| {
+    let inputs = scaling::inputs(256, chain_raise);
+    scaling::check_order("chain raise, Backward, k tests", 256, 1, |m| {
         drop(inputs[&m].narrowed(How::Backward));
     });
 }
@@ -154,8 +155,8 @@ fn a_chain_raise_in_reverse_narrows_in_near_linear_time() {
 /// n = 32). The answers in this order are checked by [`unbounded_family`].
 #[test]
 fn c26_given_at_once_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(32, |k| c26(k, false));
-    scaling::check_order("C26, AtOnce, k tests", 32, 1, |m| {
+    let inputs = scaling::inputs(64, |k| c26(k, false));
+    scaling::check_order("C26, AtOnce, k tests", 64, 1, |m| {
         drop(inputs[&m].narrowed(How::AtOnce));
     });
 }
@@ -170,8 +171,8 @@ fn c26_given_at_once_narrows_in_near_linear_time() {
 /// [`unbounded_family`].
 #[test]
 fn churn_given_at_once_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(16, |k| c26(k, true));
-    scaling::check_order("base churn, AtOnce, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(32, |k| c26(k, true));
+    scaling::check_order("base churn, AtOnce, k tests", 32, 1, |m| {
         drop(inputs[&m].narrowed(How::AtOnce));
     });
 }
@@ -185,8 +186,8 @@ fn split_class_last_scales() {
     for i in 0..5 {
         assert_eq!(kept(&s, &format!("y{i}"), -21, 21), low, "y{i}: {s}");
     }
-    let inputs = scaling::inputs(16, class_cases);
-    scaling::check_order("class cases, Backward, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(128, class_cases);
+    scaling::check_order("class cases, Backward, k tests", 128, 1, |m| {
         drop(inputs[&m].narrowed(How::Backward));
     });
 }
@@ -194,8 +195,8 @@ fn split_class_last_scales() {
 /// [`class_cases_moved`] one at a time: near linear time.
 #[test]
 fn split_moved_often_scales() {
-    let inputs = scaling::inputs(16, class_cases_moved);
-    scaling::check_order("class cases moved, Forward, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(256, class_cases_moved);
+    scaling::check_order("class cases moved, Forward, k tests", 256, 1, |m| {
         drop(inputs[&m].narrowed(How::Forward));
     });
 }
@@ -210,15 +211,17 @@ fn holes_cut_one_at_a_time_scale() {
     for i in 0..5 {
         assert_eq!(kept(&s, &format!("x{i}"), -31, 31), even, "x{i}: {s}");
     }
-    let inputs = scaling::inputs(16, holes_cut_one_at_a_time);
-    scaling::check_order("holes cut one at a time, Forward, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(64, holes_cut_one_at_a_time);
+    scaling::check_order("holes cut one at a time, Forward, k tests", 64, 1, |m| {
         drop(inputs[&m].narrowed(How::Forward));
     });
 }
 
 /// [`points_written_after`] backward, the second case `x_i % 2 == 0`: each constraint looks
 /// only at the tests that fix its name `x_i`, not the `k` that fix `y`, so near linear time;
-/// each `x_i` ends even.
+/// each `x_i` ends even. Measured at 32 (16 before): at 64 it took 10.08 times the
+/// instructions and 9.69 times the bytes at 8n, near the limit of 10.5 (2026-11-14), against
+/// 9.10 and 8.89 at 32.
 #[test]
 fn points_written_after_scale() {
     let s = points_written_after(5, even).narrowed(How::Backward);
@@ -230,8 +233,8 @@ fn points_written_after_scale() {
             "x{i}: {s}"
         );
     }
-    let inputs = scaling::inputs(16, |k| points_written_after(k, even));
-    scaling::check_order("points written after, Backward, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(32, |k| points_written_after(k, even));
+    scaling::check_order("points written after, Backward, k tests", 32, 1, |m| {
         drop(inputs[&m].narrowed(How::Backward));
     });
 }
@@ -258,8 +261,8 @@ fn points_of_relations_written_after_scale() {
 /// [`linear_moved`] narrows in near-linear time.
 #[test]
 fn linear_moved_often_scales() {
-    let inputs = scaling::inputs(16, linear_moved);
-    scaling::check_order("linear cases moved, Forward, k tests", 16, 1, |m| {
+    let inputs = scaling::inputs(2048, linear_moved);
+    scaling::check_order("linear cases moved, Forward, k tests", 2048, 1, |m| {
         drop(inputs[&m].narrowed(How::Forward));
     });
 }

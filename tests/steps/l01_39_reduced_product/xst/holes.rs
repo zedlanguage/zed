@@ -9,6 +9,7 @@
 //! Those tests wait for ST-holes-moves.
 
 use zed_kernel::Value;
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
 use super::{Inst, Lcg, ends, nm, permutations, rotations};
@@ -88,17 +89,26 @@ fn check_named(what: &str, inst: &Inst, sets: bool) {
 
 /// Claude round 4 (`probe_r4_holes.rs`), Codex round 3 (`holes.mjs`) and round 4 (named
 /// systems), Gemini rounds 3 and 4 (`q1_holes_probe.rs`, `q1_holes_r4.rs`): main's ends are
-/// exact on the named systems in every order.
+/// exact on the named systems in every order, one test each (one test of all four before:
+/// 0.99 s at load 27).
 #[test]
-fn named_systems_have_exact_ends_in_every_order() {
-    for (what, inst) in [
-        ("CE-A", ce_a()),
-        ("CE-B", ce_b()),
-        ("collective", collective()),
-        ("HeapInvariant", heap()),
-    ] {
-        check_named(what, &inst, false);
-    }
+fn ce_a_has_exact_ends_in_every_order() {
+    check_named("CE-A", &ce_a(), false);
+}
+
+#[test]
+fn ce_b_has_exact_ends_in_every_order() {
+    check_named("CE-B", &ce_b(), false);
+}
+
+#[test]
+fn the_collective_system_has_exact_ends_in_every_order() {
+    check_named("collective", &collective(), false);
+}
+
+#[test]
+fn heap_invariant_has_exact_ends_in_every_order() {
+    check_named("HeapInvariant", &heap(), false);
     assert_eq!(
         ends(&heap().exact())
             .iter()
@@ -201,29 +211,28 @@ fn random_inst(rnd: &mut Lcg, names: usize, edges: usize, holes: u64, w: i64) ->
     }
 }
 
-/// The three corpora of the sources, each reduced to a seeded size that runs in a few
-/// seconds: Claude round 4 (`probe_r4_holes_random_exact`, seed `0x5eed_0004`, 3 or 4 names,
-/// up to two holes, 2 to 5 edges in `-2..=2`, 3,000 cases, here 300), Codex round 3
-/// (`holes.mjs`, 2 to 4 names, up to four holes, up to `2n` edges in `-3..=3`, 6,000 cases,
-/// here 300) and Gemini rounds 3 and 4 (`q1_holes_probe.rs`, `q1_holes_r4.rs`; like its
-/// `random_in_class`, a cycle through 3 to 5 names and one chord; 50,000 and 4,507 cases,
-/// here 300).
-fn corpus() -> Vec<Inst> {
+/// The three corpora of the sources, `each` cases of each from generators seeded by `rng`:
+/// Claude round 4 (`probe_r4_holes_random_exact`: 3 or 4 names, up to two holes, 2 to 5 edges
+/// in `-2..=2`; 3,000 cases there), Codex round 3 (`holes.mjs`: 2 to 4 names, up to four
+/// holes, up to `2n` edges in `-3..=3`; 6,000 cases) and Gemini rounds 3 and 4
+/// (`q1_holes_probe.rs`, `q1_holes_r4.rs`; like its `random_in_class`, a cycle through 3 to 5
+/// names and one chord; 50,000 and 4,507 cases).
+fn corpus(rng: &mut Rng, each: usize) -> Vec<Inst> {
     let mut all = vec![];
-    let mut rnd = Lcg(0x5eed_0004);
-    for _ in 0..300 {
+    let mut rnd = Lcg(rng.next_u64());
+    for _ in 0..each {
         let n = 3 + rnd.next(2) as usize;
         let e = 2 + rnd.next(4) as usize;
         all.push(random_inst(&mut rnd, n, e, 2, 2));
     }
-    let mut rnd = Lcg(235_711);
-    for _ in 0..300 {
+    let mut rnd = Lcg(rng.next_u64());
+    for _ in 0..each {
         let n = 2 + rnd.next(3) as usize;
         let e = rnd.next(2 * n as u64 + 1) as usize;
         all.push(random_inst(&mut rnd, n, e, 4, 3));
     }
-    let mut rnd = Lcg(101);
-    for _ in 0..300 {
+    let mut rnd = Lcg(rng.next_u64());
+    for _ in 0..each {
         let n = 3 + rnd.next(3) as usize;
         let mut inst = random_inst(&mut rnd, n, 0, 3, 3);
         // A cycle through every name, and one chord.
@@ -239,12 +248,17 @@ fn corpus() -> Vec<Inst> {
     all
 }
 
+/// Cases of each source in [`corpus`]: 300 before random tests took a new seed each run (900
+/// systems, 4.8 s at load 27); 25 now.
+const EACH: usize = 25;
+
 /// Every system of [`corpus`], its tests in order and as one conjunction: the scope keeps
 /// every value some solution has (sound), and finds no solution exactly when there is none.
 #[test]
 fn random_systems_are_sound() {
+    let (mut rng, seed) = Rng::fresh("random systems with holes, sound");
     let (mut cases, mut empty) = (0, 0);
-    for inst in corpus() {
+    for inst in corpus(&mut rng, EACH) {
         let want = inst.exact();
         let order: Vec<usize> = (0..inst.tests().1.len()).collect();
         for (how, s) in [
@@ -255,7 +269,7 @@ fn random_systems_are_sound() {
             for (i, (w, g)) in want.iter().zip(&got).enumerate() {
                 assert!(
                     w.iter().all(|v| g.contains(v)),
-                    "{how}: {} loses a value of {w:?}, keeps {g:?}: {inst:?}",
+                    "seed {seed}, {how}: {} loses a value of {w:?}, keeps {g:?}: {inst:?}",
                     nm(i)
                 );
             }
@@ -263,9 +277,10 @@ fn random_systems_are_sound() {
         cases += 1;
         empty += usize::from(want.iter().any(|w| w.is_empty()));
     }
+    // Seeds 1 to 24 gave 13 to 26 empty of 75.
     assert!(
-        empty > 100 && empty < cases - 100,
-        "{empty} of {cases} empty"
+        empty > 5 && empty < cases - 5,
+        "seed {seed}: {empty} of {cases} empty"
     );
 }
 
@@ -273,22 +288,23 @@ fn random_systems_are_sound() {
 /// one conjunction. An empty answer is a name with no values.
 #[test]
 fn random_systems_have_exact_ends() {
-    for inst in corpus() {
+    let (mut rng, seed) = Rng::fresh("random systems with holes, exact ends");
+    for inst in corpus(&mut rng, EACH) {
         let want = ends(&inst.exact());
         let order: Vec<usize> = (0..inst.tests().1.len()).collect();
         let got = ends(&inst.values(&inst.in_order(&order)));
         if want.iter().any(Option::is_none) {
             assert!(
                 got.iter().any(Option::is_none) || inst.in_order(&order).bottom,
-                "no solution, but the scope keeps {got:?}: {inst:?}"
+                "seed {seed}: no solution, but the scope keeps {got:?}: {inst:?}"
             );
             continue;
         }
-        assert_eq!(got, want, "in order: {inst:?}");
+        assert_eq!(got, want, "seed {seed}, in order: {inst:?}");
         assert_eq!(
             ends(&inst.values(&inst.at_once())),
             want,
-            "at once: {inst:?}"
+            "seed {seed}, at once: {inst:?}"
         );
     }
 }
@@ -462,9 +478,12 @@ fn unbounded_names_keep_their_exact_values_and_rays() {
         }
         want
     };
-    let mut rnd = Lcg(7331);
+    let (_, seed) = Rng::fresh("unbounded names with holes");
+    let mut rnd = Lcg(seed);
     let mut nonempty = 0;
-    for t in 0..400 {
+    // 400 cases before random tests took a new seed each run (0.8 s at load 27).
+    const CASES: usize = 150;
+    for t in 0..CASES {
         let n = 1 + rnd.next(4) as usize;
         let dom: Vec<Runs> = (0..n)
             .map(|_| choices[rnd.next(choices.len() as u64) as usize].clone())
@@ -478,10 +497,14 @@ fn unbounded_names_keep_their_exact_values_and_rays() {
                 )
             })
             .collect();
-        let want = check(&dom, &edges, &format!("case {t}"));
+        let want = check(&dom, &edges, &format!("seed {seed}, case {t}"));
         nonempty += usize::from(want.iter().any(|r| !r.is_empty()));
     }
-    assert!(nonempty > 100, "{nonempty} of 400 have a solution");
+    // Seeds 1 to 24 gave 56 to 80 of 150.
+    assert!(
+        nonempty > 30,
+        "seed {seed}: {nonempty} of {CASES} have a solution"
+    );
     // Two unbounded names with `x0 - x1 <= -3`: both stay unbounded both ways.
     let all = vec![(None, None)];
     let want = check(&[all.clone(), all.clone()], &[(1, 0, -3)], "two rays");
@@ -572,28 +595,66 @@ fn mixed(n: usize, r: i64) -> Inst {
     inst
 }
 
-/// Asserts that the scope of `make(n)`, its tests in order, has the exact greatest and least
-/// value of every name at `n` and `8n`, and that its work grows near linearly
-/// ([`scaling::check_order`]).
+/// Asserts that the scope of `inst`, its tests in order, has the exact greatest and least
+/// value of every name, by [`extreme`].
+fn assert_exact_ends(what: &str, inst: &Inst) {
+    let order: Vec<usize> = (0..inst.tests().1.len()).collect();
+    let s = inst.in_order(&order);
+    let got: Vec<Option<(i64, i64)>> = (0..inst.len())
+        .map(|i| {
+            let p = s.get(&nm(i));
+            let vs: Vec<i64> = (inst.range[i].0..=inst.range[i].1)
+                .filter(|v| p.contains(&Value::Int(*v)))
+                .collect();
+            Some((*vs.first()?, *vs.last()?))
+        })
+        .collect();
+    assert_eq!(got, extreme_ends(inst), "{what}: ends");
+}
+
+/// The least and greatest value of each name by [`extreme`], `None` for each when there is
+/// no solution.
+fn extreme_ends(inst: &Inst) -> Vec<Option<(i64, i64)>> {
+    match (extreme(inst, false), extreme(inst, true)) {
+        (Some(l), Some(h)) => l.into_iter().zip(h).map(Some).collect(),
+        _ => vec![None; inst.len()],
+    }
+}
+
+/// Laps, the staircase, the mixed family and laps without the closing edge have the exact
+/// ends at small sizes; at the smallest, the ends of [`extreme`] are those of enumeration.
+/// The benchmarks of `bench` assert the same ends at their sizes.
+#[test]
+fn the_families_have_exact_ends_at_small_sizes() {
+    let open_laps = |n: usize| {
+        let mut inst = laps(n, 6 * n as i64);
+        inst.edges.pop();
+        inst
+    };
+    for n in [2, 3, 4, 16] {
+        for (what, inst) in [
+            ("laps, r = 6n", laps(n, 6 * n as i64)),
+            ("staircase", staircase(n)),
+            ("mixed, r = 3n", mixed(n, 3 * n as i64)),
+            ("laps without the closing edge", open_laps(n)),
+        ] {
+            assert_exact_ends(&format!("{what}, n = {n}"), &inst);
+            if n <= 3 {
+                assert_eq!(
+                    extreme_ends(&inst),
+                    ends(&inst.exact()),
+                    "{what}, n = {n}: the oracle"
+                );
+            }
+        }
+    }
+}
+
+/// Asserts the ends of [`assert_exact_ends`] for `make(n)` and `make(8n)`, and that the work
+/// of the scope, its tests in order, grows near linearly ([`scaling::check_order`]).
 fn family(what: &str, n: usize, make: impl Fn(usize) -> Inst + Sync) {
     for m in [n, 8 * n] {
-        let inst = make(m);
-        let order: Vec<usize> = (0..inst.tests().1.len()).collect();
-        let s = inst.in_order(&order);
-        let want: Vec<Option<(i64, i64)>> = match (extreme(&inst, false), extreme(&inst, true)) {
-            (Some(l), Some(h)) => l.into_iter().zip(h).map(Some).collect(),
-            _ => vec![None; inst.len()],
-        };
-        let got: Vec<Option<(i64, i64)>> = (0..inst.len())
-            .map(|i| {
-                let p = s.get(&nm(i));
-                let vs: Vec<i64> = (inst.range[i].0..=inst.range[i].1)
-                    .filter(|v| p.contains(&Value::Int(*v)))
-                    .collect();
-                Some((*vs.first()?, *vs.last()?))
-            })
-            .collect();
-        assert_eq!(got, want, "{what}, n = {m}: ends");
+        assert_exact_ends(&format!("{what}, n = {m}"), &make(m));
     }
     let inputs = scaling::inputs(n, |m| {
         let inst = make(m);

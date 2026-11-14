@@ -6,8 +6,8 @@ use super::*;
 /// O(N log N) in the parts at a fixed hub width.
 #[test]
 fn the_walk_is_solved_in_near_linear_time() {
-    let inputs = scaling::inputs(500, |n| walk(n, 1));
-    scaling::check("threshold walk, n parts", 500, |m| {
+    let inputs = scaling::inputs(64_000, |n| walk(n, 1));
+    scaling::check("threshold walk, n parts", 64_000, |m| {
         drop(threshold::solve(&inputs[&m]));
     });
 }

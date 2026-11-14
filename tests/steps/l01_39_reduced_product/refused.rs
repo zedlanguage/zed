@@ -304,6 +304,58 @@ fn refused_guards(names: &[Arc<str>]) -> Vec<Term> {
     names.chunks(4).map(growth_term).collect()
 }
 
+/// Three refused tests on disjoint names, assumed one after another: one refusal and one
+/// warning each.
+#[test]
+fn a_few_refused_tests_on_disjoint_names_give_one_warning_each() {
+    use zedc::store::cell::Premises;
+    let none = Premises::new();
+    let k = 3;
+    let ns = refused_names(k);
+    let s = refused_guards(&ns)
+        .iter()
+        .fold(super::ints(&ns), |s, g| s.assume(g, true, &none));
+    assert_eq!(s.warnings().len(), k);
+    assert_eq!(s.refusals.len(), k);
+}
+
+/// Three refusals on disjoint names, each kept with the sets of its names: the scope keeps
+/// each once.
+#[test]
+fn a_few_refusals_are_each_kept() {
+    let names = refused_names(3);
+    let s = names.chunks(4).fold(super::ints(&[]), |mut s, c| {
+        let r = Refused {
+            constraint: growth_test([&*c[0], &*c[1], &*c[2], &*c[3]]).into(),
+            asked: Asked::Test { outcome: true },
+            cause: Refusal::Growth.into(),
+        };
+        let sets = c.iter().map(|n| (n.clone(), IntervalSet::top()));
+        s.refuse(r, Arc::new(sets.collect()), c);
+        s
+    });
+    assert_eq!(s.refusals.len(), 3);
+}
+
+/// Two arms that share two refused tests on disjoint names and add one each: their join keeps
+/// each of the four refusals once, with one warning each, whichever side is joined to which.
+#[test]
+fn the_join_of_arms_sharing_refused_tests_keeps_each_once() {
+    use zedc::store::cell::Premises;
+    let none = Premises::new();
+    let k = 4;
+    let ns = refused_names(k);
+    let gs = refused_guards(&ns);
+    let shared = gs[..k - 2]
+        .iter()
+        .fold(super::ints(&ns), |s, g| s.assume(g, true, &none));
+    let [l, r] = [k - 2, k - 1].map(|i| shared.assume(&gs[i], true, &none));
+    let joined = l.join(&r);
+    assert_eq!(joined.refusals.len(), k);
+    assert_eq!(joined.warnings().len(), k);
+    assert_eq!(texts(&joined), texts(&r.join(&l)));
+}
+
 // The tests of `k` refused tests on disjoint names below were one test until
 // SPLIT-reduced-refused (2026-11-10). That test took 15 to 16 s alone with malloc's cache per thread
 // and 26 to 27 s without it, as tools/run_tests.sh runs it (load 28 to 36), and once ran past its

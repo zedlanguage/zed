@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound::{Included, Unbounded};
 
 use super::{Inst, Lcg};
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
 /// A sorted union of disjoint, non-adjacent runs of integers.
@@ -536,10 +537,11 @@ fn family(name: &str, n: usize) -> System {
     System { domains, edges }
 }
 
-/// Codex round 4's corpus, 4 modes of 5,000 systems each (seed `0x139`): cycles,
-/// DAGs, random graphs, and two 2-cycles joined by one edge; 1 to 5 names in `-2..=3`.
-fn corpus() -> Vec<(&'static str, System)> {
-    let mut rng = Lcg(0x139);
+/// Codex round 4's corpus, 4 modes of `each` systems (5,000 there, with seed `0x139`; here
+/// from `seed`): cycles, DAGs, random graphs, and two 2-cycles joined by one edge; 1 to 5 names
+/// in `-2..=3`.
+fn corpus(seed: u64, each: usize) -> Vec<(&'static str, System)> {
+    let mut rng = Lcg(seed);
     let mut all = named();
     for name in ["laps", "staircase", "mixed"] {
         for n in 2..=4 {
@@ -547,7 +549,7 @@ fn corpus() -> Vec<(&'static str, System)> {
         }
     }
     for mode in 0..4 {
-        for _ in 0..5000 {
+        for _ in 0..each {
             let n = if mode == 3 {
                 4
             } else {
@@ -592,6 +594,10 @@ fn corpus() -> Vec<(&'static str, System)> {
     all
 }
 
+/// Systems of each mode in [`corpus`]: 5,000 before random tests took a new seed each run
+/// (0.75 s at load 27).
+const EACH: usize = 1_500;
+
 /// Codex round 4 (`work/r4/src/main.rs`, `check`): on every system of the corpus the model
 /// gives the same answer with the names numbered backward, and on every system it accepts its
 /// greatest and least solutions are those of enumeration; on the named systems and the
@@ -600,8 +606,9 @@ fn corpus() -> Vec<(&'static str, System)> {
 /// a wrong greatest solution on some system, and the corpus has refused systems.
 #[test]
 fn scc_composition_matches_enumeration() {
+    let (_, seed) = Rng::fresh("the corpus of SCC composition");
     let (mut accepted, mut refused, mut hull_caught) = (0, 0, 0);
-    for (name, sys) in &corpus() {
+    for (name, sys) in &corpus(seed, EACH) {
         let n = sys.domains.len();
         let got = greatest(sys);
         let backward = System {
@@ -619,18 +626,18 @@ fn scc_composition_matches_enumeration() {
                 p
             })
         });
-        assert_eq!(got, other, "names numbered backward: {sys:?}");
+        assert_eq!(got, other, "seed {seed}, names numbered backward: {sys:?}");
         let Ok(got) = got else {
             refused += 1;
             continue;
         };
         accepted += 1;
         let oracle = brute(sys);
-        assert_eq!(got, oracle.upper, "greatest, {name}: {sys:?}");
+        assert_eq!(got, oracle.upper, "seed {seed}, greatest, {name}: {sys:?}");
         assert_eq!(
             least(sys).expect("the same shape"),
             oracle.lower,
-            "least, {name}: {sys:?}"
+            "seed {seed}, least, {name}: {sys:?}"
         );
         if *name == "cycle" {
             for root in 0..n {
@@ -653,7 +660,7 @@ fn scc_composition_matches_enumeration() {
                 assert_eq!(
                     cycle_marginal(&domains, &weights),
                     oracle.projection[root],
-                    "cycle_marginal, root {root}: {sys:?}"
+                    "seed {seed}, cycle_marginal, root {root}: {sys:?}"
                 );
             }
         }
@@ -673,15 +680,18 @@ fn scc_composition_matches_enumeration() {
                     )
                 })
                 .collect();
-            assert_eq!(sets, oracle.projection, "sets, {name}");
+            assert_eq!(sets, oracle.projection, "seed {seed}, sets, {name}");
         }
     }
     if let Some((_, heap)) = named().first() {
         assert_eq!(brute(heap).upper, Some(vec![4, 7, 6, 3]), "HeapInvariant");
     }
-    assert!(accepted > 1000, "{accepted} accepted");
-    assert!(refused > 0, "CONTROL: no system was refused");
-    assert!(hull_caught > 0, "CONTROL: the hull was never wrong");
+    assert!(accepted > 1000, "seed {seed}: {accepted} accepted");
+    assert!(refused > 0, "seed {seed}, CONTROL: no system was refused");
+    assert!(
+        hull_caught > 0,
+        "seed {seed}, CONTROL: the hull was never wrong"
+    );
 }
 
 /// Codex round 4: a component that is not one cycle (a triangle with a chord) is refused by
@@ -700,6 +710,33 @@ fn scc_composition_refuses_a_component_that_is_not_one_cycle() {
     let mut cycle = bad;
     cycle.edges.pop();
     assert_eq!(greatest(&cycle), Ok(Some(vec![3, 3, 3])));
+}
+
+/// The model accepts laps, the staircase and the mixed family, as one cycle each, with a
+/// solution that satisfies every edge with each value in its domain, and that is the greatest
+/// by enumeration where enumeration is small. [`scc_composition_matches_enumeration`] skips a
+/// refused system, so it does not show that the families are accepted.
+#[test]
+fn scc_composition_answers_the_families() {
+    for name in ["laps", "staircase", "mixed"] {
+        for n in [2, 3, 4, 16] {
+            let sys = family(name, n);
+            let x = greatest(&sys).expect("one cycle").expect("a solution");
+            assert!(
+                sys.edges.iter().all(|&(u, v, w)| x[v] <= x[u] + w),
+                "{name}, n = {n}"
+            );
+            assert!(
+                x.iter()
+                    .zip(&sys.domains)
+                    .all(|(&v, d)| predecessor(d, v) == Some(v)),
+                "{name}, n = {n}"
+            );
+            if n <= 4 {
+                assert_eq!(Some(x), brute(&sys).upper, "{name}, n = {n}");
+            }
+        }
+    }
 }
 
 /// All-pairs shortest distances by Floyd–Warshall, `None` on a negative cycle.
@@ -823,12 +860,13 @@ fn projections(sys: &System) -> Vec<Domain> {
 }
 
 /// Codex round 3 (`holes.mjs`, 6,000 random systems of 2 to 4 names in `0..=6`,
-/// seed 235711) and the three named systems: the sets by capped queries, and the greatest and
-/// least solutions by snapping, are those of enumeration. The sets of `super::holes`'s
-/// equality chain at `n = 2..8` are the even numbers.
+/// seed 235711 there, a new seed each run here) and the three named systems: the sets by capped
+/// queries, and the greatest and least solutions by snapping, are those of enumeration. The sets
+/// of `super::holes`'s equality chain at `n = 2..8` are the even numbers.
 #[test]
 fn closure_and_snapping_match_enumeration() {
-    let mut rng = Lcg(235_711);
+    let (_, seed) = Rng::fresh("random systems of closure and snapping");
+    let mut rng = Lcg(seed);
     let mut all: Vec<System> = named().into_iter().skip(1).map(|(_, s)| s).collect();
     for _ in 0..6000 {
         let n = 2 + rng.next(3) as usize;
@@ -846,11 +884,15 @@ fn closure_and_snapping_match_enumeration() {
     }
     for sys in &all {
         let oracle = brute(sys);
-        assert_eq!(projections(sys), oracle.projection, "{sys:?}");
-        assert_eq!(snapped(sys, None, Snap::Always), oracle.upper, "{sys:?}");
+        assert_eq!(projections(sys), oracle.projection, "seed {seed}: {sys:?}");
+        assert_eq!(
+            snapped(sys, None, Snap::Always),
+            oracle.upper,
+            "seed {seed}: {sys:?}"
+        );
         let low = snapped(&negated(sys), None, Snap::Always)
             .map(|p| p.into_iter().map(|v| -v).collect::<Vec<_>>());
-        assert_eq!(low, oracle.lower, "{sys:?}");
+        assert_eq!(low, oracle.lower, "seed {seed}: {sys:?}");
     }
     for n in 2..=8 {
         let sys = System {

@@ -220,7 +220,8 @@ fn fan_in_or(k: usize) -> Sys {
 
 #[test]
 fn fan_in_chains_of_disjunctions_give_the_exact_bound() {
-    for k in [1usize, 2, 3, 4, 6, 8, 12] {
+    // k = 6 and 12 too before (2.0 s at load 27): 0.27 s at k = 8, 0.83 s at 12, 3.1 s at 16.
+    for k in [1usize, 2, 3, 4, 8] {
         exact(
             &format!("fan_in_or k = {k}"),
             &fan_in_or(k),
@@ -258,8 +259,10 @@ fn diamond(k: usize, prefix: &str) -> Sys {
 
 #[test]
 fn a_diamond_of_disjunctions_gives_the_exact_bound() {
+    // k = 6 and 8 before (2.1 s at load 27). The time grows about as the square of the parts:
+    // 0.42 s at k = 8, 1.17 s at 12, 5.8 s at 16 (37, 79, 137 parts; 2026-11-14, load 27).
     for prefix in ["a", "z"] {
-        for k in [1usize, 2, 3, 4, 6, 8] {
+        for k in [1usize, 2, 3, 4, 5] {
             exact(
                 &format!("diamond prefix {prefix}, k = {k}"),
                 &diamond(k, prefix),
@@ -300,7 +303,9 @@ fn diamond_rev(k: usize) -> Sys {
 
 #[test]
 fn a_diamond_with_its_parts_sorted_sink_first_gives_the_exact_bound() {
-    for k in [1usize, 2, 3, 4, 5, 6, 8] {
+    // k = 2, 4, 5 and 6 too before (1.65 s at load 27); k from 5 to 8 refutes the move limit, and
+    // Gemini asserts k = 8. 0.47 s at k = 8, 1.64 s at 12, 4.9 s at 16.
+    for k in [1usize, 3, 8] {
         exact(
             &format!("diamond_rev k = {k}"),
             &diamond_rev(k),
@@ -545,11 +550,14 @@ fn chain(n: usize, close: Option<i64>) -> Sys {
     Sys::new(&xs, 0, 4 * n as i64, vec![], rel)
 }
 
-/// Asserts the answers of [`chain`] closed by `close` in each of [`HOWS`] at 8 and 64 names,
-/// then near linear time in each: in the reverse order the closing test comes first and each
-/// link then moves the ends of a closed path (ST-walk-orders: on main 36 to 61 at 8n).
-fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty: bool) {
-    for n in [8, 64] {
+/// Asserts the answers of [`chain`] closed by `close` in each of [`HOWS`] at each of `sizes`.
+fn chain_answers_at(
+    what: &str,
+    close: impl Fn(usize) -> Option<i64>,
+    empty: bool,
+    sizes: &[usize],
+) {
+    for &n in sizes {
         let sys = chain(n, close(n));
         for how in HOWS {
             let s = sys.narrowed(how);
@@ -567,9 +575,26 @@ fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty:
             }
         }
     }
+}
+
+/// A chain closed into a cycle of weight 0, of weight 1, and open, at a few names, in each
+/// order. At one name the closing test is `x0 - x0 >= 0` or `x0 - x0 >= 1`.
+#[test]
+fn chains_and_their_cycles_have_their_answers() {
+    let sizes = [1, 2, 3, 8];
+    chain_answers_at("cycle of weight 0", |n| Some(1 - n as i64), false, &sizes);
+    chain_answers_at("cycle of weight 1", |n| Some(2 - n as i64), true, &sizes);
+    chain_answers_at("open chain", |_| None, false, &sizes);
+}
+
+/// Asserts the answers of [`chain`] closed by `close` in each of [`HOWS`] at 8 and 64 names,
+/// then near linear time in each from 512 names (8 before): in the reverse order the closing test comes first and each
+/// link then moves the ends of a closed path (ST-walk-orders: on main 36 to 61 at 8n).
+fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty: bool) {
+    chain_answers_at(what, &close, empty, &[8, 64]);
     for how in HOWS {
-        let inputs = scaling::inputs(8, |n| chain(n, close(n)));
-        scaling::check_order(&format!("{what}, {how:?}, n names"), 8, 1, |m| {
+        let inputs = scaling::inputs(512, |n| chain(n, close(n)));
+        scaling::check_order(&format!("{what}, {how:?}, n names"), 512, 1, |m| {
             drop(inputs[&m].narrowed(how));
         });
     }
@@ -597,15 +622,29 @@ fn walk(n: usize, start: bool) -> Sys {
     Sys::new(&all, 0, 3, vec![prim(Prim::Le, var("w"), int(1))], rel)
 }
 
-/// Asserts `want` of each name at sizes `n` and `8n`, then near linear time one test at a
-/// time.
+/// Asserts `want` of each name at sizes `n` and `8n` ([`family_answers`]), then near linear
+/// time one test at a time.
 fn family(
     what: &str,
     n: usize,
     make: impl Fn(usize) -> Sys + Sync,
     want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
 ) {
-    for m in [n, 8 * n] {
+    family_answers(what, &[n, 8 * n], &make, want);
+    let inputs = scaling::inputs(n, make);
+    scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
+        drop(inputs[&m].narrowed(How::Forward));
+    });
+}
+
+/// Asserts `want` of each name at each of `sizes`, the same [`Answer`] in each of [`HOWS`].
+fn family_answers(
+    what: &str,
+    sizes: &[usize],
+    make: impl Fn(usize) -> Sys,
+    want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
+) {
+    for &m in sizes {
         let sys = make(m);
         let w = want(m);
         let w: Vec<(&str, i64, i64, Vec<i64>)> = w
@@ -620,9 +659,49 @@ fn family(
             &w,
         );
     }
-    let inputs = scaling::inputs(n, make);
-    scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
-        drop(inputs[&m].narrowed(How::Forward));
+}
+
+/// The families of [`family`] at small sizes: the answers, exact or refused but sound, the
+/// same in each order. The benchmarks of `bench` assert the same answers at their sizes.
+#[test]
+fn the_families_have_their_answers_in_each_order() {
+    family_answers(
+        "walk",
+        &[1, 2, 5],
+        |n| walk(n, true),
+        |n| {
+            let mut w: Vec<_> = (0..n)
+                .map(|i| (format!("v{i}"), 0, 3, vec![1, 2, 3]))
+                .collect();
+            w.push(("w".into(), 0, 1, vec![0, 1]));
+            w
+        },
+    );
+    family_answers(
+        "walk without its start",
+        &[1, 2, 5],
+        |n| walk(n + 1, false),
+        |n| {
+            let mut w: Vec<_> = (0..=n).map(|i| (format!("v{i}"), 0, 3, upto(3))).collect();
+            w.push(("w".into(), 0, 1, upto(1)));
+            w
+        },
+    );
+    family_answers("shifted ping-pong", &[2, 16], ping_pong_shifted, |r| {
+        let r = r as i64;
+        vec![
+            ("x".into(), -1, r, vec![-1]),
+            ("y".into(), -1, r, vec![-1, 0]),
+            ("z".into(), -1, r, vec![-1, 0]),
+        ]
+    });
+    family_answers("chain raise", &[1, 2, 6], chain_raise, |k| {
+        let k = k as i64;
+        let mut w: Vec<_> = (0..k)
+            .map(|i| (format!("x{i}"), k - 1, k + 1, vec![k, k + 1]))
+            .collect();
+        w.extend((0..k).map(|j| (format!("y{j}"), 0, 1, upto(1))));
+        w
     });
 }
 
@@ -700,10 +779,20 @@ fn far(ns: &[&str]) -> Vec<(String, i64, i64, Vec<i64>)> {
         .collect()
 }
 
-/// Asserts that `sys` keeps the far values of [`far`] in each of [`HOWS`], then near linear
-/// time.
+/// Asserts that `sys` keeps the far values of [`far`] in each of [`HOWS`] at `n` and `8n`
+/// ([`unbounded_answers`]), then near linear time.
 fn unbounded_family(what: &str, n: usize, make: impl Fn(usize) -> Sys + Sync) {
-    for m in [n, 8 * n] {
+    unbounded_answers(what, &[n, 8 * n], &make);
+    let inputs = scaling::inputs(n, make);
+    scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
+        drop(inputs[&m].narrowed(How::Forward));
+    });
+}
+
+/// Asserts that `make(m)` keeps the far values of [`far`] in each of [`HOWS`], at each of
+/// `sizes`.
+fn unbounded_answers(what: &str, sizes: &[usize], make: impl Fn(usize) -> Sys) {
+    for &m in sizes {
         let sys = make(m);
         for how in HOWS {
             let s = sys.narrowed(how);
@@ -717,10 +806,13 @@ fn unbounded_family(what: &str, n: usize, make: impl Fn(usize) -> Sys + Sync) {
             }
         }
     }
-    let inputs = scaling::inputs(n, make);
-    scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
-        drop(inputs[&m].narrowed(How::Forward));
-    });
+}
+
+/// C26 and base churn at a few tests: every name stays unbounded both ways, in each order.
+#[test]
+fn c26_and_churn_keep_every_name_unbounded() {
+    unbounded_answers("C26", &[1, 2, 3], |k| c26(k, false));
+    unbounded_answers("base churn", &[1, 2, 3], |k| c26(k, true));
 }
 
 /// Claude round 3 (`probe_r3.rs`, shifted ping-pong): `x`, `y`, `z` in `-1..=r`,
@@ -1560,6 +1652,92 @@ fn points_of_relations_written_after_are_dropped() {
     ] {
         for i in 0..5 {
             assert_eq!(kept(&s, &format!("x{i}"), -21, 21), want, "x{i}: {s}");
+        }
+    }
+}
+
+/// [`cyclic_base`] at a few names: each name is at most 10 and may be 10.
+#[test]
+fn a_cycle_of_differences_with_one_bound_is_exact() {
+    let p = Premises::new();
+    for n in [2, 3, 16] {
+        let (ns, all) = cyclic_base(n);
+        let s = ints(&ns).assume(&all, true, &p);
+        for x in &ns {
+            assert!(s.get(x).contains(&Value::Int(10)), "n = {n}: {x}");
+            assert!(!s.get(x).contains(&Value::Int(11)), "n = {n}: {x}");
+        }
+    }
+}
+
+/// [`class_cases`] with the class last, at a few kept tests: every `y_i` in `-20..=-5`.
+#[test]
+fn split_class_last_drops_each_kept_case() {
+    let low: Vec<i64> = (-20..=-5).collect();
+    for k in [2, 3, 5] {
+        let s = class_cases(k).narrowed(How::Backward);
+        for i in 0..k {
+            assert_eq!(
+                kept(&s, &format!("y{i}"), -21, 21),
+                low,
+                "k = {k}, y{i}: {s}"
+            );
+        }
+    }
+}
+
+/// [`class_cases_moved`] at a few tests: no case is ever emptied, so each `y_i` keeps both
+/// cases' values and `x` ends at most 20, in each order with no warning.
+#[test]
+fn split_moved_keeps_both_cases() {
+    for k in 1..=3usize {
+        let b = 20 + k as i64;
+        let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+        let y: Vec<i64> = (-b..=-5).chain(0..=b).collect();
+        let mut want: Vec<(&str, i64, i64, Vec<i64>)> = ys
+            .iter()
+            .map(|n| (n.as_str(), -b - 1, b + 1, y.clone()))
+            .collect();
+        want.push(("x", -b - 1, b + 1, (-b..=20).collect()));
+        exact(
+            &format!("class cases moved, k = {k}"),
+            &class_cases_moved(k),
+            &want,
+        );
+    }
+}
+
+/// [`holes_cut_one_at_a_time`] at a few tests, forward: the cut at `k + i` drops the first
+/// case of test `i`, so each `x_i` ends even.
+#[test]
+fn holes_cut_one_at_a_time_drop_each_case() {
+    for k in [1, 2, 3, 5] {
+        let b = 20 + 2 * k as i64;
+        let s = holes_cut_one_at_a_time(k).narrowed(How::Forward);
+        let even: Vec<i64> = (-b..=b).filter(|v| v.rem_euclid(2) == 0).collect();
+        for i in 0..k {
+            assert_eq!(
+                kept(&s, &format!("x{i}"), -b - 1, b + 1),
+                even,
+                "k = {k}, x{i}: {s}"
+            );
+        }
+    }
+}
+
+/// [`points_written_after`] at a few tests, backward, the second case `x_i % 2 == 0`: each
+/// `x_i` ends even.
+#[test]
+fn points_written_after_drop_each_case() {
+    let even_values: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
+    for k in [2, 3, 5] {
+        let s = points_written_after(k, even).narrowed(How::Backward);
+        for i in 0..k {
+            assert_eq!(
+                kept(&s, &format!("x{i}"), -21, 21),
+                even_values,
+                "k = {k}, x{i}: {s}"
+            );
         }
     }
 }
