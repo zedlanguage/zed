@@ -736,7 +736,7 @@ fn printing_a_kept_power_is_rejected_where_the_power_is_not() {
          |            ^^ [7]
   [3]  2:7: this `^` gives int
   [4]  2:7: this literal, 2, is 2
-  [5]  2:9: this `^` gives int
+  [5]  2:9: this `^` gives 2^70
   [6]  2:10: this literal, 2, is 2
   [7]  2:12: this literal, 70, is 70
   [8]  3:15: `String(x)` asks for at least 2^71 bits: printing a number writes all of its digits, a byte each
