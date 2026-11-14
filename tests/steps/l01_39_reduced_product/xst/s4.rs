@@ -9,9 +9,10 @@
 
 use std::sync::Arc;
 
-use zed_kernel::{Prim, Term, Value};
+use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
+use zedc::store::lattice::{Congruence, Lattice};
 use zedc::store::product::Scope;
 
 use crate::ints;
@@ -1095,4 +1096,227 @@ fn class_case_is_exact(how: How) {
 fn a_case_a_class_empties_is_dropped() {
     class_case_is_exact(How::AtOnce);
     class_case_is_exact(How::Forward);
+}
+
+/// [`class_case`] with the disjunction given first: the class that comes after it drops the
+/// case it empties, as in the other orders. The disjunction has no relation (`x % 2` needs an
+/// auxiliary variable), so the scope keeps it and narrows by it again when the class moves
+/// `x` (ST-class-case-reverse; on main before it, `y` kept `0..=20` too, with no warning).
+#[test]
+fn a_case_a_class_empties_is_dropped_when_the_class_comes_last() {
+    class_case_is_exact(How::Backward);
+}
+
+/// `x % m == r`.
+fn class(x: &str, m: i64, r: i64) -> Term {
+    prim(Prim::Eq, prim(Prim::Mod, var(x), int(m)), int(r))
+}
+
+/// `(x % 2 == 1 && y >= 0) || y <= -5`.
+fn odd_or_low(x: &str, y: &str) -> Term {
+    or(
+        and(class(x, 2, 1), prim(Prim::Ge, var(y), int(0))),
+        prim(Prim::Le, var(y), int(-5)),
+    )
+}
+
+/// Kept disjunctions in a chain: the class drops a case of the first, which moves `z`, which
+/// drops a case of the second; in each order, `z` and `y` end in `-20..=-5`.
+#[test]
+fn a_case_a_class_empties_drops_the_cases_it_reaches() {
+    let second = or(
+        and(
+            class("z", 3, 1),
+            and(
+                prim(Prim::Ge, var("z"), int(-4)),
+                prim(Prim::Ge, var("y"), int(0)),
+            ),
+        ),
+        prim(Prim::Le, var("y"), int(-5)),
+    );
+    let sys = Sys {
+        start: boxed(&["x", "y", "z"], 20),
+        rel: vec![class("x", 2, 0), odd_or_low("x", "z"), second],
+    };
+    let low: Vec<i64> = (-20..=-5).collect();
+    exact(
+        "class, then two kept disjunctions",
+        &sys,
+        &[("y", -21, 21, low.clone()), ("z", -21, 21, low)],
+    );
+}
+
+/// The other forms of a test kept for its cases: an `if`, and a conjunction that gives
+/// `false`, each before and after the class that empties one of its cases. The case `x % 2
+/// != 0` of the false conjunction is the class `1 mod 2`.
+#[test]
+fn a_case_a_class_empties_is_dropped_from_an_if_and_a_false_conjunction() {
+    let p = Premises::new();
+    let low: Vec<i64> = (-20..=-5).collect();
+    let even = class("x", 2, 0);
+    let by_if = Term::If(
+        Shared::new(class("x", 2, 1)),
+        Shared::new(prim(Prim::Ge, var("y"), int(0))),
+        Shared::new(prim(Prim::Le, var("y"), int(-5))),
+    );
+    // `!(x % 2 == 0 && y >= -4)`: `x` odd or `y <= -5`.
+    let by_and = and(even.clone(), prim(Prim::Ge, var("y"), int(-4)));
+    for (what, test, value) in [("if", &by_if, true), ("false conjunction", &by_and, false)] {
+        let last = (boxed(&["x", "y"], 20).assume(test, value, &p)).assume(&even, true, &p);
+        let first = (boxed(&["x", "y"], 20).assume(&even, true, &p)).assume(test, value, &p);
+        for (order, s) in [("class last", last), ("class first", first)] {
+            assert_eq!(kept(&s, "y", -21, 21), low, "{what}, {order}: {s}");
+            assert!(
+                s.warnings().is_empty(),
+                "{what}, {order}: {:?}",
+                s.warnings()
+            );
+        }
+    }
+}
+
+/// A case of a test with no relation that a later bound empties is dropped by its end:
+/// `(x % 2 == 1 && x <= 5 && y >= 0) || y <= -5`, then `x >= 6` leaves `y` in `-20..=-5`
+/// in each order, and `x >= 5`, which keeps `x = 5` in the first case, drops nothing; so do
+/// the mirrored `x >= -5` and `x <= -6`.
+#[test]
+fn a_case_a_bound_empties_is_dropped_from_a_test_with_no_relation() {
+    let p = Premises::new();
+    let low: Vec<i64> = (-20..=-5).collect();
+    let both: Vec<i64> = (-20..=-5).chain(0..=20).collect();
+    let test = |op: Prim, end: i64| {
+        or(
+            and(
+                class("x", 2, 1),
+                and(
+                    prim(op, var("x"), int(end)),
+                    prim(Prim::Ge, var("y"), int(0)),
+                ),
+            ),
+            prim(Prim::Le, var("y"), int(-5)),
+        )
+    };
+    let cases = [
+        (test(Prim::Le, 5), prim(Prim::Ge, var("x"), int(6)), &low),
+        (test(Prim::Le, 5), prim(Prim::Ge, var("x"), int(5)), &both),
+        (test(Prim::Ge, -5), prim(Prim::Le, var("x"), int(-6)), &low),
+        (test(Prim::Ge, -5), prim(Prim::Le, var("x"), int(-5)), &both),
+    ];
+    for (t, bound, want) in &cases {
+        let last = (boxed(&["x", "y"], 20).assume(t, true, &p)).assume(bound, true, &p);
+        let first = (boxed(&["x", "y"], 20).assume(bound, true, &p)).assume(t, true, &p);
+        for (order, s) in [("bound last", last), ("bound first", first)] {
+            assert_eq!(
+                &kept(&s, "y", -21, 21),
+                *want,
+                "{t} then {bound}, {order}: {s}"
+            );
+        }
+    }
+}
+
+/// `x % 2 == r` giving `false` leaves the other class of 2, and no class for a modulus
+/// above 2, where the classes left are not one: the congruence is exact, and `x % 3 == 0`
+/// giving `false` leaves every class.
+#[test]
+fn a_class_of_two_that_fails_leaves_the_other() {
+    let p = Premises::new();
+    for (r, other) in [(0, 1), (1, 0)] {
+        let s = boxed(&["x"], 20).assume(&class("x", 2, r), false, &p);
+        let want: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == other).collect();
+        assert_eq!(kept(&s, "x", -21, 21), want, "x % 2 != {r}: {s}");
+        assert_eq!(
+            s.get("x").cell.congruence.element,
+            Congruence::new(2, other),
+            "x % 2 != {r}"
+        );
+    }
+    let s = boxed(&["x"], 20).assume(&class("x", 3, 0), false, &p);
+    assert_eq!(
+        s.get("x").cell.congruence.element,
+        Congruence::top(),
+        "x % 3 != 0"
+    );
+    // A residue outside `0..2` fails at every integer: no class is taken.
+    let s = boxed(&["x"], 20).assume(&class("x", 2, 2), false, &p);
+    assert_eq!(
+        kept(&s, "x", -21, 21),
+        (-20..=20).collect::<Vec<_>>(),
+        "x % 2 != 2"
+    );
+}
+
+/// A class that empties no case drops none: `x` even after `(x % 3 == 1 && y >= 0) || y <=
+/// -5` keeps both ranges of `y`, in each order.
+#[test]
+fn a_class_that_empties_no_case_drops_none() {
+    let sys = Sys {
+        start: boxed(&["x", "y"], 20),
+        rel: vec![
+            class("x", 2, 0),
+            or(
+                and(class("x", 3, 1), prim(Prim::Ge, var("y"), int(0))),
+                prim(Prim::Le, var("y"), int(-5)),
+            ),
+        ],
+    };
+    let y: Vec<i64> = (-20..=-5).chain(0..=20).collect();
+    exact(
+        "class, then a disjunction it keeps whole",
+        &sys,
+        &[("y", -21, 21, y)],
+    );
+}
+
+/// `k` disjunctions [`odd_or_low`] on `x` and `y_i`, then `x` even.
+fn class_cases(k: usize) -> Sys {
+    let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+    let mut ns: Vec<&str> = ys.iter().map(String::as_str).collect();
+    ns.push("x");
+    let mut rel = vec![class("x", 2, 0)];
+    rel.extend(ys.iter().map(|y| odd_or_low("x", y)));
+    Sys {
+        start: boxed(&ns, 20),
+        rel,
+    }
+}
+
+/// [`class_cases`] in the reverse order, the class last, which narrows again by each of the
+/// `k` kept tests once: near linear time, and every `y_i` in `-20..=-5`.
+#[test]
+fn split_class_last_scales() {
+    let low: Vec<i64> = (-20..=-5).collect();
+    let s = class_cases(5).narrowed(How::Backward);
+    for i in 0..5 {
+        assert_eq!(kept(&s, &format!("y{i}"), -21, 21), low, "y{i}: {s}");
+    }
+    let inputs = scaling::inputs(16, class_cases);
+    scaling::check_order("class cases, Backward, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::Backward));
+    });
+}
+
+/// `k` disjunctions [`odd_or_low`] on `x` and `y_i`, all in `-b..=b` for `b = 20 + k`, then
+/// `k` tests `x <= b - 1 - i`, each of which moves `x` and empties no case: the kept tests
+/// read a name that moves at each.
+fn class_cases_moved(k: usize) -> Sys {
+    let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+    let mut ns: Vec<&str> = ys.iter().map(String::as_str).collect();
+    ns.push("x");
+    let b = 20 + i64::try_from(k).expect("a small size");
+    let mut rel: Vec<Term> = ys.iter().map(|y| odd_or_low("x", y)).collect();
+    rel.extend((1..=b - 20).map(|i| prim(Prim::Le, var("x"), int(b - i))));
+    Sys {
+        start: boxed(&ns, b),
+        rel,
+    }
+}
+
+/// [`class_cases_moved`] one at a time: near linear time.
+#[test]
+fn split_moved_often_scales() {
+    let inputs = scaling::inputs(16, class_cases_moved);
+    scaling::check_order("class cases moved, Forward, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::Forward));
+    });
 }
