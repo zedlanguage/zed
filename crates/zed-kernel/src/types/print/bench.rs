@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::super::Type;
-use super::tests::{decision_list, three_carriers};
+use super::tests::{decision_list, part_ring, three_carriers};
 use crate::scaling;
 
 /// Small instances: `the_text_of_a_decision_list_has_a_connective_between_each_two_literals`.
@@ -44,6 +44,24 @@ fn a_union_of_many_numeric_literals_prints_ascending_in_m_log_m() {
         |m| {
             let s = built[&m].surface();
             assert_eq!(s.root.matches(" | ").count(), 3 * m - 1);
+        },
+    );
+}
+
+/// Small instances: `a_cycle_of_parts_written_by_name_is_defined`.
+#[test]
+fn a_long_cycle_of_parts_written_by_name_scales() {
+    let n = 2_000;
+    let built: BTreeMap<usize, Type> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, part_ring(m)))
+        .collect();
+    scaling::check(
+        "the text by name of a ring of parts kept unevaluated",
+        n,
+        |m| {
+            let s = built[&m].surface_by_name(super::super::TextPlace::Any);
+            assert_eq!(s.defs.len(), m + 1);
         },
     );
 }

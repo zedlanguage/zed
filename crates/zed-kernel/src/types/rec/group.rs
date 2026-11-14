@@ -704,7 +704,7 @@ fn first_on_cycle(edges: &[Vec<usize>]) -> Option<usize> {
 /// Whether each vertex of `edges` is on a cycle: Tarjan's strongly connected components, each
 /// edge read once, with an explicit stack. A search from each vertex in turn read the graph once
 /// per vertex.
-fn on_cycle(edges: &[Vec<usize>]) -> Vec<bool> {
+pub(in crate::types) fn on_cycle(edges: &[Vec<usize>]) -> Vec<bool> {
     const NEW: usize = usize::MAX;
     let n = edges.len();
     let (mut index, mut low, mut on) = (vec![NEW; n], vec![0; n], vec![false; n]);

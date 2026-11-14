@@ -27,7 +27,8 @@ use std::sync::Arc;
 use super::TextPlace as At;
 use super::bdd::{Bdd, Form, Part};
 use super::hash::names_first;
-use super::{Lits, Morphism, Node, Row, Spell, Surface, Surfaces, Tuples, Type};
+use super::rec::group::on_cycle;
+use super::{Lits, Morphism, Node, Rope, Row, Spell, Surface, Surfaces, Tuples, Type};
 use crate::value::Value;
 use order::{Member, NumberType};
 
@@ -196,6 +197,7 @@ impl Printer<'_> {
             }
             .print(types);
         }
+        p.force_cycles();
         p.canon(&roots);
         p.render(&roots)
     }
@@ -389,7 +391,7 @@ fn group(items: Vec<Text>, sep: &'static str, at: At) -> Seg {
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Tok<'a> {
     /// A recursive type: its context, its name, and the type, whose order breaks a tie of names.
-    Rec(&'a str, &'a str, &'a Type),
+    Rec(&'a str, &'a Rope, &'a Type),
     /// Whether the node is named, and the class it has.
     Head(bool, Class),
     Str(&'a str),
@@ -503,7 +505,18 @@ struct Printer<'s> {
     uses: Vec<u32>,
     /// A recursive type, named however often it is used: its context, its name and the
     /// type, by whose order (its key) names alike are ranked ([`Printer::canon`]).
-    forced: Vec<Option<(String, String, Type)>>,
+    // Complexity tradeoff: the name was kept as a string, made from the type's rope in time
+    // linear in its length; the names of parts nested `k` deep, each spelling out the parts
+    // inside it, then took O(k^2) to write out (printing 2,000 such parts took 41.1 times the
+    // instructions of 250, measured for FAIL-print-height-cycle-seed). Used: the rope the type
+    // already keeps, compared byte by byte only up to where two names differ, so a name costs
+    // nothing to keep and a comparison no more than on the strings, in the same order
+    // (9.27 times at the same sizes).
+    forced: Vec<Option<(String, Rope, Type)>>,
+    /// A recursive type written by name and unfolded where it stands, as a part kept
+    /// unevaluated is ([`Printer::ty`]): its node, its context and the type. One on a cycle of
+    /// the texts is given a definition after the walk ([`Printer::force_cycles`]).
+    unfolded: Vec<(usize, Ctx, Type)>,
     /// The nodes in the order the walk leaves them.
     post: Vec<usize>,
     /// Each node's item, until visited.
@@ -689,6 +702,45 @@ impl Printer<'_> {
         self.forced[i].is_some() || (self.uses[i] >= 2 && !token)
     }
 
+    /// Gives a definition to each recursive type unfolded where it stands ([`Printer::ty`]) that
+    /// lies on a cycle of the texts once the edges out of the recursive types with a definition
+    /// are cut, as the printer without names gives every recursive type one: written out where
+    /// it stands, such a cycle would have no end. Every cycle of the texts passes through a
+    /// recursive type, the one way a type holds itself, so afterward every cycle passes through
+    /// one with a definition, as [`Printer::heights`] needs. Which types are named depends only
+    /// on the texts, not on the order of the walk.
+    // Complexity tradeoff: naive, a search from each unfolded type for a path back to itself,
+    // O(k (n + e)) for k such types in a graph of n nodes and e references. Used: the strongly
+    // connected components of the whole graph at once, by Tarjan's algorithm (R. E. Tarjan,
+    // "Depth-first search and linear graph algorithms", SIAM Journal on Computing 1(2), 1972),
+    // O(n + e) time and O(n + e) memory for the edge lists, none when no type was unfolded.
+    // Every unfolded type on a cycle is named, not a least set of them that cuts every cycle
+    // (a least feedback vertex set, NP-hard), so a cycle through two of them names both, as
+    // the printer without names would.
+    fn force_cycles(&mut self) {
+        if self.unfolded.is_empty() {
+            return;
+        }
+        let edges: Vec<Vec<usize>> = (self.texts.iter().zip(&self.forced))
+            .map(|(text, forced)| match forced {
+                Some(_) => Vec::new(),
+                None => Pieces::new(&text.as_ref().expect("visited").segs)
+                    .filter_map(|p| match p {
+                        Piece::Node(j, _) => Some(j),
+                        Piece::Str(_) => None,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let cyclic = on_cycle(&edges);
+        for (i, ctx, t) in std::mem::take(&mut self.unfolded) {
+            if cyclic[i] {
+                let ctx_name = ctx.as_deref().unwrap_or("").to_string();
+                self.forced[i] = Some((ctx_name, t.rope(), t));
+            }
+        }
+    }
+
     /// Orders the elements of every group by their contents, so that the text does not depend
     /// on the order the parts' operands and literals were found in, which follows the atoms'
     /// digests (step BDD-atom-order). Each node gets a rank by its contents, as in the tree
@@ -732,8 +784,8 @@ impl Printer<'_> {
     }
 
     /// Each node's height in the graph of the texts with the edges out of the recursive types
-    /// cut, a recursive type at height 0. Every cycle passes through a recursive type, so that
-    /// graph has no cycle. The walk's order is not an order of it in which a node comes after
+    /// with a definition cut, a recursive type at height 0. Every cycle passes through a
+    /// recursive type with a definition ([`Printer::force_cycles`]), so that graph has no cycle. The walk's order is not an order of it in which a node comes after
     /// those it names: the walk may enter a cycle at a node that is not a recursive type, such
     /// as a tuple diagram that a recursive type's unfolding shares with a part of its body kept
     /// unevaluated (`R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)` enters at the diagram of
@@ -761,9 +813,9 @@ impl Printer<'_> {
                     Step::Leave(i) => {
                         let h = Pieces::new(segs(i))
                             .filter_map(|p| match p {
-                                Piece::Node(j, _) => Some(
-                                    height[j].expect("every cycle passes through a recursive type"),
-                                ),
+                                Piece::Node(j, _) => Some(height[j].expect(
+                                    "every cycle passes through a recursive type with a definition",
+                                )),
                                 Piece::Str(_) => None,
                             })
                             .max()
@@ -817,7 +869,9 @@ impl Printer<'_> {
             // an atom's payload that is a recursive type as a whole has none of its own to follow
             // the atom's: each is unfolded once, as `#c(int, L(int))`, the recursive types inside
             // by name. An unfolding that is itself a recursive node gets a definition, as without
-            // names.
+            // names, and so does one met again inside its own unfolding, as the part `#a | R0` of
+            // `R0 = (#a, (#a | R0))` is inside `(#a, #a | R0) | #a`, since a cycle written out
+            // where it stands has no end ([`Printer::force_cycles`]).
             if self.by_name {
                 match r.key.member_name() {
                     Some((name, [])) if ctx.is_none() => return Text::word(name, Class::Prim),
@@ -839,6 +893,8 @@ impl Printer<'_> {
                     _ => {
                         let body = r.unfolding();
                         if !matches!(&*body.0, Node::Rec(_)) {
+                            let i = self.building.expect("a type's text is made for its node");
+                            self.unfolded.push((i, ctx.clone(), t.clone()));
                             return self.refer(Item::Ty(ctx.clone(), body));
                         }
                     }
@@ -846,7 +902,7 @@ impl Printer<'_> {
             }
             let i = self.index[&Key::Ty(ctx.clone(), t.clone())];
             let ctx_name = ctx.as_deref().unwrap_or("").to_string();
-            self.forced[i] = Some((ctx_name, t.to_string(), t.clone()));
+            self.forced[i] = Some((ctx_name, t.rope(), t.clone()));
             let body = r.unfolding();
             return self.refer(Item::Ty(ctx.clone(), body));
         }
@@ -2071,6 +2127,92 @@ mod tests {
                 "{m}: {}",
                 s.root
             );
+        }
+    }
+
+    /// `R1 = R0 \ Never` with `R0 = (#a0, #a0 | (#a1, #a1 | … (#a{k-1}, #a{k-1} | R0)))`.
+    /// Written by name, `R1` unfolds once, and so does each part `#ai | …` kept unevaluated,
+    /// whose unfolding holds the next and the last of which holds the first again: a cycle of
+    /// `k` parts, none of them a member with a name of its own.
+    pub(super) fn part_cycle(k: usize) -> Type {
+        use super::super::rec::{Def, Expr, Group};
+        let one = |name: &str, body| {
+            let def = Def {
+                name: name.into(),
+                params: vec![],
+                body,
+            };
+            Group::new(vec![def])
+                .expect("accepted")
+                .instance(vec![])
+                .remove(0)
+        };
+        let mut body = Expr::Ref(0, vec![]);
+        for i in (0..k).rev() {
+            let a = || Expr::Type(Type::atom(&format!("a{i}")));
+            body = Expr::Tuple(vec![a(), Expr::Union(vec![a(), body])]);
+        }
+        let r0 = Expr::Type(one("R0", body));
+        one(
+            "R1",
+            Expr::Diff(Box::new(r0), Box::new(Expr::Type(Type::empty()))),
+        )
+    }
+
+    /// `R = R0 \ Never` with `Ri = (#ai, #ai | R{i+1})` for `i < k`, `Rk` being `R0`: written by
+    /// name, `R` unfolds once, and so does each part `#ai | R{i+1}`, whose unfolding holds the
+    /// next part, the last the first: a cycle of `k` parts, each name a few words long.
+    pub(super) fn part_ring(k: usize) -> Type {
+        use super::super::rec::{Def, Expr, Group};
+        let defs = (0..k)
+            .map(|i| {
+                let a = || Expr::Type(Type::atom(&format!("a{i}")));
+                let next = Expr::Ref((i + 1) % k, vec![]);
+                Def {
+                    name: format!("R{i}"),
+                    params: vec![],
+                    body: Expr::Tuple(vec![a(), Expr::Union(vec![a(), next])]),
+                }
+            })
+            .collect();
+        let r0 = Group::new(defs)
+            .expect("accepted")
+            .instance(vec![])
+            .remove(0);
+        let def = Def {
+            name: "R".into(),
+            params: vec![],
+            body: Expr::Diff(
+                Box::new(Expr::Type(r0)),
+                Box::new(Expr::Type(Type::empty())),
+            ),
+        };
+        Group::new(vec![def])
+            .expect("accepted")
+            .instance(vec![])
+            .remove(0)
+    }
+
+    /// Item FAIL-print-height-cycle-seed: [`part_cycle`] and [`part_ring`] written by name end,
+    /// each part on the cycle defined; before, the printer stopped in `heights`, which found a
+    /// cycle with no recursive type with a definition on it. The benchmark
+    /// `a_long_cycle_of_parts_written_by_name_scales` in `bench.rs` checks the same on a ring of
+    /// more parts.
+    #[test]
+    fn a_cycle_of_parts_written_by_name_is_defined() {
+        // `type T1 = T2 | #a0; type T2 = (#a0, T1);` and `T2` for one part, of either family.
+        for (k, t) in [1, 2, 3, 5]
+            .into_iter()
+            .flat_map(|k| [(k, part_cycle(k)), (k, part_ring(k))])
+        {
+            let s = t.surface_by_name(super::At::Any);
+            assert_eq!(s.defs.len(), k + 1, "{k}: {s}");
+            assert!(s.defs.iter().any(|(name, _)| *name == s.root), "{k}: {s}");
+            for i in 0..k {
+                let atom = format!("#a{i}");
+                let uses: usize = s.defs.iter().map(|(_, b)| b.matches(&atom).count()).sum();
+                assert_eq!(uses, 2, "{k}: {atom} in {s}");
+            }
         }
     }
 

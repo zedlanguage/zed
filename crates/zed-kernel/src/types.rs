@@ -5870,7 +5870,7 @@ pub mod rec {
     use super::{Type, bytes, mix};
     use crate::deep;
 
-    mod group;
+    pub(super) mod group;
     pub(super) mod unfold;
 
     mod walk {

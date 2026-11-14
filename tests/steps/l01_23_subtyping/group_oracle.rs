@@ -1937,11 +1937,11 @@ fn permutations(n: usize) -> Vec<Vec<usize>> {
 /// when asked alone (a unit checked by itself) and in a batch: groups of three in all six
 /// orders, and with their definitions written in all six orders, larger groups in every
 /// rotation. Groups the decider refuses (`\ #none` on each body) and groups it decides. The
-/// X14 and layered systems are of 40 seeds of each family drawn from a generator made with
-/// [`Rng::fresh`] (`ZED_TEST_SEED` repeats a run); they were of seeds 0 to 39 until
-/// TEST-l0124-fixed-seeds. The systems of meets and differences stay of seeds 0 to 39 until
-/// FAIL-print-height-cycle-seed is fixed (about 1 in 10,000 other seeds makes `kernel` panic),
-/// whose fix draws them too. The chain of 64 and the X14 system of 24 are recorded cases.
+/// X14, meet-and-difference and layered systems are of 40 seeds of each family drawn from a
+/// generator made with [`Rng::fresh`] (`ZED_TEST_SEED` repeats a run); they were of seeds 0 to
+/// 39 until TEST-l0124-fixed-seeds, the meets and differences until FAIL-print-height-cycle-seed,
+/// before which about 1 in 10,000 other seeds made `kernel` panic. The chain of 64 and the X14
+/// system of 24 are recorded cases.
 #[test]
 fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
     let (mut rng, rng_seed) = Rng::fresh("members asked in every order");
@@ -1951,7 +1951,7 @@ fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
         systems.push((format!("x14_{seed}"), sys.clone()));
         systems.push((format!("x14u_{seed}"), undecided(sys)));
     }
-    for seed in 0..40 {
+    for seed in pick_seeds(&mut rng, "cells", 0..u64::MAX, 40) {
         systems.push((format!("cells{seed}"), gen_cells(&mut Rng::new(seed))));
     }
     for seed in pick_seeds(&mut rng, "layer", 0..u64::MAX, 40) {
@@ -2431,27 +2431,32 @@ fn prints_as_syntax(t: &Type, what: &str) -> String {
 /// unevaluated: 503 of these 1364 members stopped the printer, which ordered the parts by the
 /// order its walk left them in.
 ///
-/// The seeds stay 0 to 599 until FAIL-print-height-cycle-seed is fixed: about 1 in 10,000 other
-/// seeds makes `kernel` panic in `heights` (print.rs) while it builds the group, so 600 fresh
-/// seeds would fail about 6% of runs. That row's fix makes this test draw 600 seeds with
-/// `pick_seeds(&mut rng, .., 0..u64::MAX, 600)` from `Rng::fresh` and replaces the count with
-/// `members > 900`: over 166 runs of 600 fresh seeds the count had mean 1342.9, standard
-/// deviation 75.1, least 1162 and most 1552 (TEST-l0124-fixed-seeds).
+/// The systems are of 600 seeds drawn from a generator made with [`Rng::fresh`]
+/// (`ZED_TEST_SEED` repeats a run). They were seeds 0 to 599, with 1364 members, until
+/// FAIL-print-height-cycle-seed: before it, about 1 in 10,000 other seeds made `kernel` panic in
+/// `heights` (print.rs) while it built the group. Over 166 runs of 600 fresh seeds the count of
+/// members had mean 1342.9, standard deviation 75.1, least 1162 and most 1552
+/// (TEST-l0124-fixed-seeds), so more than 900 is asked, about 5.9 deviations under the mean.
 #[test]
 fn every_member_of_systems_of_meets_and_differences_prints_as_syntax() {
+    let (mut rng, rng_seed) = Rng::fresh("members of meets and differences print");
     let mut members = 0;
-    for seed in 0..600 {
+    for seed in pick_seeds(&mut rng, "cells", 0..u64::MAX, 600) {
         let sys = gen_cells(&mut Rng::new(seed));
         for (form, sys) in [("", sys.clone()), ("-", undecided(sys))] {
             let tag = format!("printed-cells{form}{seed}");
             for (i, t) in kernel(&sys, &tag).iter().enumerate() {
                 let Some(t) = t else { continue };
-                prints_as_syntax(t, &format!("{tag}: R{i} of {}", show_system(&sys)));
+                let what = format!(
+                    "{tag}: R{i} of {}, ZED_TEST_SEED={rng_seed}",
+                    show_system(&sys)
+                );
+                prints_as_syntax(t, &what);
                 members += 1;
             }
         }
     }
-    assert_eq!(members, 1364);
+    assert!(members > 900, "{members} members, ZED_TEST_SEED={rng_seed}");
 }
 
 #[test]
@@ -3301,3 +3306,103 @@ fn a_few_copies_of_the_group_that_hung_the_search_are_refused() {
 }
 
 mod bench;
+
+/// Item FAIL-print-height-cycle-seed: the smallest system found, its neighbors, and the ten
+/// `gen_cells` seeds of 100,000 fresh seeds whose systems made the kernel panic while building
+/// the group, build and print. The panic came from the refusal of `R2 = R1 \ ((int) -> R2)`
+/// with `R1 = R0 \ Never` and `R0 = (#a, (#a | R0))`: written by name, `R1` unfolds once to
+/// `(#a, #a | R0) | #a`, and inside it the part `#a | R0`, kept unevaluated, unfolds once to the
+/// same text again. That cycle of the printer's texts passed through no recursive type with a
+/// definition, and the printer assumed every one does. Such a part now gets a definition.
+#[test]
+fn groups_whose_printing_met_a_cycle_without_a_recursive_type_build_and_print() {
+    let a = || E::Atom("a");
+    let smallest = vec![
+        tup(vec![a(), E::Union(vec![a(), r(0)])]),
+        diff(r(0), E::Empty),
+        diff(r(1), exact(E::Int, r(2))),
+    ];
+    // `R2` is refused, and its message prints `R1`, whose part `#a | R0` meets itself inside its
+    // own unfolding: the part gets a definition, as a cycle written out where it stands has no
+    // end.
+    let built = kernel(&smallest[..2], "height_cycle_min");
+    let body = expr(&smallest[2], &[None, None, Some(0)], &built).expect("R0 and R1 build");
+    let message = Group::new(vec![Def {
+        name: "height_cycle_min_2".into(),
+        params: vec![],
+        body,
+    }])
+    .expect_err("R2 is not monotone")
+    .message;
+    let decls: Vec<&str> = (message.lines().map(str::trim))
+        .filter(|line| line.starts_with("type "))
+        .collect();
+    assert_eq!(decls.len(), 2, "{message}");
+    let unit = decls.join("\n");
+    let tokens = lex_fence(&unit).unwrap_or_else(|e| panic!("{message}: {e:?}"));
+    parse(&unit, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{message}: {e:?}"));
+    // Its neighbors: `R1` is `R0` itself; the cycle passes through two parts kept unevaluated,
+    // one inside the other or side by side; and the group `R2` makes is accepted, by `&` or by a
+    // reference to `R0` on the right of `\`.
+    let b = || E::Atom("b");
+    let r0 = |r0: E| vec![r0, diff(r(0), E::Empty)];
+    let refused = || diff(r(1), exact(E::Int, r(2)));
+    let neighbors = [
+        vec![
+            tup(vec![a(), E::Union(vec![a(), r(0)])]),
+            diff(r(0), exact(E::Int, r(1))),
+        ],
+        [
+            r0(tup(vec![
+                a(),
+                E::Union(vec![a(), tup(vec![b(), E::Union(vec![b(), r(0)])])]),
+            ])),
+            vec![refused()],
+        ]
+        .concat(),
+        [
+            r0(tup(vec![
+                E::Union(vec![a(), r(0)]),
+                E::Union(vec![b(), r(0)]),
+            ])),
+            vec![refused()],
+        ]
+        .concat(),
+        [
+            r0(tup(vec![a(), E::Union(vec![a(), r(0)])])),
+            vec![E::And(vec![r(1), exact(E::Int, r(2))])],
+        ]
+        .concat(),
+        [
+            r0(tup(vec![a(), E::Union(vec![a(), r(0)])])),
+            vec![diff(r(1), exact(E::Int, r(0)))],
+        ]
+        .concat(),
+    ];
+    let mut systems = vec![("height_cycle_min".to_string(), smallest)];
+    for (k, sys) in neighbors.into_iter().enumerate() {
+        systems.push((format!("height_cycle_near{k}"), sys));
+    }
+    for seed in [
+        1480778453660708751u64,
+        2332610074532812974,
+        6838895980222929389,
+        8443097688697121190,
+        8612506816989866889,
+        8825795845270495757,
+        11404091016327924444,
+        12649215288799211595,
+        14429515599504043526,
+        16467311145843597599,
+    ] {
+        let sys = gen_cells(&mut Rng::new(seed));
+        systems.push((format!("height_cycle-{seed}"), sys.clone()));
+        systems.push((format!("height_cycle--{seed}"), undecided(sys)));
+    }
+    for (tag, sys) in &systems {
+        for (i, t) in kernel(sys, tag).iter().enumerate() {
+            let Some(t) = t else { continue };
+            prints_as_syntax(t, &format!("{tag}: R{i} of {}", show_system(sys)));
+        }
+    }
+}
