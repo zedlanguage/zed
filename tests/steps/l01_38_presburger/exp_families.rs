@@ -624,13 +624,39 @@ pub(super) fn random_window_systems_answer(seeds: &[u64], at: &str) {
                 };
                 let what =
                     format!("{at}: windows of {width}, {per} rows each, n = {n}, seed {seed}");
-                // Main refuses (`Growth`) on most systems of windows of three from n = 12 on,
-                // and answers every system of windows of two: COMPLEXITY.md PRES-exp-families.
-                let answered = if width == 2 { "dsa" } else { "" };
-                agrees(&what, &windows(n, seed, width, per), &truth, answered);
+                let f = windows(n, seed, width, per);
+                // Main refuses (`Growth`) on most systems of windows of three from n = 12 on.
+                // On windows of two it answers, except where a point could lie only in a
+                // splinter that would have to be split again with as many live variables left:
+                // DESIGN.md sec:diagnostics allows that refusal, `Shadows`, and no other (22 of
+                // window seeds 0..4000 at n = 6, 1 at n = 12, none at n = 24; COMPLEXITY.md
+                // PRES-exp-families).
+                let answered = match decide(&f) {
+                    _ if width == 3 => "",
+                    Err(Refusal::Shadows) => {
+                        splinter_refusals_only(&what, &f);
+                        ""
+                    }
+                    _ => "dsa",
+                };
+                agrees(&what, &f, &truth, answered);
             }
         }
     }
+}
+
+/// Checks that `decide`, `satisfiable` and `Extending::answers` each answer `f` or refuse it
+/// with `Shadows`, the one refusal DESIGN.md sec:diagnostics allows on a window system of two:
+/// a point that could lie only in a splinter split again with as many live variables left.
+fn splinter_refusals_only(what: &str, f: &Formula) {
+    let shadows = |r: Result<(), Refusal>, op: &str| {
+        if let Err(e) = r {
+            assert_eq!(e, Refusal::Shadows, "{what}: {op} refused");
+        }
+    };
+    shadows(decide(f).map(drop), "decide");
+    shadows(satisfiable(f).map(drop), "satisfiable");
+    shadows(Extending::new().answers(f).holds.map(drop), "answers");
 }
 
 /// Runs entry point `op` ('d', 's', 'p' onto `on`, 'a') on `f`.
@@ -702,4 +728,35 @@ pub(super) fn doubling(what: &str, sizes: &[usize], power: u32, cost: impl Fn(us
     let what = format!("{what}: k = {first} and {last} (COMPLEXITY.md PRES-exp-families)");
     scaling::hold(&what, "instructions", start.units, before.units, power);
     scaling::hold(&what, "bytes", start.bytes, before.bytes, power);
+}
+
+/// Window seed 628126726154 is answered as the window program answers it, or refused for a
+/// splinter where DESIGN.md allows that (FAIL-window-two-shadows-seed).
+#[test]
+fn the_window_systems_of_seed_628126726154_are_answered() {
+    random_window_systems_answer(&[628126726154], "seed 628126726154");
+}
+
+/// The seed of FAIL-window-two-shadows-seed and the first windows of two that `decide` refuses
+/// among seeds 0..4000 (the one at n = 12 among them) are refused for a splinter that would have
+/// to be split again with as many live variables left, the cause DESIGN.md sec:diagnostics
+/// names, and by `satisfiable` and `answers` for no other cause. The refusal can stand where
+/// there is a point: seed 398 has points with `x0` in 0..=2, by the window program.
+#[test]
+fn the_refused_windows_of_two_are_refused_for_a_splinter() {
+    let cases: [(usize, u64, &[i64]); 5] = [
+        (6, 628126726154, &[]),
+        (6, 398, &[0, 1, 2]),
+        (6, 409, &[]),
+        (6, 650, &[]),
+        (12, 2591, &[]),
+    ];
+    for (n, seed, x0) in cases {
+        let what = format!("windows of 2, 3 rows each, n = {n}, seed {seed}");
+        let f = windows(n, seed, 2, 3);
+        assert_eq!(decide(&f), Err(Refusal::Shadows), "{what}: decide");
+        let program: Vec<i64> = windows_x0(n, seed, 2, 3).into_iter().collect();
+        assert_eq!(program, x0, "{what}: the window program");
+        splinter_refusals_only(&what, &f);
+    }
 }
