@@ -665,7 +665,8 @@ fi
 # split the same way (2026-11-14, TESTS-split).
 # l01_23 r6_reduction, one test of 384 formulas, took 38 to 77 s alone at load 27 to 41 and ran
 # past its limit of 90 s in a full run at load 48; it is four tests of 96 formulas, each a piece
-# (2026-11-11, REFUSAL-front-xr after batch merge 128).
+# (2026-11-11, REFUSAL-front-xr after batch merge 128). r6_reduction, refusals and the decider's
+# modules moved to l01_23_groups_and_refusals, split the same way (2026-11-14, TESTS-split).
 # l01_28_staging took 46 to 65 s whole at load 41 and more, 28 s of it the test of four shapes
 # 100,000 deep on a small stack and 20 s the test of lets of built values (alone, load 41); those
 # are now four tests and two. Each module is a piece, and each test of scaling and dag
@@ -688,7 +689,8 @@ fi
 # piece per test 34 and 32 s at most (2026-11-13, TESTS-l01_26a-split).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
-  l01_23_subtyping l01_23_subtyping::scaling l01_23_subtyping::r6_reduction
+  l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
+  l01_23_subtyping l01_23_subtyping::scaling
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
   l01_25_preimage_catalog::exact_oracle
   l01_26_type_resolution l01_26_type_resolution::deep_ops l01_26_type_resolution::op_table

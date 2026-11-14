@@ -6999,7 +6999,7 @@ pub mod rec {
             // each instance and each comparison costs O((N + M) log N) each time; it is made once,
             // on first use, and kept with the group, so later instances read it in O(1), at the
             // cost of the form's memory, O(N + M), for the group's life. The first instance of a
-            // group pays for it: `l01_23_subtyping::judgments::deciding_a_group_scales` holds that
+            // group pays for it: `l01_23_groups_and_refusals::judgments::deciding_a_group_scales` holds that
             // first run, at 256 and 2,048 definitions, to the n log n limit (2,141,806 and
             // 17,071,066 bytes, 8.0 times, 2026-11-12), and so decides neither ring before.
             self.0

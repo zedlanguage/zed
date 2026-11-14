@@ -88,6 +88,9 @@ path = "steps/l01_21_test_runner/mod.rs"
 name = "l01_22_type_representation"
 path = "steps/l01_22_type_representation/mod.rs"
 [[test]]
+name = "l01_23_groups_and_refusals"
+path = "steps/l01_23_groups_and_refusals/mod.rs"
+[[test]]
 name = "l01_23_subtyping"
 path = "steps/l01_23_subtyping/mod.rs"
 [[test]]

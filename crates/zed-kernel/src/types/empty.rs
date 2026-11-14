@@ -37,7 +37,7 @@
 //! representative search of `no_morphism` likewise answers "none found", never "empty"). The
 //! site comment at `give_up(Refusal::TupleSplit)` names the steps tried first. Tests:
 //! `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key` (four pigeons in three
-//! holes, empty and not proved so) and `l01_23_subtyping::refusals::each_refusal_names_its_cause`
+//! holes, empty and not proved so) and `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
 //! (`box_cover`). COMPLEXITY.md rows K1 and K2, and the Kept row
 //! "emptiness and subtyping of tuple and morphism parts".
 //! A complete solution would split the box in every component (a DPLL search over the tuple
@@ -492,7 +492,7 @@ fn refine_tuple_forks(undecided: &[Type]) {
 // When one has none the search gives up whole rather than dropping that closure and searching
 // again, which would decide the group exactly (the game DESIGN.md L1.23 refuses) but in time
 // quadratic in it. Trigger: a member of a group the decider refused that the other searches
-// build no value of. Tests: `l01_23_subtyping::group_oracle` (GROUP-closure-order).
+// build no value of. Tests: `l01_23_groups_and_refusals::group_oracle` (GROUP-closure-order).
 fn optimistic_values(members: &[Type]) -> Option<Search> {
     let mut o = Search {
         strict: true,
@@ -604,7 +604,7 @@ impl Type {
         // subset construction, exponential in the recursive types (the lists of int against
         // lists with a 1 at each place from the end up to `n`: 8 ms, 277 ms and 32.5 s at `n`
         // 1, 4 and 6 when the search followed it). Trigger: a fork met in the search. Tests:
-        // `l01_23_subtyping::refusals::emptiness_counts_a_fork_as_inhabited_in_its_size`,
+        // `l01_23_groups_and_refusals::refusals::emptiness_counts_a_fork_as_inhabited_in_its_size`,
         // deferred to plan row SUB-empty-fork-bytes in
         // wt/scratch/deferred-tests/SUB-empty-fork-bytes.rs.
         // COMPLEXITY.md K35. A complete solution needs the subset construction over the forked
@@ -938,9 +938,9 @@ impl Type {
             // sought is proved empty only when a phase of `solve` ends, so a search that only
             // builds values (the second one here) gives it no closure. Trigger: no refusal was
             // named, and neither search built a value. Tests:
-            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`morphism_between`),
+            // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`morphism_between`),
             // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
-            // `l01_23_subtyping::judgments::a_morphism_cycle_through_an_empty_part_is_empty`.
+            // `l01_23_groups_and_refusals::judgments::a_morphism_cycle_through_an_empty_part_is_empty`.
             // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
             // complete solution needs a value builder for every kind of type (closures included,
             // L2) and a complete search, exponential in the types (the subset construction at
@@ -964,7 +964,7 @@ impl Type {
     // `forget_emptiness` (`PAST_FORKS`). Naive version: the first search alone, which
     // ends at the first fork in operand order, so `(F, E)` is refused and `(E, F)` is empty.
     // What is given up: an Empty that only a search following both sides of the fork proves
-    // stays refused. Test: `l01_23_subtyping::refusals::a_tuple_with_an_empty_component_is_empty_in_either_order`.
+    // stays refused. Test: `l01_23_groups_and_refusals::refusals::a_tuple_with_an_empty_component_is_empty_in_either_order`.
     fn empty_past_forks(&self) -> bool {
         if let Some(e) = PAST_FORKS.with(|m| m.borrow().get(self).copied()) {
             return e;
@@ -3340,7 +3340,7 @@ impl<'m> Searching<'m> {
                 // work stays polynomial in the residue classes. Why: whether residue classes
                 // cover the lengths is the covering problem for residues, NP-hard. Trigger:
                 // `residues_meet` answers `Refused`. Tests:
-                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`erdos_cover`) and
+                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`erdos_cover`) and
                 // `covering_residues_are_decided_by_a_split_on_one_prime`. COMPLEXITY.md K34 and
                 // the Kept row "emptiness and subtyping of tuple and morphism parts". A complete
                 // solution needs a backtracking split over several primes at once, exponential in
@@ -4271,7 +4271,7 @@ impl<'m> Searching<'m> {
             // product of the periods). Trigger: two tuple types this pass takes out of one
             // component with different recursive types on a cycle there, in the decision of a
             // verdict or the search of a value after it. Tests:
-            // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+            // `l01_23_groups_and_refusals::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
             // (deferred to plan row SUB-fork-place-bytes in
             // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
             // and `each_refusal_names_its_cause` (`nfa`). COMPLEXITY.md K35. A complete solution
@@ -4356,7 +4356,7 @@ impl<'m> Searching<'m> {
                     // construction (the tradeoff in `narrow_tuples`); the decision of a value's
                     // check by its own walk stays exact. Trigger: `open_forks` and a component on
                     // which the open tuple types fork. Tests:
-                    // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+                    // `l01_23_groups_and_refusals::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
                     // (deferred to plan row SUB-fork-place-bytes in
                     // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
                     // and `a_value_found_by_refining_a_forked_part_is_kept`. COMPLEXITY.md K35.
@@ -4442,7 +4442,7 @@ impl<'m> Searching<'m> {
                 // `refusals::a_difference_of_forked_unions_is_refused_in_its_size` (62 times the
                 // bytes at 8 times `n`; REFUSAL-nfa-refuse, not kept). Trigger: a
                 // component on which the open tuple types fork, outside seeding. Tests:
-                // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`fork_empty`) and
+                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`fork_empty`) and
                 // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
                 // row "emptiness and subtyping of tuple and morphism parts". A complete solution
                 // needs the subset construction over the forked rows (a tree automaton
@@ -4575,7 +4575,7 @@ impl<'m> Searching<'m> {
                 // A union of parts that share no tuple type is empty when each part is, each
                 // decided on the box with only its own tuple types: `n` parts of `c` tuple types
                 // each cost order `n c`, not the `n c` pieces by the whole part of the split
-                // below (`l01_23_subtyping::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
+                // below (`l01_23_groups_and_refusals::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
                 // COMPLEXITY.md K80).
                 if let Some(parts) = f.disjoint_disjuncts() {
                     let mut all_empty = true;
@@ -4731,7 +4731,7 @@ impl<'m> Searching<'m> {
             // types is coNP-hard (a cover of the box by tuple types is a DNF tautology), and one
             // split per branch keeps the search polynomial. Trigger: a part that only a split of
             // the box in two or more components at once proves empty. Tests:
-            // `l01_23_subtyping::refusals::each_refusal_names_its_cause` (`box_cover`),
+            // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`box_cover`),
             // `a_call_whose_check_was_refused_says_why` and
             // `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key`. COMPLEXITY.md
             // K2 and the Kept row "emptiness and subtyping of tuple and morphism parts". A
@@ -8264,7 +8264,7 @@ impl<'m> Searching<'m> {
             // one part at a time on that box: a value of one in the box is a value of the union,
             // and each part's own box holds its own tuple types only, so `n` such parts cost
             // order `n`, not the `n` candidates by `n` cells of one box over them all
-            // (`l01_23_subtyping::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
+            // (`l01_23_groups_and_refusals::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
             // and `a_pair_type_met_with_forked_differences_is_refused_in_its_size`, whose pair
             // type holds the box and so drops out; COMPLEXITY.md K80).
             // Complexity tradeoff (COMPLEXITY.md K80): the naive search narrows each of the n
@@ -8336,7 +8336,7 @@ impl<'m> Searching<'m> {
                 // each place from the end up to `n` (63,634 `cuts` at `n` 64; now 1,578).
                 // Trigger: a narrowing of this part kept a component whole at a fork while
                 // `past_fork`. Tests:
-                // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+                // `l01_23_groups_and_refusals::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
                 // (deferred to plan row SUB-fork-place-bytes in
                 // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
                 // and `a_value_is_sought_before_a_refusal` (`fork`, found by a candidate past
@@ -8381,7 +8381,7 @@ impl<'m> Searching<'m> {
                 // candidate inside a tuple type the part excludes holds no value of it, and the
                 // narrowing or the check of its row would say so, so it is skipped: narrowing it tests
                 // every open cell of its components, n candidates by n cells, order n^2 types on the
-                // pairs of `l01_23_subtyping::refusals::fork_by` (COMPLEXITY.md K35). So is a candidate
+                // pairs of `l01_23_groups_and_refusals::refusals::fork_by` (COMPLEXITY.md K35). So is a candidate
                 // that lies inside an excluded tuple type in every component, as each pair of
                 // `a_difference_of_forked_unions_is_refused_in_its_size` does (K80). `all_inside`
                 // says whether every candidate was skipped so.
@@ -8518,7 +8518,7 @@ impl<'m> Searching<'m> {
         // `n` places, cost 28.5M, 320M and 3.64G instructions at `n` 1, 2 and 3 (`is_empty`
         // 1.58G at 3); now 62.1M and 435M at 8 and 64. Trigger: a fork met in a piece `refine`
         // tries, in a search with `refuse_forks` set (`verdict_alone`, `is_empty`). Test:
-        // `l01_23_subtyping::refusals::refining_a_box_follows_no_fork_in_its_size`.
+        // `l01_23_groups_and_refusals::refusals::refining_a_box_follows_no_fork_in_its_size`.
         // COMPLEXITY.md K35. A complete solution needs the subset construction over the
         // forked tuple types, exponential in them.
         let (refuse_forks, open_forks, types_mark) = {
@@ -8856,7 +8856,7 @@ impl<'m> Searching<'m> {
                 // `verdict`. Why: emptiness of Boolean combinations of morphism types is
                 // coNP-hard, like that of tuple types, and one split per branch keeps the search
                 // polynomial. Trigger: no atom is forced and the split was spent or does not
-                // apply. Tests: `l01_23_subtyping::refusals::each_refusal_names_its_cause`
+                // apply. Tests: `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
                 // (`morphism_split`) and `a_morphism_type_whose_bound_check_was_refused_says_why`.
                 // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
                 // complete solution needs a split of the guarantee, permission and value type in
@@ -11476,7 +11476,7 @@ impl Placing {
 // `types_that_meet_are_joined_in_random_groups_holding_lower_types` (400 random cases against
 // the meets), `types_that_each_reach_a_ring_of_names_are_apart`,
 // `classes_inside_a_recursive_group_follow_its_merged_nodes`, and
-// `l01_23_subtyping::group_oracle::verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`.
+// `l01_23_groups_and_refusals::group_oracle::verdicts_of_a_ring_of_the_group_that_hung_the_search_scale`.
 // COMPLEXITY.md K36.
 fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     let none = Type::empty();

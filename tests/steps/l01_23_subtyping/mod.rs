@@ -4,34 +4,28 @@
 //! over random types, and run on the spec's examples and on recursive types. The four
 //! definitions the plan names are written here as kernel definition groups: `type`
 //! declarations, which elaborate to them, join at L2.
+//!
+//! The step has two test binaries (TESTS-split, author A30): the refusals, the decider of
+//! recursive groups, the front sweep's oracle and the spec's examples are in
+//! l01_23_groups_and_refusals.
 
 mod admission;
 mod admission_sweep;
-mod bes;
-mod bes_families;
 mod bound_paths;
 mod bound_sameness;
-mod cases;
 mod cells;
-mod complete;
-mod cycle_dup;
 mod deep_rec;
-mod group_oracle;
 mod group_refusal;
-mod judgments;
 mod listing;
 mod meet_join_oracle;
 mod one_pass;
 mod oracle;
 mod payload_scaling;
-mod r6_reduction;
 mod rec;
 mod rec_order;
 mod refusal_cost;
-mod refusals;
 mod scaling;
 mod setop;
-mod sweep_agreement;
 mod two_sat;
 mod witnesses;
 mod x13;

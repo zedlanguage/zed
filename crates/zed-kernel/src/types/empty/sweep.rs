@@ -108,7 +108,7 @@
 //! plus `O(log n)` per event. With the bound: O((L + R) log n) steps, each of a size set by
 //! the heads read (the classes of a pair cost O((Σ literals) log) for integers and atoms,
 //! O(cells · K) for booleans and tuples), and the check as above. So O(n log n) for the front
-//! and far families and the variants in `l01_23_subtyping::refusals` whose heads have a size
+//! and far families and the variants in `l01_23_groups_and_refusals::refusals` whose heads have a size
 //! fixed as `n` grows. Given up: a head whose size grows with `n` and is read at many depths pays
 //! its size at each; inputs outside the class pay their recognition (at most the cost above)
 //! and then the search with today's verdict. Memory: O(L + R + cached classes).

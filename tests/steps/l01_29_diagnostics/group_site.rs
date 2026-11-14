@@ -83,7 +83,7 @@ fn parity(n: usize) -> Vec<Type> {
     group(&defs)
 }
 
-/// The test `fork_empty` of `l01_23_subtyping::refusals`, written with named definitions, each
+/// The test `fork_empty` of `l01_23_groups_and_refusals::refusals`, written with named definitions, each
 /// list a ring of `n`: `(Ints, Ints)` within the pairs whose first list holds only 1s and whose
 /// second has an even length, only 2s and odd, and the rest of each. It holds, but the excluded
 /// first lists meet at `#nil` and differ, so deciding it follows both at once, which the
