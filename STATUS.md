@@ -1398,6 +1398,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | POLY-trivial-base-folded | merged and pushed (the commit "POLY-trivial-base-folded: …", which marks the row Done); no spec change | crates/zed-kernel/src/poly.rs `folded_bases`: a base with no name whose normal form is 0, 1 or -1 (`0 - 1`, `1 * 1`, `2 - 2`, `-(0 - 1)`) takes an exponent past `u64::MAX`, as a base written `-1` did; the bases are expanded once under their own budget. Test `l03_09_egraph::forms::a_base_whose_value_is_0_1_or_minus_1_takes_a_wide_exponent`. New row FAIL-pendants-route-quarter-seed (a random l01_39 test fails on some seeds). |
 | FAIL-pext-transfer-popcount | merged and pushed (the commit "FAIL-pext-transfer-popcount: ..."); no spec change | The `pext` transfer bounded the result below `2^digits(mask)`; it now takes `2^m - 1`, `m` the most one digits of an int in the mask interval (`Num::most_ones_from`, one pass over the words, O(digits)). Tests: `pext_popcount.rs` (4, red before the fix), `transfer.rs` at `r(0, 15)`, a bench with 8x ratio 7.75 (negative control, a loop per bit, 58.4). Local suite: 2188 of 2190 pieces passed; the 2 failures, `scaling::tests::each_check_prints_a_bench_line_whose_time_grows_with_the_work` in zed_rt and zedc_presburger, were time ratios at load 58 to 69 and passed alone. |
 | FAIL-ports-key-past-i64 | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-ports. Cause: `Frame::Index1` in `crates/zedc-check/src/check/walk.rs` gave a literal index past 64 bits the unknown type before `at_index`, so no dense read was recorded and the elaborator wrote a lookup that misses with `#notFound`. Fix: such a key goes to `at_index` with no tuple position, as a negative key does: `m.stdin[2^63]` and `m.args[2^63]` miss with `#outOfBounds`, and `(1, 2)[2^63]` is rejected (it was accepted). Tests: `l01_19_whole_file_ports::key_past_i64` (three tests, two red before the fix) |
+| FAIL-layer-mcu-target-value | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-crates. Cause: `TARGET_ATOMS` in crates/zed-tools/src/layer.rs listed four target values, so `#mcu` outside `target(…)` counted as an L31 atom read; DESIGN sec:layers lists five. Fix: `#mcu` added, with a doc comment quoting DESIGN. Tests: `fail_layer_mcu` (2 tests: the row's, and the five values in each position); m0_03 133/133 |
 
 ## Decisions made
 
@@ -2274,7 +2275,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
-| FAIL-layer-mcu-target-value | running | 2026-11-14 07:52 |  |
 | FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |

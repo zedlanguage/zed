@@ -51,7 +51,10 @@ use crate::syntax::{Tokens, Tree, lex, then_end};
 use crate::text::{base_name, left, read_text, repr, right, strip};
 use crate::{Outcome, arg, say};
 
-const TARGET_ATOMS: [&str; 4] = ["#cpu", "#wasm", "#gpu", "#cluster"];
+/// The target values DESIGN sec:layers lists ("a target value (`#cpu`, `#wasm`, `#gpu`, `#cluster`,
+/// `#mcu`) is one only as the argument of `target(…)` or of `@require`'s `target:`"): elsewhere
+/// each is an ordinary atom, which the table does not count.
+const TARGET_ATOMS: [&str; 5] = ["#cpu", "#wasm", "#gpu", "#cluster", "#mcu"];
 
 /// Words the table names in prose rather than in backticks.
 fn prose_words(layer: u32) -> &'static [&'static str] {
