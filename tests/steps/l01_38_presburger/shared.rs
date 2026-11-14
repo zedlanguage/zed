@@ -1153,3 +1153,61 @@ fn nodes_of_constraints_alone_compare_as_written_out() {
         }
     }
 }
+
+/// Terms compare as their derived order would, the pairs of atom and coefficient in order and
+/// then the constant, though the first pairs are read apart from the rest (COMPLEXITY.md row
+/// ST-chain-raise-reverse-log): terms with no pairs, one a prefix of another, the same first
+/// pair and another second, first atoms or coefficients that differ, symbols against
+/// auxiliary variables, and equal pairs with other constants. Each pair of terms is also
+/// compared as constraints, which the conjuncts of a relation are kept in the order of.
+#[test]
+fn terms_compare_as_their_derived_order() {
+    fn lin(pairs: &[(Atom, i64)], c: i64) -> Lin {
+        Lin {
+            terms: pairs
+                .iter()
+                .map(|(a, k)| (a.clone(), Int::from(*k)))
+                .collect(),
+            constant: Int::from(c),
+        }
+    }
+    let (x, y, z) = (
+        Atom::Sym("x".into()),
+        Atom::Sym("y".into()),
+        Atom::Sym("z".into()),
+    );
+    let (a0, a1) = (Atom::Aux(0), Atom::Aux(1));
+    let lins = [
+        lin(&[], 0),
+        lin(&[], -3),
+        lin(&[(x.clone(), 1)], 0),
+        lin(&[(x.clone(), 1)], 2),
+        lin(&[(x.clone(), -1)], 0),
+        lin(&[(x.clone(), 1), (y.clone(), -1)], 0),
+        lin(&[(x.clone(), 1), (y.clone(), 1)], 0),
+        lin(&[(x.clone(), 1), (z.clone(), -1)], 0),
+        lin(&[(x.clone(), 1), (y.clone(), -1), (z.clone(), 1)], 0),
+        lin(&[(y.clone(), 1), (z.clone(), -1)], 5),
+        lin(&[(y.clone(), 1), (a0.clone(), 1)], 0),
+        lin(&[(a0.clone(), 2)], 0),
+        lin(&[(a1.clone(), 2)], 0),
+        lin(&[(x.clone(), 1), (a1.clone(), -1)], 1),
+    ];
+    fn derived(l: &Lin) -> (Vec<(&Atom, &Int)>, &Int) {
+        (l.terms.iter().collect(), &l.constant)
+    }
+    for p in &lins {
+        for q in &lins {
+            let want = derived(p).cmp(&derived(q));
+            assert_eq!(p.cmp(q), want, "{p} against {q}");
+            assert_eq!(p.partial_cmp(q), Some(want), "{p} against {q}");
+            assert_eq!(p == q, want == Ordering::Equal, "{p} against {q}");
+            let (cp, cq) = (Con::ge(p, &Lin::constant(0)), Con::ge(q, &Lin::constant(0)));
+            assert_eq!(
+                Formula::Con(cp).cmp(&Formula::Con(cq)),
+                want,
+                "{p} >= 0 against {q} >= 0"
+            );
+        }
+    }
+}

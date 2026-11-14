@@ -36,12 +36,43 @@ pub enum Factor {
 }
 
 /// A linear term: each atom times its coefficient, plus a constant. No coefficient is zero.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Lin {
     /// The coefficients.
     pub terms: BTreeMap<Atom, Int>,
     /// The constant.
     pub constant: Int,
+}
+
+impl PartialOrd for Lin {
+    fn partial_cmp(&self, other: &Lin) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Lin {
+    /// The derived order: the terms as a sequence of pairs, then the constant.
+    // Complexity tradeoff: naive version, the derived order, which walks both maps of terms
+    // with their iterators from the first pair: about 160 instructions for two constraints of
+    // two terms, most of it setting up the iterators, and a set keyed by constraints makes
+    // O(log n) such comparisons per lookup, so their cost grew 12.5 times from 32 to 256 tests
+    // of the chain raise in reverse (`xst::s4`). Used: the first pairs read directly and
+    // compared, which decides the order alone when they differ, as they do for most pairs of
+    // constraints of a set; the walk only when they are equal. The same order, O(1) when the
+    // first pairs differ and O(t) at worst as before. Test
+    // `l01_38_presburger::shared::terms_compare_as_their_derived_order`, COMPLEXITY.md row
+    // ST-chain-raise-reverse-log.
+    fn cmp(&self, other: &Lin) -> std::cmp::Ordering {
+        if let (Some(a), Some(b)) = (self.terms.first_key_value(), other.terms.first_key_value()) {
+            match a.cmp(&b) {
+                std::cmp::Ordering::Equal => {}
+                o => return o,
+            }
+        }
+        self.terms
+            .cmp(&other.terms)
+            .then_with(|| self.constant.cmp(&other.constant))
+    }
 }
 
 /// How a constraint's term compares with zero.

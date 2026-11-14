@@ -13,7 +13,9 @@ use std::fmt;
 use std::ops::{Bound, RangeBounds};
 use std::sync::Arc;
 
-use imbl::{OrdMap, OrdSet};
+use imbl::shared_ptr::DefaultSharedPtr;
+use imbl::{GenericHashMap, OrdMap, OrdSet};
+use rustc_hash::FxBuildHasher;
 
 use super::presburger::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use zedc_int::int::Int;
@@ -30,8 +32,20 @@ impl<T: Ord + Clone> Default for Uses<T> {
 
 impl<T: Ord + Clone> Uses<T> {
     /// Records that `name` is used by `t`.
+    // Complexity tradeoff: naive version, `entry(name).or_default()`, which in imbl looks the
+    // name up once to choose the entry and again to give the set: two descents of O(log n)
+    // name comparisons each when the name is there, as it is for all but its first value.
+    // Used: one descent that gives the set, and a second only to insert a new name. The same
+    // O(log n), half the comparisons. COMPLEXITY.md row ST-chain-raise-reverse-log.
     pub fn add(&mut self, name: &Arc<str>, t: &T) {
-        self.0.entry(name.clone()).or_default().insert(t.clone());
+        match self.0.get_mut(name) {
+            Some(s) => {
+                s.insert(t.clone());
+            }
+            None => {
+                self.0.insert(name.clone(), OrdSet::unit(t.clone()));
+            }
+        }
     }
 
     /// Forgets that `name` is used by `t`.
@@ -1936,7 +1950,19 @@ pub struct Blocks {
     /// Each name's number.
     name: OrdMap<Arc<str>, BlockId>,
     /// Each conjunct's block.
-    of: OrdMap<Arc<Formula>, BlockId>,
+    // Complexity tradeoff: naive version, an `OrdMap` keyed by the formula, O(log n)
+    // comparisons a lookup, each a walk of two constraints' terms (about 220 instructions):
+    // near 2,400 instructions a lookup at 2,000 conjuncts, and growing with log n, which made
+    // the chain raise in reverse 9.57 times at 8n (`xst::s4`). Used: a persistent hash map
+    // (Bagwell's hash array mapped trie, imbl `GenericHashMap`), one hash of the formula
+    // (`Formula`'s `Hash`, kept with a compound node, linear in a constraint's size) and one
+    // comparison, which a key held at the same address answers by its pointer, so O(1)
+    // expected a lookup. This map is only read by key, never in order, so no order is lost;
+    // its hasher is fixed (`FxBuildHasher` over the formula's own fixed hash), so a run does
+    // not depend on a random seed. Test
+    // `l01_39_reduced_product::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`;
+    // COMPLEXITY.md row ST-chain-raise-reverse-log.
+    of: GenericHashMap<Arc<Formula>, BlockId, FxBuildHasher, DefaultSharedPtr>,
     /// Each block's conjuncts.
     members: OrdMap<BlockId, OrdSet<Arc<Formula>>>,
     /// Each node's parent in its tree; a root has none.
@@ -2017,14 +2043,26 @@ pub struct Blocks {
 }
 
 /// Adds `by` to the count of `r` in `counts`, which holds no zero.
+// Complexity tradeoff: naive version, the count read and then written back, two descents of
+// O(log n) key comparisons for a count that is kept. Used: one descent that changes the count
+// in place, a second only to insert a new count or remove one that reaches zero. The same
+// O(log n), half the comparisons for a kept count. COMPLEXITY.md row ST-chain-raise-reverse-log.
 fn tally<K: Ord + Clone>(counts: &mut OrdMap<K, usize>, r: K, by: isize) {
-    let n = counts.get(&r).copied().unwrap_or(0).checked_add_signed(by);
-    debug_assert!(n.is_some(), "a count below zero");
-    let n = n.unwrap_or(0);
-    if n == 0 {
-        counts.remove(&r);
-    } else {
-        counts.insert(r, n);
+    match counts.get_mut(&r) {
+        Some(c) => {
+            let n = c.checked_add_signed(by);
+            debug_assert!(n.is_some(), "a count below zero");
+            *c = n.unwrap_or(0);
+            if *c == 0 {
+                counts.remove(&r);
+            }
+        }
+        None => {
+            debug_assert!(by >= 0, "a count below zero");
+            if by > 0 {
+                counts.insert(r, by.unsigned_abs());
+            }
+        }
     }
 }
 
@@ -2243,17 +2281,40 @@ impl Blocks {
                 }
             }
             if let Some(t) = to {
-                self.at.entry((x.clone(), t)).or_default().insert(g.clone());
+                // One descent for a key that is there, as in [`Uses::add`].
+                let key = (x.clone(), t);
+                match self.at.get_mut(&key) {
+                    Some(set) => {
+                        set.insert(g.clone());
+                    }
+                    None => {
+                        self.at.insert(key, OrdSet::unit(g.clone()));
+                    }
+                }
             }
         }
         was
     }
 
+    // Complexity tradeoff: naive version, the name's counts taken out and put back, two
+    // descents of O(log n) name comparisons. Used: one descent that changes them in place, a
+    // second only for a name new to the map or one whose counts run out. COMPLEXITY.md row
+    // ST-chain-raise-reverse-log.
     fn count_moving(&mut self, n: &Arc<str>, b: BlockId, by: isize) {
-        let mut counts = self.moving_at.remove(n).unwrap_or_default();
-        tally(&mut counts, b, by);
-        if !counts.is_empty() {
-            self.moving_at.insert(n.clone(), counts);
+        match self.moving_at.get_mut(n) {
+            Some(counts) => {
+                tally(counts, b, by);
+                if counts.is_empty() {
+                    self.moving_at.remove(n);
+                }
+            }
+            None => {
+                let mut counts = OrdMap::new();
+                tally(&mut counts, b, by);
+                if !counts.is_empty() {
+                    self.moving_at.insert(n.clone(), counts);
+                }
+            }
         }
     }
 

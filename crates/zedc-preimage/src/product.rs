@@ -2666,7 +2666,8 @@ impl Potential {
 
     /// Gives component `c`, one of `parts` and with no rank in `order`, a rank right after
     /// `after`, or before every other with none, from `0..RANKS`: the middle one of those
-    /// between `after` and the next rank given; when none is free, the components of the
+    /// between `after` and the next rank given, or at an end with none beyond it at most
+    /// [`END_STEP`] from the rank there; when none is free, the components of the
     /// smallest range of `2^i` ranks aligned at a multiple of `2^i` around `after` that holds
     /// at most `1.6^i` components, `c` counted, take ranks spread evenly over it (Bender, Cole,
     /// Demaine, Farach-Colton and Zito, "Two simplified algorithms for maintaining order in a
@@ -2693,7 +2694,23 @@ impl Potential {
         let a = after.unwrap_or(-1);
         let b = self.order.range(a + 1..).next().map_or(RANKS, |(&r, _)| r);
         if b - a >= 2 {
-            self.set_rank(c, a + (b - a) / 2);
+            // Complexity tradeoff: naive version, the middle rank at an end too, so ranks
+            // given one after another after the last halve the ranks left each time and run
+            // out after 61, and from then on each such rank ranks a range again: in a run of
+            // `put_in` the components made last were ranked again O(log n) times each,
+            // O(log² n) a component, where below 61 components none was, so `rank_after`
+            // grew 62 times from 32 to 256 tests of the chain raise in reverse (`xst::s4`).
+            // Used: at an end with no rank beyond it, a step of `min(gap / 2, END_STEP)` from
+            // the rank there, O(log n) for the one insert into `order`; 2^29 ranks in a row
+            // fit at one end before a range is ranked again, and ranks put between two of
+            // them still halve 32 times. COMPLEXITY.md row ST-chain-raise-reverse-log; test
+            // `product::tests::ranks_given_one_after_another_at_an_end_rank_no_other_again`.
+            let r = match (after, b) {
+                (Some(_), RANKS) => a + ((b - a) / 2).min(END_STEP),
+                (None, b) if b < RANKS => b - ((b - a) / 2).min(END_STEP),
+                _ => a + (b - a) / 2,
+            };
+            self.set_rank(c, r);
             return 0;
         }
         // The smallest range of `2^i` ranks around `at` sparse enough, counted half by half.
@@ -2737,6 +2754,10 @@ impl Potential {
 
 /// The ranks a component of a [`Potential`] may take: `0..RANKS`.
 const RANKS: i64 = 1 << 62;
+
+/// The step between ranks given one after another at an end of a [`Potential`]'s order
+/// ([`Potential::rank_after`]).
+const END_STEP: i64 = 1 << 32;
 
 /// A strongly connected component of the edges of a [`Potential`], or several merged.
 #[derive(Clone)]
@@ -15509,30 +15530,44 @@ mod tests {
         }
     }
 
-    /// Ranks given one after another at either end reach the end of `0..RANKS`, after which
-    /// the next is given by ranking a range again, the order kept.
+    /// Ranks given one after another at either end, 100,000 of them, rank no other component
+    /// again, each at most `END_STEP` from the one before; ranks then put between the last
+    /// two halve that step, the order kept.
+    #[test]
+    fn ranks_given_one_after_another_at_an_end_rank_no_other_again() {
+        for last in [false, true] {
+            let mut pot = Potential::default();
+            let mut list = Vec::new();
+            for k in 0..100_000 {
+                let place = if last { list.len() } else { 0 };
+                let moved = rank_at(&mut pot, &mut list, place);
+                assert_eq!(moved, 0, "{last}: rank {k} ranked {moved} others again");
+            }
+            check_ranks(&pot, &list);
+            let ranks: Vec<i64> = pot.order.keys().copied().collect();
+            assert!(ranks.windows(2).all(|w| w[1] - w[0] <= END_STEP), "{last}");
+            for _ in 0..20 {
+                let place = if last { list.len() - 1 } else { 1 };
+                assert_eq!(rank_at(&mut pot, &mut list, place), 0, "{last}");
+            }
+            check_ranks(&pot, &list);
+        }
+    }
+
+    /// A rank given at an end of `0..RANKS` that is taken ranks a range again, the order
+    /// kept, and ranks given at that end after it keep their order.
     #[test]
     fn ranks_given_at_either_end_rank_a_full_range_again() {
         for last in [false, true] {
             let mut pot = Potential::default();
             let mut list = Vec::new();
-            let mut k = 0;
-            loop {
-                let place = if last { list.len() } else { 0 };
-                let end = if last {
-                    pot.last()
-                } else {
-                    pot.order.get_min().map(|&(r, _)| r)
-                };
-                let moved = rank_at(&mut pot, &mut list, place);
-                check_ranks(&pot, &list);
-                k += 1;
-                if moved > 0 {
-                    assert_eq!(end, Some(if last { RANKS - 1 } else { 0 }), "{last}");
-                    break;
-                }
-                assert!(k < 70, "{last}: no range ranked again after {k} ranks");
-            }
+            rank_at(&mut pot, &mut list, 0);
+            // The one component moved to the end of the ranks.
+            let c = list[0];
+            pot.rerank(c, if last { RANKS - 1 } else { 0 });
+            let place = if last { list.len() } else { 0 };
+            assert!(rank_at(&mut pot, &mut list, place) > 0, "{last}");
+            check_ranks(&pot, &list);
             for _ in 0..200 {
                 let place = if last { list.len() } else { 0 };
                 rank_at(&mut pot, &mut list, place);
