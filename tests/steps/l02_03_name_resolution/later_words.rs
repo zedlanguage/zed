@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::errors;
-use zedc::resolve::{LATER_TYPES, WORDS, annotation_layer, prelude_layer};
+use zedc::resolve::{ANNOTATIONS, LATER_TYPES, WORDS, annotation_layer, prelude_layer};
 
 #[test]
 fn a_later_word_is_reported_as_not_compiled_yet() {
@@ -311,6 +311,7 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
     // The first layer a name is listed at is its layer: `Ast` returns at L11 with members.
     let mut words: BTreeMap<String, u32> = BTreeMap::new();
     let mut types: BTreeMap<String, u32> = BTreeMap::new();
+    let mut listed: BTreeMap<String, u32> = BTreeMap::new();
     for Row {
         layer,
         annots,
@@ -329,6 +330,7 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
                 continue;
             }
             assert_eq!(annotation_layer(name), Some(*layer), "@{name}");
+            listed.entry(name.to_string()).or_insert(*layer);
         }
         // A facet word is a value word: the prelude binds the `Facet` value to the name.
         let tag = format!("L{layer}");
@@ -400,6 +402,18 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
     assert_eq!(
         unlisted, UNLISTED,
         "the words of later layers the table does not list"
+    );
+    // Nor an annotation the table no longer lists, as `@teardown` after the spec replaced it
+    // by a token (zed 32909bd).
+    let unlisted: Vec<(&str, u32)> = ANNOTATIONS
+        .iter()
+        .filter(|&&(a, l)| listed.get(a) != Some(&l))
+        .copied()
+        .collect();
+    assert_eq!(
+        unlisted,
+        [] as [(&str, u32); 0],
+        "the annotations the table does not list"
     );
     for &(t, layer) in LATER_TYPES {
         assert!(
