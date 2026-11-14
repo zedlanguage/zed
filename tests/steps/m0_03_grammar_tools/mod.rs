@@ -17,6 +17,7 @@ mod prose_checks;
 mod scaling;
 mod split;
 mod sync;
+mod tool_edges;
 
 use zed_tools::spec::Spec;
 use zed_tools::{audit, cases, check, fence_layers, fences, fuzz, layer, progress, ring};
