@@ -2320,13 +2320,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| FAIL-check-arm-call-bench-hang | running | 2026-11-14 11:16 |  |
 | FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
-| FAIL-linked-piled-holes-count | impl attempt 1 | 2026-11-14 07:09 | done, pushed 346aa91bb; the test's count assertions were wrong, trees drawn until counts are met, 4 seeds pinned; filed FAIL-check-arm-call-bench-hang (19514ef8 |
+| FAIL-l139-wide-asum-scaling | running | 2026-11-14 11:32 |  |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
-| FAIL-product-refused-box-renamed | impl attempt 1 | 2026-11-14 07:09 | done, pushed 346aa91bb; signs from coefficients and constant (flips), names only on a full tie (row PRES-sign-tie-names); groups 1263 pieces 0 failed |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
