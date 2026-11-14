@@ -2196,10 +2196,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CMP-class-int-unchecked | impl attempt 1 | 2026-11-13 20:38 | started; worktree from origin/main 395a02e6d |
-| CONST-too-large-products-unproved | impl attempt 1 | 2026-11-13 20:23 | started; worktree from origin/main |
+| CONST-too-large-kept-powers | running | 2026-11-13 21:17 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
-| REPAIR-block-pow-negative | running | 2026-11-13 20:38 |  |
+| REPAIR-block-pow-negative | impl attempt 1 | 2026-11-13 20:38 | started; worktree seeded |
 | REPAIR-literal-text-spelling | impl attempt 1 | 2026-11-13 20:48 | start |
 | REPAIR-text-number-both-sides | impl attempt 1 | 2026-11-13 20:28 | started; load 40.28 39.26 43.11 |
 | ST-chain-raise-reverse-log | impl attempt 1 | 2026-11-13 20:31 | started; worktree from origin/main f714c55fc |
