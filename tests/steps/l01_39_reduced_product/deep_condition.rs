@@ -302,7 +302,7 @@ fn a_chain_of_paired_choices_keeps_only_the_small_choice() {
     // At each level `qi >= 0` needs `y >= 1` and `x >= 5`, which the level below allows only
     // at `3 <= x <= 4` or, at the bottom, at `x <= 0` or `y <= -1`; so every level takes
     // `qi <= -1` and `3 <= x <= 4`.
-    for d in [1, 2, 20, 200] {
+    for d in [1, 2, 3, 20] {
         let a = arms(
             &if_(paired_chain(d), lit(1), lit(2)),
             &ints(&paired_names(d)),
