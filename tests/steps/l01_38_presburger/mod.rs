@@ -13,6 +13,7 @@
 mod bench;
 mod canonical;
 mod carrier;
+mod cell_sweep;
 mod cells;
 mod checker;
 mod completeness;
