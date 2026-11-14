@@ -9,6 +9,7 @@ mod bench;
 mod cone;
 mod dag;
 mod differential;
+mod edges;
 mod ends;
 mod ids;
 mod mix;
