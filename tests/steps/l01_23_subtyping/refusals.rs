@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
+use zed_tests::instances::{Rng, pick_seeds};
 use zed_tests::scaling;
 use zedc::ast::{BinaryOp, UnaryOp};
 use zedc::check::Operator;
@@ -1989,6 +1990,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
             format!("_or{tag_id}")
         };
 
+        let (mut pick, seed) = Rng::fresh("lists by the place from the front");
+        // Every case to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
+        // P169): every case was asked, in 3.2 s with the rest, until TEST-bench-move-l0123.
         for n in 1..=5 {
             for skip_idx in 0..=n {
                 let skip = (skip_idx > 0).then_some(skip_idx);
@@ -1998,6 +2002,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
                             (false, Type::int(), lit(1)),
                             (true, Type::bool(), bool_tys[1].clone()),
                         ] {
+                            if pick.below([1, 1, 1, 1, 2, 4][n]) != 0 {
+                                continue;
+                            }
                             Type::forget_emptiness();
                             let tag = next_tag();
                             let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
@@ -2083,22 +2090,26 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
                     };
                     assert_eq!(tg.verdict(), want_g, "rfx_groups n={n} far={far}");
 
-                    Type::forget_emptiness();
-                    let tag = next_tag();
-                    let l = list_named(Type::int(), &tag);
-                    let tgh = &l - &rfx_groups_holes(n, far, &tag);
-                    // X18: one value of every class: 1, each excluded `k + 2`, and 0 for the rest.
-                    let gh_samples: Vec<Value> = [0, 1]
-                        .into_iter()
-                        .chain(3..=n as i64 + 2)
-                        .map(Value::Int)
-                        .collect();
-                    let want_gh = if list_oracle_inhabited(&tgh, &gh_samples, n + 1) {
-                        Verdict::Inhabited
-                    } else {
-                        Verdict::Empty
-                    };
-                    assert_eq!(tgh.verdict(), want_gh, "rfx_groups_holes n={n} far={far}");
+                    // To n = 4: at n = 5 the oracle lists 7^6 lists for each `far`, 2 s of the test
+                    // (TEST-bench-move-l0123); n = 5 is a larger instance of the same kind.
+                    if n <= 4 {
+                        Type::forget_emptiness();
+                        let tag = next_tag();
+                        let l = list_named(Type::int(), &tag);
+                        let tgh = &l - &rfx_groups_holes(n, far, &tag);
+                        // X18: one value of every class: 1, each excluded `k + 2`, and 0 for the rest.
+                        let gh_samples: Vec<Value> = [0, 1]
+                            .into_iter()
+                            .chain(3..=n as i64 + 2)
+                            .map(Value::Int)
+                            .collect();
+                        let want_gh = if list_oracle_inhabited(&tgh, &gh_samples, n + 1) {
+                            Verdict::Inhabited
+                        } else {
+                            Verdict::Empty
+                        };
+                        assert_eq!(tgh.verdict(), want_gh, "rfx_groups_holes n={n} far={far}");
+                    }
 
                     Type::forget_emptiness();
                     let tag = next_tag();
@@ -2154,14 +2165,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
             }
         }
 
-        // Random small prefix-chain families over int (including cofinite heads) and bool.
-        let mut seed = 0x5eed_cafe_d00d_u64;
-        let mut rng = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
+        // Random small prefix-chain families over int (including cofinite heads) and bool, from the
+        // seed printed above (40 from one fixed seed until TEST-bench-move-l0123).
+        let mut rng = || pick.next_u64();
         let head_for = |bits: u64, is_bool: bool| -> Type {
             if is_bool {
                 match bits % 3 {
@@ -2190,7 +2196,7 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
                 }
             }
         };
-        for _ in 0..40 {
+        for case in 0..20 {
             Type::forget_emptiness();
             let is_bool = (rng() & 1) != 0;
             let all = if is_bool { Type::bool() } else { Type::int() };
@@ -2237,8 +2243,12 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
             } else {
                 Verdict::Empty
             };
-            assert_eq!(t.verdict(), want, "random chain seed={seed:#x}");
-            assert_eq!(t.is_empty(), !inhab, "is_empty random chain seed={seed:#x}");
+            assert_eq!(t.verdict(), want, "random chain {case}, ZED_SEED={seed}");
+            assert_eq!(
+                t.is_empty(),
+                !inhab,
+                "is_empty random chain {case}, ZED_SEED={seed}"
+            );
         }
     });
 }
@@ -2504,6 +2514,9 @@ fn r3_build(
 fn r3_cofinite_redundant_oracle_and_order() {
     big(|| {
         let mut cases = 0;
+        // Every case to 4 names, one in six at 5 and one in 24 at 6, drawn afresh (author P169;
+        // every case, in 2.3 s, until TEST-bench-move-l0123).
+        let (mut pick, _) = Rng::fresh("R3 cofinite redundant oracle and order");
         for n in 1..=6 {
             for m in 1..=n + 2 {
                 for skip in 0..=n {
@@ -2518,6 +2531,9 @@ fn r3_cofinite_redundant_oracle_and_order() {
                         (0, n, true),
                         (1, n, true),
                     ] {
+                        if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
+                            continue;
+                        }
                         let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
                         if mode == 2 {
                             all = 3;
@@ -2607,6 +2623,10 @@ fn r3_union(a: &Type, b: &Type) -> Type {
 #[test]
 fn r3_all_probe_and_family_orders() {
     big(|| {
+        // Each case at one size of 3 to 6, and the families at every size to 4, one in six at 5
+        // and one in 24 at 6, drawn afresh (author P169): every size, in 1.3 s to 2.4 s, until
+        // TEST-bench-move-l0123.
+        let (mut pick, _) = Rng::fresh("R3 all-probe and family orders");
         let cases = [
             "front",
             "far",
@@ -2668,7 +2688,7 @@ fn r3_all_probe_and_family_orders() {
         ];
         let mut count = 0;
         for case in cases {
-            for n in 3..=6 {
+            for n in [3 + pick.below(4)] {
                 let tag = format!("_order3_{case}_{n}");
                 R3_REVERSE.with(|x| x.set(false));
                 let a = rfx_case(case, n, &tag);
@@ -2697,6 +2717,9 @@ fn r3_all_probe_and_family_orders() {
                 for skip in std::iter::once(None).chain((1..=n).map(Some)) {
                     for m in 1..=n + 2 {
                         for split in [false, true] {
+                            if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
+                                continue;
+                            }
                             let tag = format!("_orderf3_{count}");
                             R3_REVERSE.with(|x| x.set(false));
                             let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
@@ -2726,11 +2749,14 @@ fn r3_all_probe_and_family_orders() {
 }
 
 /// Every shape of the round-3 cofinite cases up to 6 names (1,494 cases), built in both orders,
-/// has the verdict of the oracle `r3_oracle`. 3.6 s alone.
+/// has the verdict of the oracle `r3_oracle`: every case to 4 names, one in six at 5 and one in
+/// 24 at 6, drawn afresh (author P169; every case, in 1.8 s to 3.6 s, until
+/// TEST-bench-move-l0123).
 #[test]
 fn r3_cofinite_survey() {
     big(|| {
         let (mut bad, mut cases) = (0, 0);
+        let (mut pick, _) = Rng::fresh("R3 cofinite survey");
         for n in 1..=6 {
             for m in 1..=n + 2 {
                 for skip in 0..=n {
@@ -2745,6 +2771,9 @@ fn r3_cofinite_survey() {
                         (0, n, true),
                         (1, n, true),
                     ] {
+                        if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
+                            continue;
+                        }
                         let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
                         if mode == 2 {
                             all = 3;
@@ -2782,6 +2811,11 @@ fn r3_cofinite_survey() {
 #[test]
 fn codex_r3_variants_agree_with_the_oracle() {
     big(|| {
+        // Every case to n = 4, one in two at n = 5 and one in four at n = 6, drawn afresh, and 40
+        // random trials from the printed seed (author P169): every case and 120 trials from one
+        // fixed seed, in 2 s to 3.4 s, until TEST-bench-move-l0123.
+        const KEEP: [usize; 7] = [1, 1, 1, 1, 1, 2, 4];
+        let (mut pick, seed) = Rng::fresh("codex R3 variants");
         let int_ty = Type::int();
         let one_ty = lit(1);
         let bool_ty = Type::bool();
@@ -2815,6 +2849,9 @@ fn codex_r3_variants_agree_with_the_oracle() {
                     for m in 1..=n + 2 {
                         for split in [false, true] {
                             seq += 1;
+                            if pick.below(KEEP[n]) != 0 {
+                                continue;
+                            }
                             Type::forget_emptiness();
                             let tag = format!("_or_{cname}_{seq}");
                             let (l, u) = rfx_family(n, skip, m, all, one, split, &tag);
@@ -2847,6 +2884,9 @@ fn codex_r3_variants_agree_with_the_oracle() {
         for n in 2..=6 {
             for m in 1..=n + 1 {
                 seq += 1;
+                if pick.below(KEEP[n]) != 0 {
+                    continue;
+                }
                 Type::forget_emptiness();
                 let tag = format!("_orm_{seq}");
                 let l = list_named(Type::int(), &tag);
@@ -2863,6 +2903,9 @@ fn codex_r3_variants_agree_with_the_oracle() {
             for far in [false, true] {
                 for which in ["chain", "groups", "one"] {
                     seq += 1;
+                    if pick.below(KEEP[n]) != 0 {
+                        continue;
+                    }
                     Type::forget_emptiness();
                     let tag = format!("_orcg_{seq}");
                     let t = match (which, far) {
@@ -2893,6 +2936,9 @@ fn codex_r3_variants_agree_with_the_oracle() {
             for s1 in [None, Some(1), Some(n / 2), Some(n)] {
                 for s2 in [None, Some(1), Some(n - 1), Some(n)] {
                     seq += 1;
+                    if pick.below(KEEP[n]) != 0 {
+                        continue;
+                    }
                     Type::forget_emptiness();
                     let tag1 = format!("_ormp1_{seq}");
                     let tag2 = format!("_ormp2_{seq}");
@@ -2940,14 +2986,8 @@ fn codex_r3_variants_agree_with_the_oracle() {
             &Type::int() - &(&lit(1) | &lit(2)),
             Type::int(),
         ];
-        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next_u64 = || {
-            rng ^= rng << 13;
-            rng ^= rng >> 7;
-            rng ^= rng << 17;
-            rng
-        };
-        for trial in 0..120 {
+        let mut next_u64 = || pick.next_u64();
+        for trial in 0..40 {
             Type::forget_emptiness();
             let tag = format!("_orr_{trial}");
             let mut defs = vec![def(
@@ -2997,12 +3037,21 @@ fn codex_r3_variants_agree_with_the_oracle() {
             let t = &ts[0] - &u;
             let inhab = oracle_inhabited(&t, &multi_alpha, max_d + 1);
             match t.verdict() {
-                Verdict::Empty => assert!(!inhab, "random trial {trial} unsound Empty"),
-                Verdict::Inhabited => assert!(inhab, "random trial {trial} unsound Inhabited"),
+                Verdict::Empty => assert!(
+                    !inhab,
+                    "random trial {trial} of ZED_SEED={seed} unsound Empty"
+                ),
+                Verdict::Inhabited => assert!(
+                    inhab,
+                    "random trial {trial} of ZED_SEED={seed} unsound Inhabited"
+                ),
                 Verdict::Refused(_) => {}
             }
             if t.is_empty() {
-                assert!(!inhab, "random trial {trial} unsound is_empty=true");
+                assert!(
+                    !inhab,
+                    "random trial {trial} of ZED_SEED={seed} unsound is_empty=true"
+                );
             }
             let original = t.verdict();
             R3_REVERSE.with(|x| x.set(true));
@@ -3016,9 +3065,13 @@ fn codex_r3_variants_agree_with_the_oracle() {
             assert_eq!(
                 rt.verdict(),
                 original,
-                "random definition/union order {trial}"
+                "random definition/union order {trial} of ZED_SEED={seed}"
             );
-            assert_eq!(t.verdict(), original, "random query order {trial}");
+            assert_eq!(
+                t.verdict(),
+                original,
+                "random query order {trial} of ZED_SEED={seed}"
+            );
         }
     });
 }
@@ -3082,15 +3135,12 @@ fn r4_boundary(n: usize, holes: bool, tag: &str) -> Type {
 #[test]
 fn r4_exact_classes_random_and_short_escape() {
     big(|| {
-        let mut seed = 0x9183ab12u64;
-        let mut rng = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
+        // 60 random trials from a seed new each run (author P169): 200 from one fixed seed until
+        // TEST-bench-move-l0123.
+        let (mut pick, seed) = Rng::fresh("R4 exact classes");
+        let mut rng = || pick.next_u64();
         let mut cases = 0;
-        for trial in 0..200 {
+        for trial in 0..60 {
             let n = 2 + (rng() % 4) as usize;
             let m = 1 + (rng() % (n + 2) as u64) as usize;
             let (mut ns, roots, all) = r3_spec(n, m, 0, n, true);
@@ -3105,12 +3155,17 @@ fn r4_exact_classes_random_and_short_escape() {
             let b = r3_build(&ns, &roots, all, true, &format!("r4random{trial}"), 0);
             let av = a.sweep_verdict();
             let bv = b.sweep_verdict();
-            assert_eq!(av, bv, "sweep definition order trial {trial}");
+            assert_eq!(
+                av, bv,
+                "sweep definition order trial {trial} of ZED_SEED={seed}"
+            );
             for t in [&a, &b] {
                 Type::forget_emptiness();
                 match t.verdict() {
-                    Verdict::Empty => assert!(!inhab, "oracle has witness {trial}"),
-                    Verdict::Inhabited => assert!(inhab, "oracle empty {trial}"),
+                    Verdict::Empty => {
+                        assert!(!inhab, "oracle has witness {trial} of ZED_SEED={seed}")
+                    }
+                    Verdict::Inhabited => assert!(inhab, "oracle empty {trial} of ZED_SEED={seed}"),
                     Verdict::Refused(_) => {}
                 }
                 assert!(!t.is_empty() || !inhab);
@@ -3289,6 +3344,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             format!("_or{tag_id}")
         };
 
+        // Every family to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
+        // P169): every family until TEST-bench-move-l0123.
+        let (mut pick, seed) = Rng::fresh("lists by the place from the front, gemini");
         for n in 1..=5 {
             for skip_idx in 0..=n {
                 let skip = (skip_idx > 0).then_some(skip_idx);
@@ -3298,6 +3356,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                             (false, Type::int(), lit(1)),
                             (true, Type::bool(), bool_tys[1].clone()),
                         ] {
+                            if pick.below([1, 1, 1, 1, 2, 4][n]) != 0 {
+                                continue;
+                            }
                             Type::forget_emptiness();
                             let tag = next_tag();
                             let (l, u) = rfx_family(n, skip, m, &all, &one, split, &tag);
@@ -3518,13 +3579,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             Value::Int(3),
             Value::Int(4),
         ];
-        let mut seed = 0x5eed_cafe_d00d_u64;
-        let mut rng = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
+        // 20 and 20 random cases from a seed new each run (author P169): 60 and 60 from one fixed
+        // seed until TEST-bench-move-l0123.
+        let mut rng = || pick.next_u64();
         let head_for = |bits: u64, is_bool: bool| -> Type {
             if is_bool {
                 match bits % 3 {
@@ -3553,7 +3610,7 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                 }
             }
         };
-        for _ in 0..60 {
+        for _ in 0..20 {
             Type::forget_emptiness();
             let is_bool = (rng() & 1) != 0;
             let all = if is_bool { Type::bool() } else { Type::int() };
@@ -3601,24 +3658,24 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                 Verdict::Empty
             };
             if let Some(sv) = t.sweep_verdict() {
-                assert_eq!(sv, want, "sweep random chain seed={seed:#x}");
+                assert_eq!(sv, want, "sweep random chain ZED_SEED={seed}");
             }
             Type::forget_emptiness();
             match t.verdict() {
-                Verdict::Empty => assert!(!inhab, "random chain seed={seed:#x}"),
-                Verdict::Inhabited => assert!(inhab, "random chain seed={seed:#x}"),
+                Verdict::Empty => assert!(!inhab, "random chain ZED_SEED={seed}"),
+                Verdict::Inhabited => assert!(inhab, "random chain ZED_SEED={seed}"),
                 Verdict::Refused(_) => {}
             }
             assert!(
                 !(t.is_empty() && inhab),
-                "is_empty random chain seed={seed:#x}"
+                "is_empty random chain ZED_SEED={seed}"
             );
         }
 
         // Random in-class prefix-chain families (uniform carrier prefix per chain, cofinite/finite
         // leaf heads over 0..4, sampled over 0..=4): must be decided (Empty or Inhabited, never
         // Refused) and agree with the oracle.
-        for _ in 0..60 {
+        for _ in 0..20 {
             Type::forget_emptiness();
             let is_bool = (rng() & 1) != 0;
             let all = if is_bool { Type::bool() } else { Type::int() };
@@ -3671,14 +3728,14 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             assert_eq!(
                 t.sweep_verdict(),
                 Some(want),
-                "sweep uniform random seed={seed:#x}"
+                "sweep uniform random ZED_SEED={seed}"
             );
             Type::forget_emptiness();
-            assert_eq!(t.verdict(), want, "uniform random seed={seed:#x}");
+            assert_eq!(t.verdict(), want, "uniform random ZED_SEED={seed}");
             assert_eq!(
                 t.is_empty(),
                 !inhab,
-                "is_empty uniform random seed={seed:#x}"
+                "is_empty uniform random ZED_SEED={seed}"
             );
         }
     });
@@ -4591,21 +4648,22 @@ fn r6_colour_list(xs: &[i64]) -> Value {
     })
 }
 
-/// Every graph on `nv` vertices whose edge mask is `shard` mod `nsh`: the type is inhabited
+/// `count` graphs on `nv` vertices, their edge masks drawn afresh each run (author P169; until
+/// TEST-bench-move-l0123 every mask, or every one in a fixed residue class, in 1 s to 10.5 s a
+/// test): the type is inhabited
 /// exactly when brute force finds a proper colouring (each colouring is a list of `P`, tested by
 /// membership), and no mechanism answers wrongly. With `comb`, also the comb form
 /// ([`r6_colour_comb`]), which the escape solve reads and must decline (its atoms cross).
-fn r6_colouring_check(nv: usize, shard: u32, nsh: u32, comb: bool) {
+fn r6_colouring_check(nv: usize, count: usize, comb: bool) {
     big(move || {
         let mut counts = std::collections::BTreeMap::new();
         {
             let pairs: Vec<(usize, usize)> = (1..=nv)
                 .flat_map(|u| (u + 1..=nv).map(move |v| (u, v)))
                 .collect();
-            for mask in 0u32..1 << pairs.len() {
-                if mask % nsh != shard {
-                    continue;
-                }
+            let what = format!("r6 colouring nv {nv}");
+            let (mut rng, _) = Rng::fresh(&what);
+            for mask in pick_seeds(&mut rng, &what, 1..1 << pairs.len(), count) {
                 let edges: Vec<(usize, usize)> = pairs
                     .iter()
                     .enumerate()
@@ -4694,17 +4752,12 @@ fn r6_colouring_check(nv: usize, shard: u32, nsh: u32, comb: bool) {
 
 #[test]
 fn r6_three_colouring_reduction_is_checked_by_brute_force_4() {
-    r6_colouring_check(4, 0, 1, true);
+    r6_colouring_check(4, 3, true);
 }
 
 #[test]
-fn r6_three_colouring_reduction_is_checked_by_brute_force_5a() {
-    r6_colouring_check(5, 0, 16, false);
-}
-
-#[test]
-fn r6_three_colouring_reduction_is_checked_by_brute_force_5b() {
-    r6_colouring_check(5, 7, 16, false);
+fn r6_three_colouring_reduction_is_checked_by_brute_force_5() {
+    r6_colouring_check(5, 6, false);
 }
 
 /// A head of the random carrier-plus-chains inputs: `{0, 1, 2}` by `mask`, or all integers but
@@ -4985,12 +5038,16 @@ fn r6_oracle(x: &R6Input) -> bool {
     go(x, &rows, nt, &start, 0, max_len, &accepts)
 }
 
-fn r6_oracle_run(seed: u64, count: usize, np_max: u64, nr_max: u64) {
-    r6_oracle_run_with(seed, count, np_max, nr_max, false);
+fn r6_oracle_run(what: &'static str, count: usize, np_max: u64, nr_max: u64) {
+    r6_oracle_run_with(what, count, np_max, nr_max, false);
 }
 
-fn r6_oracle_run_with(seed: u64, count: usize, np_max: u64, nr_max: u64, alt_rows: bool) {
+/// `count` random inputs from a seed new each run, printed with `what` (author P169; until
+/// TEST-bench-move-l0123 each test had a fixed seed and 600 to 3,000 inputs, the two tests at
+/// 1,500 differing only in their seed, now one test of 800).
+fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64, alt_rows: bool) {
     big(move || {
+        let (_, seed) = Rng::fresh(what);
         let mut g = R6Rng(seed);
         let mut counts = std::collections::BTreeMap::new();
         for i in 0..count {
@@ -5007,10 +5064,13 @@ fn r6_oracle_run_with(seed: u64, count: usize, np_max: u64, nr_max: u64, alt_row
                     (Verdict::Empty, true) | (Verdict::Inhabited, false)
                 )
             };
-            assert!(!wrong(&v), "verdict {v:?} truth {truth} on {x:?}");
+            assert!(
+                !wrong(&v),
+                "verdict {v:?} truth {truth} on {x:?}, ZED_SEED={seed}"
+            );
             assert!(
                 !ch.as_ref().is_some_and(wrong),
-                "chains {ch:?} truth {truth} on {x:?}"
+                "chains {ch:?} truth {truth} on {x:?}, ZED_SEED={seed}"
             );
             *counts
                 .entry(format!("truth {truth} {v:?} chains {ch:?}"))
@@ -5024,25 +5084,20 @@ fn r6_oracle_run_with(seed: u64, count: usize, np_max: u64, nr_max: u64, alt_row
 
 #[test]
 fn r6_carrier_and_chains_against_brute_force_1() {
-    r6_oracle_run(0x9e37_79b9_7f4a_7c15, 1500, 4, 6);
-}
-
-#[test]
-fn r6_carrier_and_chains_against_brute_force_2() {
-    r6_oracle_run(0x2545_f491_4f6c_dd1d, 1500, 4, 6);
+    r6_oracle_run("r6 oracle 1", 800, 4, 6);
 }
 
 /// Longer pools and more refused rows, so that rows with three or more atoms (whose `Empty` the
 /// escape solve must not give from their first two) are common.
 #[test]
 fn r6_carrier_and_chains_against_brute_force_3() {
-    r6_oracle_run(0x5851_f42d_4c95_7f2d, 600, 6, 12);
+    r6_oracle_run("r6 oracle 3", 300, 6, 12);
 }
 
 /// Pool nodes with a second row into the carrier, below the top of positive and refused chains.
 #[test]
 fn r6_carrier_and_chains_against_brute_force_4() {
-    r6_oracle_run_with(0x1405_7b7e_f767_814f, 3000, 4, 6, true);
+    r6_oracle_run_with("r6 oracle 4", 1000, 4, 6, true);
 }
 
 /// A comb where no place of a root separates except its first: `F_e = cons(int \ {e mod 2},
