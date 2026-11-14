@@ -369,6 +369,7 @@ fn report(x: Value) -> String {
     let m = zedc::mutate::Mutant {
         def: 0,
         at: zed_kernel::provenance::Position::root(),
+        also: Vec::new(),
         was: zedc::mutate::Change::Int(x),
         to: zedc::mutate::Change::Int(Value::int(BigInt::from(0))),
         offset: 0,

@@ -16,6 +16,7 @@ use zedc_stage::defs::Test;
 use zedc_syntax::ast::{Error, Expr, ExprKind, Pattern, Type};
 use zedc_syntax::lex::Span;
 use zedc_types::kernel_type::kernel_type;
+use zedc_types::ty::Carrier;
 
 use super::mark::Mark;
 
@@ -40,10 +41,10 @@ pub(super) struct Elab<'a> {
     /// ([`zedc_check::check::Witness`]), by the read's span: built once and shared.
     pub(super) reads: HashMap<Span, Shared>,
     /// Each operation on generic literals alone built once per carrier, by its span, with the
-    /// witness its `match` is on (`walk::per_carrier`, L1.26a) and whether each arm `is c`
-    /// gives a value of carrier `c` and the last arm one of the literals' own carrier (`+`,
-    /// `-`, `*`, not `/` or `==`), so the operation it is an operand of finds it in O(1).
-    pub(super) split: HashMap<Span, (&'a Witness, bool)>,
+    /// witness its `match` is on (`walk::per_carrier`, L1.26a), whether each arm `is c` gives a
+    /// value of carrier `c` (`+`, `-`, `*`, not `/` or `==`), and the carrier of the value of
+    /// its last arm where it is known, so the operation it is an operand of finds them in O(1).
+    pub(super) split: HashMap<Span, (&'a Witness, bool, Option<Carrier>)>,
     fresh: usize,
     pub(super) tests: Vec<Test>,
     pub(super) errors: Vec<Error>,

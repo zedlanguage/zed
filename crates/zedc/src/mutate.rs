@@ -20,6 +20,8 @@
 //! definition's term replaced, so it costs that definition and the tables that reach it, not
 //! a new parse, check or elaboration.
 
+use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
@@ -58,8 +60,13 @@ impl std::fmt::Display for Change {
 pub struct Mutant {
     /// The definition's position in the unit.
     pub def: usize,
-    /// The node's position in the definition's term.
+    /// The node's position in the definition's term: the first, in preorder, of the nodes of
+    /// one written operator.
     pub at: Position,
+    /// The positions of the other nodes of the same written operator, which the mutant replaces
+    /// too: one in each arm of an operation on generic literals built once per carrier (L1.26a),
+    /// none elsewhere.
+    pub also: Vec<Position>,
     /// The node as written.
     pub was: Change,
     /// What replaces it.
@@ -187,6 +194,8 @@ fn sites(
     marks: &[Mark],
     out: &mut Vec<Mutant>,
 ) -> Result<(), String> {
+    // The mutants made at each mark, by its index, so a mark met again adds its node to them.
+    let mut first: HashMap<usize, Range<usize>> = HashMap::new();
     let mut stack = vec![(m, u, Position::root())];
     while let Some((m, u, at)) = stack.pop() {
         let differs = |what: &str| {
@@ -198,34 +207,47 @@ fn sites(
             let Some(mark) = marks.get(k) else {
                 return differs("a mark has no entry");
             };
-            match (m, u) {
+            let (was, offset) = match (m, u) {
                 (Term::Prim(p, ms), Term::Prim(q, us)) if p == q && us.len() == 2 => {
-                    let offset = operator_at(text, mark.span);
-                    for &to in neighbors(*p, mark.quotient) {
-                        out.push(Mutant {
-                            def,
-                            at: at.clone(),
-                            was: Change::Op(*p),
-                            to: Change::Op(to),
-                            offset,
-                        });
-                    }
                     stack.push((&ms[1], &us[1], at.child(1)));
                     stack.push((&ms[0], &us[0], at.child(0)));
+                    (Change::Op(*p), operator_at(text, mark.span))
                 }
                 (Term::Prim(Prim::Neg, ms), Term::Lit(v)) if matches!(&ms[0], Term::Lit(w) if w == v) => {
-                    for to in beside(v)? {
-                        out.push(Mutant {
-                            def,
-                            at: at.clone(),
-                            was: Change::Int(v.clone()),
-                            to: Change::Int(to),
-                            offset: mark.span.start,
-                        });
-                    }
+                    (Change::Int(v.clone()), mark.span.start)
                 }
                 _ => return differs("a marked node has another shape"),
+            };
+            // One written operator is a node in each arm of an operation on generic literals
+            // built once per carrier (`elab::walk::per_carrier`), all with its mark: its mutants
+            // are made at the first and replace it in every arm, as a mutant of the operation
+            // written once replaces it at every carrier.
+            if let Some(made) = first.get(&k) {
+                let made = &mut out[made.clone()];
+                if made.iter().any(|x| x.was != was) {
+                    return differs("one mark is on nodes of two kinds");
+                }
+                for x in made {
+                    x.also.push(at.clone());
+                }
+                continue;
             }
+            let to: Vec<Change> = match &was {
+                Change::Op(p) => (neighbors(*p, mark.quotient).iter())
+                    .map(|&q| Change::Op(q))
+                    .collect(),
+                Change::Int(v) => beside(v)?.into_iter().map(Change::Int).collect(),
+            };
+            let start = out.len();
+            out.extend(to.into_iter().map(|to| Mutant {
+                def,
+                at: at.clone(),
+                also: Vec::new(),
+                was: was.clone(),
+                to,
+                offset,
+            }));
+            first.insert(k, start..out.len());
             continue;
         }
         if std::mem::discriminant(m) != std::mem::discriminant(u) {
@@ -248,23 +270,27 @@ fn sites(
     Ok(())
 }
 
-/// `term` with the node at `at` replaced as `to` says: one copy of `term`, O(its size, the
-/// order of the remix that follows), then the node changed in place. The copy shares what
-/// `term` holds behind an `Arc` until the path to `at` reaches it ([`child_mut`]).
-pub fn apply(term: &Term, at: &Position, to: &Change) -> Term {
+/// `term` with the nodes at `at` replaced as `to` says: one copy of `term`, O(its size, the
+/// order of the remix that follows), then each node changed in place. The copy shares what
+/// `term` holds behind an `Arc` until the path to a node reaches it ([`child_mut`]). `at` holds
+/// one node, or one per carrier of an operation on generic literals ([`Mutant::also`]).
+pub fn apply<'p>(term: &Term, at: impl IntoIterator<Item = &'p Position>, to: &Change) -> Term {
     // Complexity tradeoff (COMPLEXITY.md F58): a rebuild along the path by `with_child`, which
     // copies each inline child list, costs O(size × depth), cubic over the mutants of one
-    // chain; one copy of the term and the node changed in place through `child_mut` costs
-    // O(size), the order of the remix that follows. Precondition: `at` lies in `term`.
+    // chain; one copy of the term and the nodes changed in place through `child_mut` costs
+    // O(size + k × depth) for k ≤ 6 nodes, the order of the remix that follows. Precondition:
+    // each position lies in `term`.
     let mut out = term.clone();
-    let mut node = &mut out;
-    for i in at.path() {
-        node = child_mut(node, i).expect("a mutant's position is in its definition");
-    }
-    match (node, to) {
-        (Term::Prim(p, _), Change::Op(q)) => *p = *q,
-        (Term::Lit(v), Change::Int(w)) => *v = w.clone(),
-        _ => unreachable!("a mutant replaces an operator by one, a constant by one"),
+    for at in at {
+        let mut node = &mut out;
+        for i in at.path() {
+            node = child_mut(node, i).expect("a mutant's position is in its definition");
+        }
+        match (node, to) {
+            (Term::Prim(p, _), Change::Op(q)) => *p = *q,
+            (Term::Lit(v), Change::Int(w)) => *v = w.clone(),
+            _ => unreachable!("a mutant replaces an operator by one, a constant by one"),
+        }
     }
     out
 }
@@ -330,7 +356,8 @@ pub fn run(
         if built[def].is_none() {
             built[def] = Some(remix.mix(original));
         }
-        let term = Shared::new(apply(original, &mutant.at, &mutant.to));
+        let at = std::iter::once(&mutant.at).chain(&mutant.also);
+        let term = Shared::new(apply(original, at, &mutant.to));
         let verdict = if built[def].as_ref() == Some(&remix.mix(&term)) {
             Verdict::Skipped
         } else if rows[def].is_empty() && untaken.contains(&unit.defs[def].kernel) {

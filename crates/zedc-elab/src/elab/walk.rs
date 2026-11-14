@@ -27,9 +27,9 @@ use zedc_syntax::ast::{
 };
 use zedc_syntax::lex::{Span, unread_literal};
 
-use super::mark::{Mark, mutable};
+use super::mark::{Mark, mark_of, mutable};
 use super::state::{Bind, Elab};
-use zedc_check::check::ty::Sig;
+use zedc_check::check::ty::{Carrier, Sig};
 use zedc_syntax::ast::Param;
 
 /// The inputs a row of `main`'s table gives, by the position of each in a key that is a tuple:
@@ -1968,16 +1968,26 @@ impl<'a> Elab<'a> {
         }
         let w = match (self.split_of(l), self.split_of(r)) {
             (Some(a), Some(b)) if same_witness(a.0, b.0) => Some((a.0, a.1 && b.1)),
-            (Some((w, true)), None) => self.follow_split(r, w, &mut args, 1).then_some((w, true)),
-            (None, Some((w, true))) => self.follow_split(l, w, &mut args, 0).then_some((w, true)),
+            (Some((w, true)), None) => {
+                let own = self.own_carrier(l, &args[0]);
+                (self.follow_split(r, w, own, &mut args, 1)).then_some((w, true))
+            }
+            (None, Some((w, true))) => {
+                let own = self.own_carrier(r, &args[1]);
+                (self.follow_split(l, w, own, &mut args, 0)).then_some((w, true))
+            }
             _ => None,
         };
         let Some((w, keeps)) = w else {
             return Some(self.follow(l, r, p, args));
         };
+        let own = Some(self.own_carrier(l, &args[0]))
+            .filter(|c| keeps_carrier(p) && *c == self.own_carrier(r, &args[1]))
+            .flatten();
         Some(match per_carrier(p, args, 2) {
             Ok(t) => {
-                self.split.insert(e.span, (w, keeps && keeps_carrier(p)));
+                self.split
+                    .insert(e.span, (w, keeps && keeps_carrier(p), own));
                 t
             }
             Err(args) => Term::Prim(p, args),
@@ -1990,29 +2000,56 @@ impl<'a> Elab<'a> {
     /// arms; if so, `args[at]` becomes the literal taking the carrier of `w`'s value instead,
     /// which picks in every case the value [`Elab::follow`] would pick, and both operands are then
     /// split on `w`. `2 + 0` in a generic definition is such a case: the checker gives `2` the
-    /// parameter as its witness and has `0` follow `2`.
+    /// parameter as its witness and has `0` follow `2`. `other` is the carrier of the value of
+    /// the other operand's last arm, and without it the operand is not split.
     ///
     /// The same value: where `w`'s value is of a carrier `c` of the patterns, the other operand's
     /// value is of carrier `c` and the literal takes its value at `c` either way; elsewhere the
-    /// other operand's value is of its literals' own carrier, which its patterns never include
-    /// (`Info::follows` lists a literal's other carriers), and so neither do the literal's
-    /// carriers, the same patterns: the literal keeps its own value either way.
+    /// other operand's value is that of its last arm, of carrier `other`, and the literal takes
+    /// its value at `other` where `Info::follows` lists it and keeps its own value elsewhere,
+    /// as `follow` does. That carrier is not always the literal's own: in `1 / 2` the checker
+    /// gives `1` the value `1.0` at a value of no carrier of the patterns, as `/` takes no
+    /// `int`, and `2`, following it, then takes `2.0`.
     // Complexity tradeoff: O(C) pattern comparisons for C ≤ 6 carriers, against the O(C) arms
     // `follow` builds anyway; the `let` of `follow` is not built.
-    fn follow_split(&mut self, o: &Expr, w: &check::Witness, args: &mut [Term], at: usize) -> bool {
+    fn follow_split(
+        &mut self,
+        o: &Expr,
+        w: &check::Witness,
+        other: Option<Carrier>,
+        args: &mut [Term],
+        at: usize,
+    ) -> bool {
         let Some(s) = lit_span(o).filter(|s| !self.info.witness.contains_key(s)) else {
             return false;
         };
-        let (Some(values), Some(arms)) = (self.info.follows.get(&s), arms_of(&args[1 - at])) else {
+        let (Some(values), Some(arms), Some(other)) =
+            (self.info.follows.get(&s), arms_of(&args[1 - at]), other)
+        else {
             return false;
         };
         let same = arms.len() == values.len() + 1
             && (values.iter().zip(arms)).all(|((c, _), (q, _))| *q == KPattern::Is(c.ty()));
         if same {
             let own = mem::replace(&mut args[at], Term::Lit(Value::Bool(false)));
+            let own = match values.iter().find(|(c, _)| *c == other) {
+                Some((_, v)) => with_value(own, v.clone()),
+                None => own,
+            };
             args[at] = self.witnessed(s, w, own);
         }
         same
+    }
+
+    /// The carrier of the value of the last arm of `t`, the term of `e`, where `e` is a
+    /// generic literal taking its carrier from a witness, or an operation on such literals
+    /// alone built once per carrier ([`Elab::split_of`]), and that carrier is known: the
+    /// literal's own value, marked or not, or the operation's as [`Elab::split`] holds it.
+    fn own_carrier(&self, e: &Expr, t: &Term) -> Option<Carrier> {
+        match lit_span(e) {
+            Some(_) => lit_carrier(&arms_of(t)?.last()?.1),
+            None => self.split.get(&e.span)?.2,
+        }
     }
 
     /// The unary operator `p` of `e` on its operand's term `a`: built once per carrier when
@@ -2029,9 +2066,11 @@ impl<'a> Elab<'a> {
         let Some((w, keeps)) = w else {
             return Term::Prim(p, vec![a]);
         };
+        let own = self.own_carrier(operand, &a).filter(|_| keeps_carrier(p));
         match per_carrier(p, vec![a], 1) {
             Ok(t) => {
-                self.split.insert(e.span, (w, keeps && keeps_carrier(p)));
+                self.split
+                    .insert(e.span, (w, keeps && keeps_carrier(p), own));
                 t
             }
             Err(args) => Term::Prim(p, args),
@@ -2046,7 +2085,7 @@ impl<'a> Elab<'a> {
     fn split_of(&self, e: &Expr) -> Option<(&'a check::Witness, bool)> {
         match lit_span(e) {
             Some(s) => self.info.witness.get(&s).map(|w| (w, true)),
-            None => self.split.get(&e.span).copied(),
+            None => self.split.get(&e.span).map(|&(w, keeps, _)| (w, keeps)),
         }
     }
 
@@ -2254,9 +2293,10 @@ fn same_witness(a: &check::Witness, b: &check::Witness) -> bool {
 /// The primitive `p` on `args`, whose first `n` (one or two) are each an operation on generic
 /// literals alone, or one such literal, on one witness `w` (L1.26a): each is
 /// `match w { is c -> v_c, …, _ -> own }` with the same patterns in the same order. Built once
-/// per carrier: `match w { is c -> p(v_c, …), …, _ -> p(own, …, rest) }`, where `rest` is what
-/// follows the `n` operands (a mutation mark, `elab::mark`), kept with the literals' own terms
-/// in the last arm, as marks are. `Err(args)` when the operands are not of that form.
+/// per carrier: `match w { is c -> p(v_c, …, rest), …, _ -> p(own, …, rest) }`, where `rest`
+/// is what follows the `n` operands (a mutation mark, `elab::mark`), in every arm, so that a
+/// mutant of the operator replaces it at every carrier. `Err(args)` when the operands are not
+/// of that form.
 ///
 /// Each value of `w` takes, in each operand, the arm of the same pattern, since the patterns
 /// are the same in the same order and `w` reads a parameter or a component of one, which
@@ -2297,9 +2337,8 @@ fn per_carrier(p: Prim, mut args: Vec<Term>, n: usize) -> Result<Term, Vec<Term>
         columns.push(mem::take(arms).into_iter());
     }
     let count = columns[0].len();
-    let mut rest = Some(rest);
     let arms = (0..count)
-        .map(|j| {
+        .map(|_| {
             let mut pattern = None;
             let mut ops: Vec<Term> = (columns.iter_mut())
                 .map(|c| {
@@ -2308,9 +2347,9 @@ fn per_carrier(p: Prim, mut args: Vec<Term>, n: usize) -> Result<Term, Vec<Term>
                     t
                 })
                 .collect();
-            if j + 1 == count {
-                ops.extend(rest.take().into_iter().flatten());
-            }
+            // The mark, one integer literal, in every arm: a mutant of the operator replaces it
+            // at every carrier (`zedc::mutate`, L25.8), as it does the operation written once.
+            ops.extend(rest.iter().cloned());
             let pattern = pattern.expect("at least one operand");
             (pattern, Term::Prim(p, ops))
         })
@@ -2326,6 +2365,34 @@ fn arms_of(t: &Term) -> Option<&[(KPattern, Term)]> {
         Term::Match(_, arms) if matches!(arms.last(), Some((KPattern::Wild, _))) => Some(arms),
         _ => None,
     }
+}
+
+/// The carrier of the literal `t`, marked or not ([`Elab::constant`]), where it is one a
+/// generic literal's own value has: `int` for an integer, `f64` for a decimal or for an
+/// integer the checker reads as `f64`, as `1` in `1 / 2`. `None` for any other term, and the
+/// operation is then not split, which keeps its value (`Elab::follow`).
+fn lit_carrier(t: &Term) -> Option<Carrier> {
+    let t = match t {
+        Term::Prim(Prim::Neg, a) if mark_of(t).is_some() => &a[0],
+        t => t,
+    };
+    match t {
+        Term::Lit(Value::Int(_) | Value::Big(_)) => Some(Carrier::Int),
+        Term::Lit(Value::Float(_)) => Some(Carrier::F64),
+        _ => None,
+    }
+}
+
+/// The literal `own`, a constant's term ([`Elab::constant`]), with the value `v`: marked as
+/// `own` is, so that a mutant of the constant replaces it (L25.8).
+fn with_value(mut own: Term, v: Value) -> Term {
+    if mark_of(&own).is_some()
+        && let Term::Prim(Prim::Neg, a) = &mut own
+    {
+        a[0] = Term::Lit(v);
+        return own;
+    }
+    Term::Lit(v)
 }
 
 /// Whether `p` on values of one numeric carrier gives a value of that carrier: `+`, `-`, `*`

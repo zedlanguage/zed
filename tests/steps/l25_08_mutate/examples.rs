@@ -37,16 +37,61 @@ fn a_boundary_the_table_checks_detects_its_mutants() {
 fn a_mutant_the_build_stage_proves_equal_is_skipped() {
     // `2 + 0` and `2 - 0` are both built to 2; the other mutants change the factor. With `x`
     // generic, `2 + 0` takes the carrier of `x` (L1.26a) and is built once per carrier, one
-    // `match` on `x` whose arms are `2.0 + 0.0`, `2r + 0r`, … and, last, the marked `2 + 0`
-    // (STAGE-generic-fold): the build stage builds each arm to its constant, so the mutant
-    // is in the last arm, .4 (the `match` on `x` is .0), and is skipped.
+    // `match` on `x` whose arms are `2.0 + 0.0`, `2r + 0r`, … and, last, `2 + 0`
+    // (STAGE-generic-fold): the build stage builds each arm to its constant, and the mutant,
+    // which replaces `+` in every arm, is skipped. It is named by the first arm, .1 (the
+    // `match` on `x` is .0).
     let unit = "scale(positional x) = x * (2 + 0) test { 3 -> 6 }\n";
     assert_eq!(
         report(unit),
         [
-            "1:30: skipped: `+` replaced by `-` in `scale` at .0.1.4: the build stage gives the \
+            "1:30: skipped: `+` replaced by `-` in `scale` at .0.1.1: the build stage gives the \
              definition the original's term",
             "5 mutants: 4 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+}
+
+#[test]
+fn a_mutant_of_an_operation_on_generic_literals_changes_it_at_every_carrier() {
+    // `2 + 1` is built once per carrier; its mutant `2 - 1` replaces `+` in every arm, so a
+    // row at `f64` alone detects it. The mutants of the constants 2 and 1 replace them in the
+    // arm of their own carrier, `int`, alone, and a row at `f64` does not detect them (plan
+    // row MUTATE-generic-constants).
+    let unit = "scale(positional x) = x * (2 + 1) test { 1.5f64 -> 4.5f64 }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:28: undetected: `2` replaced by `1` in `scale` at .0.1.4.0: every row that reaches \
+             it passes",
+            "1:28: undetected: `2` replaced by `3` in `scale` at .0.1.4.0: every row that reaches \
+             it passes",
+            "1:32: undetected: `1` replaced by `0` in `scale` at .0.1.4.1: every row that reaches \
+             it passes",
+            "1:32: undetected: `1` replaced by `2` in `scale` at .0.1.4.1: every row that reaches \
+             it passes",
+            "5 mutants: 1 detected, 4 undetected, 0 skipped, 0 not run",
+        ]
+    );
+}
+
+#[test]
+fn a_literal_following_another_keeps_its_mark_at_the_other_s_carrier() {
+    // `/` takes no `int`, so at the `int` 2 the last arm of `4 / 2` is `4.0 / 2.0`: `2` takes
+    // the carrier of `4.0` and keeps its mark there, so its mutants are made, at `f64`.
+    let unit = "g(positional x) = x == 4 / 2 test { 2 -> false, 2.0f64 -> true, 3r -> false }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:24: undetected: `4.0` replaced by `3.0` in `g` at .0.1.4.0: every row that \
+             reaches it passes",
+            "1:24: undetected: `4.0` replaced by `5.0` in `g` at .0.1.4.0: every row that \
+             reaches it passes",
+            "1:28: undetected: `2.0` replaced by `1.0` in `g` at .0.1.4.1: every row that \
+             reaches it passes",
+            "1:28: undetected: `2.0` replaced by `3.0` in `g` at .0.1.4.1: every row that \
+             reaches it passes",
+            "6 mutants: 2 detected, 4 undetected, 0 skipped, 0 not run",
         ]
     );
 }
