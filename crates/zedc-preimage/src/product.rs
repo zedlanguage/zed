@@ -513,6 +513,48 @@ pub struct NameProducts {
     /// different paths, kept as (a, b, gap) until a later test moves an end of `a` or `b`
     /// or puts them on one path (`NameProducts::pending_holds`).
     pending: Option<(Arc<str>, Arc<str>, Int)>,
+    /// The pendant leaves ([`PendantRow`]), each with its row: a leaf's product is its base
+    /// product met with what its row allows at its hub's upper end.
+    pendants: imbl::OrdMap<Arc<str>, PendantRow>,
+}
+
+/// The row `(hub - leaf >= gap && leaf >= start) || leaf <= low`, with `low < start`, of a
+/// leaf no other conjunct mentions ([`Scope::extend_pendant`]). With `H` the hub's upper end,
+/// the leaf's values the row allows are `(-inf, low]` and `[start, H - gap]`: a value at most
+/// `low` holds with every value of the hub, and one in `[start, H - gap]` with `H`. The leaf
+/// keeps a value at most `low` (checked when the row is admitted, and its base product is not
+/// written after), so every value of the hub keeps a witness and the row narrows no hub.
+#[derive(Clone, PartialEq, Debug)]
+struct PendantRow {
+    hub: Arc<str>,
+    low: Int,
+    start: Int,
+    gap: Int,
+}
+
+impl PendantRow {
+    /// The upper end `H - gap` of the leaf's values in the row's first case, for the hub's
+    /// upper end `H` (`inf` when it has none), when that case has values: it is at least
+    /// `start`.
+    fn cap(&self, hub: &IntervalSet) -> Option<End> {
+        let cap = match hub.bounds()? {
+            (_, End::Fin(h)) => End::Fin(Num::from(&(&Int::from(h) - &self.gap))),
+            (_, e) => e.clone(),
+        };
+        (cap >= End::Fin(Num::from(&self.start))).then_some(cap)
+    }
+
+    /// The leaf's values the row allows where the hub's integers are `hub`: `(-inf, low]`,
+    /// and `[start, H - gap]` when it is not empty ([`PendantRow::cap`]).
+    fn allowed(&self, hub: &IntervalSet) -> IntervalSet {
+        let low = (End::NegInf, End::Fin(Num::from(&self.low)));
+        match self.cap(hub) {
+            Some(cap) => {
+                IntervalSet::from_pieces(vec![low, (End::Fin(Num::from(&self.start)), cap)])
+            }
+            None => IntervalSet::from_pieces(vec![low]),
+        }
+    }
 }
 
 /// A directed path of names: the interval they share in the root's coordinates, its head and
@@ -600,7 +642,7 @@ impl NameProducts {
     /// O(log² n), where reading it through the map would build the whole map.
     pub fn read(&self, name: &str) -> Option<std::borrow::Cow<'_, Product>> {
         use std::borrow::Cow;
-        if !self.paths.contains_key(name) {
+        if !self.paths.contains_key(name) && !self.pendants.contains_key(name) {
             return self.base.get(name).map(Cow::Borrowed);
         }
         if let Some(view) = self.view.as_ref().and_then(|v| v.get()) {
@@ -647,11 +689,29 @@ impl NameProducts {
         since: &'a NameProducts,
         vars: &'a imbl::OrdSet<Arc<str>>,
     ) -> impl Iterator<Item = &'a Arc<str>> + 'a {
-        let moved = !(self.paths.ptr_eq(&since.paths) && self.ranges.ptr_eq(&since.ranges));
+        let moved = self.moved_since(since);
         let on_paths = (vars.iter()).filter(move |v| {
-            moved && (self.paths.contains_key(*v) || since.paths.contains_key(*v))
+            moved
+                && (self.paths.contains_key(*v)
+                    || since.paths.contains_key(*v)
+                    || self.pendants.contains_key(*v)
+                    || since.pendants.contains_key(*v))
         });
         crate::images::changed(&since.base, &self.base).chain(on_paths)
+    }
+
+    /// Whether a name's product may differ between `since` and `self` other than through its
+    /// base entry: the paths, their ranges or the pendant rows differ. A pendant leaf follows
+    /// its hub, which is on a path. O(1).
+    fn moved_since(&self, since: &NameProducts) -> bool {
+        !(self.paths.ptr_eq(&since.paths)
+            && self.ranges.ptr_eq(&since.ranges)
+            && self.pendants.ptr_eq(&since.pendants))
+    }
+
+    /// Whether some product is not its base entry: a name on a path or a pendant leaf.
+    fn implicit(&self) -> bool {
+        !self.paths.is_empty() || !self.pendants.is_empty()
     }
 
     fn root(&self, name: &str) -> Option<(Arc<str>, Int, &PathRange)> {
@@ -676,12 +736,16 @@ impl NameProducts {
                 &Premises::new(),
             );
             while p.reduce_domains() {}
+        } else if let Some(row) = self.pendants.get(name) {
+            let hub = self.product(&row.hub)?;
+            p.meet_ints(row.allowed(hub.ints()), &Premises::new());
+            while p.reduce_domains() {}
         }
         Some(p)
     }
 
     fn view(&self) -> &Products {
-        if self.paths.is_empty() {
+        if !self.implicit() {
             return &self.base;
         }
         self.view
@@ -689,7 +753,7 @@ impl NameProducts {
             .expect("implicit bounds have an exact-map cache")
             .get_or_init(|| {
                 let mut out = self.base.clone();
-                for n in self.paths.keys() {
+                for n in self.paths.keys().chain(self.pendants.keys()) {
                     let p = self.product(n).expect("a path member is in the base map");
                     if self.base.get(n) != Some(&p) {
                         out.insert(n.clone(), p);
@@ -700,10 +764,11 @@ impl NameProducts {
     }
 
     fn materialize(&mut self) {
-        if !self.paths.is_empty() {
+        if self.implicit() {
             self.base = self.view().clone();
             self.paths.clear();
             self.ranges.clear();
+            self.pendants.clear();
             self.relation = None;
             self.view = None;
             self.pending = None;
@@ -720,7 +785,7 @@ impl NameProducts {
     // and no test was admitted after the first. Used: one entry of the base map, and of the
     // built map when there is one, O(log n) (item ST-walk-checker-admit).
     fn set_fresh(&mut self, x: &Arc<str>, p: Option<Product>) {
-        if self.paths.contains_key(x) {
+        if self.paths.contains_key(x) || self.pendants.contains_key(x) {
             self.materialize();
         }
         if let Some(view) = &mut self.view {
@@ -739,7 +804,7 @@ impl NameProducts {
     /// The exact map when it costs nothing to read: the base map when no name is on a path,
     /// or the map of this version when it was built.
     fn built(&self) -> Option<&Products> {
-        if self.paths.is_empty() {
+        if !self.implicit() {
             return Some(&self.base);
         }
         self.view.as_ref().and_then(|v| v.get())
@@ -754,6 +819,10 @@ impl NameProducts {
     fn member(&mut self, n: &Arc<str>) -> Option<()> {
         if self.paths.contains_key(n) {
             return Some(());
+        }
+        // A pendant leaf's base entry is not its product, and a path would take it as one.
+        if self.pendants.contains_key(n) {
+            return None;
         }
         let p = self.base.get(n)?;
         if p.ty.element != Type::int()
@@ -5988,8 +6057,7 @@ impl Scope {
         while !self.bottom
             && !(self.kept.triggers.is_empty() && self.kept.fixed.names().next().is_none())
         {
-            let moved =
-                !(self.names.paths.ptr_eq(&since.paths) && self.names.ranges.ptr_eq(&since.ranges));
+            let moved = self.names.moved_since(&since);
             let vars: imbl::OrdSet<Arc<str>> = if moved {
                 (self.kept.triggers.keys())
                     .chain(self.kept.fixed.names())
@@ -6903,7 +6971,8 @@ impl Scope {
         reduce: fn(&mut Scope),
     ) -> Scope {
         let mut s = self.clone();
-        let admitted = s.extend_path(test, outcome, premises);
+        let admitted =
+            s.extend_path(test, outcome, premises) || s.extend_pendant(test, outcome, premises);
         if admitted {
             if s.bottom {
                 reduce(&mut s);
@@ -6921,7 +6990,7 @@ impl Scope {
             // the shortest-path argument of `NameProducts::hold` (Bellman 1958, Shostak
             // 1981). Measured 8.1 to 8.7 at 8n in every order (ST-walk-orders).
             let certified = (s.seen.extension.as_deref()).is_some_and(Extension::certified);
-            if s.bottom || s.names.paths.is_empty() && !certified {
+            if s.bottom || !s.names.implicit() && !certified {
                 reduce(&mut s);
             }
         }
@@ -6934,7 +7003,7 @@ impl Scope {
                 (Some(a), Some(b)) => !Arc::ptr_eq(&a, &b),
                 _ => false,
             };
-            if admitted || newly || !s.names.paths.is_empty() {
+            if admitted || newly || s.names.implicit() {
                 path_check::compare(&s, || {
                     path_check::as_reference(|| self.assume_with(test, outcome, premises, reduce))
                 });
@@ -7129,6 +7198,138 @@ impl Scope {
         names.relation = Some(self.relation.mark());
         self.names = names;
         self.bottom = bottom;
+        true
+    }
+
+    /// Admits `(x - y >= gap && y >= start) || y <= low`, `low < start`, on a leaf `y` no
+    /// conjunct mentions yet ([`PendantRow`]): `y` becomes a pendant leaf of the hub `x`, which
+    /// goes on a path of its own, and the row is held apart in the relation. Later tests on
+    /// the hub that the paths admit then narrow every such leaf through its hub at no cost per
+    /// leaf, and any other test materializes the products and runs the solver as before.
+    // Complexity tradeoff (XR-hub-moved-relation): naive version, the row is split into its
+    // two cases, each a copy of the scope reduced by the solver, and the cases are joined. The
+    // first case raises the hub's lower end to `start + gap`, which makes every earlier row on
+    // the hub due, so the k-th row projects k - 1 rows for nothing (the join restores the
+    // hub): Θ(k²) over k rows. Then each test lowering the hub's upper end changes every
+    // leaf, and an eager scope that holds each product writes k of them per test, Θ(k²) over
+    // k tests (linear_moved: 60.7 times the bytes at 8n on main). Used: by the witness
+    // argument of [`PendantRow`] the row narrows no hub and a leaf's product is its own met with
+    // `(-inf, low] ∪ [start, H - gap]` for the hub's upper end `H`, so the leaf keeps its own
+    // product and reads `H` when it is read, as a path member reads its root's interval
+    // ([`NameProducts`]). A row costs O(log n) (one entry of the pendant map, the hub put on
+    // a path, the row pushed on the relation's pending list) and a test on the hub O(log n)
+    // (`NameProducts::bound`); reading a leaf O(log² n), the exact map O(n log² n) once per
+    // version. The argument is the support argument of Freuder, "A sufficient condition for
+    // backtrack-free search", JACM 29(1), 1982 (a tree of binary constraints, each arc
+    // consistent, leaves every value reachable), here with the explicit witness `y <= low`
+    // that holds with every hub value. The leaf's own product has two values at most `low`
+    // and the hub two values at least, so the box of the second case gives the join no
+    // affine equality (Karr's join, which the solver's path takes). Tradeoffs: the leaf must
+    // be on no path, a pendant of no other row and in no other conjunct (the relation at the
+    // mark of the last admission, or unary bounds alone), the test must hold under no
+    // premises, and the leaf a plain integer interval with no premises; a later test on a
+    // leaf, any test the paths refuse, or a write through `DerefMut` materializes every leaf
+    // in O(k log² n) once and runs the solver, which projects each row once more. Measured
+    // (`linear_moved_often_scales`, xst/s4.rs, k = 16 and 128): 8.2 times the instructions and
+    // 8.1 times the bytes, against 60.7 times the bytes on main; the family at k = 64 allocates
+    // 7.7 MB, against 3.87 GB on main (COMPLEXITY.md HUB-moved-relation).
+    fn extend_pendant(&mut self, test: &Term, outcome: bool, prem: &Premises) -> bool {
+        if self.bottom
+            || self.exact
+            || self.in_case
+            || !self.written.is_empty()
+            || !outcome
+            || !prem.is_empty()
+        {
+            return false;
+        }
+        #[cfg(feature = "preimage-ref")]
+        if path_check::reference() {
+            return false;
+        }
+        if !matches!(test, Term::Prim(Prim::Or, sides) if sides.len() == 2) {
+            return false;
+        }
+        if self
+            .names
+            .blocker
+            .as_ref()
+            .is_some_and(|g| self.relation.set().contains(g))
+        {
+            return false;
+        }
+        // The row as `narrow` and `narrow_linear` take it, so the relation holds the very
+        // formula the solver's path adds.
+        let plain = plain_test(test, self);
+        let t = plain.as_ref().unwrap_or(test);
+        let (tree, pol) = Tree::of(t);
+        if !matches!(tree.nodes[0].kind, Kind::Nest(..)) {
+            return false;
+        }
+        let Some(body) = self.relation_of(&tree.term_at(0), outcome == pol) else {
+            return false;
+        };
+        let Some((leaf, row)) = pendant_row(&body) else {
+            return false;
+        };
+        if let Some(relation) = &self.names.relation {
+            if !self.relation.at(relation) {
+                return false;
+            }
+        } else if let Some(g) = self.relation.set().iter().find(|g| {
+            !matches!(&***g,
+            Formula::Con(c) if c.rel == Rel::Ge && c.lin.terms.len() == 1
+                && c.lin.terms.keys().all(|a| matches!(a, Atom::Sym(_))))
+        }) {
+            self.names.blocker = Some(g.clone());
+            return false;
+        }
+        if !self.self_bound(&leaf) || !self.self_bound(&row.hub) {
+            return false;
+        }
+        let mut names = Clone::clone(&self.names);
+        if names.paths.contains_key(&leaf) || names.pendants.contains_key(&leaf) {
+            return false;
+        }
+        let Some(p) = names.base.get(&leaf) else {
+            return false;
+        };
+        if p.ty.element != Type::int()
+            || classed(p)
+            || listed(p).is_some()
+            || !p.premises().is_empty()
+            || p.cell.ints.element != Bounds::ints(p.ints().clone())
+        {
+            return false;
+        }
+        // Two values at most `low`: the witness of every hub value, and no equality.
+        let Some((End::Fin(lo), hi)) = p.ints().only() else {
+            return false;
+        };
+        if Int::from(lo) >= row.low {
+            return false;
+        }
+        let hi = hi.clone();
+        if names.member(&row.hub).is_none() {
+            return false;
+        }
+        let Some(hub) = names.product(&row.hub) else {
+            return false;
+        };
+        // Both cases live, as the solver's join of the two: a dead first case leaves the
+        // test of one name `y <= low`, whose moved end the solver records ([`Scope::direct`]).
+        if !hub.premises().is_empty()
+            || row.cap(hub.ints()).is_none()
+            || hi < End::Fin(Num::from(&row.start))
+        {
+            return false;
+        }
+        names.pendants.insert(leaf, row);
+        names.view = Some(Arc::new(OnceLock::new()));
+        self.refuse_looped(t, &tree, outcome == pol, outcome);
+        self.relation.defer(body);
+        names.relation = Some(self.relation.mark());
+        self.names = names;
         true
     }
 
@@ -13010,6 +13211,76 @@ impl Product {
 }
 
 /// Whether `p` has a class other than all integers, or than the one value its interval is.
+/// The leaf and row of `(x - y >= gap && y >= start) || y <= low` with `low < start`, the
+/// sides and the conjuncts in either order ([`PendantRow`]). O(1): two sides of two conjuncts.
+fn pendant_row(f: &Formula) -> Option<(Arc<str>, PendantRow)> {
+    let Formula::Or(sides) = f else {
+        return None;
+    };
+    let [a, b] = &sides[..] else {
+        return None;
+    };
+    let one = |c: &Con| -> Option<(Arc<str>, Int)> {
+        let [(Atom::Sym(n), k)] = c.lin.terms.iter().collect::<Vec<_>>()[..] else {
+            return None;
+        };
+        (c.rel == Rel::Ge).then(|| (n.clone(), k.clone()))
+    };
+    for (upper, both) in [(a, b), (b, a)] {
+        let (Formula::Con(upper), Formula::And(both)) = (upper, both) else {
+            continue;
+        };
+        // `low - y >= 0`.
+        let Some((leaf, k)) = one(upper) else {
+            continue;
+        };
+        if k != Int::from(-1) {
+            continue;
+        }
+        let low = upper.lin.constant.clone();
+        let [c, d] = &both[..] else {
+            continue;
+        };
+        for (lower, edge) in [(c, d), (d, c)] {
+            let (Formula::Con(lower), Formula::Con(edge)) = (lower, edge) else {
+                continue;
+            };
+            // `y - start >= 0`.
+            if one(lower) != Some((leaf.clone(), Int::from(1))) {
+                continue;
+            }
+            let start = -&lower.lin.constant;
+            // `x - y - gap >= 0`.
+            if edge.rel != Rel::Ge || edge.lin.terms.len() != 2 {
+                continue;
+            }
+            if edge.lin.terms.get(&Atom::Sym(leaf.clone())) != Some(&Int::from(-1)) {
+                continue;
+            }
+            let Some(hub) = edge.lin.terms.iter().find_map(|(a, k)| match a {
+                Atom::Sym(n) if *n != leaf && *k == Int::from(1) => Some(n.clone()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            if low >= start {
+                continue;
+            }
+            let gap = -&edge.lin.constant;
+            return Some((
+                leaf,
+                PendantRow {
+                    hub,
+                    low,
+                    start,
+                    gap,
+                },
+            ));
+        }
+    }
+    None
+}
+
 fn classed(p: &Product) -> bool {
     match &p.cell.congruence.element {
         Congruence::Class { modulus, .. } if *modulus == Num::ONE => false,

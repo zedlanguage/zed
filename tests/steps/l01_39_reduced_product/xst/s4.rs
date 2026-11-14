@@ -999,6 +999,7 @@ fn every_order_of_the_families_on_paths_matches_the_solver() {
         ("walk without its start", walk(6, false), true),
         ("chain raise", chain_raise(6), true),
         ("churn", c26(3, true), false),
+        ("linear cases moved", linear_moved(6), false),
     ];
     for (what, sys, on_paths) in &fams {
         for how in HOWS {
@@ -1530,4 +1531,107 @@ fn points_written_after_scale() {
     scaling::check_order("points written after, Backward, k tests", 16, 1, |m| {
         drop(inputs[&m].narrowed(How::Backward));
     });
+}
+
+/// The disjunctions of [`class_cases_moved`] with the difference `x - y >= 1` in place of the class, so
+/// that the relation holds them: k tests on `y_i` that read `x`, then k tests that lower `x`.
+fn linear_moved(k: usize) -> Sys {
+    let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+    let mut ns: Vec<&str> = ys.iter().map(String::as_str).collect();
+    ns.push("x");
+    let b = 20 + i64::try_from(k).expect("a small size");
+    let mut rel: Vec<Term> = ys
+        .iter()
+        .map(|y| {
+            or(
+                and(diff_ge("x", y, 1), prim(Prim::Ge, var(y), int(0))),
+                prim(Prim::Le, var(y), int(-5)),
+            )
+        })
+        .collect();
+    rel.extend((1..=b - 20).map(|i| prim(Prim::Le, var("x"), int(b - i))));
+    Sys {
+        start: boxed(&ns, b),
+        rel,
+    }
+}
+
+/// Rows of [`linear_moved`]'s shape with differing gaps and ends, mixed with tests the
+/// pendants do not take (XR-hub-moved-relation): a second row on a leaf, with another hub; a
+/// leaf with no value at most the row's `low`; a second hub `z` with a leaf `v`; a hole in the
+/// hub; a test on a leaf; then more tests on both hubs.
+fn pendant_mix(k: usize) -> Sys {
+    let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+    let mut ns: Vec<&str> = ys.iter().map(String::as_str).collect();
+    ns.extend(["x", "z", "w", "v"]);
+    let b = 12;
+    let row = |hub: &str, y: &str, gap: i64, start: i64, low: i64| {
+        or(
+            and(diff_ge(hub, y, gap), prim(Prim::Ge, var(y), int(start))),
+            prim(Prim::Le, var(y), int(low)),
+        )
+    };
+    let mut rel: Vec<Term> = (0..k)
+        .map(|i| {
+            let i = i64::try_from(i).expect("a small size");
+            row("x", &format!("y{i}"), 1 + i % 3, i % 4, -5 - i % 2)
+        })
+        .collect();
+    rel.extend([
+        row("z", "y0", 2, 1, -6),
+        prim(Prim::Ge, var("w"), int(-3)),
+        row("x", "w", 1, 0, -5),
+        row("z", "v", 2, 1, -6),
+        prim(Prim::Le, var("x"), int(b - 2)),
+        prim(Prim::Ne, var("x"), int(b - 4)),
+        prim(Prim::Le, var("z"), int(3)),
+        prim(Prim::Le, var("y1"), int(2)),
+        prim(Prim::Le, var("x"), int(b - 6)),
+        prim(Prim::Le, var("z"), int(1)),
+        prim(Prim::Le, var("x"), int(2)),
+    ]);
+    Sys {
+        start: boxed(&ns, b),
+        rel,
+    }
+}
+
+/// [`linear_moved`] narrows in near-linear time.
+#[test]
+fn linear_moved_often_scales() {
+    let inputs = scaling::inputs(16, linear_moved);
+    scaling::check_order("linear cases moved, Forward, k tests", 16, 1, |m| {
+        drop(inputs[&m].narrowed(How::Forward));
+    });
+}
+
+/// [`linear_moved`] and [`pendant_mix`] in every order agree with the solver at each test, and
+/// the rows of [`linear_moved`] are admitted one at a time as pendants of `x`
+/// (XR-hub-moved-relation): given one at a time, every order compares some scope. The mixed
+/// family's reverse order refuses every row (the hole in `x` comes first and leaves the
+/// relation more than unary bounds), so there nothing need be compared.
+#[test]
+fn linear_moved_on_pendants_matches_the_solver() {
+    use zedc::store::product::path_check;
+    for (k, family, admits) in [1, 2, 6].into_iter().flat_map(|k| {
+        [
+            (k, linear_moved as fn(usize) -> Sys, true),
+            (k, pendant_mix as fn(usize) -> Sys, false),
+        ]
+    }) {
+        for how in HOWS {
+            path_check::start();
+            drop(family(k).narrowed(how));
+            let (compared, differences) = path_check::stop();
+            assert!(
+                differences.is_empty(),
+                "k = {k}, {how:?}: the scopes on pendants differ from the solver's:\n{}",
+                differences.join("\n")
+            );
+            eprintln!("k = {k}, {how:?}: {compared} compared");
+            if admits && !matches!(how, How::AtOnce) {
+                assert!(compared > 0, "k = {k}, {how:?}: nothing compared");
+            }
+        }
+    }
 }
