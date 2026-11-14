@@ -438,10 +438,13 @@ fn strip(text: &str, content: usize, raw: &[Raw]) -> Result<Vec<(usize, usize)>,
     for (p, end) in lines {
         let stop = text[p..end].find('\n').map_or(end, |k| p + k);
         let line = &text[p..stop];
-        if line.starts_with(indent) {
-            cuts.push((p, p + indent.len()));
-        } else if line.bytes().all(|b| b == b' ' || b == b'\t') && stop < end {
+        // A line of only spaces and tabs becomes empty, whether it is shorter than the
+        // indentation, as long, or longer; one that a hole ends (`stop == end`) is not such a
+        // line, since the line goes on in the hole.
+        if line.bytes().all(|b| b == b' ' || b == b'\t') && stop < end {
             cuts.push((p, stop));
+        } else if line.starts_with(indent) {
+            cuts.push((p, p + indent.len()));
         } else {
             let ws = line.len() - line.trim_start_matches([' ', '\t']).len();
             return Err(bad(
