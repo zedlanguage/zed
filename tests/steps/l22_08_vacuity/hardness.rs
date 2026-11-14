@@ -89,7 +89,9 @@ fn model_count(t: &Theory) -> (u64, u64) {
 
 #[test]
 fn clause_laws_have_one_model_per_satisfying_assignment() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "clause_laws_have_one_model_per_satisfying_assignment",
+    ));
     let mut with_dead_ends = 0;
     for _ in 0..150 {
         let n = 4 + rng.below(9);
@@ -244,7 +246,7 @@ fn an_or_of_ands_is_refused() {
     let all: Vec<Clause> = (0..8)
         .map(|bits| (0..3).map(|v| (v, (bits >> v) & 1 == 1)).collect())
         .collect();
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed("an_or_of_ands_is_refused"));
     let mut cases = vec![all.clone(), all[..7].to_vec()];
     for _ in 0..40 {
         let m = 1 + rng.below(7);

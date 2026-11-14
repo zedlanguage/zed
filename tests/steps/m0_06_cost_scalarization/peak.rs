@@ -175,7 +175,9 @@ fn peak_by_definition(p: &Plan, device: usize) -> u64 {
 
 #[test]
 fn the_peak_agrees_with_its_definition_and_lies_between_the_largest_and_the_sum() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_peak_agrees_with_its_definition_and_lies_between_the_largest_and_the_sum",
+    ));
     for _ in 0..RANDOM_INSTANCES / 4 {
         let p = random_plan(&mut rng, 2);
         for d in 0..2 {
@@ -199,7 +201,9 @@ fn the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
     for d in &mut t.devices {
         d.capacity = 3 << 19;
     }
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick",
+    ));
     let (mut feasible_seen, mut infeasible_seen) = (0, 0);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let p = random_plan(&mut rng, 2);

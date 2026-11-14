@@ -656,7 +656,9 @@ fn the_picks_agree_with_brute_force() {
 /// one by one (`Theory::pair_form`).
 #[test]
 fn the_frontier_agrees_with_brute_force() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_frontier_agrees_with_brute_force",
+    ));
     for _ in 0..100 {
         super::brute::check(&frontier(&mut rng));
     }

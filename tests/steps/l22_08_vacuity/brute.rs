@@ -259,7 +259,9 @@ pub fn check(t: &Theory) -> u64 {
 
 #[test]
 fn the_report_agrees_with_brute_force_on_random_theories() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_report_agrees_with_brute_force_on_random_theories",
+    ));
     let (mut forest, mut forest_dead, mut other, mut other_dead) = (0, 0, 0, 0);
     for _ in 0..1000 {
         let t = random_theory(&mut rng);

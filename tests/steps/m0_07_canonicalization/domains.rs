@@ -111,7 +111,9 @@ fn members(d: &Domain) -> Vec<i64> {
 
 #[test]
 fn the_normal_form_admits_the_same_integers_and_is_unique() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_normal_form_admits_the_same_integers_and_is_unique",
+    ));
     let mut by_members: BTreeMap<Vec<i64>, Domain> = BTreeMap::new();
     let mut collisions = 0;
     for _ in 0..RANDOM_INSTANCES * 2 {

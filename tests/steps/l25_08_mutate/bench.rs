@@ -60,7 +60,9 @@ fn running_the_mutants_of_a_chain_of_n_additions_scales() {
 
 #[test]
 fn running_the_mutants_of_a_generic_chain_of_n_additions_scales() {
-    on_main_sized_stack(|| running_a_chain("generic ", 50, generic_chain_with_row));
+    // At 50 and 400 it took 18.3 s at load 19 and past 22 s at load 34, and at 35 and 280 15.6 s
+    // at load 39 (ratio 56.6 by instructions); the work is order 2, so 25 and 200 do half that.
+    on_main_sized_stack(|| running_a_chain("generic ", 25, generic_chain_with_row));
 }
 
 fn running_a_chain(kind: &str, n: usize, make: fn(usize) -> String) {

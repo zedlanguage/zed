@@ -540,7 +540,7 @@ fn splitmix(seed: u64, i: u64) -> u64 {
 #[test]
 fn clustering_agrees_with_its_quadratic_form_on_random_inputs() {
     let mut inputs = Vec::new();
-    let seed = zed_tests::test_seed();
+    let seed = zed_tests::seed::seed("clustering_agrees_with_its_quadratic_form_on_random_inputs");
     for case in 0..1500u64 {
         let draw = |i: u64| splitmix(seed.wrapping_add(case), i);
         let n = draw(0) % 41;

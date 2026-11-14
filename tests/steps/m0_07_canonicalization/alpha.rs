@@ -382,7 +382,7 @@ fn indices(t: &Term, env: &mut Vec<Arc<str>>) -> String {
 #[test]
 fn addresses_agree_with_an_independent_alpha_equivalence_test() {
     let (mut same, mut differ) = (0, 0);
-    let base = zed_tests::test_seed();
+    let base = zed_tests::seed::seed("addresses_agree_with_an_independent_alpha_equivalence_test");
     for i in 0..RANDOM_INSTANCES as u64 {
         let seed = base.wrapping_add(i);
         let make = |names: u64| {
@@ -417,7 +417,7 @@ fn one_pass_is_stepwise(t: Term) {
 
 #[test]
 fn the_normal_form_is_the_rules_applied_one_step_at_a_time() {
-    let base = zed_tests::test_seed();
+    let base = zed_tests::seed::seed("the_normal_form_is_the_rules_applied_one_step_at_a_time");
     for i in 0..RANDOM_INSTANCES as u64 / 4 {
         let seed = base.wrapping_add(i);
         one_pass_is_stepwise(random(

@@ -135,7 +135,9 @@ fn the_broken_text_is_the_flat_text_up_to_whitespace() {
     // nothing is broken.
     const TERMS: usize = 2_000;
     const WIDTHS: [usize; 8] = [8, 16, 24, 32, 48, 64, 80, 120];
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_broken_text_is_the_flat_text_up_to_whitespace",
+    ));
     for _ in 0..TERMS {
         let depth = 1 + rng.below(4);
         let t = random(&mut rng, depth);

@@ -114,7 +114,9 @@ fn random_graph(rng: &mut Rng) -> Vec<Vec<usize>> {
 
 #[test]
 fn bourdoncle_agrees_with_the_declarative_definition() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "bourdoncle_agrees_with_the_declarative_definition",
+    ));
     let mut components = 0;
     for _ in 0..RANDOM_INSTANCES {
         let g = random_graph(&mut rng);
@@ -146,7 +148,9 @@ fn every_backward_edge_goes_to_an_enclosing_head() {
             }
         }
     }
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "every_backward_edge_goes_to_an_enclosing_head",
+    ));
     for _ in 0..RANDOM_INSTANCES / 4 {
         let g = random_graph(&mut rng);
         let mut order = Vec::new();
@@ -194,7 +198,9 @@ fn the_traversal_order_picks_the_head() {
 /// following the lists as written.
 #[test]
 fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_order_agrees_with_the_declarative_definition_on_larger_graphs",
+    ));
     let mut nested = 0;
     for _ in 0..RANDOM_INSTANCES / 2 {
         let n = 1 + rng.below(40);
@@ -230,7 +236,9 @@ fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
 /// each successor list sorted by them.
 #[test]
 fn the_keyed_order_agrees_with_the_declarative_definition() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_keyed_order_agrees_with_the_declarative_definition",
+    ));
     for _ in 0..RANDOM_INSTANCES {
         let g = random_graph(&mut rng);
         let n = g.len();

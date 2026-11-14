@@ -414,7 +414,9 @@ fn random_scheduled(rng: &mut Rng, max: usize, t: &Target) -> (Plan, Vec<Vec<boo
 #[test]
 fn the_footprint_agrees_with_its_definition() {
     let t = two_kinds();
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_footprint_agrees_with_its_definition",
+    ));
     let (mut nestings, mut timings) = (0, 0);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, before) = random_scheduled(&mut rng, 7, &t);
@@ -464,7 +466,9 @@ fn the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
     for d in &mut t.devices {
         d.capacity = 3 << 19;
     }
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick",
+    ));
     let (mut feasible_seen, mut infeasible_seen) = (0, 0);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, _) = random_scheduled(&mut rng, 5, &t);

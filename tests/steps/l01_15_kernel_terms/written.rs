@@ -284,7 +284,11 @@ fn samples() -> Vec<Value> {
 /// read 50 payload tests and wanted more than 50.
 #[test]
 fn random_terms_with_type_tests_read_back() {
-    for seed in [19, 20, zed_tests::test_seed()] {
+    for seed in [
+        19,
+        20,
+        zed_tests::seed::seed("random_terms_with_type_tests_read_back"),
+    ] {
         let mut rng = zed_tests::instances::Rng::new(seed);
         let mut seed_seen = Seen::default();
         let mut drawn = 0;

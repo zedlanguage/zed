@@ -827,7 +827,9 @@ fn shuffle(rng: &mut Rng, xs: &mut [usize]) {
 /// its nodes and the order of its roots: values and refusals, cycles included.
 #[test]
 fn the_engine_agrees_with_the_meaning_under_every_order() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_engine_agrees_with_the_meaning_under_every_order",
+    ));
     let mut refused = 0;
     let mut solved_cycles = 0;
     for trial in 0..375 {

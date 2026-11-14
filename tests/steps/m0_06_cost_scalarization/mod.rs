@@ -246,7 +246,9 @@ fn random_plan(rng: &mut Rng, devices: usize) -> Plan {
 #[test]
 fn the_scalar_is_monotone_in_work_depth_and_cut_edges() {
     let t = workstation();
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_scalar_is_monotone_in_work_depth_and_cut_edges",
+    ));
     for _ in 0..RANDOM_INSTANCES / 4 {
         let p = plan_with(&mut rng);
         let base = scalarize(&p, &t);
@@ -271,7 +273,9 @@ fn plan_with(rng: &mut Rng) -> Plan {
 #[test]
 fn the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_plan() {
     let t = workstation();
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_plan",
+    ));
     let mut pruned = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let mut plans: Vec<Plan> = (0..2 + rng.below(6))

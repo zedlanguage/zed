@@ -682,7 +682,11 @@ fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
 fn fuzz_of_the_real_grammar_finds_no_failure() {
     let dir = spec_dir("fuzz_real", &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let (outcome, out) = fuzz_of(&spec, 100, zed_tests::test_seed() as i64);
+    let (outcome, out) = fuzz_of(
+        &spec,
+        100,
+        zed_tests::seed::seed("fuzz_of_the_real_grammar_finds_no_failure") as i64,
+    );
     assert_eq!(outcome, Ok(true), "{out}");
     assert!(
         out.contains(" containment failures 0 derived but rejected 0\n"),

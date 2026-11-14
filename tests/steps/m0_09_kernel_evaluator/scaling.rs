@@ -92,7 +92,9 @@ fn random_family(rng: &mut Rng, depth: usize) -> Family {
 
 #[test]
 fn the_union_agrees_with_the_union_of_the_leaves() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_union_agrees_with_the_union_of_the_leaves",
+    ));
     let (mut collisions, mut overlaps) = (0, 0);
     for _ in 0..2_000 {
         let (a, b) = (random_family(&mut rng, 3), random_family(&mut rng, 3));
@@ -111,7 +113,9 @@ fn the_union_agrees_with_the_union_of_the_leaves() {
 fn families_are_ordered_by_their_entries() {
     // A family of families is ordered by its keys, so the order of two families must stay
     // the order of their entries in key order.
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "families_are_ordered_by_their_entries",
+    ));
     let mut both = [0; 3];
     for _ in 0..2_000 {
         let (a, b) = (random_family(&mut rng, 2), random_family(&mut rng, 2));
@@ -127,7 +131,9 @@ fn families_are_ordered_by_their_entries() {
 fn a_family_built_with_families_as_leaves_agrees_with_its_leaves() {
     // A family given as a leaf is kept whole where nothing else is written beneath its
     // keypath; the result, and the first collision, are those of its leaves given one by one.
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "a_family_built_with_families_as_leaves_agrees_with_its_leaves",
+    ));
     let (mut built, mut collisions) = (0, 0);
     for _ in 0..2_000 {
         let parts: Vec<(Vec<Value>, Value)> = (0..1 + rng.below(3))

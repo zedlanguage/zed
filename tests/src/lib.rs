@@ -98,21 +98,6 @@ pub fn main_param_message(name: &str, written: &str) -> String {
     )
 }
 
-/// The seed of a random test: `ZED_TEST_SEED` when it is set, to repeat a run, else a new one
-/// from the clock, so that each run draws other cases. It is printed, which `cargo test` shows
-/// when the test fails.
-pub fn test_seed() -> u64 {
-    let seed = match std::env::var("ZED_TEST_SEED") {
-        Ok(s) => s.parse().expect("ZED_TEST_SEED is a number"),
-        Err(_) => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("the clock is after 1970")
-            .as_nanos() as u64,
-    };
-    println!("seed {seed}: ZED_TEST_SEED={seed} repeats this run");
-    seed
-}
-
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps")

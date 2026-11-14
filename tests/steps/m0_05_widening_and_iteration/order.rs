@@ -112,7 +112,9 @@ fn the_loop_gives_c_at_1_to_4_in_each_order_of_its_equations() {
 fn reversed_and_rotated_units_give_the_same_cells() {
     // Each random system, with its equations reversed and rotated by each position, gives the
     // same order and the same cells by name, in phase 1 and after both phases.
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "reversed_and_rotated_units_give_the_same_cells",
+    ));
     let mut cut = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let eq = System::random(&mut rng);
@@ -371,7 +373,9 @@ fn checking_one_file_gives_the_cells_checking_all_files_gives() {
     // keypaths, each cell in one of three files. Checking every file at once (batch) and
     // checking one file, which traces only the cells that file reaches, give each cell the
     // same value, and so do the equations reversed and rotated.
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "checking_one_file_gives_the_cells_checking_all_files_gives",
+    ));
     let mut cut = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let mut eq = System::random(&mut rng);
@@ -663,7 +667,9 @@ fn renaming_a_loops_local_bindings_keeps_the_units_address() {
     ] {
         assert_eq!(address_of(&walk(names)), want, "{names:?}");
     }
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "renaming_a_loops_local_bindings_keeps_the_units_address",
+    ));
     for _ in 0..RANDOM_INSTANCES / 4 {
         let n = local_names(&mut rng, 3);
         assert_eq!(address_of(&walk([&n[0], &n[1], &n[2]])), want, "{n:?}");
@@ -760,7 +766,9 @@ fn a_local_binding_is_keyed_by_its_level_and_sorts_before_every_declaration() {
     let want: Vec<String> = (1..=3).map(|l| level_name(l).to_string()).collect();
     assert_eq!(hashed_names(["a", "b", "c"]), want);
     assert_eq!(hashed_names(["z", "b", "c"]), want);
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "a_local_binding_is_keyed_by_its_level_and_sorts_before_every_declaration",
+    ));
     for _ in 0..RANDOM_INSTANCES / 4 {
         let n = local_names(&mut rng, 3);
         assert_eq!(hashed_names([&n[0], &n[1], &n[2]]), want, "{n:?}");
@@ -818,7 +826,9 @@ fn a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_v
     // witness, each under six namings, the six orders of three random local names, so that
     // every relative order of the written names is met.
     const MEMBERS: usize = 2_000;
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "a_unit_and_a_copy_with_a_local_binding_renamed_get_the_same_heads_cells_and_verdict",
+    ));
     for _ in 0..MEMBERS {
         let eq = abc_member(&mut rng);
         let want = outcome(&keyed_by_level(&eq, ["a", "b", "c"]));

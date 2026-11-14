@@ -87,7 +87,9 @@ fn random(rng: &mut Rng) -> Def {
 
 #[test]
 fn every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one",
+    ));
     let mut fired = [0usize; 4];
     for _ in 0..RANDOM_INSTANCES / 4 {
         let mut d = random(&mut rng);
@@ -130,7 +132,9 @@ fn the_facet_rank_counts_the_pairs_out_of_order_and_the_facets() {
 
 #[test]
 fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
-    let mut rng = Rng::new(zed_tests::test_seed());
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "the_normal_form_does_not_depend_on_the_order_of_the_rules",
+    ));
     for _ in 0..RANDOM_INSTANCES / 4 {
         let d0 = random(&mut rng);
         let mut d = d0.clone();

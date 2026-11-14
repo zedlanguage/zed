@@ -842,7 +842,7 @@ fn chain_sides(t: &[Vec<(i64, i64, Value)>; 3], sum: &Term, times: &Term) -> (Te
 
 #[test]
 fn law_19_a_chain_of_contractions_reorders_in_every_semiring() {
-    let seed = zed_tests::test_seed();
+    let seed = zed_tests::seed::seed("law_19_a_chain_of_contractions_reorders_in_every_semiring");
     let ints: Vec<Value> = (-3..=3).map(Value::Int).collect();
     let bools = vec![Value::Bool(false), Value::Bool(true)];
     let semirings = [
@@ -948,7 +948,7 @@ fn star_sides(t: &[Vec<(i64, i64, Value)>; 3], sum: &Term, times: &Term) -> (Ter
 
 #[test]
 fn law_19_a_star_join_folds_each_arm_before_the_join() {
-    let seed = zed_tests::test_seed();
+    let seed = zed_tests::seed::seed("law_19_a_star_join_folds_each_arm_before_the_join");
     // Orders `a[i][j]` of customer i for product j, with the product's prices `b[j][k]` and
     // discounts `c[j][l]` per variant: the sum over all triples is the sum over `j` of the
     // order times the arms' totals. A product with no prices or no discounts drops out. The
