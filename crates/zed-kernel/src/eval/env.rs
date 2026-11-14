@@ -201,8 +201,8 @@ mod tests {
             }
             let want: Vec<_> = (0..12).map(|i| (NAMES[i], i)).collect();
             assert_eq!(contents(&env), want);
-            for i in 0..12 {
-                assert_eq!(get(&env, NAMES[i]).and_then(|b| b.fact), Some(i));
+            for (i, name) in NAMES.iter().enumerate() {
+                assert_eq!(get(&env, name).and_then(|b| b.fact), Some(i));
             }
             assert!(get(&env, "zz").is_none() && get(&env, "").is_none());
             // 12 names fit in an AVL tree of height 4 or 5.
