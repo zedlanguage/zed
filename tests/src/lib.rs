@@ -103,10 +103,13 @@ pub fn steps_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps")
 }
 
-/// Whether `name` is a well-formed step-folder name: a stage (`m0`, `l01`…`l29`, or `s` for
-/// the self-hosting row), the two-digit step number within the stage, with the one lowercase
-/// letter of a step DESIGN.md inserts after it (`L1.39a`), and a short lowercase description,
-/// joined by underscores (`l01_07_fences`, `l01_39a_bit_words`).
+/// The last layer DESIGN.md has (`L40`, a browser layout engine in Zed).
+const LAST_LAYER: u8 = 40;
+
+/// Whether `name` is a well-formed step-folder name: a stage (`m0`, `l01`…`l40` for the layers
+/// L1 to L40 of DESIGN.md, or `s` for the self-hosting row), the two-digit step number within
+/// the stage, with the one lowercase letter of a step DESIGN.md inserts after it (`L1.39a`), and
+/// a short lowercase description, joined by underscores (`l01_07_fences`, `l01_39a_bit_words`).
 pub fn is_step_name(name: &str) -> bool {
     let mut parts = name.splitn(3, '_');
     let (Some(stage), Some(step), Some(desc)) = (parts.next(), parts.next(), parts.next()) else {
@@ -118,7 +121,7 @@ pub fn is_step_name(name: &str) -> bool {
             && stage.starts_with('l')
             && stage[1..]
                 .parse::<u8>()
-                .is_ok_and(|n| (1..=29).contains(&n)));
+                .is_ok_and(|n| (1..=LAST_LAYER).contains(&n)));
     let digits = step
         .strip_suffix(|c: char| c.is_ascii_lowercase())
         .unwrap_or(step);
@@ -143,6 +146,8 @@ mod tests {
         assert!(is_step_name("m0_01_scaffolding"));
         assert!(is_step_name("l01_07_fences"));
         assert!(is_step_name("l29_03_lowering_in_zed"));
+        assert!(is_step_name("l30_01_editor"));
+        assert!(is_step_name("l40_01_layout"));
         assert!(is_step_name("s_01_stage1"));
         assert!(is_step_name("l01_39a_bit_words"));
     }
@@ -152,7 +157,8 @@ mod tests {
         for bad in [
             "m0_1_scaffolding", // step not two digits
             "l1_07_fences",     // layer not two digits
-            "l30_01_beyond",    // no layer 30
+            "l41_01_beyond",    // no layer 41
+            "l99_01_beyond",    // no layer 99
             "l00_01_zero",      // no layer 0
             "l01_00_zero",      // steps count from 1
             "l01_07",           // no description

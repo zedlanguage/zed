@@ -6,6 +6,7 @@
 
 mod bench;
 mod cases;
+mod fail_steps_name_layers;
 mod scaling;
 
 use std::collections::BTreeSet;

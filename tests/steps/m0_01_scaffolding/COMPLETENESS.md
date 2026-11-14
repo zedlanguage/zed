@@ -8,8 +8,8 @@ and a failed `fs::write`, which need a failing file system. Every line of `is_st
 | Case | Covering test, or the reason none is needed |
 |---|---|
 | Stage `m0`, `s`, `l01`, `l29` | `cases::step_names_by_stage_step_letter_and_description` |
-| Stage `l30` to `l40` (DESIGN.md has layers L30 to L40) | Fails: row FAIL-steps-name-layers, `wt/failing-tests/FAIL-steps-name-layers.rs` |
-| Stage `l41` (no such layer) refused | FAIL-steps-name-layers (passes now, kept beside the failing case) |
+| Stage `l30` to `l40` (DESIGN.md has layers L30 to L40) | `fail_steps_name_layers::every_layer_of_design_names_a_step_folder`, `cases` ("layer 30", "the last layer, 40") |
+| Stage `l41` (no such layer) refused | `fail_steps_name_layers::every_layer_of_design_names_a_step_folder`, `cases` ("layer 41, past the last") |
 | Stage `l+1` (a sign) refused | Fails: row FAIL-steps-name-plus-sign, `wt/failing-tests/FAIL-steps-name-plus-sign.rs` |
 | Stage upper case, unknown, `m1`, `l00`, `l1`, `l001`, a letter beyond ASCII after `l` | `cases::step_names_by_stage_step_letter_and_description` |
 | Step `01`, `99`, `00`, one digit, three digits, `+1`, letter `a` on each stage, two letters, upper-case letter, a letter only | `cases::step_names_by_stage_step_letter_and_description` |
