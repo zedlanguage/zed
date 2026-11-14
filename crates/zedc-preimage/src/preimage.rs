@@ -10839,6 +10839,10 @@ fn leaf_pa(leaf: &Leaf, base: Option<&Pa>) -> Option<Pa> {
     }
 }
 
+/// A range of classes [`cls_zip`] finds, with the summaries of its two trees there, or with
+/// none when the range meets none of the ranges read.
+type Zipped = ((usize, usize), Option<(Pa, Pa)>);
+
 /// Appends to `out`, in the order of the classes, each range of classes `span` in which both
 /// `a` and `b`, trees over `span` with no map above them, are one summary, with those two
 /// summaries; `bases` are the summaries of their [`Leaf::Base`] leaves. A range is a node of
@@ -10851,7 +10855,7 @@ fn cls_zip(
     bases: (Option<&Pa>, Option<&Pa>),
     (lo, hi): (usize, usize),
     on: Option<&[(usize, usize)]>,
-    out: &mut Vec<((usize, usize), Option<(Pa, Pa)>)>,
+    out: &mut Vec<Zipped>,
 ) -> Option<()> {
     if on.is_some_and(|r| !ranges_meet(r, (lo, hi))) {
         out.push(((lo, hi), None));
@@ -10885,13 +10889,17 @@ fn cls_build(
     })
 }
 
+/// Where [`cls_clamp`] works: the summary of the leaves [`Leaf::Base`], the range of classes
+/// of the node, and the ranges of classes read, if not all.
+type ClampAt<'a> = (Option<&'a Pa>, (usize, usize), Option<&'a [(usize, usize)]>);
+
 /// The tree `node` over the classes `span` with the map `f` applied above it and every leaf's
 /// summary clamped ([`ByClass::clamp`]); `base` is the summary of the leaves [`Leaf::Base`].
 /// With `on`, a node that meets none of those ranges is a placeholder ([`Walk::by_class_on`]).
 fn cls_clamp(
     node: &Rc<Cls>,
     f: (i128, i128),
-    (base, (lo, hi), on): (Option<&Pa>, (usize, usize), Option<&[(usize, usize)]>),
+    (base, (lo, hi), on): ClampAt<'_>,
     min: bool,
     c: i64,
     dom: &IntervalSet,

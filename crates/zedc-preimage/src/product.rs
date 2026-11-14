@@ -3977,6 +3977,9 @@ impl Users {
 /// then the constraints' own part, keyed `(true, least constraint)`.
 type PartAt = (bool, Arc<Formula>);
 
+/// The parts of a block under each chain key, each with its ends ([`Block::chains`]).
+type ChainParts = imbl::OrdMap<Arc<Vec<ChainAtom>>, imbl::OrdSet<(Vec<Int>, PartAt)>>;
+
 /// Top-level conjuncts of a relation projected together: a block of [`Conjuncts::blocks`],
 /// with its conjuncts among its hubs when it is a star of two hubs or more
 /// ([`Conjuncts::core`]). A scope keeps each block it projects ([`Seen::blocks`]) and brings it
@@ -4050,7 +4053,7 @@ struct Block {
     vars: imbl::OrdMap<Factor, imbl::OrdSet<PartAt>>,
     /// The parts of each chain key ([`chain_shape`]), ordered by their ends, so that the
     /// first is the least ([`Scope::idle_by_chain`]).
-    chains: imbl::OrdMap<Arc<Vec<ChainAtom>>, imbl::OrdSet<(Vec<Int>, PartAt)>>,
+    chains: ChainParts,
     /// The disjunctions in which a constraint on two names bounds an end of one of them in
     /// every arm ([`bounds_at`]), by the two names, the end and the side of it the constraint
     /// turns from that end, and by how far it may turn ([`Turn`]), so that a case's constraint

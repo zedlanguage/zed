@@ -2199,7 +2199,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CLIPPY-preimage-type-complexity | impl attempt 1 | 2026-11-13 22:29 | started; worktree from origin/main 7745e160a |
 | CONST-too-large-kept-powers | impl attempt 1 | 2026-11-13 21:17 | reproduced on origin/main d353a0b07: 3^(2^70), 3r^(2^70), 2r^(2^70) compile (rc 0, widening warning only); control b^(2^64) rejected; load 23.03 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-rat-decimal-exponent | impl attempt 1 | 2026-11-13 22:07 | started; worktree from origin/main e92e7e508 |
