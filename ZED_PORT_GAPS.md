@@ -3860,3 +3860,13 @@ GROUP-overlaps-lower removed `Placing::real` and the `continue` out of the `Work
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A thread-local `Cell<Option<u64>>` holding the fold's memory bound, set for the length of a closure and put back by a drop guard, also on a panic, so `room` deep in `Rat::pow` reads it without a parameter through every arithmetic call | `fixed_room`, `room`, `FIXED`; `kernel_folded` | Mutation, global state | The bound a field of the evaluator's state passed to `eval`, or `room` an effect handled at the fold: the checker's handler answers by the bound, the runtime's by the allocator |
+
+## Entries from MAIN-limits (`crates/zed-rt/src/limits.rs`; `crates/zed-rt/src/stack.rs`; `crates/zedc-check/src/check/limits.rs`; `crates/zedc/src/run.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `libc::setrlimit`, `timer_create`, `clock_nanosleep`, `mmap`, `mprotect`, `sigaction`, `sigaltstack` | `enforce`, `cpu`, `deadline`, `memory`, `Stack::limited` | Foreign calls (FFI, L7.4) | the libzed OS layer's declarations of these functions (author decision: FFI only in libzed's OS layer) |
+| `extern "C"` signal handlers writing to a fixed buffer and calling `_exit` | `on_cpu`, `on_abort`, the stack's fault handler | Signal handlers (no Zed form) | a callback the OS layer registers, held to async-signal-safe calls; stays in the OS layer |
+| `static` atomics and `OnceLock` read by the handlers | `CPU_START`, `CPU_PASSED`, `MEMORY_LIMIT`, `GROWING`, `BEFORE` | Mutable globals (gap 11) | state the OS layer owns, set once at the start of the run |
+| `OnceLock<Enforce>`, a `fn(&MainLimits) -> Result<(), String>` set by the `zedc` binary | `ENFORCE`, `enforce_limits_with` | Function pointers in globals (gap 11) | a parameter of `command` that the binary passes, or a `#main`-bound library call |
+| `Box::leak` of the stack's growth record | `Stack::limited` | Leaked allocation (no Zed form) | a value held for the life of the run by `main`'s scope |

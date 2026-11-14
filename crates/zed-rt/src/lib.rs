@@ -12,6 +12,7 @@
 
 mod bug;
 pub mod heap;
+pub mod limits;
 pub mod ports;
 pub mod stack;
 

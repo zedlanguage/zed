@@ -130,6 +130,7 @@ fn lower<'a>(
         .collect();
     let mut out = Unit {
         int_params,
+        limits: e.info.limits,
         ..Unit::default()
     };
     if let Some((binds, _)) = e.scope(unit, true) {

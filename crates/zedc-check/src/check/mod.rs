@@ -38,6 +38,7 @@
 
 pub(crate) use zedc_types::kernel_type;
 pub mod blocking;
+mod limits;
 pub mod ports;
 pub mod read;
 pub use zedc_types::ty;
@@ -363,6 +364,24 @@ pub enum Witness {
     },
 }
 
+/// A power `a ^ e` at `span` whose base the text fixes and builds (DESIGN.md
+/// sec:checking_in_zed): whether the base is a `rat`, the bit lengths of its built parts
+/// ([`Rat::built_widths`]), `F`, the sum of their lengths less one, and their count, the least
+/// magnitude `k` of the exponent where the walk met it and whether every exponent is below 0,
+/// and `k * F + built`, the least bit length of the result. Found by `Ck::too_large_power`.
+struct WidePower<'a> {
+    a: &'a Expr,
+    e: &'a Expr,
+    span: Span,
+    rat: bool,
+    widths: [Option<u64>; 2],
+    floor_log: u64,
+    built: u64,
+    k: Num,
+    negative: bool,
+    bits: Num,
+}
+
 /// What the checker finds.
 #[derive(Clone, Debug, Default)]
 pub struct Info {
@@ -413,6 +432,9 @@ pub struct Info {
     /// "Every port operation says whether it can block"); a function not here cannot block.
     /// [`blocking::explain`] says why in the program's words, for an editor to show.
     pub blocking: std::collections::BTreeMap<usize, blocking::Cause>,
+    /// The limits written before the unit's `main` (DESIGN.md sec:ports), which the run
+    /// enforces; none when the unit writes none.
+    pub limits: zed_kernel::limits::MainLimits,
 }
 
 /// The two operands of `==` that [`Ck::equal`] pairs, built before a scaling test, so that
@@ -1221,6 +1243,14 @@ struct Ck<'t, 'a> {
     /// The parameters that are output ports ([`ports`]): a push to one is checked as a push
     /// to a `Lines` port of `main` is.
     port_params: HashSet<usize>,
+    /// The memory limit written before `main`, in bytes, the span of its `@limits` and that of
+    /// the argument of `memory:` ([`Self::main_limits`]): a number proved larger is rejected
+    /// ([`Self::too_large_power`]).
+    main_memory: Option<(u64, Span, Span)>,
+    /// The powers of a wide base found within the address space, by span, with what the walk
+    /// found of each at its site, for [`Self::powers_over_main_limit`] to judge against the
+    /// memory limit of `main` once it is read.
+    wide_powers: BTreeMap<Span, WidePower<'a>>,
     /// The classes; class `k` is the type variable `$k`.
     classes: Vec<Class>,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
@@ -1498,6 +1528,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             rough: false,
             lines_out: HashSet::new(),
             port_params: HashSet::new(),
+            main_memory: None,
+            wide_powers: BTreeMap::new(),
             classes: Vec::new(),
             data_checked: HashSet::new(),
             clean: HashMap::new(),
@@ -8832,7 +8864,7 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// The value bound to the name `e` by a `name = value` binder.
-    fn bound_value(&self, e: &Expr) -> Option<&'a Expr> {
+    pub(super) fn bound_value(&self, e: &Expr) -> Option<&'a Expr> {
         match self.t.res.uses.get(&e.span) {
             Some(Ref::Bound(ids)) if ids.len() == 1 => self.facts.get(&ids[0]).copied(),
             _ => None,

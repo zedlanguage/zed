@@ -3,11 +3,12 @@
 //! [`zed_main`] in the runtime library.
 //!
 //! The data is the plan's `fuse` flag, the program's content address, which a record names
-//! (step L1.19b), `main`'s ports as [`Ports::to_text`] writes them, and the graph as lowered in
-//! ZIR's binary form; and for the run-time errors' sites (plan row RT-sites), the name of the
-//! source file, its text and the site of each node of the graph. The runtime decodes the graph, legalizes it and plans it again, which
-//! gives the tables the code was generated from, node for node, and the nodes legalization
-//! swapped: the code passes node numbers, and the hooks read the tables by them.
+//! (step L1.19b), `main`'s ports as [`Ports::to_text`] writes them, the limits written before
+//! `main` as [`MainLimits::to_text`] writes them, and the graph as lowered in ZIR's binary form;
+//! and for the run-time errors' sites (plan row RT-sites), the name of the source file, its text
+//! and the site of each node of the graph. The runtime decodes the graph, legalizes it and plans
+//! it again, which gives the tables the code was generated from, node for node, and the nodes
+//! legalization swapped: the code passes node numbers, and the hooks read the tables by them.
 
 use std::ffi::{CStr, OsString, c_char, c_int};
 use std::io::Write as _;
@@ -25,6 +26,7 @@ use zedc::zir::Region;
 use zedc::zir::legalize::{Legalized, legalized_sites};
 use zedc::zir::memory::{Plan, plan};
 
+use zed_kernel::limits::MainLimits;
 use zed_kernel::sites::Span;
 use zed_rt::Word;
 
@@ -33,6 +35,8 @@ use crate::tables::Tables;
 /// The program an executable runs: what its data holds, decoded and legalized.
 struct Program {
     ports: Ports,
+    /// The limits written before `main`, which the start sets on its own process.
+    limits: MainLimits,
     /// The content address of the program built, which a record names (step L1.19b).
     address: ContentAddress,
     graph: Legalized,
@@ -95,7 +99,8 @@ fn kept_lines(text: &str, sites: &[Option<Span>]) -> (String, Vec<Option<Span>>)
 }
 
 /// The bytes of the data: `fuse` as one byte, the program's content address as its 32 bytes,
-/// the length of the ports' text as 8 bytes, little end first, the text; the source file's name
+/// the length of the ports' text as 8 bytes, little end first, the text; the limits' text
+/// the same way; the source file's name
 /// (empty for none) and the lines of the source text the sites touch ([`kept_lines`]), each the
 /// same way; the number of sites in 8 bytes and each site as its start and end in 8 bytes each,
 /// both [`u64::MAX`] for a node with none, by node number in `graph`, as
@@ -113,11 +118,13 @@ pub(crate) fn data(
     fuse: bool,
     address: ContentAddress,
     ports: &Ports,
+    limits: &MainLimits,
     source: (Option<&str>, &str),
     sites: &[Option<Span>],
     graph: &Region,
 ) -> Result<Vec<u8>, String> {
     let text = ports.to_text();
+    let limits = limits.to_text();
     let file = source.0.unwrap_or_default();
     let (source, sites) = kept_lines(source.1, sites);
     let source = source.as_str();
@@ -129,8 +136,15 @@ pub(crate) fn data(
             e.memory()
         )
     })?;
-    let len =
-        1 + 32 + 8 * 4 + text.len() + file.len() + source.len() + 16 * sites.len() + zir.len();
+    let len = 1
+        + 32
+        + 8 * 5
+        + text.len()
+        + limits.len()
+        + file.len()
+        + source.len()
+        + 16 * sites.len()
+        + zir.len();
     let mut out = Vec::new();
     out.try_reserve_exact(len).map_err(|_| {
         format!(
@@ -144,7 +158,7 @@ pub(crate) fn data(
     out.extend_from_slice(&address.0);
     out.extend_from_slice(&(text.len() as u64).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
-    for s in [file, source] {
+    for s in [limits.as_str(), file, source] {
         out.extend_from_slice(&(s.len() as u64).to_le_bytes());
         out.extend_from_slice(s.as_bytes());
     }
@@ -172,6 +186,8 @@ impl Program {
         let address = ContentAddress(*address);
         let (text, rest) = string(rest).ok_or_else(bad)?;
         let ports = Ports::from_text(text)?;
+        let (limits, rest) = string(rest).ok_or_else(bad)?;
+        let limits = MainLimits::from_text(limits).map_err(|e| format!("{DAMAGED} ({e})"))?;
         let (file, rest) = string(rest).ok_or_else(bad)?;
         let (source, rest) = string(rest).ok_or_else(bad)?;
         let (n, mut zir) = number(rest).ok_or_else(bad)?;
@@ -193,6 +209,7 @@ impl Program {
         let plan = plan(graph.graph(), fuse != 0);
         Ok(Program {
             ports,
+            limits,
             address,
             graph,
             plan,
@@ -317,6 +334,11 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
             return 1;
         }
     };
+    // The limits hold from here: the decoded program is the executable's, not the run's.
+    if let Err(e) = zed_rt::limits::enforce(&program.limits) {
+        let _ = writeln!(stderr, "{e}");
+        return 1;
+    }
     let name = words
         .first()
         .map_or_else(|| "program".into(), |w| w.to_string_lossy().into_owned());
@@ -414,8 +436,14 @@ mod tests {
         let address = ContentAddress([7; 32]);
         let site = Some(Span { start: 1, end: 4 });
         let source = (Some("a.zed"), "x = \"a\" > \"b\";");
-        let p = Program::decode(&data(true, address, &ports, source, &[site], &graph).unwrap())
-            .unwrap();
+        let limits = MainLimits {
+            memory: Some(1 << 30),
+            cpu: Some(std::time::Duration::from_millis(500)),
+            ..MainLimits::default()
+        };
+        let bytes = data(true, address, &ports, &limits, source, &[site], &graph).unwrap();
+        let p = Program::decode(&bytes).unwrap();
+        assert_eq!(p.limits, limits);
         assert_eq!((p.file.as_deref(), p.text.as_str()), source);
         assert_eq!(p.sites, [site]);
         assert_eq!(p.ports, ports);
@@ -425,12 +453,24 @@ mod tests {
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));
         assert!(p.plan.fuse);
-        let bytes = data(false, address, &ports, (None, ""), &[None], &graph).unwrap();
+        let bytes = data(
+            false,
+            address,
+            &ports,
+            &MainLimits::default(),
+            (None, ""),
+            &[None],
+            &graph,
+        )
+        .unwrap();
         let p = Program::decode(&bytes).unwrap();
         assert!(!p.plan.fuse);
+        assert!(p.limits.is_none());
         assert_eq!((p.file, p.text.as_str(), p.sites), (None, "", vec![None]));
-        // Cut in the flag, the address, the length, at the text and in it.
-        for cut in [0, 1, 5, 37, 41, 44] {
+        // Cut in the flag, the address, the length, at the text and in it, and in the length of
+        // the limits.
+        let limits_at = 1 + 32 + 8 + ports.to_text().len();
+        for cut in [0, 1, 5, 37, 41, 44, limits_at + 3] {
             assert_eq!(
                 Program::decode(&bytes[..cut]).err().as_deref(),
                 Some(DAMAGED),

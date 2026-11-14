@@ -85,7 +85,8 @@ fn a_folded_constant_too_large_to_write_out_stops_alike() {
     let src = "g() = 2^2^100;\nmain(m: MainArgs) {\n    n = 1;\n    \
                m.stdout <- String(g() * n);\n}\n";
     let ran = agree("folded", src);
-    assert_eq!(ran.status, 1);
+    // A fault of the run (MAIN-limits; DESIGN.md sec:ports): status 3.
+    assert_eq!(ran.status, 3);
     assert_eq!(
         stop_line(&ran, "folded"),
         format!(
@@ -100,7 +101,7 @@ fn a_folded_constant_too_large_to_write_out_stops_alike() {
 fn the_row_s_program_stops_alike() {
     let src = "main(m: MainArgs) {\n    n = 1;\n    m.stdout <- String(2^2^100 * n);\n}\n";
     let ran = agree("row", src);
-    assert_eq!(ran.status, 1);
+    assert_eq!(ran.status, 3);
     assert!(
         stop_line(&ran, "row")
             .starts_with("FILE:3:17: Text too large for memory: `String(2^2^100 * n)` would write")

@@ -39,6 +39,11 @@ path = "../../tests/steps/l01_19c_environment/binary.rs"
 name = "build_binary"
 path = "../../tests/steps/l01_36a_executables/binary.rs"
 
+# The limits `main` sets on its own run, under `zedc run` and an executable (MAIN-limits).
+[[test]]
+name = "limits_binary"
+path = "../../tests/steps/l01_36a_executables/limits_binary.rs"
+
 # `zedc --report` run as a user runs it (TIME-report).
 [[test]]
 name = "report_binary"

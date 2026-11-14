@@ -188,23 +188,25 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
 }
 
 /// The object file of an executable that runs the lowered graph `g`, planned with `fuse`, with
-/// `main`'s ports `ports` and the program's content address `address` (steps L1.36a and
-/// L1.19b): [`object()`]'s code for `g` legalized, the program as data, and a C `main` that
-/// passes both, with the command line, to the runtime library's start. The data holds `g` as
-/// lowered, since ZIR's binary form does not record which nodes legalization swapped; the
-/// start legalizes and plans it again, as this does. The data holds too `source`, the name of the program's
-/// file and its text, and `sites`, the site of each node of `g` (plan row RT-sites), so that a
-/// run-time error prints its site as `zedc run` prints it.
+/// `main`'s ports `ports`, the limits written before `main`, `limits`, and the program's content
+/// address `address` (steps L1.36a and L1.19b): [`object()`]'s code for `g` legalized, the
+/// program as data, and a C `main` that passes both, with the command line, to the runtime
+/// library's start. The data holds `g` as lowered, since ZIR's binary form does not record which
+/// nodes legalization swapped; the start legalizes and plans it again, as this does. The data
+/// holds too `source`, the name of the program's file and its text, and `sites`, the site of
+/// each node of `g` (plan row RT-sites), so that a run-time error prints its site as `zedc run`
+/// prints it.
 #[cfg(unix)]
 pub fn executable_object(
     g: Region,
     fuse: bool,
     ports: &zedc::run::Ports,
+    limits: &zed_kernel::limits::MainLimits,
     address: zedc::address::ContentAddress,
     source: (Option<&str>, &str),
     sites: &[Option<zed_kernel::sites::Span>],
 ) -> Result<Vec<u8>, String> {
-    let data = exe::data(fuse, address, ports, source, sites, &g)?;
+    let data = exe::data(fuse, address, ports, limits, source, sites, &g)?;
     let g = legalize(g);
     let plan = plan(g.graph(), fuse);
     let (t, plans) = Tables::new(&g, &plan)?;

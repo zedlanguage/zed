@@ -50,6 +50,7 @@ fn bug_report(info: &std::panic::PanicHookInfo<'_>) {
 
 fn main() -> ExitCode {
     std::panic::set_hook(Box::new(bug_report));
+    zedc::run::enforce_limits_with(zed_rt::limits::enforce);
     // The words stay as the system gives them: a `CommandLine` argument need not be UTF-8 to
     // reach `zedc run`, which names the one that is not (step L1.19a).
     let mut os: Vec<OsString> = std::env::args_os().skip(1).collect();

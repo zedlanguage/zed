@@ -624,6 +624,13 @@ pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("require", 24),
 ];
 
+/// The facts a process takes at its start that `main` takes as annotations (DESIGN.md
+/// sec:ports, "`main` may limit its own run"), read by `Resolver::main_fact` before `main`.
+/// `limits` and `kill` are facet words of a child's start, not annotations of a layer, so
+/// they are not in [`ANNOTATIONS`]; `timeout` is, as `@timeout(d) e` bounds the waits in
+/// `e` (layer L7), and before any declaration but `main` it is that annotation.
+pub const MAIN_FACTS: [&str; 3] = ["limits", "timeout", "kill"];
+
 /// The layer of the annotation `@name`, if it is one.
 pub fn annotation_layer(name: &str) -> Option<u32> {
     ANNOTATIONS
@@ -1974,7 +1981,7 @@ impl Resolver<'_> {
             StmtKind::Until(_) => self.later(s.span, "an `until` guard"),
             StmtKind::Expr(_) => self.later(s.span, "an expression statement"),
             StmtKind::Annotated { annots, decl } => {
-                self.annotations(annots, decl);
+                self.annotations(annots, decl, todo);
                 todo.push(Task::Stmt(decl, false));
             }
             StmtKind::UnitAnnot(a) => self.unit_annotation(a, s.span),
@@ -2040,14 +2047,22 @@ impl Resolver<'_> {
     /// this layer: `@nonblocking` before a function or a method, which the checker then proves
     /// never blocks (DESIGN.md sec:ports, "Every port operation says whether it can block").
     /// It takes no arguments and is written once; before `local` it marks the function `local`
-    /// marks. Every other annotation is refused, by [`Self::annotation`].
-    fn annotations(&mut self, annots: &[Annot], decl: &Stmt) {
+    /// marks. The facts of [`MAIN_FACTS`] are read by [`Self::main_fact`]. Every other
+    /// annotation is refused, by [`Self::annotation`].
+    fn annotations<'a>(&mut self, annots: &'a [Annot], decl: &Stmt, todo: &mut Vec<Task<'a>>) {
         let decl = match &decl.kind {
             StmtKind::Local(d) => d,
             _ => decl,
         };
         let mut marked = false;
+        let mut facts: Vec<&Annot> = Vec::new();
+        let is_main = self.scopes.len() <= TOP
+            && matches!(&decl.kind, StmtKind::Function(f) if f.main.is_some());
         for a in annots {
+            if MAIN_FACTS.contains(&a.name.as_str()) && (a.name != "timeout" || is_main) {
+                self.main_fact(a, is_main, &mut facts, todo);
+                continue;
+            }
             if a.name != "nonblocking" {
                 self.annotation(a);
                 continue;
@@ -2093,6 +2108,86 @@ impl Resolver<'_> {
                 notes: Vec::new(),
             });
         }
+    }
+
+    /// The fact `a`, one of [`MAIN_FACTS`], written after the facts `seen` of the same
+    /// declaration, which is the unit's `main` where `is_main` (DESIGN.md sec:ports, "`main`
+    /// may limit its own run"). It stands before the unit's `main`, once, in its own form: `@limits` with `memory:`, `cpu:` or both,
+    /// `@timeout(d)`, and `@kill(#term, grace: d)`, `@kill(#term)` or `@kill(#kill)`. Its
+    /// arguments are resolved as expressions; the checker then demands a constant of each
+    /// (`zedc_check`, `limits.rs`). Before any other declaration it is refused by the
+    /// attachment check, which names `main`: a limit is of the program's process, and a child's
+    /// limits are written at its start.
+    fn main_fact<'a>(
+        &mut self,
+        a: &'a Annot,
+        is_main: bool,
+        seen: &mut Vec<&'a Annot>,
+        todo: &mut Vec<Task<'a>>,
+    ) {
+        let name = a.name.as_str();
+        fn atom(e: &Expr) -> Option<&str> {
+            match &e.kind {
+                ExprKind::Atom(x) => Some(x.as_str()),
+                _ => None,
+            }
+        }
+        let named = |n: &str| a.named.iter().filter(|(w, _)| w == n).count();
+        let form = match name {
+            "limits" => "`@limits(memory: b, cpu: d)`, with either field left out",
+            "timeout" => "`@timeout(d)`",
+            _ => "`@kill(#term, grace: d)` or `@kill(#kill)`",
+        };
+        let shaped = a.called
+            && match name {
+                "limits" => {
+                    a.positional.is_empty()
+                        && !a.named.is_empty()
+                        && a.named.iter().all(|(w, _)| w == "memory" || w == "cpu")
+                        && named("memory") <= 1
+                        && named("cpu") <= 1
+                }
+                "timeout" => a.positional.len() == 1 && a.named.is_empty(),
+                _ => match a.positional.first().and_then(atom) {
+                    Some("term") => {
+                        a.positional.len() == 1
+                            && a.named.iter().all(|(w, _)| w == "grace")
+                            && named("grace") <= 1
+                    }
+                    Some("kill") => a.positional.len() == 1 && a.named.is_empty(),
+                    _ => false,
+                },
+            };
+        let message = if !is_main {
+            Some(format!(
+                "`@{name}` stands before `main`: it limits the program's own process, and a \
+                 child's limits are written at its start. Move it before `main`, or write it \
+                 as `with {name}(…)` at the child's start."
+            ))
+        } else if seen.iter().any(|s| s.name == name) {
+            Some(format!(
+                "`@{name}` is written twice before `main`. Keep one, with every field in it."
+            ))
+        } else if !shaped {
+            Some(format!(
+                "`@{name}` before `main` is written {form}, each argument a constant."
+            ))
+        } else {
+            None
+        };
+        seen.push(a);
+        if let Some(message) = message {
+            self.errors.push(Error {
+                row: None,
+                menu: String::new(),
+                span: a.span,
+                message,
+                notes: Vec::new(),
+            });
+            return;
+        }
+        let args = a.positional.iter().chain(a.named.iter().map(|(_, e)| e));
+        todo.extend(args.filter(|e| atom(e).is_none()).map(Task::Expr));
     }
 
     /// The annotation `a`, refused with its reason: it is no annotation; it is `@hash`, which

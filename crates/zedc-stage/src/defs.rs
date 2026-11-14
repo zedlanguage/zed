@@ -61,6 +61,9 @@ pub struct Unit {
     /// as integers (RUNG2-carrier). `front::linear_questions` reads them; a mixed unit, which
     /// nothing asks a question of, leaves this empty.
     pub int_params: HashMap<Arc<str>, Vec<bool>>,
+    /// The limits written before `main` (DESIGN.md sec:ports, "`main` may limit its own run"),
+    /// as the checker read them (`Info::limits`), which the run and an executable enforce.
+    pub limits: zed_kernel::limits::MainLimits,
 }
 
 /// The name the program wrote for the binder whose kernel name is `kernel`: the kernel name

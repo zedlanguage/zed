@@ -61,6 +61,8 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     if !stop {
         ck.bounds();
         ck.walk(unit);
+        ck.main_limits(unit);
+        ck.powers_over_main_limit();
     }
     // A function marked `@nonblocking` that can block (DESIGN.md sec:ports), decided from the
     // fact found once for every function: one lookup per mark.
@@ -682,6 +684,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A statement other than a binding drops the errors of its operations on literals
         // that met a carrier here.
         self.drop_met(0);
+    }
+
+    /// Checks the expression `e` alone, in the unit's top scope after the walk, as an argument
+    /// of a fact written before `main` ([`Self::main_limits`]): what it gives.
+    pub(super) fn walk_alone(&mut self, e: &'a Expr) -> Ty {
+        let mut m = M::new();
+        m.job(Job::Expr(e));
+        self.drive(&mut m);
+        m.take_ty()
     }
 
     /// A call through a value of `f` with arguments already found, as a need of a generic
@@ -7746,36 +7757,106 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The result has more than 2^67 bits, 2^64 bytes, exactly when `k * F + built` does,
         // that is when `k` reaches `(2^67 + 1 - built) / F` rounded up: below 2^61, as
         // `F >= 64`, so the comparison is of words.
-        let room_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let limit = (room_bits + 1 - u128::from(built)).div_ceil(u128::from(floor_log));
-        if k < Num::from(u64::try_from(limit).expect("a quotient below 2^61")) {
-            return;
-        }
-        let bits = &(&k * &Num::from(floor_log)) + &Num::from(built);
-        let bytes = bits.div_floor(&Num::from(8i64));
-        let space = bytes_text_of(&Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2))));
-        // A size that writes as the address space, as 2^64 bytes and a few bits, is more than
-        // it.
-        let need = match bytes_text_of(&bytes) {
-            need if need == space => format!("more than {need}"),
-            need => format!("at least {need}"),
+        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
+        let limit = (space_bits + 1 - u128::from(built)).div_ceil(u128::from(floor_log));
+        let over_space = k >= Num::from(u64::try_from(limit).expect("a quotient below 2^61"));
+        let p = WidePower {
+            a,
+            e,
+            span,
+            rat: matches!(base, Value::Rat(_)),
+            widths,
+            floor_log,
+            built,
+            bits: &(&k * &Num::from(floor_log)) + &Num::from(built),
+            // Every exponent below 0, as `x ^ -(2^64)` on a `rat`: the repair keeps the sign.
+            negative: matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0),
+            k,
         };
-        let target = self
-            .t
-            .target
-            .map_or("a 64-bit target".to_string(), target_text);
+        if over_space {
+            self.power_too_large(&p, None);
+        } else if !self.trying {
+            // Judged against the memory limit of `main` once the walk is over and the limits
+            // are read ([`Self::powers_over_main_limit`]), from what the walk first found here.
+            self.wide_powers.entry(span).or_insert(p);
+        }
+    }
+
+    /// The powers [`Self::too_large_power`] found within the address space, rejected where
+    /// their least size passes the memory limit written before `main` (DESIGN.md sec:ports,
+    /// "`main` may limit its own run"; sec:diagnostics, row "Number too large for any memory
+    /// of the target"): `8 * b` bits against the least bit length the walk found, one
+    /// comparison of numbers below 2^67 per power. Called after [`Self::main_limits`], since a
+    /// limit's argument may name a binding the walk reads.
+    pub(super) fn powers_over_main_limit(&mut self) {
+        let Some((b, ..)) = self.main_memory else {
+            return;
+        };
+        let room = Num::from(i128::from(b) * 8);
+        for p in std::mem::take(&mut self.wide_powers).into_values() {
+            if p.bits > room {
+                self.power_too_large(&p, self.main_memory);
+            }
+        }
+    }
+
+    /// Rejects the power `p`, larger than the target's address space, or, with `main_limit`,
+    /// the memory limit of `main` in bytes, its `@limits` and the argument of `memory:`, than
+    /// that limit: the message, the derivation of the least size, and the repairs, a smaller
+    /// exponent and, for the limit, a larger limit.
+    fn power_too_large(&mut self, p: &WidePower<'a>, main_limit: Option<(u64, Span, Span)>) {
+        let WidePower {
+            a,
+            e,
+            span,
+            rat,
+            widths,
+            floor_log,
+            built,
+            ref bits,
+            negative,
+            ref k,
+        } = *p;
+        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
+        let room_bits = main_limit.map_or(space_bits, |(b, ..)| u128::from(b) * 8);
         let power = self.code(Some(span)).unwrap_or("this power");
         let base_code = self.code(Some(a.span)).unwrap_or("the base");
         let exponent_code = self.code(Some(e.span)).unwrap_or("the exponent");
-        let message = format!(
-            "Number too large for any memory of the target: `{power}` needs {need}; {target} \
-             addresses {space}"
-        );
+        let message = match main_limit {
+            // Rounded up, so that a size a few bits over the limit is not written as the limit.
+            Some((_, at, _)) => {
+                let bytes = (bits + &Num::from(7i64)).div_floor(&Num::from(8i64));
+                let limits = self.code(Some(at)).unwrap_or("@limits");
+                format!(
+                    "Number too large for the memory limit of `main`: `{power}` needs at least \
+                     {}; `{limits}`",
+                    bytes_text_of(&bytes)
+                )
+            }
+            None => {
+                let bytes = bits.div_floor(&Num::from(8i64));
+                let space = bytes_text_of(&Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2))));
+                // A size that writes as the address space, as 2^64 bytes and a few bits, is
+                // more than it.
+                let need = match bytes_text_of(&bytes) {
+                    need if need == space => format!("more than {need}"),
+                    need => format!("at least {need}"),
+                };
+                let target = self
+                    .t
+                    .target
+                    .map_or("a 64-bit target".to_string(), target_text);
+                format!(
+                    "Number too large for any memory of the target: `{power}` needs {need}; \
+                     {target} addresses {space}"
+                )
+            }
+        };
         // Where each operand comes from, the literal or the declaration, and its least size.
         let mut notes = self.derive(&[span]);
-        let part_names = match &base {
-            Value::Rat(_) => [Some("numerator"), Some("denominator")],
-            _ => [None, None],
+        let part_names = match rat {
+            true => [Some("numerator"), Some("denominator")],
+            false => [None, None],
         };
         // `x` names the base, or `p` each part of a `rat` base, as the formula does.
         let var = if part_names[0].is_some() { "p" } else { "x" };
@@ -7799,9 +7880,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             span: self.fixed_at(a),
             text: base_is,
         });
-        // Every exponent below 0, as `x ^ -(2^64)` on a `rat`: the repair keeps the sign.
-        let negative = matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0);
-        let k_text = number_text(&k);
+        let k_text = number_text(k);
         let exponent_is = match negative {
             true => format!("the exponent k, `{exponent_code}`, is at most -{k_text}"),
             false => format!("the exponent k, `{exponent_code}`, is at least {k_text}"),
@@ -7827,16 +7906,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                  |{var}| and |k|"
             ),
         });
+        if let Some((b, at, _)) = main_limit {
+            notes.push(Note {
+                span: at,
+                text: format!(
+                    "the memory limit of `main` lets the run hold {}",
+                    bytes_text_of(&Num::from(b))
+                ),
+            });
+        }
         notes.push(Note {
             span,
-            text: "or read the exponent from the input: the run then stops if no memory holds \
-                   the result"
-                .to_string(),
+            text: match main_limit {
+                Some(_) => {
+                    "or read the exponent from the input: the run then stops at the \
+                            memory limit of `main` if the result passes it"
+                }
+                None => {
+                    "or read the exponent from the input: the run then stops if no memory \
+                         holds the result"
+                }
+            }
+            .to_string(),
         });
         // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
-        // most 2^67, as `b ^ (2^60)` for a base of 65 bits; none where even the base does not.
+        // most the bound, 2^67 or `8 * b`, as `b ^ (2^60)` for a base of 65 bits; none where
+        // even the base does not.
         let mut fixes = Vec::new();
-        let most = (room_bits - u128::from(built)) / u128::from(floor_log);
+        let most = room_bits.saturating_sub(u128::from(built)) / u128::from(floor_log);
         if most > 0 {
             let j = 127 - most.leading_zeros();
             let with = match negative {
@@ -7859,6 +7956,31 @@ impl<'t, 'a> Ck<'t, 'a> {
             fixes.push(Rewrite::new(
                 &[(e.span, &with)],
                 &format_args!("needs at least {fits}"),
+                &alone,
+            ));
+        }
+        // Under the memory limit of `main`, the limit raised to the least power of two that
+        // holds the size, `2^j` bytes before step L12 gives `with units("MiB")` (DESIGN.md
+        // sec:diagnostics, row "Number too large for any memory of the target").
+        if let Some((_, at, arg)) = main_limit {
+            let need = bits
+                .to_i128()
+                .map(|b| (b + 7) / 8)
+                .expect("below 2^64 bytes");
+            let j = 128 - (need - 1).leading_zeros();
+            let with = format!("2^{j}");
+            let alone = match self.code(Some(at)) {
+                Some(code) => format!(
+                    "{}{with}{}",
+                    &code[..arg.start - at.start],
+                    &code[arg.end - at.start..],
+                ),
+                None => format!("@limits(memory: {with})"),
+            };
+            let holds = bytes_text_of(&Num::pow2(&Num::from(i64::from(j))));
+            fixes.push(Rewrite::new(
+                &[(arg, &with)],
+                &format_args!("lets the run hold {holds}"),
                 &alone,
             ));
         }
@@ -7905,7 +8027,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the same chain of `*` at `int`, which [`Self::known`] folds alike, 77 ms and 700 ms.
     /// A step past [`FOLD_ASK_BITS`] fails ([`prim_folded`]), whatever the machine, and the
     /// value is then none.
-    fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
+    pub(super) fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
         if !self.fixed.contains_key(&a.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements
             // are checked in dependency order, and the set keeps it finite if not.
@@ -8419,7 +8541,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The program's code at `at`, if the checker has the program's text.
-    fn code(&self, at: Option<Span>) -> Option<&'a str> {
+    pub(super) fn code(&self, at: Option<Span>) -> Option<&'a str> {
         let at = at?;
         self.t.text?.get(at.start..at.end)
     }
@@ -14003,7 +14125,7 @@ const ADDRESS_BYTES_LOG2: u32 = 64;
 
 /// The target `target`, as `build.target` names it (`x86_64-linux`), as a message names it:
 /// the system, then the architecture, `Linux x86_64`. A name of another form is kept as it is.
-fn target_text(target: &str) -> String {
+pub(super) fn target_text(target: &str) -> String {
     let Some((arch, os)) = target.split_once('-') else {
         return target.to_string();
     };

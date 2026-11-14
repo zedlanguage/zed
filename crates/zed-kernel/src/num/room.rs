@@ -165,7 +165,26 @@ pub fn machine_memory() -> Option<u64> {
 /// `, and about 1 ZiB of memory to compute it; this machine has 125 GiB of memory` when only
 /// the step's working memory is; and `…; this run could not get that much memory, though this
 /// machine has 125 GiB` when neither is, as under a limit on the run's address space.
+///
+/// Under a memory limit of `main` (DESIGN.md sec:ports), the limit is the bound the step
+/// passed, not the machine: `; the run holds 700 MiB of 1.0 GiB`, from the operating system's
+/// count of the run's data ([`crate::limits::held`]).
 pub fn memory_clause(size: &BigUint, ask: &BigUint) -> String {
+    if let Some((limit, _)) = crate::limits::memory() {
+        let mut out = String::new();
+        if ask > size {
+            out = format!(", and about {} of memory to compute it", bytes_text(ask));
+        }
+        let limit = bytes_text(&BigUint::from(limit));
+        out += &match crate::limits::held() {
+            Some(held) => format!(
+                "; the run holds {} of {limit}",
+                bytes_text(&BigUint::from(held))
+            ),
+            None => format!("; the run may hold {limit}"),
+        };
+        return out;
+    }
     let memory = machine_memory().map(BigUint::from);
     if let Some(m) = &memory
         && size > m

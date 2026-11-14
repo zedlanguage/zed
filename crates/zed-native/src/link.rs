@@ -224,6 +224,7 @@ pub fn build(
             g,
             true,
             program.ports(),
+            &program.limits(),
             address,
             (program.file(), program.text()),
             &sites,

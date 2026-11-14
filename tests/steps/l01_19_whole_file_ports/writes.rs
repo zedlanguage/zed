@@ -84,7 +84,8 @@ fn a_number_too_large_to_build_stops_the_run() {
     let src = "main(m: MainArgs) {\n  m.stdout <- \"start\";\n  \
                m.stdout <- String(2^2^100 + 1);\n}\n";
     let out = run("too_large", src, "", &[]);
-    assert_eq!(out.status, 1, "{}", out.stderr);
+    // Running out of memory is a fault of the run, status 3 (MAIN-limits; DESIGN.md sec:ports).
+    assert_eq!(out.status, 3, "{}", out.stderr);
     assert!(
         out.stderr.contains(
             "3:22: Number too large for memory: `2^2^100 + 1` needs a number of about \
@@ -102,7 +103,7 @@ fn a_number_too_large_to_build_stops_the_run() {
 fn printing_a_number_too_large_to_build_stops_the_run() {
     let src = "main(m: MainArgs) {\n  m.stdout <- String(2^2^100);\n}\n";
     let out = run("print_too_large", src, "", &[]);
-    assert_eq!(out.status, 1, "{}", out.stderr);
+    assert_eq!(out.status, 3, "{}", out.stderr);
     assert!(
         out.stderr.contains(
             "2:15: Text too large for memory: `String(2^2^100)` would write about 3.8 × 10^29 \

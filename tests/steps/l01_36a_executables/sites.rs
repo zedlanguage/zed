@@ -37,17 +37,17 @@ fn both(name: &str, src: &str) -> (PathBuf, Ran, Ran) {
     (file, native, interpreted)
 }
 
-/// Checks that `src` stops with status 1 under both engines, the executable writing `stderr`
-/// (`FILE` standing for the program's path) after `stdout`, and `zedc run` writing the same
-/// output and ending its standard error with the same text, after the warnings it prints
-/// first.
-fn stops(name: &str, src: &str, stdout: &str, stderr: &str) {
+/// Checks that `src` stops with `status` under both engines (3 for a fault of the run, as
+/// running out of memory, 1 for any other stop), the executable writing `stderr` (`FILE`
+/// standing for the program's path) after `stdout`, and `zedc run` writing the same output
+/// and ending its standard error with the same text, after the warnings it prints first.
+fn stops(name: &str, src: &str, status: u8, stdout: &str, stderr: &str) {
     let (file, native, interpreted) = both(name, src);
     let stderr = stderr.replace("FILE", &file.display().to_string());
     assert_eq!(
         native,
         Ran {
-            status: 1,
+            status,
             stdout: stdout.into(),
             stderr: stderr.clone(),
         },
@@ -55,7 +55,7 @@ fn stops(name: &str, src: &str, stdout: &str, stderr: &str) {
     );
     assert_eq!(
         (interpreted.status, interpreted.stdout.as_str()),
-        (1, stdout),
+        (status, stdout),
         "{name}, by zedc run"
     );
     assert!(
@@ -70,6 +70,7 @@ fn a_number_too_large_is_placed_at_its_operation() {
     stops(
         "plus",
         "main(m: MainArgs) {\n    n = 1;\n    m.stdout <- String(2^2^100 + n);\n}\n",
+        3,
         "",
         &format!(
             "FILE:3:24: Number too large for memory: `2^2^100 + n` needs a number of about \
@@ -105,6 +106,7 @@ fn a_power_too_large_is_named_as_written_with_its_size() {
     stops(
         "power",
         &input_power("b"),
+        3,
         "",
         &format!(
             "FILE:4:36: Number too large for memory: `b ^ k` needs a number of about \
@@ -122,6 +124,7 @@ fn a_rational_power_too_large_is_named_as_written_with_its_size() {
     stops(
         "rat_power",
         &input_power("rat(b)"),
+        3,
         "",
         &format!(
             "FILE:4:36: Number too large for memory: `rat(b) ^ k` needs a number of about \
@@ -142,6 +145,7 @@ fn a_string_too_large_is_named_as_written_with_its_size() {
     stops(
         "huge_string",
         src,
+        3,
         "",
         &format!(
             "FILE:3:17: Text too large for memory: `String(2^(2^64) * b)` would write about \
@@ -161,6 +165,7 @@ fn a_string_too_long_is_placed_at_its_join() {
     stops(
         "join",
         &src,
+        1,
         "",
         "FILE:65:11: String too long: `d62 ++ d62` would join strings of 8.0 EiB and 8.0 EiB, \
          16 EiB in all; a string holds at most 2^64 - 1 bytes. Keep the parts apart, as a list \
@@ -191,6 +196,7 @@ fn a_prelude_word_is_placed_at_the_call_in_the_program() {
     stops(
         "prelude",
         &src,
+        3,
         "",
         &lower_refused(
             65,
@@ -212,6 +218,7 @@ fn a_function_of_the_program_is_placed_in_its_body() {
     stops(
         "function",
         &src,
+        3,
         "",
         &lower_refused(
             1,
@@ -232,6 +239,7 @@ fn a_node_two_expressions_share_takes_the_first_site() {
     stops(
         "shared",
         &src,
+        1,
         "",
         "FILE:65:9: String too long: `d62 ++ d62` would join strings of 8.0 EiB and 8.0 EiB, \
          16 EiB in all; a string holds at most 2^64 - 1 bytes. Keep the parts apart, as a list \

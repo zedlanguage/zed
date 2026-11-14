@@ -453,6 +453,12 @@ impl Program {
         &self.ports
     }
 
+    /// The limits written before `main` (DESIGN.md sec:ports, "`main` may limit its own run"),
+    /// which the run sets on its process and an executable carries.
+    pub fn limits(&self) -> zed_kernel::limits::MainLimits {
+        self.unit.limits
+    }
+
     /// The term a wave runs: `main` closed over the definitions it reaches, applied to a read
     /// of each input port, under the prelude. What `zedc build` compiles (step L1.36a).
     pub fn term(&self) -> Term {
@@ -854,10 +860,13 @@ fn local(ports: &Ports, env: &Arc<Environment>) -> impl Fn(&str) -> Arc<dyn Look
 }
 
 /// The exit status and message of a wave that stopped with `why`: a usage error, 2, when it
-/// stopped at a variable of `env` that is not UTF-8, and otherwise 1.
+/// stopped at a variable of `env` that is not UTF-8; 3 for a fault of the run, memory the
+/// system refused it under a limit of `main` or not (DESIGN.md sec:ports,
+/// [`zed_kernel::value::is_fault`]); and otherwise 1.
 fn stopped(env: &Environment, why: String) -> (u8, String) {
     match env.not_utf8() {
         Some(usage) => (2, usage.to_string()),
+        None if zed_kernel::value::is_fault(&why) => (3, why),
         None => (1, why),
     }
 }
@@ -1111,6 +1120,21 @@ fn words(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<Words<'_>, String> {
     Ok(Words { command, args })
 }
 
+/// How the process that runs a program sets on itself the limits written before its `main`
+/// (`zed_rt::limits::enforce`): set once by the `zedc` binary, whose process is the run's. A
+/// process that runs many programs, as a test harness does, sets none and its runs are not
+/// limited, since a limit holds for every thread of a process.
+static ENFORCE: OnceLock<Enforce> = OnceLock::new();
+
+/// Sets the given limits on the calling process, or says why it could not.
+type Enforce = fn(&zed_kernel::limits::MainLimits) -> Result<(), String>;
+
+/// Makes `enforce` set the limits of each program `zedc run` and `zedc replay` run, in this
+/// process: called by the `zedc` binary only.
+pub fn enforce_limits_with(enforce: Enforce) {
+    let _ = ENFORCE.set(enforce);
+}
+
 fn command_inner(
     words: &Words<'_>,
     env: &Arc<Environment>,
@@ -1150,6 +1174,13 @@ fn command_inner(
     let (on, rest) = crate::build::take(&rest).map_err(|why| (2, why))?;
     let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
     let program = load_file(file, &on, &mut suppress, stderr)?;
+    // The limits hold from here, for the run and its input, not for the compiler before it.
+    let limits = program.limits();
+    if !limits.is_none()
+        && let Some(enforce) = ENFORCE.get()
+    {
+        enforce(&limits).map_err(|e| (1, e))?;
+    }
     let wave = match replay {
         Some(path) => {
             let bytes = std::fs::read(path).map_err(|e| (2, unreadable(path, &e)))?;
@@ -1380,7 +1411,8 @@ impl<'a> Options<'a> {
 /// The run-time error `why` placed at `at`, a site in `text`, the program's source, read from
 /// `file` when it has a name, in the layout of a diagnostic (DESIGN.md sec:diagnostics):
 /// `file:line:col: why`, then the source line with the expression the run stopped at marked
-/// under it. `why` alone when it has no site. `zedc run` and an executable `zedc build` makes
+/// under it; a refusal of memory under a limit of `main` names the limit
+/// ([`zed_kernel::value::under_memory_limit`]). `why` alone when it has no site. `zedc run` and an executable `zedc build` makes
 /// both print an error with it, so the two print the same text (plan row RT-sites).
 pub fn placed(
     text: &str,
@@ -1388,6 +1420,8 @@ pub fn placed(
     why: String,
     at: Option<zed_kernel::sites::Span>,
 ) -> String {
+    // Under a memory limit of `main`, a refusal of memory names the limit, not the machine.
+    let why = zed_kernel::value::under_memory_limit(why);
     let Some(at) = at else {
         return why;
     };

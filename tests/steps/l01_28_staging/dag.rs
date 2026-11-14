@@ -67,6 +67,7 @@ fn unit(d: usize, shared: bool) -> Unit {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     }
 }
 
@@ -148,6 +149,7 @@ fn the_effects_of_a_part_shared_by_both_arms_are_read() {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     };
     // Every name read is build-stage: the build evaluates the whole chain.
     let pure = of(var("n"));
@@ -325,6 +327,7 @@ fn lets(d: usize, shared: bool) -> Unit {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     }
 }
 
@@ -411,6 +414,7 @@ fn built(d: usize, a: i64, b: i64, shared: bool) -> Unit {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     }
 }
 
@@ -526,6 +530,7 @@ fn composed(d: usize, shared: bool) -> Unit {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     }
 }
 
@@ -573,6 +578,7 @@ fn a_call_at_minus_zero_is_answered_apart_from_zero() {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     };
     let (mixed, report) = stage::mix(&unit, &["main"]);
     let printed = mixed.defs[0].term.to_string();
@@ -623,6 +629,7 @@ fn mixed_nodes_of(arg: Term) -> usize {
         tests: Arc::from([]),
         warnings: Vec::new(),
         int_params: Default::default(),
+        limits: Default::default(),
     };
     let (mixed, report) = stage::mix(&unit, &["main"]);
     assert!(report.left.is_empty(), "{report:?}");
@@ -719,6 +726,7 @@ fn reporting_a_term_left_to_run_whose_arms_are_one_part_scales() {
             tests: Arc::from([]),
             warnings: Vec::new(),
             int_params: Default::default(),
+            limits: Default::default(),
         };
         (unit, t)
     }

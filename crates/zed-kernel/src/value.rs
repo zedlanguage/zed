@@ -2726,6 +2726,51 @@ pub fn name_expression(why: String, written: &str) -> String {
     out
 }
 
+/// The first words of a message for an allocation refused under the memory limit of `main`
+/// (DESIGN.md sec:diagnostics, row "Limit of `main` passed in a run").
+pub const MEMORY_LIMIT_PASSED: &str = "Memory limit of `main` passed";
+
+/// The first words of each message for memory the system refused a run: a fault of the
+/// machine, not an error of the program (DESIGN.md sec:checking_in_zed). A join longer than a
+/// string can be, [`STRING_TOO_LONG`], is not one: no machine holds it.
+const MEMORY_TITLES: [&str; 8] = [
+    NUMBER_TOO_LARGE,
+    TEXT_TOO_LARGE,
+    ORDER_TOO_LARGE,
+    EQUALITY_TOO_LARGE,
+    ROUND_TOO_LARGE,
+    STRING_TOO_LARGE,
+    "Keys too close to order in memory",
+    "Atom name too large for memory",
+];
+
+/// `why`, a run's error, with the first words of a refusal of memory replaced by
+/// [`MEMORY_LIMIT_PASSED`] when a memory limit of `main` is in force
+/// ([`crate::limits::memory`]): the limit, not the machine, is what the run passed, and the
+/// rest of the message already says so ([`crate::num::memory_clause`]). Any other `why` is
+/// left as it is. Tradeoff as for [`name_expression`]: the error reaches here as text, so it
+/// is recognized by its first words. O(length of `why`).
+pub fn under_memory_limit(why: String) -> String {
+    if crate::limits::memory().is_none() {
+        return why;
+    }
+    match MEMORY_TITLES.iter().find(|t| why.starts_with(*t)) {
+        Some(t) => format!("{MEMORY_LIMIT_PASSED}{}", &why[t.len()..]),
+        None => why,
+    }
+}
+
+/// Whether `why`, a run's error, placed or not, is a fault of the run that ends it with exit
+/// status 3 (DESIGN.md sec:ports): a refusal of memory, under the memory limit of `main` or
+/// not. Its first line starts with the headline's first words, or holds them after the
+/// `file:line:col: ` of a placed error. O(length of the first line).
+pub fn is_fault(why: &str) -> bool {
+    let first = why.lines().next().unwrap_or_default();
+    std::iter::once(MEMORY_LIMIT_PASSED)
+        .chain(MEMORY_TITLES)
+        .any(|t| first.starts_with(t) || first.contains(&format!(": {t}: ")))
+}
+
 impl fmt::Display for KernelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
