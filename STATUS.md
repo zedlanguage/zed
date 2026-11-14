@@ -2322,6 +2322,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | bench finding generic chain 100/800 ratio 7.926 (instr), finding n functions 7.900, chain 7.946, running generic chain 25/200 54.142 (order 2); negative control |
+| SPEC-and-or-failing-operand | running |  |  |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
