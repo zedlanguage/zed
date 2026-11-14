@@ -2359,10 +2359,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
-| FAIL-tight-corner-shadows-seed | impl attempt 1 | 2026-11-14 13:13 | started in wt/fix-tight-corner |
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
 | FAIL-whole-projection-parity | impl attempt 2 | 2026-11-14 11:49 | fixed, pushed faf0c362b 24d072140; new row FAIL-tight-corner-shadows-seed; Growth seed 11479163432696490265 logged for FAIL-rewrite-growth-both; load 52.10 |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | negative control B (each evaluated node spins steps/16, quadratic in steps): 18 of 66 m0_09/m0_10 bench pieces fail (ratios 11.5-60.4 or 20 s timeouts: lets 23. |
+| PRES-switchover-not-race | running |  |  |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | started; worktree /home/luke/Work/wt/tests-split at 8895df00b; load 36.28 39.25 39.35 |
 
