@@ -2348,7 +2348,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
-| FAIL-types-three-variable-shapes | running | 2026-11-14 12:16 |  |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | M4 spare vals Vec in Machine::prim (not for Tuple/Path): law_04 1,867.4M->1,841.5M (-1.4%), law_06 -1.0%, law_10 -2.1%, law_20 -1.8%, law_28 -3.3%, law_25 bench |
 | MSG-range-error-class-spans | impl attempt 1 | 2026-11-14 12:33 | started in wt/range-spans, load 48.46 |
