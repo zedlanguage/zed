@@ -337,13 +337,21 @@ fn a_passing_check_prints_its_sizes_work_bytes_and_ratios() {
 
 /// Two checks for [`each_check_prints_a_bench_line_whose_time_grows_with_the_work`]: a spin
 /// loop of 4000 passes per unit of n, and its negative control, a loop of the same length at
-/// both sizes. A run of 4000 × 1000 passes takes a few milliseconds, so the time of the
-/// larger is far above the clock's resolution and the start of a thread.
+/// both sizes. Each run also sleeps [`SLEEP_PER_N`] per unit of n, n = 1000 at both sizes for
+/// the control: the meter does not count a sleep, and the time of a run cannot be less than
+/// its sleep, so the time a line prints has a lower bound that no load moves.
 #[test]
 fn spins_for_the_bench_line() {
-    check_instructions_only("a growing spin", 1000, 1, |n| spin(4000 * n as u64));
-    check_instructions_only("a constant spin", 1000, 0, |_| spin(4000 * 1000));
+    let growing = |n: usize| {
+        spin(4000 * n as u64);
+        std::thread::sleep(SLEEP_PER_N * n as u32);
+    };
+    check_instructions_only("a growing spin", 1000, 1, growing);
+    check_instructions_only("a constant spin", 1000, 0, |_| growing(1000));
 }
+
+/// The sleep of a run of [`spins_for_the_bench_line`] per unit of n.
+const SLEEP_PER_N: Duration = Duration::from_micros(20);
 
 /// The fields of the bench line of `what` in `out`: n, the two times and the two counts.
 fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
@@ -375,10 +383,18 @@ fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
 
 /// Each check prints one line `bench <what> n=<n> ns=<small>/<large> instr=<small>/<large>
 /// bytes=<small>/<large> ratio=<ratio>` and writes the two times to the file of
-/// [`RATIOS_FILE`] (TEST-bench-split). The time of a loop 8 times as long grows: 8 times by
-/// its work, held above 4 so that a loaded machine passes. The negative control, a loop of
-/// one length at both sizes, stays under 2: a timer that measured anything but the run, or
-/// one size twice, would fail one of the two.
+/// [`RATIOS_FILE`] (TEST-bench-split). The count of a loop 8 times as long grows, held above
+/// 4 times; that of the negative control, a loop of one length at both sizes, stays under 2.
+/// Each time is at least the sleep of its run, 8 times as long at 8n for the growing loop: a
+/// timer that measured less than the run, or that gave the larger size the time of the
+/// smaller, fails.
+///
+/// The test held the time to the same ratios as the count until TEST-flaky-constant-spin:
+/// two runs of the constant loop took 983682 and 2177950 ns (2.21 times) at load 19, and
+/// 2283732 and 5777023 ns (2.53 times) at load 32, with the same count of instructions, since
+/// a run preempted or moved to a busy core takes longer by the clock. Instructions and bytes
+/// decide, time is only reported; no upper bound on a time holds under load, so only the
+/// lower bounds the sleeps give are held.
 #[test]
 fn each_check_prints_a_bench_line_whose_time_grows_with_the_work() {
     let ratios = std::env::temp_dir().join(format!("zed-bench-line-{}", std::process::id()));
@@ -398,19 +414,22 @@ fn each_check_prints_a_bench_line_whose_time_grows_with_the_work() {
     assert!(run.status.success(), "{out}");
     let lines = out.lines().filter(|l| l.starts_with("bench ")).count();
     assert_eq!(lines, 2, "one bench line per check in:\n{out}");
+    let sleep = |n: u32| (SLEEP_PER_N * n).as_nanos() as u64;
     let (n, grows, units) = bench_fields(&out, "a growing spin");
     assert_eq!(n, "1000");
     assert!(units[1] > 4 * units[0], "{units:?}");
-    let ratio = grows[1] as f64 / grows[0] as f64;
     assert!(
-        ratio > 4.0,
-        "the time of 8 times the work: {grows:?}, {ratio:.2} times"
+        grows[0] >= sleep(1000) && grows[1] >= sleep(8000),
+        "the times of runs that sleep {} and {} ns: {grows:?}",
+        sleep(1000),
+        sleep(8000)
     );
-    let (_, flat, _) = bench_fields(&out, "a constant spin");
-    let ratio = flat[1] as f64 / flat[0] as f64;
+    let (_, flat, units) = bench_fields(&out, "a constant spin");
+    assert!(units[1] < 2 * units[0], "{units:?}");
     assert!(
-        ratio < 2.0,
-        "the time of the same work: {flat:?}, {ratio:.2} times"
+        flat.iter().all(|&t| t >= sleep(1000)),
+        "the times of runs that sleep {} ns: {flat:?}",
+        sleep(1000)
     );
     // The file has the times as its last two columns, the same as the line's.
     let written = written.expect("the file of the ratios");
