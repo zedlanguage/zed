@@ -18028,23 +18028,24 @@ fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
             rows.push((neg, -&k.lin.constant));
         }
     }
-    let mut stuck: BTreeSet<Atom> = BTreeSet::new();
+    // Each round takes out one atom, which no later row holds, so there are at most as many
+    // rounds as atoms. An atom that would grow the rows may not after another is taken out
+    // (`#1` with three lower and two upper rows, one of each once `#2` is out), so each round
+    // counts them again.
     loop {
         let mut sides: BTreeMap<&Atom, (usize, usize)> = BTreeMap::new();
         for (t, _) in &rows {
-            for (a, v) in t.iter().filter(|(a, _)| *a != sym && !stuck.contains(*a)) {
+            for (a, v) in t.iter().filter(|(a, _)| *a != sym) {
                 let s = sides.entry(a).or_default();
                 if v.is_positive() { s.0 += 1 } else { s.1 += 1 }
             }
         }
-        let Some((x, (l, u))) = sides.into_iter().next() else {
+        let Some(x) = (sides.into_iter())
+            .find(|(_, (l, u))| l * u <= l + u)
+            .map(|(x, _)| x.clone())
+        else {
             break;
         };
-        let x = x.clone();
-        if l > 0 && u > 0 && l * u > l + u {
-            stuck.insert(x);
-            continue;
-        }
         let (mut lower, mut upper) = (Vec::new(), Vec::new());
         for r in std::mem::take(&mut rows) {
             match r.0.get(&x).map(Int::is_positive) {
@@ -25533,6 +25534,21 @@ mod real_end_tests {
         ]);
         assert_eq!(real_end(&f, &sym("a"), 1), Some(Int::from(9)));
         assert_eq!(real_end(&f, &sym("a"), -1), None);
+    }
+
+    /// A side of `persist` (PERF-l139-family): `s == x + y`, `x <= y - 1`, `x + y >= -1000`,
+    /// `2x + y >= -1000`. `x` has three lower and two upper rows and is left at first; once `y`
+    /// is out it has one of each, and taking it out gives `3s + 1999 >= 0`, so `s >= -666`,
+    /// where the row `s >= -1000` alone gives -1000.
+    #[test]
+    fn a_name_left_at_first_is_taken_out_once_another_is() {
+        let f = and(vec![
+            Con::eq(&v("s"), &v("x").plus(&v("y"))),
+            Con::ge(&v("y").minus(&c(1)), &v("x")),
+            Con::ge(&v("x").plus(&v("y")), &c(-1000)),
+            Con::ge(&v("x").times(2).plus(&v("y")), &c(-1000)),
+        ]);
+        assert_eq!(real_end(&f, &sym("s"), -1), Some(Int::from(-666)));
     }
 
     /// A disjunction is not read: no bound.

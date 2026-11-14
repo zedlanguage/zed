@@ -1748,7 +1748,7 @@ fn unary_arms_scale() {
 }
 
 #[test]
-#[ignore = "PERF-l139-under9: cuts, 11.1 times the instructions (315.9M and 3,501.2M) and 11.0 times the bytes (59.9M and 662.0M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
+#[ignore = "PERF-l139-under9: cuts, 10.7 times the instructions (224.6M and 2,398.6M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn cuts_scale() {
     scales("cuts", 4, 1);
 }
@@ -1761,7 +1761,7 @@ fn wide_scales() {
 }
 
 #[test]
-#[ignore = "PERF-l139-under9: coordmix_floor, 12.1 times the instructions (219.8M and 2,654.8M) and 10.7 times the bytes (41.1M and 438.9M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
+#[ignore = "PERF-l139-under9: coordmix_floor, 11.3 times the instructions (132.2M and 1,497.1M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn coordmix_floor_scales() {
     scales("coordmix_floor", 4, 1);
 }
@@ -1835,7 +1835,7 @@ fn coordkk_scales() {
 
 /// About `k^1.75` to `k^1.96`.
 #[test]
-#[ignore = "PERF-l139-family: star_extra, 16.2 times the instructions at 8n (117.3M and 1,904.8M), over the limit of 13; open"]
+#[ignore = "PERF-l139-family: star_extra, 11.0 times the bytes (28.4M and 310.9M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn star_extra_scales() {
     scales("star_extra", 4, 1);
 }
@@ -1844,21 +1844,21 @@ fn star_extra_scales() {
 /// passes (31.9 times the work against 35.2); at `n = 4` each run of `k = 32` takes over 30 s,
 /// so the test would not finish in 60 s.
 #[test]
-#[ignore = "PERF-l139-family: chain, 13.1 times the instructions at 8n (352.6M and 4,633.1M) on origin/main af6a5a696, over the limit of 13 (12.9 on abf5d24cd); open"]
+#[ignore = "PERF-l139-family: chain, 10.9 times the instructions (279.9M and 3,040.5M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn chain_scales() {
     scales("chain", 2, 1);
 }
 
 /// About `k^2.1`.
 #[test]
-#[ignore = "PERF-l139-under9: boxstar, 11.4 times the instructions (144.7M and 1,648.4M) and 10.8 times the bytes (27.9M and 300.3M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
+#[ignore = "PERF-l139-under9: boxstar, 11.1 times the instructions (103.4M and 1,143.4M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn boxstar_scales() {
     scales("boxstar", 2, 1);
 }
 
 /// About `k^2.5` from `k = 8` to 16.
 #[test]
-#[ignore = "PERF-l139-family: persist, 13.2 times the bytes at 8n (39.3M and 517.3M), over the limit of 13; open"]
+#[ignore = "PERF-l139-family: persist, 13.7 times the bytes (16.6M and 227.7M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn persist_scales() {
     scales("persist", 2, 1);
 }
@@ -1903,13 +1903,13 @@ fn hopon_scales() {
 }
 
 #[test]
-#[ignore = "PERF-l139-family: hopb, 13.0 times the instructions at 8n (152.3M and 1,981.7M), at the limit of 13; open"]
+#[ignore = "PERF-l139-family: hopb, 11.0 times the instructions (158.7M and 1,737.9M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn hopb_scales() {
     scales("hopb", 2, 1);
 }
 
 #[test]
-#[ignore = "PERF-l139-under9: hoponb, 12.8 times the instructions (186.7M and 2,388.3M) and 12.0 times the bytes (34.6M and 416.7M) at 8n on origin/main 783fd27c8, over the limit of 10.5; open"]
+#[ignore = "PERF-l139-under9: hoponb, 10.9 times the instructions (159.6M and 1,736.9M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
 fn hoponb_scales() {
     scales("hoponb", 2, 1);
 }
