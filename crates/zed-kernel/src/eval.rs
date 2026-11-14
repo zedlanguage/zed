@@ -18,7 +18,7 @@
 //! frame is a heap allocation, which measured cheaper than the old recursion (1.2 µs against 10
 //! µs per call at 19,990 calls, release build); depth is limited by memory alone.
 
-use imbl::{OrdMap, Vector};
+use imbl::Vector;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -37,6 +37,9 @@ use num_bigint::BigInt;
 use crate::provenance::{Fact, FactAddress, Holds, NodeAddress, Position, Provenance};
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
 use crate::value::Value;
+
+mod env;
+use env::Env;
 
 /// The minimum depth of nested calls the evaluator reaches (DESIGN.md step M0.11, prelude unit
 /// `limits`): a conforming compiler never rejects an evaluation for nesting calls this deep. It
@@ -274,39 +277,26 @@ fn global_env<'t>(reads: &'t [(Arc<str>, Global)]) -> Env<'t> {
         Global::At(i) => Slot::Global(i),
         Global::Prim(p) => Slot::Is(V::Prim(p)),
     };
-    let map = reads.iter().map(|(x, g)| {
+    reads.iter().fold(None, |env, (x, g)| {
         let b = Binding {
             value: slot(*g),
             fact: None,
         };
-        (&**x, b)
-    });
-    Some(map.collect())
+        env::insert(env, x, b)
+    })
 }
 
-/// The names in scope, in a persistent map: binding a name and looking one up cost
-/// `O(log n)` in the names in scope, and a closure's copy of its environment costs `O(1)`.
-/// A binding replaces an outer one of the same name.
-// Complexity tradeoff (COMPLEXITY.md K8): the naive environment is a list of frames walked on
-// each lookup, O(depth), so O(n·depth) for `n` reads, and a closure copies it, O(names). Used:
-// a persistent ordered map, O(log n) per binding and lookup and O(1) per closure. Tradeoff:
-// memory, since the environments of a chain of `let`s stay live and each shares all but
-// O(log n) nodes with the last, O(n log n) in all (1.2 GB at 16,000 `let`s against 0.6 GB).
-type Env<'t> = Option<OrdMap<&'t str, Binding<'t>>>;
-
 fn bind<'t>(env: Env<'t>, name: &'t str, value: V<'t>, fact: Option<usize>) -> Env<'t> {
-    let mut map = env.unwrap_or_default();
     let value = Slot::Is(value);
-    map.insert(name, Binding { value, fact });
-    Some(map)
+    env::insert(env, name, Binding { value, fact })
 }
 
 fn lookup_fact(env: &Env<'_>, name: &str) -> Option<usize> {
-    env.as_ref()?.get(name)?.fact
+    env::get(env, name)?.fact
 }
 
 fn lookup<'t>(env: &Env<'t>, name: &str) -> Option<Slot<'t>> {
-    Some(env.as_ref()?.get(name)?.value.clone())
+    Some(env::get(env, name)?.value.clone())
 }
 
 /// Why an evaluation stopped: an error, or, inside a definedness `fix`, a read of an entry
