@@ -7312,9 +7312,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.classes[a].rank == self.classes[b].rank {
             self.classes[root].rank += 1;
         }
-        // Each use of one class is checked on what flowed into the other.
+        // Each use of one class is checked on what flowed into the other. A class into which
+        // nothing flowed is passed over without walking the other's uses: walked each time, a
+        // chain of `n` merges into one class with nothing flowed in walked its `O(n)` uses at
+        // each merge, `O(n^2)` in all (17.6 times the instructions at 8n for 6,000 `else`s).
         let mut cross: Vec<(Need, Inflow)> = Vec::new();
         for (x, y) in [(a, b), (b, a)] {
+            if self.classes[y].flowed.is_empty() {
+                continue;
+            }
             for (_, n) in &self.classes[x].uses {
                 for v in &self.classes[y].flowed {
                     cross.push((n.clone(), v.clone()));
