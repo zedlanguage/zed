@@ -675,13 +675,14 @@ fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
 }
 
 /// Many sentences on the real grammar: every one generated at a ring parses at it with the same
-/// tree at every ring above, and none whose derivation passed its lookaheads is rejected. Five
-/// hundred per ring take about 5 s.
+/// tree at every ring above, and none whose derivation passed its lookaheads is rejected: a
+/// hundred per ring, from a new seed each run (`ZED_TEST_SEED` repeats one). Five hundred took
+/// 5 to 7 s; zed-tools' `fuzz SPEC_DIR N SEED` runs any number on the spec.
 #[test]
-fn fuzz_of_the_real_grammar_at_500_per_ring_finds_no_failure() {
-    let dir = spec_dir("fuzz_500", &design(""), "");
+fn fuzz_of_the_real_grammar_finds_no_failure() {
+    let dir = spec_dir("fuzz_real", &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
-    let (outcome, out) = fuzz_of(&spec, 500, 1);
+    let (outcome, out) = fuzz_of(&spec, 100, zed_tests::test_seed() as i64);
     assert_eq!(outcome, Ok(true), "{out}");
     assert!(
         out.contains(" containment failures 0 derived but rejected 0\n"),

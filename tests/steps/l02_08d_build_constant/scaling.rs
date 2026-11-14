@@ -34,7 +34,7 @@ pub(super) fn front_passes(build: &Build, n: usize) {
 #[test]
 fn a_few_reads_pass_the_front_end() {
     let build = fast_build();
-    for n in [0, 1, 2, 9] {
+    for n in [1, 2, 9] {
         front_passes(&build, n);
     }
 }

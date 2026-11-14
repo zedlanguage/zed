@@ -130,11 +130,12 @@ fn no_space(s: &str) -> String {
 
 #[test]
 fn the_broken_text_is_the_flat_text_up_to_whitespace() {
-    // 20,000 random terms, each printed at eight widths from narrower than any name to wider
-    // than most terms, and at the width of its own flat text, where nothing is broken.
-    const TERMS: usize = 20_000;
+    // 2,000 random terms from a new seed each run, each printed at eight widths from narrower
+    // than any name to wider than most terms, and at the width of its own flat text, where
+    // nothing is broken.
+    const TERMS: usize = 2_000;
     const WIDTHS: [usize; 8] = [8, 16, 24, 32, 48, 64, 80, 120];
-    let mut rng = Rng::new(15);
+    let mut rng = Rng::new(zed_tests::test_seed());
     for _ in 0..TERMS {
         let depth = 1 + rng.below(4);
         let t = random(&mut rng, depth);

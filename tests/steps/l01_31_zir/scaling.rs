@@ -1,8 +1,9 @@
-//! Graphs nested 100,000 deep: an `if` whose `then` region holds the next `if`, as a chain of
+//! Graphs nested 20,000 deep: an `if` whose `then` region holds the next `if`, as a chain of
 //! `else if` branches lowers. Each pass over the graph keeps its own stack on the heap, so such
 //! a graph is checked, compared, written and read back on a thread of the default 2 MiB stack,
 //! in time linear in its depth, as the benchmarks in `bench/scaling.rs` hold. Here each form
-//! is also written and read back at small sizes.
+//! is also written and read back at small sizes. A plain recursion takes at least 112 bytes a
+//! level (measured at opt-level 2), so 20,000 levels, 2.2 MB, would overflow that stack.
 
 use std::sync::Arc;
 
@@ -16,11 +17,11 @@ use zedc::zir::{Edge, Node, Op, Region, RegionKind, Src, binary, text};
 pub(crate) use zed_tests::step_helpers::l01_31_zir::nested_ifs;
 
 #[test]
-fn a_graph_nested_100000_deep_is_checked_compared_and_freed_on_a_2_mib_stack() {
+fn a_graph_nested_20000_deep_is_checked_compared_and_freed_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let g = nested_ifs(100_000);
+        let g = nested_ifs(20_000);
         validate(&g).unwrap();
-        assert_eq!(g, nested_ifs(100_000));
+        assert_eq!(g, nested_ifs(20_000));
         assert_ne!(g, nested_ifs(99_999));
     });
 }
@@ -40,9 +41,9 @@ fn an_error_deep_in_a_graph_is_named_by_its_path() {
 }
 
 #[test]
-fn a_graph_nested_100000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
+fn a_graph_nested_20000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let g = nested_ifs(100_000);
+        let g = nested_ifs(20_000);
         assert_eq!(
             binary::decode(&binary::encode(&g).expect("memory for the bytes")),
             Ok(g)
@@ -51,13 +52,19 @@ fn a_graph_nested_100000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
 }
 
 // Each line of the text form names its node or region by its whole path, so the text of a
-// graph `d` deep holds O(d^2) bytes, 80 MB at depth 4,000; these tests go as deep as that.
+// graph `d` deep holds O(d^2) bytes, 80 MB at depth 4,000. So this test runs on a 64 KiB stack,
+// which a recursion of at least 112 bytes a level overflows at 585 levels, 1,000 deep: 5 MB of
+// text.
 
 #[test]
-fn a_graph_nested_4000_deep_is_written_and_read_as_text_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let g = nested_ifs(4_000);
-        assert_eq!(text::parse(&text::print(&g)), Ok(g));
+fn a_graph_nested_1000_deep_is_written_and_read_as_text_on_a_64_kib_stack() {
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(1 << 16);
+        let run = || {
+            let g = nested_ifs(1_000);
+            assert_eq!(text::parse(&text::print(&g)), Ok(g));
+        };
+        thread.spawn_scoped(scope, run).unwrap().join().unwrap();
     });
 }
 
@@ -101,9 +108,9 @@ pub(super) fn holding(value: usize, pattern: usize) -> Region {
 }
 
 #[test]
-fn a_value_100000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
+fn a_value_20000_deep_is_written_and_read_in_binary_and_as_text_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let g = holding(100_000, 1);
+        let g = holding(20_000, 1);
         assert_eq!(
             binary::decode(&binary::encode(&g).expect("memory for the bytes")).as_ref(),
             Ok(&g)
@@ -145,11 +152,11 @@ pub(super) fn deep_type_text(d: usize) -> String {
 }
 
 #[test]
-fn a_type_100000_deep_is_read_as_text_on_a_2_mib_stack() {
+fn a_type_20000_deep_is_read_as_text_on_a_2_mib_stack() {
     // The kernel's `Type` drops its parts by recursion (ZED_PORT_GAPS.md), so a type this deep
     // overflows when dropped, whatever the parser does; the test keeps it.
     on_small_stack(|| {
-        std::mem::forget(text::parse_type(&deep_type_text(100_000)).unwrap());
+        std::mem::forget(text::parse_type(&deep_type_text(20_000)).unwrap());
     });
 }
 
@@ -189,10 +196,10 @@ fn a_graph_prints_for_debugging_as_a_derived_debug_would() {
 }
 
 #[test]
-fn a_graph_nested_100000_deep_is_printed_for_debugging_on_a_2_mib_stack() {
+fn a_graph_nested_20000_deep_is_printed_for_debugging_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let text = format!("{:?}", nested_ifs(100_000));
-        assert_eq!(text.matches("Node { op: If").count(), 100_000);
+        let text = format!("{:?}", nested_ifs(20_000));
+        assert_eq!(text.matches("Node { op: If").count(), 20_000);
     });
 }
 

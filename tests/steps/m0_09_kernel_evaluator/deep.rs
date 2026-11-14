@@ -1,4 +1,4 @@
-//! Programs far deeper than the minimum of 20,000 nested calls (DESIGN.md step M0.11). The
+//! Programs deeper than the minimum of 20,000 nested calls (DESIGN.md step M0.11). The
 //! evaluator keeps its frames on the heap, so each runs on a thread with a
 //! small stack: a test passes only if no part of the evaluator nests on the thread's stack.
 //! The benchmarks of these programs' time are in `bench/deep.rs`; each program they time runs
@@ -9,8 +9,10 @@ use zed_kernel::{Evaluator, Family, KernelError, Prim, Schedule, Term, Value, Wo
 use zed_tests::deep::{linked_list, on_main_sized_stack};
 use zed_tests::kernel::*;
 
-/// Far past [`zed_kernel::eval::MIN_NESTED_CALLS`].
-const DEEP: i64 = 1_000_000;
+/// Twice [`zed_kernel::eval::MIN_NESTED_CALLS`]. A plain recursion takes at least 112 bytes a
+/// level (a recursive equality of nested tuples, measured at opt-level 2), so the 64 KiB stack
+/// below would overflow at 585 levels.
+const DEEP: i64 = 40_000;
 
 /// Runs `f` on a thread with a 64 KiB stack.
 fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
@@ -83,7 +85,7 @@ pub(super) fn through_regions(k: i64) -> Term {
 }
 
 #[test]
-fn a_recursion_a_million_calls_deep_returns() {
+fn a_recursion_past_the_minimum_depth_returns() {
     let sum = DEEP * (DEEP + 1) / 2;
     assert_eq!(on_small_stack(|| eval(&total(DEEP))), Ok(Value::Int(sum)));
 }
@@ -109,14 +111,14 @@ fn a_chain_of_continuations_is_called_and_freed() {
 #[test]
 fn a_recursion_through_regions_returns() {
     assert_eq!(
-        on_small_stack(|| eval(&through_regions(100_000))),
-        Ok(Value::Int(100_000))
+        on_small_stack(|| eval(&through_regions(DEEP))),
+        Ok(Value::Int(DEEP))
     );
 }
 
 #[test]
 fn a_deep_recursion_records_its_provenance() {
-    let n = 100_000;
+    let n = DEEP;
     let run = || {
         let mut ev = Evaluator::new(World::new()).with_provenance(vec![]);
         let v = ev.run(&through_regions(n)).unwrap();
@@ -206,8 +208,8 @@ fn a_long_stream_runs_at_every_guard_position() {
 }
 
 #[test]
-fn a_chain_of_demands_a_million_entries_long_is_defined() {
-    // Each entry reads the one after it, so the first demand nests a million attempts.
+fn a_long_chain_of_demands_is_defined() {
+    // Each entry reads the one after it, so the first demand nests `DEEP` attempts.
     let d = DEEP;
     let keys = lit(Value::Family(Family::set(0..d)));
     let t = fix_defined(keys, |this, k| {

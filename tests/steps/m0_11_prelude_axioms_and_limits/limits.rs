@@ -3,46 +3,25 @@
 //! more is shown to cross it, so the size is measured and not estimated. Nested calls have a
 //! minimum and no maximum: a chain past the minimum is accepted too.
 
-use zed_kernel::eval::{MIN_MEMORY, MIN_NESTED_CALLS, MIN_STEPS};
+use zed_kernel::eval::{MIN_MEMORY, MIN_NESTED_CALLS};
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
-use zed_kernel::{Evaluator, KernelError, Prim, Term, Value, World, eval};
+use zed_kernel::{KernelError, Prim, Term, Value, eval};
 
-/// Counts the leaves of a balanced split of `n` items, as a merge sort recurses:
-/// `count(n) = if n <= 1 { 1 } else { count(n div 2) + count(n - n div 2) }`, which makes
-/// `2n - 1` calls, each one step.
-fn count_leaves(n: i64) -> Term {
-    let half = || prim(Prim::IntDiv, vec![var("n"), lit(2)]);
-    let me = |arg: Term| app(var("me"), vec![var("me"), arg]);
-    let body = if_(
-        prim(Prim::Le, vec![var("n"), lit(1)]),
-        lit(1),
-        prim(
-            Prim::Add,
-            vec![me(half()), me(prim(Prim::Sub, vec![var("n"), half()]))],
-        ),
-    );
-    let f = lam(&["me", "n"], body);
-    app(f.clone(), vec![f, lit(n)])
-}
+use crate::leaves::{count_leaves, with_fuel};
 
-fn with_fuel(fuel: u64, t: &Term) -> Result<Value, KernelError> {
-    Evaluator::new(World::new()).with_fuel(fuel).run(t)
-}
-
+/// Fuel of `2k` steps accepts the `2k - 1` calls of `k` items and refuses the `2k + 1` calls of
+/// `k + 1`. The limit itself, 10,000,000 steps, takes about 14 s at each side, and
+/// `tests/full/m0_11_prelude_axioms_and_limits` runs it at 5,000,000 and 5,000,001 items.
 #[test]
-fn ten_million_steps_are_accepted() {
-    // 5,000,000 items make 9,999,999 calls.
-    let within = count_leaves(5_000_000);
-    assert_eq!(with_fuel(MIN_STEPS, &within), Ok(Value::Int(5_000_000)));
-}
-
-#[test]
-fn the_step_past_ten_million_is_refused() {
-    // 5,000,001 items make 10,000,001 calls.
-    assert_eq!(
-        with_fuel(MIN_STEPS, &count_leaves(5_000_001)),
-        Err(KernelError::OutOfFuel)
-    );
+fn the_step_past_the_fuel_is_refused() {
+    for k in [1, 2, 9, 1000] {
+        let fuel = 2 * k as u64;
+        assert_eq!(with_fuel(fuel, &count_leaves(k)), Ok(Value::Int(k)));
+        assert_eq!(
+            with_fuel(fuel, &count_leaves(k + 1)),
+            Err(KernelError::OutOfFuel)
+        );
+    }
 }
 
 /// A chain of `n` calls, each nested in the one before:

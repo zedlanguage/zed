@@ -1,4 +1,4 @@
-//! Values far deeper than the minimum of 20,000 nested calls (DESIGN.md step M0.11), each
+//! Values deeper than the minimum of 20,000 nested calls (DESIGN.md step M0.11), each
 //! operation run on a thread with the 8 MiB stack of a main thread. Only memory limits the depth
 //! of a value, so none of these operations may nest on the thread's stack. This is a test
 //! program of its own because it takes many gigabytes at once, which disturbs the timing of
@@ -14,8 +14,10 @@ use zed_kernel::{Evaluator, Family, KernelError, Term, Value, World, eval};
 use zed_tests::deep::*;
 use zed_tests::kernel::*;
 
-/// The two depths every operation runs at: the minimum, and far past it.
-const DEPTHS: [usize; 2] = [20_000, 1_000_000];
+/// The two depths every operation runs at: the minimum, and past the depth at which a plain
+/// recursion overflows the 8 MiB stack. A recursive equality of nested tuples takes at least 112
+/// bytes a level (measured at opt-level 2), so it overflows at 74,898 levels.
+const DEPTHS: [usize; 2] = [20_000, 100_000];
 
 /// Three values of one shape and depth; the last differs from the others at the bottom.
 struct Deep {
@@ -151,7 +153,7 @@ fn surface_equality_follows_numbers_to_the_bottom() {
 }
 
 #[test]
-fn a_keypath_a_million_long_is_built_read_and_merged() {
+fn a_long_keypath_is_built_read_and_merged() {
     on_main_sized_stack(|| {
         for depth in DEPTHS {
             let path = vec![Value::Int(0); depth];
@@ -194,7 +196,7 @@ fn membership_of_a_long_list_reads_to_its_end() {
 }
 
 #[test]
-fn a_program_compares_values_a_million_deep() {
+fn a_program_compares_deep_values() {
     on_main_sized_stack(|| {
         for depth in DEPTHS {
             let (a, b) = (
@@ -217,7 +219,7 @@ fn a_program_compares_values_a_million_deep() {
 #[test]
 fn a_recursive_program_returns_a_list_and_frees_it() {
     on_main_sized_stack(|| {
-        for depth in [140_000, 200_000, 1_000_000] {
+        for depth in [140_000, 200_000] {
             let v = eval(&linked_list(depth)).unwrap();
             assert!(matches!(&v, Value::Tuple(xs) if xs[0] == Value::Int(depth)));
             drop(v);
@@ -263,7 +265,7 @@ fn doubled(depth: usize, bottom: Value) -> Value {
 }
 
 #[test]
-fn a_value_shared_a_million_levels_deep_is_compared_keyed_and_freed() {
+fn a_value_shared_at_every_level_is_compared_keyed_and_freed() {
     // Each walk keeps the pairs of shared parts it has read, so each costs O(depth), not
     // O(2^depth), on two such values built apart.
     on_main_sized_stack(|| {

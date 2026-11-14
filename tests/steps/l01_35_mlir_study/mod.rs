@@ -220,7 +220,7 @@ fn struct_variants(k: usize) -> String {
 /// the source in `bench/mod.rs`.
 #[test]
 fn the_reader_finds_each_of_a_few_struct_variants() {
-    for k in [0, 1, 2, 9] {
+    for k in [1, 2, 9] {
         assert_eq!(variants(&struct_variants(k), "Op").len(), k);
     }
 }

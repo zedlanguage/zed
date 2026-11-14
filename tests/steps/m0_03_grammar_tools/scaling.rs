@@ -254,7 +254,9 @@ fn each_tool_benchmark_passes_at_small_sizes() {
         audit_runs(&empty, &p);
         let (needs, list) = checklist(m);
         compares_checklist(&spec, &table, &needs, &list, m);
-        reads_unreadable(&spec, &table, &no_needs, &unreadable(m), m);
+        // One reason is written without a count, so the line of m reasons needs m of 2 or more.
+        let r = m.max(2);
+        reads_unreadable(&spec, &table, &no_needs, &unreadable(r), r);
         first_pass_accepts(&spec, m);
         let (plan, done) = progress_plan(m);
         renders_progress(&plan, &done);

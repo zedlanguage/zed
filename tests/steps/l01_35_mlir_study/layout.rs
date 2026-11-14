@@ -9,7 +9,6 @@ use zed_rt::Word;
 use zed_rt::heap::CELL_BYTES;
 use zed_tests::layout::{Native, Record, ast_stage, record};
 use zed_tests::oracle::step_units;
-use zed_tests::scaling;
 use zedc::ast::{Expr, ExprKind, Pattern, Stmt, Type};
 use zedc::zir::{Edge, Node, Op, Region, Src};
 
@@ -168,25 +167,8 @@ pub(super) fn many(n: usize) -> String {
         .collect()
 }
 
-#[test]
-fn the_peak_bytes_of_n_and_8n_definitions_scale() {
-    let peak = |n: usize| {
-        let text = many(n);
-        let (r, l) = zed_alloc_count::live(|| record(&text).unwrap_or_else(|e| panic!("{e}")));
-        assert_eq!(r.native.runs, n as u64);
-        l.peak
-    };
-    scaling::hold(
-        "the peak bytes of recording 100 and 800 definitions",
-        "bytes",
-        peak(100),
-        peak(800),
-        1,
-    );
-}
-
 /// The layout record of a unit of a few definitions is made, one native run per definition; the
-/// time is held linear in the definitions in `bench/layout.rs`.
+/// time and the peak bytes are held linear in the definitions in `bench/layout.rs`.
 #[test]
 fn the_record_of_a_unit_of_a_few_definitions_is_made() {
     for n in [1, 2, 9] {

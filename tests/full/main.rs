@@ -6,4 +6,5 @@
 mod l01_21_test_runner;
 mod m0_04_corpus_references;
 mod m0_09_kernel_evaluator;
+mod m0_11_prelude_axioms_and_limits;
 mod s00_01_tools;

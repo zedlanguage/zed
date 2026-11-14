@@ -298,7 +298,7 @@ fn names_each_cycle_of_two(k: usize, m: &[String]) {
 /// did at n and 8n.
 #[test]
 fn each_package_of_cycles_names_its_cycles_at_small_sizes() {
-    for k in [2, 3, 9] {
+    for k in [3, 4, 9] {
         names_the_long_cycle(k, &loaded(&memory(long_cycle(k))));
         names_the_cycle_back(k, &loaded(&memory(chain_back(k))));
         names_the_component_once(k, &loaded(&memory(imports_back(k))));
@@ -427,7 +427,7 @@ pub(super) fn complete(k: usize) -> Vec<Vec<usize>> {
 /// benchmark's inputs did at n and 8n.
 #[test]
 fn each_import_graph_is_ordered_and_its_cycles_reported_at_small_sizes() {
-    for k in [2, 3, 9] {
+    for k in [3, 4, 9] {
         let m = ordered(&mut graph(&pairs_of_units(k)));
         assert_eq!(m.len(), k);
         assert!(

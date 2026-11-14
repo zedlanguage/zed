@@ -5,12 +5,12 @@
 //! long keypaths, linear in their length. A program of its own, as deep_values.rs explains;
 //! this module is the file `bench/deep_scaling.rs` of the step folder, beside the benchmarks of
 //! `mod.rs`, which do not include it. What each benchmark asserts besides its ratio is checked
-//! by deep_values.rs at depths of 20,000 and 1,000,000:
+//! by deep_values.rs at depths of 20,000 and 100,000:
 //! `equality_and_order_find_a_difference_at_the_bottom`,
 //! `surface_equality_follows_numbers_to_the_bottom`,
 //! `a_copy_equals_what_it_copied_and_outlives_it`, `printing_shows_every_level`,
 //! `a_key_is_made_from_a_deep_value`, `membership_of_a_long_list_reads_to_its_end` and
-//! `a_keypath_a_million_long_is_built_read_and_merged`.
+//! `a_long_keypath_is_built_read_and_merged`.
 
 use zed_kernel::{Family, Value};
 use zed_tests::deep::*;

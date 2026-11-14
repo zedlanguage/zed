@@ -278,12 +278,13 @@ fn samples() -> Vec<Value> {
 /// Seeded random terms: a `match` of up to four arms whose patterns nest tuples, atoms with
 /// payloads by position and by name, names, literals and `_` up to three deep, with type tests
 /// of random types among them, parts shared between them declared before the term. Each
-/// printed term reads back, at each of the seeds 15 to 30, and so does each type test drawn,
-/// whatever the seed (READ-atom-meet: the test ran seed 15 alone, and at seed 19 a payload
-/// meet read back wrong, at seed 20 it read 50 payload tests and wanted more than 50).
+/// printed term reads back, and so does each type test drawn, at seeds 19 and 20 and at a new
+/// seed each run (`ZED_TEST_SEED` repeats one). Seeds 19 and 20 are kept for READ-atom-meet:
+/// the test ran seed 15 alone, and at seed 19 a payload meet read back wrong; at seed 20 it
+/// read 50 payload tests and wanted more than 50.
 #[test]
 fn random_terms_with_type_tests_read_back() {
-    for seed in 15..=30 {
+    for seed in [19, 20, zed_tests::test_seed()] {
         let mut rng = zed_tests::instances::Rng::new(seed);
         let mut seed_seen = Seen::default();
         let mut drawn = 0;

@@ -425,9 +425,11 @@ fn expected_cycles(graph: &HashMap<&str, Vec<(&str, usize)>>, units: &[String]) 
     out
 }
 
+/// 100 packages from a new seed each run; `ZED_TEST_SEED` repeats one.
 #[test]
 fn random_packages_report_the_same_cycles_for_every_order_of_the_roots_and_each_unit_alone() {
-    for seed in 0..1000 {
+    let first = zed_tests::test_seed();
+    for seed in (0..100).map(|i| first.wrapping_add(i)) {
         let (fs, roots, prelude, graph) = generate(seed);
         let refs: Vec<(&str, &str)> = fs.iter().map(|(f, t)| (f.as_str(), t.as_str())).collect();
         let files = files(&refs);

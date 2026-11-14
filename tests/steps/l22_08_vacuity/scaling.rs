@@ -620,8 +620,11 @@ fn the_picks_take_the_steps_of_their_formulas() {
 
 /// The lists made together keep exactly the choices the lists made one by one keep: the report
 /// on each family of [`picks`] at m = 2 and 3 agrees with brute force, on `keyed` at m = 4,
-/// which reaches the lookup of each key below a subtree, as m = 2 and 3 do not, and on `deeper`
-/// at m = 2 (with `deeper` at m = 3 as well this test ran over a minute).
+/// which reaches the lookup of each key below a subtree, as m = 2 and 3 do not, and on `deep`
+/// and `deeper` at m = 2. These two have no choice by parity, so m = 3 is a larger instance of
+/// the same shape, two `q_j` already on the frontier at m = 2; brute force took 4 s on `deep` at
+/// m = 3 and over a minute on `deeper`. `the_picks_take_the_steps_of_their_formulas` runs the
+/// report on both at m = 3 and checks the walk's counts at m = 8 and 64.
 #[test]
 fn the_picks_agree_with_brute_force() {
     for family in [
@@ -630,7 +633,6 @@ fn the_picks_agree_with_brute_force() {
         "rotations",
         "inner",
         "keyed",
-        "deep",
         "crossed",
         "mirror",
     ] {
@@ -639,6 +641,7 @@ fn the_picks_agree_with_brute_force() {
         }
     }
     super::brute::check(&picks("keyed", 4));
+    super::brute::check(&picks("deep", 2));
     super::brute::check(&picks("deeper", 2));
 }
 

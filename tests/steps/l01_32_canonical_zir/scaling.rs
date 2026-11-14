@@ -1,8 +1,10 @@
-//! A graph nested 100,000 deep, whose deepest region matches a value against a pattern that
+//! A graph nested 20,000 deep, whose deepest region matches a value against a pattern that
 //! binds a written name: the canonicalizer renames the binder, normalizes, ranks and keys the
 //! graph on a thread of the default 2 MiB stack, in time linear in its depth. An edge of many
 //! facets in reverse order is canonicalized and keyed in `O(F log F)`, its facets sorted once.
 //! The benchmarks in `bench/scaling.rs` hold both orders; here each is checked at small sizes.
+//! A plain recursion takes at least 112 bytes a level (measured at opt-level 2), so 20,000
+//! levels, 2.2 MB, would overflow the 2 MiB stack.
 
 use std::sync::Arc;
 
@@ -41,17 +43,17 @@ pub(super) fn deep_match(depth: usize, binder: &str) -> Region {
 }
 
 #[test]
-fn a_graph_nested_100000_deep_is_canonicalized_on_a_2_mib_stack() {
+fn a_graph_nested_20000_deep_is_canonicalized_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let mut g = deep_match(100_000, "x");
+        let mut g = deep_match(20_000, "x");
         assert_eq!(ranks(&g)[0], 1, "one written binder");
         assert_eq!(
             address(&g).expect("memory for the address"),
-            address(&deep_match(100_000, "y")).expect("memory for the address")
+            address(&deep_match(20_000, "y")).expect("memory for the address")
         );
         assert_eq!(
             key(&canonicalize(&g)).expect("memory for the key"),
-            key(&canonicalize(&deep_match(100_000, "y"))).expect("memory for the key")
+            key(&canonicalize(&deep_match(20_000, "y"))).expect("memory for the key")
         );
         let normal = canonicalize(&g);
         while step(&mut g).is_some() {}

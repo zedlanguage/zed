@@ -1,7 +1,7 @@
 //! The units the step tests compiled on the day of the census that had a refusal, read from
 //! `programs.txt`: each unit is a line `== <origin> <bytes>`, then that many bytes of text, then
 //! a line break. The origin names the step test that compiled it first, and then, after `#`, the
-//! first 8 hex digits of a hash of its text. The units are censused in pieces, each under 60 s.
+//! first 8 hex digits of a hash of its text. The units are censused in pieces, each under 20 s.
 
 use std::path::Path;
 use std::sync::OnceLock;

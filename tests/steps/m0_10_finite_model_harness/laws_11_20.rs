@@ -804,8 +804,12 @@ fn contract(a: Term, b: Term, sum: &Term, times: &Term) -> Term {
     fold_at(prune(joined, 3), 3, sum.clone(), None)
 }
 
-/// Random triples of matrices over `values`, each cell absent with probability 1/4.
-fn triples(seed: u64, values: &[Value]) -> Vec<[Vec<(i64, i64, Value)>; 3]> {
+/// The random triples each law that holds is run on, drawn from a new seed each run. The
+/// counterexamples below keep 512 triples of a fixed seed, which hold the instance each needs.
+const HELD: usize = 64;
+
+/// `count` random triples of matrices over `values`, each cell absent with probability 1/4.
+fn triples(seed: u64, count: usize, values: &[Value]) -> Vec<[Vec<(i64, i64, Value)>; 3]> {
     let mut rng = Rng::new(seed);
     let one = |rng: &mut Rng| {
         let mut cells = Vec::new();
@@ -818,7 +822,7 @@ fn triples(seed: u64, values: &[Value]) -> Vec<[Vec<(i64, i64, Value)>; 3]> {
         }
         cells
     };
-    (0..512)
+    (0..count)
         .map(|_| [one(&mut rng), one(&mut rng), one(&mut rng)])
         .collect()
 }
@@ -838,6 +842,7 @@ fn chain_sides(t: &[Vec<(i64, i64, Value)>; 3], sum: &Term, times: &Term) -> (Te
 
 #[test]
 fn law_19_a_chain_of_contractions_reorders_in_every_semiring() {
+    let seed = zed_tests::test_seed();
     let ints: Vec<Value> = (-3..=3).map(Value::Int).collect();
     let bools = vec![Value::Bool(false), Value::Bool(true)];
     let semirings = [
@@ -847,10 +852,10 @@ fn law_19_a_chain_of_contractions_reorders_in_every_semiring() {
         (pf(Prim::Or), pf(Prim::And), &bools), // reachability
     ];
     for (k, (sum, times, values)) in semirings.iter().enumerate() {
-        let n = holds(triples(19 + k as u64, values), |t| {
+        let n = holds(triples(seed.wrapping_add(k as u64), HELD, values), |t| {
             chain_sides(t, sum, times)
         });
-        assert_eq!(n, 512);
+        assert_eq!(n, HELD);
     }
 }
 
@@ -858,13 +863,13 @@ fn law_19_a_chain_of_contractions_reorders_in_every_semiring() {
 fn law_19_contraction_needs_distribution_and_a_commutative_sum() {
     let ints: Vec<Value> = (-3..=3).map(Value::Int).collect();
     // `max` does not distribute over `+`.
-    let _ = refuted(triples(23, &ints), |t| {
+    let _ = refuted(triples(23, 512, &ints), |t| {
         chain_sides(t, &pf(Prim::Add), &pf(Prim::Max))
     });
     // `first` is associative and `*` distributes over it, but it does not commute: the two
     // orders take the first `k` of the first `j` and the first `j` of the first `k`.
     let first = func(|[x, _]| x);
-    let _ = refuted(triples(24, &ints), |t| {
+    let _ = refuted(triples(24, 512, &ints), |t| {
         chain_sides(t, &first, &pf(Prim::Mul))
     });
 }
@@ -943,6 +948,7 @@ fn star_sides(t: &[Vec<(i64, i64, Value)>; 3], sum: &Term, times: &Term) -> (Ter
 
 #[test]
 fn law_19_a_star_join_folds_each_arm_before_the_join() {
+    let seed = zed_tests::test_seed();
     // Orders `a[i][j]` of customer i for product j, with the product's prices `b[j][k]` and
     // discounts `c[j][l]` per variant: the sum over all triples is the sum over `j` of the
     // order times the arms' totals. A product with no prices or no discounts drops out. The
@@ -955,8 +961,10 @@ fn law_19_a_star_join_folds_each_arm_before_the_join() {
         (pf(Prim::Max), pf(Prim::Min)),
     ];
     for (k, (sum, times)) in semirings.iter().enumerate() {
-        let n = holds(triples(25 + k as u64, &ints), |t| star_sides(t, sum, times));
-        assert_eq!(n, 512);
+        let n = holds(triples(seed.wrapping_add(k as u64), HELD, &ints), |t| {
+            star_sides(t, sum, times)
+        });
+        assert_eq!(n, HELD);
     }
 }
 
@@ -966,7 +974,7 @@ fn law_19_a_star_join_needs_distribution() {
     // join: with an order of 0 and two prices of 1, `max(0, 1, d) + max(0, 1, d)` is not
     // `max(0, 1 + 1, d)`.
     let ints: Vec<Value> = (-3..=3).map(Value::Int).collect();
-    let (t, _, _) = refuted(triples(28, &ints), |t| {
+    let (t, _, _) = refuted(triples(28, 512, &ints), |t| {
         star_sides(t, &pf(Prim::Add), &pf(Prim::Max))
     });
     assert!(t.iter().all(|m| !m.is_empty()));
