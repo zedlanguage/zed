@@ -2360,6 +2360,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
+| FAIL-types-three-variable-shapes | running | 2026-11-14 12:16 | 2026-11-14 fix-types-3: cause traced (F124 refusal); needs cross-review of a near-linear search, agent stopped |
 | FAIL-whole-projection-parity | impl attempt 2 | 2026-11-14 11:49 | fixed, pushed faf0c362b 24d072140; new row FAIL-tight-corner-shadows-seed; Growth seed 11479163432696490265 logged for FAIL-rewrite-growth-both; load 52.10 |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
