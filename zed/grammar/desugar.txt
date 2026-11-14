@@ -32,7 +32,7 @@ PosParam      : a positional parameter
 TupleParam    : `(a, b)` is a fresh parameter p with `let a = p[0]`, `let b = p[1]` in the body
 PositionalParam : a parameter passed by position, its default filled at saturated calls that omit it
 Param         : a named parameter, its default filled at saturated calls that omit it
-Result        : declares the result type; on `main` the type is `int`, the exit status (sec:ports)
+Result        : declares the result type; on `main` the type is `int`, the exit status, with no facet but `handles` (sec:ports)
 Body          : the λ body ⟦e⟧ or ⟦Block⟧; trailers add no term
 Trailer       : the trailer of its alternative
 TestTable     : a list of test cases, each run with the ports its `with` gives

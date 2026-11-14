@@ -500,6 +500,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("held", 7),
     ("notPassed", 7),
     ("anyThread", 7),
+    ("handles", 7),
     ("handedBack", 7),
     ("dropsHeld", 7),
     ("concurrency", 7),

@@ -118,6 +118,8 @@ Out of memory in a run
 Limit of `main` passed in a run
 Release that fails during a stop
 Releases of a stop cut short
+Signals of `main` read without `handles`
+Signal declaration of `main` that cannot hold
 Fault of foreign code in a run
 Size with no proven bound under `@preallocated` or the `preallocated` mode
 No proved memory bound

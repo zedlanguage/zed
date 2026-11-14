@@ -17,6 +17,7 @@ use super::{
 };
 use crate::lex::{Part, Span, Tok};
 use zedc_base::address::ContentAddress;
+use zedc_base::rejection::Row;
 
 impl Builder<'_, '_> {
     /// The block of node `n`, a `Block`: its statements, of which at most one is a `return`.
@@ -480,6 +481,17 @@ impl Builder<'_, '_> {
                 // Any result type but `int` is rejected naming `int`, a form this zedc does not
                 // compile yet as well, as the old `-> (stdout: Lines)`, after the parameter,
                 // whose message says where each old input is read now ([`Self::main_header`]).
+                // A facet `with handles(…)` is checked here, and a `main` that takes signals over
+                // is not compiled yet ([`Self::main_handles`]).
+                "Result"
+                    if is_main
+                        && self
+                            .mains
+                            .of(self.span(body))
+                            .is_some_and(|m| m.handles.is_some()) =>
+                {
+                    return Err(self.main_handles(self.kids(k)[0], self.span(body)));
+                }
                 "Result" if is_main => {
                     let t = self.kids(k)[0];
                     result = Some(match self.ty(t) {
@@ -487,7 +499,19 @@ impl Builder<'_, '_> {
                         _ => Err(self.span(t)),
                     });
                 }
-                "Result" => return Err(self.later_as(k, "the declared result type")),
+                "Result" => {
+                    let t = self.kids(k)[0];
+                    // Only `main` takes signals over (DESIGN sec:ports): one look at each facet
+                    // of the result, O(f) for f facets.
+                    let handles = (self.kids(t)[1..].iter().copied()).find(|&f| {
+                        self.tree.name(f) == "TypeFacet"
+                            && self.word(self.tree.nodes[f].start + 1) == "handles"
+                    });
+                    return Err(match handles {
+                        Some(f) => self.handles_not_on_main(n, f, body, &name),
+                        None => self.later_as(k, "the declared result type"),
+                    });
+                }
                 _ => return Err(self.later(k)),
             }
         }
@@ -613,6 +637,214 @@ impl Builder<'_, '_> {
             });
         }
         Ok(out)
+    }
+
+    /// The rejection of `with handles(…)`, the facet `f`, on the result of the function `name`
+    /// of node `n`, which is not `main` (row "Signal declaration of `main` that cannot hold"):
+    /// the repair is the header without the facet, or the facet moved to `main`.
+    fn handles_not_on_main(&self, n: usize, f: usize, body: usize, name: &str) -> Error {
+        let (facet, end) = (self.span(f), self.span(body).start);
+        let before = self.text[self.span(n).start..facet.start].trim_end();
+        let after = self.text[facet.end..end].trim();
+        let header = match after {
+            "" => before.to_string(),
+            _ => format!("{before} {after}"),
+        };
+        Error {
+            row: Some(Row::SignalDeclarationCannotHold),
+            menu: String::new(),
+            span: facet,
+            message: format!("`handles` on `{name}`, which is not `main`: `{header}`."),
+            notes: vec![
+                Note {
+                    span: facet,
+                    text: "only `main` takes signals over, and only `main`'s parameter has the \
+                           field `signals`"
+                        .into(),
+                },
+                Note {
+                    span: facet,
+                    text: format!("repair: remove the facet, `{header}`"),
+                },
+                Note {
+                    span: facet,
+                    text: format!(
+                        "repair: write the facet on `main`, `main(m: MainArgs) -> int with \
+                         handles(#sigint)`, which reads `m.signals` and passes the entries to \
+                         `{name}`"
+                    ),
+                },
+            ],
+        }
+    }
+
+    /// Why `main`, whose body is the text `body` and whose result type, node `t`, carries
+    /// `with handles(…)`, cannot be compiled (DESIGN.md sec:ports, "`main` may take over SIGINT,
+    /// SIGTERM and SIGHUP"). A result other than `int` with only `handles` facets is rejected as
+    /// any other result of `main` is ([`main_result_error`]); a declaration that cannot hold
+    /// (row "Signal declaration of `main` that cannot hold"): a second `handles`, no argument,
+    /// an argument other than `#sigint`, `#sigterm` and `#sighup`, an atom named twice, or a
+    /// `main` that never reads `m.signals`; and a declaration that holds is a form this zedc
+    /// does not compile yet, until plan row SIGNALS-rt gives the port and the runtime's part.
+    // Complexity: one pass over the f facets and the a arguments, O(f + a); the atoms seen are
+    // at most three, so the repeat check is a scan of a list of at most three, O(1) each.
+    fn main_handles(&mut self, t: usize, body: Span) -> Error {
+        let main = self.mains.of(body).expect("a main's body is in the table");
+        let row = |span: Span, message: String, notes: Vec<Note>| Error {
+            row: Some(Row::SignalDeclarationCannotHold),
+            menu: String::new(),
+            span,
+            message,
+            notes,
+        };
+        let note = |span: Span, text: &str| Note {
+            span,
+            text: text.into(),
+        };
+        let kids = self.kids(t);
+        let mut facets = Vec::with_capacity(kids.len());
+        for &f in &kids[1..] {
+            let call = self.kids(f).first().copied();
+            if self.tree.name(f) != "TypeFacet"
+                || call.is_none_or(|c| self.word(self.tree.nodes[c].start) != "handles")
+            {
+                return main_result_error(self.text, self.span(t));
+            }
+            facets.push((f, call.expect("a facet's call")));
+        }
+        if !matches!(self.ty(kids[0]), Ok(r) if matches!(&r.kind, TypeKind::Name(n) if n == "int"))
+        {
+            return main_result_error(self.text, self.span(t));
+        }
+        let takes = "`handles` takes one or more of `#sigint` (SIGINT, Ctrl-C), `#sigterm` \
+                     (SIGTERM) and `#sighup` (SIGHUP), each named once";
+        let (first, call) = facets[0];
+        if let Some(&(again, _)) = facets.get(1) {
+            // The repair: the arguments of every `handles` written, in one.
+            let all: Vec<&str> = (facets.iter())
+                .filter_map(|&(_, c)| self.kids(c).get(1))
+                .map(|&a| &self.text[self.span(a).start..self.span(a).end])
+                .collect();
+            let all = all.join(", ");
+            return row(
+                self.span(again),
+                format!("`handles` is written twice: `with handles({all})`."),
+                vec![
+                    note(self.span(first), "`handles` is written first here"),
+                    note(
+                        self.span(again),
+                        "repair: name every signal in the first `handles`",
+                    ),
+                ],
+            );
+        }
+        let args = (self.kids(call).get(1).copied()).filter(|&a| self.tree.name(a) == "Args");
+        let Some(args) = args else {
+            return row(
+                self.span(first),
+                "`handles()` names no signal: `with handles(#sigint)`.".into(),
+                vec![note(self.span(first), takes)],
+            );
+        };
+        let node = &self.tree.nodes[args];
+        if let Some(dots) = (node.start..node.end).find(|&i| self.word(i) == "...") {
+            let span = self.tokens[dots].span;
+            return row(
+                span,
+                "`...` cannot be taken over: `with handles(#sigint)`.".into(),
+                vec![note(span, takes)],
+            );
+        }
+        // Every argument is checked to be one of the three signals before any repeat is looked
+        // for, so the repeat check below meets only those three texts. One pass, O(a) for a
+        // arguments.
+        let mut atoms: Vec<(&str, Span)> = Vec::with_capacity(self.kids(args).len());
+        for &a in self.kids(args) {
+            let (from, to) = (self.tree.nodes[a].start, self.tree.nodes[a].end);
+            let written = &self.text[self.span(a).start..self.span(a).end];
+            let span = self.span(a);
+            // A named argument is three tokens at least, so one token is a positional one.
+            let atom = (to - from == 1)
+                .then_some(written)
+                .filter(|w| matches!(*w, "#sigint" | "#sigterm" | "#sighup"));
+            let Some(atom) = atom else {
+                let why = match written {
+                    "#sigkill" => "SIGKILL cannot be caught",
+                    "#sigstop" => "SIGSTOP cannot be caught",
+                    _ => "it is not a signal `handles` takes",
+                };
+                return row(
+                    span,
+                    format!("`{written}` cannot be taken over: {why}. `with handles(#sigint)`."),
+                    vec![
+                        note(span, takes),
+                        note(
+                            span,
+                            "repair: name `#sigint`, `#sigterm` or `#sighup` in its place, or \
+                             remove it",
+                        ),
+                    ],
+                );
+            };
+            atoms.push((atom, span));
+        }
+        // The atoms named so far, each with its place: at most the three signals, so finding one
+        // in it is O(1) and the pass O(a). The naive check, counting each argument's copies
+        // among all the arguments, is O(a²).
+        let mut seen: Vec<(&str, Span)> = Vec::with_capacity(3);
+        for &(atom, span) in &atoms {
+            if let Some(&(_, before)) = seen.iter().find(|(s, _)| *s == atom) {
+                // The arguments, each once, in the order first written: one pass with a set of
+                // the atoms kept, O(a) for a arguments.
+                let mut kept = HashSet::new();
+                let once: Vec<&str> = (atoms.iter().map(|&(a, _)| a))
+                    .filter(|a| kept.insert(*a))
+                    .collect();
+                let once = once.join(", ");
+                return row(
+                    span,
+                    format!("`{atom}` is named twice: `with handles({once})`."),
+                    vec![
+                        note(before, &format!("`{atom}` is named first here")),
+                        note(span, "repair: remove the second"),
+                    ],
+                );
+            }
+            seen.push((atom, span));
+        }
+        if main.signals.get().is_none() {
+            let header = self.text[main.header.start..self.span(first).start].trim_end();
+            let names: Vec<String> = (seen.iter()).map(|(a, _)| a[1..].to_uppercase()).collect();
+            let names = match &names[..] {
+                [one] => one.clone(),
+                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+                [] => unreachable!("an `Args` has an argument"),
+            };
+            let m = main.param.as_deref().unwrap_or("m");
+            return row(
+                self.span(first),
+                format!("`main` takes over {names} and never reads `{m}.signals`: `{header}`."),
+                vec![
+                    note(
+                        self.span(first),
+                        &format!(
+                            "each signal `main` takes over becomes an entry of `{m}.signals`, \
+                             and one that arrives while the last is unread stops the run: as \
+                             written, {names} would wait unread and take two to stop the run"
+                        ),
+                    ),
+                    note(
+                        self.span(first),
+                        &format!("repair: remove the facet, `{header}`, and {names} stops the run"),
+                    ),
+                    note(
+                        body,
+                        &format!("repair: read the signals in the body, as `{m}.signals[0]`"),
+                    ),
+                ],
+            );
+        }
+        self.later_as(first, "the facet")
     }
 
     /// The parameters and ports the rest of the compiler runs `main` with, from its written

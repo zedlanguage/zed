@@ -404,12 +404,33 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:58",
         Some("write `(12 div (p - 4)) > 0` so that it gives `true` or `false` at `p = 4`"),
     ),
+    // SPEC-sigint-override: `m.signals` exists only under `with handles(…)` on `main`'s result.
+    (
+        Row::SignalsReadWithoutHandles,
+        "",
+        "main(m: MainArgs) -> int with handles(#sigint) {\n  _ = m.signals[0];\n}\n",
+        "main(m: MainArgs) -> int {\n  _ = m.signals[0];\n}\n",
+        "2:7",
+        Some(
+            "take SIGINT over with `main(m: MainArgs) -> int with handles(#sigint)`; `#sigterm` \
+             and `#sighup` may be named too, as `handles(#sigint, #sigterm)`",
+        ),
+    ),
+    // SPEC-sigint-override: SIGKILL cannot be caught, so `handles` cannot take it.
+    (
+        Row::SignalDeclarationCannotHold,
+        "",
+        "main(m: MainArgs) -> int with handles(#sigint) {\n  _ = m.signals[0];\n}\n",
+        "main(m: MainArgs) -> int with handles(#sigkill) {\n  _ = m.signals[0];\n}\n",
+        "1:39",
+        Some("name `#sigint`, `#sigterm` or `#sighup` in its place, or remove it"),
+    ),
 ];
 
-/// Rows whose accepted program holds a form name resolution does not compile yet (a boundary
-/// `with`, step L6.2, or a `loop`, step L6.1): their accepted program is refused only with the
-/// message that names the form as not compiled yet. Once it is accepted, the row leaves this
-/// list.
+/// Rows whose accepted program holds a form zedc does not compile yet (a boundary `with`, step
+/// L6.2, a `loop`, step L6.1, or `with handles(…)` on `main`, plan row SIGNALS-rt): their
+/// accepted program is refused only with the message that names the form as not compiled yet.
+/// Once it is accepted, the row leaves this list.
 const LATER: &[Row] = &[
     Row::BareBoundary,
     Row::WithInitialItem,
@@ -422,6 +443,8 @@ const LATER: &[Row] = &[
     Row::CarryOnKeyedEntry,
     Row::MutableDeclaration,
     Row::CarryWord,
+    Row::SignalsReadWithoutHandles,
+    Row::SignalDeclarationCannotHold,
 ];
 
 /// The `.rs` files under `dir`, in no order.

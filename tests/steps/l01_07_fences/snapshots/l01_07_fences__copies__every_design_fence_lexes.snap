@@ -68,6 +68,11 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  15 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 20₍10₎ ) ) ;
  16 | }
 == DESIGN.md [sec:ports] 3 L7
+  3 | main ( m : MainArgs ) -> int «with» handles ( #sigint ) {
+  4 | stopped = m . signals [ 0₍10₎ ] == #sigint «else» «false» ;
+  5 | m . stdout <- «if» stopped { str["stopping"] } «else» { str[] } ;
+  6 | }
+== DESIGN.md [sec:ports] 4 L7
   2 | main ( m : MainArgs ) -> int {
   3 | r = run ( [ str["git"] , str["status"] , str["--short"] ] ) ;
   4 | «match» r {
@@ -84,12 +89,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  18 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
  19 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
  20 | }
-== DESIGN.md [sec:ports] 4 L7
+== DESIGN.md [sec:ports] 5 L7
   2 | main ( m : MainArgs ) {
   3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
   4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
   5 | }
-== DESIGN.md [sec:ports] 5 L21
+== DESIGN.md [sec:ports] 6 L21
   1 | orders : Utf8String ->? { total : rat , note : Utf8String | #none }
   2 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» 0r

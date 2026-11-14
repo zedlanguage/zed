@@ -76,6 +76,16 @@ pub(super) struct MainBody {
     /// Where each of [`MAIN_INPUTS`] is first read, and each of [`MAIN_OUTPUTS`] first pushed
     /// to, in the body.
     pub(super) uses: std::cell::RefCell<FieldUses>,
+    /// The facet `with handles(…)` on its result type, by which `main` takes signals over and
+    /// `m.signals` exists (DESIGN.md sec:ports, "`main` may take over SIGINT, SIGTERM and
+    /// SIGHUP"), when it is written: the first such facet, whose arguments the header checks.
+    pub(super) handles: Option<Span>,
+    /// Where `m.signals` is first read in the body.
+    pub(super) signals: std::cell::Cell<Option<Span>>,
+    /// The header's text, from `main` to the end of its result type or of its parameters.
+    pub(super) header: Span,
+    /// Whether the header declares a result type.
+    pub(super) result: bool,
 }
 
 /// Where each input field of `main`'s argument is first read, and each output field first pushed
@@ -111,10 +121,30 @@ impl Mains {
                 .and_then(|&ps| tree.nodes[ps].kids.first())
                 .filter(|&&p| tree.name(p) == "Param")
                 .map(|&p| word(tree.nodes[p].start).to_string());
+            // `Result = '->' Type` and `Type = Arrow TypeFacet* …`: the facets are kids of the
+            // result's one `Type`, each `TypeFacet = 'with' FacetCall`, so the facet's name is
+            // its second token. O(f) for f facets written on the result.
+            let result = node.kids.iter().find(|&&k| tree.name(k) == "Result");
+            let header = Span {
+                start: span(n).start,
+                end: tokens[tree.nodes[body].start - 1].span.end,
+            };
+            let handles = result
+                .and_then(|&r| tree.nodes[r].kids.first())
+                .and_then(|&t| {
+                    (tree.nodes[t].kids.iter()).find(|&&f| {
+                        tree.name(f) == "TypeFacet" && word(tree.nodes[f].start + 1) == "handles"
+                    })
+                })
+                .map(|&f| span(f));
             list.push(MainBody {
                 body: span(body),
                 param,
                 uses: std::cell::RefCell::new(([None; 4], [None; 2])),
+                handles,
+                signals: std::cell::Cell::new(None),
+                header,
+                result: result.is_some(),
             });
         }
         list.sort_by_key(|b| b.body.start);
@@ -370,6 +400,23 @@ impl<'a, 's> Builder<'a, 's> {
         };
         match field {
             "args" | "stdin" | "env" => Ok(self.main_use(field, span)),
+            // `m.signals` exists only under `with handles(…)` on `main`'s result (DESIGN.md
+            // sec:ports). The read is recorded either way, for the header's check that a `main`
+            // which declares `handles` reads `m.signals`. The port itself is compiled by plan row
+            // SIGNALS-rt, which needs the stop thread (STOP-releases-rt) and input streams.
+            "signals" => {
+                let main = self.mains.at(span.start).expect("a use inside main's body");
+                let mut first = main.signals.get();
+                first_use(&mut first, span);
+                main.signals.set(first);
+                match main.handles {
+                    None => Err(signals_without_handles(self.text, m, span, main)),
+                    Some(_) => Err(Error {
+                        message: not_yet(&format!("the port `{m}.signals`")),
+                        ..error(String::new())
+                    }),
+                }
+            }
             // Passed whole to a parameter, the output is given to the function called, which
             // pushes to it, and `main` declares it as it declares an output it pushes to. The
             // port is declared at its first use, the whole argument, which is also the text a
@@ -909,4 +956,45 @@ fn kind_of(rule: &str) -> &'static str {
 /// is kept, not the first built.
 fn first_use(slot: &mut Option<Span>, span: Span) {
     *slot = Some(slot.map_or(span, |s| s.min(span)));
+}
+
+/// The error for the read `m.signals` at `span` in the body of `main`, whose result declares no
+/// `with handles(…)` (DESIGN.md sec:diagnostics, row "Signals of `main` read without
+/// `handles`"): a short headline with the header rewritten to take SIGINT over, the rule in the
+/// notes, and the two repairs.
+fn signals_without_handles(text: &str, m: &str, span: Span, main: &MainBody) -> Error {
+    let header = text[main.header.start..main.header.end].trim_end();
+    let rewritten = match main.result {
+        true => format!("{header} with handles(#sigint)"),
+        false => format!("{header} -> int with handles(#sigint)"),
+    };
+    let note = |span: Span, text: String| Note { span, text };
+    Error {
+        row: Some(Row::SignalsReadWithoutHandles),
+        menu: String::new(),
+        span,
+        message: format!("`{m}.signals` is read, and `main` takes over no signal: `{rewritten}`."),
+        notes: vec![
+            note(span, format!("`{m}.signals` is read here")),
+            note(
+                main.header,
+                format!(
+                    "`{header}` declares no `with handles(…)`, so `{m}` has no field `signals`: \
+                     SIGINT (Ctrl-C), SIGTERM and SIGHUP each stop the run, and the stop runs \
+                     the program's releases"
+                ),
+            ),
+            note(
+                main.header,
+                format!(
+                    "repair: take SIGINT over with `{rewritten}`; `#sigterm` and `#sighup` may \
+                     be named too, as `handles(#sigint, #sigterm)`"
+                ),
+            ),
+            note(
+                span,
+                format!("repair: remove the read of `{m}.signals`, and Ctrl-C stops the run"),
+            ),
+        ],
+    }
 }

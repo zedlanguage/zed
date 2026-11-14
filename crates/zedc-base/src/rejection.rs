@@ -185,9 +185,12 @@ rows! {
     // No diagnostic uses the next two rows yet: plan row MAIN-limits emits them.
     OutOfMemory => "Out of memory in a run",
     MainLimitPassed => "Limit of `main` passed in a run",
-    // No diagnostic uses the next three rows yet: plan row STOP-releases-rt emits them.
+    // No diagnostic uses the next two rows yet: plan row STOP-releases-rt emits them.
     StopReleaseFailed => "Release that fails during a stop",
     StopReleasesCut => "Releases of a stop cut short",
+    SignalsReadWithoutHandles => "Signals of `main` read without `handles`",
+    SignalDeclarationCannotHold => "Signal declaration of `main` that cannot hold",
+    // No diagnostic uses the next row yet: plan row STOP-releases-rt emits it.
     ForeignFault => "Fault of foreign code in a run",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
     // No diagnostic uses the next row yet: plan row MEM-verdicts emits it.
