@@ -23,6 +23,9 @@ Cost claim that bounds nothing
 Cost claim with no kind of bound, or with a lower bound
 Equivalent switch of another shape
 Equivalent switch below proof grade without inputs
+`@memoized` on code whose result is not a function of its key
+`memoizationArena` written after `with`
+Memo arena around no `@memoized` code
 Non-exhaustive `match`
 Unreachable `match` arm
 `.fold` on a type that has none

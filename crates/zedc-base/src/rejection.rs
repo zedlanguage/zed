@@ -69,6 +69,11 @@ rows! {
     CostKindMissing => "Cost claim with no kind of bound, or with a lower bound",
     EquivalentShape => "Equivalent switch of another shape",
     EquivalentNoInputs => "Equivalent switch below proof grade without inputs",
+    // No diagnostic uses the next three rows yet: steps L18.2d (the first) and L18.2e (the other
+    // two) emit them.
+    MemoizedNotAFunction => "`@memoized` on code whose result is not a function of its key",
+    MemoArenaAfterWith => "`memoizationArena` written after `with`",
+    MemoArenaAroundNothing => "Memo arena around no `@memoized` code",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     FoldWithNone => "`.fold` on a type that has none",

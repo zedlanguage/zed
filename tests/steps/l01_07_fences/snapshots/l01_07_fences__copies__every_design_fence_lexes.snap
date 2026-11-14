@@ -606,6 +606,31 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | width = header . len ;
   6 | ( width , body )
   7 | }
+== DESIGN.md [sec:arenas] 1 L18
+  1 | @memoized paths ( r : int , c : int ) -> int = «if» r <= 0₍10₎ || c <= 0₍10₎ { 1₍10₎ } «else» { paths ( r - 1₍10₎ , c ) + paths ( r , c - 1₍10₎ ) } ;
+  3 | main ( m : MainArgs ) {
+  4 | n = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+  5 | m . stdout <- String ( paths ( n , n ) ) ;
+  6 | }
+== DESIGN.md [sec:arenas] 2 L18
+  1 | @memoized fib ( n : int [ 0₍10₎ .. ] ) -> int = «if» n < 2₍10₎ { n } «else» { fib ( n - 1₍10₎ ) + fib ( n - 2₍10₎ ) } ;
+  3 | each ( queries : [ int [ 0₍10₎ .. ] ] ) -> [ int ] = queries . map ( q -> @memoizationArena fib ( q ) ) ;
+  4 | shared ( queries : [ int [ 0₍10₎ .. ] ] ) -> [ int ] = @memoizationArena queries . map ( q -> fib ( q ) ) ;
+== DESIGN.md [sec:arenas] 3 L18
+  1 | «type» Ty = #int | #rat | #var ( id : int ) | #fn ( param : Ty , result : Ty ) | #forall ( id : int , body : Ty ) ;
+  4 | @memoized rename ( t : Ty , from : int , to : int ) -> Ty = «match» t {
+  5 | #var ( id : ) where id == from -> #var ( id : to ) ,
+  6 | #fn ( param : , result : ) -> #fn ( param : rename ( param , from , to ) , result : rename ( result , from , to ) ) ,
+  7 | #forall ( id : , body : ) where id != from -> #forall ( id : id , body : rename ( body , from , to ) ) ,
+  8 | _ -> t ,
+  9 | } ;
+ 12 | @memoized fits ( a : Ty , b : Ty , binds : int ->? Ty ) -> bool = «match» ( a , b ) {
+ 13 | ( #int , #rat ) -> «true» ,
+ 14 | ( #var ( id : i ) , _ ) -> «match» binds [ i ] { #notFound -> a == b , t -> fits ( t , b , binds ) } ,
+ 15 | ( #fn ( param : p , result : r ) , #fn ( param : q , result : s ) ) -> fits ( q , p , binds ) && fits ( r , s , binds ) ,
+ 16 | ( #forall ( id : i , body : x ) , #forall ( id : j , body : y ) ) -> @memoizationArena fits ( x , rename ( y , j , i ) , binds ) ,
+ 17 | _ -> a == b ,
+ 18 | } ;
 == DESIGN.md [sec:robustness] 1 L21
   1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) ;
   3 | main ( m : MainArgs ) {

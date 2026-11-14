@@ -17,7 +17,7 @@
 | L15 | `@invariant`, `@ensure`, `@exhaustive`, `@exact` | — | `Proof`, `byInduction`, `bySimp`, `byCases`, `using`, `anyIntro`, `anyElim`, `allElim`, `allIntro`, `::grade`, `reflect` |
 | L16 | `@associative`, `@commutative`, `@idempotent`, `@injective`, `@assume` | `unique` | — |
 | L17 | `@measure`, `@total` | — | `total`, `zedc build --total` |
-| L18 | `@cost`, `@equivalent`, `@fused`, `@memoized`, `@noalloc`, `@preallocated`, `@stack` | — | `preallocated`, `f::cost`, `f::depth`, `f::costWithMultipliers`, `f::depthWithMultipliers` |
+| L18 | `@cost`, `@equivalent`, `@fused`, `@memoized`, `@memoizationArena`, `@noalloc`, `@preallocated`, `@stack` | — | `preallocated`, `f::cost`, `f::depth`, `f::costWithMultipliers`, `f::depthWithMultipliers` |
 | L19 | — | — | `compile`, `mix` |
 | L20 | — | `bitorder` | `records`, `json`, `csv` |
 | L21 | — | `store`, `retry`, `hedge`, `breaker`, `rate`, `peers` | `#unavailable` |
