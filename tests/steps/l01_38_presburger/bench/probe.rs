@@ -97,3 +97,29 @@ fn twin_chains_of_absolute_values_scale() {
         },
     );
 }
+
+/// `probe::guards_beyond_the_inputs_are_answered` as first written, 1.9 s (2026-11-14, load
+/// 25): inputs from 1 to 8 wide, guards from one past the width to three times it, both
+/// demands.
+#[test]
+fn guards_beyond_the_inputs_are_answered_on_the_whole_grid() {
+    for w in 1..=8i64 {
+        for k_ in (w + 1)..=(3 * w) {
+            guards_beyond_the_inputs_answer(k_ as usize, w);
+        }
+    }
+}
+
+/// `probe::guards_are_projected_onto_each_input` as first written, 7.1 s (2026-11-14, load
+/// 25): the projections onto each input of the chains of 1 to 16 guards on inputs from 0 to 8
+/// wide, both demands.
+#[test]
+fn guards_are_projected_onto_each_input_on_the_whole_grid() {
+    for w in 0..=8 {
+        for k_ in 1..=16 {
+            for meet in [true, false] {
+                projects_guards(k_, w, meet);
+            }
+        }
+    }
+}
