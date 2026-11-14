@@ -2189,7 +2189,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | SPEC-ffi-release-apply | impl attempt 1 | 2026-11-13 16:29 | started; spec worktree /home/luke/Work/wt/spec-ffi-release-apply-spec; load 63.31 57.12 51.32 |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
-| STUDY-eval-pull-body | running |  |  |
+| STUDY-eval-pull-body | impl attempt 1 | 2026-11-13 16:58 | running: reading DESIGN for pull-within-body study |
+| TERM-report | running |  |  |
 | TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
