@@ -2567,6 +2567,9 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
     if let Some(answer) = cell_sweep::decide_by_cells(&p) {
         return answer;
     }
+    if let Some(answer) = by_chain_hulls(&p) {
+        return Ok(answer);
+    }
     if pick(&p, true).is_ok() {
         return Ok(true);
     }
@@ -2593,6 +2596,650 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
         Ok(Some(q)) => pick(&q, true).map(|_| true).map_err(|_| refused),
         Err(_) => Err(refused),
     }
+}
+
+/// The smallest bounded arithmetic progression containing the offsets of one sign of
+/// map: a singleton has step zero. A progression can contain offsets no choice produces.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OffsetHull {
+    lo: Int,
+    hi: Int,
+    step: Int,
+}
+
+/// Offset hulls of `v -> v + c` and `v -> -v + c`, with absent signs represented by None.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MapHull([Option<OffsetHull>; 2]);
+impl MapHull {
+    fn empty() -> Self {
+        Self([None, None])
+    }
+    fn identity() -> Self {
+        Self::one(false, Int::ZERO)
+    }
+    fn one(flip: bool, offset: Int) -> Self {
+        let mut out = Self::empty();
+        out.0[usize::from(flip)] = Some(OffsetHull {
+            lo: offset.clone(),
+            hi: offset,
+            step: Int::ZERO,
+        });
+        out
+    }
+    fn add(&mut self, sign: usize, span: OffsetHull) {
+        match &mut self.0[sign] {
+            None => self.0[sign] = Some(span),
+            Some(old) => {
+                old.step = old.step.gcd(&span.step).gcd(&(&span.lo - &old.lo));
+                old.lo = old.lo.clone().min(span.lo);
+                old.hi = old.hi.clone().max(span.hi);
+            }
+        }
+    }
+    fn join(&mut self, other: &Self) {
+        for (sign, span) in other.0.iter().enumerate() {
+            if let Some(span) = span {
+                self.add(sign, span.clone());
+            }
+        }
+    }
+    /// Union takes the gcd of both difference gcds and the difference of representatives.
+    /// A sum takes the gcd of the two difference gcds. Both preserve exact extrema and
+    /// exact difference gcds, even if the hull fills holes, so composition is associative.
+    fn compose(outer: &Self, inner: &Self) -> Self {
+        let mut out = Self::empty();
+        for (a, x) in outer.0.iter().enumerate() {
+            let Some(x) = x else { continue };
+            for (b, y) in inner.0.iter().enumerate() {
+                let Some(y) = y else { continue };
+                let (lo, hi) = if a == 0 {
+                    (&x.lo + &y.lo, &x.hi + &y.hi)
+                } else {
+                    (&x.lo - &y.hi, &x.hi - &y.lo)
+                };
+                out.add(
+                    a ^ b,
+                    OffsetHull {
+                        lo,
+                        hi,
+                        step: x.step.gcd(&y.step),
+                    },
+                );
+            }
+        }
+        out
+    }
+}
+
+/// A product of map hulls, in chain order. One changed guard updates one leaf and its
+/// ancestors; the number of ancestors is the height of the binary tree, O(log N).
+struct HullProduct {
+    size: usize,
+    tree: Vec<MapHull>,
+}
+impl HullProduct {
+    fn new(n: usize) -> Self {
+        let size = n.next_power_of_two();
+        let mut tree = vec![MapHull::identity(); 2 * size];
+        for leaf in &mut tree[size..size + n] {
+            *leaf = MapHull::empty();
+        }
+        for i in (1..size).rev() {
+            tree[i] = MapHull::compose(&tree[2 * i + 1], &tree[2 * i]);
+        }
+        Self { size, tree }
+    }
+    fn set(&mut self, at: usize, value: MapHull) {
+        let mut i = self.size + at;
+        self.tree[i] = value;
+        while i > 1 {
+            i /= 2;
+            self.tree[i] = MapHull::compose(&self.tree[2 * i + 1], &self.tree[2 * i]);
+        }
+    }
+}
+
+/// An unoriented unit row and its guard in the common guard coordinate.
+struct HullArm {
+    ends: [usize; 2],
+    positive: [bool; 2],
+    constant: Int,
+    guard: Span,
+}
+
+type HullStage = Vec<(Span, MapHull)>;
+
+/// A chain whose guards use one input, or the unit sum/difference of two independent box
+/// inputs. Its initial value is an affine function of one input, and its final query fixes
+/// one output. Other rows are guarded binary definitions of unit maps.
+struct GuardedChain {
+    defs: Vec<Vec<HullArm>>,
+    vars: usize,
+    queries: Vec<(Span, usize, Int)>,
+    initial_coef: Int,
+    initial_offset: Int,
+    input: (Int, Int),
+    other: (Int, Int),
+    negative_input: bool,
+    whole: (Int, Int),
+    complete: bool,
+}
+impl GuardedChain {
+    fn of(p: &Parts) -> Option<Self> {
+        // Reject the outer shape before copying root bounds. Nested cells and shared point
+        // lists do not pay to build a solver state for this unrelated flat-chain subclass.
+        if p.ors.is_empty()
+            || p.ors
+                .iter()
+                .any(|o| o.len() != 2 || o.iter().any(|d| !d.ors.is_empty()))
+        {
+            return None;
+        }
+        let mut form: Option<BTreeMap<Atom, Int>> = None;
+        let mut payload = BTreeSet::new();
+        let mut query_or = None;
+        // Complexity tradeoff: H references to an arm with R redundant guard rows must
+        // not reread H R rows. The visited map records its equality once; the second pass
+        // below also computes one guard span per physical arm, O((rows + edges) log N).
+        let mut arm_rows: BTreeMap<*const Parts, (&Con, &Parts)> = BTreeMap::new();
+        for (j, o) in p.ors.iter().enumerate() {
+            let mut arity = None;
+            for d in o {
+                let key = Rc::as_ptr(d);
+                let eq = if let Some((eq, _)) = arm_rows.get(&key) {
+                    *eq
+                } else {
+                    let mut equation = None;
+                    for c in &d.cons {
+                        if c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..))) {
+                            return None;
+                        }
+                        if c.rel == Rel::Eq {
+                            if equation.replace(c).is_some() {
+                                return None;
+                            }
+                            if !(1..=2).contains(&c.lin.terms.len())
+                                || !c.lin.terms.values().all(Int::is_unit)
+                            {
+                                return None;
+                            }
+                            payload.extend(c.lin.terms.keys().cloned());
+                        } else {
+                            if !(1..=2).contains(&c.lin.terms.len())
+                                || !c.lin.terms.values().all(Int::is_unit)
+                            {
+                                return None;
+                            }
+                            let old = form.get_or_insert_with(|| c.lin.terms.clone());
+                            if c.lin.terms.len() != old.len()
+                                || c.lin.terms != *old
+                                    && !c
+                                        .lin
+                                        .terms
+                                        .iter()
+                                        .all(|(a, k)| old.get(a).is_some_and(|b| *k == -b))
+                            {
+                                return None;
+                            }
+                        }
+                    }
+                    let eq = equation?;
+                    arm_rows.insert(key, (eq, d.as_ref()));
+                    eq
+                };
+                let n = eq.lin.terms.len();
+                if arity.is_some_and(|old| old != n) {
+                    return None;
+                }
+                arity = Some(n);
+            }
+            if arity == Some(1) && query_or.replace(j).is_some() {
+                return None;
+            }
+        }
+        let form = form?;
+        let mut guards = BTreeMap::new();
+        for (&key, (_, d)) in &arm_rows {
+            let mut span = (None, None);
+            for c in &d.cons {
+                if c.rel != Rel::Eq {
+                    Self::guard(c, &form, &mut span)?;
+                }
+            }
+            guards.insert(key, span);
+        }
+
+        let mut bounds = AtomBounds::new();
+        let mut basis = None;
+        let mut guard_bounds = (None, None);
+        let mut root_complete = true;
+        for c in &p.cons {
+            if c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..))) {
+                return None;
+            }
+            if c.lin.terms.len() <= 1 {
+                if !narrow(c, &mut bounds) {
+                    return None;
+                }
+            } else if c.rel == Rel::Eq {
+                if basis.is_some() || c.lin.terms.len() != 2 {
+                    return None;
+                }
+                basis = Some(c);
+            } else if Self::guard(c, &form, &mut guard_bounds).is_none() {
+                // Dropping a root consequence is safe only for a negative decision.
+                root_complete = false;
+            }
+        }
+        let (input, seed, initial_coef, initial_offset) = if let Some(c) = basis {
+            let mut read = c.lin.terms.iter().filter(|(a, _)| form.contains_key(*a));
+            let (input, k) = read.next()?;
+            if read.next().is_some() {
+                return None;
+            }
+            let (seed, a) = c.lin.terms.iter().find(|(b, _)| *b != input)?;
+            if !a.is_unit() {
+                return None;
+            }
+            (
+                input.clone(),
+                seed.clone(),
+                -&(k * a),
+                -&(&c.lin.constant * a),
+            )
+        } else {
+            let mut read = form.keys().filter(|a| payload.contains(*a));
+            let input = read.next()?.clone();
+            if read.next().is_some() {
+                return None;
+            }
+            (input.clone(), input, Int::ONE, Int::ZERO)
+        };
+        // Guard inputs are independent box coordinates. A guard atom defined by the
+        // chain would have to equal its computed value, which the box projection does
+        // not enforce. Only the initial seed may be both a guard input and a payload.
+        if form.keys().any(|a| payload.contains(a) && *a != seed) {
+            return None;
+        }
+        let mut whole = (Int::ZERO, Int::ZERO);
+        let mut other = (Int::ZERO, Int::ZERO);
+        let mut input_bounds = None;
+        for (a, k) in &form {
+            let (Some(l), Some(h)) = bounds.get(a)?.clone() else {
+                return None;
+            };
+            if l > h {
+                return None;
+            }
+            let span = if k.is_positive() {
+                (l.clone(), h.clone())
+            } else {
+                (-&h, -&l)
+            };
+            whole.0 = &whole.0 + &span.0;
+            whole.1 = &whole.1 + &span.1;
+            if *a == input {
+                input_bounds = Some((l, h));
+            } else {
+                other = span;
+            }
+        }
+        if let Some(l) = guard_bounds.0 {
+            whole.0 = whole.0.max(l);
+        }
+        if let Some(h) = guard_bounds.1 {
+            whole.1 = whole.1.min(h);
+        }
+        if whole.0 > whole.1 {
+            return None;
+        }
+        // The normal lowering often substitutes the fixed final output into its last
+        // disjunction, leaving unary queries on its predecessors. Those are kept as
+        // queries, not reconstructed as approximate maps with a target-dependent shift.
+        let mut target = None;
+        if query_or.is_none() {
+            for (a, span) in &bounds {
+                if form.contains_key(a) || !payload.contains(a) {
+                    continue;
+                }
+                if target.is_some() {
+                    return None;
+                }
+                let (Some(l), Some(h)) = span else {
+                    return None;
+                };
+                if l != h {
+                    return None;
+                }
+                target = Some((a.clone(), l.clone()));
+            }
+            target.as_ref()?;
+        }
+        let complete = root_complete
+            && bounds.keys().all(|a| {
+                form.contains_key(a)
+                    || !payload.contains(a)
+                    || target.as_ref().is_some_and(|(t, _)| t == a)
+            });
+        let mut ids = BTreeMap::from([(seed, 0_usize)]);
+
+        let mut defs = Vec::new();
+        let mut queries = Vec::new();
+        for (j, o) in p.ors.iter().enumerate() {
+            let mut arms = Vec::new();
+            for d in o {
+                let key = Rc::as_ptr(d);
+                let eq = arm_rows.get(&key)?.0;
+                let span = guards.get(&key)?.clone();
+                let mut terms = eq.lin.terms.iter();
+                let (a, ka) = terms.next()?;
+                let mut id = |a: &Atom| {
+                    let n = ids.len();
+                    *ids.entry(a.clone()).or_insert(n)
+                };
+                if query_or == Some(j) {
+                    queries.push((span, id(a), -&(&eq.lin.constant * ka)));
+                } else {
+                    let (b, kb) = terms.next()?;
+                    arms.push(HullArm {
+                        ends: [id(a), id(b)],
+                        positive: [ka.is_positive(), kb.is_positive()],
+                        constant: eq.lin.constant.clone(),
+                        guard: span,
+                    });
+                }
+            }
+            if !arms.is_empty() {
+                defs.push(arms);
+            }
+        }
+        if let Some((a, v)) = target {
+            queries.push(((None, None), *ids.get(&a)?, v));
+        }
+        Some(Self {
+            defs,
+            vars: ids.len(),
+            queries,
+            initial_coef,
+            initial_offset,
+            input: input_bounds?,
+            other,
+            negative_input: form[&input].is_negative(),
+            whole,
+            complete,
+        })
+    }
+    fn guard(c: &Con, form: &BTreeMap<Atom, Int>, span: &mut Span) -> Option<()> {
+        if c.rel != Rel::Ge || c.lin.terms.len() != form.len() {
+            return None;
+        }
+        if c.lin.terms == *form {
+            let v = -&c.lin.constant;
+            span.0 = Some(span.0.take().map_or(v.clone(), |old| old.max(v)));
+        } else if c
+            .lin
+            .terms
+            .iter()
+            .all(|(a, k)| form.get(a).is_some_and(|g| *k == -g))
+        {
+            let v = c.lin.constant.clone();
+            span.1 = Some(span.1.take().map_or(v.clone(), |old| old.min(v)));
+        } else {
+            return None;
+        }
+        Some(())
+    }
+    /// A topological incidence queue constructs marginal descriptions, with twins sharing
+    /// one description. All non-twin definitions must extend one chain, not branch off it.
+    fn stages(&self) -> Option<Vec<HullStage>> {
+        let mut incident = vec![Vec::new(); self.vars];
+        for (j, ds) in self.defs.iter().enumerate() {
+            let mut read: Vec<usize> = ds.iter().flat_map(|d| d.ends).collect();
+            read.sort_unstable();
+            read.dedup();
+            for a in read {
+                incident[a].push(j);
+            }
+        }
+        type Key = Vec<(Span, bool, Int, usize)>;
+        let mut canonical: BTreeMap<Key, usize> = BTreeMap::new();
+        let mut reps = vec![None; self.vars];
+        reps[0] = Some(0_usize);
+        let mut used = vec![false; self.defs.len()];
+        let mut queue = std::collections::VecDeque::from([0_usize]);
+        let mut stages = Vec::new();
+        while let Some(a) = queue.pop_front() {
+            for &j in &incident[a] {
+                let ds = &self.defs[j];
+                for out in ds[0].ends {
+                    if reps[out].is_some() {
+                        continue;
+                    }
+                    if !ds.iter().all(|d| {
+                        d.ends.contains(&out)
+                            && d.ends.iter().all(|&b| b == out || reps[b].is_some())
+                    }) {
+                        continue;
+                    }
+                    let mut key = Vec::new();
+                    for d in ds {
+                        let oi = usize::from(d.ends[0] != out);
+                        let pi = 1 - oi;
+                        let parent = reps[d.ends[pi]]?;
+                        let offset = if d.positive[oi] {
+                            -&d.constant
+                        } else {
+                            d.constant.clone()
+                        };
+                        key.push((
+                            d.guard.clone(),
+                            d.positive[0] == d.positive[1],
+                            offset,
+                            parent,
+                        ));
+                    }
+                    key.sort_unstable();
+                    key.dedup();
+                    let rep = if let Some(&r) = canonical.get(&key) {
+                        r
+                    } else {
+                        if key.iter().any(|item| item.3 != stages.len()) {
+                            return None;
+                        }
+                        stages.push(
+                            key.iter()
+                                .map(|(sp, flip, c, _)| {
+                                    (sp.clone(), MapHull::one(*flip, c.clone()))
+                                })
+                                .collect(),
+                        );
+                        canonical.insert(key, stages.len());
+                        stages.len()
+                    };
+                    reps[out] = Some(rep);
+                    used[j] = true;
+                    queue.push_back(out);
+                }
+            }
+        }
+        if !used.into_iter().all(|x| x) {
+            return None;
+        }
+        self.queries
+            .iter()
+            .all(|(_, a, _)| reps[*a] == Some(stages.len()))
+            .then_some(stages)
+    }
+}
+
+/// Whether `coef * x + offset` can equal `target` for an integer x in `lo..=hi` and an
+/// offset in the arithmetic progression. This is one linear congruence, not point search.
+fn progression_meets(target: &Int, coef: &Int, offset: &OffsetHull, lo: &Int, hi: &Int) -> bool {
+    if coef.is_zero() {
+        return offset.lo <= *target
+            && *target <= offset.hi
+            && (if offset.step.is_zero() {
+                *target == offset.lo
+            } else {
+                (target - &offset.lo).mod_floor(&offset.step).is_zero()
+            });
+    }
+    let low = target - &offset.hi;
+    let high = target - &offset.lo;
+    let (l, h) = if coef.is_positive() {
+        (-&(-&low).div_floor(coef), high.div_floor(coef))
+    } else {
+        let a = -coef;
+        (-&high.div_floor(&a), (-&low).div_floor(&a))
+    };
+    let l = l.max(lo.clone());
+    let h = h.min(hi.clone());
+    if l > h {
+        return false;
+    }
+    let r = target - &offset.lo;
+    if offset.step.is_zero() {
+        return r.mod_floor(coef).is_zero();
+    }
+    let g = coef.gcd(&offset.step);
+    if !r.mod_floor(&g).is_zero() {
+        return false;
+    }
+    let m = offset.step.div_floor(&g);
+    let reduced = coef.div_floor(&g);
+    let (_, inverse, _) = bezout(&reduced.abs(), &m);
+    let inverse = if reduced.is_negative() {
+        -&inverse
+    } else {
+        inverse
+    };
+    let residue = (&r.div_floor(&g) * &inverse).mod_floor(&m);
+    let first = &l + &(&residue - &l).mod_floor(&m);
+    first <= h
+}
+
+/// Progression hulls of a flat chain of guarded unit maps. Exclusion refutes the chain.
+/// Membership decides it too when all guards are disjoint and all constraints were
+/// represented; otherwise a member may be a hole and main's methods continue.
+// Complexity tradeoff: settle repeats n disjunct repairs over many rounds (wideik,
+// overlap2c). A topological incidence queue reads each binary definition O(1) times. Guard
+// endpoints update an associative product of bounded arithmetic progressions in a segment
+// tree: O(N log N) arithmetic operations, O(N) storage. Offsets add, so their bit length
+// grows by O(log N); gcd and congruence operations additionally depend on integer bit size.
+// This extends the event sweep of HAS-point-probe R1-CX6 with a necessary hull, rather than
+// claiming that the two-bit exact group decides different reflection centers.
+fn by_chain_hulls(p: &Parts) -> Option<bool> {
+    let chain = GuardedChain::of(p)?;
+    let stages = chain.stages()?;
+    #[derive(Clone, Copy)]
+    enum Event {
+        Definition(usize, usize, bool),
+        Query(usize, bool),
+    }
+    let (lo, hi) = &chain.whole;
+    let mut events: BTreeMap<Int, Vec<Event>> = BTreeMap::new();
+    events.entry(lo.clone()).or_default();
+    events.entry(hi + &Int::ONE).or_default();
+    let clip = |span: &Span| {
+        let l = span
+            .0
+            .as_ref()
+            .map_or(lo.clone(), |v| v.clone().max(lo.clone()));
+        let h = span
+            .1
+            .as_ref()
+            .map_or(hi.clone(), |v| v.clone().min(hi.clone()));
+        (l <= h).then_some((l, h))
+    };
+    for (j, stage) in stages.iter().enumerate() {
+        for (a, (span, _)) in stage.iter().enumerate() {
+            if let Some((l, h)) = clip(span) {
+                events
+                    .entry(l)
+                    .or_default()
+                    .push(Event::Definition(j, a, true));
+                events
+                    .entry(&h + &Int::ONE)
+                    .or_default()
+                    .push(Event::Definition(j, a, false));
+            }
+        }
+    }
+    for (j, (span, _, _)) in chain.queries.iter().enumerate() {
+        if let Some((l, h)) = clip(span) {
+            events.entry(l).or_default().push(Event::Query(j, true));
+            events
+                .entry(&h + &Int::ONE)
+                .or_default()
+                .push(Event::Query(j, false));
+        }
+    }
+    // If all definition guards are disjoint, every map in every live cell is unique.
+    // With every definition reached and every root constraint represented, membership is
+    // then an exact decision, including a positive answer. This structural condition is
+    // global to the chain, so a partly nondeterministic chain never changes to a cheaper
+    // positive path merely because an early cell happened to be deterministic.
+    let functional = stages.iter().all(|stage| match stage.as_slice() {
+        [a, b] => match (clip(&a.0), clip(&b.0)) {
+            (Some((al, ah)), Some((bl, bh))) => al.max(bl) > ah.min(bh),
+            _ => true,
+        },
+        _ => true,
+    });
+    let positive = chain.complete && functional;
+    let events: Vec<_> = events.into_iter().collect();
+
+    let mut active: Vec<Vec<bool>> = stages.iter().map(|s| vec![false; s.len()]).collect();
+    let mut queries = vec![false; chain.queries.len()];
+    let mut product = HullProduct::new(stages.len());
+    for cuts in events.windows(2) {
+        let (l, at) = &cuts[0];
+        let h = &cuts[1].0 - &Int::ONE;
+        for event in at {
+            match *event {
+                Event::Query(j, on) => queries[j] = on,
+                Event::Definition(j, a, on) => {
+                    active[j][a] = on;
+                    let mut value = MapHull::empty();
+                    for (on, (_, choice)) in active[j].iter().zip(&stages[j]) {
+                        if *on {
+                            value.join(choice);
+                        }
+                    }
+                    product.set(j, value);
+                }
+            }
+        }
+        // Project g = ±input + other onto the independent input box. Unit coefficients
+        // make this projection exact on integer intervals.
+        let (a, b) = if chain.negative_input {
+            (&chain.other.0 - &h, &chain.other.1 - l)
+        } else {
+            (l - &chain.other.1, &h - &chain.other.0)
+        };
+        let a = a.max(chain.input.0.clone());
+        let b = b.min(chain.input.1.clone());
+        if a > b {
+            continue;
+        }
+        for (on, (_, _, target)) in queries.iter().zip(&chain.queries) {
+            if !*on {
+                continue;
+            }
+            for (sign, offset) in product.tree[1].0.iter().enumerate() {
+                let Some(offset) = offset else { continue };
+                let (coef, shift) = if sign == 0 {
+                    (chain.initial_coef.clone(), chain.initial_offset.clone())
+                } else {
+                    (-&chain.initial_coef, -&chain.initial_offset)
+                };
+                if progression_meets(&(target - &shift), &coef, offset, &a, &b) {
+                    return positive.then_some(true);
+                }
+            }
+        }
+    }
+    Some(false)
 }
 
 mod cell_sweep {
@@ -5847,6 +6494,22 @@ impl CellView {
         if let Some((a, b)) = other.single() {
             return self.clamp(a, b);
         }
+        // Complexity tradeoff: merging the common main R runs again for H different pairs
+        // costs O(H R), even when each pair differs only in its extras. The distributive
+        // identity (M union A) meet (M union B) = M union (A meet B) retains M by reference
+        // and reads only the extras. Whole-view memoization still handles repeated pairs.
+        if Rc::ptr_eq(&self.main.set, &other.main.set)
+            && self.main.lo == other.main.lo
+            && self.main.hi == other.main.hi
+        {
+            return CellView {
+                main: self.main.clone(),
+                extra: CellPiece::of(cells_meet(
+                    &self.extra.runs().collect::<Vec<_>>(),
+                    &other.extra.runs().collect::<Vec<_>>(),
+                )),
+            };
+        }
         CellView::of(cells_meet(&self.runs(), &other.runs()))
     }
 
@@ -5907,6 +6570,139 @@ struct CellWalk<'a> {
 }
 
 impl CellWalk<'_> {
+    fn live(&mut self, p: &Parts) -> CellSet {
+        let all = [(0, self.cells.len() - 1)];
+        let mut views: HashMap<ViewKey, CellView> = HashMap::new();
+        let mut catalog_tried = false;
+        for o in &p.ors {
+            let m = if let [d] = o.as_slice() {
+                self.of(d).0
+            } else {
+                let children = o.iter().map(|d| self.of(d).0).collect();
+                match self.try_join(children, false) {
+                    Some(m) => m,
+                    None => {
+                        if !catalog_tried {
+                            catalog_tried = true;
+                            if let Some(live) = self.catalog_live(p) {
+                                return live;
+                            }
+                        }
+                        let children = o.iter().map(|d| self.of(d).0).collect();
+                        self.join(children)
+                    }
+                }
+            };
+            views.insert(m.key(), m);
+        }
+        let mut sets: HashMap<*const CellSet, (Rc<CellSet>, Option<CellSet>)> = HashMap::new();
+        let mut dead: CellSet = Vec::new();
+        for v in views.into_values() {
+            let extra: CellSet = v.extra.runs().collect();
+            let window = if v.main.count() == 0 {
+                Vec::new()
+            } else {
+                vec![(v.main.lo, v.main.hi)]
+            };
+            dead.extend(cells_minus(&cells_minus(&all, &window), &extra));
+            let s = (sets.entry(Rc::as_ptr(&v.main.set))).or_insert((v.main.set.clone(), None));
+            s.1 = Some(match s.1.take() {
+                None => extra,
+                Some(m) => cells_meet(&m, &extra),
+            });
+        }
+        for (set, extras) in sets.into_values() {
+            let held = cells_join(
+                set.iter()
+                    .copied()
+                    .chain(extras.unwrap_or_default())
+                    .collect(),
+            );
+            dead.extend(cells_minus(&all, &held));
+        }
+        cells_minus(&all, &cells_join(dead))
+    }
+
+    /// Intersects clauses described as windows of pairwise disjoint shared bases. Clauses
+    /// made only of single runs contribute their gaps directly. `None` means two distinct
+    /// bases overlap, so the ordinary view algebra must be used.
+    // Complexity tradeoff: merging each clause's clamped bases reads O(H R) runs for H
+    // holders of R base runs (split_skew). Disjoint bases let intersection distribute by
+    // base: a base must occur in every clause, outside the union of its window gaps. Each
+    // base run and window is read once, with O((R + W) log(R + W)) sorting and ordered-map
+    // indexing. This is the disjoint-catalog lead of R4_CODEX.md, not the general
+    // persistent merge of Liljenzin, "Confluently Persistent Sets and Maps", 2013.
+    fn catalog_live(&mut self, p: &Parts) -> Option<CellSet> {
+        let all = [(0, self.cells.len() - 1)];
+        let mut ids: BTreeMap<PieceKey, usize> = BTreeMap::new();
+        let mut bases: Vec<(CellPiece, usize, CellSet)> = Vec::new();
+        let mut simple_dead = Vec::new();
+        let mut clauses = 0;
+        for o in &p.ors {
+            let pieces: Vec<CellPiece> = o
+                .iter()
+                .flat_map(|d| {
+                    let v = self.of(d).0;
+                    [v.main, v.extra]
+                })
+                .filter(|piece| piece.count() > 0)
+                .collect();
+            if pieces.iter().all(|piece| piece.count() <= 1) {
+                let runs = cells_join(pieces.iter().flat_map(CellPiece::runs).collect());
+                simple_dead.extend(cells_minus(&all, &runs));
+                continue;
+            }
+            clauses += 1;
+            let mut windows: BTreeMap<usize, CellSet> = BTreeMap::new();
+            for piece in pieces {
+                // Single-run allocations of an equal interval are the same base. Windows
+                // of a multi-run allocation retain that allocation even at a one-run end.
+                let (key, full) = if piece.set.len() == 1 {
+                    let key = (std::ptr::null(), piece.lo, piece.hi);
+                    (key, CellPiece::of(vec![(piece.lo, piece.hi)]))
+                } else {
+                    let full = CellPiece {
+                        set: piece.set.clone(),
+                        lo: piece.set.first().expect("nonempty piece").0,
+                        hi: piece.set.last().expect("nonempty piece").1,
+                    };
+                    ((Rc::as_ptr(&piece.set), full.lo, full.hi), full)
+                };
+                let next = bases.len();
+                let id = *ids.entry(key).or_insert_with(|| {
+                    bases.push((full, 0, Vec::new()));
+                    next
+                });
+                windows.entry(id).or_default().push((piece.lo, piece.hi));
+            }
+            for (id, windows) in windows {
+                bases[id].1 += 1;
+                bases[id].2.extend(cells_minus(&all, &cells_join(windows)));
+            }
+        }
+        if clauses == 0 {
+            return None;
+        }
+        // A sorted pass proves disjointness; every physical base is visited once. A mere
+        // pointer inequality would not prove it, since different bases may share cells.
+        let mut runs: Vec<(usize, usize)> =
+            bases.iter().flat_map(|(base, _, _)| base.runs()).collect();
+        runs.sort_unstable();
+        if runs.windows(2).any(|w| w[0].1 >= w[1].0) {
+            return None;
+        }
+        let mut live = Vec::new();
+        for (base, count, gaps) in bases {
+            if count == clauses {
+                live.extend(cells_minus(
+                    &base.runs().collect::<Vec<_>>(),
+                    &cells_join(gaps),
+                ));
+            }
+        }
+        Some(cells_minus(&cells_join(live), &cells_join(simple_dead)))
+    }
+
     fn span(&self, cons: &[Con]) -> Option<Span> {
         let mut b = AtomBounds::from([(self.x.clone(), (None, None))]);
         let mut own =
@@ -5949,10 +6745,16 @@ impl CellWalk<'_> {
     // the last piece is kept as the extra, uncopied: O(D log D log R) for holders whose
     // pieces but one are shared, plus the runs of each distinct list joined.
     fn join(&mut self, views: Vec<CellView>) -> CellView {
+        self.try_join(views, true).expect("materialized join")
+    }
+
+    /// With `materialize` false, gives the caller a chance to intersect disjoint bases
+    /// before a join of incompatible windows copies their shared runs.
+    fn try_join(&mut self, views: Vec<CellView>, materialize: bool) -> Option<CellView> {
         let mut views = views;
         let total = |v: &CellView| v.main.count() + v.extra.count();
         let Some(s) = (0..views.len()).rev().min_by_key(|&i| total(&views[i])) else {
-            return CellView::of(Vec::new());
+            return Some(CellView::of(Vec::new()));
         };
         let own = views.swap_remove(s);
         let (extra, left) = if own.main.count() < own.extra.count() {
@@ -5970,16 +6772,16 @@ impl CellWalk<'_> {
         });
         let pieces = CellView::pieces(views);
         if pieces.is_empty() {
-            return CellView {
+            return Some(CellView {
                 main: extra,
                 extra: CellPiece::of(Vec::new()),
-            };
+            });
         }
         if let [main] = pieces.as_slice() {
-            return CellView {
+            return Some(CellView {
                 main: main.clone(),
                 extra,
-            };
+            });
         }
         // Complexity tradeoff: joining windows of the same bases separately costs O(H R)
         // for H different windows and R base runs. When one common window represents all
@@ -6015,11 +6817,14 @@ impl CellWalk<'_> {
                     let runs = cells_join(full.iter().flat_map(CellPiece::runs).collect());
                     (full, CellPiece::of(runs))
                 });
-                return CellView {
+                return Some(CellView {
                     main: joined.1.clamp(lo, hi),
                     extra,
-                };
+                });
             }
+        }
+        if !materialize && pieces[0].count() > 1 {
+            return None;
         }
         let key: Vec<PieceKey> = (pieces.iter())
             .map(|p| (Rc::as_ptr(&p.set), p.lo, p.hi))
@@ -6028,10 +6833,10 @@ impl CellWalk<'_> {
             let runs = cells_join(pieces.iter().flat_map(CellPiece::runs).collect());
             (pieces, CellPiece::of(runs))
         });
-        CellView {
+        Some(CellView {
             main: joined.1.clone(),
             extra,
-        }
+        })
     }
 
     /// The cells common to both views, retaining the result of a general meet.
@@ -6045,6 +6850,35 @@ impl CellWalk<'_> {
         }
         if let Some((lo, hi)) = b.single() {
             return a.clamp(lo, hi);
+        }
+        // Complexity tradeoff: different windows miss a cache keyed by whole views, O(H R)
+        // for H holders of R runs. For two bare pieces, intersection distributes over the
+        // windows: cache the full-base pair once, then clamp its result in O(log R). Total
+        // O(sum of full-base pair merge costs + H log R), not a bound on many distinct bases.
+        if a.extra.lo > a.extra.hi && b.extra.lo > b.extra.hi {
+            if a.main.set.is_empty() {
+                return a.clone();
+            }
+            if b.main.set.is_empty() {
+                return b.clone();
+            }
+            let full = |v: &CellView| CellView {
+                main: CellPiece {
+                    set: v.main.set.clone(),
+                    lo: v.main.set.first().expect("multi-run view").0,
+                    hi: v.main.set.last().expect("multi-run view").1,
+                },
+                extra: CellPiece::of(Vec::new()),
+            };
+            let is_full = |v: &CellView| {
+                v.main.set.first().is_some_and(|r| r.0 == v.main.lo)
+                    && v.main.set.last().is_some_and(|r| r.1 == v.main.hi)
+            };
+            if !is_full(a) || !is_full(b) {
+                let lo = a.main.lo.max(b.main.lo);
+                let hi = a.main.hi.min(b.main.hi);
+                return self.meet(&full(a), &full(b)).clamp(lo, hi);
+            }
         }
         let (ka, kb) = (a.key(), b.key());
         let key = if ka <= kb { (ka, kb) } else { (kb, ka) };
@@ -6334,38 +7168,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
     // disjunctions and R runs of the meet so far (quadratic when each disjunction removes a
     // cell). This reads each distinct view's extra once and each main set once, and equal
     // views once: O(T log T) for T runs read.
-    let all = [(0, walk.cells.len() - 1)];
-    let mut views: HashMap<ViewKey, CellView> = HashMap::new();
-    for o in &p.ors {
-        let (m, _) = walk.of_or(o);
-        views.insert(m.key(), m);
-    }
-    let mut sets: HashMap<*const CellSet, (Rc<CellSet>, Option<CellSet>)> = HashMap::new();
-    let mut dead: CellSet = Vec::new();
-    for v in views.into_values() {
-        let extra: CellSet = v.extra.runs().collect();
-        let window = if v.main.count() == 0 {
-            Vec::new()
-        } else {
-            vec![(v.main.lo, v.main.hi)]
-        };
-        dead.extend(cells_minus(&cells_minus(&all, &window), &extra));
-        let s = (sets.entry(Rc::as_ptr(&v.main.set))).or_insert((v.main.set.clone(), None));
-        s.1 = Some(match s.1.take() {
-            None => extra,
-            Some(m) => cells_meet(&m, &extra),
-        });
-    }
-    for (set, extras) in sets.into_values() {
-        let held = cells_join(
-            set.iter()
-                .copied()
-                .chain(extras.unwrap_or_default())
-                .collect(),
-        );
-        dead.extend(cells_minus(&all, &held));
-    }
-    let live = cells_minus(&all, &cells_join(dead));
+    let live = walk.live(p);
     if live.is_empty() {
         return Some(Ok(false));
     }
@@ -25765,5 +26568,556 @@ mod real_end_tests {
             }
         }
         assert!(bounded > 400, "{bounded} bounds of 800");
+    }
+}
+
+#[cfg(test)]
+mod r5_cells_tests {
+    use super::*;
+    use crate::scaling;
+
+    fn var(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
+        let mut p = Parts::default();
+        p.cons = cons;
+        p.ors = ors;
+        Rc::new(p)
+    }
+    fn skew(n: usize, contradiction: bool) -> Parts {
+        let x = var("i");
+        let c = Lin::constant;
+        let base = |off| {
+            part(
+                vec![],
+                vec![
+                    (0..n)
+                        .map(|j| part(vec![Con::eq(&x, &c(4 * j as i128 + off))], vec![]))
+                        .collect(),
+                ],
+            )
+        };
+        let (a, b) = (base(0), base(2));
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&x, &c(0)), Con::ge(&c(8 * n as i128), &x)];
+        let pairs = if contradiction {
+            vec![(1, 2), (2, 1)]
+        } else {
+            vec![(1, 2)]
+        };
+        for (l, r) in pairs {
+            p.ors.push(vec![
+                part(vec![Con::ge(&c(1), &x), Con::eq(&var("w"), &c(l))], vec![]),
+                part(vec![Con::ge(&x, &c(2)), Con::eq(&var("w"), &c(r))], vec![]),
+            ]);
+        }
+        for j in 0..n {
+            p.ors.push(vec![
+                part(
+                    vec![Con::ge(&c((4 * n - j) as i128), &x)],
+                    vec![vec![a.clone()]],
+                ),
+                part(
+                    vec![Con::ge(&c((4 * n - 2 * j) as i128), &x)],
+                    vec![vec![b.clone()]],
+                ),
+                part(
+                    vec![
+                        Con::ge(&x, &c(4 * n as i128)),
+                        Con::eq(&var(&format!("private{j}")), &c(j as i128)),
+                    ],
+                    vec![],
+                ),
+            ]);
+        }
+        p
+    }
+    fn distinct_meets(n: usize) -> Parts {
+        let x = var("i");
+        let c = Lin::constant;
+        let base = |step, count| {
+            part(
+                vec![],
+                vec![
+                    (0..count)
+                        .map(|j| part(vec![Con::eq(&x, &c(step * j as i128))], vec![]))
+                        .collect(),
+                ],
+            )
+        };
+        let (a, b) = (base(4, n), base(2, 2 * n));
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&x, &c(0)), Con::ge(&c(8 * n as i128), &x)];
+        p.ors.push(
+            (0..n)
+                .map(|j| {
+                    let ca = part(
+                        vec![Con::ge(&c((4 * n - j) as i128), &x)],
+                        vec![vec![a.clone()]],
+                    );
+                    let cb = part(
+                        vec![Con::ge(&c((4 * n - 2 * j) as i128), &x)],
+                        vec![vec![b.clone()]],
+                    );
+                    part(vec![], vec![vec![ca], vec![cb]])
+                })
+                .collect(),
+        );
+        p
+    }
+    fn distinct_extras(n: usize) -> Parts {
+        let x = var("i");
+        let c = Lin::constant;
+        let base = part(
+            vec![],
+            vec![
+                (0..n)
+                    .map(|j| part(vec![Con::eq(&x, &c(2 * j as i128))], vec![]))
+                    .collect(),
+            ],
+        );
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&x, &c(0)), Con::ge(&c(8 * n as i128), &x)];
+        p.ors.push(
+            (0..n)
+                .map(|j| {
+                    let a = part(
+                        vec![],
+                        vec![vec![
+                            base.clone(),
+                            part(vec![Con::eq(&x, &c((4 * n + 2 * j) as i128))], vec![]),
+                        ]],
+                    );
+                    let b = part(
+                        vec![],
+                        vec![vec![
+                            base.clone(),
+                            part(vec![Con::eq(&x, &c((4 * n + 2 * j + 1) as i128))], vec![]),
+                        ]],
+                    );
+                    part(vec![], vec![vec![a], vec![b]])
+                })
+                .collect(),
+        );
+        p
+    }
+    #[test]
+    fn distinct_pairs_with_one_common_main_and_different_extras_scale() {
+        scaling::check_order("different extras of one shared main", 125, 1, |n| {
+            assert_eq!(has_point(distinct_extras(n)), Ok(true));
+        });
+    }
+
+    fn point_rows(n: usize, hit: bool) -> Parts {
+        let x = var("i");
+        let q0 = var("q0");
+        let c = Lin::constant;
+        let mut p = Parts::default();
+        p.cons = vec![
+            Con::ge(&x, &c(2)),
+            Con::ge(&c(2 * n as i128), &x),
+            Con::eq(&q0, &x.times(2)),
+            Con::eq(&x, &var("t").times(2)),
+        ];
+        for j in 1..=n {
+            let y = var(&format!("y{j:06}"));
+            let jj = j as i128;
+            p.cons.extend([
+                Con::ge(&y, &q0.plus(&c(jj))),
+                Con::ge(&q0.plus(&c(jj + 1)), &y),
+                Con::ge(&y, &c(jj)),
+                Con::ge(&c(3 * n as i128 + jj), &y),
+                Con::ge(&y.plus(&q0), &c(jj)),
+                Con::ge(&c(9 * n as i128), &y.plus(&q0)),
+            ]);
+            p.ors.push(vec![
+                part(
+                    vec![
+                        Con::eq(&x, &c(2 * jj)),
+                        Con::eq(&y, &c(if hit { 5 * jj } else { 1 })),
+                    ],
+                    vec![],
+                ),
+                part(vec![Con::ge(&c(2 * jj - 1), &x)], vec![]),
+                part(vec![Con::ge(&x, &c(2 * jj + 1))], vec![]),
+            ]);
+        }
+        p
+    }
+    #[test]
+    fn different_windows_of_disjoint_bases_scale() {
+        scaling::check_order("skew windows of disjoint bases", 125, 1, |n| {
+            assert_eq!(has_point(skew(n, true)), Ok(false));
+        });
+    }
+    #[test]
+    fn different_windows_with_a_point_scale() {
+        scaling::check_order("skew windows with a point", 125, 1, |n| {
+            assert_eq!(has_point(skew(n, false)), Ok(true));
+        });
+    }
+    #[test]
+    fn distinct_window_pairs_of_two_bases_scale() {
+        scaling::check_order("distinct pairs of windowed bases", 125, 1, |n| {
+            assert_eq!(has_point(distinct_meets(n)), Ok(true));
+        });
+    }
+    #[test]
+    fn independent_components_of_a_cell_core_scale() {
+        scaling::check_order("independent components of a cell core", 16, 1, |n| {
+            assert_eq!(has_point(point_rows(n, false)), Ok(false));
+        });
+    }
+    #[test]
+    fn independent_components_preserve_points_and_congruences() {
+        for n in 1..=8 {
+            assert_eq!(has_point(point_rows(n, true)), Ok(n > 1));
+            assert_eq!(has_point(point_rows(n, false)), Ok(false));
+            let mut p = point_rows(n, true);
+            p.cons.push(Con::eq(&var("i"), &Lin::constant(3)));
+            assert_eq!(has_point(p), Ok(false));
+        }
+    }
+}
+
+#[cfg(test)]
+mod r5_orbit_tests {
+    use super::*;
+    use crate::scaling;
+    fn var(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+    fn formula(n: usize, target: i128, mixed: bool, rename: bool) -> Formula {
+        let (i, k) = if rename {
+            (var("z"), var("a"))
+        } else {
+            (var("i"), var("k"))
+        };
+        let c = Lin::constant;
+        let q = |j, twin| {
+            if j == 0 {
+                i.clone()
+            } else {
+                var(&format!("q{j}_{twin}"))
+            }
+        };
+        let con = Formula::Con;
+        let and = |v| Formula::And(Shared::new(v));
+        let mut fs = vec![
+            con(Con::ge(&i, &c(-(n as i128 / 2)))),
+            con(Con::ge(&c(n as i128 / 2), &i)),
+            con(Con::ge(&k, &c(-3))),
+            con(Con::ge(&c(3), &k)),
+            con(Con::eq(&q(n, false), &c(target))),
+        ];
+        for j in 1..=n {
+            for twin in [false, true].into_iter().take(if j == n { 1 } else { 2 }) {
+                let at = (j / 2) as i128 - (n / 4) as i128;
+                let center = if mixed && j % 2 == 0 { 3 } else { 2 };
+                fs.push(Formula::Or(Shared::new(vec![
+                    and(vec![
+                        con(Con::ge(&c(at), &i.plus(&k))),
+                        con(Con::eq(&q(j, twin), &q(j - 1, false))),
+                    ]),
+                    and(vec![
+                        con(Con::ge(&i.plus(&k), &c(at + 1))),
+                        con(Con::eq(&q(j, twin).plus(&q(j - 1, true)), &c(center))),
+                    ]),
+                ])));
+            }
+        }
+        and(fs)
+    }
+    #[test]
+    fn a_guard_on_two_inputs_and_one_reflection_center_scales() {
+        scaling::check_order("a chain guarded by the sum of two inputs", 10, 1, |n| {
+            let target = ((n / 2 + 1) | 1) as i128;
+            assert_eq!(decide(&formula(n, target, false, false)), Ok(false));
+        });
+    }
+    #[test]
+    fn a_functional_two_input_chain_with_a_point_scales() {
+        scaling::check_order("two-input chain with an interior point", 10, 1, |n| {
+            assert_eq!(decide(&formula(n, 0, false, false)), Ok(true));
+        });
+    }
+    #[test]
+    fn guarded_orbits_keep_points_and_do_not_merge_reflection_centers() {
+        for n in [2, 3, 5, 8] {
+            for mixed in [false, true] {
+                let mut reach = BTreeSet::new();
+                // Independent small oracle, outside any measured solver work.
+                for i in -(n as i128 / 2)..=n as i128 / 2 {
+                    for k in -3..=3 {
+                        let mut v = i;
+                        for j in 1..=n {
+                            if i + k > (j / 2) as i128 - (n / 4) as i128 {
+                                v = (if mixed && j % 2 == 0 { 3 } else { 2 }) - v;
+                            }
+                        }
+                        reach.insert(v);
+                    }
+                }
+                for target in -(n as i128 / 2) - 2..=n as i128 / 2 + 3 {
+                    for rename in [false, true] {
+                        let f = formula(n, target, mixed, rename);
+                        assert_eq!(
+                            decide(&f),
+                            Ok(reach.contains(&target)),
+                            "n={n} mixed={mixed} rename={rename} target={target}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+#[cfg(test)]
+mod r5_hull_tests {
+    use super::*;
+    use crate::scaling;
+    fn var(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+    fn formula(n: usize, target: i128, shift: bool) -> Formula {
+        let (i, q0) = (var("i"), var("q0"));
+        let c = Lin::constant;
+        let q = |j, twin| {
+            if j == 0 {
+                q0.clone()
+            } else {
+                var(&format!("q{j}_{twin}"))
+            }
+        };
+        let con = Formula::Con;
+        let and = |v| Formula::And(Shared::new(v));
+        let mut fs = vec![
+            con(Con::ge(&i, &c(if shift { -(n as i128) } else { -20 }))),
+            con(Con::ge(&c(if shift { n as i128 } else { 20 }), &i)),
+            con(Con::eq(&q0, &i.times(if shift { 2 } else { 1 }))),
+            con(Con::eq(&q(n, false), &c(target))),
+        ];
+        for j in 1..=n {
+            for twin in [false, true].into_iter().take(if j == n { 1 } else { 2 }) {
+                let (g, h) = if shift {
+                    (1, 0)
+                } else {
+                    ((j % 7) as i128 - 3, (j % 5) as i128 - 2)
+                };
+                let change = if shift {
+                    Con::eq(&q(j, twin), &q(j - 1, true).plus(&c(2)))
+                } else {
+                    Con::eq(&q(j, twin).plus(&q(j - 1, true)), &c(2 + (j % 2) as i128))
+                };
+                fs.push(Formula::Or(Shared::new(vec![
+                    and(vec![
+                        con(Con::ge(&c(g), &i)),
+                        con(Con::eq(&q(j, twin), &q(j - 1, false))),
+                    ]),
+                    and(vec![con(Con::ge(&i, &c(h))), con(change)]),
+                ])));
+            }
+        }
+        and(fs)
+    }
+    #[test]
+    fn different_reflection_centers_are_refuted_in_linear_work() {
+        scaling::check_order(
+            "overlapping guards and two reflection centers",
+            20,
+            1,
+            |n| {
+                assert_eq!(decide(&formula(n, (n / 2 + 1) as i128, false)), Ok(false));
+            },
+        );
+    }
+    #[test]
+    fn shifts_with_gaps_are_refuted_in_linear_work() {
+        scaling::check_order("even shifts and an odd target", 20, 1, |n| {
+            assert_eq!(decide(&formula(n, 1, true)), Ok(false));
+        });
+    }
+    #[test]
+    fn arithmetic_progression_membership_agrees_with_enumeration() {
+        for coef in -3..=3 {
+            for step in 0..=4 {
+                let off = OffsetHull {
+                    lo: Int::from(-4),
+                    hi: Int::from(if step == 0 { -4 } else { -4 + 3 * step }),
+                    step: Int::from(step),
+                };
+                for target in -15..=15 {
+                    let expected = (-5..=5).any(|x| {
+                        (0..=if step == 0 { 0 } else { 3 })
+                            .any(|k| coef * x - 4 + k * step == target)
+                    });
+                    assert_eq!(
+                        progression_meets(
+                            &Int::from(target),
+                            &Int::from(coef),
+                            &off,
+                            &Int::from(-5),
+                            &Int::from(5)
+                        ),
+                        expected,
+                        "coef={coef} step={step} target={target}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn overlapping_chains_agree_with_independent_small_domains() {
+        let mut refused = 0;
+        for n in [2, 3, 5, 8] {
+            for shift in [false, true] {
+                let r = if shift { n as i128 } else { 20 };
+                let mut reach = BTreeSet::new();
+                for i in -r..=r {
+                    let mut values = BTreeSet::from([if shift { 2 * i } else { i }]);
+                    for j in 1..=n {
+                        let mut next = BTreeSet::new();
+                        let (g, h) = if shift {
+                            (1, 0)
+                        } else {
+                            ((j % 7) as i128 - 3, (j % 5) as i128 - 2)
+                        };
+                        for v in values {
+                            if i <= g {
+                                next.insert(v);
+                            }
+                            if i >= h {
+                                next.insert(if shift {
+                                    v + 2
+                                } else {
+                                    2 + (j % 2) as i128 - v
+                                });
+                            }
+                        }
+                        values = next;
+                    }
+                    reach.extend(values);
+                }
+                let lo = *reach.first().expect("reachable point");
+                let hi = *reach.last().expect("reachable point");
+                for target in lo - 1..=hi + 1 {
+                    let expected = reach.contains(&target);
+                    match decide(&formula(n, target, shift)) {
+                        Ok(actual) => {
+                            assert_eq!(actual, expected, "n={n} shift={shift} target={target}")
+                        }
+                        Err(_) => refused += 1,
+                    }
+                }
+            }
+        }
+        eprintln!("small overlapping-chain oracle: refused={refused}");
+    }
+}
+#[cfg(test)]
+mod r5_guard_input_tests {
+    use super::*;
+    #[test]
+    fn a_guard_input_is_not_an_independent_box_if_the_chain_defines_it() {
+        let var = |s: &str| Lin::atom(Atom::Sym(s.into()));
+        let (i, k, s) = (var("i"), var("k"), var("s"));
+        let c = Lin::constant;
+        let part = |cons| {
+            let mut p = Parts::default();
+            p.cons = cons;
+            Rc::new(p)
+        };
+        let mut p = Parts::default();
+        p.cons = vec![
+            Con::eq(&s, &i),
+            Con::ge(&i, &c(0)),
+            Con::ge(&c(2), &i),
+            Con::ge(&k, &c(0)),
+            Con::ge(&c(2), &k),
+        ];
+        p.ors = vec![
+            vec![
+                part(vec![
+                    Con::ge(&c(1), &i.plus(&k)),
+                    Con::eq(&k, &s.plus(&c(1))),
+                ]),
+                part(vec![
+                    Con::ge(&i.plus(&k), &c(2)),
+                    Con::eq(&k, &s.plus(&c(-1))),
+                ]),
+            ],
+            vec![
+                part(vec![Con::ge(&i.plus(&k), &c(0)), Con::eq(&k, &c(0))]),
+                part(vec![Con::ge(&i.plus(&k), &c(0)), Con::eq(&k, &c(0))]),
+            ],
+        ];
+        let expected = (0..=2).any(|i| {
+            (0..=2).any(|k| k == 0 && ((i + k <= 1 && k == i + 1) || (i + k >= 2 && k == i - 1)))
+        });
+        assert!(!expected, "independent finite-domain control");
+        let hull = by_chain_hulls(&p);
+        let full = has_point(p);
+        eprintln!("guard-input alias: hull={hull:?} full={full:?} oracle={expected}");
+        assert_eq!(hull, None);
+        if let Ok(answer) = full {
+            assert_eq!(answer, expected);
+        }
+    }
+}
+#[cfg(test)]
+mod r5_shared_arm_tests {
+    use super::*;
+    use crate::scaling;
+    fn parts(n: usize, two_inputs: bool) -> Parts {
+        let i = Lin::atom(Atom::Sym("i".into()));
+        let k = Lin::atom(Atom::Sym("k".into()));
+        let q = Lin::atom(Atom::Sym("q".into()));
+        let c = Lin::constant;
+        let g = if two_inputs { i.plus(&k) } else { i.clone() };
+        let part = |row, guard| {
+            let mut d = Parts::default();
+            d.cons = vec![row];
+            d.cons.extend(std::iter::repeat_n(guard, n));
+            Rc::new(d)
+        };
+        let a = part(Con::eq(&q, &i), Con::ge(&c(1), &g));
+        let b = part(Con::eq(&q.plus(&i), &c(2)), Con::ge(&g, &c(2)));
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&i, &c(0)), Con::ge(&c(2), &i), Con::eq(&q, &c(0))];
+        if two_inputs {
+            p.cons.extend([Con::ge(&k, &c(0)), Con::ge(&c(2), &k)]);
+        }
+        p.ors = (0..n).map(|_| vec![a.clone(), b.clone()]).collect();
+        p
+    }
+    #[test]
+    fn shared_flat_arms_with_many_guard_rows_are_read_once() {
+        scaling::check_order("shared flat arms with redundant guard rows", 125, 1, |n| {
+            assert!(GuardedChain::of(&parts(n, false)).is_some());
+        });
+    }
+}
+
+#[cfg(test)]
+mod r5_empty_view_tests {
+    use super::*;
+    #[test]
+    fn empty_views_meet_multi_run_bases_in_either_order() {
+        let atom = Atom::Sym("i".into());
+        let mut walk = CellWalk {
+            x: &atom,
+            cells: Vec::new(),
+            memo: HashMap::new(),
+            owns: HashMap::new(),
+            joins: HashMap::new(),
+            meets: FxHashMap::default(),
+            unary_payload: false,
+        };
+        let many = CellView::of(vec![(0, 0), (2, 2)]);
+        for empty in [CellView::of(Vec::new()), many.clamp(1, 1)] {
+            assert!(walk.meet(&empty, &many).is_empty());
+            assert!(walk.meet(&many, &empty).is_empty());
+        }
     }
 }
