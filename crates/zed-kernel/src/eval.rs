@@ -665,10 +665,15 @@ impl Evaluator {
     }
 
     /// Names the call site and the argument facts of the next closure call.
-    fn aim(&mut self, site: Option<At>, args: Vec<Option<usize>>) {
+    // Complexity tradeoff (KERNEL-eval-step-cost): this took the facts as a `Vec`, which each
+    // caller allocated (`vec![from; 2]`) and dropped unread when provenance is not traced, the
+    // common case: an allocation and a free, about 250 instructions, on each call of a key map,
+    // value map, test or operator (158,000 in law_04). Used: a slice, copied into a `Vec` only
+    // when traced; the traced cost is the same allocation, and the untraced one is none.
+    fn aim(&mut self, site: Option<At>, args: &[Option<usize>]) {
         if let Some(t) = &mut self.trace {
             t.site = site;
-            t.args = args;
+            t.args = args.to_vec();
         }
     }
 
@@ -1314,11 +1319,10 @@ impl<'t> Machine<'_, 't> {
             Head::Prim(p) => self.prim(p, done),
             Head::App => {
                 let f = done.remove(0);
-                let facts = match &self.ev.trace {
-                    Some(t) => t.reads[t.reads.len() - done.len()..].to_vec(),
-                    None => Vec::new(),
-                };
-                self.ev.aim(Some(at), facts);
+                if let Some(t) = &mut self.ev.trace {
+                    t.site = Some(at);
+                    t.args = t.reads[t.reads.len() - done.len()..].to_vec();
+                }
                 self.apply(&f, done)
             }
         }
@@ -1608,7 +1612,7 @@ impl<'t> Machine<'_, 't> {
             Wait::ReindexKey(mut st) => {
                 st.key = Some(data(v)?);
                 let (p, leaf) = st.args.take().expect("a `reindex` has a leaf in hand");
-                self.ev.aim(st.vf.1, vec![st.from; 2]);
+                self.ev.aim(st.vf.1, &[st.from; 2]);
                 let step = self.call2(&st.vf.0, p, leaf);
                 self.wait(Wait::ReindexValue(st));
                 step
@@ -1629,7 +1633,7 @@ impl<'t> Machine<'_, 't> {
             }
             Wait::LatticeStep(st) => {
                 let next_fact = self.ev.last_fact();
-                self.ev.aim(st.join.1, vec![st.from, next_fact]);
+                self.ev.aim(st.join.1, &[st.from, next_fact]);
                 let V::Data(next) = v else {
                     return type_err("a fix step returned a function");
                 };
@@ -2071,7 +2075,7 @@ impl<'t> Machine<'_, 't> {
         };
         self.ev.enter(&path);
         let p = Value::path(path.clone());
-        self.ev.aim(st.kf.1, vec![st.from; 2]);
+        self.ev.aim(st.kf.1, &[st.from; 2]);
         // A keypath above an empty level binds no leaf value and no key past its end: the key
         // map reads the kernel's own atom [`unbound`] there, not `#notFound`, which a key may
         // hold as data.
@@ -2098,7 +2102,7 @@ impl<'t> Machine<'_, 't> {
                 top.entry = Some(v.clone());
                 self.ev.enter(std::slice::from_ref(&k));
                 st.prefix.push(k);
-                self.ev.aim(st.sel.1, vec![st.from; 2]);
+                self.ev.aim(st.sel.1, &[st.from; 2]);
                 let path = Value::path(st.prefix.clone());
                 let step = self.call2(&st.sel.0, path, v);
                 self.wait(Wait::Discard(st));
@@ -2210,7 +2214,7 @@ impl<'t> Machine<'_, 't> {
                     TreeStep::Join(a, b) => {
                         self.ev.enter(&[Value::Int(st.step)]);
                         st.step += 1;
-                        self.ev.aim(st.op.1, vec![st.from; 2]);
+                        self.ev.aim(st.op.1, &[st.from; 2]);
                         let step = self.call2(&st.op.0, a, b);
                         self.wait(Wait::Fold(st));
                         return step;
@@ -2252,7 +2256,7 @@ impl<'t> Machine<'_, 't> {
     fn lattice(&mut self, st: Box<Lattice<'t>>) -> R<Step<'t>> {
         self.ev.burn()?;
         self.ev.enter(&[Value::Int(st.i)]);
-        self.ev.aim(st.step.1, vec![st.from]);
+        self.ev.aim(st.step.1, &[st.from]);
         let step = self.apply(&st.step.0, vec![V::Data(st.x.clone())]);
         self.wait(Wait::LatticeStep(st));
         step
@@ -2494,7 +2498,7 @@ impl<'t> Machine<'_, 't> {
         self.ev.burn()?;
         let last = st.frames.last().expect("generation 0 is present").clone();
         self.ev.enter(&[Value::Int(st.frames.len() as i64)]);
-        self.ev.aim(st.step.1, vec![st.from]);
+        self.ev.aim(st.step.1, &[st.from]);
         let step = self.apply(&st.step.0, vec![V::Data(last)]);
         self.wait(Wait::GenStep(st));
         step
@@ -2505,7 +2509,7 @@ impl<'t> Machine<'_, 't> {
     fn gen_guard(&mut self, st: Box<Gen<'t>>) -> R<Step<'t>> {
         let last = st.frames.last().expect("generation 0 is present").clone();
         self.ev.enter(&[Value::Int(st.frames.len() as i64 - 1)]);
-        self.ev.aim(st.guard.1, vec![st.from]);
+        self.ev.aim(st.guard.1, &[st.from]);
         let step = self.apply(&st.guard.0, vec![V::Data(last)]);
         self.wait(Wait::GenGuard(st));
         step
