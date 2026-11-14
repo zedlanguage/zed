@@ -4274,30 +4274,6 @@ impl Choices {
         self.groups[g].bucket(id)
     }
 
-    /// The shapes of `buckets`, merged in written order, each with the index in `buckets` of
-    /// its bucket and its place in that bucket.
-    fn merged<'c>(
-        &'c self,
-        buckets: &'c Buckets,
-    ) -> impl Iterator<Item = (usize, usize, usize)> + 'c {
-        use std::cmp::Reverse;
-        let shapes: Vec<&[usize]> = (buckets.iter())
-            .map(|(g, id)| self.bucket(*g, id))
-            .collect();
-        // Each bucket's next shape, by the shape first, so the heap yields written order.
-        let mut heads: std::collections::BinaryHeap<Reverse<(usize, usize, usize)>> =
-            (shapes.iter().enumerate())
-                .filter_map(|(k, s)| Some(Reverse((*s.first()?, k, 0))))
-                .collect();
-        std::iter::from_fn(move || {
-            let Reverse((r, k, at)) = heads.pop()?;
-            if let Some(&next) = shapes[k].get(at + 1) {
-                heads.push(Reverse((next, k, at + 1)));
-            }
-            Some((k, at, r))
-        })
-    }
-
     /// Why the shapes of the bucket `id` of group `g` may each hold the members found in it,
     /// for a message: the members have `items` items, then the fields `names`.
     fn apart(&self, g: usize, id: &Bucket, items: usize, names: &[&Arc<str>]) -> String {
@@ -4882,7 +4858,7 @@ thread_local! {
 struct Search<'a> {
     site: Site<'a>,
     filed: Option<Arc<Filed>>,
-    searched: BTreeMap<(usize, usize, Bucket), Row>,
+    searched: Searched<usize, Row>,
 }
 
 impl<'a> Search<'a> {
@@ -4890,8 +4866,196 @@ impl<'a> Search<'a> {
         Search {
             site,
             filed: None,
-            searched: BTreeMap::new(),
+            searched: Searched::new(),
         }
+    }
+}
+
+/// A bucket of [`Choices`]: its group's key `G` among the groups of one union, the group's
+/// index in the [`Choices`], and the bucket.
+type BucketAt<G> = (G, usize, Bucket);
+
+/// What the members of one union keep between their searches ([`Comparing::search`]): each
+/// bucket a member has searched past the first shape it tried there, with that member, and
+/// each bucket's shapes pinned by the ceilings of their variables ([`Pins`]), with the ceilings
+/// read, once a member has needed them.
+struct Searched<G, M> {
+    by: BTreeMap<BucketAt<G>, M>,
+    pins: BTreeMap<BucketAt<G>, (Ceilings, Option<Rc<Pins>>)>,
+}
+
+impl<G: Ord + Clone, M> Searched<G, M> {
+    fn new() -> Searched<G, M> {
+        Searched {
+            by: BTreeMap::new(),
+            pins: BTreeMap::new(),
+        }
+    }
+
+    /// The pins of the bucket `at` under the ceilings of `binds`, if made.
+    fn pins(&self, at: &BucketAt<G>, binds: &Binds) -> Option<Rc<Pins>> {
+        let (c, p) = self.pins.get(at)?;
+        Arc::ptr_eq(c, binds.ceilings.as_ref()?).then(|| p.clone())?
+    }
+
+    /// [`Searched::pins`], made now from the shapes `bucket` (whose components `comps` gives)
+    /// if not yet; none where `binds` has no ceilings.
+    fn pin<'t>(
+        &mut self,
+        at: BucketAt<G>,
+        bucket: &[usize],
+        comps: &impl Fn(usize) -> Vec<&'t Ty>,
+        binds: &Binds,
+        cx: &Cx,
+    ) -> Option<Rc<Pins>> {
+        let ceilings = binds.ceilings.clone()?;
+        if let Some((c, p)) = self.pins.get(&at)
+            && Arc::ptr_eq(c, &ceilings)
+        {
+            return p.clone();
+        }
+        let p = Pins::of(bucket, comps, binds, cx).map(Rc::new);
+        self.pins.insert(at, (ceilings, p.clone()));
+        p
+    }
+}
+
+/// The shapes of one bucket of [`Choices`] split by the ceilings of their variables
+/// ([`ceilings`]), so that [`Comparing::search`] finds those that may hold a member by lookup.
+/// A shape is pinned at the first place where its component is one variable `v` and nothing
+/// else, neither rigid nor a function, whose ceiling `c` is not the unknown and holds no
+/// variable that is rigid or a function. There the shape holds a member only if each variable
+/// of the member's component that is neither rigid nor a function is `v` or a variable of `c`,
+/// and, where `c` holds only variables, only if the component holds no scalar value
+/// ([`Pins::lists`] has the proof). Each pinned shape is filed at that place under `v` and
+/// under each variable of `c`, and with the shapes `open` there when `c` holds more than
+/// variables; the other shapes are free.
+struct Pins {
+    /// The shapes pinned nowhere, in written order.
+    free: Rc<[usize]>,
+    /// Each place at which shapes are pinned, with those shapes, those whose ceiling holds
+    /// scalars, tuples or functions (`open`), and those filed under each variable, in written
+    /// order.
+    at: Vec<PinnedAt>,
+}
+
+/// The shapes pinned at one place ([`Pins`]).
+struct PinnedAt {
+    place: usize,
+    all: Rc<[usize]>,
+    open: Rc<[usize]>,
+    by: HashMap<Arc<str>, Rc<[usize]>>,
+}
+
+/// A list of shapes [`Comparing::search`] tries, in written order: a bucket of [`Choices`] or a
+/// list of its [`Pins`].
+enum Shapes<'c> {
+    Bucket(&'c [usize]),
+    Pinned(Rc<[usize]>),
+}
+
+impl std::ops::Deref for Shapes<'_> {
+    type Target = [usize];
+
+    fn deref(&self) -> &[usize] {
+        match self {
+            Shapes::Bucket(s) => s,
+            Shapes::Pinned(s) => s,
+        }
+    }
+}
+
+impl Pins {
+    /// The pins of the shapes `bucket`, whose components `comps` gives, under the ceilings of
+    /// `binds`: none when no shape is pinned. Cost: the components of the shapes, and for each
+    /// shape pinned the variables of its ceiling.
+    fn of<'t>(
+        bucket: &[usize],
+        comps: &impl Fn(usize) -> Vec<&'t Ty>,
+        binds: &Binds,
+        cx: &Cx,
+    ) -> Option<Pins> {
+        let special = |w: &Arc<str>| cx.rigid.contains_key(w) || cx.fns.contains_key(w);
+        let mut free = Vec::new();
+        type At = (Vec<usize>, Vec<usize>, HashMap<Arc<str>, Vec<usize>>);
+        let mut at: BTreeMap<usize, At> = BTreeMap::new();
+        for &r in bucket {
+            let pin = comps(r).into_iter().enumerate().find_map(|(j, d)| {
+                let v = d.as_var().filter(|v| !special(v))?;
+                let c = (binds.ceiling(v)).filter(|c| !c.dynamic && !c.vars.iter().any(special))?;
+                Some((j, v.clone(), c))
+            });
+            let Some((j, v, c)) = pin else {
+                free.push(r);
+                continue;
+            };
+            let (all, open, by) = at.entry(j).or_default();
+            all.push(r);
+            if !c.set.is_empty() || !c.tuples.is_empty() || !c.fns.is_empty() {
+                open.push(r);
+            }
+            for w in c.vars.iter().filter(|w| **w != v).chain([&v]) {
+                by.entry(w.clone()).or_default().push(r);
+            }
+        }
+        let at = (at.into_iter())
+            .map(|(place, (all, open, by))| PinnedAt {
+                place,
+                all: all.into(),
+                open: open.into(),
+                by: by.into_iter().map(|(w, rs)| (w, rs.into())).collect(),
+            })
+            .collect::<Vec<_>>();
+        (!at.is_empty()).then(|| Pins {
+            free: free.into(),
+            at,
+        })
+    }
+
+    /// The lists of shapes that may hold the member whose components are `xs`: the free
+    /// shapes, and at each place pinned, the shorter of those filed under the first variable
+    /// of the member's component there that is neither rigid nor a function, where it has one,
+    /// and those `open` there, where the component holds a scalar value; all those pinned there
+    /// where neither applies. The lists are apart, as each shape is pinned at one place at most.
+    ///
+    /// Proof that a shape left out does not hold the member: it is pinned at `j` by `v`, of
+    /// ceiling `c`, and the member's component `x` there has (a) a variable `w`, neither rigid
+    /// nor a function, that is neither `v` nor in `c`, or (b) a scalar value, the piece
+    /// `Set(s)` with `s` not empty, while `c` holds only variables. [`Comparing::rows`] and
+    /// [`Comparing::shape_in`] hold the member only if each component is held, by
+    /// [`Comparing::sub_by_shape`] at a site inside the shape ([`Site::In`]), and that holds
+    /// `x` only if [`accepts`] holds each piece of `x`, `Var(w)` or `Set(s)` among them. In
+    /// [`accepts`] with `t` the variable `v` alone: `t` is not the unknown; `ok` is false, in
+    /// (a) as `w` is no function, `t.vars` does not hold `w`, and `w` is not rigid, in (b) as
+    /// `t.set` is empty, so it holds no `s` not empty, and `v` is not rigid; the one variable
+    /// of `t` is `v`, bindable, and `admits` refuses it, as [`may_be_within`] is false: in (a)
+    /// for `Var(w)` in `c` (`c` is not the unknown and has no rigid or function variable, `w`
+    /// is neither and is not in `c`), in (b) for `Set(s)` in `c` (`s` is not within the empty
+    /// `c.set`, and `c` has no tuples or functions); and at a site inside a shape nothing else
+    /// is bound. So the piece is not held, whatever the bindings so far. Rigidity does not
+    /// change while a name lives: the names made rigid or functions are new ones, forgotten
+    /// with their scope ([`Cx::forget`]).
+    fn lists(&self, xs: &[&Ty], cx: &Cx) -> Vec<Rc<[usize]>> {
+        let special = |w: &Arc<str>| cx.rigid.contains_key(w) || cx.fns.contains_key(w);
+        let mut out = vec![self.free.clone()];
+        for p in &self.at {
+            let x = xs[p.place];
+            let by_var = (x.vars.iter().find(|w| !special(w)))
+                .map(|w| p.by.get(w).cloned().unwrap_or_else(|| Rc::from([])));
+            let by_set = (!x.set.is_empty()).then(|| p.open.clone());
+            out.push(match (by_var, by_set) {
+                (Some(a), Some(b)) => {
+                    if a.len() <= b.len() {
+                        a
+                    } else {
+                        b
+                    }
+                }
+                (Some(a), None) | (None, Some(a)) => a,
+                (None, None) => p.all.clone(),
+            });
+        }
+        out
     }
 }
 
@@ -5311,46 +5475,71 @@ impl<'m, 's> Comparing<'m, 's> {
     /// group `member.0`, whose components are `xs`: the shapes of its buckets
     /// ([`Choices::lookup`]), merged in written order, each tried by `fit` with the bindings so
     /// far, the first that holds it keeping what it binds. The rule of one shape tries every
-    /// shape of the group in order; a shape outside the buckets holds no member of them, so the
-    /// shape found and the bindings are the same. `Ok(false)` when none holds it, and at once
-    /// when the comparison was refused, since it then answers false.
+    /// shape of the group in order; a shape outside the buckets holds no member of them, and a
+    /// shape a bucket's [`Pins`] leave out holds no member of the lists they give
+    /// ([`Pins::lists`]), so the shape found and the bindings are the same. `comps` gives the
+    /// components of a shape. `Ok(false)` when none holds it, and at once when the comparison
+    /// was refused, since it then answers false.
     ///
-    /// Complexity tradeoff: a bucket is searched past its first shape for one member of a union
-    /// only; the next member of the same union that needs a later shape of the same bucket is
-    /// refused (`Err`, with the member that searched it, the group of [`Choices`] and the
-    /// bucket), and the comparison answers false ([`Cx::decided`]) with the reason
-    /// [`Ty::refused`] gives. What is given up: the verdict of the rule of one shape where two
-    /// members each need a later shape of one bucket, such as two members that the first shape
-    /// of a bucket does not hold, in a bucket of shapes that agree at every place filed. Why:
-    /// whether a shape holds a member is a comparison of their components, which binds
-    /// variables, with no order among shapes to search by; searching the shapes for each member
-    /// cost the members times the shapes, the n² of `#a(String, 1) | … <: #a(T, 1) | …` before
-    /// the index. With the refusal each bucket is searched past its first shape once, so a
-    /// member costs a lookup in each group, the first shape of each of its buckets and the
-    /// buckets it alone searches, and the members and shapes cost n log n times the groups. The
-    /// groups are the sets of places at which shapes have a class and are one value, a few in a
-    /// written union; shapes with variables or values at many different sets of places make as
-    /// many groups, up to the shapes, and then each member costs a lookup in each. Measured on
-    /// 20,000 random comparisons of unions of up to four shapes of width two against the rule
-    /// of one shape: the same verdict and bindings wherever not refused, and 6 refused
-    /// (`shapes_found_by_the_index_are_those_of_the_rule_of_one_shape`). Structure refused:
-    /// `#a(3, 5) | #a(4, 6) <: #a(1 | 2, T) | #a(int, U)`, where component 1 files both shapes
-    /// under `int` and `1 | 2` holds neither payload. Tests:
+    /// Complexity tradeoff: a member tries the shapes of a bucket until one holds it, but once
+    /// it has failed one there, it goes on past it for one member of a union only; the next
+    /// member of the same union that fails one shape of the bucket and needs another is refused
+    /// (`Err`, with the member that searched it, the group of [`Choices`] and the bucket), and
+    /// the comparison answers false ([`Cx::decided`]) with the reason [`Ty::refused`] gives.
+    /// Where the bindings have ceilings ([`ceilings`]), the first shape a member fails in a
+    /// bucket has the bucket's shapes pinned by those ceilings ([`Pins`]), once for the union,
+    /// and the member and those after it try only the shapes the pins give: a shape whose
+    /// variable's ceiling is a variable of the other side is found by a lookup on that variable,
+    /// not by trying it, and a member with a scalar value there skips the shapes whose ceiling
+    /// holds only variables. So `(X,) | (W,) | (Y,)` in `(T,) | (U,) | (V,)`, with `T`'s
+    /// ceiling `X`, binds `T` to `X` and `U` to `W | Y`, as the rule of one shape does, where
+    /// before the pins `(W,)` and `(Y,)` each failed `(T,)` and the second was refused
+    /// (FAIL-types-three-variable-shapes); and `(int,) | (1,)` skip `(T,)` likewise.
+    /// Naive version: every member tries every shape in written order, the members times the
+    /// shapes, the n² of `#a(String, 1) | … <: #a(T, 1) | …` before the index, and of n shapes
+    /// `(T_i,)` each with the ceiling `X_i` for the members `(X_i,)`. Chosen: a member costs a
+    /// lookup in each group, the first shape it tries in each of its buckets, the lists of the
+    /// pins at each place pinned (a hash lookup each) and, for one member of the union per
+    /// bucket, the shapes past the first it fails; the pins cost the bucket's components and the
+    /// variables of the ceilings of its pinned shapes, once for the union. The members and
+    /// shapes then cost n log n times the groups. What is given up: the verdict of the rule of
+    /// one shape where two members each fail a shape of one bucket that no pin leaves out and
+    /// need a later one, such as `#a(3, 5) | #a(4, 6) <: #a(1 | 2, T) | #a(int, U)`, where
+    /// component 1 files both shapes under `int` and `1 | 2` holds neither payload, or shapes
+    /// whose variables are bounded and bound already, or with no ceiling, or whose ceiling
+    /// holds scalars, tuples or functions where the members have scalars there. The proposal
+    /// was to count, for shapes of one canonical form, the members of each form and compare
+    /// the counts; not taken, as a variable with no ceiling takes the union of every member it
+    /// holds, so counts of shapes say nothing of whether the result holds the bindings. The groups are the sets of places at which shapes have a class and are one
+    /// value, a few in a written union; shapes with variables or values at many different sets
+    /// of places make as many groups, up to the shapes, and then each member costs a lookup in
+    /// each. Measured: the same verdict and bindings as the rule of one shape wherever not
+    /// refused, on random comparisons of unions of shapes of width two
+    /// (`shapes_found_by_the_index_are_those_of_the_rule_of_one_shape`) and of signatures whose
+    /// unions of variable shapes meet ceilings
+    /// (`pinned_shapes_are_those_of_the_rule_of_one_shape`). Prior work: clause indexing on the
+    /// first argument in Prolog (Warren, "An Abstract Prolog Instruction Set", SRI 1983), which
+    /// tries only the clauses whose head may match the call; here the key of a shape pinned by a
+    /// ceiling is each variable the ceiling holds. Tests:
     /// `tests/steps/l01_22_type_representation/kinds.rs`,
-    /// `payloads_with_a_variable_are_searched_by_their_keys` and the tests after it;
-    /// COMPLEXITY.md F124. A complete solution would search a bucket once for all its members,
-    /// by keys of the components that are not one value too (a tuple of a carrier, a payload),
-    /// at any depth, as the kernel files its rows (`RowIndex`), and would find the groups that
-    /// may hold a member by a partial-match index rather than one lookup in each.
-    async fn search<G: Ord + Clone, M: Clone>(
+    /// `payloads_with_a_variable_are_searched_by_their_keys` and the tests after it, and the
+    /// tests after `a_union_of_three_shapes_of_variables_fits_itself_renamed`; COMPLEXITY.md
+    /// F124. A complete solution would search a bucket once for all its members, by keys of
+    /// the components that are not one value too (a tuple of a carrier, a payload), at any
+    /// depth, as the kernel files its rows (`RowIndex`), and would find the groups that may
+    /// hold a member by a partial-match index rather than one lookup in each.
+    #[allow(clippy::too_many_arguments)]
+    async fn search<'t, G: Ord + Clone, M: Clone>(
         &'m self,
         choices: &Choices,
         xs: &[&Ty],
         member: (G, &M),
-        searched: &mut BTreeMap<(G, usize, Bucket), M>,
+        searched: &mut Searched<G, M>,
+        comps: impl Fn(usize) -> Vec<&'t Ty>,
         binds: &mut Binds,
         fit: impl Fn(usize, Binds) -> Deep<'m, (bool, Binds)>,
     ) -> Result<bool, (M, usize, Bucket)> {
+        use std::cmp::Reverse;
         let buckets = {
             let cx = self.cx.borrow();
             if cx.unchosen.is_some() {
@@ -5366,13 +5555,47 @@ impl<'m, 's> Comparing<'m, 's> {
         #[cfg(not(test))]
         let scan_all = false;
         let (group, m) = member;
-        // The buckets this member has searched past their first shape.
+        let at = |k: usize| (group.clone(), buckets[k].0, buckets[k].1.clone());
+        // The lists of shapes to try, each with its bucket: a bucket whole, or the lists its
+        // pins give the member where they are made; `pinned` marks the buckets read by pins.
+        let mut lists: Vec<(usize, Shapes)> = Vec::new();
+        let mut pinned = vec![false; buckets.len()];
+        {
+            let cx = self.cx.borrow();
+            for (k, (g, id)) in buckets.iter().enumerate() {
+                match searched.pins(&at(k), binds).filter(|_| !scan_all) {
+                    Some(p) => {
+                        pinned[k] = true;
+                        lists.extend(p.lists(xs, &cx).into_iter().map(|l| (k, Shapes::Pinned(l))));
+                    }
+                    None => lists.push((k, Shapes::Bucket(choices.bucket(*g, id)))),
+                }
+            }
+        }
+        // Each list's next shape, by the shape first, so the heap yields written order; a list
+        // replaced by the pins of its bucket is no longer `live`.
+        let mut heads: std::collections::BinaryHeap<Reverse<(usize, usize, usize)>> =
+            (lists.iter().enumerate())
+                .filter_map(|(i, (_, l))| Some(Reverse((*l.first()?, i, 0))))
+                .collect();
+        let mut live = vec![true; lists.len()];
+        // The buckets in which this member has failed a shape, and those it has searched past
+        // that shape.
+        let mut failed = vec![false; buckets.len()];
         let mut past = vec![false; buckets.len()];
-        for (k, at, r) in choices.merged(&buckets) {
-            if at > 0 && !past[k] && !scan_all {
-                let (g, id) = &buckets[k];
-                match searched.entry((group.clone(), *g, id.clone())) {
-                    Entry::Occupied(e) => return Err((e.get().clone(), *g, id.clone())),
+        while let Some(Reverse((r, i, n))) = heads.pop() {
+            if !live[i] {
+                continue;
+            }
+            let k = lists[i].0;
+            if let Some(&next) = lists[i].1.get(n + 1) {
+                heads.push(Reverse((next, i, n + 1)));
+            }
+            if failed[k] && !past[k] && !scan_all {
+                match searched.by.entry(at(k)) {
+                    Entry::Occupied(e) => {
+                        return Err((e.get().clone(), buckets[k].0, buckets[k].1.clone()));
+                    }
                     Entry::Vacant(e) => e.insert(m.clone()),
                 };
                 past[k] = true;
@@ -5381,6 +5604,36 @@ impl<'m, 's> Comparing<'m, 's> {
             if ok {
                 *binds = b;
                 return Ok(true);
+            }
+            if failed[k] || pinned[k] || scan_all {
+                failed[k] = true;
+                continue;
+            }
+            // The first shape the member fails in a bucket not yet pinned: the bucket is pinned,
+            // and the rest of it is read from the lists the pins give, from past `r` on.
+            let pins = {
+                let cx = self.cx.borrow();
+                let (g, id) = &buckets[k];
+                (searched.pin(at(k), choices.bucket(*g, id), &comps, binds, &cx))
+                    .map(|p| p.lists(xs, &cx))
+            };
+            let Some(pins) = pins else {
+                failed[k] = true;
+                continue;
+            };
+            pinned[k] = true;
+            for (j, live) in live.iter_mut().enumerate() {
+                if lists[j].0 == k {
+                    *live = false;
+                }
+            }
+            for l in pins {
+                let from = l.partition_point(|&s| s <= r);
+                if let Some(&first) = l.get(from) {
+                    heads.push(Reverse((first, lists.len(), from)));
+                }
+                lists.push((k, Shapes::Pinned(l)));
+                live.push(true);
             }
         }
         Ok(false)
@@ -5415,7 +5668,7 @@ impl<'m, 's> Comparing<'m, 's> {
             }
             let filed = self.filed(t, search);
             let groups = (filed.payloads.get(n)).expect("each payload union `t` lists is filed");
-            let mut searched = BTreeMap::new();
+            let mut searched = Searched::new();
             for l in ls {
                 let g = shape_group(l);
                 let Some(choices) = groups.get(&g) else {
@@ -5423,7 +5676,8 @@ impl<'m, 's> Comparing<'m, 's> {
                 };
                 let fit = |r: usize, b| self.shape_in(l.clone(), rs[r].clone(), b);
                 let xs = comps(l);
-                let found = self.search(choices, &xs, (g, l), &mut searched, binds, fit);
+                let shapes = |r: usize| comps(&rs[r]);
+                let found = self.search(choices, &xs, (g, l), &mut searched, shapes, binds, fit);
                 match found.await {
                     Ok(true) => {}
                     Ok(false) => return false,
@@ -5479,6 +5733,7 @@ impl<'m, 's> Comparing<'m, 's> {
             &xs,
             (cs.len(), cs),
             &mut search.searched,
+            |r: usize| t.tuples[r].iter().collect(),
             binds,
             fit,
         );
@@ -7568,9 +7823,9 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     // result then does not keep (`(x0: (T,) | (U,)) -> (T,)`, whose `(U,)` binds `T` in
     // `(T,)`), and a bounded variable of `q` is read under a new name, so no arrow of `s` is
     // equal to its arrow as read. The ceilings the result puts on the variables
-    // ([`ceilings`]) now steer a tuple piece past such a shape where a union has two shapes of
-    // variables, but not three or more, which [`Comparing::search`] refuses: `(x0: (B,) | (T,)
-    // | (U,)) -> (T,)` fits itself only here (FAIL-types-three-variable-shapes). Cost: the
+    // ([`ceilings`]) and the pins of [`Comparing::search`] now steer a tuple piece past such a
+    // shape, but not where a variable has no ceiling or is bounded and bound already, so the
+    // signature as a whole is still taken here first. Cost: the
     // digests, kept with each signature, and where they agree a walk of both as written, which
     // the comparison would have cost.
     if s.digest() == q.digest() && s == q && read_alike(s, se, qe) {
@@ -7836,9 +8091,9 @@ async fn every_arrow_fits<'m>(
             // the same name in `q` (FAIL-types-sig-reflexive), so it is taken without
             // comparing, unless it holds a bounded variable of `s` whose bound the variable
             // of `q` does not keep. Comparing would bind in written order and could miss
-            // that binding where a union has three or more shapes of variables, which
-            // [`Comparing::search`] refuses (FAIL-types-three-variable-shapes); with two, the
-            // ceilings of the result ([`ceilings`]) find it. Cost: the size of `sa`, once per
+            // that binding where a variable has no ceiling from the result ([`ceilings`]) or is
+            // bounded and bound already; where each has one, the ceilings and the pins of
+            // [`Comparing::search`] find it. Cost: the size of `sa`, once per
             // arrow of `q`, and nothing when `s` has no bounded variable.
             if equal_fits(s, sa, &c.cx.borrow())
                 || arrow_fits_alone(s, sa, qa, c, &mut refused).await
@@ -8819,6 +9074,10 @@ impl std::hash::Hash for Sig {
 /// attempts do not multiply with the depth.
 async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
     let mut b = Binds::of_arrow(s, sa, Some(&qa.result), &c.cx.borrow());
+    // Why the attempt within the ceilings was refused, if it was: then it may have found a fit
+    // the attempt with no ceiling does not, so where that one fails too, the comparison is
+    // refused, not decided false.
+    let mut refused = None;
     loop {
         let before = b.ceilings.is_some().then(|| c.begin_alone());
         let mut ok = true;
@@ -8831,9 +9090,13 @@ async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_
         ok = ok && bounds_hold(s, sa, &b, &c.cx.borrow());
         ok = ok && result_within(sa, qa, &b, c).await;
         let Some(before) = before else {
+            if let Some(why) = refused.filter(|_| !ok) {
+                c.refuse(|| why);
+            }
             return ok;
         };
-        if c.end_alone(before).is_none() && ok {
+        refused = c.end_alone(before);
+        if refused.is_none() && ok {
             return true;
         }
         b = Binds::of_arrow(s, sa, None, &c.cx.borrow());
@@ -8904,8 +9167,8 @@ fn piece_within(p: &Piece, m: u8, cx: &Cx) -> bool {
 /// on the shapes the result leaves; one walk of `sr` and of `qr`'s shapes per arrow compared,
 /// each place of `qr`'s shapes of one length joined once, not once per variable there.
 /// What is given up: a variable whose ceiling holds two shapes alike, or with no ceiling, is
-/// still bound first-fit, as is a union of more than two shapes of one bucket, which
-/// [`Comparing::search`] refuses. Prior work: the upper bounds that local type inference
+/// still bound first-fit; [`Comparing::search`] refuses where two members of one union each
+/// fail a shape no pin leaves out. Prior work: the upper bounds that local type inference
 /// propagates from the expected type into the arguments (Pierce and Turner, "Local Type
 /// Inference", TOPLAS 2000), here only one level deep.
 fn ceilings(sr: &Ty, qr: &Ty, free: &impl Fn(&str) -> bool) -> Option<Ceilings> {
@@ -11737,6 +12000,368 @@ mod tests {
         let q = one_param(tup(string), Ty::tuple(vec![int.clone(), int]), &[], false);
         let q = owning(q, &[], "T");
         assert!(fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    #[test]
+    fn a_union_of_three_shapes_of_variables_fits_itself_renamed() {
+        let v = |x: &str| Ty::var(x.into());
+        let tx = |x: &str| Ty::tuple(vec![v(x)]);
+        let s = owning(
+            one_param(tx("T").union(&tx("U")).union(&tx("V")), tx("T"), &[], false),
+            &["T", "U", "V"],
+            "T",
+        );
+        let q = owning(
+            one_param(tx("X").union(&tx("W")).union(&tx("Y")), tx("X"), &[], false),
+            &["X", "W", "Y"],
+            "X",
+        );
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        // Control: two shapes fit (FAIL-types-first-shape-unbounded).
+        let s = owning(
+            one_param(tx("T").union(&tx("U")), tx("T"), &[], false),
+            &["T", "U"],
+            "T",
+        );
+        let q = owning(
+            one_param(tx("X").union(&tx("W")), tx("X"), &[], false),
+            &["X", "W"],
+            "X",
+        );
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    /// Why `fits_sig(s, q)` was refused, if a member needed a shape of a bucket past one failed
+    /// fit after another member had ([`Comparing::search`]).
+    fn sig_unchosen(s: &Sig, q: &Sig) -> Option<String> {
+        let env = Env::new();
+        let mut cx = Cx::default();
+        comparing!(&mut cx, |c| async {
+            fits_in(s, &env, q, &env, &c).await;
+        });
+        cx.unchosen
+    }
+
+    /// `fits_sig(s, q)`, checked against the search of every shape in written order
+    /// (`SCAN_ALL`): the same verdict, and no refusal.
+    fn fits_both(s: &Sig, q: &Sig) -> bool {
+        let ok = fits_sig(s, q);
+        SCAN_ALL.set(true);
+        let want = fits_sig(s, q);
+        SCAN_ALL.set(false);
+        assert_eq!(ok, want, "{q} in {s}: the index and the full search differ");
+        assert_eq!(sig_unchosen(s, q), None, "{q} in {s}: refused");
+        ok
+    }
+
+    /// The tuple of the variables `names`.
+    fn vars_tuple(names: &[&str]) -> Ty {
+        Ty::tuple(names.iter().map(|&x| Ty::var(x.into())).collect())
+    }
+
+    /// `(x0: (T0,) | … | (Tn-1,)) -> (T0,)` fits itself renamed to `X0 … Xn-1`, for `n` from 1
+    /// to 8: each member after the first is found in its shape by its own name ([`Pins`]),
+    /// which FAIL-types-three-variable-shapes refused from three shapes on.
+    #[test]
+    fn n_shapes_of_variables_fit_themselves_renamed() {
+        for n in 1..=8 {
+            let ts: Vec<String> = (0..n).map(|i| format!("T{i}")).collect();
+            let xs: Vec<String> = (0..n).map(|i| format!("X{i}")).collect();
+            let make = |names: &[String]| {
+                let p = Ty::union_all(&names.iter().map(|x| vars_tuple(&[x])).collect::<Vec<_>>());
+                let own: Vec<&str> = names.iter().map(String::as_str).collect();
+                owning(
+                    one_param(p, vars_tuple(&[&names[0]]), &[], false),
+                    &own,
+                    "B",
+                )
+            };
+            let (s, q) = (make(&ts), make(&xs));
+            assert!(fits_both(&s, &q), "{q} in {s}");
+        }
+    }
+
+    /// Pinned and free shapes in one bucket: in `(x0: (T, int) | (U, int) | (V, int)) -> (T,)`
+    /// only `T` has a ceiling, so `(T, int)` is pinned and the other two are free; and with the
+    /// result `(T, U, V)` all three are pinned, each by its own variable.
+    #[test]
+    fn pinned_and_free_shapes_of_one_bucket_fit_themselves_renamed() {
+        let int = Ty::carrier(Carrier::Int);
+        let with_int = |x: &str| Ty::tuple(vec![Ty::var(x.into()), int.clone()]);
+        let make = |names: [&str; 3], r: Ty| {
+            let p = Ty::union_all(&names.map(with_int));
+            owning(one_param(p, r, &[], false), &names, "B")
+        };
+        let s = make(["T", "U", "V"], vars_tuple(&["T"]));
+        let q = make(["X", "W", "Y"], vars_tuple(&["X"]));
+        assert!(fits_both(&s, &q), "{q} in {s}");
+        let s = make(["T", "U", "V"], vars_tuple(&["T", "U", "V"]));
+        let q = make(["X", "W", "Y"], vars_tuple(&["X", "W", "Y"]));
+        assert!(fits_both(&s, &q), "{q} in {s}");
+        // The result names the variables in another order: `T`'s ceiling is `W` and `U`'s is
+        // `X`, so `T` takes `W`'s member and `U` takes `X`'s, and the result `(U, T, V)` is
+        // `(X, W, Y)`.
+        let s = make(["T", "U", "V"], vars_tuple(&["U", "T", "V"]));
+        assert!(fits_both(&s, &q), "{q} in {s}");
+        // A result that names `T` twice still fits, with `T` bound to nothing and `U` taking
+        // both `X`'s and `W`'s members: the result is then empty.
+        let s = make(["T", "U", "V"], vars_tuple(&["T", "T", "V"]));
+        assert!(fits_both(&s, &q), "{q} in {s}");
+        // A fourth member `(Z, int)` is within no ceiling, so the attempt within the ceilings
+        // fails; with no ceiling the first shape takes every member, `T` is `X | W | Y | Z` and
+        // `U` and `V` are bound to nothing, so the result is empty and within any.
+        let s = make(["T", "U", "V"], vars_tuple(&["T", "U", "V"]));
+        let p = Ty::union_all(&["X", "W", "Y", "Z"].map(with_int));
+        let q = owning(
+            one_param(p, vars_tuple(&["X", "W", "Y"]), &[], false),
+            &["X", "W", "Y", "Z"],
+            "B",
+        );
+        assert!(fits_both(&s, &q), "{q} in {s}");
+    }
+
+    /// Two shapes where three members need three: `(x0: (T, int) | (U, bool)) -> (T, U)` is not
+    /// a function of type `(x0: (X, int) | (W, bool) | (Y, bool)) -> (X, W)`, as its `U` would
+    /// be `W | Y`, which the result `W` does not hold; with the result `(X, W | Y)` it is.
+    #[test]
+    fn shapes_that_take_more_members_than_the_result_holds_do_not_fit() {
+        let (int, bool) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool));
+        let at = |x: &str, c: &Ty| Ty::tuple(vec![Ty::var(x.into()), c.clone()]);
+        let s = owning(
+            one_param(
+                at("T", &int).union(&at("U", &bool)),
+                vars_tuple(&["T", "U"]),
+                &[],
+                false,
+            ),
+            &["T", "U"],
+            "B",
+        );
+        let p = at("X", &int).union(&at("W", &bool)).union(&at("Y", &bool));
+        let q = owning(
+            one_param(p.clone(), vars_tuple(&["X", "W"]), &[], false),
+            &["X", "W", "Y"],
+            "B",
+        );
+        assert!(!fits_both(&s, &q), "{q} in {s}");
+        let wy = Ty::var("W".into()).union(&Ty::var("Y".into()));
+        let r = Ty::tuple(vec![Ty::var("X".into()), wy]);
+        let q = owning(one_param(p, r, &[], false), &["X", "W", "Y"], "B");
+        assert!(fits_both(&s, &q), "{q} in {s}");
+    }
+
+    /// Shapes that share a variable: `(x0: (T, int) | (T, bool)) -> (T,)` takes `(X, int)` and
+    /// `(W, bool)` only with `T` bound to `X | W`, so it is not a function of type
+    /// `(x0: (X, int) | (W, bool)) -> (X,)`, and is one of type `… -> (X | W,)`. Both shapes are
+    /// pinned at `T`, filed under the variable `X` of its ceiling.
+    #[test]
+    fn shapes_that_share_a_variable_take_the_union_of_their_members() {
+        let (int, bool) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool));
+        let at = |x: &str, c: &Ty| Ty::tuple(vec![Ty::var(x.into()), c.clone()]);
+        let s = owning(
+            one_param(
+                at("T", &int).union(&at("T", &bool)),
+                vars_tuple(&["T"]),
+                &[],
+                false,
+            ),
+            &["T"],
+            "B",
+        );
+        let p = at("X", &int).union(&at("W", &bool));
+        let q = owning(
+            one_param(p.clone(), vars_tuple(&["X"]), &[], false),
+            &["X", "W"],
+            "B",
+        );
+        assert!(!fits_both(&s, &q), "{q} in {s}");
+        let xw = Ty::tuple(vec![Ty::var("X".into()).union(&Ty::var("W".into()))]);
+        let q = owning(one_param(p, xw, &[], false), &["X", "W"], "B");
+        assert!(fits_both(&s, &q), "{q} in {s}");
+    }
+
+    /// A random component of a shape for [`pinned_shapes_are_those_of_the_rule_of_one_shape`]:
+    /// one of the variables `names`, now and then with `int` beside it, `int`, `Bool`, a
+    /// literal of two, or the tuple `(int,)`, which has neither a variable nor a scalar.
+    fn sig_component(rng: &mut Rng, names: &[&str]) -> Ty {
+        let var = |rng: &mut Rng| Ty::var(names[rng.below(names.len() as u64) as usize].into());
+        match rng.below(8) {
+            0..=2 => var(rng),
+            3 => var(rng).union(&Ty::carrier(Carrier::Int)),
+            4 => Ty::carrier(Carrier::Int),
+            5 => Ty::carrier(Carrier::Bool),
+            6 => Ty::lit(&Value::Int(rng.below(2) as i64)),
+            _ => Ty::tuple(vec![Ty::carrier(Carrier::Int)]),
+        }
+    }
+
+    /// The members of a random parameter: one to five tuples of one or two components.
+    fn sig_members(rng: &mut Rng, names: &[&str]) -> Vec<Vec<Ty>> {
+        (0..1 + rng.below(5))
+            .map(|_| {
+                (0..1 + rng.below(2))
+                    .map(|_| sig_component(rng, names))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// `(x0: members) -> result`, each a union of the tuples of the components given, with its own
+    /// variables `names`.
+    fn random_shapes_sig(names: &[&str], members: &[Vec<Ty>], result: &[Vec<Ty>]) -> Sig {
+        let p = Ty::union_all(
+            &members
+                .iter()
+                .map(|m| Ty::tuple(m.clone()))
+                .collect::<Vec<_>>(),
+        );
+        let r = Ty::union_all(
+            &result
+                .iter()
+                .map(|m| Ty::tuple(m.clone()))
+                .collect::<Vec<_>>(),
+        );
+        owning(one_param(p, r, &[], false), names, "B")
+    }
+
+    /// The components `cs` with each variable `from[i]` renamed `to[i]`: each component is one
+    /// variable, a variable with `int` beside it ([`sig_result`]), or has no variable.
+    fn renamed(cs: &[Vec<Ty>], from: &[&str], to: &[&str]) -> Vec<Vec<Ty>> {
+        let int = Ty::carrier(Carrier::Int);
+        let name = |t: &Ty| {
+            let Some(v) = t.vars.iter().next() else {
+                return t.clone();
+            };
+            let new = Ty::var(to[from.iter().position(|f| **f == **v).unwrap()].into());
+            match t.as_var() {
+                Some(_) => new,
+                None => {
+                    assert_eq!(*t, Ty::var(v.clone()).union(&int));
+                    new.union(&int)
+                }
+            }
+        };
+        cs.iter().map(|m| m.iter().map(name).collect()).collect()
+    }
+
+    /// Members of scalar values are not tried against a shape pinned by a ceiling of
+    /// variables only: in `(x0: (T,) | (U,) | (int,)) -> (T, T)` compared with
+    /// `(x0: (Y,) | (int,) | (1,) | (X,)) -> (X, X)`, `T`'s ceiling is `X`, so `(int,)` and `(1,)`
+    /// go to `(U,)` without failing `(T,)`. Tried there, each failed `(T,)`, and the second was
+    /// refused; the attempt with no ceiling then failed and its false was taken as the verdict,
+    /// though the rule of one shape finds the fit. Both are fixed: the lookup leaves `(T,)` out,
+    /// and a refusal within the ceilings is kept where the attempt with no ceiling fails
+    /// ([`arrow_fits`]).
+    #[test]
+    fn scalar_members_skip_shapes_pinned_by_ceilings_of_variables() {
+        let v = |x: &str| vec![Ty::var(x.into())];
+        let vv = |x: &str| vec![vec![Ty::var(x.into()), Ty::var(x.into())]];
+        let int = vec![Ty::carrier(Carrier::Int)];
+        let one = vec![Ty::lit(&Value::Int(1))];
+        let s = random_shapes_sig(&["T", "U"], &[v("T"), v("U"), int.clone()], &vv("T"));
+        let q = random_shapes_sig(&["X", "Y"], &[v("Y"), int, one, v("X")], &vv("X"));
+        assert!(fits_both(&s, &q), "{q} in {s}");
+    }
+
+    /// A case the search still gives up (F124), from the sweep below: `(x0: (bool, T) | (int | T,)
+    /// | (int | T, T) | (U,) | (V,)) -> (T,) | (T, T)` compared with itself renamed, members
+    /// shuffled. Three of its shapes are pinned by no ceiling: `(int | T,)`, whose component is
+    /// not one variable, and `(U,)` and `(V,)`, whose variables have none; the search gives the
+    /// comparison up, though every shape tried in order finds the fit. Kept so that a change
+    /// that decides it shows here.
+    #[test]
+    fn a_signature_the_pins_do_not_separate_is_still_refused() {
+        let v = |x: &str| Ty::var(x.into());
+        let (int, bool) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool));
+        let make = |t: &str, u: &str, w: &str, order: [usize; 5]| {
+            let shapes = [
+                vec![bool.clone(), v(t)],
+                vec![v(t).union(&int)],
+                vec![v(t).union(&int), v(t)],
+                vec![v(u)],
+                vec![v(w)],
+            ];
+            let members: Vec<Vec<Ty>> = order.iter().map(|&i| shapes[i].clone()).collect();
+            random_shapes_sig(&[t, u, w], &members, &[vec![v(t)], vec![v(t), v(t)]])
+        };
+        let s = make("T", "U", "V", [0, 1, 2, 3, 4]);
+        let q = make("X", "W", "Y", [1, 2, 3, 0, 4]);
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        assert!(sig_unchosen(&s, &q).is_some(), "{q} in {s}: not refused");
+        SCAN_ALL.set(true);
+        let want = fits_sig(&s, &q);
+        SCAN_ALL.set(false);
+        assert!(want, "{q} in {s}: the full search finds no fit");
+    }
+
+    /// The result of a random signature for [`pinned_shapes_are_those_of_the_rule_of_one_shape`]:
+    /// one or two tuples of one or two of the variables `names`, now and then with `int` beside
+    /// one, so that some ceilings hold scalars (the shapes `open` of [`Pins`]).
+    fn sig_result(rng: &mut Rng, names: &[&str]) -> Vec<Vec<Ty>> {
+        let one = |rng: &mut Rng| {
+            let v = Ty::var(names[rng.below(names.len() as u64) as usize].into());
+            match rng.below(4) {
+                0 => v.union(&Ty::carrier(Carrier::Int)),
+                _ => v,
+            }
+        };
+        (0..1 + rng.below(2))
+            .map(|_| (0..1 + rng.below(2)).map(|_| one(rng)).collect())
+            .collect()
+    }
+
+    /// The members pinned to their shapes by the ceilings ([`Pins`]) are matched as the rule of
+    /// one shape matches them, trying every shape in written order (`SCAN_ALL`): the same
+    /// verdict on random signatures of tuple shapes wherever the comparison is not refused.
+    /// Half the cases compare a signature with itself renamed, members shuffled and one
+    /// component changed now and then, so that many hold. The count of refusals is printed:
+    /// each is a case given up (see [`Comparing::search`]).
+    #[test]
+    fn pinned_shapes_are_those_of_the_rule_of_one_shape() {
+        let mut rng = Rng(crate::seed::seed(
+            "pinned_shapes_are_those_of_the_rule_of_one_shape",
+        ));
+        let (ts, xs) = (["T", "U", "V"], ["X", "W", "Y"]);
+        let (mut cases, mut held, mut failed, mut refused) = (0, 0, 0, 0);
+        for i in 0..3000 {
+            let sm = sig_members(&mut rng, &ts);
+            let sr = sig_result(&mut rng, &ts);
+            let s = random_shapes_sig(&ts, &sm, &sr);
+            let (mut qm, qr) = if i % 2 == 0 {
+                let mut qm = renamed(&sm, &ts, &xs);
+                for k in (1..qm.len()).rev() {
+                    qm.swap(k, rng.below(k as u64 + 1) as usize);
+                }
+                (qm, renamed(&sr, &ts, &xs))
+            } else {
+                let qr = sig_result(&mut rng, &xs);
+                (sig_members(&mut rng, &xs), qr)
+            };
+            if rng.below(4) == 0 {
+                let m = rng.below(qm.len() as u64) as usize;
+                let j = rng.below(qm[m].len() as u64) as usize;
+                qm[m][j] = sig_component(&mut rng, &xs);
+            }
+            let q = random_shapes_sig(&xs, &qm, &qr);
+            let ok = fits_sig(&s, &q);
+            SCAN_ALL.set(true);
+            let want = fits_sig(&s, &q);
+            SCAN_ALL.set(false);
+            cases += 1;
+            if sig_unchosen(&s, &q).is_some() {
+                assert!(!ok, "{q} in {s}: refused, but held");
+                refused += 1;
+                continue;
+            }
+            assert_eq!(ok, want, "{q} in {s}");
+            if ok {
+                held += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        println!("{cases} cases: {held} held, {failed} failed, {refused} refused");
+        assert!(held > 300 && failed > 300, "{held} held, {failed} failed");
     }
 
     #[test]

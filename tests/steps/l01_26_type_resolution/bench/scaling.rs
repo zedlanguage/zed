@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use zed_tests::scaling;
-use zedc::check::ty::Ty;
+use zedc::check::ty::{Carrier, Ty};
 
 use super::super::Resolved;
 use super::super::info;
@@ -624,5 +624,96 @@ fn never_arguments_check_in_linear_time() {
         |m| {
             assert_eq!(units[&m].type_errors(), Vec::<String>::new());
         },
+    );
+}
+
+/// `(x0: (P0,) | … | (P(n-1),) | more) -> result(P0, …, P(n-1))`, owning the variables `P0` to
+/// `P(n-1)`, its members in written order, or in reverse where `reversed`.
+fn shapes_of_variables(
+    prefix: &str,
+    n: usize,
+    more: &[Ty],
+    result: impl Fn(&[Ty]) -> Ty,
+    reversed: bool,
+) -> zedc::check::ty::Sig {
+    use zedc::check::ty::{Arrow, Facts, SParam, Sig};
+    let vs = variables(prefix, n);
+    let mut members: Vec<Ty> = (vs.iter().map(|v| Ty::tuple(vec![v.clone()])))
+        .chain(more.iter().map(|t| Ty::tuple(vec![t.clone()])))
+        .collect();
+    if reversed {
+        members.reverse();
+    }
+    let mut s = Sig {
+        params: vec![SParam {
+            name: "x0".into(),
+            positional: false,
+            default: None,
+        }],
+        arrows: vec![Arrow {
+            params: vec![Ty::union_all(&members)],
+            result: result(&vs),
+        }],
+        bounds: BTreeMap::new(),
+        data: false,
+        dense: false,
+        word: None,
+        needs: Vec::new(),
+        own: (vs.iter())
+            .map(|v| v.vars.first().cloned().unwrap())
+            .collect(),
+        held: Default::default(),
+        named: 0,
+        facts: Facts::default(),
+    };
+    s.note_held();
+    s
+}
+
+/// A signature whose parameter is a union of `n` one-place shapes of its own variables, with
+/// the result `(P0, …, P(n-1))`, fits itself renamed, its members in reverse order: each shape
+/// is pinned by the ceiling of its variable (`Pins` in zedc-types), so each member fails a shape at most
+/// once and is then found by a lookup on its variable (COMPLEXITY.md F124,
+/// FAIL-types-three-variable-shapes; that search refused from three shapes on). `scalars`
+/// adds the shapes `(int,)` and `(String,)` to both, whose members skip the shapes pinned by
+/// ceilings of variables only. Small instances: `zedc-types`
+/// `n_shapes_of_variables_fit_themselves_renamed` and the tests after it. With the result
+/// `(P0,)` instead, one variable takes the other n - 1 members, a quadratic cost of its own
+/// (FAIL-types-binding-union-copied).
+fn shapes_of_variables_fit_renamed(what: &str, n: usize, scalars: bool) {
+    let more: Vec<Ty> = match scalars {
+        true => vec![Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Str)],
+        false => Vec::new(),
+    };
+    let result = |vs: &[Ty]| Ty::tuple(vs.to_vec());
+    let sigs = scaling::inputs(n, |m| {
+        (
+            shapes_of_variables("T", m, &more, result, false),
+            shapes_of_variables("X", m, &more, result, true),
+        )
+    });
+    scaling::check(what, n, |m| {
+        let (s, q) = &sigs[&m];
+        assert!(zedc::check::ty::fits_sig(s, q));
+    });
+}
+
+// 1x measured 955 ms (ns=955400456) at load 52 on 2026-11-14; 8.62 times the instructions at 8n.
+#[test]
+fn n_shapes_of_variables_pinned_by_the_result_fit_themselves_renamed_in_linear_time() {
+    shapes_of_variables_fit_renamed(
+        "n shapes of variables, each pinned by the result, fitting themselves renamed",
+        15_000,
+        false,
+    );
+}
+
+// 1x measured 1339 ms (ns=1338916939) at load 52 on 2026-11-14; 8.62 times the instructions at 8n.
+#[test]
+fn n_pinned_shapes_of_variables_beside_scalars_fit_themselves_renamed_in_linear_time() {
+    shapes_of_variables_fit_renamed(
+        "n shapes of variables pinned by the result beside int and String, fitting themselves renamed",
+        15_000,
+        true,
     );
 }
