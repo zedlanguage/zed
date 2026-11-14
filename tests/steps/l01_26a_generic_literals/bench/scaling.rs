@@ -25,7 +25,7 @@ use super::super::scaling::{
 #[test]
 fn a_body_of_many_generic_literals_scales() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 1000;
+        let n = 5000;
         let units = [checked(&sum(n)), checked(&sum(scaling::FACTOR * n))];
         for (u, m) in units.iter().zip([n, scaling::FACTOR * n]) {
             assert_eq!(u.info.follows.len(), m);
@@ -40,7 +40,7 @@ fn a_body_of_many_generic_literals_scales() {
 #[test]
 fn a_body_of_many_decimal_literals_of_19_digits_checks_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 500;
+        let n = 3000;
         let srcs = [decimals(n), decimals(scaling::FACTOR * n)];
         scaling::check(
             "checking a body of n decimal literals of 19 digits",
@@ -54,7 +54,7 @@ fn a_body_of_many_decimal_literals_of_19_digits_checks_in_linear_time() {
 
 #[test]
 fn one_decimal_literal_of_many_digits_checks_in_linear_time() {
-    let n = 65_536;
+    let n = 20_000_000;
     let srcs = [long(n), long(scaling::FACTOR * n)];
     scaling::check("checking one decimal literal of n digits", n, |m| {
         checked(&srcs[usize::from(m != n)]);
@@ -64,7 +64,7 @@ fn one_decimal_literal_of_many_digits_checks_in_linear_time() {
 #[test]
 fn a_body_of_many_generic_literal_arguments_scales() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 1000;
+        let n = 5000;
         let units = [checked(&calls(n)), checked(&calls(scaling::FACTOR * n))];
         for (u, m) in units.iter().zip([n, scaling::FACTOR * n]) {
             assert_eq!(u.info.witness.len(), m);
@@ -92,7 +92,7 @@ fn a_body_of_many_generic_literal_arguments_scales() {
 #[test]
 fn a_menu_of_a_long_line_scales() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 500;
+        let n = 860;
         let units = scaling::inputs(n, |m| Resolved::new(&product(m, "0.5")));
         for (m, u) in &units {
             let [e] = &u.type_errors()[..] else {
@@ -115,7 +115,7 @@ fn a_menu_of_a_long_line_scales() {
 #[test]
 fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 500;
+        let n = 880;
         let units = scaling::inputs(n, |m| Resolved::new(&product(m, "0.5f64")));
         for u in units.values() {
             assert_eq!(u.type_errors(), Vec::<String>::new());
@@ -150,7 +150,7 @@ fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
 #[test]
 fn a_menu_of_divisions_nested_deep_scales() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 500;
+        let n = 900;
         let units = scaling::inputs(n, |m| Resolved::new(&nested_quotients(m)));
         for (m, u) in &units {
             let [e] = &u.type_errors()[..] else {
@@ -223,7 +223,7 @@ fn divisions_of_literals_nested_deep_record_their_operands_in_linear_time() {
 #[test]
 fn a_comparison_of_tuples_of_many_operations_scales() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 500;
+        let n = 1000;
         let units = scaling::inputs(n, |m| Resolved::new(&pairs(m)));
         for u in units.values() {
             assert_eq!(u.type_errors(), Vec::<String>::new());
@@ -353,7 +353,7 @@ fn accepted_scales(what: &str, n: usize, order: u32, make: fn(usize) -> String) 
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_in_a_body() {
     accepted_scales(
         "checking n nested powers of literals in a body at rat",
-        500,
+        1100,
         1,
         powers_in_a_body,
     );
@@ -363,7 +363,7 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_in_a_body() 
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_powers_of_two() {
     accepted_scales(
         "checking n nested powers of the literal 2 in a body at rat",
-        500,
+        1400,
         1,
         powers_of_two,
     );
@@ -373,7 +373,7 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_powers_of_tw
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_at_the_top_level() {
     accepted_scales(
         "checking n nested powers of literals at the top level",
-        500,
+        900,
         1,
         powers_at_the_top,
     );
@@ -383,7 +383,7 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_at_the_top_l
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_divisors() {
     accepted_scales(
         "checking n divisors that are operations on literals",
-        500,
+        1000,
         1,
         divisor_chain,
     );
@@ -405,7 +405,7 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_a_power_divi
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_squares() {
     accepted_scales(
         "checking a divisor of n nested squares of 3",
-        500,
+        2000,
         1,
         squares_divisor,
     );
@@ -544,7 +544,7 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_plus_one_when_
 /// holds.
 fn exponent_scales(what: &str, shape: fn(usize, &str) -> String, e: &str, ok: bool) {
     scaling::on_a_thread(1 << 29, || {
-        let n = 500;
+        let n = 1400;
         let units = scaling::inputs(n, |m| Resolved::new(&shape(m, e)));
         for u in units.values() {
             assert_eq!(u.type_errors().is_empty(), ok);

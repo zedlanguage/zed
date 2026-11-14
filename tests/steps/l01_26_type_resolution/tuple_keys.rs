@@ -4,9 +4,7 @@
 //! may lie outside `0..<n`; a key that selects no component is a static error, as a literal one
 //! is. At run time a key outside `0..<n`, negative or past the end, is `#outOfBounds`.
 
-use zed_tests::scaling;
-
-use super::{Resolved, sig, type_errors};
+use super::{sig, type_errors};
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 /// A record read by a column number the user types.
@@ -141,7 +139,7 @@ fn a_possibly_missing_component_is_disposed_of_before_a_port() {
 }
 
 /// A unit indexing a tuple of `n` components by an `int` key, and by a key of two numbers.
-fn wide(n: usize) -> String {
+pub(super) fn wide(n: usize) -> String {
     let ts: Vec<&str> = (0..n)
         .map(|j| if j % 2 == 0 { "int" } else { "String" })
         .collect();
@@ -154,19 +152,8 @@ fn wide(n: usize) -> String {
 }
 
 #[test]
-fn indexing_a_wide_tuple_scales() {
+fn a_wide_tuple_is_indexed_by_a_computed_key() {
+    // A small instance of the benchmark `bench::tuple_keys::indexing_a_wide_tuple_scales`.
     assert_eq!(type_errors(&wide(4)), Vec::<String>::new(), "{}", wide(4));
-    let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-        .into_iter()
-        .map(|m| (m, Resolved::new(&wide(m))))
-        .collect();
-    scaling::check_order(
-        "a tuple of n components indexed by a computed key",
-        500,
-        1,
-        |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
 }
+

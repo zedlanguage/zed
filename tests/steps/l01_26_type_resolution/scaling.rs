@@ -1,7 +1,8 @@
 //! The checker at the rule of low complexity (DESIGN.md Part G). A signature search tried
 //! each carrier for each untyped parameter, up to a budget, and began each run from a copy of
 //! everything found so far. An untyped parameter is now a class of a union-find forest, and
-//! each body is checked once.
+//! each body is checked once. The programs and types here are checked small; their time, at
+//! sizes where a cost above linear shows, is measured in `bench::scaling`.
 
 use std::collections::BTreeMap;
 
@@ -9,7 +10,7 @@ use zed_kernel::types::Type as KType;
 use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
-use super::{Resolved, info, sig, sig_of};
+use super::{Resolved, info, sig, sig_of, type_errors};
 
 /// The units `text(m)` at `n` and `FACTOR * n`, read and resolved before the timing, so that a
 /// test times the checker alone (COMPLEXITY.md F85).
@@ -20,60 +21,25 @@ pub(super) fn resolved(n: usize, text: impl Fn(usize) -> String) -> BTreeMap<usi
         .collect()
 }
 
-#[test]
-fn searching_the_signatures_of_many_functions_scales() {
-    // Twenty constants for each function, each adopting its literal with no search, so that
-    // what the unit has found is large beside the searches.
-    let units = resolved(25, |n| {
-        let mut text: String = (0..20 * n)
-            .map(|j| format!("k{j} = 0.5f64 + {j};\n"))
-            .collect();
-        text.extend((0..n).map(|i| format!("h{i}(x) = x / {}.0;\n", i + 1)));
-        text
-    });
-    scaling::check(
-        "the signatures of n functions beside 20n constants",
-        25,
-        |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-            assert_eq!(info.sigs.len(), n);
-            assert_eq!(info.adopt.len(), 20 * n);
-        },
-    );
+/// `20 n` constants, each adopting its literal with no search, and `n` functions of one untyped
+/// parameter: what the unit has found is large beside the searches.
+pub(super) fn constants_and_functions(n: usize) -> String {
+    let mut text: String = (0..20 * n)
+        .map(|j| format!("k{j} = 0.5f64 + {j};\n"))
+        .collect();
+    text.extend((0..n).map(|i| format!("h{i}(x) = x / {}.0;\n", i + 1)));
+    text
 }
 
 /// A function of `n` untyped parameters, all added together.
-fn sum(n: usize) -> String {
+pub(super) fn sum(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
     format!("f({}) = {};\n", ps.join(", "), xs.join(" + "))
 }
 
-#[test]
-fn a_function_of_many_untyped_parameters_scales() {
-    // The search tried the product of the carriers of the parameters, 3^n, until its budget
-    // of 256 combinations gave `_`. The parameters now merge into one class, once each.
-    // The body is a chain of `n` additions, nested `n` deep, on a 2 MiB stack.
-    zed_tests::deep::on_small_stack(|| {
-        assert_eq!(
-            sig(&sum(3), "f"),
-            "(T, T, T) -> T for T in int | f32 | f64 | rat"
-        );
-        let wide = sig(&sum(40), "f");
-        assert!(
-            wide.ends_with(") -> T for T in int | f32 | f64 | rat"),
-            "{wide}"
-        );
-        scaling::check("a function of n untyped parameters", 400, |n| {
-            let (info, _) = info(&sum(n));
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        });
-    });
-}
-
 /// `n` functions, each calling the one before with its untyped parameter.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let mut src = "g0(positional x) = -x;\n".to_string();
     for i in 1..n {
         src += &format!("g{i}(positional x) = g{}(x) * x;\n", i - 1);
@@ -81,59 +47,24 @@ fn chain(n: usize) -> String {
     src
 }
 
-#[test]
-fn a_chain_of_functions_with_untyped_parameters_scales() {
-    // Each takes the bound of the one it calls, by its signature, with no search.
-    assert_eq!(
-        sig(&chain(3), "g2"),
-        "(T) -> T for T in int | f32 | f64 | rat"
-    );
-    let units = resolved(400, chain);
-    scaling::check("a chain of n functions", 400, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-        assert_eq!(info.sigs.len(), n);
-    });
-}
-
-#[test]
-fn many_else_patterns_scale() {
-    // Each `else` with a pattern read every binder of the unit to find its own.
-    let units = resolved(1000, |n| {
-        (0..n)
-            .map(|i| format!("v{i} = #e(code: {i}) else #e(code:) -> code;\n"))
-            .collect()
-    });
-    scaling::check("n bindings each with an else pattern", 1000, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
+/// `n` bindings, each with an `else` pattern.
+pub(super) fn else_patterns(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("v{i} = #e(code: {i}) else #e(code:) -> code;\n"))
+        .collect()
 }
 
 /// A function of `n` untyped parameters that returns them all, so that its signature has `n`
 /// type variables.
-fn tuple(n: usize) -> String {
+pub(super) fn tuple(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     let ps: Vec<String> = xs.iter().map(|x| format!("positional {x}")).collect();
     format!("f({}) = ({});\n", ps.join(", "), xs.join(", "))
 }
 
-#[test]
-fn a_signature_of_many_type_variables_scales() {
-    // Naming the variables looked for each among those named before (COMPLEXITY.md F28).
-    let s = sig_of(&tuple(2), "f");
-    assert_eq!(s.to_string(), "(T, U) -> (T, U)");
-    assert_eq!(s.own.len(), 2, "two variables, each named");
-    let units = resolved(1000, tuple);
-    scaling::check("a signature of n type variables", 1000, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
 /// `n` functions, each calling the one before twice with its untyped parameter, the first
 /// taking a component of it.
-fn fan(n: usize) -> String {
+pub(super) fn fan(n: usize) -> String {
     let mut src = "g0(positional t) = t[0];\n".to_string();
     for i in 1..n {
         let call = format!("g{}(t)", i - 1);
@@ -142,26 +73,8 @@ fn fan(n: usize) -> String {
     src
 }
 
-#[test]
-fn needs_replayed_through_a_fan_of_calls_scale() {
-    // Each of the two calls met the needs of the one before anew, so they doubled at each
-    // function; a use met twice now gives what it gave the first time.
-    let s = sig_of(&fan(3), "g2");
-    assert_eq!(s.to_string(), "(_) -> U for U in int | f32 | f64 | rat");
-    assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
-    let units = resolved(250, fan);
-    scaling::check(
-        "needs replayed through n functions, each calling the one before twice",
-        250,
-        |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
-}
-
 /// `n` atoms, each with a payload of one field: of `n` names, or of one name with `n` shapes.
-fn payloads(n: usize, one_name: bool) -> Vec<zedc::check::ty::Ty> {
+pub(super) fn payloads(n: usize, one_name: bool) -> Vec<zedc::check::ty::Ty> {
     use zed_kernel::types::Type;
     use zedc::check::ty::{Shape, Ty};
     (0..n)
@@ -184,56 +97,12 @@ fn payloads(n: usize, one_name: bool) -> Vec<zedc::check::ty::Ty> {
         .collect()
 }
 
-#[test]
-fn the_union_of_many_atoms_with_payloads_scales() {
-    let sides: std::collections::BTreeMap<usize, (Vec<_>, Vec<_>)> = [256, scaling::FACTOR * 256]
-        .into_iter()
-        .map(|n| (n, (payloads(n, false), payloads(n, true))))
-        .collect();
-    scaling::check("the union of n atoms with payloads", 256, |n| {
-        let (names, shapes) = &sides[&n];
-        let u = zedc::check::ty::Ty::union_all(names);
-        assert_eq!(u.payloads.len(), n);
-        assert!(u.payloads.values().all(Option::is_some));
-        let u = zedc::check::ty::Ty::union_all(shapes);
-        assert_eq!(u.payloads["e"].as_ref().map(Vec::len), Some(n));
-    });
-}
-
 /// `g(positional a0) = (a1) -> (a2) -> … -> (an) -> (a0, a1, …, an);`, `n` curried lambdas,
 /// the innermost using every parameter around it.
-fn curried(n: usize) -> String {
+pub(super) fn curried(n: usize) -> String {
     let lambdas: String = (1..=n).map(|i| format!("(a{i}) -> ")).collect();
     let all: Vec<String> = (0..=n).map(|i| format!("a{i}")).collect();
     format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
-}
-
-#[test]
-fn curried_lambdas_using_every_parameter_check_in_linear_time() {
-    // Each lambda names its parameter's class when it is closed. The name is kept on the
-    // class, and the class variable stays in the signatures inside, which are not rewritten:
-    // only `finish` writes the names, once per signature it shows. Before CHK-curried the
-    // name replaced the class in every lambda inside, n - k signatures at the k-th, so the
-    // time was quadratic. The facts of a signature are persistent sets shared with the
-    // signatures inside (`VarFacts::held`), so merging them costs O(log n) per variable.
-    assert_eq!(
-        sig(&curried(3), "g"),
-        "(T) -> (U) -> (V) -> (W) -> (T, U, V, W)"
-    );
-    let n = 100;
-    let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = zed_tests::deep::statements(&curried(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, (stmts, res))
-        })
-        .collect();
-    scaling::check_order("n curried lambdas using every parameter", n, 1, |m| {
-        let (stmts, res) = &built[&m];
-        let info = zedc::check::walk::check(stmts, res);
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
 }
 
 /// `g(positional a0) = (a1) -> … -> (an) -> (a0 + int(1), …, an + int(1));`, `n` curried
@@ -241,50 +110,15 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
 /// `int(1)`: a bare `1` takes the carrier of its operand (steps L1.26a, L1.26b) and leaves
 /// each parameter generic, and curried lambdas generic in their parameters check in time
 /// quadratic in `n`, on main too (follow-up GENERIC-nested-quadratic).
-fn curried_sums(n: usize) -> String {
+pub(super) fn curried_sums(n: usize) -> String {
     let lambdas: String = (1..=n).map(|i| format!("(a{i}) -> ")).collect();
     let all: Vec<String> = (0..=n).map(|i| format!("a{i} + int(1)")).collect();
     format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
 }
 
-#[test]
-fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
-    // Each lambda's parameter takes int when the lambda ends. `generalize` replaced the class
-    // by int in each of the n - k lambdas inside the k-th, which hold it: n^2, 38.2 times the
-    // bytes for 8 times n at ab0d3a84. Now a class solved to a type with no variable is
-    // replaced outside the lambdas only, and read through the union-find inside them by the
-    // comparisons and messages that read them; `finish` settles each signature once
-    // (CHK-carrier, COMPLEXITY.md F77). Per node at n = 100 and 800: 274103 and 274564
-    // instructions, 49621 and 49236 bytes; replaced at every depth, 798369 and 4944027
-    // instructions, 101619 and 481807 bytes.
-    assert_eq!(
-        sig(&curried_sums(2), "g"),
-        "(int) -> (int) -> (int) -> (int, int, int)"
-    );
-    let n = 100;
-    let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = zed_tests::deep::statements(&curried_sums(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, (stmts, res))
-        })
-        .collect();
-    scaling::check_order(
-        "n curried lambdas whose parameters take a carrier",
-        n,
-        1,
-        |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::walk::check(stmts, res);
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
-}
-
 /// [`curried_sums`] with `h = g(0)` put in a tuple and tested by `is` against its written
 /// type, whose `n` arrows take int.
-fn curried_tested(n: usize) -> String {
+pub(super) fn curried_tested(n: usize) -> String {
     let arrows: String = (0..n).map(|_| "(int) -> (").collect();
     let ints = vec!["int"; n + 1].join(", ");
     let shut = ")".repeat(n);
@@ -292,35 +126,6 @@ fn curried_tested(n: usize) -> String {
         "{}h = g(0);\nt = (h, 1);\nr = if t is (({arrows}({ints}){shut}), int) {{ 1 }} else {{ t }};\n",
         curried_sums(n)
     )
-}
-
-#[test]
-fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
-    // `is` compares the lambdas of `t` with the written ones, reading the classes solved
-    // inside them through the union-find (`Ty::diff_with`), so the `else` branch, where `t`
-    // is not of the type, narrows to nothing. A tuple takes no function, so `t = (h, 1)` is
-    // rejected, once. The comparison of function types recursed once per lambda, about 8
-    // frames a level, and overflowed a 2 MiB stack at 800; it now keeps its frames on the
-    // heap (`Comparing`, TY-sub-stack).
-    let (info, _) = super::info(&curried_tested(2));
-    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
-    assert_eq!(info.tops["r"].to_string(), "1");
-    let n = 100;
-    zed_tests::deep::on_small_stack(|| {
-        let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| {
-                let stmts = zed_tests::deep::statements(&curried_tested(m));
-                let res = zedc::resolve::resolve(&stmts).unwrap();
-                (m, (stmts, res))
-            })
-            .collect();
-        scaling::check_order("an is test of n curried lambdas", n, 1, |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::walk::check(stmts, res);
-            assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
-        });
-    });
 }
 
 #[test]
@@ -369,41 +174,14 @@ fn nested_lambdas_name_their_variables_as_before() {
 
 /// `curried_sums(n)` and `y = g(0)(1)…(n);`: a chain of n calls on one value, each through
 /// the function the call before gives.
-fn call_chain(n: usize) -> String {
+pub(super) fn call_chain(n: usize) -> String {
     let args: String = (1..=n).map(|i| format!("({i})")).collect();
     format!("{}y = g(0){args};\n", curried_sums(n))
 }
 
-#[test]
-fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
-    // Each call's result is a function that holds the rest of the chain. A set of functions
-    // hashed each whole (`Ty::union`), and `hold` walked each result whole, so each call cost
-    // the depth left: n^2. A signature's hash is now made once from those of the functions it
-    // holds ([`Sig::digest`]), and `hold` reads their facts (CHK-carrier, COMPLEXITY.md F77).
-    // Per node at n = 100 and 800: 413888 and 413130 instructions, 70057 and 69516 bytes;
-    // before, 1076078 and 5444818 instructions, 82672 and 166976 bytes.
-    let (info, _) = super::info(&call_chain(3));
-    assert!(info.errors.is_empty(), "{:?}", info.errors);
-    assert_eq!(info.tops["y"].to_string(), "(int, int, int, int)");
-    let n = 100;
-    let built: std::collections::BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = zed_tests::deep::statements(&call_chain(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, (stmts, res))
-        })
-        .collect();
-    scaling::check_order("a chain of n calls on one value", n, 1, |m| {
-        let (stmts, res) = &built[&m];
-        let info = zedc::check::walk::check(stmts, res);
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
 /// A unit whose function `q` passes its parameter, an overload of `n` arrows, to `p`, whose
 /// slot is the same overload: `q`'s function has an arrow for each of `p`'s.
-fn overloads(n: usize) -> String {
+pub(super) fn overloads(n: usize) -> String {
     let ov = (0..n)
         .map(|i| format!("((x: #a{i}) -> #b{i})"))
         .collect::<Vec<_>>()
@@ -411,23 +189,9 @@ fn overloads(n: usize) -> String {
     format!("p(f: {ov}) = 0;\nq(g: {ov}) = p(f: g);\n")
 }
 
-#[test]
-fn passing_an_overload_of_many_arrows_scales() {
-    scales(
-        "an overload of n arrows passed to a slot of n arrows",
-        200,
-        overloads,
-        |unit| {
-            let info = unit.check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-            assert_eq!(info.sigs.len(), 2);
-        },
-    );
-}
-
 /// Like [`overloads`], but each arrow of `q`'s function takes its atom or `#z`, so no arrow
 /// of it equals the arrow of the slot it fits.
-fn wider_overloads(n: usize) -> String {
+pub(super) fn wider_overloads(n: usize) -> String {
     let ov = |wide: &str| {
         (0..n)
             .map(|i| format!("((x: #a{i}{wide}) -> #b{i})"))
@@ -437,27 +201,10 @@ fn wider_overloads(n: usize) -> String {
     format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(""), ov(" | #z"))
 }
 
-/// An overload of n arrows passed to a slot of n other arrows: each arrow of the slot is
-/// looked up by its parameter's atom in an index of the function's arrows, which gives the one
-/// arrow that takes it (COMPLEXITY.md F82). Before the index each was compared with every
-/// arrow of the function: 57.1 times the bytes at n = 100 and 800.
-#[test]
-fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
-    scales(
-        "an overload of n arrows passed to a slot of n other arrows",
-        100,
-        wider_overloads,
-        |unit| {
-            let info = unit.check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
-}
-
 /// Like [`wider_overloads`], but every arrow of `q`'s function takes `#c` as well as its own
 /// atom, and each arrow of the slot takes `#c` alone: every arrow of the function offers what
 /// each arrow of the slot needs, and only the results tell them apart.
-fn shared_overloads(n: usize) -> String {
+pub(super) fn shared_overloads(n: usize) -> String {
     let ov = |param: &dyn Fn(usize) -> String| {
         (0..n)
             .map(|i| format!("((x: {}) -> #b{i})", param(i)))
@@ -471,53 +218,20 @@ fn shared_overloads(n: usize) -> String {
     )
 }
 
-/// The arrows share the piece of the parameter the slot's arrows need, so the index of arrows
-/// by parameter leaves every arrow; the index by result leaves one (COMPLEXITY.md F82; the
-/// parameter index alone cost n^2/2 comparisons, 57.6x at n and 8n).
-#[test]
-fn passing_an_overload_whose_arrows_share_a_parameter_piece_scales() {
-    scales(
-        "an overload of n arrows sharing a parameter piece passed to a slot of n arrows",
-        100,
-        shared_overloads,
-        |unit| {
-            let info = unit.check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
-}
-
 /// A unit whose function `p` has a slot written as an overload of `n` arrows nested `n` deep
 /// in parentheses: resolve and the checker read each intersection once, with the one around
 /// it.
-fn nested_overload(n: usize) -> String {
+pub(super) fn nested_overload(n: usize) -> String {
     let arrow = |i: usize| format!("((x: #a{i}) -> #b{i})");
     let ov = (1..n).fold(arrow(0), |inner, i| format!("({inner}) & {}", arrow(i)));
     format!("p(f: {ov}) = 0;\n")
-}
-
-#[test]
-fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
-    // Resolution and the checker are timed, on statements parsed before the timing.
-    let n = 100;
-    let units: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, zed_tests::deep::statements(&nested_overload(m))))
-        .collect();
-    scaling::check("a slot of n arrows nested n deep in parentheses", n, |m| {
-        let stmts = &units[&m];
-        let res = zedc::resolve::resolve(stmts).unwrap();
-        let info = zedc::check::walk::check(stmts, &res);
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-        assert_eq!(info.sigs.len(), 1);
-    });
 }
 
 /// A slot `(x: #a0 | ... | #a(n-1)) -> String` and an overload of `n` arrows `(x: #ai) ->
 /// String` that cover it only together: each arrow is compared once with the slot's arrow, and
 /// the union of their parameter types once with its parameter (`check::ty::covered`,
 /// COMPLEXITY.md F82).
-fn covering_overload(n: usize) -> String {
+pub(super) fn covering_overload(n: usize) -> String {
     let slot = (0..n)
         .map(|i| format!("#a{i}"))
         .collect::<Vec<_>>()
@@ -529,21 +243,11 @@ fn covering_overload(n: usize) -> String {
     format!("p(f: (x: {slot}) -> String) = 0;\nq(g: {ov}) = p(f: g);\n")
 }
 
-#[test]
-fn an_overload_of_many_arrows_that_cover_a_slot_together_scales() {
-    scales(
-        "an overload of n arrows covering a slot together",
-        100,
-        covering_overload,
-        |unit| assert_eq!(unit.type_errors(), Vec::<String>::new()),
-    );
-}
-
 /// A slot of `w` parameters and a function of one arrow that takes all but the last, where it
 /// takes `int` and the slot passes `int | bool`: the cover compares the arrow's parameters in
 /// one pass, not once for each parameter left out (`check::ty::part_of`; that cost the
 /// square of the width, 38.8 times the bytes at w = 100 and 800).
-fn wide_arrows(w: usize) -> String {
+pub(super) fn wide_arrows(w: usize) -> String {
     let params = |last: &str| {
         (0..w)
             .map(|j| format!("x{j}: {}", if j + 1 == w { last } else { "int" }))
@@ -557,32 +261,12 @@ fn wide_arrows(w: usize) -> String {
     )
 }
 
-#[test]
-fn a_function_of_many_parameters_that_misses_one_scales() {
-    scales(
-        "an arrow of w parameters that misses the slot's last",
-        100,
-        wide_arrows,
-        |unit| {
-            let errors = unit.type_errors();
-            assert_eq!(errors.len(), 1, "{errors:?}");
-        },
-    );
-}
-
 /// The cases of rule 6 that `check::ty::covered` builds or refuses with a reason, each at `n`
 /// and `8 * n` arrows: the source of `p(f: g)` for the slot `slot` and the overload of
 /// `arrows`.
 fn slot_and_overload(slot: &str, arrows: impl Iterator<Item = String>) -> String {
     let ov = arrows.collect::<Vec<_>>().join(" & ");
     format!("p(f: {slot}) = 0;\nq(g: {ov}) = p(f: g);\n")
-}
-
-/// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
-/// is run.
-fn scales(what: &str, n: usize, text: impl Fn(usize) -> String, want: impl Fn(&Resolved) + Sync) {
-    let units = resolved(n, text);
-    scaling::check(what, n, |m| want(&units[&m]));
 }
 
 /// The atoms `#{name}0 | ... | #{name}(n-1)`.
@@ -596,89 +280,45 @@ fn atoms(name: &str, n: usize) -> String {
 /// Case (3), built: `n` arrows `(x: #ai) -> String` within the slot's result, and `n` arrows
 /// `(x: #c | #ai) -> String | #bi` outside it, each taking `#c`, what the others leave; the
 /// intersection of their `n` results is `String` (`check::ty::met`).
-#[test]
-fn many_arrows_whose_results_intersect_within_the_slots_scale() {
-    let text = |n| {
-        let within = (0..n).map(|i| format!("((x: #a{i}) -> String)"));
-        let outside = (0..n).map(|i| format!("((x: #c | #a{i}) -> String | #b{i})"));
-        let slot = format!("(x: #c | {}) -> String", atoms("a", n));
-        slot_and_overload(&slot, within.chain(outside))
-    };
-    scales("n arrows met and n within", 100, text, |unit| {
-        assert_eq!(unit.type_errors(), Vec::<String>::new());
-    });
+pub(super) fn met_and_within(n: usize) -> String {
+    let within = (0..n).map(|i| format!("((x: #a{i}) -> String)"));
+    let outside = (0..n).map(|i| format!("((x: #c | #a{i}) -> String | #b{i})"));
+    let slot = format!("(x: #c | {}) -> String", atoms("a", n));
+    slot_and_overload(&slot, within.chain(outside))
 }
 
 /// Case (3), refused with the reason: `(x: #ai | #a(i+1)) -> String | #bi` meet in `String` at
 /// each atom, but no one set of them takes every atom; the message names the `n` arrows in
 /// one pass (`check::ty::refused_cover`).
-#[test]
-fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time() {
-    let text = |n| {
-        let arrows = (0..n).map(|i| format!("((x: #a{i} | #a{}) -> String | #b{i})", i + 1));
-        slot_and_overload(&format!("(x: {}) -> String", atoms("a", n + 1)), arrows)
-    };
-    scales(
-        "n arrows whose results meet on different sets",
-        400,
-        text,
-        |unit| {
-            let errors = unit.type_errors();
-            assert_eq!(errors.len(), 1, "{errors:?}");
-            assert!(
-                errors[0].contains("grows with the product of their number"),
-                "{errors:?}"
-            );
-        },
-    );
+pub(super) fn meeting_on_different_sets(n: usize) -> String {
+    let arrows = (0..n).map(|i| format!("((x: #a{i} | #a{}) -> String | #b{i})", i + 1));
+    slot_and_overload(&format!("(x: {}) -> String", atoms("a", n + 1)), arrows)
 }
 
 /// Case (2), built: `n` arrows `(x: #ai) -> String` and one whose parameter is a function type,
 /// which binds nothing, cover `(x: #a0 | ... | ((y: int) -> int)) -> String`
 /// (`check::ty::binds_nothing`).
-#[test]
-fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
-    let text = |n| {
-        let arrows = (0..n).map(|i| format!("((x: #a{i}) -> String)"));
-        let fun = std::iter::once("((x: (y: int) -> int) -> String)".to_string());
-        let slot = format!("(x: {} | ((y: int) -> int)) -> String", atoms("a", n));
-        slot_and_overload(&slot, arrows.chain(fun))
-    };
-    scales(
-        "n arrows and a function arrow covering",
-        100,
-        text,
-        |unit| {
-            assert_eq!(unit.type_errors(), Vec::<String>::new());
-        },
-    );
+pub(super) fn with_a_function_arrow(n: usize) -> String {
+    let arrows = (0..n).map(|i| format!("((x: #a{i}) -> String)"));
+    let fun = std::iter::once("((x: (y: int) -> int) -> String)".to_string());
+    let slot = format!("(x: {} | ((y: int) -> int)) -> String", atoms("a", n));
+    slot_and_overload(&slot, arrows.chain(fun))
 }
 
-/// A bounded variable at `w` parameters, bound to `int | f64`, is refused with the count of its
+/// A bounded variable at `w` parameters, bound to `int | f64`, refused with the count of its
 /// places, found by one walk of the arrow (`check::ty::one_place`).
-#[test]
-fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
-    let text = |w| {
-        let params = |t: &str| {
-            (0..w)
-                .map(|j| format!("x{j}: {t}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        format!(
-            "p(f: ({}) -> int | f64) = 0;\nq(g: ({}) -> T for T in int | f64) = p(f: g);\n",
-            params("int | f64"),
-            params("T")
-        )
+pub(super) fn bounded_at_many_parameters(w: usize) -> String {
+    let params = |t: &str| {
+        (0..w)
+            .map(|j| format!("x{j}: {t}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    scales("a bounded variable at w parameters", 100, text, |unit| {
-        let errors = unit.type_errors();
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].contains("places the arguments give"),
-            "{errors:?}"
-        );
-    });
+    format!(
+        "p(f: ({}) -> int | f64) = 0;\nq(g: ({}) -> T for T in int | f64) = p(f: g);\n",
+        params("int | f64"),
+        params("T")
+    )
 }
 
 /// The intersection built where results hold a rigid variable or a function: `n` arrows
@@ -686,47 +326,27 @@ fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
 /// int) -> int)`, at the slot `(x: U) -> U | String for U in int | f64`. The piece `U` of each
 /// result is within the slot's, and the function is in no other result; the carriers of all
 /// results but one are read off a pass from each end (`check::ty::meet_within`).
-#[test]
-fn many_results_that_hold_a_variable_or_a_function_meet_in_linear_time() {
-    let text = |n| {
-        let arrows = (0..n).map(|i| format!("((x: T) -> T | String | #b{i} for T in int | f64)"));
-        let fun = std::iter::once("((x: int | f64) -> String | ((y: int) -> int))".to_string());
-        slot_and_overload("(x: U) -> U | String for U in int | f64", arrows.chain(fun))
-    };
-    scales("n results holding a variable met", 100, text, |unit| {
-        assert_eq!(unit.type_errors(), Vec::<String>::new());
-    });
+pub(super) fn results_holding_a_variable(n: usize) -> String {
+    let arrows = (0..n).map(|i| format!("((x: T) -> T | String | #b{i} for T in int | f64)"));
+    let fun = std::iter::once("((x: int | f64) -> String | ((y: int) -> int))".to_string());
+    slot_and_overload("(x: U) -> U | String for U in int | f64", arrows.chain(fun))
 }
 
-/// The intersection of [`many_results_that_hold_a_variable_or_a_function_meet_in_linear_time`]
-/// timed alone, on results built before the timing: `n` results `U | String | #bi`, `U`
-/// bounded by `int | f64`, met within `U | String`. There the check around the intersection
-/// costs about 160,000 instructions a result, so a quadratic in the results that allocates
-/// nothing, such as reading the carriers of every other result for each result, passes it
-/// even at 3,200 results; here it fails at 1,000 (COMPLEXITY.md F82).
-#[test]
-fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
+/// The intersection of [`results_holding_a_variable`] alone: `n` results `U | String | #bi`,
+/// `U` bounded by `int | f64`, to meet within `U | String`.
+pub(super) fn results_met_alone(n: usize) -> zedc::check::ty::Meet {
     use zedc::check::ty::{Carrier, Meet};
-    let n = 1000;
     let u_or_string = || Ty::var("U".into()).union(&Ty::carrier(Carrier::Str));
-    let meets: BTreeMap<usize, Meet> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let results = (0..m)
-                .map(|i| u_or_string().union(&Ty::set(KType::atom(&format!("b{i}")))))
-                .collect();
-            let bound: &[Carrier] = &[Carrier::Int, Carrier::F64];
-            (m, Meet::new(results, u_or_string(), &[("U", bound)]))
-        })
+    let results = (0..n)
+        .map(|i| u_or_string().union(&Ty::set(KType::atom(&format!("b{i}")))))
         .collect();
-    scaling::check("n results holding a variable met alone", n, |m| {
-        assert!(meets[&m].within());
-    });
+    let bound: &[Carrier] = &[Carrier::Int, Carrier::F64];
+    Meet::new(results, u_or_string(), &[("U", bound)])
 }
 
 /// `f`, which destructures its parameter into `n` names and gives the last and the first, and
 /// a call of it on a tuple of `n`: `n` needs of one class, each checked at the call.
-fn wide_destructuring(n: usize) -> String {
+pub(super) fn wide_destructuring(n: usize) -> String {
     let names: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
     let items: Vec<String> = (0..n).map(|i| i.to_string()).collect();
     format!(
@@ -738,7 +358,7 @@ fn wide_destructuring(n: usize) -> String {
 }
 
 /// `n` functions, each destructuring its parameter into a pair, each called on a pair.
-fn many_destructurings(n: usize) -> String {
+pub(super) fn many_destructurings(n: usize) -> String {
     (0..n)
         .map(|i| {
             format!(
@@ -751,7 +371,7 @@ fn many_destructurings(n: usize) -> String {
 /// `app`, which applies its parameter `g` to each of its `n` other parameters, called with the
 /// generic `id` and `n` numbers: `n` needs of `g`'s class, each naming the type variable of
 /// `id` that the call leaves unbound, checked at a call that binds `2n` variables.
-fn generic_applied_to_many(n: usize) -> String {
+pub(super) fn generic_applied_to_many(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("positional a{i}")).collect();
     let calls: Vec<String> = (0..n).map(|i| format!("g(a{i})")).collect();
     let args: Vec<String> = (0..n).map(|i| i.to_string()).collect();
@@ -763,106 +383,80 @@ fn generic_applied_to_many(n: usize) -> String {
     )
 }
 
-#[test]
-fn needs_that_name_a_variable_the_call_leaves_unbound_check_in_linear_time() {
-    let (info, _) = info(&generic_applied_to_many(3));
-    assert!(info.errors.is_empty(), "{:?}", info.errors);
-    assert_eq!(info.tops["y"].to_string(), "(0, 1, 2)");
-    // At n = 200 the scan of every bound variable at each signature (`Ty::replace_in`) gave
-    // 19.2 times the instructions, inside the limit; at n = 400 it gave 26.5 times.
-    scales(
-        "a generic function applied to n parameters",
-        400,
-        generic_applied_to_many,
-        |unit| {
-            assert_eq!(unit.type_errors(), Vec::<String>::new());
-        },
-    );
-}
-
-#[test]
-fn destructured_parameters_check_in_linear_time() {
-    let (info, _) = info(&wide_destructuring(3));
-    assert!(info.errors.is_empty(), "{:?}", info.errors);
-    assert_eq!(info.tops["y"].to_string(), "(2, 0)");
-    scales(
-        "a parameter destructured into n names",
-        200,
-        wide_destructuring,
-        |unit| {
-            assert_eq!(unit.type_errors(), Vec::<String>::new());
-        },
-    );
-    scales(
-        "n parameters each destructured into two names",
-        100,
-        many_destructurings,
-        |unit| {
-            assert_eq!(unit.type_errors(), Vec::<String>::new());
-        },
-    );
-}
-
-/// The variables named `{prefix}0` to `{prefix}(m-1)`, for `m` of `n` and `FACTOR * n`, made
-/// before the timing.
-fn variables(prefix: &str, n: usize) -> BTreeMap<usize, Vec<Ty>> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let vs = (0..m).map(|i| Ty::var(format!("{prefix}{i}").into()));
-            (m, vs.collect())
-        })
+/// The variables named `{prefix}0` to `{prefix}(n-1)`.
+pub(super) fn variables(prefix: &str, n: usize) -> Vec<Ty> {
+    (0..n)
+        .map(|i| Ty::var(format!("{prefix}{i}").into()))
         .collect()
 }
 
-/// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`: each row merges the variables of its two
-/// components, `k` and `k + 1` of them, the second set made from the first by adding `Vk`
-/// (ROW-made-cost). Inserting each variable of the smaller set cost `O(k log k)` a row, and
-/// took 70.6 times the instructions at 2,000 against 250; stepping over the nodes the two sets
-/// share took 10.0 times. A row now keeps no set, only the bits of its variables and the range
-/// of its classes, `O(1)` a row, and the variables of the last row are listed by one walk that
-/// enters each row once (CK-data-memo, COMPLEXITY.md F93).
-#[test]
-fn rows_made_from_overlapping_variable_sets_scale() {
-    let n = 250;
-    let vars = variables("V", n);
-    scaling::check_order("n rows of overlapping variable sets", n, 1, |m| {
-        let vs = &vars[&m];
-        let t = vs[1..].iter().fold(vs[0].clone(), |s, v| {
-            Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
-        });
-        assert_eq!(t.var_facts().names.len(), m);
-    });
+/// The rows `t(k) = (t(k-1), (t(k-1), vs[k]))`, `t(0) = vs[0]`: each row merges the variables of
+/// its two components, and the last has `2^n` paths through `n` rows.
+pub(super) fn overlapping_rows(vs: &[Ty]) -> Ty {
+    vs[1..].iter().fold(vs[0].clone(), |s, v| {
+        Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
+    })
 }
 
-/// `n` rows `z(k) = (x(k), y(k))`, with `x(k) = (x(k-1), Ak)` and `y(k) = (y(k-1), Bk)`: each
-/// `z(k)` holds a set of `2k` variables no other row holds, made from two sets that share no
-/// node. When each row kept its set, `Row::made` cost `O(n^2 log n)` here (71.2 times the
-/// instructions and 39.4 times the bytes at 2,000 against 250), since those sets are the
-/// transitive closure of a DAG. A row now keeps flags, the bits of its variables and the
-/// range of its classes, `O(1)` a row, and the variables of the last row are listed by one
-/// walk (author's answer A8 as amended by A20; CK-data-memo, COMPLEXITY.md F93).
-#[test]
-fn rows_made_from_disjoint_variable_sets_scale() {
-    let n = 250;
-    let (xs, ys) = (variables("A", n), variables("B", n));
-    scaling::check_order("n rows of disjoint variable sets", n, 1, |m| {
-        let (a, b) = (&xs[&m], &ys[&m]);
-        let (mut x, mut y) = (a[0].clone(), b[0].clone());
-        let mut zs = Vec::with_capacity(m);
-        for (a, b) in a[1..].iter().zip(&b[1..]) {
-            x = Ty::tuple(vec![x, a.clone()]);
-            y = Ty::tuple(vec![y, b.clone()]);
-            zs.push(Ty::tuple(vec![x.clone(), y.clone()]));
-        }
-        assert_eq!(zs.last().map(|z| z.var_facts().names.len()), Some(2 * m));
+/// The rows `z(k) = (x(k), y(k))`, with `x(k) = (x(k-1), a[k])` and `y(k) = (y(k-1), b[k])`:
+/// each `z(k)` holds `2k + 2` variables no other row holds, made from two sets that share no
+/// node.
+pub(super) fn disjoint_rows(a: &[Ty], b: &[Ty]) -> Vec<Ty> {
+    let (mut x, mut y) = (a[0].clone(), b[0].clone());
+    let mut zs = Vec::with_capacity(a.len());
+    for (a, b) in a[1..].iter().zip(&b[1..]) {
+        x = Ty::tuple(vec![x, a.clone()]);
+        y = Ty::tuple(vec![y, b.clone()]);
+        zs.push(Ty::tuple(vec![x.clone(), y.clone()]));
+    }
+    zs
+}
+
+/// The functions `(os[i]) -> (os[i], hs[i])`, each holding the one variable `hs[i]` and owning
+/// `os[i]`, in one type, and the binds of every `os[i]` and `hs[i]` to `ws[i]`.
+pub(super) fn functions_holding_one(
+    os: &[Ty],
+    hs: &[Ty],
+    ws: &[Ty],
+) -> (Ty, zedc::check::ty::Binds) {
+    use std::sync::Arc;
+    use zedc::check::ty::{Arrow, Facts, Sig};
+    let name = |t: &Ty| t.vars.first().cloned().unwrap();
+    let fns = os.iter().zip(hs).map(|(o, h)| {
+        Arc::new(Sig {
+            arrows: vec![Arrow {
+                params: vec![o.clone()],
+                result: Ty::tuple(vec![o.clone(), h.clone()]),
+            }],
+            own: [name(o)].into(),
+            held: [name(h)].into(),
+            params: Vec::new(),
+            bounds: BTreeMap::new(),
+            data: false,
+            dense: false,
+            word: None,
+            needs: Vec::new(),
+            named: 0,
+            facts: Facts::default(),
+        })
     });
+    let binds: zedc::check::ty::Binds = (os.iter().zip(ws))
+        .chain(hs.iter().zip(ws))
+        .map(|(v, w)| (name(v), w.clone()))
+        .collect();
+    (
+        Ty {
+            fns: fns.collect(),
+            ..Ty::empty()
+        },
+        binds,
+    )
 }
 
 /// `p(s, v) = (s, (s, v))` applied `n` times, `f(a0, ..., an) = p(p(p(a0, a1), a2), ...)`, and,
 /// if `call`, `f` called on `0, ..., n`: the type of each `p` holds the row of the one inside
 /// twice, so the result's type has `2^n` paths through `n` rows (REPLACE-shared-rows).
-fn shared_rows(n: usize, call: bool) -> String {
+pub(super) fn shared_rows(n: usize, call: bool) -> String {
     let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}")).collect();
     let body = (1..=n).fold("a0".to_string(), |s, i| format!("p({s}, a{i})"));
     let mut text = format!(
@@ -893,129 +487,10 @@ fn rows_shared_on_many_paths_are_replaced_once() {
     );
 }
 
-/// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`, `2^n` paths, with each `Vk` replaced by `Wk`:
-/// `Ty::replace`, `Ty::subst` and `Ty::settle` each make a row once, however many paths reach
-/// it (REPLACE-shared-rows, COMPLEXITY.md F97). Each walked every path before: 2^n.
-#[test]
-fn replacing_in_rows_shared_on_many_paths_scales() {
-    let n = 100;
-    let (vs, ws) = (variables("V", n), variables("W", n));
-    let binds = |m: usize| -> zedc::check::ty::Binds {
-        let pairs = vs[&m].iter().zip(&ws[&m]);
-        (pairs.map(|(v, w)| (v.vars.first().cloned().unwrap(), w.clone()))).collect()
-    };
-    let binds: BTreeMap<_, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, binds(m)))
-        .collect();
-    // Built before timing, so the runs time the walks alone.
-    let shared: BTreeMap<_, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let vs = &vs[&m];
-            let t = vs[1..].iter().fold(vs[0].clone(), |s, v| {
-                Ty::tuple(vec![s.clone(), Ty::tuple(vec![s, v.clone()])])
-            });
-            (m, t)
-        })
-        .collect();
-    let replaced = |t: &Ty, m: usize| {
-        let f = t.var_facts();
-        assert_eq!(f.names.len() + f.classes.len(), m);
-        assert!(f.names.iter().chain(&f.classes).all(|v| v.starts_with('W')));
-    };
-    scaling::check("Ty::replace in n shared rows", n, |m| {
-        replaced(&shared[&m].replace(&binds[&m]), m)
-    });
-    scaling::check("Ty::subst in n shared rows", n, |m| {
-        replaced(&shared[&m].subst(&binds[&m]), m)
-    });
-    scaling::check("Ty::settle in n shared rows", n, |m| {
-        let b = &binds[&m];
-        replaced(&shared[&m].settle(&|v: &str| b.get(v).cloned()), m)
-    });
-}
-
-/// `n` functions `(Oi) -> (Oi, Hi)`, each holding the one variable `Hi` and owning `Oi`, with
-/// all `2n` variables bound: each function keeps its own `Oi` and replaces `Hi`, looked up for
-/// the variables it holds, not by a copy of the `2n` binds less its own (O(n^2) in all;
-/// REPLACE-shared-rows, COMPLEXITY.md F97).
-#[test]
-fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
-    use std::sync::Arc;
-    use zedc::check::ty::{Arrow, Facts, Sig};
-    let n = 250;
-    let (os, hs, ws) = (variables("O", n), variables("H", n), variables("W", n));
-    let name = |t: &Ty| t.vars.first().cloned().unwrap();
-    let made = |m: usize| {
-        let fns = (os[&m].iter().zip(&hs[&m])).map(|(o, h)| {
-            Arc::new(Sig {
-                arrows: vec![Arrow {
-                    params: vec![o.clone()],
-                    result: Ty::tuple(vec![o.clone(), h.clone()]),
-                }],
-                own: [name(o)].into(),
-                held: [name(h)].into(),
-                params: Vec::new(),
-                bounds: BTreeMap::new(),
-                data: false,
-                dense: false,
-                word: None,
-                needs: Vec::new(),
-                named: 0,
-                facts: Facts::default(),
-            })
-        });
-        let binds: zedc::check::ty::Binds = (os[&m].iter().zip(&ws[&m]))
-            .chain(hs[&m].iter().zip(&ws[&m]))
-            .map(|(v, w)| (name(v), w.clone()))
-            .collect();
-        (
-            Ty {
-                fns: fns.collect(),
-                ..Ty::empty()
-            },
-            binds,
-        )
-    };
-    let made: BTreeMap<_, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, made(m)))
-        .collect();
-    scaling::check(
-        "n functions each holding one of 2n bound variables",
-        n,
-        |m| {
-            let (t, binds) = &made[&m];
-            let out = t.replace(binds);
-            for (s, (o, w)) in out.fns.iter().zip(os[&m].iter().zip(&ws[&m])) {
-                assert_eq!(s.arrows[0].result, Ty::tuple(vec![o.clone(), w.clone()]));
-            }
-        },
-    );
-}
-
-/// The program family checks with no walk that follows each of its `2^n` paths, and in time
-/// linear in `n`: each call `p(s, v)` replays its data need on `s`, a type of `k` rows at the
-/// `k`th call, and `Ck::data` enters only the one row the call before made, since it keeps the
-/// rows it entered. `Ck::bound` likewise skips the rows it found to hold only classes that
-/// outlast the call (`Ck::clean`), and a replacement reads the index its binding keeps
-/// (`Binds`) rather than building one from all the binds (CK-data-memo, COMPLEXITY.md F97; it
-/// was of order `n^2`).
-#[test]
-fn rows_shared_on_many_paths_scale() {
-    for (what, call) in [("a function of n shared rows", false), ("its call", true)] {
-        let units = resolved(400, |n| shared_rows(n, call));
-        scaling::check_order(what, 400, 1, |m| {
-            assert_eq!(units[&m].type_errors(), Vec::<String>::new());
-        });
-    }
-}
-
 /// `r(positional line, bump = 1) = { a1 = (line else 0) + bump; a2 = (line else a1) + bump;
 /// … an }`: each sum meets the parameter's class beside an int on one path and an int alone
 /// on another, so each keeps two states where it kept one (ISSUE1-tvar-else).
-fn sums_of_a_line_or_a_count(n: usize) -> String {
+pub(super) fn sums_of_a_line_or_a_count(n: usize) -> String {
     let steps: String = (1..=n)
         .map(|i| {
             format!(
@@ -1031,23 +506,11 @@ fn sums_of_a_line_or_a_count(n: usize) -> String {
     format!("r(positional line, bump = 1) = {{ {steps}a{n} }};\n")
 }
 
-#[test]
-fn sums_of_a_line_or_a_count_check_in_linear_time() {
-    assert_eq!(
-        sig(&sums_of_a_line_or_a_count(3), "r"),
-        "(int | #_, bump: int) -> int"
-    );
-    let units = resolved(250, sums_of_a_line_or_a_count);
-    scaling::check_order("n sums of a line or a count", 250, 1, |m| {
-        assert_eq!(units[&m].type_errors(), Vec::<String>::new());
-    });
-}
-
 /// `f(positional x: int) = if x > 2n { 0 } else if x > 2n - 1 { 1 } … else if x > 0 && x < 0
 /// { n } else { n + 1 }`, with every other test made unreachable by those before it, nested `n`
 /// deep: each `if` with a comparison computes the scopes of its arms to find which no value
 /// reaches, where before only a read of an int under them did (EMPTY-bottom-arm).
-fn a_chain_of_tests(n: usize) -> String {
+pub(super) fn a_chain_of_tests(n: usize) -> String {
     let mut text = String::from("f(positional x: int) = ");
     for i in 0..n {
         // The odd tests ask for more than the test before them failed to give.
@@ -1061,20 +524,10 @@ fn a_chain_of_tests(n: usize) -> String {
     text
 }
 
-#[test]
-fn a_chain_of_tests_is_linear_in_its_length() {
-    assert_eq!(sig(&a_chain_of_tests(4), "f"), "(int) -> 0 | 2 | 5");
-    let units = resolved(64, a_chain_of_tests);
-    scaling::check("a chain of n tests on one int", 64, |m| {
-        let info = units[&m].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
 /// `g(positional x1, … positional xn) = (x1, … xn); f(positional n: Never) = g(n, … n)`: each
 /// argument of type `Never` binds its parameter's variable to `Never`, and each component's
 /// need that it holds no function is checked on `Never` (EMPTY-arg-needs).
-fn never_arguments(n: usize) -> String {
+pub(super) fn never_arguments(n: usize) -> String {
     let params: Vec<String> = (1..=n).map(|i| format!("positional x{i}")).collect();
     let comps: Vec<String> = (1..=n).map(|i| format!("x{i}")).collect();
     let args = vec!["n"; n].join(", ");
@@ -1085,16 +538,246 @@ fn never_arguments(n: usize) -> String {
     )
 }
 
+
+// Small instances of the benchmarks in `bench::scaling`, each keeping every check the
+// benchmark makes besides its ratio.
+
 #[test]
-fn never_arguments_check_in_linear_time() {
-    assert_eq!(sig(&never_arguments(3), "f"), "(Never) -> Never");
-    let units = resolved(250, never_arguments);
-    scaling::check_order(
-        "n arguments of type Never to a generic function",
-        250,
-        1,
-        |m| {
-            assert_eq!(units[&m].type_errors(), Vec::<String>::new());
-        },
+fn a_few_functions_beside_their_constants_find_their_signatures() {
+    // A small instance of the benchmark
+    // `bench::scaling::searching_the_signatures_of_many_functions_scales`.
+    let info = Resolved::new(&constants_and_functions(3)).check();
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.sigs.len(), 3);
+    assert_eq!(info.adopt.len(), 60);
+}
+
+#[test]
+fn a_function_of_untyped_parameters_takes_one_class() {
+    // A small instance of the benchmark
+    // `bench::scaling::a_function_of_many_untyped_parameters_scales`.
+    zed_tests::deep::on_small_stack(|| {
+        assert_eq!(
+            sig(&sum(3), "f"),
+            "(T, T, T) -> T for T in int | f32 | f64 | rat"
+        );
+        let wide = sig(&sum(40), "f");
+        assert!(
+            wide.ends_with(") -> T for T in int | f32 | f64 | rat"),
+            "{wide}"
+        );
+    });
+}
+
+#[test]
+fn a_chain_of_functions_takes_the_bound_of_the_one_called() {
+    // A small instance of the benchmark
+    // `bench::scaling::a_chain_of_functions_with_untyped_parameters_scales`.
+    assert_eq!(
+        sig(&chain(3), "g2"),
+        "(T) -> T for T in int | f32 | f64 | rat"
     );
+    let info = Resolved::new(&chain(3)).check();
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.sigs.len(), 3);
+}
+
+#[test]
+fn bindings_with_else_patterns_check() {
+    // A small instance of the benchmark `bench::scaling::many_else_patterns_scale`.
+    let (info, _) = info(&else_patterns(4));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+}
+
+#[test]
+fn a_signature_names_each_of_its_type_variables() {
+    // A small instance of the benchmark
+    // `bench::scaling::a_signature_of_many_type_variables_scales`.
+    let s = sig_of(&tuple(2), "f");
+    assert_eq!(s.to_string(), "(T, U) -> (T, U)");
+    assert_eq!(s.own.len(), 2, "two variables, each named");
+}
+
+#[test]
+fn needs_replayed_through_a_fan_of_calls_are_met_once() {
+    // A small instance of the benchmark
+    // `bench::scaling::needs_replayed_through_a_fan_of_calls_scale`.
+    let s = sig_of(&fan(3), "g2");
+    assert_eq!(s.to_string(), "(_) -> U for U in int | f32 | f64 | rat");
+    assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
+}
+
+#[test]
+fn the_union_of_atoms_with_payloads_keeps_each_payload() {
+    // A small instance of the benchmark
+    // `bench::scaling::the_union_of_many_atoms_with_payloads_scales`.
+    let u = Ty::union_all(&payloads(4, false));
+    assert_eq!(u.payloads.len(), 4);
+    assert!(u.payloads.values().all(Option::is_some));
+    let u = Ty::union_all(&payloads(4, true));
+    assert_eq!(u.payloads["e"].as_ref().map(Vec::len), Some(4));
+}
+
+#[test]
+fn curried_lambdas_name_their_parameters_and_take_their_carriers() {
+    // Small instances of the benchmarks `bench::scaling::curried_lambdas_using_every_parameter_…`
+    // and `bench::scaling::curried_lambdas_whose_parameters_take_a_carrier_…`.
+    assert_eq!(
+        sig(&curried(3), "g"),
+        "(T) -> (U) -> (V) -> (W) -> (T, U, V, W)"
+    );
+    assert_eq!(
+        sig(&curried_sums(2), "g"),
+        "(int) -> (int) -> (int) -> (int, int, int)"
+    );
+}
+
+#[test]
+fn an_is_test_of_curried_lambdas_narrows_its_else_branch_to_nothing() {
+    // A small instance of the benchmark
+    // `bench::scaling::an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales`.
+    let (info, _) = info(&curried_tested(2));
+    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    assert_eq!(info.tops["r"].to_string(), "1");
+}
+
+#[test]
+fn a_chain_of_calls_on_one_value_gives_each_result() {
+    // A small instance of the benchmark
+    // `bench::scaling::a_chain_of_calls_on_one_value_checks_in_linear_time`.
+    let (info, _) = info(&call_chain(3));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.tops["y"].to_string(), "(int, int, int, int)");
+}
+
+#[test]
+fn overloads_passed_to_slots_of_arrows_check() {
+    // Small instances of the benchmarks `bench::scaling::passing_an_overload_…`,
+    // `bench::scaling::a_slot_written_as_an_overload_nested_in_parentheses_scales`,
+    // `bench::scaling::an_overload_of_many_arrows_that_cover_a_slot_together_scales` and
+    // `bench::scaling::a_function_of_many_parameters_that_misses_one_scales`.
+    let info = Resolved::new(&overloads(4)).check();
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.sigs.len(), 2);
+    for text in [wider_overloads(4), shared_overloads(4)] {
+        let info = Resolved::new(&text).check();
+        assert!(info.errors.is_empty(), "{text}: {:?}", info.errors);
+    }
+    let info = Resolved::new(&nested_overload(4)).check();
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.sigs.len(), 1);
+    assert_eq!(type_errors(&covering_overload(4)), Vec::<String>::new());
+    let errors = type_errors(&wide_arrows(4));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+}
+
+#[test]
+fn results_of_arrows_meet_within_the_slots_or_are_refused() {
+    // Small instances of the benchmarks in `bench::scaling` from
+    // `many_arrows_whose_results_intersect_within_the_slots_scale` to
+    // `many_results_that_hold_a_variable_meet_in_linear_time_alone`.
+    for text in [
+        met_and_within(3),
+        with_a_function_arrow(3),
+        results_holding_a_variable(3),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
+    let errors = type_errors(&meeting_on_different_sets(3));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("grows with the product of their number"),
+        "{errors:?}"
+    );
+    let errors = type_errors(&bounded_at_many_parameters(3));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].contains("places the arguments give"),
+        "{errors:?}"
+    );
+    assert!(results_met_alone(4).within());
+}
+
+#[test]
+fn needs_that_name_a_variable_the_call_leaves_unbound_check() {
+    // A small instance of the benchmark
+    // `bench::scaling::needs_that_name_a_variable_the_call_leaves_unbound_check_in_linear_time`.
+    let (info, _) = info(&generic_applied_to_many(3));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.tops["y"].to_string(), "(0, 1, 2)");
+}
+
+#[test]
+fn destructured_parameters_check() {
+    // Small instances of the benchmarks
+    // `bench::scaling::a_parameter_destructured_into_many_names_checks_in_linear_time` and
+    // `bench::scaling::many_parameters_each_destructured_check_in_linear_time`.
+    let (info, _) = info(&wide_destructuring(3));
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
+    assert_eq!(info.tops["y"].to_string(), "(2, 0)");
+    assert_eq!(type_errors(&many_destructurings(3)), Vec::<String>::new());
+}
+
+#[test]
+fn rows_of_overlapping_or_disjoint_variable_sets_list_their_variables() {
+    // Small instances of the benchmarks `bench::scaling::rows_made_from_…_variable_sets_scale`.
+    let t = overlapping_rows(&variables("V", 5));
+    assert_eq!(t.var_facts().names.len(), 5);
+    let zs = disjoint_rows(&variables("A", 5), &variables("B", 5));
+    assert_eq!(zs.last().map(|z| z.var_facts().names.len()), Some(10));
+}
+
+#[test]
+fn replacing_in_rows_shared_on_many_paths_replaces_each_variable() {
+    // A small instance of the benchmarks
+    // `bench::scaling::replacing_in_rows_shared_on_many_paths_scales_by_…`.
+    let (vs, ws) = (variables("V", 5), variables("W", 5));
+    let binds: zedc::check::ty::Binds = (vs.iter().zip(&ws))
+        .map(|(v, w)| (v.vars.first().cloned().unwrap(), w.clone()))
+        .collect();
+    let shared = overlapping_rows(&vs);
+    for t in [
+        shared.replace(&binds),
+        shared.subst(&binds),
+        shared.settle(&|v: &str| binds.get(v).cloned()),
+    ] {
+        let f = t.var_facts();
+        assert_eq!(f.names.len() + f.classes.len(), 5);
+        assert!(f.names.iter().chain(&f.classes).all(|v| v.starts_with('W')));
+    }
+}
+
+#[test]
+fn functions_that_each_hold_one_bound_variable_keep_their_own() {
+    // A small instance of the benchmark
+    // `bench::scaling::replacing_in_many_functions_that_each_hold_one_bound_variable_scales`.
+    let (os, hs, ws) = (variables("O", 4), variables("H", 4), variables("W", 4));
+    let (t, binds) = functions_holding_one(&os, &hs, &ws);
+    let out = t.replace(&binds);
+    assert_eq!(out.fns.len(), 4);
+    for (s, (o, w)) in out.fns.iter().zip(os.iter().zip(&ws)) {
+        assert_eq!(s.arrows[0].result, Ty::tuple(vec![o.clone(), w.clone()]));
+    }
+}
+
+#[test]
+fn rows_shared_on_many_paths_check_in_a_function_and_its_call() {
+    // A small instance of the benchmarks `bench::scaling::rows_shared_on_many_paths_scale_…`.
+    for call in [false, true] {
+        assert_eq!(type_errors(&shared_rows(5, call)), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn sums_tests_and_never_arguments_give_their_signatures() {
+    // Small instances of the benchmarks
+    // `bench::scaling::sums_of_a_line_or_a_count_check_in_linear_time`,
+    // `bench::scaling::a_chain_of_tests_is_linear_in_its_length` and
+    // `bench::scaling::never_arguments_check_in_linear_time`.
+    assert_eq!(
+        sig(&sums_of_a_line_or_a_count(3), "r"),
+        "(int | #_, bump: int) -> int"
+    );
+    assert_eq!(sig(&a_chain_of_tests(4), "f"), "(int) -> 0 | 2 | 5");
+    assert_eq!(sig(&never_arguments(3), "f"), "(Never) -> Never");
 }

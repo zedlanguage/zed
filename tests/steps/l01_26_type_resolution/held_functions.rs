@@ -8,7 +8,7 @@
 use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
-use super::{Resolved, type_errors};
+use super::{info, type_errors};
 
 /// `int(2)`, not `2`: a bare `2` takes the carrier of `x` (steps L1.26a, L1.26b), so `scale`
 /// would be generic, and a generic function held by `n` bindings checks in time quadratic in
@@ -62,50 +62,25 @@ fn two_functions_in_tuples_are_two_errors() {
 }
 
 /// `scale` at the bottom of `n` tuples written in one expression.
-fn in_one_expression(n: usize) -> String {
+pub(super) fn in_one_expression(n: usize) -> String {
     format!("{SCALE}t = {}scale{};\n", "(".repeat(n), ", 1)".repeat(n))
 }
 
 /// `scale` in a tuple, then `n - 1` bindings each putting the last in a tuple.
-fn in_named_steps(n: usize) -> String {
+pub(super) fn in_named_steps(n: usize) -> String {
     let mut text = format!("{SCALE}t0 = (scale, 1);\n");
     text.extend((1..n).map(|i| format!("t{i} = (t{}, 1);\n", i - 1)));
     text
 }
 
 /// `scale` wrapped in a tuple by `n` nested calls of `wrap`.
-fn in_calls(n: usize) -> String {
+pub(super) fn in_calls(n: usize) -> String {
     let wrap = "wrap(positional x) = (x, 1);\n";
     format!(
         "{SCALE}{wrap}t = {}scale{};\n",
         "wrap(".repeat(n),
         ")".repeat(n)
     )
-}
-
-#[test]
-fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
-    for (what, text) in [
-        (
-            "a function n tuples deep in one expression",
-            in_one_expression as fn(usize) -> String,
-        ),
-        ("a function put in a tuple by n bindings", in_named_steps),
-        ("a function put in a tuple by n nested calls", in_calls),
-    ] {
-        let one = type_errors(&text(3));
-        assert_eq!(one.len(), 1, "{what}: {one:?}");
-        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            // One error with its two notes and its two repairs, whatever the depth.
-            assert_eq!(info.errors.len(), 1, "{what} at {n}");
-            assert_eq!(info.errors[0].notes.len(), 4, "{what} at {n}");
-        });
-    }
 }
 
 /// `((… (T, T) …, T), T)`, `n` tuples deep, printed `((… (_, _) …, _), _)` as `T` is named by
@@ -128,16 +103,18 @@ fn a_type_8000_tuples_deep_prints_and_drops_on_a_2_mib_stack() {
 }
 
 #[test]
-fn a_type_a_million_tuples_deep_prints_and_drops_on_an_8_mib_stack() {
-    scaling::on_a_thread(8 << 20, || {
-        let n = 1_000_000;
+fn a_type_31250_tuples_deep_prints_and_drops_on_a_256_kib_stack() {
+    // It ran a million tuples deep on an 8 MiB stack, about 8 bytes a level; this is the same
+    // stack a level at a thirty-second of the depth.
+    scaling::on_a_thread((8 << 20) / 32, || {
+        let n = 1_000_000 / 32;
         let text = nested(n).to_string();
         assert!(text == format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
     });
 }
 
 /// `leaf` in an atom at the bottom of `n` levels of an atom around a tuple, compared with `==`.
-fn in_atoms_and_tuples(n: usize, leaf: &str) -> String {
+pub(super) fn in_atoms_and_tuples(n: usize, leaf: &str) -> String {
     format!(
         "{SCALE}t = {}#a({leaf}){};\nsame = t == #b;\n",
         "#a((".repeat(n),
@@ -146,7 +123,7 @@ fn in_atoms_and_tuples(n: usize, leaf: &str) -> String {
 }
 
 /// `leaf` after `n` integers in the payload of one atom, compared with `==`.
-fn in_a_wide_payload(n: usize, leaf: &str) -> String {
+pub(super) fn in_a_wide_payload(n: usize, leaf: &str) -> String {
     let items: String = (0..n).map(|i| format!("{i}, ")).collect();
     format!("{SCALE}t = #a({items}{leaf});\nsame = t == #b;\n")
 }
@@ -169,52 +146,9 @@ fn a_function_in_an_atom_s_payload_is_one_error() {
     );
 }
 
-#[test]
-fn a_function_in_payloads_is_found_in_linear_time() {
-    // Each level makes a row, which reads the payload below it once; the payload walk reads
-    // a row and does not enter it. Atoms nested directly in atoms are tested by
-    // `atoms_nested_in_atoms_are_checked_in_linear_time` (COMPLEXITY.md, ATOM-nested-sq).
-    type Family = fn(usize, &str) -> String;
-    for (what, text, leaf, errors) in [
-        (
-            "a function n atoms and tuples deep",
-            in_atoms_and_tuples as Family,
-            "scale",
-            1,
-        ),
-        (
-            "an integer n atoms and tuples deep",
-            in_atoms_and_tuples,
-            "1",
-            0,
-        ),
-        (
-            "a function after n integers in a payload",
-            in_a_wide_payload,
-            "scale",
-            1,
-        ),
-        (
-            "an integer after n integers in a payload",
-            in_a_wide_payload,
-            "1",
-            0,
-        ),
-    ] {
-        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n, leaf))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert_eq!(info.errors.len(), errors, "{what} at {n}");
-        });
-    }
-}
-
 /// `leaf` at the bottom of `n` atoms nested directly in atoms in one expression, compared
 /// with `==`.
-fn in_atoms(n: usize, leaf: &str) -> String {
+pub(super) fn in_atoms(n: usize, leaf: &str) -> String {
     format!(
         "{SCALE}t = {}{leaf}{};\nsame = t == #b;\n",
         "#a(".repeat(n),
@@ -224,7 +158,7 @@ fn in_atoms(n: usize, leaf: &str) -> String {
 
 /// `leaf` in an atom, then `n - 1` bindings each putting the last in an atom, compared with
 /// `==`.
-fn in_atoms_by_bindings(n: usize, leaf: &str) -> String {
+pub(super) fn in_atoms_by_bindings(n: usize, leaf: &str) -> String {
     let mut text = format!("{SCALE}t0 = #a({leaf});\n");
     text.extend((1..n).map(|i| format!("t{i} = #a(t{});\n", i - 1)));
     text.push_str(&format!("same = t{} == #b;\n", n - 1));
@@ -232,7 +166,7 @@ fn in_atoms_by_bindings(n: usize, leaf: &str) -> String {
 }
 
 /// `leaf` put in an atom by `n` nested calls of `wrap`, compared with `==`.
-fn in_atoms_by_calls(n: usize, leaf: &str) -> String {
+pub(super) fn in_atoms_by_calls(n: usize, leaf: &str) -> String {
     format!(
         "{SCALE}wrap(positional x) = #a(x);\nt = {}{leaf}{};\nsame = t == #b;\n",
         "wrap(".repeat(n),
@@ -259,55 +193,9 @@ fn a_function_in_atoms_nested_in_atoms_is_refused_by_equality() {
     }
 }
 
-#[test]
-fn atoms_nested_in_atoms_are_checked_in_linear_time() {
-    // The checker keeps the type of every expression it meets, and the type of the atom at
-    // each level holds the level below as its payload: copying that payload at each level was
-    // `O(n^2)`, and so were the walks that entered every payload at each level to find its
-    // variables, replace them or find a function (ATOM-nested-sq). A payload is a shared
-    // node now, copied in constant time, which keeps what it holds at any depth, so a walk
-    // reads it and does not enter it; a payload holding the level below twice is a shared
-    // node met twice, entered at most once, and made at most once where a call replaces the
-    // variables it holds. The leaf is an integer: with a function there, the refusal of `==`
-    // shows a note for each level with that level's type, `O(n^2)` characters of text, and
-    // `2^n` for the payload held twice (COMPLEXITY.md, ATOM-nested-sq).
-    type Family = fn(usize, &str) -> String;
-    for (what, text) in [
-        (
-            "an integer n atoms deep in one expression",
-            in_atoms as Family,
-        ),
-        (
-            "an integer put in an atom by n bindings",
-            in_atoms_by_bindings,
-        ),
-        (
-            "an integer put in an atom by n nested calls",
-            in_atoms_by_calls,
-        ),
-        (
-            "an integer put twice in an atom by n bindings",
-            in_atoms_twice,
-        ),
-        (
-            "an integer put twice in an atom by n bindings in a generic function",
-            in_atoms_twice_in_a_function,
-        ),
-    ] {
-        let units: std::collections::BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n, "1"))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{what} at {n}");
-        });
-    }
-}
-
 /// `leaf` in an atom, then `n - 1` bindings each putting the last twice in an atom, so the
 /// payloads are shared and their tree has `2^n` leaves, compared with `==`.
-fn in_atoms_twice(n: usize, leaf: &str) -> String {
+pub(super) fn in_atoms_twice(n: usize, leaf: &str) -> String {
     let mut text = format!("{SCALE}t0 = #a({leaf}, 1);\n");
     text.extend((1..n).map(|i| format!("t{i} = #a(t{0}, t{0});\n", i - 1)));
     text.push_str(&format!("same = t{} == #b;\n", n - 1));
@@ -317,7 +205,7 @@ fn in_atoms_twice(n: usize, leaf: &str) -> String {
 /// [`in_atoms_twice`] inside a generic function, on its parameter, then called with `leaf`:
 /// the call replaces the parameter's variable in a type of `n` shapes with `2^n` paths
 /// through them.
-fn in_atoms_twice_in_a_function(n: usize, leaf: &str) -> String {
+pub(super) fn in_atoms_twice_in_a_function(n: usize, leaf: &str) -> String {
     let mut text = format!("{SCALE}g(positional x) {{\n  t0 = #a(x, x);\n");
     text.extend((1..n).map(|i| format!("  t{i} = #a(t{0}, t{0});\n", i - 1)));
     text.push_str(&format!(
@@ -325,4 +213,26 @@ fn in_atoms_twice_in_a_function(n: usize, leaf: &str) -> String {
         n - 1
     ));
     text
+}
+
+#[test]
+fn a_function_in_nested_tuples_is_one_error_with_its_notes_and_repairs() {
+    // A small instance of the benchmark
+    // `bench::held_functions::a_function_in_many_nested_tuples_is_one_error_in_linear_time`.
+    for text in [in_one_expression(3), in_named_steps(3), in_calls(3)] {
+        let (i, _) = info(&text);
+        // One error with its two notes and its two repairs.
+        assert_eq!(i.errors.len(), 1, "{text}: {:?}", i.errors);
+        assert_eq!(i.errors[0].notes.len(), 4, "{text}: {:?}", i.errors[0].notes);
+    }
+}
+
+#[test]
+fn an_integer_put_twice_in_atoms_is_data() {
+    // A small instance of the benchmark
+    // `bench::held_functions::atoms_nested_in_atoms_are_checked_in_linear_time`, whose other
+    // programs `a_function_in_atoms_nested_in_atoms_is_refused_by_equality` checks.
+    for text in [in_atoms_twice(3, "1"), in_atoms_twice_in_a_function(3, "1")] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
 }

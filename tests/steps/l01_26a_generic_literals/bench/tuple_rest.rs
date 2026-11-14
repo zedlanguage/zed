@@ -11,7 +11,7 @@ fn many_decimals_on_one_line_print_the_line_once() {
     // prints 4.0 times (zedc: 51340 bytes for 200, 207641 for 800). Held at 200 and 1,600
     // decimals since the limit of 13 (TESTS-scaling-limit-13).
     scaling::on_a_thread(1 << 28, || {
-        let n = 200;
+        let n = 6600;
         let bytes = |m: usize| printed(&decimals(m)).len() as u64;
         scaling::hold_linear(
             &format!(
@@ -42,7 +42,7 @@ fn many_decimals_on_one_line_print_the_line_once() {
 #[test]
 fn many_calls_of_a_long_chain_check_in_linear_time() {
     scaling::on_a_thread(1 << 28, || {
-        let n = 500;
+        let n = 2800;
         let units = scaling::inputs(n, |m| Resolved::new(&chain(m)));
         scaling::check(
             "checking n calls of a chain of n functions that returns a decimal",

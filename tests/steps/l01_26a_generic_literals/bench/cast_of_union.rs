@@ -7,10 +7,10 @@ use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
 use super::super::cast_of_union::many;
 
-/// Checks `word(g(0))` with `g` of `n` values and `last`, at `n = 200` and `8n`.
+/// Checks `word(g(0))` with `g` of `n` values and `last`, at `n = 1000` and `8n`.
 fn one_cast_of_many_values(last: &str, word: &str) {
     scaling::on_a_thread(1 << 28, || {
-        let n = 200;
+        let n = 1000;
         let units = scaling::inputs(n, |m| Resolved::new(&many(m, 1, last, word)));
         scaling::check(
             &format!("checking `{word}(g(0))`, `g` of n values and {last}"),
@@ -22,10 +22,10 @@ fn one_cast_of_many_values(last: &str, word: &str) {
     });
 }
 
-/// Checks `n` casts `word(g(k))` with `g` of two values and `last`, at `n = 200` and `8n`.
+/// Checks `n` casts `word(g(k))` with `g` of two values and `last`, at `n = 700` and `8n`.
 fn many_casts_of_two_values(last: &str, word: &str) {
     scaling::on_a_thread(1 << 28, || {
-        let n = 200;
+        let n = 700;
         let units = scaling::inputs(n, |m| Resolved::new(&many(2, m, last, word)));
         scaling::check(
             &format!("checking n casts `{word}(g(k))`, `g` of two values and {last}"),

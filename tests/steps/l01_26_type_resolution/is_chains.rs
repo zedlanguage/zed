@@ -7,7 +7,6 @@
 //! shorter onto the longer (COMPLEXITY.md IS-chain-quad).
 
 use super::{sig, type_errors};
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 #[test]
@@ -106,7 +105,7 @@ fn the_narrowing_of_a_chain_ends_with_its_branch() {
 }
 
 /// A function of `x: int | String` returning `x` where the chain of `k` sides `side(j)` holds.
-fn chain(k: usize, op: &str, side: impl Fn(usize) -> String) -> String {
+pub(super) fn chain(k: usize, op: &str, side: impl Fn(usize) -> String) -> String {
     let sides: Vec<String> = (0..k).map(side).collect();
     format!(
         "f(x: int | String) = if {} {{ x }} else {{ 0 }};\n",
@@ -115,7 +114,7 @@ fn chain(k: usize, op: &str, side: impl Fn(usize) -> String) -> String {
 }
 
 /// The chain of `k` sides `side(j)`, each `&&` with the rest of the chain on its right.
-fn right_chain(k: usize, side: impl Fn(usize) -> String) -> String {
+pub(super) fn right_chain(k: usize, side: impl Fn(usize) -> String) -> String {
     let mut c = side(k - 1);
     for j in (0..k - 1).rev() {
         c = format!("{} && ({c})", side(j));
@@ -124,7 +123,7 @@ fn right_chain(k: usize, side: impl Fn(usize) -> String) -> String {
 }
 
 /// A chain of `k` tests of `k` names, each bound to `x`.
-fn names_chain(k: usize) -> String {
+pub(super) fn names_chain(k: usize) -> String {
     let binds: String = (0..k).map(|j| format!("y{j} = x;\n")).collect();
     let tests: Vec<String> = (0..k).map(|j| format!("y{j} is int")).collect();
     format!(
@@ -133,62 +132,8 @@ fn names_chain(k: usize) -> String {
     )
 }
 
-/// Checks the units `text(m)` at `n` and `8n`, read and resolved before the timing, for work
-/// of order n log n at most: each fact of the chain is narrowed once and moved at most log2 n
-/// times.
-fn scales(what: &str, text: impl Fn(usize) -> String + Sync) {
-    let n = 500;
-    let built = scaling::inputs(n, |m| zed_tests::deep::resolved(&text(m)));
-    scaling::check_order(what, n, 1, |m| {
-        let (stmts, res) = &built[&m];
-        let info = zedc::check::walk::check(stmts, res);
-        assert!(info.errors.is_empty(), "{what}: {:?}", info.errors);
-    });
-}
-
-#[test]
-fn a_chain_of_is_tests_nested_to_the_left_scales() {
-    scales("a chain of n `x is int` joined by `&&`", |k| {
-        chain(k, "&&", |_| "x is int".into())
-    });
-}
-
-#[test]
-fn a_chain_of_is_tests_nested_to_the_right_scales() {
-    scales("a chain of n `x is int`, each `&&` with the rest", |k| {
-        right_chain(k, |_| "x is int".into())
-    });
-}
-
-#[test]
-fn a_chain_of_is_tests_and_comparisons_scales() {
-    let side = |j: usize| match j % 2 {
-        0 => "x is int".to_string(),
-        _ => format!("x > {j}"),
-    };
-    scales("a chain of n `is` tests and comparisons", |k| {
-        chain(k, "&&", side)
-    });
-    scales(
-        "a chain of n `is` tests and comparisons nested right",
-        |k| right_chain(k, side),
-    );
-}
-
-#[test]
-fn a_chain_of_is_tests_of_many_names_scales() {
-    scales("a chain of `is` tests of n names", names_chain);
-}
-
-#[test]
-fn a_chain_of_is_tests_joined_by_or_scales() {
-    scales("a chain of n `x is int` joined by `||`", |k| {
-        chain(k, "||", |_| "x is int".into())
-    });
-}
-
 /// `k` sides `x is int` joined by `&&` as a balanced tree, each half in parentheses.
-fn balanced(k: usize) -> String {
+pub(super) fn balanced(k: usize) -> String {
     // The text is built bottom up, level by level, so its depth is log2 k.
     let mut level: Vec<String> = vec!["x is int".into(); k];
     while level.len() > 1 {
@@ -207,9 +152,28 @@ fn balanced(k: usize) -> String {
     )
 }
 
+
+/// The side `j` of a chain of `is` tests and comparisons.
+pub(super) fn test_or_comparison(j: usize) -> String {
+    match j % 2 {
+        0 => "x is int".to_string(),
+        _ => format!("x > {j}"),
+    }
+}
+
 #[test]
-fn a_balanced_tree_of_is_tests_scales() {
-    // Each join moves the shorter list of facts onto the longer, so a fact moves once per
-    // level of the tree: n log n.
-    scales("a balanced tree of n `x is int` joined by `&&`", balanced);
+fn chains_and_trees_of_is_tests_are_accepted() {
+    // A small instance of each benchmark of `bench::is_chains`.
+    let is_int = |_: usize| "x is int".to_string();
+    for text in [
+        chain(3, "&&", is_int),
+        right_chain(3, is_int),
+        chain(4, "&&", test_or_comparison),
+        right_chain(4, test_or_comparison),
+        names_chain(3),
+        chain(3, "||", is_int),
+        balanced(5),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
 }

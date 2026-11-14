@@ -7,7 +7,6 @@
 //! their cases are kept below, ignored until zedc compiles them.
 
 use super::{sig, type_errors};
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 /// A divisor of one of two literals, neither zero.
@@ -319,7 +318,7 @@ fn zedc_run_drops_the_quotient_only_under_a_test_that_rules_zero_out() {
 
 /// `f(x: int, d: int) = { a1 = if d != 0 { x div d } else { 0 }; a2 = if d != 0 { a1 div d }
 /// else { a1 }; …; an }`: `n` tests, each with a division in its arm.
-fn chained_tests(n: usize) -> String {
+pub(super) fn chained_tests(n: usize) -> String {
     let mut s = String::from("f(x: int, d: int) = { a0 = x; ");
     for i in 1..=n {
         let p = i - 1;
@@ -329,32 +328,10 @@ fn chained_tests(n: usize) -> String {
     s
 }
 
-#[test]
-fn chained_tests_and_divisions_check_in_linear_time() {
-    // Each division reads the integers of its divisor in the scope of its arm once
-    // (`Ck::ints_here`), only where the divisor's type holds a zero (COMPLEXITY.md row
-    // NARROW-ne-divisor).
-    assert_eq!(sig(&chained_tests(3), "f"), "(x: int, d: int) -> int");
-    let built = scaling::inputs(100, |m| {
-        let stmts = zed_tests::deep::statements(&chained_tests(m));
-        let res = zedc::resolve::resolve(&stmts).unwrap();
-        (stmts, res)
-    });
-    scaling::check(
-        "n chained tests each with a division in its arm",
-        100,
-        |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::walk::check(stmts, res);
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
-}
-
 /// `f(x: rat, r: rat) = { a0 = x; a1 = if r != 0r { a0 / r } else { a0 }; …; an }`, the tests
 /// taking in turn `r != 0r`, `r >= 1r` and `r != 0`: `n` tests, each with a division by a
 /// `rat` in its arm.
-fn chained_rat_tests(n: usize) -> String {
+pub(super) fn chained_rat_tests(n: usize) -> String {
     let mut s = String::from("f(x: rat, r: rat) = { a0 = x; ");
     for i in 1..=n {
         let p = i - 1;
@@ -366,25 +343,12 @@ fn chained_rat_tests(n: usize) -> String {
 }
 
 #[test]
-fn chained_rat_tests_and_divisions_check_in_linear_time() {
-    // Each division by a `rat` whose type holds `0r` reads the divisor's product in the scope
-    // of its arm once (`Ck::may_be_here`), and each test against a `rat` literal reads the
-    // literal's sign once (`Scope::atom_names`) (COMPLEXITY.md row NARROW-ne-rat-divisor).
+fn chained_tests_each_with_a_division_in_its_arm_add_no_div_by_zero() {
+    // A small instance of the benchmarks
+    // `bench::divisors::chained_tests_and_divisions_check_in_linear_time` and
+    // `bench::divisors::chained_rat_tests_and_divisions_check_in_linear_time`.
+    assert_eq!(sig(&chained_tests(3), "f"), "(x: int, d: int) -> int");
     assert_eq!(sig(&chained_rat_tests(3), "f"), "(x: rat, r: rat) -> rat");
-    let built = scaling::inputs(100, |m| {
-        let stmts = zed_tests::deep::statements(&chained_rat_tests(m));
-        let res = zedc::resolve::resolve(&stmts).unwrap();
-        (stmts, res)
-    });
-    scaling::check(
-        "n chained tests each with a division by a rat in its arm",
-        100,
-        |m| {
-            let (stmts, res) = &built[&m];
-            let info = zedc::check::walk::check(stmts, res);
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
 }
 
 /// A divisor, or the base of a `^` under a negative exponent, that is an operation on

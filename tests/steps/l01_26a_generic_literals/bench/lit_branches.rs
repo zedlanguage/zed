@@ -10,7 +10,7 @@ fn scaling() {
     // copies the type so far, O(n^2). The small instance is
     // `an_if_of_many_literal_branches_takes_f64_at_a_parameter`.
     scaling::on_a_thread(1 << 29, || {
-        let n = 250;
+        let n = 880;
         let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
         scaling::check("checking an `if` of n literal branches at `f64`", n, |m| {
             units[&m].check();

@@ -5,7 +5,7 @@ use super::super::spelling::{misuses, tuple};
 
 #[test]
 fn printing_the_spellings_of_many_literals_scales() {
-    let n = 200;
+    let n = 250;
     let texts = scaling::inputs(n, misuses);
     scaling::check("checking n misused literals and printing each", n, |m| {
         assert_eq!(type_errors(&texts[&m]).len(), m);
@@ -14,7 +14,7 @@ fn printing_the_spellings_of_many_literals_scales() {
 
 #[test]
 fn printing_a_tuple_of_many_literals_scales() {
-    let n = 400;
+    let n = 6200;
     let texts = scaling::inputs(n, tuple);
     scaling::check("checking a tuple of n literals and printing it", n, |m| {
         let errors = type_errors(&texts[&m]);

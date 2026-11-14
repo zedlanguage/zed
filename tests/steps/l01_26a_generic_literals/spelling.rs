@@ -101,7 +101,8 @@ fn each_message_of_many_misused_literals_prints_its_own_spelling() {
 
 #[test]
 fn the_message_of_a_misused_tuple_of_literals_prints_each() {
-    // A small instance of the benchmark `bench::spelling::printing_a_tuple_of_many_literals_scales`.
+    // A small instance of the benchmark
+    // `bench::spelling::printing_a_tuple_of_many_literals_scales`.
     let errors = type_errors(&tuple(2));
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(errors[0].contains("(String, (0.50r, 1.50r))"), "{errors:?}");

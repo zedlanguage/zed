@@ -4,14 +4,12 @@
 //! read); a value of the other operand that no arrow of the operator takes
 //! is reported as it is beside an operand that has values.
 
-use zed_tests::scaling;
-
 use super::{sig, type_errors};
 
 /// A function whose parameter `h` gives `Never`, with names of union types beside it: `u`
 /// holds `true` beside `int`, `w` holds `int` and `f64`, and `v` holds a function beside
 /// `int`.
-fn body(e: &str) -> String {
+pub(super) fn body(e: &str) -> String {
     format!(
         "f(positional h: (int) -> Never, positional n: int, positional b: bool, positional g: \
          (int) -> int, positional s: String) = {{ u = if b {{ n }} else {{ true }}; w = if b \
@@ -207,39 +205,6 @@ fn an_operand_beside_loose_atoms_is_checked() {
     assert_eq!(sig(&text, "f"), "(int) -> #a | #b");
 }
 
-/// A chain of `n` additions beside one operand of type `Never`, each other operand a union of
-/// `int` and `f64`, ending in `true`: each operator is checked once.
-#[test]
-fn a_chain_beside_never_scales() {
-    let chain = |n: usize| {
-        let terms: String = (0..n).map(|_| " + w").collect();
-        body(&format!("h(1){terms} + true"))
-    };
-    let units = super::scaling::resolved(500, chain);
-    scaling::check_order("a chain of n operators beside Never", 500, 1, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
-    });
-}
-
-/// A comparison of `Never` with a value of nested tuples that share their rows: each row is
-/// visited once.
-#[test]
-fn a_comparison_of_never_with_shared_tuples_scales() {
-    // `t0 = (n, w)` and `t{i+1} = (t{i}, t{i})`: the type of `t{d}` has `2^d` paths to `t0`
-    // and `d + 1` rows.
-    let nested = |d: usize| {
-        let mut e = String::from("t0 = (n, w); ");
-        e.extend((0..d).map(|i| format!("t{} = (t{i}, t{i}); ", i + 1)));
-        body(&format!("{e}h(1) < t{d}"))
-    };
-    let units = super::scaling::resolved(100, nested);
-    scaling::check_order("Never beside a tuple of n shared rows", 100, 1, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
 /// The examples of DOCS-TODO 50 that are accepted, with their signatures, and those rejected.
 #[test]
 fn the_examples_of_the_guide() {
@@ -288,19 +253,46 @@ fn the_examples_of_the_guide() {
     }
 }
 
-/// `max` of `Never` and a value of nested tuples that share their rows: each position of each
-/// row is checked once.
+
+/// A chain of `n` additions beside one operand of type `Never`, each other operand a union of
+/// `int` and `f64`, ending in `true`.
+pub(super) fn chain_beside_never(n: usize) -> String {
+    let terms: String = (0..n).map(|_| " + w").collect();
+    body(&format!("h(1){terms} + true"))
+}
+
+/// `t0 = (n, w)` and `t{i+1} = (t{i}, t{i})`, the type of `t{d}` having `2^d` paths to `t0`
+/// and `d + 1` rows, and `apply(t)` applied to `t{d}` and `h(1)`, of type `Never`.
+pub(super) fn never_beside_shared_tuples(d: usize, apply: fn(&str) -> String) -> String {
+    let mut e = String::from("t0 = (n, w); ");
+    e.extend((0..d).map(|i| format!("t{} = (t{i}, t{i}); ", i + 1)));
+    body(&format!("{e}{}", apply(&format!("t{d}"))))
+}
+
+/// `h(1) < t`.
+pub(super) fn below(t: &str) -> String {
+    format!("h(1) < {t}")
+}
+
+/// `max(h(1), t)`.
+pub(super) fn max_of(t: &str) -> String {
+    format!("max(h(1), {t})")
+}
+
 #[test]
-fn max_of_never_and_shared_tuples_scales() {
-    // `t0 = (n, w)` and `t{i+1} = (t{i}, t{i})`, as in the test above.
-    let nested = |d: usize| {
-        let mut e = String::from("t0 = (n, w); ");
-        e.extend((0..d).map(|i| format!("t{} = (t{i}, t{i}); ", i + 1)));
-        body(&format!("{e}max(h(1), t{d})"))
-    };
-    let units = super::scaling::resolved(100, nested);
-    scaling::check_order("max of Never and a tuple of n shared rows", 100, 1, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
+fn a_chain_beside_never_is_one_error() {
+    // A small instance of the benchmark `bench::never_operands::a_chain_beside_never_scales`.
+    let errors = type_errors(&chain_beside_never(3));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+}
+
+#[test]
+fn never_beside_shared_tuples_is_accepted() {
+    // A small instance of the benchmarks
+    // `bench::never_operands::a_comparison_of_never_with_shared_tuples_scales` and
+    // `bench::never_operands::max_of_never_and_shared_tuples_scales`.
+    for apply in [below as fn(&str) -> String, max_of] {
+        let text = never_beside_shared_tuples(3, apply);
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
 }

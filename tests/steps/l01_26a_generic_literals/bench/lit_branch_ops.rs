@@ -23,7 +23,7 @@ fn checks(what: &str, n: usize, make: fn(usize) -> String) {
 fn scaling_an_if_of_operation_branches() {
     checks(
         "checking an `if` of n operation branches at `f64`",
-        250,
+        450,
         nest,
     );
 }
@@ -32,7 +32,7 @@ fn scaling_an_if_of_operation_branches() {
 fn scaling_a_call_of_operation_branches() {
     checks(
         "reading a call of n operation branches at `f64`",
-        250,
+        590,
         through_a_call,
     );
 }
@@ -43,7 +43,7 @@ fn scaling_a_call_of_operation_branches() {
 fn scaling_products_of_calls() {
     checks(
         "reading the calls of n products `x * g(c)` at `f64`",
-        1000,
+        1700,
         products,
     );
 }

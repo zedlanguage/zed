@@ -5,9 +5,6 @@
 //! them, the integer operators, the bit words, `codePoint`) and from the tests the cast is under;
 //! a declared range on a parameter is layer L10.
 
-use zed_tests::scaling;
-
-use super::scaling::resolved;
 use super::{sig, type_errors};
 
 /// `f(positional n: int) = if <test> { f64(n) } else { 0.0f64 };` and its signature.
@@ -118,37 +115,6 @@ fn an_exact_cast_runs_to_the_float() {
     assert_eq!(sig(src, "half"), "(int) -> f64");
 }
 
-#[test]
-fn many_bounded_casts_scale() {
-    // n functions, each casting its parameter under a test that bounds it.
-    let functions = |n: usize| -> String {
-        (0..n)
-            .map(|i| {
-                format!(
-                    "g{i}(positional n: int) = if n >= 0 && n <= {i} {{ f64(n) }} else {{ 0.0f64 }};\n"
-                )
-            })
-            .collect()
-    };
-    let units = resolved(200, functions);
-    scaling::check("n functions, each a cast under a test", 200, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-    // One function of n arms, each arm a cast under the tests of the arms before it.
-    let chain = |n: usize| -> String {
-        let arms: String = (0..n)
-            .map(|i| format!("if n < {} {{ f64(n) }} else ", i as i64 - n as i64))
-            .collect();
-        format!("f(positional n: int) = {arms}{{ 0.0f64 }};\n")
-    };
-    let units = resolved(200, chain);
-    scaling::check("a chain of n arms, each a cast", 200, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
 /// Item CHK-f64-bounded-int-menus: a rejection beside an `int` the checker bounds within
 /// ±2^53 offers `f64(n)` among its fixes, and one beside an unbounded `int` does not
 /// (DESIGN.md sec:diagnostics, row "Two numeric values with no common carrier").
@@ -186,27 +152,6 @@ fn a_bounded_int_compared_with_an_f64_is_offered_its_cast() {
     let errors = type_errors("f(positional n: int, positional y: f64) = y == n;\n");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(!errors[0].contains("f64(n)"), "{}", errors[0]);
-}
-
-#[test]
-fn many_bounded_comparisons_scale() {
-    // n functions, each comparing an f64 with an int a test bounds: n rejections, each
-    // offering `f64(n)`. The bound of each is proved from the tests above it alone.
-    let functions = |n: usize| -> String {
-        (0..n)
-            .map(|i| {
-                format!(
-                    "g{i}(positional n: int, positional y: f64) = \
-                     if n >= 0 && n <= {i} {{ y == n }} else {{ false }};\n"
-                )
-            })
-            .collect()
-    };
-    let units = resolved(200, functions);
-    scaling::check("n rejected comparisons, each of a bounded int", 200, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), n);
-    });
 }
 
 /// Item CAST-overflow-atom (A36): a cast to a float format is `#overflow` for a number beyond
@@ -337,28 +282,6 @@ fn a_text_beyond_the_largest_float_always_fails_with_overflow() {
     );
 }
 
-#[test]
-fn many_casts_of_ints_in_range_scale() {
-    // n functions, each casting its parameter under a test that bounds it beyond ±2^53 and
-    // within the largest `f64`: the path that drops `#overflow` and keeps `#inexact`.
-    let functions = |n: usize| -> String {
-        (0..n)
-            .map(|i| {
-                format!(
-                    "g{i}(positional n: int) = \
-                     if n >= 0 && n <= {} {{ f64(n) }} else {{ 0.0f64 }};\n",
-                    (num_bigint::BigInt::from(1) << 60) + i
-                )
-            })
-            .collect()
-    };
-    let units = resolved(200, functions);
-    scaling::check("n functions, each a cast of an int in range", 200, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
 /// Item CAST-literal-exact: a cast of a literal is typed from the one value the literal holds
 /// (DESIGN.md sec:failure, "a literal's domain being the singleton of its value"): `#inexact`
 /// only where that value has no equal float and `#overflow` only where it lies beyond the
@@ -441,27 +364,92 @@ fn a_rat_literal_written_with_an_exponent_is_decided_by_its_value() {
     }
 }
 
-#[test]
-fn many_casts_of_literals_scale() {
-    // n functions, each casting a `rat` literal that converts, so each result drops both atoms.
-    let units = resolved(200, |n| {
-        (0..n)
-            .map(|i| format!("g{i}(x: int) = f64({i}r);\n"))
-            .collect()
-    });
-    scaling::check("n functions, each a cast of a rat literal", 200, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
+/// `n` functions, each casting its parameter under a test that bounds it.
+pub(super) fn bounded_casts(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "g{i}(positional n: int) = if n >= 0 && n <= {i} {{ f64(n) }} else {{ 0.0f64 }};\n"
+            )
+        })
+        .collect()
+}
+
+/// One function of `n` arms, each arm a cast under the tests of the arms before it.
+pub(super) fn arms_of_casts(n: usize) -> String {
+    let arms: String = (0..n)
+        .map(|i| format!("if n < {} {{ f64(n) }} else ", i as i64 - n as i64))
+        .collect();
+    format!("f(positional n: int) = {arms}{{ 0.0f64 }};\n")
+}
+
+/// `n` functions, each comparing an `f64` with an `int` a test bounds.
+pub(super) fn bounded_comparisons(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "g{i}(positional n: int, positional y: f64) = \
+                 if n >= 0 && n <= {i} {{ y == n }} else {{ false }};\n"
+            )
+        })
+        .collect()
+}
+
+/// `n` functions, each casting its parameter under a test that bounds it beyond ±2^53 and
+/// within the largest `f64`.
+pub(super) fn casts_in_range(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            format!(
+                "g{i}(positional n: int) = \
+                 if n >= 0 && n <= {} {{ f64(n) }} else {{ 0.0f64 }};\n",
+                (num_bigint::BigInt::from(1) << 60) + i
+            )
+        })
+        .collect()
+}
+
+/// `n` functions, each casting a `rat` literal that converts.
+pub(super) fn casts_of_literals(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("g{i}(x: int) = f64({i}r);\n"))
+        .collect()
+}
+
+/// The cast of `1e<k>r` to `f64`.
+pub(super) fn cast_of_a_power(k: usize) -> String {
+    format!("f(x: int) = f64(1e{k}r);\n")
 }
 
 #[test]
-fn a_cast_of_a_power_does_not_grow_with_its_exponent() {
-    // `1e<k>r` holds 2^k * 5^k as two exponents, so its cast costs the same at k and 8k: a cast
-    // that built the power would cost k^1.47 or more (COMPLEXITY.md K41).
-    let units = resolved(1_000_000, |k| format!("f(x: int) = f64(1e{k}r);\n"));
-    scaling::check_order("the cast of 1e<k>r", 1_000_000, 0, |k| {
-        let info = units[&k].check();
-        assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
-    });
+fn many_casts_under_tests_are_accepted() {
+    // A small instance of the benchmarks `bench::exact_casts::many_bounded_casts_scale`,
+    // `bench::exact_casts::many_casts_of_ints_in_range_scale` and
+    // `bench::exact_casts::many_casts_of_literals_scale`.
+    for text in [
+        bounded_casts(3),
+        arms_of_casts(3),
+        casts_in_range(3),
+        casts_of_literals(3),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
+    assert_eq!(sig(&casts_in_range(1), "g0"), "(int) -> f64 | #inexact");
+    assert_eq!(sig(&casts_of_literals(3), "g2"), "(x: int) -> f64");
+}
+
+#[test]
+fn many_bounded_comparisons_are_one_rejection_each() {
+    // A small instance of the benchmark `bench::exact_casts::many_bounded_comparisons_scale`.
+    let errors = type_errors(&bounded_comparisons(3));
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert!(errors.iter().all(|e| e.contains("y == f64(n)")), "{errors:?}");
+}
+
+#[test]
+fn a_cast_of_a_large_power_always_fails() {
+    // A small instance of the benchmark
+    // `bench::exact_casts::a_cast_of_a_power_does_not_grow_with_its_exponent`.
+    let errors = type_errors(&cast_of_a_power(1000));
+    assert_eq!(errors.len(), 1, "{errors:?}");
 }

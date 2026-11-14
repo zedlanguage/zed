@@ -5,9 +5,8 @@
 //! rejected with "this function, which `r` applies, does not take #notFound" (repair
 //! CHK-index-else, found writing the L1.36a test programs).
 
-use zed_tests::scaling;
 
-use super::{Resolved, type_errors};
+use super::{info, type_errors};
 use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
 
 /// `main` reading the files its first two arguments name through `r`, `missing` for a file
@@ -87,7 +86,7 @@ fn a_test_that_leaves_the_atom_is_still_rejected() {
 
 /// `n` helpers, each reading the file an argument names or the empty path, and `main` calling
 /// each once.
-fn helpers(n: usize) -> String {
+pub(super) fn helpers(n: usize) -> String {
     let mut src: String = (0..n)
         .map(|i| format!("r{i}(fs, args, k) = fs[args[k] else \"\"];\n"))
         .collect();
@@ -104,17 +103,11 @@ fn helpers(n: usize) -> String {
 }
 
 #[test]
-fn many_helpers_narrowing_what_a_use_gives_scale() {
-    let n = 200;
-    let units: Vec<(usize, Resolved)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, Resolved::new(&helpers(m))))
-        .collect();
-    scaling::check("n helpers narrowing what a use gives", n, |m| {
-        let (_, r) = units.iter().find(|(k, _)| *k == m).unwrap();
-        let info = r.check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
+fn helpers_narrowing_what_a_use_gives_are_accepted() {
+    // A small instance of the benchmark
+    // `bench::given::many_helpers_narrowing_what_a_use_gives_scale`.
+    let (i, _) = info(&helpers(3));
+    assert!(i.errors.is_empty(), "{:?}", i.errors);
 }
 
 #[test]

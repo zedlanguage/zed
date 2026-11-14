@@ -5,7 +5,7 @@ use super::super::written::long;
 
 #[test]
 fn quoting_a_literal_of_n_digits_with_underscores_scales() {
-    let n = 20_000;
+    let n = 1_500_000;
     let srcs = scaling::inputs(n, long);
     scaling::check("quoting a literal of n digits with `_`", n, |m| {
         type_errors(&srcs[&m]);

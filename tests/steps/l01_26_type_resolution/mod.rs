@@ -6,6 +6,7 @@
 mod adoption;
 mod always_fails;
 mod atom_scaling;
+mod bench;
 mod bounds;
 mod calls;
 mod curried_classes;

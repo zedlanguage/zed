@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 
 use zed_kernel::{F64, Value};
-use zed_tests::scaling;
 use zedc::testing::test;
 
 use super::{info, menu, tried, type_errors};
@@ -205,7 +204,7 @@ fn literals_in_a_tuple_take_the_carrier_every_shape_of_its_length_holds_there() 
 /// `tu` at a union of `w` tuple shapes of length 2, all but the last with a string first,
 /// called on `(1, 2)`, on a tuple of `(1, 2)` nested 2 deep at the same shapes inside, and
 /// compared by `==` with `(1, 2)`.
-fn shapes(w: usize) -> String {
+pub(super) fn shapes(w: usize) -> String {
     let mut ty: Vec<String> = (0..w - 1)
         .map(|i| format!("(String, f64) | (#a{i}, f64)"))
         .collect();
@@ -216,20 +215,6 @@ fn shapes(w: usize) -> String {
          tv(positional p: ({one}, {one})) = 0;\nz = tv(((1, 2), (3, 4)));\n\
          tw(positional p: {one}) = p == (1, 2);\n"
     )
-}
-
-#[test]
-fn adopting_at_a_union_of_many_tuple_shapes_scales() {
-    assert_eq!(
-        adopted(&shapes(3)),
-        [1.0, 2.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0].map(f64)
-    );
-    checks_linearly(
-        "adopting the literals of tuples at n tuple shapes",
-        64,
-        shapes,
-        |_| 8,
-    );
 }
 
 #[test]
@@ -279,7 +264,7 @@ fn sum_reads_literals_at_the_other_components_carrier() {
 
 /// `isAt((0, 1, …))` of `w` components, compared with a tuple of `w` literals, and `sum` of
 /// `w` literals beside a parameter.
-fn wide(w: usize) -> String {
+pub(super) fn wide(w: usize) -> String {
     let fs = vec!["f64"; w].join(", ");
     let zs: Vec<String> = (0..w).map(|i| format!("{i}")).collect();
     let zs = zs.join(", ");
@@ -291,7 +276,7 @@ fn wide(w: usize) -> String {
 
 /// `isAt` of a tuple nested `d` deep, `((…(0, 0)…, 0), 0)`, at f64 components, called on the
 /// same tuple of literals and compared with it.
-fn deep(d: usize) -> String {
+pub(super) fn deep(d: usize) -> String {
     let (mut ty, mut lit) = ("f64".to_string(), "0".to_string());
     for _ in 0..d {
         ty = format!("({ty}, f64)");
@@ -300,55 +285,9 @@ fn deep(d: usize) -> String {
     format!("isAt(positional p: {ty}) = p == {lit};\ny = isAt({lit});\n")
 }
 
-/// Checks the programs `text(n)` and `text(8n)`, lexed, parsed and resolved before timing,
-/// and checks the checker's work is linear; each check adopts `adopts(n)` literals.
-fn checks_linearly(what: &str, n: usize, text: fn(usize) -> String, adopts: fn(usize) -> usize) {
-    use zed_tests::deep::statements;
-    let units: Vec<_> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = statements(&text(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, stmts, res)
-        })
-        .collect();
-    scaling::check_order(what, n, 1, |m| {
-        let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-        let info = zedc::check::walk::check(stmts, res);
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-        assert_eq!(info.adopt.len(), adopts(m));
-    });
-}
-
-#[test]
-fn adopting_the_literals_of_a_wide_tuple_scales() {
-    assert_eq!(adopted(&wide(3)).len(), 9);
-    checks_linearly(
-        "adopting the literals of tuples of width n",
-        64,
-        wide,
-        |m| 3 * m,
-    );
-}
-
-#[test]
-fn adopting_the_literals_of_a_deep_tuple_scales() {
-    // The parser, the checker and the type printer recurse on the nesting, within a 2 MiB
-    // stack at 1,024 deep (it ran on 512 MiB, TY-sub-stack).
-    zed_tests::deep::on_small_stack(|| {
-        assert_eq!(value(&deep(3), "y"), "true");
-        checks_linearly(
-            "adopting the literals of tuples nested n deep",
-            128,
-            deep,
-            |m| 2 * (m + 1),
-        );
-    });
-}
-
 /// The operands of `p == ((…(0, 0)…, 0), 0)`, the tuple nested `d` deep, with `p` at f64
 /// components, as in [`deep`].
-fn deep_operands(d: usize) -> zedc::check::Operands {
+pub(super) fn deep_operands(d: usize) -> zedc::check::Operands {
     use zedc::check::ty::{Carrier, Ty};
     let nested = |c| {
         let mut t = Ty::carrier(c);
@@ -367,32 +306,6 @@ fn deep_operands(d: usize) -> zedc::check::Operands {
         unreachable!("a binding")
     };
     zedc::check::Operands::new(nested(Carrier::F64), value, nested(Carrier::Int))
-}
-
-#[test]
-fn pairing_the_sides_of_a_deep_comparison_scales() {
-    // The check of the whole program in `adopting_the_literals_of_a_deep_tuple_scales` spends
-    // about 357,000 instructions a level, most of them outside `==`, and that hides a `sides`
-    // that walks each level's whole type for variables, O(d^2) with no allocation: the test
-    // passed such a `sides` at 9.1 times the instructions from depth 128 to 1,024. Here the
-    // operands are built before the timing, and only their pairing by `==` is timed. The
-    // pairing itself spends about 106,000 instructions a level, most in `class_of_ty` of each
-    // literal's carrier, so the O(d^2) walk reaches the limit only from depth 2,048: that
-    // `sides` takes 37.3 times the instructions from 2,048 to 16,384 here, and this one 8.0.
-    assert_eq!(deep_operands(3).adoptions(), 4);
-    let ops: Vec<_> = [2048, scaling::FACTOR * 2048]
-        .into_iter()
-        .map(|d| (d, deep_operands(d)))
-        .collect();
-    scaling::check_order(
-        "pairing the sides of == of tuples nested n deep",
-        2048,
-        1,
-        |d| {
-            let (_, o) = ops.iter().find(|(k, _)| *k == d).unwrap();
-            assert_eq!(o.adoptions(), d + 1);
-        },
-    );
 }
 
 #[test]
@@ -817,38 +730,9 @@ fn each_repair_of_a_number_literal_compared_with_no_number_checks() {
 }
 
 /// A function comparing a parameter whose tuple type has `n` components with `1`.
-fn wide_tuple(n: usize) -> String {
+pub(super) fn wide_tuple(n: usize) -> String {
     let comps = vec!["int"; n].join(", ");
     format!("f(positional x: ({comps})) = x == 1;\n")
-}
-
-#[test]
-fn the_component_repairs_of_a_wide_tuple_scale() {
-    // One repair per component, each read once in each shape.
-    let n = 256;
-    let units: Vec<_> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = zed_tests::deep::statements(&wide_tuple(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, stmts, res)
-        })
-        .collect();
-    scaling::check_order(
-        "the repairs of a tuple of n components compared with a literal",
-        n,
-        1,
-        |m| {
-            let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-            let info = zedc::check::walk::check(stmts, res);
-            assert_eq!(info.errors.len(), 1);
-            assert!(
-                info.errors[0]
-                    .message
-                    .contains(&format!("`x[{}] == 1`", m - 1))
-            );
-        },
-    );
 }
 
 #[test]
@@ -905,7 +789,7 @@ fn a_literal_at_each_kind_of_declared_type() {
 
 /// `n` decimals at an `int` parameter, and `n` compared by `==` with a parameter whose class
 /// `div` fixed at `int`: each is rejected, `2 n` errors in all.
-fn menus(n: usize) -> String {
+pub(super) fn menus(n: usize) -> String {
     let calls: String = (0..n).map(|i| format!("y{i} = f({i}.5);\n")).collect();
     let tests: Vec<String> = (0..n).map(|i| format!("x == {i}.5")).collect();
     format!(
@@ -915,7 +799,43 @@ fn menus(n: usize) -> String {
 }
 
 #[test]
-fn rejecting_literals_with_their_menus_scales() {
+fn literals_at_many_tuple_shapes_and_in_wide_and_deep_tuples_are_adopted() {
+    // Small instances of the benchmarks
+    // `bench::literals::adopting_at_a_union_of_many_tuple_shapes_scales`,
+    // `bench::literals::adopting_the_literals_of_a_wide_tuple_scales` and
+    // `bench::literals::adopting_the_literals_of_a_deep_tuple_scales`.
+    assert_eq!(
+        adopted(&shapes(3)),
+        [1.0, 2.0, 1.0, 2.0, 3.0, 4.0, 1.0, 2.0].map(f64)
+    );
+    assert_eq!(adopted(&wide(3)).len(), 9);
+    assert_eq!(adopted(&deep(3)).len(), 2 * (3 + 1));
+    assert_eq!(value(&deep(3), "y"), "true");
+    // A small instance of `bench::literals::pairing_the_sides_of_a_deep_comparison_scales`.
+    assert_eq!(deep_operands(3).adoptions(), 4);
+}
+
+#[test]
+fn a_wide_tuple_compared_with_a_literal_has_one_repair_per_component() {
+    // A small instance of the benchmark
+    // `bench::literals::the_component_repairs_of_a_wide_tuple_scale`.
+    let (info, _) = info(&wide_tuple(3));
+    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    assert!(
+        info.errors[0].message.contains("`x[2] == 1`"),
+        "{}",
+        info.errors[0].message
+    );
+    let errors = type_errors(&wide_tuple(3));
+    for i in 0..3 {
+        assert!(errors[0].contains(&format!("x[{i}] == 1;")), "{}", errors[0]);
+    }
+}
+
+#[test]
+fn literals_rejected_with_their_menus() {
+    // A small instance of the benchmark
+    // `bench::literals::rejecting_literals_with_their_menus_scales`.
     assert_eq!(
         type_errors(&menus(2)),
         [
@@ -924,28 +844,5 @@ fn rejecting_literals_with_their_menus_scales() {
             decimal_at_int("0.5"),
             decimal_at_int("1.5"),
         ]
-    );
-    // A copy of every earlier error at each menu takes 45.2 times the bytes from 256 to 2,048
-    // here, and fails; a scan of every earlier error's text at each menu does not, since the
-    // checker's own work at each rejected literal is far larger than the scan up to n = 8,192.
-    use zed_tests::deep::statements;
-    let n = 256;
-    let units: Vec<_> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = statements(&menus(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, stmts, res)
-        })
-        .collect();
-    scaling::check_order(
-        "rejecting n decimals at a parameter and n compared with a class",
-        n,
-        1,
-        |m| {
-            let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-            let info = zedc::check::walk::check(stmts, res);
-            assert_eq!(info.errors.len(), 2 * m);
-        },
     );
 }

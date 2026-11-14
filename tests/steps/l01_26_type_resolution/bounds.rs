@@ -303,40 +303,12 @@ fn a_bounded_signature_printed_and_read_back_is_the_same_type() {
 }
 
 /// A signature of `n` parameters, each of its own variable, with the clause bounding all `n`.
-fn many_bounds(n: usize) -> String {
+pub(super) fn many_bounds(n: usize) -> String {
     let ps: Vec<String> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
     let bs: Vec<String> = (0..n)
         .map(|i| format!("T{i} in {}", ["int | f64", "String", "rat | bool"][i % 3]))
         .collect();
     format!("({}) -> T0 for {}", ps.join(", "), bs.join(", "))
-}
-
-#[test]
-fn printing_and_reading_a_signature_of_many_bounds_scales() {
-    let first = parse_type(&many_bounds(3)).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(
-        first.to_string(),
-        "(x0: T0, x1: T1, x2: T2) -> T0 for T0 in int | f64, T1 in String, T2 in rat | bool"
-    );
-    // Each size's type and printed text built before timing; printing and reading are timed
-    // apart.
-    let n = 400;
-    let inputs: std::collections::HashMap<usize, _> = [n, zed_tests::scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let t = parse_type(&many_bounds(m)).unwrap_or_else(|e| panic!("{e}"));
-            let text = t.to_string();
-            (m, (t, text))
-        })
-        .collect();
-    zed_tests::scaling::check("printing a signature of n bounds", n, |m| {
-        let (t, _) = &inputs[&m];
-        assert_eq!(t.to_string().matches(" in ").count(), m);
-    });
-    zed_tests::scaling::check("reading back a signature of n bounds", n, |m| {
-        let (t, text) = &inputs[&m];
-        assert_eq!(&parse_type(text).unwrap_or_else(|e| panic!("{e}")), t);
-    });
 }
 
 #[test]
@@ -376,7 +348,7 @@ fn an_argument_must_take_every_carrier_of_the_bound() {
 
 /// A function whose parameter `g` takes `n` arguments, each of its own bounded variable, and
 /// that calls `g` once.
-fn wide(n: usize) -> String {
+pub(super) fn wide(n: usize) -> String {
     let ps: Vec<String> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
     let bs: Vec<String> = (0..n).map(|i| format!("T{i} in int | f64")).collect();
     let args: Vec<String> = (0..n)
@@ -394,7 +366,7 @@ fn wide(n: usize) -> String {
 }
 
 /// `n` bounds clauses nested in the parameter of a function type.
-fn nested(n: usize) -> String {
+pub(super) fn nested(n: usize) -> String {
     let mut t = "(".repeat(n - 1);
     t.push_str("T0 -> T0 for T0 in int");
     for i in 1..n {
@@ -405,7 +377,7 @@ fn nested(n: usize) -> String {
 
 /// A function that passes its argument, of `n` parameters each of its own variable bounded by
 /// int and f64, where one bounded by int alone is expected.
-fn passed(n: usize) -> String {
+pub(super) fn passed(n: usize) -> String {
     let ps = |v: &str| -> String {
         let ps: Vec<String> = (0..n).map(|i| format!("x{i}: {v}{i}")).collect();
         ps.join(", ")
@@ -421,69 +393,6 @@ fn passed(n: usize) -> String {
         ps("U"),
         bs("U", "int | f64")
     )
-}
-
-/// The unit `text` lexed, parsed and resolved, for a test that times the check alone.
-fn resolved(text: &str) -> (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution) {
-    let tokens = lex_fence(text).unwrap();
-    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
-    let stmts = unit(text, &tokens, &tree).unwrap();
-    let res = resolve(&stmts).unwrap_or_else(|e| panic!("{e:?}"));
-    (stmts, res)
-}
-
-/// Checks `make(n)` at `n` and `8n` with `check_order`, each input lexed, parsed and resolved
-/// before timing, so that the check alone is measured.
-fn check_scales(what: &str, n: usize, make: impl Fn(usize) -> String) {
-    let inputs: std::collections::HashMap<usize, _> = [n, zed_tests::scaling::FACTOR * n]
-        .into_iter()
-        .map(|n| (n, resolved(&make(n))))
-        .collect();
-    zed_tests::scaling::check_order(what, n, 1, |n| {
-        let (stmts, res) = &inputs[&n];
-        let info = zedc::check::walk::check(stmts, res);
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
-}
-
-#[test]
-fn many_bounded_variables_scale() {
-    assert!(
-        type_errors(&wide(3)).is_empty(),
-        "{:?}",
-        type_errors(&wide(3))
-    );
-    assert_eq!(fmt(&wide(800)), wide(800));
-    check_scales("a clause of n bounds and a call of n arguments", 800, wide);
-}
-
-#[test]
-fn passing_a_function_of_many_bounded_variables_scales() {
-    assert!(
-        type_errors(&passed(3)).is_empty(),
-        "{:?}",
-        type_errors(&passed(3))
-    );
-    check_scales(
-        "a function of n bounded variables passed as one of n",
-        800,
-        passed,
-    );
-}
-
-#[test]
-fn nested_bounds_clauses_scale() {
-    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
-    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
-    assert!(
-        resolve_errors(&nested(3)).is_empty(),
-        "{:?}",
-        resolve_errors(&nested(3))
-    );
-    assert_eq!(fmt(&nested(400)), nested(400));
-    // The check alone is timed: the formatter's linear work would hide a walk of each
-    // clause's whole type, quadratic in the depth.
-    check_scales("n nested bounds clauses", 400, nested);
 }
 
 /// `p` calls its argument on an int; `p_wide` on an int and on an f64.
@@ -554,30 +463,6 @@ fn a_bounded_variable_only_in_the_result_gives_its_whole_bound() {
         sig(text, "h"),
         "(g: () -> T for T in int | f64) -> int | f64"
     );
-}
-
-#[test]
-fn printing_a_deep_function_type_scales() {
-    // Each function type is written in place: building each part as a string and copying it
-    // into the whole cost O(n^2) for n nested function types.
-    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
-    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
-    let inputs: std::collections::HashMap<usize, _> = [800, 6400]
-        .into_iter()
-        .map(|n| {
-            let (info, names) = info(&nested(n));
-            let (_, s) = info
-                .sigs
-                .iter()
-                .find(|(id, _)| names[**id] == "h")
-                .expect("h");
-            (n, s.clone())
-        })
-        .collect();
-    assert!(inputs[&800].to_string().ends_with(" -> 0"));
-    zed_tests::scaling::check("printing n nested function types", 800, |n| {
-        assert!(!inputs[&n].to_string().is_empty());
-    });
 }
 
 #[test]
@@ -656,7 +541,7 @@ fn a_lambda_outside_a_result_only_bound_names_the_whole_bound() {
 /// `p` and `q` both take a function of type `t` nested `n` deep, `(h: … (x: int) -> int …)
 /// -> int`, each level's result its own variable bounded by int when `bounded`; `q` passes its
 /// argument to `p`.
-fn passed_deep(n: usize, bounded: bool) -> String {
+pub(super) fn passed_deep(n: usize, bounded: bool) -> String {
     let mut t = String::from("(x: int) -> int");
     for i in 0..n {
         t = match bounded {
@@ -665,28 +550,6 @@ fn passed_deep(n: usize, bounded: bool) -> String {
         };
     }
     format!("p(g: {t}) = 0;\nq(f: {t}) = p(g: f);\n")
-}
-
-#[test]
-fn passing_a_deep_function_type_as_itself_scales() {
-    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
-    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
-    check_scales("a function type n deep passed as itself", 400, |n| {
-        passed_deep(n, false)
-    });
-}
-
-#[test]
-fn passing_a_deep_bounded_function_type_as_itself_scales() {
-    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
-    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
-    let e = type_errors(&passed_deep(3, true));
-    assert!(e.is_empty(), "{e:?}");
-    check_scales(
-        "a function type n deep, a bound at each level, passed as itself",
-        400,
-        |n| passed_deep(n, true),
-    );
 }
 
 /// Functions with bounded variables passed where other bounded function types are expected.
@@ -858,7 +721,7 @@ fn a_lambda_and_a_declared_function_of_the_same_body_give_the_same_result() {
 }
 
 /// `n` lambdas nested, each passed for a parameter bounded by int and using its own.
-fn nested_lambdas(n: usize) -> String {
+pub(super) fn nested_lambdas(n: usize) -> String {
     let mut body = String::from("x");
     for _ in 1..n {
         body = format!("x + p(g: (x) -> {body})");
@@ -868,33 +731,9 @@ fn nested_lambdas(n: usize) -> String {
 
 /// A lambda of `n` parameters, each of its own bounded variable, passed to the `h` of
 /// [`wide`].
-fn wide_lambda(n: usize) -> String {
+pub(super) fn wide_lambda(n: usize) -> String {
     let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
     format!("{}y = h(g: ({}) -> x0 + x0);\n", wide(n), xs.join(", "))
-}
-
-#[test]
-fn a_lambda_of_many_bounded_parameters_scales() {
-    let text = wide_lambda(3);
-    assert!(type_errors(&text).is_empty(), "{:?}", type_errors(&text));
-    assert_eq!(value(&text, "y"), "2");
-    check_scales(
-        "a lambda of n bounded parameters passed as a function of n",
-        800,
-        wide_lambda,
-    );
-}
-
-#[test]
-fn nested_lambdas_for_bounded_parameters_scale() {
-    zed_tests::deep::on_small_stack(|| {
-        assert_eq!(value(&nested_lambdas(3), "y"), "3");
-        check_scales(
-            "n nested lambdas, each for a bounded parameter",
-            400,
-            nested_lambdas,
-        );
-    });
 }
 
 #[test]
@@ -935,7 +774,7 @@ fn bounds_on_two_payloads_are_both_found() {
 /// A printed type of `n` definitions, the first a tuple of one bounded signature and each
 /// after it a tuple of two of the one before, ending with the last: the signature is reached
 /// by `2^n` paths and read once.
-fn shared_bounded_chain(n: usize) -> String {
+pub(super) fn shared_bounded_chain(n: usize) -> String {
     let mut text = String::from("type T0 = ((x: T) -> T for T in int | f64,); ");
     for i in 1..=n {
         text += &format!("type T{i} = (T{}, T{});\n", i - 1, i - 1);
@@ -943,23 +782,10 @@ fn shared_bounded_chain(n: usize) -> String {
     text + &format!("T{n}")
 }
 
-#[test]
-fn reading_a_chain_of_shared_bounded_parts_scales() {
-    let n = 200;
-    let texts: std::collections::HashMap<usize, String> = [n, zed_tests::scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, shared_bounded_chain(m)))
-        .collect();
-    zed_tests::scaling::check("reading a chain of n shared bounded tuples", n, |m| {
-        let t = parse_type(&texts[&m]).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(t.tuples.len(), 1);
-    });
-}
-
 /// A printed type of `n` definitions, each a tuple of a bounded signature of its own and the
 /// definition before it, ending with the last: each `for` clause is read against the parts
 /// its definition names, which hold every definition before it.
-fn bounded_chain(n: usize) -> String {
+pub(super) fn bounded_chain(n: usize) -> String {
     let mut text = String::from("type T0 = ((x: T) -> T for T in int | f64,);\n");
     for i in 1..=n {
         text += &format!(
@@ -968,21 +794,6 @@ fn bounded_chain(n: usize) -> String {
         );
     }
     text + &format!("T{n}")
-}
-
-#[test]
-fn reading_a_chain_of_bounded_definitions_scales() {
-    let n = 200;
-    let texts = zed_tests::scaling::inputs(n, bounded_chain);
-    zed_tests::scaling::check_order(
-        "reading a chain of n definitions, each with its own bounds clause",
-        n,
-        1,
-        |m| {
-            let t = parse_type(&texts[&m]).unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(t.tuples.len(), 1);
-        },
-    );
 }
 
 /// `bounded_chain` with `T0` bounding `W` in place of `T`, so that of the definitions only the
@@ -1026,7 +837,7 @@ fn a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected() {
 /// A type of `n` bounded signatures, each for a variable of its own name (`X1` to `Xn`) and
 /// each in a tuple with the one before, every one also taking `int | #x`, a part used `n`
 /// times, so the checker prints it with a definition before the whole text.
-fn distinct_bounds_chain(n: usize) -> String {
+pub(super) fn distinct_bounds_chain(n: usize) -> String {
     let mut text = String::from("type D0 = (int | #x,);\n");
     for k in 1..=n {
         text += &format!(
@@ -1057,24 +868,76 @@ fn a_printed_type_has_each_bounds_clause_on_a_signature_of_its_last_part() {
 }
 
 #[test]
-fn reading_back_a_printed_type_of_many_distinct_bounded_variables_scales() {
-    // The printed texts of `distinct_bounds_chain`, built before timing. Each of the n clauses
-    // bounds a variable of its own name on a signature of the last part, which the reading
-    // meets first: O(n). A reading that searched the type for each variable, as it does for
-    // a variable whose signature was emptied away, would take O(n^2) here (COMPLEXITY.md
-    // F155).
-    let n = 200;
-    let inputs = zed_tests::scaling::inputs(n, |m| {
-        let t = parse_type(&distinct_bounds_chain(m)).unwrap_or_else(|e| panic!("{e}"));
-        let text = t.to_string();
-        (t, text)
-    });
-    zed_tests::scaling::check(
-        "reading back a printed type of n bounded signatures, each for a variable of its own name",
-        n,
-        |m| {
-            let (t, text) = &inputs[&m];
-            assert_eq!(&parse_type(text).unwrap_or_else(|e| panic!("{e}")), t);
-        },
+fn a_signature_of_many_bounds_prints_and_reads_back() {
+    // A small instance of the benchmarks
+    // `bench::bounds::printing_a_signature_of_many_bounds_scales`
+    // and `bench::bounds::reading_back_a_signature_of_many_bounds_scales`.
+    let first = parse_type(&many_bounds(3)).unwrap_or_else(|e| panic!("{e}"));
+    let printed = first.to_string();
+    assert_eq!(
+        printed,
+        "(x0: T0, x1: T1, x2: T2) -> T0 for T0 in int | f64, T1 in String, T2 in rat | bool"
     );
+    assert_eq!(parse_type(&printed).unwrap_or_else(|e| panic!("{e}")), first);
+}
+
+#[test]
+fn many_bounded_variables_and_nested_clauses_are_checked() {
+    // Small instances of the benchmarks `bench::bounds::many_bounded_variables_scale`,
+    // `bench::bounds::passing_a_function_of_many_bounded_variables_scales`,
+    // `bench::bounds::nested_bounds_clauses_scale`,
+    // `bench::bounds::passing_a_deep_function_type_as_itself_scales`,
+    // `bench::bounds::passing_a_deep_bounded_function_type_as_itself_scales` and
+    // `bench::bounds::a_lambda_of_many_bounded_parameters_scales`.
+    for text in [
+        wide(3),
+        passed(3),
+        nested(3),
+        passed_deep(3, false),
+        passed_deep(3, true),
+        wide_lambda(3),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
+    assert_eq!(fmt(&wide(3)), wide(3));
+    assert_eq!(fmt(&nested(3)), nested(3));
+    assert!(resolve_errors(&nested(3)).is_empty());
+    assert_eq!(value(&wide_lambda(3), "y"), "2");
+}
+
+#[test]
+fn nested_lambdas_for_bounded_parameters_give_their_value() {
+    // A small instance of the benchmark
+    // `bench::bounds::nested_lambdas_for_bounded_parameters_scale`.
+    assert_eq!(value(&nested_lambdas(3), "y"), "3");
+}
+
+#[test]
+fn a_deep_function_type_prints() {
+    // A small instance of the benchmark `bench::bounds::printing_a_deep_function_type_scales`.
+    let (info, names) = info(&nested(3));
+    let (_, s) = info
+        .sigs
+        .iter()
+        .find(|(id, _)| names[**id] == "h")
+        .expect("h");
+    assert_eq!(
+        s.to_string(),
+        "(g: (((T0) -> T0 for T0 in int) -> T1 for T1 in f64) -> T2 for T2 in f64) -> 0"
+    );
+}
+
+#[test]
+fn chains_of_bounded_definitions_read_as_one_tuple() {
+    // Small instances of the benchmarks
+    // `bench::bounds::reading_a_chain_of_shared_bounded_parts_scales`,
+    // `bench::bounds::reading_a_chain_of_bounded_definitions_scales` and
+    // `bench::bounds::reading_back_a_printed_type_of_many_distinct_bounded_variables_scales`.
+    for text in [shared_bounded_chain(3), bounded_chain(3)] {
+        let t = parse_type(&text).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(t.tuples.len(), 1, "{text}");
+        assert_eq!(parse_type(&t.to_string()).unwrap_or_else(|e| panic!("{e}")), t);
+    }
+    let t = parse_type(&distinct_bounds_chain(3)).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(parse_type(&t.to_string()).unwrap_or_else(|e| panic!("{e}")), t);
 }

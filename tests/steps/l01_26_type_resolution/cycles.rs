@@ -138,53 +138,49 @@ fn a_function_that_calls_a_recursive_one_is_checked() {
 }
 
 /// `n` cycles of two functions each, and a chain of `n` functions, each calling the one before
-/// and a function of a cycle: the checker's pass at `n` and `8n`. Its own work hides that of
-/// the order, which `the_order_around_many_cycles_scales` times alone.
-#[test]
-fn many_cycles_beside_many_functions_scale() {
-    let units = super::scaling::resolved(200, |n| {
-        let mut text = String::from("g0(positional c: int) = 1 + c;\n");
-        for i in 0..n {
-            text.push_str(&format!(
-                "p{i}(positional n: int) = q{i}(n);\nq{i}(positional n: int) = p{i}(n);\n"
-            ));
-            text.push_str(&format!(
-                "g{}(positional c: int) = g{i}(c) + g0(p{i}(c));\n",
-                i + 1
-            ));
-        }
-        text
-    });
-    zed_tests::scaling::check_order("n cycles beside a chain of n functions", 200, 1, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), n);
-        assert_eq!(info.sigs.len(), n + 1);
-    });
+/// and a function of a cycle.
+pub(super) fn cycles_beside_a_chain(n: usize) -> String {
+    let mut text = String::from("g0(positional c: int) = 1 + c;\n");
+    for i in 0..n {
+        text.push_str(&format!(
+            "p{i}(positional n: int) = q{i}(n);\nq{i}(positional n: int) = p{i}(n);\n"
+        ));
+        text.push_str(&format!(
+            "g{}(positional c: int) = g{i}(c) + g0(p{i}(c));\n",
+            i + 1
+        ));
+    }
+    text
 }
 
-/// The order alone, around `n` cycles of two items each, with a chain of `n` items each
-/// depending on the one before and on an item of a cycle; `check_order` sees what the checker's
-/// pass above hides.
 #[test]
-fn the_order_around_many_cycles_scales() {
+fn cycles_beside_a_chain_of_functions_are_each_one_error() {
+    // A small instance of the benchmark `bench::cycles::many_cycles_beside_many_functions_scale`.
+    let (info, _) = super::info(&cycles_beside_a_chain(3));
+    assert_eq!(info.errors.len(), 3);
+    assert_eq!(info.sigs.len(), 4);
+}
+
+/// `3n` items: item `3i` and `3i + 1` form cycle `i`; item `3i + 2` depends on `3i - 1` and on
+/// `3i`.
+pub(super) fn deps_around_cycles(n: usize) -> Vec<Vec<usize>> {
+    (0..3 * n)
+        .map(|k| match k % 3 {
+            0 => vec![k + 1],
+            1 => vec![k - 1],
+            _ => match k {
+                2 => vec![0],
+                _ => vec![k - 3, k - 2],
+            },
+        })
+        .collect()
+}
+
+#[test]
+fn the_order_around_cycles_lists_each_item_outside_them_and_each_cycle() {
+    // A small instance of the benchmark `bench::cycles::the_order_around_many_cycles_scales`.
     use zedc::resolve::topo::topo_around_cycles;
-    // Item `3i` and `3i + 1` form cycle `i`; item `3i + 2` depends on `3i - 1` and on `3i`.
-    let deps = |n: usize| -> Vec<Vec<usize>> {
-        (0..3 * n)
-            .map(|k| match k % 3 {
-                0 => vec![k + 1],
-                1 => vec![k - 1],
-                _ => match k {
-                    2 => vec![0],
-                    _ => vec![k - 3, k - 2],
-                },
-            })
-            .collect()
-    };
-    let made = zed_tests::scaling::inputs(20_000, deps);
-    zed_tests::scaling::check_order("the order around n cycles", 20_000, 1, |n| {
-        let deps = &made[&n];
-        let (order, cycles) = topo_around_cycles(deps, deps.len());
-        assert_eq!((order.len(), cycles.len()), (n, n));
-    });
+    let deps = deps_around_cycles(3);
+    let (order, cycles) = topo_around_cycles(&deps, deps.len());
+    assert_eq!((order.len(), cycles.len()), (3, 3));
 }

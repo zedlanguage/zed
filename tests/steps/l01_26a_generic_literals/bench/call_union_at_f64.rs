@@ -12,7 +12,7 @@ fn scaling() {
     // walking the branches again for each, would be O(n^2). The small instance is
     // `a_call_of_many_listed_values_and_an_if_of_many_branches_are_read_at_f64`.
     scaling::on_a_thread(1 << 29, || {
-        let n = 250;
+        let n = 630;
         let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
         scaling::check(
             "reading a call of n listed values and an `if` of n branches at `f64`",

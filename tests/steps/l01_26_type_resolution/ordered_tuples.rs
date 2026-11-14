@@ -11,15 +11,11 @@
 //! of the two components there, each step that leads to it and the repairs, each tried
 //! before it is offered (MSG-compare-components).
 
-use std::collections::BTreeMap;
-
-use zed_tests::scaling;
-
-use super::{Resolved, info, type_errors};
+use super::{info, type_errors};
 
 /// `t0 = (1, 1)`, then `n - 1` bindings each holding the last twice, the last compared with
 /// itself by `op`.
-fn doubled(n: usize, op: &str) -> String {
+pub(super) fn doubled(n: usize, op: &str) -> String {
     let mut text = "t0 = (1, 1);\n".to_string();
     text.extend((1..n).map(|i| format!("t{i} = (t{0}, t{0});\n", i - 1)));
     text.push_str(&format!("less = t{0} {op} t{0};\n", n - 1));
@@ -27,13 +23,13 @@ fn doubled(n: usize, op: &str) -> String {
 }
 
 /// A parameter of `n` tuple shapes `(#ai, int)`, compared with itself.
-fn tagged(n: usize) -> String {
+pub(super) fn tagged(n: usize) -> String {
     let arms: Vec<String> = (0..n).map(|i| format!("(#a{i}, int)")).collect();
     format!("f(positional x: {}) = x < x;\n", arms.join(" | "))
 }
 
 /// A parameter of the tuples of `int` of each length from 1 to `n`, compared with itself.
-fn lengths(n: usize) -> String {
+pub(super) fn lengths(n: usize) -> String {
     let arms: Vec<String> = (1..=n)
         .map(|i| match i {
             1 => "(int,)".to_string(),
@@ -45,7 +41,7 @@ fn lengths(n: usize) -> String {
 
 /// `x` of `n` nested tuples around `(int,)` and `y` of `n` around `(inner,)`, each tuple's
 /// second component an `int`, compared: the pair that does not compare is at depth `n`.
-fn nested(n: usize, inner: &str) -> String {
+pub(super) fn nested(n: usize, inner: &str) -> String {
     let around = |inner: &str| (0..n).fold(format!("({inner},)"), |t, _| format!("({t}, int)"));
     format!(
         "f(positional x: {}, positional y: {}) = x < y;\n",
@@ -279,63 +275,6 @@ fn each_offered_repair_is_accepted() {
 }
 
 #[test]
-fn rows_held_twice_at_each_level_compare_in_linear_time() {
-    let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&doubled(n, "<"))))
-        .collect();
-    scaling::check_order(
-        "t < t over n levels each holding the last twice",
-        500,
-        1,
-        |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "at {n}: {:?}", info.errors);
-        },
-    );
-}
-
-#[test]
-fn many_tuple_shapes_compare_in_linear_time() {
-    let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&tagged(n))))
-        .collect();
-    scaling::check_order("x < x over n tuple shapes (#ai, int)", 500, 1, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "at {n}: {:?}", info.errors);
-    });
-}
-
-#[test]
-fn tuples_of_every_length_compare_in_time_linear_in_their_components() {
-    // The type holds n(n + 1)/2 components, so work linear in it is of order n².
-    let units: BTreeMap<usize, Resolved> = [20, scaling::FACTOR * 20]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&lengths(n))))
-        .collect();
-    scaling::check_order("x < x over tuples of each length from 1 to n", 20, 2, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "at {n}: {:?}", info.errors);
-    });
-}
-
-#[test]
-fn a_mismatch_at_depth_n_is_reported_in_linear_time() {
-    // The message names the place, `n` indices, once, and one step for each level, each of
-    // its own size; the two declared types, of size `n`, are printed once each.
-    let units: BTreeMap<usize, Resolved> = [200, scaling::FACTOR * 200]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&nested(n, "bool"))))
-        .collect();
-    scaling::check_order("x < y failing at depth n", 200, 1, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), 1, "at {n}");
-        assert_eq!(info.errors[0].notes.len(), n + 8, "at {n}");
-    });
-}
-
-#[test]
 fn a_repair_at_depth_n_is_the_whole_comparison_rewritten() {
     // The headline's repair writes `x` again with its innermost `int` cast to `rat` and every
     // other component read from `x`, and the checker accepts it.
@@ -354,19 +293,10 @@ fn a_repair_at_depth_n_is_the_whole_comparison_rewritten() {
 }
 
 #[test]
-fn a_repair_at_depth_n_is_written_in_time_linear_in_its_length() {
-    // Complexity tradeoff: the repair is the whole comparison rewritten, and the component it
-    // writes at level `j` is read from `x` by `j` indices, so the repair holds n(n + 1)/2
-    // indices: work linear in it is of order n². Naming the place alone, `rat(x[0]…[0])` in
-    // place of `x[0]…[0]`, was O(n), but it is not an expression the program can hold
-    // (DESIGN.md sec:diagnostics). COMPLEXITY.md row F140.
-    let units: BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&nested(n, "rat"))))
-        .collect();
-    scaling::check_order("x < y with a repair at depth n", 100, 2, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), 1, "at {n}");
-        assert!(info.errors[0].message.contains("Try `("), "at {n}");
-    });
+fn a_mismatch_at_depth_n_names_one_step_for_each_level() {
+    // A small instance of the benchmark
+    // `bench::ordered_tuples::a_mismatch_at_depth_n_is_reported_in_linear_time`.
+    let (i, _) = info(&nested(3, "bool"));
+    assert_eq!(i.errors.len(), 1, "{:?}", i.errors);
+    assert_eq!(i.errors[0].notes.len(), 3 + 8, "{:?}", i.errors[0].notes);
 }

@@ -10,11 +10,10 @@
 
 use zed_kernel::Value;
 use zed_kernel::types::Type;
-use zed_tests::deep::{on_small_stack, statements};
-use zed_tests::scaling;
 use zedc::check::ty::{Carrier, Ty};
 use zedc::rejection::Row;
 
+use super::deep_ops::{DEEP, on_shallow_stack};
 use super::type_errors;
 
 /// The rejection of `a op b`, of the types `ta` and `tb` at their carriers, that no repair
@@ -288,53 +287,20 @@ fn nested(d: usize, b: Ty) -> Ty {
 }
 
 #[test]
-fn carriers_of_a_deep_tuple_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn carriers_of_a_deep_tuple_run_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let (a, b) = (
-            nested(100_000, int(1)).carriers(),
-            nested(100_000, Ty::carrier(Carrier::Str)).carriers(),
+            nested(DEEP, int(1)).carriers(),
+            nested(DEEP, Ty::carrier(Carrier::Str)).carriers(),
         );
-        assert!(a.meets(&nested(100_000, int(7)).carriers()));
+        assert!(a.meets(&nested(DEEP, int(7)).carriers()));
         assert!(!a.meets(&b));
-    });
-}
-
-#[test]
-fn carriers_of_shared_tuples_scale() {
-    // `t(k+1) = (t(k), t(k))` has `2^n` paths through `n` nodes; each is widened once.
-    let shared = |n: usize| (0..n).fold(int(1), |t, _| Ty::tuple(vec![t.clone(), t]));
-    let ts: Vec<_> = [512, scaling::FACTOR * 512]
-        .into_iter()
-        .map(|n| (n, shared(n)))
-        .collect();
-    scaling::check_order("carriers of n shared tuples", 512, 1, |n| {
-        let (_, t) = ts.iter().find(|(k, _)| *k == n).unwrap();
-        assert!(!t.carriers().is_empty());
-    });
-}
-
-/// Checks the programs `text(n)` and `text(8n)`, lexed, parsed and resolved before timing,
-/// and checks each is rejected once, in the row `row`, in time linear in n.
-fn rejects_linearly(what: &str, n: usize, text: fn(usize) -> String, row: Row) {
-    let units: Vec<_> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = statements(&text(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, stmts, res)
-        })
-        .collect();
-    scaling::check_order(what, n, 1, |m| {
-        let (_, stmts, res) = units.iter().find(|(k, _, _)| *k == m).unwrap();
-        let info = zedc::check::walk::check(stmts, res);
-        let rows: Vec<_> = info.errors.iter().map(|e| e.row).collect();
-        assert_eq!(rows, [Some(row)], "{:?}", info.errors);
     });
 }
 
 /// `x == y` with `x` a union of `n` tuples `(#ak, String)` and `y` one of `n` tuples
 /// `(#ak, int)`: a scan of each arm against each would compare `n^2` pairs.
-fn wide_union(n: usize) -> String {
+pub(super) fn wide_union(n: usize) -> String {
     let arms = |last: &str| {
         (0..n)
             .map(|k| format!("(#a{k}, {last})"))
@@ -349,20 +315,35 @@ fn wide_union(n: usize) -> String {
 
 /// `x == y` with `x` and `y` tuples of `n` components, the last `String` in one and `int` in
 /// the other.
-fn wide_tuples(n: usize) -> String {
+pub(super) fn wide_tuples(n: usize) -> String {
     let ints = vec!["int"; n - 1].join(", ");
     format!("f(positional x: ({ints}, String), positional y: ({ints}, int)) = x == y;\n")
 }
 
 /// `p == (0, …, 0, 1r)` with `p` a tuple of `n` components, the last `bool`.
-fn wide_written(n: usize) -> String {
+pub(super) fn wide_written(n: usize) -> String {
     let ints = vec!["int"; n - 1].join(", ");
     let zeros = vec!["0"; n - 1].join(", ");
     format!("f(positional p: ({ints}, bool)) = p == ({zeros}, 1r);\n")
 }
 
+/// `t(k+1) = (t(k), t(k))` from `t(0) = 1`: `2^n` paths through `n` nodes.
+pub(super) fn shared(n: usize) -> Ty {
+    (0..n).fold(int(1), |t, _| Ty::tuple(vec![t.clone(), t]))
+}
+
 #[test]
-fn rejecting_two_wide_types_that_share_no_value_scales() {
+fn carriers_of_shared_tuples_widen_each_component() {
+    // A small instance of the benchmark `bench::no_common_value::carriers_of_shared_tuples_scale`.
+    let int_ = Ty::carrier(Carrier::Int);
+    let pair = Ty::tuple(vec![int_.clone(), int_]);
+    assert_eq!(shared(2).carriers(), Ty::tuple(vec![pair.clone(), pair]));
+}
+
+#[test]
+fn two_wide_types_that_share_no_value_are_rejected() {
+    // A small instance of the benchmark
+    // `bench::no_common_value::rejecting_two_wide_types_that_share_no_value_scales`.
     let errors = type_errors(&wide_union(2));
     assert_eq!(
         errors,
@@ -374,18 +355,6 @@ fn rejecting_two_wide_types_that_share_no_value_scales() {
             "(#a0, int) | (#a1, int)"
         )]
     );
-    rejects_linearly(
-        "== of a union of n tuples",
-        256,
-        wide_union,
-        Row::EqNoCommonCarrier,
-    );
-    rejects_linearly(
-        "== of two tuples of n components",
-        256,
-        wide_tuples,
-        Row::EqNoCommonCarrier,
-    );
     assert_eq!(
         type_errors(&wide_written(3)),
         [
@@ -393,10 +362,9 @@ fn rejecting_two_wide_types_that_share_no_value_scales() {
              of the right operand is always `false`. Try `false` instead. [p == (0, 0, 1r)]"
         ]
     );
-    rejects_linearly(
-        "== of a tuple of n components and a written one",
-        256,
-        wide_written,
-        Row::EqNoCommonCarrier,
-    );
+    for text in [wide_union(3), wide_tuples(3), wide_written(3)] {
+        let (info, _) = super::info(&text);
+        let rows: Vec<_> = info.errors.iter().map(|e| e.row).collect();
+        assert_eq!(rows, [Some(Row::EqNoCommonCarrier)], "{text}");
+    }
 }

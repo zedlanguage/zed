@@ -167,7 +167,8 @@ pub(super) fn decimals(n: usize) -> String {
 
 #[test]
 fn a_chain_of_bindings_of_literals_is_an_int() {
-    // A small instance of the benchmark `bench::name_fixed::bindings_of_literals_check_in_linear_time`.
+    // A small instance of the benchmark
+    // `bench::name_fixed::bindings_of_literals_check_in_linear_time`.
     assert_eq!(sig(&chain(3), "f"), "() -> int");
 }
 

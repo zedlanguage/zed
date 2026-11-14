@@ -203,19 +203,18 @@ fn a_misplaced_argument_is_the_one_error_of_the_expressions_around_it() {
     );
 }
 
-/// Item NUM-huge-div: n misplaced arguments, each in an operation and in a name read once more,
-/// give their n errors and no more in linear time: an application of an argument with no value
-/// asks one set of spans, once per argument.
+/// `n` misplaced arguments, each in an operation and in a name read once more.
+pub(super) fn misplaced_arguments(n: usize) -> String {
+    let mut text = DECLS.to_string();
+    text.extend((0..n).map(|i| {
+        format!("y{i} = (dbl(3) + 1) * \"a\";\nz{i} = dbl(3);\nw{i} = z{i} + \"a\";\n")
+    }));
+    text
+}
+
 #[test]
-fn many_misplaced_arguments_in_operations_check_in_linear_time() {
-    let units = super::scaling::resolved(40, |n| {
-        let mut text = DECLS.to_string();
-        text.extend((0..n).map(|i| {
-            format!("y{i} = (dbl(3) + 1) * \"a\";\nz{i} = dbl(3);\nw{i} = z{i} + \"a\";\n")
-        }));
-        text
-    });
-    zed_tests::scaling::check("n misplaced arguments in operations", 40, |n| {
-        assert_eq!(units[&n].check().errors.len(), 2 * n);
-    });
+fn misplaced_arguments_in_operations_are_two_errors_each() {
+    // A small instance of the benchmark
+    // `bench::named_calls::many_misplaced_arguments_in_operations_check_in_linear_time`.
+    assert_eq!(type_errors(&misplaced_arguments(3)).len(), 6);
 }

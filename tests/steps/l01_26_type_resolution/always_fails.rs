@@ -8,9 +8,6 @@
 //! read whose key shares no value with the map's keys (R11, row "Key outside the permission
 //! bound") are rejected; the same operations on a parameter keep their atom.
 
-use zed_tests::scaling;
-
-use super::scaling::resolved;
 use super::{sig, type_errors};
 
 /// The message for `op` on the divisor `at`, always 0 for `reason`, in a function of `kind`.
@@ -240,37 +237,27 @@ fn a_key_that_may_be_present_keeps_its_atom() {
 
 /// A function of `n` parameters whose divisor adds each parameter and the constant 1 and
 /// subtracts them again, so is always 0.
-fn cancelling(n: usize) -> String {
+pub(super) fn cancelling(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("x{i}: int")).collect();
     let terms: String = (0..n).map(|i| format!(" + x{i} + 1 - x{i} - 1")).collect();
     format!("f({}) = 1 div (0{terms});\n", params.join(", "))
 }
 
-#[test]
-fn a_long_divisor_that_cancels_scales() {
-    // One pass over the divisor's sums, with a count for each name, and one balanced sum of
-    // the constants.
-    assert_eq!(type_errors(&cancelling(3)).len(), 1);
-    let units = resolved(2000, cancelling);
-    scaling::check("a divisor of n terms that cancel", 2000, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
-    });
-}
-
 /// A function of `n` divisions, each divisor `x + 1 +` the next division.
-fn nested(n: usize) -> String {
+pub(super) fn nested(n: usize) -> String {
     let open: String = (0..n).map(|_| "x div (x + 1 + ").collect();
     format!("f(x: int) = {open}x{};\n", ")".repeat(n))
 }
 
+
 #[test]
-fn nested_divisions_scale() {
-    // The sums of each divisor end at the division inside it, so no divisor is read twice.
+fn a_long_divisor_that_cancels_is_one_rejection() {
+    // A small instance of the benchmark `bench::always_fails::a_long_divisor_that_cancels_scales`.
+    assert_eq!(type_errors(&cancelling(3)).len(), 1);
+}
+
+#[test]
+fn divisions_nested_in_their_divisors_are_accepted() {
+    // A small instance of the benchmark `bench::always_fails::nested_divisions_scale`.
     assert!(type_errors(&nested(3)).is_empty());
-    let units = resolved(2000, nested);
-    scaling::check("n divisions nested in their divisors", 2000, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{:?}", info.errors);
-    });
 }

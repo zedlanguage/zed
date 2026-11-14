@@ -12,7 +12,7 @@ fn scaling() {
     // each pair of values of the two operands, as each would be alone, costs O(v²). The small
     // instance is `two_calls_of_many_listed_values_and_an_if_of_many_decimals_check`.
     scaling::on_a_thread(1 << 29, || {
-        let n = 250;
+        let n = 440;
         let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
         scaling::check(
             "adding two calls of n listed values beside f64, and reading an `if` of n \

@@ -6,7 +6,7 @@ use super::super::parts_type::{calls, parts};
 #[test]
 fn a_call_that_reads_many_parts_checks_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
-        let n = 1000;
+        let n = 1600;
         let srcs = [parts(n), parts(scaling::FACTOR * n)];
         scaling::check("checking a call that reads n parts of its tuple", n, |m| {
             checked(&srcs[usize::from(m != n)]);

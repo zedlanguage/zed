@@ -1,7 +1,9 @@
 //! Replacing variables in a type nested as deep as the program: [`Ty::subst`], [`Ty::replace`],
 //! [`Ty::renamed`], [`Ty::replace_outside`], [`Ty::settle`] and [`Sig::settle`] keep their own
 //! stack (TY-subst-stacks). Each recursed once a level through rows, payload shapes and
-//! functions, and overflowed a 2 MiB stack a few thousand levels deep.
+//! functions, and overflowed a 2 MiB stack a few thousand levels deep. Each runs here on a stack
+//! as small a level as 2 MiB at 100,000 levels (`super::deep_ops::DEEP`); the benchmarks of
+//! their time are in `bench::deep_types`.
 //!
 //! Comparing two such types built apart, with `==`, keeps its own stack too (ROW-eq-deep).
 
@@ -9,9 +11,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_kernel::types::Type;
-use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
 use zedc::check::ty::{Binds, SParam, Shape, Sig, Ty};
+
+use super::deep_ops::{DEEP, on_shallow_stack};
 
 /// The type `#z`, which the tests put in the place of a variable.
 fn z() -> Ty {
@@ -77,7 +80,7 @@ fn solve(v: &str) -> Option<Ty> {
 }
 
 /// The results of each replacement over `t`.
-fn replaced_each_way(t: &Ty) -> [Ty; 6] {
+pub(super) fn replaced_each_way(t: &Ty) -> [Ty; 6] {
     let tz = binds(&[("T", z()), ("V", z())]);
     let names = binds(&[("T", Ty::var("U".into())), ("V", Ty::var("W".into()))]);
     let held = Arc::new(Sig::one(Vec::new(), Vec::new(), t.clone()));
@@ -145,9 +148,11 @@ fn replacements_in_a_shallow_type_are_as_built() {
 }
 
 #[test]
-fn replacements_in_a_type_100000_deep_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
-        let n = 100_000;
+fn replacements_in_a_deep_type_run_on_a_shallow_stack() {
+    // Each recursed once a level and overflowed a 2 MiB stack a few thousand levels deep; the
+    // stack here is as small a level as 2 MiB at 100,000 levels.
+    on_shallow_stack(|| {
+        let n = DEEP;
         let t = chain(n, &same);
         assert_eq!(hashes(&replaced_each_way(&t)), hashes(&expected(n)));
     });
@@ -155,7 +160,7 @@ fn replacements_in_a_type_100000_deep_run_on_a_2_mib_stack() {
 
 /// A type `n` levels deep in which each level holds the one below twice, so it has `2^n` paths
 /// and `n` rows, shapes and functions, in a tuple: each replacement makes each once.
-fn shared(n: usize) -> Ty {
+pub(super) fn shared(n: usize) -> Ty {
     let mut t = Ty::var("T".into());
     for k in 0..n {
         t = match k % 3 {
@@ -165,20 +170,6 @@ fn shared(n: usize) -> Ty {
         };
     }
     Ty::tuple(vec![t])
-}
-
-#[test]
-fn replacements_in_a_shared_type_take_linear_time_on_a_2_mib_stack() {
-    // Each run builds its type: `Sig::settle` keeps what it made in the signature, so a second
-    // run on one type would not settle it again.
-    on_small_stack(|| {
-        scaling::check_order("each replacement in a shared type n deep", 4000, 1, |n| {
-            let made = replaced_each_way(&shared(n));
-            let (tys, held) = made.split_at(5);
-            assert!(tys.iter().all(|t| t.tuples.len() == 1), "{n} deep");
-            assert_eq!(held[0].fns.len(), 1, "{n} deep");
-        });
-    });
 }
 
 /// A type `n` levels deep with `bottom` at the bottom, a tuple, an atom's payload and a
@@ -195,6 +186,18 @@ fn levels(n: usize, bottom: Ty) -> Ty {
 /// `((… (bottom, #z) …, #z), #z)`, `n` tuples deep, each built anew.
 fn tuples(n: usize, bottom: Ty) -> Ty {
     (0..n).fold(bottom, |t, _| Ty::tuple(vec![t, z()]))
+}
+
+#[test]
+fn replacements_in_a_shared_type_make_each_node_once() {
+    // A small instance of the benchmark
+    // `bench::deep_types::replacements_in_a_shared_type_take_linear_time`.
+    for n in 0..9 {
+        let made = replaced_each_way(&shared(n));
+        let (tys, held) = made.split_at(5);
+        assert!(tys.iter().all(|t| t.tuples.len() == 1), "{n} deep");
+        assert_eq!(held[0].fns.len(), 1, "{n} deep");
+    }
 }
 
 #[test]
@@ -233,50 +236,34 @@ fn a_value_shared_on_one_side_and_built_twice_on_the_other_compares_each_copy() 
 }
 
 #[test]
-fn types_built_apart_100000_deep_compare_on_a_2_mib_stack() {
-    // `==` recursed once a level through rows, payload shapes and signatures, and overflowed
-    // this stack a few thousand levels deep (ROW-eq-deep).
-    let n = 100_000;
+fn types_built_apart_deep_compare_on_a_shallow_stack() {
+    // `==` recursed once a level through rows, payload shapes and signatures, and overflowed a
+    // 2 MiB stack a few thousand levels deep (ROW-eq-deep).
+    let n = DEEP;
     let (a, b, c) = (
         levels(n, z()),
         levels(n, z()),
         levels(n, Ty::set(Type::atom("y"))),
     );
-    on_small_stack(|| {
+    on_shallow_stack(|| {
         assert!(a == b);
         assert!(a != c);
     });
 }
 
 #[test]
-fn tuples_built_apart_200000_deep_compare_on_an_8_mib_stack() {
-    // The recursive `==` overflowed this stack (ROW-eq-deep).
-    let n = 200_000;
+fn tuples_built_apart_deep_compare_on_a_shallow_stack() {
+    // The recursive `==` overflowed an 8 MiB stack 200,000 deep, about 42 bytes a level
+    // (ROW-eq-deep); the stack here is about 21 bytes a level.
+    let n = DEEP;
     let (a, b, c) = (
         tuples(n, z()),
         tuples(n, z()),
         tuples(n, Ty::set(Type::atom("y"))),
     );
-    scaling::on_a_thread(8 << 20, || {
+    on_shallow_stack(|| {
         assert!(a == b);
         assert!(a != c);
-    });
-}
-
-#[test]
-fn shared_types_built_apart_compare_in_linear_time() {
-    // Each side holds `2^n` paths through `n` nodes, and no node is shared between the sides:
-    // a comparison that followed the paths took `2^n` time.
-    let n = 2000;
-    let pairs: std::collections::BTreeMap<usize, (Ty, Ty)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|k| (k, (shared(k), shared(k))))
-        .collect();
-    on_small_stack(|| {
-        scaling::check_order("== on two shared types n deep built apart", n, 1, |k| {
-            let (a, b) = &pairs[&k];
-            assert!(a == b, "{k} deep");
-        });
     });
 }
 

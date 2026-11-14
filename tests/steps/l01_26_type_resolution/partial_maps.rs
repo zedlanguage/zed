@@ -7,9 +7,8 @@
 //! `(L) -> V` and `(U) -> V | #notFound`: a key in `L` finds its value, a key in `U` alone may
 //! not, and a key not inside `U` is a static error (the lookup rows of sec:type_language).
 
-use zed_tests::scaling;
 
-use super::{Resolved, sig, type_errors};
+use super::{sig, type_errors};
 
 #[test]
 fn a_lookup_in_a_partial_map_may_be_not_found() {
@@ -97,7 +96,7 @@ fn a_partial_map_of_partial_maps_misses_at_either_step() {
 /// `n` partial maps as parameters, each looked up once and the lookups summed, and a partial
 /// map nested `n` deep looked up to the bottom: each written `->?` is denoted once, so checking
 /// is linear in `n`.
-fn many(n: usize) -> String {
+pub(super) fn many(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("m{i}: String ->? int")).collect();
     let reads: Vec<String> = (0..n).map(|i| format!("(m{i}[\"k\"] else 0)")).collect();
     let deep = format!("{}int{}", "String ->? (".repeat(n), ")".repeat(n));
@@ -110,22 +109,11 @@ fn many(n: usize) -> String {
 }
 
 #[test]
-fn checking_many_and_deep_partial_maps_scales() {
+fn many_and_deep_partial_maps_are_looked_up() {
+    // A small instance of the benchmark
+    // `bench::partial_maps::checking_many_and_deep_partial_maps_scales`.
     assert_eq!(type_errors(&many(3)), Vec::<String>::new(), "{}", many(3));
     assert_eq!(sig(&many(2), "g"), "(m: String ->? String ->? int) -> int");
-    let units: std::collections::BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
-        .into_iter()
-        .map(|m| (m, Resolved::new(&many(m))))
-        .collect();
-    scaling::check_order(
-        "n partial maps, and one nested n deep, looked up",
-        100,
-        1,
-        |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-        },
-    );
 }
 
 /// `f(m: M, k: K) = m[k];` with the map type `M` and the key type `K`: the signature of `f`.
@@ -263,7 +251,7 @@ fn a_bounded_map_reads_back_in_every_position() {
 
 /// `n` bounded maps looked up by a key of their permission, and one bounded map nested `n`
 /// deep looked up `n` times.
-fn bounded(n: usize) -> String {
+pub(super) fn bounded(n: usize) -> String {
     let params: Vec<String> = (0..n)
         .map(|i| format!("m{i}: int .. int | String -> int, k{i}: String"))
         .collect();
@@ -282,7 +270,9 @@ fn bounded(n: usize) -> String {
 }
 
 #[test]
-fn checking_and_printing_many_and_deep_bounded_maps_scales() {
+fn many_and_deep_bounded_maps_are_looked_up_and_printed() {
+    // A small instance of the benchmark
+    // `bench::partial_maps::checking_and_printing_many_and_deep_bounded_maps_scales`.
     assert_eq!(
         type_errors(&bounded(3)),
         Vec::<String>::new(),
@@ -293,19 +283,5 @@ fn checking_and_printing_many_and_deep_bounded_maps_scales() {
         sig(&bounded(2), "g"),
         "type T1 = int | String;\n(m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
     );
-    let units: std::collections::BTreeMap<usize, Resolved> = [100, scaling::FACTOR * 100]
-        .into_iter()
-        .map(|m| (m, Resolved::new(&bounded(m))))
-        .collect();
-    scaling::check_order(
-        "n bounded maps, and one nested n deep, looked up and printed",
-        100,
-        1,
-        |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{:?}", info.errors);
-            let printed: usize = info.sigs.values().map(|s| s.to_string().len()).sum();
-            assert!(printed > n, "{printed}");
-        },
-    );
 }
+

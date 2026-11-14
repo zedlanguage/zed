@@ -1,43 +1,45 @@
 //! The operations on a type nested as deep as the program keep their own stack (T2-ty): each
-//! runs on a type 100,000 levels deep on a 2 MiB stack, or 20,000 deep on a fifth of it, and
-//! costs linear time in the depth.
+//! runs on a type [`DEEP`] levels deep on a stack of [`SHALLOW_STACK`] bytes, the same stack a
+//! level as 2 MiB at 100,000 levels, and costs linear time in the depth (the benchmarks in
+//! `bench::deep_ops`).
 //!
 //! `Debug` of a type or signature, [`Ty::meet`], [`Ty::meets`] and [`Ty::contains`] recursed
 //! once a level and overflowed this stack; the others here passed before and are kept so that
 //! none comes back. A meet, a `meets` and a `contains` walk a pair of nodes shared at many
 //! places once, so a tuple with `2^n` paths through `n` nodes costs `O(n)`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_kernel::Value;
 use zed_kernel::types::Type;
-use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
 use zedc::check::ty::{self, Binds, SParam, Shape, Sig, Ty, Vars};
 
-const DEEP: usize = 100_000;
+/// The depth of the deep checks here. They ran 100,000 deep on a 2 MiB stack (T2-ty), and the
+/// two slowest 20,000 deep on a fifth of it, after taking 73 s and over 80 s alone at load 42
+/// (TESTS-l01_29-split); their time is linear in the depth, and they need no more stack at
+/// 20,000 levels than at 100. Each now runs 13,000 deep, about an eighth of 100,000, on the
+/// same fraction of 2 MiB; 13,000 and 100,000 leave the same remainder by 6, so the outermost
+/// level of [`levels`] and the parity of the depth are as they were
+/// (TEST-bench-move-l0126).
+pub(super) const DEEP: usize = 13_000;
 
-/// The depth of the two slowest checks here, a fifth of [`DEEP`], on [`SHALLOW_STACK`]. At
-/// [`DEEP`] they took 73 s and over 80 s alone at load 42; their time is linear in the depth, and
-/// they need no more stack at 20,000 levels than at 100 (TESTS-l01_29-split).
-const SHALLOW: usize = 20_000;
-
-/// A 2 MiB stack scaled by [`SHALLOW`] / [`DEEP`], so a check that takes stack a level overflows
-/// it as it would overflow 2 MiB at [`DEEP`]: a walk of two tuples that recurses once a level,
-/// about 30 bytes a level, overflows both, while the checks here need under 128 KiB.
-const SHALLOW_STACK: usize = (2 << 20) * SHALLOW / DEEP;
+/// A 2 MiB stack scaled by [`DEEP`] / 100,000, so a check that takes stack a level overflows it
+/// as it would overflow 2 MiB at 100,000 levels: a walk of two tuples that recurses once a
+/// level, about 30 bytes a level, overflows both, while the checks here need under 128 KiB.
+const SHALLOW_STACK: usize = (2 << 20) * DEEP / 100_000;
 
 /// Runs `f` on a thread with a stack of [`SHALLOW_STACK`] bytes.
-fn on_shallow_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+pub(super) fn on_shallow_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     scaling::on_a_thread(SHALLOW_STACK, f)
 }
 
-fn z() -> Ty {
+pub(super) fn z() -> Ty {
     Ty::set(Type::atom("z"))
 }
 
-fn y() -> Ty {
+pub(super) fn y() -> Ty {
     Ty::set(Type::atom("y"))
 }
 
@@ -50,7 +52,7 @@ fn atom(items: Vec<Ty>, f: Ty) -> Ty {
 }
 
 /// The signature `(x: param) -> result`.
-fn sig(param: Ty, result: Ty) -> Sig {
+pub(super) fn sig(param: Ty, result: Ty) -> Sig {
     let x = SParam {
         name: "x".into(),
         positional: true,
@@ -68,7 +70,7 @@ fn func(param: Ty, result: Ty) -> Ty {
 
 /// A type `n` levels deep with `bottom` at the bottom, a tuple, an atom's payload and a
 /// function's result in turn, each level built anew.
-fn levels(n: usize, bottom: Ty) -> Ty {
+pub(super) fn levels(n: usize, bottom: Ty) -> Ty {
     (0..n).fold(bottom, |t, k| match k % 3 {
         0 => Ty::tuple(vec![t, z()]),
         1 => atom(vec![z(), t], z()),
@@ -85,7 +87,7 @@ fn data(n: usize, bottom: Ty) -> Ty {
 }
 
 /// `((… (bottom, #z) …, #z), #z)`, `n` tuples deep, each built anew.
-fn tuples(n: usize, bottom: Ty) -> Ty {
+pub(super) fn tuples(n: usize, bottom: Ty) -> Ty {
     (0..n).fold(bottom, |t, _| Ty::tuple(vec![t, z()]))
 }
 
@@ -98,7 +100,7 @@ fn open(n: usize) -> Ty {
 }
 
 /// The value `((… (#bottom, #z) …, #z), #z)`, `n` tuples deep.
-fn value(n: usize, bottom: &str) -> Value {
+pub(super) fn value(n: usize, bottom: &str) -> Value {
     (0..n).fold(Value::atom(bottom), |v, _| {
         Value::tuple(vec![v, Value::atom("z")])
     })
@@ -106,18 +108,18 @@ fn value(n: usize, bottom: &str) -> Value {
 
 /// `(t, t)` for `t` the same `n - 1` deep, `bottom` at the bottom: `2^n` paths through `n`
 /// tuples.
-fn shared(n: usize, bottom: Ty) -> Ty {
+pub(super) fn shared(n: usize, bottom: Ty) -> Ty {
     (0..n).fold(bottom, |t, _| Ty::tuple(vec![t.clone(), t]))
 }
 
 /// The value of [`shared`] with `#z` at the bottom, its tuples shared too.
-fn shared_value(n: usize) -> Value {
+pub(super) fn shared_value(n: usize) -> Value {
     (0..n).fold(Value::atom("z"), |v, _| Value::tuple(vec![v.clone(), v]))
 }
 
 #[test]
-fn clone_hash_and_drop_of_a_deep_type_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn clone_hash_and_drop_of_a_deep_type_run_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let t = levels(DEEP, z());
         let u = t.clone();
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
@@ -129,9 +131,9 @@ fn clone_hash_and_drop_of_a_deep_type_run_on_a_2_mib_stack() {
 }
 
 #[test]
-fn display_and_debug_of_a_deep_type_run_on_a_2_mib_stack() {
+fn display_and_debug_of_a_deep_type_run_on_a_shallow_stack() {
     // The derived `Debug` of a type and a signature recursed once a level.
-    on_small_stack(|| {
+    on_shallow_stack(|| {
         let t = levels(DEEP, z());
         assert!(t.to_string().len() > DEEP);
         assert!(format!("{t:?}").len() > DEEP);
@@ -171,8 +173,8 @@ fn debug_writes_what_a_derived_debug_writes() {
 }
 
 #[test]
-fn union_of_deep_types_runs_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn union_of_deep_types_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let (a, b, c) = (levels(DEEP, z()), levels(DEEP, z()), levels(DEEP, y()));
         assert_eq!(a.union(&b).fns.len() + a.union(&b).tuples.len(), 1);
         assert_eq!(a.union(&c).fns.len() + a.union(&c).tuples.len(), 2);
@@ -209,8 +211,8 @@ fn meet_meets_and_contains_of_shallow_tuples_are_as_built() {
 }
 
 #[test]
-fn meet_meets_and_contains_of_deep_tuples_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn meet_meets_and_contains_of_deep_tuples_run_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let (a, b, c) = (tuples(DEEP, z()), tuples(DEEP, z()), tuples(DEEP, y()));
         assert_eq!(a.meet(&b), a);
         assert!(a.meet(&c).is_empty());
@@ -223,8 +225,8 @@ fn meet_meets_and_contains_of_deep_tuples_run_on_a_2_mib_stack() {
 }
 
 #[test]
-fn subtype_of_deep_types_runs_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn subtype_of_deep_types_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let (a, b) = (levels(DEEP, z()), levels(DEEP, z()));
         assert!(a.subtype(&b));
     });
@@ -233,13 +235,13 @@ fn subtype_of_deep_types_runs_on_a_2_mib_stack() {
 #[test]
 fn subtype_of_deep_data_runs_on_a_shallow_stack() {
     on_shallow_stack(|| {
-        let (a, c) = (data(SHALLOW, z()), data(SHALLOW, y()));
+        let (a, c) = (data(DEEP, z()), data(DEEP, y()));
         assert!(!a.subtype(&c));
         assert!(!a.refused(&c).contains("undecided"));
         let (a, b, c) = (
-            tuples(SHALLOW, z()),
-            tuples(SHALLOW, z()),
-            tuples(SHALLOW, y()),
+            tuples(DEEP, z()),
+            tuples(DEEP, z()),
+            tuples(DEEP, y()),
         );
         assert!(a.subtype(&b));
         assert!(!a.subtype(&c));
@@ -248,8 +250,8 @@ fn subtype_of_deep_data_runs_on_a_shallow_stack() {
 }
 
 #[test]
-fn diff_of_deep_types_runs_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn diff_of_deep_types_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let (a, b, c) = (tuples(DEEP, z()), tuples(DEEP, z()), tuples(DEEP, y()));
         assert!(a.diff(&b).is_empty());
         assert_eq!(a.diff(&c), a);
@@ -259,8 +261,8 @@ fn diff_of_deep_types_runs_on_a_2_mib_stack() {
 }
 
 #[test]
-fn kernel_of_deep_tuples_runs_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn kernel_of_deep_tuples_runs_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let a = tuples(DEEP, z());
         assert!(a.kernel().is_some());
         assert!(a.exact_kernel().is_some());
@@ -273,8 +275,8 @@ fn kernel_of_deep_tuples_runs_on_a_2_mib_stack() {
 }
 
 #[test]
-fn variables_of_a_deep_type_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn variables_of_a_deep_type_run_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let t = open(DEEP);
         let mut out = Vars::default();
         t.vars_in(&mut out);
@@ -289,8 +291,8 @@ fn variables_of_a_deep_type_run_on_a_2_mib_stack() {
 }
 
 #[test]
-fn signatures_of_deep_types_run_on_a_2_mib_stack() {
-    on_small_stack(|| {
+fn signatures_of_deep_types_run_on_a_shallow_stack() {
+    on_shallow_stack(|| {
         let s = sig(levels(DEEP, z()), levels(DEEP, z()));
         let q = sig(levels(DEEP, z()), levels(DEEP, z()));
         assert!(ty::fits_sig(&s, &q));
@@ -308,75 +310,17 @@ fn signatures_of_deep_types_run_on_a_2_mib_stack() {
 #[test]
 fn signatures_of_deep_tuples_that_differ_run_on_a_shallow_stack() {
     on_shallow_stack(|| {
-        let s = sig(tuples(SHALLOW, z()), tuples(SHALLOW, z()));
-        let r = sig(tuples(SHALLOW, y()), tuples(SHALLOW, z()));
+        let s = sig(tuples(DEEP, z()), tuples(DEEP, z()));
+        let r = sig(tuples(DEEP, y()), tuples(DEEP, z()));
         assert!(!ty::fits_sig(&s, &r));
         let _ = ty::why_unfit(&s, &r);
     });
 }
 
-/// Checks that `op` on what `build` makes for each size takes time linear in the size, on a
-/// 2 MiB stack; what is built is not measured.
-fn linear<T: Sync>(what: &str, n: usize, build: impl Fn(usize) -> T, op: impl Fn(&T) + Sync) {
-    let made: BTreeMap<usize, T> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|k| (k, build(k)))
-        .collect();
-    on_small_stack(|| scaling::check_order(what, n, 1, |k| op(&made[&k])));
-}
-
-#[test]
-fn meet_meets_and_contains_take_linear_time_in_the_depth() {
-    let n = 10_000;
-    linear(
-        "meet of two tuples n deep",
-        n,
-        |k| (tuples(k, z()), tuples(k, z())),
-        |(a, b)| assert!(!a.meet(b).is_empty()),
-    );
-    linear(
-        "meets of two tuples n deep",
-        n,
-        |k| (tuples(k, z()), tuples(k, y())),
-        |(a, b)| assert!(!a.meets(b)),
-    );
-    linear(
-        "contains of a tuple n deep",
-        n,
-        |k| (tuples(k, z()), value(k, "z")),
-        |(a, v)| assert!(a.contains(v)),
-    );
-}
-
-#[test]
-fn meet_meets_and_contains_of_shared_tuples_take_linear_time() {
-    // Each side holds `2^n` paths through `n` tuples, and no tuple is shared between the
-    // sides: a walk that followed the paths took `2^n` time.
-    let n = 2000;
-    linear(
-        "meet of two shared tuples n deep",
-        n,
-        |k| (shared(k, z()), shared(k, Ty::union(&z(), &y()))),
-        |(a, b)| assert!(!a.meet(b).is_empty()),
-    );
-    linear(
-        "meets of two shared tuples n deep",
-        n,
-        |k| (shared(k, z()), shared(k, y())),
-        |(a, b)| assert!(!a.meets(b)),
-    );
-    linear(
-        "contains of a shared value in a shared tuple n deep",
-        n,
-        |k| (shared(k, z()), shared_value(k)),
-        |(a, v)| assert!(a.contains(v)),
-    );
-}
-
 /// A type `n` levels deep in which the level below stands, in turn, as a function's parameter,
 /// in a union in a function's result, as a tuple component and as a member of a union: the
 /// places where a function type needs or does not need parentheses (PRINT-fn-parens).
-fn functions(n: usize) -> Ty {
+pub(super) fn functions(n: usize) -> Ty {
     (0..n).fold(z(), |t, k| match k % 4 {
         0 => func(t, z()),
         1 => func(z(), t.union(&y())),
@@ -386,145 +330,14 @@ fn functions(n: usize) -> Ty {
 }
 
 #[test]
-fn printing_a_type_with_a_function_at_every_place_takes_linear_time_in_the_depth() {
-    // The printer decides each part's parentheses from where it stands, once per part, and
-    // what it writes reads back as the type it printed.
+fn a_type_with_a_function_at_every_place_prints_and_reads_back() {
+    // A small instance of the benchmark
+    // `bench::deep_ops::printing_a_type_with_a_function_at_every_place_takes_linear_time_in_the_depth`:
+    // the printer decides each part's parentheses from where it stands, and what it writes
+    // reads back as the type it printed.
     let printed = functions(5).to_string();
     assert_eq!(printed, "(((#z) -> ((#z) -> #z) | #y, #z) | #y) -> #z");
     let again = zedc::check::read::parse_type(&printed).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(again.to_string(), printed);
     assert!(again.subtype(&functions(5)) && functions(5).subtype(&again));
-    linear(
-        "printing a type n deep with a function at every place",
-        2000,
-        functions,
-        |t| assert!(!t.to_string().is_empty()),
-    );
-}
-
-#[test]
-fn debug_of_a_type_takes_linear_time_in_the_depth() {
-    linear(
-        "Debug of a type n deep",
-        10_000,
-        |k| levels(k, z()),
-        |t| assert!(!format!("{t:?}").is_empty()),
-    );
-}
-
-#[test]
-fn subtype_diff_and_signatures_take_linear_time_in_the_depth() {
-    let n = 2000;
-    linear(
-        "subtype of two tuples n deep",
-        n,
-        |k| (tuples(k, z()), tuples(k, y())),
-        |(a, b)| assert!(!a.subtype(b)),
-    );
-    linear(
-        "subtype of two types n deep",
-        n,
-        |k| (levels(k, z()), levels(k, z())),
-        |(a, b)| assert!(a.subtype(b)),
-    );
-    linear(
-        "diff of two tuples n deep",
-        n,
-        |k| (tuples(k, z()), tuples(k, y())),
-        |(a, b)| assert!(!a.diff(b).is_empty()),
-    );
-    linear(
-        "fits_sig of two signatures n deep",
-        n,
-        |k| {
-            (
-                sig(levels(k, z()), levels(k, z())),
-                sig(levels(k, z()), levels(k, z())),
-            )
-        },
-        |(s, q)| assert!(ty::fits_sig(s, q)),
-    );
-}
-
-/// The instructions a level of `op` on what `build` makes: the least of two runs at `2n` less
-/// the least of two at `n`, over `n`, so the work done once, as starting the thread, cancels.
-/// What is built is not measured. `None` where the meter counts no instructions: processor
-/// time moves with the load.
-fn per_level<T: Sync>(n: usize, build: impl Fn(usize) -> T, op: impl Fn(&T) + Sync) -> Option<u64> {
-    let mut meter = scaling::Meter::new();
-    if !meter.unit().starts_with("instructions") {
-        return None;
-    }
-    let mut least = |k: usize| {
-        let made = build(k);
-        (0..2)
-            .map(|_| meter.work(|| on_shallow_stack(|| op(&made))).units)
-            .min()
-            .expect("two runs")
-    };
-    let (small, large) = (least(n), least(2 * n));
-    Some(large.saturating_sub(small) / n as u64)
-}
-
-/// The instructions a level of a subtype verdict, `fits_sig`, `why_unfit` and a difference on
-/// tuples nested `n` deep stay bounded (PERF-deep-ops-slow): a change that costs more a level
-/// fails here, where the linear checks above pass it. Each bound is about 10% over the count of
-/// this test when it was set (2026-11-12), and below the count on main before
-/// PERF-deep-ops-slow, given beside it. The counts include the test allocator's counting.
-#[test]
-fn subtype_fits_why_and_diff_cost_a_bounded_number_of_instructions_a_level() {
-    let n = 2000;
-    let pairs = |k: usize| (tuples(k, z()), tuples(k, y()));
-    let sigs = |k: usize| {
-        (
-            sig(tuples(k, z()), tuples(k, z())),
-            sig(tuples(k, y()), tuples(k, z())),
-        )
-    };
-    // (what, measured, bound, before PERF-deep-ops-slow), in instructions a level.
-    let checks = [
-        (
-            "verdict of two tuples n deep",
-            per_level(n, pairs, |(a, c)| {
-                std::hint::black_box(a.verdict(c));
-            }),
-            286_000,
-            315_516,
-        ),
-        (
-            "diff of two tuples n deep",
-            per_level(n, pairs, |(a, c)| assert_eq!(&a.diff(c), a)),
-            245_000,
-            570_672,
-        ),
-        (
-            "fits_sig of two signatures n deep",
-            per_level(n, sigs, |(s, r)| assert!(!ty::fits_sig(s, r))),
-            537_000,
-            714_888,
-        ),
-        (
-            "why_unfit of two signatures n deep",
-            per_level(n, sigs, |(s, r)| {
-                std::hint::black_box(ty::why_unfit(s, r));
-            }),
-            930_000,
-            1_083_786,
-        ),
-    ];
-    let over: Vec<String> = checks
-        .iter()
-        .filter_map(|(what, measured, bound, before)| {
-            let Some(measured) = measured else {
-                eprintln!("{what}: no counter of instructions, not checked");
-                return None;
-            };
-            eprintln!("{what}: {measured} instructions a level, bound {bound}, before {before}");
-            (measured > bound).then(|| format!("{what}: {measured} over {bound}"))
-        })
-        .collect();
-    assert!(
-        over.is_empty(),
-        "instructions a level over the bound: {over:?}"
-    );
 }
