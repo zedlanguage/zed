@@ -108,6 +108,8 @@ mod local;
 mod modular;
 mod one_row;
 mod pairs;
+#[cfg(test)]
+mod pick_wide_tests;
 mod refusal;
 mod row_domains;
 mod row_sums;
