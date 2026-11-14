@@ -2206,7 +2206,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-generic-class-follows | running | 2026-11-13 23:24 |  |
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
-| PERF-s22-sliced-regress | impl attempt 1 | 2026-11-13 23:11 | started; worktree from origin/main 879451b9f; load 59.68 55.35 49.96 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
 | SPEC-ffi-state-param | impl attempt 1 | 2026-11-13 23:04 | started; reading DESIGN sec:ffi token sections |
