@@ -53,7 +53,7 @@ second column names the test that covers it, or says why no test is needed.
 | a missing dup: an edge consumed twice | `checks::a_missing_dup_consumes_an_edge_twice` |
 | a borrowed argument to a consuming parameter | `checks::a_borrowed_argument_to_a_consuming_parameter_is_refused` |
 | no plan at all; an arm with no plan | `checks::each_check_of_the_machine_reports_its_wrong_plan` |
-| a lambda body with no plan, called | not merged: filed as FAIL-memory-callee-no-plan (the message names the same region twice) |
+| a lambda body with no plan, called, with the callee resolved or not | `callee_no_plan::a_called_body_with_no_plan_is_reported_as_one`, `callee_no_plan::a_called_body_with_no_plan_and_no_resolved_callee_is_reported_the_same` (FAIL-memory-callee-no-plan) |
 | the plan resolves a call to another region | `checks::each_check_of_the_machine_reports_its_wrong_plan` |
 | an argument arriving borrowed that the plan owns (a capture), and owned that the plan borrows (an arm argument) | `checks::each_check_of_the_machine_reports_its_wrong_plan` |
 | a region (the root, a body) that ends owning an edge | `checks::each_check_of_the_machine_reports_its_wrong_plan` |

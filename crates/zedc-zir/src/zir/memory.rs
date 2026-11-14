@@ -1331,9 +1331,11 @@ impl<'g> Machine<'g, '_> {
                 Mv::Clo(c)
                     if c.node.regions[0].args.len() == c.node.inputs.len() + ins.len() - 1 =>
                 {
-                    let body = plan.regions[c.at].nodes[c.k].regions.first().copied();
+                    // The body's plan first: a body with no plan is reported as such, not as a
+                    // call to the wrong region.
+                    let body = self.sub(c.at, c.k, 0)?;
                     if let Some(want) = np.callee
-                        && Some(want) != body
+                        && want != body
                     {
                         return Err(format!(
                             "memory: {here}: the plan calls `{}`, and the callee is `{}/0`",
@@ -1341,7 +1343,6 @@ impl<'g> Machine<'g, '_> {
                             self.node_at(c.at, c.k)
                         ));
                     }
-                    let body = self.sub(c.at, c.k, 0)?;
                     let rp = &plan.regions[body];
                     let mut args = Vec::new();
                     let mut held = Vec::new();

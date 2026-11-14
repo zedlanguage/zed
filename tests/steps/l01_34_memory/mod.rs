@@ -6,6 +6,7 @@
 mod bench;
 mod binders;
 mod borrow;
+mod callee_no_plan;
 mod cells;
 mod chains;
 mod checks;
