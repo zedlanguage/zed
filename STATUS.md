@@ -2286,11 +2286,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-coprime-base-shared-primes | running | 2026-11-14 09:23 |  |
-| CONST-coprime-check-many-sets | running | 2026-11-14 09:23 |  |
+| CONST-coprime-base-shared-primes | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
+| CONST-coprime-check-many-sets | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
 | FAIL-agree-few-arms-seed | running | 2026-11-14 08:46 |  |
-| FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
-| FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
@@ -2300,7 +2298,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
-| FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
