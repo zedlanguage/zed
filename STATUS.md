@@ -2203,7 +2203,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | QUESTIONS-A102-anythread | impl attempt 1 | 2026-11-13 21:52 | started |
 | REPAIR-block-pow-negative | impl attempt 1 | 2026-11-13 20:38 | started; worktree seeded |
 | REPAIR-literal-text-spelling | impl attempt 1 | 2026-11-13 20:48 | start |
-| S1F-limits-cycle | running | 2026-11-13 22:06 |  |
+| S1F-limits-cycle | impl attempt 1 | 2026-11-13 22:06 | started, worktree s1f-limits-cycle on origin/main 237da07e6 |
 | ST-chain-raise-reverse-log | impl attempt 1 | 2026-11-13 20:31 | started; worktree from origin/main f714c55fc |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-hub-moved-relation | impl attempt 1 | 2026-11-13 20:48 | started; rebasing wt/hub-moved-relation onto origin/main 252a4f1d4 |
