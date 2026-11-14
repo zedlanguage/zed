@@ -15,6 +15,7 @@ mod canonical;
 mod carrier;
 mod cells;
 mod checker;
+mod completeness;
 mod controls;
 mod decide_sat;
 mod deep;
