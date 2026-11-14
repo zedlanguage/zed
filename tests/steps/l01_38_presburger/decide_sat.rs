@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use zedc::store::presburger::{Atom, Con, Formula, Lin};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared, decide, satisfiable};
 
 use super::repair::answers;
 
@@ -124,5 +124,47 @@ fn decide_answers_where_satisfiable_answers() {
     ] {
         let (f, truth) = &fs[case];
         answers(f, *truth);
+    }
+}
+
+/// Case 43 of seed 8087861239740142386 of `l01_39_reduced_product::pendants`'s rewritten parts
+/// (FAIL-pendants-rewrite-growth-seed), with its boxes as rows: `decide` found no point, but
+/// `satisfiable` refused by growth on the part as written and found none once the equation
+/// `2 * a + b + 2 * c + z0 == 3` was written as two rows. `satisfiable` now removes the
+/// disjuncts the bounds show have no point first, as `decide` does, and gives no point on both.
+#[test]
+fn an_equation_written_as_one_row_or_two_is_decided_by_both() {
+    let ne = Formula::Not(Shared::new(Formula::Con(Con::eq(
+        &lin(&[("a", 2), ("c", 1), ("b", -1), ("z2", -1)], -1),
+        &Lin::constant(0),
+    ))));
+    let rows = |equation: Vec<Formula>| {
+        let mut fs = vec![
+            ge(&[("b", 1)], 7),
+            ge(&[("b", -1)], -3),
+            ge(&[("c", -1)], 5),
+            ge(&[("z0", -1)], -7),
+            ge(&[("z2", 1)], -2),
+            ge(&[("z2", -1)], 17),
+            ge(&[("a", 1), ("b", 2), ("c", 2)], -5),
+            ge(&[("b", 1), ("c", 1), ("z2", 1)], 9),
+            ne.clone(),
+        ];
+        fs.extend(equation);
+        fs.extend([
+            ge(&[("a", 1), ("b", 1), ("z2", -1)], 1),
+            ge(&[("b", 2), ("c", -1)], 12),
+            ge(&[("z0", 1), ("z2", -1)], 4),
+            ge(&[("a", 1), ("c", 1), ("b", -1), ("z2", -1)], -6),
+        ]);
+        Formula::and(fs)
+    };
+    let sum = [("a", 2), ("b", 1), ("c", 2), ("z0", 1)];
+    let one = rows(vec![eq(&sum, -3)]);
+    let neg: Vec<(&str, i64)> = sum.iter().map(|&(a, c)| (a, -c)).collect();
+    let two = rows(vec![ge(&sum, -3), ge(&neg, 3)]);
+    for f in [&one, &two] {
+        assert_eq!(decide(f), Ok(false), "{f}");
+        assert_eq!(satisfiable(f).map(|m| m.is_some()), Ok(false), "{f}");
     }
 }

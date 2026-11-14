@@ -2210,6 +2210,39 @@ fn a_refused_box_does_not_depend_on_the_names_seed_15900465239627589939() {
     refused_names_in(15900465239627589939, 11, true);
 }
 
+/// Seed 8087861239740142386 of [`rewritten_parts_are_decided_alike`]
+/// (FAIL-pendants-rewrite-growth-seed): case 43, with `2 * a + b + 2 * c + z0 == 3` and no
+/// point, was found empty by `decide` on each writing, but `satisfiable` refused it by growth as
+/// written and found it empty once the equation was written as two rows. `satisfiable` now
+/// removes the disjuncts the bounds show have no point before it settles, as `decide` does
+/// (`l01_38_presburger::decide_sat::an_equation_written_as_one_row_or_two_is_decided_by_both`).
+#[test]
+fn rewritten_parts_of_seed_8087861239740142386_are_decided_alike() {
+    let seed = 8087861239740142386u64;
+    let mut wrong = Vec::new();
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(seed, 60)
+    {
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = decided(&s, &f, &syms);
+        for g in rewrites {
+            let got = decided(&s, &g, &syms);
+            if got != want {
+                wrong.push(format!(
+                    "case {case}\n  {f}\n  {g}\n  want {want}\n  got  {got}"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// Seed 8203920530908347152 of [`rewritten_parts_give_one_answer`]
 /// (FAIL-pendants-rewrite-empty-seed): case 5, a part with no point whose rows
 /// `a + b >= 2 * c + z2 + 10`, `a + b <= 2 * c + z2 + 10` and `a + b == 2 * c + z2 - 3`

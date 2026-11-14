@@ -748,6 +748,20 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     };
     let ask = |mut p: Parts, rows: Vec<Con>| -> Result<Option<Model>, Refusal> {
         p.cons.extend(rows);
+        // The disjuncts the bounds of single atoms show have no point are removed first, as
+        // [`decide_inner`] removes them: without this, `settle` and `found` met growth on a part
+        // with an equation that `decide` answered, and that both answered once the equation was
+        // written as two rows (FAIL-pendants-rewrite-growth-seed). The disjuncts removed have no
+        // point, so a point found is one as before.
+        // Complexity tradeoff: naive, `settle` alone, which tests each disjunct by a propagation
+        // of the whole formula, O(r n) for `r` disjuncts of parts of `n` terms; used: one
+        // O(n log n) pass of [`drop_by_bounds`] before it, which costs at most the same order as
+        // the propagations `settle` makes and removes the disjuncts it would have to test. Tests:
+        // `l01_39_reduced_product::pendants::rewritten_parts_of_seed_8087861239740142386_are_decided_alike`,
+        // `l01_38_presburger::probe::twin_chains_of_absolute_values_scale`. COMPLEXITY.md row C47.
+        if drop_by_bounds(&mut p, &|_| false).is_none() {
+            return Ok(None);
+        }
         match settle(p, true)? {
             None => Ok(None),
             Some(p) => found(p),

@@ -5,7 +5,7 @@ use crate::repair::guards;
 use std::sync::Arc;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
-use zedc::store::presburger::{Atom, decide, project_each};
+use zedc::store::presburger::{Atom, decide, project_each, satisfiable};
 
 /// The counter below zero with `k` guards on inputs `3k/4` wide, at `k = 16` and `128`: the
 /// formula implies `i > k/4`, and the `k/4` disjuncts `i <= j - 1` for `j` up to `k/4 + 1`
@@ -96,6 +96,16 @@ fn twin_chains_of_absolute_values_scale() {
             projects_abs_chain(&fs[&n], n);
         },
     );
+}
+
+/// `satisfiable` on [`a_nested_chain_of_absolute_values_scales`]'s chain: a point, `i` at
+/// `n + 1` and up. MEASURE
+#[test]
+fn the_point_of_a_nested_chain_of_absolute_values_scales() {
+    let fs = scaling::inputs(1100, |n| abs_chain(n, false));
+    scaling::check("a point of a nested chain of absolute values", 1100, |n| {
+        assert!(satisfiable(&fs[&n]).expect("decided").is_some(), "{n}");
+    });
 }
 
 /// `probe::guards_beyond_the_inputs_are_answered` as first written, 1.9 s (2026-11-14, load
