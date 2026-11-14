@@ -2329,16 +2329,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-l139-wide-asum-scaling | running | 2026-11-14 11:32 |  |
 | FAIL-linked-holes-scratch-seed | running | 2026-11-14 07:58 |  |
 | FAIL-linked-sums-between-seed | running | 2026-11-14 11:43 |  |
-| FAIL-pendants-route-parity | running |  |  |
+| FAIL-pendants-growth-scaled-seed | running | 2026-11-14 11:58 |  |
+| FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | started in wt/fix-parity at origin/main 3c9c29d5b, load 46 |
 | FAIL-preimage-stop-entry-seed | running | 2026-11-14 11:43 |  |
 | FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
+| FAIL-rewrite-growth-both | running |  |  |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
-| FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
-| FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
-| FAIL-whole-projection-parity | running |  |  |
-| FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
+| FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | started in wt/fix-parity at origin/main 3c9c29d5b, load 46 |
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
