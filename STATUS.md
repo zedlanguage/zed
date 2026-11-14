@@ -2322,13 +2322,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | Done, pushed: bound checked when binding in `accepts`; 3 FAIL rows filed |
+| FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
+| FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
+| FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
 | FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
-| PERF-l139-hopb-wakes | running |  |  |
-| PERF-l139-persist-due | running |  |  |
+| PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
+| PERF-l139-persist-due | impl attempt 1 | 2026-11-14 11:00 | start, worktree wt/perf-l139 from origin/main 10fb070e9; load 34.30 42.93 45.18 |
 | POLY-square-choice-cost | impl attempt 1 | 2026-11-14 10:56 | started; worktree /home/luke/Work/wt/poly-square |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
