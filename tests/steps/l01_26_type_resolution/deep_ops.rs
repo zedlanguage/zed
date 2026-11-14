@@ -100,6 +100,15 @@ pub(super) fn shared_payloads(n: usize, v: &str) -> Ty {
     (0..n).fold(Ty::var(v.into()), |t, _| atom(vec![t.clone(), t], z()))
 }
 
+/// `#a(u, u)` for `u = #a(t, at(k))` and `t` the same `k` levels deep, `bottom` at the bottom:
+/// each payload shared by both places that hold it, and `at(k)` beside it at level `k`.
+pub(super) fn level_payloads(n: usize, at: impl Fn(usize) -> Ty, bottom: Ty) -> Ty {
+    (0..n).fold(bottom, |t, k| {
+        let u = atom(vec![t, at(k)], z());
+        atom(vec![u.clone(), u], z())
+    })
+}
+
 /// The value of [`shared`] with `#z` at the bottom, its tuples shared too.
 pub(super) fn shared_value(n: usize) -> Value {
     (0..n).fold(Value::atom("z"), |v, _| Value::tuple(vec![v.clone(), v]))
@@ -568,4 +577,53 @@ fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
     assert!(ty::fits_sig(&s, &q));
     // The control: the second arrow of `q` alone, with no refusal before it.
     assert!(ty::fits_sig(&s, &sig(vec![arrow(&int, &mx)])));
+}
+
+/// Small instances of
+/// `bench::deep_ops::sub_of_shared_payloads_with_a_variable_a_level_takes_linear_time`
+/// (FAIL-types-sub-level-variables): payloads `#a(u, u)` with `u = #a(t, V{k})` at level `k`,
+/// within which the same with `#x` for each `V{k}` is. The second `u` is met under the binding
+/// the first gave, which holds `V{k}` and those below it, and is not compared again; the
+/// verdict and the bindings are those of a comparison of every path.
+#[test]
+fn shared_payloads_with_a_variable_a_level_bind_each_once() {
+    let x = || Ty::set(Type::atom("x"));
+    let var = |v: &str| Ty::var(v.into());
+    let level = |k: usize| var(&format!("V{k}"));
+    let bound = |n: usize, at_0: Ty| -> Binds {
+        let rest = (1..n).map(|k| (format!("V{k}").into(), x()));
+        [("V0".into(), at_0), ("C".into(), z())]
+            .into_iter()
+            .chain(rest)
+            .collect()
+    };
+    for n in 1..7 {
+        let into = level_payloads(n, level, var("C"));
+        let mut binds = Binds::new();
+        assert!(
+            level_payloads(n, |_| x(), z()).sub(&into, &mut binds),
+            "{n} deep"
+        );
+        assert_eq!(binds, bound(n, x()), "{n} deep");
+        // The two copies at level 0 differ, `#a(#z, #x)` and `#a(#z, #y)`: `V0` is bound to
+        // both, and each level above, met twice, is compared again only under the binding
+        // its first comparison gave.
+        let two = atom(
+            vec![atom(vec![z(), x()], z()), atom(vec![z(), y()], z())],
+            z(),
+        );
+        let above = (1..n).fold(two, |t, _| {
+            let u = atom(vec![t, x()], z());
+            atom(vec![u.clone(), u], z())
+        });
+        let mut binds = Binds::new();
+        assert!(above.sub(&into, &mut binds), "{n} deep");
+        assert_eq!(binds, bound(n, x().union(&y())), "{n} deep");
+        // `#y` at the bottom is not within `#z`.
+        let on_z = level_payloads(n, level, z());
+        assert!(
+            !level_payloads(n, |_| x(), y()).sub(&on_z, &mut Binds::new()),
+            "{n} deep"
+        );
+    }
 }

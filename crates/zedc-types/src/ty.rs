@@ -5238,9 +5238,37 @@ impl<'m, 's> Comparing<'m, 's> {
     /// Kept, a false found after a refusal was read by a later attempt with nothing refused,
     /// and a function that fits was found not to fit
     /// (`l01_26_type_resolution::deep_ops::an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`).
+    ///
+    /// An answer true is kept under `b` too, the binding it gave (FAIL-types-sub-level-
+    /// variables): a pair shared by both places of `#a(u, u)` is met the second time under the
+    /// binding the first comparison of it gave, which binds the variables it holds, so keyed
+    /// only by the binding in force before, it missed, and so did every pair below it, though
+    /// each gives the same: O(n) comparisons again at each of n levels, O(n²) in all and an
+    /// O(n) comparison of the bindings on each hash match, `T(8n)/T(n)` = 109 measured. Kept
+    /// under `b`, the second meeting is one lookup. Why the answer under `b` is `(true, b)`:
+    /// the comparison reads the binding only in [`accepts`], where the parts of the type that
+    /// are not variables hold a piece or not whatever is bound (they read it only through the
+    /// comparisons below, which by induction give the same), and a piece no other part holds
+    /// is united with the first variable that admits it. Under `b`, each variable the first
+    /// comparison bound holds the pieces it was bound to; the one chosen admits its piece
+    /// again (the same bound and ceiling, a piece of carriers within the bound), one passed
+    /// over does not (a piece outside the ceiling or the bound is outside them under `b`
+    /// too), and [`Binds::unite`] of a piece already held is the same type ([`Ty::union`] joins
+    /// the kernel sets and drops a shape, a function or a variable it holds). So the same
+    /// shapes are chosen in the same order and `b` comes back unchanged. Only an answer found
+    /// with nothing refused is kept, so a refusal, which may end the search of a member
+    /// early, never stands behind it. The other fix weighed: keying each pair by the binding
+    /// restricted to the variables the two nodes hold, which needs the set of those variables
+    /// kept with each shape, O(size) memory a node and a restriction at each lookup, where
+    /// this costs a second entry for each answer true, O(1) to make (a persistent map is
+    /// copied by its root).
     fn keep(&self, key: Compared, ok: bool, b: &Binds) {
         let mut cx = self.cx.borrow_mut();
         if cx.unchosen.is_none() {
+            if ok {
+                let out = Compared::new(key.left, key.right, b);
+                cx.compared.insert(out, (true, b.clone()));
+            }
             cx.compared.insert(key, (ok, b.clone()));
         }
     }

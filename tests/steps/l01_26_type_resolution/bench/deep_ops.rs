@@ -9,8 +9,8 @@ use zed_tests::scaling;
 use zedc::check::ty;
 
 use super::super::deep_ops::{
-    self, functions, levels, shared, shared_payload_sig, shared_payloads, shared_value, sig,
-    tuples, value, y, z,
+    self, functions, level_payloads, levels, shared, shared_payload_sig, shared_payloads,
+    shared_value, sig, tuples, value, y, z,
 };
 
 /// The depth of the deep checks here. They ran 100,000 deep on a 2 MiB stack (T2-ty), and the
@@ -369,6 +369,32 @@ fn sub_of_shared_payloads_takes_linear_time() {
         "sub of two shared payloads n deep, a variable at the bottom",
         2000,
         |k| (shared_payloads(k, "B"), shared_payloads(k, "C")),
+        |(a, b)| assert!(a.sub(b, &mut ty::Binds::new())),
+    );
+}
+
+/// Besides its ratio: payloads `#a(u, u)` n deep, `u = #a(t, V{k})` at level `k`, each shared
+/// by both places that hold it, hold the same with `#x` for each `V{k}`. The second `u` of a
+/// level is met under the binding the first gave, which holds `V{k}` and every variable below,
+/// and is not compared again (FAIL-types-sub-level-variables: 69 ms at n = 50, 8.63 s at 400,
+/// T(8n)/T(n) = 125, each level compared again below it). Small instance:
+/// `deep_ops::shared_payloads_with_a_variable_a_level_bind_each_once`.
+#[test]
+fn sub_of_shared_payloads_with_a_variable_a_level_takes_linear_time() {
+    let x = || ty::Ty::set(zed_kernel::types::Type::atom("x"));
+    linear(
+        "sub of shared payloads n deep, a new variable at each level",
+        50,
+        |k| {
+            (
+                level_payloads(k, |_| x(), z()),
+                level_payloads(
+                    k,
+                    |k| ty::Ty::var(format!("V{k}").into()),
+                    ty::Ty::var("C".into()),
+                ),
+            )
+        },
         |(a, b)| assert!(a.sub(b, &mut ty::Binds::new())),
     );
 }
