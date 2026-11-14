@@ -6,6 +6,7 @@
 
 mod axioms;
 mod bench;
+mod cases;
 mod leaves;
 mod limits;
 mod scaling;
