@@ -10,6 +10,7 @@ mod cse;
 mod errors;
 mod forms;
 mod ports;
+mod reach;
 pub(crate) mod scaling;
 
 use zed_kernel::Term;
