@@ -8879,6 +8879,37 @@ pub(super) fn shadow_whole(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option
     shadow_logged(rows, keep, true, true, None)
 }
 
+/// A row with its terms divided by their common divisor and its constant rounded down, which
+/// keeps every integer point; `Ok(None)` for a row without atoms that holds, `Err` for a row
+/// that holds at no integer point (one without atoms that is false, or an equality whose
+/// constant the divisor does not divide).
+fn tidy(lin: Lin, rel: Rel) -> Result<Option<Con>, ()> {
+    if lin.terms.is_empty() {
+        let holds = match rel {
+            Rel::Eq => lin.constant.is_zero(),
+            Rel::Ge => !lin.constant.is_negative(),
+        };
+        return if holds { Ok(None) } else { Err(()) };
+    }
+    let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
+    if rel == Rel::Eq && !lin.constant.mod_floor(&g).is_zero() {
+        return Err(());
+    }
+    let lin = if g.is_unit() {
+        lin
+    } else {
+        Lin {
+            terms: lin
+                .terms
+                .iter()
+                .map(|(a, k)| (a.clone(), k.div_floor(&g)))
+                .collect(),
+            constant: lin.constant.div_floor(&g),
+        }
+    };
+    Ok(Some(Con { lin, rel }))
+}
+
 /// [`shadow`], each elimination written to `log` in turn when there is one; with `grow`, as
 /// [`shadow_whole`].
 fn shadow_logged(
@@ -8971,34 +9002,6 @@ fn shadow_logged(
             }
         }
     };
-    // A combined row with its terms divided by their common divisor and its constant rounded
-    // down; `None` for a row without atoms, which is false when its constant is below zero.
-    let tidy = |lin: Lin, rel: Rel| -> Result<Option<Con>, ()> {
-        if lin.terms.is_empty() {
-            let holds = match rel {
-                Rel::Eq => lin.constant.is_zero(),
-                Rel::Ge => !lin.constant.is_negative(),
-            };
-            return if holds { Ok(None) } else { Err(()) };
-        }
-        let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
-        if rel == Rel::Eq && !lin.constant.mod_floor(&g).is_zero() {
-            return Err(());
-        }
-        let lin = if g.is_unit() {
-            lin
-        } else {
-            Lin {
-                terms: lin
-                    .terms
-                    .iter()
-                    .map(|(a, k)| (a.clone(), k.div_floor(&g)))
-                    .collect(),
-                constant: lin.constant.div_floor(&g),
-            }
-        };
-        Ok(Some(Con { lin, rel }))
-    };
     // Of two inequalities on one form only the tighter is kept, so that a bound made again
     // (by two eliminations, or by an equality put in two rows) does not count against the
     // elimination of its atoms; `same` gives the place of the row kept for each form.
@@ -9048,8 +9051,29 @@ fn shadow_logged(
         // once, which no count from the sides foresees. With two bounds or more on each side,
         // `(l - 1)(u - 1) <= 2`, so a trial reads at most five rows of the atom and makes at
         // most six.
+        // A trial is made too where the rows of the atom name one other atom `y` at most: each
+        // row made is then `±y + k >= 0` once tidied, of which the tighter of each sign is
+        // kept, so at most two rows are made, however many pairs make them.
+        // Complexity tradeoff: naive version, the count `made` alone, which leaves the atom:
+        // `z` of the hop family (l01_39 `families`), once `y` is put in from `s == x + y + z`,
+        // has `2·z + s >= 21`, `z >= -326`, `z >= s - 1001` below and `z + s <= 14`,
+        // `z <= 1000`, `z <= s + 999` above (8 rows counted, 6 taken out); it was kept, and
+        // each side of `s` found by questions of the whole formula, 8 to 20 a side before
+        // [`real_end`] read such rows, 1 after, 112 questions in all at k = 16 and none at
+        // k = 2. Used: the l·u pairs made, O(1) work each on rows of two terms; a question on
+        // the same rows eliminates the atom by the same pairs (the Omega test, Pugh 1991), so
+        // the trial costs no more than one question it saves. The elimination is done only
+        // when no more rows, of no more terms, are made than taken out (below).
         let made = l * u - d.lo_unary * d.hi_unary;
-        let trial = !small && l >= 2 && u >= 2 && made <= l + u;
+        let one_other = || {
+            let mut other = None;
+            (d.rows.iter()).filter_map(|&i| live[i].as_ref()).all(|c| {
+                (c.lin.terms.keys())
+                    .filter(|a| **a != x)
+                    .all(|a| *other.get_or_insert(a) == a)
+            })
+        };
+        let trial = !small && (l >= 2 && u >= 2 && made <= l + u || exact && one_other());
         let (out_rows, out_terms) = (l + u, d.lo_terms + d.hi_terms);
         // An equality where the atom's coefficient is 1 or -1 gives its value, which is put
         // in each other row of the atom, exactly: `r` rows and an equality of `e` terms make
@@ -9057,8 +9081,50 @@ fn shadow_logged(
         // than the `e` terms of the equality taken out. Judged with the mean size of such
         // equalities, which the one used is no larger than.
         let others = (l + u).saturating_sub(d.eqs + 1);
+        // Where that bound refuses, the rows are made and counted (`eq_trial`), as `trial` does
+        // for bounds: terms of the equality may cancel those of the row (`y + z <= 8` with
+        // `s == y + z + w` gives `s - w <= 8`), so that the rows made have fewer terms than
+        // the bound foresees.
+        // Complexity tradeoff: naive version, the bound above alone, which leaves the atom of
+        // such an equality, and every atom only it would free: in the hop family (l01_39
+        // `families`), `s == x + y + z` with `y + i·z <= c` and `2·y + i·z >= c'` kept `y` and
+        // `z`, so each side of `s` was found by O(log d) questions of the whole formula at d
+        // from the point (8 to 20 a side), whose cost grows with i. Used: the substitution made
+        // and its rows and terms counted, O(r·e) for r rows of the atom and an equality of e
+        // terms, the cost of the elimination itself, run only when the bound refuses; the
+        // elimination is done when no more rows, of no more terms in all, are made than are
+        // taken out, so the projection still never grows.
+        let eq_trial = || {
+            let rows_of = || (d.rows.iter()).filter_map(|&i| Some(i).zip(live[i].as_ref()));
+            let Some((at, e)) = rows_of()
+                .filter(|(_, c)| c.rel == Rel::Eq && c.lin.terms[&x].is_unit())
+                .min_by_key(|(_, c)| c.lin.terms.len())
+            else {
+                return false;
+            };
+            let e = if e.lin.terms[&x].is_positive() {
+                e.lin.clone()
+            } else {
+                e.lin.times(-1)
+            };
+            let (mut old_terms, mut new_terms) = (0, 0);
+            for (i, c) in rows_of() {
+                old_terms += c.lin.terms.len();
+                if i == at {
+                    continue;
+                }
+                match tidy(c.lin.minus(&e.times(c.lin.terms[&x].clone())), c.rel) {
+                    Err(()) => return true,
+                    Ok(None) => {}
+                    Ok(Some(c)) => new_terms += c.lin.terms.len(),
+                }
+            }
+            new_terms <= old_terms
+        };
         let by_eq = d.unit_eqs > 0
-            && (grow || others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs);
+            && (grow
+                || others * d.unit_eq_terms <= d.unit_eq_terms + 2 * others * d.unit_eqs
+                || eq_trial());
         // With `dark`, an atom is eliminated too when each pair of its bounds has, in its real
         // shadow, the integer points of its dark shadow ([`Side1::dark_is_real`], always so
         // for a coefficient 1 or -1): the dark shadow of the whole then has the points of the
@@ -18665,7 +18731,9 @@ pub fn hull_sides_asked() -> u64 {
 
 /// The greatest value (`dir` 1) or the least (`dir` -1) of a symbol over a formula, given a
 /// point `m` of it; `None` when there is none. A bound is found by the monotone question "is
-/// there a point with the symbol at least `v`" (or at most). Where `c`'s constraints with the
+/// there a point with the symbol at least `v`" (or at most). Where `c` is a conjunction of
+/// constraints from which every other atom is eliminated exactly, the rows left give the side
+/// and no question is asked ([`exact_side`]). Where `c`'s constraints with the
 /// symbol alone bound that side ([`alone_end`]), the bound lies between the point's value and
 /// that end, and it is searched from both, [`side_within`]: no question of an unbounded side
 /// is asked, and a bound at the end, or a few steps inside it, is found by a few questions
@@ -18700,10 +18768,15 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
     if let Some(side) = two_atom_side(c, sym, dir) {
         return Ok(side);
     }
-    // The search from both ends answers what the search below answers, the one bound, where
-    // its questions are answered; where one is refused, the search below is run as before
-    // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
-    // `x == 2 * e`, `x` in a gap's bounds, read about 20 questions for each side, and now 3).
+    // Complexity tradeoff (PRES-exact-side): naive version, the questions below for a side
+    // [`two_atom_side`] does not read, a formula of three or more atoms: 1476 questions of the
+    // whole formula in the hop family at k = 16 (sides of `s == x + y + z`), 8 to 20 a side,
+    // and none at k = 2. Used: the elimination of every other atom by [`exact_side`], with no
+    // question where it is exact, O(m log m) for m terms; [`two_atom_side`] runs first, since
+    // it is cheaper and answers its formulas in full.
+    if let Some(side) = exact_side(c, sym, dir) {
+        return Ok(side);
+    }
     // Complexity tradeoff: naive version, the search below from the point and the bound of
     // the symbol alone, O(log d) questions for a side at distance d inside both: about 24
     // questions for each side `(1000 + c) / i` of `hopb` (PERF-l139-family), whose number grows
@@ -18712,11 +18785,21 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
     // it is an end past which no point lies, and the search runs inside it. One elimination
     // pass over the rows, O(a · r log r) for `a` atoms and `r` rows. A refused question falls
     // through to the searches below, as a refusal of theirs does.
+    // The question at the real end asks for a point with the symbol at `end` exactly, since
+    // none lies past it, and is answered with no decision where putting `end` in for the
+    // symbol leaves rows [`shadow`] eliminates exactly ([`exact_at`]).
+    // Complexity tradeoff: naive version, the question always asked, a decision of the whole
+    // of `c`: 108 of them in the hop family at k = 16 (l01_39 `families`, sides of
+    // `s == x + y + z` where `y` and `z` are bound by rows such as `2·z + s <= 19` and
+    // `3·z + s >= 26`, with coefficients other than 1 on both sides of `z`, which no exact
+    // elimination of `z` reads) and none at k = 2. Used: the elimination with the symbol
+    // fixed, which leaves rows of `z` alone there, O(m log m) for m terms as in
+    // [`exact_side`]; a question where it leaves an atom.
     if let Some(at) = m.get(sym)
         && let Some(end) = real_end(c, sym, dir)
         && (if dir > 0 { *at <= end } else { *at >= end })
     {
-        match holds(&end) {
+        match exact_at(c, sym, &end).map_or_else(|| holds(&end), Ok) {
             Ok(true) => return Ok(Some(end)),
             Ok(false) => {
                 let inside = &end - &Int::from(dir);
@@ -18727,6 +18810,10 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
             Err(_) => {}
         }
     }
+    // The search from both ends answers what the search below answers, the one bound, where
+    // its questions are answered; where one is refused, the search below is run as before
+    // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
+    // `x == 2 * e`, `x` in a gap's bounds, read about 20 questions for each side, and now 3).
     if let Some(end) = alone_end(c, sym, dir)
         && let Some(at) = m.get(sym)
         && (if dir > 0 { *at <= end } else { *at >= end })
@@ -18936,28 +19023,79 @@ fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
         }
         (t, k)
     };
-    let mut rows: Vec<Row> = Vec::new();
+    let (mut rows, mut eqs): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
     for k in cons {
-        rows.push((k.lin.terms.clone(), k.lin.constant.clone()));
+        let row = (k.lin.terms.clone(), k.lin.constant.clone());
         if k.rel == Rel::Eq {
-            let neg = (k.lin.terms.iter()).map(|(a, v)| (a.clone(), -v)).collect();
-            rows.push((neg, -&k.lin.constant));
+            eqs.push(row)
+        } else {
+            rows.push(row)
         }
+    }
+    // An equality where an atom other than `sym` has coefficient 1 or -1 gives that atom's
+    // value, which is put in every other row, exactly over the reals; the rest are read as two
+    // rows each.
+    // Complexity tradeoff: naive version, each equality read as two rows alone, so that an
+    // atom of an equality keeps the bounds of both (`s == x + y + z` with three bounds on `y`
+    // and `z` each, in the hop family, l01_39 `families`): no atom was taken out, and each
+    // side of `s` was found by 11 to 19 questions of the whole formula. Used: the
+    // substitution, one pass over the rows and equalities for each equality, O(e) work on each
+    // row of the atom for an equality of e terms: the cost of one round of the loop below,
+    // which takes out one atom as each substitution does; the rows are no more than before.
+    while let Some((i, x)) = (eqs.iter().enumerate()).find_map(|(i, (t, _))| {
+        let (x, _) = t.iter().find(|(a, v)| *a != sym && v.is_unit())?;
+        Some((i, x.clone()))
+    }) {
+        let (mut t, mut k) = eqs.swap_remove(i);
+        // `x == t + k` once `x`'s coefficient is -1 and `x` is taken out of `t`.
+        if t[&x].is_positive() {
+            t.values_mut().for_each(|v| *v = -&*v);
+            k = -&k;
+        }
+        t.remove(&x);
+        for (r, rk) in rows.iter_mut().chain(eqs.iter_mut()) {
+            let Some(a) = r.remove(&x) else { continue };
+            for (y, v) in &t {
+                let s = &r.remove(y).unwrap_or(Int::ZERO) + &(&a * v);
+                if !s.is_zero() {
+                    r.insert(y.clone(), s);
+                }
+            }
+            *rk = &*rk + &(&a * &k);
+        }
+    }
+    for (t, k) in eqs {
+        let neg = (t.iter()).map(|(a, v)| (a.clone(), -v)).collect();
+        rows.push((neg, -&k));
+        rows.push((t, k));
     }
     // Each round takes out one atom, which no later row holds, so there are at most as many
     // rounds as atoms. An atom that would grow the rows may not after another is taken out
     // (`#1` with three lower and two upper rows, one of each once `#2` is out), so each round
     // counts them again.
+    // An atom whose rows name no atom but itself and `sym` is taken out too, however many rows
+    // that makes: each is a row of `sym` alone, of which the tightest on each side is the end.
+    // Complexity tradeoff: naive version, the rule `l · u <= l + u` alone, which keeps `z` of
+    // the hop family (three bounds on each side, over `z` and `s` once `y` is put in from
+    // `s == x + y + z`), so each side of `s` was found by 11 to 19 questions. Used: the l·u
+    // pairs made, rows of `sym` alone, which no later round reads; a question on the same rows
+    // eliminates `z` by the same pairs (the Omega test, Pugh 1991), so this costs no more than
+    // the one question it saves.
     loop {
-        let mut sides: BTreeMap<&Atom, (usize, usize)> = BTreeMap::new();
+        let mut sides: BTreeMap<&Atom, (usize, usize, bool)> = BTreeMap::new();
         for (t, _) in &rows {
             for (a, v) in t.iter().filter(|(a, _)| *a != sym) {
-                let s = sides.entry(a).or_default();
-                if v.is_positive() { s.0 += 1 } else { s.1 += 1 }
+                let s = sides.entry(a).or_insert((0, 0, true));
+                if v.is_positive() {
+                    s.0 += 1
+                } else {
+                    s.1 += 1
+                }
+                s.2 &= t.keys().all(|b| b == a || b == sym);
             }
         }
         let Some(x) = (sides.into_iter())
-            .find(|(_, (l, u))| l * u <= l + u)
+            .find(|(_, (l, u, alone))| l * u <= l + u || *alone)
             .map(|(x, _)| x.clone())
         else {
             break;
@@ -19015,6 +19153,78 @@ fn alone_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
         .filter_map(|k| Some((k.lin.terms.get(sym)?.clone(), k.lin.constant.clone(), k.rel)));
     let (lo, hi) = int_bounds(alone)?;
     if dir > 0 { hi } else { lo }
+}
+
+/// The side of `sym` over `c` going `dir` (`None` inside: no bound), found with no question,
+/// when `c` is a constraint or a conjunction of constraints alone, with a point, no atom of
+/// it a product (which the solver may read more tightly than as an atom of its own), and
+/// [`shadow`] eliminates every atom but `sym` exactly over the integers: the rows left are
+/// then the projection of `c`'s integer points on `sym`, and their bound is the side. `None`
+/// otherwise.
+// Complexity tradeoff: naive (as before ST-churn-at-once), the questions of [`hull_side`], each
+// a decision of the whole of `c`, about 234,000 instructions in base churn at any k: one at
+// the real bound ([`real_end`], since PERF-l139-family) or one to find a side unbounded, and
+// before that O(log d) for a side at distance d from the point, 11 to 14 at k = 32 in base
+// churn given at once (`x - y >= 2k + j`, l01_39 `xst::s4`), 11.1 times at 8n by bytes. Used:
+// Fourier-Motzkin elimination with the dark shadow (Pugh, "The Omega test: a fast and
+// practical integer programming algorithm for dependence analysis", Supercomputing 1991),
+// exact over the integers where [`shadow`] does it, so a conjunction it fully eliminates
+// gives its side with no question; [`shadow`] makes no more rows than it takes out, O(m log m)
+// for m terms, below the cost of one question on the same constraints. Measured on base
+// churn at once at n = 16 and 128: 1.68e9 and 13.6e9 instructions, 321 and 2,607 MB with the
+// one question at the real bound, 1.05e9 and 8.50e9, 204 and 1,655 MB with this first (8.1
+// times at 8n either way, 37% less of each).
+fn exact_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
+    let rows = plain_rows(c)?;
+    let out = shadow(&rows, &|a| a == sym, true)?;
+    if !(out.iter()).all(|k| k.lin.terms.keys().all(|a| a == sym)) {
+        return None;
+    }
+    let alone = (out.iter())
+        .filter(|k| k.lin.terms.len() == 1)
+        .map(|k| (k.lin.terms[sym].clone(), k.lin.constant.clone(), k.rel));
+    let (lo, hi) = int_bounds(alone)?;
+    Some(if dir > 0 { hi } else { lo })
+}
+
+/// The constraints of `c` when it is a constraint or a conjunction of constraints alone, no
+/// atom of them a product (which the solver may read more tightly than as an atom of its own,
+/// so that rows read with it as an atom may hold where `c` does not); `None` otherwise.
+fn plain_rows(c: &Formula) -> Option<Vec<Con>> {
+    let rows: Vec<Con> = match c {
+        Formula::Con(k) => vec![k.clone()],
+        Formula::And(fs) => (fs.iter())
+            .map(|f| match f {
+                Formula::Con(k) => Some(k.clone()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    let product = |k: &Con| (k.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)));
+    (!rows.iter().any(product)).then_some(rows)
+}
+
+/// Whether `c` has an integer point with `sym` at `v`, found with no question where `c` is
+/// as [`plain_rows`] reads it and, once `v` is put in for `sym` and each row is divided by the
+/// common divisor of its terms ([`tidy`]), [`shadow`] eliminates every atom exactly (a point)
+/// or meets a row that cannot hold (none); `None` otherwise.
+fn exact_at(c: &Formula, sym: &Atom, v: &Int) -> Option<bool> {
+    let mut rows = Vec::new();
+    for mut k in plain_rows(c)? {
+        if let Some(a) = k.lin.terms.remove(sym) {
+            k.lin.constant = &k.lin.constant + &(&a * v);
+        }
+        match tidy(k.lin, k.rel) {
+            Err(()) => return Some(false),
+            Ok(None) => {}
+            Ok(Some(k)) => rows.push(k),
+        }
+    }
+    match shadow(&rows, &|_| false, true) {
+        None => Some(false),
+        Some(out) => out.is_empty().then_some(true),
+    }
 }
 
 /// The hull of every atom of `cons`, constraints with a point `m`, when each is a difference
@@ -23861,10 +24071,11 @@ pub(super) mod tests {
         }
     }
 
-    /// The sides [`hull_side`] finds are the sides: the shapes of base churn given at once
-    /// (ST-churn-at-once), a side inside a row of two atoms with the point far from it, and the
-    /// corner cases: an atom no row names (no bound either way), an equality whose coefficient
-    /// is not 1 (`2·x == y`), a disjunction and a product atom.
+    /// The sides [`hull_side`] finds by elimination alone ([`exact_side`]) are the sides: the
+    /// shapes of base churn given at once (ST-churn-at-once), a side inside a row of two atoms
+    /// with the point far from it, and the corner cases: an atom no row names (no bound either
+    /// way), an equality whose coefficient is not 1 (`2·x == y`), a disjunction and a product
+    /// atom (neither settled by elimination: the questions find the side).
     #[test]
     fn hull_sides_of_corner_cases_are_the_sides() {
         let con =
@@ -23909,32 +24120,257 @@ pub(super) mod tests {
             )),
             con(&[("x", -1)], 7),
         ]);
-        let cases: [(&Formula, &str, i64, Option<i128>); 12] = [
-            (&churn, "q", -1, Some(52)),
-            (&churn, "q", 1, None),
-            (&churn, "p", 1, None),
-            (&sum, "s", -1, Some(0)),
-            (&sum, "s", 1, None),
-            (&sum, "z", 1, None),
-            (&twice, "x", -1, Some(2)),
-            (&twice, "x", 1, Some(4)),
-            (&either, "x", -1, Some(40)),
-            (&either, "y", 1, Some(60)),
-            (&product, "x", 1, Some(7)),
-            (&product, "y", 1, None),
+        let cases: [(&Formula, &str, i64, Option<i128>, bool); 12] = [
+            (&churn, "q", -1, Some(52), true),
+            (&churn, "q", 1, None, true),
+            (&churn, "p", 1, None, true),
+            (&sum, "s", -1, Some(0), true),
+            (&sum, "s", 1, None, true),
+            (&sum, "z", 1, None, true),
+            (&twice, "x", -1, Some(2), true),
+            (&twice, "x", 1, Some(4), true),
+            (&either, "x", -1, Some(40), false),
+            (&either, "y", 1, Some(60), false),
+            (&product, "x", 1, Some(7), false),
+            (&product, "y", 1, None, false),
         ];
-        for (f, n, dir, want) in cases {
+        for (f, n, dir, want, exact) in cases {
             let a = sym(n);
             let model = satisfiable_inner(f).unwrap().expect("the case has a point");
             let side = hull_side(f, &a, &model, dir).unwrap();
             assert_eq!(side, want.map(Int::from), "{f}: {n} going {dir}");
             is_side(f, &a, dir, &side);
+            assert_eq!(
+                exact_side(f, &a, dir).is_some(),
+                exact,
+                "{f}: {n} going {dir}"
+            );
+        }
+    }
+
+    /// How a side of the hop family's sums is settled, and that it is the side: by elimination
+    /// alone ([`exact_side`]), at the real end with no question ([`real_end`], [`exact_at`]), or
+    /// by a question. The shapes are those of l01_39 `families` hop at k = 16, `s == x + y + z`
+    /// with `z == 1` and two rows of `x` and `y`: the substitution of `s`'s equality, kept
+    /// before since its count of terms refused it although the terms cancel (`eq_trial` in
+    /// [`shadow_logged`]); `x`'s rows naming one other atom, `y`, kept since `2·3` pairs are
+    /// more than `2 + 3` rows (`one_other`); and coefficients other than 1 on both sides of
+    /// `x`, which no exact elimination reads, settled with `s` (or `y`) put in at its real
+    /// end, where the rows left name `x` alone. Corner cases: a real end where no point lies
+    /// (`y` even, its real bound odd), and a product atom (none of these paths: the questions
+    /// find the side). Each side is checked by questions of its own ([`is_side`]), and each
+    /// real end by a question past it.
+    #[test]
+    fn hop_sides_are_settled_without_questions() {
+        #[derive(Debug, PartialEq)]
+        enum Path {
+            Exact,
+            AtEnd,
+            Asked,
+        }
+        let con = |t: &[(&str, i128)], k: i128| ge(t, k);
+        let eq = |t: &[(&str, i128)], k: i128| {
+            Formula::Con(Con {
+                lin: lin(t, k),
+                rel: Rel::Eq,
+            })
+        };
+        // `s == x + y + z`, `z == 1`, `-1000 <= y <= 1000` and `rows` of `x` and `y`.
+        let hop = |rows: &[Formula]| {
+            let mut all = vec![
+                eq(&[("s", 1), ("x", -1), ("y", -1), ("z", -1)], 0),
+                eq(&[("z", 1)], -1),
+                con(&[("y", -1)], 1000),
+                con(&[("y", 1)], 1000),
+            ];
+            all.extend_from_slice(rows);
+            Formula::and(all)
+        };
+        // `10·x + y <= 53`, `9·x + y <= 48`, `-1000 <= x <= 105`.
+        let cancel = hop(&[
+            con(&[("x", -10), ("y", -1)], 53),
+            con(&[("x", -9), ("y", -1)], 48),
+            con(&[("x", -1)], 105),
+            con(&[("x", 1)], 1000),
+        ]);
+        // `2·x + y <= 13`, `3·x + y >= 20`, `-326 <= x <= 1000`.
+        let one = hop(&[
+            con(&[("x", -2), ("y", -1)], 13),
+            con(&[("x", 3), ("y", 1)], -20),
+            con(&[("x", -1)], 1000),
+            con(&[("x", 1)], 326),
+        ]);
+        // `10·x + y <= 53`, `11·x + y >= 60`, `-85 <= x <= 1000`.
+        let wide = hop(&[
+            con(&[("x", -10), ("y", -1)], 53),
+            con(&[("x", 11), ("y", 1)], -60),
+            con(&[("x", -1)], 1000),
+            con(&[("x", 1)], 85),
+        ]);
+        // `9·x + y <= 48`, `8·x + y >= 45`, `-1000 <= x <= 116`.
+        let nine = hop(&[
+            con(&[("x", -9), ("y", -1)], 48),
+            con(&[("x", 8), ("y", 1)], -45),
+            con(&[("x", -1)], 116),
+            con(&[("x", 1)], 1000),
+        ]);
+        // `y >= 2·x`, `y <= 2·x + 1`, `y == 2·w + 1`, `0 <= x <= 5`: `y` is `2·x + 1`, so `s`
+        // is `3·x + 2`, from 2 to 17.
+        let odd = hop(&[
+            con(&[("y", 1), ("x", -2)], 0),
+            con(&[("y", -1), ("x", 2)], 1),
+            eq(&[("y", 1), ("w", -2)], -1),
+            con(&[("x", 1)], 0),
+            con(&[("x", -1)], 5),
+        ]);
+        // `y == 2·w`, `1 <= y <= 5`, `x == 0`: the real end of `s` is 6, at `y = 5`, which is
+        // odd: no point lies there (`exact_at` false), and the side, 5, is found inside it.
+        let even = hop(&[
+            eq(&[("y", 1), ("w", -2)], 0),
+            con(&[("y", 1)], -1),
+            con(&[("y", -1)], 5),
+            eq(&[("x", 1)], 0),
+        ]);
+        let product = Formula::and(vec![
+            Formula::Con(Con::ge(
+                &Lin::atom(Atom::Product(
+                    Factor::Sym("x".into()),
+                    Factor::Sym("y".into()),
+                )),
+                &Lin::constant(4),
+            )),
+            con(&[("x", -1)], 7),
+            con(&[("x", 1)], -1),
+            con(&[("y", -1)], 3),
+            eq(&[("s", 1), ("x", -1), ("y", -1)], 0),
+        ]);
+        let cases: [(&Formula, &str, i64, Option<i128>, Path); 13] = [
+            (&cancel, "s", -1, Some(-1999), Path::Exact),
+            (&cancel, "s", 1, Some(895), Path::Exact),
+            (&one, "s", -1, Some(-659), Path::Exact),
+            (&one, "s", 1, Some(7), Path::Exact),
+            (&wide, "s", -1, Some(-902), Path::AtEnd),
+            (&wide, "s", 1, Some(-9), Path::AtEnd),
+            (&wide, "y", -1, Some(-1000), Path::AtEnd),
+            (&nine, "y", -1, Some(21), Path::AtEnd),
+            (&odd, "s", 1, Some(17), Path::AtEnd),
+            (&even, "s", 1, Some(5), Path::AtEnd),
+            (&odd, "s", -1, Some(2), Path::AtEnd),
+            (&product, "s", 1, Some(10), Path::Asked),
+            (&product, "s", -1, None, Path::Asked),
+        ];
+        for (f, n, dir, want, path) in cases {
+            let a = sym(n);
+            let model = satisfiable_inner(f).unwrap().expect("the case has a point");
+            let side = hull_side(f, &a, &model, dir).unwrap();
+            is_side(f, &a, dir, &side);
+            assert_eq!(side, want.map(Int::from), "{f}: {n} going {dir}");
+            let end = real_end(f, &a, dir);
+            if let Some(e) = &end {
+                // No point lies past the real end.
+                let (x, next) = (Lin::atom(a.clone()), Lin::constant(e + &Int::from(dir)));
+                let past = if dir > 0 {
+                    Con::ge(&x, &next)
+                } else {
+                    Con::ge(&next, &x)
+                };
+                let f_past = Formula::and(vec![f.clone(), Formula::Con(past)]);
+                assert!(!decide_inner(&f_past).unwrap(), "{f}: a point past {e}");
+            }
+            let at_end = end.as_ref().and_then(|e| exact_at(f, &a, e));
+            let got = if exact_side(f, &a, dir).is_some() {
+                Path::Exact
+            } else if at_end.is_some() {
+                assert_eq!(
+                    at_end,
+                    Some(side.as_ref() == end.as_ref()),
+                    "{f}: {n} going {dir}"
+                );
+                Path::AtEnd
+            } else {
+                Path::Asked
+            };
+            assert_eq!(got, path, "{f}: {n} going {dir}");
+        }
+    }
+
+    /// [`exact_at`] answers whether a point has the symbol at a value only where elimination
+    /// settles it, and then rightly: a row false once the value is put in, an equality the
+    /// divisor of whose terms does not divide its constant, rows eliminated exactly with and
+    /// without a point; and no answer for a disjunction, a product atom, or rows that keep an
+    /// atom (coefficients other than 1 on both sides of `x`).
+    #[test]
+    fn points_at_a_value_are_found_by_elimination_or_not_at_all() {
+        let eq = |t: &[(&str, i128)], k: i128| {
+            Formula::Con(Con {
+                lin: lin(t, k),
+                rel: Rel::Eq,
+            })
+        };
+        let s = sym("s");
+        // `s == x + y`, `0 <= x <= 3`, `0 <= y <= 3`.
+        let box_sum = Formula::and(vec![
+            eq(&[("s", 1), ("x", -1), ("y", -1)], 0),
+            ge(&[("x", 1)], 0),
+            ge(&[("x", -1)], 3),
+            ge(&[("y", 1)], 0),
+            ge(&[("y", -1)], 3),
+        ]);
+        // `s == 2·x`.
+        let even = eq(&[("s", 1), ("x", -2)], 0);
+        // `s <= 4` alone, and with an atom other than `s`.
+        let low = ge(&[("s", -1)], 4);
+        // `2·x - 3·y >= s`, `3·x - 2·y <= s + 1`, `x` and `y` from 0 to 100: once `s` is put
+        // in, each of `x` and `y` has a coefficient other than 1 on both of its sides, so
+        // neither is eliminated exactly and both are kept.
+        let kept = Formula::and(vec![
+            ge(&[("x", 2), ("y", -3), ("s", -1)], 0),
+            ge(&[("x", -3), ("y", 2), ("s", 1)], 1),
+            ge(&[("x", 1)], 0),
+            ge(&[("x", -1)], 100),
+            ge(&[("y", 1)], 0),
+            ge(&[("y", -1)], 100),
+        ]);
+        let either = Formula::or(vec![ge(&[("s", 1)], 0), ge(&[("x", 1)], 0)]);
+        let product = Formula::and(vec![
+            Formula::Con(Con::ge(
+                &Lin::atom(Atom::Product(
+                    Factor::Sym("x".into()),
+                    Factor::Sym("x".into()),
+                )),
+                &Lin::constant(4),
+            )),
+            eq(&[("s", 1), ("x", -1)], 0),
+        ]);
+        let cases: [(&Formula, i128, Option<bool>); 12] = [
+            (&box_sum, 0, Some(true)),
+            (&box_sum, 6, Some(true)),
+            (&box_sum, 7, Some(false)),
+            (&box_sum, -1, Some(false)),
+            (&even, 4, Some(true)),
+            (&even, 5, Some(false)),
+            (&low, 4, Some(true)),
+            (&low, 5, Some(false)),
+            (&kept, 7, None),
+            (&either, 1, None),
+            (&product, 3, None),
+            (&product, 1, None),
+        ];
+        for (f, v, want) in cases {
+            let got = exact_at(f, &s, &Int::from(v));
+            assert_eq!(got, want, "{f} at s = {v}");
+            let at = Formula::and(vec![f.clone(), eq(&[("s", 1)], -v)]);
+            let has = decide_inner(&at).unwrap();
+            if let Some(g) = got {
+                assert_eq!(g, has, "{f} at s = {v}");
+            }
         }
     }
 
     /// The sides [`hull_side`] finds are the sides, on random conjunctions of up to 6 rows over
     /// 4 names with coefficients from -3 to 3, some with a disjunction of two conjunctions of
-    /// such rows.
+    /// such rows; and many are found by elimination alone ([`exact_side`]), so that path is
+    /// compared, not passed by.
     #[test]
     fn hull_sides_on_random_conjunctions_are_the_sides() {
         let names = ["a", "b", "c", "d"];
@@ -23953,7 +24389,7 @@ pub(super) mod tests {
                 rel,
             })
         };
-        let mut sides = 0;
+        let (mut sides, mut exact) = (0, 0);
         for _ in 0..600 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
@@ -23973,10 +24409,11 @@ pub(super) mod tests {
                     };
                     is_side(&whole, &a, dir, &side);
                     sides += 1;
+                    exact += usize::from(exact_side(&whole, &a, dir).is_some());
                 }
             }
         }
-        assert!(sides > 1000, "{sides} sides");
+        assert!(sides > 1000 && exact > sides / 4, "{exact} of {sides}");
     }
 
     /// Calls `f` with each order of `0..n`, by Heap's method.
