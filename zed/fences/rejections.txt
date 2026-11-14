@@ -132,6 +132,7 @@ Hole in the program
 Dependency reaching what its importer did not grant
 Two operations on one port that may not commute, with nothing ordering them
 Function marked `@nonblocking` that can block
+`@blocking` written
 Operator with no arrow at its operands' carrier
 Units that differ where an operation requires equal ones
 Unit name not declared

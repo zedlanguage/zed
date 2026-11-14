@@ -385,6 +385,15 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:1",
         Some("remove `@nonblocking` before `opt`"),
     ),
+    // SPEC-blocking-default: Zed has no `@blocking`; the repair is the line without it.
+    (
+        Row::BlockingWritten,
+        "",
+        FEE,
+        "@blocking fee(positional base: int, rate: int) = base * rate;\n",
+        "1:1",
+        Some("`fee(positional base: int, rate: int) = base * rate;`"),
+    ),
     // ROOTS-listed (A81): at the root `p = 4` of the divisor, the written `12 div (p - 4) > 0`
     // gives `#divByZero`; a range that starts at 5 holds no root.
     (

@@ -3,6 +3,7 @@
 //! the wave without the world.
 
 mod blocking;
+mod blocking_word;
 mod files;
 mod line_ends;
 mod lines;

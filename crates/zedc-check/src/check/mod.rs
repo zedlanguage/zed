@@ -448,7 +448,8 @@ pub struct Info {
     /// in order of place, then of the question (DESIGN.md L1.39).
     pub warnings: Vec<Error>,
     /// Each function of the unit that can block, by its binder, with why (DESIGN.md sec:ports,
-    /// "Every port operation says whether it can block"); a function not here cannot block.
+    /// "A port operation can block unless it is marked `@nonblocking`"); a function not here
+    /// cannot block.
     /// [`blocking::explain`] says why in the program's words, for an editor to show.
     pub blocking: std::collections::BTreeMap<usize, blocking::Cause>,
     /// The limits written before the unit's `main` (DESIGN.md sec:ports), which the run

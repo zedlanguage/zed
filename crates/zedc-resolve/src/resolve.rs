@@ -593,7 +593,8 @@ fn later_type_layer(name: &str) -> Option<u32> {
 /// The annotations, each with the layer it belongs to (DESIGN.md, "Defined words by layer").
 /// `@hash`, of layer L2, pins an import and annotates no declaration; `@nonblocking`, of layer
 /// L2 on a function written in Zed, marks one the checker proves never blocks, and at L7 a
-/// foreign function, as `@blocking` does.
+/// foreign function it marks as returning in a short constant time, a claim Zed trusts. Zed has
+/// no `@blocking`: an operation with no mark can block.
 pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("hash", 2),
     ("nonblocking", 2),
@@ -603,7 +604,6 @@ pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("stateless", 7),
     ("log", 7),
     ("after", 7),
-    ("blocking", 7),
     ("thread", 7),
     ("checked", 10),
     ("invariant", 15),
@@ -2047,11 +2047,13 @@ impl Resolver<'_> {
 
     /// The annotations `annots`, written before the declaration `decl`. One has a meaning at
     /// this layer: `@nonblocking` before a function or a method, which the checker then proves
-    /// never blocks (DESIGN.md sec:ports, "Every port operation says whether it can block").
-    /// It takes no arguments and is written once; before `local` it marks the function `local`
-    /// marks. The facts of [`MAIN_FACTS`] are read by [`Self::main_fact`]. Every other
-    /// annotation is refused, by [`Self::annotation`].
+    /// never blocks (DESIGN.md sec:ports, "A port operation can block unless it is marked
+    /// `@nonblocking`"). It takes no arguments and is written once; before `local` it marks
+    /// the function `local` marks. The facts of [`MAIN_FACTS`] are read by
+    /// [`Self::main_fact`]. `@blocking`, which Zed does not have, is refused by
+    /// [`Self::blocking_written`], and every other annotation by [`Self::annotation`].
     fn annotations<'a>(&mut self, annots: &'a [Annot], decl: &Stmt, todo: &mut Vec<Task<'a>>) {
+        let whole = decl.span;
         let decl = match &decl.kind {
             StmtKind::Local(d) => d,
             _ => decl,
@@ -2063,6 +2065,10 @@ impl Resolver<'_> {
         for a in annots {
             if MAIN_FACTS.contains(&a.name.as_str()) && (a.name != "timeout" || is_main) {
                 self.main_fact(a, is_main, &mut facts, todo);
+                continue;
+            }
+            if a.name == "blocking" {
+                self.blocking_written(a, Some(whole));
                 continue;
             }
             if a.name != "nonblocking" {
@@ -2217,11 +2223,76 @@ impl Resolver<'_> {
         });
     }
 
+    /// `@blocking`, written as `a` before the declaration `decl`, or as a unit item where `decl`
+    /// is `None`: Zed has no such word, since an operation or function with no mark can block
+    /// (DESIGN.md sec:ports, "A port operation can block unless it is marked `@nonblocking`";
+    /// sec:diagnostics, "`@blocking` written"). The error quotes the declaration's line, from
+    /// the line `a` starts on to the end of the line the declaration starts on, each line
+    /// trimmed and the lines joined by a space, and its repair is that line with `a`, its
+    /// arguments and the blanks after it deleted; a unit item's repair deletes the item. Work:
+    /// O(l) for the l bytes of those lines, found by scanning back from `a` and forward from
+    /// the declaration, never the whole text.
+    fn blocking_written(&mut self, a: &Annot, decl: Option<Span>) {
+        let why = Note {
+            span: a.span,
+            text: "a foreign function or port operation can block unless it is marked \
+                   `@nonblocking`, and a function written in Zed blocks when its body reaches \
+                   one, so nothing is written on one that can block"
+                .into(),
+        };
+        let joined = |s: &str| {
+            let lines = s.lines().map(str::trim).filter(|l| !l.is_empty());
+            lines.collect::<Vec<_>>().join(" ")
+        };
+        let (message, repair) = match (self.text, decl) {
+            (Some(t), Some(d)) => {
+                let start = t[..a.span.start].rfind('\n').map_or(0, |i| i + 1);
+                let from = d.start.max(a.span.end);
+                let end = t[from..].find('\n').map_or(t.len(), |i| from + i);
+                let line = joined(&t[start..end]);
+                let rest = t[a.span.end..end].trim_start();
+                let repaired = joined(&format!("{}{rest}", &t[start..a.span.start]));
+                (
+                    format!("Zed has no `@blocking`: `{line}`. Write `{repaired}` instead."),
+                    format!("repair: `{repaired}`"),
+                )
+            }
+            (Some(t), None) => {
+                let end = t[a.span.end..]
+                    .find(';')
+                    .map_or(t.len(), |i| a.span.end + i + 1);
+                let item = joined(&t[a.span.start..end]);
+                (
+                    format!("Zed has no `@blocking`: `{item}`. Delete the line."),
+                    format!("repair: delete `{item}`"),
+                )
+            }
+            (None, _) => (
+                "Zed has no `@blocking`. Delete it.".into(),
+                "repair: delete `@blocking`".into(),
+            ),
+        };
+        let repair = Note {
+            span: a.span,
+            text: repair,
+        };
+        self.errors.push(Error {
+            row: Some(Row::BlockingWritten),
+            menu: String::new(),
+            span: a.span,
+            message,
+            notes: vec![why, repair],
+        });
+    }
+
     /// The unit item `a;`, written as the statement at `span`. One annotation is a unit item,
     /// `@log(#off);`, which this layer accepts. Each other way to write one is refused with its
     /// reason.
     fn unit_annotation(&mut self, a: &Annot, span: Span) {
         let name = &a.name;
+        if name == "blocking" {
+            return self.blocking_written(a, None);
+        }
         let fail = |message: String| Error {
             row: None,
             menu: String::new(),

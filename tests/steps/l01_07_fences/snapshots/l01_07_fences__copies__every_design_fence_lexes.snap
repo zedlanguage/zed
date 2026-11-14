@@ -160,7 +160,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
 == DESIGN.md [sec:codecs] 7 L20
   2 | @foreign «struct» Sample { t : u64 , value : f64 }
   3 | @foreign ( str["sensor"] , str["sensor_free"] ) @nonblocking freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok ;
-  4 | @foreign ( str["sensor"] , str["sensor_read"] ) @blocking readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
+  4 | @foreign ( str["sensor"] , str["sensor_read"] ) readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
   6 | main ( m : MainArgs ) {
   7 | fs = main :: files ;
   8 | samples = readSamples ( count : 1024₍10₎ ) «else» [ ] ;
@@ -608,9 +608,9 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | next : Ptr ( AddrInfo ) | #none ,
   8 | }
   9 | @foreign ( str["c"] , str["freeaddrinfo"] ) @nonblocking freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
- 10 | @foreign ( str["c"] , str["getaddrinfo"] ) @blocking getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
+ 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
 == DESIGN.md [sec:ffi] 2 L7
-  1 | @foreign ( str["counter"] , str["counter_next"] ) @blocking next : ( ) -> i32 ;
+  1 | @foreign ( str["counter"] , str["counter_next"] ) next : ( ) -> i32 ;
   3 | f ( y : bool ) -> i32 | #none {
   4 | x = next ( ) «else» 0₍10₎ ;
   5 | «return» «if» y { x } «else» { #none } ;
@@ -625,19 +625,19 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | sharingMode : i32 , queueFamilyCount : u32 , queueFamilies : Ptr ( [ u32 ] «with» length ( queueFamilyCount ) ) | #none ,
   8 | }
   9 | @foreign ( str["vulkan"] , str["vkDestroyBuffer"] ) @nonblocking destroyBuffer : ( device : Ptr ( Device ) , buffer : Ptr ( Buffer ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> #ok ;
- 10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) @blocking createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) ;
+ 10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) ;
 == DESIGN.md [sec:ffi] 4 L7
   1 | @foreign «struct» Env { }
   2 | @foreign «struct» Txn { }
   3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok ;
-  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) @blocking begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
-  5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) @blocking commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
+  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
+  5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
 == DESIGN.md [sec:ffi] 5 L7
   1 | @foreign «struct» Zip { }
   2 | @foreign «struct» Source { }
   3 | @foreign ( str["zip"] , str["zip_source_free"] ) @nonblocking sourceFree : ( source : Ptr ( Source ) ) -> #ok ;
-  4 | @foreign ( str["zip"] , str["zip_source_file"] ) @blocking sourceFile : ( archive : Ptr ( Zip ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , start : u64 , length : i64 ) -> Ptr ( Source ) | #none «with» release ( sourceFree ) ;
-  5 | @foreign ( str["zip"] , str["zip_file_add"] ) @blocking fileAdd : ( archive : Ptr ( Zip ) , name : [ u8 ] «with» terminated ( 0₍10₎ ) , source : Ptr ( Source ) «with» consumes ( unless : - 1₍10₎ ) , flags : u32 ) -> i64 ;
+  4 | @foreign ( str["zip"] , str["zip_source_file"] ) sourceFile : ( archive : Ptr ( Zip ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , start : u64 , length : i64 ) -> Ptr ( Source ) | #none «with» release ( sourceFree ) ;
+  5 | @foreign ( str["zip"] , str["zip_file_add"] ) fileAdd : ( archive : Ptr ( Zip ) , name : [ u8 ] «with» terminated ( 0₍10₎ ) , source : Ptr ( Source ) «with» consumes ( unless : - 1₍10₎ ) , flags : u32 ) -> i64 ;
 == DESIGN.md [sec:ffi] 6 L2
   1 | «match» sourceFile ( archive : , path : , start : 0₍10₎ , length : - 1₍10₎ ) {
   2 | #none -> - 1₍10₎ ,
@@ -648,21 +648,21 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | }
 == DESIGN.md [sec:ffi] 7 L7
   1 | @foreign «struct» File { }
-  2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
-  3 | @foreign ( str["c"] , str["fputs"] ) @blocking fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 ;
-  4 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
-  5 | @foreign ( str["c"] , str["fopen"] ) @blocking openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
+  2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["c"] , str["fputs"] ) fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 ;
+  4 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
+  5 | @foreign ( str["c"] , str["fopen"] ) openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
 == DESIGN.md [sec:ffi] 8 L7
   1 | @foreign «struct» Lock { }
   2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok ;
-  3 | @foreign ( str["locks"] , str["lock_acquire"] ) @blocking acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
+  3 | @foreign ( str["locks"] , str["lock_acquire"] ) acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
 == DESIGN.md [sec:ffi] 9 L7
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
-  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) @blocking close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
   4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) @nonblocking finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 ;
-  7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) @blocking open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #ok ; #ok } ) ) ;
-  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) @blocking prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) ;
+  7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #ok ; #ok } ) ) ;
+  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) ;
  11 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 {
  12 | rc , opened = open ( path : ) ;
  13 | «match» opened {
@@ -682,9 +682,9 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | line : u8 , cc : [ u8 ] «with» length ( 32₍10₎ ) ,
   4 | ispeed : u32 , ospeed : u32 ,
   5 | }
-  6 | @foreign ( str["c"] , str["tcgetattr"] ) @blocking tcgetattr : ( fd : i32 ) -> ( i32 , Termios «with» arg ( 1₍10₎ ) ) ;
-  7 | @foreign ( str["c"] , str["tcsetattr"] ) @blocking tcsetattr : ( fd : i32 , when : i32 , mode : Ptr ( Termios ) ) -> i32 ;
-  9 | @thread ( #keys ) @foreign ( str["c"] , str["getchar"] ) @blocking getKey : ( raw : Termios «with» notPassed ( duringStop : #release ) ) -> i32 «with» anyThread ( ) ;
+  6 | @foreign ( str["c"] , str["tcgetattr"] ) tcgetattr : ( fd : i32 ) -> ( i32 , Termios «with» arg ( 1₍10₎ ) ) ;
+  7 | @foreign ( str["c"] , str["tcsetattr"] ) tcsetattr : ( fd : i32 , when : i32 , mode : Ptr ( Termios ) ) -> i32 ;
+  9 | @thread ( #keys ) @foreign ( str["c"] , str["getchar"] ) getKey : ( raw : Termios «with» notPassed ( duringStop : #release ) ) -> i32 «with» anyThread ( ) ;
  12 | makeRaw ( t : Termios ) -> Termios {
  13 | t «with» {
  14 | iflag = t . iflag . bitAnd ( bitNot ( 1515₍10₎ , width : 32₍10₎ ) ) ,
@@ -717,11 +717,11 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  46 | }
 == DESIGN.md [sec:ffi] 11 L7
   1 | «struct» Dir { fd : i32 }
-  2 | @foreign ( str["c"] , str["open"] ) @blocking openPath : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 ;
-  3 | @foreign ( str["c"] , str["chdir"] ) @blocking chdir : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 ;
-  4 | @foreign ( str["c"] , str["fchdir"] ) @blocking fchdir : ( fd : i32 ) -> i32 ;
-  5 | @foreign ( str["c"] , str["close"] ) @blocking closeFd : ( fd : i32 ) -> i32 ;
-  7 | @foreign ( str["c"] , str["open"] ) @blocking openIn : ( dir : Dir «with» notPassed ( ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 ;
+  2 | @foreign ( str["c"] , str["open"] ) openPath : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 ;
+  3 | @foreign ( str["c"] , str["chdir"] ) chdir : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 ;
+  4 | @foreign ( str["c"] , str["fchdir"] ) fchdir : ( fd : i32 ) -> i32 ;
+  5 | @foreign ( str["c"] , str["close"] ) closeFd : ( fd : i32 ) -> i32 ;
+  7 | @foreign ( str["c"] , str["open"] ) openIn : ( dir : Dir «with» notPassed ( ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 ;
  10 | leaveDir ( old : Dir ) -> #ok {
  11 | r = fchdir ( fd : old . fd ) ;
  12 | @after ( r ) _ = closeFd ( fd : old . fd ) ;
@@ -740,33 +740,33 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
 == DESIGN.md [sec:ffi] 12 L7
   1 | @foreign «struct» Curl { }
   2 | «struct» CurlState { }
-  3 | @foreign ( str["curl"] , str["curl_global_init"] ) @blocking globalInit : ( flags : i64 ) -> i32 ;
-  4 | @foreign ( str["curl"] , str["curl_global_cleanup"] ) @blocking globalCleanup : ( ) -> #ok ;
-  5 | @foreign ( str["curl"] , str["curl_easy_cleanup"] ) @blocking easyCleanup : ( handle : Ptr ( Curl ) ) -> #ok ;
-  6 | @foreign ( str["curl"] , str["curl_easy_init"] ) @blocking easyInit : ( state : CurlState «with» notPassed ( ) ) -> Ptr ( Curl ) | #none «with» release ( easyCleanup ) «with» keeps ( state ) ;
+  3 | @foreign ( str["curl"] , str["curl_global_init"] ) globalInit : ( flags : i64 ) -> i32 ;
+  4 | @foreign ( str["curl"] , str["curl_global_cleanup"] ) globalCleanup : ( ) -> #ok ;
+  5 | @foreign ( str["curl"] , str["curl_easy_cleanup"] ) easyCleanup : ( handle : Ptr ( Curl ) ) -> #ok ;
+  6 | @foreign ( str["curl"] , str["curl_easy_init"] ) easyInit : ( state : CurlState «with» notPassed ( ) ) -> Ptr ( Curl ) | #none «with» release ( easyCleanup ) «with» keeps ( state ) ;
   9 | startCurl ( ) -> CurlState | #none «with» release ( globalCleanup ) {
  10 | «return» «if» globalInit ( flags : 3₍10₎ ) != 0₍10₎ { #none } «else» { CurlState ( ) } ;
  11 | }
 == DESIGN.md [sec:ffi] 13 L7
   1 | @foreign «struct» File { }
-  2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
-  3 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
-  5 | @foreign ( str["c"] , str["setvbuf"] ) @blocking setvbuf : ( file : Ptr ( File ) , buf : [ u8 ] «with» length ( 65536₍10₎ ) «with» held ( by : file ) , mode : i32 , size : u64 ) -> i32 ;
+  2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
+  5 | @foreign ( str["c"] , str["setvbuf"] ) setvbuf : ( file : Ptr ( File ) , buf : [ u8 ] «with» length ( 65536₍10₎ ) «with» held ( by : file ) , mode : i32 , size : u64 ) -> i32 ;
   8 | @foreign «struct» Ring { }
   9 | @foreign «struct» Page { bytes : [ u8 ] «with» length ( 4096₍10₎ ) }
- 10 | @foreign ( str["uringshim"] , str["ring_exit"] ) @blocking ringExit : ( ring : Ptr ( Ring ) «with» consumes ( ) ) -> #ok ;
- 11 | @foreign ( str["uringshim"] , str["ring_cancel_all"] ) @blocking cancelAll : ( ring : Ptr ( Ring ) ) -> i32 ;
- 12 | @foreign ( str["uringshim"] , str["ring_init"] ) @blocking ringInit : ( entries : u32 ) -> Ptr ( Ring ) | #none «with» release ( ring -> { n = cancelAll ( ring ) «else» 0₍10₎ ; @after ( n ) _ = ringExit ( ring ) «else» #ok ; #ok } ) ;
- 13 | @foreign ( str["uringshim"] , str["submit_read"] ) @blocking submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 ;
- 14 | @foreign ( str["uringshim"] , str["wait_read"] ) @blocking waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) ;
- 16 | @foreign ( str["uringshim"] , str["unregister_pages"] ) @blocking unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 ;
+ 10 | @foreign ( str["uringshim"] , str["ring_exit"] ) ringExit : ( ring : Ptr ( Ring ) «with» consumes ( ) ) -> #ok ;
+ 11 | @foreign ( str["uringshim"] , str["ring_cancel_all"] ) cancelAll : ( ring : Ptr ( Ring ) ) -> i32 ;
+ 12 | @foreign ( str["uringshim"] , str["ring_init"] ) ringInit : ( entries : u32 ) -> Ptr ( Ring ) | #none «with» release ( ring -> { n = cancelAll ( ring ) «else» 0₍10₎ ; @after ( n ) _ = ringExit ( ring ) «else» #ok ; #ok } ) ;
+ 13 | @foreign ( str["uringshim"] , str["submit_read"] ) submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 ;
+ 14 | @foreign ( str["uringshim"] , str["wait_read"] ) waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) ;
+ 16 | @foreign ( str["uringshim"] , str["unregister_pages"] ) unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 ;
 == DESIGN.md [sec:ffi] 14 L7
   1 | «struct» Glfw { }
-  2 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwInit"] ) @blocking glfwInit : ( ) -> i32 ;
-  3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) @blocking terminate : ( ) -> #ok ;
-  4 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) @blocking pollEvents : ( glfw : Glfw «with» notPassed ( ) ) -> #ok ;
+  2 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwInit"] ) glfwInit : ( ) -> i32 ;
+  3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) terminate : ( ) -> #ok ;
+  4 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) pollEvents : ( glfw : Glfw «with» notPassed ( ) ) -> #ok ;
   5 | @foreign «struct» Window { }
-  6 | @thread ( #render ) @foreign ( str["glfw"] , str["glfwMakeContextCurrent"] ) @blocking makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) ) -> #ok «with» anyThread ( ) ;
+  6 | @thread ( #render ) @foreign ( str["glfw"] , str["glfwMakeContextCurrent"] ) makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) ) -> #ok «with» anyThread ( ) ;
   7 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) @nonblocking clear : ( glfw : Glfw «with» notPassed ( ) , mask : u32 ) -> #ok ;
   8 | @thread ( #render ) drawFrame ( glfw : Glfw , current : #ok ) -> #ok {
   9 | @after ( current ) r = clear ( glfw : , mask : 16384₍10₎ ) «else» #ok ;
