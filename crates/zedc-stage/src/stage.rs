@@ -1957,7 +1957,7 @@ type Said = Result<Value, Option<String>>;
 /// ([`Run::failed`]); or where the stub itself fails: at a call inside a pure region, an
 /// argument holding a function no stub stands for, one a key cannot tell apart or an answer
 /// that cannot be compared, which the call as written may not meet, and then the error is not
-/// known. A run whose result is a function fails where the call as written gives that
+/// known. A run whose result is or holds a function fails where the call as written gives that
 /// function, so that error is not known either. Any other error is met outside the stubs'
 /// bodies, where the two runs agree. An error the evaluator gives for want of memory is treated
 /// as not known, since the run as written holds other values than the run with stubs.
@@ -1966,6 +1966,7 @@ fn error_as_written(e: KernelError, calls: &Run) -> Option<String> {
         KernelError::Port(..) => calls.failed.lock().expect("one thread").take(),
         KernelError::Type(m)
             if m.ends_with("applied to a function")
+                || m.ends_with("holds a function")
                 || m.ends_with("used inside a pure region")
                 || m == "the program's result is a function" =>
         {

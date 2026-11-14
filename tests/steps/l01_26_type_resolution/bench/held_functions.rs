@@ -5,19 +5,30 @@ use zed_tests::scaling;
 use super::super::held_functions::{
     in_a_wide_payload, in_atoms, in_atoms_and_tuples, in_atoms_by_bindings, in_atoms_by_calls,
     in_atoms_twice, in_atoms_twice_in_a_function, in_calls, in_named_steps, in_one_expression,
-    nested,
+    nested, notes_in_calls, notes_in_named_steps, notes_in_one_expression,
 };
 use super::super::{Resolved, type_errors};
 
 #[test]
 fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
-    for (what, text) in [
+    type Family = fn(usize) -> String;
+    type Count = fn(usize) -> usize;
+    for (what, text, notes) in [
         (
             "a function n tuples deep in one expression",
-            in_one_expression as fn(usize) -> String,
+            in_one_expression as Family,
+            notes_in_one_expression as Count,
         ),
-        ("a function put in a tuple by n bindings", in_named_steps),
-        ("a function put in a tuple by n nested calls", in_calls),
+        (
+            "a function put in a tuple by n bindings",
+            in_named_steps,
+            notes_in_named_steps,
+        ),
+        (
+            "a function put in a tuple by n nested calls",
+            in_calls,
+            notes_in_calls,
+        ),
     ] {
         let one = type_errors(&text(3));
         assert_eq!(one.len(), 1, "{what}: {one:?}");
@@ -27,9 +38,10 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
             .collect();
         scaling::check_order(what, 500, 1, |n| {
             let info = units[&n].check();
-            // One error with its two notes and its two repairs, whatever the depth.
+            // One error, with one note for each step the function passes through and none
+            // that prints a type of the depth of the tuples.
             assert_eq!(info.errors.len(), 1, "{what} at {n}");
-            assert_eq!(info.errors[0].notes.len(), 4, "{what} at {n}");
+            assert_eq!(info.errors[0].notes.len(), notes(n), "{what} at {n}");
         });
     }
 }

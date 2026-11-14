@@ -2268,6 +2268,139 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.derive_narrowed(spans, &HashMap::new(), out);
     }
 
+    /// The derivation of the function that the value of the expression at `span` holds, for a
+    /// use that needs data (DESIGN.md step L1.17). Each tuple, atom and name on the path from
+    /// `span` to the function, that holds the function and is not one, is a step that names
+    /// its site and prints no type: "this tuple holds the function", "`t` holds the function
+    /// here", "`t` is defined here". The function itself is shown as [`Ck::derive`] shows it,
+    /// and a part of a tuple or an atom that holds no function is left out. Where the walk
+    /// meets no such step, this is [`Ck::derive`].
+    ///
+    /// Complexity tradeoff (CHK-held-cascade): [`Ck::derive`] shows each step with its type, so
+    /// a function at the bottom of `n` nested tuples gives `n` steps each printing a type of
+    /// size `O(n)`, `O(n^2)` in all (about 114 KB of notes at `n = 200`, and 328 KB for `n`
+    /// bindings each putting the last in a tuple): a type that holds a function is printed
+    /// anew at each step (DESIGN.md sec:diagnostics, "Types in a message"). The steps that
+    /// only hold the function print no type, `O(1)` each, `O(n)` in all, and still show the
+    /// path the function takes to the use. Test:
+    /// `l01_26_type_resolution::bench::held_functions::a_function_in_many_nested_tuples_is_one_error_in_linear_time`.
+    fn derive_held(&self, span: Span) -> Vec<Note> {
+        let mut out = Vec::new();
+        self.derive_walk(&[span], &HashMap::new(), true, &mut out);
+        out
+    }
+
+    /// The step of [`Ck::derive_held`] at the expression at `span`, of type `kept` given by
+    /// `src`, when that expression holds a function and is not one: its notes, then the spans
+    /// the walk goes on to, a tuple's or an atom's parts that may hold the function, or the
+    /// expressions a name's binder is defined by. `None` where the expression is to be shown as
+    /// [`Ck::derive`] shows it. `held` keeps, for each tuple written out that the walk has
+    /// read, whether it holds a function ([`Ck::tuple_holds`]).
+    fn toward_function(
+        &self,
+        span: Span,
+        kept: &Option<Ty>,
+        src: &Src<'a>,
+        held: &mut HashMap<Span, bool>,
+    ) -> Option<(Vec<Note>, Vec<Span>)> {
+        if kept.as_ref().is_some_and(|t| t.fns.iter().any(|s| !s.data)) {
+            return None;
+        }
+        // A part with a type of its own is left out when that type holds no function; a
+        // tuple written out keeps none ([`Seen`]), and is read by its parts.
+        let mut may_hold = |p: &Expr| match self.seen.get(&p.span) {
+            Some((Some(t), _)) => t.held_function().is_some(),
+            Some((None, _)) => self.tuple_holds(p, held),
+            None => false,
+        };
+        let (text, parts): (String, Vec<&Expr>) = match src {
+            Src::Other(e) => match &e.kind {
+                ExprKind::Tuple(items) => (
+                    "this tuple holds the function".into(),
+                    items.iter().collect(),
+                ),
+                ExprKind::Call {
+                    callee,
+                    positional,
+                    named,
+                    ..
+                } => {
+                    let ExprKind::Atom(a) = &callee.kind else {
+                        return None;
+                    };
+                    (
+                        format!("this atom `#{a}` holds the function in its payload"),
+                        positional
+                            .iter()
+                            .chain(named.iter().map(|(_, a)| a))
+                            .collect(),
+                    )
+                }
+                _ => return None,
+            },
+            Src::Name(id) => {
+                let name = &self.t.res.binders[*id].name;
+                let mut notes = vec![Note {
+                    span,
+                    text: format!("`{name}` holds the function here"),
+                }];
+                let mut from = Vec::new();
+                let mut o = self.whence.get(id).map(|o| &**o);
+                while let Some(origin) = o {
+                    if let Some(f) = origin.from {
+                        notes.push(Note {
+                            span: origin.span,
+                            text: format!("`{name}` is defined here"),
+                        });
+                        from.push(f);
+                    }
+                    o = origin.then.as_deref();
+                }
+                return (!from.is_empty()).then_some((notes, from));
+            }
+            Src::Call(..) => return None,
+        };
+        let on = parts
+            .into_iter()
+            .filter(|p| may_hold(p))
+            .map(|p| p.span)
+            .collect();
+        Some((vec![Note { span, text }], on))
+    }
+
+    /// Whether the tuple written out `e`, which keeps no type of its own ([`Seen`]), holds a
+    /// function: a part does whose own type holds one, or a tuple written out in it that does.
+    /// Each tuple is decided once, after its parts, and kept in `held`, so the walk of
+    /// [`Ck::derive_held`] decides all the tuples it reads in time linear in their parts.
+    ///
+    /// Complexity tradeoff: [`Ck::tuple_seen`] builds the type of `e` from its parts, `O(s)`
+    /// for a tuple of `s` parts at any depth, and a walk that built it at each of `n` nested
+    /// tuples would cost `O(n^2)`; one answer per tuple costs `O(1)` per part.
+    fn tuple_holds(&self, e: &Expr, held: &mut HashMap<Span, bool>) -> bool {
+        let written = |p: &Expr| matches!(self.seen.get(&p.span), Some((None, _)));
+        let mut stack = vec![(e, false)];
+        while let Some((x, parts_done)) = stack.pop() {
+            let ExprKind::Tuple(items) = &x.kind else {
+                continue;
+            };
+            if held.contains_key(&x.span) {
+                continue;
+            }
+            if !parts_done {
+                stack.push((x, true));
+                stack.extend(items.iter().filter(|p| written(p)).map(|p| (p, false)));
+                continue;
+            }
+            let holds = items.iter().any(|p| match self.seen.get(&p.span) {
+                Some((Some(t), _)) => t.held_function().is_some(),
+                Some((None, _)) => held.get(&p.span).copied().unwrap_or(false),
+                None => false,
+            });
+            held.insert(x.span, holds);
+        }
+        held.get(&e.span).copied().unwrap_or(false)
+    }
+
     /// [`Ck::derive_into`], with the type of each name of type `int` at a span of `narrowed`
     /// shown as given there: its interval where a test the walk is in narrowed it, `k` as
     /// int[0..] in the arm of `if k >= 0` (POW-nonneg-power).
@@ -2275,6 +2408,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         spans: &[Span],
         narrowed: &HashMap<Span, String>,
+        out: &mut Vec<Note>,
+    ) {
+        self.derive_walk(spans, narrowed, false, out);
+    }
+
+    /// [`Ck::derive_narrowed`], and with `to_function` the walk of [`Ck::derive_held`].
+    fn derive_walk(
+        &self,
+        spans: &[Span],
+        narrowed: &HashMap<Span, String>,
+        to_function: bool,
         out: &mut Vec<Note>,
     ) {
         if self.trying {
@@ -2289,6 +2433,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // for one copy of each note.
         let mut shown: HashSet<Note> = out.iter().cloned().collect();
         let mut visited = HashSet::new();
+        // Whether each tuple written out holds a function ([`Ck::tuple_holds`]).
+        let mut held = HashMap::new();
         // The end of each chain of names the steps have followed ([`Ck::written_at`]).
         let mut written = HashMap::new();
         let mut stack: Vec<Work> = spans.iter().rev().map(|&s| Work::Derive(s)).collect();
@@ -2310,6 +2456,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             };
             built(1);
+            if to_function
+                && let Some((notes, on)) = self.toward_function(span, kept, src, &mut held)
+            {
+                let next = notes.into_iter().map(Work::Show);
+                stack.extend(next.chain(on.into_iter().map(Work::Derive)).rev());
+                continue;
+            }
             // A step prints a literal value as the program writes it in the expression the
             // step is about, `-0r` for `x / -0r` and `0r` for its `0r` ([`Ck::spelling`]).
             let at = Some(self.written_at(span, &mut written));

@@ -150,12 +150,7 @@ fn a_tuple_beside_never_is_checked_by_component() {
         ),
         (
             "h(1) < (n, g)",
-            vec![
-                refused("<", "Never", "(int) -> int", "h(1) < (n, g)"),
-                "a tuple takes data, and this value may hold a function, `(int) -> int`: data \
-                 is a value that holds no function at any depth. [g]"
-                    .into(),
-            ],
+            vec![refused("<", "Never", "(int) -> int", "h(1) < (n, g)")],
         ),
     ] {
         let text = body(e);
@@ -237,12 +232,7 @@ fn the_examples_of_the_guide() {
         ),
         (
             "f5(positional h: (int) -> Never, positional g: (int) -> int) = h(1) < (1, g);\n",
-            vec![
-                refused("<", "Never", "(int) -> int", "h(1) < (1, g)"),
-                "a tuple takes data, and this value may hold a function, `(int) -> int`: data \
-                 is a value that holds no function at any depth. [g]"
-                    .into(),
-            ],
+            vec![refused("<", "Never", "(int) -> int", "h(1) < (1, g)")],
         ),
         (
             "f6(positional h: (int) -> Never, positional x) = h(1) + x;\nr(positional h: (int) -> Never) = f6(h, true);\n",

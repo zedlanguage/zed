@@ -370,7 +370,7 @@ fn a_prelude_word_takes_its_number_of_arguments() {
 }
 
 #[test]
-fn a_function_is_not_shown_and_not_put_in_a_tuple() {
+fn a_function_is_not_shown_and_may_be_held_in_a_tuple() {
     rejected(INC, r#""${inc}""#);
     assert_eq!(
         rejected(INC, "String(inc)"),
@@ -388,11 +388,12 @@ fn a_function_is_not_shown_and_not_put_in_a_tuple() {
          holds its result and not the function\n  \
          [4] 3:15: repair: keep the function under its own name, out of the value"
     );
-    rejected(INC, r#""${(inc, 1)[1]}""#);
-    rejected(
-        &format!("pair(positional a, positional b) = (a, b);\n{INC}"),
-        r#""${pair(inc, 2)[1]}""#,
-    );
+    // A tuple may hold a function (DESIGN.md step L1.17, QUESTIONS A43): building one is no
+    // error, a component that is data is shown, and showing the tuple itself is refused.
+    assert_eq!(runs(INC, r#""${(inc, 1)[1]}""#, ""), "1\n");
+    let pair = format!("pair(positional a, positional b) = (a, b);\n{INC}");
+    assert_eq!(runs(&pair, r#""${pair(inc, 2)[1]}""#, ""), "2\n");
+    rejected(INC, r#""${(inc, 1)}""#);
 }
 
 #[test]

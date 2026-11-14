@@ -66,16 +66,6 @@ err `w` does not take ((int) -> (int) -> (int, int, int)): no arrow of `w` takes
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top k = ((int) -> (int) -> (int, int, int), (int) -> (int) -> (int, int, int))
 top t = ((int) -> (int) -> (int, int, int), (int) -> (int) -> (int, int, int))
-err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (int, int, int)`: data is a value that holds no function at any depth. [g(0)]
-  note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
-err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (int, int, int)`: data is a value that holds no function at any depth. [g(1)]
-  note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
 === "c(x: int) = if x > 0 { g(0) } else { g(1) };\nd = c(x: 1)(2)(3);\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig c = (x: int) -> (int) -> (int) -> (int, int, int)
@@ -188,38 +178,17 @@ sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int) -> (int, int, int)
 top r = 1
 top t = ((int) -> (int) -> (int, int, int), 1)
-err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (int, int, int)`: data is a value that holds no function at any depth. [h]
-  note `h` is (int) -> (int) -> (int, int, int) here
-  note `h` is defined as this expression, (int) -> (int) -> (int, int, int)
-  note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
 === "h = g(0);\nt = (h, 1);\nr = if t is not (((int) -> ((int) -> (int, int, int))), int) { t } else { 2 };\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int) -> (int, int, int)
 top r = 2
 top t = ((int) -> (int) -> (int, int, int), 1)
-err a tuple takes data, and this value may hold a function, `(int) -> (int) -> (int, int, int)`: data is a value that holds no function at any depth. [h]
-  note `h` is (int) -> (int) -> (int, int, int) here
-  note `h` is defined as this expression, (int) -> (int) -> (int, int, int)
-  note this call of `g` gives (int) -> (int) -> (int, int, int)
-  note `g` is declared here with no type written for `a0` or its result; the type the checker found for `g` is `(int) -> (int) -> (int) -> (int, int, int)`
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = (h, 1);\nr = if t is (((String) -> (int, int, int)), int) { 1 } else { t };\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int, int, int)
 top r = 1 | ((int) -> (int, int, int), 1)
 top t = ((int) -> (int, int, int), 1)
 call "g(0)(1)" = (int) -> (int) -> (int, int, int)
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth. [h]
-  note `h` is (int) -> (int, int, int) here
-  note `h` is defined as this expression, (int) -> (int, int, int)
-  note this call gives (int) -> (int, int, int)
-  note this literal, 1, is 1
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
 === "f(c: bool) = if c { (g(0)(1), 1) } else { (g(1)(2), 2) };\nt = f(c: true);\nr = if t is (((int) -> (int, int, int)), int) { 1 } else { t };\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 sig f = (c: bool) -> ((int) -> (int, int, int), 1) | ((int) -> (int, int, int), 2)
@@ -227,39 +196,15 @@ top r = 1
 top t = ((int) -> (int, int, int), 1) | ((int) -> (int, int, int), 2)
 call "g(0)(1)" = (int) -> (int) -> (int, int, int)
 call "g(1)(2)" = (int) -> (int) -> (int, int, int)
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth. [g(0)(1)]
-  note this call gives (int) -> (int, int, int)
-  note this literal, 1, is 1
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth. [g(1)(2)]
-  note this call gives (int) -> (int, int, int)
-  note this literal, 2, is 2
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = (h, 1);\nr = if t is ((((int) -> (int, int, int)), int) | int) { 1 } else { t };\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int, int, int)
 top r = 1
 top t = ((int) -> (int, int, int), 1)
 call "g(0)(1)" = (int) -> (int) -> (int, int, int)
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth. [h]
-  note `h` is (int) -> (int, int, int) here
-  note `h` is defined as this expression, (int) -> (int, int, int)
-  note this call gives (int) -> (int, int, int)
-  note this literal, 1, is 1
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value
 === "h = g(0)(1);\nt = ((h, 1), 2);\nr = if t is ((((int) -> (int, int, int)), int), int) { 1 } else { t };\n"
 sig g = (int) -> (int) -> (int) -> (int, int, int)
 top h = (int) -> (int, int, int)
 top r = 1
 top t = (((int) -> (int, int, int), 1), 2)
 call "g(0)(1)" = (int) -> (int) -> (int, int, int)
-err a tuple takes data, and this value may hold a function, `(int) -> (int, int, int)`: data is a value that holds no function at any depth. [h]
-  note `h` is (int) -> (int, int, int) here
-  note `h` is defined as this expression, (int) -> (int, int, int)
-  note this call gives (int) -> (int, int, int)
-  note this literal, 1, is 1
-  note repair: call the function before the value gets here, so that the value holds its result and not the function
-  note repair: keep the function under its own name, out of the value

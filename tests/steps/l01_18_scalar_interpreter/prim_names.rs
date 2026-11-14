@@ -43,6 +43,9 @@ fn check_refusal(p: Prim, w: &str, message: &str) {
             message.starts_with(&format!("`{w}` on functions")),
             "{p:?}: {message}"
         ),
+        // A tuple may hold a function (DESIGN.md step L1.17), so a tuple of functions is made,
+        // and only the program's result, which must be data, refuses it.
+        Prim::Tuple => assert_eq!(message, "the program's result holds a function", "{p:?}"),
         Prim::Path | Prim::PathKey | Prim::PathLen => assert_eq!(
             message,
             format!("{w} applied to a function, {OUTSIDE}"),
@@ -293,9 +296,15 @@ fn a_refusal_names_an_atom_by_its_name() {
         };
     let none = || lit(Value::tuple(Vec::new()));
     let f = || lam(&["y"], var("y"));
+    // A payload may hold a function (DESIGN.md step L1.17): the atom is made, and only the
+    // program's result refuses it. A name that is a function is refused where the atom is made.
     assert_eq!(
         run(vec![lit("err"), none(), f()]),
-        "`#err(..)` applied to a function"
+        "the program's result holds a function"
+    );
+    assert_eq!(
+        run(vec![f(), none(), lit(1)]),
+        "`#_(..)` applied to a function"
     );
     assert_eq!(
         run(vec![lit("err"), lit(5), lit(1)]),

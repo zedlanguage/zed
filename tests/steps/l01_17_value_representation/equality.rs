@@ -4,7 +4,7 @@
 use zed_kernel::term::build::{lam, prim, var};
 use zed_kernel::{Evaluator, F64, Prim, Value, World};
 
-use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, errors, value};
 
 #[test]
 fn float_equality_and_comparison_follow_ieee() {
@@ -61,14 +61,17 @@ fn functions_compare_only_over_an_enumerable_domain() {
 }
 
 #[test]
-fn a_function_deep_in_a_tuple_is_reported_once_where_it_is_written() {
-    // Each tuple checks its own components, so a function two tuples deep gets one error, at
-    // the inner tuple, and not one more at each tuple around it.
+fn a_function_deep_in_a_tuple_is_reported_once_where_data_is_needed() {
+    // A tuple may hold a function at any depth, and building one is no error (L1.17, QUESTIONS
+    // A43): a function two tuples deep gets one error, at the `==` that needs data, and none at
+    // the tuples around it.
     let src = "inc = x -> x + 1;\npair = ((inc, 1), 2);\n";
+    elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let src = "inc = x -> x + 1;\npair = ((inc, 1), 2);\nsame = pair == pair;\n";
     assert_eq!(
         errors(src),
         [
-            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [inc]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [pair == pair]"
         ]
     );
 }
@@ -95,8 +98,8 @@ fn a_function_in_an_atom_s_payload_is_refused_by_equality() {
 
 #[test]
 fn a_function_nested_in_payloads_and_tuples_is_refused() {
-    // Two atoms deep, the function is found by `==`; under a tuple, it is reported once, at the
-    // tuple expression that holds it, as a function in a tuple is (CHK-held-cascade).
+    // Two atoms deep, the function is found by `==`, and under a tuple too: a tuple may hold a
+    // function (L1.17, QUESTIONS A43), so the one error is the `==`'s.
     let src = "h = x -> x + 1;\nx = #a(#b(h));\nsame = x == #c;\n";
     assert_eq!(
         errors(src),
@@ -108,19 +111,22 @@ fn a_function_nested_in_payloads_and_tuples_is_refused() {
     assert_eq!(
         errors(src),
         [
-            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [#b(f: h)]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [x == #c]"
         ]
     );
 }
 
 #[test]
-fn a_tuple_of_an_atom_whose_payload_holds_a_function_is_refused() {
-    // A tuple takes data (L1.17), and an atom component's payload is part of it.
+fn a_tuple_of_an_atom_whose_payload_holds_a_function_is_built_and_refused_by_equality() {
+    // A tuple may hold an atom whose payload holds a function (L1.17, QUESTIONS A43), and `==`
+    // on the tuple compares that function.
     let src = "h = x -> x + 1;\npair = (#a(h), 1);\n";
+    elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let src = "h = x -> x + 1;\npair = (#a(h), 1);\nsame = pair == pair;\n";
     assert_eq!(
         errors(src),
         [
-            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [#a(h)]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [pair == pair]"
         ]
     );
 }
@@ -147,8 +153,6 @@ fn a_function_reaching_a_payload_through_a_generic_call_is_refused_by_equality()
     // `use` compares a tuple whose atom holds `use`'s parameter in its payload, so `==` needs
     // that parameter to be data, and `scale` is a function (ATOM-payload-open: the variable
     // inside the payload was not seen, so the call was accepted).
-    // A tuple expression inside `wrap` checks its components as data, so there the need is
-    // the tuple's.
     let refused = |what: &str| {
         [format!(
             "{what} takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [use(scale)]"
@@ -158,8 +162,8 @@ fn a_function_reaching_a_payload_through_a_generic_call_is_refused_by_equality()
         ("#a(x), 1", "`==`"),
         ("1, #a(n: 1, f: x)", "`==`"),
         ("#a(#b(#c(x))), 1", "`==`"),
-        ("(1, #a(x)), 1", "a tuple"),
-        ("#a((x, 1)), 1", "a tuple"),
+        ("(1, #a(x)), 1", "`==`"),
+        ("#a((x, 1)), 1", "`==`"),
     ] {
         assert_eq!(
             errors(&compared_after_a_call(body, "scale")),

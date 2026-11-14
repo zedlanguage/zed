@@ -29,7 +29,7 @@ use crate::exact::{CanonicalTree, TreeStep, exact_sum};
 use crate::num::{Test, TooLarge, refused};
 use crate::sites::{Sites, Span};
 use crate::value::KernelError;
-use crate::value::{Family, Keypath, all_leaves, ieee_min_max};
+use crate::value::{Atom, Family, Fields, Keypath, all_leaves, ieee_min_max};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -46,7 +46,8 @@ use crate::value::Value;
 /// evaluator a caller may choose, not a limit of the language.
 pub const MIN_NESTED_CALLS: usize = 20_000;
 
-/// A run-time value: a data value, or a function, which families never hold.
+/// A run-time value: a data value, or a function, which families never hold, or a tuple or an
+/// atom that holds a function.
 #[derive(Clone)]
 enum V<'t> {
     /// Data.
@@ -59,6 +60,69 @@ enum V<'t> {
     Partial(Rc<Partial<'t>>),
     /// An input port read by lookup, such as a `Files` port: the port's name.
     Source(Arc<str>),
+    /// A tuple or an atom with a part that is no data.
+    Held(Rc<Held<'t>>),
+}
+
+/// A tuple or an atom that holds a function at some depth: a tuple, an array or a struct may
+/// hold one, and only a use that needs data, such as showing it or `==`, is an error (DESIGN.md
+/// step L1.17, QUESTIONS A43). It is made only when a part is no data, so a tuple of data stays
+/// a [`Value`] and the common path is unchanged.
+// Complexity tradeoff: a [`Value`] holds no function, and giving it one would put closures,
+// with their lifetime and their environments, in every data structure, its order and its
+// hash. Used: this second form, O(parts) to build like a data tuple, read in O(1) per part; a
+// `match` on it walks the pattern as [`matches()`] does. Given up: a type test (`is`) on it
+// builds a data stand-in, O(the parts above the data, which it shares), see
+// [`Held::stand_in`]. Tests: `l01_17_value_representation::function_in_tuple` and
+// `function_in_payload_run`.
+struct Held<'t> {
+    /// `None` for a tuple; for an atom, its name and its field names, sorted as
+    /// [`Value::atom_named`] sorts them, empty for a payload by position.
+    atom: Option<(Arc<str>, Fields)>,
+    /// The components of a tuple, or the payload of an atom in the order of its field names.
+    parts: Vec<V<'t>>,
+    drops: Rc<Drops<'t>>,
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.drops
+            .free(Freed::Parts(std::mem::take(&mut self.parts)));
+    }
+}
+
+impl Held<'_> {
+    /// `self` with each function in it replaced by the empty family. A type holds a family
+    /// exactly when it holds every function (`Type::functions`, and `Type::member` on a
+    /// family), so the stand-in is in a type exactly when `self` is. Built from an explicit
+    /// stack, so a held value of any depth uses none of the thread's stack.
+    fn stand_in(&self) -> Value {
+        let mut stack: Vec<(&Held<'_>, Vec<Value>)> = vec![(self, Vec::new())];
+        loop {
+            let (h, done) = stack.last_mut().expect("the root is popped last");
+            let h: &Held<'_> = h;
+            match h.parts.get(done.len()) {
+                Some(V::Data(d)) => done.push(d.clone()),
+                Some(V::Held(k)) => stack.push((k, Vec::new())),
+                Some(_) => done.push(Value::Family(Family::default())),
+                None => {
+                    let (h, done) = stack.pop().expect("the top read above");
+                    let v = match &h.atom {
+                        None => Value::tuple(done),
+                        Some((name, fields)) => Value::Atom(Atom {
+                            name: name.clone(),
+                            fields: fields.clone(),
+                            payload: Some(done.into()),
+                        }),
+                    };
+                    match stack.last_mut() {
+                        Some((_, up)) => up.push(v),
+                        None => return v,
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A lambda with its environment. The evaluated term outlives the run, so the closure borrows
@@ -72,18 +136,25 @@ struct Closure<'t> {
     drops: Rc<Drops<'t>>,
 }
 
-/// Environments no longer in use, freed one at a time. A closure's environment can hold the
-/// only reference to another closure, to any depth, and dropping such a chain by Rust's
-/// recursive drop would use the thread's stack as the evaluator otherwise does not.
+/// What [`Drops`] frees: an environment, or the parts of a [`Held`].
+enum Freed<'t> {
+    Env(Env<'t>),
+    Parts(Vec<V<'t>>),
+}
+
+/// Environments and held parts no longer in use, freed one at a time. A closure's environment
+/// can hold the only reference to another closure, and a held tuple to another held tuple, to
+/// any depth, and dropping such a chain by Rust's recursive drop would use the thread's stack
+/// as the evaluator otherwise does not.
 #[derive(Default)]
 struct Drops<'t> {
-    envs: RefCell<Vec<Env<'t>>>,
+    envs: RefCell<Vec<Freed<'t>>>,
     /// Whether a drop further up the thread's stack is already emptying `envs`.
     busy: Cell<bool>,
 }
 
 impl<'t> Drops<'t> {
-    fn free(&self, env: Env<'t>) {
+    fn free(&self, env: Freed<'t>) {
         self.envs.borrow_mut().push(env);
         if self.busy.replace(true) {
             return;
@@ -92,7 +163,8 @@ impl<'t> Drops<'t> {
             // The borrow ends here: dropping the environment can reach `free` again.
             let next = self.envs.borrow_mut().pop();
             match next {
-                Some(env) => drop(env),
+                Some(Freed::Env(env)) => drop(env),
+                Some(Freed::Parts(parts)) => drop(parts),
                 None => break,
             }
         }
@@ -102,7 +174,7 @@ impl<'t> Drops<'t> {
 
 impl Drop for Closure<'_> {
     fn drop(&mut self) {
-        self.drops.free(self.env.take());
+        self.drops.free(Freed::Env(self.env.take()));
     }
 }
 
@@ -563,6 +635,9 @@ impl Evaluator {
         }
         match out {
             Ok(V::Data(v)) => Ok(v),
+            Ok(V::Held(_)) => Err(KernelError::Type(
+                "the program's result holds a function".into(),
+            )),
             Ok(_) => Err(KernelError::Type(
                 "the program's result is a function".into(),
             )),
@@ -1466,6 +1541,8 @@ impl<'t> Machine<'_, 't> {
                 let at = self.ev.child(at, 1);
                 Ok(Step::Eval(body, at, bind(env, name, v, fact)))
             }
+            // An atom that holds a function passes through as any atom does.
+            Wait::If { .. } if held_atom(&v) => Ok(Step::Give(v)),
             Wait::If { a, b, at, env } => match data(v)? {
                 Value::Bool(true) => Ok(Step::Eval(a, self.ev.child(at, 1), env)),
                 Value::Bool(false) => Ok(Step::Eval(b, self.ev.child(at, 2), env)),
@@ -1476,16 +1553,7 @@ impl<'t> Machine<'_, 't> {
                 let fact = self.ev.last_fact();
                 for (i, (pat, body)) in arms.iter().enumerate() {
                     let mut env2 = env.clone();
-                    let hit = match (&v, pat) {
-                        (V::Data(v), pat) => matches(pat, v, &mut env2, fact),
-                        (_, Pattern::Wild) => true,
-                        (f, Pattern::Bind(name)) => {
-                            env2 = bind(env2, name, f.clone(), fact);
-                            true
-                        }
-                        (_, Pattern::Is(t)) => t.functions(),
-                        _ => false,
-                    };
+                    let hit = matches_any(pat, &v, &mut env2, fact);
                     // A literal pattern whose test was refused its memory gave no answer.
                     if let Some((t, e)) = refused() {
                         return Err(test_too_large(Some("match"), t, e).into());
@@ -1499,6 +1567,7 @@ impl<'t> Machine<'_, 't> {
                         "no arm matches a value of type `{}`",
                         v.kind_type()
                     )),
+                    V::Held(_) => type_err("no arm matches the value that holds a function"),
                     _ => type_err("no arm matches the function"),
                 }
             }
@@ -1667,8 +1736,16 @@ impl<'t> Machine<'_, 't> {
                 with_tuple.extend(args);
                 self.prim(Prim::TupleGet, with_tuple)
             }
+            V::Held(h) if h.atom.is_none() && args.len() == 1 => {
+                let mut with_tuple = Vec::with_capacity(2);
+                with_tuple.push(f.clone());
+                with_tuple.extend(args);
+                self.prim(Prim::TupleGet, with_tuple)
+            }
             V::Partial(_) | V::Source(_) => type_err("a family is read with `[]`, not called"),
             V::Data(Value::Atom(a)) => Ok(Step::Give(V::Data(Value::Atom(a.clone())))),
+            V::Held(h) if h.atom.is_some() => Ok(Step::Give(f.clone())),
+            V::Held(_) => type_err("a tuple is read at one key"),
             V::Data(other) => type_err(format!(
                 "a value of type `{}` is not a function",
                 other.kind_type()
@@ -1727,6 +1804,103 @@ impl<'t> Machine<'_, 't> {
         self.apply(f, vec![V::Data(a), V::Data(b)])
     }
 
+    /// Primitive `p` on `args`, one of which holds a function or, for a tuple or an atom, is
+    /// one: a tuple or an atom is made as a [`Held`], a tuple is read at a key, and an atom
+    /// that holds a function passes through every other primitive as any failure does.
+    fn held(&mut self, p: Prim, mut args: Vec<V<'t>>) -> R<Step<'t>> {
+        let held = |parts, atom| {
+            V::Held(Rc::new(Held {
+                atom,
+                parts,
+                drops: self.drops.clone(),
+            }))
+        };
+        match p {
+            Prim::Tuple => return Ok(Step::Give(held(args, None))),
+            // The atom is made from marks, its payload's positions, by the rules every atom
+            // follows ([`prim_data`]: its name, its field names in order, none repeated), and
+            // each part is put where its mark landed.
+            Prim::Atom => {
+                let parts = args.split_off(2.min(args.len()));
+                let mut marks = Vec::with_capacity(2 + parts.len());
+                for a in args {
+                    let V::Data(v) = a else {
+                        return type_err(
+                            self.at_step(p, format!("{} applied to a function", p.named(None))),
+                        );
+                    };
+                    marks.push(v);
+                }
+                marks.extend((0..parts.len()).map(|i| Value::Int(i as i64)));
+                let shape = match prim_data(Prim::Atom, marks) {
+                    Ok(Value::Atom(a)) => a,
+                    Ok(_) => return type_err("an atom made as something else"),
+                    Err(KernelError::Type(m)) => return type_err(self.at_step(p, m)),
+                    Err(e) => return Err(e.into()),
+                };
+                let mut parts: Vec<Option<V<'t>>> = parts.into_iter().map(Some).collect();
+                let mut ordered = Vec::with_capacity(parts.len());
+                for m in shape.args().iter() {
+                    let Value::Int(i) = m else {
+                        unreachable!("each payload value is a mark")
+                    };
+                    ordered.push(parts[*i as usize].take().expect("each mark once"));
+                }
+                return Ok(Step::Give(held(ordered, Some((shape.name, shape.fields)))));
+            }
+            // A tuple's keys are its positions; any other key misses, as for data (`prim_data`).
+            Prim::TupleGet | Prim::At if matches!(&args[0], V::Held(h) if h.atom.is_none()) => {
+                let V::Held(h) = &args[0] else {
+                    unreachable!("matched above")
+                };
+                return match &args[1] {
+                    V::Data(Value::Int(i)) => {
+                        match usize::try_from(*i).ok().and_then(|i| h.parts.get(i)) {
+                            Some(v) => Ok(Step::Give(v.clone())),
+                            None => give(Value::atom("outOfBounds")),
+                        }
+                    }
+                    V::Data(k @ Value::Atom(_)) => give(k.clone()),
+                    V::Data(_) => give(Value::atom("outOfBounds")),
+                    k if held_atom(k) => Ok(Step::Give(k.clone())),
+                    _ => type_err(self.at_step(p, format!("{} at a function", p.named(None)))),
+                };
+            }
+            Prim::Eq | Prim::Ne => {
+                return type_err(format!(
+                    "`{}` on a value that holds a function compares that function at every \
+                     point of an enumerable domain, which its type gives",
+                    p.written()
+                ));
+            }
+            _ => {}
+        }
+        // Every other primitive but a keypath passes its failures through (see [`Self::prim`]):
+        // one alone is given as it is, and several are merged into `#errs`, a family, which
+        // holds data only.
+        let failure = |a: &V<'_>| matches!(a, V::Data(Value::Atom(_))) || held_atom(a);
+        if p != Prim::Path
+            && args.iter().all(|a| matches!(a, V::Data(_)) || held_atom(a))
+            && let Some(i) = args.iter().position(held_atom)
+        {
+            if args.iter().filter(|a| failure(a)).count() == 1 {
+                return Ok(Step::Give(args.swap_remove(i)));
+            }
+            return type_err(self.at_step(
+                p,
+                format!(
+                    "{} given several failures, one of which holds a function, which `#errs` \
+                     cannot hold",
+                    p.named(None)
+                ),
+            ));
+        }
+        type_err(self.at_step(
+            p,
+            format!("{} applied to a value that holds a function", p.named(None)),
+        ))
+    }
+
     fn prim(&mut self, p: Prim, args: Vec<V<'t>>) -> R<Step<'t>> {
         if let Some(n) = p.arity()
             && args.len() != n
@@ -1740,6 +1914,14 @@ impl<'t> Machine<'_, 't> {
                     args.len()
                 ),
             ));
+        }
+        // A tuple or an atom made with a part that is no data, or a value that holds a
+        // function given to any primitive (DESIGN.md step L1.17).
+        if args.iter().any(|a| matches!(a, V::Held(_)))
+            || (matches!(p, Prim::Tuple | Prim::Atom)
+                && args.iter().any(|a| !matches!(a, V::Data(_))))
+        {
+            return self.held(p, args);
         }
         // A key past the end of a keypath above an empty level, read by the key map of a
         // `reindex`, is unbound. `short_paths` holds one id per `reindex` nested in a key map.
@@ -2475,7 +2657,7 @@ struct Definedness<'t> {
 
 impl Drop for Definedness<'_> {
     fn drop(&mut self) {
-        self.drops.free(self.env.take());
+        self.drops.free(Freed::Env(self.env.take()));
     }
 }
 
@@ -2495,6 +2677,70 @@ impl SplitMix {
     fn shuffle<T>(&mut self, xs: &mut [T]) {
         for i in (1..xs.len()).rev() {
             xs.swap(i, (self.next() % (i as u64 + 1)) as usize);
+        }
+    }
+}
+
+/// Whether `v` is an atom that holds a function.
+fn held_atom(v: &V<'_>) -> bool {
+    matches!(v, V::Held(h) if h.atom.is_some())
+}
+
+/// Whether `v`, data, a function or a value that holds one, matches `pat`, binding its
+/// variables in `env` as [`matches()`] does. A function matches a wildcard, a binder and a type
+/// test of a type with every function; the parts of a [`Held`] are matched left to right, from
+/// a stack of those left, and its data parts by [`matches()`].
+fn matches_any<'t>(pat: &'t Pattern, v: &V<'t>, env: &mut Env<'t>, fact: Option<usize>) -> bool {
+    let mut left: Vec<(&'t Pattern, &V<'t>)> = Vec::new();
+    let mut at = (pat, v);
+    loop {
+        let hit = match at {
+            (pat, V::Data(v)) => matches(pat, v, env, fact),
+            (Pattern::Wild, _) => true,
+            (Pattern::Bind(name), v) => {
+                *env = bind(env.take(), name, v.clone(), fact);
+                true
+            }
+            (Pattern::Is(t), V::Held(h)) => t.contains(&h.stand_in()),
+            (Pattern::Is(t), _) => t.functions(),
+            (Pattern::AnyAtom, V::Held(h)) => h.atom.is_some(),
+            (Pattern::Atom(name, ps), V::Held(h)) => {
+                // A held atom has a payload, with a function in it, so it is never bare.
+                let hit = matches!(&h.atom, Some((n, f)) if n == name && f.is_empty())
+                    && !ps.is_empty()
+                    && ps.len() == h.parts.len();
+                if hit {
+                    left.extend(ps.iter().zip(&h.parts).rev());
+                }
+                hit
+            }
+            (Pattern::Fields(name, fs), V::Held(h)) => match &h.atom {
+                Some((n, f)) if n == name && !f.is_empty() => {
+                    fs.iter().rev().all(|(x, p)| match f.binary_search(x) {
+                        Ok(i) => {
+                            left.push((p, &h.parts[i]));
+                            true
+                        }
+                        Err(_) => false,
+                    })
+                }
+                _ => false,
+            },
+            (Pattern::Tuple(ps), V::Held(h)) => {
+                let hit = h.atom.is_none() && ps.len() == h.parts.len();
+                if hit {
+                    left.extend(ps.iter().zip(&h.parts).rev());
+                }
+                hit
+            }
+            _ => false,
+        };
+        if !hit {
+            return false;
+        }
+        match left.pop() {
+            Some(next) => at = next,
+            None => return true,
         }
     }
 }

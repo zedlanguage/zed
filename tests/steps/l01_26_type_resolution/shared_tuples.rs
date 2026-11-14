@@ -33,13 +33,20 @@ fn a_value_held_twice_at_each_level_is_data() {
 }
 
 #[test]
-fn a_function_held_twice_at_each_level_is_one_error() {
-    // Reported once, at the tuple that first holds it; the levels above meet the same function.
+fn a_function_held_twice_at_each_level_is_one_error_per_compared_operand() {
+    // A tuple may hold a function (DESIGN.md step L1.17), so no tuple is an error; `==` needs
+    // data, and each of its operands holds the function, once each, however many paths reach it.
     let at = |site: &str| {
         format!(
-            "a tuple takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [{site}]"
+            "`==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth. [{site}]"
         )
     };
-    assert_eq!(type_errors(&by_calls(3, "scale")), [at("pair(scale)")]);
-    assert_eq!(type_errors(&by_bindings(3, "scale")), [at("scale")]);
+    assert_eq!(
+        type_errors(&by_calls(3, "scale")),
+        [at("t == t"), at("t == t")]
+    );
+    assert_eq!(
+        type_errors(&by_bindings(3, "scale")),
+        [at("t2 == t2"), at("t2 == t2")]
+    );
 }

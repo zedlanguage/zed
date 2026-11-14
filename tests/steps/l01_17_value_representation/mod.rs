@@ -11,6 +11,8 @@ mod completeness;
 mod edges;
 mod equality;
 mod fields;
+mod function_in_payload_run;
+mod function_in_tuple;
 mod in_place;
 pub(crate) mod memory_check;
 mod numbers;

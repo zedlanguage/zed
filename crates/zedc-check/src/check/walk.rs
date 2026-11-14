@@ -462,8 +462,6 @@ pub(super) struct TupleF<'a> {
     /// How many have been started; one more than `out` holds while one is checked.
     started: usize,
     out: Vec<Ty>,
-    /// Whether each component is checked as data.
-    data: bool,
 }
 
 pub(super) struct CondAnd<'a> {
@@ -1561,7 +1559,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     es,
                     started: 0,
                     out: Vec::new(),
-                    data: false,
                 }),
             ),
         }
@@ -2830,7 +2827,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     es: items,
                     started: 0,
                     out: Vec::new(),
-                    data: true,
                 };
                 self.tuple_step(m, Box::new(s));
             }
@@ -2913,15 +2909,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(out);
     }
 
+    /// A tuple's components, checked in turn. A component may be or hold a function: a tuple
+    /// may hold one at any depth, and only a use that needs data is an error (DESIGN.md step
+    /// L1.17, QUESTIONS A43).
     fn tuple_step(&mut self, m: &mut M<'a>, mut s: Box<TupleF<'a>>) {
         if s.started > s.out.len() {
             let t = m.take_ty();
-            // A tuple written as a component has checked its own components, so it is data
-            // where they are; checking it again would walk each nested tuple once per level.
-            let e = &s.es[s.out.len()];
-            if s.data && !matches!(e.kind, ExprKind::Tuple(_)) {
-                self.data(&t, "a tuple", e.span, e.span);
-            }
             s.out.push(t);
         }
         if let Some(e) = s.es.get(s.started) {
@@ -2930,10 +2923,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return m.job(Job::Expr(e));
         }
         let cs = std::mem::take(&mut s.out);
-        m.ty(Ty::of_row(match s.data {
-            true => ty::Row::of_data(cs),
-            false => ty::Row::new(cs),
-        }));
+        m.ty(Ty::of_row(ty::Row::new(cs)));
     }
 
     /// A condition's type and the facts it makes when it holds and when it does not.
@@ -10679,12 +10669,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// function at any depth. A function it holds is reported at `span` with the derivation of
     /// the expression at `from`, which gave the value.
     fn data(&mut self, t: &Ty, what: &str, span: Span, from: Span) {
-        // A function held in the row of a tuple expression was reported at that tuple, with its
-        // derivation: one error for one function, however many tuples and uses it then flows
-        // through, each of which meets the same value, so that fixing the error fixes them all.
+        // A function held at any depth is reported here, at the use that needs data, with the
+        // derivation of the function through the tuples, atoms and names that hold it
+        // ([`Ck::derive_held`]).
         if let Some(s) = t.unchecked_function() {
             let s = self.sig_text(s);
-            let mut notes = self.derive(&[from]);
+            let mut notes = self.derive_held(from);
             notes.extend(data_repairs(span));
             self.error_with(
                 span,

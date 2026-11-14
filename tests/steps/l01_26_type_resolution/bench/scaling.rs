@@ -191,8 +191,8 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
 fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
     // `is` compares the lambdas of `t` with the written ones, reading the classes solved
     // inside them through the union-find (`Ty::diff_with`), so the `else` branch, where `t`
-    // is not of the type, narrows to nothing. A tuple takes no function, so `t = (h, 1)` is
-    // rejected, once. The comparison of function types recursed once per lambda, about 8
+    // is not of the type, narrows to nothing, and a tuple may hold a function (L1.17), so the
+    // program has no error. The comparison of function types recursed once per lambda, about 8
     // frames a level, and overflowed a 2 MiB stack at 800; it now keeps its frames on the
     // heap (`Comparing`, TY-sub-stack).
     let n = 1000;
@@ -201,7 +201,7 @@ fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
         scaling::check_order("an is test of n curried lambdas", n, 1, |m| {
             let (stmts, res) = &built[&m];
             let info = zedc::check::walk::check(stmts, res);
-            assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
         });
     });
 }

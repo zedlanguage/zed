@@ -161,7 +161,8 @@ fn a_callee_that_is_not_a_name_is_named_by_its_code() {
 }
 
 /// A function is called beside the tuple, and the body's parameter that may hold one is
-/// called: both run. A tuple cannot hold the function, which is data's rule.
+/// called: both run. A tuple may hold the function too (DESIGN.md step L1.17, QUESTIONS A43),
+/// and the body calls it from there.
 #[test]
 fn a_call_of_a_function_beside_the_literals_runs() {
     let name = "l01_26a_tuple_arg_pair_fn";
@@ -177,12 +178,7 @@ fn a_call_of_a_function_beside_the_literals_runs() {
         outcome(name, "h(positional f) = f(1);", "h(x -> x * 3)"),
         "3\n"
     );
-    let errors = type_errors(&format!("{CALL}\nr = h((1, x -> x + 1));\n"));
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(
-        errors[0].starts_with("a tuple takes data, and this value may hold a function"),
-        "{errors:?}"
-    );
+    assert_eq!(outcome(name, CALL, "h((1, x -> x + 1))"), "2\n");
 }
 
 const PICK: &str = "h(positional p) = if p[0] < 5 { p[0] } else { 0 };";

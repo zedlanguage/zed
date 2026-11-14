@@ -635,7 +635,7 @@ fn an_is_test_of_curried_lambdas_narrows_its_else_branch_to_nothing() {
     // A small instance of the benchmark
     // `bench::scaling::an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales`.
     let (info, _) = info(&curried_tested(2));
-    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    assert!(info.errors.is_empty(), "{:?}", info.errors);
     assert_eq!(info.tops["r"].to_string(), "1");
 }
 
