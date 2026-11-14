@@ -2316,7 +2316,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
+| TEST-cov-run-settings | running |  |  |
+| TEST-fixture-write-race | running |  |  |
 | TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
+| TEST-seed-test-once | running |  |  |
+| TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
 | TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | kernel_type.rs 7 to 2 regions unreached; committing, rebasing / load 21.19 34.16 43.34 |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
