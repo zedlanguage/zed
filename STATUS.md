@@ -2206,11 +2206,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-generic-class-follows | impl attempt 1 | 2026-11-13 23:24 | reproduced (g(positional x) = x == 1 + 1 gave false false false true at f64 f32 rat int); fix in Ck::equal_classes/follow_param; baseline run in progress |
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
-| PRES-exact-side | merged and pushed (9ccfdc344, fbc0709b6); no spec change | COMPLEXITY.md PRES-exact-side. `hull_side` reads a side by Fourier-Motzkin with the dark shadow where every elimination is exact, and asks no question in hop and hopon; instructions at 8n on 6a223ba86: hop 8.60, hopon 9.13, boxstar 7.62, cuts 7.64, star_extra 9.98, chain 9.62, `nest_empty_project_each` 10.48, all under 10.5, absolute work lower at both sizes; after the rebase onto 488eb4618 star_extra 10.42 (main 9.80, under 10.5 by 0.08) and hopon 9.22; hopon over 9 from main's `twovar::ends`, in PERF-l139-under9. zedc_presburger 267 passed (main 264); zedc_presburger, zedc_preimage, l01_25, l01_38, l01_39*: 898 pieces, 0 failed, as on main 6a223ba86; 899, 0 failed, on 488eb4618. |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
 | REPAIR-text-cast-spelling | impl attempt 1 | 2026-11-13 23:35 | started |
 | SPEC-ffi-state-libc-substate | running | 2026-11-13 23:47 |  |
 | SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
+| STAGE-generic-fold | running | 2026-11-09 09:24 | 2026-11-11: sink given a consumer (author: every DAG node must have a descendant) |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
