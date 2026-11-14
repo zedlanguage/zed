@@ -1,16 +1,11 @@
-// prelude unit limits (DESIGN.md sec:verification, "Budgets"; written by step
-// M0.11): the minimum resource limits of compile-time evaluation, as the C
-// standard sets translation limits. A conforming compiler never rejects an
-// evaluation within all three; past them, running out is a build failure,
-// reported as the machine's and not as a rejection of the program. The
-// Rust-hosted copy is zed_kernel::eval::MIN_* in crates/zed-kernel/src/eval.rs.
-
-// Steps of the definitional interpreter, whose strategy is fixed: one step per
-// function call, `fix` round and `gen` step.
-minSteps = 10000000;
-
-// Bytes of memory: 1 GiB.
-minMemory = 1073741824;
+// prelude unit limits (DESIGN.md step M0.11, written by that step): the
+// minimum depth of nested calls the evaluator reaches. A conforming compiler
+// never rejects an evaluation for nesting calls this deep. There is no minimum
+// of steps or of memory, since no count of either may stop compile-time
+// evaluation: checking code runs only when it is total by algebraic evidence,
+// and the program's static calls run under the partial-evaluation budgets
+// (author, 2026-11-09). The Rust-hosted copy is
+// zed_kernel::eval::MIN_NESTED_CALLS in crates/zed-kernel/src/eval.rs.
 
 // Calls nested in one another.
 minNestedCalls = 20000;

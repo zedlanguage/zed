@@ -38,17 +38,12 @@ use crate::provenance::{Fact, FactAddress, Holds, NodeAddress, Position, Provena
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
 use crate::value::Value;
 
-/// The minimum resource limits of compile-time evaluation (DESIGN.md sec:verification,
-/// fixed by step M0.11). A conforming compiler never rejects an evaluation within
-/// them; past them, running out is a build failure, the machine's and not the program's.
-///
-/// Steps of the definitional interpreter, counted as [`Evaluator::with_fuel`] counts them.
-pub const MIN_STEPS: u64 = 10_000_000;
-/// Bytes of memory. The reference evaluator sets no memory limit of its own, so it is bounded
-/// only by the machine.
-pub const MIN_MEMORY: u64 = 1 << 30;
-/// Nested calls. The evaluator sets no limit of its own here either: its frames are on the
-/// heap, so it is bounded only by the machine.
+/// The minimum depth of nested calls the evaluator reaches (DESIGN.md step M0.11, prelude unit
+/// `limits`): a conforming compiler never rejects an evaluation for nesting calls this deep. It
+/// is a minimum and not a maximum: the evaluator's frames are on the heap, so it is bounded only
+/// by the machine. There is no minimum of steps or of memory, since no count of either may stop
+/// compile-time evaluation (author, 2026-11-09); [`Evaluator::with_fuel`] is a setting of the
+/// evaluator a caller may choose, not a limit of the language.
 pub const MIN_NESTED_CALLS: usize = 20_000;
 
 /// A run-time value: a data value, or a function, which families never hold.

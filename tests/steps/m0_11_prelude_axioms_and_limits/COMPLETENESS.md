@@ -2,7 +2,7 @@
 
 Code under test: the axiom table `zedc::axioms` (crates/zedc-base/src/axioms.rs) and its prelude
 copy `zed/prelude/axioms.zed`; `zedc::canon::unit_address` and `zed/prelude/unit.zed`; the
-limits `zed_kernel::eval::MIN_*` and `zed/prelude/limits.zed`; all against DESIGN.md step M0.11.
+limit `zed_kernel::eval::MIN_NESTED_CALLS` and `zed/prelude/limits.zed`; all against DESIGN.md step M0.11.
 Lines of axioms.rs reached (llvm-cov, without the `bench` module): 61% before (7 of 18 missed),
 83% after (3 missed: the `const fn ax`, which runs only at compile time). `unit_address` is
 reached in full (mod.rs of the canonicalizer, 100%, see m0_07's table).
@@ -27,5 +27,6 @@ reached in full (mod.rs of the canonicalizer, 100%, see m0_07's table).
 | Unit address: pinned value, local names and export order do not change it, a changed local helper changes it through its export, the arrows of an overloaded name all hashed | `units::*`; and `m0_07 cases::a_unit_address_hashes_its_exports_sorted_by_name_then_address` |
 | Limit: the prelude's `minNestedCalls` is 20 000, equal to `MIN_NESTED_CALLS` | `cases::the_prelude_limit_of_nested_calls_is_the_rust_one` |
 | Chains of 20 000 nested calls, one more, and fifty times as many run | `bench::limits::twenty_thousand_nested_calls_are_accepted` (an unusual size, P178); small chains in `limits::a_few_nested_calls_and_a_short_doubled_string_are_accepted` |
-| No minimum of steps or of memory (DESIGN: "there is no minimum of steps or of memory") | Failing: plan row FAIL-limits-steps-memory, test source /home/luke/Work/wt/failing-tests/FAIL-limits-steps-memory.rs. `limits.zed` still declares `minSteps` and `minMemory`, and eval.rs `MIN_STEPS` and `MIN_MEMORY`; `limits::the_step_past_the_fuel_is_refused` and `bench::limits::a_value_of_almost_a_gibibyte_is_accepted` test those old minimums and move with the fix |
+| No minimum of steps or of memory (DESIGN: "there is no minimum of steps or of memory") | `fail_limits_steps_memory::the_limits_unit_names_only_the_minimum_of_nested_calls` (the unit declares `minNestedCalls` alone); `limits::with_no_fuel_no_count_of_steps_stops_the_evaluation` (small sizes), `tests/full` `ten_million_and_one_steps_run_with_no_fuel` (one step past the old minimum of ten million), `bench::limits::a_value_of_almost_a_gibibyte_is_accepted` (no memory limit stops a value of 2^30 - 1 bytes) |
+| Fuel, an evaluator setting and not a limit, counted exactly | `limits::the_step_past_the_fuel_is_refused` |
 | Linear work of the harness | `bench::the_harness_is_linear_in_the_tuples_it_checks`; small widths in `scaling::the_harness_checks_each_triple_of_a_narrow_word_once` |

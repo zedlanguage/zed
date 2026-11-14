@@ -1,17 +1,32 @@
-//! The minimum resource limits: an evaluation within them is accepted by the reference
-//! evaluator with its default settings. The step program is sized to its limit, and one step
-//! more is shown to cross it, so the size is measured and not estimated. Nested calls have a
-//! minimum and no maximum: a chain past the minimum is accepted too. The limits at their size
-//! are in `bench/limits.rs`; here the same programs run at small sizes.
+//! The limits of compile-time evaluation (DESIGN.md step M0.11): nested calls have a minimum,
+//! 20,000, and no maximum, so a chain past the minimum is accepted too; there is no minimum of
+//! steps or of memory, since no count of either may stop compile-time evaluation, so the
+//! evaluator with its default settings has no fuel. Fuel is a setting a caller of the evaluator
+//! may choose, and where it is set it is counted exactly. The chain at the minimum, the string of
+//! 512 MiB and the run past ten million steps are in `bench/limits.rs` and
+//! `tests/full/m0_11_prelude_axioms_and_limits`; here the same programs run at small sizes.
 
 use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
-use zed_kernel::{KernelError, Prim, Term, Value, eval};
+use zed_kernel::{Evaluator, KernelError, Prim, Term, Value, World, eval};
 
-use crate::leaves::{count_leaves, with_fuel};
+use crate::leaves::count_leaves;
+
+/// Evaluates `t` with `fuel` steps.
+fn with_fuel(fuel: u64, t: &Term) -> Result<Value, KernelError> {
+    Evaluator::new(World::new()).with_fuel(fuel).run(t)
+}
+
+/// With no fuel, which is the evaluator's default, no count of steps stops the evaluation: the
+/// programs `the_step_past_the_fuel_is_refused` stops at a fuel of `2k` steps run to the end.
+#[test]
+fn with_no_fuel_no_count_of_steps_stops_the_evaluation() {
+    for k in [1, 2, 9, 1000, 1001] {
+        assert_eq!(eval(&count_leaves(k)), Ok(Value::Int(k)));
+    }
+}
 
 /// Fuel of `2k` steps accepts the `2k - 1` calls of `k` items and refuses the `2k + 1` calls of
-/// `k + 1`. The limit itself, 10,000,000 steps, takes about 14 s at each side, and
-/// `tests/full/m0_11_prelude_axioms_and_limits` runs it at 5,000,000 and 5,000,001 items.
+/// `k + 1`, so the step count of `count_leaves` is measured and not estimated.
 #[test]
 fn the_step_past_the_fuel_is_refused() {
     for k in [1, 2, 9, 1000] {
