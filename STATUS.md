@@ -2197,7 +2197,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | REPAIR-literal-string-order | impl attempt 1 | 2026-11-13 20:06 | started; load 61.28 56.25 52.21 |
-| REPAIR-text-number-both-sides | running | 2026-11-13 20:28 |  |
+| REPAIR-text-number-both-sides | impl attempt 1 | 2026-11-13 20:28 | started; load 40.28 39.26 43.11 |
+| ST-chain-raise-reverse-log | running | 2026-11-13 20:31 |  |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
