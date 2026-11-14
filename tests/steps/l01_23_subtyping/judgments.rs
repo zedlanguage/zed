@@ -519,7 +519,35 @@ const QUERIES: usize = 200;
 #[test]
 fn subtype_answers_do_not_depend_on_the_queries_before_them() {
     // On the stack of its test thread, 2 MiB by default.
-    let (mut rng, seed) = Rng::fresh("subtype answers alone and in batches");
+    let (_, seed) = Rng::fresh("subtype answers alone and in batches");
+    order_free(seed);
+}
+
+/// The query whose answer depended on the queries before it at this seed (FAIL row
+/// FAIL-judgments-query-order-seed): query 44, `ts[142] <: ts[72]`, was false alone and in the
+/// batch, and true reversed, as it was after query 182 alone. The difference of the two holds
+/// a pair whose first component is a pair with a `1 -> empty` in it, so the pair is empty; the
+/// search of the difference met a fork before it reached that component and stopped, and the
+/// search that sets forks aside (`empty_past_forks`), which proves the pair empty, ran only
+/// when the fork was met in a component with others after it. Query 182 kept the pair empty,
+/// and query 44 then read that without meeting the fork.
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_at_a_fork_without_later_components() {
+    let mut rng = Rng::new(10511391382961984112);
+    let ts = corpus(&mut rng, 150);
+    let (a, b) = (&ts[142], &ts[72]);
+    Type::forget_emptiness();
+    assert!(a.subtype(b), "{a} <: {b}");
+    Type::forget_emptiness();
+    assert_eq!((a - b).verdict(), Verdict::Empty, "{a} - {b}");
+    order_free(10511391382961984112);
+}
+
+/// Asks `QUERIES` queries `a <: b` on the corpus of `seed` one at a time with the kept results
+/// dropped before each, in one batch keeping them, and in the batch reversed, and asserts the
+/// three agree.
+fn order_free(seed: u64) {
+    let mut rng = Rng::new(seed);
     let ts = corpus(&mut rng, 150);
     let qs: Vec<(usize, usize)> = (0..QUERIES)
         .map(|_| (rng.below(ts.len()), rng.below(ts.len())))

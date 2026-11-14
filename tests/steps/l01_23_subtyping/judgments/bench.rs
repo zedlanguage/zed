@@ -62,3 +62,32 @@ fn a_nest_of_key_types_is_decided_in_one_search() {
         assert_eq!(nests[&m].verdict(), verdict);
     });
 }
+
+/// `order_free` over many seeds: the correctness test runs one new seed each run, so a corpus
+/// on which an answer depends on the queries before it is found only now and then (FAIL row
+/// FAIL-judgments-query-order-seed was one such seed). Each test sweeps 50 seeds.
+fn order_free_sweep(from: u64) {
+    for seed in from..from + 50 {
+        order_free(seed);
+    }
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seeds_0_to_49() {
+    order_free_sweep(0);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seeds_50_to_99() {
+    order_free_sweep(50);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seeds_100_to_149() {
+    order_free_sweep(100);
+}
+
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them_seeds_150_to_199() {
+    order_free_sweep(150);
+}

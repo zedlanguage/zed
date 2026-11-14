@@ -619,10 +619,13 @@ impl Type {
         };
         let b = s.solve(self);
         if s.refused.is_some() {
-            // A fork met in a component of a box with components left untried: a search that
-            // sets it aside may still prove `self` empty by a later component
-            // ([`Type::empty_past_forks`]).
-            return s.fork_later && self.empty_past_forks();
+            // A search that sets the fork aside may still prove `self` empty, by a part the fork
+            // is not under ([`Type::empty_past_forks`]), wherever the fork was met: until
+            // FAIL-judgments-query-order-seed it ran only for a fork met in a component of a box
+            // with components after it, so a fork met before the search reached an empty
+            // component left `self` inhabited alone and empty after a query that kept that
+            // component empty.
+            return s.refused == Some(Refusal::Fork) && self.empty_past_forks();
         }
         MEMO.with(|m| {
             m.borrow_mut()
@@ -906,7 +909,7 @@ impl Type {
         s.swept.insert(self.clone(), None);
         let b = s.solve(self);
         let decided = s.refused.is_none();
-        if (decided && b) || (s.fork_later && self.empty_past_forks()) {
+        if (decided && b) || (s.refused == Some(Refusal::Fork) && self.empty_past_forks()) {
             Verdict::Empty
         } else if decided
             && (s.ids.get(self).is_some_and(|t| s.witnessed.contains(t)) || s.rep(self).is_some())
@@ -952,10 +955,13 @@ impl Type {
     /// the type being decided, and a part proved empty by one component is not charged with a
     /// fork met in another (`Searching::any_empty`), so a tuple with an empty component is
     /// empty whichever component comes first.
-    // Complexity tradeoff: run only after the search of `verdict_alone` ended at a fork, so a
-    // type decided without a fork costs what it did; one more search over the same types, the
-    // cost of one group decision (module comment), once per type until `forget_emptiness`
-    // (`PAST_FORKS`). Naive version: the first search alone, which
+    // Complexity tradeoff: run only after the search of `is_empty` or `verdict_alone` ended at a
+    // fork, wherever the fork was met (a test of where it was met, kept until
+    // FAIL-judgments-query-order-seed, saved this search for a fork met in the last component
+    // tried, but a part the fork is not under can still be empty, so answers depended on the
+    // queries kept before), so a type decided without a fork costs what it did; one more search
+    // over the same types, the cost of one group decision (module comment), once per type until
+    // `forget_emptiness` (`PAST_FORKS`). Naive version: the first search alone, which
     // ends at the first fork in operand order, so `(F, E)` is refused and `(E, F)` is empty.
     // What is given up: an Empty that only a search following both sides of the fork proves
     // stays refused. Test: `l01_23_subtyping::refusals::a_tuple_with_an_empty_component_is_empty_in_either_order`.
@@ -1345,10 +1351,6 @@ struct Search {
     /// For [`Type::empty_past_forks`]: how many components of boxes are being tried for
     /// emptiness ([`Searching::any_empty`]). A fork met outside such a trial ends the search.
     trials: Option<usize>,
-    /// How many of those trials have components after the one tried, and whether the fork
-    /// that ended the search was met in one ([`Type::verdict_alone`]).
-    later: usize,
-    fork_later: bool,
 }
 
 /// What [`Searching::cut`] builds of two types.
@@ -3457,10 +3459,7 @@ impl<'m> Searching<'m> {
                     (Some(blame), Some(c)) if s.trials.is_none_or(|n| n > 0) => {
                         blame.push((c, Refusal::Fork, ep))
                     }
-                    _ => {
-                        s.refused = Some(Refusal::Fork);
-                        s.fork_later = s.later > 0;
-                    }
+                    _ => s.refused = Some(Refusal::Fork),
                 }
                 Some(true)
             }
@@ -3661,11 +3660,10 @@ impl<'m> Searching<'m> {
     async fn any_empty(&'m self, ts: &[Type]) -> bool {
         if !self.s().canonical_blame {
             let mut first_fork = None;
-            for (k, t) in ts.iter().enumerate() {
-                let later = k + 1 < ts.len();
-                self.trial(1, later);
+            for t in ts {
+                self.trial(1);
                 let tried = self.empty_fork(t).await;
-                self.trial(-1, later);
+                self.trial(-1);
                 match tried {
                     (true, None) => return true,
                     (true, Some(fork)) => {
@@ -4164,14 +4162,9 @@ impl<'m> Searching<'m> {
     /// Notes a fork met in the decision of a verdict: against the type being decided in a search
     /// with several roots, else as the refusal that ends the search.
     /// Counts a trial of a component in [`Searching::any_empty`] begun (+1) or ended (-1).
-    fn trial(&self, step: isize, later: bool) {
-        let mut guard = self.s();
-        let s = &mut *guard;
-        if let Some(n) = &mut s.trials {
+    fn trial(&self, step: isize) {
+        if let Some(n) = &mut self.s().trials {
             *n = n.wrapping_add_signed(step);
-            if later {
-                s.later = s.later.wrapping_add_signed(step);
-            }
         }
     }
 
@@ -4189,10 +4182,7 @@ impl<'m> Searching<'m> {
             // is none at a fork. COMPLEXITY.md K61. Naive version: a search of its own per open
             // member, n searches of a group of n, O(n²); used: one search with every open member
             // as a root, so one fork outside any type being decided refuses them all.
-            _ => {
-                s.refused = Some(Refusal::Fork);
-                s.fork_later = s.later > 0;
-            }
+            _ => s.refused = Some(Refusal::Fork),
         }
     }
 
