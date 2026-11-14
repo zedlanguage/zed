@@ -135,26 +135,34 @@ fn the_readme_examples_give_these_values() {
 /// number, two numbers, a function with one or two parameters, a prelude function of several
 /// signatures, a generic function, a choice of two functions), has members the checker does
 /// not know, so the merge of it with another failure is `#errs` with any payload, `#errs(..)`
-/// (item TEST-types-unreached-paths).
+/// (item TEST-types-unreached-paths). A payload that holds a function cannot go into the
+/// merged `#errs`, which holds data only: the kernel stops such a run with "`+` given several
+/// failures, one of which holds a function, which `#errs` cannot hold", so the checker refuses
+/// the merge at that operand (row FIX-functions-in-tuples); the signature is the same.
 #[test]
 fn a_merge_with_an_errs_the_program_wrote_has_unknown_members() {
-    for payload in [
-        "5",
-        "5, 6",
-        "g",
-        "h",
-        "min",
-        "abs",
-        "q",
-        "if p { g } else { q }",
-    ] {
+    for (payload, data) in [("5", true), ("5, 6", true)]
+        .into_iter()
+        .chain(["g", "h", "min", "abs", "q", "if p { g } else { q }"].map(|f| (f, false)))
+    {
         let t = format!(
             "g(positional k: int) = k;\nh(positional k: int, positional j: int) = k;\nq(positional k) = k;\n\
              a(positional p: bool) = if p {{ 1 }} else {{ #errs({payload}) }};\n\
              c(positional p: bool) = if p {{ 2 }} else {{ #bad }};\n\
              x(positional p: bool) = a(p) + c(p);\n"
         );
-        assert_eq!(type_errors(&t), Vec::<String>::new(), "{t}");
+        let errors = type_errors(&t);
+        if data {
+            assert_eq!(errors, Vec::<String>::new(), "{t}");
+        } else {
+            assert_eq!(errors.len(), 1, "{t}\n{errors:?}");
+            assert!(
+                errors[0].starts_with(
+                    "`#errs`, which `+` merges the failures of its operands into, takes data"
+                ) && errors[0].ends_with("[a(p)]"),
+                "{t}\n{errors:?}"
+            );
+        }
         assert_eq!(sig(&t, "x"), "(bool) -> int | #bad | #errs(..)", "{t}");
     }
 }
