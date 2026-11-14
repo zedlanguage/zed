@@ -1490,8 +1490,13 @@ pub(super) fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int, use_fast: b
 
     // Right-to-left suffix maxima `main_m[0] > main_m[1] > ... > main_m[r - 1] == 0` of
     // `disjs[u].atom` (the exact sequence of `quotient` unpack targets along `pick_by(..., false)`),
-    // plus the disjoint exposed sub-chains `exposed[q]` inside `(main_m[q + 1], main_m[q])` when
-    // `loc == main_m[q]` is removed (`sum_q |exposed[q]| <= k_r - r <= k_r`).
+    // plus the disjoint exposed sub-chains `exposed[q]` inside `(main_m[q], main_m[q - 1])` (after
+    // `main_m[0]` where `q == 0`): the indices that join the chain when `loc == main_m[q]` is
+    // removed, each above every name before it but `main_m[q]` (`sum_q |exposed[q]| <= k_r - r`).
+    // Before 2026-11-14 they were taken inside `(main_m[q + 1], main_m[q])`, where every name lies
+    // below `main_m[q + 1]`, so they were always empty: the walk of such a `loc` skipped the names
+    // that join the chain, and `fill_row_model`, which takes them, failed on 1090 of 28894 slow hits
+    // of the random rows of `unbounded_row_tests` (row TEST-presburger-unreached-paths).
     let mut inc_m: Vec<usize> = Vec::new();
     for u in 0..k_r {
         if inc_m
@@ -1523,8 +1528,8 @@ pub(super) fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int, use_fast: b
 
     let mut exposed: Vec<Vec<usize>> = Vec::with_capacity(r);
     for q in 0..r {
-        let low_u = if q + 1 < r { main_m[q + 1] + 1 } else { 0 };
-        let high_u = main_m[q];
+        let low_u = main_m[q] + 1;
+        let high_u = if q > 0 { main_m[q - 1] } else { k_r };
         let mut sub_inc: Vec<usize> = Vec::new();
         let mut floor_atom: Option<&Atom> = if q + 1 < r {
             Some(&disjs[main_m[q + 1]].atom)
@@ -2098,5 +2103,116 @@ mod r6_row_order_tests {
             let ratio = scaling::hold(&what, unit, counts[i], counts[i + 1], 1);
             println!("R6ORDER ratio={ratio}");
         }
+    }
+}
+
+/// The point search over one row of names of one color that no bound limits
+/// (`sweep_row_unbounded`) and its fill (`fill_row_model`), called directly on random small rows
+/// and checked against enumeration of every choice of arms (row TEST-presburger-unreached-paths).
+/// Called directly because the public entries fill only the first hit in the order of the
+/// disjunctions and mark the arms of later hits as held unfilled, so the fill of most kinds of
+/// hit (`UnboundedFast` away from the greatest name, `UnboundedSlow`) and rows whose first
+/// disjunction has its high value second are never reached through them.
+#[cfg(test)]
+mod unbounded_row_tests {
+    use super::*;
+
+    /// A small linear congruential generator, so the rows are the same on every run.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn below(&mut self, n: u64) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 33) % n
+        }
+    }
+
+    #[test]
+    fn every_hit_has_a_point_and_its_fill_gives_one() {
+        let mut rng = Lcg(0x5eed_0f0e_3a77);
+        let mut reached: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut wrong = Vec::new();
+        for _ in 0..2000 {
+            let k = 2 + rng.below(5) as usize;
+            // Distinct names in a random order, so the greatest name falls anywhere in the row.
+            let mut names: Vec<usize> = (0..k).collect();
+            for i in (1..k).rev() {
+                names.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+            let ws: Vec<i128> = (0..k).map(|_| 1 + rng.below(6) as i128).collect();
+            let highs: Vec<usize> = (0..k).map(|_| rng.below(2) as usize).collect();
+            let row = || -> Vec<DisjInfo> {
+                (0..k)
+                    .map(|i| DisjInfo {
+                        disj_idx: i,
+                        atom: Atom::Sym(format!("a{}", names[i]).into()),
+                        low_arm: 1 - highs[i],
+                        high_arm: highs[i],
+                        low_val: Int::ZERO,
+                        high_val: Int::from(ws[i]),
+                        weight: Int::from(ws[i]),
+                    })
+                    .collect()
+            };
+            let disjs = row();
+            let total: i128 = ws.iter().sum();
+            for target in 0..=total + 1 {
+                for use_fast in [false, true] {
+                    let plan = sweep_row_unbounded(row(), Int::from(target), use_fast);
+                    for loc in 0..k {
+                        for arm in 0..2 {
+                            let kind = match &plan.hit_table[loc][arm] {
+                                HitKind::None => continue,
+                                HitKind::Exact { .. } => "exact",
+                                HitKind::UnboundedFast { at_gmax: true, .. } => "fast at gmax",
+                                HitKind::UnboundedFast { at_gmax: false, .. } => "fast",
+                                HitKind::UnboundedSlow { .. } => "slow",
+                                _ => "other",
+                            };
+                            *reached.entry(kind).or_default() += 1;
+                            let high = arm == highs[loc];
+                            let tag = format!(
+                                "names {names:?}, weights {ws:?}, high arms {highs:?}, target {target}, fast {use_fast}, loc {loc}, arm {arm}, {kind}"
+                            );
+                            let exists = (0u32..1 << k).any(|s| {
+                                (s >> loc & 1 == 1) == high
+                                    && (0..k)
+                                        .filter(|&i| s >> i & 1 == 1)
+                                        .map(|i| ws[i])
+                                        .sum::<i128>()
+                                        == target
+                            });
+                            if !exists {
+                                wrong.push(format!("{tag}: no point"));
+                            }
+                            let mut m = Model::new();
+                            if !fill_row_model(&plan, loc, arm, &mut m) {
+                                wrong.push(format!("{tag}: the fill fails"));
+                                continue;
+                            }
+                            let sum = disjs.iter().fold(Int::ZERO, |s, d| &s + &m[&d.atom]);
+                            let want = if high { Int::from(ws[loc]) } else { Int::ZERO };
+                            if sum != Int::from(target) || m[&disjs[loc].atom] != want {
+                                wrong.push(format!("{tag}: the fill gives {m:?}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Each kind of hit is reached (31916 exact, 13184 fast, 15958 fast at gmax, 32882 slow
+        // on 2026-11-14), so the test does not silently stop reaching one.
+        for kind in ["exact", "fast", "fast at gmax", "slow"] {
+            assert!(reached.contains_key(kind), "no {kind} hit: {reached:?}");
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} wrong:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
     }
 }
