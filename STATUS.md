@@ -2185,13 +2185,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-rat-names | impl attempt 1 | 2026-11-13 16:26 | started; worktree from origin/main dc590de7b |
+| FENCE-checking-mains | running | 2026-11-13 18:38 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
 | MSG-cast-repair-parens | impl attempt 1 | 2026-11-13 18:06 | started; worktree from origin/main |
+| MSG-never-f64-wording | running | 2026-11-13 17:20 |  |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
-| TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | merged 6b87a1c3a + 71ea7447a + e66cf748c + 22b715865 to main: 79 failing tests moved to wt/scratch/deferred-tests/<STEP-ID>.rs (36 files, owning rows name them) |
+| TESTS-defer-leftovers | running | 2026-11-13 18:38 |  |
+| TESTS-l01_26a-calls-slow | running | 2026-11-13 16:36 | slow scaling test of many calls in l01_26a (29 to 39 s alone at load 40 to 48); added by TESTS-l01_26a-split 2026-11-13 |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
