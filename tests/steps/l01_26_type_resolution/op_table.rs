@@ -26,12 +26,14 @@
 //!   anything else, the expected included, so a fix shows as a mark to remove.
 //!
 //! A unit that does not get past the syntax tree or name resolution (a form zedc does not compile
-//! yet) is checked again one case per unit. A sample of the cases of every file, one in
+//! yet) is read again one case per unit up to resolution, and the cases that get past it are
+//! checked as one unit. A sample of the cases of every file, one in
 //! `SAMPLE`, is also checked one case per unit, and must give what the whole unit gives, as batch
 //! and single-file checking agree (sec:type_resolution).
 //!
 //! Cost: one check per file and one per sampled case, each over a unit linear in its cases; the
-//! comparison is one pass over the lines, O(n) in the cases.
+//! comparison is one pass over the lines, O(n) in the cases. The two largest files, compare.txt
+//! and arith.txt, are checked in two halves, each half a test of its own and a unit of its own.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -238,17 +240,27 @@ fn check(table: &Table, ns: &[usize]) -> Option<HashMap<usize, String>> {
 
 /// The result of case `n` checked alone; `notyet` for a form zedc does not compile yet.
 fn check_alone(table: &Table, n: usize) -> String {
-    if let Some(mut r) = check(table, &[n]) {
-        return r.remove(&n).expect("checked");
+    match front_end(table, n) {
+        Some(r) => r,
+        None => check(table, &[n])
+            .and_then(|mut r| r.remove(&n))
+            .expect("the case gets past resolution, so it is checked"),
     }
+}
+
+/// The result of case `n` alone when its unit does not get past the syntax tree or resolution:
+/// `notyet` for a form zedc does not compile yet, else the rejection. `None` when it does, and
+/// only the checker can give its result. This runs no checker, so it costs a small part of a
+/// check.
+fn front_end(table: &Table, n: usize) -> Option<String> {
     let (text, _) = unit(table, &[n]);
     let tokens = match zedc::lex::lex_fence(&text) {
         Ok(t) => t,
-        Err(_) => return "error lex".to_string(),
+        Err(_) => return Some("error lex".to_string()),
     };
     let tree = match zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP) {
         Ok(t) => t,
-        Err(_) => return "error parse".to_string(),
+        Err(_) => return Some("error parse".to_string()),
     };
     // A form the grammar has and the checker does not compile yet, or a type the spec defines
     // and resolution does not know yet. Any other name not defined is a rejection: `bool(x)` is
@@ -261,12 +273,12 @@ fn check_alone(table: &Table, n: usize) -> String {
                 .any(|t| m.ends_with(&format!("`{t}` is not defined.")))
     };
     match zedc::ast::unit(&text, &tokens, &tree) {
-        Err(e) if not_yet(&e.message) => "notyet".to_string(),
-        Err(e) => format!("error {}", e.row.map_or("-", |r| r.name())),
+        Err(e) if not_yet(&e.message) => Some("notyet".to_string()),
+        Err(e) => Some(format!("error {}", e.row.map_or("-", |r| r.name()))),
         Ok(stmts) => match zedc::resolve::resolve(&stmts) {
-            Err(es) if es.iter().any(|e| not_yet(&e.message)) => "notyet".to_string(),
-            Err(es) => format!("error {}", es[0].row.map_or("-", |r| r.name())),
-            Ok(_) => unreachable!("checked above"),
+            Err(es) if es.iter().any(|e| not_yet(&e.message)) => Some("notyet".to_string()),
+            Err(es) => Some(format!("error {}", es[0].row.map_or("-", |r| r.name()))),
+            Ok(_) => None,
         },
     }
 }
@@ -286,24 +298,41 @@ fn agrees(expected: &str, got: &str) -> bool {
 
 /// Checks every case of the fixture `name` and panics with every line that disagrees.
 fn run(name: &str) {
+    run_part(name, 0, 1);
+}
+
+/// Checks part `part` of `parts` equal parts of the cases of the fixture `name`, in their order,
+/// and panics with every line of it that disagrees. A fixture whose check takes near a second is
+/// checked in parts, each a test of its own, so that each test stays well under a second
+/// (TEST-op-table-speed).
+fn run_part(name: &str, part: usize, parts: usize) {
     let table = read_table(name);
-    let all: Vec<usize> = (0..table.cases.len()).collect();
-    // A unit that does not get past resolution (a form not compiled yet in some case) is checked
-    // one case at a time, and the cases that compile alone are checked again as one unit: n small
-    // checks and one of size n, linear in the cases.
+    let len = table.cases.len();
+    let all: Vec<usize> = (len * part / parts..len * (part + 1) / parts).collect();
+    // A unit that does not get past resolution (a form not compiled yet in some case) is read one
+    // case at a time up to resolution, and the cases that get past it alone are checked as one
+    // unit: n front-end passes and one check of size n, linear in the cases. Should that unit
+    // still not get past resolution, each of its cases is checked alone.
+    // The cases that get past resolution were checked alone in full here before, and those
+    // results were then replaced by the unit's: twice the checker's work, 0.63 of 1.15 s for
+    // compare.txt (TEST-op-table-speed, 2026-11-14). The sample below still checks one case in
+    // `SAMPLE` alone against the unit.
     let mut results: HashMap<usize, String> = HashMap::new();
     let mut batched = all.clone();
     let mut batch = check(&table, &all);
     if batch.is_none() {
         for &n in &all {
-            results.insert(n, check_alone(&table, n));
+            if let Some(r) = front_end(&table, n) {
+                results.insert(n, r);
+            }
         }
-        batched = all
-            .iter()
-            .copied()
-            .filter(|n| results[n] != "notyet")
-            .collect();
+        batched.retain(|n| !results.contains_key(n));
         batch = check(&table, &batched);
+        if batch.is_none() {
+            for &n in &batched {
+                results.insert(n, check_alone(&table, n));
+            }
+        }
     }
     if let Some(r) = &batch {
         results.extend(r.iter().map(|(&n, g)| (n, g.clone())));
@@ -328,10 +357,9 @@ fn run(name: &str) {
     let plan =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/plan_dag.md"))
             .expect("docs/plan_dag.md");
-    let marks: std::collections::BTreeSet<&str> = table
-        .cases
+    let marks: std::collections::BTreeSet<&str> = all
         .iter()
-        .filter_map(|c| c.known.as_ref().map(|(m, _)| m.as_str()))
+        .filter_map(|&n| table.cases[n].known.as_ref().map(|(m, _)| m.as_str()))
         .collect();
     for m in marks {
         if !plan.contains(&format!("| {m} |")) {
@@ -343,7 +371,8 @@ fn run(name: &str) {
     }
     let (mut agree, mut known) = (0, 0);
     let mut per: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
-    for (n, c) in table.cases.iter().enumerate() {
+    for &n in &all {
+        let c = &table.cases[n];
         let got = &results[&n];
         *per.entry(c.template.as_str()).or_default() += 1;
         match &c.known {
@@ -368,9 +397,13 @@ fn run(name: &str) {
             }
         }
     }
+    let label = match parts {
+        1 => name.to_string(),
+        _ => format!("{name}, part {} of {parts}", part + 1),
+    };
     println!(
-        "{name}: {} cases, {agree} agree, {known} known failures",
-        table.cases.len()
+        "{label}: {} cases, {agree} agree, {known} known failures",
+        all.len()
     );
     for (t, k) in &per {
         println!("  {k:5} cases of `{t}`");
@@ -412,8 +445,13 @@ fn every_fixture_has_a_test() {
 }
 
 #[test]
-fn arith() {
-    run("arith.txt");
+fn arith_first_half() {
+    run_part("arith.txt", 0, 2);
+}
+
+#[test]
+fn arith_second_half() {
+    run_part("arith.txt", 1, 2);
 }
 
 #[test]
@@ -432,8 +470,13 @@ fn div_mod() {
 }
 
 #[test]
-fn compare() {
-    run("compare.txt");
+fn compare_first_half() {
+    run_part("compare.txt", 0, 2);
+}
+
+#[test]
+fn compare_second_half() {
+    run_part("compare.txt", 1, 2);
 }
 
 #[test]
