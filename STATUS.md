@@ -2330,11 +2330,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-l139-wide-asum-scaling | running | 2026-11-14 11:32 |  |
 | FAIL-linked-holes-scratch-seed | running | 2026-11-14 07:58 |  |
 | FAIL-linked-sums-between-seed | running | 2026-11-14 11:43 |  |
-| FAIL-pendants-growth-scaled-seed | running | 2026-11-14 11:58 |  |
+| FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | started in wt/fix-parity at origin/main 3c9c29d5b, load 46 |
 | FAIL-preimage-stop-entry-seed | running | 2026-11-14 11:43 |  |
-| FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
-| FAIL-rewrite-growth-both | running |  |  |
+| FAIL-print-function-in-union | running |  |  |
+| FAIL-returned-generic-need-fit | running | 2026-11-14 11:42 |  |
+| FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
