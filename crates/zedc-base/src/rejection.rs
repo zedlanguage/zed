@@ -60,7 +60,7 @@ rows! {
     // No diagnostic uses the next two rows yet: step L18.2a emits them.
     CostAboveClaim => "Work above its cost claim",
     CostUnbounded => "Unbounded work under a cost claim",
-    // No diagnostic uses this row yet: the build that plan row TERM-report schedules emits it.
+    // No diagnostic uses the next row yet: plan row TERM-verdicts emits it.
     NotProvedToEnd => "Not proved to end",
     // No diagnostic uses the next six rows yet: plan row COST-required emits them.
     CostClaimMissing => "Function without a cost claim in a unit under `@cost(#required);`",
@@ -187,7 +187,7 @@ rows! {
     StopReleasesCut => "Releases of a stop cut short",
     ForeignFault => "Fault of foreign code in a run",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
-    // No diagnostic uses this row yet: the build that plan row TERM-report schedules emits it.
+    // No diagnostic uses the next row yet: plan row MEM-verdicts emits it.
     NoProvedMemoryBound => "No proved memory bound",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",
