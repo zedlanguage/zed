@@ -288,25 +288,54 @@ fn agree_both(s: &Shape) -> Result<(usize, bool), String> {
     Ok((compared, arms[3].reachable() && !arms[4].reachable()))
 }
 
-/// Over [`AGREE_SHAPES`] random shapes, with a new seed each run (author P169; was 300 shapes
-/// of the one seed `0x1_39_33`, 19 s at load 30).
+/// Over random shapes, with a new seed each run (author P169; was 300 shapes of the one seed
+/// `0x1_39_33`, 19 s at load 30), until [`AGREE_ARMS`] arms are compared.
 #[test]
 fn the_closed_path_condition_and_the_scope_agree_on_emptiness() {
     let (mut rng, seed) = Rng::fresh("the_closed_path_condition_and_the_scope_agree_on_emptiness");
-    let mut compared = 0;
-    for _ in 0..AGREE_SHAPES {
-        let s = Shape::random(&mut rng);
+    let shapes = agree_run(&mut rng, seed);
+    eprintln!("seed {seed}: {AGREE_ARMS} arms compared over {shapes} shapes");
+}
+
+/// [`agree_both`] on shapes drawn from `rng` until [`AGREE_ARMS`] arms are compared: the
+/// number of shapes drawn. Most arms are not compared, by DESIGN step L1.25: a test relating
+/// `x` and `y` (`x != y`, `y + x > -1`) has a box preimage marked necessary, and a path through
+/// an `or` has a scope that is a join; two shapes in three compare no arm. A fixed count of
+/// shapes therefore compares few arms on some seeds (10 shapes compared 2 or fewer on 4 seeds
+/// in 100), so the run draws until the count of arms is met.
+fn agree_run(rng: &mut Rng, seed: u64) -> usize {
+    let (mut shapes, mut compared) = (0, 0);
+    while compared < AGREE_ARMS {
+        assert!(
+            shapes < AGREE_SHAPES_MAX,
+            "seed {seed}: {shapes} shapes compared only {compared} arms"
+        );
+        let s = Shape::random(rng);
         compared += agree_both(&s)
             .unwrap_or_else(|e| panic!("seed {seed}, {s:?}: {e}"))
             .0;
+        shapes += 1;
     }
-    eprintln!("seed {seed}: {compared} arms compared");
-    assert!(compared > 2, "seed {seed}: {compared} arms compared");
+    shapes
 }
 
-/// The random shapes [`the_closed_path_condition_and_the_scope_agree_on_emptiness`] compares in
-/// a run.
-const AGREE_SHAPES: usize = 10;
+/// The arms [`agree_run`] compares in a run: over 300 seeds, 10 shapes compared 21 on average,
+/// about 2.1 a shape.
+const AGREE_ARMS: usize = 20;
+
+/// The shapes [`agree_run`] may draw before it has compared [`AGREE_ARMS`] arms: 100, where
+/// about 210 arms are expected, fails only when exact arms grow ten times rarer than measured
+/// (by chance, when 93 or more of the 100 shapes compare none, estimated at 1 run in 10^9).
+const AGREE_SHAPES_MAX: usize = 100;
+
+/// The seeds on which 10 shapes compared too few arms: 18222323747793033296 compared 2 and
+/// 1206774933959865883 compared 0, every test of their shapes relating `x` and `y`.
+#[test]
+fn the_seeds_that_compared_too_few_arms_reach_the_count() {
+    for seed in [18222323747793033296, 1206774933959865883] {
+        agree_run(&mut Rng::new(seed), seed);
+    }
+}
 
 /// Some arms are unreachable only through what `h` returns, and the comparison holds there: the
 /// shapes 1, 4 and 15 drawn from the seed `0x1_39_33`, three of the 38 among its first 300 where
