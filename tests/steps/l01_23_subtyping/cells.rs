@@ -182,13 +182,17 @@ fn match_tables_agree_with_listing_their_values() {
         let expected = !missed_by_listing(t);
         empty += expected as usize;
         let ty = missed(t, &PLAIN);
-        assert_eq!(ty.is_empty(), expected, "ZED_SEED={seed}, table {i}: {ty}");
+        assert_eq!(
+            ty.is_empty(),
+            expected,
+            "ZED_TEST_SEED={seed}, table {i}: {ty}"
+        );
     }
-    eprintln!("ZED_SEED={seed}: {empty} of {count} exhaustive");
+    eprintln!("ZED_TEST_SEED={seed}: {empty} of {count} exhaustive");
     // Both answers are common, so the comparison means something either way.
     assert!(
         (count / 4..count * 3 / 4).contains(&empty),
-        "ZED_SEED={seed}: {empty} of {count} exhaustive"
+        "ZED_TEST_SEED={seed}: {empty} of {count} exhaustive"
     );
 }
 
@@ -221,7 +225,7 @@ fn the_answers_do_not_depend_on_names() {
             assert_eq!(
                 missed(t, n).is_empty(),
                 plain,
-                "ZED_SEED={seed}, table {i}, renaming {k}"
+                "ZED_TEST_SEED={seed}, table {i}, renaming {k}"
             );
         }
     }
@@ -250,8 +254,8 @@ fn the_answers_do_not_depend_on_the_order_of_queries() {
     Type::forget_emptiness();
     let mut backward: Vec<bool> = built.iter().rev().map(Type::is_empty).collect();
     backward.reverse();
-    assert_eq!(forward, alone, "ZED_SEED={seed}");
-    assert_eq!(backward, alone, "ZED_SEED={seed}");
+    assert_eq!(forward, alone, "ZED_TEST_SEED={seed}");
+    assert_eq!(backward, alone, "ZED_TEST_SEED={seed}");
 }
 
 mod bench;

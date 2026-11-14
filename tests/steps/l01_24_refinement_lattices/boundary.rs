@@ -392,7 +392,7 @@ fn step(rng: &mut Rng, v: &Num, want: &BigInt) -> (Num, BigInt) {
 #[test]
 fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
     let (mut rng, seed) = Rng::fresh("values near the edges");
-    let walk = format!("a random walk, ZED_SEED={seed}");
+    let walk = format!("a random walk, ZED_TEST_SEED={seed}");
     let mut seen: Vec<(Num, BigInt)> = Vec::new();
     // Every start, in every form, then three random walks of one to four operations from it,
     // each result checked.
@@ -426,10 +426,22 @@ fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
         .iter()
         .flat_map(|&a| sample.iter().map(move |&b| (a, b)));
     for ((a, wa), (b, wb)) in neighbors.chain(sampled) {
-        assert_eq!(a.cmp(b), wa.cmp(wb), "{a} against {b}, ZED_SEED={seed}");
-        assert_eq!(b.cmp(a), wb.cmp(wa), "{b} against {a}, ZED_SEED={seed}");
+        assert_eq!(
+            a.cmp(b),
+            wa.cmp(wb),
+            "{a} against {b}, ZED_TEST_SEED={seed}"
+        );
+        assert_eq!(
+            b.cmp(a),
+            wb.cmp(wa),
+            "{b} against {a}, ZED_TEST_SEED={seed}"
+        );
         if a == b {
-            assert_eq!(hash_of(a), hash_of(b), "{a} against {b}, ZED_SEED={seed}");
+            assert_eq!(
+                hash_of(a),
+                hash_of(b),
+                "{a} against {b}, ZED_TEST_SEED={seed}"
+            );
         }
     }
     let set: HashSet<Num> = seen.iter().map(|(v, _)| v.clone()).collect();
@@ -437,7 +449,7 @@ fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
     assert_eq!(
         set.len(),
         distinct.len(),
-        "one entry per value, ZED_SEED={seed}"
+        "one entry per value, ZED_TEST_SEED={seed}"
     );
 }
 

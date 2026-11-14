@@ -2166,7 +2166,7 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
     // seeds of `PREFIX_CHAIN_SEEDS`, drawn afresh each run (40 from one fixed seed until
     // TEST-bench-move-l0123); `refusals/bench.rs` asks every one.
     for chain in pick_seeds(&mut pick, "random prefix chains", PREFIX_CHAIN_SEEDS, 20) {
-        check_random_prefix_chain(chain, &next_tag(), &format!("ZED_SEED={seed}"));
+        check_random_prefix_chain(chain, &next_tag(), &format!("ZED_TEST_SEED={seed}"));
     }
 }
 
@@ -2621,7 +2621,7 @@ fn r3_cofinite_redundant_oracle_and_order() {
             let bv = b.verdict();
             assert_eq!(
                 av, expected,
-                "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger} ZED_SEED={seed}"
+                "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger} ZED_TEST_SEED={seed}"
             );
             assert_eq!(bv, av, "definition/union order {tag}");
             assert_eq!(a.is_empty(), expected == Verdict::Empty, "is_empty {tag}");
@@ -2851,7 +2851,7 @@ fn r3_cofinite_survey() {
     eprintln!("survey cases={cases} mismatches={bad}");
     assert_eq!(
         bad, 0,
-        "cases whose verdict is not the oracle's ZED_SEED={seed}"
+        "cases whose verdict is not the oracle's ZED_TEST_SEED={seed}"
     );
 }
 
@@ -3087,18 +3087,18 @@ fn codex_r3_variants_agree_with_the_oracle() {
         match t.verdict() {
             Verdict::Empty => assert!(
                 !inhab,
-                "random trial {trial} of ZED_SEED={seed} unsound Empty"
+                "random trial {trial} of ZED_TEST_SEED={seed} unsound Empty"
             ),
             Verdict::Inhabited => assert!(
                 inhab,
-                "random trial {trial} of ZED_SEED={seed} unsound Inhabited"
+                "random trial {trial} of ZED_TEST_SEED={seed} unsound Inhabited"
             ),
             Verdict::Refused(_) => {}
         }
         if t.is_empty() {
             assert!(
                 !inhab,
-                "random trial {trial} of ZED_SEED={seed} unsound is_empty=true"
+                "random trial {trial} of ZED_TEST_SEED={seed} unsound is_empty=true"
             );
         }
         let original = t.verdict();
@@ -3113,12 +3113,12 @@ fn codex_r3_variants_agree_with_the_oracle() {
         assert_eq!(
             rt.verdict(),
             original,
-            "random definition/union order {trial} of ZED_SEED={seed}"
+            "random definition/union order {trial} of ZED_TEST_SEED={seed}"
         );
         assert_eq!(
             t.verdict(),
             original,
-            "random query order {trial} of ZED_SEED={seed}"
+            "random query order {trial} of ZED_TEST_SEED={seed}"
         );
     }
 }
@@ -3203,15 +3203,17 @@ fn r4_exact_classes_random_and_short_escape() {
         let bv = b.sweep_verdict();
         assert_eq!(
             av, bv,
-            "sweep definition order trial {trial} of ZED_SEED={seed}"
+            "sweep definition order trial {trial} of ZED_TEST_SEED={seed}"
         );
         for t in [&a, &b] {
             Type::forget_emptiness();
             match t.verdict() {
                 Verdict::Empty => {
-                    assert!(!inhab, "oracle has witness {trial} of ZED_SEED={seed}")
+                    assert!(!inhab, "oracle has witness {trial} of ZED_TEST_SEED={seed}")
                 }
-                Verdict::Inhabited => assert!(inhab, "oracle empty {trial} of ZED_SEED={seed}"),
+                Verdict::Inhabited => {
+                    assert!(inhab, "oracle empty {trial} of ZED_TEST_SEED={seed}")
+                }
                 Verdict::Refused(_) => {}
             }
             assert!(!t.is_empty() || !inhab);
@@ -3423,12 +3425,12 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         assert_eq!(
                             t.verdict(),
                             want,
-                            "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
+                            "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_TEST_SEED={seed}"
                         );
                         assert_eq!(
                             t.is_empty(),
                             !inhab,
-                            "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
+                            "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_TEST_SEED={seed}"
                         );
                     }
                 }
@@ -3548,10 +3550,10 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         assert_eq!(
                             t.sweep_verdict(),
                             Some(want),
-                            "sweep {case} n={n} ZED_SEED={seed}"
+                            "sweep {case} n={n} ZED_TEST_SEED={seed}"
                         );
                         Type::forget_emptiness();
-                        assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
+                        assert_eq!(t.verdict(), want, "{case} n={n} ZED_TEST_SEED={seed}");
                     }
                 }
             }
@@ -3591,22 +3593,22 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         assert_eq!(
                             t.chain_verdict(),
                             None,
-                            "chains {case} n={n} ZED_SEED={seed}"
+                            "chains {case} n={n} ZED_TEST_SEED={seed}"
                         );
                         assert_eq!(
                             t.sweep_verdict(),
                             Some(want),
-                            "sweep {case} n={n} ZED_SEED={seed}"
+                            "sweep {case} n={n} ZED_TEST_SEED={seed}"
                         );
                     } else {
                         assert_eq!(
                             t.sweep_verdict(),
                             Some(want),
-                            "sweep {case} n={n} ZED_SEED={seed}"
+                            "sweep {case} n={n} ZED_TEST_SEED={seed}"
                         );
                     }
                     Type::forget_emptiness();
-                    assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
+                    assert_eq!(t.verdict(), want, "{case} n={n} ZED_TEST_SEED={seed}");
                 }
             }
         }
@@ -3636,7 +3638,7 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             } else {
                 Verdict::Empty
             };
-            assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
+            assert_eq!(t.verdict(), want, "{case} n={n} ZED_TEST_SEED={seed}");
         }
     }
 
@@ -3730,17 +3732,17 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
             Verdict::Empty
         };
         if let Some(sv) = t.sweep_verdict() {
-            assert_eq!(sv, want, "sweep random chain ZED_SEED={seed}");
+            assert_eq!(sv, want, "sweep random chain ZED_TEST_SEED={seed}");
         }
         Type::forget_emptiness();
         match t.verdict() {
-            Verdict::Empty => assert!(!inhab, "random chain ZED_SEED={seed}"),
-            Verdict::Inhabited => assert!(inhab, "random chain ZED_SEED={seed}"),
+            Verdict::Empty => assert!(!inhab, "random chain ZED_TEST_SEED={seed}"),
+            Verdict::Inhabited => assert!(inhab, "random chain ZED_TEST_SEED={seed}"),
             Verdict::Refused(_) => {}
         }
         assert!(
             !(t.is_empty() && inhab),
-            "is_empty random chain ZED_SEED={seed}"
+            "is_empty random chain ZED_TEST_SEED={seed}"
         );
     }
 
@@ -3800,14 +3802,14 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
         assert_eq!(
             t.sweep_verdict(),
             Some(want),
-            "sweep uniform random ZED_SEED={seed}"
+            "sweep uniform random ZED_TEST_SEED={seed}"
         );
         Type::forget_emptiness();
-        assert_eq!(t.verdict(), want, "uniform random ZED_SEED={seed}");
+        assert_eq!(t.verdict(), want, "uniform random ZED_TEST_SEED={seed}");
         assert_eq!(
             t.is_empty(),
             !inhab,
-            "is_empty uniform random ZED_SEED={seed}"
+            "is_empty uniform random ZED_TEST_SEED={seed}"
         );
     }
 }
@@ -4243,7 +4245,7 @@ fn r5_sat_decide(
     label: &str,
     seed: Option<u64>,
 ) {
-    let seed = seed.map_or(String::new(), |s| format!(" ZED_SEED={s}"));
+    let seed = seed.map_or(String::new(), |s| format!(" ZED_TEST_SEED={s}"));
     let mut counts = std::collections::BTreeMap::new();
     let (mut bad, mut units, mut most) = (0, 0u64, 0u64);
     for set in &sets {
@@ -5189,11 +5191,11 @@ fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64
         };
         assert!(
             !wrong(&v),
-            "verdict {v:?} truth {truth} on {x:?}, ZED_SEED={seed}"
+            "verdict {v:?} truth {truth} on {x:?}, ZED_TEST_SEED={seed}"
         );
         assert!(
             !ch.as_ref().is_some_and(wrong),
-            "chains {ch:?} truth {truth} on {x:?}, ZED_SEED={seed}"
+            "chains {ch:?} truth {truth} on {x:?}, ZED_TEST_SEED={seed}"
         );
         *counts
             .entry(format!("truth {truth} {v:?} chains {ch:?}"))
@@ -5707,7 +5709,7 @@ fn r7_aperiodic_matches_its_closed_form() {
         empties += usize::from(!inhabited);
         Type::forget_emptiness();
         let t = rfx_case("r7aperiodic", n, &format!("_r7ac{n}"));
-        assert_eq!(t.verdict(), want, "r7aperiodic at {n} ZED_SEED={seed}");
+        assert_eq!(t.verdict(), want, "r7aperiodic at {n} ZED_TEST_SEED={seed}");
     }
     assert!(empties > 0, "the closed form must include empty sizes");
 }
@@ -6496,7 +6498,7 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
                     }
                 }
                 let tag = format!("_r9bmm_{m}_{num}_{draw}");
-                let at = format!("m {m} num {num} draw {draw} ZED_SEED={seed}");
+                let at = format!("m {m} num {num} draw {draw} ZED_TEST_SEED={seed}");
                 Type::forget_emptiness();
                 let t = r9_bmm(&a, &b, &tag);
                 let want = if r9_product_all_ones(&a, &b) {
@@ -6529,7 +6531,7 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
     }
     assert!(
         seen.0 >= 4 && seen.1 >= 4,
-        "both verdicts occur: {seen:?} ZED_SEED={seed}"
+        "both verdicts occur: {seen:?} ZED_TEST_SEED={seed}"
     );
 }
 
@@ -6673,7 +6675,7 @@ fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
                 assert_eq!(
                     v == Verdict::Inhabited,
                     want,
-                    "case {i} expanded {expanded}: {input:?} {v:?} ZED_SEED={seed}"
+                    "case {i} expanded {expanded}: {input:?} {v:?} ZED_TEST_SEED={seed}"
                 );
             }
         }

@@ -144,11 +144,11 @@ fn lists_agree_with_membership() {
         };
         checked += 1;
         let want: BTreeSet<Value> = all.iter().filter(|v| t.contains(v)).cloned().collect();
-        assert_eq!(got, want, "{t} (ZED_SEED={first})");
+        assert_eq!(got, want, "{t} (ZED_TEST_SEED={first})");
     }
     assert_eq!(
         checked, 40,
-        "{checked} of {drawn} types listed (ZED_SEED={first})"
+        "{checked} of {drawn} types listed (ZED_TEST_SEED={first})"
     );
 }
 
@@ -711,20 +711,23 @@ fn each_value_agrees_with_a_search_of_all_points() {
         let finite = !holds.iter().any(|v| mentions_seven(v));
         match listed(&t) {
             Some(got) => {
-                assert!(finite, "an infinite type listed: {t} (ZED_SEED={first})");
+                assert!(
+                    finite,
+                    "an infinite type listed: {t} (ZED_TEST_SEED={first})"
+                );
                 // Listing merges boxes (LIST-box-overlap), and is known finite exactly when
                 // `finite` says so.
-                assert!(t.finite(), "{t} (ZED_SEED={first})");
+                assert!(t.finite(), "{t} (ZED_TEST_SEED={first})");
                 let want: BTreeSet<Value> = holds.into_iter().cloned().collect();
-                assert_eq!(got, want, "{t} (ZED_SEED={first})");
+                assert_eq!(got, want, "{t} (ZED_TEST_SEED={first})");
                 listed_count += 1;
             }
             None if finite => {
-                assert!(!t.finite(), "{t} (ZED_SEED={first})");
+                assert!(!t.finite(), "{t} (ZED_TEST_SEED={first})");
                 missed += 1
             }
             None => {
-                assert!(!t.finite(), "{t} (ZED_SEED={first})");
+                assert!(!t.finite(), "{t} (ZED_TEST_SEED={first})");
                 infinite += 1
             }
         }
@@ -732,7 +735,7 @@ fn each_value_agrees_with_a_search_of_all_points() {
     eprintln!("listed {listed_count}, infinite {infinite}, finite but not known finite {missed}");
     assert!(
         listed_count > 300 && infinite > 300,
-        "{listed_count} listed, {infinite} infinite (ZED_SEED={first})"
+        "{listed_count} listed, {infinite} infinite (ZED_TEST_SEED={first})"
     );
 }
 

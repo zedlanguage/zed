@@ -229,7 +229,7 @@ fn the_body_of_a_definition_is_released() {
 }
 
 /// The text of `cases` random types made from the outside in is their text made from the
-/// inside out, from a new seed each run, printed (`ZED_SEED=<seed>` repeats it).
+/// inside out, from a new seed each run, printed (`ZED_TEST_SEED=<seed>` repeats it).
 fn outside_in_is_inside_out(cases: usize) {
     // The text of a type is made in a loop that tries a type, makes the texts it found
     // missing, and tries again. Printing every part first makes each text at the first try,
@@ -239,7 +239,7 @@ fn outside_in_is_inside_out(cases: usize) {
         let case = rng.next_u64();
         let outside_in = random(&mut case.clone(), 5, false);
         let inside_out = random(&mut case.clone(), 5, true);
-        let why = format!("type {k}, case seed {case} (ZED_SEED={seed})");
+        let why = format!("type {k}, case seed {case} (ZED_TEST_SEED={seed})");
         assert_eq!(outside_in.to_string(), inside_out.to_string(), "{why}");
         assert_eq!(
             outside_in.surface().to_string(),

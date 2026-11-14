@@ -188,7 +188,7 @@ fn emptiness_agrees_with_the_oracle() {
         let e = random(&mut r);
         let want = !reps.iter().any(|v| holds(&e, v));
         let t = build(&e);
-        assert_eq!(t.is_empty(), want, "{t}, from {e:?} (ZED_SEED={seed})");
+        assert_eq!(t.is_empty(), want, "{t}, from {e:?} (ZED_TEST_SEED={seed})");
         // The tuple part on its own, where the product split decides.
         let tuples = t.part(Universe::Tuple);
         let want_tuples = !reps
@@ -197,7 +197,7 @@ fn emptiness_agrees_with_the_oracle() {
         assert_eq!(
             tuples.is_empty(),
             want_tuples,
-            "{tuples}, from {e:?} (ZED_SEED={seed})"
+            "{tuples}, from {e:?} (ZED_TEST_SEED={seed})"
         );
         match want_tuples {
             true => empty += 1,
@@ -207,7 +207,7 @@ fn emptiness_agrees_with_the_oracle() {
     // Both answers occur often, so neither "always empty" nor "never empty" would pass.
     assert!(
         empty > 200 && inhabited > 200,
-        "{empty} {inhabited} (ZED_SEED={seed})"
+        "{empty} {inhabited} (ZED_TEST_SEED={seed})"
     );
 }
 
@@ -226,7 +226,7 @@ fn subtyping_agrees_with_the_oracle() {
         };
         let want = reps.iter().all(|v| !holds(&a, v) || holds(&b, v));
         let (ta, tb) = (build(&a), build(&b));
-        assert_eq!(ta.subtype(&tb), want, "{ta} <: {tb} (ZED_SEED={seed})");
+        assert_eq!(ta.subtype(&tb), want, "{ta} <: {tb} (ZED_TEST_SEED={seed})");
         match want {
             true => yes += 1,
             false => no += 1,
@@ -235,7 +235,7 @@ fn subtyping_agrees_with_the_oracle() {
     // Both answers occur often, so neither "always yes" nor "always no" would pass. Over 100 new
     // seeds `no` averaged 457 (standard deviation 19) and `yes` 1043, so the floor of 400 that
     // suited seed 5 would fail about one run in 1000; 300 lies over eight deviations below.
-    assert!(yes > 400 && no > 300, "{yes} {no} (ZED_SEED={seed})");
+    assert!(yes > 400 && no > 300, "{yes} {no} (ZED_TEST_SEED={seed})");
 }
 
 #[test]
@@ -255,7 +255,7 @@ fn deep_combinations_are_decided_exactly() {
             let want = !reps
                 .iter()
                 .any(|v| (!tuple_only || matches!(v, Rep::Tuple(_))) && holds(&e, v));
-            assert_eq!(t.is_empty(), want, "{t}, from {e:?} (ZED_SEED={seed})");
+            assert_eq!(t.is_empty(), want, "{t}, from {e:?} (ZED_TEST_SEED={seed})");
             match want {
                 true => empty += 1,
                 false => inhabited += 1,
@@ -266,12 +266,12 @@ fn deep_combinations_are_decided_exactly() {
         assert_eq!(
             build(&a).subtype(&t),
             want,
-            "{a:?} <: {e:?} (ZED_SEED={seed})"
+            "{a:?} <: {e:?} (ZED_TEST_SEED={seed})"
         );
     }
     assert!(
         empty > 300 && inhabited > 300,
-        "{empty} {inhabited} (ZED_SEED={seed})"
+        "{empty} {inhabited} (ZED_TEST_SEED={seed})"
     );
 }
 
@@ -299,11 +299,11 @@ fn verdicts_agree_with_the_oracle_in_any_order() {
     for ((t, want), v) in asked.iter().zip(&first) {
         match v {
             Verdict::Empty => {
-                assert!(*want, "{t} is inhabited, not empty (ZED_SEED={seed})");
+                assert!(*want, "{t} is inhabited, not empty (ZED_TEST_SEED={seed})");
                 empty += 1;
             }
             Verdict::Inhabited => {
-                assert!(!*want, "{t} is empty, not inhabited (ZED_SEED={seed})");
+                assert!(!*want, "{t} is empty, not inhabited (ZED_TEST_SEED={seed})");
                 assert!(!t.is_empty(), "{t}");
                 inhabited += 1;
             }
@@ -312,22 +312,22 @@ fn verdicts_agree_with_the_oracle_in_any_order() {
     }
     Type::forget_emptiness();
     let again: Vec<Verdict> = asked.iter().rev().map(|(t, _)| t.verdict()).collect();
-    assert!(first.iter().eq(again.iter().rev()), "ZED_SEED={seed}");
+    assert!(first.iter().eq(again.iter().rev()), "ZED_TEST_SEED={seed}");
     println!("verdicts: {empty} empty, {inhabited} inhabited, refused {refused:?}");
     assert!(
         empty > 300 && inhabited > 300,
-        "{empty} {inhabited} {refused:?} (ZED_SEED={seed})"
+        "{empty} {inhabited} {refused:?} (ZED_TEST_SEED={seed})"
     );
     for pair in asked.chunks(2) {
         let (a, b) = (&pair[0].0, &pair[1].0);
         let a = a & b;
         match a.subtype_verdict(b) {
-            Verdict::Empty => assert!(a.subtype(b), "{a} <: {b} (ZED_SEED={seed})"),
-            v => panic!("{a} <: {b} holds, and its verdict is {v:?} (ZED_SEED={seed})"),
+            Verdict::Empty => assert!(a.subtype(b), "{a} <: {b} (ZED_TEST_SEED={seed})"),
+            v => panic!("{a} <: {b} holds, and its verdict is {v:?} (ZED_TEST_SEED={seed})"),
         }
         match b.subtype_verdict(&a) {
-            Verdict::Empty => assert!(b.subtype(&a), "{b} <: {a} (ZED_SEED={seed})"),
-            Verdict::Inhabited => assert!(!b.subtype(&a), "{b} <: {a} (ZED_SEED={seed})"),
+            Verdict::Empty => assert!(b.subtype(&a), "{b} <: {a} (ZED_TEST_SEED={seed})"),
+            Verdict::Inhabited => assert!(!b.subtype(&a), "{b} <: {a} (ZED_TEST_SEED={seed})"),
             Verdict::Refused(_) => {}
         }
     }
@@ -401,7 +401,7 @@ fn the_two_routes_agree_on_boolean_types() {
         routes.record(&tb, &ta, sub(&b, &a));
     }
     println!("boolean pairs: {routes:?}");
-    assert!(routes.same > 2500, "{routes:?} (ZED_SEED={seed})");
+    assert!(routes.same > 2500, "{routes:?} (ZED_TEST_SEED={seed})");
 }
 
 /// The generator of the cross-review's random recursive systems (wt/xv/Q1Q7/scripts/x_tail.rs,
@@ -647,12 +647,12 @@ fn the_two_routes_agree_on_recursive_systems() {
         drawn
             .into_iter()
             .map(|s| (1 + s / SYSTEMS_PER_SEED, (s % SYSTEMS_PER_SEED) as usize)),
-        &format!("ZED_SEED={first}"),
+        &format!("ZED_TEST_SEED={first}"),
     );
     // About 750 of the 1500 are accepted; 600 lies over eight standard deviations below.
     assert!(
         accepted > 600 && routes.same + 20 > accepted && routes.refused < 20,
-        "{routes:?} of {accepted} (ZED_SEED={first})"
+        "{routes:?} of {accepted} (ZED_TEST_SEED={first})"
     );
 }
 

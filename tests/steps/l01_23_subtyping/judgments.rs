@@ -538,12 +538,15 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them() {
     let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
     back.reverse();
     let held = batch.iter().filter(|&&b| b).count();
-    eprintln!("ZED_SEED={seed}: {held} of {} hold", qs.len());
-    assert!(0 < held && held < qs.len(), "ZED_SEED={seed}: {held} hold");
+    eprintln!("ZED_TEST_SEED={seed}: {held} of {} hold", qs.len());
+    assert!(
+        0 < held && held < qs.len(),
+        "ZED_TEST_SEED={seed}: {held} hold"
+    );
     for (i, &(a, b)) in qs.iter().enumerate() {
         assert!(
             alone[i] == batch[i] && alone[i] == back[i],
-            "ZED_SEED={seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
+            "ZED_TEST_SEED={seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
             ts[a],
             ts[b],
             alone[i],

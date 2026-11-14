@@ -166,13 +166,13 @@ fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
                 assert_eq!(
                     t.verdict(),
                     expected,
-                    "{vars} variables, {clauses:?} (ZED_SEED={seed})"
+                    "{vars} variables, {clauses:?} (ZED_TEST_SEED={seed})"
                 );
                 Type::forget_emptiness();
                 assert_eq!(
                     t.is_empty(),
                     !sat,
-                    "{vars} variables, {clauses:?} (ZED_SEED={seed})"
+                    "{vars} variables, {clauses:?} (ZED_TEST_SEED={seed})"
                 );
                 if sat {
                     inhabited += 1;
@@ -184,7 +184,7 @@ fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
         // Both answers are met.
         assert!(
             empty >= 20 && inhabited >= 20,
-            "{empty} empty, {inhabited} inhabited (ZED_SEED={seed})"
+            "{empty} empty, {inhabited} inhabited (ZED_TEST_SEED={seed})"
         );
     });
 }

@@ -1314,7 +1314,7 @@ type Listed = (u64, usize, char, Refusal);
 /// The seeds `fixed`, asked each run, and `count` more of `all` drawn from `rng` and printed with
 /// `what`. Each test that asks these makes `rng` with [`Rng::fresh`], so that it asks other
 /// seeds each run (author P169: random tests run fewer cases, with a new seed each run;
-/// `ZED_SEED` repeats a run); each swept the whole of `all` until TEST-bench-move-l0123.
+/// `ZED_TEST_SEED` repeats a run); each swept the whole of `all` until TEST-bench-move-l0123.
 fn seeds_of(
     rng: &mut Rng,
     what: &str,
@@ -1331,7 +1331,7 @@ fn seeds_of(
 
 /// The seeds a sweep of family `name` runs: 8 of the seeds `listed` names and 24 of 0 to 1500,
 /// drawn from a generator made with [`Rng::fresh`] and printed (author P169: random tests run
-/// fewer cases, with a new seed each run; `ZED_SEED` repeats a run). Every seed of the range
+/// fewer cases, with a new seed each run; `ZED_TEST_SEED` repeats a run). Every seed of the range
 /// was swept, and its refusals listed, as of TEST-bench-move-l0123, when each sweep ran all
 /// 1500 seeds in 2 to 13 s. The seed `both`, whose system has a member shown empty and one
 /// shown inhabited, is asked every run. Returns the seeds and the seed of the generator, for
@@ -1378,13 +1378,13 @@ fn sweep_listed(
     eprintln!("{name}: {tally:?}");
     assert!(
         tally.members > 0 && tally.empty > 0 && tally.inhabited > 0,
-        "{name} (ZED_SEED={rng_seed}): {tally:?}"
+        "{name} (ZED_TEST_SEED={rng_seed}): {tally:?}"
     );
     let new: Vec<_> = got.iter().filter(|r| !want.contains(r)).collect();
     let gone: Vec<_> = want.iter().filter(|r| !got.contains(r)).collect();
     assert!(
         new.is_empty() && gone.is_empty(),
-        "{name} {seeds:?} (ZED_SEED={rng_seed}): refused and not listed: {new:?}; listed and not refused so: \
+        "{name} {seeds:?} (ZED_TEST_SEED={rng_seed}): refused and not listed: {new:?}; listed and not refused so: \
          {gone:?}; the refusals now:\n{}",
         (got.iter())
             .map(|r| format!("    {r:?},"))
@@ -2546,7 +2546,7 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
                     types[at[j]].verdict(),
                     Verdict::Refused(Refusal::Group),
                     "{} with the definitions at {at:?}, asked in the order {order:?} \
-                     (ZED_SEED={seed})",
+                     (ZED_TEST_SEED={seed})",
                     ["Q", "R", "S"][j]
                 );
             }

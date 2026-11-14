@@ -205,7 +205,7 @@ fn random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_t
         println!("answers {answers:?}");
         assert!(
             answers[0] >= 40 && answers[1] >= 40,
-            "{answers:?} (ZED_SEED={seed})"
+            "{answers:?} (ZED_TEST_SEED={seed})"
         );
     });
 }
@@ -301,7 +301,7 @@ fn random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_th
         println!("answers {answers:?}");
         assert!(
             answers[0] >= 30 && answers[1] >= 30,
-            "{answers:?} (ZED_SEED={seed})"
+            "{answers:?} (ZED_TEST_SEED={seed})"
         );
     });
 }
@@ -365,7 +365,7 @@ fn random_parts_out_of_the_class_are_decided_or_refused() {
         // `an_orthogonal_vectors_meet_is_refused_naming_its_component`.
         assert!(
             answers[0] >= 5 && answers[1] >= 5,
-            "{answers:?} (ZED_SEED={seed})"
+            "{answers:?} (ZED_TEST_SEED={seed})"
         );
     });
 }

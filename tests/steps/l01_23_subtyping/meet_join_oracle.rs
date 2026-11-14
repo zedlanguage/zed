@@ -205,7 +205,7 @@ fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all
             .map(|_| random_side(&mut rng))
             .collect();
         let case = format!(
-            "seed {seed:#x} (type {i}), {sides:?}; rerun with ZED_SEED={base} /home/luke/Work/wt/zrun \
+            "seed {seed:#x} (type {i}), {sides:?}; rerun with ZED_TEST_SEED={base} /home/luke/Work/wt/zrun \
              tools/run_tests.sh --no-doc --only '^l01_23_subtyping::meet_join_oracle'"
         );
         match check(&sides, &case) {
@@ -220,6 +220,6 @@ fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all
     // but not known finite.
     assert!(
         listed >= 150 && infinite >= 250 && missed <= 70,
-        "{listed} listed, {infinite} infinite, {missed} missed (ZED_SEED={base})"
+        "{listed} listed, {infinite} infinite, {missed} missed (ZED_TEST_SEED={base})"
     );
 }

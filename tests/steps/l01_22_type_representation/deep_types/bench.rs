@@ -357,7 +357,7 @@ fn the_body_of_a_definition_nested_deep_is_released() {
 }
 
 /// TEST-bench-move-l0123 (author P169): was 4,000 types from the fixed seed 11; now 1,000 types
-/// from a new seed each run, printed (`ZED_SEED=<seed>` repeats it).
+/// from a new seed each run, printed (`ZED_TEST_SEED=<seed>` repeats it).
 #[test]
 fn the_text_of_a_type_made_from_the_outside_in_is_its_text_made_from_the_inside_out() {
     outside_in_is_inside_out(1000);

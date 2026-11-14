@@ -688,7 +688,7 @@ fn random_groups_admitted_are_monotone() {
     let (mut rng, seed) = Rng::fresh("admission sweep");
     let seeds = pick_seeds(&mut rng, "admission sweep", 0..SWEPT, DRAWN);
     sweep(
-        &format!("sweep (ZED_SEED={seed})"),
+        &format!("sweep (ZED_TEST_SEED={seed})"),
         seeds,
         false_rejection_limit(DRAWN),
     );

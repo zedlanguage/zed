@@ -426,7 +426,7 @@ fn random_parity_meets_answered_empty_hold_no_short_list() {
         if v == Verdict::Empty {
             assert_eq!(
                 found, None,
-                "a list of a meet answered empty (ZED_SEED={seed})"
+                "a list of a meet answered empty (ZED_TEST_SEED={seed})"
             );
         }
         *tally
@@ -436,7 +436,7 @@ fn random_parity_meets_answered_empty_hold_no_short_list() {
     eprintln!("random parity meets, by verdict and whether a short list was found: {tally:?}");
     assert!(
         tally.contains_key(&("Empty".to_owned(), false)),
-        "no meet answered empty (ZED_SEED={seed}): {tally:?}"
+        "no meet answered empty (ZED_TEST_SEED={seed}): {tally:?}"
     );
 }
 

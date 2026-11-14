@@ -347,7 +347,7 @@ fn kept_forms_compute_as_their_values_written_out() {
     use num_integer::Integer;
     use num_traits::{Signed, Zero};
     let (mut rng, seed) = zed_tests::instances::Rng::fresh("kept forms");
-    let at = format!("ZED_SEED={seed}");
+    let at = format!("ZED_TEST_SEED={seed}");
     let values = kept_values(&mut rng);
     for (i, (a, x)) in values.iter().enumerate() {
         assert_eq!(*a, Num::from(x), "{x}, {at}");

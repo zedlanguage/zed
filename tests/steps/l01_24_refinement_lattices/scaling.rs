@@ -454,21 +454,24 @@ fn products_quotients_sign_parts_and_joins_of_open_sets_hold_their_members() {
             assert_eq!(
                 nb.contains(v),
                 b.contains(-v),
-                "-({b}) at {v}, ZED_SEED={seed}"
+                "-({b}) at {v}, ZED_TEST_SEED={seed}"
             );
             assert_eq!(
                 joined.contains(v),
                 a.contains(v) || b.contains(v),
-                "{a} join {b} at {v}, ZED_SEED={seed}"
+                "{a} join {b} at {v}, ZED_TEST_SEED={seed}"
             );
         }
-        assert!(a.sign_parts().len() >= n, "{a}, ZED_SEED={seed}");
+        assert!(a.sign_parts().len() >= n, "{a}, ZED_TEST_SEED={seed}");
         for op in [Op::Mul, Op::Div] {
             let z = revision::forward(&op, &a, &nb);
             for x in (-w..=w).filter(|&x| a.contains(x)) {
                 for y in (-w..=w).filter(|&y| nb.contains(y)) {
                     if let Some(r) = apply(&op, x, y) {
-                        assert!(z.contains(r), "{op:?} {a} {nb}: {x}, {y}, ZED_SEED={seed}");
+                        assert!(
+                            z.contains(r),
+                            "{op:?} {a} {nb}: {x}, {y}, ZED_TEST_SEED={seed}"
+                        );
                     }
                 }
             }
@@ -497,25 +500,29 @@ fn one_piece_updates_and_queries_agree_with_membership() {
                 assert_eq!(
                     meet.contains(x),
                     inb && inone,
-                    "{b} meet {one} at {x}, ZED_SEED={seed}"
+                    "{b} meet {one} at {x}, ZED_TEST_SEED={seed}"
                 );
                 assert_eq!(
                     rest.contains(x),
                     inb && !inone,
-                    "{b} minus {one} at {x}, ZED_SEED={seed}"
+                    "{b} minus {one} at {x}, ZED_TEST_SEED={seed}"
                 );
             }
             let inside = (v..=v + 3).all(|x| b.contains(x));
-            assert_eq!(one.is_subset(&b), inside, "{one} in {b}, ZED_SEED={seed}");
+            assert_eq!(
+                one.is_subset(&b),
+                inside,
+                "{one} in {b}, ZED_TEST_SEED={seed}"
+            );
             assert!(
                 b.is_subset(&b.join(&one)),
-                "{b} join {one}, ZED_SEED={seed}"
+                "{b} join {one}, ZED_TEST_SEED={seed}"
             );
             if b.contains(v) {
                 assert_eq!(
                     b.join(&IntervalSet::single(v)),
                     b,
-                    "{b} join {v}, ZED_SEED={seed}"
+                    "{b} join {v}, ZED_TEST_SEED={seed}"
                 );
             }
             grown = grown.join(&IntervalSet::single(3 * v));

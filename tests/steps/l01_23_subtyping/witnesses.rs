@@ -78,26 +78,34 @@ fn periodic_lists_agree_with_their_lengths() {
         Type::forget_emptiness();
         let v = t.verdict();
         match v {
-            Verdict::Empty => assert!(empty, "{t} is inhabited (ZED_SEED={seed})"),
-            Verdict::Inhabited => assert!(!empty, "{t} is empty (ZED_SEED={seed})"),
+            Verdict::Empty => assert!(empty, "{t} is inhabited (ZED_TEST_SEED={seed})"),
+            Verdict::Inhabited => assert!(!empty, "{t} is empty (ZED_TEST_SEED={seed})"),
             // A union of meets that take out different classes may be refused at a fork whether
             // it is empty or not (COMPLEXITY.md K113, given up); the check is sound, not
             // complete. Seed 3 drew only empty ones; new seeds also draw inhabited ones.
             Verdict::Refused(why) => {
-                assert_eq!(why, Refusal::Fork, "{t} (empty: {empty}) (ZED_SEED={seed})")
+                assert_eq!(
+                    why,
+                    Refusal::Fork,
+                    "{t} (empty: {empty}) (ZED_TEST_SEED={seed})"
+                )
             }
         }
         // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
         // (3 of 600 at seed 3, unions whose meets take out different cycles) counts as
         // inhabited for it too.
-        assert_eq!(t.is_empty(), v == Verdict::Empty, "{t} (ZED_SEED={seed})");
+        assert_eq!(
+            t.is_empty(),
+            v == Verdict::Empty,
+            "{t} (ZED_TEST_SEED={seed})"
+        );
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
     let count = |v: &str| seen.get(v).copied().unwrap_or(0);
     println!("verdicts {seen:?}");
     assert!(
         count("Empty") > 50 && count("Inhabited") > 50,
-        "{seen:?} (ZED_SEED={seed})"
+        "{seen:?} (ZED_TEST_SEED={seed})"
     );
 }
 
@@ -172,13 +180,13 @@ fn tuples_of_small_sets_are_decided_and_shown() {
             true => Verdict::Empty,
             false => Verdict::Inhabited,
         };
-        assert_eq!(v, want, "{t} (ZED_SEED={seed})");
+        assert_eq!(v, want, "{t} (ZED_TEST_SEED={seed})");
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
     assert!(
         seen.get("Empty").copied().unwrap_or(0) > 50
             && seen.get("Inhabited").copied().unwrap_or(0) > 50,
-        "{seen:?} (ZED_SEED={seed})"
+        "{seen:?} (ZED_TEST_SEED={seed})"
     );
 }
 
@@ -266,17 +274,17 @@ fn the_residue_rule_agrees_with_listing_the_lengths() {
         Type::forget_emptiness();
         let v = t.verdict();
         match v {
-            Verdict::Empty => assert!(empty, "{p} {k} {classes:?} (ZED_SEED={seed})"),
-            Verdict::Inhabited => assert!(!empty, "{p} {k} {classes:?} (ZED_SEED={seed})"),
+            Verdict::Empty => assert!(empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})"),
+            Verdict::Inhabited => assert!(!empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})"),
             Verdict::Refused(why) => assert!(
                 empty,
-                "{p} {k} {classes:?} is inhabited, and refused: {why:?} (ZED_SEED={seed})"
+                "{p} {k} {classes:?} is inhabited, and refused: {why:?} (ZED_TEST_SEED={seed})"
             ),
         }
         if t.is_empty() {
-            assert!(empty, "{p} {k} {classes:?} (ZED_SEED={seed})");
+            assert!(empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})");
         } else if v != Verdict::Refused(Refusal::Residues) {
-            assert!(!empty, "{p} {k} {classes:?} (ZED_SEED={seed})");
+            assert!(!empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})");
         }
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
@@ -284,7 +292,7 @@ fn the_residue_rule_agrees_with_listing_the_lengths() {
     assert!(
         seen.get("Empty").copied().unwrap_or(0) > 40
             && seen.get("Inhabited").copied().unwrap_or(0) > 40,
-        "{seen:?} (ZED_SEED={seed})"
+        "{seen:?} (ZED_TEST_SEED={seed})"
     );
 }
 
@@ -320,7 +328,7 @@ fn answers_do_not_depend_on_the_order_types_are_built() {
     };
     let forward = answers((0..es.len()).collect(), 0);
     let backward = answers((0..es.len()).rev().collect(), 500);
-    assert_eq!(forward, backward, "ZED_SEED={seed}");
+    assert_eq!(forward, backward, "ZED_TEST_SEED={seed}");
 }
 
 /// Recursive types have a canonical form (item REC-canon): a copy of a group with its definitions

@@ -229,7 +229,7 @@ fn random_rings_with_union_chords_are_decided_right() {
         }
         let g = ring(&kinds, &extra, &mors);
         rings += 1;
-        let label = format!("ZED_SEED={seed}: {kinds:?} edges {extra:?} morphisms {mors:?}");
+        let label = format!("ZED_TEST_SEED={seed}: {kinds:?} edges {extra:?} morphisms {mors:?}");
         let refused = checked(&label, &g);
         let a = decide(&g.bes()).answers;
         let mut b = decide(&reversed(&g).bes()).answers;
@@ -242,11 +242,11 @@ fn random_rings_with_union_chords_are_decided_right() {
         }
     }
     eprintln!(
-        "ZED_SEED={seed}: {along} rings along the cycle, {kept} with added edges, of {rings}"
+        "ZED_TEST_SEED={seed}: {along} rings along the cycle, {kept} with added edges, of {rings}"
     );
     assert!(
         along > rings / 4 && kept > rings / 8,
-        "ZED_SEED={seed}: {along} {kept} of {rings}"
+        "ZED_TEST_SEED={seed}: {along} {kept} of {rings}"
     );
 }
 

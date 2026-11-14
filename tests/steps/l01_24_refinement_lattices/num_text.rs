@@ -164,7 +164,7 @@ fn a_written_end_is_num_bigints_text() {
             assert_eq!(
                 Num::from(&x).to_string(),
                 text,
-                "{} digits, ZED_SEED={seed}",
+                "{} digits, ZED_TEST_SEED={seed}",
                 text.len()
             );
         }
@@ -236,12 +236,12 @@ fn a_written_end_is_the_text_it_was_read_from_on_both_sides_of_print_whole() {
             assert_eq!(
                 Num::from(&x).to_string(),
                 text,
-                "{w} words, ZED_SEED={seed}"
+                "{w} words, ZED_TEST_SEED={seed}"
             );
             assert_eq!(
                 Num::from(-&x).to_string(),
                 format!("-{text}"),
-                "{w} words, ZED_SEED={seed}"
+                "{w} words, ZED_TEST_SEED={seed}"
             );
         }
     }
@@ -258,10 +258,10 @@ fn a_long_decimal_end_read_as_num_is_written_as_its_text() {
     let len = ((64 * (PRINT_WHOLE + 1) - 32) as f64 * std::f64::consts::LOG10_2) as usize;
     let text = format!("{}{}", rng.int(1, 9), digits(&mut rng, len - 1));
     let end = text.parse::<Num>().expect("digits");
-    assert_eq!(end.to_string(), text, "ZED_SEED={seed}");
+    assert_eq!(end.to_string(), text, "ZED_TEST_SEED={seed}");
     let negative = format!("-{text}");
     let end = negative.parse::<Num>().expect("digits");
-    assert_eq!(end.to_string(), negative, "ZED_SEED={seed}");
+    assert_eq!(end.to_string(), negative, "ZED_TEST_SEED={seed}");
 }
 
 /// Item PRINT-below-whole: the two ways of printing, forced, write the same text: num-bigint's

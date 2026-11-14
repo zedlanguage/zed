@@ -773,7 +773,7 @@ fn a_type_of_points_prints_without_the_top_type_and_reads_back() {
         let s = round_trip(&t);
         assert!(
             !s.to_string().contains('_'),
-            "{s}, case seed {case} (ZED_SEED={seed})"
+            "{s}, case seed {case} (ZED_TEST_SEED={seed})"
         );
     }
 }
