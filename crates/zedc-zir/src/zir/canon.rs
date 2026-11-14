@@ -126,6 +126,14 @@ fn normal_edge(e: &mut Edge) {
     }
 }
 
+/// Whether the binder `name` at preorder position `index` among its pattern's binders is in
+/// normal form: spelled as the level `index` itself. A binder spelled as another level, such as
+/// `$$5` read from the text form in the first place, counts as written and is renamed, since an
+/// arm reads its binders by position and the name must not change the address.
+fn canonical_at(name: &str, index: usize) -> bool {
+    level_of(name) == Some(index)
+}
+
 /// Each written binder of `p` renamed to its level, the number of binders before it.
 fn rename_all(p: &mut Pattern, index: &mut usize) {
     // A stack of the subpatterns left, the next on top, visits them in preorder.
@@ -133,7 +141,7 @@ fn rename_all(p: &mut Pattern, index: &mut usize) {
     while let Some(p) = todo.pop() {
         match p {
             Pattern::Bind(name) => {
-                if level_of(name).is_none() {
+                if !canonical_at(name, *index) {
                     *name = level_name(*index);
                 }
                 *index += 1;
@@ -359,7 +367,11 @@ fn written(g: &Region) -> u64 {
         for node in &r.nodes {
             if let Op::Match(ps) = &node.op {
                 for p in ps {
-                    binds(p, &mut |name| n += u64::from(level_of(name).is_none()));
+                    let mut index = 0;
+                    binds(p, &mut |name| {
+                        n += u64::from(!canonical_at(name, index));
+                        index += 1;
+                    });
                 }
             }
             todo.extend(node.regions.iter().map(|r| &**r));
@@ -404,7 +416,11 @@ fn rename_first(g: &mut Region) -> bool {
 fn first_written(g: &Region) -> Option<(Vec<(usize, usize)>, usize)> {
     let has_written = |p: &Pattern| {
         let mut found = false;
-        binds(p, &mut |name| found |= level_of(name).is_none());
+        let mut index = 0;
+        binds(p, &mut |name| {
+            found |= !canonical_at(name, index);
+            index += 1;
+        });
         found
     };
     /// A region being searched: node `k` is next, or is being searched, its patterns already
@@ -462,7 +478,7 @@ fn rename_in(p: &mut Pattern, index: &mut usize) -> Option<std::sync::Arc<str>> 
     let mut todo = vec![p];
     while let Some(p) = todo.pop() {
         match p {
-            Pattern::Bind(name) if level_of(name).is_none() => {
+            Pattern::Bind(name) if !canonical_at(name, *index) => {
                 let written = name.clone();
                 *name = level_name(*index);
                 return Some(written);

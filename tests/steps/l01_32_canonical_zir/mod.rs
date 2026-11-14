@@ -6,6 +6,7 @@
 mod bench;
 mod binders;
 mod facet_order;
+mod fail_misplaced_level;
 mod fuzz;
 mod scaling;
 mod stability;
