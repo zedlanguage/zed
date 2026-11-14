@@ -12401,6 +12401,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// one value, the cast gives an atom on it, or the value has no literal the checker reads
     /// back, as `rat("1/3")`, whose `rat` no decimal literal writes; the repair is then the
     /// cast. A `rat` is written with its point where that is no longer ([`plain_rat`]).
+    /// The value is written in decimal, as the text reads it, never in the spelling some
+    /// literal of the program gives the same value: `"8" < 0x08` is offered `8 < 0x08`, not
+    /// `0x08 < 0x08` (row REPAIR-text-cast-spelling).
     ///
     /// Complexity tradeoff: the naive repair writes the cast around the literal, O(1), and
     /// shows a call that cannot fail as if it could. This runs the cast once on the one value,
@@ -12412,7 +12415,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         if matches!(x, Value::Atom(_)) {
             return None;
         }
-        let text = self.text(&Ty::lit(&x));
+        // The value's own text, not `self.text`, which writes a value as the program spells
+        // it near this site ([`Self::spelling`]) and so gave `0x08` for the `8` that
+        // `int("8")` reads beside a literal `0x08`. Both print the one value in O(d); the
+        // plain print also skips the search of the program's spellings, O(log s) for s
+        // spelled literals.
+        let text = Ty::lit(&x).to_string();
         let text = match x {
             Value::Rat(_) => plain_rat(&text).unwrap_or(text),
             _ => text,

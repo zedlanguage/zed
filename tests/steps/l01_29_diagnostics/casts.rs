@@ -973,6 +973,41 @@ fn a_literal_in_another_base_compared_with_its_text_is_offered_the_equal_text() 
 }
 
 #[test]
+fn a_text_ordered_with_a_literal_of_its_value_is_offered_the_number_the_text_reads() {
+    // Row REPAIR-text-cast-spelling. `"8" < 0x08` orders a text with a number; the repair
+    // writes the number the text reads in place of the text, in decimal, as the text writes
+    // it: `8 < 0x08`, not `0x08 < 0x08`, the other operand's spelling of the same value. Each
+    // case is the text, the literal beside it, and the number written for the text; both
+    // orders of the operands are tried.
+    for (text, lit, number) in [
+        ("8", "0x08", "8"),
+        ("5", "0b101", "5"),
+        ("15", "0o17", "15"),
+        ("1000", "1_000", "1000"),
+        ("1000", "0x3_E8", "1000"),
+        ("-8", "-0x08", "-8"),
+        ("0", "0x0", "0"),
+        // `rat` comes before `f64` in the menu, so the first repair is the `rat` literal.
+        ("0.5", "5e-1", "0.5r"),
+    ] {
+        for (expr, want) in [
+            (format!("\"{text}\" < {lit}"), format!("{number} < {lit}")),
+            (format!("{lit} >= \"{text}\""), format!("{lit} >= {number}")),
+        ] {
+            let out = rejected(&program(&format!("f() {{ c = {expr}; return c; }}")));
+            let headline = out.lines().next().expect("a headline");
+            assert!(
+                headline.ends_with(&format!(" Try `{want}` instead.")),
+                "{expr}\n{out}"
+            );
+            assert!(out.contains(&entry(number)), "{expr}\n{out}");
+            assert!(!out.contains(&entry(lit)), "{expr}\n{out}");
+            checks(&program(&format!("f() {{ c = {want}; return c; }}")));
+        }
+    }
+}
+
+#[test]
 fn a_literal_of_many_digits_ordered_with_a_text_is_offered_as_text_and_scales() {
     // The literal is written as text, O(d) for d digits, and the ordering checked once with it.
     let srcs = scaling::inputs(4000, |d| {
