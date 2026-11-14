@@ -18,6 +18,7 @@ mod prose_checks;
 mod scaling;
 mod split;
 mod sync;
+mod test_dirs;
 mod tool_edges;
 
 use zed_tools::spec::Spec;
@@ -708,7 +709,7 @@ fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
 /// 5 to 7 s; zed-tools' `fuzz SPEC_DIR N SEED` runs any number on the spec.
 #[test]
 fn fuzz_of_the_real_grammar_finds_no_failure() {
-    let dir = spec_dir("fuzz_real", &design(""), "");
+    let dir = spec_dir("fuzz_real_many", &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(
         &spec,
@@ -853,7 +854,7 @@ fn nested_body(depth: usize) -> String {
 /// Runs the ring, layer and check tools on a program whose body nests `depth` parentheses.
 fn tools_take_a_nest(depth: usize) {
     let text = nested_body(depth);
-    let dir = spec_dir("deep_tools", &design(&fence(&text)), "");
+    let dir = spec_dir(&format!("deep_tools_{depth}"), &design(&fence(&text)), "");
     let file = dir.write("01-deep.zed", &format!("// layer L1\n{text}\n"));
     let (outcome, out) = tool(ring::run, &[&dir.root(), &file]);
     assert_eq!(outcome, Ok(true), "{out}");
@@ -866,7 +867,7 @@ fn tools_take_a_nest(depth: usize) {
 /// Lexes a body that adds `n` names, one character at a time through the machine.
 fn lexes_a_sum(n: usize) {
     let text = format!("double(x: int) -> int = {};", vec!["x"; n].join(" + "));
-    let dir = spec_dir("long_lex", &design(""), "");
+    let dir = spec_dir(&format!("long_lex_{n}"), &design(""), "");
     let spec = Spec::open(&dir.root()).expect("the spec reads");
     assert!(zed_tools::syntax::lex(&spec.lexical, &text).is_ok());
 }

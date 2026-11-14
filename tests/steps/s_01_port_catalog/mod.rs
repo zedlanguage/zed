@@ -426,8 +426,8 @@ fn zed_text_passes(name: &str, texts: impl IntoIterator<Item = String>) {
 #[test]
 fn nested_lambdas_and_chains_of_calls_pass_the_zed_check() {
     let sizes = [0, 1, 2, 9];
-    zed_text_passes("catalog_zed_nesting", sizes.map(nested_lambdas));
-    zed_text_passes("catalog_zed_scaling", sizes.map(call_chain));
+    zed_text_passes("catalog_zed_nesting_small", sizes.map(nested_lambdas));
+    zed_text_passes("catalog_zed_scaling_small", sizes.map(call_chain));
 }
 
 #[test]

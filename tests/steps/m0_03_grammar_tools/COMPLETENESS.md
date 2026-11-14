@@ -35,6 +35,7 @@ below) cover more of `llp.rs`, `split.rs` and `fuzz.rs`.
 | `split`: split and whole parse agree on the corpus and on damaged programs, cuts, lookaheads, a grammar the scan cannot read (brackets, no tokens, undefined names, a character class, a match inside brackets that leaves one open or closes one) | `split::*` (9 tests) |
 | `cite::run`, `progress::run` and `done_row`, `sync::run`, `conflicts` with its default path | None in a test: they read this repository or call `git`; their logic is tested through the functions they call with a spec directory |
 | `spec_checks` build modes (`build_modes`, `before_build`, `undefined_builds`, `defined`, `is_layer`) | Tested with their step in l07_03_unit_log_off/modes.rs |
+| The test directories of the helpers: a name given once per test binary, under the binary's name (TEST-m0_03-flake) | `test_dirs.rs::a_test_directory_name_is_given_once_and_lies_under_the_binary_name` |
 | `lib.rs` `main_of`, `compiler_dirs` | None: entry points of the binaries |
 | `syntax.rs` `Tokens::char_at` and the `Expected::Class` closure | None: a grammar over tokens has no character class and no character to read (the character engine is tested in l01_08 `grammar_errors`) |
 | `split::run` over files, `fuzz` output of a differing ring, `llp::run` with a rules file | Not yet covered: these print paths of the binaries, reached only on a failing grammar or a file argument |

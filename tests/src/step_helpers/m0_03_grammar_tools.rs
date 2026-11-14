@@ -1,18 +1,39 @@
 //! Grammar-tool helpers of step M0.3 (tests/steps/m0_03_grammar_tools).
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use zed_tools::Outcome;
 
 /// A directory under `build/` that is removed at the end of the test.
 pub struct Dir(pub PathBuf);
 
+/// The names `Dir::new` has given in this process. Two tests that used one name deleted each
+/// other's files when they ran at once, which failed one or both only now and then
+/// (TEST-m0_03-flake: two tests of m0_03 shared `fuzz_real`); a second use now fails at once.
+static NAMES: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
 impl Dir {
-    /// A new empty directory named `name`.
+    /// A new empty directory named `name`, a name no other `Dir` of this test binary has. It
+    /// lies in a directory named after the binary, so the binaries running at once that use
+    /// these helpers do not share one either.
     pub fn new(name: &str) -> Dir {
+        let fresh = NAMES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name.to_string());
+        assert!(fresh, "two tests use the test directory {name}");
+        let exe = std::env::current_exe().expect("the test binary's path");
+        let stem = exe
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .expect("a UTF-8 name");
+        // Cargo names a test binary `<target>-<hash>`.
+        let binary = stem.rsplit_once('-').map_or(stem, |(b, _)| b);
         let path = PathBuf::from(format!(
-            "{}/build/tool_tests/{name}",
+            "{}/build/tool_tests/{binary}/{name}",
             zed_tools::impl_root()
         ));
         if path.exists() {

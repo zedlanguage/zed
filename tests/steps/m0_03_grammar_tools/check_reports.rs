@@ -205,7 +205,11 @@ fn a_token_rule_with_no_kind_stops_the_lexer() {
             "{}Odd           = '`'    L1\n",
             lexical.replacen(from, to, 1)
         );
-        let dir = spec_dir("lex_kind", &design_of(&lex, &syn, &doc, &desugar, ""), "");
+        let dir = spec_dir(
+            &format!("lex_kind_{name}"),
+            &design_of(&lex, &syn, &doc, &desugar, ""),
+            "",
+        );
         let spec = Spec::open(&dir.root()).expect("the spec reads");
         let got = ring::ring_of(&spec, "x = `;").map(|r| r.ring);
         let want = if name == "Token" { "Odd" } else { "Number" };
