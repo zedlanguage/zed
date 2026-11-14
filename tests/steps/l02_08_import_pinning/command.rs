@@ -4,12 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// A package directory of its own for test `name`, holding `files`, under the test target's
+/// A package directory of its own for test `name`, holding `files`, under this process's
 /// scratch directory; files in it are overwritten by each run, never deleted.
 fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l02_08")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l02_08/{name}"));
     for (file, text) in files {
         let path = d.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -238,11 +238,9 @@ fn a_printed_string_type_reads_back_as_itself() {
     assert_eq!(parse_type(&text), Ok(t));
 }
 
-/// A package `name` of the files `files`, under the tests' directory for temporary files.
+/// A package `name` of the files `files`, under this process's scratch directory.
 fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l02_12_diagnostics")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l02_12_diagnostics/{name}"));
     for (file, text) in files {
         let path = d.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

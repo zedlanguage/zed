@@ -10,12 +10,10 @@ use std::path::PathBuf;
 use zedc::address::ContentAddress;
 use zedc::run::{Program, Record, load};
 
-/// A directory of its own for test `name`, under the test target's scratch directory; files
+/// A directory of its own for test `name`, under this process's scratch directory; files
 /// in it are overwritten by each run, never deleted.
 fn dir(name: &str) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l01_19b")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l01_19b/{name}"));
     std::fs::create_dir_all(&d).unwrap();
     d
 }

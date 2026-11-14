@@ -89,7 +89,7 @@ fn step_names_by_stage_step_letter_and_description() {
 
 /// A fresh, empty directory for test `name` in the test target's scratch directory.
 fn scratch(name: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("m0_01_cases_{name}"));
+    let dir = zed_tests::step_helpers::scratch(format!("m0_01_cases_{name}"));
     if dir.exists() {
         fs::remove_dir_all(&dir).expect("clearing an old test directory");
     }

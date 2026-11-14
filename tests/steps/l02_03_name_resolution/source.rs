@@ -9,12 +9,10 @@ use std::path::PathBuf;
 use zedc::query::Db;
 use zedc::unit::{Dir, Files, load};
 
-/// A package directory of its own for test `name`, holding `files` as bytes, under the test
-/// target's scratch directory; files in it are overwritten by each run, never deleted.
+/// A package directory of its own for test `name`, holding `files` as bytes, under this process's
+/// scratch directory; files in it are overwritten by each run, never deleted.
 pub(super) fn package_dir(name: &str, files: &[(&str, &[u8])]) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l02_03_source")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l02_03_source/{name}"));
     for (file, bytes) in files {
         let path = d.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

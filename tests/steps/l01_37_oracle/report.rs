@@ -81,9 +81,7 @@ fn a_program_that_writes_nothing_or_does_not_load() {
 
 #[test]
 fn the_layer_of_each_program_is_read_from_its_first_line() {
-    let d = zed_tests::step_helpers::target_tmpdir()
-        .join("l01_37")
-        .join("labeled");
+    let d = zed_tests::step_helpers::scratch("l01_37/labeled");
     std::fs::create_dir_all(&d).unwrap();
     std::fs::write(d.join("b.zed"), "// layer L3\nx = 1\n").unwrap();
     std::fs::write(d.join("a.zed"), "// layer L12 \nx = 1\n").unwrap();

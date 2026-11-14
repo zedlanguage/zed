@@ -9,6 +9,12 @@
 //! can name the executable.
 #![cfg(target_os = "linux")]
 
+/// This process's scratch directory, as the step tests have it. A test target of zed-native
+/// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
+#[allow(dead_code)]
+#[path = "../../src/scratch.rs"]
+mod scratch;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -40,9 +46,8 @@ fn bare_rejection(file: &Path) -> String {
 /// The file `name` in this test's directory under the test target's scratch directory, holding
 /// `text`; it is overwritten by each run, never deleted.
 fn file(name: &str, text: &str) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("l01_29_commands_binary");
-    std::fs::create_dir_all(&d).unwrap();
-    let f = d.join(name);
+    let f = scratch::scratch(format!("l01_29_commands_binary/{name}"));
+    std::fs::create_dir_all(f.parent().unwrap()).unwrap();
     std::fs::write(&f, text).unwrap();
     f
 }
@@ -244,7 +249,7 @@ fn a_rejection_by_the_checker_prints_alike_and_zedc_fmt_lays_the_unit_out() {
 /// A manifest is read with the syntax of a unit, and its parse error prints its steps too.
 #[test]
 fn a_parse_error_in_a_manifest_prints_its_steps_and_repairs() {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("l01_29_commands_binary_package");
+    let d = scratch::scratch("l01_29_commands_binary_package");
     std::fs::create_dir_all(&d).unwrap();
     let manifest = d.join("zed.manifest");
     std::fs::write(&manifest, "prelude = \"std.prelude\" with y = 0;\n").unwrap();

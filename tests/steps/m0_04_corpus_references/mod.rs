@@ -62,7 +62,9 @@ fn a_missing_input_is_an_error() {
 
 #[test]
 fn an_input_that_is_not_utf8_is_an_error_and_prints_nothing() {
-    let path = format!("{}/build/not_utf8.in", zed_tools::impl_root());
+    let path = zed_tests::step_helpers::scratch("not_utf8.in")
+        .display()
+        .to_string();
     fs::write(&path, b"caf\xe9\n").expect("writing a test input");
     let (out, result) = zed_corpus_ref::run("01", &path);
     fs::remove_file(&path).expect("removing a test input");
@@ -107,7 +109,9 @@ fn the_references_do_not_depend_on_the_compiler() {
 
 /// The output of reference `number` on `input`, which `name` keeps apart from other tests.
 fn on_text(number: &str, name: &str, input: &str) -> (String, Result<(), String>) {
-    let path = format!("{}/build/ref_{name}.in", zed_tools::impl_root());
+    let path = zed_tests::step_helpers::scratch(format!("ref_{name}.in"))
+        .display()
+        .to_string();
     fs::write(&path, input).expect("writing a test input");
     let result = zed_corpus_ref::run(number, &path);
     fs::remove_file(&path).expect("removing a test input");

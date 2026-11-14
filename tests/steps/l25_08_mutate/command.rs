@@ -15,9 +15,8 @@ fn run(args: &[&str]) -> (u8, String, String) {
 }
 
 fn unit(name: &str, text: &str) -> String {
-    let dir = std::env::temp_dir().join("zed-l25-08");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
+    let path = zed_tests::step_helpers::scratch(format!("l25_08/{name}"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, text).unwrap();
     path.display().to_string()
 }

@@ -7,6 +7,12 @@
 //! two addresses. `crates/zed-native/Cargo.toml` names this test, since only a test of that
 //! package can name the executable and set the directory it runs in.
 
+/// This process's scratch directory, as the step tests have it. A test target of zed-native
+/// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
+#[allow(dead_code)]
+#[path = "../../src/scratch.rs"]
+mod scratch;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -15,13 +21,11 @@ const AREA: &str = "half(positional x) = x div 2 test { 10 -> 5, 7 -> 3 }\n\
                     main(m: MainArgs) {\n  side = 3037000500;\n  \
                     area = side * side;\n  m.stdout <- String(0);\n}\n";
 
-/// The directory `name` of this test under the test target's scratch directory, holding
+/// The directory `name` of this test under this process's scratch directory, holding
 /// `src/area.zed` and, when `package`, a manifest; its files are overwritten by each run, never
 /// deleted, so a name is used for a package or for loose files, never for both.
 fn tree(name: &str, package: bool) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("suppress_binary")
-        .join(name);
+    let d = scratch::scratch(format!("suppress_binary/{name}"));
     std::fs::create_dir_all(d.join("src")).unwrap();
     std::fs::write(d.join("src").join("area.zed"), AREA).unwrap();
     if package {

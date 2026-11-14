@@ -1,6 +1,9 @@
 //! The scratch directories of the tests: a directory per process of a test binary, and in it a
-//! path per test. Re-exported by `crate::step_helpers`; its own tests are in
-//! `crate::scratch_tests`.
+//! path per test. Compiled into this crate as `crate::scratch` (re-exported by
+//! `crate::step_helpers`) and, by `#[path]`, into the test targets of zed-native that run the
+//! zedc executable, which cannot depend on this crate; its own tests are in
+//! `crate::scratch_tests`, so they run once, in this crate only (as TEST-seed-test-once does
+//! for `crate::seed`).
 
 use std::collections::BTreeMap;
 use std::fs::{File, TryLockError};

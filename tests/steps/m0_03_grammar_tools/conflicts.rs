@@ -180,7 +180,7 @@ fn a_plan_whose_table_fails_the_plan_check_stops_the_tool() {
     let mut rows = ROWS.to_vec();
     rows[4].0 = 0;
     let text = plan(HEAD, &rows, "old", "- old");
-    let dir = std::env::temp_dir().join(format!("zed-conflicts-{}", std::process::id()));
+    let dir = zed_tests::step_helpers::scratch("conflicts");
     std::fs::create_dir_all(&dir).expect("a temporary directory");
     let path = dir.join("plan_dag.md");
     std::fs::write(&path, &text).expect("writing the plan");

@@ -20,7 +20,7 @@ impl Drop for Scratch {
 
 #[test]
 fn a_missing_tool_fails_the_full_run() {
-    let dir = Scratch(std::env::temp_dir().join("zed-full-missing-tool"));
+    let dir = Scratch(zed_tests::step_helpers::scratch("zed-full-missing-tool"));
     let step = dir.0.join("tests/full/s99_99_needs_a_tool");
     std::fs::create_dir_all(&step).unwrap();
     std::fs::write(step.join("needs"), "zed-no-such-tool\n").unwrap();

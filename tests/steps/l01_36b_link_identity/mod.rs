@@ -23,13 +23,11 @@ use zedc::work::{self, Stage, Work};
 
 pub(crate) use zed_tests::step_helpers::l01_36a_executables::{executable, toolchain};
 
-/// A directory of its own for test `name`, under the test target's scratch directory; files
+/// A directory of its own for test `name`, under this process's scratch directory; files
 /// in it are overwritten by each run, never deleted, so a test's first build may find its
 /// output from the run before.
 pub(crate) fn dir(name: &str) -> PathBuf {
-    let d = zed_tests::step_helpers::target_tmpdir()
-        .join("l01_36b")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l01_36b/{name}"));
     std::fs::create_dir_all(&d).unwrap();
     d
 }

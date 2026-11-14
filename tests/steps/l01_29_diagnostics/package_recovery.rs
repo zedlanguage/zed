@@ -212,11 +212,9 @@ fn a_unit_that_compiles_alone_has_its_syntax_and_type_errors_reported_together()
     );
 }
 
-/// The directory `name` under the tests' scratch directory, holding the files `fs`.
+/// The directory `name` under this process's scratch directory, holding the files `fs`.
 fn package_dir(name: &str, fs: &[(&str, &str)]) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l01_29_package")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l01_29_package/{name}"));
     for (file, text) in fs {
         let path = d.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

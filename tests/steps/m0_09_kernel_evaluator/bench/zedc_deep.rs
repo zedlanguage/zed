@@ -4,7 +4,6 @@
 //! only a test of that package can name the executable.
 
 use std::fs;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 /// The largest stack a run may have for this test to prove anything: the usual 8 MiB. Under a
@@ -46,8 +45,7 @@ fn limit_stack() {
 #[test]
 fn zedc_compares_a_value_20000_deep_on_an_ordinary_stack() {
     limit_stack();
-    let name = format!("deep_value_{}.zed", std::process::id());
-    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let file = crate::scratch::scratch("deep_value.zed");
     fs::write(&file, PROGRAM).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_zedc"))
         .arg("run")

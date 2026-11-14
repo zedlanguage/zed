@@ -5,5 +5,11 @@
 //! `--bench` runs it; the evaluator's comparison of deep values runs at small depths in
 //! `deep_values.rs`, and zedc runs programs at ordinary sizes in step L1.36a.
 
+/// This process's scratch directory, as the step tests have it. A test target of zed-native
+/// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
+#[allow(dead_code)]
+#[path = "../../src/scratch.rs"]
+mod scratch;
+
 #[path = "bench/zedc_deep.rs"]
 mod bench;

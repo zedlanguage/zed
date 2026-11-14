@@ -3,17 +3,21 @@
 //! UTF-8 is a usage error naming its position, not a crash. `crates/zed-native/Cargo.toml` names
 //! this test, since only a test of that package can name the executable.
 
+/// This process's scratch directory, as the step tests have it. A test target of zed-native
+/// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
+#[allow(dead_code)]
+#[path = "../../src/scratch.rs"]
+mod scratch;
+
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
-use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.args;\n}\n";
 
 /// `zedc run <echo program> -- <args>`, the program written for test `name`.
 fn echo(name: &str, args: &[OsString]) -> Output {
-    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("command_line_{name}_{}.zed", std::process::id()));
+    let file = scratch::scratch(format!("command_line_{name}.zed"));
     std::fs::write(&file, ECHO).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_zedc"))
         .arg("run")
@@ -82,7 +86,7 @@ fn zedc_fmt_counts_the_words_after_it() {
 
 #[test]
 fn zedc_fmt_says_why_it_could_not_read_the_file() {
-    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("command_line_no_such_file.zed");
+    let file = scratch::scratch("command_line_no_such_file.zed");
     let out = zedc(&["fmt".into(), file.clone().into()]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(

@@ -73,12 +73,10 @@ fn addresses(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// A package directory of its own for test `name`, holding `files`, under the test target's
+/// A package directory of its own for test `name`, holding `files`, under this process's
 /// scratch directory; files in it are overwritten by each run, never deleted.
 fn package(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l01_29_rejection_addresses")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l01_29_rejection_addresses/{name}"));
     for (file, text) in files {
         let path = d.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -382,12 +380,10 @@ fn a_root_unit_with_no_file_has_an_address_from_its_name_under_the_root() {
     assert_ne!(InFile::named("gone2.zed"), InFile::named("gone.zed"));
 }
 
-/// A file `m` directories deep, with no manifest above it, under the test target's scratch
+/// A file `m` directories deep, with no manifest above it, under this process's scratch
 /// directory; the directories are made, and the file written empty.
 pub(super) fn a_deep_file(m: usize) -> PathBuf {
-    let mut d = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("l01_29_rejection_addresses")
-        .join(format!("deep{m}"));
+    let mut d = zed_tests::step_helpers::scratch(format!("l01_29_rejection_addresses/deep{m}"));
     for _ in 0..m {
         d.push("d");
     }

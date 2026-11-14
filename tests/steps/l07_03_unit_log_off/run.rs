@@ -1,16 +1,13 @@
 //! A unit with `@log(#off);` checks and runs as it does without it: the item binds nothing and
 //! gives no value. With no log port before step L7.3 there is no line for it to drop yet.
 
-use std::path::PathBuf;
-
 use zedc::testing::test;
 
 /// Runs `zedc <command> <file>`, the file holding `src`, with `stdin`; its status, standard
 /// output and standard error.
 fn zedc(command: &str, name: &str, src: &str, stdin: &str) -> (u8, String, String) {
-    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("l07_03");
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join(format!("{name}.zed"));
+    let file = zed_tests::step_helpers::scratch(format!("l07_03/{name}.zed"));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, src).unwrap();
     let args = [command.to_string(), file.to_str().unwrap().to_string()];
     let (mut out, mut err) = (Vec::new(), Vec::new());

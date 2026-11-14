@@ -1,4 +1,6 @@
-//! The tests of [`crate::scratch`].
+//! The tests of [`crate::scratch`], compiled into this crate's unit tests only: the module is
+//! compiled, by `#[path]`, into test targets of zed-native too, where these tests would run
+//! again.
 
 use crate::scratch::*;
 use std::path::PathBuf;

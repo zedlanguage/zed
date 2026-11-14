@@ -79,7 +79,7 @@ fn the_pin_file_is_made_when_missing_and_never_written_over_a_change() {
     // writes over an edit made while it ran. The file's name is new in each process, so the
     // case of a missing file runs on every run, not only on a fresh build directory.
     use zedc::pin::write_file;
-    let d = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("l02_08");
+    let d = zed_tests::step_helpers::scratch("l02_08_pins");
     std::fs::create_dir_all(&d).unwrap();
     let file = d.join(format!("made-{}.pins", std::process::id()));
     let changed = Err("the file changed while zedc was reading it; build again".to_string());

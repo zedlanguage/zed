@@ -7,13 +7,19 @@
 //! package can name the zedc executable.
 #![cfg(target_os = "linux")]
 
+/// This process's scratch directory, as the step tests have it. A test target of zed-native
+/// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
+#[allow(dead_code)]
+#[path = "../../src/scratch.rs"]
+mod scratch;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// A directory of its own for this test, under the test target's scratch directory; files in
 /// it are overwritten by each run, never deleted.
 fn dir() -> PathBuf {
-    let d = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("main_limits_binary");
+    let d = scratch::process_tmpdir().join("main_limits_binary");
     std::fs::create_dir_all(&d).unwrap();
     d
 }

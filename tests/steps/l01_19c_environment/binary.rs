@@ -4,6 +4,12 @@
 //! variables unset. `crates/zed-native/Cargo.toml` names this test, since only a test of that
 //! package can name the executable.
 
+/// This process's scratch directory, as the step tests have it. A test target of zed-native
+/// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
+#[allow(dead_code)]
+#[path = "../../src/scratch.rs"]
+mod scratch;
+
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -20,8 +26,7 @@ const NOT_UTF8: &str = "the program reads the environment variable `ZED_ENV_TEST
 
 /// A file of its own for test `name` and `what`.
 fn file(name: &str, what: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("environment_{name}_{}.{what}", std::process::id()))
+    scratch::scratch(format!("environment_{name}.{what}"))
 }
 
 /// `zedc <words>` with `ZED_ENV_TEST` set to `value`, or unset when it is `None`.

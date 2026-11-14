@@ -36,7 +36,9 @@ pub(super) fn runs(what: &str, number: &str, m: usize, text: &str) {
 /// The file the input of `what` at size `m` is written to.
 pub(super) fn input_path(what: &str, m: usize) -> String {
     let name = what.replace(' ', "_");
-    format!("{}/build/ref_{name}_{m}.in", zed_tools::impl_root())
+    zed_tests::step_helpers::scratch(format!("ref_{name}_{m}.in"))
+        .display()
+        .to_string()
 }
 
 pub(super) const WORD_COUNT: Input = Input {

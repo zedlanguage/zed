@@ -10,12 +10,10 @@ use zedc::build::{Build, TARGETS};
 use zedc::query::Db;
 use zedc::testing::{self, command};
 
-/// A directory of its own for test `name` holding `files`, under the test target's scratch
+/// A directory of its own for test `name` holding `files`, under this process's scratch
 /// directory; files in it are overwritten by each run, never deleted.
 fn dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let d = zed_tests::step_helpers::target_tmpdir()
-        .join("l02_08d_test_staged")
-        .join(name);
+    let d = zed_tests::step_helpers::scratch(format!("l02_08d_test_staged/{name}"));
     for (file, text) in files {
         let path = d.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

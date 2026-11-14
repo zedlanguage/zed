@@ -166,7 +166,7 @@ fn a_wave_over_n_lines_and_its_replay_share_the_input_and_scale() {
 #[test]
 fn zedc_run_reading_a_file_of_n_lines_on_stdin_scales() {
     let n = 200_000;
-    let dir = std::env::temp_dir().join("zed-l01-19-sharing-scaling");
+    let dir = zed_tests::step_helpers::scratch("l01_19_sharing_scaling");
     std::fs::create_dir_all(&dir).unwrap();
     let program = dir.join("first.zed");
     std::fs::write(&program, sharing::FIRST_LINE).unwrap();
