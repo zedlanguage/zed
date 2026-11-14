@@ -2286,6 +2286,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CONST-coprime-base-shared-primes | running | 2026-11-14 09:23 |  |
+| CONST-coprime-check-many-sets | running | 2026-11-14 09:23 |  |
 | FAIL-agree-few-arms-seed | running | 2026-11-14 08:46 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
