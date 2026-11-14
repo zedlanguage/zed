@@ -260,6 +260,10 @@ fn copies_and_fills_count_by_their_length() {
 /// Fails where glibc's malloc keeps a cache per thread, which glibc turns off only by
 /// `GLIBC_TUNABLES` as the process starts: there, the instructions a run spends in malloc
 /// depend on the threads before it, and a difference of two counts can be 1.5 times its size.
+/// A test binary run directly, as a coverage run under `-C instrument-coverage` runs it, has
+/// no such setting unless the run sets it; that, and not the coverage runtime, is why the test
+/// failed under coverage (TEST-malloc-state-under-cov: it fails in the normal build too without
+/// the variable, and passes in the coverage build with it).
 #[test]
 fn malloc_keeps_no_state_from_earlier_threads() {
     let tunables = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
@@ -267,7 +271,8 @@ fn malloc_keeps_no_state_from_earlier_threads() {
     assert!(
         tunables.split(':').any(|s| s == setting),
         "GLIBC_TUNABLES ({tunables:?}) does not set {setting}. Run the tests by \
-         tools/run_tests.sh, which sets it"
+         tools/run_tests.sh, which sets it, or, running a test binary directly (a coverage \
+         run), set GLIBC_TUNABLES as tools/run_tests.sh does"
     );
 }
 
