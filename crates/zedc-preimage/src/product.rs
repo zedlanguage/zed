@@ -12040,13 +12040,19 @@ impl Scope {
             return Some(out);
         }
         // Each form, with a new name for it and the values at which each of its pendants has
-        // a value of its `x`. A name begins with `#` here, which no program writes.
+        // a value of its `x`. A name begins with `#` here, which no program writes. The form
+        // starts within the hull of its values over its names' integers, which `framed`
+        // implies already: the name of the form of an inequality pendant would otherwise
+        // have a half-line, and an atom with no finite box takes the projection from the
+        // exact join of row sums (`presburger::project_each`) to the hulls of the solver,
+        // where the whole part, whose names have boxes, keeps a parity or a hole
+        // (FAIL-pendants-route-parity).
         let mut forms: BTreeMap<Lin, (Atom, IntervalSet)> = BTreeMap::new();
         for p in &hung {
             let i = forms.len();
             let (_, d) = forms
                 .entry(p.form.clone())
-                .or_insert_with(|| (Atom::Sym(format!("#w{i}").into()), IntervalSet::top()));
+                .or_insert_with(|| (Atom::Sym(format!("#w{i}").into()), self.form_hull(&p.form)));
             *d = d.meet(&p.allows(self.get(&p.x).ints()));
         }
         let mut left = rest;
@@ -12084,6 +12090,50 @@ impl Scope {
             out.push((p.x.clone(), p.takes(&forms_at[&forms[&p.form].0])));
         }
         Some(out)
+    }
+
+    /// The least interval that holds the values of `form` over the integers of its names, an
+    /// end infinite where a name is unbounded on the side it reads, and empty where a name has
+    /// no integer.
+    // Complexity tradeoff: O(t) for `t` terms, each name's two ends read once (interval
+    // arithmetic), against the hull from the solver, a question of its own; the hull is that
+    // of the box of the names, so it holds the form's values in the part, which is all the
+    // bound needs, `#w == form` being asked with the boxes as well.
+    fn form_hull(&self, form: &Lin) -> IntervalSet {
+        if self.bottom {
+            return IntervalSet::empty();
+        }
+        let at = End::Fin(Num::from(&form.constant));
+        let (mut lo, mut hi) = (at.clone(), at);
+        let add = |s: &End, t: &End| match (s, t) {
+            (End::Fin(a), End::Fin(b)) => End::Fin(a + b),
+            (End::Fin(_), t) => t.clone(),
+            (s, _) => s.clone(),
+        };
+        for (a, c) in &form.terms {
+            // A name the scope does not hold is the top, unbounded on both sides.
+            let Some(p) = (match a {
+                Atom::Sym(n) => self.names.get(n),
+                _ => None,
+            }) else {
+                return IntervalSet::top();
+            };
+            let Some((l, h)) = p.ints().bounds() else {
+                return IntervalSet::empty();
+            };
+            let m = Num::from(&c.abs());
+            let times = |e: &End| match e {
+                End::Fin(v) => End::Fin(v * &m),
+                e => e.clone(),
+            };
+            let (l, h) = if c.is_positive() {
+                (times(l), times(h))
+            } else {
+                (times(&-h), times(&-l))
+            };
+            (lo, hi) = (add(&lo, &l), add(&hi, &h));
+        }
+        IntervalSet::range(lo, hi)
     }
 
     /// `t` as a pendant of a part whose names have the counts `count`: a constraint of names
@@ -16563,6 +16613,45 @@ mod tests {
     use super::*;
 
     mod bench;
+
+    /// The hull [`Scope::form_hull`] gives the form of a pendant (FAIL-pendants-route-parity):
+    /// each term's ends times its coefficient, swapped where the coefficient is negative, and
+    /// summed; an end infinite where a name is unbounded on the side its term reads; the top
+    /// for an atom that is not a name of the scope; empty for a scope with no point.
+    #[test]
+    fn the_hull_of_a_form_is_interval_arithmetic_over_the_boxes() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let lin = |terms: &[(&str, i64)], k: i64| {
+            terms.iter().fold(Lin::constant(k), |l, (n, c)| {
+                l.plus(&Lin::atom(Atom::Sym((*n).into())).times(*c))
+            })
+        };
+        let fin = |v: i64| End::Fin(Num::from(&BigInt::from(v)));
+        let range = |lo: End, hi: End| IntervalSet::range(lo, hi);
+        let p = Premises::new();
+        let s =
+            Scope::new(["b", "c"].map(|n| (Arc::<str>::from(n), Product::of_type(Type::int()))))
+                .assume(&prim(Prim::Ge, vec![var("b"), lit(-1)]), true, &p)
+                .assume(&prim(Prim::Le, vec![var("b"), lit(4)]), true, &p);
+        let hull = |terms: &[(&str, i64)], k: i64| s.form_hull(&lin(terms, k));
+        assert_eq!(hull(&[], 5), range(fin(5), fin(5)));
+        assert_eq!(hull(&[("b", 2)], 1), range(fin(-1), fin(9)));
+        assert_eq!(hull(&[("b", -3)], 0), range(fin(-12), fin(3)));
+        assert_eq!(
+            hull(&[("c", 1), ("b", 1)], 0),
+            range(End::NegInf, End::PosInf)
+        );
+        let s = s.assume(&prim(Prim::Ge, vec![var("c"), lit(0)]), true, &p);
+        let hull = |terms: &[(&str, i64)], k: i64| s.form_hull(&lin(terms, k));
+        assert_eq!(hull(&[("c", 1), ("b", 1)], 0), range(fin(-1), End::PosInf));
+        assert_eq!(hull(&[("c", -1), ("b", 1)], 0), range(End::NegInf, fin(4)));
+        assert_eq!(hull(&[("z", 1)], 0), IntervalSet::top());
+        let aux = Lin::constant(0).plus(&Lin::atom(Atom::Aux(0)));
+        assert_eq!(s.form_hull(&aux), IntervalSet::top());
+        let none = s.assume(&prim(Prim::Lt, vec![var("b"), lit(-1)]), true, &p);
+        assert!(none.bottom);
+        assert_eq!(none.form_hull(&lin(&[("c", 1)], 0)), IntervalSet::empty());
+    }
 
     /// The groups `Split::update` keeps as constraints come and go, linking the factors of
     /// each constraint as a path ([`count_links`]), are those `Split::new` finds anew from the

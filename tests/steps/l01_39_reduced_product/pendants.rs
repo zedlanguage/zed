@@ -618,6 +618,23 @@ fn hung(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
     )
 }
 
+/// What [`hung`] leaves each name the part mentions: its answer, or for a name it does not
+/// answer, the box, which `Scope::project_part` leaves as it is. The route through
+/// `Scope::unbounded_unit` answers the names of the pendant and its form alone; it is taken
+/// only where each conjunct on any other name holds at every point of the boxes, so the box
+/// of each other name is its projection
+/// ([`seed_16705573548664468879_part_16_by_pendants_leaves_the_other_names_their_boxes`]).
+fn kept(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
+    let mut out = hung(s, f)?;
+    for a in f.atoms() {
+        if let Atom::Sym(n) = a {
+            out.entry(n.to_string())
+                .or_insert_with(|| show(s.get(&n).ints()));
+        }
+    }
+    Some(out)
+}
+
 /// Each part the projection of the whole part refused in 3000 random programs
 /// (`probe_diff`, seeds 1 to 10 of 300 cases each), the boxes of its names then, and its
 /// projection by pendants, each name met with its box.
@@ -963,12 +980,112 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 }
 
 /// On random parts from a new seed each run, the projection by pendants, where it is taken,
-/// and that of the whole part, where neither refuses, are the same; parts are drawn until
-/// [`PENDANT_COMPARED`] are compared. Seed 0x7e4d at 400 parts took 1.6 s.
+/// and that of the whole part, where neither refuses, are each sound and no coarser than the
+/// union of hulls, and are the same wherever both have the same precision
+/// ([`pendants_against_whole`]); parts are drawn until [`PENDANT_COMPARED`] are compared.
+/// Seed 0x7e4d at 400 parts took 1.6 s.
 #[test]
-fn the_projection_by_pendants_is_that_of_the_whole_part_where_neither_refuses() {
+fn the_projections_by_pendants_and_of_the_whole_part_differ_only_in_precision() {
     let (r, seed) = Rng::fresh("the projection by pendants");
     pendants_against_whole(r, seed);
+}
+
+/// How near the answer for one name comes to the set of its values: that set, the union of
+/// the hulls of its values over the disjuncts of the part, or between the two.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Precision {
+    Exact,
+    Hull,
+    Between,
+}
+
+/// The precision of `answer` for `name`, given the exact set of its values and the union
+/// of their hulls over the disjuncts, both by brute force, or why it is wrong: it misses a
+/// value (unsound), or holds one outside that union (coarser than the projection
+/// presburger.rs documents).
+///
+/// The route is taken only on parts with at most one disjunction (a disjunction,
+/// `!(t == 0)` or a name of two intervals or more), so the documented projection, the meet
+/// over the disjunctions of the union over each one's disjuncts of the hull of the base with
+/// that disjunct, is here the union of the hulls over the disjuncts, which [`brute`] finds;
+/// with no disjunction nothing is moved inward by halving.
+fn precision(
+    name: &str,
+    answer: &IntervalSet,
+    exact: &IntervalSet,
+    hull: &IntervalSet,
+) -> Result<Precision, String> {
+    let within = |x: &IntervalSet, y: &IntervalSet| x.meet(y) == *x;
+    if !within(exact, answer) {
+        Err(format!(
+            "{name}: {} misses values of {} (unsound)",
+            show(answer),
+            show(exact)
+        ))
+    } else if !within(answer, hull) {
+        Err(format!(
+            "{name}: {} holds values outside {} (coarser than the hulls)",
+            show(answer),
+            show(hull)
+        ))
+    } else if answer == exact {
+        Ok(Precision::Exact)
+    } else if answer == hull {
+        Ok(Precision::Hull)
+    } else {
+        Ok(Precision::Between)
+    }
+}
+
+/// Two answers for the part `items` within `bs`, the projection by pendants (`route`) and
+/// that of the whole part, checked against brute force: each name of each answer sound and
+/// no coarser than the hulls ([`precision`]), both answers over the same names, and equal
+/// wherever both have the same precision. On success, each name where they differ with the
+/// precision of each.
+fn compared(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    route: &BTreeMap<String, String>,
+    whole: &BTreeMap<String, String>,
+) -> Result<Vec<(String, Precision, Precision)>, String> {
+    if route.keys().ne(whole.keys()) {
+        return Err(format!(
+            "the answers are over different names: {:?} and {:?}",
+            route.keys().collect::<Vec<_>>(),
+            whole.keys().collect::<Vec<_>>()
+        ));
+    }
+    let truth = brute(items, bs, WIDE, true);
+    let mut differ = Vec::new();
+    let mut faults = Vec::new();
+    for (n, r) in route {
+        let (hull, exact) = &truth[n];
+        let (hull, exact) = (shown_set(hull), shown_set(exact));
+        let judge = |x: &str| precision(n, &shown_set(x), &exact, &hull);
+        let (p, q) = match (judge(r), judge(&whole[n])) {
+            (Ok(p), Ok(q)) => (p, q),
+            (p, q) => {
+                faults.extend(p.err().map(|e| format!("by pendants {e}")));
+                faults.extend(q.err().map(|e| format!("whole {e}")));
+                continue;
+            }
+        };
+        if *r == whole[n] {
+            continue;
+        }
+        if p == q {
+            faults.push(format!(
+                "{n}: {r} by pendants and {} whole differ, both {p:?}",
+                whole[n]
+            ));
+        }
+        differ.push((n.clone(), p, q));
+    }
+    if faults.is_empty() {
+        Ok(differ)
+    } else {
+        Err(faults.join("; "))
+    }
 }
 
 /// The parts [`pendants_against_whole`] compares in a run. Over 956 seeds (FAIL-pendants-route-
@@ -984,40 +1101,52 @@ const PENDANT_COMPARED: usize = 40;
 /// part in six, half the rate measured.
 const PENDANT_PARTS_MAX: usize = 240;
 
-/// Random parts drawn from `r` until [`PENDANT_COMPARED`] are compared: the projection by
-/// pendants, where it is taken, and that of the whole part, where neither refuses, are the
-/// same on each, and the count is met within [`PENDANT_PARTS_MAX`] parts.
+/// Random parts drawn from `r` until [`PENDANT_COMPARED`] are compared, within
+/// [`PENDANT_PARTS_MAX`] parts: where the projection by pendants is taken and neither it nor
+/// that of the whole part refuses, the two are the same, or else both pass [`compared`]
+/// (brute force runs only on such parts). Prints the count of names that differ by the
+/// precision of each answer.
 fn pendants_against_whole(mut r: Rng, seed: u64) {
-    let (mut same, mut taken, mut cases) = (0, 0, 0);
+    let (mut same, mut taken, mut cases, mut compared_on) = (0, 0, 0, 0);
+    let mut kinds: BTreeMap<(Precision, Precision), usize> = BTreeMap::new();
     let mut wrong = Vec::new();
-    while same + wrong.len() < PENDANT_COMPARED && cases < PENDANT_PARTS_MAX {
-        let nz = 2 + r.below(5);
-        let items = random_part(&mut r, nz);
-        let bs = random_boxes(&mut r, nz);
+    while compared_on < PENDANT_COMPARED && cases < PENDANT_PARTS_MAX {
+        let (items, bs) = next_case(&mut r, false);
         let s = scope(&bs);
         let f = formula(&items);
         cases += 1;
-        let Some(got) = hung(&s, &f) else { continue };
+        let Some(got) = kept(&s, &f) else { continue };
         taken += 1;
         let Some(want) = whole(&s, &f) else { continue };
+        compared_on += 1;
         if got == want {
             same += 1;
-        } else {
-            wrong.push(format!(
-                "{f}\n  boxes {bs:?}\n  hung  {got:?}\n  whole {want:?}"
-            ));
+            continue;
+        }
+        match compared(&items, &bs, &got, &want) {
+            Ok(differ) => {
+                for (_, p, q) in differ {
+                    *kinds.entry((p, q)).or_default() += 1;
+                }
+            }
+            Err(e) => wrong.push(format!(
+                "part {cases}: {f}\n  boxes {bs:?}\n  hung  {got:?}\n  whole {want:?}\n  {e}"
+            )),
         }
     }
     assert!(
         wrong.is_empty(),
-        "seed {seed}: {} differ:\n{}",
+        "seed {seed}: {} wrong:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
-    eprintln!("{cases} parts, the route taken on {taken}, the same as the whole on {same}");
+    eprintln!(
+        "{cases} parts, the route taken on {taken}, compared on {compared_on}, the same on \
+         {same}; names that differ (by pendants, whole): {kinds:?}"
+    );
     assert!(
-        same >= PENDANT_COMPARED,
-        "seed {seed}: {same} compared of {cases}: too few to show anything"
+        compared_on >= PENDANT_COMPARED,
+        "seed {seed}: {compared_on} compared of {cases}: too few to show anything"
     );
 }
 
@@ -2350,4 +2479,91 @@ fn the_seeds_that_compared_too_few_parts_reach_the_count() {
     ] {
         pendants_against_whole(Rng::new(seed), seed);
     }
+}
+
+/// A random part, its boxes, its formula, its projection by pendants and that of the whole.
+type Answers = (
+    Vec<Item>,
+    BTreeMap<String, Vec<Piece>>,
+    Formula,
+    BTreeMap<String, String>,
+    BTreeMap<String, String>,
+);
+
+/// Part `part` (from 1) of `seed` as [`pendants_against_whole`] draws them, its formula,
+/// and its projection by pendants and that of the whole part, which must both answer.
+fn answers(seed: u64, part: usize) -> Answers {
+    let (items, bs) = random_case(seed, part - 1, false);
+    let s = scope(&bs);
+    let f = formula(&items);
+    let route = kept(&s, &f).expect("the route taken");
+    let all = whole(&s, &f).expect("the whole projection answers");
+    (items, bs, f, route, all)
+}
+
+/// Three random parts whose projection by pendants lost a parity or a hole while the new name
+/// of each pendant form took every value (FAIL-pendants-route-parity, QUESTIONS A105): with
+/// the name bounded by the range of its form over the boxes (`Scope::form_hull`), each is
+/// projected as the whole part is, and both are sound and no coarser than the hulls.
+#[test]
+fn the_route_by_pendants_keeps_parities_and_holes() {
+    for (seed, part) in [
+        (12317615902327464975u64, 352),
+        (11157326757344143999, 200),
+        (11291320176478098157, 117),
+    ] {
+        let (items, bs, f, route, all) = answers(seed, part);
+        assert_eq!(route, all, "seed {seed} part {part}: {f}");
+        assert_eq!(
+            compared(&items, &bs, &route, &all),
+            Ok(Vec::new()),
+            "seed {seed} part {part}: {f}"
+        );
+    }
+}
+
+/// Negative controls of [`compared`] on part 52 of seed 12035647242373093243, where
+/// `2 * b + 2 * c + z3 == 7` makes `z3` odd, with
+/// `z3` of the projection by pendants (and of the whole) replaced: a set that misses the value
+/// 3 is unsound, one that holds 7 is coarser than the hull, and two sets between the exact
+/// set and the hull that differ have the same precision; each is caught.
+#[test]
+fn the_comparison_of_projections_catches_unsound_coarser_and_same_precision_answers() {
+    let (items, bs, _, route, all) = answers(12035647242373093243, 52);
+    let with = |m: &BTreeMap<String, String>, z3: &str| {
+        let mut m = m.clone();
+        m.insert("z3".to_string(), z3.to_string());
+        m
+    };
+    let caught = |r: &BTreeMap<String, String>, w: &BTreeMap<String, String>, want: &str| {
+        let got = compared(&items, &bs, r, w);
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains(want)),
+            "want an error with {want:?}, got {got:?}"
+        );
+    };
+    caught(&with(&route, "[1,1 5,5]"), &all, "(unsound)");
+    caught(&with(&route, "[1,7]"), &all, "(coarser than the hulls)");
+    caught(
+        &with(&route, "[1,3 5,5]"),
+        &with(&all, "[1,1 3,5]"),
+        "both Between",
+    );
+}
+
+/// `z0 <= z5 + 5 && !(2 * a + b + c == z5 + 6) && b <= c + z2 - 8`, where the first two hold
+/// at every point of the boxes (`z0` in `[-4,-3]`, `z5 == -2`, `a <= -3`, `b <= 1`, `c` in
+/// `[2,4]`): the projection by pendants (`Scope::unbounded_unit`) answers `b`, `c` and `z2`
+/// alone, and leaves `a`, `z0` and `z5` their boxes, which are the projection of the whole
+/// part.
+#[test]
+fn seed_16705573548664468879_part_16_by_pendants_leaves_the_other_names_their_boxes() {
+    let (items, bs) = random_case(16705573548664468879, 15, false);
+    let s = scope(&bs);
+    let f = formula(&items);
+    let answered: Vec<String> = hung(&s, &f).expect("the route taken").into_keys().collect();
+    assert_eq!(answered, ["b", "c", "z2"], "{f}");
+    let (items, bs, f, route, all) = answers(16705573548664468879, 16);
+    assert_eq!(route, all, "{f}");
+    assert_eq!(compared(&items, &bs, &route, &all), Ok(Vec::new()), "{f}");
 }
