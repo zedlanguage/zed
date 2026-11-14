@@ -330,6 +330,7 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // (`negsssp`: BF-Dijkstra tried first at each step, padded balls peeled off, the next
     // potential doubled when that helps, scans over the negative edges only) the race grows 21.2
     // times from k = 128 to 1,024, 78.7 before (`stages::split_bad_gor_both_ways_scales`,
+    // deferred to plan row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs;
     // UTVPI-both-ways), and the families above stay within 1% of their cost before. With the
     // pairs stopped against the estimate, the race at k = 1,024 takes 7.0G instructions, 2.8
     // times Duong's search alone, 10.0G and 4.1 times before, and 10.8 times from k = 128 to

@@ -75,7 +75,8 @@ fn a_division_of_operations_on_integer_literals_writes_one_carrier() {
     // literal are those of the passage's `text` fence.
     //
     // The two fixes that declare a type, `q: f64 = ...` and `q: rat = ...`, are in
-    // `fixes_declare_a_type`, deferred to plan row LIT-menu-design-gaps.
+    // `fixes_declare_a_type`, deferred to plan row LIT-menu-design-gaps in
+    // wt/scratch/deferred-tests/LIT-menu-design-gaps.rs.
     let src = "q = (1 + 2) / (3 + 4);\n";
     assert_eq!(
         first(src),

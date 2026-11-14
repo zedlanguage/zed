@@ -2364,7 +2364,8 @@ impl VarFacts {
 // (l01_26); COMPLEXITY.md F93. Open: rows whose classes cover every bit and a wide range,
 // or whose names cover every bit, met by `n` replacements of variables they do not hold,
 // cost `O(n^2)` (test `replacing_variables_no_row_holds_in_rows_on_every_bit_scales`,
-// ignored, 61.7 times the bytes for 8 times the rows): COMPLEXITY.md CK-every-bit, open for
+// 61.7 times the bytes for 8 times the rows, deferred to plan row CK-every-bit in
+// wt/scratch/deferred-tests/CK-every-bit.rs): COMPLEXITY.md CK-every-bit, open for
 // the hard-algorithm cross-review XR-algos.
 #[derive(Clone, Copy, Debug)]
 struct VarBits {

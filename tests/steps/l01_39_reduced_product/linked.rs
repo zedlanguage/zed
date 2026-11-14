@@ -2080,7 +2080,8 @@ fn satellite_built_in_a_random_order(d: usize, bounds: bool) {
 /// order: 10.7 times the instructions and 8.4 times the bytes, limit 13.2; before, 22.5 and
 /// 16.6 times (2026-11-09). At 64 and 512 it measured 11.3 times, over the limit of 10.5, so it
 /// is built at 512 and 4096: 10.4 times the instructions and 8.3 times the bytes (2026-11-13). Without the bounds no leaf becomes a star
-/// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`, deferred to plan row RP-scaling-10_5). COMPLEXITY.md C37.
+/// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`, deferred to plan row RP-scaling-10_5 in
+/// wt/scratch/deferred-tests/RP-scaling-10_5.rs). COMPLEXITY.md C37.
 #[test]
 fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
     satellite_built_in_a_random_order(512, true);

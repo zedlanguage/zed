@@ -215,9 +215,11 @@ impl Int {
     // Complexity tradeoff: Stein's gcd is quadratic in the written bits.
     // The one-variable solver explicitly uses the kernel's binary half-GCD,
     // O(M(B) log B), while other solver paths keep their measured arithmetic.
-    // No input or answer is given up. Tests: pncx_common_factor_scale,
-    // pncx_wide_arithmetic_random_oracle and pncx_fibonacci_scale (still failing
-    // the strict allocation ratio). Native representations keep direct gcd.
+    // No input or answer is given up. Tests: pncx_wide_arithmetic_random_oracle;
+    // pncx_common_factor_scale and pncx_fibonacci_scale (still failing the strict
+    // allocation ratio) are deferred to plan row PERF-negated-chain-unsolved in
+    // wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs. Native
+    // representations keep direct gcd.
     /// The nonnegative gcd using recursive half-GCD on wide operands.
     pub fn gcd_recursive(&self, other: &Int) -> Int {
         if matches!((&self.0, &other.0), (Repr::Small(_), Repr::Small(_))) {
@@ -256,8 +258,10 @@ impl Int {
     // Complexity tradeoff: num-bigint's arithmetic is quadratic for gcd and
     // superlinear for wide division. Reuse kernel half-GCD and reciprocal
     // division, O(M(n) log n) and O(M(n)), with exactly the same signs.
-    // Tests: pncx_fast_bezout_matches_euclid, pncx_fibonacci_scale,
-    // pncx_common_factor_scale and the integer arithmetic unit tests.
+    // Tests: pncx_fast_bezout_matches_euclid and the integer arithmetic unit
+    // tests; pncx_fibonacci_scale and pncx_common_factor_scale are deferred to
+    // plan row PERF-negated-chain-unsolved in
+    // wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
     fn big_div_floor(&self, m: &Int) -> Int {
         let (a, b) = (self.big(), m.big());
         let (q, r) = div_rem_uint(a.magnitude(), b.magnitude());

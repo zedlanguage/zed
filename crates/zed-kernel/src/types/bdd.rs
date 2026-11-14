@@ -3138,9 +3138,10 @@ mod list {
                 // the cells on the path cut make their atoms again on first use, each from its
                 // children's, the smaller added to the larger: up to `O(min(p, m - p) log m)` for a
                 // cut after `p` of `m` blocks, where carrying the atoms over would cost the `m - p`
-                // atoms dropped. Measured in `rejoining_one_atom_of_each_block_scales`; COMPLEXITY.md
-                // K67 (4). A sequence that kept its atoms by count of blocks would carry them in
-                // `O(log m)`.
+                // atoms dropped. Measured in `rejoining_one_atom_of_each_block_scales` (deferred to
+                // plan row KERNEL-bdd-rejoin-bytes in
+                // wt/scratch/deferred-tests/KERNEL-bdd-rejoin-bytes.rs); COMPLEXITY.md K67 (4). A
+                // sequence that kept its atoms by count of blocks would carry them in `O(log m)`.
                 finish((prefix(&seq, at), v), w)
             };
             rest.or_literal(key)

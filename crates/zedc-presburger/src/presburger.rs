@@ -1936,7 +1936,8 @@ impl Renamed {
         // ranks do: unpadded, `#10` sorts before `#2`, and [`nnf`] would hand the disjuncts of
         // a chain to [`pick`] out of rank order, where its first choices can fail and [`probe`]
         // runs (`l01_25_preimage_catalog::s22::chain_cross_live_scales`: 34.9 times the bytes
-        // from 32 to 256 unpadded, against a limit of 24).
+        // from 32 to 256 unpadded, against a limit of 24; the test is deferred to plan row
+        // S22-scaling-10_5 in wt/scratch/deferred-tests/S22-scaling-10_5.rs).
         let width = from.len().saturating_sub(1).to_string().len();
         let to: HashMap<Atom, Arc<str>> = (from.iter().enumerate())
             .map(|(k, a)| (a.clone(), Arc::from(format!("#{k:0width$}"))))
@@ -11721,7 +11722,8 @@ fn drain_unary(ors: &mut Vec<Vec<Rc<Parts>>>, base: &mut Linked, near: &mut Near
 /// tests cost the constraints that link the disjunct's atoms to others and their bounds, so
 /// the point is kept a point of the base as it grows, repaired the same way when a disjunct
 /// that joins it does not hold there (COMPLEXITY S22, tests
-/// `l01_25_preimage_catalog::s22::chain_cross_live_scales` and
+/// `l01_25_preimage_catalog::s22::chain_cross_live_scales`, deferred to plan row
+/// S22-scaling-10_5 in wt/scratch/deferred-tests/S22-scaling-10_5.rs, and
 /// `chain_cross_within_its_width_scales`).
 ///
 /// With `search`, for a caller that only searches the parts for a point ([`decide`],
@@ -21218,7 +21220,8 @@ fn products(
     // where those are not all hulls, the signs of its atoms ([`signs`], linear in the part).
     // Asking [`hull_from`] for each factor cost O(factors × part) on one part (C2-chain,
     // `l01_38_presburger::ladder::products_whose_factors_one_chain_connects_scale`, and
-    // C2-chain-general, `products_along_a_chain_with_a_general_row_scale`).
+    // C2-chain-general, `products_along_a_chain_with_a_general_row_scale`; both tests are
+    // deferred to plan row PRES-ladder-10_5 in wt/scratch/deferred-tests/PRES-ladder-10_5.rs).
     type Signs = HashMap<Atom, (bool, bool)>;
     let mut given: HashMap<usize, Option<(Model, PartBounds, Option<Signs>)>> = HashMap::new();
     for (root, atoms) in &part_factors {

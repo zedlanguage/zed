@@ -694,7 +694,8 @@ fn products_of_premises_in_pairs_scale() {
     thread.spawn(measure).unwrap().join().unwrap();
 }
 
-/// `product_chain` (deferred to plan row PRES-ladder-10_5) with the rows `extra` added to the premise.
+/// `product_chain` (deferred to plan row PRES-ladder-10_5 in
+/// wt/scratch/deferred-tests/PRES-ladder-10_5.rs) with the rows `extra` added to the premise.
 fn product_chain_with(k: usize, extra: &[String]) -> (Relation, Relation) {
     let (premise, goal) = product_chain_source(k, extra);
     let (ps, p) = function(&premise);
@@ -722,9 +723,9 @@ fn product_chain_source(k: usize, extra: &[String]) -> (String, String) {
 
 #[test]
 fn products_along_a_chain_with_a_disjunction_on_each_link_scale() {
-    // The chain of `product_chain` with `abs(x{i} - y{i}) <= z{i} + 1` on each link: the
-    // definition of each `abs` is a disjunction over the link's atoms, so k disjunctions lie
-    // in the one part (C2-chain-general).
+    // The chain of `product_chain` (deferred, see [`product_chain_with`]) with
+    // `abs(x{i} - y{i}) <= z{i} + 1` on each link: the definition of each `abs` is a disjunction
+    // over the link's atoms, so k disjunctions lie in the one part (C2-chain-general).
     let n = 16;
     let built = scaling::inputs(n, |k| {
         let extra: Vec<String> = (0..k)

@@ -5015,7 +5015,7 @@ fn r6_wide_rows_are_retired_and_decided_in_their_size() {
 /// outside the chains' class and quadratic on the base search as well, so they are not here;
 /// `r6two` and `r6twoun` are in
 /// `r7_round6_probe_cases_r6two_and_r6twoun_are_decided_in_their_size`, deferred to plan row
-/// SUB-r6two-bytes.
+/// SUB-r6two-bytes in wt/scratch/deferred-tests/SUB-r6two-bytes.rs.
 #[test]
 fn r7_round6_probe_cases_are_decided_in_their_size() {
     r5_cases_scale(&[

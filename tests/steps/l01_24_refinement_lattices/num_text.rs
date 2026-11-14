@@ -108,7 +108,8 @@ fn a_text_that_is_not_an_integer_gets_num_bigints_error() {
 /// the work (2026-11-13), over 10.5; at 8 times those sizes, 10.3 times the work and 8.9 times the
 /// bytes. Both sizes are above `PRINT_WHOLE` words (1,280,000 digits is 66,439 words), so both are
 /// split by halves. Below `PRINT_WHOLE`, num-bigint's printing, faster there, grows faster:
-/// `writing_an_end_below_print_whole_scales`, deferred to plan row PRINT-below-whole-13.
+/// `writing_an_end_below_print_whole_scales`, deferred to plan row PRINT-below-whole-13 in
+/// wt/scratch/deferred-tests/PRINT-below-whole-13.rs.
 #[test]
 fn writing_a_long_decimal_end_scales() {
     let ends = scaling::inputs(1_280_000, |n| {

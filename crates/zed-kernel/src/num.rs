@@ -1437,7 +1437,8 @@ fn gcd_uint_using(a: &BigUint, b: &BigUint, core: fn(&BigUint, &BigUint) -> BigU
 // Binary half-GCD accumulates one coefficient column in O(M(n) log n),
 // then one exact division recovers the other coefficient. A failed arithmetic
 // check returns None. No input size changes the verdict. Tests in modular.rs:
-// pncx_fast_bezout_matches_euclid and pncx_fibonacci_scale.
+// pncx_fast_bezout_matches_euclid, and pncx_fibonacci_scale, deferred to plan row
+// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 pub fn bezout_int(a: &BigInt, b: &BigInt) -> Option<(BigInt, BigInt, BigInt)> {
     let (g, s, t) = fast::bezout(a.magnitude(), b.magnitude())?;
     let s = if a.is_negative() { -s } else { s };

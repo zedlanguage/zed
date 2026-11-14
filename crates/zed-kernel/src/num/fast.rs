@@ -494,7 +494,9 @@ impl Field {
             // blocks `2k` and `2k + 1` of the second, with roots `tw[2k]` and `tw[2k + 1]`.
             // Index loops, not `zip`: the test build has no inlining across codegen units, so
             // `Zip::new` there is a call per block. With it, the larger run of
-            // `reading_a_rat_of_two_wide_parts_scales` took 8349 M instructions; without, 7571 M.
+            // `reading_a_rat_of_two_wide_parts_scales` took 8349 M instructions; without, 7571 M
+            // (that test is deferred to plan row RADIX-nlog2-10_5 in
+            // wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs).
             let first = &tw[..blocks];
             let second = tw[..2 * blocks].as_chunks::<2>().0;
             for k in 0..blocks {
@@ -2309,8 +2311,9 @@ fn half(a: BigInt, b: BigInt, k: u64, want: Want, lift: u64) -> Half {
 /// at most `MUL_LEAF` words, `k` at most [`LIFT_BITS`] bits. Measured on 2026-11-12, a gcd of two
 /// random odd numbers of 4,153 and of 33,220 words took 515.9 and 6,270.1 million
 /// instructions; with the limit at half, 537.0 and 6,443.6, and at double, 521.9 and 6,344.5.
-/// The same pair either way. Tests half_pairs_match_the_matrix,
-/// pncx_fast_bezout_matches_euclid, reading_a_rat_of_two_wide_parts_scales.
+/// The same pair either way. Tests half_pairs_match_the_matrix and
+/// pncx_fast_bezout_matches_euclid; reading_a_rat_of_two_wide_parts_scales is deferred to plan
+/// row RADIX-nlog2-10_5 in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs.
 fn half_low(a: BigInt, b: BigInt, k: u64, lift: u64) -> (u64, Mat, BigInt, BigInt) {
     // At the leaf the matrix has at most two words, and applying it to the whole numbers is
     // linear in their width, as a lift is.
@@ -2586,7 +2589,9 @@ pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
 
 /// The same half-GCD without the historical wide Stein handoff. The solver
 /// already performs machine-sized gcds directly, so its big values take this
-/// path at every width. Test: pncx_fibonacci_scale and the gcd axis.
+/// path at every width. Test: pncx_fibonacci_scale, deferred to plan row
+/// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs,
+/// and the gcd axis.
 pub(crate) fn gcd_recursive(a: &BigUint, b: &BigUint) -> BigUint {
     gcd_using(a, b, false, GCD_LEAF, LIFT_BITS)
 }
@@ -2613,7 +2618,8 @@ fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool, leaf: u64, lift: u64) -> B
     // allocations while keeping O(n^2) bounded to the leaf width with a 30x smaller pass count.
     // Measured on 2026-11-06: 1.8 s at 32768 words, 11.0 s at 131072; Stein's gcd is faster
     // below about 300 words at load 1 (2026-11-06), 512 to 1024 at load 45 to 75 (2026-11-05);
-    // see `GCD_LEAF`. Test `a_gcd_of_wide_numbers_scales`.
+    // see `GCD_LEAF`. Test `a_gcd_of_wide_numbers_scales`, deferred to plan row
+    // RADIX-nlog2-10_5 in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
         if handoff && n <= leaf {
@@ -2722,8 +2728,9 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
 // Complexity tradeoff: extended Euclid uses O(n^2) bit operations, while
 // separately computing the gcd and an inverse repeats the half-GCD. This
 // computes both in one O(M(n) log n) pass. An overflow of the halving count
-// returns None. Tests: pncx_fast_bezout_matches_euclid,
-// bezout_coefficients_with_unequal_widths, pncx_fibonacci_scale.
+// returns None. Tests: pncx_fast_bezout_matches_euclid and
+// bezout_coefficients_with_unequal_widths; pncx_fibonacci_scale is deferred to plan row
+// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigInt)> {
     bezout_with(a, b, LIFT_BITS)
 }
@@ -3027,7 +3034,8 @@ thread_local! {
 /// another, as the gcd's matrix products are, share one table instead of each building its
 /// own. Opened for one operation and dropped at its end, which frees the table once nothing
 /// else holds it. Measured, `reading_a_rat_of_two_wide_parts_scales` at 640,000 digits:
-/// 7,620 M instructions without it, 7,558 M with it.
+/// 7,620 M instructions without it, 7,558 M with it (that test is deferred to plan row
+/// RADIX-nlog2-10_5 in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs).
 struct HoldRoots;
 
 impl HoldRoots {

@@ -604,7 +604,9 @@ impl Type {
         // subset construction, exponential in the recursive types (the lists of int against
         // lists with a 1 at each place from the end up to `n`: 8 ms, 277 ms and 32.5 s at `n`
         // 1, 4 and 6 when the search followed it). Trigger: a fork met in the search. Tests:
-        // `l01_23_subtyping::refusals::emptiness_counts_a_fork_as_inhabited_in_its_size`.
+        // `l01_23_subtyping::refusals::emptiness_counts_a_fork_as_inhabited_in_its_size`,
+        // deferred to plan row SUB-empty-fork-bytes in
+        // wt/scratch/deferred-tests/SUB-empty-fork-bytes.rs.
         // COMPLEXITY.md K35. A complete solution needs the subset construction over the forked
         // tuple types; deciding whether such a union holds every list is NFA universality,
         // PSPACE-complete. The answers of a search a fork ended may rest on it, so none is kept.
@@ -4280,6 +4282,8 @@ impl<'m> Searching<'m> {
             // component with different recursive types on a cycle there, in the decision of a
             // verdict or the search of a value after it. Tests:
             // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+            // (deferred to plan row SUB-fork-place-bytes in
+            // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
             // and `each_refusal_names_its_cause` (`nfa`). COMPLEXITY.md K35. A complete solution
             // needs the subset construction over the forked tuple types, exponential in them.
             let (refuse, open) = {
@@ -4363,6 +4367,8 @@ impl<'m> Searching<'m> {
                     // check by its own walk stays exact. Trigger: `open_forks` and a component on
                     // which the open tuple types fork. Tests:
                     // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+                    // (deferred to plan row SUB-fork-place-bytes in
+                    // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
                     // and `a_value_found_by_refining_a_forked_part_is_kept`. COMPLEXITY.md K35.
                     // A complete solution needs the subset construction over the forked tuple
                     // types, exponential in them; used: no value sought in that part, so the
@@ -8341,6 +8347,8 @@ impl<'m> Searching<'m> {
                 // Trigger: a narrowing of this part kept a component whole at a fork while
                 // `past_fork`. Tests:
                 // `l01_23_subtyping::refusals::a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size`
+                // (deferred to plan row SUB-fork-place-bytes in
+                // wt/scratch/deferred-tests/SUB-fork-place-bytes.rs)
                 // and `a_value_is_sought_before_a_refusal` (`fork`, found by a candidate past
                 // the first fork). COMPLEXITY.md K35. A complete solution needs the subset
                 // construction over the forked tuple types, exponential in them. Used: one

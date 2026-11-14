@@ -1204,7 +1204,8 @@ fn solve_modular_whole(
     // in a balanced tree, O(s log c) interval operations for s input intervals.
     // Restricting every clause to global_bounds would also multiply their
     // sizes; leave that restriction to the segment walk. Nothing is given up.
-    // Tests: pncx_bound_merge_scale, pncx_bound_merge_enumeration.
+    // Tests: pncx_bound_merge_enumeration; pncx_bound_merge_scale is deferred to
+    // plan row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs.
     let mut by_mods: BTreeMap<BTreeMap<Int, ResidueSet>, Vec<Domain>> = BTreeMap::new();
     for cl in raw_clauses {
         by_mods.entry(cl.mods).or_default().push(cl.bounds);
@@ -2889,8 +2890,9 @@ type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 /// 15.3, 16.2, 17.3, 18.1 and 21.2 use product trees and sparse factor
 /// propagation instead, essentially linear in the total bits with fast
 /// arithmetic (a polylogarithmic factor, not a proved O(n log n) bound).
-/// No modulus or answer is given up. Tests: pncx_common_factor_scale,
-/// pncx_common_factors_reconstruct_inputs and pncx_shared_formula_axis.
+/// No modulus or answer is given up. Tests: pncx_common_factors_reconstruct_inputs;
+/// pncx_common_factor_scale and pncx_shared_formula_axis are deferred to plan row
+/// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
     let ms: Vec<Int> = moduli.iter().filter(|m| **m > Int::ONE).cloned().collect();
     // A modulus 1 (if any) has no factors.
@@ -2930,7 +2932,9 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
 // Complexity tradeoff: pairwise refinement is quadratic on g p_i. A running
 // gcd, followed by one product/remainder tree on the cofactors, recognizes
 // the complete factorization in O(M(B) log k). Failure gives no verdict and
-// Bernstein's general method continues. Test: pncx_common_factor_scale.
+// Bernstein's general method continues. Test: pncx_common_factor_scale, deferred
+// to plan row PERF-negated-chain-unsolved in
+// wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 fn common_factorization(ms: &[Int]) -> Option<ModBase> {
     let mut g = ms.first()?.clone();
     for m in &ms[1..] {
@@ -3586,7 +3590,8 @@ fn solve_coprime_system(
 // unique maximizing value on each base. A tie gives no preferred value, so
 // this rule is invariant under local value permutations and affine renaming.
 // Failure to cover every clause gives no verdict. CRT retains its bit cost.
-// Tests: pncx_score_witness_oracle, pncx_score_witness_scale.
+// Tests: pncx_score_witness_oracle; pncx_score_witness_scale is deferred to plan
+// row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs.
 fn score_witness(
     info: &[BaseInfo],
     allowed: &[ResidueSet],

@@ -516,7 +516,7 @@ fn preimage_in(
     // known only by running it. Trigger: a split that is wide over the whole box and not
     // exact over the box it finds. Test:
     // `store::preimage::tests::a_chain_split_by_two_classes_is_read_in_time_near_its_length`,
-    // deferred to plan row PRE-class-int.
+    // deferred to plan row PRE-class-int in wt/scratch/deferred-tests/PRE-class-int.rs.
     // COMPLEXITY.md row S22-order-chain.
     let mut whole_tried = false;
     let mut early = None;
@@ -884,9 +884,10 @@ fn split_classes(
     // different constant in each class), and the wide path below ([`residue_relation`],
     // [`covers`]) reads each class's own part. Test:
     // `l01_25_preimage_catalog::s22::split_classes_share_the_holes_scale` covers the shared case
-    // only; COMPLEXITY.md row S22-split-holes. A complete solution would keep a run's set as
-    // "this set within the domain" without meeting the two, so that classes that bound `x`
-    // differently share the domain's holes too.
+    // only (deferred to plan row S22-scaling-10_5 in
+    // wt/scratch/deferred-tests/S22-scaling-10_5.rs); COMPLEXITY.md row S22-split-holes. A
+    // complete solution would keep a run's set as "this set within the domain" without meeting
+    // the two, so that classes that bound `x` differently share the domain's holes too.
     let begun = tx.begin(dom);
     let empty = Rc::new(IntervalSet::empty());
     let mut sets: Vec<(Rc<IntervalSet>, IntervalSet)> = Vec::with_capacity(cuts.len() - 1);
@@ -8751,7 +8752,8 @@ impl<'m, 't> Walk<'m, 't> {
     // + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x != j`: relations 0.051 s
     // at 50 links, 4.41 s at 400 (measured once). Congruences are kept: test
     // `l01_38_presburger::one_scope::
-    // the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale`. COMPLEXITY.md
+    // the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale`, deferred to plan
+    // row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs. COMPLEXITY.md
     // row LOAD-call-relation. A complete solution would index the canonical atoms by the call,
     // so each call binds its own copy of them without copying the relation: a relation node
     // instantiated at the call, which the solver reads with the call's atoms; or, for one
@@ -9438,7 +9440,8 @@ impl Pa {
     // O(log P)), `2k + 1 + 3T` cases (729 at k = 256). Tradeoffs: the summary claims values at
     // the holes, which is sound only because every reader meets its result with the domain or
     // slices it to a part of the domain; a new reader must do the same. Test
-    // `l01_25_preimage_catalog::s22::class_ranges_read_the_holes_once`; COMPLEXITY.md row
+    // `l01_25_preimage_catalog::s22::class_ranges_read_the_holes_once`, deferred to plan row
+    // S22-scaling-10_5 in wt/scratch/deferred-tests/S22-scaling-10_5.rs; COMPLEXITY.md row
     // S22-hole-summaries.
     fn to_treap(&self, dom: &IntervalSet) -> Option<Tree> {
         let (a, b) = match self {
