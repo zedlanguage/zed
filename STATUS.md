@@ -2262,7 +2262,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-coprime-base-ctl | running | 2026-11-14 07:58 |  |
 | CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | resumed; WIP committed (566a0d3a5) and rebased on origin/main; bench moved into bench/too_large.rs |
 | DOC-deferred-refs | running | 2026-11-14 00:03 | author P174/P181 2026-11-14: held until every TEST-bench-move item merges, then the FAIL rows, then the six handoff items; AUDIT-p184 2026-11-14: P174 hold lift |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
@@ -2277,7 +2276,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
-| FAIL-layer-mcu-target-value | running | 2026-11-14 07:52 |  |
 | FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
