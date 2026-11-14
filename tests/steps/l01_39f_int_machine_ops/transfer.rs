@@ -196,14 +196,15 @@ fn the_bounds_design_states() {
         bit_word(Prim::ByteSwap, &[all.clone(), r(16, 16)]),
         r(0, 65535)
     );
-    // `pdep` at most `mask`; `pext` at most `x` and below `2 ^ digits(mask)`.
+    // `pdep` at most `mask`; `pext` at most `x` and below `2 ^ m`, `m` the most one digits of
+    // a mask in the hull: 4 in 0 ..= 26 (15 and 23).
     assert_eq!(
         bit_word(Prim::Pdep, &[all.clone(), r(0, 0b11010)]),
         r(0, 0b11010)
     );
     assert_eq!(
         bit_word(Prim::Pext, &[all.clone(), r(0, 0b11010)]),
-        r(0, 31)
+        r(0, 15)
     );
     assert_eq!(bit_word(Prim::Pext, &[r(0, 6), r(0, 0b11010)]), r(0, 6));
     assert_eq!(bit_word(Prim::Pext, &[all.clone(), from(0)]), from(0));

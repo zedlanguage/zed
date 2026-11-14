@@ -10,6 +10,7 @@ mod bench;
 mod completeness;
 mod errors;
 mod native;
+mod pext_popcount;
 mod reference;
 mod transfer;
 mod values;

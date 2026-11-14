@@ -1530,8 +1530,9 @@ fn fin(e: &End) -> &Num {
 /// grows, so it lies in `(lo_a * lo_b) div 2^hi_w ..= (hi_a * hi_b) div 2^lo_w`, below
 /// `2^hi_w`; `bitReverse` and `byteSwap` lie below `2^w`, 0 exactly when `x` is, as the
 /// rotations do; `pdep` lies in `0..=hi_mask`, since its one digits are some of the mask's;
-/// `pext` lies in `0..=min(hi_x, 2^digits(hi_mask) - 1)`, since it moves the digits of `x` it
-/// keeps to places no higher and in the same order, and keeps at most `popCount(mask)` of them.
+/// `pext` lies in `0..=min(hi_x, 2^m - 1)`, `m` the most one digits of a mask in the mask's
+/// hull ([`Num::most_ones_from`]), since it moves the digits of `x` it keeps to places no
+/// higher and in the same order, and keeps at most `popCount(mask)` of them.
 /// DESIGN gives no bound for `funnelShl` and `funnelShr`; they take the hull `0 ..< 2^hi_w`, 0
 /// exactly when both halves are.
 ///
@@ -1695,7 +1696,14 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
             IntervalSet::range(End::of(i64::from(fin(x_lo).signum() > 0)), hi)
         }
         Prim::Pdep => IntervalSet::range(End::of(0), b(1).1.clone()),
-        Prim::Pext => IntervalSet::range(End::of(0), x_hi.clone().min(mask(b(1).1))),
+        Prim::Pext => {
+            let (m_lo, m_hi) = b(1);
+            let hi = match m_hi {
+                Fin(h) => Fin(ones(&h.most_ones_from(fin(m_lo)))),
+                e => e.clone(),
+            };
+            IntervalSet::range(End::of(0), x_hi.clone().min(hi))
+        }
         Prim::FunnelShl | Prim::FunnelShr => {
             if *x_hi == End::of(0) && *b(1).1 == End::of(0) {
                 return IntervalSet::single(0);

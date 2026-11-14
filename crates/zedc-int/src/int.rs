@@ -2358,6 +2358,69 @@ impl Num {
         }
     }
 
+    /// The most one binary digits of a value in `lo ..= self`, for `0 <= lo <= self`: the
+    /// popCount of `self` when `lo == self`. Above the highest digit `p` where `lo` and `self`
+    /// differ, every value in the range has the digits of `self`; at `p`, `self` has 1 and `lo`
+    /// 0, so the range holds those high digits followed by `p` ones, and `self` itself, which
+    /// has one more one exactly when its low `p` digits are all ones. So the answer is the
+    /// ones of `self` above `p`, plus `p`, plus 1 when the low `p` digits of `self` are ones.
+    // Complexity tradeoff: naive, the popCount of each value in the range, O(range * digits);
+    // here one pass over the words from the highest and a count of the trailing ones, O(digits),
+    // with nothing allocated past a machine word. A kept end is not written out:
+    // the answer is then that of the range `0 ..= self`, the digits of `self`, less one unless
+    // `self + 1` is a power of 2, which bounds the answer from above and is exact when `lo` has
+    // fewer digits than `self` (so for the masks `0 ..= h`). Why: the digits of a kept value
+    // cost its full width to write out. Trigger: `pext` with a mask interval with an end kept
+    // as a power or root past `i128`. Test:
+    // `l01_39f_int_machine_ops::pext_popcount::a_kept_mask_bounds_pext_by_its_digits`;
+    // COMPLEXITY.md S33. A complete solution would read the popCount of a kept power from its
+    // cores (a bare power of 2 has one one digit).
+    pub fn most_ones_from(&self, lo: &Num) -> Num {
+        match (&lo.0, &self.0) {
+            (Word::Small(l), Word::Small(h)) => {
+                let (l, h) = (l.unsigned_abs(), h.unsigned_abs());
+                let x = l ^ h;
+                if x == 0 {
+                    return Num::from(i64::from(h.count_ones()));
+                }
+                let p = 63 - x.leading_zeros();
+                let top = (h >> p >> 1).count_ones();
+                let low = u32::from(h.trailing_ones() >= p);
+                Num::from(i64::from(top + p + low))
+            }
+            (Word::Kept(_), _) | (_, Word::Kept(_)) => {
+                let d = self.bits();
+                if (self + &Num::ONE) == Num::pow2(&d) {
+                    d
+                } else {
+                    &d - &Num::ONE
+                }
+            }
+            _ => {
+                // The words of both from the highest, `lo`'s padded with zeros to the length of
+                // `self`'s, read in place: no xor or shift is built.
+                let (l, h) = (lo.big(), self.big());
+                let (l, h) = (l.magnitude(), h.magnitude());
+                let (lw, hw) = (l.iter_u64_digits(), h.iter_u64_digits());
+                let at = hw.len();
+                let lw = std::iter::repeat_n(0, at - lw.len()).chain(lw.rev());
+                let mut top = 0;
+                for (i, (a, b)) in (0..at).rev().zip(lw.zip(hw.rev())) {
+                    let x = a ^ b;
+                    if x != 0 {
+                        let d = 63 - u64::from(x.leading_zeros());
+                        let p = 64 * i as u64 + d;
+                        top += u64::from((b >> d >> 1).count_ones());
+                        let low = u64::from(h.trailing_ones() >= p);
+                        return Num::from(top + p + low);
+                    }
+                    top += u64::from(b.count_ones());
+                }
+                Num::from(top)
+            }
+        }
+    }
+
     /// The bits of the kept value `self`, whose form is `k`, from its approximation at 64 bits
     /// and then at twice as many. When the bounds `lo * 2^s` and `hi * 2^s` of `abs(self)`
     /// have one bit count, that is the answer: so for a bare power of 2 at once, since its

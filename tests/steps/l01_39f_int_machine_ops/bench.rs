@@ -100,3 +100,31 @@ fn the_width_words_are_linear_in_the_width() {
         },
     );
 }
+
+#[test]
+fn the_pext_transfer_is_linear_in_the_digits_of_the_mask_hull() {
+    // The bound of `pext` on a mask in `lo ..= hi` counts the most one digits of the hull in one
+    // pass over the words of both ends and the trailing ones of `hi` (`Num::most_ones_from`):
+    // O(n) for n digits.
+    use zedc::store::interval::{End, IntervalSet, Num, bit_word};
+    let n = 1 << 22;
+    // The longest pass: the ends share their high n/2 digits and differ at digit n/2, below
+    // which `hi` is all ones, so both the pass from the highest word and the trailing ones of
+    // `hi` read every word.
+    let ops = scaling::inputs(n, |m| {
+        let mut rng = Rng::new(m as u64);
+        let words: Vec<u32> = (0..m / 64).map(|_| rng.next_u64() as u32).collect();
+        let half = BigInt::from(1u32) << (m / 2);
+        let hi =
+            ((BigInt::from(BigUint::new(words)) | BigInt::from(1u32)) << (m / 2)) | (&half - 1);
+        let lo = &hi - &half;
+        let mask = IntervalSet::range(End::Fin(Num::from(&lo)), End::Fin(Num::from(&hi)));
+        (IntervalSet::range(End::of(0), End::PosInf), mask)
+    });
+    scaling::check_order("the pext transfer on a mask hull of n digits", n, 1, |m| {
+        let (x, mask) = &ops[&m];
+        for _ in 0..2000 {
+            bit_word(Prim::Pext, &[x.clone(), mask.clone()]);
+        }
+    });
+}

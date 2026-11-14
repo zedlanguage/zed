@@ -43,10 +43,10 @@ Tests in `completeness.rs` unless a file is named.
 | The domain of a word curried with `...` | | fails: accepted, and the run stops with a zedc bug: FAIL-bitword-curry-domain |
 | A failure atom as an operand passes through each word; `else` gives the default | `a_failure_passes_through_each_word` | |
 | Forward transfer: `mulHi`, `bitReverse`, `byteSwap` below `2^w`, `pdep` at most `mask`, read back by a second word's domain at the width that fits and one narrower | `the_bounds_of_forward_transfer_are_read_by_a_second_word`; `transfer.rs` `the_bounds_design_states` | |
-| Forward transfer of `pext` below `2^popCount(mask)` | | fails: the bound is `2^digits(mask)`: FAIL-pext-transfer-popcount |
+| Forward transfer of `pext` below `2^m`, `m` the most one digits of a mask in its hull: a single mask, a range, an all-ones end, a one-digit mask, an unbounded mask, a kept end; the count checked against every member on machine and wide words | `pext_popcount.rs` all four; `transfer.rs` `the_bounds_design_states` | FAIL-pext-transfer-popcount, fixed |
 | A funnel shift gives a word of its width | `a_funnel_shift_gives_a_word_of_its_width` | |
 | `bit_word` sound on random intervals; a single value gives the value | `transfer.rs` `the_transfer_is_sound_on_random_intervals`, `single_values_give_the_value` | |
-| Scaling: n and 8n `u64` values; `pdep`/`pext` O(w); the width words O(w) | `bench.rs` all three | |
+| Scaling: n and 8n `u64` values; `pdep`/`pext` O(w); the width words O(w); the `pext` transfer O(n) in the digits of the mask hull | `bench.rs` all four | |
 | Lowering to machine instructions | | step L24.2a |
 | `NumberTooLarge` from the exact path | | no width or operand the checker accepts makes a result too large to hold: the result is below `2^width`, and `2^width` is computed by the checker first |
 | Units and facets on an operand | | this zedc does not compile a declared type with `units` yet (`n: int with units("B") = 3;` is refused as not compiled) |
