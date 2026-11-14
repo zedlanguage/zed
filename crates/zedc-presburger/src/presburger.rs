@@ -17860,7 +17860,9 @@ pub fn hull_sides_asked() -> u64 {
 
 /// The greatest value (`dir` 1) or the least (`dir` -1) of a symbol over a formula, given a
 /// point `m` of it; `None` when there is none. A bound is found by the monotone question "is
-/// there a point with the symbol at least `v`" (or at most). Where `c`'s constraints with the
+/// there a point with the symbol at least `v`" (or at most). Where `c` is a conjunction of
+/// constraints from which every other atom is eliminated exactly, the rows left give the side
+/// and no question is asked ([`exact_side`]). Where `c`'s constraints with the
 /// symbol alone bound that side ([`alone_end`]), the bound lies between the point's value and
 /// that end, and it is searched from both, [`side_within`]: no question of an unbounded side
 /// is asked, and a bound at the end, or a few steps inside it, is found by a few questions
@@ -17885,6 +17887,9 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
     // its questions are answered; where one is refused, the search below is run as before
     // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
     // `x == 2 * e`, `x` in a gap's bounds, read about 20 questions for each side, and now 3).
+    if let Some(side) = exact_side(c, sym, dir) {
+        return Ok(side);
+    }
     // Complexity tradeoff: naive version, the search below from the point and the bound of
     // the symbol alone, O(log d) questions for a side at distance d inside both: about 24
     // questions for each side `(1000 + c) / i` of `hopb` (PERF-l139-family), whose number grows
@@ -18099,6 +18104,49 @@ fn alone_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
         .filter_map(|k| Some((k.lin.terms.get(sym)?.clone(), k.lin.constant.clone(), k.rel)));
     let (lo, hi) = int_bounds(alone)?;
     if dir > 0 { hi } else { lo }
+}
+
+/// The side of `sym` over `c` going `dir` (`None` inside: no bound), found with no question,
+/// when `c` is a constraint or a conjunction of constraints alone, with a point, no atom of
+/// it a product (which the solver may read more tightly than as an atom of its own), and
+/// [`shadow`] eliminates every atom but `sym` exactly over the integers: the rows left are
+/// then the projection of `c`'s integer points on `sym`, and their bound is the side. `None`
+/// otherwise.
+// Complexity tradeoff: naive (as before ST-churn-at-once), the questions of [`hull_side`], each
+// a decision of the whole of `c`: one at the real bound ([`real_end`]) or one to find a side
+// unbounded where that settles it, and O(log d) for a side at distance d from the point where
+// the real bound is not reached. In base churn given at once (`x - y >= 2k + j`, l01_39
+// `xst::s4`) such sides lie about k from the point, 11 to 14 questions at k = 32 (about 234,000
+// instructions each, at any k), so the hulls grew as k log k: 11.1 times at 8n by bytes. Used:
+// Fourier-Motzkin elimination with the dark shadow (Pugh, "The Omega test: a fast and
+// practical integer programming algorithm for dependence analysis", Supercomputing 1991),
+// which is exact over the integers where [`shadow`] does it, so a conjunction it fully
+// eliminates gives its side with no question; [`shadow`] makes no more rows than it takes
+// out, O(m log m) for m terms, below the cost of one question on the same constraints. In
+// base churn about 80% of the sides are settled so; base churn at once is then 8.1 at 8n.
+fn exact_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
+    let rows: Vec<Con> = match c {
+        Formula::Con(k) => vec![k.clone()],
+        Formula::And(fs) => (fs.iter())
+            .map(|f| match f {
+                Formula::Con(k) => Some(k.clone()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    if (rows.iter()).any(|k| (k.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)))) {
+        return None;
+    }
+    let out = shadow(&rows, &|a| a == sym, true)?;
+    if !(out.iter()).all(|k| k.lin.terms.keys().all(|a| a == sym)) {
+        return None;
+    }
+    let alone = (out.iter())
+        .filter(|k| k.lin.terms.len() == 1)
+        .map(|k| (k.lin.terms[sym].clone(), k.lin.constant.clone(), k.rel));
+    let (lo, hi) = int_bounds(alone)?;
+    Some(if dir > 0 { hi } else { lo })
 }
 
 /// The hull of every atom of `cons`, constraints with a point `m`, when each is a difference
