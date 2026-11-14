@@ -416,6 +416,24 @@ pub(crate) mod tests {
         assert_eq!(text(u64::MAX), "18446744073709551615 B (15.9 EiB)");
     }
 
+    /// P188: the sizes at each side of a unit's start, and tenths rounded down, never up to
+    /// the next whole unit.
+    #[test]
+    fn a_size_at_a_unit_boundary_is_written_rounded_down() {
+        let text = |n| {
+            let mut l = Line::new();
+            write_bytes(&mut l, n);
+            String::from_utf8(l.bytes().to_vec()).unwrap()
+        };
+        assert_eq!(text(0), "0 B");
+        assert_eq!(text(1023), "1023 B");
+        assert_eq!(text(1024), "1024 B (1 KiB)");
+        assert_eq!(text(2047), "2047 B (1.9 KiB)");
+        assert_eq!(text((1 << 20) - 1), "1048575 B (1023.9 KiB)");
+        assert_eq!(text(1 << 20), "1048576 B (1 MiB)");
+        assert_eq!(text(1 << 60), "1152921504606846976 B (1 EiB)");
+    }
+
     #[test]
     fn a_line_drops_what_passes_its_end() {
         let mut l = Line::new();
@@ -470,7 +488,7 @@ pub(crate) mod tests {
             "limits::tests::processor_time_past_the_limit_stops_the_run_with_status_3",
             || {
                 let limits = MainLimits {
-                    cpu: Some(Duration::from_millis(200)),
+                    cpu: Some(Duration::from_millis(100)),
                     ..MainLimits::default()
                 };
                 enforce(&limits).unwrap();
@@ -482,7 +500,7 @@ pub(crate) mod tests {
         let (code, err) = status(&out);
         assert_eq!(code, Some(3), "{err}");
         assert!(
-            err.starts_with("Processor-time limit of `main` passed: 0.2 s. The run used 0.2"),
+            err.starts_with("Processor-time limit of `main` passed: 0.1 s. The run used 0.1"),
             "{err}"
         );
     }
@@ -497,7 +515,7 @@ pub(crate) mod tests {
                     ..MainLimits::default()
                 };
                 enforce(&limits).unwrap();
-                spin(Duration::from_millis(100));
+                spin(Duration::from_millis(20));
             },
         ) else {
             return;
@@ -513,7 +531,7 @@ pub(crate) mod tests {
                 // The deadline counts from the process's start, sleep included: no processor
                 // time is used.
                 let limits = MainLimits {
-                    timeout: Some(Duration::from_millis(500)),
+                    timeout: Some(Duration::from_millis(100)),
                     ..MainLimits::default()
                 };
                 enforce(&limits).unwrap();
@@ -525,7 +543,7 @@ pub(crate) mod tests {
         let (code, err) = status(&out);
         assert_eq!(
             (code, err.as_str()),
-            (Some(3), "Deadline of `main` passed: 0.5 s.\n")
+            (Some(3), "Deadline of `main` passed: 0.1 s.\n")
         );
     }
 
@@ -539,7 +557,7 @@ pub(crate) mod tests {
                     ..MainLimits::default()
                 };
                 enforce(&limits).unwrap();
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(20));
             },
         ) else {
             return;
@@ -676,6 +694,60 @@ pub(crate) mod tests {
             status(&out).0,
             Some(0),
             "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// P188: a deadline already passed when the limits are set, as one shorter than the time the
+    /// process took to start: the thread of the deadline sleeps until a time gone by, which
+    /// returns at once, and the run stops with the deadline written to the nanosecond.
+    #[test]
+    fn a_deadline_passed_before_the_run_stops_it_at_once() {
+        let Some(out) = in_child(
+            "limits::tests::a_deadline_passed_before_the_run_stops_it_at_once",
+            || {
+                enforce(&MainLimits {
+                    timeout: Some(Duration::from_nanos(1)),
+                    ..MainLimits::default()
+                })
+                .unwrap();
+                std::thread::sleep(Duration::from_secs(10));
+            },
+        ) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(
+            (code, err.as_str()),
+            (Some(3), "Deadline of `main` passed: 0.000000001 s.\n")
+        );
+    }
+
+    /// P188: all three limits at once, each set in its order (the thread of the deadline before
+    /// the memory limit, which counts its stack), and a run within all of them runs to the end.
+    #[test]
+    fn a_run_within_every_limit_runs_to_the_end() {
+        let Some(out) = in_child(
+            "limits::tests::a_run_within_every_limit_runs_to_the_end",
+            || {
+                enforce(&MainLimits {
+                    cpu: Some(Duration::from_secs(10)),
+                    timeout: Some(Duration::from_secs(10)),
+                    memory: Some(64 << 20),
+                    ..MainLimits::default()
+                })
+                .unwrap();
+                spin(Duration::from_millis(20));
+                std::hint::black_box(vec![1u8; 32 << 20]);
+            },
+        ) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(
+            code,
+            Some(0),
+            "{err}{}",
             String::from_utf8_lossy(&out.stdout)
         );
     }

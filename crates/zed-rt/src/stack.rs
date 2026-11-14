@@ -466,27 +466,36 @@ fn reserve(bytes: usize, err: &io::Error) -> String {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::tests::{in_child, status};
 
     /// How deep `depth` goes before it returns.
-    fn depth(n: u64) -> u64 {
+    pub(super) fn depth(n: u64) -> u64 {
         // A frame of a kilobyte, which the optimizer cannot remove, so the recursion uses stack.
         let frame = std::hint::black_box([n; 128]);
         if n == 0 { 0 } else { 1 + depth(frame[0] - 1) }
     }
 
+    /// The small instance of `bench::a_run_goes_deeper_than_its_thread_stack`: the frames of a
+    /// run lie in the stack mapped for it, above its guard page, and not on the thread's stack,
+    /// so the run's depth is limited by that stack alone; and the run gives its result.
     #[test]
-    fn a_run_goes_deeper_than_its_thread_stack() {
-        // 100,000 frames of at least a kilobyte: more than 100 MB, on a thread of 2 MiB.
-        let got = std::thread::Builder::new()
-            .stack_size(2 << 20)
-            .spawn(|| Stack::new().unwrap().run(|| depth(100_000)))
-            .unwrap()
-            .join()
-            .unwrap();
-        assert_eq!(got, 100_000);
+    fn a_run_is_on_its_own_stack_and_gives_its_result() {
+        let s = Stack::new().unwrap();
+        let (low, high) = (s.base as usize + s.page, s.base as usize + s.len);
+        let (at, got) = s.run(|| {
+            let local = std::hint::black_box(0u8);
+            (std::ptr::from_ref(&local) as usize, depth(100))
+        });
+        assert!(
+            low <= at && at < high,
+            "{at:#x} outside {low:#x}..{high:#x}"
+        );
+        assert_eq!(got, 100);
     }
 
     #[test]
@@ -625,41 +634,98 @@ mod tests {
                 && err.ends_with("67108864 B (64 MiB).\n"),
             "{err}"
         );
+        // P188: the system refuses the next part, `GROW` bytes, before the run reaches the
+        // guard page, since the data the process held before counts against the limit too.
+        assert!(
+            err.contains(" and needs 262144 B (256 KiB) more; the run may hold "),
+            "{err}"
+        );
     }
+
+    /// P188: the handler of faults finds each stack's own record among several, live and
+    /// dropped: a dropped stack's record stays in the list with no stack (`high` 0) and is
+    /// passed over, and each live stack grows on its own.
     #[test]
-    fn a_stack_under_a_memory_limit_grows_in_time_linear_in_its_depth() {
-        // The handler of faults makes a part of `GROW` bytes writable per fault, O(1) each, so
-        // a run to depth n takes O(n / GROW) faults beside its O(n) frames: at n and 8n frames,
-        // the bytes made writable and the processor time, kernel included, must be less than
-        // 10.5 times (DESIGN.md Part G; the fastest of five runs of each, on a fresh stack).
+    fn stacks_under_a_memory_limit_grow_each_on_its_own() {
         let Some(out) = in_child(
-            "stack::tests::a_stack_under_a_memory_limit_grows_in_time_linear_in_its_depth",
+            "stack::tests::stacks_under_a_memory_limit_grow_each_on_its_own",
+            || {
+                crate::limits::enforce(&memory_64_mib()).unwrap();
+                let held = |s: &Stack| {
+                    let (grows, _) = s.grows.as_ref().unwrap();
+                    grows.high.load(Ordering::Relaxed) - grows.writable.load(Ordering::Relaxed)
+                };
+                let dropped = Stack::new().unwrap();
+                assert_eq!(dropped.run(|| depth(1_000)), 1_000);
+                drop(dropped);
+                let (a, b) = (Stack::new().unwrap(), Stack::new().unwrap());
+                assert_eq!(b.run(|| depth(2_000)), 2_000);
+                assert_eq!(held(&a), GROW, "a grew with b");
+                assert!(held(&b) > GROW, "{}", held(&b));
+                assert_eq!(a.run(|| depth(1_000)), 1_000);
+                assert!(held(&a) > GROW, "{}", held(&a));
+            },
+        ) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(
+            code,
+            Some(0),
+            "{err}{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// P188: a fault that is in no stack under the limit is not the stack's growth: the handler
+    /// passes it to the action before its own, std's, which ends the process as `SIGSEGV` does,
+    /// with no message of the memory limit.
+    #[test]
+    fn a_fault_outside_the_stacks_ends_the_process_as_sigsegv_does() {
+        let Some(out) = in_child(
+            "stack::tests::a_fault_outside_the_stacks_ends_the_process_as_sigsegv_does",
+            || {
+                crate::limits::enforce(&memory_64_mib()).unwrap();
+                let _s = Stack::new().unwrap();
+                #[expect(
+                    unsafe_code,
+                    reason = "prctl is a libc call; the test writes through a null pointer"
+                )]
+                // SAFETY: prctl only sets a flag of the process, so that its end by `SIGSEGV`
+                // leaves no core dump; the write faults, as the test means it to.
+                unsafe {
+                    assert_eq!(libc::prctl(libc::PR_SET_DUMPABLE, 0), 0);
+                    std::ptr::write_volatile(std::ptr::null_mut::<u8>(), 1);
+                }
+                unreachable!("a write through a null pointer was given");
+            },
+        ) else {
+            return;
+        };
+        use std::os::unix::process::ExitStatusExt;
+        let (_, err) = status(&out);
+        assert_eq!(out.status.signal(), Some(libc::SIGSEGV), "{err}");
+        assert!(!err.contains("Memory limit"), "{err}");
+    }
+
+    /// P188: a memory limit that leaves no room for the stack's first part, `GROW` bytes and the
+    /// handler's stack of `ALT` bytes, is refused with its own message, `too_small`.
+    #[test]
+    fn a_memory_limit_too_small_for_the_stack_refuses_it() {
+        let Some(out) = in_child(
+            "stack::tests::a_memory_limit_too_small_for_the_stack_refuses_it",
             || {
                 crate::limits::enforce(&zed_kernel::limits::MainLimits {
-                    memory: Some(1 << 30),
+                    memory: Some(128 << 10),
                     ..Default::default()
                 })
                 .unwrap();
-                let run = |n: u64| {
-                    (0..5)
-                        .map(|_| {
-                            let s = Stack::new().unwrap();
-                            let start = crate::limits::cpu_now();
-                            assert_eq!(s.run(|| depth(n)), n);
-                            let time = crate::limits::cpu_now() - start;
-                            let (grows, _) = s.grows.as_ref().unwrap();
-                            let high = grows.high.load(Ordering::Relaxed);
-                            (time, high - grows.writable.load(Ordering::Relaxed))
-                        })
-                        .min()
-                        .unwrap()
-                };
-                let ((t1, b1), (t8, b8)) = (run(10_000), run(80_000));
-                let (time, bytes) = (t8.as_secs_f64() / t1.as_secs_f64(), b8 as f64 / b1 as f64);
-                println!("time {t1:?} -> {t8:?}: {time:.2}; bytes {b1} -> {b8}: {bytes:.2}");
-                assert!(
-                    time < 10.5 && bytes < 10.5,
-                    "time {time:.2}, bytes {bytes:.2}"
+                let e = Stack::new().unwrap_err();
+                assert_eq!(
+                    e,
+                    "Memory limit of `main` passed: the run's stack cannot start within the \
+                     131072 B (128 KiB) the run may hold. Repair: raise `memory:` in `@limits` \
+                     before `main`"
                 );
             },
         ) else {

@@ -2224,6 +2224,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-bench-move-crates-c | impl attempt 1 | 2026-11-14 04:47 | zed-rt: stack scaling test + deep-thread test moved to stack/bench.rs (instructions + bytes made writable; 1x 0.25 s; negative control 35.3x fails); limits time |
 | TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
+| TEST-bench-move-crates | part c done | 2026-11-14 05:40 | zed-rt: stack scaling test moved to stack/bench.rs, now by instructions and bytes at 400k frames (ratios 8.00, 8.00); limit timers shrunk; 6 P188 tests. zed-native: two 1M-deep hook tests moved to hooks/bench.rs, small versions kept; 1 P188 test. zed-tools, benches/: no change. New row TEST-scaling-module-tests-once |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-complete-lex | impl attempt 1 | 2026-11-14 04:55 | started; worktree made, seeded / load 30.78 25.91 23.00 |
 | TEST-complete-names | impl attempt 1 | 2026-11-14 04:55 | started; worktree made and seeded |

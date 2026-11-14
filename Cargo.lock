@@ -1069,7 +1069,11 @@ name = "zed-rt"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "perf-event2",
  "psm",
+ "rustix",
+ "stacker",
+ "zed-alloc-count",
  "zed-kernel",
  "zed-rt",
 ]

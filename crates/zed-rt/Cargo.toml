@@ -37,3 +37,14 @@ counts = []
 [dev-dependencies.zed-rt]
 path = "."
 features = ["counts"]
+
+# The shared scaling checks (tests/src/scaling.rs) of the benchmarks in `stack/bench.rs`: they
+# count instructions with perf-event2 and bytes with zed-alloc-count, read clocks with rustix
+# and the room left on the stack with stacker.
+[dev-dependencies]
+rustix.workspace = true
+stacker.workspace = true
+zed-alloc-count.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2.workspace = true

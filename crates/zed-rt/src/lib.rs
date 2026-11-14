@@ -16,6 +16,16 @@ pub mod limits;
 pub mod ports;
 pub mod stack;
 
+/// The scaling test of the rule of low complexity, shared with the step tests, for the
+/// benchmarks of `stack`.
+#[cfg(test)]
+#[path = "../../../tests/src/scaling.rs"]
+#[expect(
+    dead_code,
+    reason = "the runtime's benchmarks use only some of the shared checks"
+)]
+mod scaling;
+
 pub use bug::bug;
 pub use heap::{Heap, Obj, Parts, Stats, Word};
 #[cfg(feature = "counts")]
