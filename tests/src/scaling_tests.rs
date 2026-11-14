@@ -7,6 +7,8 @@
 //! crate as `pub(crate)`.
 
 use std::hint::black_box;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
 
 use crate::scaling::*;
@@ -56,20 +58,51 @@ fn work_a_power_of_n_above_the_order_given_fails() {
     )));
 }
 
-/// Work of order `n^1.25`, which the limit of 24 for k = 1 let pass (13.5 times at 8n), fails
-/// at n = 1000, and work of order `n log n` passes there and at n = 2000 (10.2 times).
+/// A meter of the passes `passes` counts, which only one test adds to, so the ratio of two runs
+/// is that of the passes they are given, exactly (TEST-cov-scaling-noise). The checks of a ratio
+/// within 1% of the limit use it, and not the instruction counter, whose count of a fixed loop is
+/// exact in the normal build (the same within 0.01% in 24 runs beside the other tests) but not in
+/// a coverage build: there each pass of [`spin`] adds to one counter of the coverage map by
+/// `lock incq`, a write every thread running `spin` shares, and with tests running beside each
+/// other the hardware counted up to 5% more instructions than the 5 per pass the loop retires
+/// (10.68 times for n log n work at 1000, over the limit of 10.5; 10.346 to 10.348 with one test
+/// at a time). The instruction counter is tested away from the limit, where 5% decides nothing:
+/// `work_of_the_order_given_passes` and `work_a_power_of_n_above_the_order_given_fails`.
+fn meter_of_passes(passes: &'static AtomicU64) -> Meter {
+    Meter {
+        read: Box::new(|| passes.load(Relaxed)),
+        unit: "passes",
+        instructions: true,
+    }
+}
+
+/// Work of order `n log n`: `50 n log2 n` passes, counted in `passes`.
+fn n_log_n_passes(passes: &'static AtomicU64, n: usize) {
+    passes.fetch_add((n as f64 * (n as f64).log2() * 50.0) as u64, Relaxed);
+}
+
+/// Work of order `n^1.25` and n log n at sizes n and 8n, counted exactly, against the limit of
+/// 10.5: `n^1.25`, which the limit of 24 for k = 1 let pass (13.45 times at 8n), fails at
+/// n = 1000, and n log n passes there (10.408 times) and at n = 2000 (10.19 times).
 #[test]
 fn work_a_quarter_power_above_n_log_n_fails() {
-    let n_log_n = |n: usize| spin((n as f64 * (n as f64).log2() * 50.0) as u64);
-    check_instructions_only("n log n work", 1000, 1, n_log_n);
-    check_instructions_only("n log n work", 2000, 1, n_log_n);
-    let quarter = |n: usize| spin(((n as f64).powf(1.25) * 500.0) as u64);
-    assert!(fails(|| check_instructions_only(
-        "work of order n^1.25",
-        1000,
-        1,
-        quarter
-    )));
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+    let meter = &mut meter_of_passes(&PASSES);
+    let n_log_n = |n: usize| n_log_n_passes(&PASSES, n);
+    check_by(meter, Measures::WorkOnly, "n log n work", 1000, 1, n_log_n);
+    check_by(meter, Measures::WorkOnly, "n log n work", 2000, 1, n_log_n);
+    let quarter = |n: usize| _ = PASSES.fetch_add(((n as f64).powf(1.25) * 500.0) as u64, Relaxed);
+    let message = message_of(|| {
+        check_by(
+            meter,
+            Measures::WorkOnly,
+            "work of order n^1.25",
+            1000,
+            1,
+            quarter,
+        )
+    });
+    assert!(message.contains("13.5 times the work"), "{message}");
 }
 
 /// The limit is 10.5 at 8n for work of order n, times `8^(k − 1)` for order `n^k`. Work of
@@ -105,13 +138,16 @@ fn a_held_ratio_must_be_under_the_limit() {
 }
 
 /// Run by [`a_ratio_from_9_to_10_5_prints_a_note_naming_the_test`]: a ratio of 10 by [`hold`]
-/// and work of order n log n at 1000 (10.4 times) print a note, a ratio of 8 none.
+/// and work of order n log n at 1000 (10.408 times, counted by [`meter_of_passes`]) print a
+/// note, a ratio of 8 none.
 #[test]
 fn ratios_near_the_limit_pass() {
+    static PASSES: AtomicU64 = AtomicU64::new(0);
     hold("ten times", "nodes", 100, 1000, 1);
     hold("eight times", "nodes", 100, 800, 1);
-    let n_log_n = |n: usize| spin((n as f64 * (n as f64).log2() * 50.0) as u64);
-    check_instructions_only("n log n work", 1000, 1, n_log_n);
+    let n_log_n = |n: usize| n_log_n_passes(&PASSES, n);
+    let meter = &mut meter_of_passes(&PASSES);
+    check_by(meter, Measures::WorkOnly, "n log n work", 1000, 1, n_log_n);
 }
 
 #[test]
