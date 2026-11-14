@@ -2340,20 +2340,24 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-arm-call-bench-hang | impl attempt 1 | 2026-11-14 11:16 | started in wt/fix-arm-call-hang at 07af08b86, load 51.40 |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
-| FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | started in fix-parity-2, applying QUESTIONS A105 A; load 48.46 |
+| FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-binds-copied-per-shape | running | 2026-11-14 12:16 |  |
+| FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
+| FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
+| FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
+| FAIL-types-sub-shared-payloads | running | 2026-11-14 12:37 |  |
 | FAIL-types-three-variable-shapes | running | 2026-11-14 12:16 |  |
-| FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | started in fix-parity-2, applying QUESTIONS A105 A; load 48.46 |
-| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | baseline: 56 pieces 0 failed (m0_*, zed_kernel, op_table); instructions law_04 2.135G law_06 2.028G law_10 1.955G law_20(order) 2.143G law_28(sequence) 2.169G b |
+| FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
+| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | M4 spare vals Vec in Machine::prim (not for Tuple/Path): law_04 1,867.4M->1,841.5M (-1.4%), law_06 -1.0%, law_10 -2.1%, law_20 -1.8%, law_28 -3.3%, law_25 bench |
 | MSG-range-error-class-spans | impl attempt 1 | 2026-11-14 12:33 | started in wt/range-spans, load 48.46 |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-l0124-fixed-seeds | impl attempt 1 | 2026-11-14 12:15 | start; worktree test-l0124-seeds on 43f9d4dcd; load 36.83 |
-| TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | part done, pushed 295c121f6 41b3ac5e5 15f696960 (405 test pieces pass; build, fmt, clippy clean); row FAIL-pres-overlap-every-level-refused / 42.58 49.06 47.59 |
+| TEST-presburger-unreached-paths | impl attempt 2 | 2026-11-14 10:07 | started in wt/pres-unreached-2 at 12a632824; load 39.92 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
