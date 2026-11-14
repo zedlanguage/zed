@@ -1338,14 +1338,33 @@ impl Remix {
     /// `t`, a changed term of a definition of the unit, mixed as [`mix`] mixes that
     /// definition: under the definitions of the unit, which names unique in the unit keep
     /// apart from those `t` does not read, each read of a definition the mix cut kept as [`mix`]
-    /// keeps it. It costs the mixing of `t` alone and two reads of its free names.
+    /// keeps it. It costs the mixing of `t` alone.
     pub fn mix(&mut self, t: &Term) -> Term {
-        let out = Shared::new(inline(self.m.mix_top(Part::inline(t))));
+        let o = self.m.mix_top(Part::inline(t));
+        let now = o.sum.free;
+        let out = Shared::new(inline(o));
         self.m.report = Report::default();
-        let now = free(&out);
-        let cut: Vec<Arc<str>> = (free(t).into_iter())
-            .filter(|x| !now.contains(x) && self.m.runs.contains(x))
+        // Complexity tradeoff (COMPLEXITY.md F161, TEST-mutate-generic-time): the naive form
+        // reads the free names of `t` and of the mixed term with two calls of `free`, each a
+        // fresh `Frees` that walks its whole term, O(s log s) for `s` distinct parts, so for
+        // the 3s mutants of a definition of size s, 6s walks of size s beside the mixing
+        // (measured: 18% more instructions for the mutants of a generic chain of 400 additions
+        // than before `Remix::mix` kept cut reads, commit ed718aa00). Used: the mixer's own
+        // summaries. The mixed term's free names are the summary `mix_top` built with it, and
+        // the mix has just summarized each part of `t` it entered under the part's node id, so
+        // the summary of `t` reads only its root's inline parts and the parts the mix did not
+        // enter (an arm it cut): no walk beyond the mixing. The cut names, a test of
+        // membership each, O(k log k) for the k names of `t`, are put in name order, as the
+        // set of `free` gave them, so the reads kept are the naive form's, in its order.
+        let was = self.m.frees.summary(Part::inline(t)).free;
+        let f = &self.m.frees;
+        let mut cut: Vec<Arc<str>> = (f.sets.members(was).into_iter())
+            .filter(|&x| !f.sets.contains(now, x))
+            .map(|x| &f.list[x as usize])
+            .filter(|&x| self.m.runs.contains(x))
+            .cloned()
             .collect();
+        cut.sort_unstable();
         match cut.is_empty() {
             true => Shared::unwrap_or_clone(out),
             false => Shared::unwrap_or_clone(with_reads(&out, &cut)),

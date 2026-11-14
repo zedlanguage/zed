@@ -367,6 +367,31 @@ fn a_definition_named_only_in_a_cut_branch_is_still_evaluated() {
     assert_eq!(remix.mix(&written.term).to_string(), main);
 }
 
+/// Two definitions whose evaluation stops, named only in a cut branch in the reverse of name
+/// order, beside a literal that does not: the staged `main` keeps a read of each of the two
+/// and none of the literal, and a remix (step L25.8), which takes the names from the mixer's
+/// own summaries, keeps the same reads in the same order (TEST-mutate-generic-time).
+#[test]
+fn a_remix_keeps_the_cut_reads_mix_keeps_in_its_order() {
+    let (p, s, report) = staged(&format!(
+        "{}verbose = false;\nzhuge = {};\nahuge = {};\nplain = \"y\";\n\
+         main(m: MainArgs) {{\n  m.stdout <- if verbose {{ zhuge ++ ahuge ++ plain }} else {{ \"x\" }};\n}}\n",
+        zed_tests::TWICE,
+        zed_tests::too_long(),
+        zed_tests::too_long()
+    ));
+    assert_eq!(report.left.len(), 2, "{:?}", report.left);
+    let main = term(&s, "main");
+    assert!(
+        main.contains("zhuge") && main.contains("ahuge") && !main.contains("plain"),
+        "{main}"
+    );
+    assert!(main.find("ahuge") < main.find("zhuge"), "{main}");
+    let written = p.unit().defs.iter().find(|d| d.name == "main").unwrap();
+    let (_, mut remix) = zedc::stage::Remix::new(p.unit());
+    assert_eq!(remix.mix(&written.term).to_string(), main);
+}
+
 /// The cut read is kept through a definition the build turns into a literal: `label` names
 /// `huge` only in its cut branch, and `main` reads `label`, so the program stops, and so does
 /// the staged one, whose `label` keeps the read.

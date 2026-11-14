@@ -2,13 +2,15 @@
 //! and a mutant costs its definition and the rows that reach it, not the unit.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use zed_kernel::Term;
 use zed_tests::deep::on_main_sized_stack;
 use zed_tests::scaling;
 use zedc::mutate::{self, Verdict};
 use zedc::query::Db;
 use zedc::run;
+use zedc::stage::{self, Remix};
 
 /// `n` functions, each with one operator, one constant and a row of its own, beside a table
 /// of fixed size: `3n + 3` mutants, each of which runs the one row that reaches its
@@ -139,4 +141,60 @@ fn running_a_chain(kind: &str, n: usize, make: fn(usize) -> String) {
             assert!(found.iter().all(|(_, v)| *v == Verdict::Detected));
         },
     );
+}
+
+#[test]
+fn remixing_a_definition_costs_less_than_mixing_it() {
+    // `Remix::mix` mixes a term of a definition as `mix` mixes the definition, with the
+    // set-up already done: it is the mixing part of `mix`'s work, without the reads of each
+    // definition's free names. A mutant of a generic chain of 400 additions remixed in 32.8M
+    // instructions against 52.1M for `mix` of the definition, 0.63 times. Reading the free
+    // names of the term and of the mixed term again, by two fresh walks (`stage::free`),
+    // cost 45.0M, 0.86 times, and 18% more for the mutants of the chain (plan row
+    // TEST-mutate-generic-time, COMPLEXITY.md F161); the limit lies between.
+    on_main_sized_stack(|| {
+        let text = generic_chain_with_row(400);
+        let mut db = Db::new();
+        let front = db.front(&text);
+        let (_, unit, _) = front.as_ref().as_ref().unwrap();
+        let term = &unit.defs[0].term;
+        let (_, remix) = Remix::new(unit);
+        let remix = Mutex::new(remix);
+        assert_eq!(
+            remix.lock().unwrap().mix(term).to_string(),
+            stage::mix(unit, &["f"]).0.defs[0].term.to_string()
+        );
+        scaling::compare_costs(
+            "Remix::mix against mix of a generic chain of 400 additions",
+            "Remix::mix mixes the term without mix's reads of each definition's free names",
+            0.75,
+            || {
+                stage::mix(unit, &["f"]);
+            },
+            || {
+                remix.lock().unwrap().mix(term);
+            },
+        );
+    });
+}
+
+#[test]
+fn remixing_a_generic_chain_of_n_additions_scales() {
+    // One remix of the definition: its mixing, and the cut reads taken from the mixer's own
+    // summaries, each O(n) (TEST-mutate-generic-time).
+    on_main_sized_stack(|| {
+        let made = scaling::inputs(100, |n| {
+            let text = generic_chain_with_row(n);
+            let mut db = Db::new();
+            let front = db.front(&text);
+            let (_, unit, _) = front.as_ref().as_ref().unwrap();
+            let (_, remix) = Remix::new(unit);
+            (Arc::clone(unit), Mutex::new(remix))
+        });
+        scaling::check("Remix::mix of a generic chain of n additions", 100, |n| {
+            let (unit, remix) = &made[&n];
+            let out = remix.lock().unwrap().mix(&unit.defs[0].term);
+            assert!(matches!(out, Term::Lam(..)), "{out}");
+        });
+    });
 }
