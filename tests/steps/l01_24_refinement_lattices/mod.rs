@@ -12,6 +12,7 @@ mod bounds;
 mod cell;
 mod complete;
 mod ends;
+mod f32_literal;
 mod float;
 mod kept_serial;
 mod loops;

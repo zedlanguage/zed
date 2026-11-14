@@ -391,6 +391,8 @@ impl Cell {
                 c.congruence.element = Congruence::single(n);
             }
             Value::Float(x) => c.float.element = FloatClass::of(x.get()),
+            // Every `f32` converts to `f64` exactly, so its class is that of the same number.
+            Value::Float32(x) => c.float.element = FloatClass::of(f64::from(x.get())),
             Value::Str(s) => {
                 c.length.element =
                     Bounds::ints(IntervalSet::point(Num::from(s.char_count() as i128)));
