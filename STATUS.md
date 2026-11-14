@@ -2207,8 +2207,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | S1F-limits-cycle | impl attempt 1 | 2026-11-13 22:06 | started, worktree s1f-limits-cycle on origin/main 237da07e6 |
 | SPEC-blocking-default | impl attempt 1 | 2026-11-13 22:19 | started; worktrees spec-blocking-default and -spec from origin/main |
 | SPEC-raw-keep-isig | running |  |  |
-| ST-chain-raise-reverse-names | impl attempt 1 | 2026-11-13 22:31 | started; worktree from origin/main 7745e160a |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
+| XR-ffi-stateful-r45 | running | 2026-11-13 22:45 |  |
 | XR-hub-moved-relation | impl attempt 1 | 2026-11-13 20:48 | started; rebasing wt/hub-moved-relation onto origin/main 252a4f1d4 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
