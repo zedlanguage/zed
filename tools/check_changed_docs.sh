@@ -135,16 +135,17 @@ names=$(awk -F '\t' '
 # reference definition `[...]: target`. Their packages are documented as if their doc lines had
 # changed.
 #
-# Complexity tradeoff: a renamed, deleted, privatized or cfg-gated item breaks only the docs that
-# link it, so only their packages are documented. The naive rule, documenting the package of every
-# changed file and every package that depends on it, costs no scan but builds documentation on
-# almost every run (two builds of up to about 15 s per package, and zedc-base reaches most of the
-# workspace), against the author's rule of no doc build unless docs change (2026-11-10). Used: one
-# awk pass over the diff (linear in the diff) and, only when a name was lost, one `git grep` of the
-# doc lines that hold a `[` (linear in the sources) and one awk pass over them that looks each word
-# of a link up in a hash of the names (linear in those lines plus the names; a private name lost in
-# k files is checked against its k scopes). A `git grep -w -F -f` of the names themselves costs
-# about (names x sources): 33 s for the 250 names of commit 2016e39f6. Measured on commits of main
+# Complexity tradeoff: a renamed, deleted or privatized item, or one put behind a cfg, breaks only
+# the docs that link it, so only their packages are documented. The naive rule, documenting the
+# package of every changed file and every package that depends on it, costs no scan but builds
+# documentation on almost every run (two builds of up to about 15 s per package, and zedc-base
+# reaches most of the workspace), against the author's rule of no doc build unless docs change
+# (2026-11-10). Used: one awk pass over the diff (linear in the diff) and, only when a name was
+# lost, one `git grep` of the doc lines that hold a `[` (linear in the sources) and one awk pass
+# over them that looks each word of a link up in a hash of the names (linear in those lines plus
+# the names; a private name lost in k files is checked against its k scopes). A `git grep -w -F -f`
+# of the names themselves costs about (names x sources): 33 s for the 250 names a first version
+# found in commit 2016e39f6. Measured on commits of main
 # against their parents at load 35 to 40, the whole search before the doc builds: 24 to 43 ms
 # before this rule, 32 to 38 ms after it on diffs that lose no name, and 270 to 340 ms on diffs
 # that do, from 5 names (444 lines) to 249 names (10902 lines). The match is by word, not by
