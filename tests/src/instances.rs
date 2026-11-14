@@ -71,24 +71,14 @@ impl Rng {
     }
 }
 
-/// The variable that fixes the seed of [`Rng::fresh`], to repeat a run whose seed it printed.
-pub const SEED_VARIABLE: &str = "ZED_SEED";
-
 impl Rng {
-    /// A generator with a new seed on each call, for a random test (author P169: random tests
-    /// run fewer cases, with a new seed each run, printed). The seed is printed with `what` on
-    /// standard error, which libtest shows when the test fails; when [`SEED_VARIABLE`] holds a
-    /// number, that is the seed, so `ZED_SEED=<seed>` repeats a failed run. The seed is also
-    /// returned, for the test's failure messages. A new seed comes from std's random hash keys,
-    /// which differ for each process and each call, so tests that run at once in one process
-    /// get different seeds.
+    /// A generator with a new seed on each run, for a random test (author P169: random tests
+    /// run fewer cases, with a new seed each run, printed). The seed is that of
+    /// [`crate::seed::seed`], shared with the random tests of the other groups: printed with `what`
+    /// on standard error, and `ZED_TEST_SEED=<seed>` repeats the run. The seed is also returned,
+    /// for the test's failure messages.
     pub fn fresh(what: &str) -> (Self, u64) {
-        use std::hash::BuildHasher;
-        let seed = std::env::var(SEED_VARIABLE)
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or_else(|| std::collections::hash_map::RandomState::new().hash_one(what));
-        eprintln!("{what}: seed {seed} ({SEED_VARIABLE}={seed} repeats it)");
+        let seed = crate::seed::seed(what);
         (Rng::new(seed), seed)
     }
 }
@@ -195,7 +185,7 @@ mod tests {
     #[test]
     fn fresh_generators_get_new_seeds() {
         let ((mut a, s), (_, t)) = (Rng::fresh("one test"), Rng::fresh("one test"));
-        if std::env::var(SEED_VARIABLE).is_err() {
+        if std::env::var(crate::seed::SEED_VAR).is_err() {
             assert_ne!(s, t);
         }
         // The printed seed repeats the run.
