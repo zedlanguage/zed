@@ -68,6 +68,7 @@ Release function written in Zed that does not free the value
 Parameter declared `with notPassed()` that cannot keep its argument
 Value given a second release
 Call of a token's release that names no token
+Foreign signature that does not take its library's state
 Use of a value after a call that holds it
 Hold that Zed cannot end
 Call on a holder with nothing ordering it with a call that changes its holds
