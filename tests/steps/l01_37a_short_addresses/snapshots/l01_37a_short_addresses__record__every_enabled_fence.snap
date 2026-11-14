@@ -9,7 +9,7 @@ DESIGN.md [sec:ports] 1
 DESIGN.md [sec:checking_in_zed] 1
   rejected: [
     Diagnostic {
-        line: 19,
+        line: 14,
         col: 1,
         message: "`main` is already declared in this scope with these parameter types.",
         steps: [
@@ -21,7 +21,57 @@ DESIGN.md [sec:checking_in_zed] 1
                 width: 19,
             },
             Step {
-                line: 19,
+                line: 14,
+                col: 1,
+                text: "repair: give this binding a new name",
+                source: "main(m: MainArgs) {",
+                width: 19,
+            },
+        ],
+        menu: "",
+        row: Some(
+            Rebinding,
+        ),
+    },
+    Diagnostic {
+        line: 20,
+        col: 1,
+        message: "`main` is already declared in this scope with these parameter types.",
+        steps: [
+            Step {
+                line: 2,
+                col: 1,
+                text: "the first `main` with these parameter types",
+                source: "main(m: MainArgs) {",
+                width: 19,
+            },
+            Step {
+                line: 20,
+                col: 1,
+                text: "repair: give this binding a new name",
+                source: "main(m: MainArgs) {",
+                width: 19,
+            },
+        ],
+        menu: "",
+        row: Some(
+            Rebinding,
+        ),
+    },
+    Diagnostic {
+        line: 32,
+        col: 1,
+        message: "`main` is already declared in this scope with these parameter types.",
+        steps: [
+            Step {
+                line: 2,
+                col: 1,
+                text: "the first `main` with these parameter types",
+                source: "main(m: MainArgs) {",
+                width: 19,
+            },
+            Step {
+                line: 32,
                 col: 1,
                 text: "repair: give this binding a new name",
                 source: "main(m: MainArgs) {",
@@ -34,7 +84,7 @@ DESIGN.md [sec:checking_in_zed] 1
         ),
     },
 ]
-  checks: [Outcome { line: 19, col: 1, failure: Some("`main` is already declared in this scope with these parameter types.\n  [1] 2:1: the first `main` with these parameter types\n       2 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^\n  [2] 19:1: repair: give this binding a new name\n      19 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^"), not_run: None }]
+  checks: [Outcome { line: 14, col: 1, failure: Some("`main` is already declared in this scope with these parameter types.\n  [1] 2:1: the first `main` with these parameter types\n       2 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^\n  [2] 14:1: repair: give this binding a new name\n      14 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^"), not_run: None }, Outcome { line: 20, col: 1, failure: Some("`main` is already declared in this scope with these parameter types.\n  [1] 2:1 to 2:19: the first `main` with these parameter types\n      line 2 is shown above\n  [2] 20:1: repair: give this binding a new name\n      20 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^"), not_run: None }, Outcome { line: 32, col: 1, failure: Some("`main` is already declared in this scope with these parameter types.\n  [1] 2:1 to 2:19: the first `main` with these parameter types\n      line 2 is shown above\n  [2] 32:1: repair: give this binding a new name\n      32 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^"), not_run: None }]
 
 DESIGN.md [sec:memory] 1
   rejected: [
