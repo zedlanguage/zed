@@ -268,10 +268,23 @@ fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // seed 0x383b and the counts measured on them are in `bench::oracle` (7.2 s at load 25).
     // About 22% of the systems hold somewhere and 0.2% are refused (2634, 9342 and 24 of the
     // 12,000), so both answers occur here at any seed.
+    //
+    // A `Shadows` refusal is allowed, and is rare. It is the cause DESIGN.md sec:diagnostics
+    // names: a point that could lie only in a splinter that would have to be split again with
+    // as many live variables left (step OMEGA-splinter-cap, COMPLEXITY.md S18). Here the dark
+    // elimination at four live variables has bound coefficients of 2 to 5, each splinter adds
+    // the gap variable and keeps four live variables, and its own dark shadow is empty. Pugh's
+    // enumeration of the gap by value would answer it, but at a cost linear in the coefficient
+    // values, which the "Limits" paragraph of DESIGN.md excludes (polynomial in rows, not in
+    // bit length); enumerating only small gaps would be a size threshold. Measured over 2,500
+    // fresh seeds (1,500,000 systems): 10 `Shadows` refusals, never two at one seed, 2 of the
+    // 10 systems with a point (`the_refused_corner_systems_are_refused_for_a_splinter`).
+    // At that rate three in one run of 600 has odds near 1 in 10^8, so more than two means
+    // the refusal has spread past this cause.
     let t = run_fresh("rows of three terms tight at a corner", 600, 4, 3, |rng| {
         corner_rows(rng, 4, 3)
     });
-    assert!(t.sat >= 60 && t.unsat >= 300 && t.shadows == 0, "{t:?}");
+    assert!(t.sat >= 60 && t.unsat >= 300 && t.shadows <= 2, "{t:?}");
 }
 
 /// 2 to 5 rows `c·(p·a + q·b) + k >= 0` over `a = x0 + 2·x1` and `b = 2·x2 - 3·x3`, with `c` 1
@@ -714,4 +727,109 @@ fn a_system_whose_only_point_is_the_upper_corner_has_that_point() {
     let f = formula(&rows, 8, 1);
     let m = satisfiable(&f).expect("answered").expect("a point");
     assert!(f.holds(&m), "{m:?} fails {f}");
+}
+
+/// Seed 12228408859946558652 of FAIL-tight-corner-shadows-seed: system 233 is refused with
+/// `Shadows`, the refusal DESIGN.md allows (the comment in
+/// `rows_of_three_terms_tight_at_a_corner_match_enumeration` says why), and every other
+/// system is answered as enumeration answers it.
+#[test]
+fn rows_of_three_terms_tight_at_a_corner_of_seed_12228408859946558652_match_enumeration() {
+    let t = run(12228408859946558652, 600, 4, 3, |rng| {
+        corner_rows(rng, 4, 3)
+    });
+    assert_eq!(
+        (t.sat, t.unsat, t.growth, t.shadows, t.tie),
+        (122, 477, 0, 1, 0),
+        "{t:?}"
+    );
+}
+
+/// Systems of rows tight at a corner that `decide` and `satisfiable` refuse with `Shadows`, the
+/// cause DESIGN.md sec:diagnostics names: the dark elimination at four live variables splinters,
+/// each splinter keeps four live variables, and its own dark shadow is empty. The first three
+/// are the refused systems of the seeds of FAIL-tight-corner-shadows-seed (12228408859946558652
+/// system 233, 15956874539988706693 system 30, 9658193861429432057 system 155); the next two
+/// are those of seeds 1178677564335123856 (system 25) and 16004174331354764304 (system 222),
+/// which have points; the last two are the first and third made smaller, a row or a coefficient
+/// at a time, while the refusal stayed. The refusal can stand where there is a point.
+#[test]
+fn the_refused_corner_systems_are_refused_for_a_splinter() {
+    type Case = (i64, &'static [([i64; 4], i64)], bool);
+    let cases: [Case; 7] = [
+        (
+            3,
+            &[
+                ([-2, 3, 0, -3], -7),
+                ([2, 0, 3, 3], 7),
+                ([3, -3, -4, 0], -10),
+            ],
+            false,
+        ),
+        (
+            3,
+            &[
+                ([-5, 0, -3, 3], -4),
+                ([-4, -4, 0, 5], 2),
+                ([-3, 0, 5, 4], 6),
+                ([4, 5, 0, -3], -11),
+            ],
+            false,
+        ),
+        (
+            3,
+            &[
+                ([-3, 0, -5, -3], -11),
+                ([0, 3, 4, 5], 3),
+                ([5, -5, 0, 3], -12),
+            ],
+            false,
+        ),
+        (
+            3,
+            &[
+                ([0, 2, 5, -3], -6),
+                ([5, 2, 0, 3], 3),
+                ([-5, -4, -2, 0], -6),
+            ],
+            true,
+        ),
+        (
+            3,
+            &[
+                ([0, 5, -5, 2], -7),
+                ([5, -3, 0, 5], -9),
+                ([-5, 1, 0, 1], -4),
+                ([0, 4, 3, -3], 4),
+            ],
+            true,
+        ),
+        (
+            3,
+            &[
+                ([-2, 3, 0, -2], -6),
+                ([1, 0, 3, 3], 3),
+                ([3, -3, -4, 0], -1),
+            ],
+            false,
+        ),
+        (
+            1,
+            &[([-2, 0, -2, -3], 0), ([0, 3, 3, 2], 0), ([4, -3, 0, 2], -1)],
+            true,
+        ),
+    ];
+    for (half, rows, point) in cases {
+        let rows: Vec<Row> = rows
+            .iter()
+            .map(|(c, k)| Row {
+                c: c.to_vec(),
+                k: *k,
+            })
+            .collect();
+        let f = formula(&rows, 4, half);
+        assert_eq!(enumerate(&rows, 4, half), point, "{f}: enumeration");
+        assert_eq!(decide(&f), Err(Refusal::Shadows), "{f}: decide");
+        assert_eq!(satisfiable(&f), Err(Refusal::Shadows), "{f}: satisfiable");
+    }
 }
