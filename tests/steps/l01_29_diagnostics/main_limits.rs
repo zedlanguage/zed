@@ -125,6 +125,42 @@ fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     assert_eq!(built(&src.replace("x * x", "x * b")), None);
 }
 
+#[test]
+fn a_product_through_a_part_with_several_roots_past_the_memory_limit_is_rejected() {
+    // Plan row CONST-too-large-coprime-base: the numerator of `x`, `b ^ (2^15) * c ^ (2^15)`,
+    // has the roots `b` and `c` and at least `2^22 + 1` bits, so `x * x` has at least
+    // `2^23 + 1`, past 1 MiB; the check that `b` and `c` share no prime with `d` is decided
+    // after the walk, and the product is then judged against the limit.
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               c = 2^64 + 15;\n    d = 2^64 + 17;\n    \
+               x = rat(b) ^ (2^15) * (rat(c) ^ (2^15)) / rat(d);\n    \
+               m.stdout <- String(x * x > 0) else \"\";\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "7:24: Number too large for the memory limit of `main`: `x * x` needs at least 1 \
+             MiB; `@limits(memory: 1048576)`."
+        ),
+        "{out}"
+    );
+    // A power of `x` is decided after the walk too, then judged against the limit.
+    let out = rejected(&src.replace("x * x", "x ^ 2"));
+    assert!(
+        out.starts_with(
+            "7:24: Number too large for the memory limit of `main`: `x ^ 2` needs at least 1 \
+             MiB; `@limits(memory: 1048576)`."
+        ),
+        "{out}"
+    );
+    // Without the limit it fits the address space. `x / (rat(c) ^ (2^15))` cancels the power
+    // of `c`, so a product through it proves nothing and is left to the run.
+    assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
+    assert_eq!(
+        built(&src.replace("x * x", "x * (x / (rat(c) ^ (2^15)))")),
+        None
+    );
+}
+
 /// `n` powers of about 8 MiB each under a 1 MiB limit.
 pub(super) fn powers(n: usize) -> String {
     let mut s = String::from("@limits(memory: 1048576)\nmain(m: MainArgs) {\n");

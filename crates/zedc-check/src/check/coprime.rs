@@ -110,9 +110,9 @@ impl Roots {
     pub(super) fn coprime_now(&self, a: SetId, b: SetId) -> Option<bool> {
         match (&self.sets[a as usize], &self.sets[b as usize]) {
             (Set::Empty, _) | (_, Set::Empty) => Some(true),
-            (Set::Leaf(x), Set::Leaf(y)) => Some(
-                gcd_uint(&self.values[*x as usize], &self.values[*y as usize]).bits() == 1,
-            ),
+            (Set::Leaf(x), Set::Leaf(y)) => {
+                Some(gcd_uint(&self.values[*x as usize], &self.values[*y as usize]).bits() == 1)
+            }
             _ => None,
         }
     }
@@ -146,42 +146,102 @@ impl Roots {
     /// in all. Used: the base is built once, over every root ([`base_of`]); each set is then
     /// the set of its roots' base elements, a persistent ordered set (`imbl::OrdSet`) made from
     /// its two halves by inserting the smaller into a copy of the larger, O(1) to copy and
-    /// O(s log n) for `s` inserted; each check looks the smaller set's elements up in the
-    /// larger, O(s log n). An expression tree of `n` products moves each element O(log n)
-    /// times, so O(n log^2 n) lookups and no gcd past the base. What it gives up: a value read
-    /// by many products, as `y = x * x0` repeated with one `x0` of `r` roots, costs `r`
-    /// lookups at each, the work of the smaller operand each time; no method is known that
-    /// decides, for every node of a DAG, whether two of its reachable sets meet in less.
+    /// O(s log n) for `s` inserted. A check of two sets costs the least of: the smaller set's
+    /// elements looked up in the larger, O(s log n); where a check of one set against the
+    /// larger half of the other was made before, its answer and the smaller half against the
+    /// one set; where one of the two larger halves was, its answer and both smaller halves.
+    /// So no check costs more than the lookups, an expression tree of `n` products moves each
+    /// element O(log n) times, O(n log^2 n) lookups and no gcd past the base, and a chain
+    /// `z = z / rat(q)` whose every link meets one fixed set `x`, as `y = x * z` at each link,
+    /// costs O(log n) a link, where the lookups alone cost the link's length, O(n^2) in all.
+    /// What it gives up: a set checked against many sets none of which was checked against a
+    /// part of it, as `x * z_i` for `n` unrelated `z_i` of `r` roots each, costs `r` lookups
+    /// at each; no method is known that decides, for every pair of nodes of a DAG, whether
+    /// their reachable sets meet in less.
     pub(super) fn settle(&self) -> Vec<bool> {
         let base = base_of(&self.values);
         let mut sets: Vec<OrdSet<u32>> = Vec::with_capacity(self.sets.len());
+        // For a union, the half whose set it extends and the other half.
+        let mut halves: Vec<Option<(SetId, SetId)>> = Vec::with_capacity(self.sets.len());
         for s in &self.sets {
-            let made = match s {
-                Set::Empty => OrdSet::new(),
-                Set::Leaf(r) => base[*r as usize].iter().copied().collect(),
+            let (made, split) = match s {
+                Set::Empty => (OrdSet::new(), None),
+                Set::Leaf(r) => (base[*r as usize].iter().copied().collect(), None),
                 Set::Union(a, b) => {
-                    let (a, b) = (&sets[*a as usize], &sets[*b as usize]);
-                    let (big, small) = if a.len() >= b.len() { (a, b) } else { (b, a) };
-                    let mut u = big.clone();
-                    u.extend(small.iter().copied());
-                    u
+                    let (a, b) = match sets[*a as usize].len() >= sets[*b as usize].len() {
+                        true => (*a, *b),
+                        false => (*b, *a),
+                    };
+                    let mut u = sets[a as usize].clone();
+                    u.extend(sets[b as usize].iter().copied());
+                    (u, Some((a, b)))
                 }
             };
             sets.push(made);
+            halves.push(split);
         }
-        let disjoint = |a: SetId, b: SetId| {
-            let (a, b) = (&sets[a as usize], &sets[b as usize]);
-            let (big, small) = if a.len() >= b.len() { (a, b) } else { (b, a) };
-            !small.iter().any(|e| big.contains(e))
-        };
+        let mut checked: HashMap<(SetId, SetId), bool> = HashMap::new();
         let mut holds: Vec<bool> = Vec::with_capacity(self.proofs.len());
         for p in &self.proofs {
             let h = p.needs.iter().flatten().all(|n| holds[*n as usize])
-                && p.checks.iter().all(|&(a, b)| disjoint(a, b));
+                && (p.checks.iter()).all(|&(a, b)| disjoint(&sets, &halves, &mut checked, a, b));
             holds.push(h);
         }
         holds
     }
+}
+
+/// Whether the sets `a` and `b` share no element, by the least of the ways of
+/// [`Roots::settle`], the answer kept in `checked` by the pair.
+fn disjoint(
+    sets: &[OrdSet<u32>],
+    halves: &[Option<(SetId, SetId)>],
+    checked: &mut HashMap<(SetId, SetId), bool>,
+    a: SetId,
+    b: SetId,
+) -> bool {
+    let pair = |a: SetId, b: SetId| (a.min(b), a.max(b));
+    if let Some(&known) = checked.get(&pair(a, b)) {
+        return known;
+    }
+    let size = |s: SetId| sets[s as usize].len();
+    // The lookups that test `s` against `t`, and their answer.
+    let cost = |s: SetId, t: SetId| size(s).min(size(t));
+    let free = |s: SetId, t: SetId| {
+        let (s, t) = (&sets[s as usize], &sets[t as usize]);
+        let (big, small) = if s.len() >= t.len() { (s, t) } else { (t, s) };
+        !small.iter().any(|e| big.contains(e))
+    };
+    // Each way: the lookups it costs, the checks made before it rests on, and the pairs it
+    // looks up.
+    let mut ways: Vec<(usize, Option<bool>, Vec<(SetId, SetId)>)> =
+        vec![(cost(a, b), None, vec![(a, b)])];
+    for (x, y) in [(a, b), (b, a)] {
+        if let Some((big, small)) = halves[y as usize]
+            && let Some(&known) = checked.get(&pair(x, big))
+        {
+            ways.push((cost(x, small), Some(known), vec![(x, small)]));
+        }
+    }
+    if let (Some((ab, asm)), Some((bb, bsm))) = (halves[a as usize], halves[b as usize])
+        && let Some(&known) = checked.get(&pair(ab, bb))
+    {
+        ways.push((
+            cost(asm, b) + cost(bsm, a),
+            Some(known),
+            vec![(asm, b), (bsm, a)],
+        ));
+    }
+    // A check made before that found a shared element decides at once.
+    let (_, before, rest) = (ways.into_iter())
+        .min_by_key(|(n, before, _)| match before {
+            Some(false) => 0,
+            _ => n + 1,
+        })
+        .expect("the lookups are one way");
+    let known = before != Some(false) && rest.iter().all(|&(s, t)| free(s, t));
+    checked.insert(pair(a, b), known);
+    known
 }
 
 /// For each root of `roots`, distinct numbers above 1, the indices of the elements of a coprime
@@ -328,8 +388,81 @@ mod tests {
         assert!(held[free.unwrap() as usize]);
         assert!(!held[meets.unwrap() as usize]);
         assert!(held[both.unwrap() as usize]);
-        assert_eq!(r.coprime_now(a, b), Some(false));
+        assert_eq!(r.coprime_now(a, b), Some(true));
+        assert_eq!(r.coprime_now(a, d), Some(false));
         assert_eq!(r.coprime_now(a, c), Some(true));
         assert_eq!(r.coprime_now(ab, c), None);
+    }
+
+    /// Each check of a chain against a fixed set, and of two chains in step, gives what a
+    /// direct test of the roots gives, whichever way `settle` takes.
+    #[test]
+    fn a_check_reusing_one_made_before_agrees_with_the_roots() {
+        let mut r = Roots::default();
+        let chain = |r: &mut Roots, ns: &[u64]| -> Vec<(SetId, Vec<u64>)> {
+            let mut out: Vec<(SetId, Vec<u64>)> = Vec::new();
+            for &n in ns {
+                let leaf = r.leaf(BigUint::from(n));
+                let (set, mut had) = match out.last() {
+                    Some((s, had)) => (r.union(*s, leaf), had.clone()),
+                    None => (leaf, Vec::new()),
+                };
+                had.push(n);
+                out.push((set, had));
+            }
+            out
+        };
+        // `x` of the odd primes to 13; `z` of the next six, then 15, which meets `x`, then two
+        // more; `w` of 2, 4 and 8 in step with `z`.
+        let x = chain(&mut r, &[3, 5, 7, 11, 13]);
+        let z = chain(&mut r, &[17, 19, 23, 29, 31, 37, 15, 41, 43]);
+        let w = chain(&mut r, &[2, 4, 8, 2, 4, 8, 2, 4, 8]);
+        let (xs, xr) = x.last().unwrap().clone();
+        let mut want = Vec::new();
+        let mut ids = Vec::new();
+        for (i, (zs, zr)) in z.iter().enumerate() {
+            let (ws, wr) = &w[i];
+            for (a, ar, b, br) in [(xs, &xr, *zs, zr), (*ws, wr, *zs, zr)] {
+                let share = ar.iter().any(|m| {
+                    br.iter()
+                        .any(|n| gcd_uint(&BigUint::from(*m), &BigUint::from(*n)).bits() > 1)
+                });
+                ids.push(r.proof([None, None], vec![(a, b)]));
+                want.push(!share);
+            }
+        }
+        let held = r.settle();
+        let got: Vec<bool> = ids.iter().map(|p| held[p.unwrap() as usize]).collect();
+        assert_eq!(got, want);
+        // `x` against `z` holds for the six links before 15 and fails from it on.
+        assert_eq!(want.iter().step_by(2).filter(|h| **h).count(), 6);
+    }
+
+    #[test]
+    fn the_short_cases_add_no_set_and_no_proof() {
+        let mut r = Roots::default();
+        // No root and no proof: nothing to settle.
+        assert!(r.settle().is_empty());
+        assert_eq!(r.leaf(BigUint::from(1u8)), EMPTY);
+        let a = r.leaf(BigUint::from(6u8));
+        assert_eq!(r.leaf(BigUint::from(6u8)), a);
+        assert_eq!(r.union(EMPTY, a), a);
+        assert_eq!(r.union(a, EMPTY), a);
+        assert_eq!(r.union(a, a), a);
+        assert_eq!(r.coprime_now(EMPTY, a), Some(true));
+        assert_eq!(r.proof([None, None], Vec::new()), None);
+        let p = r.proof([None, None], vec![(a, a)]);
+        assert_eq!(r.proof([p, None], Vec::new()), p);
+        assert_eq!(r.proof([None, p], Vec::new()), p);
+        assert_eq!(r.proof([p, p], Vec::new()), p);
+        // Two proofs and no check is a new proof, and fails where a need fails.
+        let q = r.proof([None, None], vec![(a, EMPTY)]);
+        let pq = r.proof([p, q], Vec::new());
+        assert!(pq != p && pq != q);
+        let held = r.settle();
+        assert_eq!(held.len(), 3);
+        assert!(!held[p.unwrap() as usize]);
+        assert!(held[q.unwrap() as usize]);
+        assert!(!held[pq.unwrap() as usize]);
     }
 }

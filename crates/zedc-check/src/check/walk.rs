@@ -8679,9 +8679,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let held = |p: Option<coprime::ProofId>| p.is_none_or(|p| holds[p as usize]);
         let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
         for s in powers {
-            let Some(p) = self.wide_powers.remove(&s) else {
-                continue;
-            };
+            let p = (self.wide_powers.remove(&s)).expect("a span read from wide_powers above");
             if !held(p.proof) {
                 continue;
             }
@@ -8691,9 +8689,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         for s in products {
-            let Some(p) = self.wide_products.remove(&s) else {
-                continue;
-            };
+            let p = (self.wide_products.remove(&s)).expect("a span read from wide_products above");
             if !held(p.r.proof) {
                 continue;
             }
@@ -9483,7 +9479,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// been read of the expressions [`Self::built_reads`] gives.
     fn built_uncached(&mut self, e: &'a Expr) -> Built {
         if let Some(v) = self.fixed_value(e) {
-            return Built::of(&v, &mut self.roots);
+            let from = self.fixed_roots(e);
+            return Built::of(&v, &mut self.roots, from);
         }
         if let ExprKind::Binary(BinaryOp::Pow, a, k) = &e.kind {
             return self.power_built(a, k);
@@ -9498,12 +9495,71 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Name(_) => self.bound_value(e).map_or_else(Built::unknown, memo),
             ExprKind::Unary(UnaryOp::Neg, a) => memo(a),
             ExprKind::Binary(op @ (BinaryOp::Mul | BinaryOp::Div), a, b) => {
-                product_built(&mut self.roots, *op, &memo(a), &memo(b)).unwrap_or_else(Built::unknown)
+                product_built(&mut self.roots, *op, &memo(a), &memo(b))
+                    .unwrap_or_else(Built::unknown)
             }
             _ => self.rat_cast_operand(e).map_or_else(Built::unknown, memo),
         }
     }
 
+    /// The roots of the coefficients and of the kept primes of the value `e` the text fixes,
+    /// from those of the expressions [`Self::built_reads`] gives, where `e` is made from them:
+    /// a name, a `-`, a `rat(x)` cast, a `*`, a `/` or a `^`. The kernel adds no prime to a
+    /// product, a quotient or a power (`Rat::mul`, `Rat::div` and `Rat::pow` reduce, move kept
+    /// primes out and raise, and a part within 64 bits that a power factors becomes kept
+    /// primes), so each prime of `e`'s numerator divides a root of a numerator of its factors
+    /// (`p` or `r` of `p/q * r/s`), each of its denominator one of a denominator, and each kept
+    /// prime a kept prime of a factor or, for a power, a part of the base. `None` for a literal,
+    /// a sum or anything else, whose value is then its own root ([`Built::of`]).
+    ///
+    /// Complexity tradeoff: the naive method makes each fixed value's coefficients its roots,
+    /// as for a literal; then a chain `z = z / rat(q)` of `n` names makes `n` roots of 1 to `n`
+    /// words, each a multiple of the one before, O(n^2) words that all share primes, and the
+    /// coprime base costs O(n^2) gcds of O(n)-word numbers ([`coprime::Roots::settle`]),
+    /// measured at 941 times the work at 8n. Used: the roots of a value made from others are
+    /// the union of theirs, O(1) ([`coprime::Roots::union`]), so the roots are the literals
+    /// and sums the text writes. What it gives up: a root may have primes the value lost to
+    /// the kernel's reduction, as `rat(6) / rat(4)` with the root 6 for the numerator 3, so a
+    /// check through it may fail where the value's own coefficient would pass.
+    fn fixed_roots(
+        &mut self,
+        e: &'a Expr,
+    ) -> Option<([Option<coprime::SetId>; 2], Option<coprime::SetId>)> {
+        let memo = |x: &Expr| self.built.get(&x.span).cloned();
+        let from = |w: Built| Some(([w.parts[0].root, w.parts[1].root], w.kept));
+        match &e.kind {
+            ExprKind::Name(_) => from(memo(self.bound_value(e)?)?),
+            ExprKind::Unary(UnaryOp::Neg, a) => from(memo(a)?),
+            ExprKind::Binary(op @ (BinaryOp::Mul | BinaryOp::Div), a, b) => {
+                let (x, y) = (memo(a)?, memo(b)?);
+                let [p, q] = &x.parts;
+                let [r, s] = match op {
+                    BinaryOp::Div => [&y.parts[1], &y.parts[0]],
+                    _ => [&y.parts[0], &y.parts[1]],
+                };
+                let roots = &mut self.roots;
+                let parts = [either_root(roots, p, r), either_root(roots, q, s)];
+                let kept = x.kept.zip(y.kept).map(|(a, b)| roots.union(a, b));
+                Some((parts, kept))
+            }
+            ExprKind::Binary(BinaryOp::Pow, a, _) => {
+                // A negative exponent swaps the parts: each part takes the roots of both.
+                let w = memo(a)?;
+                let roots = &mut self.roots;
+                let all = either_root(roots, &w.parts[0], &w.parts[1]);
+                // The kernel factors a part within 64 bits into kept primes, and builds the
+                // power of a wider one.
+                let mut kept = w.kept;
+                for c in &w.parts {
+                    if !c.one && !(w.exact && c.bits > Num::from(64i64)) {
+                        kept = kept.zip(c.root).map(|(a, b)| roots.union(a, b));
+                    }
+                }
+                Some(([all, all], kept))
+            }
+            _ => from(memo(self.rat_cast_operand(e)?)?),
+        }
+    }
     /// The operand `x` of a call `rat(x)` of the prelude's cast.
     fn rat_cast_operand(&self, e: &'a Expr) -> Option<&'a Expr> {
         match &e.kind {
@@ -16148,24 +16204,35 @@ impl Built {
     }
 
     /// The coefficients of the exact value `v`, as the kernel holds them ([`Rat::kept`]): an
-    /// `int` within 64 bits is its own numerator over 1. Each coefficient other than 0 is its
-    /// own root, and the kept primes' product is the root they divide.
+    /// `int` within 64 bits is its own numerator over 1. Each coefficient other than 0 and 1
+    /// has the roots `from` gives it ([`Ck::fixed_roots`]), else is its own root, and the kept
+    /// primes have the root `from` gives them, else their product.
     ///
-    /// Complexity tradeoff: a copy of each coefficient, O(n) in its bits, as
-    /// [`Ck::fixed_value`] copies the value, and the product of the `m` kept primes by halves,
-    /// O(M(m) log m), where a product one prime at a time is O(m^2) words. Kept as roots, the
-    /// copies are shared by every product and power that reads them.
-    fn of(v: &Value, roots: &mut coprime::Roots) -> Built {
-        let mut coef = |m: BigUint| Coef {
+    /// Complexity tradeoff: a coefficient that is its own root is copied, O(n) in its bits, as
+    /// [`Ck::fixed_value`] copies the value, and the product of the `m` kept primes is taken
+    /// by halves, O(M(m) log m), where a product one prime at a time is O(m^2) words; one with
+    /// roots given costs O(1). Kept as roots, the copies are shared by every product and power
+    /// that reads them.
+    fn of(
+        v: &Value,
+        roots: &mut coprime::Roots,
+        from: Option<([Option<coprime::SetId>; 2], Option<coprime::SetId>)>,
+    ) -> Built {
+        let (given, kept) = from.unwrap_or_default();
+        let mut coef = |m: &BigUint, i: usize| Coef {
             bits: Num::from(i128::from(m.bits())),
             one: m.bits() == 1,
-            root: (m.bits() != 0).then(|| roots.leaf(m)),
+            root: match m.bits() {
+                0 => None,
+                1 => Some(coprime::EMPTY),
+                _ => Some(given[i].unwrap_or_else(|| roots.leaf(m.clone()))),
+            },
         };
         match v {
             Value::Int(i) => Built {
                 parts: [
-                    coef(BigUint::from(i.unsigned_abs())),
-                    coef(BigUint::from(1u8)),
+                    coef(&BigUint::from(i.unsigned_abs()), 0),
+                    coef(&BigUint::from(1u8), 1),
                 ],
                 kept: Some(coprime::EMPTY),
                 exact: true,
@@ -16173,11 +16240,14 @@ impl Built {
             },
             Value::Big(r) | Value::Rat(r) => {
                 let (num, den, pows) = r.kept();
-                let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
-                let parts = [coef(num.magnitude().clone()), coef(den.magnitude().clone())];
+                let parts = [coef(num.magnitude(), 0), coef(den.magnitude(), 1)];
+                let kept = kept.unwrap_or_else(|| {
+                    let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
+                    roots.leaf(product_of(&primes))
+                });
                 Built {
                     parts,
-                    kept: Some(roots.leaf(product_of(&primes))),
+                    kept: Some(kept),
                     exact: true,
                     proof: None,
                 }
@@ -16246,12 +16316,7 @@ fn either_root(roots: &mut coprime::Roots, a: &Coef, b: &Coef) -> Option<coprime
 /// every root the walk met (Bernstein, "Factoring into coprimes in essentially linear time",
 /// J. Algorithms 54, 2005), where it costs set lookups ([`coprime::Roots::settle`]): a chain
 /// of `n` products costs O(n) here and O(n log^2 n) lookups at the end.
-fn product_built(
-    roots: &mut coprime::Roots,
-    op: BinaryOp,
-    x: &Built,
-    y: &Built,
-) -> Option<Built> {
+fn product_built(roots: &mut coprime::Roots, op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
     let [p, q] = &x.parts;
     let [r, s] = match op {
         BinaryOp::Div => [&y.parts[1], &y.parts[0]],
