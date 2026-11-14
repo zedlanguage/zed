@@ -11,9 +11,9 @@ use zedc::query::Db;
 use zedc::unit::{Memory, load, order};
 
 use crate::scaling::{
-    Graph, chain, chain_back, chain_of_cycles, complete, cycles_of_two, dense, fan, graph,
-    imports_back, ladder, later_forms, long_cycle, memory, names, nested_fors, own_main, pairs,
-    pairs_of_units, placeholders, ring,
+    Graph, ambiguous_uses, chain, chain_back, chain_of_cycles, complete, cycles_of_two, dense, fan,
+    graph, imports_back, ladder, later_forms, long_cycle, memory, names, nested_fors, own_main,
+    pairs, pairs_of_units, placeholders, ring,
 };
 
 /// Checks that loading the package `make(k)` from `main` is linear in `k`, from `k` = `n`.
@@ -80,6 +80,11 @@ fn many_imports_back_into_a_long_cycle_are_named_once_in_linear_time() {
 #[test]
 fn many_disjoint_cycles_are_each_named_in_linear_time() {
     linear("many cycles of two", 200, cycles_of_two);
+}
+
+#[test]
+fn many_uses_of_an_ambiguous_qualifier_beside_many_taken_names_resolve_in_linear_time() {
+    linear("uses of an ambiguous qualifier", 8000, ambiguous_uses);
 }
 
 #[test]

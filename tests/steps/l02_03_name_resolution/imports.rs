@@ -135,7 +135,7 @@ fn a_name_two_units_bring_in_is_ambiguous_where_it_is_used() {
         mistakes(&p),
         [
             "main.zed:3:13: `scale` is ambiguous between two imports. Try `metric.scale` after \
-          `import metric;` instead.\n  \
+          `import metric;` or `imperial.scale` after `import imperial;` instead.\n  \
           [1] 1:1: this import brings `scale` in from the unit `metric`\n      \
           1 | import metric.{scale};\n        \
           | ^^^^^^^^^^^^^^^^^^^^^^\n  \

@@ -43,7 +43,7 @@ is listed below with the group that covers it or the reason none is needed.
 | Corpus fences, one or several programs | fences.rs (6 tests) | |
 | Depth and width at small sizes | scaling.rs `nested_blocks_and_overloads_resolve_at_small_sizes`, `each_deep_shape_resolves_at_small_depths` | |
 | Imports, qualified names, aliases, ambiguity | l02_03_name_resolution imports.rs, complete.rs | Layer L2.3 |
-| Ambiguous qualifier or alias: repair names a member the unit lacks | none merged | Fails: row FAIL-ambiguous-qualifier-repair |
+| Ambiguous qualifier or alias: repair names a member the unit lacks | l02_03_name_resolution ambiguous_qualifier.rs | Row FAIL-ambiguous-qualifier-repair, fixed |
 | Structs, methods, type parameters, match arms | l02_03_name_resolution binders.rs | Layer L2 |
 | `main_fact`, `blocking_written`, annotations on `main` | none | Rows MAIN-files and BLOCKING-fact (A68) build them; no DESIGN output yet to test against |
 | `type_var` (generic type variables) | none | Generics, a later layer |

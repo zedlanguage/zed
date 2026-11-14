@@ -14,7 +14,7 @@ regions% / lines%, before the qualified-type tests of `complete.rs` were added: 
 | Qualified member undefined; qualifier shadowed by a parameter; qualifier is no value | imports.rs `a_qualified_member_the_unit_does_not_define_is_rejected`, `a_qualifier_is_a_name_that_a_parameter_shadows`, `a_qualifier_is_no_value` | |
 | Qualified type: a type of the unit, a non-type, a missing name, an unimported qualifier | complete.rs `a_qualified_type_names_a_type_of_an_imported_unit_or_is_refused`; imports.rs `a_type_of_another_unit_is_not_yet_linked` | |
 | Ambiguous name, used or unused; top level shadows it | imports.rs `a_name_two_units_bring_in_is_ambiguous_where_it_is_used`, `an_unused_ambiguous_name_is_no_error_and_a_top_level_definition_shadows_it` | |
-| Ambiguous qualifier or alias: the repair | none merged | Fails: row FAIL-ambiguous-qualifier-repair; test in wt/failing-tests/FAIL-ambiguous-qualifier-repair.rs |
+| Ambiguous qualifier or alias: the repair | ambiguous_qualifier.rs (an alias per import, a free new name, a qualifier beside a selective import, each repair resolves) | Row FAIL-ambiguous-qualifier-repair, fixed |
 | Overloads from two units and the unit | imports.rs `functions_of_one_name_from_two_units_and_the_unit_are_one_overload_set` | |
 | One unit imported twice | imports.rs `one_unit_imported_twice_brings_in_one_binder_without_ambiguity` | |
 | Block imports: seen in the block, shadow the top level, rebinding either order | imports.rs (4 tests) | |

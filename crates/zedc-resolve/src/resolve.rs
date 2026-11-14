@@ -867,6 +867,9 @@ struct Resolver<'u> {
     // so a use is compared with it in O(1), at no memory beyond the binder table and one entry
     // here per binder used too early.
     above: HashMap<usize, Span>,
+    /// For each import binder an ambiguity error has renamed, the number its numbered new
+    /// name was last given, the start of its next search ([`Resolver::alias`]).
+    aliases: HashMap<usize, u64>,
     /// The body of each `main` with its parameter written, `m` in `main(m: MainArgs)`, and that
     /// name: a use of the name alone, not a read of a field, is not defined, and its message
     /// says what `m` is ([`main_param_alone`]).
@@ -1138,10 +1141,21 @@ impl Resolver<'_> {
     }
 
     /// The error that `name`, used at `span`, names the binders `a` and `b`, which two imports
-    /// from different units bring in.
+    /// from different units bring in, with a repair for each import (DESIGN.md sec:units,
+    /// "Ambiguity is rejected, not ranked"): a name a selective import brings in is read
+    /// through its unit's qualifier, `metric.scale` after `import metric;`; a qualifier or an
+    /// alias, `shapes` of `import a.shapes;` or `s` of `import a.shapes as s;`, is the name of
+    /// the unit itself, so its import is renamed with `as` ([`Resolver::alias`]).
     fn ambiguous(&mut self, name: &str, span: Span, a: usize, b: usize) {
-        let unit = &self.out.imports[&a];
-        let q = unit.rsplit('.').next().unwrap_or_default();
+        let repairs = [a, b].map(|i| {
+            let unit = self.out.imports[&i].clone();
+            if self.out.binders[i].kind == Kind::Unit {
+                format!("`import {unit} as {};`", self.alias(name, i, &unit))
+            } else {
+                let q = unit.rsplit('.').next().unwrap_or_default();
+                format!("`{q}.{name}` after `import {unit};`")
+            }
+        });
         let notes = [a, b]
             .map(|i| Note {
                 span: self.out.binders[i].span,
@@ -1156,11 +1170,43 @@ impl Resolver<'_> {
             menu: String::new(),
             span,
             message: format!(
-                "`{name}` is ambiguous between two imports. Try `{q}.{name}` after `import {unit};` \
-                 instead"
+                "`{name}` is ambiguous between two imports. Try {} or {} instead",
+                repairs[0], repairs[1]
             ),
             notes,
         });
+    }
+
+    /// A new name for the import binder `id` of `unit`, whose qualifier or alias `name` is
+    /// ambiguous: the last name of its path, `forms` for `b.forms`, else its whole path joined
+    /// by `_`, `b_shapes` for `b.shapes`, else that with a number from 2 that makes it a name
+    /// nothing in scope, the prelude or a type uses. Each try is one lookup.
+    // Complexity tradeoff: the naive search counts from 2 at each use, O(k) for k numbered
+    // names in scope, so u uses of the name beside k such names cost O(u · k), quadratic in
+    // the text. The search starts instead at the number the last use of `id` was given and
+    // only counts up: a use whose number is still free costs one lookup, and every further
+    // try passes a number for good, so all uses cost O(u + k) together, at one map entry per
+    // renamed import. A later use may be given a larger number than the smallest free one,
+    // which repairs it as well.
+    fn alias(&mut self, name: &str, id: usize, unit: &str) -> String {
+        let free = |r: &Self, n: &str| n != name && r.find(n).is_none() && !TYPES.contains(&n);
+        let last = unit.rsplit('.').next().unwrap_or_default();
+        if free(self, last) {
+            return last.into();
+        }
+        let joined = unit.replace('.', "_");
+        if free(self, &joined) {
+            return joined;
+        }
+        let mut k = self.aliases.get(&id).copied().unwrap_or(2);
+        loop {
+            let n = format!("{joined}{k}");
+            if free(self, &n) {
+                self.aliases.insert(id, k);
+                return n;
+            }
+            k += 1;
+        }
     }
 
     /// Notes the use at `span` of `name`, which names `ids`, when it stands above its

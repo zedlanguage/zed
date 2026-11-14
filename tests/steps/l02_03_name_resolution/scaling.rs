@@ -481,3 +481,37 @@ fn a_few_reads_of_main_files_in_a_unit_with_its_own_main_are_each_rejected() {
         assert_eq!(loaded(&memory(own_main(k))).len(), k + 1, "{k}");
     }
 }
+
+/// Two imports of one last name, `shapes`, the `k` numbered new names `a_shapes` …
+/// `a_shapes{k}` taken by definitions, and `k` uses of the ambiguous `shapes`: each use is
+/// offered the new name `a_shapes{k + 1}`, which a search from 2 at each use would reach only
+/// after `k` tries (FAIL-ambiguous-qualifier-repair).
+pub(super) fn ambiguous_uses(k: usize) -> Vec<(String, String)> {
+    let mut text = String::from("import a.shapes;\nimport b.shapes;\na_shapes = 0;\n");
+    for i in 2..=k {
+        text.push_str(&format!("a_shapes{i} = 0;\n"));
+    }
+    for i in 0..k {
+        text.push_str(&format!("y{i} = shapes.o;\n"));
+    }
+    vec![
+        ("a/shapes.zed".into(), "o = 1;\n".into()),
+        ("b/shapes.zed".into(), "o = 1;\n".into()),
+        ("main.zed".into(), text),
+    ]
+}
+
+#[test]
+fn each_use_of_an_ambiguous_qualifier_is_offered_the_first_free_number() {
+    for k in [1, 2, 9] {
+        let m = loaded(&memory(ambiguous_uses(k)));
+        assert_eq!(m.len(), k, "{k}: {m:?}");
+        let want = format!("a_shapes{}", k + 1);
+        for e in &m {
+            assert!(
+                e.contains(&format!("`import a.shapes as {want};`")),
+                "{k}: {e}"
+            );
+        }
+    }
+}
