@@ -2280,8 +2280,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-generic-need-ignores-arm | running |  |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
+| FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
 | FAIL-diagnostics-follow-on | running | 2026-11-14 07:10 |  |
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
+| FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
@@ -2292,7 +2294,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
-| XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
