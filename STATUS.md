@@ -2326,7 +2326,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
-| POLY-square-choice-cost | running |  |  |
+| PERF-l139-hopb-wakes | running |  |  |
+| PERF-l139-persist-due | running |  |  |
+| POLY-square-choice-cost | impl attempt 1 | 2026-11-14 10:56 | started; worktree /home/luke/Work/wt/poly-square |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
 | TEST-l0123-slow-pieces | running | 2026-11-14 10:33 |  |
