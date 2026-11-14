@@ -10,6 +10,7 @@
 mod boundary;
 mod bounds;
 mod cell;
+mod complete;
 mod ends;
 mod float;
 mod kept_serial;

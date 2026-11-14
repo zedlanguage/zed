@@ -10,6 +10,7 @@
 //! bound of every lattice, and `revision` on constraints from ordinary programs.
 
 mod bench;
+mod complete;
 mod invariant;
 mod iteration;
 mod order;
