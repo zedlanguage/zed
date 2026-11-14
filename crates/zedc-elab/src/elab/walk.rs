@@ -2115,12 +2115,14 @@ impl<'a> Elab<'a> {
         };
         let other = self.temp();
         let x = mem::replace(&mut args[1 - at], Term::Var(other.clone()));
+        // The literal's own term, which a marked elaboration marks, is the last arm; each other
+        // arm carries the same mark ([`marked_as`]), so a mutant of the constant replaces it at
+        // every carrier.
+        let own = mem::replace(&mut args[at], Term::Var(other.clone()));
         let mut arms: Vec<(KPattern, Term)> = values
             .iter()
-            .map(|(c, v)| (KPattern::Is(c.ty()), Term::Lit(v.clone())))
+            .map(|(c, v)| (KPattern::Is(c.ty()), marked_as(&own, v.clone())))
             .collect();
-        // The literal's own term, which a marked elaboration marks, is the last arm.
-        let own = mem::replace(&mut args[at], Term::Var(other.clone()));
         arms.push((KPattern::Wild, own));
         args[at] = Term::Match(Shared::new(Term::Var(other.clone())), arms);
         Term::Let(other, Shared::new(x), Shared::new(Term::Prim(p, args)))
@@ -2132,7 +2134,7 @@ impl<'a> Elab<'a> {
     fn witnessed(&mut self, s: Span, w: &check::Witness, own: Term) -> Term {
         let mut arms: Vec<(KPattern, Term)> = self.info.follows[&s]
             .iter()
-            .map(|(c, v)| (KPattern::Is(c.ty()), Term::Lit(v.clone())))
+            .map(|(c, v)| (KPattern::Is(c.ty()), marked_as(&own, v.clone())))
             .collect();
         arms.push((KPattern::Wild, own));
         Term::Match(self.witness_term(w), arms)
@@ -2399,6 +2401,22 @@ fn with_value(mut own: Term, v: Value) -> Term {
         return own;
     }
     Term::Lit(v)
+}
+
+/// The literal `v` at another carrier of the generic literal whose own term is `own`, marked
+/// with `own`'s mark where `own` is a marked constant ([`Elab::constant`]): an arm of
+/// [`Elab::witnessed`] or [`Elab::follow`], so that a mutant of the constant replaces it in
+/// every arm, at each arm's carrier (L25.8, plan row MUTATE-generic-constants). Unmarked
+/// elsewhere, as the elaboration without marks builds it.
+// Complexity tradeoff: O(1), the mark one integer literal; `with_value(own.clone(), v)` would
+// copy the whole of `own` per arm where `own` is an operation, as an exponent `(1 + 1)` is.
+fn marked_as(own: &Term, v: Value) -> Term {
+    match own {
+        Term::Prim(Prim::Neg, a) if mark_of(own).is_some() => {
+            Term::Prim(Prim::Neg, vec![Term::Lit(v), a[1].clone()])
+        }
+        _ => Term::Lit(v),
+    }
 }
 
 /// Whether `p` on values of one numeric carrier gives a value of that carrier: `+`, `-`, `*`

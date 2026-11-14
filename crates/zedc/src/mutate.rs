@@ -5,11 +5,11 @@
 //! The replacements: a comparison by its neighbor (`<=` and `<`, `>=` and `>`, `==` and
 //! `!=`, each way), `+` and `-` each way, `*` by `/` where `/` is defined (the checker types
 //! the product with no `int`) and `/` by `*`, and an integer literal `n` by `n - 1` and by
-//! `n + 1` at the carrier it adopted (`int`, `rat` or `f64`). A
-//! mutant is named by its definition's source name, the position of the node in the
-//! definition's kernel term, and the replacement, so the name does not change when other
-//! declarations move; mutants are taken in that order (definitions by name, nodes in
-//! preorder), never in the order of a hash.
+//! `n + 1` at the carrier it adopted (`int`, `rat`, `f64` or `f32`), in every arm where a
+//! generic literal is built once per carrier (L1.26a). A mutant is named by its definition's
+//! source name, the position of the node in the definition's kernel term, and the
+//! replacement, so the name does not change when other declarations move; mutants are taken
+//! in that order (definitions by name, nodes in preorder), never in the order of a hash.
 //!
 //! A mutant is skipped when the optimizer of today, the build stage (`stage::mix`, step
 //! L1.28), gives its definition the same term as the original's: the two programs are then
@@ -21,6 +21,7 @@
 //! a new parse, check or elaboration.
 
 use std::collections::HashMap;
+use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -60,13 +61,15 @@ impl std::fmt::Display for Change {
 pub struct Mutant {
     /// The definition's position in the unit.
     pub def: usize,
-    /// The node's position in the definition's term: the first, in preorder, of the nodes of
-    /// one written operator.
+    /// The node's position in the definition's term: of an operator, the first in preorder of
+    /// its nodes; of a constant, the last, its own value's ([`Self::also`]).
     pub at: Position,
-    /// The positions of the other nodes of the same written operator, which the mutant replaces
-    /// too: one in each arm of an operation on generic literals built once per carrier (L1.26a),
-    /// none elsewhere.
-    pub also: Vec<Position>,
+    /// The other nodes of the same written operator or constant, which the mutant replaces too,
+    /// each with what replaces it there: one in each arm of an operation on generic literals
+    /// built once per carrier, and one in each arm of a generic literal taking its carrier
+    /// (L1.26a); none elsewhere. An operator's arms take [`Self::to`]; a constant's arm takes
+    /// its neighbor at that arm's carrier, as `2.0` is replaced by `1.0` where `2` is by `1`.
+    pub also: Vec<(Position, Change)>,
     /// The node as written.
     pub was: Change,
     /// What replaces it.
@@ -108,7 +111,7 @@ fn neighbors(p: Prim, quotient: bool) -> &'static [Prim] {
 }
 
 /// The neighbors `n - 1` and `n + 1` of the integer literal `n`, at the carrier it adopted:
-/// `int`, `rat` or `f64`; an error when the system refuses the memory to build one.
+/// `int`, `rat`, `f64` or `f32`; an error when the system refuses the memory to build one.
 fn beside(n: &Value) -> Result<[Value; 2], String> {
     let exact = |r: &Rat| -> Result<[Rat; 2], String> {
         let one = Rat::int(1.into());
@@ -123,10 +126,11 @@ fn beside(n: &Value) -> Result<[Value; 2], String> {
     match n {
         Value::Rat(r) => Ok(exact(r)?.map(Value::rat)),
         Value::Float(x) => Ok([Value::float(x.get() - 1.0), Value::float(x.get() + 1.0)]),
+        Value::Float32(x) => Ok([Value::float32(x.get() - 1.0), Value::float32(x.get() + 1.0)]),
         _ => {
             let n = n
                 .as_integer()
-                .expect("an integer literal is an int, a rat or an f64");
+                .expect("an integer literal is an int, a rat, an f64 or an f32");
             Ok(exact(&n)?.map(Value::integer))
         }
     }
@@ -221,14 +225,33 @@ fn sites(
             // One written operator is a node in each arm of an operation on generic literals
             // built once per carrier (`elab::walk::per_carrier`), all with its mark: its mutants
             // are made at the first and replace it in every arm, as a mutant of the operation
-            // written once replaces it at every carrier.
+            // written once replaces it at every carrier. One written constant is likewise a
+            // node in each arm of a generic literal taking its carrier (`elab::walk::marked_as`),
+            // of that arm's value: each mutant replaces it in every arm by its neighbor there,
+            // `n - 1` or `n + 1` at the arm's carrier, and is named by the last node, the
+            // literal's own value, which the source writes.
             if let Some(made) = first.get(&k) {
                 let made = &mut out[made.clone()];
-                if made.iter().any(|x| x.was != was) {
-                    return differs("one mark is on nodes of two kinds");
-                }
-                for x in made {
-                    x.also.push(at.clone());
+                match &was {
+                    Change::Op(_) => {
+                        if made.iter().any(|x| x.was != was) {
+                            return differs("one mark is on nodes of two kinds");
+                        }
+                        for x in made {
+                            x.also.push((at.clone(), x.to.clone()));
+                        }
+                    }
+                    Change::Int(v) => {
+                        if made.iter().any(|x| !matches!(x.was, Change::Int(_))) {
+                            return differs("one mark is on nodes of two kinds");
+                        }
+                        for (x, to) in made.iter_mut().zip(beside(v)?) {
+                            let at = mem::replace(&mut x.at, at.clone());
+                            let to = mem::replace(&mut x.to, Change::Int(to));
+                            x.also.push((at, to));
+                            x.was = was.clone();
+                        }
+                    }
                 }
                 continue;
             }
@@ -270,18 +293,19 @@ fn sites(
     Ok(())
 }
 
-/// `term` with the nodes at `at` replaced as `to` says: one copy of `term`, O(its size, the
+/// `term` with each node of `at` replaced as its change says: one copy of `term`, O(its size, the
 /// order of the remix that follows), then each node changed in place. The copy shares what
 /// `term` holds behind an `Arc` until the path to a node reaches it ([`child_mut`]). `at` holds
-/// one node, or one per carrier of an operation on generic literals ([`Mutant::also`]).
-pub fn apply<'p>(term: &Term, at: impl IntoIterator<Item = &'p Position>, to: &Change) -> Term {
+/// one node, or one per carrier of an operation on generic literals or of a generic literal
+/// ([`Mutant::also`]), each with what replaces it.
+pub fn apply<'p>(term: &Term, at: impl IntoIterator<Item = (&'p Position, &'p Change)>) -> Term {
     // Complexity tradeoff (COMPLEXITY.md F58): a rebuild along the path by `with_child`, which
     // copies each inline child list, costs O(size × depth), cubic over the mutants of one
     // chain; one copy of the term and the nodes changed in place through `child_mut` costs
     // O(size + k × depth) for k ≤ 6 nodes, the order of the remix that follows. Precondition:
     // each position lies in `term`.
     let mut out = term.clone();
-    for at in at {
+    for (at, to) in at {
         let mut node = &mut out;
         for i in at.path() {
             node = child_mut(node, i).expect("a mutant's position is in its definition");
@@ -356,8 +380,9 @@ pub fn run(
         if built[def].is_none() {
             built[def] = Some(remix.mix(original));
         }
-        let at = std::iter::once(&mutant.at).chain(&mutant.also);
-        let term = Shared::new(apply(original, at, &mutant.to));
+        let at = std::iter::once((&mutant.at, &mutant.to))
+            .chain(mutant.also.iter().map(|(at, to)| (at, to)));
+        let term = Shared::new(apply(original, at));
         let verdict = if built[def].as_ref() == Some(&remix.mix(&term)) {
             Verdict::Skipped
         } else if rows[def].is_empty() && untaken.contains(&unit.defs[def].kernel) {

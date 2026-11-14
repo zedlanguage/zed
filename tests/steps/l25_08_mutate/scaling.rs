@@ -104,7 +104,7 @@ pub(super) fn remixes_to_a_lambda(unit: &Arc<Unit>, remix: &Mutex<Remix>) {
 }
 
 /// Each benchmark of `bench.rs` at small sizes, through the same assertions: the mutants found
-/// in [`unit`] and [`chain`], the verdicts of the mutants run on [`unit`], [`chain_with_row`] and
+/// in [`unit`], [`chain`] and [`generic_chain_with_row`], the verdicts of the mutants run on [`unit`], [`chain_with_row`] and
 /// [`generic_chain_with_row`], a remix of the generic chain, and that `Remix::mix` gives the
 /// term `mix` gives, which `remixing_a_definition_costs_less_than_mixing_it` times at 400.
 #[test]
@@ -115,6 +115,8 @@ fn the_mutants_of_each_benchmark_unit_at_small_sizes() {
         finds_the_mutants(&text, db.clone(), 3 * n);
         runs_the_mutants_of_functions(&text, db, n);
         let (text, db) = warm(&cache, n, chain);
+        finds_the_mutants(&text, db, 3 * n);
+        let (text, db) = warm(&Warm::default(), n, generic_chain_with_row);
         finds_the_mutants(&text, db, 3 * n);
         for make in [
             chain_with_row as fn(usize) -> String,
