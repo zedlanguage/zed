@@ -2227,11 +2227,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-complete-diagnostics | impl attempt 1 | 2026-11-14 05:21 | started; worktree made, load 53.12 59.44 49.57 |
+| TEST-complete-m0 | impl attempt 1 | 2026-11-14 05:28 | started; worktree made and seeded |
 | TEST-complete-names | impl attempt 1 | 2026-11-14 04:55 | started; worktree made and seeded |
 | TEST-complete-native | impl attempt 1 | 2026-11-14 05:08 | started; worktree /home/luke/Work/wt/test-complete-native |
 | TEST-complete-parse | impl attempt 1 | 2026-11-14 04:55 | started; worktree made and seeded |
 | TEST-complete-ports | impl attempt 1 | 2026-11-14 05:21 | survey done; coverage build started (build/cov, -j 4) / load 55.24 56.11 49.65 |
-| TEST-complete-staging | impl attempt 1 | 2026-11-14 05:27 | started; worktree made and seeded |
+| TEST-complete-staging | impl attempt 1 | 2026-11-14 05:27 | baseline l01_27 59 passed, l01_28 100 passed (71 pieces, 0 failed); coverage build started (build/cov, -j 4) / 32.19 54.07 52.45 |
 | TEST-complete-values | impl attempt 1 | 2026-11-14 05:13 | started; worktree seeded |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
