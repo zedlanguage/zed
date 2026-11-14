@@ -1761,6 +1761,14 @@ fn wide_scales() {
     scales("wide", 8, 2);
 }
 
+/// 12.0 times the instructions at 8n while each part of a test was certified idle again at
+/// each of its cases; 10.3 since the least part of each chain of disjunctions stands for the
+/// parts above it (XR-l139-family, `Scope::idle_by_chain`).
+#[test]
+fn coordmix_floor_scales() {
+    scales("coordmix_floor", 4, 1);
+}
+
 /// About `k^1.6` to `k^2` on main; about `k^1.1` to `k^1.25` since the threshold aggregate
 /// reads the upper disjunctions (LAZY-hub-unsolved).
 #[test]
@@ -1788,6 +1796,24 @@ fn coordmix_slopes_scales() {
 #[test]
 fn coordkk_scales() {
     scales("coordkk", 16, 1);
+}
+
+/// About `k^1.75` to `k^1.96`, 14.8 times the instructions at 8n, while each part of a test
+/// was certified idle again at each of its cases; 10.1 since the least part of each chain of
+/// disjunctions stands for the parts above it (XR-l139-family, `Scope::idle_by_chain`).
+#[test]
+fn star_extra_scales() {
+    scales("star_extra", 4, 1);
+}
+
+/// About `k^1.7` from `k = 8` to 32. At `n = 2` the limit's log factor is 4, and main
+/// passes (31.9 times the work against 35.2); at `n = 4` each run of `k = 32` takes over 30 s,
+/// so the test would not finish in 60 s. 10.9 times the instructions at 8n while each part of
+/// a test was certified idle again at each of its cases; 10.2 since the least part of each
+/// chain of disjunctions stands for the parts above it (XR-l139-family, `Scope::idle_by_chain`).
+#[test]
+fn chain_scales() {
+    scales("chain", 2, 1);
 }
 
 /// About `k^2.1` while each side of a hull over two names was searched; 8.8 times the

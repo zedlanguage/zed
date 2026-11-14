@@ -3783,6 +3783,88 @@ struct Part {
     role: Role,
     /// Its entries in [`Block::bounds`] ([`bounds_at`]).
     bounds: Vec<(BoundsKey, Turn)>,
+    /// Its conjunct's atoms and their ends ([`chain_shape`]), when it has that shape.
+    chain: Option<Chain>,
+}
+
+/// One atom of a disjunction of rows, without its ends: a row `t + c >= 0`, kept as its
+/// terms `t`, or two rows `F + b*y + c >= 0` and `F - b*y + c >= 0`, which together mean
+/// `F + |b|*|y| + c >= 0`, kept as `F` and `y` (the shape of [`compact_abs`]).
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ChainAtom {
+    Row(BTreeMap<Atom, Int>),
+    Abs(BTreeMap<Atom, Int>, Atom),
+}
+
+/// A disjunction's atoms, sorted, and their ends in the same order: `c` for a row, `|b|`
+/// and `c` for an absolute value ([`chain_shape`]).
+type Chain = (Arc<Vec<ChainAtom>>, Vec<Int>);
+
+/// The atoms and ends of `g` when `g` is a disjunction of rows `>= 0`, no two of its arms or
+/// atoms alike; otherwise `None`. Two arms pair as an absolute value when they have the same
+/// constant and their terms differ only in the sign of one coefficient.
+///
+/// Naive: try every later arm against each arm, O(r^2 t) for r arms of t terms. Used: the
+/// arms sorted once by constant and terms, and for each arm and each of its terms the arm
+/// with that sign flipped found by binary search, O(r t (t + log r)). A different pairing
+/// of arms that could pair two ways only gives another exact form of the same disjunction,
+/// so [`chain_below`] stays sound; `None` only leaves the part to [`Scope::idle`]. Read once
+/// per part, as it is added.
+fn chain_shape(g: &Formula) -> Option<Chain> {
+    let Formula::Or(gs) = g else { return None };
+    let mut rows = vec![];
+    for a in &gs[..] {
+        let Formula::Con(c) = a else { return None };
+        if c.rel != Rel::Ge {
+            return None;
+        }
+        rows.push(c);
+    }
+    fn key(c: &Con) -> (&Int, &BTreeMap<Atom, Int>) {
+        (&c.lin.constant, &c.lin.terms)
+    }
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|&i, &j| key(rows[i]).cmp(&key(rows[j])));
+    if order.windows(2).any(|w| key(rows[w[0]]) == key(rows[w[1]])) {
+        return None;
+    }
+    let mut used = vec![false; rows.len()];
+    let mut atoms: Vec<(ChainAtom, Vec<Int>)> = vec![];
+    for i in 0..rows.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        let c = &rows[i].lin;
+        let pair = c.terms.iter().find_map(|(y, k)| {
+            let mut f = c.terms.clone();
+            f.insert(y.clone(), -k);
+            let at = order.binary_search_by(|&j| key(rows[j]).cmp(&(&c.constant, &f)));
+            let j = order[at.ok()?];
+            (!used[j]).then(|| (j, y, k.abs()))
+        });
+        match pair {
+            Some((j, y, k)) => {
+                used[j] = true;
+                let mut rest = c.terms.clone();
+                rest.remove(y);
+                atoms.push((ChainAtom::Abs(rest, y.clone()), vec![k, c.constant.clone()]));
+            }
+            None => atoms.push((ChainAtom::Row(c.terms.clone()), vec![c.constant.clone()])),
+        }
+    }
+    atoms.sort_by(|a, b| a.0.cmp(&b.0));
+    if atoms.windows(2).any(|w| w[0].0 == w[1].0) {
+        return None;
+    }
+    let (keys, ends): (Vec<ChainAtom>, Vec<Vec<Int>>) = atoms.into_iter().unzip();
+    Some((Arc::new(keys), ends.into_iter().flatten().collect()))
+}
+
+/// Whether ends `q` lie at or below ends `p` in every place, for two chains of one key:
+/// then the disjunction of `q` implies that of `p` ([`Scope::idle_by_chain`]).
+fn chain_below(q: &[Int], p: &[Int]) -> bool {
+    q.len() == p.len() && q.iter().zip(p).all(|(a, b)| a <= b)
 }
 
 /// What reads a part's conjunct besides its own projection, found once as the part is added.
@@ -3945,6 +4027,9 @@ struct Block {
     // at every level (36.4 times the bytes at 8 times the depth). Used: each part under each
     // of its variables, O(s log k). COMPLEXITY.md C52.
     vars: imbl::OrdMap<Factor, imbl::OrdSet<PartAt>>,
+    /// The parts of each chain key ([`chain_shape`]), ordered by their ends, so that the
+    /// first is the least ([`Scope::idle_by_chain`]).
+    chains: imbl::OrdMap<Arc<Vec<ChainAtom>>, imbl::OrdSet<(Vec<Int>, PartAt)>>,
     /// The disjunctions in which a constraint on two names bounds an end of one of them in
     /// every arm ([`bounds_at`]), by the two names, the end and the side of it the constraint
     /// turns from that end, and by how far it may turn ([`Turn`]), so that a case's constraint
@@ -4035,6 +4120,7 @@ impl Block {
             terms: imbl::OrdMap::new(),
             mentions: imbl::OrdMap::new(),
             vars: imbl::OrdMap::new(),
+            chains: imbl::OrdMap::new(),
             bounds: imbl::OrdMap::new(),
             stairs: imbl::OrdMap::new(),
             fired: BTreeSet::new(),
@@ -4188,6 +4274,13 @@ impl Block {
         let bounds = (of.as_ref()).map_or_else(Vec::new, |g| bounds_at(g, &with, &self.names_at));
         self.index_bounds(&at, &bounds);
         self.added.push(key.clone());
+        let chain = of.as_deref().and_then(chain_shape);
+        if let Some((k, ends)) = &chain {
+            self.chains
+                .entry(k.clone())
+                .or_default()
+                .insert((ends.clone(), at.clone()));
+        }
         let part = Part {
             key,
             with,
@@ -4195,6 +4288,7 @@ impl Block {
             names,
             role,
             bounds,
+            chain,
         };
         self.parts.insert(at, Arc::new(part));
     }
@@ -4231,6 +4325,14 @@ impl Block {
                 if us.is_empty() {
                     self.users.remove(n);
                 }
+            }
+        }
+        if let Some((k, ends)) = &part.chain
+            && let Some(set) = self.chains.get_mut(k)
+        {
+            set.remove(&(ends.clone(), at.clone()));
+            if set.is_empty() {
+                self.chains.remove(k);
             }
         }
         let Some(g) = &part.of else {
@@ -10298,6 +10400,8 @@ impl Scope {
         let leaf = b.leaf.clone();
         let mut work: std::collections::VecDeque<PartAt> = due.iter().cloned().collect();
         let mut queued: BTreeSet<PartAt> = due.iter().cloned().collect();
+        // The idle verdicts found since the names last moved ([`Scope::idle_by_chain`]).
+        let mut certified: BTreeMap<PartAt, bool> = BTreeMap::new();
         while let Some(i) = work.pop_front() {
             queued.remove(&i);
             let part = &b.parts[&i].clone();
@@ -10322,7 +10426,27 @@ impl Scope {
             // called at loop entry and after the preceding actual projection; with
             // unchanged names and block, calling it again is idempotent (its own
             // documented invariant). No aggregate transition can be missed here.
-            if !b.ray_managed && self.projected.contains_key(&part.key) && self.idle(&b, part) {
+            // Complexity tradeoff: naive version, `idle` on each projected part each time it
+            // is dequeued: a test of k arms splits into k cases, each wakes the k earlier
+            // parts, and each is certified again, k^2 eliminations of ~0.2M instructions.
+            // Used: [`Scope::idle_by_chain`]. A part whose conjunct is a disjunction of rows
+            // is implied by the least part of its chain key when that one's ends lie at or
+            // below its own, and then it is idle whenever that one is: the certificate is
+            // monotone in the point set, and the two formulas share the block's base and
+            // names. One certificate per chain and box replaces one per part. Cost: O(log k)
+            // to find the least part, O(e) to compare e ends; parts of other shapes, or not
+            // above the least, are certified as before; a verdict is kept until the next
+            // projection moves the names. Certificates in a model of the loop at k = 32:
+            // star_extra 1488 against 93, chain 4032 against 250, coordmix 2512 against 590,
+            // hopb unchanged (its chain keys all differ). Measured at 8n (instructions):
+            // star_extra 14.8 to 10.1 times, coordmix_floor 12.0 to 10.2, chain 10.9 to 10.2
+            // (XR-l139-family). Prior work: the certificate is the Omega test's exactness
+            // check (Pugh, "The Omega test", Supercomputing '91, pp. 4-13); taking the least
+            // element of a chain under implication is subsumption, as in clause subsumption.
+            if !b.ray_managed
+                && self.projected.contains_key(&part.key)
+                && self.idle_by_chain(&b, &i, part, &mut certified)
+            {
                 continue;
             }
             // Complexity tradeoff: naive version, a covered block's names copied and their
@@ -10334,6 +10458,7 @@ impl Scope {
             let start_part = (self.names.view().clone(), self.bottom);
             let part_before = (covered.is_none()).then(|| self.snapshot(&part.names));
             self.project_part(&b.formula(part));
+            certified.clear();
             let after_part = self.names.view().clone();
             let was = (b.stair_managed, b.ray_managed);
             covered = self.cover(&mut b, covered.is_some());
@@ -14978,6 +15103,50 @@ impl Scope {
             };
             !classed(&p) && covers(spans.remove(n).unwrap_or_default(), lo, hi)
         })
+    }
+
+    /// Whether the part `part` at `at` of `b` is idle, read from the least part of its chain
+    /// key ([`Block::chains`]) when that one's ends lie at or below its own and it is idle,
+    /// and otherwise from [`Scope::idle`]. `certified` holds the verdicts found since the
+    /// names last moved, and takes the new ones.
+    ///
+    /// Proof. Let Q be the least part and P this one, with one key and ends q <= p in every
+    /// place. A row atom `t + c_q >= 0` implies `t + c_p >= 0` for c_q <= c_p; an absolute
+    /// value `F + b_q|y| + c_q >= 0` implies `F + b_p|y| + c_p >= 0` for b_q <= b_p and
+    /// c_q <= c_p, as |y| >= 0. So each atom of Q implies the atom of P at its place, Q
+    /// implies P, and Q and the base imply P and the base ([`Split::formula`]). The atoms
+    /// hold the same names, so both formulas have the same names and refusals of the
+    /// group's names. When `idle` holds for Q, every value of each name in the box has an
+    /// integer point of Q and the base, which is a point of P and the base, and no name is
+    /// classed; so P's exact projection covers the box, and a sound projection of P meets
+    /// it to itself, as when `idle` holds for P. The names' products are those projecting P
+    /// leaves. As with `idle` itself, a refusal that projecting P would have reported is not
+    /// reported; that happens only where `idle` refuses P and holds for Q.
+    fn idle_by_chain(
+        &self,
+        b: &Block,
+        at: &PartAt,
+        part: &Part,
+        certified: &mut BTreeMap<PartAt, bool>,
+    ) -> bool {
+        let mut verdict = |q: &PartAt, p: &Part| match certified.get(q) {
+            Some(v) => *v,
+            None => {
+                let v = self.idle(b, p);
+                certified.insert(q.clone(), v);
+                v
+            }
+        };
+        if let Some((k, ends)) = &part.chain
+            && let Some((least, q)) = b.chains.get(k).and_then(|set| set.get_min())
+            && q != at
+            && chain_below(least, ends)
+            && let Some(qp) = b.parts.get(q)
+            && verdict(q, qp)
+        {
+            return true;
+        }
+        verdict(at, part)
     }
 }
 
