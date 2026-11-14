@@ -80,7 +80,10 @@ fn coprime_fourth_powers(n: usize) -> Vec<u128> {
     let mut q: u128 = 1 << 16;
     while out.len() < n {
         q += 1;
-        if (2..).take_while(|d| d * d <= q).all(|d| q % d != 0) {
+        if (2..)
+            .take_while(|d| d * d <= q)
+            .all(|d| !q.is_multiple_of(d))
+        {
             out.push(q.pow(4));
         }
     }
@@ -132,8 +135,8 @@ fn reused_chain(n: usize) -> String {
         "main(m: MainArgs) {{\n    x0 = rat({}) ^ (2^60);\n    z0 = rat(1) / rat({});\n",
         r[0], r[n]
     );
-    for i in 1..n {
-        s += &format!("    x{i} = x{} * rat({});\n", i - 1, r[i]);
+    for (i, ri) in r.iter().enumerate().take(n).skip(1) {
+        s += &format!("    x{i} = x{} * rat({ri});\n", i - 1);
     }
     for i in 1..n {
         s += &format!(

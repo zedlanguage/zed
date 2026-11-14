@@ -152,6 +152,16 @@ fn a_product_through_a_part_with_several_roots_past_the_memory_limit_is_rejected
         ),
         "{out}"
     );
+    // A negated value keeps the roots of what it negates: `d` still shares no prime with `b`
+    // and `c`.
+    let out = rejected(&src.replace("d = 2^64 + 17", "d = -(2^64 + 17)"));
+    assert!(
+        out.starts_with(
+            "7:24: Number too large for the memory limit of `main`: `x * x` needs at least 1 \
+             MiB; `@limits(memory: 1048576)`."
+        ),
+        "{out}"
+    );
     // Without the limit it fits the address space. `x / (rat(c) ^ (2^15))` cancels the power
     // of `c`, so a product through it proves nothing and is left to the run.
     assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);

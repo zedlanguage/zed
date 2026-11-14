@@ -191,6 +191,10 @@ impl Roots {
     }
 }
 
+/// A way [`disjoint`] can decide a check: the lookups it costs, the answer of the check made
+/// before that it rests on, if any, and the pairs of sets it looks up.
+type Way = (usize, Option<bool>, Vec<(SetId, SetId)>);
+
 /// Whether the sets `a` and `b` share no element, by the least of the ways of
 /// [`Roots::settle`], the answer kept in `checked` by the pair.
 fn disjoint(
@@ -212,10 +216,7 @@ fn disjoint(
         let (big, small) = if s.len() >= t.len() { (s, t) } else { (t, s) };
         !small.iter().any(|e| big.contains(e))
     };
-    // Each way: the lookups it costs, the checks made before it rests on, and the pairs it
-    // looks up.
-    let mut ways: Vec<(usize, Option<bool>, Vec<(SetId, SetId)>)> =
-        vec![(cost(a, b), None, vec![(a, b)])];
+    let mut ways: Vec<Way> = vec![(cost(a, b), None, vec![(a, b)])];
     for (x, y) in [(a, b), (b, a)] {
         if let Some((big, small)) = halves[y as usize]
             && let Some(&known) = checked.get(&pair(x, big))
