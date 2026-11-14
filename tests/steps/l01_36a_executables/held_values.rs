@@ -10,7 +10,7 @@ use super::{Ran, built, dir, executable, interpreter};
 /// the executable and by `zedc run`: each gives status 0 and the standard output paired with
 /// `n`.
 fn agree(name: &str, src: &str, runs: &[(&str, &str)]) {
-    let d = dir("held_values");
+    let d = dir(&format!("held_values_{name}"));
     let (file, exe) = (d.join(format!("{name}.zed")), d.join(name));
     std::fs::write(&file, src).unwrap();
     built(&file, &exe);
