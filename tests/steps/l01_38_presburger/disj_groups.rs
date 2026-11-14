@@ -979,12 +979,18 @@ pub(super) mod row_sums {
         shared_sums_are_answered(seed, 300, 30);
     }
 
+    /// The cases of seed 10247473762259090707, where the solver alone refused a projection.
+    #[test]
+    fn shared_sums_of_seed_10247473762259090707_are_answered_and_never_coarser() {
+        shared_sums_are_answered(10247473762259090707, 300, 30);
+    }
+
     /// Cases `0..count` of the generator of `decide_sat.rs` at `seed` (777 there): every answer
     /// is right and exact, and no answer is coarser than the solver's alone, with which the
     /// first `compared` are compared.
     pub(crate) fn shared_sums_are_answered(seed: u64, count: usize, compared: usize) {
         let cases = random_cases(seed, count);
-        let (mut exact, mut finer) = (0, 0);
+        let (mut exact, mut finer, mut alone_refused) = (0, 0, 0);
         for (c, (case, sets)) in cases.iter().enumerate() {
             let f = case.formula();
             let atoms: Vec<Atom> = (0..sets.len()).map(v).collect();
@@ -1013,7 +1019,17 @@ pub(super) mod row_sums {
                 let (d_old, p_old) = ask();
                 ROW_SUMS_OFF.with(|o| o.set(false));
                 assert!(d_old.is_err() || d.is_ok(), "case {c}: decide coarser");
-                let p_old = p_old.expect("a projection");
+                // The solver alone may refuse the projection as a whole, as it may refuse
+                // `decide` or one atom: where two atoms that share a row are told apart by
+                // nothing but their names it refuses with `Tie` rather than choose one (author
+                // ruling XR3, fix B). Seed 10247473762259090707 meets one: `-y0 + y1 + y4 - y2 +
+                // 2 * y3 == 42` and `y0 - y1 - y4 + y2 + 2 * y3 == 42` swap into each other
+                // with y0 and y1, y2 and y4. The method's answer, exact as checked above, is
+                // then finer than none, and there is nothing to compare.
+                let Ok(p_old) = p_old else {
+                    alone_refused += 1;
+                    continue;
+                };
                 for (i, (new, old)) in p.iter().zip(&p_old).enumerate() {
                     match (new, old) {
                         (Ok(new), Ok(old)) => {
@@ -1030,7 +1046,8 @@ pub(super) mod row_sums {
         }
         eprintln!(
             "random shared sums: {exact} of {count} exact; {finer} projections finer than the \
-             solver's in the first {compared}"
+             solver's in the first {compared}, where the solver alone refused \
+             {alone_refused} projections"
         );
         assert_eq!(exact, count, "seed {seed}");
     }
