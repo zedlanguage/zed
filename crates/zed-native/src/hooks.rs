@@ -945,6 +945,9 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
 mod bench;
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use std::mem::ManuallyDrop;
 
