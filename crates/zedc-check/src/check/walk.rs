@@ -1968,6 +1968,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 side.ty = Ty::carrier(c);
             }
         }
+        let (kx, ky) = (self.class_of_ty(&x.ty), self.class_of_ty(&y.ty));
+        if let (Some(kx), Some(ky)) = (kx, ky) {
+            if self.follow_param(kx, ky) {
+                x.ty = y.ty.clone();
+            } else if self.follow_param(ky, kx) {
+                y.ty = x.ty.clone();
+            }
+        }
         let mut vars = Vars::default();
         for t in [&x.ty, &y.ty] {
             if t.holds_vars() {
@@ -1989,6 +1997,57 @@ impl<'t, 'a> Ck<'t, 'a> {
             x.ty = x.ty.replace_outside(&binds);
             y.ty = y.ty.replace_outside(&binds);
         }
+    }
+
+    /// The class `k` of an operation on literals alone, one side of `==` or `!=` in a body,
+    /// follows the carrier of the parameter whose class `p` is the other side, as a bare
+    /// literal compared with it does ([`Ck::follow`]; DESIGN.md L1.26a: a literal under `==`
+    /// "follows the class without removing carriers from it", and an operation on literals
+    /// alone "is a literal too"): `k` takes `p`'s binder, so [`Ck::resolve`] leaves it a type
+    /// variable and each of its literals takes, at run time, the carrier of the parameter's
+    /// value, by the `match` the elaborator builds on it ([`Info::witness`]). With
+    /// `g(positional x) = x == 1 + 1`, `g(2.0f64)` compares `2.0` with `2.0`, as
+    /// `g(x: f64) = x == 1 + 1` does; before, `k` took `int` where the function ended, and
+    /// the comparison was false at every carrier but `int`. `p` keeps its carriers. Where the
+    /// parameter's value has a carrier `k` cannot take, as `int` for `1 / 2`, each literal
+    /// takes its value at the class's own carrier ([`Ck::lits_take`]'s choice, `f64` where the
+    /// class may take it) instead of its own, so the operation runs at a carrier it has, and
+    /// the comparison is false there, as `x == 0.5` is at an `int`: `/` of two `int` literals
+    /// has no arrow. A class with a need of its own, as the base of `2^-1`, does not follow:
+    /// a need on it is checked again at each call ([`Ck::check_on`]), where no argument gives
+    /// its variable a type, so it keeps the carrier [`Self::class_takes`] reads, and the need
+    /// is checked at that carrier, as before. Returns whether `k` follows `p`.
+    // Complexity tradeoff: naive version, merge `k` into `p` as an arithmetic operator does,
+    // O(α(N)) and the literals moved, which removes from `p` the carriers `k` cannot take,
+    // against L1.26a. Used: one binder copied, O(1) (its component chain is shared), and one
+    // pass over the l literals of `k` for their own carriers, O(l); each class of literals
+    // alone is a side of one comparison only, so each literal is read once here.
+    fn follow_param(&mut self, k: usize, p: usize) -> bool {
+        let (c, q) = (&self.classes[k], &self.classes[p]);
+        if k == p || !c.generic || c.binder.is_some() || q.generic || !c.uses.is_empty() {
+            return false;
+        }
+        let Some(b) = q.binder.clone() else {
+            return false;
+        };
+        let mask = c.mask;
+        let fallback = match mask & Carrier::F64.bit() != 0 {
+            true => Some(Carrier::F64),
+            false => Carrier::of_mask(mask).find(|c| c.numeric()),
+        };
+        let adopted: Vec<(Span, Value)> = (c.lits.iter())
+            .filter(|(l, _)| l.witness && mask & lit_carrier(&l.value).bit() == 0)
+            .filter_map(|(l, _)| match adopt(l, fallback?) {
+                Ok(Some(v)) => Some((l.span, v)),
+                _ => None,
+            })
+            .collect();
+        self.touch(k);
+        self.classes[k].binder = Some(b);
+        for (s, v) in adopted {
+            self.put(Undo::Adopt(s, Some(v)));
+        }
+        true
     }
 
     /// Checks the int powers on the class `r`, which a binding in a body has just given the
