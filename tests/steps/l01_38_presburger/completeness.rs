@@ -11,16 +11,16 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use zed_tests::step_helpers::l01_25_preimage_catalog::{function, int_ok};
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage::relations;
 use zedc::store::presburger::{
-    Atom, Boxed, Con, Entailment, Factor, Formula, Joining, Lin, Model, Refusal, Relation, Split, Tie,
-    Written, colors, decide, eliminated, entails, free_names, hull_sides_asked, member,
+    Atom, Boxed, Con, Entailment, Factor, Formula, Joining, Lin, Model, Refusal, Relation, Split,
+    Tie, Written, colors, decide, eliminated, entails, free_names, hull_sides_asked, member,
     names_in, parts_tested, project, project_each, project_each_boxed, row_box, satisfiable,
     with_parts_reversed, within, without_modular_empty_check,
 };
-use zed_tests::step_helpers::l01_25_preimage_catalog::{function, int_ok};
 
 use super::scaling::x;
 use super::stages::CROSSING;
@@ -36,9 +36,9 @@ fn var(s: &str) -> Lin {
 
 /// `Σ c·s + k`.
 fn lin(terms: &[(&str, i128)], k: i128) -> Lin {
-    terms.iter().fold(Lin::constant(k), |l, (s, c)| {
-        l.plus(&var(s).times(*c))
-    })
+    terms
+        .iter()
+        .fold(Lin::constant(k), |l, (s, c)| l.plus(&var(s).times(*c)))
 }
 
 /// `Σ c·s + k >= 0`.
@@ -53,7 +53,10 @@ fn eq(terms: &[(&str, i128)], k: i128) -> Formula {
 
 /// The model of the named values.
 fn model(values: &[(&str, i128)]) -> Model {
-    values.iter().map(|(s, v)| (sym(s), Int::from(*v))).collect()
+    values
+        .iter()
+        .map(|(s, v)| (sym(s), Int::from(*v)))
+        .collect()
 }
 
 /// The set `[lo..=hi]`.
@@ -111,7 +114,11 @@ fn true_and_false_answer_every_question() {
 
 #[test]
 fn conjunctions_and_disjunctions_of_none_one_and_constant_operands() {
-    let (a, b, c) = (ge(&[("x", 1)], 0), ge(&[("y", 1)], 0), ge(&[("x", -1), ("y", 1)], 3));
+    let (a, b, c) = (
+        ge(&[("x", 1)], 0),
+        ge(&[("y", 1)], 0),
+        ge(&[("x", -1), ("y", 1)], 3),
+    );
     assert_eq!(Formula::and(vec![]), Formula::top());
     assert_eq!(Formula::or(vec![]), Formula::bottom());
     assert_eq!(Formula::and(vec![a.clone()]), a);
@@ -119,9 +126,15 @@ fn conjunctions_and_disjunctions_of_none_one_and_constant_operands() {
     // `true` is dropped from a conjunction and `false` absorbs it; the other way round in a
     // disjunction.
     assert_eq!(Formula::and(vec![a.clone(), Formula::top()]), a);
-    assert_eq!(Formula::and(vec![a.clone(), Formula::bottom(), b.clone()]), Formula::bottom());
+    assert_eq!(
+        Formula::and(vec![a.clone(), Formula::bottom(), b.clone()]),
+        Formula::bottom()
+    );
     assert_eq!(Formula::or(vec![a.clone(), Formula::bottom()]), a);
-    assert_eq!(Formula::or(vec![a.clone(), Formula::top(), b.clone()]), Formula::top());
+    assert_eq!(
+        Formula::or(vec![a.clone(), Formula::top(), b.clone()]),
+        Formula::top()
+    );
     // Nested conjunctions are flattened, in order.
     assert_eq!(
         Formula::and(vec![Formula::and(vec![a.clone(), b.clone()]), c.clone()]),
@@ -164,16 +177,18 @@ fn conjunctions_and_disjunctions_of_none_one_and_constant_operands() {
     assert!(!gap.holds(&model(&[("x", -1)])));
     assert_eq!(decide(&gap), Ok(true));
     // A conjunction kept whole holds where the flat one does, and is shown and compared as it.
-    let kept = Formula::and_keeping(vec![Formula::and(vec![a.clone(), b.clone()]), c.clone()], |i| {
-        i == 0
-    });
+    let kept = Formula::and_keeping(
+        vec![Formula::and(vec![a.clone(), b.clone()]), c.clone()],
+        |i| i == 0,
+    );
     let flat = Formula::and(vec![a.clone(), b.clone(), c.clone()]);
     assert_eq!(kept.to_string(), flat.to_string());
     assert_eq!(kept, flat);
     assert!(same_points(&kept, &flat, &["x", "y"]));
-    let kept = Formula::or_keeping(vec![Formula::or(vec![a.clone(), b.clone()]), c.clone()], |i| {
-        i == 0
-    });
+    let kept = Formula::or_keeping(
+        vec![Formula::or(vec![a.clone(), b.clone()]), c.clone()],
+        |i| i == 0,
+    );
     let flat = Formula::or(vec![a, b, c]);
     assert_eq!(kept.to_string(), flat.to_string());
     assert!(same_points(&kept, &flat, &["x", "y"]));
@@ -191,10 +206,17 @@ fn negation_removes_double_negations_and_constants() {
         assert_eq!(not_c.holds(&m), !c.holds(&m), "{p:?}");
     }
     // An integer point of `!(2x - y + 1 >= 0)` has `2x - y <= -2`.
-    let m = satisfiable(&Formula::and(vec![not_c.clone(), ge(&[("x", 1)], 0), ge(&[("x", -1)], 0)]))
-        .unwrap()
-        .expect("x = 0, y >= 2");
-    assert!(m.get(&sym("y")).is_some_and(|y| *y >= Int::from(2i64)), "{m:?}");
+    let m = satisfiable(&Formula::and(vec![
+        not_c.clone(),
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1)], 0),
+    ]))
+    .unwrap()
+    .expect("x = 0, y >= 2");
+    assert!(
+        m.get(&sym("y")).is_some_and(|y| *y >= Int::from(2i64)),
+        "{m:?}"
+    );
 }
 
 #[test]
@@ -210,11 +232,16 @@ fn forgetting_a_symbol_weakens_by_the_parity_of_negations() {
         Formula::negate(Formula::negate(both.clone())).forget(&x),
         ys
     );
-    assert_eq!(Formula::or(vec![xs.clone(), ys.clone()]).forget(&x), Formula::top());
+    assert_eq!(
+        Formula::or(vec![xs.clone(), ys.clone()]).forget(&x),
+        Formula::top()
+    );
     // A symbol the formula does not mention changes nothing.
     assert_eq!(both.forget(&Arc::from("z")), both);
     // A product that has `x` as a factor mentions `x`.
-    let xy = var("x").product(&var("y")).expect("a product of two symbols");
+    let xy = var("x")
+        .product(&var("y"))
+        .expect("a product of two symbols");
     let with_product = Formula::and(vec![
         Formula::Con(Con::ge(&xy, &Lin::constant(1))),
         ge(&[("y", 1)], 0),
@@ -240,7 +267,11 @@ fn a_set_as_a_formula_holds_exactly_at_its_members() {
     for s in &sets {
         let f = member(&x, s);
         for v in -10i64..=10 {
-            assert_eq!(f.holds(&model(&[("x", v.into())])), s.contains(v), "{s} at {v}");
+            assert_eq!(
+                f.holds(&model(&[("x", v.into())])),
+                s.contains(v),
+                "{s} at {v}"
+            );
         }
         // The projection of the set's formula is the set: over a disjunction of boxes, the
         // union of each box's projection.
@@ -268,7 +299,10 @@ fn a_chain_joined_one_operand_at_a_time_is_the_chain_joined_two_at_a_time() {
     let m = j.mark();
     j.operand(Formula::and(vec![b.clone(), c.clone()]), true);
     j.close(m);
-    assert_eq!(j.finish(), Formula::and(vec![a.clone(), b.clone(), c.clone()]));
+    assert_eq!(
+        j.finish(),
+        Formula::and(vec![a.clone(), b.clone(), c.clone()])
+    );
     // `a && (b || c)`: a disjunction in a conjunction stays one part.
     let mut j = Joining::new(true);
     j.operand(a.clone(), false);
@@ -285,7 +319,10 @@ fn a_chain_joined_one_operand_at_a_time_is_the_chain_joined_two_at_a_time() {
     let m = j.mark();
     j.operand(Formula::or(vec![b.clone(), c.clone()]), true);
     j.close(m);
-    assert_eq!(j.finish(), Formula::or(vec![a.clone(), b.clone(), c.clone()]));
+    assert_eq!(
+        j.finish(),
+        Formula::or(vec![a.clone(), b.clone(), c.clone()])
+    );
     // A mark with two operands after it closes nothing: `a && (b && c)` with `b` and `c` given
     // apart is already flat.
     let mut j = Joining::new(true);
@@ -322,7 +359,11 @@ fn either_takes_out_the_shared_conjuncts_and_drops_a_complement() {
     let b = Formula::and(vec![s.clone(), ys.clone()]);
     let e = Formula::either(&a, &b, &id);
     assert_eq!(e, Formula::and(vec![s.clone(), Formula::or(vec![xs, ys])]));
-    assert!(same_points(&e, &Formula::or(vec![a.clone(), b.clone()]), &["x", "y"]));
+    assert!(same_points(
+        &e,
+        &Formula::or(vec![a.clone(), b.clone()]),
+        &["x", "y"]
+    ));
     // `rest` maps each constraint of the rest of each side: mapped to `true`, the disjunction is
     // `true` and only the shared part is left.
     assert_eq!(Formula::either(&a, &b, &|_| Formula::top()), s);
@@ -353,7 +394,10 @@ fn a_constraint_is_reduced_by_the_gcd_of_its_coefficients() {
         reduced(eq(&[("x", 6), ("y", 4)], -10)),
         Some(eq(&[("x", 3), ("y", 2)], -5))
     );
-    assert_eq!(reduced(eq(&[("x", 6), ("y", 4)], -9)), Some(Formula::bottom()));
+    assert_eq!(
+        reduced(eq(&[("x", 6), ("y", 4)], -9)),
+        Some(Formula::bottom())
+    );
     assert_eq!(reduced(eq(&[("x", 2)], -1)), Some(Formula::bottom()));
     // A gcd of one, or no term, keeps the constraint as written.
     assert_eq!(reduced(ge(&[("x", 2), ("y", 3)], -1)), None);
@@ -364,7 +408,10 @@ fn a_constraint_is_reduced_by_the_gcd_of_its_coefficients() {
     for (f, g) in [
         (ge(&[("x", 3)], -4), ge(&[("x", 1)], -2)),
         (ge(&[("x", -4)], 6), ge(&[("x", -1)], 1)),
-        (eq(&[("x", 6), ("y", 4)], -10), eq(&[("x", 3), ("y", 2)], -5)),
+        (
+            eq(&[("x", 6), ("y", 4)], -10),
+            eq(&[("x", 3), ("y", 2)], -5),
+        ),
     ] {
         assert!(same_points(&f, &g, &["x", "y"]), "{f} and {g}");
     }
@@ -377,18 +424,21 @@ fn terms_are_added_scaled_and_multiplied() {
     assert_eq!(x.minus(&x), Lin::constant(0));
     assert_eq!(x.plus(&y).minus(&y), x);
     // `(x + 1)(y + 2) = x·y + 2x + y + 2`.
-    let p = x.plus(&Lin::constant(1)).product(&y.plus(&Lin::constant(2))).unwrap();
+    let p = x
+        .plus(&Lin::constant(1))
+        .product(&y.plus(&Lin::constant(2)))
+        .unwrap();
     let xy = x.product(&y).unwrap();
-    assert_eq!(
-        p,
-        xy.plus(&x.times(2)).plus(&y).plus(&Lin::constant(2))
-    );
+    assert_eq!(p, xy.plus(&x.times(2)).plus(&y).plus(&Lin::constant(2)));
     assert!(!p.is_linear());
     assert!(x.plus(&y).is_linear());
     // A product is the same whichever factor is first.
     assert_eq!(y.product(&x), Some(xy.clone()));
     // A constant scales either side, a product included.
-    assert_eq!(Lin::constant(3).product(&x.plus(&Lin::constant(1))), Some(x.times(3).plus(&Lin::constant(3))));
+    assert_eq!(
+        Lin::constant(3).product(&x.plus(&Lin::constant(1))),
+        Some(x.times(3).plus(&Lin::constant(3)))
+    );
     assert_eq!(xy.product(&Lin::constant(-2)), Some(xy.times(-2)));
     // A product of a product and a symbol is not a product of two factors.
     assert_eq!(xy.product(&x), None);
@@ -412,7 +462,10 @@ fn constraints_and_terms_are_printed_with_the_first_atom_positive_on_the_left() 
     assert_eq!(show(ge(&[("x", 1), ("y", 1)], 0)), "x + y >= 0");
     assert_eq!(show(ge(&[], 3)), "3 >= 0");
     assert_eq!(show(eq(&[], -1)), "-1 == 0");
-    assert_eq!(lin(&[("x", -1), ("y", 2)], -3).to_string(), "-x + 2 * y - 3");
+    assert_eq!(
+        lin(&[("x", -1), ("y", 2)], -3).to_string(),
+        "-x + 2 * y - 3"
+    );
     assert_eq!(Lin::constant(0).to_string(), "0");
     assert_eq!(var("x").product(&var("y")).unwrap().to_string(), "x * y");
     assert_eq!(Lin::atom(Atom::Aux(4)).to_string(), "q4");
@@ -483,9 +536,15 @@ fn split_names_skip_the_names_a_program_takes() {
     assert_eq!(free_names("ok", &none), ["ok1", "ok2"]);
     assert_eq!(free_names("ok", &HashSet::from(["ok1"])), ["ok2", "ok3"]);
     assert_eq!(free_names("ok", &HashSet::from(["ok2"])), ["ok1", "ok3"]);
-    assert_eq!(free_names("ok", &HashSet::from(["ok1", "ok2", "ok3"])), ["ok4", "ok5"]);
+    assert_eq!(
+        free_names("ok", &HashSet::from(["ok1", "ok2", "ok3"])),
+        ["ok4", "ok5"]
+    );
     // Other names are no obstacle.
-    assert_eq!(free_names("ok", &HashSet::from(["ok", "f1"])), ["ok1", "ok2"]);
+    assert_eq!(
+        free_names("ok", &HashSet::from(["ok", "f1"])),
+        ["ok1", "ok2"]
+    );
 }
 
 #[test]
@@ -545,7 +604,11 @@ fn a_refusal_offers_the_repairs_its_data_supports() {
     // A refusal with no alike variables: the first name is fixed, and the conditions halved.
     let r = Refusal::Growth.repairs(&w);
     assert_eq!(r.len(), 2, "{r:#?}");
-    assert!(r[0].contains("if `a` is meant to take only one value"), "{}", r[0]);
+    assert!(
+        r[0].contains("if `a` is meant to take only one value"),
+        "{}",
+        r[0]
+    );
     assert!(
         r[1].ends_with("`ok1(a, b) = a >= 0 && b >= 0;` and `ok2(a, b) = a + b <= 3;`"),
         "{}",
@@ -575,7 +638,13 @@ fn a_refusal_offers_the_repairs_its_data_supports() {
     };
     let r = Refusal::Shadows.repairs(&test);
     assert_eq!(r.len(), 1);
-    assert!(r[0].ends_with("`a == 0 && a >= 0 && b >= 0 && a + b <= 3`, with the value in place of `0`"), "{}", r[0]);
+    assert!(
+        r[0].ends_with(
+            "`a == 0 && a >= 0 && b >= 0 && a + b <= 3`, with the value in place of `0`"
+        ),
+        "{}",
+        r[0]
+    );
     let nameless = Written {
         names: &[],
         split: None,
@@ -609,12 +678,19 @@ fn each_refusal_reason_ends_with_what_the_checker_kept() {
         assert_eq!(r.said(&["x"], &[]), s);
     }
     // The condition and conditions of a tie are counted.
-    assert!(Refusal::Tie(tie.clone()).to_string().contains("share the condition `a + b >= 0`"));
+    assert!(
+        Refusal::Tie(tie.clone())
+            .to_string()
+            .contains("share the condition `a + b >= 0`")
+    );
     let two = Refusal::Tie(Arc::new(Tie {
         vars: vec!["a".into(), "b".into()],
         rows: vec!["a >= 0".into(), "b >= 0".into()],
     }));
-    assert!(two.to_string().contains("share the conditions `a >= 0`, `b >= 0`"));
+    assert!(
+        two.to_string()
+            .contains("share the conditions `a >= 0`, `b >= 0`")
+    );
     assert!(
         Refusal::Unordered(tie)
             .to_string()
@@ -626,7 +702,10 @@ fn each_refusal_reason_ends_with_what_the_checker_kept() {
     assert!(said.ends_with(stopped));
     let said = Refusal::Shadows.said(&["x"], &["2", "3", "5"]);
     assert!(said.contains("quotients by 2, 3 and 5;"), "{said}");
-    assert_eq!(Refusal::Growth.said(&["x"], &["3"]), Refusal::Growth.to_string());
+    assert_eq!(
+        Refusal::Growth.said(&["x"], &["3"]),
+        Refusal::Growth.to_string()
+    );
 }
 
 #[test]
@@ -639,16 +718,30 @@ fn the_first_cause_of_a_wider_set_is_the_whole_question_then_a_symbol_then_a_dis
     };
     assert_eq!(b(vec![None, None], vec![], None).cause(), None);
     assert_eq!(
-        b(vec![None, None], vec![Refusal::Disjuncts, Refusal::Growth], None).cause(),
+        b(
+            vec![None, None],
+            vec![Refusal::Disjuncts, Refusal::Growth],
+            None
+        )
+        .cause(),
         Some(Refusal::Disjuncts)
     );
     assert_eq!(
-        b(vec![None, Some(Refusal::Growth), Some(Refusal::Shadows)], vec![Refusal::Disjuncts], None)
-            .cause(),
+        b(
+            vec![None, Some(Refusal::Growth), Some(Refusal::Shadows)],
+            vec![Refusal::Disjuncts],
+            None
+        )
+        .cause(),
         Some(Refusal::Growth)
     );
     assert_eq!(
-        b(vec![Some(Refusal::Growth)], vec![Refusal::Disjuncts], Some(Refusal::Shadows)).cause(),
+        b(
+            vec![Some(Refusal::Growth)],
+            vec![Refusal::Disjuncts],
+            Some(Refusal::Shadows)
+        )
+        .cause(),
         Some(Refusal::Shadows)
     );
 }
@@ -710,7 +803,12 @@ fn a_refused_projection_keeps_the_box_of_its_rows() {
     // and the cause is the first refused symbol's.
     let mut rows: Vec<Formula> = CROSSING
         .iter()
-        .map(|(c, k)| Formula::Con(Con::ge(&(0..4).fold(Lin::constant(k + 8), |l, i| l.plus(&x(i).times(c[i]))), &Lin::constant(0))))
+        .map(|(c, k)| {
+            Formula::Con(Con::ge(
+                &(0..4).fold(Lin::constant(k + 8), |l, i| l.plus(&x(i).times(c[i]))),
+                &Lin::constant(0),
+            ))
+        })
         .collect();
     for i in 0..4 {
         rows.push(Formula::Con(Con::ge(&x(i), &Lin::constant(-4))));
@@ -724,7 +822,10 @@ fn a_refused_projection_keeps_the_box_of_its_rows() {
     // Each wider row tightens each atom once from the others' box: `2·x0 - 3·x1 - 4·x2 - x3 - 12 >= 0`
     // gives `4·x2 <= 12`, and `2·x0 - 2·x1 + 4·x2 + x3 - 9 >= 0` gives `4·x2 >= -11`, so `x2` is in
     // -2..=3; no row moves the other bounds.
-    assert_eq!(rb, vec![range(-4, 4), range(-4, 4), range(-2, 3), range(-4, 4)]);
+    assert_eq!(
+        rb,
+        vec![range(-4, 4), range(-4, 4), range(-2, 3), range(-4, 4)]
+    );
     assert_eq!(project_each(&crossing, &xs), Err(Refusal::Growth));
     let want = Boxed {
         each: rb.into_iter().map(|s| (s, Some(Refusal::Growth))).collect(),
@@ -734,26 +835,47 @@ fn a_refused_projection_keeps_the_box_of_its_rows() {
     assert_eq!(boxed, want);
     assert_eq!(boxed.cause(), Some(Refusal::Growth));
     // An answered question keeps its projections and has no cause.
-    let g = Formula::and(vec![ge(&[("a", 1)], 0), ge(&[("a", -1), ("d", 1)], -1), ge(&[("d", -1)], 4)]);
+    let g = Formula::and(vec![
+        ge(&[("a", 1)], 0),
+        ge(&[("a", -1), ("d", 1)], -1),
+        ge(&[("d", -1)], 4),
+    ]);
     let boxed = project_each_boxed(&g, &syms);
     assert_eq!(boxed.cause(), None);
     assert_eq!(
-        boxed.each.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>(),
+        boxed
+            .each
+            .iter()
+            .map(|(s, _)| s.clone())
+            .collect::<Vec<_>>(),
         vec![range(0, 3), range(1, 4), IntervalSet::top()]
     );
 }
 
 #[test]
 fn project_each_answers_a_repeated_and_an_absent_symbol() {
-    let f = Formula::and(vec![ge(&[("x", 1)], 0), ge(&[("x", -1), ("y", -1)], 6), ge(&[("y", 1)], -2)]);
+    let f = Formula::and(vec![
+        ge(&[("x", 1)], 0),
+        ge(&[("x", -1), ("y", -1)], 6),
+        ge(&[("y", 1)], -2),
+    ]);
     let (each, skipped) = project_each(&f, &[sym("x"), sym("z"), sym("x"), sym("y")]).unwrap();
     assert!(skipped.is_empty());
     assert_eq!(
         each,
-        vec![Ok(range(0, 4)), Ok(IntervalSet::top()), Ok(range(0, 4)), Ok(range(2, 6))]
+        vec![
+            Ok(range(0, 4)),
+            Ok(IntervalSet::top()),
+            Ok(range(0, 4)),
+            Ok(range(2, 6))
+        ]
     );
     // An equation and the two inequalities it stands for project alike.
-    let e = Formula::and(vec![eq(&[("x", 1), ("y", -2)], 0), ge(&[("y", 1)], 0), ge(&[("y", -1)], 3)]);
+    let e = Formula::and(vec![
+        eq(&[("x", 1), ("y", -2)], 0),
+        ge(&[("y", 1)], 0),
+        ge(&[("y", -1)], 3),
+    ]);
     let two = Formula::and(vec![
         ge(&[("x", 1), ("y", -2)], 0),
         ge(&[("x", -1), ("y", 2)], 0),
@@ -765,7 +887,10 @@ fn project_each_answers_a_repeated_and_an_absent_symbol() {
     // An unsatisfiable formula projects every symbol, mentioned or not, to the empty set.
     let none = Formula::and(vec![f, ge(&[("y", -1)], 1)]);
     let (each, _) = project_each(&none, &[sym("x"), sym("z")]).unwrap();
-    assert_eq!(each, vec![Ok(IntervalSet::empty()), Ok(IntervalSet::empty())]);
+    assert_eq!(
+        each,
+        vec![Ok(IntervalSet::empty()), Ok(IntervalSet::empty())]
+    );
 }
 
 #[test]
@@ -786,7 +911,11 @@ fn elimination_is_exact_or_declined() {
     let f = Formula::and(out.into_iter().map(Formula::Con).collect());
     assert!(same_points(&f, &ge(&[("x", 1)], -1), &["x"]), "{f}");
     // No point: the single row `-1 >= 0`.
-    let r = rows(vec![ge(&[("y", 1)], -1), ge(&[("y", -1)], 0), ge(&[("x", 1)], 0)]);
+    let r = rows(vec![
+        ge(&[("y", 1)], -1),
+        ge(&[("y", -1)], 0),
+        ge(&[("x", 1)], 0),
+    ]);
     assert_eq!(
         eliminated(&r, &keep_x),
         Some(vec![Con::ge(&Lin::constant(0), &Lin::constant(1))])
@@ -803,7 +932,11 @@ fn elimination_is_exact_or_declined() {
     if let Some(out) = eliminated(&r, &keep_x) {
         let f = Formula::and(out.into_iter().map(Formula::Con).collect());
         for v in -6i64..=6 {
-            assert_eq!(f.holds(&model(&[("x", v.into())])), v % 2 == 0, "{f} at {v}");
+            assert_eq!(
+                f.holds(&model(&[("x", v.into())])),
+                v % 2 == 0,
+                "{f} at {v}"
+            );
         }
     }
 }
@@ -819,16 +952,28 @@ fn colors_tell_apart_only_what_the_structure_does() {
             .collect()
     };
     // `x + y <= 5`, `x >= 0`, `y >= 0`: `x` and `y` alike.
-    let r = rows(vec![ge(&[("x", -1), ("y", -1)], 5), ge(&[("x", 1)], 0), ge(&[("y", 1)], 0)]);
+    let r = rows(vec![
+        ge(&[("x", -1), ("y", -1)], 5),
+        ge(&[("x", 1)], 0),
+        ge(&[("y", 1)], 0),
+    ]);
     let (atoms, col) = colors(&r);
     assert_eq!(atoms.len(), 2);
     assert_eq!(col[&sym("x")], col[&sym("y")]);
     // `x + 2y <= 5`: told apart by their coefficients.
-    let r = rows(vec![ge(&[("x", -1), ("y", -2)], 5), ge(&[("x", 1)], 0), ge(&[("y", 1)], 0)]);
+    let r = rows(vec![
+        ge(&[("x", -1), ("y", -2)], 5),
+        ge(&[("x", 1)], 0),
+        ge(&[("y", 1)], 0),
+    ]);
     let (_, col) = colors(&r);
     assert_ne!(col[&sym("x")], col[&sym("y")]);
     // Renaming changes no color: `u`, `v` in place of `x`, `y`.
-    let r2 = rows(vec![ge(&[("v", -1), ("u", -2)], 5), ge(&[("v", 1)], 0), ge(&[("u", 1)], 0)]);
+    let r2 = rows(vec![
+        ge(&[("v", -1), ("u", -2)], 5),
+        ge(&[("v", 1)], 0),
+        ge(&[("u", 1)], 0),
+    ]);
     let (_, col2) = colors(&r2);
     assert_eq!(col[&sym("x")], col2[&sym("v")]);
     assert_eq!(col[&sym("y")], col2[&sym("u")]);
@@ -844,7 +989,11 @@ fn the_test_hooks_change_no_answer_and_their_counters_reset() {
         ge(&[("p", 1), ("q", -1)], 0),
         ge(&[("q", 1)], -1),
     ]);
-    let g = Formula::and(vec![ge(&[("p", 1), ("q", -1)], 0), ge(&[("q", 1)], -1), ge(&[("r", 1)], 0)]);
+    let g = Formula::and(vec![
+        ge(&[("p", 1), ("q", -1)], 0),
+        ge(&[("q", 1)], -1),
+        ge(&[("r", 1)], 0),
+    ]);
     for h in [&f, &g] {
         assert_eq!(with_parts_reversed(|| decide(h)), decide(h));
         assert_eq!(without_modular_empty_check(|| decide(h)), decide(h));
@@ -870,7 +1019,10 @@ fn agrees(src: &str) -> Option<()> {
                 .iter()
                 .zip(&p)
                 .map(|(n, v)| {
-                    Formula::Con(Con::eq(&Lin::atom(Atom::Sym(n.clone())), &Lin::constant(*v)))
+                    Formula::Con(Con::eq(
+                        &Lin::atom(Atom::Sym(n.clone())),
+                        &Lin::constant(*v),
+                    ))
                 })
                 .collect(),
         );
@@ -907,6 +1059,11 @@ fn tests_at_the_edges_of_the_operators_agree_with_the_interpreter() {
         "ok(x) = 2 * x == 7;",
         "ok(x) = 2 * x + 1 == 7;",
         "ok(x, y) = 3 * x - 2 * y >= 1 || x == y;",
+        // Powers 0 and 1 of a variable, and a power of a constant.
+        "ok(x) = x ^ 0 == 1;",
+        "ok(x) = x ^ 1 + 2 ^ 2 == 6;",
+        // `&&` beside `||`.
+        "ok(x, y) = x >= 0 && y >= 0 || x == -y;",
     ] {
         assert!(agrees(src).is_some(), "{src}: outside the domain");
     }
@@ -915,9 +1072,8 @@ fn tests_at_the_edges_of_the_operators_agree_with_the_interpreter() {
 #[test]
 fn the_box_of_rows_reads_one_term_rows_equations_and_disjunctions_that_bound_in_every_case() {
     let (x, y) = (sym("x"), sym("y"));
-    let within = |s: &str, lo: i128, hi: i128| {
-        Formula::and(vec![ge(&[(s, 1)], -lo), ge(&[(s, -1)], hi)])
-    };
+    let within =
+        |s: &str, lo: i128, hi: i128| Formula::and(vec![ge(&[(s, 1)], -lo), ge(&[(s, -1)], hi)]);
     let boxes = |f: &Formula| row_box(f, &[x.clone(), y.clone()]);
     // A disjunction every disjunct of which bounds `x` gives it their hull, gaps and all.
     let two = Formula::or(vec![within("x", 0, 2), within("x", 5, 7)]);
@@ -935,10 +1091,19 @@ fn the_box_of_rows_reads_one_term_rows_equations_and_disjunctions_that_bound_in_
         IntervalSet::range(End::Fin(Num::from(0)), End::PosInf)
     );
     // A negation is not read.
-    assert_eq!(boxes(&Formula::negate(ge(&[("x", 1)], -3)))[0], IntervalSet::top());
+    assert_eq!(
+        boxes(&Formula::negate(ge(&[("x", 1)], -3)))[0],
+        IntervalSet::top()
+    );
     // No point: every set is empty, whether the bounds cross or the formula is `false`.
-    assert_eq!(boxes(&none), vec![IntervalSet::empty(), IntervalSet::empty()]);
-    assert_eq!(boxes(&Formula::bottom()), vec![IntervalSet::empty(), IntervalSet::empty()]);
+    assert_eq!(
+        boxes(&none),
+        vec![IntervalSet::empty(), IntervalSet::empty()]
+    );
+    assert_eq!(
+        boxes(&Formula::bottom()),
+        vec![IntervalSet::empty(), IntervalSet::empty()]
+    );
     // An equation is its two rows, each divided by the gcd: `2·x == 6` fixes `x` at 3, and
     // `2·x - 1 >= 0` is `x >= 1`.
     assert_eq!(boxes(&eq(&[("x", 2)], -6))[0], range(3, 3));
@@ -948,7 +1113,11 @@ fn the_box_of_rows_reads_one_term_rows_equations_and_disjunctions_that_bound_in_
     );
     // A wider row tightens each of its atoms once from the others' bounds:
     // `x + y <= 3` with `y >= 1` gives `x <= 2`.
-    let wide = Formula::and(vec![ge(&[("x", -1), ("y", -1)], 3), within("y", 1, 9), ge(&[("x", 1)], 0)]);
+    let wide = Formula::and(vec![
+        ge(&[("x", -1), ("y", -1)], 3),
+        within("y", 1, 9),
+        ge(&[("x", 1)], 0),
+    ]);
     assert_eq!(boxes(&wide), vec![range(0, 2), range(1, 3)]);
 }
 
@@ -967,8 +1136,14 @@ fn factors_and_formulas_are_written_with_the_names_the_program_wrote() {
     assert_eq!(Factor::Aux(3).to_string(), "q3");
     assert_eq!(Factor::of(&Atom::Aux(3)), Some(Factor::Aux(3)));
     assert_eq!(Factor::Aux(3).atom(), Atom::Aux(3));
-    assert_eq!(Factor::of(&Atom::Product(Factor::Aux(1), Factor::Aux(2))), None);
+    assert_eq!(
+        Factor::of(&Atom::Product(Factor::Aux(1), Factor::Aux(2))),
+        None
+    );
     let f = Formula::and(vec![ge(&[("x@2", 1)], -1), ge(&[("x@2", -1), ("y", 1)], 0)]);
     assert_eq!(f.written(unversioned), f.to_string().replace("x@2", "x"));
-    assert_eq!(Formula::top().written(unversioned), Formula::top().to_string());
+    assert_eq!(
+        Formula::top().written(unversioned),
+        Formula::top().to_string()
+    );
 }
