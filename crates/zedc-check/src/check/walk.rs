@@ -13566,6 +13566,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         pass: bool,
         span: Span,
     ) -> Option<Option<(Ty, Vec<Span>)>> {
+        self.repairs_tried += 1;
         if let Some(got) = self.written_with(what.text(), span, with.clone()) {
             return got.map(Some);
         }
@@ -14266,7 +14267,27 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Where the operands have no common carrier, the application's derivation and
         // repairs, once for all its literals; otherwise each literal's own derivation.
         let applied = row == Row::LiteralCarrier && self.no_common_carrier(sig, args);
+        // In a trial such a refusal stands at the application, as [`Self::forced_rat`] puts a
+        // `rat` literal's: it is the operands' together, so a type a repair gives another
+        // operand that the literal still refuses, as `rat` for `z` in `z * 2.0f64`, is
+        // rejected there. At the literal it would lie inside an argument the repair leaves as
+        // it was, and the check of the repair ([`Self::written_with`], [`Self::carried_alone`])
+        // would read it as that argument's own error, found again at the same place, and keep
+        // the repair (REPAIR-pow-use-f64-drops-rat). The message is the first literal's; a
+        // trial reads only where its errors are.
+        // Complexity tradeoff: none; one rejection in place of one per literal, O(1). The
+        // naive alternative, telling the two errors apart by their messages wherever a trial
+        // is compared with the construct's own check, would compare text at every such check.
+        if applied && self.trying {
+            let (_, m) = refused.swap_remove(0);
+            return self.reject(Some(row), span, m, Vec::new());
+        }
         let mut notes = Vec::new();
+        // Whether the checker tried repairs of the application and rejected each where it is
+        // written, as `rat(x)` in `x + 0.5f64` with `x: int`: the message then says that it
+        // offers none ([`Msg::dropped`]). Complexity tradeoff: none; one count before the
+        // repairs and one after, O(1).
+        let mut none_kept = false;
         if applied && !self.trying {
             notes = self.applied(what.text(), sig, args, span);
             let mut seen: HashSet<Note> = notes.iter().cloned().collect();
@@ -14277,11 +14298,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
+            let tried = self.repairs_tried;
             let repairs = self.repairs(what, sig, args, pass, span);
+            none_kept = repairs.is_empty() && self.repairs_tried > tried;
             notes.extend(self.offered(repairs));
         }
         if refused.len() == 1 {
-            let (s, m) = refused.pop().expect("one literal");
+            let (s, mut m) = refused.pop().expect("one literal");
+            m.dropped |= none_kept && m.fixes.is_empty();
             if !applied {
                 notes = self.derive(&[s]);
             }
@@ -14297,7 +14321,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             None => "arguments",
         };
         let head = format!("{n} {whose} of {what} are literals at carriers they cannot take");
-        let (m, steps) = grouped(head, refused);
+        let (mut m, steps) = grouped(head, refused);
+        m.dropped |= none_kept && m.fixes.is_empty();
         // Each literal's step, then its derivation, with no step written twice and none that
         // only shows the literal again; the application's notes after them all.
         let mut shown: HashSet<Note> = notes.iter().cloned().collect();

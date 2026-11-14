@@ -1459,6 +1459,10 @@ struct Ck<'t, 'a> {
     /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
     /// takes the entry.
     tried: HashMap<Span, Option<KType>>,
+    /// The number of repairs [`Self::repaired`] has tried so far, so that a rejection whose
+    /// repairs were all rejected where they are written says that it offers none
+    /// ([`Self::literals_refused`], [`Msg::dropped`]).
+    repairs_tried: usize,
     /// The scopes the tests the walk is in make, which narrow the ints a bit word or `^`
     /// reads.
     arms: arms::Arms<'a>,
@@ -1669,6 +1673,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             outside: HashMap::new(),
             widened_only: HashMap::new(),
             tried: HashMap::new(),
+            repairs_tried: 0,
             arms: arms::Arms::new(),
             refused_at: BTreeMap::new(),
             asked_where: BTreeMap::new(),

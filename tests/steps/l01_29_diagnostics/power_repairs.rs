@@ -385,6 +385,79 @@ fn a_use_of_a_bound_power_keeps_the_repairs_it_takes() {
     }
 }
 
+/// Programs of `2^-1` used beside an operand of a fixed carrier other than `int`, each with
+/// the repairs it offers: those whose type the operand takes. Numbers of two carriers meet in
+/// no operator (no implicit conversion), so `2r^-1` makes `z` a `rat`, which `z * 2.0f64` then
+/// rejects as `rat * f64`; it was kept before, since the check of the use with the repair in
+/// place rejected the literal `2.0f64` again, at the same place, which read as the use's own
+/// error (REPAIR-pow-use-f64-drops-rat). Beside an `f32`, every repair gives an `f64` or a
+/// `rat`, and none is offered.
+const USE_AT_A_CARRIER: [(&str, &[&str]); 12] = [
+    ("z = 2^-1;\nc = z * 2.0f64;\n", &["2.0f64^-1", "2^-1.0f64"]),
+    (
+        "g() {\n  z = 2^-1;\n  return z * 2.0f64;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64"],
+    ),
+    (
+        "g() = { z = 2^-1; z * 2.0f64 };\n",
+        &["2.0f64^-1", "2^-1.0f64"],
+    ),
+    (
+        "g() {\n  z, w = (2^-1, 3);\n  return 2.0f64 * z;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64"],
+    ),
+    (
+        "g() {\n  z = 2^-1;\n  return z < 2.0f64;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64"],
+    ),
+    ("z = 2^-1;\nc = z + 1.5f32;\n", &[]),
+    ("g() {\n  z = 2^-1;\n  return z + 1.5f32;\n}\n", &[]),
+    ("g() {\n  z = 2^-1;\n  w = z;\n  return w + 1.5f32;\n}\n", &[]),
+    // A name of type `f64`: a parameter, and a name bound to an `f64` literal.
+    (
+        "g(x: f64) {\n  z = 2^-1;\n  return z * x;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64"],
+    ),
+    (
+        "g() {\n  x = 1.5f64;\n  z = 2^-1;\n  return z * x;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64"],
+    ),
+    (
+        "g(x: f32) {\n  z = 2^-1;\n  return x - z;\n}\n",
+        &[],
+    ),
+    // A `rat` operand keeps `2r^-1` alone.
+    (
+        "g(x: rat) {\n  z = 2^-1;\n  return z * x;\n}\n",
+        &["2r^-1"],
+    ),
+];
+
+#[test]
+fn a_use_beside_a_fixed_carrier_keeps_the_repairs_of_that_carrier() {
+    for (src, want) in USE_AT_A_CARRIER {
+        let out = rejected(src);
+        assert_eq!(repairs(&out), want, "{src}\n{out}");
+        assert_eq!(tried(&out), want.first().copied(), "{src}\n{out}");
+        if want.is_empty() {
+            assert!(
+                out.contains("No fix is offered: each one the checker tried is rejected too."),
+                "{out}"
+            );
+        }
+        for r in want {
+            checks(&repaired(src, "2^-1", r));
+        }
+        // Each repair dropped is rejected where it is written.
+        for r in ["2.0f64^-1", "2^-1.0f64", "2r^-1"] {
+            if !want.contains(&r) {
+                let src = program(&repaired(src, "2^-1", r));
+                assert!(load(src.as_bytes()).is_err(), "{src}");
+            }
+        }
+    }
+}
+
 /// A function of `n` names each bound to a power to a negative literal and used twice, and one
 /// name bound to a sum of `n` such powers, one class with `n` powers among its uses.
 fn negative_bound(n: usize) -> String {
