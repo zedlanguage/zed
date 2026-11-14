@@ -3259,6 +3259,10 @@ struct Run {
     seen: HashSet<(StopKind, Tid)>,
     /// The bodies of the lambdas whose calls are being read, each with its place on the stack.
     active: HashMap<Tid, usize>,
+    /// How many lambdas reads entered, and entries read whose reads entered one and that are
+    /// read again on a higher stack ([`Entry`]): a read that leaves the count as it found it
+    /// entered no lambda.
+    entered: u64,
     marks: Marks,
     /// Whether `marks` holds the ends of the inputs of the context's reads ([`Tx::marks`]).
     marked: bool,
@@ -3576,8 +3580,23 @@ struct Memo {
 /// `usize::MAX`. An entry of the first kind holds while the stack holds what it held then,
 /// since its value depends on those lambdas alone, and is kept until the stack is lower; a
 /// result that reads it stopped at that place too (ST-formula-k2-rec). The second kind holds
-/// wherever it is reached.
-type Entry<V> = (V, usize);
+/// wherever it is reached. Last, the highest stack an entry of the first kind is read on: its
+/// height when it began if its read entered a lambda ([`Run::entered`]), else `usize::MAX`.
+/// On a higher stack such a read may reach a call of a lambda read since, and stop there where
+/// the entry did not: `let a = g(…) && …` within `f`, where `g`'s body reads `f`'s body again,
+/// which holds `((p) -> a)(…)`, read again within the lambda of `p` stops at that call
+/// (FAIL-preimage-stop-entry-seed). A read that entered no lambda stops at the same calls on
+/// every stack that holds the one it began on.
+// Complexity tradeoff: the exact test is whether a lambda the read entered is on the stack
+// above where it began, which needs the set of lambdas each entry's read entered: O(l) memory
+// per entry and O(l) per read, for the l lambdas of the term. Used: whether it entered one,
+// O(1) per entry and per read; such an entry is read again on a higher stack, as the memo
+// before ST-formula-k2-rec read every entry of the first kind, so no read costs more than it
+// did there. Tradeoff: an entry whose read entered only lambdas that are not on the higher
+// stack is read again, though it would give the same. Tests:
+// `entries_made_below_a_stop_give_what_reading_the_term_again_gives` and its seed
+// 17213863407132117863; `l01_25_preimage_catalog`'s bounds on `rereads`.
+type Entry<V> = (V, usize, usize);
 
 /// Removes an entry of the first kind of [`Entry`] from its table, unless the table holds
 /// another entry under its key by then.
@@ -4811,6 +4830,7 @@ impl<'t> Tx<'t> {
         }
         let place = self.run.active.len();
         self.run.active.insert(body, place);
+        self.run.entered += 1;
         Some(place)
     }
 
@@ -4855,6 +4875,13 @@ impl<'t> Tx<'t> {
         cut >= place
     }
 
+    /// Passes on, to the result that reads it, a memo entry's stop at `cut` and whether its
+    /// read entered a lambda, which `high` holds ([`Entry`]).
+    fn reached(&mut self, cut: usize, high: usize) {
+        self.cx.cut = self.cx.cut.min(cut);
+        self.run.entered += u64::from(high != usize::MAX);
+    }
+
     /// Removes the translation's entries made after the first `mark`, but for those that found
     /// no translation wherever they are reached (`None`, with no stop below them): a failure
     /// names no auxiliary variable, so undoing the attempt does not touch it.
@@ -4884,7 +4911,7 @@ impl<'t> Tx<'t> {
     fn forget(&mut self, mark: usize) {
         fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K) {
             if t.get(k)
-                .is_some_and(|(v, cut)| v.is_some() || *cut != usize::MAX)
+                .is_some_and(|(v, cut, _)| v.is_some() || *cut != usize::MAX)
             {
                 t.remove(k);
             }
@@ -5755,7 +5782,8 @@ impl<'m, 't> Walk<'m, 't> {
 
     /// The answer of `f()`, remembered under `k` in `table`: wherever it is reached, or, when a
     /// call it reads stopped at a lambda that was being read before it began, while the stack of
-    /// lambdas being read is no lower than it was then ([`Entry`]). Each read of such an entry
+    /// lambdas being read is no lower than it was then, and, if its read entered a lambda, no
+    /// higher ([`Entry`]). Each read of such an entry
     /// passes its stop on. Without the second kind, a term reached at many places under recursion
     /// was read again at each: a chain of k operands named and read at r places took O(r k), and
     /// an `if` d deep whose arms are one shared term took 2^d (ST-formula-k2-rec). A known answer
@@ -5771,13 +5799,16 @@ impl<'m, 't> Walk<'m, 't> {
         V: Clone + 'static,
         F: Future<Output = V> + 'm,
     {
-        #[cfg(test)]
-        self.with(|tx| tests::held_read(tx, table, &k));
         let known = self.with(|tx| {
+            let now = tx.run.active.len();
             let entry = table(&mut tx.run.memo).get(&k);
-            entry.map(|(v, cut)| (v.clone(), *cut))
+            // An entry whose read entered a lambda is read again on a higher stack ([`Entry`]).
+            let entry = entry.filter(|e| now <= e.2);
+            entry.map(|(v, cut, high)| (v.clone(), *cut, *high))
         });
-        if let Some((v, cut)) = known {
+        if let Some((v, cut, high)) = known {
+            #[cfg(test)]
+            self.with(|tx| tests::held_read(tx, table, &k));
             #[cfg(test)]
             let bypass = cut != usize::MAX && tests::BYPASS.get();
             #[cfg(not(test))]
@@ -5787,11 +5818,11 @@ impl<'m, 't> Walk<'m, 't> {
                 if tests::RECHECK.get() && !tests::BYPASS.get() {
                     return self.stack.call(move || async move {
                         tests::recheck(self, table, &k, &v, cut, f).await;
-                        self.with(|tx| tx.cx.cut = tx.cx.cut.min(cut));
+                        self.with(|tx| tx.reached(cut, high));
                         v
                     });
                 }
-                self.with(|tx| tx.cx.cut = tx.cx.cut.min(cut));
+                self.with(|tx| tx.reached(cut, high));
                 return Stack::ready(v);
             }
         }
@@ -5805,9 +5836,10 @@ impl<'m, 't> Walk<'m, 't> {
         V: Clone + 'static,
         F: Future<Output = V>,
     {
-        let (base, outer) = self.with(|tx| {
+        let (base, outer, entered) = self.with(|tx| {
             let base = tx.run.active.len();
-            (base, std::mem::replace(&mut tx.cx.cut, usize::MAX))
+            let outer = std::mem::replace(&mut tx.cx.cut, usize::MAX);
+            (base, outer, tx.run.entered)
         });
         let v = f().await;
         self.with(|tx| {
@@ -5826,7 +5858,7 @@ impl<'m, 't> Walk<'m, 't> {
             }
             let m = &mut tx.run.memo;
             if cut >= base {
-                table(m).insert(k, (v.clone(), usize::MAX));
+                table(m).insert(k, (v.clone(), usize::MAX, usize::MAX));
             } else if none_held() {
                 // The memo before ST-formula-k2-rec, which the tests compare with.
             } else {
@@ -5838,7 +5870,12 @@ impl<'m, 't> Walk<'m, 't> {
                         }
                     }
                 });
-                table(m).insert(k, (v.clone(), cut));
+                let high = if tx.run.entered == entered {
+                    usize::MAX
+                } else {
+                    base
+                };
+                table(m).insert(k, (v.clone(), cut, high));
                 m.held.push((base, unheld));
             }
             tx.cx.cut = outer.min(cut);
@@ -12883,10 +12920,13 @@ mod tests {
             let held = std::mem::take(&mut tx.run.memo.held);
             BYPASS.set(true);
             let outer = std::mem::replace(&mut tx.cx.cut, usize::MAX);
-            (above, inputs, held, outer)
+            (above, inputs, held, (outer, tx.run.entered))
         });
         let fresh = f().await;
         let again = w.with(|tx| {
+            // The lambdas the term read again entered are not passed on: the entry read is.
+            let (outer, entered) = outer;
+            tx.run.entered = entered;
             let again = std::mem::replace(&mut tx.cx.cut, outer);
             BYPASS.set(false);
             let m = &mut tx.run.memo;
@@ -13663,7 +13703,7 @@ mod tests {
                 .map(|(n, w, f)| format!("{n} {w} {}", built(f)))
                 .collect(),
             memo: (tx.run.memo.formula.iter())
-                .map(|(k, (v, _))| (*k, v.as_ref().map(built)))
+                .map(|(k, (v, _, _))| (*k, v.as_ref().map(built)))
                 .collect(),
             chains,
             cut: tx.cx.cut,
@@ -14272,19 +14312,28 @@ mod tests {
     /// ([`ByClass`]) that [`RECHECK`] reads again give what reading their terms again gives,
     /// on the random programs of
     /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] whose tests may
-    /// also compare a chain with a constant ([`Gen::chain_test`]): [`SUMMARY_ROUNDS`] of a new
-    /// seed each run (printed; `ZED_TEST_SEED` repeats a run). Both kinds of summary must be
-    /// met; a summary made below a stop is met by some runs only, and
-    /// [`a_summary_made_below_a_stop_is_read_again`] makes one on purpose.
+    /// also compare a chain with a constant ([`Gen::chain_test`]): at least [`SUMMARY_ROUNDS`]
+    /// of a new seed each run (printed; `ZED_TEST_SEED` repeats a run), and more until both
+    /// kinds of summary that hold wherever they are reached are met. A summary made below a
+    /// stop is met by some runs only, and [`a_summary_made_below_a_stop_is_read_again`] makes
+    /// one on purpose.
     #[test]
     fn summaries_read_again_give_what_reading_the_term_again_gives() {
         let seed = crate::seed::seed("summaries_read_again_give_what_reading_the_term_again_gives");
+        summaries_read_again(seed);
+    }
+
+    /// The rounds of [`summaries_read_again_give_what_reading_the_term_again_gives`] from
+    /// `seed`, drawn until both kinds of summary are met: ten rounds met no summary over the
+    /// classes of remainders that holds wherever it is reached under 1 seed in 400
+    /// (FAIL-preimage-summaries-rounds-seed). Gives the number of rounds.
+    fn summaries_read_again(seed: u64) -> usize {
         let mut g = Gen::new(seed, true);
         g.chains = true;
         CHECKED.set([0; 5]);
         SUMMARIES.set([0; 4]);
-        let (mut met, mut endless) = (0, 0);
-        for round in 0..SUMMARY_ROUNDS {
+        let (mut met, mut endless, mut round) = (0, 0, 0);
+        while round < SUMMARY_ROUNDS || SUMMARIES.get()[1] == 0 || SUMMARIES.get()[3] == 0 {
             g.pool.clear();
             let t = match g.rng.below(4) {
                 0 => g.group(3),
@@ -14302,17 +14351,27 @@ mod tests {
             let (_, _, m, e) = check(&t, round);
             met += m;
             endless += usize::from(e);
+            round += 1;
         }
         let [checked, unchecked, _, _, everywhere] = CHECKED.get();
         let [pa, pa_everywhere, by_class, by_class_everywhere] = SUMMARIES.get();
         eprintln!(
-            "read again {checked}, of kinds not compared {unchecked}, entries that hold \
-             anywhere {everywhere}; summaries held {pa}, anywhere {pa_everywhere}; by class \
-             held {by_class}, anywhere {by_class_everywhere}; points met {met}, rounds out of \
-             fuel {endless}"
+            "rounds {round}, read again {checked}, of kinds not compared {unchecked}, entries \
+             that hold anywhere {everywhere}; summaries held {pa}, anywhere {pa_everywhere}; by \
+             class held {by_class}, anywhere {by_class_everywhere}; points met {met}, rounds out \
+             of fuel {endless}"
         );
         assert_eq!(unchecked, 0);
-        assert!(pa_everywhere > 0 && by_class_everywhere > 0);
+        round
+    }
+
+    /// Seed 150777271703164204 of
+    /// [`summaries_read_again_give_what_reading_the_term_again_gives`]: its first ten rounds
+    /// meet no summary over the classes of remainders that holds wherever it is reached, so
+    /// it draws more.
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_seed_150777271703164204() {
+        assert!(summaries_read_again(150777271703164204) > SUMMARY_ROUNDS);
     }
 
     /// The classes of [`unite`] without its remembered refusals and its look-up of the caller
@@ -15292,6 +15351,33 @@ mod tests {
             );
             assert_eq!(checked[1], 0, "{checked:?}");
             assert!(SUMMARIES.get()[0] > 0, "{:?}", SUMMARIES.get());
+        }
+    }
+
+    /// Seed 17213863407132117863 of
+    /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`]: round 18 lists a
+    /// Recursion stop reading the term again gives and the held entry does not.
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_seed_17213863407132117863()
+    {
+        let mut g = Gen::new(17213863407132117863, true);
+        READS.set([0; 3]);
+        CHECKED.set([0; 5]);
+        for round in 0..ENTRY_ROUNDS {
+            g.pool.clear();
+            let t = match g.rng.below(3) {
+                0 => g.group(4),
+                1 => g.itself(4),
+                _ => {
+                    let p = if g.rng.below(2) == 0 {
+                        Prim::And
+                    } else {
+                        Prim::Or
+                    };
+                    Term::Prim(p, vec![g.test(4), g.test(4)])
+                }
+            };
+            check(&t, round);
         }
     }
 }
