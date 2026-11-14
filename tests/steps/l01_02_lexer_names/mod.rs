@@ -3,6 +3,7 @@
 
 mod ascii;
 mod bench;
+mod edges;
 mod ignorable;
 mod invisible;
 mod names;
