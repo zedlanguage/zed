@@ -2522,8 +2522,24 @@ fn the_route_by_pendants_keeps_parities_and_holes() {
     }
 }
 
-/// Negative controls of [`compared`] on part 52 of seed 12035647242373093243, where
-/// `2 * b + 2 * c + z3 == 7` makes `z3` odd, with
+/// A part where `2 * b + 2 * c + z3 == 7` makes `z3` odd (FAIL-whole-projection-parity): the
+/// projection by pendants gives the exact set `{1, 3, 5}`, and that of the whole part, where
+/// the solver answers first, the hull `[1, 5]`, which presburger.rs documents; QUESTIONS
+/// A105 accepts the difference in precision. Every other name is the same both ways.
+#[test]
+fn seed_12035647242373093243_part_52_by_pendants_is_exact_and_whole_is_the_hull() {
+    let (items, bs, f, route, all) = answers(12035647242373093243, 52);
+    assert_eq!(route["z3"], "[1,1 3,3 5,5]", "{f}");
+    assert_eq!(all["z3"], "[1,5]", "{f}");
+    assert_eq!(
+        compared(&items, &bs, &route, &all),
+        Ok(vec![("z3".to_string(), Precision::Exact, Precision::Hull)]),
+        "{f}"
+    );
+}
+
+/// Negative controls of [`compared`] on the part of
+/// [`seed_12035647242373093243_part_52_by_pendants_is_exact_and_whole_is_the_hull`], with
 /// `z3` of the projection by pendants (and of the whole) replaced: a set that misses the value
 /// 3 is unsound, one that holds 7 is coarser than the hull, and two sets between the exact
 /// set and the hull that differ have the same precision; each is caught.
