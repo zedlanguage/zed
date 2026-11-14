@@ -65,21 +65,47 @@ fn every_enabled_corpus_program_agrees_and_writes_its_output() {
     assert_eq!(runs, 0, "native runs, each leaving no cell live");
 }
 
+/// Each step program runs on a thread of its own, at once with the others: a native run's
+/// count and the cells it leaves are kept per thread, so each thread counts its own runs.
 #[test]
 fn every_step_program_agrees_on_every_corpus_input() {
-    let mut r = Report::default();
-    let mut programs = 0;
-    let ((), runs) = native(|engines| {
-        for p in oracle::step_units() {
-            let text = std::fs::read_to_string(&p).unwrap();
-            for (c, _) in oracle::corpus() {
-                let input = std::fs::read(c.with_extension("in")).unwrap();
-                let (rep, want) = program(&text, &input, engines);
-                programs += usize::from(want.is_some());
-                r.add(&format!("{} on {}", p.display(), c.display()), rep);
-            }
-        }
+    let corpus = oracle::corpus();
+    let units = oracle::step_units();
+    let each = std::thread::scope(|s| {
+        let threads: Vec<_> = units
+            .iter()
+            .map(|p| {
+                let corpus = &corpus;
+                s.spawn(move || {
+                    let text = std::fs::read_to_string(p).unwrap();
+                    let mut r = Report::default();
+                    let mut programs = 0;
+                    let ((), runs) = native(|engines| {
+                        for (c, _) in corpus {
+                            let input = std::fs::read(c.with_extension("in")).unwrap();
+                            let (rep, want) = program(&text, &input, engines);
+                            programs += usize::from(want.is_some());
+                            r.add(&format!("{} on {}", p.display(), c.display()), rep);
+                        }
+                    });
+                    (r, programs, runs)
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|t| t.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect::<Vec<_>>()
     });
+    let mut r = Report::default();
+    let (mut programs, mut runs) = (0, 0);
+    for (each, p, n) in each {
+        r.compared += each.compared;
+        r.mismatches.extend(each.mismatches);
+        r.not_compared.extend(each.not_compared);
+        programs += p;
+        runs += n;
+    }
     assert_eq!(runs, 248, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());

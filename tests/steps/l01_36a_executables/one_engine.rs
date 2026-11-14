@@ -168,17 +168,30 @@ fn every_program_ends_alike() {
             text.windows(5).any(|w| w == b"main(") && zedc::run::load(&text).is_ok()
         })
         .collect();
-    let mut differ = Vec::new();
-    for (k, src) in programs.iter().enumerate() {
-        let native = native(src, &d.join(format!("program{k}")));
-        let run = interpreter(src, &[], b"");
-        let same = native.as_ref().is_ok_and(|n| {
-            (n.status, &n.stdout) == (run.status, &run.stdout) && run.stderr.ends_with(&n.stderr)
-        });
-        if !same {
-            differ.push(format!("{}: native {native:?}, run {run:?}", src.display()));
-        }
-    }
+    // Each program on a thread of its own, all at once: most of a program's time is its build's
+    // link, which waits on the linker.
+    let differ: Vec<String> = std::thread::scope(|s| {
+        let threads: Vec<_> = programs
+            .iter()
+            .enumerate()
+            .map(|(k, src)| {
+                let out = d.join(format!("program{k}"));
+                s.spawn(move || {
+                    let native = native(src, &out);
+                    let run = interpreter(src, &[], b"");
+                    let same = native.as_ref().is_ok_and(|n| {
+                        (n.status, &n.stdout) == (run.status, &run.stdout)
+                            && run.stderr.ends_with(&n.stderr)
+                    });
+                    (!same).then(|| format!("{}: native {native:?}, run {run:?}", src.display()))
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .filter_map(|t| t.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    });
     eprintln!("{} programs: {programs:?}", programs.len());
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
