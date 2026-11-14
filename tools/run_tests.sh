@@ -1,8 +1,18 @@
 #!/bin/bash
-# Runs every test in pieces, one test binary, step folder, module or slow test each, each under a
-# 60 s limit, and prints a line per piece as it ends. Usage, from a checkout's root:
-#   tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
+# Runs the tests in pieces, one test binary, step folder, module or slow test each, each under a
+# limit of 20 s (more under load, below), and prints a line per piece as it ends. Usage, from a
+# checkout's root:
+#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [jobs]
 #   tools/run_tests.sh --short-clone-remove
+# A run is of the correctness tests or, with --bench, of the benchmarks alone (TEST-bench-split,
+# author P169). A benchmark is a test whose path holds `bench::`: it lies in a module `bench`,
+# a file of its own (tests/steps/<step>/bench.rs, or src/.../bench.rs in a crate), and measures
+# work at two sizes (zed_tests::scaling). The default run leaves out every piece whose tests are
+# all benchmarks and gives a piece that holds some of them `--skip bench::` (with --exact, a
+# `--skip` of each by name). --bench runs each benchmark as a piece of its own, named
+# <group>::<test>, with the same slots, slice, limit and summary lines; --only selects among them
+# as among the correctness pieces. --each-test runs each selected correctness test as a piece of
+# its own, `--exact <test>` in one process (tools/time_tests.sh times the tests this way).
 # Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
@@ -35,12 +45,17 @@
 # (an alternative at its top level) that selects no binary stops the run with an error naming it.
 # A failed piece keeps its output in build/test-logs/<piece>.log, or in the --logs directory.
 # Every piece runs in the systemd slice zedtests.slice, whose 112 GB limit holds across all
-# checkouts together. A load above the number of cores raises the limit of the pieces that start under it in proportion.
+# checkouts together. A piece's limit is max(20, 20 × load / cores) s: a load above the number of
+# cores raises the limit of the pieces that start under it in proportion. It was 60 s until
+# TEST-bench-split (author P169), which puts the measurements at two sizes in benchmarks, run
+# apart with --bench, and asks each correctness test to take well under 1 s alone.
 args=$*
-features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove=
+features= full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
+    --bench) run_kind=bench ;;
+    --each-test) each_test=1 ;;
     --only)
       if [ $# -lt 2 ] || [ -z "$2" ]; then
         echo "--only needs a non-empty extended regular expression"
@@ -64,7 +79,7 @@ while [ $# -gt 0 ]; do
       ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--short-clone-remove] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--short-clone-remove] [jobs])"
       exit 2
       ;;
   esac
@@ -216,14 +231,106 @@ if ! flock -n 8; then
 fi
 echo "process $$, started $(date '+%F %T'), arguments: ${args:-none}" >"$out/run.holder"
 exec 7>&-
-# Writes the pieces of the table on stdin that --only selects to $out/pieces, one per line: its
-# name, directory and command. A line of the table is a piece's group, step folder, then those.
+# The tests of each test binary, one per line, listed once (`--list --format terse`, 30 ms for
+# l01_38's 644 tests); empty for a binary that cannot be listed. list_binary fills it, in the
+# shell that calls it.
+declare -A test_list
+list_binary() {
+  [ -n "${test_list[$1]+x}" ] ||
+    test_list[$1]=$("$1" --list --format terse </dev/null 2>/dev/null | sed -n 's/: test$//p')
+}
+# The tests of a piece's command, one per line: the listed binary $1 run with the arguments
+# after it, applied to its list as libtest applies them. A test runs when a filter is part of
+# its name (with --exact, its whole name), or when there is no filter, and when no --skip is
+# part of it (with --exact, the whole of it). The pieces use no other argument. Listing each
+# piece instead would take 30 ms a piece, 50 s for the 1,653 pieces of 2026-11-14.
+piece_tests() {
+  local bin=$1
+  shift
+  [ -n "${test_list[$bin]}" ] || return 0
+  printf '%s\n' "${test_list[$bin]}" | awk -v args="$*" '
+    BEGIN {
+      n = split(args, a, " ")
+      for (i = 1; i <= n; i++) {
+        if (a[i] == "--exact") exact = 1
+        else if (a[i] == "--skip") skip[++ns] = a[++i]
+        else filter[++nf] = a[i]
+      }
+    }
+    function has(s) { return exact ? $0 == s : index($0, s) > 0 }
+    {
+      for (i = 1; i <= nf; i++) if (has(filter[i])) break
+      if (nf && i > nf) next
+      for (i = 1; i <= ns; i++) if (has(skip[i])) next
+      print
+    }'
+}
+# Splits the pieces of the table on stdin, `group step name dir binary args`, into correctness
+# pieces and benchmarks, and writes each with its kind, test or bench, first. A piece none of
+# whose tests has `bench::` in its path is a correctness piece as it is. Otherwise each of its
+# benchmarks becomes a piece of its own, <its name before the first ::>::<test> running
+# `--exact <test>`, and the rest of it, if any test is left, a correctness piece that skips them:
+# by `--skip bench::`, which libtest matches anywhere in a name, or, in a piece that runs with
+# --exact, where a skip must be a whole name, by a `--skip` of each.
+split_benchmarks() {
+  local group step name dir bin args tests t skips
+  local -A seen
+  while read -r group step name dir bin args; do
+    list_binary "$bin"
+    tests=
+    [[ ${test_list[$bin]} != *bench::* ]] || tests=$(piece_tests "$bin" $args)
+    if [[ $tests != *bench::* ]]; then
+      echo "test $group $step $name $dir $bin${args:+ $args}"
+      continue
+    fi
+    if printf '%s\n' "$tests" | grep -qv 'bench::'; then
+      if [[ " $args " == *" --exact "* ]]; then
+        skips=$(printf '%s\n' "$tests" | grep 'bench::' | sed 's/^/ --skip /' | tr -d '\n')
+        echo "test $group $step $name $dir $bin${args:+ $args}$skips"
+      else
+        echo "test $group $step $name $dir $bin${args:+ $args} --skip bench::"
+      fi
+    fi
+    for t in $(printf '%s\n' "$tests" | grep 'bench::'); do
+      [ -z "${seen[$bin $t]}" ] || continue
+      seen[$bin $t]=1
+      echo "bench $group $step ${name%%::*}::$t $dir $bin --exact $t"
+    done
+  done
+}
+# Writes the pieces of the table $1 of the kind the run is of that --only selects to
+# $out/pieces, one per line: its name, directory and command. A line of the table is a piece's
+# kind, group and step folder, then those. With --each-test, each selected piece of the run's kind
+# becomes a piece per test it runs, <its name before the first ::>::<test> running
+# `--exact <test>`.
 select_pieces() {
-  while read -r group step name rest; do
-    { selected "$group" "$name" || selected "$step" "$name"; } && echo "$name $rest"
-  done >"$out/pieces"
+  local k group step name dir bin args first t
+  read -r first _ <"$1"
+  if [ "$first" != test ] && [ "$first" != bench ]; then
+    echo "$1 is a table of pieces of an older tools/run_tests.sh, without the kind of each"
+    echo "piece; run tools/run_tests.sh --list without --only to write it again."
+    exit 1
+  fi
+  while read -r k group step name dir bin args; do
+    [ "$k" = "$run_kind" ] || continue
+    { selected "$group" "$name" || selected "$step" "$name"; } || continue
+    if [ -z "$each_test" ]; then
+      echo "$name $dir $bin${args:+ $args}"
+      continue
+    fi
+    list_binary "$bin"
+    for t in $(piece_tests "$bin" $args); do
+      echo "${name%%::*}::$t $dir $bin --exact $t"
+    done
+  done <"$1" >"$out/pieces"
   if [ ! -s "$out/pieces" ]; then
-    echo "NO PIECE MATCHES --only '$only'"
+    local among=
+    [ "$run_kind" = test ] || among=" among the benchmarks"
+    if [ -n "$only" ]; then
+      echo "NO PIECE MATCHES --only '$only'$among${each_test:+ (or the pieces it selects run no test)}"
+    else
+      echo "NO PIECE TO RUN$among"
+    fi
     exit 1
   fi
 }
@@ -232,7 +339,7 @@ if [ -n "$reuse" ]; then
     echo "--reuse-table: no $out/table; run tools/run_tests.sh --list without --only first"
     exit 1
   fi
-  select_pieces <"$out/table"
+  select_pieces "$out/table"
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
 fi
@@ -465,7 +572,8 @@ fi
 # Each step folder is a test binary of its own, named after the folder (tests/Cargo.toml), and a
 # test's name in it is its module path within the folder. A step folder or module named here
 # gets a piece for each of its modules and each of its own tests instead of one piece; the rest
-# get one piece each. Named because together they ran past
+# get one piece each. The cases below are history, written under the old limit of 60 s; the limit
+# is 20 s since TEST-bench-split (author P169). Named because together they ran past
 # 60 s at load 100 (l01_25 138 s, l01_38 94 s, l01_36 89 s, l01_16 72 s, l01_08 64 s; l01_23
 # 29 to 35 s at load 53, with tests of 36, 32 and 15 s); the modules are those with a test over
 # 10 s there, so each of those tests has a process of its own. l01_38 names ran past 60 s at
@@ -648,7 +756,7 @@ step_pieces() {
           ;;
         zed_kernel-*)
           # This test took 35 to 39 s alone (46 s at load 26), so the rest of the
-          # crate's tests ran past 60 s with it in one process (LIST-xor-finite,
+          # crate's tests ran past the old limit of 60 s with it in one process (LIST-xor-finite,
           # 2026-11-07); it gets a process of its own.
           # The exclusive-or scaling test sums 8 random shapes per size and took 38 to 46 s
           # alone, so it gets one too (SCALE-fix-kernel, 2026-11-07). The parity test split
@@ -678,8 +786,8 @@ step_pieces() {
       echo "$n $n $n tests $full $n::"
     done
   fi
-} >"$table"
-select_pieces <"$table"
+} | split_benchmarks >"$table"
+select_pieces "$table"
 if [ -n "$list" ]; then
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
@@ -700,7 +808,7 @@ fi
 # three times (DOC-private-links, -2, -3); with no doc comment changed it builds nothing.
 tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
 # At most `slots` pieces run at once on this machine, whichever checkout started them. A piece holds
-# a lock on one file of $slot_dir until it ends, so a killed run frees its slots, and its 60 s start
+# a lock on one file of $slot_dir until it ends, so a killed run frees its slots, and its limit starts
 # when it has one. Four suites at once took 2:13 with 8 slots and 2:05 without, and the longest
 # piece 28 s against 53 s. The author raised the count from 8 to 12 on 2026-11-11 (BUILD-apply):
 # most of a group's wall time was spent waiting for a slot. Waiting pieces queue on a lock of
@@ -753,7 +861,7 @@ piece() {
   scratch=$out/slot-$slot.out
   log=$out/$name.log
   read -r load _ </proc/loadavg
-  limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 60 * l / c; print (x > 60 ? int(x + 1) : 60) }')
+  limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 20 * l / c; print (x > 20 ? int(x + 1) : 20) }')
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \

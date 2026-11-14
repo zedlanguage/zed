@@ -84,7 +84,7 @@
 
 use std::cell::Cell;
 use std::hint::black_box;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use perf_event::Builder;
@@ -141,6 +141,7 @@ pub fn hold(what: &str, measure: &str, small: u64, large: u64, power: u32) -> f6
         (None, Bound::Order(power)),
         limit,
         (small, large, ratio, measure),
+        None,
         None,
     );
     assert!(
@@ -210,10 +211,12 @@ pub const TRIES: usize = 3;
 /// thread's stack is what is left of the caller's, less about 5 KiB of the thread's own, so a
 /// test that sets the stack of the thread it checks on, or sets none, sets it for its runs too.
 /// It returns the bytes the thread and the threads it started allocated, which count in this
-/// thread's count too. A panic in `f` goes on in the caller.
-fn alone(f: &(impl Fn() + Sync)) -> u64 {
+/// thread's count too, and the elapsed time of `f` in nanoseconds (see [`counted_on_a_thread`]). A
+/// panic in `f` goes on in the caller.
+fn alone(f: &(impl Fn() + Sync)) -> (u64, u64) {
     let stack = stacker::remaining_stack().expect("the size of this thread's stack");
-    counted_on_a_thread(stack, f).1
+    let ((), bytes, ns) = counted_on_a_thread(stack, f);
+    (bytes, ns)
 }
 
 /// The processor time this thread has used, which time spent waiting for a processor does not
@@ -514,10 +517,64 @@ pub fn on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
     counted_on_a_thread(stack, f).0
 }
 
-/// [`on_a_thread`], returning the bytes the thread allocated too. A panic in `f` goes on in the
-/// caller, with its own message.
-fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (T, u64) {
-    let (out, bytes) = std::thread::scope(|scope| {
+/// The line a check prints once, as it ends, passed or failed (TEST-bench-split): `bench <what>
+/// n=<n> ns=<small>/<large> instr=<small>/<large> bytes=<small>/<large> ratio=<ratio>`, where
+/// `ns` is the least elapsed time of the runs of each size in the last measurement (see
+/// [`counted_on_a_thread`]), `instr` the least count of the meter (`work=` for a meter of
+/// processor time or cycles, which are not instructions), `bytes` the least bytes, and `ratio`
+/// that of the count. `n` is `-` for a [`compare`]. A guard that prints on drop prints the line on
+/// every way out of a check, a panic included, with what was measured last; a check that panics
+/// before its first measurement prints none. The time is never a pass condition.
+struct BenchLine<'a> {
+    what: &'a str,
+    n: Option<usize>,
+    key: &'static str,
+    last: Option<Measured>,
+}
+
+/// One measurement of a check, for [`BenchLine`].
+#[derive(Clone, Copy)]
+struct Measured {
+    ns: (u64, u64),
+    units: (u64, u64),
+    bytes: (u64, u64),
+}
+
+impl BenchLine<'_> {
+    fn text(&self) -> Option<String> {
+        let Measured { ns, units, bytes } = self.last?;
+        let n = self.n.map_or("-".into(), |n| n.to_string());
+        Some(format!(
+            "bench {} n={n} ns={}/{} {}={}/{} bytes={}/{} ratio={:.3}",
+            self.what,
+            ns.0,
+            ns.1,
+            self.key,
+            units.0,
+            units.1,
+            bytes.0,
+            bytes.1,
+            units.1 as f64 / units.0.max(1) as f64
+        ))
+    }
+}
+
+impl Drop for BenchLine<'_> {
+    fn drop(&mut self) {
+        if let Some(line) = self.text() {
+            eprintln!("{line}");
+        }
+    }
+}
+
+/// [`on_a_thread`], returning the bytes the thread allocated too, and the elapsed time of `f`
+/// in nanoseconds, by [`Instant`] inside the thread from just before `f` is called to just after
+/// it returns: the start of the thread and the waiting for it are not timed. The time is reported
+/// by the checks, never held to a limit: it changes with the load, which the count of
+/// instructions does not (see the module's documentation). A panic in `f` goes on in the caller,
+/// with its own message.
+fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (T, u64, u64) {
+    std::thread::scope(|scope| {
         // The test's name, which libtest gives its thread, so a note of [`hold`] names the test.
         let mut thread = std::thread::Builder::new().stack_size(stack);
         if let Some(name) = std::thread::current().name() {
@@ -525,16 +582,17 @@ fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (
         }
         let counted = || {
             let start = zed_alloc_count::allocated();
+            let clock = Instant::now();
             let out = f();
-            (out, zed_alloc_count::allocated() - start)
+            let ns = u64::try_from(clock.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            (out, zed_alloc_count::allocated() - start, ns)
         };
         let run = thread
             .spawn_scoped(scope, counted)
             .expect("starting the thread of a run");
         run.join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    });
-    (out, bytes)
+    })
 }
 
 /// The inputs `make` gives at sizes `n` and `FACTOR * n`, built before any run is timed, so
@@ -698,27 +756,45 @@ fn compare_by_dyn(
         Bound::Order(_) => ratio >= limit,
         Bound::Given(..) => ratio > limit,
     };
+    let mut line = BenchLine {
+        what,
+        n,
+        key: if meter.instructions { "instr" } else { "work" },
+        last: None,
+    };
     let warm_bytes = Cell::new(0);
-    let mut warm = Some(meter.work(|| warm_bytes.set(alone(&small))));
+    let mut warm = Some(meter.work(|| warm_bytes.set(alone(&small).0)));
     let mut first_runs = String::new();
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
         // The bytes compared are those `alone` counts inside its thread, not the meter's: those
         // hold every thread the run starts, whole, but not the start of `alone`'s own thread,
         // whose bookkeeping in std depends on the other threads alive (see zed-alloc-count).
-        // The least of the runs of each size, and the most of the larger for the refusal.
+        // The least of the runs of each size, and the most of the larger for the refusal. The
+        // elapsed times are the least of the same runs, for the bench line only.
         let (small_bytes, large_bytes, large_most) =
             (Cell::new(u64::MAX), Cell::new(u64::MAX), Cell::new(0));
-        let small = meter.least(|| small_bytes.set(small_bytes.get().min(alone(&small))));
+        let (small_ns, large_ns) = (Cell::new(u64::MAX), Cell::new(u64::MAX));
+        let small = meter.least(|| {
+            let (bytes, ns) = alone(&small);
+            small_bytes.set(small_bytes.get().min(bytes));
+            small_ns.set(small_ns.get().min(ns));
+        });
         let run_large = || {
-            let bytes = alone(&large);
+            let (bytes, ns) = alone(&large);
             large_bytes.set(large_bytes.get().min(bytes));
             large_most.set(large_most.get().max(bytes));
+            large_ns.set(large_ns.get().min(ns));
         };
         // The first run at the larger size, before any other: its bytes are the only ones in
         // `large_bytes` until the rest of the runs.
         let first = warm.map(|warm| (warm, meter.work(run_large), large_bytes.get()));
         let large = meter.least_with(first.map(|(_, run, _)| run), run_large);
+        line.last = Some(Measured {
+            ns: (small_ns.get(), large_ns.get()),
+            units: (small.units, large.units),
+            bytes: (small_bytes.get(), large_bytes.get()),
+        });
         if measures == Measures::Both && large_most.get() == 0 {
             panic!(
                 "{what}: the larger run allocated no bytes, on its thread or any thread it \
@@ -765,6 +841,7 @@ fn compare_by_dyn(
             limit,
             (small.units, large.units, ratio, meter.unit()),
             Some((small_bytes, large_bytes, bytes)),
+            Some((small_ns.get(), large_ns.get())),
         );
         if measures == Measures::Both && over(bytes, limit) {
             panic!(
@@ -814,9 +891,11 @@ fn compare_by_dyn(
 
 /// The variable naming the file every check ([`check_order`], [`compare`] and the rest) appends a
 /// line to for each measurement, when it is set: the test, `what`, n (`-` for [`compare`] and
-/// [`hold`]), the power (`-` for [`compare_costs`]), the limit, the work of the two sizes and its ratio, the unit, and the
-/// bytes of the two sizes and their ratio (`-` for [`hold`]), separated by tabs. It lists the
-/// ratios the tests measure (SCALE-ratio, TESTS-scaling-limit-13, TESTS-scaling-limit-10_5).
+/// [`hold`]), the power (`-` for [`compare_costs`]), the limit, the work of the two sizes and its ratio, the unit, the
+/// bytes of the two sizes and their ratio (`-` for [`hold`]), and the elapsed nanoseconds of the
+/// two sizes (`-` for [`hold`]; see `counted_on_a_thread`), separated by tabs. It lists the
+/// ratios the tests measure (SCALE-ratio, TESTS-scaling-limit-13, TESTS-scaling-limit-10_5) and,
+/// since TEST-bench-split, their times.
 pub const RATIOS_FILE: &str = "ZED_SCALING_RATIOS";
 
 /// Appends one measurement to the file [`RATIOS_FILE`] names, if it is set. One `write` call per
@@ -827,6 +906,7 @@ fn record(
     limit: f64,
     (small, large, ratio, unit): (u64, u64, f64, &str),
     bytes: Option<(u64, u64, f64)>,
+    ns: Option<(u64, u64)>,
 ) {
     use std::io::Write;
     let Some(path) = std::env::var_os(RATIOS_FILE) else {
@@ -842,8 +922,9 @@ fn record(
     let bytes = bytes.map_or("-\t-\t-".into(), |(small, large, ratio)| {
         format!("{small}\t{large}\t{ratio:.3}")
     });
+    let ns = ns.map_or("-\t-".into(), |(small, large)| format!("{small}\t{large}"));
     let line = format!(
-        "{test}\t{what}\t{n}\t{power}\t{limit}\t{small}\t{large}\t{ratio:.3}\t{unit}\t{bytes}\n"
+        "{test}\t{what}\t{n}\t{power}\t{limit}\t{small}\t{large}\t{ratio:.3}\t{unit}\t{bytes}\t{ns}\n"
     );
     std::fs::OpenOptions::new()
         .create(true)
@@ -1201,6 +1282,98 @@ mod tests {
         );
     }
 
+    /// Two checks for [`each_check_prints_a_bench_line_whose_time_grows_with_the_work`]: a spin
+    /// loop of 4000 passes per unit of n, and its negative control, a loop of the same length at
+    /// both sizes. A run of 4000 × 1000 passes takes a few milliseconds, so the time of the
+    /// larger is far above the clock's resolution and the start of a thread.
+    #[test]
+    fn spins_for_the_bench_line() {
+        check_instructions_only("a growing spin", 1000, 1, |n| spin(4000 * n as u64));
+        check_instructions_only("a constant spin", 1000, 0, |_| spin(4000 * 1000));
+    }
+
+    /// The fields of the bench line of `what` in `out`: n, the two times and the two counts.
+    fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
+        let line = out
+            .lines()
+            .find(|l| l.starts_with(&format!("bench {what}: sizes ")))
+            .unwrap_or_else(|| panic!("no bench line of {what:?} in:\n{out}"));
+        let field = |key: &str| {
+            line.split(' ')
+                .find_map(|f| f.strip_prefix(key))
+                .unwrap_or_else(|| panic!("no {key} in {line:?}"))
+                .to_owned()
+        };
+        let pair = |key: &str| -> [u64; 2] {
+            let f = field(key);
+            let (a, b) = f.split_once('/').unwrap_or_else(|| panic!("{key}{f}"));
+            [a.parse().unwrap(), b.parse().unwrap()]
+        };
+        for key in ["bytes=", "ratio="] {
+            field(key);
+        }
+        let key = if Meter::new().instructions {
+            "instr="
+        } else {
+            "work="
+        };
+        (field("n="), pair("ns="), pair(key))
+    }
+
+    /// Each check prints one line `bench <what> n=<n> ns=<small>/<large> instr=<small>/<large>
+    /// bytes=<small>/<large> ratio=<ratio>` and writes the two times to the file of
+    /// [`RATIOS_FILE`] (TEST-bench-split). The time of a loop 8 times as long grows: 8 times by
+    /// its work, held above 4 so that a loaded machine passes. The negative control, a loop of
+    /// one length at both sizes, stays under 2: a timer that measured anything but the run, or
+    /// one size twice, would fail one of the two.
+    #[test]
+    fn each_check_prints_a_bench_line_whose_time_grows_with_the_work() {
+        let ratios = std::env::temp_dir().join(format!("zed-bench-line-{}", std::process::id()));
+        let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+            .args([
+                "--exact",
+                "scaling::tests::spins_for_the_bench_line",
+                "--show-output",
+                "--test-threads=1",
+            ])
+            .env(RATIOS_FILE, &ratios)
+            .output()
+            .expect("running this test binary");
+        let written = std::fs::read_to_string(&ratios);
+        let _ = std::fs::remove_file(&ratios);
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert!(run.status.success(), "{out}");
+        let lines = out.lines().filter(|l| l.starts_with("bench ")).count();
+        assert_eq!(lines, 2, "one bench line per check in:\n{out}");
+        let (n, grows, units) = bench_fields(&out, "a growing spin");
+        assert_eq!(n, "1000");
+        assert!(units[1] > 4 * units[0], "{units:?}");
+        let ratio = grows[1] as f64 / grows[0] as f64;
+        assert!(
+            ratio > 4.0,
+            "the time of 8 times the work: {grows:?}, {ratio:.2} times"
+        );
+        let (_, flat, _) = bench_fields(&out, "a constant spin");
+        let ratio = flat[1] as f64 / flat[0] as f64;
+        assert!(
+            ratio < 2.0,
+            "the time of the same work: {flat:?}, {ratio:.2} times"
+        );
+        // The file has the times as its last two columns, the same as the line's.
+        let written = written.expect("the file of the ratios");
+        let row = written
+            .lines()
+            .find(|l| l.contains("\ta growing spin: sizes "))
+            .unwrap_or_else(|| panic!("no row of the growing spin in:\n{written}"));
+        let columns: Vec<&str> = row.split('\t').collect();
+        assert_eq!(columns.len(), 14, "{row}");
+        assert_eq!(
+            columns[12..],
+            [grows[0].to_string(), grows[1].to_string()],
+            "{row}"
+        );
+    }
+
     #[test]
     fn bytes_a_power_of_n_above_the_order_given_fail_though_the_work_does_not() {
         let failed = std::panic::catch_unwind(|| check("n² bytes", 1000, square_of_bytes));
@@ -1276,8 +1449,9 @@ mod tests {
                 });
             }
             // Measured on a thread none of them started, as a test beside them is.
-            let measured = s
-                .spawn(|| -> Vec<u64> { (0..50).map(|_| alone(&|| linear_bytes(1000))).collect() });
+            let measured = s.spawn(|| -> Vec<u64> {
+                (0..50).map(|_| alone(&|| linear_bytes(1000)).0).collect()
+            });
             let bytes = measured.join().unwrap();
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
             // 1000 words in lists of 4, 8, ..., 1024 of them.
@@ -1295,7 +1469,7 @@ mod tests {
     fn a_run_alone_counts_the_bytes_its_thread_allocates() {
         let before = zed_alloc_count::allocated();
         // 1000 words in lists of 4, 8, ..., 1024 of them.
-        assert_eq!(alone(&|| linear_bytes(1000)), 8 * (2048 - 4));
+        assert_eq!(alone(&|| linear_bytes(1000)).0, 8 * (2048 - 4));
         assert!(zed_alloc_count::allocated() - before >= 8 * (2048 - 4));
     }
 
@@ -1315,13 +1489,13 @@ mod tests {
     fn the_bytes_of_a_bare_thread_a_run_starts_count() {
         // 1000 words in lists of 4, 8, ..., 1024 of them.
         let list = 8 * (2048 - 4);
-        assert_eq!(alone(&|| linear_bytes(1000)), list);
+        assert_eq!(alone(&|| linear_bytes(1000)).0, list);
         let spawned = || std::thread::spawn(|| linear_bytes(1000)).join().unwrap();
-        let joined = alone(&spawned);
+        let joined = alone(&spawned).0;
         assert!(joined >= list, "{joined}");
         // The list is allocated on the second thread down only. The starts of the threads differ
         // by the other threads alive (see zed-alloc-count), so the two counts are not compared.
-        let nested = alone(&|| std::thread::spawn(spawned).join().unwrap());
+        let nested = alone(&|| std::thread::spawn(spawned).join().unwrap()).0;
         assert!(nested >= list, "{nested}");
         let bare = |n| {
             std::thread::spawn(move || square_of_bytes(n))

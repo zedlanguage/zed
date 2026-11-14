@@ -2,6 +2,7 @@
 //! with, the evidence record of `fold` and `fix` included, and the printer writes each in that
 //! notation, on one line or broken to a width.
 
+mod bench;
 mod deep;
 mod evidence;
 mod forms;

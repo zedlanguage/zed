@@ -1,5 +1,5 @@
 #!/bin/bash
-# Tests the piece selection of tools/run_tests.sh (--list, --only). Run from a checkout's root,
+# Tests the piece selection of tools/run_tests.sh (--list, --only, --bench, --each-test). Run from a checkout's root,
 # in a worktree through zrun (`/home/luke/Work/wt/zrun tools/test_run_tests.sh`), since it lists
 # the tests of the built binaries. It builds as run_tests.sh does, which does nothing on a built
 # tree; its first listing selects every piece, so in a checkout with no short-addresses clone
@@ -69,6 +69,42 @@ check "zedc's unit tests are one piece" "$(by_binary zedc)" "$(selected '^zedc$'
 check "a short-addresses piece is selected by its name" "short-l01_37_oracle" "$(selected '^short-l01_37_oracle$')"
 check "a fresh listing selects what the table does" "$(selected '^l01_36_cranelift$')" \
   "$(run --list --only '^l01_36_cranelift$' | sort)"
+# Benchmarks (TEST-bench-split): l01_15_kernel_terms holds a module bench beside its correctness
+# tests, and l01_03 none. The default run leaves the benchmarks out and runs the rest of the
+# step with `--skip bench::`; --bench runs each benchmark as a piece; --each-test runs each
+# correctness test of the selection as a piece. The tests of a piece are found by applying its
+# arguments to the binary's list, as libtest does; the checks of --each-test compare that with
+# libtest's own listing of each piece's command, on pieces with filters, --exact and --skip.
+bin15=$(echo "$pieces" | awk '$1 ~ /^l01_15_kernel_terms/ { print $3; exit }')
+# What libtest lists for each piece of the pieces file whose name matches $1, prefixed as
+# --each-test names the pieces.
+listed_by_libtest() {
+  echo "$pieces" | awk -v re="$1" '$1 ~ re' | while read -r name _ bin args; do
+    # shellcheck disable=SC2086
+    "$bin" --list --format terse $args | sed -n "s/: test\$//p" | sed "s/^/${name%%::*}::/"
+  done | sort
+}
+check "the default run runs no benchmark" "0" "$(echo "$all" | grep -c 'bench::')"
+check "a step with benchmarks is one correctness piece" "l01_15_kernel_terms" "$(selected '^l01_15_')"
+check "its piece skips the benchmarks" "--skip bench::" \
+  "$(echo "$pieces" | awk '$1 == "l01_15_kernel_terms" { print $(NF - 1), $NF }')"
+check "--bench runs each benchmark of the selection as a piece" \
+  "$("$bin15" --list --format terse bench:: | sed -n 's/: test$//p' | sed 's/^/l01_15_kernel_terms::/' | sort)" \
+  "$(run --list --reuse-table --bench --only '^l01_15_' | sort)"
+check "a benchmark matches as <group>::<test>" "l01_15_kernel_terms::bench::the_printer_scales_with_depth" \
+  "$(run --list --reuse-table --bench --only '^l01_15_kernel_terms::bench::the_printer')"
+out=$(run --list --reuse-table --bench --only '^l01_03_')
+rc=$?
+check "--bench on a group without benchmarks stops the run" \
+  "1 NO PIECE MATCHES --only '^l01_03_' among the benchmarks" "$rc $out"
+check "--each-test runs each correctness test of a step with benchmarks" \
+  "$("$bin15" --list --format terse --skip bench:: | sed -n 's/: test$//p' | sed 's/^/l01_15_kernel_terms::/' | sort)" \
+  "$(run --list --reuse-table --each-test --only '^l01_15_' | sort)"
+check "--each-test runs the tests of a split step's pieces, filtered and --exact" \
+  "$(listed_by_libtest '^l01_38_presburger')" "$(run --list --reuse-table --each-test --only '^l01_38_presburger' | sort)"
+check "--each-test runs the tests of pieces with --exact and --skip" \
+  "$(listed_by_libtest '^(zedc_preimage|zed_kernel)-')" \
+  "$(run --list --reuse-table --each-test --only '^(zedc_preimage|zed_kernel)$' | sort)"
 # The binaries the last run built, by name without the hash.
 built() {
   sed -n 's/^ *Executable .*(.*\/\([^/]*\)-[0-9a-f]*)$/\1/p' "$logs/build.log" | sort | tr '\n' ' '

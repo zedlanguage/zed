@@ -1,18 +1,18 @@
-//! The printer at the rule of low complexity (DESIGN.md Part G).
+//! The printer and the drop of terms on deep and wide terms: the shapes the benchmarks of
+//! `bench.rs` measure, and a small instance of each check they make besides the ratio
+//! (TEST-bench-split, P170).
 
-use std::sync::Mutex;
 use zed_kernel::Shared;
 
 use zed_kernel::Term;
 use zed_kernel::print::pretty;
-use zed_tests::scaling;
 
-fn var(x: &str) -> Term {
+pub(super) fn var(x: &str) -> Term {
     Term::Var(x.into())
 }
 
 /// Shape `k` nested `d` deep: lambdas, calls in argument position, calls in head position.
-fn shape(k: usize, d: usize) -> Term {
+pub(super) fn shape(k: usize, d: usize) -> Term {
     (0..d).fold(var(["x", "x", "f"][k]), |t, _| match k {
         0 => Term::Lam(vec!["y".into()], Shared::new(t)),
         1 => Term::App(Shared::new(var("g")), vec![t, var("z")]),
@@ -20,41 +20,11 @@ fn shape(k: usize, d: usize) -> Term {
     })
 }
 
-const SHAPES: [&str; 3] = [
+pub(super) const SHAPES: [&str; 3] = [
     "lambdas",
     "calls in argument position",
     "calls in head position",
 ];
-
-#[test]
-fn the_printer_scales_with_depth() {
-    // Every node a broken layout visited computed its subtree's one-line text, and each level
-    // of the one-line text copied the text of the level inside it.
-    zed_tests::deep::on_small_stack(|| {
-        for (k, what) in SHAPES.iter().enumerate() {
-            let one_line = format!("one line, nested {what}, by depth");
-            // A call's head was copied into the text of the call around it, a cost that
-            // shows only past a few thousand levels. Between 8,000 and 16,000 levels of
-            // heads the recursion leaves the cache, the cost per level stepping up from
-            // 0.4 to 1.1 µs and flat again after, so both sizes are past it.
-            let n = if k == 2 { 16_000 } else { 500 };
-            zed_tests::scaling::check(&one_line, n, |d| {
-                std::hint::black_box(shape(k, d).to_string());
-            });
-            // Broken, calls nested in argument position put depth `i` at indentation `2i`,
-            // so their text is quadratic in the depth: they are measured by the text's
-            // length, the depth growing as its square root.
-            let (n, depth): (usize, fn(usize) -> usize) = match k {
-                1 => (250_000, |m| m.isqrt()),
-                _ => (500, |m| m),
-            };
-            let broken = format!("width 80, nested {what}, by text");
-            zed_tests::scaling::check(&broken, n, |m| {
-                std::hint::black_box(pretty(&shape(k, depth(m)), 80));
-            });
-        }
-    });
-}
 
 #[test]
 fn nested_shapes_break_as_before() {
@@ -70,10 +40,24 @@ fn nested_shapes_break_as_before() {
     assert_eq!(pretty(&lam, 10), "y -> y -> y -> x");
 }
 
+/// Each shape `bench::the_printer_scales_with_depth` prints, on a small stack, at the larger
+/// depths it reaches: on one line with one level of text per level, and broken at width 80.
+#[test]
+fn each_shape_prints_deep_on_a_small_stack() {
+    zed_tests::deep::on_small_stack(|| {
+        for (k, depth) in [(0, 4_000), (1, 1_000), (2, 16_000)] {
+            let t = shape(k, depth);
+            let marks = [" -> ", "g(", "(a)"][k];
+            assert_eq!(t.to_string().matches(marks).count(), depth, "{}", SHAPES[k]);
+            std::hint::black_box(pretty(&shape(k, depth.min(4_000)), 80));
+        }
+    });
+}
+
 /// Each shape of term dropped, `n` nodes: four nested `n` deep, through an `Arc` (`let` bodies,
 /// lambda bodies, `else` branches) or a `Vec` of arguments (a left-nested sum), and two
 /// branching, a balanced tree of sums and one tuple of `n` parts.
-fn dropped_shapes(n: usize) -> Vec<(&'static str, Term)> {
+pub(super) fn dropped_shapes(n: usize) -> Vec<(&'static str, Term)> {
     use zed_kernel::term::Prim;
     use zed_kernel::term::build::{if_, lam, let_, lit, prim};
     let chain = (0..n).fold(var("x"), |body, _| let_("x", lit(1), body));
@@ -106,36 +90,13 @@ fn dropped_shapes(n: usize) -> Vec<(&'static str, Term)> {
     ]
 }
 
+/// Every shape `bench::dropping_deep_and_wide_terms_scales` drops, at its smaller size, 12,500,
+/// past the near 10,000 levels where a recursive drop overflows a 2 MiB stack.
 #[test]
-fn dropping_deep_and_wide_terms_scales() {
-    // `Term`'s drop keeps the parts still to free on a heap stack (COMPLEXITY.md F62), each part
-    // moved there once. Only the drop is measured: each run frees a term built before any run.
-    let n = 12_500;
+fn each_shape_drops_on_a_small_stack() {
     zed_tests::deep::on_small_stack(|| {
-        let (small_runs, large_runs) = scaling::Meter::new().runs();
-        let pools = |k: usize, runs: usize| -> Vec<(&'static str, Mutex<Vec<Term>>)> {
-            let built: Vec<_> = dropped_shapes(k)
-                .into_iter()
-                .map(|(what, t)| (what, Mutex::new(vec![t])))
-                .collect();
-            for _ in 1..runs {
-                for ((_, pool), (_, t)) in built.iter().zip(dropped_shapes(k)) {
-                    pool.lock().expect("no run panicked").push(t);
-                }
-            }
-            built
-        };
-        let (small, large) = (pools(n, small_runs), pools(8 * n, large_runs));
-        for ((what, s), (_, l)) in small.iter().zip(&large) {
-            scaling::check(&format!("dropping {what}"), n, |k| {
-                let pool = if k == n { s } else { l };
-                drop(
-                    pool.lock()
-                        .expect("no run panicked")
-                        .pop()
-                        .expect("a term built for each run"),
-                );
-            });
+        for (_, t) in dropped_shapes(12_500) {
+            drop(t);
         }
     });
 }
@@ -178,7 +139,7 @@ fn a_term_far_deeper_than_the_stack_drops_and_keeps_its_shared_parts() {
 
 /// Negations and indices nested `d` deep: `-(-(-x))` and `t[0][0][0]`, each operand checked
 /// for parentheses once (repair PRIM-hidden-names).
-fn prefix_shape(k: usize, d: usize) -> Term {
+pub(super) fn prefix_shape(k: usize, d: usize) -> Term {
     use zed_kernel::term::Prim;
     use zed_kernel::term::build::{lit, prim};
     (0..d).fold(var("x"), |t, _| match k {
@@ -187,48 +148,42 @@ fn prefix_shape(k: usize, d: usize) -> Term {
     })
 }
 
+/// The texts of `bench::negations_and_indices_print_in_linear_time`'s shapes, and both printed
+/// at its smaller depth on a small stack.
 #[test]
-fn negations_and_indices_print_in_linear_time() {
-    zed_tests::deep::on_small_stack(|| {
-        let n = 2_000;
-        for (k, what) in ["negations", "indices"].into_iter().enumerate() {
-            let (small, large) = (prefix_shape(k, n), prefix_shape(k, 8 * n));
-            scaling::check(&format!("one line, nested {what}, by depth"), n, |d| {
-                let t = if d == n { &small } else { &large };
-                std::hint::black_box(t.to_string());
-            });
-            scaling::check(&format!("width 80, nested {what}, by depth"), n, |d| {
-                let t = if d == n { &small } else { &large };
-                std::hint::black_box(pretty(t, 80));
-            });
-        }
-    });
+fn negations_and_indices_print_as_before() {
     assert_eq!(prefix_shape(0, 3).to_string(), "-(-(-x))");
     assert_eq!(prefix_shape(1, 3).to_string(), "x[0][0][0]");
+    zed_tests::deep::on_small_stack(|| {
+        for k in 0..2 {
+            let t = prefix_shape(k, 2_000);
+            assert_eq!(t.to_string().matches(["-", "[0]"][k]).count(), 2_000);
+            std::hint::black_box(pretty(&t, 80));
+        }
+    });
 }
 
-/// Item PRINT-group-site-defs: a term whose n type tests each write a part twice,
-/// `is (int | #x{k}, int | #x{k})`, is written with n declarations before it, in time
-/// linear in the term (COMPLEXITY.md K92).
-#[test]
-fn a_term_declaring_its_shared_parts_scales() {
+/// Item PRINT-group-site-defs: a match on `v` with `n` type tests that each write a part twice,
+/// `is (int | #x{k}, int | #x{k})`.
+pub(super) fn declaring_shared_parts(n: usize) -> Term {
     use zed_kernel::Pattern;
     use zed_kernel::types::Type;
-    scaling::check_order(
-        "a term with n type tests that each write a part twice",
-        100,
-        1,
-        |n| {
-            let arms = (0..n)
-                .map(|k| {
-                    let part = &Type::int() | &Type::atom(&format!("x{k}"));
-                    let pair = Type::tuple(vec![part.clone(), part]);
-                    (Pattern::Is(pair), zed_kernel::term::build::lit(k as i64))
-                })
-                .collect();
-            let text = Term::Match(Shared::new(var("v")), arms).to_string();
-            assert_eq!(text.matches("type T").count(), n);
-            std::hint::black_box(text);
-        },
-    );
+    let arms = (0..n)
+        .map(|k| {
+            let part = &Type::int() | &Type::atom(&format!("x{k}"));
+            let pair = Type::tuple(vec![part.clone(), part]);
+            (Pattern::Is(pair), zed_kernel::term::build::lit(k as i64))
+        })
+        .collect();
+    Term::Match(Shared::new(var("v")), arms)
+}
+
+/// The term of `bench::a_term_declaring_its_shared_parts_scales` is written with one
+/// declaration for each part written twice.
+#[test]
+fn a_term_with_type_tests_that_write_a_part_twice_declares_each_part() {
+    for n in [1, 3] {
+        let text = declaring_shared_parts(n).to_string();
+        assert_eq!(text.matches("type T").count(), n, "{text}");
+    }
 }
