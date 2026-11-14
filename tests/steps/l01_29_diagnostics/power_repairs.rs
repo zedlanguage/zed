@@ -412,7 +412,10 @@ const USE_AT_A_CARRIER: [(&str, &[&str]); 12] = [
     ),
     ("z = 2^-1;\nc = z + 1.5f32;\n", &[]),
     ("g() {\n  z = 2^-1;\n  return z + 1.5f32;\n}\n", &[]),
-    ("g() {\n  z = 2^-1;\n  w = z;\n  return w + 1.5f32;\n}\n", &[]),
+    (
+        "g() {\n  z = 2^-1;\n  w = z;\n  return w + 1.5f32;\n}\n",
+        &[],
+    ),
     // A name of type `f64`: a parameter, and a name bound to an `f64` literal.
     (
         "g(x: f64) {\n  z = 2^-1;\n  return z * x;\n}\n",
@@ -422,15 +425,9 @@ const USE_AT_A_CARRIER: [(&str, &[&str]); 12] = [
         "g() {\n  x = 1.5f64;\n  z = 2^-1;\n  return z * x;\n}\n",
         &["2.0f64^-1", "2^-1.0f64"],
     ),
-    (
-        "g(x: f32) {\n  z = 2^-1;\n  return x - z;\n}\n",
-        &[],
-    ),
+    ("g(x: f32) {\n  z = 2^-1;\n  return x - z;\n}\n", &[]),
     // A `rat` operand keeps `2r^-1` alone.
-    (
-        "g(x: rat) {\n  z = 2^-1;\n  return z * x;\n}\n",
-        &["2r^-1"],
-    ),
+    ("g(x: rat) {\n  z = 2^-1;\n  return z * x;\n}\n", &["2r^-1"]),
 ];
 
 #[test]
