@@ -327,16 +327,6 @@ fn literal_branches_take_f64_where_the_result_is_used_at_f64() {
 }
 
 #[test]
-#[ignore = "step L10.1: a binding with a declared type is layer L10, and zedc refuses it at L1"]
-fn a_declared_binding_reads_literal_branches_at_its_carrier() {
-    // DESIGN.md step L1.26a, word for word: `z: f64 = if c { 2 } else { 1 }` reads both
-    // branches at `f64`.
-    let src = "g(positional c: bool) = { z: f64 = if c { 2 } else { 1 }; z };\ny = g(true);\n";
-    assert_eq!(sig(src, "g"), "(bool) -> f64");
-    assert_eq!(value(src, "y"), "2.0");
-}
-
-#[test]
 fn an_operation_on_literals_keeps_its_value_in_an_if() {
     // DESIGN.md step L1.26a: "an operation on literals alone keeps its value in an `if`, so
     // `if c { 1 + 1 } else { 1.5 }` is `2 | 1.5`".
