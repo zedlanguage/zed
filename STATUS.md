@@ -2206,7 +2206,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-generic-class-follows | impl attempt 1 | 2026-11-13 23:24 | reproduced (g(positional x) = x == 1 + 1 gave false false false true at f64 f32 rat int); fix in Ck::equal_classes/follow_param; baseline run in progress |
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
-| PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
+| PRES-exact-side | merged and pushed (9ccfdc344, fbc0709b6); no spec change | COMPLEXITY.md PRES-exact-side. `hull_side` reads a side by Fourier-Motzkin with the dark shadow where every elimination is exact, and asks no question in hop and hopon; instructions at 8n on 6a223ba86: hop 8.60, hopon 9.13, boxstar 7.62, cuts 7.64, star_extra 9.98, chain 9.62, `nest_empty_project_each` 10.48, all under 10.5, absolute work lower at both sizes; after the rebase onto 488eb4618 star_extra 10.42 (main 9.80, under 10.5 by 0.08) and hopon 9.22; hopon over 9 from main's `twovar::ends`, in PERF-l139-under9. zedc_presburger 267 passed (main 264); zedc_presburger, zedc_preimage, l01_25, l01_38, l01_39*: 898 pieces, 0 failed, as on main 6a223ba86; 899, 0 failed, on 488eb4618. |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
 | REPAIR-text-cast-spelling | impl attempt 1 | 2026-11-13 23:35 | started |
 | SPEC-ffi-state-libc-substate | running | 2026-11-13 23:47 |  |
