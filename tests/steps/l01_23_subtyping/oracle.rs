@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Type, Universe, Verdict};
 use zed_kernel::{Family, Value};
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, pick_seeds};
 
 #[derive(Clone, Debug)]
 enum E {
@@ -631,22 +631,47 @@ fn the_two_routes_agree_on_recursive_systems() {
     // Every system of seeds 1 and 2 the cross-review measured: no route says `Empty` where
     // the other says `Inhabited`, and none is wrong against the closure oracle. The
     // simulation decides a pair only where the search refuses it. Ran all 8000 (3980 the same,
-    // 17 refused by both, 2 decided by the simulation alone); now 1500 drawn from them with a new
-    // seed each run, printed (TEST-bench-move-l0123, author P169: random tests run fewer cases);
-    // the cases the simulation alone decides are checked each run in
-    // `the_recorded_cases_are_decided_by_the_simulation`.
+    // 17 refused by both, 2 decided by the simulation alone), as `bench::every_recursive_system`
+    // still does; now 1500 distinct systems drawn from them with a new seed each run, printed
+    // (TEST-bench-move-l0123, author P169: random tests run fewer cases). The 8000 hold 19 pairs
+    // not decided the same way by both routes, so any draw has fewer than 20, and the check below
+    // holds for every draw while the 8000 do. Drawing with replacement, and asking `same > 690`
+    // of about 750 accepted, failed one run in 45. The cases the simulation alone decides are
+    // checked each run in `the_recorded_cases_are_decided_by_the_simulation`.
     let (mut rng, first) = Rng::fresh("recursive systems drawn");
+    let drawn = pick_seeds(&mut rng, "recursive systems", 0..2 * SYSTEMS_PER_SEED, 1500);
+    let (routes, accepted) = recursive_routes(
+        drawn
+            .into_iter()
+            .map(|s| (1 + s / SYSTEMS_PER_SEED, (s % SYSTEMS_PER_SEED) as usize)),
+        &format!("ZED_SEED={first}"),
+    );
+    // About 750 of the 1500 are accepted; 600 lies over eight standard deviations below.
+    assert!(
+        accepted > 600 && routes.same + 20 > accepted && routes.refused < 20,
+        "{routes:?} of {accepted} (ZED_SEED={first})"
+    );
+}
+
+/// Systems per seed of `recursive_pair` that the cross-review measured, for seeds 1 and 2.
+const SYSTEMS_PER_SEED: u64 = 4000;
+
+/// Checks the pairs of `systems` (seed, index) against the closure oracle and records the two
+/// routes on each; returns the routes and the number of systems whose group is accepted. `run`
+/// names the run in failure messages.
+fn recursive_routes(systems: impl Iterator<Item = (u64, usize)>, run: &str) -> (Routes, usize) {
     let mut routes = Routes::default();
     let mut decided = Vec::new();
-    for _ in 0..1500 {
-        let (seed, idx) = (1 + rng.below(2) as u64, rng.below(4000));
+    let mut accepted = 0;
+    for (seed, idx) in systems {
         let Some((a, b, witness)) = recursive_pair(seed, idx) else {
             continue;
         };
+        accepted += 1;
         if let Some(w) = &witness {
             assert!(
                 (&a - &b).contains(w),
-                "{w} in {a} \\ {b} (system {seed}, {idx}; ZED_SEED={first})"
+                "{w} in {a} \\ {b} (system {seed}, {idx}; {run})"
             );
         }
         if routes.record(&a, &b, witness.is_none()) {
@@ -654,10 +679,7 @@ fn the_two_routes_agree_on_recursive_systems() {
         }
     }
     println!("recursive systems: {routes:?}, decided by the simulation alone: {decided:?}");
-    assert!(
-        routes.same > 690 && routes.refused < 20,
-        "{routes:?} (ZED_SEED={first})"
-    );
+    (routes, accepted)
 }
 
 #[test]
@@ -678,3 +700,5 @@ fn the_recorded_cases_are_decided_by_the_simulation() {
         assert!(v != Verdict::Inhabited, "system {idx}: {a} \\ {b} is {v:?}");
     }
 }
+
+mod bench;
