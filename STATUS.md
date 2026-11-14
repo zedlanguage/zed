@@ -1397,6 +1397,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | FAIL-zir-lower-port-in-family-message | merged and pushed (the commit "FAIL-zir-lower-port-in-family-message: …", which marks the row Done); no spec change | crates/zedc-zir/src/zir/lower.rs: a `fam` body region, of kind function, is marked as a family's body, and the refusal of a port in it says "inside a loop or a family", as for `gen` and `fix`. Test `l01_33_lowering::fail_port_in_family`, with a neighbor test. Follow-up row MSG-lower-port-repair-kind (the repair "bind the function with `let`" is given for every region kind). |
 | POLY-trivial-base-folded | merged and pushed (the commit "POLY-trivial-base-folded: …", which marks the row Done); no spec change | crates/zed-kernel/src/poly.rs `folded_bases`: a base with no name whose normal form is 0, 1 or -1 (`0 - 1`, `1 * 1`, `2 - 2`, `-(0 - 1)`) takes an exponent past `u64::MAX`, as a base written `-1` did; the bases are expanded once under their own budget. Test `l03_09_egraph::forms::a_base_whose_value_is_0_1_or_minus_1_takes_a_wide_exponent`. New row FAIL-pendants-route-quarter-seed (a random l01_39 test fails on some seeds). |
 | FAIL-pext-transfer-popcount | merged and pushed (the commit "FAIL-pext-transfer-popcount: ..."); no spec change | The `pext` transfer bounded the result below `2^digits(mask)`; it now takes `2^m - 1`, `m` the most one digits of an int in the mask interval (`Num::most_ones_from`, one pass over the words, O(digits)). Tests: `pext_popcount.rs` (4, red before the fix), `transfer.rs` at `r(0, 15)`, a bench with 8x ratio 7.75 (negative control, a loop per bit, 58.4). Local suite: 2188 of 2190 pieces passed; the 2 failures, `scaling::tests::each_check_prints_a_bench_line_whose_time_grows_with_the_work` in zed_rt and zedc_presburger, were time ratios at load 58 to 69 and passed alone. |
+| FAIL-ports-key-past-i64 | merged and pushed (the commit that marks the row Done); no spec change | Found by TEST-complete-ports. Cause: `Frame::Index1` in `crates/zedc-check/src/check/walk.rs` gave a literal index past 64 bits the unknown type before `at_index`, so no dense read was recorded and the elaborator wrote a lookup that misses with `#notFound`. Fix: such a key goes to `at_index` with no tuple position, as a negative key does: `m.stdin[2^63]` and `m.args[2^63]` miss with `#outOfBounds`, and `(1, 2)[2^63]` is rejected (it was accepted). Tests: `l01_19_whole_file_ports::key_past_i64` (three tests, two red before the fix) |
 
 ## Decisions made
 
@@ -2280,7 +2281,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
-| FAIL-ports-key-past-i64 | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
 | FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |

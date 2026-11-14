@@ -1342,11 +1342,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     m.job(Job::Arg(k, Want::default()));
                     return;
                 };
+                // A key past 64 bits is no tuple index and no key of a dense family, as a
+                // negative one is not: it is read the same way, so a family whose keys are one
+                // integer interval misses it with `#outOfBounds` (FAIL-ports-key-past-i64).
                 let i = match literal(k, None).map(|l| l.value) {
-                    Some(Value::Int(i)) => i,
+                    Some(Value::Int(i)) => usize::try_from(i).ok(),
+                    Some(Value::Big(_)) => None,
                     _ => return m.ty(Ty::dynamic()),
                 };
-                m.k(Frame::AtIndex(v, usize::try_from(i).ok(), of, span));
+                m.k(Frame::AtIndex(v, i, of, span));
                 m.job(Job::Arg(k, Want::default()));
             }
             Frame::AtKey(v, of, span) => {

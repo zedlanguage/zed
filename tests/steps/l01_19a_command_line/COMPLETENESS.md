@@ -12,7 +12,7 @@ error naming its key, the arguments recorded and replayed. Plan row TEST-complet
 | Every word after the first `--`, a later `--` or `--record` among them | `arguments.rs::every_word_after_the_first_dashes_is_an_argument`; `combinations.rs::an_argument_of_each_kind_is_written_as_given` | |
 | An empty word, empty between words, a leading dash, spaces and a tab kept, non-ASCII | `combinations.rs::an_argument_of_each_kind_is_written_as_given` | |
 | A key past the last or below 0 | `arguments.rs::a_key_past_the_last_argument_or_below_0_is_out_of_bounds` | |
-| A key of 2^63 or more | `/home/luke/Work/wt/failing-tests/FAIL-ports-key-past-i64.rs` | Fails: gives `#notFound`, DESIGN gives `#outOfBounds`. Plan row FAIL-ports-key-past-i64; not merged (P188). |
+| A key of 2^63 or more | `l01_19_whole_file_ports/key_past_i64.rs::a_key_past_64_bits_is_out_of_bounds` | Fixed by row FAIL-ports-key-past-i64. |
 | An argument read in interpolation, in a condition, at a computed key, through a helper, cast to `int`, used as a path | `combinations.rs::an_argument_is_read_in_each_position` | |
 | An argument that is not UTF-8 is a usage error naming its key | `arguments.rs::an_argument_that_is_not_utf8_is_a_usage_error_naming_its_key`, `binary.rs::zedc_names_the_argument_that_is_not_utf8` | |
 | A read left undisposed is rejected | `arguments.rs::a_read_may_be_out_of_bounds_so_the_checker_asks_for_its_disposal` | |

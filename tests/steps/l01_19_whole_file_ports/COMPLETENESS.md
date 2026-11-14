@@ -19,7 +19,7 @@ Plan row TEST-complete-ports (author P189). Coverage before and after is at the 
 | A key computed from an expression | same test (key_computed); `lines.rs::a_computed_line_number_reads_that_line` | |
 | One past the last key, a negative key, key 0 of no lines, key 0 of one line | `combinations.rs::a_key_outside_the_lines_gives_out_of_bounds` | |
 | A key below -2^63 | same test (below_64_bits) | |
-| A key of 2^63 or more | `/home/luke/Work/wt/failing-tests/FAIL-ports-key-past-i64.rs` | Fails: gives `#notFound`, DESIGN gives `#outOfBounds`. Plan row FAIL-ports-key-past-i64; not merged (P188). |
+| A key of 2^63 or more, on `m.stdin` and `m.args`; 2^63 - 1; a key past 64 bits held in a name; a tuple index past 64 bits | `key_past_i64.rs` (three tests) | Fixed by row FAIL-ports-key-past-i64. |
 | A line of 1-, 2-, 3- and 4-byte UTF-8, a NUL and a tab inside | `combinations.rs::a_line_is_utf8_text_or_io_error` | |
 | A line that is not UTF-8: lone continuation byte, overlong NUL, surrogate, above U+10FFFF, cut short at the end | same test; `lines.rs::a_line_that_is_not_utf8_is_an_io_error_at_its_key` | |
 | `len(m.stdin)` | | Left out: at layer L1 `len` takes `(String) -> int` only (DESIGN words table); the length of a family is a later layer. |
