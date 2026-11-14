@@ -1176,6 +1176,9 @@ struct Ck<'t, 'a> {
     /// and for each it reads to get it, by its span ([`Ck::fixed_value`]); `None` where the text
     /// fixes none.
     fixed: HashMap<Span, Option<Value>>,
+    /// What the text proves of the coefficients the kernel holds for each expression read as an
+    /// operand of `*` or `/`, and for each it reads to get it, by its span ([`Ck::least_built`]).
+    built: HashMap<Span, Built>,
     /// The expressions whose value is the result of `main`, its exit status ([`Ck::main_tails`]).
     main_tails: HashSet<Span>,
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
@@ -1508,6 +1511,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             alias: HashMap::new(),
             known: HashMap::new(),
             fixed: HashMap::new(),
+            built: HashMap::new(),
             facts: HashMap::new(),
             main_tails: HashSet::new(),
             whence: HashMap::new(),
@@ -8758,6 +8762,28 @@ impl IntRange {
             _ => None,
         }
     }
+}
+
+/// What the text proves of the coefficients the kernel holds for an exact value, its numerator
+/// and denominator ([`Rat::kept`]): for each, a lower bound on its bit length, and whether it is
+/// 1 in magnitude; and whether the value keeps no prime as a power beside them
+/// ([`Ck::least_built`]).
+#[derive(Clone)]
+struct Built {
+    /// The numerator, then the denominator.
+    parts: [Coef; 2],
+    /// Whether no prime is kept as a power, so that a product of two such values keeps none and
+    /// the kernel moves no factor out of its coefficients.
+    plain: bool,
+}
+
+/// What [`Built`] proves of one coefficient.
+#[derive(Clone)]
+struct Coef {
+    /// The least bit length of its magnitude; 0 where it may be 0.
+    bits: Num,
+    /// Whether it is 1 in magnitude.
+    one: bool,
 }
 
 /// What the text of an expression shows of its `int` value: an interval holding it and, for an

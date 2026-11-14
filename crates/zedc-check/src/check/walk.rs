@@ -3469,6 +3469,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.too_large_power(a, b, span);
                     }
                 }
+                if matches!(op, BinaryOp::Mul | BinaryOp::Div)
+                    && let Some(a) = x.expr
+                {
+                    self.too_large_product(op, a, b, span);
+                }
                 let zero = if divides {
                     self.zero_divisor(op, &x, &y, b)
                 } else {
@@ -7833,24 +7838,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     bytes_text_of(&bytes)
                 )
             }
-            None => {
-                let bytes = bits.div_floor(&Num::from(8i64));
-                let space = bytes_text_of(&Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2))));
-                // A size that writes as the address space, as 2^64 bytes and a few bits, is
-                // more than it.
-                let need = match bytes_text_of(&bytes) {
-                    need if need == space => format!("more than {need}"),
-                    need => format!("at least {need}"),
-                };
-                let target = self
-                    .t
-                    .target
-                    .map_or("a 64-bit target".to_string(), target_text);
-                format!(
-                    "Number too large for any memory of the target: `{power}` needs {need}; \
-                     {target} addresses {space}"
-                )
-            }
+            None => self.too_large_headline(power, bits),
         };
         // Where each operand comes from, the literal or the declaration, and its least size.
         let mut notes = self.derive(&[span]);
@@ -7929,6 +7917,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             .to_string(),
         });
+        notes.push(Note {
+            span,
+            text: format!("or delete `{power}` if its result is not used"),
+        });
         // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
         // most the bound, 2^67 or `8 * b`, as `b ^ (2^60)` for a base of 65 bits; none where
         // even the base does not.
@@ -7988,6 +7980,121 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(Row::NumberOverAddressSpace),
             span,
             Msg::new(message, fixes),
+            notes,
+        );
+    }
+
+    /// The headline of a number `code` proved to need at least `bits` bits, more than the
+    /// target's address space: "Number too large for any memory of the target: `b ^ (2^64)`
+    /// needs at least 128 EiB; Linux x86_64 addresses 16 EiB".
+    fn too_large_headline(&self, code: &str, bits: &Num) -> String {
+        let bytes = bits.div_floor(&Num::from(8i64));
+        let space = bytes_text_of(&Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2))));
+        // A size that writes as the address space, as 2^64 bytes and a few bits, is more than
+        // it.
+        let need = match bytes_text_of(&bytes) {
+            need if need == space => format!("more than {need}"),
+            need => format!("at least {need}"),
+        };
+        let target = self
+            .t
+            .target
+            .map_or("a 64-bit target".to_string(), target_text);
+        format!(
+            "Number too large for any memory of the target: `{code}` needs {need}; {target} \
+             addresses {space}"
+        )
+    }
+
+    /// The product or quotient `a * b` or `a / b` at `span`, rejected when its result is proved
+    /// larger than the target's address space, whether or not its branch is taken, as a power
+    /// is ([`Self::too_large_power`]; DESIGN.md sec:checking_in_zed, sec:diagnostics "Number
+    /// too large for any memory of the target"; plan row CONST-too-large-products). Each part
+    /// of the result, its numerator or denominator, is a product of a part of `a` and a part
+    /// of `b`, at least `2^(La - 1) * 2^(Lb - 1)` in magnitude for parts of `La` and `Lb`
+    /// bits, so it has at least `La + Lb - 1` bits: the bit lengths of the least factors
+    /// added, less one. What each operand's parts are at least comes from
+    /// [`Self::least_built`], so `(b ^ (2^60)) * (b ^ (2^60))` with `b = 2^64 + 13`, each
+    /// factor of `2^66 + 1` bits, needs more than 16 EiB. An operand already past the address
+    /// space is not reported again here: its own operation is.
+    ///
+    /// The bound is of the reduced result, the number the program holds, as DESIGN states it,
+    /// so it holds only where the kernel cancels nothing ([`product_built`]): both operands
+    /// keep no prime as a power, and the parts a reduction could divide share no factor, which
+    /// the text proves where one of each pair is 1, as every pair of an `int` product is. GMP's
+    /// `mpq_mul` and `mpq_div` (after Knuth, TAOCP vol. 2, §4.5.1) cancel the cross gcds
+    /// before multiplying, so `x / x` builds nothing there, and a bound on the factors alone
+    /// would reject it. The kernel's `Rat::mul` and `Rat::div` build the unreduced products
+    /// first, so a quotient of two wide `rat`s whose parts may share a factor can still need
+    /// more memory than the target has; that is left to the run, as a power of a kept base is.
+    ///
+    /// Complexity tradeoff: the naive method builds the product, as the run would, at the cost
+    /// of its size (24 EiB for the product of three such powers) and depending on the memory
+    /// of the machine that builds. Used: the operands' bounds, each expression read once
+    /// ([`Self::least_built`]), and a few additions and comparisons of bit lengths: O(1)
+    /// operations on numbers of O(log) words per `*` or `/`, plus the size of the numbers a
+    /// rejection's message writes.
+    fn too_large_product(&mut self, op: BinaryOp, a: &'a Expr, b: &'a Expr, span: Span) {
+        let (x, y) = (self.least_built(a), self.least_built(b));
+        let Some(r) = product_built(op, &x, &y) else {
+            return;
+        };
+        let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
+        if r.size() <= room || x.size() > room || y.size() > room {
+            return;
+        }
+        let code = self.code(Some(span)).unwrap_or(match op {
+            BinaryOp::Mul => "this product",
+            _ => "this quotient",
+        });
+        let message = self.too_large_headline(code, &r.size());
+        // Where each operand comes from, the literal, the power or the declaration, and its
+        // least size.
+        let mut notes = self.derive(&[span]);
+        for (o, w, name) in [(a, &x, "the left operand"), (b, &y, "the right operand")] {
+            let o_code = self.code(Some(o.span)).unwrap_or(name);
+            notes.push(Note {
+                span: self.fixed_at(o),
+                text: format!("`{o_code}` has {}", built_text(w)),
+            });
+        }
+        // The formula, in the letters of DESIGN's `x * y`.
+        let factors = match (op, r.parts[1].one) {
+            (BinaryOp::Mul, true) => "the bit lengths of the least |x| and |y| added, less one",
+            (BinaryOp::Mul, false) => {
+                "for each part, the bit lengths of the least parts it multiplies added, less \
+                 one: numerator by numerator and denominator by denominator, where neither \
+                 numerator shares a factor with the other operand's denominator"
+            }
+            (_, true) => {
+                "the bit lengths of the least numerator of x and denominator of y added, less \
+                 one"
+            }
+            _ => {
+                "for each part, the bit lengths of the least parts it multiplies added, less \
+                 one: the numerator of x by the denominator of y and the denominator of x by \
+                 the numerator of y, where the numerators share no factor and the denominators \
+                 share none"
+            }
+        };
+        notes.push(Note {
+            span,
+            text: format!("so `{code}` has {}: {factors}", built_text(&r)),
+        });
+        notes.push(Note {
+            span,
+            text: "or read a factor from the input: the run then stops if no memory holds the \
+                   result"
+                .to_string(),
+        });
+        notes.push(Note {
+            span,
+            text: format!("or delete `{code}` if its result is not used"),
+        });
+        self.reject(
+            Some(Row::NumberOverAddressSpace),
+            span,
+            Msg::new(message, Vec::new()),
             notes,
         );
     }
@@ -8107,6 +8214,144 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             _ => None,
         }
+    }
+
+    /// What the text proves of the coefficients the kernel holds for `e`'s value ([`Built`]):
+    /// exactly, for a value the text fixes ([`Self::fixed_value`]); for a power `a ^ k` of a
+    /// fixed `a`, where every `k` is at least 1 in magnitude, as [`Self::too_large_power`]
+    /// bounds it ([`Self::power_built`]); the same through a name bound by `name = e`, a `-`
+    /// and a `rat(x)` cast; and for a `*` or `/` of two such values by [`product_built`].
+    /// Anything else proves nothing ([`Built::unknown`]). An exponent is read by
+    /// [`Self::known`], not under the tests of the arm being checked, so each bound holds at
+    /// every site that reads it and is kept by span.
+    ///
+    /// Complexity tradeoff: the naive method builds the values, as the run does, at the cost of
+    /// their size, or reads each operand's text afresh at each `*`, O(n) reads per operation
+    /// and O(n^2) for a chain of `n` names each a product of the one before. Used: as
+    /// [`Self::fixed_value`] does, each expression is read once, by its span, operands before
+    /// the operation on an explicit stack, and kept ([`Ck::built`]), so the chain costs O(n)
+    /// reads in all and no native stack; a read adds or multiplies bit lengths, numbers of
+    /// O(log) words, beside what [`Self::fixed_value`] reads of it.
+    fn least_built(&mut self, e: &'a Expr) -> Built {
+        if !self.built.contains_key(&e.span) {
+            // Each node is entered once: the graph through binders is acyclic, as statements
+            // are checked in dependency order, and the set keeps it finite if not.
+            let mut entered = HashSet::new();
+            let mut stack = vec![(e, false)];
+            while let Some((x, ready)) = stack.pop() {
+                if ready {
+                    let w = self.built_uncached(x);
+                    self.built.insert(x.span, w);
+                } else if !self.built.contains_key(&x.span) && entered.insert(x.span) {
+                    stack.push((x, true));
+                    stack.extend(self.built_reads(x).into_iter().map(|c| (c, false)));
+                }
+            }
+        }
+        self.built[&e.span].clone()
+    }
+
+    /// The expressions [`Self::built_uncached`] reads to read `e`: the value a name is bound
+    /// to, the operand of a `-` or a `rat(x)` cast, or the operands of a `*` or `/`.
+    fn built_reads(&self, e: &'a Expr) -> Vec<&'a Expr> {
+        match &e.kind {
+            ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
+            ExprKind::Unary(UnaryOp::Neg, a) => vec![&**a],
+            ExprKind::Binary(BinaryOp::Mul | BinaryOp::Div, a, b) => vec![&**a, &**b],
+            _ => self.rat_cast_operand(e).into_iter().collect(),
+        }
+    }
+
+    /// What the text proves of the coefficients of `e` ([`Self::least_built`]), from what has
+    /// been read of the expressions [`Self::built_reads`] gives.
+    fn built_uncached(&mut self, e: &'a Expr) -> Built {
+        if let Some(v) = self.fixed_value(e) {
+            return Built::of(&v);
+        }
+        if let ExprKind::Binary(BinaryOp::Pow, a, k) = &e.kind {
+            return self.power_built(a, k);
+        }
+        let memo = |x: &Expr| {
+            self.built
+                .get(&x.span)
+                .cloned()
+                .unwrap_or_else(Built::unknown)
+        };
+        match &e.kind {
+            ExprKind::Name(_) => self.bound_value(e).map_or_else(Built::unknown, memo),
+            ExprKind::Unary(UnaryOp::Neg, a) => memo(a),
+            ExprKind::Binary(op @ (BinaryOp::Mul | BinaryOp::Div), a, b) => {
+                product_built(*op, &memo(a), &memo(b)).unwrap_or_else(Built::unknown)
+            }
+            _ => self.rat_cast_operand(e).map_or_else(Built::unknown, memo),
+        }
+    }
+
+    /// The operand `x` of a call `rat(x)` of the prelude's cast.
+    fn rat_cast_operand(&self, e: &'a Expr) -> Option<&'a Expr> {
+        match &e.kind {
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+            } if named.is_empty()
+                && positional.len() == 1
+                && matches!(&callee.kind, ExprKind::Name(w) if w == "rat")
+                && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
+            {
+                Some(&positional[0])
+            }
+            _ => None,
+        }
+    }
+
+    /// The coefficients of `a ^ k` for a base `a` the text fixes and an exponent every value
+    /// of which is at least 1 in magnitude, as the kernel's `Rat::pow` makes them: a part of
+    /// `L` bits beyond 64 is built, of at least `|k| * (L - 1) + 1` bits, the bound of
+    /// [`Self::too_large_power`]; a part within 64 bits, other than 1, is factored into kept
+    /// prime powers, leaving 1, so the value is not plain. A negative exponent swaps the
+    /// parts, and one that may take either sign gives each part the lesser of the two.
+    fn power_built(&mut self, a: &'a Expr, k: &'a Expr) -> Built {
+        let Some(base) = self.fixed_value(a).map(|v| Built::of(&v)) else {
+            return Built::unknown();
+        };
+        let ints = self.known(k).ints;
+        let Some(least) = least_magnitude(&ints) else {
+            return Built::unknown();
+        };
+        if base.parts[0].bits == Num::ZERO {
+            return Built::unknown();
+        }
+        let word = Num::from(64i64);
+        let mut plain = base.plain;
+        let [n, d] = base.parts.map(|c| {
+            if c.one || c.bits <= word {
+                plain &= c.one;
+                return Coef {
+                    bits: Num::ONE,
+                    one: true,
+                };
+            }
+            Coef {
+                bits: &(&least * &(&c.bits - &Num::ONE)) + &Num::ONE,
+                one: false,
+            }
+        });
+        let positive = matches!(ints.bounds(), Some((Fin(lo), _)) if lo.signum() > 0);
+        let negative = matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0);
+        let parts = match (positive, negative) {
+            (true, _) => [n, d],
+            (_, true) => [d, n],
+            _ => {
+                let lesser = |x: &Coef, y: &Coef| Coef {
+                    bits: x.bits.clone().min(y.bits.clone()),
+                    one: x.one && y.one,
+                };
+                [lesser(&n, &d), lesser(&d, &n)]
+            }
+        };
+        Built { parts, plain }
     }
 
     /// `x ^ n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
@@ -14184,6 +14429,126 @@ fn least_magnitude(ints: &IntervalSet) -> Option<Num> {
     match (above, below) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
+    }
+}
+
+impl Built {
+    /// Nothing proved: a numerator that may be 0 and a denominator of at least 1, perhaps
+    /// with kept primes.
+    fn unknown() -> Built {
+        Built {
+            parts: [
+                Coef {
+                    bits: Num::ZERO,
+                    one: false,
+                },
+                Coef {
+                    bits: Num::ONE,
+                    one: false,
+                },
+            ],
+            plain: false,
+        }
+    }
+
+    /// The coefficients of the exact value `v`, as the kernel holds them ([`Rat::kept`]): an
+    /// `int` within 64 bits is its own numerator over 1. O(1): the bit lengths are read, not
+    /// counted.
+    fn of(v: &Value) -> Built {
+        let coef = |bits: u64| Coef {
+            bits: Num::from(i128::from(bits)),
+            one: bits == 1,
+        };
+        match v {
+            Value::Int(i) => Built {
+                parts: [
+                    coef(u64::from(64 - i.unsigned_abs().leading_zeros())),
+                    coef(1),
+                ],
+                plain: true,
+            },
+            Value::Big(r) | Value::Rat(r) => {
+                let (num, den, pows) = r.kept();
+                Built {
+                    parts: [coef(num.bits()), coef(den.bits())],
+                    plain: pows.is_empty(),
+                }
+            }
+            _ => Built::unknown(),
+        }
+    }
+
+    /// The least bits the value's coefficients hold together, those of magnitude 1 left out,
+    /// as an `int`'s denominator.
+    fn size(&self) -> Num {
+        self.parts
+            .iter()
+            .filter(|c| !c.one)
+            .fold(Num::ZERO, |sum, c| &sum + &c.bits)
+    }
+}
+
+/// The coefficients of `x * y`, or `x / y` for `op` `/`, where the operands' bound them:
+/// `p/q * r/s` is `pr / qs` (and `p/q / (r/s)` is `ps / qr`), each part at least
+/// `2^(L1 - 1) * 2^(L2 - 1)` in magnitude for factors of `L1` and `L2` bits, so of at least
+/// `L1 + L2 - 1` bits. That is the result the kernel holds only where it cancels nothing:
+/// every factor is nonzero, neither operand keeps a prime as a power (the kernel would move
+/// the product's factors of that prime out of the coefficients, `Rat::extract`), and the parts
+/// a reduction divides by their gcd share no factor. With `p/q` and `r/s` each reduced, the
+/// gcd of `pr` and `qs` is `gcd(p, s) * gcd(r, q)`, so it is 1 where one of `p` and `s` and
+/// one of `r` and `q` is 1 in magnitude, as for every product of two `int`s. `None` where
+/// any of these is not proved. O(1) additions of bit lengths.
+fn product_built(op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
+    let [p, q] = &x.parts;
+    let [r, s] = match op {
+        BinaryOp::Div => [&y.parts[1], &y.parts[0]],
+        _ => [&y.parts[0], &y.parts[1]],
+    };
+    let nonzero = [p, q, r, s].iter().all(|c| c.bits >= Num::ONE);
+    let coprime = (p.one || s.one) && (r.one || q.one);
+    if !(x.plain && y.plain && nonzero && coprime) {
+        return None;
+    }
+    let times = |a: &Coef, b: &Coef| Coef {
+        bits: &(&a.bits + &b.bits) - &Num::ONE,
+        one: a.one && b.one,
+    };
+    Some(Built {
+        parts: [times(p, r), times(q, s)],
+        plain: true,
+    })
+}
+
+/// What a message says the value whose coefficients are `w` has, as "at least 2^66 + 1 bits"
+/// for an integer, or "a numerator of at least 2^66 + 1 bits and a denominator of at least
+/// 65 bits"; a part of magnitude 1 is left out.
+fn built_text(w: &Built) -> String {
+    let [n, d] = &w.parts;
+    let at_least = |c: &Coef| format!("at least {} bits", exact_text(&c.bits));
+    match (n.one, d.one) {
+        (_, true) => at_least(n),
+        (true, false) => format!("a denominator of {}", at_least(d)),
+        (false, false) => format!(
+            "a numerator of {} and a denominator of {}",
+            at_least(n),
+            at_least(d)
+        ),
+    }
+}
+
+/// `n`, at least 0, written exactly where that is short: its digits within 64 bits, else
+/// the power of 2 below it and the rest, as `2^66 + 1`, where the rest is within 64 bits;
+/// else as [`number_text`] writes it, a lower bound.
+fn exact_text(n: &Num) -> String {
+    if n.bits() <= Num::from(64i64) {
+        return n.to_string();
+    }
+    let low = &n.bits() - &Num::ONE;
+    let rest = n - &Num::pow2(&low);
+    match rest.bits() <= Num::from(64i64) {
+        true if rest == Num::ZERO => format!("2^{low}"),
+        true => format!("2^{low} + {rest}"),
+        false => number_text(n),
     }
 }
 

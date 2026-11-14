@@ -40,10 +40,11 @@ fn a_power_past_the_address_space_is_rejected_with_its_least_size() {
         |     ^^^^^^^^^^^^^^
   [2] 3:28: the exponent k, `(2^64)`, is at least 2^64
       3 |     m.stdout <- String(b ^ (2^64));
-        |                        ^^^^^^^^^^ [3, 4]
+        |                        ^^^^^^^^^^ [3, 4, 5]
         |                            ^^^^^^ [2]
   [3] 3:24: so `b ^ (2^64)` has at least 2^64 * 64 + 1 bits: |k| * ⌊log₂ |x|⌋ + 1 at the least |x| and |k|
   [4] 3:24: or read the exponent from the input: the run then stops if no memory holds the result
+  [5] 3:24: or delete `b ^ (2^64)` if its result is not used
   fixes, each checked here:
     m.stdout <- String(b ^ (2^60));    needs at least 8 EiB"#
     );
@@ -129,11 +130,12 @@ fn a_negative_exponent_is_bounded_by_its_magnitude() {
   [1] 3:24: the numerator p of the base `rat(b)` is at least 2^64 in magnitude, so ⌊log₂ |p|⌋ is 64
       3 |     m.stdout <- String(rat(b) ^ -(2^64)) else "";
         |                        ^^^^^^ [1]
-        |                        ^^^^^^^^^^^^^^^^ [3, 4]
+        |                        ^^^^^^^^^^^^^^^^ [3, 4, 5]
         |                                 ^^^^^^^ [2]
   [2] 3:33: the exponent k, `-(2^64)`, is at most -2^64
   [3] 3:24: so `rat(b) ^ -(2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
   [4] 3:24: or read the exponent from the input: the run then stops if no memory holds the result
+  [5] 3:24: or delete `rat(b) ^ -(2^64)` if its result is not used
   fixes, each checked here:
     m.stdout <- String(rat(b) ^ -(2^60)) else "";    needs at least 8 EiB"#
     );
@@ -182,10 +184,11 @@ fn a_rat_base_fixed_through_a_name_and_a_division_is_rejected() {
         |     ^^^^^^^^^^^^^^^^^^^^^^^^
   [2] 4:28: the exponent k, `(2^62)`, is at least 2^62
       4 |     m.stdout <- String(x ^ (2^62)) else "";
-        |                        ^^^^^^^^^^ [3, 4]
+        |                        ^^^^^^^^^^ [3, 4, 5]
         |                            ^^^^^^ [2]
   [3] 4:24: so `x ^ (2^62)` has at least 2^62 * 102 + 1 bits from the base's numerator and 2^62 * 102 + 1 bits from the base's denominator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
   [4] 4:24: or read the exponent from the input: the run then stops if no memory holds the result
+  [5] 4:24: or delete `x ^ (2^62)` if its result is not used
   fixes, each checked here:
     m.stdout <- String(x ^ (2^59)) else "";    needs at least 12 EiB"#
     );
@@ -320,6 +323,180 @@ fn reading_a_chain_of_names_and_divisions_scales() {
         200,
         |n| {
             let out = rejected(&chain(n));
+            assert_eq!(
+                out.matches("Number too large for any memory of the target")
+                    .count(),
+                n
+            );
+        },
+    );
+}
+
+// Products and quotients (plan row CONST-too-large-products). `b = 2^64 + 13` has 65 bits,
+// so `b ^ (2^60)` has at least `2^66 + 1` bits, 8 EiB, and a product of two such factors at
+// least `2^67 + 1`, past the 2^67 bits of the address space. Before, only `^` was bounded,
+// and the row's program compiled; its run stopped with "Number too large for memory".
+
+#[test]
+fn a_product_past_the_address_space_is_rejected_with_its_least_size() {
+    // The row's program: the first `*` is past the address space, and the second, whose
+    // operand already is, is not reported again.
+    let src = pushed("(b ^ (2^60)) * (b ^ (2^60)) * (b ^ (2^60))");
+    assert_eq!(
+        rejected(&src),
+        r#"3:24: Number too large for any memory of the target: `(b ^ (2^60)) * (b ^ (2^60))` needs more than 16 EiB; Linux x86_64 addresses 16 EiB.
+  [1] 3:24: `(b ^ (2^60))` has at least 2^66 + 1 bits
+      3 |     m.stdout <- String((b ^ (2^60)) * (b ^ (2^60)) * (b ^ (2^60))) else "";
+        |                        ^^^^^^^^^^^^ [1]
+        |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^ [3, 4, 5]
+        |                                       ^^^^^^^^^^^^ [2]
+  [2] 3:39: `(b ^ (2^60))` has at least 2^66 + 1 bits
+  [3] 3:24: so `(b ^ (2^60)) * (b ^ (2^60))` has at least 2^67 + 1 bits: the bit lengths of the least |x| and |y| added, less one
+  [4] 3:24: or read a factor from the input: the run then stops if no memory holds the result
+  [5] 3:24: or delete `(b ^ (2^60)) * (b ^ (2^60))` if its result is not used"#
+    );
+}
+
+#[test]
+fn the_product_bound_is_exact_at_the_address_space() {
+    // `b ^ (2^60)` times `b ^ k` has at least `2^66 + 64 * k + 1` bits: `k = 2^60 - 1` gives
+    // `2^67 - 63`, which fit, and `k = 2^60` gives `2^67 + 1`.
+    for product in [
+        "(b ^ (2^60)) * (b ^ (2^60 - 1))",
+        "(b ^ (2^60)) * (b ^ (2^59))",
+        "(b ^ (2^60)) * b",
+        "rat(b ^ (2^60)) * (rat(b) ^ (2^60 - 1))",
+    ] {
+        assert_eq!(built(&pushed(product)), None, "{product}");
+    }
+    for product in [
+        "(b ^ (2^60)) * (b ^ (2^60))",
+        "(b ^ (2^60 - 1)) * (b ^ (2^60 + 1))",
+        "-(b ^ (2^60)) * (b ^ (2^60))",
+        "(rat(b) ^ (2^60)) * (rat(b) ^ (2^60))",
+    ] {
+        let out = rejected(&pushed(product));
+        let head = format!(
+            "3:24: Number too large for any memory of the target: `{product}` needs more \
+             than 16 EiB; Linux x86_64 addresses 16 EiB."
+        );
+        assert!(out.starts_with(&head), "{product}:\n{out}");
+    }
+}
+
+#[test]
+fn a_chain_of_names_and_products_is_rejected_where_it_passes() {
+    // `x` has `2^65 + 1` bits, `y` `2^66 + 1`, `y * x` `2^66 + 2^65 + 1`, and `y * x * x`
+    // `2^67 + 1`: the third `*` is rejected, through the names, and `y` is not.
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    x = b ^ (2^59);\n    \
+               y = x * x;\n    z = y * x * x;\n    m.stdout <- String(z) else \"\";\n}\n";
+    let out = rejected(src);
+    assert_eq!(
+        out.matches("Number too large for any memory of the target")
+            .count(),
+        1,
+        "{out}"
+    );
+    assert!(
+        out.starts_with(
+            "5:9: Number too large for any memory of the target: `y * x * x` needs more than \
+             16 EiB; Linux x86_64 addresses 16 EiB."
+        ) && out.contains("[2] 3:5: `x` has at least 2^65 + 1 bits\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_quotient_past_the_address_space_is_rejected() {
+    // `x / y` is `x` times the denominator of `y`, `2^67 + 1` bits; the numerator of `y` is 1,
+    // so nothing cancels.
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    x = rat(b) ^ (2^60);\n    \
+               y = 1 / (rat(b) ^ (2^60));\n    m.stdout <- String(x / y) else \"\";\n}\n";
+    assert_eq!(
+        rejected(src),
+        r#"5:24: Number too large for any memory of the target: `x / y` needs more than 16 EiB; Linux x86_64 addresses 16 EiB.
+  [1] 3:5: `x` has at least 2^66 + 1 bits
+      3 |     x = rat(b) ^ (2^60);
+        |     ^^^^^^^^^^^^^^^^^^^^
+  [2] 4:5: `y` has a denominator of at least 2^66 + 1 bits
+      4 |     y = 1 / (rat(b) ^ (2^60));
+        |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [3] 5:24: so `x / y` has at least 2^67 + 1 bits: the bit lengths of the least numerator of x and denominator of y added, less one
+      5 |     m.stdout <- String(x / y) else "";
+        |                        ^^^^^
+  [4] 5:24: or read a factor from the input: the run then stops if no memory holds the result
+  [5] 5:24: or delete `x / y` if its result is not used"#
+    );
+}
+
+#[test]
+fn a_product_or_quotient_that_may_cancel_or_build_nothing_proves_nothing() {
+    // `x / x` is 1 and `x * (1 / x)` is 1: the kernel reduces by a gcd the text does not
+    // prove 1, so the factors' sizes bound nothing (GMP's `mpq_div` cancels it before it
+    // multiplies). A factor kept as prime powers, a factor that may be 0 and one the text
+    // does not fix prove nothing either.
+    let src = |x: &str, out: &str| {
+        format!(
+            "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    \
+             k = int(m.args[0] else \"\") else 0;\n    x = {x};\n    \
+             m.stdout <- String(({out}) + rat(k)) else \"\";\n}}\n"
+        )
+    };
+    for (x, out) in [
+        ("rat(b) ^ (2^60)", "x / x"),
+        ("rat(b) ^ (2^59)", "(x * x) / (x * x)"),
+        ("rat(b) ^ (2^60)", "x * (1 / x)"),
+        ("rat(3) ^ (2^100)", "x * x * x"),
+        ("rat(2) ^ (2^70)", "x * (rat(b) ^ (2^60))"),
+        ("rat(b) ^ (2^60)", "x * (rat(b) ^ k)"),
+        ("rat(b) ^ (2^60)", "x * rat(k) * x"),
+        ("rat(b) ^ (2^60)", "x * (x - x)"),
+    ] {
+        let program = src(x, out);
+        assert_eq!(built(&program), None, "{x}; {out}");
+    }
+}
+
+#[test]
+fn a_product_in_a_branch_not_taken_is_rejected() {
+    let src = "main(m: MainArgs) {\n    k = int(m.args[0] else \"\") else 0;\n    \
+               b = 2^64 + 13;\n    \
+               m.stdout <- if k > 5 { String((b ^ (2^60)) * (b ^ (2^60))) } else { \"few\" };\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "4:35: Number too large for any memory of the target: `(b ^ (2^60)) * (b ^ (2^60))` \
+             needs more than 16 EiB; Linux x86_64 addresses 16 EiB."
+        ),
+        "{out}"
+    );
+}
+
+/// `n` names, each 7 times the one before, from `x = b ^ (2^59)`, and a product of each with
+/// `x` three times, past the address space.
+fn product_chain(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|i| {
+            let prev = if i == 0 {
+                "x".to_string()
+            } else {
+                format!("y{}", i - 1)
+            };
+            format!("    y{i} = {prev} * 7;\n    p{i} = y{i} * x * x * x;\n")
+        })
+        .collect();
+    format!("main(m: MainArgs) {{\n    b = 2^64 + 13;\n    x = b ^ (2^59);\n{body}}}\n")
+}
+
+#[test]
+fn bounding_a_chain_of_products_scales() {
+    // Each name is read once, however many products read through it: the chain of `n` names
+    // costs O(n) reads of bit lengths and `n` rejections, each at the third `*` of its line.
+    scaling::check(
+        "a chain of n names and products, a product of each rejected",
+        200,
+        |n| {
+            let out = rejected(&product_chain(n));
             assert_eq!(
                 out.matches("Number too large for any memory of the target")
                     .count(),
