@@ -2268,7 +2268,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | red-before-green: on origin/main (ctl tree) too_large::a_product_through_a_part_with_several_roots_is_rejected and main_limits::a_product_through_a_part_with_se |
-| DOC-deferred-refs | running | 2026-11-14 00:03 | author P174/P181 2026-11-14: held until every TEST-bench-move item merges, then the FAIL rows, then the six handoff items; AUDIT-p184 2026-11-14: P174 hold lift |
+| DOC-deferred-refs | impl attempt 2 | 2026-11-14 00:03 | resumed after pause: rebased onto 34055ea99 (COMPLEXITY.md 10 conflicts merged word by word, result = main + the 79 original word changes exactly); rescan 43 fi |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
@@ -2289,8 +2289,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
+| TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | cleanup done: worktree, branch, scratch and build/cov removed; finished / load 47.96 67.39 61.26 |
 | TEST-m0_03-flake | running |  |  |
 | TEST-m0-layer-label | running |  |  |
+| XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
