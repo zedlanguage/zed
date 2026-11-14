@@ -1312,9 +1312,9 @@ pub struct Scope {
     pub written: imbl::OrdMap<Address, Vec<Arc<str>>>,
     /// The addresses of the written constraints on each name.
     written_by: Uses<Address>,
-    /// The tests narrowed by joining two cases or more that the relation does not hold, kept
-    /// so that a later test that leaves no value in one of their cases narrows by them again
-    /// ([`Scope::narrow_kept_again`]).
+    /// The tests narrowed by joining two cases or more, kept so that a later test that leaves
+    /// no value in one of their cases narrows by them again ([`Scope::narrow_kept_again`]):
+    /// those the relation does not hold, and those it holds that have a case fixing a name.
     kept: KeptTests,
     /// Whether no state reaches this scope.
     pub bottom: bool,
@@ -1410,11 +1410,12 @@ pub struct Scope {
     pub root_failures: imbl::OrdSet<RootFailure>,
 }
 
-/// The tests of a scope whose cases were joined with no relation ([`Scope::narrow_kept`]),
-/// by their content addresses, with the names each reads and the triggers each is kept
-/// under, by name. The join keeps only what the cases share: after `(x % 2 == 1 && y >= 0)
-/// || y <= -5`, `x` is any integer and `y` in `-20..=-5` or `0..=20`, so `x % 2 == 0` alone
-/// does not say that the first case is gone. A trigger does.
+/// The tests of a scope whose cases were joined ([`Scope::join_kept`]), by their content
+/// addresses, with the names each reads and the triggers each is kept under, by name. The
+/// join keeps only what the cases share: after `(x % 2 == 1 && y >= 0) || y <= -5`, which
+/// has no relation, `x` is any integer and `y` in `-20..=-5` or `0..=20`, so `x % 2 == 0`
+/// alone does not say that the first case is gone. A trigger does. A test the relation
+/// holds is kept for the points of its cases alone ([`Watch::Points`]).
 #[derive(Clone, PartialEq, Debug, Default)]
 struct KeptTests {
     tests: imbl::OrdMap<Address, KeptTest>,
@@ -1436,6 +1437,19 @@ struct KeptTest {
     /// values: a written constraint on those names may give `false` there
     /// ([`Scope::written_dead`]), as it would in the case had it come first.
     points: Vec<Vec<(Arc<str>, Value)>>,
+}
+
+/// What a kept test is watched by ([`Scope::join_kept`]).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Watch {
+    /// The triggers and the points of its cases: a test the linear relation does not hold,
+    /// so nothing else finds a case that a later test leaves with no value.
+    Cases,
+    /// The points of its cases alone: a test the linear relation holds, whose cases' ends,
+    /// classes and holes the relation's projection reads, but not a written constraint at a
+    /// point a case fixes, which lies outside the relation (`x * y == x` after `(x == 3 && y
+    /// == 0) || x <= -5`).
+    Points,
 }
 
 /// When a case of a kept test holds no value, by the product of one name: the case's own
@@ -1661,20 +1675,64 @@ fn case_triggers(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<(Arc
     out
 }
 
-/// For each of `cases`, the names of `free` it fixes to one value that `joined` does not fix,
-/// with the values ([`KeptTest::points`]); empty when no case fixes one. O(c·v) reads for c
-/// cases and v names.
-fn case_points(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<Vec<(Arc<str>, Value)>> {
-    let open: Vec<&Arc<str>> = (free.iter())
-        .filter(|x| joined.get(x).value().is_none())
+/// For each of `cases`, the names of `free` (sorted) it fixes to one value that `joined` does
+/// not fix, with the values ([`KeptTest::points`]); empty when no case fixes one. `start` is
+/// the scope the cases were narrowed from.
+// Complexity tradeoff: naive, as before ST-relation-case-written, each name of the test read
+// in each case, O(c·v) for c cases and v names: Θ(d²) for a chain of d nests, which
+// `case_list` makes one list of about d cases over about 2d names (`deep_condition`'s chain of
+// accounts, 18.1 times the work at 8n). Used: the cases are made one from the next on one
+// work stack, so a case shares most of its persistent maps with the one before it; walking
+// them in order, a name is read again only where the two differ (`images::changed`, which
+// skips the parts they share), or, when the paths, their ranges or the pendant rows moved,
+// for the names of the test on a path or pendant, as `NameProducts::changed` does. A pendant
+// leaf whose hub moved alone is not read again, as there: its base keeps two values at most
+// `low` ([`PendantRow`]), so it fixes no value while pendant. O(v log n) at the start, then
+// O((Σ δ + p·m) log n + P) for δ the entries consecutive cases differ in, m the cases whose
+// paths moved, p the names of the test on a path or pendant and P the points given.
+fn case_points(
+    start: &Scope,
+    cases: &[Scope],
+    free: &[Arc<str>],
+    joined: &Scope,
+) -> Vec<Vec<(Arc<str>, Value)>> {
+    let is_free = |n: &Arc<str>| free.binary_search(n).is_ok();
+    let mut pathed: BTreeSet<Arc<str>> = (free.iter())
+        .filter(|x| start.names.paths.contains_key(*x) || start.names.pendants.contains_key(*x))
+        .cloned()
         .collect();
-    let out: Vec<Vec<(Arc<str>, Value)>> = (cases.iter())
-        .map(|c| {
-            (open.iter())
-                .filter_map(|x| Some(((*x).clone(), c.get(x).value()?.clone())))
-                .collect()
-        })
-        .collect();
+    // The names of the test the case before fixes and `joined` leaves open, with the values.
+    let mut fixed: BTreeMap<Arc<str>, Value> = BTreeMap::new();
+    let mut prev = &start.names;
+    let mut out = Vec::with_capacity(cases.len());
+    for c in cases {
+        let now = &c.names;
+        let mut check: BTreeSet<Arc<str>> = crate::images::changed(&prev.base, &now.base)
+            .filter(|n| is_free(n))
+            .cloned()
+            .collect();
+        let entered = crate::images::changed(&prev.paths, &now.paths)
+            .chain(crate::images::changed(&prev.pendants, &now.pendants));
+        for n in entered.filter(|n| is_free(n)) {
+            pathed.insert(n.clone());
+            check.insert(n.clone());
+        }
+        if now.moved_since(prev) {
+            check.extend(pathed.iter().cloned());
+        }
+        for n in check {
+            match c.get(&n).value() {
+                Some(v) if joined.get(&n).value().is_none() => {
+                    fixed.insert(n, v.clone());
+                }
+                _ => {
+                    fixed.remove(&n);
+                }
+            }
+        }
+        out.push(fixed.iter().map(|(n, v)| (n.clone(), v.clone())).collect());
+        prev = now;
+    }
     if out.iter().all(Vec::is_empty) {
         return Vec::new();
     }
@@ -8100,7 +8158,7 @@ impl Scope {
                         self.narrow_linear(tree, k, value == p, prem);
                     }
                 }
-                _ => self.narrow_kept(tree, n, value, prem),
+                _ => self.narrow_kept(tree, n, value, prem, Watch::Cases),
             }
             return;
         };
@@ -8119,7 +8177,7 @@ impl Scope {
                 // side is dead, of the live sides alone: O(s) for a test of `s` nodes, no
                 // further case and no projection (COMPLEXITY.md C42).
                 let mut live = Vec::new();
-                let joined = self.cases(tree, n, value, prem, false, &mut live);
+                let cases = self.case_list(tree, n, value, prem, false, &mut live);
                 let body = if live.contains(&false) && live.contains(&true) {
                     let terms: Vec<Term> = sides
                         .iter()
@@ -8132,17 +8190,11 @@ impl Scope {
                 } else {
                     body
                 };
-                match joined {
-                    Some(mut s) => {
-                        s.in_case = self.in_case;
-                        *self = s;
-                    }
-                    None => self.bottom = true,
-                }
+                self.join_kept(cases, signed(tree.term_at(n), value), prem, Watch::Points);
                 body
             }
             _ => {
-                self.narrow_node(tree, n, value, prem);
+                self.narrow_kept(tree, n, value, prem, Watch::Points);
                 body
             }
         };
@@ -8204,15 +8256,10 @@ impl Scope {
         })
     }
 
-    /// [`Scope::narrow_node`] for a node with no relation. A nest the value does not force,
-    /// or an `if`, with two cases or more that are not bottom is kept in [`Scope::kept`] with
-    /// the triggers of its cases ([`case_triggers`]), when it has one: the join of its cases
-    /// keeps only what they share, so a later test may leave one case where the join kept two.
-    // Complexity tradeoff: naive, the cases joined and the test forgotten, as with a
-    // relation-free nest before ST-class-case-reverse: O(c) cases, and the order of the tests
-    // changes the answer. Used: the same cases, kept unjoined until the join, plus O(c·v)
-    // triggers for v names the test reads, each put in the persistent index in O(log k).
-    fn narrow_kept(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises) {
+    /// [`Scope::narrow_node`], keeping the test when it splits: a nest the value does not
+    /// force, or an `if`, is split into its cases, which are joined and the test kept as
+    /// [`Scope::join_kept`] does, watched by `watch`.
+    fn narrow_kept(&mut self, tree: &Tree, n: usize, value: bool, prem: &Premises, watch: Watch) {
         let splits = match &tree.nodes[n].kind {
             Kind::Nest(and, _) => *and != value,
             Kind::If(_) => true,
@@ -8221,24 +8268,42 @@ impl Scope {
         if !splits || self.bottom {
             return self.narrow_node(tree, n, value, prem);
         }
+        let cases = self.case_list(tree, n, value, prem, false, &mut Vec::new());
+        self.join_kept(cases, signed(tree.term_at(n), value), prem, watch);
+    }
+
+    /// Becomes the join of `cases`, the cases of `test` that are not bottom (bottom when
+    /// there are none), and, with two cases or more, keeps `test` in [`Scope::kept`] with
+    /// what `watch` names of its cases, when that is not empty: the join keeps only what the
+    /// cases share, so a later test may leave one case where the join kept two.
+    // Complexity tradeoff: naive, the cases joined and the test forgotten, as with a
+    // relation-free nest before ST-class-case-reverse, and with any test the linear relation
+    // holds before ST-relation-case-written: O(c) cases, and the order of the tests changes
+    // the answer (a written constraint after `(x == 3 && y == 0) || x <= -5` left 3). Used:
+    // the same cases, kept unjoined until the join, plus O(c·v) triggers for v names the
+    // test reads and the points of the cases in time near the entries consecutive cases
+    // differ in ([`case_points`]), each put in the persistent index in O(log k); a test the
+    // relation holds takes points alone ([`Watch::Points`]), so it adds nothing to the index
+    // when no case fixes a name, as with the rows of a walk, and a later move of an end, a
+    // class or a hole narrows it through the relation's projection, not by narrowing it again.
+    fn join_kept(&mut self, cases: Vec<Scope>, test: Term, prem: &Premises, watch: Watch) {
         let in_case = self.in_case;
-        let mut live = Vec::new();
-        let cases = self.case_list(tree, n, value, prem, false, &mut live);
-        let test = signed(tree.term_at(n), value);
-        let free: Vec<Arc<str>> = stage::free(&test).into_iter().collect();
-        let (triggers, points) = if cases.len() > 1 {
-            let joined = join_cases(cases.clone());
-            let t = case_triggers(&cases, &free, &joined);
-            let p = case_points(&cases, &free, &joined);
-            *self = joined;
-            (t, p)
-        } else {
+        if cases.len() < 2 {
             match cases.into_iter().next() {
                 Some(s) => *self = s,
                 None => self.bottom = true,
             }
-            (Vec::new(), Vec::new())
+            self.in_case = in_case;
+            return;
+        }
+        let free: Vec<Arc<str>> = stage::free(&test).into_iter().collect();
+        let joined = join_cases(cases.clone());
+        let triggers = match watch {
+            Watch::Cases => case_triggers(&cases, &free, &joined),
+            Watch::Points => Vec::new(),
         };
+        let points = case_points(self, &cases, &free, &joined);
+        *self = joined;
         self.in_case = in_case;
         if !self.bottom && !(triggers.is_empty() && points.is_empty()) {
             self.kept.keep(KeptTest {

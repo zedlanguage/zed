@@ -1423,6 +1423,115 @@ fn a_case_a_written_constraint_empties_is_dropped() {
     );
 }
 
+/// The same with a test the linear relation holds: `(x == 3 && y == 0) || x <= -5` has the
+/// relation of its two cases, and `x * y == x` drops the first, before the test or after it,
+/// in each order, as it drops the point when the other case is `x % 2 == 0`; likewise the
+/// test written as `if x == 3 then y == 0 else x <= -5`.
+#[test]
+fn a_case_of_a_relation_a_written_constraint_empties_is_dropped() {
+    let written = prim(Prim::Eq, prim(Prim::Mul, var("x"), var("y")), var("x"));
+    let point = and(
+        prim(Prim::Eq, var("x"), int(3)),
+        prim(Prim::Eq, var("y"), int(0)),
+    );
+    let low = prim(Prim::Le, var("x"), int(-5));
+    let branch = Term::If(
+        Shared::new(prim(Prim::Eq, var("x"), int(3))),
+        Shared::new(prim(Prim::Eq, var("y"), int(0))),
+        Shared::new(low.clone()),
+    );
+    let tests = [
+        ("the point or x <= -5", or(point, low)),
+        ("if x == 3 then y == 0 else x <= -5", branch),
+    ];
+    for (what, test) in tests {
+        for rel in [
+            vec![written.clone(), test.clone()],
+            vec![test.clone(), written.clone()],
+        ] {
+            let sys = Sys {
+                start: boxed(&["x", "y"], 20),
+                rel,
+            };
+            exact(
+                &format!("x * y == x and {what}"),
+                &sys,
+                &[("x", -21, 21, (-20..=-5).collect())],
+            );
+        }
+    }
+}
+
+/// A case of a test the linear relation holds that fixes `x` through another name: in
+/// `(x == z + 1 && z == 2 && y == 0) || x <= -5` the first case fixes `x` to 3 by `z`, and
+/// `x * y == x`, before the test or after it, drops it in each order.
+#[test]
+fn a_case_of_a_relation_that_fixes_a_name_through_another_is_dropped() {
+    let written = prim(Prim::Eq, prim(Prim::Mul, var("x"), var("y")), var("x"));
+    let point = and(
+        and(
+            prim(Prim::Eq, var("x"), prim(Prim::Add, var("z"), int(1))),
+            prim(Prim::Eq, var("z"), int(2)),
+        ),
+        prim(Prim::Eq, var("y"), int(0)),
+    );
+    let test = or(point, prim(Prim::Le, var("x"), int(-5)));
+    for rel in [
+        vec![written.clone(), test.clone()],
+        vec![test.clone(), written.clone()],
+    ] {
+        let sys = Sys {
+            start: boxed(&["x", "y", "z"], 20),
+            rel,
+        };
+        exact(
+            "x * y == x and x == z + 1 && z == 2 && y == 0, or x <= -5",
+            &sys,
+            &[("x", -21, 21, (-20..=-5).collect())],
+        );
+    }
+}
+
+/// A case of a test the linear relation holds that an end, a class or a hole of a later
+/// test leaves with no value is dropped through the relation, with no trigger kept: after
+/// `(x == 3 && y == 0) || y >= 10`, each of `x <= 0`, `x % 2 == 0` and `x < 2 || x > 4` (the
+/// last a hole inside x's ends, with the first case `2 <= x && x <= 4`) leaves y in
+/// `10..=20`, in each order.
+#[test]
+fn a_case_of_a_relation_an_end_a_class_or_a_hole_empties_is_dropped() {
+    let point_or_high = |a: Term| {
+        or(
+            and(a, prim(Prim::Eq, var("y"), int(0))),
+            prim(Prim::Ge, var("y"), int(10)),
+        )
+    };
+    let three = || prim(Prim::Eq, var("x"), int(3));
+    let span = and(
+        prim(Prim::Ge, var("x"), int(2)),
+        prim(Prim::Le, var("x"), int(4)),
+    );
+    let hole = or(
+        prim(Prim::Lt, var("x"), int(2)),
+        prim(Prim::Gt, var("x"), int(4)),
+    );
+    let cases = [
+        (
+            "an end",
+            point_or_high(three()),
+            prim(Prim::Le, var("x"), int(0)),
+        ),
+        ("a class", point_or_high(three()), class("x", 2, 0)),
+        ("a hole", point_or_high(span), hole),
+    ];
+    for (what, test, other) in cases {
+        let sys = Sys {
+            start: boxed(&["x", "y"], 20),
+            rel: vec![test, other],
+        };
+        exact(what, &sys, &[("y", -21, 21, (10..=20).collect())]);
+    }
+}
+
 /// A written constraint that a later test fixes the other name of drops a case: with
 /// `(x + y) % 3 != 0`, `x == 3 || x % 2 == 0` and then `y == 0`, the constraint gives
 /// `false` at `x == 3`, the one value of its case, so no order keeps 3. How many multiples
@@ -1493,10 +1602,10 @@ fn holes_cut_one_at_a_time_scale() {
     });
 }
 
-/// `k` tests `(x_i == 3 && y == 0) || x_i % 2 == 0`, then the written constraints
+/// `k` tests `(x_i == 3 && y == 0) || other(x_i)`, then the written constraints
 /// `x_i * y == x_i` (the backward order of the relation as listed): each constraint drops the
-/// first case of its own test alone, and each `x_i` ends even.
-fn points_written_after(k: usize) -> Sys {
+/// first case of its own test alone.
+fn points_written_after(k: usize, other: fn(&str) -> Term) -> Sys {
     let xs: Vec<String> = (0..k).map(|i| format!("x{i}")).collect();
     let mut ns: Vec<&str> = xs.iter().map(String::as_str).collect();
     ns.push("y");
@@ -1509,7 +1618,7 @@ fn points_written_after(k: usize) -> Sys {
                 prim(Prim::Eq, var(x), int(3)),
                 prim(Prim::Eq, var("y"), int(0)),
             ),
-            class(x, 2, 0),
+            other(x),
         )
     }));
     Sys {
@@ -1518,16 +1627,31 @@ fn points_written_after(k: usize) -> Sys {
     }
 }
 
-/// [`points_written_after`] backward: each constraint looks only at the tests that fix its
-/// name `x_i`, not the `k` that fix `y`, so near linear time.
+/// `x % 2 == 0`: a second case the linear relation does not hold.
+fn even(x: &str) -> Term {
+    class(x, 2, 0)
+}
+
+/// `x <= -5`: a second case the linear relation holds.
+fn low(x: &str) -> Term {
+    prim(Prim::Le, var(x), int(-5))
+}
+
+/// [`points_written_after`] backward, the second case `x_i % 2 == 0`: each constraint looks
+/// only at the tests that fix its name `x_i`, not the `k` that fix `y`, so near linear time;
+/// each `x_i` ends even.
 #[test]
 fn points_written_after_scale() {
-    let s = points_written_after(5).narrowed(How::Backward);
-    let even: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
+    let s = points_written_after(5, even).narrowed(How::Backward);
+    let even_values: Vec<i64> = (-20i64..=20).filter(|v| v.rem_euclid(2) == 0).collect();
     for i in 0..5 {
-        assert_eq!(kept(&s, &format!("x{i}"), -21, 21), even, "x{i}: {s}");
+        assert_eq!(
+            kept(&s, &format!("x{i}"), -21, 21),
+            even_values,
+            "x{i}: {s}"
+        );
     }
-    let inputs = scaling::inputs(16, points_written_after);
+    let inputs = scaling::inputs(16, |k| points_written_after(k, even));
     scaling::check_order("points written after, Backward, k tests", 16, 1, |m| {
         drop(inputs[&m].narrowed(How::Backward));
     });
@@ -1634,4 +1758,58 @@ fn linear_moved_on_pendants_matches_the_solver() {
             }
         }
     }
+}
+
+/// `k` tests `(x_i == 3 && y_i == 0) || x_i <= -5`, then the written constraints
+/// `x_i * y_i == x_i`: each test has a linear relation and a case that fixes both its names,
+/// which its own constraint empties. Each test has its own `y_i`, unlike
+/// [`points_written_after`], whose `k` disjunctions over the one `y` cost the linear relation
+/// time quadratic in `k` with no written constraint at all (on main before
+/// ST-relation-case-written as after it).
+fn relation_points_written_after(k: usize) -> Sys {
+    let xs: Vec<String> = (0..k).map(|i| format!("x{i}")).collect();
+    let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
+    let ns: Vec<&str> = xs.iter().chain(&ys).map(String::as_str).collect();
+    let mut rel: Vec<Term> = (xs.iter().zip(&ys))
+        .map(|(x, y)| prim(Prim::Eq, prim(Prim::Mul, var(x), var(y)), var(x)))
+        .collect();
+    rel.extend(xs.iter().zip(&ys).map(|(x, y)| {
+        or(
+            and(
+                prim(Prim::Eq, var(x), int(3)),
+                prim(Prim::Eq, var(y), int(0)),
+            ),
+            low(x),
+        )
+    }));
+    Sys {
+        start: boxed(&ns, 20),
+        rel,
+    }
+}
+
+/// The second case `x_i <= -5`, so that each test has a linear relation: the tests are kept
+/// with their points as with the other case, and each constraint looks only at the tests that
+/// fix `x_i`; each `x_i` ends in `-20..=-5`, with one `y` ([`points_written_after`]) as with
+/// one `y_i` per test ([`relation_points_written_after`]), which is timed.
+#[test]
+fn points_of_relations_written_after_scale() {
+    let want: Vec<i64> = (-20..=-5).collect();
+    for s in [
+        points_written_after(5, low).narrowed(How::Backward),
+        relation_points_written_after(5).narrowed(How::Backward),
+    ] {
+        for i in 0..5 {
+            assert_eq!(kept(&s, &format!("x{i}"), -21, 21), want, "x{i}: {s}");
+        }
+    }
+    let inputs = scaling::inputs(16, relation_points_written_after);
+    scaling::check_order(
+        "points of relations written after, Backward, k tests",
+        16,
+        1,
+        |m| {
+            drop(inputs[&m].narrowed(How::Backward));
+        },
+    );
 }
