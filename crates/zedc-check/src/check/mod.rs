@@ -683,6 +683,18 @@ struct Pending {
     ty: Ty,
 }
 
+/// A class of literals alone that a binding in a body has just given its carrier
+/// ([`Ck::powers_bound`]): `mask`, the carriers it might take before the binding chose one,
+/// says which repairs of its int powers its own uses take, and `carried`, whether the bound
+/// value is a value of the class alone, so that a repair's type is the value's type and is
+/// carried to the uses of the name.
+#[derive(Clone, Copy)]
+struct Fixing {
+    class: usize,
+    mask: u8,
+    carried: bool,
+}
+
 /// The fixes kept in a construct that give it the type `ty` in place of the type its own check
 /// gives ([`Ck::carried`]), checked together in the construct around it: they give it the
 /// same argument, so one check settles them all.
@@ -1279,6 +1291,10 @@ struct Ck<'t, 'a> {
     /// binder, which each use of the name carries on to the construct it is an argument of,
     /// as `y + n` drops `2r^k` from `y = 2^k` for an int `n`.
     bound_carried: HashMap<usize, Vec<Carry>>,
+    /// The class of literals a name in a body is being bound to while its int powers are
+    /// checked at the binding ([`Ck::powers_bound`]), with the carriers it might take before
+    /// the binding chose one, and whether the bound value is a value of that class alone.
+    fixing: Option<Fixing>,
     /// The [`Pending::serial`] the next fix gets.
     next_fix: usize,
     /// The parameter whose default is the expression at each span, for each default checked
@@ -1592,6 +1608,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             pending_fixes: Vec::new(),
             carried: HashMap::new(),
             bound_carried: HashMap::new(),
+            fixing: None,
             next_fix: 0,
             defaults: HashMap::new(),
             next_found: 0,

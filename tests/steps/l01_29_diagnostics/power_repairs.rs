@@ -303,6 +303,115 @@ fn a_repair_of_a_bound_value_is_checked_at_every_use() {
     }
 }
 
+/// Programs of one int power to a negative literal bound to a name in a body, written as
+/// `2^-1` once in the program, each with the repairs it offers: those a power outside every
+/// function offers, `c = 2^-3` above, less those a use of the name does not take
+/// (REPAIR-block-pow-negative). The binding gives the power's class its carrier, int, which
+/// takes no repair; before, each was checked against it and none was offered.
+const NEGATIVE_BOUND: [(&str, &[&str]); 10] = [
+    (
+        "g() = { z = 2^-1; z };\n",
+        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+    ),
+    (
+        "g() {\n  z = 2^-1;\n  return z;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+    ),
+    // The power's class holds the `1` too, which takes each repair's carrier.
+    (
+        "g() {\n  z = 2^-1 + 1;\n  return z * z;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+    ),
+    (
+        "g() = { z = { w = 2^-1; w }; z };\n",
+        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+    ),
+    // `z + n` takes none: each repair adds a rat or a float to an int.
+    ("g(n: int) {\n  z = 2^-1;\n  return z + n;\n}\n", &[]),
+    // Through a second name.
+    (
+        "g(n: int) {\n  z = 2^-1;\n  w = z;\n  return w + n;\n}\n",
+        &[],
+    ),
+    // A component of a tuple display bound to a name.
+    (
+        "g() {\n  z, w = (2^-1, 3);\n  return z;\n}\n",
+        &["2.0f64^-1", "2^-1.0f64", "2r^-1"],
+    ),
+    (
+        "g(n: int) {\n  z, w = (2^-1, n);\n  return z + n;\n}\n",
+        &[],
+    ),
+    // A use of the name in a call whose parameter is an int.
+    (
+        "f(a: int) = a + 1;\ng() {\n  z = 2^-1;\n  return f(a: z);\n}\n",
+        &[],
+    ),
+    // A value the power's class is only part of carries no repair to the name's uses.
+    ("g() {\n  y = (2^-1, 1);\n  return y;\n}\n", &[]),
+];
+
+#[test]
+fn a_bound_power_to_a_negative_literal_offers_the_repairs_of_one_outside_every_function() {
+    for (src, want) in NEGATIVE_BOUND {
+        let out = rejected(src);
+        assert_eq!(repairs(&out), want, "{src}\n{out}");
+        assert_eq!(tried(&out), want.first().copied(), "{src}\n{out}");
+        if want.is_empty() {
+            assert!(
+                out.contains("No fix is offered: each one the checker tried is rejected too."),
+                "{out}"
+            );
+        }
+        for r in want {
+            checks(&repaired(src, "2^-1", r));
+        }
+    }
+}
+
+/// A use that takes a rat and no float keeps `2r^-1` alone, in a body as outside every
+/// function; the use is rejected too, as `z` is an int.
+#[test]
+fn a_use_of_a_bound_power_keeps_the_repairs_it_takes() {
+    for src in [
+        "z = 2^-1;\nc = z * 2r;\n",
+        "g() {\n  z = 2^-1;\n  return z * 2r;\n}\n",
+        "g() {\n  z, w = (2^-1, 3);\n  return z * 2r;\n}\n",
+    ] {
+        let out = rejected(src);
+        assert_eq!(repairs(&out), ["2r^-1"], "{src}\n{out}");
+        assert_eq!(tried(&out), Some("2r^-1"), "{src}\n{out}");
+        checks(&repaired(src, "2^-1", "2r^-1"));
+    }
+}
+
+/// A function of `n` names each bound to a power to a negative literal and used twice, and one
+/// name bound to a sum of `n` such powers, one class with `n` powers among its uses.
+fn negative_bound(n: usize) -> String {
+    let mut src = String::from("q(n: int) {\n  y = 2^-1");
+    for _ in 1..n {
+        src += " + 2^-1";
+    }
+    src += ";\n";
+    for i in 0..n {
+        src += &format!("  z{i} = 2^-1;\n  a{i} = z{i} * z{i};\n  b{i} = z{i} + n;\n");
+    }
+    src + "  return y;\n}\n"
+}
+
+#[test]
+fn checking_bound_powers_to_negative_literals_scales() {
+    let made = scaling::inputs(64, |n| program(&negative_bound(n)));
+    scaling::check(
+        "checking n bound powers to negative literals and n powers in one class",
+        64,
+        |n| {
+            let src = &made[&n];
+            assert!(load(src.as_bytes()).is_err(), "{src}");
+        },
+    );
+}
+
 /// A function of `n` rejected powers each bound to a name used twice, as one argument of an
 /// int sum and as both arguments of a product, and one rejected power bound to a name used `n`
 /// times: each repair is checked at every use.

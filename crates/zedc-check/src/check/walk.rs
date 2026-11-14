@@ -1696,7 +1696,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         } else {
             let names: Vec<&str> = targets.iter().map(name).collect();
             let bound = format!("the binding of `{}`", names.join(", "));
-            let (rejected, binds) = self.fix_bound(&v, value.span, &bound);
+            // The values bound to names one by one, as `y, w = (2^k, 1)` binds them.
+            let display = match (&targets[..], &value.kind) {
+                (ts, ExprKind::Tuple(items)) if ts.len() > 1 && items.len() == ts.len() => {
+                    &items[..]
+                }
+                _ => &[],
+            };
+            let (rejected, binds) = self.fix_bound(&v, value, display, &bound);
             if !rejected.is_empty() {
                 self.reject_bound(before, rejected, parts(), &what);
             }
@@ -1800,7 +1807,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     // no class, and each literal is passed over a constant number of times in all. The
     // method before this change waited for the function's end and resolved each class once,
     // O(l), but let a later use give the name its carrier, which A63 forbids.
-    fn fix_bound(&mut self, v: &Ty, span: Span, what: &str) -> (Vec<(Lit, Vec<Carrier>)>, Binds) {
+    fn fix_bound(
+        &mut self,
+        v: &Ty,
+        value: &Expr,
+        display: &[Expr],
+        what: &str,
+    ) -> (Vec<(Lit, Vec<Carrier>)>, Binds) {
+        let span = value.span;
         let level = self.level;
         if self.bound.len() <= level {
             self.bound.resize_with(level + 1, Vars::default);
@@ -1818,6 +1832,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut fixed: HashMap<usize, Option<Carrier>> = HashMap::new();
         let mut rejected = Vec::new();
         let mut binds = Vec::new();
+        // The value bound to one name that is a class alone, by the class's root: the whole
+        // value, or an item of a tuple display bound to names one by one. A repair of a power
+        // on that class is carried to the uses of the name ([`Self::powers_bound`]).
+        let mut alone: Vec<(&Ty, Span)> = vec![(v, span)];
+        if let [row] = &v.tuples[..]
+            && row.len() == display.len()
+            && (Ty {
+                tuples: Vec::new(),
+                ..v.clone()
+            })
+            .lists_nothing()
+        {
+            alone = row.iter().zip(display).map(|(t, e)| (t, e.span)).collect();
+        }
+        let alone: Vec<(usize, Span)> = (alone.into_iter())
+            .filter_map(|(t, at)| {
+                let k = class_id(t.as_var()?).filter(|&k| k < self.classes.len())?;
+                Some((self.find(k), at))
+            })
+            .collect();
         for x in found {
             let Some(r) = class_id(&x).filter(|&k| k < self.classes.len()) else {
                 continue;
@@ -1826,8 +1860,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             let takes = match fixed.get(&r) {
                 Some(&t) => t,
                 None => {
+                    let mask = self.classes[r].mask;
                     let t = self.fix_class(r, span, what, &mut rejected, numbers);
                     fixed.insert(r, t);
+                    if let Some(c) = t {
+                        // A class in two items of the display is the value of neither alone.
+                        let mut at = alone.iter().filter(|&&(k, _)| k == r).map(|&(_, s)| s);
+                        let carried = at.next().filter(|_| at.next().is_none());
+                        self.powers_bound(r, mask, c, carried);
+                    }
                     t
                 }
             };
@@ -1947,6 +1988,72 @@ impl<'t, 'a> Ck<'t, 'a> {
             let binds: Binds = binds.into_iter().collect();
             x.ty = x.ty.replace_outside(&binds);
             y.ty = y.ty.replace_outside(&binds);
+        }
+    }
+
+    /// Checks the int powers on the class `r`, which a binding in a body has just given the
+    /// carrier `c` out of the carriers `mask` ([`Self::fix_bound`]), at the binding rather
+    /// than when the function ends, so that their repairs are checked at the uses of the name
+    /// as a power's own are: `z = 2^-1` offers `2.0f64^-1`, `2^-1.0f64` and `2r^-1` as
+    /// `g() = 2^-1` does, `return z * 2r` keeps `2r^-1` alone and `return z + n` for an int
+    /// `n` keeps none, as `c = z * 2r` and `c = z + n` do outside every function. The class's
+    /// own uses take a repair where the carriers it might take before the binding chose one
+    /// include the repair's ([`Self::power_swapped`]); the carrier the binding chose, `int`,
+    /// rejects every repair, which is why each was dropped before (REPAIR-block-pow-negative).
+    /// A repair kept gives the value its type where the value is the class's alone, and is
+    /// carried, from the value's place `carried`, to the name's uses
+    /// ([`Self::carried_bound`]), which check it there. The powers
+    /// leave the class's uses, so the function's end does not check them again; the class
+    /// takes no other carrier after its binding, so the answer is the one the end would give.
+    ///
+    /// Complexity tradeoff: one pass over the class's uses, O(u), at the one binding that
+    /// fixes the class, and only for a class with a power among its uses; the `min` and `max`
+    /// uses are indexed again, O(u). The checks of the powers cost what they cost at the
+    /// function's end. The naive alternative, checking each repair by checking the function
+    /// again with it written in, costs the function's size per repair.
+    fn powers_bound(&mut self, r: usize, mask: u8, c: Carrier, carried: Option<Span>) {
+        let f = Fixing {
+            class: r,
+            mask,
+            carried: carried.is_some(),
+        };
+        let powers = |n: &Need| matches!(n.kind, NeedKind::Power(_));
+        if !self.classes[r].uses.iter().any(|(_, n)| powers(n)) {
+            return;
+        }
+        self.touch(r);
+        let (now, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
+            .into_iter()
+            .partition(|(_, n)| powers(n));
+        let class = &mut self.classes[r];
+        class.orders.clear();
+        for (i, (_, n)) in kept.iter().enumerate() {
+            if let NeedKind::Order { word, first, .. } = &n.kind {
+                class.orders.insert((word.clone(), *first, n.span), i);
+            }
+        }
+        class.uses = kept;
+        let pending = self.pending_fixes.len();
+        let outer = (self.fixing.replace(f), self.written.take());
+        let t = Ty::carrier(c);
+        for (_, n) in &now {
+            self.check_on(n, &t, n.span, None);
+        }
+        (self.fixing, self.written) = outer;
+        let fixes = self.pending_fixes.split_off(pending);
+        let Some(value) = carried.filter(|_| !self.trying && !fixes.is_empty()) else {
+            return;
+        };
+        let mut up = HashMap::new();
+        for p in fixes {
+            carry_joined(&mut up, p.ty.clone(), Fixes::one(p));
+        }
+        let carried = self.carried.entry(value).or_default();
+        for (ty, fixes) in up {
+            match carried.iter_mut().find(|k| k.ty == ty) {
+                Some(k) => k.fixes.join(fixes),
+                None => carried.push(Carry { ty, fixes }),
+            }
         }
     }
 
@@ -9072,7 +9179,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             // class, whose carriers left then say whether every use of it takes the `rat` or
             // the float, as `2r^-3` does not in `2^-3 + k` for an int `k`.
             let r = self.class_root(p.base_var.as_deref()?)?;
-            return (self.classes[r].mask & result.bit() == 0).then_some(None);
+            // A class a binding in a body just gave its carrier ([`Self::powers_bound`]): its
+            // own uses are those of the carriers it might take before, and the name's uses
+            // check the repair's type where the bound value is the class's alone; where it is
+            // only part of the value, nothing checks it there, and it is left out.
+            return match self.fixing.filter(|f| f.class == r) {
+                Some(f) if f.mask & result.bit() == 0 || !f.carried => Some(None),
+                Some(_) => Some(Some((Ty::carrier(result), Vec::new()))),
+                None => (self.classes[r].mask & result.bit() == 0).then_some(None),
+            };
         };
         if w.span == p.at && matches!(w.form, Construct::Binary(BinaryOp::Pow, _)) {
             let at = [p.base, p.exponent_at][i];
