@@ -1653,10 +1653,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             Target::Wild => "_",
         };
         let text = self.t.text;
+        // Outside every function, the operations on literals alone that take `f64`, as the
+        // same line in a body does ([`f64_operands`]), take it before the errors their
+        // operators wrote are dropped; in a body their classes do ([`Self::fix_bound`]).
+        let taken = match self.level {
+            0 => {
+                let (taken, w) = self.top_takes_f64(value, &v);
+                v = w;
+                taken
+            }
+            _ => HashSet::new(),
+        };
         let parts = || match (&targets[..], &value.kind) {
-            ([t], _) => unfixed_parts(value, name(t), true, text),
+            ([t], _) => unfixed_parts(value, name(t), true, text, &taken),
             (ts, ExprKind::Tuple(items)) if items.len() == ts.len() => (ts.iter().zip(items))
-                .flat_map(|(t, x)| unfixed_parts(x, name(t), false, text))
+                .flat_map(|(t, x)| unfixed_parts(x, name(t), false, text, &taken))
                 .collect(),
             _ => Vec::new(),
         };
@@ -2238,9 +2249,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             // rejected as `rate = 0.2;` is (step L1.26b).
             let p = &s.f.params[s.given.len()];
             let d = p.default.as_ref().expect("a closed default");
+            // As a binding outside every function ([`Self::bind`]): `rate = 2^-1.0` is `0.5`.
+            let (taken, t) = match self.level {
+                0 => self.top_takes_f64(d, &t),
+                _ => (HashSet::new(), t),
+            };
             self.drop_met(before);
             let what = format!("the default of `{}`", p.name);
-            self.rejects_unfixed(before, unfixed_parts(d, &p.name, true, self.t.text), &what);
+            let parts = unfixed_parts(d, &p.name, true, self.t.text, &taken);
+            self.rejects_unfixed(before, parts, &what);
             let mut out = Ty::empty();
             for piece in t.pieces() {
                 out = out.union(&match piece.carrier() {
@@ -2821,6 +2838,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         let bare = |a: &Arg| a.lit.as_ref().is_some_and(|l| l.bare);
         let (ox, oy) = (op_of(x), op_of(y));
         if (ox || bare(x)) && (oy || bare(y)) {
+            // `<`, `<=`, `>` and `>=` make one class of their sides in a body, so where the
+            // two together take `f64` ([`f64_operands`]) both take it here, before the
+            // comparison is checked: in `y = 2^(1 + 1) < 0.5`, `2^(1 + 1)` would otherwise be
+            // an `int` and `0.5` rejected there, where `g() = 2^(1 + 1) < 0.5` is `false`.
+            // One walk of each side, which then holds a value of a carrier, so it is walked
+            // no more ([`Self::lit_takes`]).
+            if matches!(
+                op,
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+            ) && !self.trying
+                && let (Some(a), Some(b)) = (x.expr, y.expr)
+                && let (Some(p), Some(q)) = (open_lits(a), open_lits(b))
+                && p.or(q).takes_f64(false)
+                && self.lit_fit(a, Carrier::F64).0
+                && self.lit_fit(b, Carrier::F64).0
+            {
+                // Both fit, so both take it ([`Self::lit_fit`] is what `lit_takes` asks).
+                self.lit_takes(a, Carrier::F64);
+                self.lit_takes(b, Carrier::F64);
+                x.ty = Ty::carrier(Carrier::F64);
+                y.ty = Ty::carrier(Carrier::F64);
+                return;
+            }
             if matches!(
                 op,
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow
@@ -2942,7 +2982,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (e, at) in nodes {
             if let Some(l) = literal(e, self.t.text) {
                 match at == c {
-                    true => _ = self.adopt_to(&l, c),
+                    // A literal that is a `c` as written, as `0.5` at `f64`, adopts nothing
+                    // ([`adopt`]), so an adoption the walk gave it before is dropped first: in
+                    // `0.5^(1 + 1) * 1.0f64` the walk gave `0.5` the carrier `rat`, which
+                    // `^` takes with an `int` exponent, and the run then met `^` at
+                    // (`rat`, `f64`).
+                    true => {
+                        self.put(Undo::Adopt(l.span, None));
+                        _ = self.adopt_to(&l, c);
+                    }
                     // An exponent keeps its own carrier, whatever the walk gave it before.
                     false => self.put(Undo::Adopt(l.span, None)),
                 }
@@ -2966,6 +3014,39 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         true
+    }
+
+    /// Outside every function, each operation on literals alone in the parts of `value`
+    /// ([`value_parts`]) that takes `f64` where nothing gives it a carrier, as the same line in
+    /// a function body does ([`f64_operands`]), taking it ([`Self::lit_takes`]): `y = 2^-1.0`
+    /// is `0.5`, as `g() = 2^-1.0` is (DESIGN.md step L1.26a). Returns the operations that
+    /// took it, which are then not rejected ([`unfixed_parts`]), and `v`, the type of
+    /// `value`, with each part that took it typed `f64` ([`retyped`]). One that does not
+    /// take it, whose value at `f64` is no `f64` ([`Self::lit_fit`]), is rejected as before.
+    ///
+    /// Complexity tradeoff: in a body each operation makes a class, merged as each operator
+    /// is walked and fixed when the name is bound ([`Self::fix_bound`]); the top level makes
+    /// none, so the text decides it here, in one walk of each part ([`f64_operands`]), one of
+    /// each operation that takes `f64` ([`Self::lit_takes`]) and one of the tuple displays
+    /// ([`retyped`]): O(|value|).
+    fn top_takes_f64(&mut self, value: &'a Expr, v: &Ty) -> (HashSet<Span>, Ty) {
+        let mut taken = HashSet::new();
+        let mut new = HashMap::new();
+        for (x, _) in value_parts(value).leaves {
+            for o in f64_operands(x) {
+                if self.lit_takes(o, Carrier::F64) {
+                    taken.insert(o.span);
+                    if std::ptr::eq(o, x) {
+                        new.insert(x.span, Ty::carrier(Carrier::F64));
+                    }
+                }
+            }
+        }
+        let v = match new.is_empty() {
+            true => v.clone(),
+            false => retyped(v, value, &new),
+        };
+        (taken, v)
     }
 
     /// What [`Self::lit_takes`] finds of `e`, an operation on bare literals alone, taking `c`:

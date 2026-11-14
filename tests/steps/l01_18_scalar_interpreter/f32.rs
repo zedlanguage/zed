@@ -142,8 +142,9 @@ fn a_use_fixes_a_decimal_literal_at_f32() {
 fn a_literal_left_the_formats_f32_and_f64_takes_f64() {
     // `^` at an `int` base and a decimal exponent has no arrow at `rat`, so it leaves the
     // literal the float formats alone; it takes `f64`, as it did before `f32` was a carrier.
-    // (At the top level, `y = 2^-1.0` is an operation on literals alone, rejected as before.)
+    // At the top level, `y = 2^-1.0` takes `f64` too (POW-top-body-agree).
     assert_eq!(value("g() = 2^-1.0;\ny = g();\n", "y"), "0.5");
+    assert_eq!(value("y = 2^-1.0;\n", "y"), "0.5");
     let src = "f(positional n) = 2^n;\ny = f(2.0);\nz = f(3);\n";
     assert_eq!(value(src, "y"), "4.0");
     assert_eq!(value(src, "z"), "8");

@@ -65,15 +65,12 @@ fn an_integer_literal_beside_a_float_takes_its_carrier() {
 
 #[test]
 fn a_power_with_a_decimal_that_nothing_fixes_is_rejected_with_f64_alone() {
-    // A decimal that nothing fixes is offered at `f64` alone under `^`; whether it should be
-    // offered at `rat` too is left to the plan row POW-domains.
-    assert_eq!(
-        type_errors("root2 = 2^0.5;\n"),
-        [unfixed(
-            "0.5",
-            &[("root2 = 2^0.5f64;", "root2 is 1.4142135623730951")]
-        )]
-    );
+    // A decimal exponent leaves the float formats alone, so it takes `f64`, as in a body
+    // (POW-top-body-agree): `root2 = 2^0.5` is no longer rejected. A decimal base with an
+    // integer exponent may still be a `rat`, so it is rejected and offered at `f64` alone
+    // under `^` (POW-domains).
+    assert_eq!(type_errors("root2 = 2^0.5;\n"), Vec::<String>::new());
+    assert_eq!(value("root2 = 2^0.5;\n", "root2"), "1.4142135623730951");
     assert_eq!(
         type_errors("x = 0.5^2;\n"),
         [unfixed("0.5", &[("x = 0.5f64^2;", "x is 0.25")])]

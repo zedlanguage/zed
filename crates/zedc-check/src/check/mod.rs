@@ -7392,8 +7392,8 @@ enum LitsTake {
 /// float formats, `f64` among them, which the literal does not choose among: it takes `f64`
 /// (author decision, 2026-11-12: a decimal literal that no use fixes takes `f64`). So
 /// `g() = 2^-1.0;`, where `^` leaves the formats `f32` and `f64` to `-1.0`, is `0.5` at `f64`,
-/// as it was before `f32` was a carrier. (At the top level, `y = 2^-1.0` is an operation on
-/// literals alone and is rejected.)
+/// as it was before `f32` was a carrier. At the top level, `y = 2^-1.0` takes `f64` too
+/// ([`f64_operands`]).
 fn floats_take_f64(cs: &[Carrier]) -> bool {
     cs.len() > 1
         && cs.contains(&Carrier::F64)
@@ -7454,6 +7454,116 @@ fn lit_op_recorded(e: &Expr, src: Option<&str>) -> bool {
         }
     }
     true
+}
+
+/// What an operation on bare literals alone holds that removes carriers from it
+/// ([`f64_operands`]).
+#[derive(Clone, Copy, Default)]
+struct OpenLits {
+    /// A decimal literal, which is never an `int`.
+    decimal: bool,
+    /// A `/`, which has no arrow at `int`.
+    div: bool,
+    /// A `^` whose exponent is no integer literal: `^` has no arrow that takes two `rat`s.
+    no_rat: bool,
+}
+
+impl OpenLits {
+    fn or(self, o: OpenLits) -> OpenLits {
+        OpenLits {
+            decimal: self.decimal || o.decimal,
+            div: self.div || o.div,
+            no_rat: self.no_rat || o.no_rat,
+        }
+    }
+
+    /// Whether the operation takes `f64`, as in a function body ([`Ck::lits_take`]): it is no
+    /// `rat` and no `int`, which leaves the formats `f32` and `f64`, and a decimal literal,
+    /// its own or `follower`, a bare decimal literal it is compared with, does not choose
+    /// among them ([`floats_take_f64`]).
+    fn takes_f64(self, follower: bool) -> bool {
+        self.no_rat && (self.decimal || (self.div && follower))
+    }
+}
+
+/// What `e` holds, where it is an operation on bare literals alone under `+`, `-`, `*`, `/`,
+/// `^` and a `-`, or one such literal; `None` otherwise. It costs the size of `e`, on its own
+/// stack.
+fn open_lits(e: &Expr) -> Option<OpenLits> {
+    let mut o = OpenLits::default();
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
+        if let Some(l) = literal(x, None) {
+            if !l.bare {
+                return None;
+            }
+            o.decimal |= is_decimal(&l.value);
+            continue;
+        }
+        match &x.kind {
+            ExprKind::Binary(
+                op
+                @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow),
+                a,
+                b,
+            ) => {
+                o.div |= *op == BinaryOp::Div;
+                o.no_rat |= *op == BinaryOp::Pow && rat_exponent(b).is_none();
+                todo.extend([&**b, &**a]);
+            }
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+            _ => return None,
+        }
+    }
+    Some(o)
+}
+
+/// The operations on bare literals alone in `e`, a part of a value bound outside every
+/// function ([`unfixed_parts`]), that take `f64` where nothing gives them a carrier, as the
+/// same line in a function body does (author decision, 2026-11-12: a decimal literal that no
+/// use fixes takes `f64`; DESIGN.md step L1.26a, `g() = 2^-1.0` is `0.5`): an operation whose
+/// carriers its operators and literals leave are the float formats alone
+/// ([`OpenLits::takes_f64`]), so `y = 2^-1.0` is `0.5` and `y = 2^0.5 + 1/2` an `f64`, while
+/// `y = 0.5^2`, whose `^` takes `rat` with an integer exponent, and `y = 0.5 * 2` stay
+/// rejected. As in a body, `<`, `<=`, `>` and `>=` make one class of their two sides, so
+/// `y = 1 < 2^0.5` takes `f64` on both; `==` and `!=` keep the sides apart, and a bare
+/// literal compared with an operation follows it, so `y = 2^-1.0 == 0.5` takes `f64` on both,
+/// `y = 2^(1/2) == 0.5` too, but in `y = 2^0.5 == 0.5^2` the right side stays rejected. Tuple
+/// displays compared pair by pair ([`paired`]) take each pair so.
+///
+/// Complexity tradeoff: a body finds this by a class per operation, merged as each operator
+/// is walked ([`Ck::lits_take`]), O(|e| α(|e|)); here the text alone decides it, one walk of
+/// each side ([`open_lits`]), O(|e|). The naive walk, of each operation at each operator over
+/// it, would cost the size times the depth.
+fn f64_operands(e: &Expr) -> Vec<&Expr> {
+    let side = |x: &Expr, follower: bool| open_lits(x).is_some_and(|o| o.takes_f64(follower));
+    match &e.kind {
+        ExprKind::Binary(BinaryOp::Eq | BinaryOp::Ne, a, b) => {
+            let Some(pairs) = paired(a, b) else {
+                return Vec::new();
+            };
+            let mut out = Vec::new();
+            for (x, y) in pairs {
+                let bare = |z: &Expr| literal(z, None).filter(|l| l.bare);
+                match (bare(x), bare(y)) {
+                    (Some(_), Some(_)) => {}
+                    (Some(l), None) if side(y, is_decimal(&l.value)) => out.extend([x, y]),
+                    (None, Some(l)) if side(x, is_decimal(&l.value)) => out.extend([x, y]),
+                    (Some(_), None) | (None, Some(_)) => {}
+                    (None, None) => out.extend([x, y].into_iter().filter(|z| side(z, false))),
+                }
+            }
+            out
+        }
+        ExprKind::Binary(BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge, a, b) => {
+            match (open_lits(a), open_lits(b)) {
+                (Some(x), Some(y)) if x.or(y).takes_f64(false) => vec![&**a, &**b],
+                _ => Vec::new(),
+            }
+        }
+        _ if side(e, false) => vec![e],
+        _ => Vec::new(),
+    }
 }
 
 /// The message for the literal `l`, which nothing gives a carrier, of the carriers `cs` that
@@ -7547,11 +7657,13 @@ fn literals_alone(e: &Expr, src: Option<&str>) -> Option<(Vec<Lit>, bool)> {
 /// pair is equal; where the pairs' literals take no one carrier, the fix names the literal
 /// instead ([`lit_holds`]). A pair at `int` or `rat` that holds a `^` is not folded, and the fix names
 /// the comparison as it writes it, as [`binder_holds`] does. `None` for any other value, which
-/// [`unfixed_binding`] then reads. It costs the size of `e` ([`folded`]).
+/// [`unfixed_binding`] then reads. A component in `taken` has taken `f64` ([`f64_operands`]),
+/// and its literals are rejected nowhere. It costs the size of `e` ([`folded`]).
 fn unfixed_comparison(
     e: &Expr,
     place: &dyn fmt::Display,
     src: Option<&str>,
+    taken: &HashSet<Span>,
 ) -> Option<(Span, Msg)> {
     let ExprKind::Binary(op @ (BinaryOp::Eq | BinaryOp::Ne), a, b) = &e.kind else {
         return None;
@@ -7563,7 +7675,12 @@ fn unfixed_comparison(
     // The literals of each pair, and whether it holds a `rat` literal.
     let lits: Vec<(Vec<Lit>, Vec<Lit>, bool)> = (pairs.iter())
         .map(|(x, y)| {
-            let ((xs, r), (ys, s)) = (literals_alone(x, src)?, literals_alone(y, src)?);
+            let ((mut xs, r), (mut ys, s)) = (literals_alone(x, src)?, literals_alone(y, src)?);
+            for (z, zs) in [(x, &mut xs), (y, &mut ys)] {
+                if taken.contains(&z.span) {
+                    zs.clear();
+                }
+            }
             Some((xs, ys, r || s))
         })
         .collect::<Option<_>>()?;
@@ -7737,14 +7854,18 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 /// otherwise a component of a tuple or a payload of an atom in it, as `0.5` in
 /// `y = (0.5, "a")`. Each fix names the value `place` then holds, `y[0] is 0.5`; a part is
 /// named by its own text, not as the binding `y = …`, in the message and the short fixes.
+///
+/// An operation in `taken`, `e` or a side of the comparison `e`, has taken `f64`
+/// ([`f64_operands`]) and is not rejected: `None` where nothing else is left.
 fn unfixed_binding(
     e: &Expr,
     n: &str,
     place: &dyn fmt::Display,
     whole: bool,
     src: Option<&str>,
+    taken: &HashSet<Span>,
 ) -> Option<(Span, Msg)> {
-    if let Some(r) = unfixed_comparison(e, place, src) {
+    if let Some(r) = unfixed_comparison(e, place, src, taken) {
         return Some(r);
     }
     let mut stack = match &e.kind {
@@ -7755,6 +7876,10 @@ fn unfixed_binding(
         ) => vec![&**b, &**a],
         _ => vec![e],
     };
+    stack.retain(|x| !taken.contains(&x.span));
+    if stack.is_empty() {
+        return None;
+    }
     let roots = stack.clone();
     let mut lits = Vec::new();
     let mut div = None;
@@ -8084,14 +8209,22 @@ impl ValueParts<'_> {
 /// order of the text; each fix rewrites that part alone and names the value of its place,
 /// `y[0] is 0.5`. `whole` is whether `e` is the whole value of `n`, not one component of a
 /// tuple bound to several names. It costs the size of `e` ([`value_parts`]), and the fixes
-/// the length of the line and the depth of each rejected part.
-fn unfixed_parts(e: &Expr, n: &str, whole: bool, src: Option<&str>) -> Vec<(Span, Span, Msg)> {
+/// the length of the line and the depth of each rejected part. The operations in `taken` have
+/// taken `f64` ([`f64_operands`]) and are not rejected.
+fn unfixed_parts(
+    e: &Expr,
+    n: &str,
+    whole: bool,
+    src: Option<&str>,
+    taken: &HashSet<Span>,
+) -> Vec<(Span, Span, Msg)> {
     let parts = value_parts(e);
     let root = (n != "_").then_some(n);
     let mut out = Vec::new();
     for &(x, at) in &parts.leaves {
         let place = parts.place(root, at);
-        if let Some((s, m)) = unfixed_binding(x, n, &place, whole && at.is_none(), src) {
+        let whole = whole && at.is_none();
+        if let Some((s, m)) = unfixed_binding(x, n, &place, whole, src, taken) {
             out.push((x.span, s, m));
         }
     }
