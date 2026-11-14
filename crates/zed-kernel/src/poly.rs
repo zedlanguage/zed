@@ -1175,7 +1175,7 @@ impl<'t> Identity<'t> {
         // O(T log k) term reads (O(T + k log k) when one summand dominates), whatever the
         // shape it was written in. Nothing is given up: the sum is the same polynomial, and a
         // partial sum that is also read elsewhere (a `let`) is formed as before. Tested by
-        // `l03_09_egraph::scaling::a_written_chain_of_n_names_times_a_sum` (COMPLEXITY.md
+        // `l03_09_egraph::bench::scaling::a_written_chain_of_n_names_times_a_sum` (COMPLEXITY.md
         // POLY-sum-chain-fold).
         let mut inner = vec![false; self.nodes.len()];
         for (i, n) in self.nodes.iter().enumerate() {

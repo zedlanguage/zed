@@ -1826,7 +1826,7 @@ type Inside<'a> = HashMap<(&'a str, usize, usize), Vec<(usize, usize)>>;
 /// each call against every method of its name, is O(u × m); the per-call loop this replaced cost
 /// each call every method of its pair's type files and was k^2 for k calls of a name in one file
 /// with k methods written apart, visible to them or not. Tests
-/// `s_01f_import_graph::untyped_calls_scale_with_the_number_of_files` (real crates' shape, n log
+/// `s_01f_import_graph::bench::untyped_calls_scale_with_the_number_of_files` (real crates' shape, n log
 /// n), `many_calls_of_a_name_cost_no_more_than_their_methods` (n log n) and
 /// `untyped_calls_without_a_triangle_scale_at_the_proven_bound` (p √p).
 fn untyped_imports<'a>(

@@ -419,7 +419,7 @@ impl Sorted {
 /// that lookup returns, whose sum over all entries is the number of entries written in Part A,
 /// O(e log e) in all, with no refused input. The grammar's rules and the table of defined
 /// words are hash maps already. Tests:
-/// `m0_03_grammar_tools::scaling::the_checklist_comparison_scales_with_its_entries` and
+/// `m0_03_grammar_tools::bench::scaling::the_checklist_comparison_scales_with_its_entries` and
 /// `the_checklist_reading_scales_with_its_unreadable_lines`.
 pub fn compare(
     spec: &Spec,

@@ -251,7 +251,7 @@ pub fn show(order: &[Element]) -> String {
 /// edge's ends by binary lifting (`Traversal::ancestors`, `V log V` words of memory); the
 /// union-find of the sets has path halving without union by rank, which is `O(log V)` per
 /// find amortized. Nothing is refused and the order is the recursive algorithm's. Test:
-/// `m0_05_widening_and_iteration::scaling::the_order_of_nested_loops_takes_time_linear_in_the_depth`;
+/// `m0_05_widening_and_iteration::bench::scaling::the_order_of_nested_loops_takes_time_linear_in_the_depth`;
 /// COMPLEXITY.md row S9.
 pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
     let n = succ.len();

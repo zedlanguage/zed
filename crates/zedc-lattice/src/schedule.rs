@@ -56,7 +56,7 @@
 //! frame machine does; re-running it from its start for each answer, as a restarting build system
 //! does, would cost O(k²). Cost: the search keeps four 32-bit words per node besides its value,
 //! and its two stacks. Tests:
-//! `m0_05_widening_and_iteration::schedule::scaling`; COMPLEXITY.md row S-sched.
+//! `m0_05_widening_and_iteration::bench::schedule::scaling`; COMPLEXITY.md row S-sched.
 
 /// What a node is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
