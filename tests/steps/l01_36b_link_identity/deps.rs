@@ -451,3 +451,45 @@ fn another_input_format_links_again() {
     };
     at_once(&[&|| change("set", None, elf), &|| change("unset", elf, None)]);
 }
+
+/// A `$` in a path is written `$$` in the list, as in a makefile, and read back as one `$`.
+#[test]
+fn a_dollar_sign_in_a_listed_path_is_read() {
+    let d = dir("dollar");
+    let lib = d.join("lib$e.a");
+    std::fs::write(&lib, "").unwrap();
+    let doubled = lib.display().to_string().replace('$', "$$");
+    let list = format!("out: \\\n {doubled}\n\n{doubled}:\n");
+    assert_eq!(dependencies(list.as_bytes()).collect::<Vec<_>>(), [lib]);
+}
+
+/// A record of a link that read no file besides its object file and the runtime library reads
+/// back with no paths.
+#[test]
+fn a_record_naming_no_files_reads_back() {
+    let out = dir("empty_record").join("sign");
+    let record = Record {
+        output: blake3::hash(b"an executable"),
+        inputs: Vec::new(),
+    };
+    std::fs::write(Record::path(&out), record.to_bytes()).unwrap();
+    assert_eq!(Record::read(&out), Some(record));
+}
+
+/// A record naming a file that is gone since the link, the executable and every other input
+/// as they were: the output is not kept, and the build links again, after which it is kept.
+#[test]
+fn a_record_naming_a_file_that_is_gone_links_again() {
+    let d = dir("gone");
+    let (src, out, copy) = (d.join("sign.zed"), d.join("sign"), d.join("sign-copy"));
+    std::fs::write(&src, sign("closed")).unwrap();
+    let tools = toolchain();
+    link(&src, &out, &tools);
+    copied(&out, &copy);
+    let mut record = Record::read(&copy).expect("a link leaves its record");
+    record.inputs.push(d.join("no-such-library.a"));
+    std::fs::write(Record::path(&copy), record.to_bytes()).unwrap();
+    assert_eq!(link(&src, &copy, &tools), Link::Ran);
+    assert_eq!(link(&src, &copy, &tools), Link::Kept);
+    assert_eq!(says(&copy), "closed\n");
+}

@@ -232,3 +232,21 @@ fn a_file_without_the_section_is_an_error_naming_it() {
         ))
     );
 }
+
+#[test]
+fn an_archive_without_a_symbol_index_holds_no_build() {
+    // An archive with no members has no symbol index, so no member defines `BUILD`.
+    let exe = std::env::current_exe().unwrap();
+    let d = dir("no-index");
+    std::fs::write(d.join("libzed_native-empty.a"), b"!<arch>\n").unwrap();
+    assert_eq!(
+        runtime_of(&exe, &d),
+        Err(format!(
+            "none of the runtime libraries in {} was built with {}, and code one build makes \
+             does not run with another's library. Repair: build them together with `cargo \
+             build -p zed-native`",
+            d.display(),
+            exe.display()
+        ))
+    );
+}

@@ -210,3 +210,172 @@ fn a_missing_source_directory_is_named() {
         "{why}"
     );
 }
+
+/// Whether an edit of `edited`, under `d`, changes the hash of the crate in `krate`; the edit
+/// is undone after.
+fn followed(d: &Path, krate: &Path, edited: &str) -> bool {
+    let path = d.join(edited);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let before = hash(krate);
+    std::fs::write(&path, format!("{text}// edited\n")).unwrap();
+    let after = hash(krate);
+    std::fs::write(&path, text).unwrap();
+    before != after
+}
+
+#[test]
+fn each_way_a_manifest_names_a_dependency_is_read() {
+    let receipt = "receipt/src/lib.rs";
+    let prices = "prices/src/item0.rs";
+    // The text after `till`'s `[package]` table, the file of a crate it may depend on, and
+    // whether that crate is among its sources.
+    let cases: [(&str, &str, &str, bool); 16] = [
+        (
+            "an inline table with a path",
+            "[dependencies]\nreceipt = { path = \"../receipt\" }\n",
+            receipt,
+            true,
+        ),
+        (
+            "a dotted key `.path`",
+            "[dependencies]\nreceipt.path = \"../receipt\"\n",
+            receipt,
+            true,
+        ),
+        (
+            "a table of its own with a path",
+            "[dependencies.receipt]\npath = \"../receipt\"\n",
+            receipt,
+            true,
+        ),
+        (
+            "a table of its own with a version and a path",
+            "[dependencies.receipt]\nversion = \"0.1\"\npath = \"../receipt\"\n",
+            receipt,
+            true,
+        ),
+        (
+            "a table of its own with a version only",
+            "[dependencies.receipt]\nversion = \"0.1\"\n",
+            receipt,
+            false,
+        ),
+        (
+            "a build dependency",
+            "[build-dependencies]\nreceipt = { path = \"../receipt\" }\n",
+            receipt,
+            true,
+        ),
+        (
+            "a build dependency of a target",
+            "[target.'cfg(unix)'.build-dependencies]\nreceipt = { path = \"../receipt\" }\n",
+            receipt,
+            true,
+        ),
+        (
+            "a dev-dependency",
+            "[dev-dependencies]\nreceipt = { path = \"../receipt\" }\n",
+            receipt,
+            false,
+        ),
+        (
+            "a dev-dependency in a table of its own",
+            "[dev-dependencies.receipt]\npath = \"../receipt\"\n",
+            receipt,
+            false,
+        ),
+        (
+            "a path through `.`",
+            "[dependencies]\nreceipt = { path = \"./../receipt\" }\n",
+            receipt,
+            true,
+        ),
+        (
+            "a registry version",
+            "[dependencies]\nreceipt = \"0.1\"\n",
+            receipt,
+            false,
+        ),
+        (
+            "lines commented out",
+            "# [dependencies]\n# receipt = { path = \"../receipt\" }\n",
+            receipt,
+            false,
+        ),
+        (
+            "the workspace's, in a table of its own",
+            "[dependencies.prices]\nworkspace = true\n",
+            prices,
+            true,
+        ),
+        (
+            "the workspace's, in an inline table",
+            "[dependencies]\nprices = { workspace = true }\n",
+            prices,
+            true,
+        ),
+        (
+            "the workspace's, by a name the workspace does not list",
+            "[dependencies]\nregister.workspace = true\n",
+            prices,
+            false,
+        ),
+        (
+            "another table",
+            "[features]\nreceipt = []\n",
+            receipt,
+            false,
+        ),
+    ];
+    for (k, (case, deps, edited, want)) in cases.into_iter().enumerate() {
+        let d = dir(&format!("sources-form-{k}"));
+        let krate = till(&d, 1);
+        put(
+            &krate.join("Cargo.toml"),
+            &format!("[package]\nname = \"till\"\n\n{deps}"),
+        );
+        assert_eq!(followed(&d, &krate, edited), want, "{case}");
+    }
+}
+
+#[test]
+fn a_directory_reached_again_through_a_symbolic_link_is_read_once() {
+    let plain = till(&dir("sources-plain"), 1);
+    let linked = till(&dir("sources-linked"), 1);
+    let again = linked.join("src/again");
+    if again.symlink_metadata().is_err() {
+        std::os::unix::fs::symlink(".", &again).unwrap();
+    }
+    assert_eq!(hash(&linked), hash(&plain));
+}
+
+#[test]
+fn an_include_the_scan_does_not_follow_leaves_those_after_it() {
+    let d = dir("sources-includes");
+    let krate = till(&d, 1);
+    // A literal naming no file, a path built by a macro, a literal with an escape, the include
+    // of the tax table, and a literal that never ends, last in the file.
+    put(
+        &krate.join("src/lib.rs"),
+        "pub mod total;\n\
+         // include_str!(\"no-such-file.txt\") names no file.\n\
+         pub const BUILT: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/built.txt\"));\n\
+         pub const ESCAPED: &str = include_str!(\"..\\u{2f}notes.txt\");\n\
+         pub const TAX: &str = include_str!(\"../../tax/table.txt\");\n\
+         // include_str!(\"never ends",
+    );
+    assert!(followed(&d, &krate, "tax/table.txt"));
+}
+
+#[test]
+fn a_crate_outside_every_workspace_is_named() {
+    let krate = Path::new("/no-such-directory/crate");
+    assert_eq!(
+        sources::of(krate).err(),
+        Some(
+            "/no-such-directory/crate: no directory above it holds a Cargo.toml with a \
+             [workspace] table"
+                .to_string()
+        )
+    );
+}

@@ -49,7 +49,7 @@ names the test that covers it, or says why no test is needed.
 | a linker that runs and fails, what it printed shown | `command::a_link_that_fails_is_named_with_what_the_linker_printed` |
 | a linker run for its versions that then cannot be run for the link | none: only a change to the file between two runs a few milliseconds apart reaches it; the message is the one of the row above, from the same function `not_run` |
 | `zedc` that cannot find its own file (`current_exe` fails) | none: on Linux it reads `/proc/self/exe`, which fails only without `/proc` |
-| picking the runtime library built with this executable among several | `runtime::*` |
+| picking the runtime library built with this executable among several; an archive with no symbol index | `runtime::*`, `runtime::an_archive_without_a_symbol_index_holds_no_build` |
 | **Output paths** | |
 | `-o` naming no file (`dir/..`) | `command::an_output_that_names_no_file_is_refused` |
 | `-o` in a directory that does not exist | `command::an_output_that_names_no_file_is_refused` |

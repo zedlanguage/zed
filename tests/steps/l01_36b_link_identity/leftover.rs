@@ -202,3 +202,32 @@ fn builds_to_one_output_at_once_all_succeed() {
     assert_eq!(recorded(&out).map(|k| k.len()), Some(32));
     assert_eq!(working(&d, &out), Vec::<String>::new());
 }
+
+/// The sweep removes only directories named `<out>.zed-build.<digits>.<digits>`: a name with
+/// other words in it, a third part, an empty part, or another output's name, and a file of the
+/// right name, are not a build's and are kept.
+#[test]
+fn the_sweep_removes_only_what_has_the_form_of_a_working_directory() {
+    let d = dir("sweep_names");
+    let out = d.join("sign");
+    let kept_dirs = [
+        "sign.zed-build.1.x",
+        "sign.zed-build.1.2.3",
+        "sign.zed-build..2",
+        "sign.zed-build.1.",
+        "signs.zed-build.5.6",
+        "sig.zed-build.5.6",
+    ];
+    for name in kept_dirs {
+        std::fs::create_dir_all(d.join(name)).unwrap();
+    }
+    let file = d.join("sign.zed-build.1.2");
+    std::fs::write(&file, "a file, not a build's directory\n").unwrap();
+    let stopped = left(&out, 3, 4);
+    sweep(&out);
+    assert!(!stopped.exists(), "{} is left", stopped.display());
+    for name in kept_dirs {
+        assert!(d.join(name).is_dir(), "{name} is removed");
+    }
+    assert!(file.is_file(), "the file is removed");
+}
