@@ -2262,7 +2262,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CONST-too-large-coprime-base-ctl | running | 2026-11-14 07:58 |  |
 | CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | resumed; WIP committed (566a0d3a5) and rebased on origin/main; bench moved into bench/too_large.rs |
+| DOC-deferred-refs | running | 2026-11-14 00:03 | author P174/P181 2026-11-14: held until every TEST-bench-move item merges, then the FAIL rows, then the six handoff items; AUDIT-p184 2026-11-14: P174 hold lift |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
@@ -2275,6 +2277,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
+| FAIL-layer-mcu-target-value | running | 2026-11-14 07:52 |  |
 | FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
@@ -2286,9 +2289,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
-| FAIL-values-function-in-tuple | attempt 1 stopped, not merged | 2026-11-14 08:05 | needs kernel, machine and native support for closures in tuples: row FIX-functions-in-tuples (size L) |
-| STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
-| TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | started; worktree /home/luke/Work/wt/test-complete-types; load 6.96 13.08 18.93 |
+| STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
+| TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | committed 3 COMPLETENESS.md + 13 tests, rebased, row Done text and TEST-types-unreached-paths added; plan --fix, tests, clippy next / load 47.10 50.62 49.91 |
 | TEST-m0_03-flake | running |  |  |
 | TEST-m0-layer-label | running |  |  |
 
