@@ -22,7 +22,7 @@ use imbl::Vector;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use crate::exact::{CanonicalTree, TreeStep, exact_sum};
@@ -190,9 +190,18 @@ struct Partial<'t> {
     round: u64,
 }
 
-/// The entries a definedness `fix` has defined, each with the round that defined it. Every
-/// attempt shares the one map, so an attempt costs nothing for the entries it does not read.
-type Defined = BTreeMap<Value, (Value, u64)>;
+/// Where the entry at one key of a definedness `fix` stands. Every attempt shares the one list
+/// of these, so an attempt costs nothing for the entries it does not read.
+enum Settled {
+    /// Not defined, and neither being demanded nor stalled.
+    Open,
+    /// Being demanded.
+    Busy,
+    /// Stalled on a cycle, or on an entry that is.
+    Stalled,
+    /// Defined, with the round that defined it.
+    Defined(Value, u64),
+}
 
 /// A name's binding in an environment.
 #[derive(Clone)]
@@ -301,10 +310,10 @@ fn lookup<'t>(env: &Env<'t>, name: &str) -> Option<Slot<'t>> {
 
 /// Why an evaluation stopped: an error, or, inside a definedness `fix`, a read of an entry
 /// not yet defined, which postpones the entry being computed. The read names the `fix` whose
-/// family it read and the key it read there.
+/// family it read and the position in that `fix`'s domain of the key it read there.
 enum Stop {
     Error(KernelError),
-    Undefined { fix: u64, key: Value },
+    Undefined { fix: u64, i: usize },
 }
 
 /// The order in which a definedness `fix` defines its entries. Every schedule reaches the
@@ -711,8 +720,9 @@ enum Step<'t> {
         env: Env<'t>,
         site: Option<At>,
     },
-    /// Evaluates an undefined entry where an attempt reads it.
-    Demand(Rc<Definedness<'t>>, Value),
+    /// Evaluates an undefined entry, at a position in its `fix`'s domain, where an attempt
+    /// reads it.
+    Demand(Rc<Definedness<'t>>, usize),
     /// Gives a value to the frame on top of the stack.
     Give(V<'t>),
 }
@@ -901,13 +911,15 @@ struct Gen<'t> {
 
 /// A definedness `fix` running in rounds: the entries left in this round, those for the next,
 /// and for each undefined entry read, the entries waiting on it.
+/// Entries are named by their keys' positions in the domain.
 struct Rounds<'t> {
     fix: Rc<Definedness<'t>>,
     rng: Option<SplitMix>,
-    waiting: BTreeMap<Value, Vec<Value>>,
-    queue: std::vec::IntoIter<Value>,
-    ready: Vec<Value>,
-    defined: Vec<Value>,
+    /// By position: the entries waiting on that entry.
+    waiting: Vec<Vec<usize>>,
+    queue: std::vec::IntoIter<usize>,
+    ready: Vec<usize>,
+    defined: Vec<usize>,
     round: u64,
     sees: u64,
 }
@@ -947,10 +959,10 @@ struct Saved {
     args: Vec<Option<usize>>,
 }
 
-/// An attempt at the entry at `k` of the `fix` of `by`. `mark` holds the lengths of the trace's
-/// facts, calls and keys when it began.
+/// An attempt at the entry at position `i` of the domain of the `fix` of `by`. `mark` holds
+/// the lengths of the trace's facts, calls and keys when it began.
 struct Entry<'t> {
-    k: Value,
+    i: usize,
     mark: Option<(usize, usize, usize)>,
     by: By<'t>,
 }
@@ -1940,26 +1952,17 @@ impl<'t> Machine<'_, 't> {
             if let Value::Atom(_) = k {
                 return give(k);
             }
-            let k = as_key(&k);
             let fix = &part.of;
-            let found = match fix.defined.borrow().get(&*k) {
-                Some((v, r)) if *r < part.round => Some(v.clone()),
-                _ => None,
+            let Some(&i) = fix.index.get(&*as_key(&k)) else {
+                return give(Value::atom("notFound"));
             };
-            return match found {
-                Some(v) => give(v),
-                None if fix.domain.binary_search(&*k).is_err() => give(Value::atom("notFound")),
-                None if self.ev.schedule == Schedule::Pull
-                    && !fix.busy.borrow().contains(&*k)
-                    && !fix.stalled.borrow().contains(&*k) =>
-                {
-                    Ok(Step::Demand(fix.clone(), k.into_owned()))
+            return match &fix.settled.borrow()[i] {
+                Settled::Defined(v, r) if *r < part.round => give(v.clone()),
+                Settled::Open if self.ev.schedule == Schedule::Pull => {
+                    Ok(Step::Demand(fix.clone(), i))
                 }
                 // An entry defined in this Jacobi round is not yet visible to it.
-                None => Err(Stop::Undefined {
-                    fix: fix.id,
-                    key: k.into_owned(),
-                }),
+                _ => Err(Stop::Undefined { fix: fix.id, i }),
             };
         }
         // `fs[k]` on a lookup port: the world answers once, and the answer is kept.
@@ -2301,6 +2304,9 @@ impl<'t> Machine<'_, 't> {
         env: Env<'t>,
     ) -> R<Step<'t>> {
         let domain: Box<[Value]> = family(init)?.keys().cloned().collect();
+        let index = domain.iter().cloned().enumerate().map(|(i, k)| (k, i));
+        let index: HashMap<Value, usize> = index.collect();
+        let settled = domain.iter().map(|_| Settled::Open).collect();
         self.ev.fixes += 1;
         let (calls, trace_keys) = match &self.ev.trace {
             Some(t) => (t.calls.clone(), t.keys.clone()),
@@ -2316,9 +2322,8 @@ impl<'t> Machine<'_, 't> {
             env,
             calls,
             keys: trace_keys,
-            defined: RefCell::default(),
-            busy: RefCell::default(),
-            stalled: RefCell::default(),
+            index,
+            settled: RefCell::new(settled),
             drops: self.drops.clone(),
         });
         let rng = match self.ev.schedule {
@@ -2328,11 +2333,12 @@ impl<'t> Machine<'_, 't> {
         };
         // The first round tries every entry; the work list is the rounds' own, since later
         // rounds refill it.
-        let ready = fix.domain.to_vec();
+        let ready = (0..fix.domain.len()).collect();
+        let waiting = fix.domain.iter().map(|_| Vec::new()).collect();
         self.round(Box::new(Rounds {
             fix,
             rng,
-            waiting: BTreeMap::new(),
+            waiting,
             queue: Vec::new().into_iter(),
             ready,
             defined: Vec::new(),
@@ -2341,10 +2347,11 @@ impl<'t> Machine<'_, 't> {
         }))
     }
 
-    /// Begins an attempt at the entry at `k` of the `fix` of `by` against the entries defined
-    /// before `round`.
-    fn attempt(&mut self, round: u64, k: Value, by: By<'t>) -> R<Step<'t>> {
+    /// Begins an attempt at the entry at position `i` of the domain of the `fix` of `by`
+    /// against the entries defined before `round`.
+    fn attempt(&mut self, round: u64, i: usize, by: By<'t>) -> R<Step<'t>> {
         let fix = by.fix();
+        let k = fix.domain[i].clone();
         let part = V::Partial(Rc::new(Partial {
             of: fix.clone(),
             round,
@@ -2359,7 +2366,7 @@ impl<'t> Machine<'_, 't> {
             .map(|t| (t.facts.len(), t.calls.len(), t.keys.len()));
         self.ev.enter(std::slice::from_ref(&k));
         self.frames
-            .push(Frame::Entry(Box::new(Entry { k, mark, by })));
+            .push(Frame::Entry(Box::new(Entry { i, mark, by })));
         Ok(Step::Eval(body, at, env))
     }
 
@@ -2368,19 +2375,19 @@ impl<'t> Machine<'_, 't> {
     /// is not a fact: what it recorded is dropped, and the entry's fact is the attempt that
     /// defines it.
     fn entry_ended(&mut self, entry: Entry<'t>, out: R<V<'t>>) -> R<Step<'t>> {
-        let Entry { k, mark, by } = entry;
+        let Entry { i, mark, by } = entry;
         let id = by.fix().id;
         self.ev.leave(1);
         let attempt = match out {
             Ok(V::Data(v)) => Ok(Ok(v)),
             Ok(_) => type_err("a fix entry is a function"),
-            Err(Stop::Undefined { fix, key }) if fix == id => {
+            Err(Stop::Undefined { fix, i: read }) if fix == id => {
                 if let (Some(t), Some((facts, calls, keys))) = (&mut self.ev.trace, mark) {
                     t.facts.truncate(facts);
                     t.calls.truncate(calls);
                     t.keys.truncate(keys);
                 }
-                Ok(Err(key))
+                Ok(Err(read))
             }
             Err(e) => Err(e),
         };
@@ -2388,40 +2395,44 @@ impl<'t> Machine<'_, 't> {
             By::Round(mut st) => {
                 match attempt? {
                     Ok(v) => {
-                        let round = st.round;
-                        st.fix.defined.borrow_mut().insert(k.clone(), (v, round));
-                        st.defined.push(k);
+                        st.fix.settled.borrow_mut()[i] = Settled::Defined(v, st.round);
+                        st.defined.push(i);
                     }
-                    Err(read) => st.waiting.entry(read).or_default().push(k),
+                    Err(read) => st.waiting[read].push(i),
                 }
                 self.next_entry(st)
             }
             By::Pull(st) => {
-                st.fix.busy.borrow_mut().remove(&k);
-                match attempt? {
-                    Ok(v) => {
-                        st.fix.defined.borrow_mut().insert(k, (v, 0));
-                    }
-                    Err(_) => {
-                        st.fix.stalled.borrow_mut().insert(k);
-                    }
-                }
+                let (settled, out) = match attempt {
+                    Ok(Ok(v)) => (Settled::Defined(v, 0), Ok(())),
+                    Ok(Err(_)) => (Settled::Stalled, Ok(())),
+                    Err(e) => (Settled::Open, Err(e)),
+                };
+                st.fix.settled.borrow_mut()[i] = settled;
+                out?;
                 self.pull(st)
             }
             By::Demand(fix, saved) => {
-                fix.busy.borrow_mut().remove(&k);
                 if let (Some(t), Some(s)) = (&mut self.ev.trace, saved) {
                     (t.calls, t.keys, t.reads, t.site, t.args) =
                         (s.calls, s.keys, s.reads, s.site, s.args);
                 }
-                match attempt? {
-                    Ok(v) => {
-                        fix.defined.borrow_mut().insert(k, (v.clone(), 0));
+                let mut settled = fix.settled.borrow_mut();
+                match attempt {
+                    Ok(Ok(v)) => {
+                        settled[i] = Settled::Defined(v.clone(), 0);
                         give(v)
                     }
-                    Err(key) => {
-                        fix.stalled.borrow_mut().insert(k);
-                        Err(Stop::Undefined { fix: fix.id, key })
+                    Ok(Err(read)) => {
+                        settled[i] = Settled::Stalled;
+                        Err(Stop::Undefined {
+                            fix: fix.id,
+                            i: read,
+                        })
+                    }
+                    Err(e) => {
+                        settled[i] = Settled::Open;
+                        Err(e)
                     }
                 }
             }
@@ -2441,9 +2452,10 @@ impl<'t> Machine<'_, 't> {
     // Complexity tradeoff (COMPLEXITY.md K5): the naive version copies the domain and the
     // defined map for each attempt and tries every undefined entry in every round, O(D³) for a
     // chain of `D` entries (`D` rounds of `D` attempts, each copying `D` entries). Used: one
-    // shared map whose entries carry the round that defined them (`Defined`), and a wait list
-    // per undefined entry read, so a chain costs `D` attempts under every schedule and each
-    // attempt only what it reads, O(D log D) for the chain. Tradeoffs: memory for the round
+    // shared list, by position in the domain, of the entries with the round that defined them
+    // (`Settled`), and a wait list per undefined entry read, so a chain costs `D` attempts
+    // under every schedule and each attempt only what it reads, O(D) for the chain, with a
+    // hash lookup a read ([`Definedness::index`]). Tradeoffs: memory for the round
     // stamps and the wait lists, O(D); it rests on entries never changing once defined, which
     // makes a retried attempt read the same entries and stop at the same one.
     fn round(&mut self, mut st: Box<Rounds<'t>>) -> R<Step<'t>> {
@@ -2461,19 +2473,20 @@ impl<'t> Machine<'_, 't> {
     }
 
     fn next_entry(&mut self, mut st: Box<Rounds<'t>>) -> R<Step<'t>> {
-        if let Some(k) = st.queue.next() {
+        if let Some(i) = st.queue.next() {
             let sees = st.sees;
-            return self.attempt(sees, k, By::Round(st));
+            return self.attempt(sees, i, By::Round(st));
         }
         if st.defined.is_empty() {
             return rounds_end(&st.fix);
         }
-        for k in std::mem::take(&mut st.defined) {
-            let waited = st.waiting.remove(&k).unwrap_or_default();
+        for i in std::mem::take(&mut st.defined) {
+            let waited = std::mem::take(&mut st.waiting[i]);
             st.ready.extend(waited);
         }
-        // The order of trying a round's entries is the key order, as when all are tried.
-        st.ready.sort();
+        // The order of trying a round's entries is the key order, as when all are tried: the
+        // domain is in key order.
+        st.ready.sort_unstable();
         st.round += 1;
         self.round(st)
     }
@@ -2487,28 +2500,34 @@ impl<'t> Machine<'_, 't> {
     // start after each undefined entry it reads is defined, O(m²) for an entry reading `m`
     // undefined ones, and checks for a cycle by `Vec::contains` on the demand stack, O(D²) for
     // a chain of `D`. Used: the undefined entry is evaluated where it is read, so each entry is
-    // evaluated once, and the entries being demanded and those stalled are ordered sets, so the
-    // cycle check is O(log D) and a chain ending in a cycle stalls in O(D log D). Tradeoffs: the
+    // evaluated once, and whether an entry is being demanded or has stalled is kept by its
+    // position in the domain ([`Settled`]), so the cycle check is O(1) once the key is found
+    // ([`Definedness::index`]) and a chain ending in a cycle stalls in O(D). Tradeoffs: the
     // demanded entries' frames are nested, held on the machine's heap stack, O(D) memory; an
     // entry on a cycle and every entry waiting on it stall rather than being retried.
     fn pull(&mut self, mut st: Box<Pull<'t>>) -> R<Step<'t>> {
-        while let Some(k) = st.fix.domain.get(st.next) {
+        while st.next < st.fix.domain.len() {
+            let i = st.next;
             st.next += 1;
-            if st.fix.defined.borrow().contains_key(k) || st.fix.stalled.borrow().contains(k) {
+            if !matches!(st.fix.settled.borrow()[i], Settled::Open) {
                 continue;
             }
             self.ev.burn()?;
-            let k = k.clone();
-            st.fix.busy.borrow_mut().insert(k.clone());
-            return self.attempt(u64::MAX, k, By::Pull(st));
+            st.fix.settled.borrow_mut()[i] = Settled::Busy;
+            return self.attempt(u64::MAX, i, By::Pull(st));
         }
-        finish_fix(&st.fix, st.fix.stalled.take().into_iter().collect())
+        let settled = st.fix.settled.borrow();
+        let stalled = st.fix.domain.iter().zip(settled.iter());
+        let stalled = stalled.filter(|(_, s)| matches!(s, Settled::Stalled));
+        let stalled = stalled.map(|(k, _)| k.clone()).collect();
+        drop(settled);
+        finish_fix(&st.fix, stalled)
     }
 
-    /// Evaluates the undefined entry `k` where an attempt reads it, with the call sites and
-    /// keypath of the `fix` itself, so that its facts are those it would have had demanded
-    /// from the top. A read it cannot demand stops it and the attempt reading it.
-    fn demand(&mut self, fix: Rc<Definedness<'t>>, k: Value) -> R<Step<'t>> {
+    /// Evaluates the undefined entry at position `i` where an attempt reads it, with the call
+    /// sites and keypath of the `fix` itself, so that its facts are those it would have had
+    /// demanded from the top. A read it cannot demand stops it and the attempt reading it.
+    fn demand(&mut self, fix: Rc<Definedness<'t>>, i: usize) -> R<Step<'t>> {
         self.ev.burn()?;
         let saved = self.ev.trace.as_mut().map(|t| Saved {
             calls: std::mem::replace(&mut t.calls, fix.calls.clone()),
@@ -2517,8 +2536,8 @@ impl<'t> Machine<'_, 't> {
             site: t.site.take(),
             args: std::mem::take(&mut t.args),
         });
-        fix.busy.borrow_mut().insert(k.clone());
-        self.attempt(u64::MAX, k, By::Demand(fix, saved))
+        fix.settled.borrow_mut()[i] = Settled::Busy;
+        self.attempt(u64::MAX, i, By::Demand(fix, saved))
     }
 
     /// The step making generation `t` runs at coordinate `t`, reading the fact of the frame
@@ -2640,31 +2659,51 @@ fn gen_end<'t>(st: Gen<'t>) -> R<Step<'t>> {
 /// The keys `fix`'s rounds left undefined, or its family.
 fn rounds_end<'t>(fix: &Definedness<'t>) -> R<Step<'t>> {
     let left: Vec<Value> = {
-        let defined = fix.defined.borrow();
-        let left = fix.domain.iter().filter(|k| !defined.contains_key(*k));
-        left.cloned().collect()
+        let settled = fix.settled.borrow();
+        let left = fix.domain.iter().zip(settled.iter());
+        let left = left.filter(|(_, s)| !matches!(s, Settled::Defined(..)));
+        left.map(|(k, _)| k.clone()).collect()
     };
     finish_fix(fix, left)
 }
 
+/// The keys that stalled, or, when none did and so every entry is defined, the family.
+// Complexity tradeoff (KERNEL-near-limit-benches): the family was built by
+// `Family::from_leaves` from one-key keypaths, an ordered-map insertion per entry, O(D log D)
+// comparisons of keys. Used: the domain is in key order and its keys are distinct, so the
+// entries are already the family's, in order, and are laid out at once, O(D). The result is the
+// one `from_leaves` gives: a one-key keypath never collides here and adds no level beneath.
 fn finish_fix<'t>(fix: &Definedness<'t>, stalled: Vec<Value>) -> R<Step<'t>> {
     if !stalled.is_empty() {
         return Err(KernelError::Stalled { keys: stalled }.into());
     }
-    let defined = fix.defined.take();
-    let leaves = defined.into_iter().map(|(k, (v, _))| (vec![k], v));
-    give(Value::Family(Family::from_leaves(leaves)?))
+    let settled = fix.settled.take();
+    let entries = fix.domain.iter().zip(settled).map(|(k, s)| match s {
+        Settled::Defined(v, _) => (k.clone(), v),
+        _ => unreachable!("an entry neither defined nor stalled when the fix ends"),
+    });
+    give(Value::Family(Family::from_map(entries.collect())))
 }
 
 /// One definedness `fix` being evaluated: its family's name, domain, and entry body, the
-/// call sites and keypath it runs inside, and, for demand, the entries being demanded and
-/// those stalled.
+/// call sites and keypath it runs inside, and where each of its entries stands.
 struct Definedness<'t> {
     id: u64,
-    /// The keys of the initial family, distinct and in order: a pull walks them by index, and
-    /// a read finds a key by binary search.
+    /// The keys of the initial family, distinct and in order: entries are named by their
+    /// positions here, and a pull walks them in order.
     domain: Box<[Value]>,
-    defined: RefCell<Defined>,
+    /// The position of each key of `domain`.
+    // Complexity tradeoff (KERNEL-near-limit-benches): a read found its key by binary search
+    // of `domain`, then in ordered maps of the defined entries and ordered sets of those being
+    // demanded and those stalled, about 4·log D comparisons of keys a read, each a walk of a
+    // key that may be a tuple: a definedness fix over `D` tuple keys grew faster than
+    // `D log D` would suggest, 10.2 times its work at 8 times `D`. Used: one hash lookup
+    // finds the key's position, and where the entry stands is read there ([`Settled`]), so a
+    // read costs the key's digest and one comparison. Tradeoffs: the map, O(D) memory, and a
+    // digest of every key when the fix begins, O(total key size).
+    index: HashMap<Value, usize>,
+    /// By position in `domain`: where each entry stands.
+    settled: RefCell<Vec<Settled>>,
     body: &'t Term,
     /// The body's position.
     at: At,
@@ -2673,8 +2712,6 @@ struct Definedness<'t> {
     env: Env<'t>,
     calls: Vector<Position>,
     keys: Vector<Value>,
-    busy: RefCell<BTreeSet<Value>>,
-    stalled: RefCell<BTreeSet<Value>>,
     drops: Rc<Drops<'t>>,
 }
 

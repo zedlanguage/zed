@@ -2362,7 +2362,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
-| KERNEL-near-limit-benches | impl attempt 1 | 2026-11-14 14:05 | started; worktree /home/luke/Work/wt/kernel-near-limit; load 32.29 38.00 40.67 |
+| KERNEL-near-limit-benches | merged and pushed | COMPLEXITY.md K5, K14, K25, K73. Neg-zero chain bench 9.71 and 10.15 to 8.03 and 7.96 (three runs each, load 45 to 48): a hash index from key to position in the definedness fix, states by position, the finished family built by from_map; ReadSet::clear keeps its 16-slot table. Provenance benches 10.21 and 10.45 unchanged (n log n by design); new row PROV-origins-linear |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
 | PRESBURGER-or-if-disjuncts-refusal | impl attempt 1 | 2026-11-14 14:24 | started; worktree pres-orif-disj at 49c35d07a |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |

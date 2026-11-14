@@ -1702,9 +1702,18 @@ impl ReadSet {
     /// pairs, K73); emptying takes time in proportion to the slots, so slots more than 8 times
     /// the pairs they held are freed instead. Either way the cost is at most a constant times
     /// the pairs this comparison added, and a thread keeps at most 8 times as many slots as
-    /// the last comparison's pairs.
+    /// the last comparison's pairs, or the 16 slots of the smallest table.
+    // Complexity tradeoff (KERNEL-near-limit-benches): the 16 slots of the smallest table were
+    // freed too, since one pair is fewer than an eighth of them, so a comparison that kept one
+    // pair allocated, zeroed and freed a table: a lookup of a shared tuple key in an ordered
+    // map paid it at each of its `O(log n)` comparisons, 2.5 of the 6.0 billion instructions
+    // of a definedness fix over 32,000 such keys. Used: the smallest table is kept, and a set
+    // that holds no pair is left as it is. Cost: 256 bytes a thread for each relation used.
     fn clear(&mut self) {
-        if self.len * 8 < self.slots.len() {
+        if self.len == 0 {
+            return;
+        }
+        if self.len * 8 < self.slots.len() && self.slots.len() > 16 {
             self.slots = Vec::new();
         } else {
             self.slots.fill(EMPTY);
@@ -2077,6 +2086,13 @@ fn walk_with(c: &Comparisons, first: Step<'_>) -> Option<Ordering> {
 /// [`walk`] from the first level it enters.
 fn walk_in(c: &Comparisons, first: Enter<'_>) -> Option<Ordering> {
     let _scope = Scope::enter(c);
+    // The two sequences an outermost comparison starts with are not kept: meeting them again
+    // inside them would be a cycle, which no value has, so a comparison of two flat tuples,
+    // such as a key read in an ordered map, keeps no pair and does not touch the table.
+    let first = match first {
+        Enter::Items(a, b, r, Some(_)) if c.scopes.get() == 1 => Enter::Items(a, b, r, None),
+        first => first,
+    };
     let mut maps = Vec::new();
     let mut level = match open(c, first, &mut maps) {
         Ok(Some(level)) => level,
@@ -3335,6 +3351,15 @@ mod tests {
         assert_eq!(capacity(), kept);
         assert!(small(1) == small(1));
         assert_eq!(capacity(), 0);
+        // The smallest table is kept, so a run of comparisons of one pair each allocates it
+        // once, not once per comparison.
+        assert!(small(2) == small(2));
+        assert_eq!(capacity(), 16);
+        let slots =
+            || COMPARISONS.with(|c| c.read.borrow()[Relation::Identity as usize].slots.as_ptr());
+        let first = slots();
+        assert!(small(3) == small(3));
+        assert_eq!((capacity(), slots()), (16, first));
     }
 
     /// The pairs `(k, k + 2^40)` for `k` from 1, as one comparison of two values built apart
