@@ -400,6 +400,9 @@ fn system(what: &str, e: &io::Error) -> String {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 

@@ -72,6 +72,9 @@ pub fn write(port: &str, v: &Value) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

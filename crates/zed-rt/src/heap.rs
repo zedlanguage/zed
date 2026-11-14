@@ -1343,6 +1343,9 @@ fn full_count(i: usize) -> String {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

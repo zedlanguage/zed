@@ -469,6 +469,9 @@ fn reserve(bytes: usize, err: &io::Error) -> String {
 mod bench;
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::limits::tests::{in_child, status};
