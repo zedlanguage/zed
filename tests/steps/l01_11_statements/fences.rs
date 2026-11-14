@@ -34,5 +34,5 @@ fn every_block_in_expression_position_builds_or_names_its_step() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    assert_eq!((built, later), (1, 0), "built, later");
+    assert_eq!((built, later), (6, 0), "built, later");
 }

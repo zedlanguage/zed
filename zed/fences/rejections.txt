@@ -16,6 +16,7 @@ Quantifier in a law over a domain that is not finite
 Obligation below proof grade
 Work above its cost claim
 Unbounded work under a cost claim
+Not proved to end
 Function without a cost claim in a unit under `@cost(#required);`
 Cost claim above `O(n log n)` without a reason
 Cost claim that bounds nothing
@@ -60,11 +61,17 @@ Release of a foreign value while a result that keeps it is still read
 Use of a foreign value after the program releases it
 Release function whose parameters the `release` does not fill
 Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own
+Use of a value that a call may have taken
 Released foreign value that nothing uses
 Release that Zed makes whose function can report a failure
 Release function written in Zed that does not free the value
 Teardown that Zed cannot call once after its library's last use
 Call of a library's teardown by the program
+Use of a value after a call that holds it
+Hold that Zed cannot end
+Call on a holder with nothing ordering it with the call that lends to it
+Stateful library on two threads
+Callback that calls a library bound to another thread
 One C symbol exported twice
 Misaligned foreign pointer in a run
 Rebinding in the same scope
@@ -111,6 +118,7 @@ Release that fails during a stop
 Releases of a stop cut short
 Fault of foreign code in a run
 Size with no proven bound under `@preallocated` or the `preallocated` mode
+No proved memory bound
 Cell read on a path back to its own cell
 Meaning function with a case `@decides` cannot reify
 Linear question outside the polynomial fragment of the linear-relation domain

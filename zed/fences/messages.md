@@ -108,7 +108,7 @@ error: No `f64` equals the literal: `x: f64 = 9007199254740993`. Try `x: int = 9
     x: f64 = round(9007199254740993r);                              x is the same f64
 ```
 
-<!-- DESIGN.md:2448; section [sec:theories] 1 -->
+<!-- DESIGN.md:2475; section [sec:theories] 1 -->
 ```text
 trivial models of CommRing
   on one value, #a, with every field returning #a: every law holds.
@@ -123,7 +123,7 @@ trivial models of CommRing
   So the model on one value is the only trivial model.
 ```
 
-<!-- DESIGN.md:2468; section [sec:theories] 2 -->
+<!-- DESIGN.md:2495; section [sec:theories] 2 -->
 ```text
 trivial models of Fano
   on one value, #a: law line1 (c1 != c2 || c2 != c3) does not hold, since on one value every two values are equal.
@@ -139,12 +139,12 @@ trivial models of Fano
         @exhaustive interface Fano(positional T) { ... }
 ```
 
-<!-- DESIGN.md:2535; section [sec:diagnostics] 1 -->
+<!-- DESIGN.md:2562; section [sec:diagnostics] 1 -->
 ```text
 error: Cannot compare unequal types: `x[1] : int < y[1] : rat`. Try `rat(x[1]) < y[1]` instead.
 ```
 
-<!-- DESIGN.md:2717; section [sec:diagnostics] 2 -->
+<!-- DESIGN.md:2752; section [sec:diagnostics] 2 -->
 ```text
 error: A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) = x * 2` instead.
   1. the literal (1:21)
@@ -167,7 +167,7 @@ error: A decimal literal is never an `int`: `x : int * 2.0`. Try `twice(x: int) 
     twice(x) = x * 2.0;              twice is (x: T) -> T for T in bf16 | f16 | f32 | f64 | rat
 ```
 
-<!-- DESIGN.md:2743; section [sec:diagnostics] 3 -->
+<!-- DESIGN.md:2778; section [sec:diagnostics] 3 -->
 ```text
 error: Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` instead.
   1. the literal (2:12)
@@ -193,7 +193,7 @@ error: Nothing gives the literal `2.5` a carrier. Try `y = inc(x: 2.5f64)` inste
     y: rat = inc(x: 2.5);    the literal is then exactly 2.5, a rat
 ```
 
-<!-- DESIGN.md:2772; section [sec:diagnostics] 4 -->
+<!-- DESIGN.md:2807; section [sec:diagnostics] 4 -->
 ```text
 error: Nothing gives the integer literals a carrier, and `/` has none at `int`: `q = (1 + 2) / (3 + 4)`. Try `q = (1.0f64 + 2) / (3 + 4)` instead.
   1. the division (1:13)
@@ -221,7 +221,7 @@ error: Nothing gives the integer literals a carrier, and `/` has none at `int`: 
     q: rat = (1 + 2) / (3 + 4);    q is 3r/7r
 ```
 
-<!-- DESIGN.md:2803; section [sec:diagnostics] 5 -->
+<!-- DESIGN.md:2838; section [sec:diagnostics] 5 -->
 ```text
 c.zed:3:47: Cannot pass `#nf` to `ap`, which takes `(T1, T1)`: `k(y : (T1, T1) | #nf)`.
   T1 stands for a part written more than once:
@@ -233,7 +233,7 @@ c.zed:3:47: Cannot pass `#nf` to `ap`, which takes `(T1, T1)`: `k(y : (T1, T1) |
   [5] 3:47: repair: handle the values that are not (T1, T1) with `else` or `match`
 ```
 
-<!-- DESIGN.md:2820; section [sec:diagnostics] 6 -->
+<!-- DESIGN.md:2855; section [sec:diagnostics] 6 -->
 ```text
 error: A list level has no string key: `sales[day: "Monday" : Utf8String]`. Try `sales[day: 0]` instead.
   1. the key (3:16)

@@ -60,6 +60,8 @@ rows! {
     // No diagnostic uses the next two rows yet: step L18.2a emits them.
     CostAboveClaim => "Work above its cost claim",
     CostUnbounded => "Unbounded work under a cost claim",
+    // No diagnostic uses this row yet: the build that plan row TERM-report schedules emits it.
+    NotProvedToEnd => "Not proved to end",
     // No diagnostic uses the next six rows yet: plan row COST-required emits them.
     CostClaimMissing => "Function without a cost claim in a unit under `@cost(#required);`",
     CostReasonMissing => "Cost claim above `O(n log n)` without a reason",
@@ -104,20 +106,29 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these thirteen rows yet: plan rows L7.4 (the first, the third to the
-    // seventh, and the thirteenth), FFI-release-failure (the eighth), FFI-release-zed (the
-    // ninth), FFI-teardown (the tenth and eleventh), TERM-1 and EXPORT-unique emit them.
+    // No diagnostic uses these nineteen rows yet: plan rows L7.4 (the first, the third to the
+    // sixth, the eighth, and the nineteenth), the build of STUDY-consume-on-success (the
+    // seventh), FFI-release-failure (the ninth), FFI-release-zed (the tenth), FFI-teardown (the
+    // eleventh and twelfth), FFI-held (the thirteenth to fifteenth), FFI-thread (the sixteenth
+    // and seventeenth), TERM-1 and EXPORT-unique emit them.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
     UseAfterRelease => "Use of a foreign value after the program releases it",
     ReleaseParametersUnfilled => "Release function whose parameters the `release` does not fill",
     ConsumesMisplaced => "Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own",
+    UseOfPossiblyTakenValue => "Use of a value that a call may have taken",
     ReleasedValueUnused => "Released foreign value that nothing uses",
     ReleaseCanFail => "Release that Zed makes whose function can report a failure",
     ZedReleaseKeepsValue => "Release function written in Zed that does not free the value",
     TeardownMisdeclared => "Teardown that Zed cannot call once after its library's last use",
     TeardownCalled => "Call of a library's teardown by the program",
+    UseOfHeldValue => "Use of a value after a call that holds it",
+    HoldNeverEnds => "Hold that Zed cannot end",
+    HolderCallUnordered =>
+        "Call on a holder with nothing ordering it with the call that lends to it",
+    StatefulLibraryOnTwoThreads => "Stateful library on two threads",
+    CallbackCrossesThread => "Callback that calls a library bound to another thread",
     SymbolExportedTwice => "One C symbol exported twice",
     MisalignedForeignPointer => "Misaligned foreign pointer in a run",
     Rebinding => "Rebinding in the same scope",
@@ -176,6 +187,8 @@ rows! {
     StopReleasesCut => "Releases of a stop cut short",
     ForeignFault => "Fault of foreign code in a run",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
+    // No diagnostic uses this row yet: the build that plan row TERM-report schedules emits it.
+    NoProvedMemoryBound => "No proved memory bound",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",
     NonLinearQuestion =>

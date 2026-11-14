@@ -352,6 +352,16 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | «type» State = int [ 0₍10₎ ..< 2₍10₎ ] ;
   2 | step ( «positional» f : ( ( i : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> ( j : State «with» units ( [ str["1/m"] , str["s/m"] ] ) ) -> f64 ) ,
   3 | «positional» x : ( ( j : State «with» units ( [ str["m"] , str["m/s"] ] ) ) -> f64 ) ) = f . matmul ( x ) ;
+== DESIGN.md [sec:staging] 1 L17
+  2 | countDown ( «positional» n : int [ 0₍10₎ .. ] ) = «if» n == 0₍10₎ { 0₍10₎ } «else» { countDown ( n - 1₍10₎ ) + 1₍10₎ } ;
+  6 | halve ( «positional» n : int ) = «if» n == 0₍10₎ { 0₍10₎ } «else» { halve ( n - 2₍10₎ ) + 1₍10₎ } ;
+ 10 | @timeout ( 10₍10₎ «with» units ( str["s"] ) )
+ 11 | main ( m : MainArgs ) {
+ 12 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+ 13 | m . stdout <- str[${countDown ( 5₍10₎ )} " " ${halve ( k )}] ;
+ 14 | }
+ 18 | @total
+ 19 | config ( ) -> Utf8String = ( @timeout ( 2₍10₎ «with» units ( str["s"] ) ) main :: files [ str["config.txt"] ] ) «else» str[] ;
 == DESIGN.md [sec:introspection] 1 L11
   1 | «type» Shape =
   2 | #scalar ( name : Utf8String , constraints : Constraints )
@@ -660,6 +670,25 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | @foreign ( str["curl"] , str["curl_easy_init"] ) @blocking easyInit : ( ) -> Ptr ( Curl ) | #none «with» release ( easyCleanup ) ;
   7 | @foreign ( str["python3"] , str["Py_FinalizeEx"] ) @blocking finalizeEx : ( ) -> i32 ;
   8 | @teardown ( str["python3"] ) endPython ( ) -> #ok { _ = finalizeEx ( ) «else» #ok ; #ok }
+== DESIGN.md [sec:ffi] 9 L7
+  1 | @foreign «struct» File { }
+  2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
+  5 | @foreign ( str["c"] , str["setvbuf"] ) @blocking setvbuf : ( file : Ptr ( File ) , buf : [ u8 ] «with» length ( 65536₍10₎ ) «with» held ( by : file ) , mode : i32 , size : u64 ) -> i32 ;
+  8 | @foreign «struct» Ring { }
+  9 | @foreign «struct» Page { bytes : [ u8 ] «with» length ( 4096₍10₎ ) }
+ 10 | @foreign ( str["uringshim"] , str["ring_exit"] ) @blocking ringExit : ( ring : Ptr ( Ring ) «with» consumes ( ) ) -> #ok ;
+ 11 | @foreign ( str["uringshim"] , str["ring_cancel_all"] ) @blocking cancelAll : ( ring : Ptr ( Ring ) ) -> i32 ;
+ 12 | @foreign ( str["uringshim"] , str["ring_init"] ) @blocking ringInit : ( entries : u32 ) -> Ptr ( Ring ) | #none «with» release ( ring -> { n = cancelAll ( ring ) «else» 0₍10₎ ; @after ( n ) _ = ringExit ( ring ) «else» #ok ; #ok } ) ;
+ 13 | @foreign ( str["uringshim"] , str["submit_read"] ) @blocking submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 ;
+ 14 | @foreign ( str["uringshim"] , str["wait_read"] ) @blocking waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) ;
+ 15 | @foreign ( str["uringshim"] , str["unregister_pages"] ) @blocking unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 ;
+== DESIGN.md [sec:ffi] 10 L7
+  1 | @teardown @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) @blocking terminate : ( ) -> #ok ;
+  2 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwInit"] ) @blocking glfwInit : ( ) -> i32 ;
+  3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) @blocking pollEvents : ( ) -> #ok ;
+  4 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) @nonblocking clear : ( mask : u32 ) -> #ok ;
+  5 | @thread ( #render ) drawFrame ( ) -> #ok { clear ( mask : 16384₍10₎ ) }
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
