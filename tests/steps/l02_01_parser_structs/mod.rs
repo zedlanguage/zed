@@ -7,6 +7,7 @@
 
 mod bench;
 mod blocks;
+mod body_positions;
 mod formatting;
 mod later;
 mod methods;
