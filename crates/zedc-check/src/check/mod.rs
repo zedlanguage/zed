@@ -10823,6 +10823,9 @@ pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
