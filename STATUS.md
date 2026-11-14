@@ -2241,6 +2241,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-complete-misc | impl attempt 1 | 2026-11-14 05:46 | started; worktree seeded at a047ea74c |
 | TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
 | TEST-complete-reduced | impl attempt 1 | 2026-11-14 05:52 | started; worktree made and seeded; load 52.75 |
+| TEST-complete-zir | impl attempt 1 | 2026-11-14 06:15 | started; worktree /home/luke/Work/wt/test-complete-zir |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
