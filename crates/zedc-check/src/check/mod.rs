@@ -56,9 +56,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
-use zed_kernel::num::{
-    FloatFormat, TooLarge, fixed_room, literal_f32, literal_f64, show_f32,
-};
+use zed_kernel::num::{FloatFormat, TooLarge, fixed_room, literal_f32, literal_f64, show_f32};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
