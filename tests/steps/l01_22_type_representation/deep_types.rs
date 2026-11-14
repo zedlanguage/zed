@@ -494,29 +494,32 @@ fn the_text_of_a_few_types_with_recursive_types_is_the_same_made_outside_in_and_
     outside_in_is_inside_out_with_trees(100);
 }
 
-/// Operands of an xor chain on the default stack. The derived `Debug` wrote `2^n` copies of the
-/// first operand: 2.9 MB at 12 operands, 183 MB in 1 s at 18; this size would never end.
-/// TEST-bench-move-l0123 (author P169): was 16,000, now 256. What this guards is the size of
-/// the text, not the stack: measured on the code of 2026-11-14, the `Debug` text of the chain
-/// nests 93 brackets deep at 100 operands, 189 at 2,000 and 225 at 16,000 (the one form is
-/// built over a tree of the operands), against 12,000 to 16,000 where the derived `Debug`s
-/// overflowed the stack (see `DEBUG_DEPTH` in `bench`). At 256 operands a `Debug` that writes a copy for
-/// each path would write `2^256` copies, and the counts below still tell a text linear in the
-/// operands from one that is not.
-const XORS: usize = 256;
-
-/// TEST-bench-move-l0123 (author P169): was 16,000 operands, now 256 (see [`XORS`]).
+/// Small instances of `bench::the_debug_text_of_an_expression_writes_each_shared_operand_once`
+/// (TEST-bench-move-l0123, author P178), each at the smallest number of operands whose `Debug`
+/// text reaches the count it checks. Measured on the code of 2026-11-14 for 1 to 24 operands:
+/// at 1 and 2 the text names no shared expression; at 3 it names 2, and from 3 on the first is
+/// written once (`#0#`) and each is referred to once; from 4 on there are between `n` and `4n`
+/// of them (6 at 4, 74 at 24), which 3 does not reach (2).
 #[test]
-fn the_debug_text_of_an_expression_writes_each_shared_operand_once() {
-    let text = format!("{:?}", xor_chain(0, XORS));
-    // The chain is taken to the one form of the exclusive or of its atoms, built over a tree of
-    // them (module `bdd::xor`): a few expressions for each atom, each shared one named once and
-    // referred to once.
+fn the_debug_text_of_an_xor_of_three_operands_names_each_shared_operand_once() {
+    let text = format!("{:?}", xor_chain(0, 3));
     let shared = text.matches('=').count();
-    assert!(shared > XORS && shared < 4 * XORS);
+    assert!(shared > 0);
     assert_eq!(text.matches("#0#").count(), 1);
     assert_eq!(text.matches('#').count(), 3 * shared);
-    assert!(text.len() < 2_000 * XORS);
+}
+
+/// The second small instance (see the one above): at 4 operands the shared expressions number
+/// between `n` and `4n` and the text stays under 2,000 bytes an operand (5,722 bytes), where
+/// a `Debug` that wrote a copy for each path, 2.9 MB at 12 operands, writes `2^n` copies.
+#[test]
+fn the_debug_text_of_an_xor_of_four_operands_is_linear_in_its_operands() {
+    let n = 4;
+    let text = format!("{:?}", xor_chain(0, n));
+    let shared = text.matches('=').count();
+    assert!(shared > n && shared < 4 * n);
+    assert_eq!(text.matches('#').count(), 3 * shared);
+    assert!(text.len() < 2_000 * n);
 }
 
 /// The parity of `n` one-tuples of the literals from `leaf`, built as `t = (t - r) | (r - t)`

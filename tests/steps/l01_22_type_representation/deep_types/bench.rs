@@ -411,3 +411,33 @@ fn the_debug_text_of_a_shared_type_writes_it_once() {
     assert_eq!(text.matches('#').count(), 3 * (DOUBLINGS - 1));
     assert!(text.len() < 1_000 * DOUBLINGS);
 }
+
+// Moved here from `deep_types.rs` as it stood by TEST-bench-move-l0123 (author P178): 256
+// operands is an unusual size. Its small instances there are
+// `the_debug_text_of_an_xor_of_three_operands_names_each_shared_operand_once` and
+// `the_debug_text_of_an_xor_of_four_operands_is_linear_in_its_operands`.
+
+/// Operands of an xor chain on the default stack. The derived `Debug` wrote `2^n` copies of the
+/// first operand: 2.9 MB at 12 operands, 183 MB in 1 s at 18; this size would never end.
+/// TEST-bench-move-l0123 (author P169): was 16,000, now 256. What this guards is the size of
+/// the text, not the stack: measured on the code of 2026-11-14, the `Debug` text of the chain
+/// nests 93 brackets deep at 100 operands, 189 at 2,000 and 225 at 16,000 (the one form is
+/// built over a tree of the operands), against 12,000 to 16,000 where the derived `Debug`s
+/// overflowed the stack (see [`DEBUG_DEPTH`]). At 256 operands a `Debug` that writes a copy for
+/// each path would write `2^256` copies, and the counts below still tell a text linear in the
+/// operands from one that is not.
+const XORS: usize = 256;
+
+/// TEST-bench-move-l0123 (author P169): was 16,000 operands, now 256 (see [`XORS`]).
+#[test]
+fn the_debug_text_of_an_expression_writes_each_shared_operand_once() {
+    let text = format!("{:?}", xor_chain(0, XORS));
+    // The chain is taken to the one form of the exclusive or of its atoms, built over a tree of
+    // them (module `bdd::xor`): a few expressions for each atom, each shared one named once and
+    // referred to once.
+    let shared = text.matches('=').count();
+    assert!(shared > XORS && shared < 4 * XORS);
+    assert_eq!(text.matches("#0#").count(), 1);
+    assert_eq!(text.matches('#').count(), 3 * shared);
+    assert!(text.len() < 2_000 * XORS);
+}

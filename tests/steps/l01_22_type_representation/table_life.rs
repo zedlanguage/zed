@@ -72,21 +72,14 @@ fn resident() -> Option<u64> {
     Some(pages * 4096)
 }
 
-/// TEST-bench-move-l0123 (author P169): was n = 256 (256 + 256 + 2,048 checks, 2.5 s under
-/// load); now n = 32 (32 + 32 + 256 checks). The 8n run fails when it leaves more than 4,096
-/// bytes over the n run, that is over 224 more checks, so it still catches a leak of 19 bytes a
-/// check, less than one table slot for each node a check makes. Measured on the code of
-/// 2026-11-14, 12 runs each on a fresh thread: with no leak the 8n run leaves between -3,936 and
-/// +3,936 bytes over the n run at every n from 32 to 256 alike (table capacity), so the smaller
-/// n is no closer to the limit; a check that leaves one type node more leaves 299,264 bytes.
-#[test]
-fn a_long_run_of_independent_checks_holds_bounded_memory() {
+/// After `n` independent checks to fill the tables, `8n` more leave no more bytes allocated on
+/// this thread than `n` more, within 4,096 bytes of table capacity.
+fn independent_checks_hold_bounded_memory(n: usize) {
     // Each table held every node it was given for the life of the thread, so the bytes left
     // allocated grew with the number of checks run; they now stay those of the first runs.
     // The bytes left are counted on this thread exactly (zed_alloc_count::live); the resident
     // bytes of the process are printed beside them, since the tests running beside this one
     // change those.
-    let n = 32;
     let next = AtomicU64::new(1 << 40);
     let run = |count: usize| {
         let (_, live) = zed_alloc_count::live(|| {
@@ -115,18 +108,12 @@ fn a_long_run_of_independent_checks_holds_bounded_memory() {
     );
 }
 
-/// TEST-bench-move-l0123 (author P169): was n = 256 (256 + 256 + 2,048 checks, 0.76 s under
-/// load); now n = 64 (64 + 64 + 512 checks). The 8n run fails when it leaves more than 4,096
-/// bytes over the n run, that is over 448 more checks, so it still catches a leak of 10 bytes a
-/// check, far less than the group, members and unfoldings a check whose cycle is not broken
-/// leaves. Measured on the code of 2026-11-14, 12 runs each on a fresh thread at n = 32 to 128:
-/// with no leak the 8n run leaves exactly 0 bytes over the n run.
-#[test]
-fn a_long_run_of_checks_on_recursive_groups_holds_bounded_memory() {
+/// After `n` checks on recursive groups of their own, `8n` more leave no more bytes allocated
+/// on this thread than `n` more, within 4,096 bytes.
+fn recursive_checks_hold_bounded_memory(n: usize) {
     // Item REC-cycle: a recursive instance held itself, so every check on a group of its own
     // left its instance allocated for the life of the process. The end of each unit breaks
     // the cycle, so the bytes left stay those of the first runs.
-    let n = 64;
     let next = AtomicU64::new(1 << 42);
     let run = |count: usize| {
         let (_, live) = zed_alloc_count::live(|| {
@@ -154,6 +141,25 @@ fn a_long_run_of_checks_on_recursive_groups_holds_bounded_memory() {
         large.net,
         small.net
     );
+}
+
+/// Small instance of `bench::a_long_run_of_independent_checks_holds_bounded_memory`
+/// (TEST-bench-move-l0123, author P178: a long run is a benchmark): n = 4, so 4 + 4 + 32
+/// checks. The 32 checks fail the test when they leave more than 4,096 bytes over the 4, that
+/// is a leak of over 147 bytes a check, less than the 1,336 bytes a check that leaves one type
+/// node more leaves (299,264 bytes over 224 checks, measured at n = 32).
+#[test]
+fn independent_checks_release_their_nodes() {
+    independent_checks_hold_bounded_memory(4);
+}
+
+/// Small instance of `bench::a_long_run_of_checks_on_recursive_groups_holds_bounded_memory`
+/// (TEST-bench-move-l0123, author P178): n = 4, so 4 + 4 + 32 checks. The 32 checks fail the
+/// test when they leave more than 4,096 bytes over the 4, a leak of over 147 bytes a check,
+/// less than the group, members and unfoldings a check whose cycle is not broken leaves.
+#[test]
+fn checks_on_recursive_groups_release_their_instances() {
+    recursive_checks_hold_bounded_memory(4);
 }
 
 mod bench;
