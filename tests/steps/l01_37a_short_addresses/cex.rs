@@ -83,3 +83,36 @@ fn every_enabled_source_replays_its_counterexamples() {
     // Every enabled unit's tables pass, so no row is replayed.
     assert_eq!((replayed, r.compared), (0, 0));
 }
+
+#[test]
+fn an_engine_that_stops_on_a_replay_is_reported() {
+    let refuse: &zedc::run::Through<'_> = &|_, _| Err("refused".into());
+    let (r, replayed) = counterexamples(WRONG, &[("refuse", refuse)]);
+    assert_eq!((replayed, r.compared), (2, 4));
+    assert_eq!(
+        r.mismatches,
+        [
+            "the counterexample `3 -> 7` of `double`: the checker names the result is 6, and \
+             refuse gives the error `refused`",
+            "the counterexample `\"ann\" -> \"hello ann\"` of `greet`: the checker names the \
+             result is \"hi ann\", and refuse gives the error `refused`",
+        ]
+    );
+}
+
+#[test]
+fn only_rows_whose_failure_names_a_result_are_replayed() {
+    // A row of `main`'s table, which is a wave; a row whose call stops, as a read of
+    // `main::files` its table gives no files; and one wrong row written twice, each replayed.
+    let text = "main(m: MainArgs) {\n  m.stdout <- \"hi\";\n}\ntest { \"\" -> \"bye\\n\" }\n\n\
+                read(positional p) = main::files[p] else \"none\"\ntest { \"a\" -> \"x\" }\n\n\
+                double(positional x) = x * 2\ntest { 3 -> 7, 3 -> 7 }\n";
+    let failures: Vec<String> = test(text).into_iter().filter_map(|o| o.failure).collect();
+    assert_eq!(failures.len(), 4, "{failures:?}");
+    let (r, replayed) = counterexamples(text, &[]);
+    assert_eq!((replayed, r.compared), (2, 2));
+    assert_eq!(r.mismatches, Vec::<String>::new());
+    // A rejected unit replays nothing.
+    let (r, replayed) = counterexamples("double(positional x) = x * \ntest { 3 -> 7 }\n", &[]);
+    assert_eq!((replayed, r.compared), (0, 0));
+}
