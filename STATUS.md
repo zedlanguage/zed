@@ -2334,26 +2334,29 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FAIL-check-arm-call-bench-hang | impl attempt 1 | 2026-11-14 11:16 | started in wt/fix-arm-call-hang at 07af08b86, load 51.40 |
-| FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
-| FAIL-l139-wide-asum-scaling | running | 2026-11-14 11:32 |  |
+| FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | done, pushed 521de84af; is_empty/verdict_alone ran empty_past_forks only for a fork with later components (fork_later), so answers hung on MEMO from earlier que |
 | FAIL-linked-holes-scratch-seed | running | 2026-11-14 07:58 |  |
 | FAIL-linked-sums-between-seed | running | 2026-11-14 11:43 |  |
+| FAIL-or-ifs-no-longer-exact-seed | running | 2026-11-14 12:17 |  |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
 | FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | started in wt/fix-parity at origin/main 3c9c29d5b, load 46 |
 | FAIL-preimage-stop-entry-seed | running | 2026-11-14 11:43 |  |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
+| FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
+| FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | started in wt/fix-parity at origin/main 3c9c29d5b, load 46 |
-| MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
+| MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | done, pushed 11a0209c0; the hidden case was unsuffixed 1e400 (1e400f64 was always reported); elab drops the range error only inside a checker error span or a st |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
-| PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
-| PERF-l139-persist-due | impl attempt 1 | 2026-11-14 11:00 | start, worktree wt/perf-l139 from origin/main 10fb070e9; load 34.30 42.93 45.18 |
 | POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | support test moved to k=640 (square now beats support at k=256: 6.4 vs 10.1 ms); crossover build for refit / load 40.93 38.65 42.23 |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
-| TEST-l0124-fixed-seeds | running |  |  |
+| TEST-l0124-fixed-seeds | impl attempt 1 | 2026-11-14 12:15 | start; worktree test-l0124-seeds on 43f9d4dcd; load 36.83 |
+| TEST-law25-time | running | 2026-11-14 10:54 |  |
+| TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
+| TEST-op-table-div-mod | running | 2026-11-14 10:54 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
