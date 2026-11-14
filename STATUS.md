@@ -2194,6 +2194,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STUDY-consume-on-success | impl attempt 1 | 2026-11-13 17:13 | started: study of take-on-success ownership (fdopen); load 34.32 33.97 37.19 |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
 | TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
+| XR-ffi-stateful | running |  |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
