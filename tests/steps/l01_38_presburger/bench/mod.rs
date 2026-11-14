@@ -30,6 +30,7 @@ mod one_scope;
 mod oracle;
 mod pncx_probe;
 mod probe;
+mod projection_oracle;
 mod q1_local;
 mod repair;
 mod scaling;

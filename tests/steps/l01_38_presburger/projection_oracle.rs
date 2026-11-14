@@ -28,7 +28,7 @@ use zedc::store::presburger::extend::Extending;
 use zedc::store::presburger::{Formula, decide};
 
 /// The seed of the random programs; each program's own seed is printed with a failure.
-const SEED: u64 = 0x7c9_0001;
+pub(super) const SEED: u64 = 0x7c9_0001;
 
 /// The box every function of a program is run on: each function's value is the same at both
 /// ends and at every point past them, which the programs below are built to make so.
@@ -338,26 +338,35 @@ fn each_answer_through_a_projected_callee_is_the_interpreters_on_a_box() {
 
 #[test]
 fn each_answer_of_a_random_unit_through_projected_callees_is_the_interpreters_on_a_box() {
+    // Four programs, at the seeds that follow a new seed each run; ZED_TEST_SEED with the
+    // printed seed repeats the run. The 60 programs of `SEED` are in `bench::projection_oracle`
+    // (6.7 s at load 25). About 20 answers per program are decided there.
+    let (_, first) = Rng::fresh("random units through projected callees");
+    let (decided, refused) = random_units_are_the_interpreters(first, 4);
+    assert!(
+        decided >= 20,
+        "{decided} answers decided, {refused} refused"
+    );
+}
+
+/// [`answers_are_the_interpreters`] on the `count` random programs of the seeds from `first`
+/// on: the answers decided and refused.
+pub(super) fn random_units_are_the_interpreters(first: u64, count: u64) -> (usize, usize) {
     // Each program's seed is its index's, so a failure is rerun alone by the test's name and
     // reproduced by the seed it prints.
     let (mut decided, mut refused) = (0, 0);
-    for i in 0..60u64 {
-        let seed = SEED + i;
+    for i in 0..count {
+        let seed = first.wrapping_add(i);
         let src = random_unit(&mut Rng::new(seed));
         let case = format!(
-            "seed {seed:#x} (program {i}); rerun with /home/luke/Work/wt/zrun tools/run_tests.sh \
-             --no-doc --only '^l01_38_presburger::projection_oracle::\
-             each_answer_of_a_random_unit_through_projected_callees_is_the_interpreters_on_a_box$'"
+            "seed {seed:#x} (program {i} from {first:#x}); rerun the test that printed {first} \
+             with ZED_TEST_SEED={first}"
         );
         let t = answers_are_the_interpreters(&src, &case);
         (decided, refused) = (decided + t.decided, refused + t.refused);
     }
     eprintln!("{decided} answers decided, {refused} refused");
-    // Most questions are decided, so the answers are compared, not only the refusals.
-    assert!(
-        decided >= 1000,
-        "{decided} answers decided, {refused} refused"
-    );
+    (decided, refused)
 }
 
 /// A callee whose body states its remainder's own definition, `x == 4 * (x div 4) + x mod 4`,
