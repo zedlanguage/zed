@@ -39,7 +39,7 @@ outside linear arithmetic, tested in `l01_38_presburger`.
 | Every command of the executable prints a rejection in full | `commands_binary.rs` | |
 | Batch and single-file checking agree | `batch.rs`; `syntax_recovery.rs`, `package_recovery.rs` | |
 | A file that is not UTF-8: the loader's refusal passes through the same report, placed at its first bad byte | `completeness.rs` `a_file_that_is_not_utf8_is_placed_at_its_first_bad_byte` | |
-| A definition whose type comes from an error already reported (`t() = 1.e;` used in `main`) gives no second error, before or after its cause | none in the tree | Fails: row FAIL-diagnostics-follow-on. Test kept at `/home/luke/Work/wt/failing-tests/FAIL-diagnostics-follow-on.rs`. |
+| A definition whose type comes from an error already reported (`t() = 1.e;` used in `main`) gives no second error, before or after its cause | follow_on.rs (either order; arithmetic, comparison, `if`, negation, tuple index; a field read) | Row FAIL-diagnostics-follow-on, fixed |
 | The headline of a member call of a name in no scope (`1.e`) is as short as `` `e` is not defined. `` | member_headline.rs (each kind of literal; a parameter keeps the field-read clause; a function in scope is accepted) | Row FAIL-diagnostics-member-headline, fixed |
 | The ✗ fence variants of the spec | `variants.rs` | |
 | L1.29c: the four argument rows and their menus | none | Row L1.29c is open; its tests come with it. |

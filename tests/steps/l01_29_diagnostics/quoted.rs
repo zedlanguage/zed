@@ -8,17 +8,22 @@ use zedc::front::{Diagnostic, Quoted, Step};
 
 use super::rejected;
 
-/// `f` adding `n` components with `sum`, each a field read the checker does not track, all on
-/// one line: each `+` of the sum fails, and each is placed over the components it adds.
-pub(super) fn untracked_sum(n: usize) -> String {
-    let xs = vec!["x.a"; n].join(", ");
-    format!("f(positional x) = sum(({xs}));\nmain(m: MainArgs) = 0;\n")
+/// The text line 1 of [`failing_sum`] and [`failing_tuple`] starts with.
+const START: &str = "f(positional x: String) = ";
+
+/// `f` adding with `sum` `n` components, each `x + 1` with `x` a `String`, all on one line: each
+/// `+` fails, with its steps on the line. (A field read the checker does not track, `x.a`, gave
+/// these errors before; elaboration rejects it, and it now gives that error alone, row
+/// FAIL-diagnostics-follow-on.)
+pub(super) fn failing_sum(n: usize) -> String {
+    let xs = vec!["x + 1"; n].join(", ");
+    format!("{START}sum(({xs},));\nmain(m: MainArgs) = 0;\n")
 }
 
-/// `f` adding `n` field reads with a written chain of `+`, all on one line.
-fn untracked_chain(n: usize) -> String {
-    let xs = vec!["x.a"; n].join(" + ");
-    format!("f(positional x) = {xs};\nmain(m: MainArgs) = 0;\n")
+/// `f` giving a tuple of `n` failing `x + 1`, all on one line.
+fn failing_tuple(n: usize) -> String {
+    let xs = vec!["x + 1"; n].join(", ");
+    format!("{START}({xs},);\nmain(m: MainArgs) = 0;\n")
 }
 
 /// The number of times `out` shows source line 1, whose text starts with `start`.
@@ -46,11 +51,11 @@ fn diagnostics(out: &str) -> Vec<Vec<&str>> {
 
 #[test]
 fn many_errors_on_one_line_show_it_once() {
-    for src in [untracked_sum(6), untracked_chain(6)] {
+    for src in [failing_sum(6), failing_tuple(6)] {
         let out = rejected(&src);
         let ds = diagnostics(&out);
         assert!(ds.len() > 2, "{out}");
-        assert_eq!(shown(&out, "f(positional x) = "), 1, "{out}");
+        assert_eq!(shown(&out, START), 1, "{out}");
         // Every later diagnostic with a step on the line says where it is shown, and gives each
         // step there by its range.
         let mut seen = false;
@@ -81,29 +86,29 @@ fn many_errors_on_one_line_show_it_once() {
 fn every_step_stays_when_the_line_is_shown_once() {
     // Each diagnostic keeps every step it had: the listing has as many step lines as the
     // diagnostics have steps, which the derivation fixes and the layout does not change.
-    let out = rejected(&untracked_sum(4));
+    let out = rejected(&failing_sum(4));
     let n = out
         .lines()
         .filter(|l| l.trim_start().starts_with('['))
         .count();
     assert_eq!(n, super::steps(&out).len(), "{out}");
     assert!(
-        out.contains("this expression is _"),
-        "the step that places the untracked component is kept:\n{out}"
+        out.matches("`x` is String here").count() == 4,
+        "the step that places each failing operand is kept:\n{out}"
     );
 }
 
-/// The sum of [`untracked_sum`]`(n)` gives three diagnostics per component, each with a few
-/// steps, and its line is shown once.
+/// The sum of [`failing_sum`]`(n)` gives one diagnostic per component, each with seven steps,
+/// and its line is shown once.
 pub(super) fn many_errors_rendered_on_one_line(src: &str) {
     let out = rejected(src);
-    assert_eq!(shown(&out, "f(positional x) = "), 1);
+    assert_eq!(shown(&out, START), 1);
 }
 
 #[test]
 fn rendering_many_errors_on_one_line() {
     for n in [1, 2, 9] {
-        many_errors_rendered_on_one_line(&untracked_sum(n));
+        many_errors_rendered_on_one_line(&failing_sum(n));
     }
 }
 

@@ -5140,7 +5140,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                     self.prelude_call(m, &f, call);
                 }
-                _ => m.ty(Ty::dynamic()),
+                // Elaboration rejects the rest: a prelude word of a later layer, a field read,
+                // or a call of a function in no scope. Never, the type of no value, keeps the
+                // uses of the result from reporting that error again as their own.
+                _ => m.ty(Ty::empty()),
             },
         }
     }
