@@ -2192,7 +2192,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
 | POW-tower-exact-test | impl attempt 1 | 2026-11-13 18:58 | /home full (748M free): workspace build after second rebase failed with ENOSPC; not deleting others' files |
-| REPAIR-grouped-literal-compare | repair attempt 1 | 2026-11-13 19:19 | started; worktree from origin/main b7770874f |
 | REPAIR-string-compare-offer | impl attempt 1 | 2026-11-13 19:03 | started; worktree from origin/main 23d47ea9e |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
