@@ -10,7 +10,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::arms::{Called, Item, Node, Summarized, Translated, prim_of, var};
+use super::arms::{Called, Item, Node, Reading, Summarized, Translated, prim_of, var};
 use super::limits::{ADDRESS_BYTES_LOG2, target_text};
 use super::*;
 use zed_kernel::Shared;
@@ -6096,7 +6096,7 @@ impl<'a> Ck<'_, 'a> {
     /// under, where its value is read ([`Item::Bound`]), and the inputs of a binder's summary
     /// under the node the walk is in, where they are read ([`Ck::with_bound`]).
     fn read_names(&mut self, e: &'a Expr) -> Vec<(Arc<str>, usize)> {
-        let t = self.term(e);
+        let t = self.term_for(e, Reading::Operand);
         let here = self.arms.here();
         let mut out: Vec<(Arc<str>, usize)> =
             t.vars.iter().map(|(x, _)| (x.clone(), here)).collect();
@@ -6114,7 +6114,7 @@ impl<'a> Ck<'_, 'a> {
             if let Some(Some(sum)) = self.arms.summaries.get(&b) {
                 out.extend(sum.summary.vars().iter().map(|x| (x.clone(), here)));
             }
-            let v = self.term(value);
+            let v = self.term_for(value, Reading::Defined);
             let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
             out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
             stack.extend_from_slice(&v.binders);
@@ -6260,7 +6260,7 @@ impl<'a> Ck<'_, 'a> {
     /// the read of the expression, so each is placed where that is read, once, and a read
     /// inside a name's value asks those the value asked where it is bound.
     fn read_in_scope_at(&mut self, e: &'a Expr, at: Option<Span>) -> (Product, Scope) {
-        let t = self.term(e);
+        let t = self.term_for(e, Reading::Operand);
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
@@ -6280,7 +6280,7 @@ impl<'a> Ck<'_, 'a> {
     /// which a written constraint gave neither `true` nor `false` ([`Scope::zero_reached`]).
     /// The questions the read refuses are those [`Ck::read_in_scope`] placed for `e` already.
     fn zero_reached_here(&mut self, e: &'a Expr) -> (bool, imbl::OrdSet<RootFailure>) {
-        let t = self.term(e);
+        let t = self.term_for(e, Reading::Operand);
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
@@ -6582,7 +6582,7 @@ impl<'a> Ck<'_, 'a> {
         if self.narrowings == 0 {
             return;
         }
-        let t = self.term(value);
+        let t = self.term_for(value, Reading::Defined);
         for (_, id) in &t.vars {
             if (self.whence.get(id)).is_some_and(|o| matches!(o.why, Why::Narrowed(_)))
                 && let Some(ty) = self.env.get(id)
@@ -6626,7 +6626,7 @@ impl<'a> Ck<'_, 'a> {
                 self.arms.summaries.insert(c, None);
                 continue;
             };
-            let t = self.term(value);
+            let t = self.term_for(value, Reading::Defined);
             if !ready {
                 stack.push((c, true));
                 stack.extend(t.binders.iter().map(|&d| (d, false)));
@@ -6769,7 +6769,7 @@ impl<'a> Ck<'_, 'a> {
                 let Some(&value) = self.facts.get(&b) else {
                     return Vec::new();
                 };
-                let t = self.term(value);
+                let t = self.term_for(value, Reading::Defined);
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let mut out = vec![Item::Scope(at)];
                 out.extend(t.binders.iter().map(|&c| Item::Bound(c)));
@@ -6853,7 +6853,7 @@ impl<'a> Ck<'_, 'a> {
                 let Some(&value) = self.facts.get(&b) else {
                     return;
                 };
-                let t = self.term(value);
+                let t = self.term_for(value, Reading::Defined);
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let s = self.scope_or_root(at);
                 let before = s.refusals.clone();
@@ -6939,20 +6939,51 @@ impl<'a> Ck<'_, 'a> {
             .unwrap_or_else(|| Scope::new([]).lazy())
     }
 
-    /// `e` as a kernel term ([`Translated`]): its int and bool literals and the values its text
-    /// shows ([`Ck::known`]), its `rat` literals ([`Ck::rat_literal`]), its names, its unary `-`
-    /// and `!`, its integer operators, its comparisons, `&&` and `||`; anything else is a name
-    /// of its own, by its span, which the scope knows nothing of. Built children first on an
-    /// explicit stack, once for `e`.
+    /// The condition `e` of an `if` as a term ([`Reading::Test`]).
     fn term(&mut self, e: &'a Expr) -> Rc<Translated> {
-        if let Some(t) = self.arms.terms.get(&e.span) {
+        self.term_for(e, Reading::Test)
+    }
+
+    /// `e` as a kernel term ([`Translated`]) read for `reading`: its int and bool literals and
+    /// the values its text shows ([`Ck::known`]), its `rat` literals ([`Ck::rat_literal`]), its
+    /// names, its unary `-` and `!`, its integer operators, its comparisons, `&&` and `||`,
+    /// the calls it keeps ([`Ck::callable`]) and, read as [`Reading::Defined`], its `if`s;
+    /// anything else is a name of its own, by its span, which the scope knows nothing of. Read
+    /// as [`Reading::Test`], a call is kept only on the test's spine: an operand of `!`, `&&`,
+    /// `||`, a comparison, `+`, `-`, `*`, the left operand of `div` or `mod`, or an argument of
+    /// a call kept, all the way from the root; read as [`Reading::Operand`], no call is kept.
+    /// Built children first on an explicit stack, once for `e` and `reading`.
+    ///
+    /// Complexity tradeoff: naive version (19514ef8c), every `if` and call kept in every term.
+    /// Each term is then read with all it holds: the test of each of `d` nested
+    /// `if (if … ) == 1` holds every `if` below it, and each of `k` tests `x mod t(x, n) >= j`,
+    /// and each read of its divisor `t(x, n)`, is closed over the `k` remainders of `t`
+    /// ([`Scope::close`]), so each of the O(k) atoms they make has O(k) parts, O(k²) in all:
+    /// `guarded_arms` at k = 1040 and `with_an_if` at d = 1024 ran past 60 s, where they took
+    /// 6 s and 4 s before (FAIL-check-arm-call-bench-hang). Used: a test keeps an `if` as a
+    /// name of its own, as before that commit, and a call only where it can narrow through
+    /// it; an operand keeps neither; a body or a binder's value keeps both, read once, and a
+    /// test reads them through the name. Prior work: a per-function summary in abstract
+    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two
+    /// approaches to interprocedural data flow analysis", 1981); here a test still reads each
+    /// body it reaches once (COMPLEXITY.md row S24), so `k` tests on a call of a body of size
+    /// `k` stay O(k²). Cost: a test `if (if c { a } else { b }) > 0` written in place, not
+    /// bound to a name, and a divisor that is a call, are not narrowed or checked through
+    /// the inner `if` or the call, as before that commit. Tests:
+    /// `l01_38_presburger::bench::ladder::the_conditions_of_shared_divisors_scale`,
+    /// `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`,
+    /// `l01_39_reduced_product::arm_test_through_call`.
+    fn term_for(&mut self, e: &'a Expr, reading: Reading) -> Rc<Translated> {
+        let defined = reading == Reading::Defined;
+        if let Some(t) = self.arms.terms.get(&(e.span, reading)) {
             return t.clone();
         }
         let (mut binders, mut vars, mut calls) = (Vec::new(), Vec::new(), Vec::new());
         let mut opaque_seen = false;
         let mut done: Vec<Term> = Vec::new();
-        let mut stack = vec![(e, false)];
-        while let Some((x, ready)) = stack.pop() {
+        // Each part, whether it waits on its operands, and whether it is on the spine.
+        let mut stack = vec![(e, false, reading != Reading::Operand)];
+        while let Some((x, ready, spine)) = stack.pop() {
             let mut opaque = || {
                 opaque_seen = true;
                 Term::Var(format!("?{}:{}", x.span.start, x.span.end).into())
@@ -7028,13 +7059,15 @@ impl<'a> Ck<'_, 'a> {
                     _ => done.push(opaque()),
                 },
                 ExprKind::Unary(UnaryOp::Neg | UnaryOp::Not, a) => {
-                    stack.push((x, true));
-                    stack.push((a, false));
+                    stack.push((x, true, spine));
+                    stack.push((a, false, spine));
                 }
                 ExprKind::Binary(o, a, b) if prim_of(*o).is_some() => {
-                    stack.push((x, true));
-                    stack.push((b, false));
-                    stack.push((a, false));
+                    // A divisor is not narrowed by a test of the quotient or the remainder.
+                    let divisor = matches!(o, BinaryOp::IntDiv | BinaryOp::Mod);
+                    stack.push((x, true, spine));
+                    stack.push((b, false, spine && !divisor));
+                    stack.push((a, false, spine));
                 }
                 // A block of its value alone, as an arm `{ x }`, is that value.
                 ExprKind::Block(stmts)
@@ -7042,29 +7075,31 @@ impl<'a> Ck<'_, 'a> {
                         && let StmtKind::Return(es) = &s.kind
                         && let [v] = &es[..] =>
                 {
-                    stack.push((v, false));
+                    stack.push((v, false, spine));
                 }
                 ExprKind::If {
                     cond,
                     then,
                     otherwise,
-                } => {
-                    stack.push((x, true));
-                    stack.extend([(&**otherwise, false), (&**then, false), (&**cond, false)]);
+                } if defined => {
+                    stack.push((x, true, spine));
+                    stack.extend([otherwise, then, cond].map(|p| (&**p, false, spine)));
                 }
                 ExprKind::Call {
                     callee,
                     positional,
                     named,
                     curry: false,
-                } if named.is_empty() => match self.callable(callee, positional.len()) {
-                    Some((id, _)) => {
-                        calls.push(id);
-                        stack.push((x, true));
-                        stack.extend(positional.iter().rev().map(|a| (a, false)));
+                } if named.is_empty() && (defined || spine) => {
+                    match self.callable(callee, positional.len()) {
+                        Some((id, _)) => {
+                            calls.push(id);
+                            stack.push((x, true, spine));
+                            stack.extend(positional.iter().rev().map(|a| (a, false, spine)));
+                        }
+                        None => done.push(opaque()),
                     }
-                    None => done.push(opaque()),
-                },
+                }
                 _ => done.push(opaque()),
             }
         }
@@ -7081,7 +7116,7 @@ impl<'a> Ck<'_, 'a> {
             calls,
             opaque: opaque_seen,
         });
-        self.arms.terms.insert(e.span, t.clone());
+        self.arms.terms.insert((e.span, reading), t.clone());
         t
     }
 
@@ -7208,7 +7243,7 @@ impl<'a> Ck<'_, 'a> {
             }
             let (params, body) = self.definition(id).expect("a definition");
             // Each definition `body` calls is translated, or waits as a caller of `id`.
-            let t = self.term(body);
+            let t = self.term_for(body, Reading::Defined);
             let binders = &self.t.res.binders;
             let param_of = |b: usize| {
                 let at = binders[b].span;
@@ -10253,7 +10288,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Arms::int_scopes`]: super::arms::Arms::int_scopes
     fn ints_as_int(&mut self, e: &'a Expr, open: Option<usize>) -> IntervalSet {
         let here = self.arms.here();
-        let t = self.term(e);
+        let t = self.term_for(e, Reading::Operand);
         let mut ids: Vec<usize> = (t.vars.iter().map(|&(_, id)| id))
             .filter(|id| self.open_params.contains(id))
             .chain(open)

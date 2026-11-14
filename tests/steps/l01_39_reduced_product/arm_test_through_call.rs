@@ -97,3 +97,33 @@ fn a_test_is_narrowed_through_calls_of_several_arguments_and_through_calls_in_a_
          f(positional x: int) = if r(x) > 10 { popCount(x - x - 1) } else { 0 };\n",
     ]);
 }
+
+/// A test is narrowed through a call on its spine, under `!`, `-`, `+`, `*` and as the argument
+/// of another call (`Ck::term_for` in walk.rs, FAIL-check-arm-call-bench-hang).
+#[test]
+fn a_test_is_narrowed_through_a_call_under_the_operators_of_its_spine() {
+    let clamp = "clamp(positional x: int) = if x > 10 { 10 } else { x };\n";
+    let arm = "{ popCount(x - x - 1) } else { 0 };\n";
+    let tests = [
+        "clamp(x) + 1 > 11",
+        "-clamp(x) < -10",
+        "3 * clamp(x) > 30",
+        "!(clamp(x) <= 10)",
+        "clamp(clamp(x)) > 10",
+        "clamp(x) > 10 || clamp(x) > 20",
+    ];
+    let srcs: Vec<String> = (tests.iter())
+        .map(|t| format!("{clamp}f(positional x: int) = if {t} {arm}"))
+        .collect();
+    accepted(&srcs.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+    // The controls: a clamp at 11 lets x = 11 reach each arm.
+    let srcs: Vec<String> = (tests.iter())
+        .map(|t| {
+            format!(
+                "{}f(positional x: int) = if {t} {arm}",
+                clamp.replace("10", "11")
+            )
+        })
+        .collect();
+    rejected(&srcs.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+}

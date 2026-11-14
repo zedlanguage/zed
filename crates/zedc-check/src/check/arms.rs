@@ -80,6 +80,23 @@ pub(super) struct Translated {
     pub(super) opaque: bool,
 }
 
+/// What a term is read for (`Ck::term_for` in walk.rs): an expression has one term for each.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum Reading {
+    /// The condition of an `if`, narrowed where it holds and where it fails, read at each
+    /// scope it narrows. An `if` in it is a name of its own, and a call is kept as a call only
+    /// where the test narrows through it, on its spine; a call elsewhere is a name of its own.
+    Test,
+    /// An operand read where the walk is, for its values. An `if` and a call in it are names
+    /// of their own: `forward` does not enter a call, so its values are any value either way,
+    /// and a check whether the operand may be 0 (`Scope::zero_reached`) does not read the body.
+    Operand,
+    /// The body of a definition whose calls are kept ([`Called`]) or the value of a binder:
+    /// read once, where it is defined or bound, and through the name at each use. An `if`
+    /// and every call it can keep are translated.
+    Defined,
+}
+
 /// A definition of the unit, `f(positional x) = e` or `f = x -> e`, whose calls a term keeps
 /// as calls, `App(Var(f), args)`, with `f` bound in the scope that reads the term to its
 /// lambda, so that a test on a call is narrowed through it (DESIGN.md step L1.39, "an arm
@@ -173,8 +190,8 @@ pub(super) struct Arms<'a> {
     pub(super) bound_ty: HashMap<usize, KType>,
     /// Each binder's value in the scope of its node, once a read has needed it.
     pub(super) bound: HashMap<usize, Product>,
-    /// The terms of the expressions read so far, by span.
-    pub(super) terms: HashMap<Span, Rc<Translated>>,
+    /// The terms of the expressions read so far, by span and what each is read for.
+    pub(super) terms: HashMap<(Span, Reading), Rc<Translated>>,
     /// The scope name of each binder a term has read.
     pub(super) names: HashMap<usize, Arc<str>>,
     /// The summary of each binder's value, once a scope has been told of the binder
@@ -464,7 +481,7 @@ impl<'a> Arms<'a> {
             else {
                 return false;
             };
-            let Some(t) = self.terms.get(&test.span) else {
+            let Some(t) = self.terms.get(&(test.span, Reading::Test)) else {
                 return false;
             };
             for (y, p) in fresh.iter() {
