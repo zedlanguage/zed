@@ -2189,13 +2189,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CONST-too-large-products-unproved | running | 2026-11-13 20:23 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
-| HUB-moved-relation | running | 2026-11-13 18:26 |  |
+| HUB-moved-relation | impl attempt 1 | 2026-11-13 18:26 | started; load 27.06 |
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | REPAIR-literal-string-order | impl attempt 1 | 2026-11-13 20:06 | started; load 61.28 56.25 52.21 |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
-| STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
 | ST-walk-orders-nine | impl attempt 1 | 2026-11-13 20:00 | started; load 44.24 |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | fix done: rejection inside an argument that takes its call's carrier not built (Ck::lit_spares); n=100 calls bare vs 2.0f64: 4.8x instr / 4.4x bytes before, 1.4 |
