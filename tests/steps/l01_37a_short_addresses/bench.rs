@@ -1,11 +1,11 @@
 //! The benchmarks of step L1.37a (DESIGN.md Part G), run by `tools/run_tests.sh --bench` and
 //! left out of its default run, in the full build and in the short-addresses build. Inputs are
 //! built before the runs are measured. Each check they make besides the ratio is made at a small
-//! size by the correctness test of `scaling.rs` named in its doc.
+//! size by the correctness test named in its doc.
 
 use zed_tests::scaling::{check_order, inputs};
 
-use super::scaling;
+use super::{collide, scaling};
 
 /// Two equal lambdas built apart: the second's key is found, and confirming it compares the
 /// two bodies node by node. Small instance: `scaling::two_equal_lambdas_built_apart_are_one_
@@ -71,4 +71,24 @@ fn rows_and_morphism_types_that_tie_in_digest_are_found_and_dropped_in_log_time(
         1,
         |k| scaling::made_twice_and_dropped(&atoms[&k]),
     );
+}
+
+/// With 8-bit digests the levels of a chain tie in digest at every depth, so building one
+/// orders each new level against older ones level after level down, as ordering two chains
+/// over different bases does where their digests tie. That order was a recursion, which
+/// overflowed a 256 KiB stack 425 levels down (421 ran; the code before 7a79799d3, dev profile,
+/// measured 2026-11-14), and a 2 MiB stack about 3,000 levels down (SHORT-stack-l01_22); it is a
+/// loop with a stack of its own. Each comparison still reads the levels on which the digests
+/// tie, so building the chain is quadratic in this build: the depth is the smallest round one
+/// past the overflow. Small instance: `collide::types_that_tie_in_digest_level_after_level_are_
+/// ordered`.
+#[test]
+fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
+    const DEPTH: usize = 500;
+    const STACK: usize = 256 << 10;
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(STACK);
+        let run = thread.spawn_scoped(scope, || collide::chains_over_two_bases_are_ordered(DEPTH));
+        run.unwrap().join().unwrap();
+    });
 }

@@ -1,34 +1,17 @@
-//! Native code as deep as a program recurses, on the 2 MiB stack of a spawned thread
-//! (COMPLEXITY.md R10): a list built by 10,000 and by 80,000 nested calls gives the kernel's
-//! value. The generated code runs on a stack the runtime maps for the run, as large as the
-//! machine's memory, so no depth is refused before memory runs out. The wide function of the
+//! Native code as deep as a program recurses (COMPLEXITY.md R10): a list built by nested calls
+//! gives the kernel's value. The generated code runs on a stack the runtime maps for the run, as
+//! large as the machine's memory, so no depth is refused before memory runs out. The test here
+//! runs a few small depths on the test's own stack; the lists built by 10,000 and by 80,000
+//! nested calls on the 2 MiB stack of a spawned thread are benchmarks, in `bench/deep_calls.rs`
+//! (author P178: a test that needs an unusual size is a benchmark). The wide function of the
 //! same row is in `deep_heap.rs`, a binary of its own.
 
-use std::cmp::Ordering;
-
-use zed_kernel::{Evaluator, Term, Value, World};
-use zed_tests::deep::{linked_list, on_main_sized_stack};
-use zed_tests::scaling;
+use zed_kernel::{Evaluator, Value, World};
+use zed_tests::deep::linked_list;
 use zedc::zir::legalize::Legalized;
 use zedc::zir::memory::Plan;
 
 use super::planned;
-
-/// The depth of calls the plan names; the tests also run 8 times as deep.
-const CALLS: usize = 10_000;
-
-/// Runs `f` on a thread with a 2 MiB stack, the default of a spawned Rust thread.
-pub(crate) fn on_2_mib_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(2 << 20);
-        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
-}
-
-/// The kernel's value of `t`, on the stack of a main thread for the deep value it builds.
-fn kernel(t: &Term) -> Value {
-    on_main_sized_stack(|| Evaluator::new(World::new()).run(t).unwrap())
-}
 
 /// `g` under `p` run natively.
 pub(crate) fn native(g: &Legalized, p: &Plan) -> Value {
@@ -38,16 +21,11 @@ pub(crate) fn native(g: &Legalized, p: &Plan) -> Value {
 }
 
 #[test]
-fn a_list_built_by_10000_nested_calls_runs_on_a_2_mib_stack() {
-    for k in [CALLS, scaling::FACTOR * CALLS] {
-        let t = linked_list(k as i64);
-        let want = kernel(&t);
+fn a_list_built_by_nested_calls_runs_natively_as_in_the_kernel() {
+    for k in [0, 1, 2, 10] {
+        let t = linked_list(k);
+        let want = Evaluator::new(World::new()).run(&t).unwrap();
         let (g, p) = planned(&t);
-        let got = on_2_mib_stack(|| native(&g, &p));
-        // `cmp` walks the two values on an explicit stack.
-        assert!(
-            got.cmp(&want) == Ordering::Equal,
-            "linked_list({k}) run natively differs from the kernel's value"
-        );
+        assert_eq!(native(&g, &p), want, "linked_list({k})");
     }
 }

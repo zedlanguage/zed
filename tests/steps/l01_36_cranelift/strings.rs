@@ -101,7 +101,7 @@ fn lengths() -> Term {
 }
 
 /// `t`'s value natively and in the kernel, with input port `x` holding `x`.
-fn both_with(t: &Term, x: &str) -> (Value, Value) {
+pub(crate) fn both_with(t: &Term, x: &str) -> (Value, Value) {
     let mut w = World::new();
     w.inputs.insert("x".into(), Value::str(x));
     let (g, p) = super::planned(t);
@@ -131,14 +131,15 @@ fn len_counts_characters_the_same_natively_and_in_the_kernel() {
     }
 }
 
-/// A log line built from 500 fields, each `++`ed onto the line so far, some with characters
-/// of two to four bytes, and its length read after every field: the kernel's count and the
-/// native count agree at each step and with a line built by `push_str`, independently of the
-/// rope.
-#[test]
-fn len_after_many_appends_agrees_natively_and_in_the_kernel() {
-    let fields = ["id=7", " naïve", " Σ=3", " 🚚", ""];
-    let n = 500;
+/// The fields of a log line: one of ASCII, characters of two, three and four bytes, and none.
+pub(crate) const FIELDS: [&str; 5] = ["id=7", " naïve", " Σ=3", " 🚚", ""];
+
+/// A log line built from `n` fields, `fields[i % fields.len()]` for the `i`th, each `++`ed onto
+/// the line so far, and its length read after every field: the kernel's count and the native
+/// count agree at each step and with a line built by `push_str`, independently of the rope. The
+/// program reads the line's start, `"log:"`, from the port `x`: the program and the tuple of
+/// the lengths and the whole line it gives.
+pub(crate) fn appended_lens(n: usize, fields: &[&str]) -> (Term, Value) {
     let mut body = prim(
         Prim::Tuple,
         (1..=n).map(|i| var(&format!("l{i}"))).collect(),
@@ -154,7 +155,6 @@ fn len_after_many_appends_agrees_natively_and_in_the_kernel() {
         );
     }
     let t = let_("s0", Term::Read("x".into()), body);
-    let (native, kernel) = on_big_stack(|| both_with(&t, "log:"));
     // The expected line and its length after each field, built without the rope.
     let mut line = String::from("log:");
     let mut lens = Vec::with_capacity(n);
@@ -162,7 +162,28 @@ fn len_after_many_appends_agrees_natively_and_in_the_kernel() {
         line.push_str(fields[i % fields.len()]);
         lens.push(Value::Int(line.chars().count() as i64));
     }
-    let want = Value::tuple(vec![Value::tuple(lens), Value::str(&line)]);
+    (t, Value::tuple(vec![Value::tuple(lens), Value::str(&line)]))
+}
+
+/// A line of 20 fields, each kind of field four times, on the test's own stack: a line of one
+/// block of the rope ([`zed_kernel::text::LEAF`] bytes). The line of 500 fields, whose recursive
+/// passes need a larger stack, is a benchmark, in `bench/strings.rs`.
+#[test]
+fn len_after_many_appends_agrees_natively_and_in_the_kernel() {
+    let (t, want) = appended_lens(20, &FIELDS);
+    let (native, kernel) = both_with(&t, "log:");
+    assert_eq!(native, want);
+    assert_eq!(kernel, want);
+}
+
+/// The check above on 80 fields each 10 times as long, 3,360 bytes: a line of many blocks, whose
+/// rope adds a field to its last block while it fits, fills its end digits and pushes nodes
+/// into its middle, as the line of 500 short fields in `bench/strings.rs` does.
+#[test]
+fn len_after_many_long_appends_agrees_natively_and_in_the_kernel() {
+    let long = FIELDS.map(|f| f.repeat(10));
+    let (t, want) = appended_lens(80, &long.each_ref().map(String::as_str));
+    let (native, kernel) = both_with(&t, "log:");
     assert_eq!(native, want);
     assert_eq!(kernel, want);
 }
@@ -198,17 +219,4 @@ fn a_string_handed_to_the_kernel_is_shared_not_copied() {
         panic!("{}", o.value)
     };
     assert_eq!(text.len(), 129 << 50);
-}
-
-/// `f`'s value, run on a thread whose stack holds the recursive passes over a term hundreds
-/// of `let`s deep: lowering, planning and the drop of a graph.
-fn on_big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 28)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
 }

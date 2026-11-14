@@ -15,4 +15,5 @@ mod scaling;
 mod shared_closures;
 mod shared_values;
 mod string_scaling;
+mod strings;
 mod table;

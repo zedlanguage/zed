@@ -1,6 +1,9 @@
-//! Values and patterns as deep as a program builds them, in the runtime's heap: a long list read
-//! from a port, matched down to its last element and released, on the default stack of a test
-//! thread (COMPLEXITY.md R9). No test here sets a stack size, and no depth is refused.
+//! Values and patterns as deep as a program builds them, in the runtime's heap: a list read from
+//! a port, matched down to its last element and released (COMPLEXITY.md R9). The tests here run
+//! each check at a few small depths on the test's own stack; the same checks 10,000 deep, on the
+//! default stack of a test thread, and the wide function on a 64 KiB stack are benchmarks, in
+//! `deep_heap_bench.rs` (author P178: a test that needs an unusual size is a benchmark). No
+//! depth is refused.
 
 use std::sync::Arc;
 
@@ -8,18 +11,16 @@ use zed_kernel::term::build::{app, lam, lit, prim, var};
 use zed_kernel::{Evaluator, Lookup, Pattern, Prim, Term, Text, Value, World};
 use zed_rt::{Heap, Obj, Paths, Word};
 use zed_tests::deep::{SHAPES, in_atom, in_named_atom, in_tuple, nested};
-use zed_tests::scaling;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::plan;
 
 #[path = "deep_heap_bench.rs"]
 mod bench;
 
-/// How deep the values go: above the depths at which the recursive runtime (before commit
-/// 220f60b69) overflowed the 2 MiB stack of a test thread, measured on a list of pairs: 2,143
-/// for `Heap::value`, 5,447 for `Heap::matches`, 6,225 for `Heap::release` and 7,691 for
-/// `Heap::fresh`.
-const DEPTH: usize = 10_000;
+/// The depths of the tests here: a bare value, one level, and a few levels more. The same
+/// checks 10,000 deep, past the depths at which the recursive runtime overflowed a 2 MiB stack,
+/// are benchmarks, in `deep_heap_bench.rs`.
+const DEPTHS: [usize; 4] = [0, 1, 2, 8];
 
 /// `#order(customer: name, lines: (first, rest), total: "…")`, as a program's record holds it.
 fn order() -> Value {
@@ -77,9 +78,9 @@ impl Lookup for Same {
     }
 }
 
-#[test]
-fn a_deep_list_read_from_a_port_runs_natively() {
-    let list = nested(in_tuple, DEPTH, Value::Int(0));
+/// A list `depth` deep read from a port and run natively: the value read, a cell a level.
+fn list_read_from_a_port_runs_natively(depth: usize) {
+    let list = nested(in_tuple, depth, Value::Int(0));
     let mut w = World::new();
     let port: Arc<dyn Lookup> = Arc::new(Same(list.clone()));
     w.sources.insert("db".into(), port);
@@ -87,13 +88,13 @@ fn a_deep_list_read_from_a_port_runs_natively() {
     let g = zed_native::legalize(lower(&t).unwrap());
     let o = zed_native::run(&g, &plan(g.graph(), true), &mut Evaluator::new(w)).unwrap();
     assert_eq!(o.value, list);
-    assert_eq!(o.stats.allocations, DEPTH as u64);
+    assert_eq!(o.stats.allocations, depth as u64, "depth {depth}");
 }
 
-#[test]
-fn each_shape_of_deep_value_enters_and_leaves_the_heap() {
+/// Each shape of value `depth` deep made in the heap, read back and freed.
+fn each_shape_enters_and_leaves_the_heap(depth: usize) {
     for (what, wrap) in SHAPES {
-        let v = nested(wrap, DEPTH, Value::str("end"));
+        let v = nested(wrap, depth, Value::str("end"));
         let mut h = Heap::new();
         let w = h.fresh(&v).unwrap();
         assert_eq!(h.value(w).unwrap(), v, "{what}");
@@ -102,8 +103,9 @@ fn each_shape_of_deep_value_enters_and_leaves_the_heap() {
     }
 }
 
-#[test]
-fn a_deep_pattern_binds_the_last_element() {
+/// A pattern `depth` deep, on a list, a nest of atoms and a nest of records, binds the last
+/// element at a path of `depth` parts.
+fn a_pattern_binds_the_last_element(depth: usize) {
     type Case = (fn(usize, Value) -> Value, fn(usize, Pattern) -> Pattern);
     let list: fn(usize, Value) -> Value = |d, b| nested(in_tuple, d, b);
     let atoms: fn(usize, Value) -> Value = |d, b| nested(in_atom, d, b);
@@ -111,42 +113,78 @@ fn a_deep_pattern_binds_the_last_element() {
     let cases: [Case; 3] = [(list, in_tuples), (atoms, in_atoms), (records, in_fields)];
     for (value, pattern) in cases {
         let mut h = Heap::new();
-        let w = h.fresh(&value(DEPTH, Value::str("last"))).unwrap();
-        let p = pattern(DEPTH, bind("x"));
+        let w = h.fresh(&value(depth, Value::str("last"))).unwrap();
+        let p = pattern(depth, bind("x"));
         let (mut paths, mut out) = (Paths::default(), Vec::new());
         assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
         let [(x, node)] = &out[..] else {
             panic!("{} binders", out.len())
         };
-        assert_eq!(paths.path(*node).len(), DEPTH, "one part per level entered");
+        assert_eq!(paths.path(*node).len(), depth, "one part per level entered");
         assert_eq!(h.value(*x).unwrap(), Value::str("last"));
     }
 }
 
-#[test]
-fn a_difference_at_the_bottom_fails_with_no_binder() {
+/// A list `depth` deep against a pattern that differs from it at the bottom: no match, no
+/// binder.
+fn a_difference_at_the_bottom_fails(depth: usize) {
     let mut h = Heap::new();
-    let w = h.fresh(&nested(in_tuple, DEPTH, Value::Int(1))).unwrap();
-    let p = in_tuples(DEPTH, Pattern::Lit(Value::Int(2)));
+    let w = h.fresh(&nested(in_tuple, depth, Value::Int(1))).unwrap();
+    let p = in_tuples(depth, Pattern::Lit(Value::Int(2)));
     let mut out = Vec::new();
     assert!(!h.matches(&p, w, &mut Paths::default(), &mut out).unwrap());
     assert!(out.is_empty());
 }
 
-#[test]
-fn releasing_a_deep_list_keeps_only_the_last_element() {
+/// A list `depth` deep matched and released keeping its last element: each level freed.
+fn release_keeps_only_the_last_element(depth: usize) {
     let mut h = Heap::new();
     let w = h
-        .fresh(&nested(in_tuple, DEPTH, Value::str("last")))
+        .fresh(&nested(in_tuple, depth, Value::str("last")))
         .unwrap();
-    let p = in_tuples(DEPTH, bind("x"));
+    let p = in_tuples(depth, bind("x"));
     let (mut paths, mut out) = (Paths::default(), Vec::new());
     assert!(h.matches(&p, w, &mut paths, &mut out).unwrap());
     let (x, node) = out.pop().unwrap();
     h.release(w, &paths, &[node]).unwrap();
     assert_eq!(h.live(), 1);
-    assert_eq!(h.stats.frees, DEPTH as u64);
+    assert_eq!(h.stats.frees, depth as u64);
     assert_eq!(h.value(x).unwrap(), Value::str("last"));
+}
+
+#[test]
+fn a_list_read_from_a_port_runs_natively() {
+    for depth in DEPTHS {
+        list_read_from_a_port_runs_natively(depth);
+    }
+}
+
+#[test]
+fn each_shape_of_value_enters_and_leaves_the_heap() {
+    for depth in DEPTHS {
+        each_shape_enters_and_leaves_the_heap(depth);
+    }
+}
+
+#[test]
+fn a_nested_pattern_binds_the_last_element() {
+    for depth in DEPTHS {
+        a_pattern_binds_the_last_element(depth);
+    }
+}
+
+#[test]
+fn a_difference_at_the_bottom_fails_with_no_binder() {
+    for depth in DEPTHS {
+        a_difference_at_the_bottom_fails(depth);
+    }
+}
+
+#[test]
+fn releasing_a_list_keeps_only_the_last_element() {
+    for depth in DEPTHS {
+        release_keeps_only_the_last_element(depth);
+    }
 }
 
 #[test]
@@ -353,12 +391,6 @@ fn a_state_word_is_not_data() {
     );
 }
 
-/// The width of the wide function of the test on a small stack.
-const WIDE: usize = 5_000;
-
-/// A stack of 64 KiB for a test thread, smaller than the frame of `wide(WIDE)`.
-const SMALL_STACK: usize = 64 << 10;
-
 /// `(x -> (x ++ "0", x ++ "1", …))("a")` with `k` concatenations, whose results are all live
 /// until the tuple is built, as a generated report's lines are. Each result has a slot of 16
 /// bytes in the frame, so the frame grows with `k`.
@@ -370,41 +402,41 @@ fn wide(k: usize) -> Term {
     )
 }
 
-/// A function of 5,000 concatenations has a frame of more than 78 KiB, larger than the stack
-/// of 64 KiB its thread runs on: before generated code had a stack of its own (COMPLEXITY.md
-/// R10), the run stopped at that stack's guard page. A thread of 2 MiB would need about 150,000
-/// concatenations, which compile in about 20 s alone and over 120 s at a load of 180.
-#[test]
-fn a_function_of_5000_concatenations_runs_on_a_smaller_thread_stack() {
-    let t = wide(WIDE);
+/// `wide(k)` run natively gives the kernel's value.
+fn a_wide_function_runs_as_the_kernel_does(k: usize) {
+    let t = wide(k);
     let want = Evaluator::new(World::new()).run(&t).unwrap();
     let g = zed_native::legalize(lower(&t).unwrap());
     let p = plan(g.graph(), true);
-    let got = scaling::on_a_thread(SMALL_STACK, || {
-        zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap()
-    });
+    let got = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
     assert!(
         got.value == want,
-        "the native value differs from the kernel's"
+        "{k} concatenations: the native value differs from the kernel's"
     );
 }
 
-/// The levels of the list the bytes test makes: a power of two, so the table of cells has no
-/// growth slack at the end and the bytes are the cells' own.
-const BYTES_LEVELS: usize = 1 << 17;
+/// A function of no, one and a few concatenations, run on the test's own stack. The function of
+/// 5,000 concatenations whose frame is larger than a thread stack of 64 KiB is a benchmark, in
+/// `deep_heap_bench.rs`.
+#[test]
+fn a_function_of_concatenations_runs_as_the_kernel_does() {
+    for k in [0, 1, 8] {
+        a_wide_function_runs_as_the_kernel_does(k);
+    }
+}
 
 /// The bytes the heap holds for each level of a list of pairs, measured on 2026-11-11 in this
 /// build (feature `counts`): one cell of 96 bytes, the two parts in it (COMPLEXITY.md R16).
 /// Before, a level held a cell of 144 bytes and a block of 32 for its parts.
 const BYTES_PER_LEVEL: f64 = 96.0;
 
-/// The heap of a list of pairs `(k, rest)` holds at most 1.25 times [`BYTES_PER_LEVEL`] a level,
-/// counted exactly on this thread, the kernel value it was made from living outside the count.
-/// A block of its own for a pair's parts (32 bytes) or a kernel value in each cell (56) is past
-/// the bound.
-#[test]
-fn a_level_of_a_list_of_pairs_is_one_small_cell() {
-    let n = BYTES_LEVELS;
+/// The heap of a list of pairs `(k, rest)` `n` levels deep holds at most 1.25 times
+/// [`BYTES_PER_LEVEL`] a level, counted exactly on this thread, the kernel value it was made from
+/// living outside the count. A block of its own for a pair's parts (32 bytes) or a kernel value
+/// in each cell (56) is past the bound. `n` is a power of two, so the table of cells has no
+/// growth slack at the end and the bytes are the cells' own.
+fn a_level_of_a_list_of_pairs_is_one_small_cell_at(n: usize) {
+    assert!(n.is_power_of_two(), "{n}");
     let v = nested(in_tuple, n, Value::Int(0));
     let (h, live) = zed_alloc_count::live(|| {
         let mut h = Heap::new();
@@ -417,4 +449,12 @@ fn a_level_of_a_list_of_pairs_is_one_small_cell() {
         per_level <= 1.25 * BYTES_PER_LEVEL,
         "{per_level} bytes a level, measured {BYTES_PER_LEVEL}"
     );
+}
+
+/// A list of 1,024 levels: the heap's fixed tables only add to the bytes a level, so a level
+/// past the bound fails here as it does on a long list. The list of 2^17 levels is a
+/// benchmark, in `deep_heap_bench.rs`.
+#[test]
+fn a_level_of_a_list_of_pairs_is_one_small_cell() {
+    a_level_of_a_list_of_pairs_is_one_small_cell_at(1 << 10);
 }

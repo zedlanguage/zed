@@ -144,31 +144,28 @@ fn chain(base: Type, depth: usize) -> Type {
     (0..depth).fold(base, |t, _| Type::tuple(vec![t.clone(), t]))
 }
 
+/// Two chains `depth` deep over one base are equal, and a chain over another base is not, in an
+/// order that is antisymmetric. With 8-bit digests the levels of a chain tie in digest at every
+/// depth, so building one orders each new level against older ones level after level down, as
+/// ordering two chains over different bases does where their digests tie.
+pub(super) fn chains_over_two_bases_are_ordered(depth: usize) {
+    let a = chain(Type::atom("z"), depth);
+    let b = chain(Type::atom("z"), depth);
+    assert_eq!(a, b, "depth {depth}");
+    let c = chain(Type::atom("y"), depth);
+    assert_ne!(a, c, "depth {depth}");
+    assert_ne!(a.cmp(&c), Ordering::Equal, "depth {depth}");
+    assert_eq!(a.cmp(&c), c.cmp(&a).reverse(), "depth {depth}");
+}
+
+/// A few small depths, on the test's own stack. The chains 500 deep on a 256 KiB stack, past
+/// the depth at which the recursive order overflowed it, are a benchmark, in `bench.rs` (author
+/// P178: a test that needs an unusual size is a benchmark).
 #[test]
-fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
-    // With 8-bit digests the levels of a chain tie in digest at every depth, so building one
-    // orders each new level against older ones level after level down, as ordering two chains
-    // over different bases does where their digests tie. That order was a recursion, which
-    // overflowed a 256 KiB stack 425 levels down (421 ran; the code before 7a79799d3, dev
-    // profile, measured 2026-11-14), and a 2 MiB stack about 3,000 levels down
-    // (SHORT-stack-l01_22); it is a loop with a stack of its own. Each comparison still reads
-    // the levels on which the digests tie, so building the chain is quadratic in this build:
-    // the depth is the smallest round one past the overflow.
-    const DEPTH: usize = 500;
-    const STACK: usize = 256 << 10;
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(STACK);
-        let run = thread.spawn_scoped(scope, || {
-            let a = chain(Type::atom("z"), DEPTH);
-            let b = chain(Type::atom("z"), DEPTH);
-            assert_eq!(a, b);
-            let c = chain(Type::atom("y"), DEPTH);
-            assert_ne!(a, c);
-            assert_ne!(a.cmp(&c), std::cmp::Ordering::Equal);
-            assert_eq!(a.cmp(&c), c.cmp(&a).reverse());
-        });
-        run.unwrap().join().unwrap();
-    });
+fn types_that_tie_in_digest_level_after_level_are_ordered() {
+    for depth in [0, 1, 2, 8] {
+        chains_over_two_bases_are_ordered(depth);
+    }
 }
 
 /// A random type over a few atoms, integers and tuple, union, meet, difference and morphism

@@ -1,7 +1,8 @@
 //! The measurements of `deep_heap.rs` at two sizes, run by `tools/run_tests.sh --bench`
 //! (TEST-bench-split): making, reading, matching and releasing a list, and compiling and running
-//! a wide function, each in time linear in its size. The correctness tests at depth are in
-//! `deep_heap.rs`.
+//! a wide function, each in time linear in its size; and the checks of `deep_heap.rs` at the
+//! depths and widths past which the recursive runtime overflowed its stack (author P178: a test
+//! that needs an unusual size is a benchmark). Their small instances are in `deep_heap.rs`.
 
 use std::sync::Mutex;
 
@@ -12,7 +13,14 @@ use zed_tests::scaling;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::plan;
 
-use super::{SMALL_STACK, in_tuples, one_path, wide};
+use super::{
+    a_difference_at_the_bottom_fails, a_level_of_a_list_of_pairs_is_one_small_cell_at,
+    a_pattern_binds_the_last_element, each_shape_enters_and_leaves_the_heap, in_tuples,
+    list_read_from_a_port_runs_natively, one_path, release_keeps_only_the_last_element, wide,
+};
+
+/// A stack of 64 KiB for a test thread, smaller than the frame of `wide(WIDE)`.
+const SMALL_STACK: usize = 64 << 10;
 
 /// The depth of the scaling tests, and 8 times it; below about 160,000 cells the run is still
 /// in the fast caches (COMPLEXITY.md K22).
@@ -140,4 +148,67 @@ fn a_wide_function_runs_in_time_linear_in_its_width() {
             },
         )
     });
+}
+
+/// How deep the values of the tests below go, on the 2 MiB stack of a test thread: above the
+/// depths at which the recursive runtime (before commit 220f60b69) overflowed that stack,
+/// measured on a list of pairs: 2,143 for `Heap::value`, 5,447 for `Heap::matches`, 6,225 for
+/// `Heap::release` and 7,691 for `Heap::fresh`.
+const DEPTH: usize = 10_000;
+
+/// Small instance: `a_list_read_from_a_port_runs_natively`.
+#[test]
+fn a_deep_list_read_from_a_port_runs_natively() {
+    list_read_from_a_port_runs_natively(DEPTH);
+}
+
+/// Small instance: `each_shape_of_value_enters_and_leaves_the_heap`.
+#[test]
+fn each_shape_of_deep_value_enters_and_leaves_the_heap() {
+    each_shape_enters_and_leaves_the_heap(DEPTH);
+}
+
+/// Small instance: `a_nested_pattern_binds_the_last_element`.
+#[test]
+fn a_deep_pattern_binds_the_last_element() {
+    a_pattern_binds_the_last_element(DEPTH);
+}
+
+/// Small instance: `a_difference_at_the_bottom_fails_with_no_binder`.
+#[test]
+fn a_difference_at_the_bottom_of_a_deep_list_fails_with_no_binder() {
+    a_difference_at_the_bottom_fails(DEPTH);
+}
+
+/// Small instance: `releasing_a_list_keeps_only_the_last_element`.
+#[test]
+fn releasing_a_deep_list_keeps_only_the_last_element() {
+    release_keeps_only_the_last_element(DEPTH);
+}
+
+/// A function of 5,000 concatenations has a frame of more than 78 KiB, larger than the stack
+/// of 64 KiB its thread runs on: before generated code had a stack of its own (COMPLEXITY.md
+/// R10), the run stopped at that stack's guard page. A thread of 2 MiB would need about 150,000
+/// concatenations, which compile in about 20 s alone and over 120 s at a load of 180. Small
+/// instance: `a_function_of_concatenations_runs_as_the_kernel_does`.
+#[test]
+fn a_function_of_5000_concatenations_runs_on_a_smaller_thread_stack() {
+    let t = wide(WIDE);
+    let want = Evaluator::new(World::new()).run(&t).unwrap();
+    let g = zed_native::legalize(lower(&t).unwrap());
+    let p = plan(g.graph(), true);
+    let got = scaling::on_a_thread(SMALL_STACK, || {
+        zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap()
+    });
+    assert!(
+        got.value == want,
+        "the native value differs from the kernel's"
+    );
+}
+
+/// The bytes a level of a list of 2^17 pairs. Small instance:
+/// `a_level_of_a_list_of_pairs_is_one_small_cell`.
+#[test]
+fn a_level_of_a_long_list_of_pairs_is_one_small_cell() {
+    a_level_of_a_list_of_pairs_is_one_small_cell_at(1 << 17);
 }

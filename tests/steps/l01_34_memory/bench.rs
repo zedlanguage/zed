@@ -141,7 +141,7 @@ fn running_many_node_occurrences_is_linear() {
     );
 }
 
-/// Small instance: `scaling::a_nest_of_ifs_1250_deep_is_planned_and_run_on_a_2_mib_stack`.
+/// Small instance: `scaling::a_nest_of_ifs_is_planned_and_run_to_the_kernels_value`.
 #[test]
 fn planning_a_deep_nest_is_linear_in_its_depth() {
     use zed_tests::step_helpers::l01_33_lowering::nest;
@@ -154,7 +154,7 @@ fn planning_a_deep_nest_is_linear_in_its_depth() {
     });
 }
 
-/// Small instance: `scaling::a_nest_of_ifs_1250_deep_is_planned_and_run_on_a_2_mib_stack`.
+/// Small instance: `scaling::a_nest_of_ifs_is_planned_and_run_to_the_kernels_value`.
 #[test]
 fn running_a_deep_nest_is_linear_in_its_depth() {
     use zed_tests::step_helpers::l01_33_lowering::nest;
@@ -163,7 +163,7 @@ fn running_a_deep_nest_is_linear_in_its_depth() {
     runs_in_linear_time("running n nested `if`s", n, &pair);
 }
 
-/// Small instance: `scaling::a_value_14000_deep_is_allocated_and_freed_on_a_2_mib_stack`.
+/// Small instance: `scaling::a_nested_value_is_allocated_and_freed_a_cell_a_level`.
 #[test]
 fn allocating_and_freeing_a_deep_value_is_linear_in_its_depth() {
     let n = 300_000;
@@ -171,8 +171,7 @@ fn allocating_and_freeing_a_deep_value_is_linear_in_its_depth() {
     runs_in_linear_time("allocating and freeing a value n deep", n, &pair);
 }
 
-/// Small instance: `scaling::closures_capturing_closures_1250_deep_are_called_and_dropped_on_
-/// a_2_mib_stack`.
+/// Small instance: `scaling::closures_capturing_closures_are_called_and_dropped`.
 #[test]
 fn planning_a_closure_chain_is_linear_in_its_depth() {
     let n = 12_000;
@@ -184,11 +183,71 @@ fn planning_a_closure_chain_is_linear_in_its_depth() {
     });
 }
 
-/// Small instance: `scaling::closures_capturing_closures_1250_deep_are_called_and_dropped_on_
-/// a_2_mib_stack`.
+/// Small instance: `scaling::closures_capturing_closures_are_called_and_dropped`.
 #[test]
 fn calling_and_dropping_a_closure_chain_is_linear_in_its_depth() {
     let n = 10_000;
     let pair = planned_pair(n, |d| lower(&scaling::closure_chain(d)).unwrap());
     runs_in_linear_time("calling and dropping a closure chain n deep", n, &pair);
+}
+
+// The deep shapes of `scaling.rs` at depths about 20% past the ones at which the recursive
+// planner and machine before T2-mid (578fbe70e) overflowed a 2 MiB stack in the dev profile,
+// measured 2026-11-14: a nest of ifs, a push under ifs and a closure chain at 1,046 (1,031
+// ran), a value at 11,875 (11,750 ran). Each is lowered on the test's stack and planned and run
+// on a 2 MiB thread.
+
+/// Small instance: `scaling::a_nest_of_ifs_is_planned_and_run_to_the_kernels_value`.
+#[test]
+fn a_nest_of_ifs_1250_deep_is_planned_and_run_on_a_2_mib_stack() {
+    use zed_tests::step_helpers::l01_33_lowering::nest;
+    let t = nest(1_250);
+    let want = Evaluator::new(World::new()).run(&t).unwrap();
+    let g = lower(&t).unwrap();
+    let v = on_small_stack(|| {
+        let p = memory::plan(&g, true);
+        memory::run(&g, &p, &mut Evaluator::new(World::new()))
+            .unwrap()
+            .0
+    });
+    assert_eq!(v, want);
+}
+
+/// Small instance: `scaling::a_push_under_nested_ifs_is_planned_and_run_once`.
+#[test]
+fn a_push_1250_regions_deep_is_planned_and_run_on_a_2_mib_stack() {
+    use zed_tests::step_helpers::l01_33_lowering::push_under_ifs;
+    let g = lower(&push_under_ifs(1_250)).unwrap();
+    on_small_stack(|| {
+        let p = memory::plan(&g, true);
+        let mut ev = Evaluator::new(World::new().output("stdout"));
+        memory::run(&g, &p, &mut ev).unwrap();
+        assert_eq!(ev.world.log("stdout").len(), 1);
+    });
+}
+
+/// Small instance: `scaling::a_nested_value_is_allocated_and_freed_a_cell_a_level`.
+#[test]
+fn a_value_14000_deep_is_allocated_and_freed_on_a_2_mib_stack() {
+    let g = lower(&scaling::wrap_deep(14_000)).unwrap();
+    let s = on_small_stack(|| {
+        let p = memory::plan(&g, true);
+        memory::run(&g, &p, &mut Evaluator::new(World::new()))
+            .unwrap()
+            .1
+    });
+    assert_eq!((s.allocations, s.frees), (14_000, 14_000), "{s:?}");
+}
+
+/// Small instance: `scaling::closures_capturing_closures_are_called_and_dropped`.
+#[test]
+fn closures_capturing_closures_1250_deep_are_called_and_dropped_on_a_2_mib_stack() {
+    let g = lower(&scaling::closure_chain(1_250)).unwrap();
+    let v = on_small_stack(|| {
+        let p = memory::plan(&g, true);
+        memory::run(&g, &p, &mut Evaluator::new(World::new()))
+            .unwrap()
+            .0
+    });
+    assert_eq!(v, zed_kernel::value::Value::from(7i64));
 }

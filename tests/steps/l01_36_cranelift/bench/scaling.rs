@@ -10,12 +10,13 @@ use std::sync::Mutex;
 use zed_kernel::{Evaluator, Term, World};
 use zed_rt::Paths;
 use zed_tests::scaling;
+use zedc::zir::memory;
 
 use crate::planned;
 use crate::scaling::{
     both, cases, consts, counted_in, curried, dups, fields, invoice, lambdas, list,
-    matched_invoice, nest, on_big_stack, paired, ports, rate_table, read_to_the_end, strings,
-    tiers, unused, world,
+    matched_invoice, nest, paired, ports, rate_table, read_to_the_end, strings, tiers, unused,
+    world,
 };
 
 /// `make(n)` and `make(8n)` run by the counting machine and natively in `w`, on a thread with a
@@ -255,4 +256,107 @@ fn many_matches_with_an_unused_binder_scale() {
         unused,
         |n| strings(64 * n),
     );
+}
+
+/// Runs `f` with a stack that holds the recursive passes of a term thousands deep: lowering,
+/// planning and the drop of a graph.
+fn on_big_stack(f: impl FnOnce() + Send) {
+    on_stack(1 << 30, f)
+}
+
+/// Runs `f` on a thread with a stack of `bytes`.
+fn on_stack(bytes: usize, f: impl FnOnce() + Send) {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(bytes)
+            .spawn_scoped(s, f)
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
+
+/// The depth of the terms below: above the depths at which the recursive code generator
+/// (before commit d5e160e51) overflowed a thread of 128 KiB, measured by bisection on each
+/// term: 107 for the rate table and the decoder, 106 for the nested `if`s.
+const DEEP: usize = 200;
+
+/// A rate table [`DEEP`] tiers long, read in the middle, and the tier it gives.
+fn deep_rate_table() -> (Term, String) {
+    let at = DEEP as i64 / 2;
+    (tiers(DEEP, at), format!(r#""t{}""#, DEEP / 2 + 1))
+}
+
+/// A decoder of [`DEEP`] cases, given the last, and the case it gives.
+fn deep_decoder() -> (Term, String) {
+    (cases(DEEP, DEEP as i64 - 1), format!(r#""c{}""#, DEEP - 1))
+}
+
+/// [`DEEP`] `if`s nested through the first arm, and the value they give.
+fn deep_ifs() -> (Term, String) {
+    (nest(DEEP), DEEP.to_string())
+}
+
+/// Code generation keeps the regions in progress on its own stacks: `t` compiles to an object
+/// file on a stack of 128 KiB. This and [`runs_as_the_machine_does`] are separate tests, each
+/// compiling the term once, so that each stays well under 60 s under load.
+fn compiles_on_a_small_stack(t: Term) {
+    on_big_stack(|| {
+        let (g, p) = planned(&t);
+        on_stack(1 << 17, || {
+            assert!(!zed_native::object(&g, &p).unwrap().is_empty());
+        });
+    });
+}
+
+/// `t` run natively gives `want`, the machine's value, with the machine's count of releases.
+/// The code runs on a larger stack than [`compiles_on_a_small_stack`]'s, since one function's
+/// frame holds a slot for each of its words.
+fn runs_as_the_machine_does((t, want): (Term, String)) {
+    on_big_stack(|| {
+        let (g, p) = planned(&t);
+        let (v, s) = memory::run(g.graph(), &p, &mut Evaluator::new(World::new())).unwrap();
+        assert_eq!(v.to_string(), want);
+        on_stack(1 << 24, || {
+            let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
+            assert_eq!(o.value, v);
+            assert_eq!(o.stats.decrements, s.decrements);
+        });
+    });
+}
+
+/// Small instance: `scaling::each_deep_shape_compiles_to_an_object_file`.
+#[test]
+fn a_rate_table_hundreds_deep_compiles_on_a_small_stack() {
+    compiles_on_a_small_stack(deep_rate_table().0);
+}
+
+/// Small instance: `scaling::a_rate_table_gives_each_tier`.
+#[test]
+fn a_rate_table_hundreds_deep_runs_as_the_machine_does() {
+    runs_as_the_machine_does(deep_rate_table());
+}
+
+/// Small instance: `scaling::each_deep_shape_compiles_to_an_object_file`.
+#[test]
+fn a_decoder_hundreds_deep_compiles_on_a_small_stack() {
+    compiles_on_a_small_stack(deep_decoder().0);
+}
+
+/// Small instance: `scaling::a_decoder_gives_each_case`.
+#[test]
+fn a_decoder_hundreds_deep_runs_as_the_machine_does() {
+    runs_as_the_machine_does(deep_decoder());
+}
+
+/// Small instance: `scaling::each_deep_shape_compiles_to_an_object_file`.
+#[test]
+fn ifs_hundreds_deep_compile_on_a_small_stack() {
+    compiles_on_a_small_stack(deep_ifs().0);
+}
+
+/// Small instance: `scaling::a_node_after_an_arm_sees_the_arm_result`.
+#[test]
+fn ifs_hundreds_deep_run_as_the_machine_does() {
+    runs_as_the_machine_does(deep_ifs());
 }

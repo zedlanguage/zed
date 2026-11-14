@@ -3,8 +3,9 @@
 //! many constants, many lambdas and one value used many times each run in time near linear in
 //! their number (COMPLEXITY.md Z14); so do the runtime heap's match of a deep constant, many
 //! matches of one, and the value of cells that share their parts (COMPLEXITY.md R3). The
-//! measurements at two sizes are in `bench/scaling.rs`; the tests here are their small instances
-//! and the deep programs on a small stack.
+//! measurements at two sizes, and the programs hundreds deep compiled on a small stack, are in
+//! `bench/scaling.rs` (author P178: a test that needs an unusual size is a benchmark); the tests
+//! here are their small instances.
 
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
@@ -184,12 +185,6 @@ pub(crate) fn curried(d: usize) -> Term {
     (0..d).fold(f, |f, i| app(f, vec![lit(i as i64 + 1)]))
 }
 
-/// Runs `f` with a stack that holds the recursive passes of a term thousands deep: lowering,
-/// planning and the drop of a graph.
-pub(crate) fn on_big_stack(f: impl FnOnce() + Send) {
-    on_stack(1 << 30, f)
-}
-
 #[test]
 fn a_rate_table_gives_each_tier() {
     assert_eq!(counted(&tiers(3, -1)), r#""t0""#);
@@ -260,97 +255,6 @@ fn a_condition_that_is_a_cell_fails_as_the_machine_fails() {
             (a, b) => panic!("the machine gave {a:?}, the native run {b:?}"),
         }
     }
-}
-
-/// Runs `f` on a thread with a stack of `bytes`.
-fn on_stack(bytes: usize, f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(bytes)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
-}
-
-/// The depth of the terms below: above the depths at which the recursive code generator
-/// (before commit d5e160e51) overflowed a thread of 128 KiB, measured by bisection on each
-/// term: 107 for the rate table and the decoder, 106 for the nested `if`s.
-const DEEP: usize = 200;
-
-/// A rate table [`DEEP`] tiers long, read in the middle, and the tier it gives.
-fn deep_rate_table() -> (Term, String) {
-    let at = DEEP as i64 / 2;
-    (tiers(DEEP, at), format!(r#""t{}""#, DEEP / 2 + 1))
-}
-
-/// A decoder of [`DEEP`] cases, given the last, and the case it gives.
-fn deep_decoder() -> (Term, String) {
-    (cases(DEEP, DEEP as i64 - 1), format!(r#""c{}""#, DEEP - 1))
-}
-
-/// [`DEEP`] `if`s nested through the first arm, and the value they give.
-fn deep_ifs() -> (Term, String) {
-    (nest(DEEP), DEEP.to_string())
-}
-
-/// Code generation keeps the regions in progress on its own stacks: `t` compiles to an object
-/// file on a stack of 128 KiB. This and [`runs_as_the_machine_does`] are separate tests, each
-/// compiling the term once, so that each stays well under 60 s under load.
-fn compiles_on_a_small_stack(t: Term) {
-    on_big_stack(|| {
-        let (g, p) = planned(&t);
-        on_stack(1 << 17, || {
-            assert!(!zed_native::object(&g, &p).unwrap().is_empty());
-        });
-    });
-}
-
-/// `t` run natively gives `want`, the machine's value, with the machine's count of releases.
-/// The code runs on a larger stack than [`compiles_on_a_small_stack`]'s, since one function's
-/// frame holds a slot for each of its words.
-fn runs_as_the_machine_does((t, want): (Term, String)) {
-    on_big_stack(|| {
-        let (g, p) = planned(&t);
-        let (v, s) = memory::run(g.graph(), &p, &mut Evaluator::new(World::new())).unwrap();
-        assert_eq!(v.to_string(), want);
-        on_stack(1 << 24, || {
-            let o = zed_native::run(&g, &p, &mut Evaluator::new(World::new())).unwrap();
-            assert_eq!(o.value, v);
-            assert_eq!(o.stats.decrements, s.decrements);
-        });
-    });
-}
-
-#[test]
-fn a_rate_table_hundreds_deep_compiles_on_a_small_stack() {
-    compiles_on_a_small_stack(deep_rate_table().0);
-}
-
-#[test]
-fn a_rate_table_hundreds_deep_runs_as_the_machine_does() {
-    runs_as_the_machine_does(deep_rate_table());
-}
-
-#[test]
-fn a_decoder_hundreds_deep_compiles_on_a_small_stack() {
-    compiles_on_a_small_stack(deep_decoder().0);
-}
-
-#[test]
-fn a_decoder_hundreds_deep_runs_as_the_machine_does() {
-    runs_as_the_machine_does(deep_decoder());
-}
-
-#[test]
-fn ifs_hundreds_deep_compile_on_a_small_stack() {
-    compiles_on_a_small_stack(deep_ifs().0);
-}
-
-#[test]
-fn ifs_hundreds_deep_run_as_the_machine_does() {
-    runs_as_the_machine_does(deep_ifs());
 }
 
 /// Paths are worked out for a message only, and the message is the one a path string gives.
