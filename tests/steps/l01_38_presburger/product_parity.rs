@@ -234,16 +234,41 @@ fn point_in_window(f: &Formula, w: i64) -> Option<Model> {
     }
 }
 
-/// Every point `satisfiable` returns on 3000 random formulas of [`case`]'s shape holds there,
-/// read as the solver reads it; it returns one exactly when `decide` answers `true`; and where
-/// it returns none and the formula has at most five atoms, no point lies in `-3..=3`.
+/// Every point `satisfiable` returns on 300 random formulas of [`case`]'s shape, of a new seed
+/// each run, holds there, as [`points_returned_hold`] checks. The 3000 formulas of seed
+/// 0x5eed0f9a417e5 are in `bench::product_parity` (5.9 s at load 25); there 1 in 20 at most is
+/// refused, and here at most 1 in 10.
 #[test]
 fn every_point_returned_holds_with_products_parity_rows_and_disjunctions() {
-    let mut rng = Rng::new(0x0005_eed0_f9a4_17e5);
+    let (mut rng, _) = Rng::fresh("products, parity rows and disjunctions");
+    let t = points_returned_hold(&mut rng, 300);
+    // Both answers occur often enough to be tested, and few questions are refused.
+    assert!(t.points >= 50 && t.empty >= 50, "{t:?}");
+    assert!(t.searched >= 10, "{t:?}");
+    assert!(t.refused * 10 <= 300, "{t:?}");
+    assert!(t.shapes.len() >= 3, "{t:?}");
+}
+
+/// What [`points_returned_hold`] counted.
+#[derive(Debug)]
+pub(super) struct PointCounts {
+    pub(super) points: usize,
+    pub(super) empty: usize,
+    pub(super) refused: usize,
+    pub(super) searched: usize,
+    /// The numbers of atoms of the formulas with a point.
+    pub(super) shapes: BTreeSet<usize>,
+}
+
+/// Every point `satisfiable` returns on `count` random formulas of [`case`]'s shape drawn from
+/// `rng` holds there, read as the solver reads it; it returns one exactly when `decide`
+/// answers `true`; and where it returns none and the formula has at most five atoms, no point
+/// lies in `-3..=3`.
+pub(super) fn points_returned_hold(rng: &mut Rng, count: usize) -> PointCounts {
     let (mut points, mut empty, mut refused, mut searched) = (0, 0, 0, 0);
     let mut shapes = BTreeSet::new();
-    for _ in 0..3000 {
-        let f = case(&mut rng);
+    for _ in 0..count {
+        let f = case(rng);
         let (Ok(m), Ok(d)) = (satisfiable(&f), decide(&f)) else {
             refused += 1;
             continue;
@@ -266,12 +291,11 @@ fn every_point_returned_holds_with_products_parity_rows_and_disjunctions() {
         }
     }
     eprintln!("points {points}, empty {empty} ({searched} searched), refused {refused}");
-    // Both answers occur often enough to be tested, and few questions are refused.
-    assert!(
-        points >= 500 && empty >= 500,
-        "points {points}, empty {empty}"
-    );
-    assert!(searched >= 100, "searched {searched}");
-    assert!(refused * 20 <= 3000, "refused {refused}");
-    assert!(shapes.len() >= 3, "atoms per formula {shapes:?}");
+    PointCounts {
+        points,
+        empty,
+        refused,
+        searched,
+        shapes,
+    }
 }
