@@ -2204,7 +2204,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CONST-too-large-kept-powers | impl attempt 1 | 2026-11-13 21:17 | reproduced on origin/main d353a0b07: 3^(2^70), 3r^(2^70), 2r^(2^70) compile (rc 0, widening warning only); control b^(2^64) rejected; load 23.03 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
-| LIT-rat-int-op-exponent | running | 2026-11-13 23:21 |  |
+| LIT-generic-class-follows | running | 2026-11-13 23:24 |  |
+| LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
 | PERF-s22-sliced-regress | impl attempt 1 | 2026-11-13 23:11 | started; worktree from origin/main 879451b9f; load 59.68 55.35 49.96 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
@@ -2212,7 +2213,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
-| XR-hub-moved-relation | running | 2026-11-13 20:48 | done; HUB-moved-relation merged e802f7960 (8.2x instructions, 8.1x bytes at 8n, was 60.7x); l01_39_reduced_product+zedc_preimage 320/320 on 2d4e5a62a; report wt |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
