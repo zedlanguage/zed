@@ -234,13 +234,13 @@ pub(super) enum Written {
 /// disjunctions, end at most at `8n`.
 const JOINT_MIDDLE_64: (i64, i64) = (32 + 6 * 8, 8 * 64 - (31 + 6 * 8));
 
-pub(super) fn joint_chain_scales(written: Written) {
-    let inputs = scaling::inputs(128, |m| joint_chain(m, written));
+pub(super) fn joint_chain_scales(written: Written, n: usize) {
+    let inputs = scaling::inputs(n, |m| joint_chain(m, written));
     scaling::check_order(
         &format!(
             "a chain whose disjunctions jointly leave one step, written {written:?}, projected"
         ),
-        128,
+        n,
         1,
         |m| {
             let r = project_each(&inputs[&m], &middle(m)).expect("a projection");

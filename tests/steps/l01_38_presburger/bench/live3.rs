@@ -11,8 +11,8 @@ use zedc::store::presburger::satisfiable;
 fn many_rows_scale_linearly() {
     // Coefficients up to 50; the work is O(m log m), from `twovar::point` on each plane.
     let fifty = |rng: &mut Rng| int(rng.int(-50, 50));
-    let (small, large) = (thin(256, 7, fifty), thin(256 * scaling::FACTOR, 7, fifty));
-    scales("rows over three variables", 256, 1, &small, &large);
+    let (small, large) = (thin(410, 7, fifty), thin(410 * scaling::FACTOR, 7, fifty));
+    scales("rows over three variables", 410, 1, &small, &large);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn a_lens_of_tangent_planes_away_from_the_origin_scales() {
     assert!(f.holds(&m), "{m:?}");
     decides(
         "a lens of tangent planes away from the origin",
-        128,
+        380,
         Ok(true),
         |n| formula(&tangents(n, 5_000)),
     );
@@ -89,14 +89,14 @@ fn a_lens_of_tangent_planes_scales_in_point() {
     // 13.0 s and 7.3 s; 41.6 times the bytes from 128 to 1,024). The work of each linear
     // program was linear there: 35k to 345k pieces visited by `solve1` from 128 to 1,024.
     let (small, large) = (
-        lens_in_a_thin_slab(64),
-        lens_in_a_thin_slab(64 * scaling::FACTOR),
+        lens_in_a_thin_slab(70),
+        lens_in_a_thin_slab(70 * scaling::FACTOR),
     );
     scaling::check(
         "a lens of tangent planes in a thin slab, in `point`",
-        64,
+        70,
         |m| {
-            let rows = if m == 64 { &small } else { &large };
+            let rows = if m == 70 { &small } else { &large };
             std::hint::black_box(point(rows));
         },
     );

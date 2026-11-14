@@ -6,7 +6,7 @@ use zed_tests::scaling;
 
 #[test]
 fn refinement_scales() {
-    let n = 2_000;
+    let n = 7_200;
     let chains = (pipeline(n), pipeline(scaling::FACTOR * n));
     scaling::check("colors of a pipeline", n, |m| {
         drop(colors(if m == n { &chains.0 } else { &chains.1 }));

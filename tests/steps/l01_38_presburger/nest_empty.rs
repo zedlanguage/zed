@@ -245,8 +245,8 @@ fn the_answers_are_those_of_the_formulas_written_out() {
 }
 
 /// The least instructions of three runs of `decide` on each family member at depths 32 to 512,
-/// printed with the exponent of each step; then [`scaling::check_order`] at 64 and 512.
-pub(super) fn costs(what: &str, family: fn(usize) -> Formula) {
+/// printed with the exponent of each step; then [`scaling::check_order`] at `n` and `8n`.
+pub(super) fn costs(what: &str, n: usize, family: fn(usize) -> Formula) {
     let mut meter = Meter::new();
     let sizes = [32, 64, 128, 256, 512];
     let built: Vec<Formula> = sizes.iter().map(|&k| family(k)).collect();
@@ -267,11 +267,11 @@ pub(super) fn costs(what: &str, family: fn(usize) -> Formula) {
             meter.unit()
         );
     }
-    let built = scaling::inputs(64, family);
-    scaling::check_order(&format!("{what}, decided"), 64, 1, |n| {
+    let built = scaling::inputs(n, family);
+    scaling::check_order(&format!("{what}, decided"), n, 1, |n| {
         std::hint::black_box(decide(&built[&n]).is_ok());
     });
-    scaling::check_order(&format!("{what}, its point sought"), 64, 1, |n| {
+    scaling::check_order(&format!("{what}, its point sought"), n, 1, |n| {
         std::hint::black_box(satisfiable(&built[&n]).is_ok());
     });
 }

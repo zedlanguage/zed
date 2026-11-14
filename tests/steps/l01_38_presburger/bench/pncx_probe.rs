@@ -9,8 +9,8 @@ use zedc::store::presburger::extend::Extending;
 #[test]
 fn pncx_distinct_moduli_scale() {
     use zedc::store::presburger::satisfiable;
-    let inputs = zed_tests::scaling::inputs(32, |n| pncx_formula("moduli", n));
-    zed_tests::scaling::check_order("one-variable distinct moduli", 32, 1, |n| {
+    let inputs = zed_tests::scaling::inputs(4800, |n| pncx_formula("moduli", n));
+    zed_tests::scaling::check_order("one-variable distinct moduli", 4800, 1, |n| {
         let ans = satisfiable(&inputs[&n]);
         assert!(ans.is_ok());
         let _ = std::hint::black_box(ans);
@@ -30,7 +30,7 @@ fn pncx_easy_pairs_scale() {
 
 #[test]
 fn pncx_sat_crt_construction_scale() {
-    let inputs = zed_tests::scaling::inputs(8, |n| {
+    let inputs = zed_tests::scaling::inputs(3200, |n| {
         let mut ps = Vec::new();
         let mut p = 2i64;
         while ps.len() < n {
@@ -42,7 +42,7 @@ fn pncx_sat_crt_construction_scale() {
         let cl = [(n - 3, true), (n - 2, false), (n - 1, true)];
         (ps, cl)
     });
-    zed_tests::scaling::check_order("construct SAT image residues by CRT", 8, 1, |n| {
+    zed_tests::scaling::check_order("construct SAT image residues by CRT", 3200, 1, |n| {
         let (ps, cl) = &inputs[&n];
         let residues: Vec<_> = (0..n).map(|_| pncx_sat_residue(ps, cl)).collect();
         std::hint::black_box(residues);
@@ -92,18 +92,18 @@ fn pncx_fibonacci_crt_scale() {
 
 #[test]
 fn pncx_disj_scale() {
-    pncx_front_scale("disj");
+    pncx_front_scale("disj", 1200);
 }
 
 #[test]
 fn pncx_pairs_scale() {
-    pncx_front_scale("pairs");
+    pncx_front_scale("pairs", 512);
 }
 
 #[test]
 fn pncx_wide_divisor_translation_scale() {
     use zedc::store::int::Int;
-    let inputs = zed_tests::scaling::inputs(128, |n| {
+    let inputs = zed_tests::scaling::inputs(42000, |n| {
         let mut m = Int::ONE;
         for _ in 0..n {
             m = &m + &m;
@@ -113,7 +113,7 @@ fn pncx_wide_divisor_translation_scale() {
         let scope = lets(&unit);
         (unit, scope)
     });
-    zed_tests::scaling::check_order("translate written wide divisors", 128, 1, |n| {
+    zed_tests::scaling::check_order("translate written wide divisors", 42000, 1, |n| {
         let (unit, scope) = &inputs[&n];
         let mut scoped = Scoped::new(scope);
         let Term::Lam(ps, body) = &*unit.defs[0].term else {

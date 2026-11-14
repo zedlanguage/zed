@@ -11,7 +11,7 @@ fn a_chain_of_definitions_at_a_point_costs_its_size() {
     // inputs are fixed by equations, by two rows whose bounds meet, or by two rows that leave
     // two values each, tried at their lower bounds.
     for inputs in [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged] {
-        let built = scaling::inputs(64, |n| defs(n as u32, inputs));
+        let built = scaling::inputs(5000, |n| defs(n as u32, inputs));
         for f in built.values() {
             let m = satisfiable(f).expect("answered").expect("a point");
             assert_eq!(m[&Atom::Sym(Arc::from("x"))], 6.into(), "{f}");
@@ -21,7 +21,7 @@ fn a_chain_of_definitions_at_a_point_costs_its_size() {
         }
         scaling::check_order(
             &format!("a chain of definitions at a point ({inputs:?}), its point found"),
-            64,
+            5000,
             1,
             |n| {
                 std::hint::black_box(satisfiable(&built[&n]).is_ok());
@@ -29,7 +29,7 @@ fn a_chain_of_definitions_at_a_point_costs_its_size() {
         );
         scaling::check_order(
             &format!("a chain of definitions at a point ({inputs:?}), decided"),
-            64,
+            5000,
             1,
             |n| {
                 std::hint::black_box(decide(&built[&n]).is_ok());
@@ -70,17 +70,17 @@ fn a_ladder_of_bounds_costs_its_size() {
     // Each round sets the rung bounded by the round before at its upper bound and continues
     // the same propagation from it, O(1) each, so the `n` rounds cost O(n) in all, not one
     // pass over the formula per round.
-    let built = scaling::inputs(64, |n| ladder(n as u32));
+    let built = scaling::inputs(19000, |n| ladder(n as u32));
     for f in built.values() {
         let m = satisfiable(f).expect("answered").expect("a point");
         assert!(f.holds(&m), "{m:?} is no point of {f}");
         assert_eq!(m[&Atom::Sym(Arc::from("x1"))], 6.into(), "{f}");
         assert_eq!(decide(f), Ok(true), "{f}");
     }
-    scaling::check("a ladder of bounds, its point found", 64, |n| {
+    scaling::check("a ladder of bounds, its point found", 19000, |n| {
         std::hint::black_box(satisfiable(&built[&n]).is_ok());
     });
-    scaling::check("a ladder of bounds, decided", 64, |n| {
+    scaling::check("a ladder of bounds, decided", 19000, |n| {
         std::hint::black_box(decide(&built[&n]).is_ok());
     });
 }

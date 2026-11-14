@@ -465,24 +465,26 @@ fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
     count
 }
 
-/// Decides `count` systems from `make` over `n` variables in the box `[-half, half]^n`, then each
-/// again under every naming of its variables: `n` random names given to the variables in each
-/// of the `n!` orders, so that the names sort in every order, with the rows and bounds shuffled
-/// anew each time; when `n! < 4` the orders are run again, so each system is shuffled at least
-/// four times. Fails at the first answer that changes. Returns the refusals, which are
-/// among the answers compared.
+/// Decides `count` systems from `make`, drawn from `rng`, over `n` variables in the box
+/// `[-half, half]^n`; when `compare`, decides each again under every naming of its variables:
+/// `n` random names given to the variables in each of the `n!` orders, so that the names sort
+/// in every order, with the rows and bounds shuffled anew each time; when `n! < 4` the orders
+/// are run again, so each system is shuffled at least four times. Fails at the first answer
+/// that changes. Returns the refusals, which are among the answers compared. Without
+/// `compare` the names and orders are drawn all the same, so that a seed gives the same
+/// systems either way.
 fn reorderings(
-    seed: u64,
+    rng: &mut Rng,
     count: usize,
     n: usize,
     half: i64,
+    compare: bool,
     make: impl Fn(&mut Rng) -> Vec<Row>,
 ) -> usize {
-    let mut rng = Rng::new(seed);
     let plain: Vec<Arc<str>> = (0..n).map(|i| Arc::from(format!("v{i}"))).collect();
     let mut refused = 0;
     for _ in 0..count {
-        let rows = make(&mut rng);
+        let rows = make(rng);
         let all = rows.len() + 2 * n;
         let f = named(&rows, half, &plain, &(0..all).collect::<Vec<_>>());
         let a = decide(&f);
@@ -499,13 +501,15 @@ fn reorderings(
         let all_namings = (1..=n).product::<usize>();
         for _ in 0..4usize.div_ceil(all_namings) {
             let namings = each_permutation(n, |perm| {
-                let names: Vec<Arc<str>> = perm.iter().map(|&p| drawn[p].clone()).collect();
                 let mut order: Vec<usize> = (0..all).collect();
                 for i in (1..all).rev() {
                     order.swap(i, rng.below(i + 1));
                 }
-                let g = named(&rows, half, &names, &order);
-                assert_eq!(a, decide(&g), "{f}\nrenamed and reordered: {g}");
+                if compare {
+                    let names: Vec<Arc<str>> = perm.iter().map(|&p| drawn[p].clone()).collect();
+                    let g = named(&rows, half, &names, &order);
+                    assert_eq!(a, decide(&g), "{f}\nrenamed and reordered: {g}");
+                }
             });
             assert_eq!(namings, all_namings);
         }
@@ -513,53 +517,105 @@ fn reorderings(
     refused
 }
 
-// 198,000 renamed and reordered systems in all: 72,000 and 96,000 in the two four-variable
-// families, 18,000 over three variables and 12,000 over two (each of the two namings twice).
-// The four-variable families check that the five points of the box stage, which are computed
-// on the rows left after the eliminations, give no answer that depends on the names (XT3
-// report, part E).
+/// [`reorderings`] of `count` systems drawn with a new seed each run (author P169: random
+/// tests run few cases, with a new seed each run).
+fn fresh_reorderings(
+    what: &str,
+    count: usize,
+    n: usize,
+    half: i64,
+    make: impl Fn(&mut Rng) -> Vec<Row>,
+) -> usize {
+    let (mut rng, _) = Rng::fresh(what);
+    reorderings(&mut rng, count, n, half, true, make)
+}
+
+/// The refusals among the first `count` systems of [`reorderings`] at `seed`, each decided
+/// once.
+fn refusals_at(
+    seed: u64,
+    count: usize,
+    n: usize,
+    half: i64,
+    make: impl Fn(&mut Rng) -> Vec<Row>,
+) -> usize {
+    reorderings(&mut Rng::new(seed), count, n, half, false, make)
+}
+
+// 198,000 renamed and reordered systems ran in all at fixed seeds, 46 s: 72,000 and 96,000 in
+// the two four-variable families, 18,000 over three variables and 12,000 over two (each of the
+// two namings twice). Now each test draws a few systems with a new seed each run, and the
+// refusals among the systems at the old seeds, each decided once, are counted apart. The
+// four-variable families check that the five points of the box stage, which are computed on
+// the rows left after the eliminations, give no answer that depends on the names (XT3 report,
+// part E).
+
+fn small_coefficients(rng: &mut Rng) -> Vec<Row> {
+    let rows = 2 + rng.below(4);
+    small(rng, 4, rows, 7, 20)
+}
 
 #[test]
 fn small_coefficients_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_40, 3000, 4, 4, |rng| {
-        let rows = 2 + rng.below(4);
-        small(rng, 4, rows, 7, 20)
-    });
+    fresh_reorderings("small coefficients", 60, 4, 4, small_coefficients);
+}
+
+#[test]
+fn small_coefficients_over_four_variables_are_refused_839_times_in_3000() {
     // The refusals, measured with the row test of the box stage (Q1-ROWBOX) and `live3`: 896;
     // 839 since Q1-LOCAL, whose exact eliminations counted by the rows they write
     // (`System::shrink`) decide 57 more.
-    assert_eq!(refused, 839);
+    assert_eq!(refusals_at(0x38_40, 3000, 4, 4, small_coefficients), 839);
 }
 
 #[test]
 fn rows_of_three_terms_answer_the_same_under_any_names_and_order() {
+    fresh_reorderings("rows of three terms", 60, 4, 3, |rng| {
+        corner_rows(rng, 4, 3)
+    });
+}
+
+#[test]
+fn rows_of_three_terms_over_four_variables_are_refused_13_times_in_4000() {
     // 4000 systems, not 3000: since the row test of the box stage (Q1-ROWBOX), 3000 of them
     // gave 17 refusals and 4000 gave 25. `live3` decides the parts left with three variables,
     // which left 13 of 3000 refused without the row test (more than 20 before it). With both,
-    // 15 of the 4000 are refused, and each of them is compared under every naming and order.
+    // 15 of the 4000 are refused, and each of them was compared under every naming and order.
     // 14 since NAME-ties, whose eliminations go by color a batch at a time, which decides one more.
     // 13 since Q1-LOCAL, whose exact eliminations counted by the rows they write
     // (`System::shrink`) decide one more.
-    let refused = reorderings(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3));
-    assert_eq!(refused, 13);
+    assert_eq!(
+        refusals_at(0x38_41, 4000, 4, 3, |rng| corner_rows(rng, 4, 3)),
+        13
+    );
+}
+
+fn three_variables(rng: &mut Rng) -> Vec<Row> {
+    let rows = 2 + rng.below(4);
+    small(rng, 3, rows, 9, 30)
 }
 
 #[test]
 fn rows_over_three_variables_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_42, 3000, 3, 3, |rng| {
-        let rows = 2 + rng.below(4);
-        small(rng, 3, rows, 9, 30)
-    });
-    assert_eq!(refused, 0);
+    assert_eq!(
+        fresh_reorderings("rows over three variables", 200, 3, 3, three_variables),
+        0
+    );
+    assert_eq!(refusals_at(0x38_42, 3000, 3, 3, three_variables), 0);
+}
+
+fn large_coefficients(rng: &mut Rng) -> Vec<Row> {
+    let rows = 2 + rng.below(4);
+    small(rng, 2, rows, 60, 400)
 }
 
 #[test]
 fn large_coefficients_answer_the_same_under_any_names_and_order() {
-    let refused = reorderings(0x38_43, 3000, 2, 40, |rng| {
-        let rows = 2 + rng.below(4);
-        small(rng, 2, rows, 60, 400)
-    });
-    assert_eq!(refused, 0);
+    assert_eq!(
+        fresh_reorderings("large coefficients", 300, 2, 40, large_coefficients),
+        0
+    );
+    assert_eq!(refusals_at(0x38_43, 3000, 2, 40, large_coefficients), 0);
 }
 
 /// Sixteen rows `a·v - 1 >= 0` over eight variables, each with two coefficients 6 and one -5:
@@ -595,18 +651,23 @@ fn regular() -> Vec<Row> {
 
 #[test]
 fn a_regular_system_is_decided_under_every_naming() {
-    // All 8! namings of the variables, in the box [-1, 1]^8. Before design R the answer
-    // changed with the names (cross-review xt, round 2); with only the point nearest zero
-    // every naming was refused with Growth. The upper corner of the box, (1, ..., 1), holds
-    // every row, and every naming finds it.
+    // 1,000 of the 8! namings of the variables, drawn with a new seed each run (author P169;
+    // all 40,320 took 13 s), in the box [-1, 1]^8. Before design R the answer changed with the
+    // names (cross-review xt, round 2); with only the point nearest zero every naming was
+    // refused with Growth. The upper corner of the box, (1, ..., 1), holds every row, and every
+    // naming finds it.
     let rows = regular();
     let all: Vec<usize> = (0..rows.len() + 16).collect();
-    let count = each_permutation(8, |perm| {
+    let (mut rng, seed) = Rng::fresh("namings of the regular system");
+    for _ in 0..1000 {
+        let mut perm: Vec<usize> = (0..8).collect();
+        for i in (1..8).rev() {
+            perm.swap(i, rng.below(i + 1));
+        }
         let names: Vec<Arc<str>> = perm.iter().map(|p| Arc::from(format!("v{p}"))).collect();
         let f = named(&rows, 1, &names, &all);
-        assert_eq!(decide(&f), Ok(true), "{f}");
-    });
-    assert_eq!(count, 40_320);
+        assert_eq!(decide(&f), Ok(true), "seed {seed}: {f}");
+    }
 }
 
 /// The points of the box `[-1, 1]^8` that meet every row.

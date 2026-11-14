@@ -10,8 +10,8 @@ use zedc::store::presburger::decide;
 #[test]
 fn guarded_chains_with_no_point_scale() {
     assert!(!reaches_zero(80, false), "80 levels have no point");
-    let fs = scaling::inputs(10, |n| chain(n, false));
-    scaling::check_order("decision of a guarded chain with no point", 10, 1, |n| {
+    let fs = scaling::inputs(770, |n| chain(n, false));
+    scaling::check_order("decision of a guarded chain with no point", 770, 1, |n| {
         assert_eq!(
             decide(&fs[&n]).expect("decided"),
             reaches_zero(n, false),
@@ -30,13 +30,13 @@ fn guarded_chains_with_no_point_scale() {
 fn wide_nested_and_joined_guards_with_no_point_scale() {
     for name in ["wide", "nest", "or", "and"] {
         let guard = family(name);
-        let fs = scaling::inputs(12, |n| {
+        let fs = scaling::inputs(190, |n| {
             let r = family_range(name, n);
             let target = missed(&guarded_run(n, r, guard));
             guarded(n, r, guard, target)
         });
         let what = format!("decision of a {name} chain with no point");
-        scaling::check_order(&what, 12, 1, |n| {
+        scaling::check_order(&what, 190, 1, |n| {
             assert!(!decide(&fs[&n]).expect("decided"), "{name} {n}");
         });
     }

@@ -28,7 +28,7 @@ fn a_chain_of_many_failure_atoms_scales() {
     on_large_stack(|| {
         scaling::check(
             "a chain of n failure atoms, checked twice",
-            1000,
+            1250,
             checks_the_chain_twice,
         )
     })
@@ -38,11 +38,11 @@ fn a_chain_of_many_failure_atoms_scales() {
 #[test]
 fn checking_many_discards_scales() {
     for (what, tail, per) in DISCARDS {
-        let units: BTreeMap<usize, Ready> = [500, FACTOR * 500]
+        let units: BTreeMap<usize, Ready> = [1600, FACTOR * 1600]
             .into_iter()
             .map(|n| (n, ready(&discards(n, tail))))
             .collect();
-        scaling::check_order(what, 500, 1, |n| {
+        scaling::check_order(what, 1600, 1, |n| {
             assert_eq!(errors(&units[&n]).len(), per * n);
         });
     }
@@ -52,11 +52,11 @@ fn checking_many_discards_scales() {
 /// `scaling::a_dropped_failure_behind_names_is_found_where_it_enters`.
 #[test]
 fn a_dropped_failure_found_through_a_long_chain_of_names_scales() {
-    let units: BTreeMap<usize, Ready> = [500, FACTOR * 500]
+    let units: BTreeMap<usize, Ready> = [2000, FACTOR * 2000]
         .into_iter()
         .map(|n| (n, ready(&deep_discard(n))))
         .collect();
-    scaling::check_order("a dropped failure behind n names", 500, 1, |n| {
+    scaling::check_order("a dropped failure behind n names", 2000, 1, |n| {
         found_through_the_names(&units[&n])
     })
 }
@@ -67,11 +67,11 @@ fn a_dropped_failure_found_through_a_long_chain_of_names_scales() {
 fn a_chain_of_many_defaulted_branches_scales() {
     on_large_stack(|| {
         for (what, last, errors) in LAST_BRANCHES {
-            let units: BTreeMap<usize, Ready> = [500, FACTOR * 500]
+            let units: BTreeMap<usize, Ready> = [820, FACTOR * 820]
                 .into_iter()
                 .map(|n| (n, ready(&defaulted_branches(n, last))))
                 .collect();
-            scaling::check_order(what, 500, 1, |n| the_branches_check(&units[&n], errors));
+            scaling::check_order(what, 820, 1, |n| the_branches_check(&units[&n], errors));
         }
     })
 }
@@ -82,13 +82,13 @@ fn a_chain_of_many_defaulted_branches_scales() {
 #[test]
 fn a_long_chain_of_defaulted_names_scales() {
     on_large_stack(|| {
-        let units: BTreeMap<usize, Ready> = [2000, FACTOR * 2000]
+        let units: BTreeMap<usize, Ready> = [3600, FACTOR * 3600]
             .into_iter()
             .map(|n| (n, ready(&defaulted_names(n))))
             .collect();
         scaling::check_order(
             "an `if` of n branches, each naming the miss of one name",
-            2000,
+            3600,
             1,
             |n| {
                 let found = errors(&units[&n]);
@@ -101,11 +101,11 @@ fn a_long_chain_of_defaulted_names_scales() {
 /// Coverage: `scaling::dropped_generic_calls_with_defaults_are_accepted`.
 #[test]
 fn many_dropped_generic_calls_scale() {
-    let units: BTreeMap<usize, Ready> = [500, FACTOR * 500]
+    let units: BTreeMap<usize, Ready> = [1500, FACTOR * 1500]
         .into_iter()
         .map(|n| (n, ready(&generic_calls(n))))
         .collect();
-    scaling::check_order("n dropped generic calls", 500, 1, |n| {
+    scaling::check_order("n dropped generic calls", 1500, 1, |n| {
         let found = errors(&units[&n]);
         assert!(found.is_empty(), "{found:?}");
     });
@@ -131,11 +131,11 @@ fn merging_the_failures_of_a_long_chain_scales() {
 #[test]
 fn the_repairs_for_a_family_of_many_atoms_scale() {
     let u = ready(FAMILY_TEXT);
-    let families: BTreeMap<usize, zedc::check::ty::Ty> = [1000, FACTOR * 1000]
+    let families: BTreeMap<usize, zedc::check::ty::Ty> = [25000, FACTOR * 25000]
         .into_iter()
         .map(|n| (n, family(n)))
         .collect();
-    scaling::check_order("the repairs for a family of n atoms", 1000, 1, |n| {
+    scaling::check_order("the repairs for a family of n atoms", 25000, 1, |n| {
         repairs_name_each_atom(&u, n, families[&n].clone())
     });
 }

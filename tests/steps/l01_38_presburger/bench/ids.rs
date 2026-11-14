@@ -10,7 +10,7 @@ use zedc::store::presburger::{Formula, project_each};
 fn passes_over_shared_parts_take_time_linear_in_the_distinct_parts() {
     // A chain of d rules holds `a0` about 1.6^d times written out; each pass reads each rule
     // once. Two chains built apart share no part, so their comparison reads each pair once.
-    let n = 40;
+    let n = 3000;
     let built: BTreeMap<usize, [Formula; 3]> = [n, scaling::FACTOR * n]
         .map(|d| {
             let and = chain(d, true, &mut || {}).0;

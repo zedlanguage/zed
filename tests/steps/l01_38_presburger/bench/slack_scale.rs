@@ -16,7 +16,10 @@ fn ss_decide_scales() {
     assert_eq!(i3_proj[0], Ok(pt_set(&[0, 101])));
 
     // Immune subset-sum regime (unreachable target near half, zero single-arm refutations).
-    let k_imm = 16;
+    // 128, so that the 8 × 128 = 1024 weights of `weights_untied` are distinct: it takes 1027
+    // values (the squares mod 2053), and from 1028 weights on equal weights tie the names, which
+    // the solver refuses (`Unordered(Tie)`) where this test asks for `Disjuncts`.
+    let k_imm = 128;
     let (imm_s, imm_l) = (
         subset_sum_dp(&weights_untied(k_imm)),
         subset_sum_dp(&weights_untied(scaling::FACTOR * k_imm)),
@@ -86,14 +89,14 @@ fn ss_decide_scales() {
 
 #[test]
 fn ss_project_scales() {
-    let k = 64;
+    let k = 910;
     let y0 = [sym("y0")];
     let (ss_s, ss_l) = (
         subset_sum_dp(&weights(k)),
         subset_sum_dp(&weights(scaling::FACTOR * k)),
     );
-    let (p_s, _) = project_each(&ss_s, &y0).expect("ss 64 project");
-    let (p_l, _) = project_each(&ss_l, &y0).expect("ss 512 project");
+    let (p_s, _) = project_each(&ss_s, &y0).expect("ss project, small");
+    let (p_l, _) = project_each(&ss_l, &y0).expect("ss project, large");
     // The target is unreachable by construction, so the exact projection is empty; the solver
     // alone gives {0, 1000} and {1000}.
     assert_eq!(p_s[0], Ok(IntervalSet::empty()));
@@ -109,7 +112,7 @@ fn ss_project_scales() {
 
 #[test]
 fn sat_half_decide_scales() {
-    let k = 64;
+    let k = 720;
     let build_tied = |n: usize| {
         let w = weights(n);
         let t: i64 = w.iter().step_by(2).sum();
@@ -142,7 +145,7 @@ fn sat_half_decide_scales() {
 
 #[test]
 fn sat_half_tied_512_is_deterministic_and_scales() {
-    let k = 64;
+    let k = 670;
     let y0 = [sym("y0")];
     let build = |n: usize| {
         let w = weights(n);
@@ -152,14 +155,14 @@ fn sat_half_tied_512_is_deterministic_and_scales() {
     let (small, large) = (build(k), build(scaling::FACTOR * k));
     assert_eq!(decide(&small), Ok(true));
     assert_eq!(decide(&large), Ok(true));
-    let (p_s, _) = project_each(&small, &y0).expect("sat_half 64 project");
-    let (p_l, _) = project_each(&large, &y0).expect("sat_half 512 project");
+    let (p_s, _) = project_each(&small, &y0).expect("sat_half project, small");
+    let (p_l, _) = project_each(&large, &y0).expect("sat_half project, large");
     assert_eq!(p_s[0], Ok(pt_set(&[0, 1000])));
     assert_eq!(p_l[0], Ok(pt_set(&[0, 1000])));
 
     let (rev_l, rev_y0) = reverse_renamed(&large, &y0[0]);
     assert_eq!(decide(&rev_l), Ok(true));
-    let (rev_p, _) = project_each(&rev_l, &[rev_y0]).expect("renamed sat_half 512 project");
+    let (rev_p, _) = project_each(&rev_l, &[rev_y0]).expect("renamed sat_half project, large");
     assert_eq!(p_l[0], rev_p[0]);
 
     scaling::check_order("project_each: sat_half", k, 1, |m| {
@@ -172,7 +175,7 @@ fn sat_half_tied_512_is_deterministic_and_scales() {
         choice_sum(&w, t)
     };
     let (u_s, u_l) = (build_u(k), build_u(scaling::FACTOR * k));
-    let (pu_l, _) = project_each(&u_l, &y0).expect("sat_half_untied 512 project");
+    let (pu_l, _) = project_each(&u_l, &y0).expect("sat_half_untied project, large");
     assert_eq!(pu_l[0], Ok(pt_set(&[0, 3000])));
     scaling::check_order("project_each: sat_half_untied", k, 1, |m| {
         drop(project_each(if m == k { &u_s } else { &u_l }, &y0));
@@ -181,7 +184,7 @@ fn sat_half_tied_512_is_deterministic_and_scales() {
 
 #[test]
 fn two_rows_scales() {
-    let k = 64;
+    let k = 690;
     let y0 = [sym("y0")];
     let u_8 = build_two_rows(&weights_untied(8));
     assert_eq!(decide(&u_8), Ok(true));
@@ -194,7 +197,7 @@ fn two_rows_scales() {
     assert_eq!(decide(&u_l), Ok(true));
     let m_l = satisfiable(&u_l).expect("decided").expect("satisfiable");
     assert!(u_l.holds(&m_l));
-    let (pu_l, _) = project_each(&u_l, &y0).expect("two_rows_untied 512 project");
+    let (pu_l, _) = project_each(&u_l, &y0).expect("two_rows_untied project, large");
     assert!(pu_l[0].as_ref().expect("interval").contains(3000));
     scaling::check_order("decide: two_rows_untied", k, 1, |m| {
         drop(decide(if m == k { &u_s } else { &u_l }));
@@ -214,7 +217,7 @@ fn two_rows_scales() {
     scaling::check_order("decide: two_rows", k, 1, |m| {
         drop(decide(if m == k { &t_s } else { &t_l }));
     });
-    let (pt_l, _) = project_each(&t_l, &y0).expect("two_rows 512 project");
+    let (pt_l, _) = project_each(&t_l, &y0).expect("two_rows project, large");
     assert!(pt_l[0].as_ref().expect("interval").contains(1000));
     scaling::check_order("project_each: two_rows", k, 1, |m| {
         drop(project_each(if m == k { &t_s } else { &t_l }, &y0));
@@ -223,7 +226,7 @@ fn two_rows_scales() {
 
 #[test]
 fn paired_chain_project_scales() {
-    let k = 64;
+    let k = 19000;
     let y0 = [sym("y0")];
     let (small, large) = (
         build_paired_chain(k),
@@ -244,7 +247,7 @@ fn paired_chain_project_scales() {
 
 #[test]
 fn alternating_weights_greedy_scales() {
-    let k = 64;
+    let k = 980;
     let y0 = [sym("y0")];
     let (small, large) = (build_alternating(k), build_alternating(scaling::FACTOR * k));
     for f in [&small, &large] {
@@ -262,7 +265,7 @@ fn alternating_weights_greedy_scales() {
 
 #[test]
 fn dense_scales() {
-    let k = 64;
+    let k = 840;
     let y0 = [sym("y0")];
     let (small, large) = (build_dense(k), build_dense(scaling::FACTOR * k));
     for f in [&small, &large] {
@@ -390,7 +393,7 @@ fn ss_project_each_costs_at_most_four_decides() {
 /// instructions on the round-6 tree. (Claude round 6.)
 #[test]
 fn sat_half_project_each_scales_past_512() {
-    let k = 512;
+    let k = 2260;
     let y0 = [sym("y0")];
     let build = |n: usize| {
         let w = weights(n);
@@ -429,7 +432,7 @@ fn many_linked_rows_project_each_fails_the_order_check() {
 /// is 0, so `y0` is exactly {1000}; `project_each` is near linear.
 #[test]
 fn many_linked_rows_project_each_scales_with_the_method() {
-    let k = 64;
+    let k = 1000;
     let y0 = [sym("y0")];
     let (s, l) = (build_many_linked(k), build_many_linked(scaling::FACTOR * k));
     scaling::check_order(

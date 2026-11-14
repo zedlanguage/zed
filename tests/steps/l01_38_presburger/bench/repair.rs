@@ -10,12 +10,12 @@ use zedc::store::presburger::{decide, satisfiable};
 #[test]
 fn a_chain_of_guards_on_one_input_scales() {
     let make = |n: usize| guards(n, n as i64, true);
-    let (small, large) = (make(64), make(64 * scaling::FACTOR));
+    let (small, large) = (make(22000), make(22000 * scaling::FACTOR));
     for f in [&small, &large] {
         assert!(satisfiable(f).expect("answered").is_some());
     }
-    scaling::check("satisfiable on a chain of k guards i >= j", 64, |n| {
-        drop(satisfiable(if n == 64 { &small } else { &large }));
+    scaling::check("satisfiable on a chain of k guards i >= j", 22000, |n| {
+        drop(satisfiable(if n == 22000 { &small } else { &large }));
     });
 }
 
@@ -25,12 +25,12 @@ fn a_chain_of_guards_on_one_input_scales() {
 #[test]
 fn a_chain_whose_point_is_at_an_end_scales() {
     let make = |n: usize| guards(n, n as i64 - 2, false);
-    let (small, large) = (make(256), make(256 * scaling::FACTOR));
+    let (small, large) = (make(730), make(730 * scaling::FACTOR));
     scaling::check(
         "decide on a chain of k guards with its point at an end",
-        256,
+        730,
         |n| {
-            assert_eq!(decide(if n == 256 { &small } else { &large }), Ok(true));
+            assert_eq!(decide(if n == 730 { &small } else { &large }), Ok(true));
         },
     );
 }

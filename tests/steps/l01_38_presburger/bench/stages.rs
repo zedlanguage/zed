@@ -10,10 +10,10 @@ use zedc::store::utvpi::{Search, integer_empty, integer_empty_by};
 #[test]
 fn the_acyclic_hub_scales() {
     // Through the parity test itself: through `decide` the work around it hides the search's.
-    let (small, large) = (hub(512, false), hub(scaling::FACTOR * 512, false));
-    assert!(!raced(512, &small) && !raced(scaling::FACTOR * 512, &large));
-    scaling::check("the acyclic hub", 512, |n| {
-        let rows = if n == 512 { &small } else { &large };
+    let (small, large) = (hub(83000, false), hub(scaling::FACTOR * 83000, false));
+    assert!(!raced(83000, &small) && !raced(scaling::FACTOR * 83000, &large));
+    scaling::check("the acyclic hub", 83000, |n| {
+        let rows = if n == 83000 { &small } else { &large };
         std::hint::black_box(raced(n, rows));
     });
 }
@@ -33,17 +33,17 @@ fn a_cycle_of_negative_edges_scales() {
     // From 2048 variables (6144 rows), so that a quadratic step is caught however cheap the
     // work per pair of rows: a scan of all rows per row comparing only their lengths gave
     // 18.8 times from 512 and passed, and gives 43.5 times from 2048 (2026-11-05, load 78).
-    decides("a cycle of negative edges", 2048, Ok(true), negchain);
+    decides("a cycle of negative edges", 12000, Ok(true), negchain);
 }
 
 #[test]
 fn the_cyclic_hub_scales() {
     // Goldberg and Radzik's search takes three passes at both sizes; Bellman–Ford–Moore took
     // 41.9 times the work (measured on this branch; XT3 measured 42.5).
-    let (small, large) = (hub(512, true), hub(scaling::FACTOR * 512, true));
-    assert!(!raced(512, &small) && !raced(scaling::FACTOR * 512, &large));
-    scaling::check("the cyclic hub", 512, |n| {
-        let rows = if n == 512 { &small } else { &large };
+    let (small, large) = (hub(21000, true), hub(scaling::FACTOR * 21000, true));
+    assert!(!raced(21000, &small) && !raced(scaling::FACTOR * 21000, &large));
+    scaling::check("the cyclic hub", 21000, |n| {
+        let rows = if n == 21000 { &small } else { &large };
         std::hint::black_box(raced(n, rows));
     });
 }
@@ -54,10 +54,10 @@ fn bad_gor_scales() {
     // 59.8 times the work (78.2M to 4.68G instructions, measured on this branch as the negative
     // control and not kept; XT3 measured 62). The race with BF-Dijkstra and Duong's search
     // takes 26.8M to 209M instructions, 7.8 times (COMPLEXITY.md C24).
-    let (small, large) = (bad_gor(256, 1), bad_gor(scaling::FACTOR * 256, 1));
+    let (small, large) = (bad_gor(3300, 1), bad_gor(scaling::FACTOR * 3300, 1));
     assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("BAD-GOR augmented, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
+    scaling::check("BAD-GOR augmented, by k", 3300, |k| {
+        let (n, rows) = if k == 3300 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
 }
@@ -93,12 +93,12 @@ fn split_bad_gor_scales() {
     // the reverse of the graph the pair is quick, and the race with a second pair searching
     // it takes 24.2M to 198M (8.2 times; COMPLEXITY.md C24).
     let (small, large) = (
-        split_bad_gor(128, 1),
-        split_bad_gor(scaling::FACTOR * 128, 1),
+        split_bad_gor(2600, 1),
+        split_bad_gor(scaling::FACTOR * 2600, 1),
     );
     assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("BAD-GOR with its path split, by k", 128, |k| {
-        let (n, rows) = if k == 128 { &small } else { &large };
+    scaling::check("BAD-GOR with its path split, by k", 2600, |k| {
+        let (n, rows) = if k == 2600 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
 }
@@ -112,12 +112,12 @@ fn bad_gor_and_a_fan_scale() {
     // bytes in the negative control, run once and not committed), since both quadratic searches
     // are cheaper than Duong's below k = 2,048 (COMPLEXITY.md C24).
     let (small, large) = (
-        bad_gor_and_fan(256, 0),
-        bad_gor_and_fan(scaling::FACTOR * 256, 0),
+        bad_gor_and_fan(2800, 0),
+        bad_gor_and_fan(scaling::FACTOR * 2800, 0),
     );
     assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("BAD-GOR augmented and a fan, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
+    scaling::check("BAD-GOR augmented and a fan, by k", 2800, |k| {
+        let (n, rows) = if k == 2800 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
 }
@@ -135,12 +135,12 @@ fn bad_gor_and_a_fan_with_no_cycle_scale() {
     // control, run once and not committed); the split costs 8.4 times less than BF-Dijkstra
     // alone at k = 256, and 3.8 times less than the race without it.
     let (small, large) = (
-        acyclic_bad_gor_and_fan(256),
-        acyclic_bad_gor_and_fan(scaling::FACTOR * 256),
+        acyclic_bad_gor_and_fan(3100),
+        acyclic_bad_gor_and_fan(scaling::FACTOR * 3100),
     );
     assert!(!empty(small.0, &small.1));
-    scaling::check("BAD-GOR and a fan with no cycle, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
+    scaling::check("BAD-GOR and a fan with no cycle, by k", 3100, |k| {
+        let (n, rows) = if k == 3100 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
 }
@@ -152,12 +152,12 @@ fn the_joined_union_family_scales() {
     // quadratic searches share labels takes 38.1M to 332.8M instructions (8.7 times). The old
     // code took 253M to 15,604M (47.6 times the bytes; negative control, not committed).
     let (small, large) = (
-        union_family(256, true, true),
-        union_family(scaling::FACTOR * 256, true, true),
+        union_family(2200, true, true),
+        union_family(scaling::FACTOR * 2200, true, true),
     );
     assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("the joined union family, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
+    scaling::check("the joined union family, by k", 2200, |k| {
+        let (n, rows) = if k == 2200 { &small } else { &large };
         std::hint::black_box(raced(*n, rows));
     });
 }
@@ -166,7 +166,7 @@ fn the_joined_union_family_scales() {
 fn the_union_family_scales_through_decide() {
     decides(
         "the union family through decide, by k",
-        256,
+        1200,
         Ok(true),
         |k| formula(&union_family(k, false, false).1),
     );
@@ -178,7 +178,7 @@ fn the_joined_union_family_scales_through_decide() {
     // a wide row, `decide` splits the halves into parts before the search and passed before too.
     decides(
         "the joined union family through decide, by k",
-        256,
+        810,
         Ok(true),
         |k| formula(&union_family(k, true, true).1),
     );
@@ -188,7 +188,7 @@ fn the_joined_union_family_scales_through_decide() {
 fn the_wide_row_family_scales_through_decide() {
     decides(
         "the union family joined by a wide row, through decide, by k",
-        256,
+        240,
         Ok(true),
         wide_row_family,
     );
@@ -210,8 +210,8 @@ fn coefficients_of_many_bits_scale() {
 
 #[test]
 fn columns_seen_through_two_aggregates_scale() {
-    decides("two aggregates", 64, Ok(true), aggregates);
-    let f = aggregates(64);
+    decides("two aggregates", 2300, Ok(true), aggregates);
+    let f = aggregates(2300);
     let m = satisfiable(&f).expect("answered").expect("a point");
     assert!(f.holds(&m), "{m:?}");
 }
@@ -228,7 +228,7 @@ fn three_variables_in_many_rows_scale() {
     // instance, not on its size: this seed takes 215M at 32 rows, 6.7M at 64 and 9.9M at 96, and
     // summed over 12 seeds 64 to 512 rows is 2.8 times the instructions and 4.7 the bytes
     // (HULL3-subsumed merge), so the ratio at 64 is that one cheap instance's.
-    decides("three variables in many rows", 128, Ok(true), three_rows);
+    decides("three variables in many rows", 4900, Ok(true), three_rows);
     let f = three_rows(64);
     let m = satisfiable(&f).expect("answered").expect("a point");
     assert!(f.holds(&m), "{m:?}");
@@ -240,7 +240,7 @@ fn a_box_point_held_by_many_rows_scales() {
     // the stage reads each row once for each point it tries, which is linear in the rows.
     decides(
         "a box point held by many rows",
-        256,
+        5900,
         Ok(true),
         rows_held_in_a_box,
     );

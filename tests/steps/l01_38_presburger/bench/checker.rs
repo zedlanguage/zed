@@ -15,7 +15,7 @@ fn the_linear_questions_of_a_unit_scale() {
         src
     };
     // The questions are timed alone, on a unit loaded before the timing (COMPLEXITY.md F85).
-    let units: std::collections::BTreeMap<usize, _> = [64, 64 * zed_tests::scaling::FACTOR]
+    let units: std::collections::BTreeMap<usize, _> = [410, 410 * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
             let src = unit(m);
@@ -24,7 +24,7 @@ fn the_linear_questions_of_a_unit_scale() {
             (m, (zed_tests::deep::statements(&src), tokens, program, src))
         })
         .collect();
-    zed_tests::scaling::check("the linear questions of a unit", 64, |m| {
+    zed_tests::scaling::check("the linear questions of a unit", 410, |m| {
         let (stmts, tokens, program, src) = &units[&m];
         let refused = zedc::front::linear_questions(src, tokens, stmts, program.unit());
         assert!(refused.is_empty(), "{refused:?}");

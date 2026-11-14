@@ -12,10 +12,10 @@ fn the_int_parameters_of_a_signature_scale() {
             .collect();
         sig_of(&format!("ok({}) = true;", ps.join(", ")), "ok")
     };
-    let sigs = scaling::inputs(1024, sig);
+    let sigs = scaling::inputs(40000, sig);
     scaling::check(
         "the int parameters of a signature of n parameters",
-        1024,
+        40000,
         |k| {
             let ints = sigs[&k].int_params();
             assert_eq!(ints.iter().filter(|&&i| i).count(), k / 2);

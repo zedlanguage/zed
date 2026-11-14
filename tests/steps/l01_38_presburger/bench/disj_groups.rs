@@ -8,7 +8,7 @@ use zedc::store::presburger::{Atom, project_each};
 fn the_middle_of_a_difference_chain_whose_disjuncts_hold_is_projected_in_n_log_n() {
     projects(
         "a difference chain projected, a disjunct holding",
-        64,
+        1100,
         difference_chain,
         Holds::First,
     );
@@ -18,7 +18,7 @@ fn the_middle_of_a_difference_chain_whose_disjuncts_hold_is_projected_in_n_log_n
 fn a_difference_chain_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
     decides(
         "a difference chain decided, no disjunct holding",
-        64,
+        4500,
         difference_chain,
     );
 }
@@ -27,7 +27,7 @@ fn a_difference_chain_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
 fn the_middle_of_a_difference_chain_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
     projects(
         "a difference chain projected, no disjunct holding",
-        64,
+        700,
         difference_chain,
         Holds::None,
     );
@@ -39,7 +39,7 @@ fn the_middle_of_a_difference_chain_whose_disjuncts_do_not_hold_is_projected_in_
 fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
     decides(
         "a chain of three-atom rows decided, no disjunct holding",
-        512,
+        1300,
         general_chain,
     );
 }
@@ -54,7 +54,7 @@ fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n(
 fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
     projects(
         "a chain of three-atom rows projected, no disjunct holding",
-        256,
+        190,
         general_chain,
         Holds::None,
     );
@@ -62,7 +62,7 @@ fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_proje
 
 #[test]
 fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n() {
-    joint_chain_scales(Written::AsIs);
+    joint_chain_scales(Written::AsIs, 180);
 }
 
 /// [`joint_chain`] with its equations negated: before item PROJECT-each-canon the greedy
@@ -71,16 +71,16 @@ fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_is_projected_
 #[test]
 fn the_middle_of_a_chain_whose_negated_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n()
 {
-    joint_chain_scales(Written::Negated);
+    joint_chain_scales(Written::Negated, 170);
 }
 
 #[test]
 fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in_n_log_n() {
     for flipped in [false, true] {
-        let inputs = scaling::inputs(128, |m| cascade(m, flipped));
+        let inputs = scaling::inputs(110, |m| cascade(m, flipped));
         scaling::check_order(
             &format!("a chain of removals each needing the one before, flipped {flipped}"),
-            128,
+            110,
             1,
             |m| {
                 let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
@@ -93,8 +93,8 @@ fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in
 
 #[test]
 fn the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n() {
-    let inputs = scaling::inputs(16, case_chain);
-    scaling::check("a chain whose lower end only cases give", 16, |m| {
+    let inputs = scaling::inputs(820, case_chain);
+    scaling::check("a chain whose lower end only cases give", 820, |m| {
         let mid = m / 2;
         let r = project_each(&inputs[&m], &[Atom::Sym(format!("y{mid:05}").into())])
             .expect("a projection");
@@ -140,11 +140,11 @@ mod row_sums {
     /// projected 1.87M and 10.53M, 5.6 times).
     #[test]
     fn two_overlapping_sums_of_64_and_512_atoms_are_decided_and_projected_in_n_log_n() {
-        let inputs = scaling::inputs(64, |k| overlap_rows(k).formula());
-        scaling::check_order("two overlapping sums decided", 64, 1, |k| {
+        let inputs = scaling::inputs(1000, |k| overlap_rows(k).formula());
+        scaling::check_order("two overlapping sums decided", 1000, 1, |k| {
             assert_eq!(decide(&inputs[&k]), Ok(true));
         });
-        scaling::check_order("two overlapping sums projected", 64, 1, |k| {
+        scaling::check_order("two overlapping sums projected", 1000, 1, |k| {
             let p = project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
             assert!(
                 p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
@@ -159,10 +159,10 @@ mod row_sums {
     /// decided 3,873M and projected 7,386M at k = 64, the pairs of the two groups' tables.
     #[test]
     fn two_overlapping_sums_with_coefficients_one_and_two_of_64_and_512_atoms_scale() {
-        let inputs = scaling::inputs(64, |k| coefficients_one_and_two(k).formula());
+        let inputs = scaling::inputs(1800, |k| coefficients_one_and_two(k).formula());
         scaling::check_order(
             "two sums with coefficients one and two decided",
-            64,
+            1800,
             1,
             |k| {
                 assert_eq!(decide(&inputs[&k]), Ok(true));
@@ -170,7 +170,7 @@ mod row_sums {
         );
         scaling::check_order(
             "two sums with coefficients one and two projected",
-            64,
+            1800,
             1,
             |k| {
                 let p =
@@ -187,11 +187,11 @@ mod row_sums {
     /// after another, in time linear in m.
     #[test]
     fn a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n() {
-        let inputs = scaling::inputs(8, |m| chain(m).formula());
-        scaling::check_order("a chain of overlapping sums decided", 8, 1, |m| {
+        let inputs = scaling::inputs(1200, |m| chain(m).formula());
+        scaling::check_order("a chain of overlapping sums decided", 1200, 1, |m| {
             assert_eq!(decide(&inputs[&m]), Ok(true));
         });
-        scaling::check_order("a chain of overlapping sums projected", 8, 1, |m| {
+        scaling::check_order("a chain of overlapping sums projected", 1200, 1, |m| {
             let r = project_each(&inputs[&m], &[v(3 * m / 2)]).expect("a projection");
             assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
         });

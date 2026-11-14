@@ -623,16 +623,16 @@ pub fn pncx_crt_bits(n: usize) -> zedc::store::presburger::Formula {
 }
 
 /// The front's linear questions of the source of `axis`: none found, in time linear in the
-/// size.
-pub fn pncx_front_scale(axis: &str) {
-    let inputs = crate::scaling::inputs(512, |n| {
+/// size, at the sizes `n` and `8n`.
+pub fn pncx_front_scale(axis: &str, n: usize) {
+    let inputs = crate::scaling::inputs(n, |n| {
         let src = axis_src(axis, n);
         let stmts = crate::deep::statements(&src);
         let tokens = zedc::lex::lex_fence(&src).unwrap();
         let unit = elab(&src).unwrap();
         (src, stmts, tokens, unit)
     });
-    crate::scaling::check_order(axis, 512, 1, |n| {
+    crate::scaling::check_order(axis, n, 1, |n| {
         let (src, stmts, tokens, unit) = &inputs[&n];
         assert!(zedc::front::linear_questions(src, tokens, stmts, unit).is_empty());
     });

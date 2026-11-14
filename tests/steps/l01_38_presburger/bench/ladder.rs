@@ -12,7 +12,7 @@ fn the_condition_that_no_operation_fails_scales() {
     // timed at k and 8k. The entailment is checked at k here and timed in
     // `a_chain_of_guarded_remainders_scales` and `a_chain_of_remainders_by_terms_scales`.
     // COMPLEXITY.md rows RUNG2-definedness, PRES-mod-conjuncts and PRES-guarded-chain.
-    let n = 16;
+    let n = 256;
     for (p, g) in [divisors(n), guarded_divisors(n)] {
         let e = entails(&p, &g);
         assert!(matches!(e, Entailment::Proved(_)), "{e}");
@@ -38,7 +38,7 @@ fn a_chain_of_guarded_remainders_scales() {
     // instructions at k = 16 and 148.6G at k = 128, 130 times (measured 2026-11-08). Now each is
     // refuted by a settling of its own definition alone (`refuted_by_links` in `probe`). The
     // entailment is timed at k and 8k. COMPLEXITY.md row PRES-guarded-chain.
-    let n = 16;
+    let n = 250;
     let (p, g) = guarded_divisors(n);
     assert_eq!(kind(&entails(&p, &g)), "proved");
     let measure = move || {
@@ -62,7 +62,7 @@ fn a_chain_of_remainders_by_terms_scales() {
     // (measured 2026-11-08; 2.04G instructions at k = 16 before either). The entailment is
     // timed at k and 8k. Under `n >= 1` it is proved; under `true` it is refuted at a
     // divisor 0. COMPLEXITY.md row PRES-mod-conjuncts.
-    let n = 16;
+    let n = 62;
     let cases = [
         ("proved", "a chain of remainders by terms", "n >= 1"),
         ("refuted", "a chain of remainders that may fail", "true"),
@@ -93,7 +93,7 @@ fn a_chain_of_remainders_by_terms_scales() {
 fn products_of_premises_in_pairs_scale() {
     // The pairs are taken per product, each from the premises on its two factors; with one
     // lower bound on each factor that is one pair per product.
-    let n = 16;
+    let n = 1000;
     let built: BTreeMap<usize, (Relation, Relation)> = [n, n * scaling::FACTOR]
         .into_iter()
         .map(|k| (k, product_sum(k)))
@@ -145,7 +145,7 @@ fn the_conditions_of_shared_divisors_scale() {
     // 10.2 now). And k functions each calling the one before twice with an argument that may
     // fail, translated once each, where reading each such call at its place read 2^k calls
     // (0.48 s at k = 12, 34 s at k = 18, measured 2026-11-08).
-    let k = 128;
+    let k = 200;
     // Each fails where `n = 0`; a verdict is checked against the interpreter (`checked`).
     for src in [met_divisors(2), guarded_arms(2)] {
         assert!(!true_on_window("ok(x, y, n) = true;", &src), "{src}");
@@ -179,7 +179,7 @@ fn products_whose_factor_bounds_pass_from_row_to_row_scale() {
     // (`propagate` in `part_bounds`), and no side is asked (C2-chain-general).
     open_side_chain_scales(
         "a sum of products whose factor bounds pass from row to row",
-        128,
+        160,
         |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000"),
         true,
     );
@@ -192,7 +192,7 @@ fn products_whose_factor_bounds_wait_on_each_other_scale() {
     // bound it has (`propagate`), and no side is asked (C2-chain-general).
     open_side_chain_scales(
         "a sum of products whose factor bounds wait on each other",
-        16,
+        160,
         |i| {
             format!(
                 "b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000 \

@@ -21,11 +21,11 @@ fn a_chain_of_extensions_is_decided_in_time_of_its_links() {
         }
         out
     };
-    let chains = zed_tests::scaling::inputs(200, chain);
-    for f in chains[&200].iter().step_by(37) {
+    let chains = zed_tests::scaling::inputs(2500, chain);
+    for f in chains[&2500].iter().step_by(37) {
         assert_eq!(Extending::new().answers(f), decided(f), "{f}");
     }
-    zed_tests::scaling::check("the answers of a chain of extensions", 200, |n| {
+    zed_tests::scaling::check("the answers of a chain of extensions", 2500, |n| {
         let mut e = Extending::new();
         for f in &chains[&n] {
             let a = e.answers(f);
@@ -39,8 +39,8 @@ fn bindings_put_in_place_scale() {
     // The substitution reads each top-level constraint once and resolves each atom through a
     // union of classes with its path compressed: time of the formula times a logarithm.
     use zedc::store::presburger::extend::with_bindings_in_place;
-    let chains = zed_tests::scaling::inputs(400, |n| bound_chain(n, 0));
-    zed_tests::scaling::check("the bindings of a chain put in place", 400, |n| {
+    let chains = zed_tests::scaling::inputs(9500, |n| bound_chain(n, 0));
+    zed_tests::scaling::check("the bindings of a chain put in place", 9500, |n| {
         assert!(with_bindings_in_place(&chains[&n]).is_some());
     });
 }

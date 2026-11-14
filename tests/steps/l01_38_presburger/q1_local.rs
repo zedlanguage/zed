@@ -825,9 +825,10 @@ fn the_answers_of_the_oracle_family_are_free_of_the_order_of_their_rows() {
 }
 
 #[test]
-fn the_answers_of_fresh_seed_1_are_free_of_the_order_of_their_rows() {
-    let mut rng = XorShift(0x5eed_0001);
-    for _ in 0..2000 {
-        let _ = order_free("fresh seed 1", &fresh(&mut rng));
+fn the_answers_of_the_fresh_family_are_free_of_the_order_of_their_rows() {
+    let (_, seed) = Rng::fresh("the fresh family, rows in any order");
+    let mut rng = XorShift(seed | 1);
+    for _ in 0..60 {
+        let _ = order_free("the fresh family", &fresh(&mut rng));
     }
 }

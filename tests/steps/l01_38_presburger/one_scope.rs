@@ -1109,8 +1109,31 @@ fn a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer() {
     }
 }
 
+/// The units of [`summaries_of_definitions`] are checked in four parts, every fourth unit each,
+/// so that each part runs alone in a few seconds (TEST-bench-move-l0138); together they check
+/// every unit.
 #[test]
-fn summaries_of_definitions_give_the_answers_of_the_definitions() {
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_0() {
+    summaries_of_definitions(0);
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_1() {
+    summaries_of_definitions(1);
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_2() {
+    summaries_of_definitions(2);
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_3() {
+    summaries_of_definitions(3);
+}
+
+/// The units whose index is `part` mod 4.
+fn summaries_of_definitions(part: usize) {
     // LOAD-chain-sep: a question with no kept part reads each definition's chain through its
     // summary, projected exactly. Each answer is the one the relation with all its definitions
     // has, asked in the unit's order, in the reverse, and alone, so that the answers do not
@@ -1352,7 +1375,7 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions() {
         chain("H mod 7 + H", "H < 0", 8),
         chain("if H mod 6 == 0 { H + 1 } else { H + 2 }", "H > 10", 8),
     ];
-    for src in &units {
+    for src in units.iter().skip(part).step_by(4) {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
         let lets = lets(&unit);
         let fs = functions(&unit);
@@ -1775,6 +1798,112 @@ pub(super) fn questions_scale_unit(what: &str, n: usize, unit: fn(usize) -> Stri
         let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
         assert!(refused.is_empty(), "{refused:?}");
     });
+}
+
+/// No linear question of `src` is refused: the check the benchmarks of [`questions_scale_unit`]
+/// make at their two sizes besides the ratio.
+fn no_question_refused(what: &str, src: &str) {
+    let (stmts, tokens, unit) = (
+        zed_tests::deep::statements(src),
+        zedc::lex::lex_fence(src).unwrap(),
+        elab(src).unwrap(),
+    );
+    let refused = zedc::front::linear_questions(src, &tokens, &stmts, &unit);
+    assert!(refused.is_empty(), "{what}: {refused:?}\n{src}");
+}
+
+/// The chains of the benchmarks of [`questions_scale_unit`] (`bench/one_scope.rs`), each at a
+/// few small sizes, have no question refused (TEST-bench-move-l0138, author P170).
+#[test]
+fn the_chains_of_the_benchmarks_have_no_question_refused_at_small_sizes() {
+    type Unit = fn(usize) -> String;
+    let units: [(&str, Unit); 36] = [
+        ("holes beside one modulus", mod4_chain),
+        ("a gap beside one modulus", gapped_chain),
+        ("bounds beside a shared remainder", shared_remainder_chain),
+        ("remainders by 3", mod3_chain),
+        ("remainders by 5", mod5_chain),
+        ("remainders by 7 moved by 2", mod7_chain),
+        ("remainders moved by the modulus", kept_residue_chain),
+        ("two exceptional residues", two_guards_chain),
+        ("an affine default with an exception", affine_default_chain),
+        ("doubling the residue by 1000", doubling_chain),
+        (
+            "a default doubling the residue by 2^40",
+            power_of_two_default_chain,
+        ),
+        ("a default unit on the coset only", nonunit_persist_chain),
+        ("two intervals, by 10^18 + 9", gap_chain),
+        ("two wide intervals, by 2^31 - 1", gap_wide_chain),
+        ("nested cuts, by 2^31 - 1", cuts_reversed_chain),
+        ("two alternating steps of cuts", two_cut_steps_chain),
+        ("three steps of overlapping cuts", overlap_chain),
+        ("two steps of wide overlaps, by 10^12 + 39", overlap0_chain),
+        (
+            "three steps of wide overlaps, by 10^12 + 39",
+            overlap6_chain,
+        ),
+        (
+            "three steps of wide overlaps, by 10^18 + 9",
+            overlap19_chain,
+        ),
+        ("random cuts and moves", random_cuts_chain),
+        ("random cuts and moves of 0 to 6", random_small_moves_chain),
+        ("a step switching every five links", switching_chain),
+        ("a first step apart from the rest", first_step_apart_chain),
+        ("independent question frontiers", |n| {
+            r6_local_source("leaves", n)
+        }),
+        ("two branches of one common prefix", |n| {
+            r6_local_source("prefix", n)
+        }),
+        ("scalar image of guarded increments", |n| {
+            r6_periodic_value_questions(n, "if H mod 1000 == 0 { H + 1 } else { H + 2 }", "H == 9")
+        }),
+        ("scalar lattice image of a remainder sum", |n| {
+            r6_periodic_value_questions(n, "H mod 1000 + H", "H == 0")
+        }),
+        ("guarded increment orbit with kept input residue", |n| {
+            r6_periodic_value_questions(
+                n,
+                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
+                "x mod 1000 == 3 && H == 9",
+            )
+        }),
+        ("remainder-sum orbit with kept input residue", |n| {
+            r6_periodic_value_questions(n, "H mod 1000 + H", "x mod 1000 == 3 && H == 9")
+        }),
+        ("guarded increment orbit with previous link residue", |n| {
+            r6_periodic_value_questions(
+                n,
+                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
+                "P mod 1000 == 3 && H == 5",
+            )
+        }),
+        ("remainder-sum orbit with previous link residue", |n| {
+            r6_periodic_value_questions(n, "H mod 1000 + H", "P mod 1000 == 3 && H == 6")
+        }),
+        ("negated and disjunctive residues", negated_modular_chain),
+        (
+            "residues over distinct primes",
+            residues_over_distinct_primes,
+        ),
+        ("clauses over many segments", clauses_over_many_segments),
+        (
+            "negated residues over distinct bounds",
+            negated_residues_over_distinct_bounds,
+        ),
+    ];
+    for (what, unit) in units {
+        for n in [1, 2, 6] {
+            no_question_refused(&format!("{what}, {n}"), &unit(n));
+        }
+    }
+    // Past link 76, where the bounds move beside the shared remainder.
+    no_question_refused(
+        "bounds beside a shared remainder, 80",
+        &shared_remainder_chain(80),
+    );
 }
 
 /// Checks that each relation and answer of each function of `src`, read under one scope and
@@ -3048,7 +3177,7 @@ fn one_variable_answers_do_not_depend_on_names() {
     // numbered in reverse; `decide` and `satisfiable` give the same answer, refusal included,
     // and `satisfiable` asked first gives the same answers too. `PNCX_CASES=a..b` runs part.
     use zedc::store::presburger::{decide, satisfiable};
-    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 5000), |s| {
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 150), |s| {
         let (a, b) = s.split_once("..").unwrap();
         (a.parse().unwrap(), b.parse().unwrap())
     });
@@ -3066,7 +3195,8 @@ fn one_variable_answers_do_not_depend_on_names() {
         ),
         ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
     ];
-    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    // 150 cases drawn with a new seed each run (author P169; 5,000 at one seed took 12 s).
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable cases renamed");
     let (mut differ, mut answered) = (Vec::new(), 0usize);
     for case_idx in 0..to {
         let (f, ..) = modular_case(&mut rng, case_idx);
@@ -3123,47 +3253,22 @@ fn moved(f: &zedc::store::presburger::Formula, s: i64, d: i64) -> zedc::store::p
     })
 }
 
-// I6.16: the whole test took more than 20 s at load 40, so it runs in eight pieces: quarters of
-// the cases with no bound (the slowest kind), halves of those with one bound. Each piece draws
-// every case before its own, so the pieces ask exactly the formulas of the whole.
+// I6.16 split the whole test, more than 20 s at load 40, into quarters of 1,500 cases with no
+// bound and halves of 1,500 with one bound, at one seed. Each test now draws its cases with a
+// new seed each run (author P169): 30 with no bound (the slowest kind), 100 with each bound.
 #[test]
-fn one_variable_answers_with_no_bound_do_not_depend_on_names_first_quarter() {
-    one_bound_or_none_names(Some("none"), 0, 375);
+fn one_variable_answers_with_no_bound_do_not_depend_on_names() {
+    one_bound_or_none_names(Some("none"), 0, 30);
 }
 
 #[test]
-fn one_variable_answers_with_no_bound_do_not_depend_on_names_second_quarter() {
-    one_bound_or_none_names(Some("none"), 375, 750);
+fn one_variable_answers_with_a_lower_bound_do_not_depend_on_names() {
+    one_bound_or_none_names(Some("lo"), 0, 100);
 }
 
 #[test]
-fn one_variable_answers_with_no_bound_do_not_depend_on_names_third_quarter() {
-    one_bound_or_none_names(Some("none"), 750, 1125);
-}
-
-#[test]
-fn one_variable_answers_with_no_bound_do_not_depend_on_names_fourth_quarter() {
-    one_bound_or_none_names(Some("none"), 1125, 1500);
-}
-
-#[test]
-fn one_variable_answers_with_a_lower_bound_do_not_depend_on_names_first_half() {
-    one_bound_or_none_names(Some("lo"), 0, 750);
-}
-
-#[test]
-fn one_variable_answers_with_a_lower_bound_do_not_depend_on_names_second_half() {
-    one_bound_or_none_names(Some("lo"), 750, 1500);
-}
-
-#[test]
-fn one_variable_answers_with_an_upper_bound_do_not_depend_on_names_first_half() {
-    one_bound_or_none_names(Some("hi"), 0, 750);
-}
-
-#[test]
-fn one_variable_answers_with_an_upper_bound_do_not_depend_on_names_second_half() {
-    one_bound_or_none_names(Some("hi"), 750, 1500);
+fn one_variable_answers_with_an_upper_bound_do_not_depend_on_names() {
+    one_bound_or_none_names(Some("hi"), 0, 100);
 }
 
 /// The cases `from..to` of the kind of bound `only` (`none`, `lo` or `hi`; all three when
@@ -3223,7 +3328,8 @@ fn one_bound_or_none_names(only: Option<&str>, from: usize, to: usize) {
         if only.is_some_and(|o| o != label) {
             continue;
         }
-        let mut rng = zed_tests::instances::Rng::new(0x15_3b0d);
+        let (mut rng, _) =
+            zed_tests::instances::Rng::fresh(&format!("one-variable cases, bound {label}"));
         let (mut sat, mut empty, mut refused, mut unchecked) = (0usize, 0usize, 0usize, 0usize);
         for case_idx in 0..to {
             let (f, x0, copies, divs, lo, hi, _) =
@@ -3647,7 +3753,7 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
     // numbered in reverse; `decide` and `satisfiable` give the same answer, refusal included,
     // and `satisfiable` asked first gives the same answers too. `PNCX_CASES=a..b` runs part.
     use zedc::store::presburger::{decide, satisfiable};
-    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 1000), |s| {
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 100), |s| {
         let (a, b) = s.split_once("..").unwrap();
         (a.parse().unwrap(), b.parse().unwrap())
     });
@@ -3665,7 +3771,8 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
         ),
         ("reversed", &|k| format!("v{}", 9 - k), &|i| 99 - i),
     ];
-    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    // 100 cases drawn with a new seed each run (author P169; 1,000 at one seed took 4.2 s).
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable boundary modes renamed");
     let (mut differ, mut answered) = (Vec::new(), 0usize);
     for case_idx in 0..to {
         let (f, ..) = modular_case_mode(&mut rng, case_idx, Some((case_idx % 4) as u8));

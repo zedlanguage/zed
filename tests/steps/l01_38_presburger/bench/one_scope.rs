@@ -15,7 +15,7 @@ fn the_questions_of_a_chain_of_calls_scale() {
         }
         src
     };
-    let n = 100;
+    let n = 1800;
     let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
@@ -43,7 +43,7 @@ fn the_questions_of_a_chain_of_tests_scale() {
     // `p{i}(x) = p{i-1}(x: x) && x > i`, the chain of LOAD-chain-share: 62.6 times the bytes
     // for 8 times the functions (100 to 800) when each body translated the chain again, 8.1
     // times when each takes its callee's translation as made for the body before.
-    questions_scale("a chain of tests", 100, "p0(x: int) = x > 0;\n", |i| {
+    questions_scale("a chain of tests", 1600, "p0(x: int) = x > 0;\n", |i| {
         format!("p{i}(x: int) = p{}(x: x) && x > {i};\n", i - 1)
     });
 }
@@ -56,7 +56,7 @@ fn the_questions_of_a_chain_over_two_variables_scale() {
     // times when it holds its callee's as a shared part and is decided from its answers.
     questions_scale(
         "a chain of tests over two variables",
-        50,
+        1000,
         "p0(x: int, y: int) = x > y && y >= 0;\n",
         |i| {
             format!(
@@ -77,7 +77,7 @@ fn the_questions_of_a_chain_defining_auxiliary_variables_scale() {
     // 400) on main, 7.9 times now.
     questions_scale(
         "a chain of tests defining auxiliary variables",
-        50,
+        1900,
         "p0(x: int) = x div 3 > 0;\n",
         |i| format!("p{i}(x: int) = p{}(x: x) && x mod 7 + {i} > 0;\n", i - 1),
     );
@@ -92,7 +92,7 @@ fn the_questions_of_a_drifting_chain_scale() {
     // MB → 15.9 GB, measured once), 8.2 now (40.9 MB → 334 MB).
     questions_scale(
         "a chain whose links extend a callee's point beside the chain",
-        40,
+        500,
         "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
          p0(x: int) = x > 0;\n",
         drifting_link,
@@ -107,7 +107,7 @@ fn the_questions_of_a_drifting_disjunctive_chain_scale() {
     // 1.005, 5.399 s at 40, 80, 160 links, debug, measured once).
     questions_scale(
         "a chain whose links extend a callee's point beside a chain of disjunctions",
-        40,
+        340,
         "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n\
          p0(x: int) = x > 0;\n",
         drifting_link,
@@ -121,7 +121,7 @@ fn the_questions_of_a_chain_moving_its_argument_scale() {
     // before (57.2 MB → 3.52 GB, each call translated again), 8.1 now (7.9 MB → 63.9 MB).
     questions_scale(
         "a chain of tests moving the argument",
-        50,
+        1700,
         "p0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -140,7 +140,7 @@ fn the_questions_of_a_chain_renaming_its_argument_scale() {
     // bytes before (45.4 MB → 2.76 GB), 8.0 now (6.3 MB → 50.9 MB).
     questions_scale(
         "a chain of tests renaming the argument",
-        50,
+        1200,
         "p0(x: int) = x > 0;\n",
         |i| {
             let (own, callee) = if i % 2 == 0 { ("x", "y") } else { ("y", "x") };
@@ -160,7 +160,7 @@ fn the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale() {
     // 8.1 and 8.0 times when it reads past those its callee's point gives a value.
     questions_scale(
         "a chain of tests over a chain of halvings",
-        25,
+        980,
         "h0(x: int) = x;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -179,7 +179,7 @@ fn the_questions_of_a_chain_of_tests_over_mixed_definitions_scale() {
     // from 25 to 200 links when each link read the chain, about 8.2 times now.
     questions_scale(
         "a chain of tests over mixed definitions",
-        25,
+        520,
         "h0(x: int) = x;\np0(x: int) = x > 0;\n",
         |i| {
             let h = i - 1;
@@ -203,7 +203,7 @@ fn the_questions_of_a_chain_of_tests_holding_everywhere_scale() {
     // point), 7.7 times now.
     questions_scale(
         "a chain of tests holding everywhere over a chain of halvings",
-        25,
+        610,
         "h0(x: int) = x;\np0(x: int) = x > 0 || x <= 0;\n",
         |i| {
             format!(
@@ -224,7 +224,7 @@ fn separate_tests_over_the_links_of_one_chain_of_definitions_scale() {
     // `h{i-1}`'s, 8.4 times the bytes and 9.0 times the instructions now.
     questions_scale(
         "separate tests over one chain of halvings",
-        25,
+        680,
         "h0(x: int) = x;\nt0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -240,7 +240,7 @@ fn separate_tests_over_a_chain_of_branches_scale() {
     // 0.042 s at 50 links, 0.387 s at 400.
     separate_tests_scale(
         "separate tests over a chain of `if`s",
-        25,
+        630,
         1,
         "if H > 3 { H div 2 } else { H + 1 }",
         "H > 2",
@@ -252,7 +252,7 @@ fn separate_tests_over_a_chain_of_smallest_values_scale() {
     // 0.100 s at 50 links, 1.58 s at 400: the summary's coefficients are `2^i` at link i.
     separate_tests_scale(
         "separate tests over a chain of `min`s",
-        25,
+        540,
         1,
         "min(H div 2, x)",
         "H > 0",
@@ -268,7 +268,7 @@ fn separate_tests_over_a_chain_of_largest_values_scale() {
     // any value, with the rows read through its division pair (Summaries::summary).
     separate_tests_scale(
         "separate tests over a chain of `max`s",
-        25,
+        710,
         1,
         "max(H div 2, x - 9)",
         "H < 0",
@@ -283,7 +283,7 @@ fn separate_tests_over_a_chain_of_largest_values_against_a_quotient_apart_from_i
     // from the fourth link on. The quotient is now read beside in the link's place.
     separate_tests_scale(
         "separate tests over a chain of `max`s against a quotient apart from it",
-        25,
+        250,
         1,
         "max(H div 2, x - 9)",
         "H < x div 64 - 1",
@@ -298,7 +298,7 @@ fn separate_tests_over_a_chain_of_largest_values_of_quotients_scale() {
     // links, n^4.7.
     separate_tests_scale(
         "separate tests over a chain of `max`s of quotients",
-        25,
+        660,
         1,
         "max(H div 2, x div 3 - 9)",
         "H < 0",
@@ -314,7 +314,7 @@ fn separate_tests_over_a_chain_of_largest_values_of_remainders_scale() {
     // tests refused, n^3.4.
     separate_tests_scale(
         "separate tests over a chain of `max`s of remainders",
-        25,
+        81,
         1,
         "max(H div 2, x mod 3 - 9)",
         "H < 0",
@@ -335,7 +335,7 @@ fn separate_tests_over_a_chain_of_largest_values_of_two_divisions_scale() {
     // unit-pair folding and slice Stein gcd. Now held to O(n log n) at 40 and 320 links.
     separate_tests_scale(
         "separate tests over a chain of `max`s of two divisions",
-        40,
+        430,
         1,
         "max(H div 2, x mod 5 + x div 7 - 9)",
         "H < 0",
@@ -355,7 +355,7 @@ fn separate_tests_over_a_chain_of_largest_values_of_two_inputs_scale() {
     // every size is LOAD-max-div-bits.
     separate_tests_over_inputs_scale(
         "separate tests over a chain of `max`s of two inputs",
-        10,
+        440,
         1,
         &["x", "y"],
         "max(H div 2, x + y - 9)",
@@ -372,7 +372,7 @@ fn separate_tests_over_a_chain_of_largest_values_less_one_scale() {
     // and 32.6 billion instructions at 10, 20, 40 and 80 links, n^2.0.
     separate_tests_scale(
         "separate tests over a chain of `max`s of a decrement",
-        25,
+        700,
         1,
         "max(H - 1, x mod 5 + x div 7 - 9)",
         "H < 0",
@@ -401,7 +401,7 @@ fn separate_tests_over_a_chain_reading_a_new_symbol_at_each_link_scale() {
             })
             .collect()
     };
-    let inputs = zed_tests::scaling::inputs(200, |m| {
+    let inputs = zed_tests::scaling::inputs(18000, |m| {
         let asks: Vec<Formula> = (0..m)
             .map(|i| Formula::Con(Con::ge(&Lin::atom(Atom::Aux(i as u32)), &Lin::constant(0))))
             .collect();
@@ -409,7 +409,7 @@ fn separate_tests_over_a_chain_reading_a_new_symbol_at_each_link_scale() {
     });
     zed_tests::scaling::check(
         "separate tests over a chain reading a new symbol at each link",
-        200,
+        18000,
         |m| {
             let (defs, asks) = &inputs[&m];
             let mut extending = Extending::new();
@@ -430,7 +430,7 @@ fn separate_tests_over_a_chain_reading_a_new_division_pair_at_each_link_scale() 
     // limit). With `seen_in` per frame, each distinct input is visited once.
     use zedc::store::presburger::extend::Extending;
     use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
-    let inputs = zed_tests::scaling::inputs(200, |m| {
+    let inputs = zed_tests::scaling::inputs(8800, |m| {
         let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
         let q = |i: usize| Lin::atom(Atom::Aux((2 * i) as u32));
         let r = |i: usize| Lin::atom(Atom::Aux((2 * i + 1) as u32));
@@ -459,7 +459,7 @@ fn separate_tests_over_a_chain_reading_a_new_division_pair_at_each_link_scale() 
     });
     zed_tests::scaling::check(
         "separate tests over a chain reading a new division pair at each link",
-        200,
+        8800,
         |m| {
             let (defs, asks) = &inputs[&m];
             let mut extending = Extending::new();
@@ -481,7 +481,7 @@ fn separate_tests_over_a_periodic_remainder_chain_scale() {
     // summarizes every link in O(n log n) with 0 refusals.
     separate_tests_scale(
         "separate tests over a periodic remainder chain",
-        20,
+        870,
         1,
         "H mod 7 + H",
         "H < 0",
@@ -494,7 +494,7 @@ fn separate_tests_over_two_chains_sharing_an_input_scale() {
     // `p{i}(x, y)` that share both input `x` and a functional leaf `x div 7`, after an earlier
     // test numbered `g{m}` first. Before, `Summaries::local` kept at most one summary and unrolled
     // the entire lower-numbered chain into `beside`, O(n^2) with refusals.
-    let inputs = zed_tests::scaling::inputs(25, |m| {
+    let inputs = zed_tests::scaling::inputs(30, |m| {
         let mut src = "g0(x: int) = x;\np0(x: int, y: int) = x + y;\n".to_string();
         for i in 1..=m {
             src += &format!("g{i}(x: int) = max(g{}(x: x) div 2, x div 7 - 9);\n", i - 1);
@@ -515,7 +515,7 @@ fn separate_tests_over_two_chains_sharing_an_input_scale() {
         let unit = elab(&src).expect("elab");
         (src, tokens, stmts, unit)
     });
-    zed_tests::scaling::check("separate tests over two chains sharing an input", 25, |m| {
+    zed_tests::scaling::check("separate tests over two chains sharing an input", 30, |m| {
         let (src, tokens, stmts, unit) = &inputs[&m];
         let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
         assert!(refused.is_empty(), "m = {m}: {} refused", refused.len());
@@ -527,7 +527,7 @@ fn separate_tests_over_a_chain_of_largest_values_of_multiples_scale() {
     // LOAD-max-div-xr: `2 * x - 9` beside `H div 2`.
     separate_tests_scale(
         "separate tests over a chain of `max`s of multiples",
-        25,
+        720,
         1,
         "max(H div 2, 2 * x - 9)",
         "H < 0",
@@ -539,7 +539,7 @@ fn separate_tests_over_a_chain_of_smallest_values_against_the_input_scale() {
     // LOAD-max-div-xr: `min` against a step of the input.
     separate_tests_scale(
         "separate tests over a chain of `min`s against `x - 5`",
-        25,
+        470,
         1,
         "min(H div 2 + 1, x - 5)",
         "H > 3",
@@ -551,7 +551,7 @@ fn separate_tests_over_a_chain_of_absolute_values_scale() {
     // 0.051 s at 50 links, 0.468 s at 400.
     separate_tests_scale(
         "separate tests over a chain of `abs`s",
-        25,
+        550,
         1,
         "abs(H - 5) div 2",
         "H > 1",
@@ -563,7 +563,7 @@ fn separate_tests_over_a_chain_of_two_inputs_scale() {
     // 0.100 s at 50 links, 0.972 s at 400.
     separate_tests_scale(
         "separate tests over a chain reading two quotients of one link",
-        25,
+        660,
         1,
         "min(H div 2, H div 3 + 1)",
         "H > 1",
@@ -575,7 +575,7 @@ fn separate_tests_over_two_links_of_one_chain_scale() {
     // 0.053 s at 50 links, 0.232 s at 400.
     separate_tests_scale(
         "separate tests over two links of one chain",
-        25,
+        510,
         1,
         "H div 2 + 1",
         "H > h1(x: x)",
@@ -587,7 +587,7 @@ fn separate_conjunctions_over_the_links_of_one_chain_scale() {
     // 0.027 s at 50 links, 0.375 s at 400.
     separate_tests_scale(
         "separate conjunctions over one chain of halvings",
-        25,
+        470,
         1,
         "H div 2 + 1",
         "H > 0 && x < 1000",
@@ -603,7 +603,7 @@ fn separate_tests_over_a_chain_of_divisions_by_a_parameter_scale() {
     // to 200. Now 77.0 and 641 million instructions at 25 and 200 links, 8.3 times.
     separate_tests_scale(
         "separate tests over a chain of divisions by a parameter",
-        25,
+        560,
         1,
         "H div x",
         "H > 0",
@@ -620,7 +620,7 @@ fn separate_tests_over_a_chain_of_products_scale() {
     // instructions at 25 and 200 links, 8.0 times.
     separate_tests_scale(
         "separate tests over a chain of products",
-        25,
+        770,
         1,
         "H * x + 1",
         "H > 0",
@@ -634,7 +634,7 @@ fn tests_that_forget_deep_and_wide_translations_scale() {
     // the product `x * x * x`, which has no linear term. The next test translates the chains
     // again, so each test makes and undoes about `32n` entries, linear in `n`.
     let tests = 4;
-    let units: std::collections::BTreeMap<usize, _> = [25, 25 * zed_tests::scaling::FACTOR]
+    let units: std::collections::BTreeMap<usize, _> = [250, 250 * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
             let mut src = String::from("q(x: int) = x * x * x;\n");
@@ -664,7 +664,7 @@ fn tests_that_forget_deep_and_wide_translations_scale() {
         .collect();
     zed_tests::scaling::check_order(
         "tests that undo the translation of four chains",
-        25,
+        250,
         1,
         |m| {
             let (stmts, tokens, unit, src) = &units[&m];
@@ -680,7 +680,7 @@ fn separate_tests_over_a_chain_of_nonunit_steps_scale() {
     // out with the input, so `2 * H == 3 * q + r` leaves no congruence.
     separate_tests_scale(
         "separate tests over a chain of `(2 * H) div 3`",
-        25,
+        990,
         1,
         "(2 * H) div 3",
         "H > 0",
@@ -695,7 +695,7 @@ fn the_questions_of_a_chain_doubling_its_argument_scale() {
     // that atom to its argument.
     questions_scale(
         "a chain of tests doubling the argument",
-        50,
+        760,
         "p0(x: int) = x > 0;\n",
         |i| format!("p{i}(x: int) = p{}(x: 2 * x) && x < {};\n", i - 1, 1000 * i),
     );
@@ -707,7 +707,7 @@ fn the_questions_of_a_chain_negating_its_argument_scale() {
     // LOAD-chain-affine too; kept so that the canonical reading stays so.
     questions_scale(
         "a chain of tests negating the argument",
-        50,
+        720,
         "p0(x: int) = x > 0;\n",
         |i| format!("p{i}(x: int) = p{}(x: 0 - x) && x < {};\n", i - 1, 1000 * i),
     );
@@ -720,7 +720,7 @@ fn the_questions_of_a_chain_passing_a_constant_scale() {
     // `the_relations_of_a_chain_passing_a_moved_parameter_and_a_constant_scale`).
     questions_scale(
         "a chain of tests passing a constant",
-        50,
+        580,
         "p0(x: int, y: int) = x > y;\n",
         |i| {
             format!(
@@ -740,7 +740,7 @@ fn the_questions_of_a_chain_passing_a_parameter_twice_scale() {
     // `the_relations_of_a_chain_passing_a_moved_parameter_twice_scale`).
     questions_scale(
         "a chain of tests passing a parameter twice",
-        50,
+        650,
         "p0(x: int, y: int) = x >= y;\n",
         |i| {
             format!(
@@ -760,7 +760,7 @@ fn the_questions_of_a_chain_with_a_second_call_scale() {
     // it again.
     questions_scale(
         "a chain of tests with a second call",
-        50,
+        1500,
         "q(x: int) = x < 1000000;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -780,7 +780,7 @@ fn the_questions_of_a_chain_calling_its_helpers_in_a_diamond_scale() {
     // Linear before LOAD-chain-affine too; kept so that the classes keep it so.
     questions_scale(
         "a chain of tests calling its helpers in a diamond",
-        25,
+        450,
         "h0(x: int) = x;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -797,7 +797,7 @@ fn the_relations_of_a_chain_with_a_second_call_whose_points_move_scale() {
     // 50 → 400: 62.5 times the bytes when each call was translated again.
     relations_scale(
         "the relations of a chain with a second call whose points move",
-        50,
+        1800,
         "q(x: int) = x > 0;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -817,7 +817,7 @@ fn the_relations_of_a_chain_dividing_by_its_argument_scale() {
     // preimage.rs).
     relations_scale(
         "the relations of a chain dividing by its argument",
-        50,
+        520,
         "q(x: int, n: int) = x mod n + x mod (n + 1) + x div (n + 2) + x div (n + 3) >= 0;\n\
          p0(x: int, n: int) = x mod n >= 0;\n",
         |i| {
@@ -836,7 +836,7 @@ fn the_relations_of_a_chain_passing_a_moved_parameter_twice_scale() {
     // each call was translated again.
     relations_scale(
         "the relations of a chain passing a moved parameter twice",
-        50,
+        740,
         "p0(x: int, y: int) = x >= y;\n",
         |i| {
             format!(
@@ -854,7 +854,7 @@ fn the_relations_of_a_chain_passing_a_moved_parameter_and_a_constant_scale() {
     // translated again.
     relations_scale(
         "the relations of a chain passing a moved parameter and a constant",
-        50,
+        650,
         "p0(x: int, y: int) = x > y;\n",
         |i| {
             format!(
@@ -872,7 +872,7 @@ fn the_relations_of_a_chain_with_a_second_call_of_two_constraints_scale() {
     // 61.1 times the bytes when each call was translated again.
     relations_scale(
         "the relations of a chain with a second call of two constraints",
-        50,
+        1200,
         "q(x: int) = x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -891,7 +891,7 @@ fn the_relations_of_a_chain_with_a_second_call_of_a_call_scale() {
     // was translated again.
     relations_scale(
         "the relations of a chain with a second call of a call",
-        50,
+        1700,
         "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
          p0(x: int) = x > 0;\n",
         |i| {
@@ -913,7 +913,7 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_call_scale() {
     // link translated the chain below it again.
     questions_scale(
         "a chain of tests with a second call of a call",
-        50,
+        670,
         "r(x: int) = x < 2000000;\nq(x: int) = r(x: x) && x < 1000000;\np0(x: int) = x > 0;\n",
         |i| {
             format!(
@@ -953,7 +953,7 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale() {
         }
         src
     };
-    let n = 50;
+    let n = 530;
     let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
@@ -992,7 +992,7 @@ fn the_relations_of_a_chain_calling_an_integer_function_scale() {
     // along the chain (10.7 s at 400 links), which item LOAD-call-relation returns.
     unit_relations_scale(
         "the relations of a chain calling an integer function",
-        50,
+        510,
         |n| {
             let mut src = String::from("h0(x: int) = x mod 3;\n");
             for j in 1..n {
@@ -1023,14 +1023,14 @@ fn the_questions_of_a_chain_moving_a_hole_scale() {
     // through each call's binding and merged in O(log n): 0.032, 0.098, 0.198 s.
     questions_scale(
         "a chain whose links move a hole of their callee",
-        40,
+        470,
         "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
         drifting_link,
     );
     // The same moved down by 30, so that the holes do not overlap: 0.011, 0.021, 0.038 s.
     questions_scale(
         "a chain whose links move a hole of their callee apart",
-        40,
+        470,
         "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
         falling_link,
     );
@@ -1052,7 +1052,7 @@ fn the_questions_of_a_chain_moving_bounds_beside_a_shared_remainder_scale() {
     // `the_questions_of_a_chain_of_holes_beside_one_modulus_scale`.
     questions_scale(
         "a chain whose links move bounds beside a shared remainder",
-        8,
+        340,
         "q(x: int) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50) && x > 0 \
          && x < 1000000;\np0(x: int) = x > 0;\n",
         rising_link,
@@ -1065,15 +1065,15 @@ fn the_questions_of_a_chain_of_holes_beside_one_modulus_scale() {
     // whole and refused (Shadows): 8.73 s at 12 links, 29.2 s at 16 (debug, measured once).
     // Now its face is read empty from its holes and the residues left by 4: 0.044 s at 12
     // links, 0.75 s at 320.
-    questions_scale_unit("a chain of holes beside one modulus", 40, mod4_chain);
+    questions_scale_unit("a chain of holes beside one modulus", 94, mod4_chain);
     // The gapped chain keeps a point until its holes cover the range: 17.6 s at 23 links
     // before, 0.071 s now, 1.68 s at 320.
-    questions_scale_unit("a chain of a gap beside one modulus", 40, gapped_chain);
+    questions_scale_unit("a chain of a gap beside one modulus", 94, gapped_chain);
     // Link 76 of the shared-remainder chain is the first with no point: before, it was
     // decided whole, 0.13 s; now its face is decided empty by the solver, 3.5 ms.
     questions_scale_unit(
         "a chain moving bounds beside a shared remainder past link 76",
-        40,
+        94,
         shared_remainder_chain,
     );
 }
@@ -1085,12 +1085,12 @@ fn the_questions_of_a_chain_of_remainders_scale() {
     // decided whole and refused (Shadows), and asked again whole: 5.5 s at 100 links, 21.9 s
     // at 200 (debug, measured once). Now the face of link 3 is read empty, and each later
     // link holds nowhere from the link below: 0.063 s at 100 links, 0.23 s at 400.
-    questions_scale_unit("a chain of remainders by 3", 50, mod3_chain);
-    questions_scale_unit("a chain of remainders by 5", 50, mod5_chain);
-    questions_scale_unit("a chain of remainders by 7 moved by 2", 50, mod7_chain);
+    questions_scale_unit("a chain of remainders by 3", 290, mod3_chain);
+    questions_scale_unit("a chain of remainders by 5", 290, mod5_chain);
+    questions_scale_unit("a chain of remainders by 7 moved by 2", 290, mod7_chain);
     questions_scale_unit(
         "a chain of remainders moved by the modulus",
-        50,
+        290,
         kept_residue_chain,
     );
 }
@@ -1103,10 +1103,10 @@ fn the_questions_of_a_chain_of_residue_maps_scale() {
     // Before, the graph path split on residues: two guards 3.08e9 instructions at 10 links,
     // 5.14e10 at 40 (exponent 2.0); the affine default 1.17e9 at 5 links (exponent 4.5).
     // Now 2.0e7 and 8.4e7 for two guards, 1.4e8 at 80 links for the affine default.
-    questions_scale_unit("a chain of two exceptional residues", 40, two_guards_chain);
+    questions_scale_unit("a chain of two exceptional residues", 43, two_guards_chain);
     questions_scale_unit(
         "a chain of an affine default with an exception",
-        40,
+        43,
         affine_default_chain,
     );
     // LOAD-max-div-unsolved: a default multiplier that shares a factor with M. The residues
@@ -1114,10 +1114,10 @@ fn the_questions_of_a_chain_of_residue_maps_scale() {
     // it kept apart; each step whose multiplier is no unit on the coset shrinks it by that
     // factor, at most log2 M times. Before, the graph path: 1.2e11 instructions at 80 links
     // for the doubling chain.
-    questions_scale_unit("a chain doubling the residue by 1000", 40, doubling_chain);
+    questions_scale_unit("a chain doubling the residue by 1000", 43, doubling_chain);
     questions_scale_unit(
         "a chain of a default doubling the residue by 2^40",
-        40,
+        43,
         power_of_two_default_chain,
     );
     // The residues outside the coset are keyed by M split into coprime blocks; a step maps
@@ -1128,7 +1128,7 @@ fn the_questions_of_a_chain_of_residue_maps_scale() {
     // times. 160 links, not 40, since the first 24 links build the coset.
     questions_scale_unit(
         "a chain of a default unit on the coset only, by 2^10 3^10 5^10",
-        160,
+        360,
         nonunit_persist_chain,
     );
 }
@@ -1139,41 +1139,41 @@ fn the_questions_of_a_chain_of_residue_intervals_scale() {
     // image is a union of intervals of residues, kept in a persistent tree whose subtrees
     // move by a constant in O(1), so a link costs its pieces' cuts and the runs its union
     // merges, not the size of the image.
-    questions_scale_unit("a chain of two intervals, by 10^18 + 9", 40, gap_chain);
+    questions_scale_unit("a chain of two intervals, by 10^18 + 9", 37, gap_chain);
     questions_scale_unit(
         "a chain of two wide intervals, by 2^31 - 1",
-        40,
+        37,
         gap_wide_chain,
     );
     questions_scale_unit(
         "a chain of nested cuts, by 2^31 - 1",
-        40,
+        37,
         cuts_reversed_chain,
     );
     questions_scale_unit(
         "two alternating steps of cuts, by 2^31 - 1",
-        40,
+        37,
         two_cut_steps_chain,
     );
     questions_scale_unit(
         "three steps of overlapping cuts, by 2^31 - 1",
-        40,
+        37,
         overlap_chain,
     );
     // Steps with offsets near M, whose shifted parts overlap across most of the residues.
     questions_scale_unit(
         "two steps of wide overlaps, by 10^12 + 39",
-        40,
+        37,
         overlap0_chain,
     );
     questions_scale_unit(
         "three steps of wide overlaps, by 10^12 + 39",
-        40,
+        37,
         overlap6_chain,
     );
     questions_scale_unit(
         "three steps of wide overlaps, by 10^18 + 9",
-        40,
+        37,
         overlap19_chain,
     );
 }
@@ -1185,63 +1185,67 @@ fn the_questions_of_a_chain_of_residue_intervals_with_no_period_scale() {
     // before the interval tree, which listed the whole image at each change of period, took
     // 11.3 times the work at 100 and 800 links on the small moves and 14.1 times the bytes on
     // the switching chain, over the limit of 12.77.
-    questions_scale_unit("random cuts and moves, by 2^31 - 1", 100, random_cuts_chain);
+    questions_scale_unit("random cuts and moves, by 2^31 - 1", 220, random_cuts_chain);
     questions_scale_unit(
         "random cuts and moves of 0 to 6, by 2^31 - 1",
-        100,
+        220,
         random_small_moves_chain,
     );
     questions_scale_unit(
         "a step switching every five links, by 10^12 + 39",
-        100,
+        220,
         switching_chain,
     );
     questions_scale_unit(
         "a first step apart from the rest, by 10^12 + 39",
-        100,
+        220,
         first_step_apart_chain,
     );
 }
 
 #[test]
 fn independent_question_frontiers_scale() {
-    questions_scale_unit("independent question frontiers", 100, |n| {
+    questions_scale_unit("independent question frontiers", 370, |n| {
         r6_local_source("leaves", n)
     });
 }
 
 #[test]
 fn questions_over_two_branches_of_one_prefix_scale() {
-    questions_scale_unit("two branches of one common prefix", 20, |n| {
+    questions_scale_unit("two branches of one common prefix", 560, |n| {
         r6_local_source("prefix", n)
     });
 }
 
 #[test]
 fn scalar_images_of_periodic_chains_scale() {
-    questions_scale_unit("scalar image of guarded increments", 10, |n| {
+    questions_scale_unit("scalar image of guarded increments", 400, |n| {
         r6_periodic_value_questions(n, "if H mod 1000 == 0 { H + 1 } else { H + 2 }", "H == 9")
     });
-    questions_scale_unit("scalar lattice image of a remainder sum", 10, |n| {
+    questions_scale_unit("scalar lattice image of a remainder sum", 400, |n| {
         r6_periodic_value_questions(n, "H mod 1000 + H", "H == 0")
     });
 }
 
 #[test]
 fn period_orbits_with_a_kept_input_remainder_scale() {
-    questions_scale_unit("guarded increment orbit with kept input residue", 10, |n| {
-        r6_periodic_value_questions(
-            n,
-            "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
-            "x mod 1000 == 3 && H == 9",
-        )
-    });
-    questions_scale_unit("remainder-sum orbit with kept input residue", 10, |n| {
+    questions_scale_unit(
+        "guarded increment orbit with kept input residue",
+        160,
+        |n| {
+            r6_periodic_value_questions(
+                n,
+                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
+                "x mod 1000 == 3 && H == 9",
+            )
+        },
+    );
+    questions_scale_unit("remainder-sum orbit with kept input residue", 160, |n| {
         r6_periodic_value_questions(n, "H mod 1000 + H", "x mod 1000 == 3 && H == 9")
     });
     questions_scale_unit(
         "guarded increment orbit with previous link residue",
-        10,
+        160,
         |n| {
             r6_periodic_value_questions(
                 n,
@@ -1250,7 +1254,7 @@ fn period_orbits_with_a_kept_input_remainder_scale() {
             )
         },
     );
-    questions_scale_unit("remainder-sum orbit with previous link residue", 10, |n| {
+    questions_scale_unit("remainder-sum orbit with previous link residue", 160, |n| {
         r6_periodic_value_questions(n, "H mod 1000 + H", "P mod 1000 == 3 && H == 6")
     });
 }
@@ -1263,7 +1267,7 @@ fn the_questions_of_a_negated_modular_chain_scale() {
     // refused with Shadows. Now decided in O(n log n) with no refusals, 40 to 320 links.
     questions_scale_unit(
         "a chain of negated and disjunctive residues over several moduli",
-        40,
+        250,
         negated_modular_chain,
     );
 }
@@ -1277,7 +1281,7 @@ fn the_coprime_base_of_distinct_primes_scales() {
     // and 20.4 times the work or bytes, against 11.7), at 64 and 512 with neither.
     questions_scale_unit(
         "residues over distinct primes",
-        512,
+        1100,
         residues_over_distinct_primes,
     );
 }
@@ -1287,7 +1291,11 @@ fn the_questions_of_clauses_over_many_segments_scale() {
     // PNCX-modular, R3 (R3-CLAUDE-2): the segments between the bounds of `n` clauses are walked
     // as a segment tree, each clause stored at O(log n) nodes, so the walk costs order
     // `n log n`; solving each segment with all the clauses active in it cost order `n^2`.
-    questions_scale_unit("clauses over many segments", 64, clauses_over_many_segments);
+    questions_scale_unit(
+        "clauses over many segments",
+        920,
+        clauses_over_many_segments,
+    );
 }
 
 #[test]
@@ -1295,11 +1303,12 @@ fn clauses_sharing_one_residue_condition_scale() {
     // PNCX-modular, R4 (I3.12): the bounds of the clauses that share one residue condition are
     // intersected as one, by sorting the pieces of their complements, so this costs order
     // `n log n`; intersecting them one after another cost order `n^2`.
-    let formulas: std::collections::BTreeMap<usize, _> = [512, 512 * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|n| (n, clauses_sharing_one_residue_condition(n)))
-        .collect();
-    zed_tests::scaling::check("clauses sharing one residue condition", 512, |n| {
+    let formulas: std::collections::BTreeMap<usize, _> =
+        [28000, 28000 * zed_tests::scaling::FACTOR]
+            .into_iter()
+            .map(|n| (n, clauses_sharing_one_residue_condition(n)))
+            .collect();
+    zed_tests::scaling::check("clauses sharing one residue condition", 28000, |n| {
         assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
     });
 }
@@ -1309,11 +1318,11 @@ fn a_disjunction_of_many_moduli_scales() {
     // PNCX-modular, R4 (R4-CLAUDE-2): the clauses over the coprime base are built with each
     // literal merged into the clause built so far, not into a copy of it, so a clause of `n`
     // literals costs order `n`; copying cost order `n^2`.
-    let formulas: std::collections::BTreeMap<usize, _> = [512, 512 * zed_tests::scaling::FACTOR]
+    let formulas: std::collections::BTreeMap<usize, _> = [4900, 4900 * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|n| (n, a_disjunction_of_many_moduli(n)))
         .collect();
-    zed_tests::scaling::check("a disjunction of many moduli", 512, |n| {
+    zed_tests::scaling::check("a disjunction of many moduli", 4900, |n| {
         assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
     });
 }
@@ -1323,11 +1332,11 @@ fn the_fails_questions_of_pairs_scale() {
     // PNCX-modular, R4 (R4-CLAUDE-3): the negation of a conjunction of clauses beside the
     // remainders' definitions is decided one negated clause at a time by the one-variable path,
     // order `n` per clause; it went to the general path, near `n^1.5` per doubling.
-    let formulas: std::collections::BTreeMap<usize, _> = [64, 64 * zed_tests::scaling::FACTOR]
+    let formulas: std::collections::BTreeMap<usize, _> = [8000, 8000 * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|n| (n, the_fails_question_of_pairs(n)))
         .collect();
-    zed_tests::scaling::check("the fails questions of pairs", 64, |n| {
+    zed_tests::scaling::check("the fails questions of pairs", 8000, |n| {
         assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
     });
 }
@@ -1339,7 +1348,7 @@ fn the_questions_of_negated_residues_over_distinct_bounds_scale() {
     // disjunction is now left to the general path, and each question costs order `n`.
     questions_scale_unit(
         "negated residues over distinct bounds",
-        16,
+        1000,
         negated_residues_over_distinct_bounds,
     );
 }

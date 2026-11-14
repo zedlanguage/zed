@@ -8,7 +8,7 @@ fn growth_of_the_hub_family() {
     // 9.39x. The hub variable joins the blocks; the first block of four is refused.
     grows(
         "the hub family",
-        64,
+        250,
         Err(Refusal::Growth),
         crate::scaling::blocks_with_a_hub,
     );
@@ -25,7 +25,7 @@ fn sliding_windows_of_four_are_decided() {
 #[test]
 fn growth_of_weighted_sliding_windows() {
     // 9.25x to the refusal.
-    grows("weighted sliding windows", 64, Err(Refusal::Growth), |n| {
+    grows("weighted sliding windows", 650, Err(Refusal::Growth), |n| {
         weighted_windows(n).0
     });
 }
@@ -41,7 +41,7 @@ fn growth_of_offsets_laid_end_to_end() {
     // Before that, 23.4x and 32.4x from 64 to 512 until the pivot of an equality was taken
     // among the variables no other equality holds (`pivots`): the chain
     // `o[i+1] == o[i] + l[i]` wrote rows of 3 to n + 1 terms.
-    grows("offsets laid end to end", 256, Ok(true), offsets);
+    grows("offsets laid end to end", 1300, Ok(true), offsets);
 }
 
 #[test]
@@ -49,13 +49,13 @@ fn growth_of_a_convex_valley() {
     // 9.4x the instructions and 8.1x the bytes from 64 to 512 (load 27, 2026-11-08). Without
     // `System::dominated`, once the stage of `System::shrink` was added, 38.1x the bytes: each
     // step carried one more row `k·x - (k - 1)·y >= -N` implied by the next.
-    grows("a convex valley", 64, Ok(true), convex);
+    grows("a convex valley", 11000, Ok(true), convex);
 }
 
 #[test]
 fn growth_of_sums_over_grid_squares() {
     // 10.25x to the refusal.
-    grows("sums over grid squares", 144, Err(Refusal::Growth), |n| {
+    grows("sums over grid squares", 840, Err(Refusal::Growth), |n| {
         grid_squares(side(n)).0
     });
 }
@@ -63,13 +63,13 @@ fn growth_of_sums_over_grid_squares() {
 #[test]
 fn growth_of_a_band_of_four() {
     // 10.03x to the refusal.
-    grows("a band of four", 64, Err(Refusal::Growth), |n| band(n).0);
+    grows("a band of four", 1100, Err(Refusal::Growth), |n| band(n).0);
 }
 
 #[test]
 fn growth_of_sparse_random_rows() {
     // 9.46x to the refusal.
-    grows("sparse random rows", 64, Err(Refusal::Growth), |n| {
+    grows("sparse random rows", 510, Err(Refusal::Growth), |n| {
         sparse_random(n).0
     });
 }
@@ -77,7 +77,7 @@ fn growth_of_sparse_random_rows() {
 #[test]
 fn growth_of_chained_blocks_of_five() {
     // 9.40x to the refusal.
-    grows("chained blocks of five", 32, Err(Refusal::Growth), |n| {
+    grows("chained blocks of five", 300, Err(Refusal::Growth), |n| {
         chained_blocks(n).0
     });
 }
@@ -85,7 +85,7 @@ fn growth_of_chained_blocks_of_five() {
 #[test]
 fn growth_of_a_tree_of_blocks_of_five() {
     // 9.29x to the refusal.
-    grows("a tree of blocks of five", 32, Err(Refusal::Growth), |n| {
+    grows("a tree of blocks of five", 160, Err(Refusal::Growth), |n| {
         tree_blocks(n).0
     });
 }
@@ -95,7 +95,7 @@ fn growth_of_chained_blocks_with_a_far_contradiction() {
     // 9.42x.
     grows(
         "chained blocks, far contradiction",
-        32,
+        490,
         Ok(false),
         chained_blocks_empty,
     );

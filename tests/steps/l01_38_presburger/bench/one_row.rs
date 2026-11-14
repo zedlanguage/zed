@@ -7,7 +7,7 @@ use zedc::store::presburger::{Formula, decide, project_each, satisfiable};
 
 #[test]
 fn a_box_and_one_row_scale() {
-    let k = 32;
+    let k = 470;
     let (small, large) = (dense(k), dense(scaling::FACTOR * k));
     let (ys, yl) = (names(k), names(scaling::FACTOR * k));
     for f in [&small, &large] {
@@ -27,7 +27,7 @@ fn a_box_and_one_row_scale() {
 
 #[test]
 fn residue_and_ends_of_a_row_scale() {
-    let k = 32;
+    let k = 490;
     for (name, build, answer) in [
         (
             "target zero",
@@ -58,7 +58,7 @@ fn residue_and_ends_of_a_row_scale() {
 fn a_forced_contradiction_projects_to_empty_in_linear_work() {
     scaling::check_order(
         "paired chain projection via forced contradiction",
-        64,
+        16000,
         1,
         |k| {
             let f = paired_chain(k, false);
@@ -73,7 +73,7 @@ fn a_forced_contradiction_projects_to_empty_in_linear_work() {
 /// `8n = 512`; the point each gives is checked by `holds` outside the measured runs.
 #[test]
 fn satisfiable_on_a_box_and_one_row_scales() {
-    let k = 64;
+    let k = 800;
     let large = scaling::FACTOR * k;
     for (name, small, large) in [
         ("a box and one row", dense(k), dense(large)),
@@ -104,12 +104,12 @@ fn a_box_and_an_extreme_row_build_their_models_in_near_linear_work() {
             (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula,
         ),
     ] {
-        let (small, large) = (build(64), build(512));
+        let (small, large) = (build(750), build(6000));
         for f in [&small, &large] {
             assert!(f.holds(&satisfiable(f).unwrap().unwrap()));
         }
-        scaling::check_order(what, 64, 1, |k| {
-            drop(satisfiable(if k == 64 { &small } else { &large }));
+        scaling::check_order(what, 750, 1, |k| {
+            drop(satisfiable(if k == 750 { &small } else { &large }));
         });
     }
 }

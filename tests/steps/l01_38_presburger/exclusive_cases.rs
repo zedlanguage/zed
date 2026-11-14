@@ -125,10 +125,15 @@ fn every_case_of_the_match_is_projected_exactly() {
     }
 }
 
-/// Projects `z` of `fam(m)` at each size `m` of a scaling check, with its answer checked.
-pub(super) fn projects(what: &str, fam: fn(usize) -> Formula, want: fn(usize) -> IntervalSet) {
-    let inputs = scaling::inputs(32, fam);
-    scaling::check_order(what, 32, 1, |m| {
+/// Projects `z` of `fam(m)` at the sizes `n` and `8n` of a scaling check, with its answer checked.
+pub(super) fn projects(
+    what: &str,
+    n: usize,
+    fam: fn(usize) -> Formula,
+    want: fn(usize) -> IntervalSet,
+) {
+    let inputs = scaling::inputs(n, fam);
+    scaling::check_order(what, n, 1, |m| {
         assert_eq!(z_of(&inputs[&m]), want(m), "{what}, m = {m}");
     });
 }

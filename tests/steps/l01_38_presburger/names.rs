@@ -163,63 +163,78 @@ fn regular_rows(rng: &mut Rng, n: usize, layers: usize) -> Vec<Row> {
     rows
 }
 
-/// The systems of the family at `seed`, `layers` layers each, in its box, with the systems
-/// whose answer changes with the naming, by place, and the counts of systems with a refusal
-/// and with an answer.
-fn regular(seed: u64, n: usize, layers: usize, count: usize) -> (Vec<usize>, usize, usize) {
-    let mut rng = Rng::new(seed);
-    let (mut differ, mut refused, mut decided) = (Vec::new(), 0, 0);
+/// The systems of the family drawn from `rng`, `layers` layers each, in its box: of the first
+/// `count`, those `decided` keeps are decided under every naming. Returns the systems whose
+/// answer changes with the naming, by place, and the counts of systems with a refusal and
+/// with an answer.
+fn regular(
+    rng: &mut Rng,
+    n: usize,
+    layers: usize,
+    count: usize,
+    decided: impl Fn(usize) -> bool,
+) -> (Vec<usize>, usize, usize) {
+    let (mut differ, mut refused, mut answered) = (Vec::new(), 0, 0);
     for s in 0..count {
         let half = 1 + rng.below(3) as i64;
-        let rows = with_box(&regular_rows(&mut rng, n, layers), n, half);
+        let rows = with_box(&regular_rows(rng, n, layers), n, half);
+        if !decided(s) {
+            continue;
+        }
         let seen = namings(&rows, n);
         if seen.len() > 1 {
             differ.push(s);
         }
         refused += usize::from(seen.keys().any(|a| a.starts_with("Err")));
-        decided += usize::from(seen.keys().any(|a| a.starts_with("Ok")));
+        answered += usize::from(seen.keys().any(|a| a.starts_with("Ok")));
     }
-    (differ, refused, decided)
+    (differ, refused, answered)
 }
 
-/// Every naming of every system of the family gives one answer: the searches of the
-/// cross-review XR3 (R3_CLAUDE.md 2.1), each `(seed, layers, systems)`.
-fn one_answer_on_the_regular_family(n: usize, runs: &[(u64, usize, usize)]) {
-    for &(seed, layers, count) in runs {
-        let (differ, refused, decided) = regular(seed, n, layers, count);
+/// Every naming of `count` systems of the family with `n` variables, drawn with a new seed
+/// each run, gives one answer, for each number of layers in `layers` (author P169: random
+/// tests run few cases, with a new seed each run). The searches of the cross-review XR3
+/// (R3_CLAUDE.md 2.1) ran 300 systems at each of five seeds for five variables and 40 at
+/// each of four for six, 20 s a seed; the systems among them that changed answer with the
+/// naming before the rule are kept in
+/// `the_systems_of_the_regular_family_that_changed_answer_with_the_naming_give_one_answer`.
+fn one_answer_on_the_regular_family(n: usize, layers: &[usize], count: usize) {
+    let (mut rng, seed) = Rng::fresh(&format!("the regular family of {n}"));
+    for &layers in layers {
+        let (differ, refused, answered) = regular(&mut rng, n, layers, count, |_| true);
         eprintln!(
-            "n {n}, layers {layers}, seed {seed}: {count} systems, {refused} refused, {decided} decided, {} name-dependent",
+            "n {n}, layers {layers}: {count} systems, {refused} refused, {answered} decided, {} name-dependent",
             differ.len()
         );
-        assert_eq!(differ, Vec::<usize>::new(), "seed {seed}, n {n}");
+        assert_eq!(
+            differ,
+            Vec::<usize>::new(),
+            "seed {seed}, n {n}, layers {layers}"
+        );
     }
 }
 
 #[test]
-fn every_naming_gives_one_answer_on_the_regular_family_of_five_101_102() {
-    one_answer_on_the_regular_family(5, &[(101, 1, 300), (102, 2, 300)]);
+fn every_naming_gives_one_answer_on_the_regular_family_of_five() {
+    one_answer_on_the_regular_family(5, &[1, 2, 3], 3);
 }
 
 #[test]
-fn every_naming_gives_one_answer_on_the_regular_family_of_five_103() {
-    // Systems 111, 120 and 194 changed answer with the naming before the rule.
-    one_answer_on_the_regular_family(5, &[(103, 2, 300)]);
+fn every_naming_gives_one_answer_on_the_regular_family_of_six() {
+    one_answer_on_the_regular_family(6, &[2], 1);
 }
 
 #[test]
-fn every_naming_gives_one_answer_on_the_regular_family_of_five_104() {
-    one_answer_on_the_regular_family(5, &[(104, 3, 300)]);
-}
-
-#[test]
-fn every_naming_gives_one_answer_on_the_regular_family_of_six_105_106() {
-    // System 15 of seed 106 changed answer with the naming before the rule.
-    one_answer_on_the_regular_family(6, &[(105, 2, 40), (106, 2, 40)]);
-}
-
-#[test]
-fn every_naming_gives_one_answer_on_the_regular_family_of_six_107_108() {
-    one_answer_on_the_regular_family(6, &[(107, 3, 40), (108, 3, 40)]);
+fn the_systems_of_the_regular_family_that_changed_answer_with_the_naming_give_one_answer() {
+    // Systems 111, 120 and 194 of seed 103 (five variables, two layers, 300 systems) and
+    // system 15 of seed 106 (six variables, two layers, 40 systems) changed answer with the
+    // naming before the rule.
+    for (seed, n, count, systems) in [(103, 5, 300, &[111, 120, 194][..]), (106, 6, 40, &[15])] {
+        let mut rng = Rng::new(seed);
+        let (differ, refused, answered) = regular(&mut rng, n, 2, count, |s| systems.contains(&s));
+        eprintln!("seed {seed}: {refused} refused, {answered} decided");
+        assert_eq!(differ, Vec::<usize>::new(), "seed {seed}, n {n}");
+    }
 }
 
 /// The rows of the orbits of `base` under the cyclic shift of the `n` variables, and under
@@ -246,10 +261,12 @@ fn orbit(base: &[Row], n: usize, dihedral: bool) -> Vec<Row> {
     out
 }
 
-/// The systems of the orbit family at `seed`: one or two random rows (coefficients in
-/// `[-4, 4]`, constant in `[-6, 6]`) with their orbits, in the box `[-half, half]^n` for a
-/// random `half` from 1 to 3, each decided under all `n!` namings; the source is `q2_cyclic_*`
-/// of the cross-review XR3 (wt/xt4/claude/R3_ZED_IMPL.patch). Asserts one answer per system.
+/// `count` systems of the orbit family, drawn with a new seed each run (author P169; the
+/// searches of XR3 ran 1500, 240, 24 and 20 systems at fixed seeds): one or two random rows
+/// (coefficients in `[-4, 4]`, constant in `[-6, 6]`) with their orbits, in the box
+/// `[-half, half]^n` for a random `half` from 1 to 3, each decided under all `n!` namings; the
+/// source is `q2_cyclic_*` of the cross-review XR3 (wt/xt4/claude/R3_ZED_IMPL.patch). Asserts
+/// one answer per system.
 ///
 /// The tie rule is not what keeps these to one answer: with it disabled (the first tied
 /// candidate taken by place; run once 2026-11-05) all four families still gave one answer
@@ -257,8 +274,8 @@ fn orbit(base: &[Row], n: usize, dihedral: bool) -> Vec<Row> {
 /// one color here are also swapped by a symmetry of the system, so any choice among them
 /// leads to the same answer. The family checks the rest of the solver for a dependence on
 /// names; the regular family above is the one that checks the tie rule.
-fn one_answer_on_orbits(seed: u64, n: usize, count: usize, dihedral: bool) {
-    let mut rng = Rng::new(seed);
+fn one_answer_on_orbits(n: usize, count: usize, dihedral: bool) {
+    let (mut rng, seed) = Rng::fresh(&format!("orbits of {n}, dihedral {dihedral}"));
     let (mut differ, mut refused, mut decided) = (Vec::new(), 0, 0);
     for s in 0..count {
         let half = 1 + rng.below(3) as i64;
@@ -279,10 +296,10 @@ fn one_answer_on_orbits(seed: u64, n: usize, count: usize, dihedral: bool) {
         decided += usize::from(seen.keys().any(|a| a.starts_with("Ok")));
     }
     eprintln!(
-        "n {n}, dihedral {dihedral}, seed {seed:#x}: {count} systems, {refused} refused, {decided} decided, {} name-dependent",
+        "n {n}, dihedral {dihedral}, seed {seed}: {count} systems, {refused} refused, {decided} decided, {} name-dependent",
         differ.len()
     );
-    assert!(differ.is_empty(), "seed {seed:#x}, n {n}: {differ:?}");
+    assert!(differ.is_empty(), "seed {seed}, n {n}: {differ:?}");
 }
 
 #[test]
@@ -314,22 +331,22 @@ fn the_orbit_of_a_row_under_a_rotation_or_a_reflection_is_closed() {
 
 #[test]
 fn every_naming_gives_one_answer_on_cyclic_orbits_of_four() {
-    one_answer_on_orbits(0x3_0004, 4, 1500, false);
+    one_answer_on_orbits(4, 60, false);
 }
 
 #[test]
 fn every_naming_gives_one_answer_on_cyclic_orbits_of_five() {
-    one_answer_on_orbits(0x3_0005, 5, 240, false);
+    one_answer_on_orbits(5, 8, false);
 }
 
 #[test]
 fn every_naming_gives_one_answer_on_cyclic_orbits_of_six() {
-    one_answer_on_orbits(0x3_0006, 6, 24, false);
+    one_answer_on_orbits(6, 1, false);
 }
 
 #[test]
 fn every_naming_gives_one_answer_on_dihedral_orbits_of_six() {
-    one_answer_on_orbits(0x3_1006, 6, 20, true);
+    one_answer_on_orbits(6, 1, true);
 }
 
 /// System 111 of the regular family at seed 103 with five variables, no box: rows
@@ -521,20 +538,25 @@ fn pugh_chain(n: usize) -> Vec<Row> {
 #[test]
 fn the_splinters_are_searched_a_batch_at_a_time() {
     // The search ends after the first batch of dark eliminations with a refusal; the batches,
-    // and their order, are the same under every naming.
-    let seen = namings(&pugh_chain(5), 6);
-    eprintln!("{seen:?}");
-    assert_eq!(seen.len(), 1, "{seen:?}");
-    let mut rng = Rng::new(0x38_5b);
-    let rows = pugh_chain(11);
-    let mut wide = BTreeMap::new();
-    for _ in 0..200 {
-        *wide
-            .entry(answer(&formula(&rows, &shuffled(&mut rng, 12))))
-            .or_insert(0) += 1;
+    // and their order, are the same under every naming. 60 of the 720 namings of six variables
+    // and 20 namings of twelve, drawn with a new seed each run (author P169; all 720 and 200 of
+    // twelve at one seed took 13.6 s).
+    let (mut rng, seed) = Rng::fresh("namings of chains of six and twelve");
+    for (links, count) in [(5, 60), (11, 20)] {
+        let rows = pugh_chain(links);
+        let mut seen = BTreeMap::new();
+        for _ in 0..count {
+            *seen
+                .entry(answer(&formula(&rows, &shuffled(&mut rng, links + 1))))
+                .or_insert(0) += 1;
+        }
+        assert_eq!(
+            seen.len(),
+            1,
+            "seed {seed}, chain of {}: {seen:?}",
+            links + 1
+        );
     }
-    eprintln!("{wide:?}");
-    assert_eq!(wide.len(), 1, "{wide:?}");
 }
 
 /// The cycle `-x[i] + 3·x[i + 1] - 10 >= 0` over `n` variables, `x[n]` being `x[0]`: every
@@ -667,10 +689,10 @@ fn a_merged_column_of_either_sign_is_left_unmerged() {
     );
 }
 
-/// Times `decide` on 16 and 128 disjoint copies of `base`, a system over `n` variables, each
+/// Times `decide` on `k` and `8k` disjoint copies of `base`, a system over `n` variables, each
 /// copy first checked to give the answer of one, so that neither size is answered by a quick
-/// refusal.
-pub(super) fn scales_over_copies(what: &str, base: &[Row], n: usize) {
+/// refusal. Each row is written over all `n k` variables, so building the copies costs O(k²).
+pub(super) fn scales_over_copies(what: &str, base: &[Row], n: usize, k: usize) {
     let copies = |m: usize| {
         let rows: Vec<Row> = (0..m)
             .flat_map(|p| {
@@ -688,15 +710,15 @@ pub(super) fn scales_over_copies(what: &str, base: &[Row], n: usize) {
         formula(&rows, &(0..n * m).collect::<Vec<_>>())
     };
     let one = answer(&copies(1));
-    let (small, large) = (copies(16), copies(16 * scaling::FACTOR));
+    let (small, large) = (copies(k), copies(k * scaling::FACTOR));
     eprintln!("{what}, one copy: {one}");
     assert_eq!(
         (answer(&small), answer(&large)),
         (one.clone(), one),
         "{what}"
     );
-    scaling::check_order(what, 16, 1, |m| {
-        let f = if m == 16 { &small } else { &large };
+    scaling::check_order(what, k, 1, |m| {
+        let f = if m == k { &small } else { &large };
         let _ = std::hint::black_box(decide(f));
     });
 }
@@ -813,21 +835,20 @@ fn three_in_a_box(rng: &mut Rng) -> Disjunctive {
     (base, ors)
 }
 
-/// The systems of `make` from `seed`, numbered from 0, from `skip` to `count`, whose answer
-/// changes with the naming of their `n` variables, each with its answers and how many namings
-/// gave each.
+/// Of the first `count` systems of `make` drawn from `rng`, numbered from 0, those `decided`
+/// keeps whose answer changes with the naming of their `n` variables, each with its answers and
+/// how many namings gave each.
 fn name_dependent(
-    seed: u64,
+    rng: &mut Rng,
     n: usize,
-    skip: usize,
     count: usize,
+    decided: impl Fn(usize) -> bool,
     make: impl Fn(&mut Rng) -> Disjunctive,
 ) -> Vec<(usize, BTreeMap<String, usize>)> {
-    let mut rng = Rng::new(seed);
     let mut differ = Vec::new();
     for s in 0..count {
-        let sys = make(&mut rng);
-        if s < skip {
+        let sys = make(rng);
+        if !decided(s) {
             continue;
         }
         let mut seen = BTreeMap::new();
@@ -843,20 +864,44 @@ fn name_dependent(
     differ
 }
 
+/// `count` systems of `make`, drawn with a new seed each run, none of whose answers changes
+/// with the naming of their `n` variables (author P169: random tests run few cases, with a new
+/// seed each run).
+fn one_answer_on_fresh_systems(
+    what: &str,
+    n: usize,
+    count: usize,
+    make: impl Fn(&mut Rng) -> Disjunctive,
+) {
+    let (mut rng, seed) = Rng::fresh(what);
+    let differ = name_dependent(&mut rng, n, count, |_| true, make);
+    for (s, seen) in &differ {
+        eprintln!("system {s}: {seen:?}");
+    }
+    assert_eq!(differ, Vec::new(), "seed {seed}");
+}
+
 // The search through the disjunctions takes the first disjunct that serves, in the order of
 // the sorted formula and at the points of the solver, and the names decided both: before the
-// formula was renamed by its colors, 10 of these 4,000 systems gave `true` under some namings
-// and a refusal under others (system 202: Disjuncts under 2 of 6, system 797: Growth under 2).
+// formula was renamed by its colors, 10 of 4,000 systems at seed 0x5eed gave `true` under some
+// namings and a refusal under others (system 202: Disjuncts under 2 of 6, system 797: Growth
+// under 2). The 4,000 ran in two tests of 6 s each; 100 are drawn now.
 
 #[test]
-fn every_naming_of_a_formula_with_disjunctions_gives_one_answer_0_to_2000() {
-    let differ = name_dependent(0x5eed, 3, 0, 2000, three_in_a_box);
-    assert_eq!(differ, Vec::new());
+fn every_naming_of_a_formula_with_disjunctions_gives_one_answer() {
+    one_answer_on_fresh_systems("three variables in a box", 3, 100, three_in_a_box);
 }
 
 #[test]
-fn every_naming_of_a_formula_with_disjunctions_gives_one_answer_2000_to_4000() {
-    let differ = name_dependent(0x5eed, 3, 2000, 4000, three_in_a_box);
+fn the_formulas_with_disjunctions_that_changed_answer_with_the_naming_give_one_answer() {
+    let mut rng = Rng::new(0x5eed);
+    let differ = name_dependent(
+        &mut rng,
+        3,
+        798,
+        |s| [202, 797].contains(&s),
+        three_in_a_box,
+    );
     assert_eq!(differ, Vec::new());
 }
 
@@ -874,19 +919,32 @@ fn regular_with_disjunctions(rng: &mut Rng, n: usize) -> Disjunctive {
     (base, ors)
 }
 
-/// Where two atoms share a color the formula was searched as written, and 5 of these 1,000
-/// systems of four variables (153, 163, 664, 681 and 760) gave `true` under some namings and
-/// Growth under the others. Such a formula is now settled without a search, then answered
+/// Where two atoms share a color the formula was searched as written, and 5 of 1,000 systems of
+/// four variables at seed 0x5eed (153, 163, 664, 681 and 760) gave `true` under some namings
+/// and Growth under the others. Such a formula is now settled without a search, then answered
 /// when each disjunction left is alone in its group of linked rows or the colors choose its
 /// disjunct, and refused with `Refusal::Unordered` otherwise (COMPLEXITY.md NAME-ties-or):
 /// under one naming, 682 of the 1,000 are decided (311 `true`, 371 `false`) against 814
-/// searched as written (440, 374), and 256 are refused for their order.
+/// searched as written (440, 374), and 256 are refused for their order. The 1,000 took 23 s;
+/// 15 are drawn now, and the five are kept below.
 #[test]
 fn disjunctions_whose_atoms_share_a_color() {
-    let differ = name_dependent(0x5eed, 4, 0, 1000, |rng| regular_with_disjunctions(rng, 4));
-    for (s, seen) in &differ {
-        eprintln!("system {s}: {seen:?}");
-    }
+    one_answer_on_fresh_systems("four variables sharing colors", 4, 15, |rng| {
+        regular_with_disjunctions(rng, 4)
+    });
+}
+
+#[test]
+fn the_formulas_whose_atoms_share_a_color_that_changed_answer_with_the_naming_give_one_answer() {
+    let mut rng = Rng::new(0x5eed);
+    let systems = [153, 163, 664, 681, 760];
+    let differ = name_dependent(
+        &mut rng,
+        4,
+        761,
+        |s| systems.contains(&s),
+        |rng| regular_with_disjunctions(rng, 4),
+    );
     assert_eq!(differ, Vec::new());
 }
 

@@ -13,7 +13,7 @@ fn chains_of_equalities_cost_the_digits_of_their_values() {
         ("3x + 5y == 7", euclid_chain as fn(usize) -> Formula),
         ("6x + 10y + 15z == 7", euclid_chain3),
     ] {
-        let n = 64;
+        let n = 490;
         let (small, large) = (build(n), build(scaling::FACTOR * n));
         for f in [&small, &large] {
             let m = satisfiable(f).unwrap().expect("a point");
@@ -31,7 +31,7 @@ fn chains_of_equalities_cost_the_digits_of_their_values() {
 fn equalities_substituted_into_a_long_row_cost_the_row_each_time() {
     // The equalities are solved among themselves, and the row is rewritten once for all of them.
     // Control: T4 took 121 times as long.
-    let n = 256;
+    let n = 1200;
     let (small, large) = (tied_sum(n), tied_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         assert!(satisfiable(f).unwrap().is_some());
@@ -45,7 +45,7 @@ fn equalities_substituted_into_a_long_row_cost_the_row_each_time() {
 fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
     // Every x[i] is pulled to its lower bound by the one long row, and all are fixed there at
     // once, the row written once. Control: T4 took 38 times as long.
-    let n = 128;
+    let n = 1400;
     let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         let m = satisfiable(f).unwrap().expect("a point");
@@ -61,7 +61,7 @@ fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
 /// a new sum for each term. `bounded_sum` gives each `x[i]` in [0, 49].
 #[test]
 fn the_box_of_refused_rows_scales() {
-    let n = 2048;
+    let n = 1800;
     let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
     let syms = |m: usize| -> Vec<Atom> { (0..m).map(|i| sym(&format!("x{i}"))).collect() };
     let (s_small, s_large) = (syms(n), syms(scaling::FACTOR * n));
@@ -82,7 +82,7 @@ fn the_box_of_refused_rows_scales() {
 fn a_value_between_a_long_sum_and_many_bounds_is_not_eliminated_first() {
     // Every b[j] and c[i] is pulled to its bound; `a` then has two bounds of its own, and its
     // elimination, n rows of n terms, is never taken.
-    let n = 16;
+    let n = 280;
     let (small, large) = (fed_sum(n), fed_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         let m = satisfiable(f).unwrap().expect("a point");
@@ -97,7 +97,7 @@ fn a_value_between_a_long_sum_and_many_bounds_is_not_eliminated_first() {
 fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
     // Eliminating `a` first would write n rows of n terms, which is fill, and the variables with
     // no fill go first. Control: T4 took 90 times as long, and was held at cubic.
-    let n = 16;
+    let n = 850;
     let (small, large) = (tied_fed_sum(n), tied_fed_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
         let m = satisfiable(f).unwrap().expect("a point");
@@ -116,19 +116,19 @@ fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
 fn the_first_and_last_credits_of_a_pipeline_scale() {
     for chain in [false, true] {
         let (small, large) = (
-            dead2(16, chain, "z"),
-            dead2(16 * scaling::FACTOR, chain, "z"),
+            dead2(470, chain, "z"),
+            dead2(470 * scaling::FACTOR, chain, "z"),
         );
         let (s_small, s_large) = (
             [sym("z0"), sym("z15")],
-            [sym("z0"), sym(&format!("z{}", 16 * scaling::FACTOR - 1))],
+            [sym("z0"), sym(&format!("z{}", 470 * scaling::FACTOR - 1))],
         );
         scaling::check_order(
             &format!("the first and last credits of a pipeline of stages, chained {chain}"),
-            16,
+            470,
             1,
             |n| {
-                let (f, s) = if n == 16 {
+                let (f, s) = if n == 470 {
                     (&small, &s_small)
                 } else {
                     (&large, &s_large)
@@ -152,10 +152,10 @@ fn every_state_and_credit_of_a_pipeline_scale() {
             .flat_map(|k| [sym(&format!("z{k}")), sym(&format!("y{k}"))])
             .collect()
     };
-    let inputs = scaling::inputs(16, |n| (dead2(n, false, "z"), syms(n)));
+    let inputs = scaling::inputs(890, |n| (dead2(n, false, "z"), syms(n)));
     scaling::check_order(
         "every state and credit of a pipeline of stages",
-        16,
+        890,
         1,
         |n| {
             let (f, s) = &inputs[&n];
@@ -169,8 +169,8 @@ fn every_state_and_credit_of_a_pipeline_scale() {
 /// in all before (item TIGHTEN-each-whole).
 #[test]
 fn independent_stages_scale() {
-    let inputs = scaling::inputs(16, |n| (joint_stages(n), joint_syms(n)));
-    scaling::check_order("every symbol of stages that share no atom", 16, 1, |n| {
+    let inputs = scaling::inputs(450, |n| (joint_stages(n), joint_syms(n)));
+    scaling::check_order("every symbol of stages that share no atom", 450, 1, |n| {
         let (f, s) = &inputs[&n];
         let _ = std::hint::black_box(project_each(f, s));
     });
@@ -183,16 +183,16 @@ fn independent_stages_scale() {
 #[test]
 fn project_each_on_a_chained_pipeline_scales() {
     let (small, large) = (
-        dead2(128, true, "z"),
-        dead2(128 * scaling::FACTOR, true, "z"),
+        dead2(990, true, "z"),
+        dead2(990 * scaling::FACTOR, true, "z"),
     );
     let syms = [sym("z0")];
     scaling::check_order(
         "the first credit of a chained pipeline of stages",
-        128,
+        990,
         1,
         |n| {
-            let f = if n == 128 { &small } else { &large };
+            let f = if n == 990 { &small } else { &large };
             let _ = std::hint::black_box(zedc::store::presburger::project_each(f, &syms));
         },
     );
@@ -204,7 +204,7 @@ fn twin_definitions_merge_in_time_near_linear() {
     // of their dependencies with a hash lookup each, and the merged formula has n absolute
     // values of one symbol. Control (once, not kept): an O(n²) scan of the definitions in the
     // merge failed this test.
-    let n = 32;
+    let n = 180;
     let (small, large) = (
         twin_absolute_values(n),
         twin_absolute_values(scaling::FACTOR * n),
