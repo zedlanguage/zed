@@ -2231,6 +2231,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-complete-native | impl attempt 1 | 2026-11-14 05:08 | started; worktree /home/luke/Work/wt/test-complete-native |
 | TEST-complete-parse | impl attempt 1 | 2026-11-14 04:55 | started; worktree made and seeded |
 | TEST-complete-ports | impl attempt 1 | 2026-11-14 05:21 | survey done; coverage build started (build/cov, -j 4) / load 55.24 56.11 49.65 |
+| TEST-complete-staging | impl attempt 1 | 2026-11-14 05:27 | started; worktree made and seeded |
 | TEST-complete-values | impl attempt 1 | 2026-11-14 05:13 | started; worktree seeded |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
