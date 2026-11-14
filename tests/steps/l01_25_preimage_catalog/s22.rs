@@ -626,7 +626,13 @@ impl Diffs {
         // Item T11-preimage-rest: the search holds only the inputs the term reads, so an
         // input it does not read keeps its set, its ends in its class, where the transfer
         // before halved it to its points. The two sets hold the same members of the class,
-        // and every input is in its class, so the preimages are the same.
+        // and every input is in its class, so the preimages are the same. The two differences
+        // may also come together: an exact preimage the transfer before listed, keeping only
+        // the members of the class, read exact now without a listing as the whole interval,
+        // which holds the same members (seeds 7429894200829055115 and 15838353310357058011 of
+        // `random_terms`: `x` in `[8, 14]` for its even points, and in `[-14, 4]` for its
+        // points of class 1 mod 3). It counts as unlisted.
+        let unlisted = now.exact && !now.enumerated && then.enumerated;
         let same_members = |k: &str, a: &IntervalSet, b: &IntervalSet| {
             let none = |s: IntervalSet| match cs.get(k) {
                 Some(c) => reduce_congruence(&s, c).0.is_empty(),
@@ -640,15 +646,31 @@ impl Diffs {
                 .domains
                 .iter()
                 .all(|(k, s)| same_members(k, s, &then.domains[k]))
-            && (
-                now.enumerated,
-                &rest(now.exact, &now.stops, &now.relation, &now.refusal),
-            ) == (
-                then.enumerated,
-                &rest(then.exact, &then.stops, &then.relation, &then.refusal),
-            )
+            && (now.enumerated == then.enumerated || unlisted)
+            && rest(now.exact, &now.stops, &now.relation, &now.refusal)
+                == rest(then.exact, &then.stops, &then.relation, &then.refusal)
         {
             self.cases += 1;
+            self.unlisted += usize::from(unlisted);
+            return;
+        }
+        // Item S22-transfer-rem, as [`Diffs::preimage_listed`] allows it: the same box,
+        // exactness, listing and stops, a relation where there was one, and a refusal of the
+        // same kind, the relation's variables named anew. Seed 16398544689257074035 of
+        // `random_terms` meets one: the relation before of `if (y >= x) { (1 + -4) } else { -x }
+        // > 5` is stated on `x` and `y`, where the transfer's names the `if` by an auxiliary
+        // variable.
+        let kind = |r: &Option<Refusal>| r.as_ref().map(std::mem::discriminant);
+        if now.domains == then.domains
+            && now.exact == then.exact
+            && now.enumerated == then.enumerated
+            && format!("{:?}", now.stops) == format!("{:?}", then.stops)
+            && now.relation.is_some() == then.relation.is_some()
+            && kind(&now.refusal) == kind(&then.refusal)
+            && format!("{now:?}") != format!("{then:?}")
+        {
+            self.cases += 1;
+            self.renamed += 1;
             return;
         }
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
@@ -3401,4 +3423,26 @@ fn holes_of_c_minus_t_at_small_sizes() {
             assert_eq!(first_refuted(&t, &ds, &d, &[(&p.domains, true)]), None);
         }
     }
+}
+
+/// [`random_terms`] of seed 7429894200829055115: a comparison with `mod 0` under true, whose
+/// exact preimage the transfer before listed to the members of `x`'s class and the transfer
+/// reads, unlisted, as the whole interval.
+#[test]
+fn random_terms_of_seed_7429894200829055115_keep_their_preimages() {
+    random_terms(7429894200829055115, 24);
+}
+
+/// [`random_terms`] of seed 15838353310357058011: a guard comparing `mod 0` with `mod x`, read
+/// as for seed 7429894200829055115.
+#[test]
+fn random_terms_of_seed_15838353310357058011_keep_their_preimages() {
+    random_terms(15838353310357058011, 24);
+}
+
+/// [`random_terms`] of seed 16398544689257074035: the relation of an exact search's `if`
+/// stated through an auxiliary variable, where the transfer before stated it on the inputs.
+#[test]
+fn random_terms_of_seed_16398544689257074035_keep_their_preimages() {
+    random_terms(16398544689257074035, 24);
 }
