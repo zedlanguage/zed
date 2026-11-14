@@ -16,12 +16,16 @@ l01_24, l01_25, l01_26, l01_26a, l01_27 and l01_29 merged in, 241 lines of `ty.r
 by no test; they are listed per function in
 `/home/luke/Work/wt/coverage/TEST-types-unreached-paths.txt` and classified below. This pass
 added no unit test here: the cases of `kernel_type.rs` are tested through the language in
-`tests/steps/l01_22_type_representation/complete.rs`, whose COMPLETENESS.md lists them.
+`tests/steps/l01_22_type_representation/complete.rs`, whose COMPLETENESS.md lists them. Row
+TEST-types-unreached-paths, over the same ten test targets and the crate's unit tests: 7 of the
+217 regions of `kernel_type.rs` were unreached (96.77%); a test of port names in an
+intersection, a difference and the bounds of a bounded function type reaches 5 of them, and the
+2 left (99.08%; lines 128 of 130) are the `unreachable!` arms below.
 
 | Case | Covering test | Or the reason none is needed |
 |---|---|---|
 | `kernel_type`: every arm of `kernel_form` that a resolved type can reach | `tests/steps/l01_22_type_representation/complete.rs` (see its COMPLETENESS.md) | |
-| `kernel_form` on `Apply`, `AtomApply`, `Record`, `Array` | | `unreachable!`: name resolution rejects each before a type is read |
+| `kernel_form` on `Apply`, `AtomApply`, `Record`, `Array` | | `unreachable!`, kept as a soundness guard (the match has no wildcard, so the arms stay). No Zed source reaches them: the resolver's type walk (`zedc_resolve::resolve`) visits every part of every written type and records each of these forms as one a later step compiles (`later`), except `AtomApply` in a printed type, which only `check/read.rs` `parse_type` reads and which never calls `kernel_type`; `resolve_text` fails when it records one; the checker (`check::walk::check_with`, which calls `bounds` and `declared_text`) runs only from `elab::elaborate_in`, and the `is` elaboration (`elab/state.rs` `ty`) only inside it; the compiler elaborates only in `front::checked` after `resolve_text` succeeds (on the recovery path of L1.29d too), and `mutate::mutants` only after `resolve` succeeds. Only a test calling `declared_text` on an unresolved type reaches them. Row TEST-types-unreached-paths |
 | Carrier masks and bits | `ty.rs` `every_carrier_has_its_own_bit_and_the_numbers_are_the_number_bits` | |
 | The index of arrows: the verdict of every set of arrows, on narrow and wide shapes; a refused arrow tried and dropped; a refusal with no arrow that fits | `ty.rs` `the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows` and the three after it | |
 | The fit of an argument: small types, a bounded variable, functions in the results, each against a cover of their values | `ty.rs` `a_fit_of_small_types_is_a_cover_of_their_values` and the two after it | |

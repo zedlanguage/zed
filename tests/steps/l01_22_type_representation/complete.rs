@@ -109,6 +109,33 @@ fn is_rejects_a_port_in_every_position_in_written_order() {
     assert_eq!(elab("f(x) = x is not Lines;").unwrap_err(), [port("Lines")]);
 }
 
+/// A port name in an intersection, on either side of a difference, and in either bound of
+/// `L .. U -> V` denotes no type, so the type holding it denotes none either
+/// (TEST-types-unreached-paths: each `?` of `kernel_form` on a refused part). Each port is named
+/// once, in written order, and no other error stands beside it: a bound that holds a port is not
+/// compared with the other.
+#[test]
+fn is_rejects_a_port_in_an_intersection_a_difference_and_a_bound() {
+    for (written, ports) in [
+        ("int & Lines", &["Lines"][..]),
+        ("Lines & Files", &["Lines", "Files"]),
+        ("Lines \\ int", &["Lines"]),
+        ("int \\ Files", &["Files"]),
+        ("Lines \\ Files", &["Lines", "Files"]),
+        ("(Lines .. int -> int)", &["Lines"]),
+        ("(int .. Files -> int)", &["Files"]),
+        ("(Lines .. Files -> int)", &["Lines", "Files"]),
+    ] {
+        let want: Vec<String> = ports.iter().map(|p| port(p)).collect();
+        assert_eq!(
+            elab(&format!("f(x) = x is {written};")).unwrap_err(),
+            want,
+            "{written}"
+        );
+        assert_eq!(denotes(written), None, "{written}");
+    }
+}
+
 #[test]
 fn is_rejects_a_type_with_some_functions_in_every_position() {
     for (written, span) in [

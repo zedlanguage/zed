@@ -14,6 +14,10 @@ The lines no test reaches, with those of l01_24 to l01_29 and the kernel's unit 
 are listed per function in `/home/luke/Work/wt/coverage/TEST-types-unreached-paths.txt`; the
 ones in this group's code are in the last rows of the table, and the rest are row
 TEST-types-unreached-paths. The cases of `ty.rs` are in `crates/zedc-types/COMPLETENESS.md`.
+Row TEST-types-unreached-paths, with l01_24 to l01_29 merged in: `kernel_type.rs` 96.77% to
+99.08% of 217 regions (7 unreached to 2), by
+`is_rejects_a_port_in_an_intersection_a_difference_and_a_bound`; the 2 left are the
+`unreachable!` arms, which no source reaches (the reason is in the table).
 
 | Case | Covering test | Or the reason none is needed |
 |---|---|---|
@@ -26,6 +30,7 @@ TEST-types-unreached-paths. The cases of `ty.rs` are in `crates/zedc-types/COMPL
 | `L .. U -> V`: a guarantee within the permission, a guarantee of `Never`, equal bounds | `complete.rs` `bounded_function_types_keep_both_bounds`; `forms.rs` `morphism_types_carry_two_domain_bounds` | |
 | A guarantee outside its permission (error); the check refused (the "could not decide" error) | `complete.rs` `a_bounds_error_and_a_port_error_both_stand_in_written_order`; `is.rs`; `../l01_23_subtyping/bound_paths.rs`, `../l01_23_subtyping/refusals.rs` | |
 | A port name (`Lines`, `Files`) alone, in a tuple, in a union, as a function result, after `is not` | `complete.rs` `a_port_name_denotes_no_type_wherever_it_stands`, `is_rejects_a_port_in_every_position_in_written_order`; `is.rs` | |
+| A port name in an intersection, on either side of a difference, in either bound of `L .. U -> V`: the whole type denotes none (each `?` of `kernel_form` on a refused part, lines 107, 110, 127), each port named once in written order and no bounds error beside it | `complete.rs` `is_rejects_a_port_in_an_intersection_a_difference_and_a_bound` (row TEST-types-unreached-paths) | |
 | Two errors in one type: in written order | `complete.rs` `is_rejects_a_port_in_every_position_in_written_order`, `a_bounds_error_and_a_port_error_both_stand_in_written_order` | |
 | `is` on a type that admits some functions and not others: a function type, in a tuple, `() -> V`, after `is not`, a bounded function type | `complete.rs` `is_rejects_a_type_with_some_functions_in_every_position`; `is.rs` | |
 | `is` on a bounded type `T for X in …`: one variable, two, inside a tuple component; it denotes no type | `complete.rs` `is_rejects_a_bounded_function_type_naming_its_variables` | |
@@ -37,6 +42,6 @@ TEST-types-unreached-paths. The cases of `ty.rs` are in `crates/zedc-types/COMPL
 | Deep types built, compared, printed and released on a small stack | `deep_types.rs` (its own binary) | |
 | Node tables keep a node only while it is held, on one thread and two | `table_life.rs` | |
 | Types of `n` parts at the rule of low complexity | `scaling.rs` (benchmarks run apart) | |
-| `kernel_form` on `Apply`, `AtomApply`, `Record`, `Array` (lines 52-58) | | `unreachable!`: name resolution rejects each of these before a type is read (`../l01_26_type_resolution`) |
+| `kernel_form` on `Apply`, `AtomApply`, `Record`, `Array` (lines 52-58) | | `unreachable!`, kept as a soundness guard: name resolution records each of these as a form a later step compiles and fails, and the checker and the `is` elaboration run only on a unit that resolved (`../l01_26_type_resolution`; the full reason is in `crates/zedc-types/COMPLETENESS.md`). Only a test calling `declared_text` on an unresolved type reaches them |
 | `order::of_value` and `cmp_values` (print/order.rs 156-169) | | Called only by the checker's message for a cast every value of whose operand fails, when two values give two atoms (`check/walk.rs`); no measured test has two. Row TEST-types-unreached-paths |
 | `hash::mix` with `address::SHORT` (hash.rs 9) | | The feature `short-addresses`, off in this build; `../l01_37a_short_addresses` runs with it on |
