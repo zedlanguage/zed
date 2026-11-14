@@ -6,6 +6,7 @@
 //! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#invalid` at NaN and the infinities.
 
 use zed_tests::scaling::{self, Meter, on_a_thread};
+use zed_tests::step_helpers::l01_19a_command_line::run;
 
 use super::{rejected, steps};
 use zedc::ast::Stmt;
@@ -880,6 +881,95 @@ fn a_literal_compared_by_equality_with_a_text_is_offered_as_text_in_both_orders(
         assert!(fixed(&src).contains(&line), "{compare}\n{}", rejected(&src));
         checks(&program(&line));
     }
+}
+
+/// Row REPAIR-literal-text-spelling: a number literal written as text is the text `String`
+/// gives for it at its own carrier, `int` for an integer literal and `f64` for a decimal one,
+/// not its spelling, which `"8" == "0x08"` shows: false, where `"8" == String(0x08)` is true.
+/// Each case is the literal as the program spells it and that text, as `zedc run` prints
+/// `String` of it (`String(2.50f64)` for a decimal, which nothing else gives a carrier).
+const SPELLED_AS_TEXT: [(&str, &str); 15] = [
+    ("0x08", "\"8\""),
+    ("0b101", "\"5\""),
+    ("0o17", "\"15\""),
+    ("1_000", "\"1000\""),
+    ("-1_000", "\"-1000\""),
+    ("007", "\"7\""),
+    ("0_0", "\"0\""),
+    ("-0", "\"0\""),
+    ("-0x0", "\"0\""),
+    ("2.50", "\"2.5\""),
+    ("0.10", "\"0.1\""),
+    ("1_000.5", "\"1000.5\""),
+    ("1e3", "\"1000.0\""),
+    ("1e22", "\"1.0e22\""),
+    ("-0.0", "\"-0.0\""),
+];
+
+#[test]
+fn each_text_of_a_literal_is_the_text_string_gives_at_run_time() {
+    // A decimal is given `f64` by its suffix, the carrier it has where nothing fixes one.
+    let shown: Vec<String> = SPELLED_AS_TEXT
+        .iter()
+        .map(|(lit, _)| {
+            let decimal = !lit.contains('x') && (lit.contains('.') || lit.contains('e'));
+            let suffix = if decimal { "f64" } else { "" };
+            format!("${{String({lit}{suffix})}}")
+        })
+        .collect();
+    let src = format!(
+        "main(m: MainArgs) {{\n  m.stdout <- \"{}\\n\";\n}}\n",
+        shown.join(" ")
+    );
+    let out = run("literal_texts", &src, &[]);
+    assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{src}");
+    let texts: Vec<String> = SPELLED_AS_TEXT
+        .iter()
+        .map(|(_, t)| t.trim_matches('"').to_string())
+        .collect();
+    assert_eq!(out.stdout.trim_end(), texts.join(" "), "{src}");
+}
+
+#[test]
+fn a_literal_compared_by_equality_with_a_text_is_offered_the_text_string_gives() {
+    for (lit, text) in SPELLED_AS_TEXT {
+        let src = program(&format!("f() {{ c = \"x8\" == {lit}; return c; }}"));
+        let line = format!("f() {{ c = \"x8\" == {text}; return c; }}");
+        assert_eq!(fixed(&src), [line.as_str()], "{lit}\n{}", rejected(&src));
+        checks(&program(&line));
+    }
+}
+
+#[test]
+fn a_literal_ordered_with_a_text_is_offered_the_text_string_gives() {
+    for (lit, text) in SPELLED_AS_TEXT {
+        let src = program(&format!("f() {{ c = {lit} < \"x8\"; return c; }}"));
+        let out = rejected(&src);
+        let headline = out.lines().next().expect("a headline");
+        assert!(
+            headline.ends_with(&format!(" Try `{text} < \"x8\"` instead.")),
+            "{lit}\n{out}"
+        );
+        assert!(out.contains(&entry(text)), "{lit}\n{out}");
+        checks(&program(&format!(
+            "f() {{ c = {text} < \"x8\"; return c; }}"
+        )));
+    }
+}
+
+#[test]
+fn a_literal_in_another_base_compared_with_its_text_is_offered_the_equal_text() {
+    // The case the row names: `"8" == 0x08` is offered `"8" == "8"`, which is true, as
+    // `"8" == String(0x08)` is; and a literal compared with a component of a tuple whose
+    // component there is a `String` is written the same way.
+    let src = program("f() { c = \"8\" == 0x08; return c; }");
+    let line = "f() { c = \"8\" == \"8\"; return c; }";
+    assert_eq!(fixed(&src), [line], "{}", rejected(&src));
+    checks(&program(line));
+    let src = program("f(p: (String, int)) = p == (0x0A, 2);");
+    let line = "f(p: (String, int)) = p == (\"10\", 2);";
+    assert_eq!(fixed(&src), [line], "{}", rejected(&src));
+    checks(&program(line));
 }
 
 #[test]

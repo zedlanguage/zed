@@ -147,28 +147,28 @@ fn a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores() {
         type_errors("f(x: String) = x == 0xF_F;\n"),
         [
             "No number equals a `String`: `x : String == 0xF_F` always gives the same answer. Try \
-             `f(x: String) = x == \"0xF_F\"` instead.\n  fixes, each checked here:\n    f(x: \
-             String) = x == \"0xF_F\";    compares the text [0xF_F]"
+             `f(x: String) = x == \"255\"` instead.\n  fixes, each checked here:\n    f(x: \
+             String) = x == \"255\";    compares the text [0xF_F]"
         ]
     );
 }
 
 #[test]
-fn the_text_fix_of_a_number_compared_with_a_string_is_the_literal_as_written() {
+fn the_text_fix_of_a_number_compared_with_a_string_is_the_text_string_gives() {
     assert_eq!(
         type_errors("f(x: String) = x == 1_000;\n"),
         [
             "No number equals a `String`: `x : String == 1_000` always gives the same answer. Try \
-             `f(x: String) = x == \"1_000\"` instead.\n  fixes, each checked here:\n    f(x: \
-             String) = x == \"1_000\";    compares the text [1_000]"
+             `f(x: String) = x == \"1000\"` instead.\n  fixes, each checked here:\n    f(x: \
+             String) = x == \"1000\";    compares the text [1_000]"
         ]
     );
     assert_eq!(
         type_errors("f(x: (int, String)) = x == (1, 2_0);\n"),
         [
             "No number equals a `String`: `2_0` compared by `==` with a component of `x` always \
-             gives the same answer. Try `f(x: (int, String)) = x == (1, \"2_0\")` instead.\n  fixes, each checked \
-             here:\n    f(x: (int, String)) = x == (1, \"2_0\");    compares the text [2_0]"
+             gives the same answer. Try `f(x: (int, String)) = x == (1, \"20\")` instead.\n  fixes, each checked \
+             here:\n    f(x: (int, String)) = x == (1, \"20\");    compares the text [2_0]"
         ]
     );
 }
@@ -260,15 +260,18 @@ fn the_repair_of_a_rat_literal_writes_its_digits_as_the_program_does() {
     );
 }
 
-/// A comparison of a text with a hexadecimal literal of `n` digits, each pair separated by
-/// `_`, in parentheses: each message quotes it, read from the program's text.
+/// A comparison of a text with a decimal literal of `n` digits, each pair separated by `_`, in
+/// parentheses: each message quotes it, read from the program's text, and its repair writes it
+/// as text without the `_` (REPAIR-literal-text-spelling). A literal in another base is written
+/// in decimal, by the kernel's conversion (COMPLEXITY.md K81), which no linear method gives;
+/// `a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores` quotes one.
 fn long(n: usize) -> String {
-    format!("f(x: String) = x == (0x{}1);\n", "1_".repeat(n))
+    format!("f(x: String) = x == ({}1);\n", "1_".repeat(n))
 }
 
 #[test]
 fn quoting_a_literal_of_n_digits_with_underscores_scales() {
-    let lit = format!("0x{}1", "1_".repeat(3));
+    let lit = format!("{}1", "1_".repeat(3));
     let errors = type_errors(&long(3));
     assert_eq!(errors.len(), 1);
     assert!(
@@ -277,7 +280,8 @@ fn quoting_a_literal_of_n_digits_with_underscores_scales() {
         )),
         "{errors:?}"
     );
-    assert!(errors[0].contains(&format!("\"{lit}\"")), "{errors:?}");
+    // The repair writes the text `String` gives, the digits without the `_`.
+    assert!(errors[0].contains("x == \"1111\""), "{errors:?}");
     let n = 20_000;
     let srcs = scaling::inputs(n, long);
     scaling::check("quoting a literal of n digits with `_`", n, |m| {

@@ -534,6 +534,40 @@ impl Lit {
         let sign = if self.neg() { "-" } else { "" };
         fmt::from_fn(move |f| write!(f, "{sign}{}", self.spelling()))
     }
+
+    /// The literal written as text, as a repair writes a number compared with a text: the
+    /// string literal of the text `String` gives for its value, with its `-`, at its own
+    /// carrier, `int` for an integer literal and `f64` for a decimal one without a suffix
+    /// (DESIGN.md sec:diagnostics), so `"8"` for `0x08`, `"1000"` for `1_000`, `"2.5"` for
+    /// `2.50` and `"1000.0"` for `1e3`. `None` where the kernel refuses to print it, a value
+    /// past the memory a fold may ask for ([`kernel_folded`]).
+    // Writing the literal as spelled, the naive method, is O(d) for d characters but gives
+    // a text `String` never gives, so `"8" == "0x08"` is false where `"8" == String(0x08)` is
+    // true. Method used: an integer written in decimal is `String`'s text already, its digits
+    // without the `_` (gone from `text`) and the leading zeros, so it is written from them in
+    // O(d) with no conversion (the scaling tests of long literals in l01_29 casts.rs and
+    // l01_26a written.rs). Every other literal goes through the kernel's own `String`, so the
+    // repair cannot drift from the run: O(d) at a float, and at an `int` written in another
+    // base the kernel's binary-to-decimal conversion, about n^1.5 for n words below
+    // `PRINT_WHOLE` and O(n log^2 n) above (COMPLEXITY.md K81), as `String` of it costs at
+    // run time; no conversion to decimal is linear.
+    fn as_text(&self) -> Option<String> {
+        if matches!(self.value, Value::Int(_) | Value::Big(_))
+            && self.text.bytes().all(|b| b.is_ascii_digit())
+        {
+            let digits = self.text.trim_start_matches('0');
+            let sign = if self.neg() && !digits.is_empty() {
+                "-"
+            } else {
+                ""
+            };
+            let digits = if digits.is_empty() { "0" } else { digits };
+            return Some(format!("\"{sign}{digits}\""));
+        }
+        let shown = kernel_folded(Prim::Show, vec![neg_value(&self.value, self.neg())])?;
+        // `Show` of a number is a `Str`, whose display is its string literal.
+        matches!(shown, Value::Str(_)).then(|| shown.to_string())
+    }
 }
 
 /// Which arguments an application needs the values of. Evaluation is neither strict nor lazy
@@ -4238,18 +4272,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
             shown(&pair).unwrap_or_default()
         };
-        let text = fmt::from_fn(|f| write!(f, "\"{lit}\""));
+        let text = l.as_text();
         let mut fixes = Vec::new();
         for r in groups.iter().flatten() {
             fixes.push(match (*r, at) {
-                (Repair::Text, _) => Rewrite::new(
-                    &[(l.site, &text)],
-                    &"compares the text",
-                    &match name {
-                        Some(n) => pair(&n, &text),
-                        None => shown(&text).unwrap_or_default(),
-                    },
-                ),
+                (Repair::Text, _) => text.as_ref().and_then(|text| {
+                    Rewrite::new(
+                        &[(l.site, text)],
+                        &"compares the text",
+                        &match name {
+                            Some(n) => pair(&n, text),
+                            None => text.clone(),
+                        },
+                    )
+                }),
                 (Repair::Bool(b), _) => Rewrite::new(
                     &[(l.site, &b)],
                     &"compares with a truth value",
@@ -4333,13 +4369,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 )
             },
         );
-        let text = fmt::from_fn(|f| write!(f, "\"{lit}\""));
+        let text = l.as_text();
         let fixes = (repairs.iter())
             .map(|r| match *r {
                 Repair::Bool(b) => {
                     Rewrite::new(&[(l.site, &b)], &"compares with a truth value", &b)
                 }
-                _ => Rewrite::new(&[(l.site, &text)], &"compares the text", &text),
+                _ => (text.as_ref())
+                    .and_then(|t| Rewrite::new(&[(l.site, t)], &"compares the text", t)),
             })
             .collect();
         let notes = self.derive(&[at.unwrap_or(l.site)]);

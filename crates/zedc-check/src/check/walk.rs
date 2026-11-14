@@ -11651,9 +11651,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The repair of [`Self::repairs`] that writes the number literal `l`, argument `i` at
-    /// `at`, as text, `"2"` for `2`, where the application checks with it and does not take
-    /// the literal as written; `kept` as in [`Self::repairs`]. O(d) for a literal of d digits,
-    /// and the checks of the application [`Self::takes_some`] and the repaired one make.
+    /// `at`, as text, the text `String` gives for it ([`Lit::as_text`]: `"2"` for `2`, `"8"`
+    /// for `0x08`), where the application checks with it and does not take the literal as
+    /// written; `kept` as in [`Self::repairs`]. The cost of [`Lit::as_text`], and the checks
+    /// of the application [`Self::takes_some`] and the repaired one make.
     fn text_literal(
         &mut self,
         what: Label<'_>,
@@ -11667,7 +11668,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.takes_some(what, sig, args, (i, &a.ty, kept.then_some(at)), pass, span) {
             return None;
         }
-        let text = format!("\"{}\"", l.written());
+        let text = l.as_text()?;
         let was = self.t.text?.get(at.start..at.end)?;
         let Mapped::Args(mut one) = self.written_arg(&text, was, a, at) else {
             return None;
