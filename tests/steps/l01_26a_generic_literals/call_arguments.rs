@@ -66,3 +66,67 @@ fn a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected() {
         );
     }
 }
+
+/// The checker does not build the rejection of an operation on literals alone whose call
+/// gives it a carrier (`Ck::lit_spares`), since the call drops it. These programs come close
+/// to that case, and each gives the same errors as before that change: an argument that
+/// takes a carrier, one at a generic parameter of float formats, which takes none, a curried call, a `-` of a
+/// division, nested divisions, a `^` at `rat`, a division by zero, a call in a function body,
+/// an argument that is itself a call, and arguments the call refuses.
+#[test]
+fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
+    let cases: &[(&str, &[&str])] = &[
+        ("f(x: f64) = x;\ny = f(x: 1 / 0);\n", &[]),
+        (
+            "g(x) = sqrt(x);\ny = g(x: 1 / 2);\n",
+            &[
+                "Nothing gives the literal `1` a carrier of `f32 | f64 | rat`. Try `y = g(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = g(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
+            ],
+        ),
+        ("f(x: rat) = x;\ny = f(x: (1 / 2) ^ 2);\n", &[]),
+        ("f(x: rat) = x;\ny = f(x: 2 ^ -1);\n", &[]),
+        ("f(x: f64) = x;\ny = f(x: -(1 / 2));\n", &[]),
+        (
+            "f(x: f64, z: f64) = x + z;\nh = f(x: 1 / 2, ...);\ny = h(z: 1.0);\n",
+            &[],
+        ),
+        ("f(x: f64) = x;\ny = f(x: ((1 + 1) / 1 + 1) / 1);\n", &[]),
+        (
+            "f(x: f64) = x;\ny = f(x: 1 / 2, z: 3);\n",
+            &[
+                "this argument is passed by the name `z`, and `f` has no parameter of that name, so the argument has no parameter to go to. [3]",
+            ],
+        ),
+        (
+            "g(x: f64, z: int) = x;\ny = g(x: 1 / 2, z: \"a\");\n",
+            &[
+                "`g` does not take (f64, \"a\"): no arrow of `g` takes these types. [g(x: 1 / 2, z: \"a\")]",
+            ],
+        ),
+        ("f(x: f64) = x;\nh() = f(x: 1 / 2);\ny = h();\n", &[]),
+        ("f(x: f64) = x;\ny = f(x: f(x: 1 / 2) / 2);\n", &[]),
+        (
+            "f(x: int) = x;\ny = f(x: 1 / 2);\n",
+            &[
+                "`f` does not take (f64): no arrow of `f` takes these types. [f(x: 1 / 2)]",
+                "Nothing gives the literal `1` a carrier of `f32 | f64 | rat`. Try `y = f(x: 1.0f64 / 2)` instead.\n  fixes, each checked here:\n    y = f(x: 1.0f64 / 2);    the literal is then the f64 1.0 [1]",
+            ],
+        ),
+        ("f(x: f32) = x;\ny = f(x: 1 / 3);\n", &[]),
+        ("f(x: f64) = x;\ny = f(x: 1 / 2) + 1 / 2;\n", &[]),
+        (
+            "y = 1 / 2;\n",
+            &[
+                "Nothing gives the integer literals a carrier, and `/` has none at `int`: `y = 1 / 2`. Try `y = 1.0f64 / 2` instead.\n  fixes, each checked here:\n    y = 1.0f64 / 2;    y is 0.5\n    y = 1r / 2;        y is 1r/2r\n    y = f64(1) / 2;    y is 0.5 [1 / 2]",
+            ],
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for &(src, want) in cases {
+        let got = type_errors(src);
+        if got != want {
+            wrong.push(format!("{src:?}: {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

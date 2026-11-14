@@ -393,6 +393,45 @@ fn many_calls_given_divisions_of_literals_take_their_carriers_in_linear_time() {
     });
 }
 
+/// The same `n` calls cost about as much as `n` calls whose divisor has a suffix,
+/// `f(x: (i + 1) / 2.0f64)`, which no step rejects: the rejection of the `/` of integer literals, which
+/// the call drops when the argument takes `f64`, is not built (`Ck::lit_spared`). Built, with
+/// its repairs tried and its fixes checked, it made the bare calls cost 4.8 times the work and
+/// 4.4 times the bytes of the fixed ones; without it they cost 1.4 times both.
+#[test]
+fn a_division_of_literals_that_a_call_gives_a_carrier_costs_no_rejection() {
+    let calls = |n: usize, divisor: &str| {
+        let ys: String = (0..n)
+            .map(|i| format!("y{i} = f(x: ({i} + 1) / {divisor});\n"))
+            .collect();
+        format!("f(x: f64) = x;\n{ys}")
+    };
+    scaling::on_a_thread(1 << 29, || {
+        let n = 100;
+        let (bare, fixed) = (
+            Resolved::new(&calls(n, "2")),
+            Resolved::new(&calls(n, "2.0f64")),
+        );
+        for u in [&bare, &fixed] {
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::compare_costs(
+            "checking n = 100 calls given `(i + 1) / 2.0f64`, then `(i + 1) / 2`, at an f64 parameter",
+            "the two calls differ only in whether the walk types the `/` before the call gives \
+             it `f64`: the bare one tries the `/` at `int` and refuses it, then takes the carrier, \
+             1.4 times the work and the bytes when measured; building the rejection made it 4.8 \
+             and 4.4",
+            2.0,
+            || {
+                std::hint::black_box(fixed.type_errors());
+            },
+            || {
+                std::hint::black_box(bare.type_errors());
+            },
+        );
+    });
+}
+
 /// `y = f(x: ((…((1 + 1) / 1 + 1) / 1 …) + 1) / 1)` at `f(x: f64)`, `n` divisions of literals
 /// nested `2n` deep, each level on a line of its own: the argument takes the parameter's `f64`
 /// in one walk (`Ck::lit_takes`), which removes every operation in it from those with no type.

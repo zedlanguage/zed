@@ -681,6 +681,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut m = M::new();
         m.job(Job::Scope(unit, true));
         self.drive(&mut m);
+        // Each rejection not built was one its call drops ([`Ck::lit_spares`]).
+        debug_assert!(
+            self.lit_spared.is_empty(),
+            "rejections not built whose argument took no carrier: {:?}",
+            self.lit_spared
+        );
         // A statement other than a binding drops the errors of its operations on literals
         // that met a carrier here.
         self.drop_met(0);
@@ -2955,6 +2961,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             if live && let Some(r) = self.lit_written.remove(&e.span) {
                 self.lit_dropped.insert(r.start, r.end);
             }
+            if live {
+                self.lit_spared.remove(&e.span);
+            }
         }
         true
     }
@@ -3102,21 +3111,55 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(e) = a.expr.filter(|e| self.lit_ops.contains(&e.span)) else {
                 continue;
             };
-            let at: Option<Vec<Carrier>> = (sig.arrows.iter())
-                .map(|arrow| arrow.params.get(i).and_then(|p| p.numeric_carrier()))
-                .collect();
-            let Some(at) = at else {
+            let Some(c) = lit_param_carrier(sig, i) else {
                 continue;
-            };
-            let c = match at[..] {
-                [c, ..] if c != Carrier::Int && at.iter().all(|&d| d == c) => c,
-                _ if floats_take_f64(&at) => Carrier::F64,
-                _ => continue,
             };
             if self.lit_takes(e, c) {
                 a.ty = Ty::carrier(c);
             }
         }
+    }
+
+    /// Whether the rejection of the application at `span` need not be built: `span` is an
+    /// operation on literals alone inside the argument [`Ck::lit_taking`], which takes its
+    /// carrier when the call is applied, so [`Ck::lit_takes`] drops every error the
+    /// operations in it write. Read only where an application is refused.
+    ///
+    /// Complexity tradeoff: the naive way builds the rejection as for any refused
+    /// application, its derivation, the repairs tried by checking the operation again at
+    /// each carrier ([`Self::repairs`]) and each fix checked as written ([`Ck::reject`]), and
+    /// drops it when the call is applied. A call `f(x: (i + 1) / 2)` at `f(x: f64)` then cost
+    /// about 4.7 million instructions, 4.8 times a call `f(x: (i + 1) / 2.0f64)` whose `/` is
+    /// not refused: a constant per call, but 1 to 2 ms a line in a debug build
+    /// (TESTS-l01_26a-calls-slow). Used: before the argument is walked, the call reads whether
+    /// it will take a carrier, one walk of its text ([`lit_op_recorded`]) and one fold
+    /// ([`Ck::lit_fit`], kept, so [`Ck::lit_takes`] reads it again for free), O(size of the
+    /// argument) once; then each refused application inside it costs one comparison of spans
+    /// and one lookup, and the call costs 1.4 times the call with the suffix. The application
+    /// itself is still tried, since its type is the operation's type until the call gives it
+    /// the carrier.
+    fn lit_spares(&self, span: Span) -> bool {
+        self.level == 0
+            && !self.trying
+            && self.replaying == 0
+            && self
+                .lit_taking
+                .is_some_and(|a| a.start <= span.start && span.end <= a.end)
+            && self.lit_ops.contains(&span)
+    }
+
+    /// The argument `e` at the parameter `j` of the call `s` as [`Ck::lit_taking`], where it
+    /// takes that parameter's carrier when the call is applied ([`Ck::lit_args_take`]): at the
+    /// top level, outside a trial and a run again of a function's body, a call applied now and
+    /// not curried, `e` an operation the walk records as one on literals alone
+    /// ([`lit_op_recorded`]), the parameter of one carrier ([`lit_param_carrier`]) and `e`'s
+    /// value a value of it ([`Ck::lit_fit`]), the three tests [`Ck::lit_takes`] makes.
+    fn lit_taking_at(&mut self, s: &CallSigF<'a>, j: usize, e: &Expr) -> Option<Span> {
+        if self.level != 0 || self.trying || self.replaying != 0 || s.curry {
+            return None;
+        }
+        let c = lit_param_carrier(&s.sig, j)?;
+        (lit_op_recorded(e, self.t.text) && self.lit_fit(e, c).0).then_some(e.span)
     }
 
     /// The errors after the first `from` that the operation at `span` wrote, recorded where it
@@ -4456,6 +4499,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn call_sig_step(&mut self, m: &mut M<'a>, mut s: Box<CallSigF<'a>>) {
         if s.waiting {
             s.waiting = false;
+            self.lit_taking = None;
             let x = m.take_arg();
             s.got.push(Some(x));
         }
@@ -4467,6 +4511,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ArgSrc::Expr(e) => {
                         let e = *e;
                         let want = Ty::union_all(s.sig.arrows.iter().map(|ar| &ar.params[j]));
+                        // An operation on literals alone that takes the parameter's carrier:
+                        // the rejections inside it are dropped, so they are not built. The
+                        // walk of `e` holds no call, so no other argument is walked first.
+                        self.lit_taking = self.lit_taking_at(&s, j, e);
                         s.waiting = true;
                         m.k(Frame::CallSig(s));
                         return m.job(Job::Arg(e, Want::of(&want)));
@@ -12960,6 +13008,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if out.is_empty() {
                     self.failed.insert(span);
                 }
+                (out, Vec::new())
+            }
+            // A rejection the call around it drops once its argument takes a carrier.
+            Err(_) if self.lit_spares(span) => {
+                self.applied = None;
+                self.lit_spared.insert(span);
                 (out, Vec::new())
             }
             Err(message) => {

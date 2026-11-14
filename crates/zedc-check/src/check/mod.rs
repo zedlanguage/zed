@@ -1157,6 +1157,16 @@ struct Ck<'t, 'a> {
     /// The ranges of [`Ck::lit_written`] of operations that met a carrier, start to end,
     /// whose errors [`Ck::drop_met`] removes when the statement ends.
     lit_dropped: BTreeMap<usize, usize>,
+    /// The span of the argument of a call being walked, an operation on bare literals alone
+    /// at a parameter of one carrier, that takes that carrier when the call is applied
+    /// ([`Ck::lit_args_take`]), so that the errors of the operations in it are dropped: a
+    /// rejection inside it is not built ([`Ck::lit_spares`]). Set only while that argument
+    /// is walked.
+    lit_taking: Option<Span>,
+    /// The operations inside [`Ck::lit_taking`] whose rejection was not built; each leaves
+    /// the set when its argument takes its carrier ([`Ck::lit_takes`]), so the set is empty
+    /// when the walk of the unit ends ([`Ck::walk`]).
+    lit_spared: HashSet<Span>,
     /// The `==` or `!=` whose operands are being paired, so that a literal component of a
     /// tuple compared with a component that holds no number names the comparison
     /// ([`Ck::never_equal_component`]), and two values with no common carrier are rejected
@@ -1505,6 +1515,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_written: HashMap::new(),
             lit_order: Vec::new(),
             lit_dropped: BTreeMap::new(),
+            lit_taking: None,
+            lit_spared: HashSet::new(),
             comparing: None,
             unnamed: HashMap::new(),
             made: HashMap::new(),
@@ -7386,6 +7398,62 @@ fn floats_take_f64(cs: &[Carrier]) -> bool {
     cs.len() > 1
         && cs.contains(&Carrier::F64)
         && cs.iter().all(|&c| matches!(c, Carrier::F64 | Carrier::F32))
+}
+
+/// The carrier an operation on literals alone takes at the parameter `i` of `sig`
+/// ([`Ck::lit_args_take`]): the one numeric carrier other than `int` that every arrow
+/// declares there, or `f64` where the arrows declare float formats alone, `f64` among them
+/// ([`floats_take_f64`]); `None` otherwise. One read of each arrow's parameter.
+fn lit_param_carrier(sig: &Sig, i: usize) -> Option<Carrier> {
+    let at: Vec<Carrier> = (sig.arrows.iter())
+        .map(|arrow| arrow.params.get(i).and_then(|p| p.numeric_carrier()))
+        .collect::<Option<_>>()?;
+    match at[..] {
+        [c, ..] if c != Carrier::Int && at.iter().all(|&d| d == c) => Some(c),
+        _ if floats_take_f64(&at) => Some(Carrier::F64),
+        _ => None,
+    }
+}
+
+/// Whether the walk at the top level records `e` as an operation on bare literals alone
+/// ([`Ck::lit_ops`]), read off its text as the walk records it: a `+`, `-`, `*`, `/` or `^`
+/// whose operands are each a literal with no suffix or such an operation
+/// ([`Ck::lit_op_meets`]), or a `-` of such an operation (the walk's `Frame::Unary`). A
+/// literal alone, `-3` included, is none. `src` is the program's text, as the walk reads the
+/// literals ([`literal`]). The walk keeps its own stack and costs the size of `e`.
+fn lit_op_recorded(e: &Expr, src: Option<&str>) -> bool {
+    let op = |x: &Expr| {
+        literal(x, src).is_none()
+            && matches!(
+                x.kind,
+                ExprKind::Binary(
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow,
+                    ..
+                ) | ExprKind::Unary(UnaryOp::Neg, _)
+            )
+    };
+    if !op(e) {
+        return false;
+    }
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
+        let operands: &[&Expr] = match &x.kind {
+            ExprKind::Binary(_, a, b) => &[&**a, &**b],
+            ExprKind::Unary(_, a) => &[&**a],
+            _ => unreachable!("only operations are pushed"),
+        };
+        for &y in operands {
+            match &x.kind {
+                // A `-` records only an operation under it; `- -3` is no operation on
+                // literals alone, since its operand `-3` is a literal.
+                ExprKind::Unary(..) if !op(y) => return false,
+                _ if op(y) => todo.push(y),
+                _ if literal(y, src).is_some_and(|l| l.bare) => {}
+                _ => return false,
+            }
+        }
+    }
+    true
 }
 
 /// The message for the literal `l`, which nothing gives a carrier, of the carriers `cs` that
