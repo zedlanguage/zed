@@ -11227,13 +11227,39 @@ impl<'t, 'a> Ck<'t, 'a> {
         // text, costs a check of the application per cast; used: the three casts run on each
         // text the operands' types list, once per rejected ordering, O(d) for texts of d
         // characters in all ([`reads_as_number`]).
-        let number_text = matches!(
+        let ordering = matches!(
             what.operator(),
             Some(Operator::Binary(
                 BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
             ))
-        ) && args.iter().flatten().any(|a| reads_as_number(&a.ty));
+        );
+        let number_text = ordering && args.iter().flatten().any(|a| reads_as_number(&a.ty));
         for (i, a) in args.iter().enumerate() {
+            // A number literal written without a suffix in an ordering, `2 < "a"`, is offered
+            // as text, `"2" < "a"`, where an operation in its place is offered its `String`
+            // cast, `String(2 + 13) < "a"`, and under the same rule: not beside a text written
+            // as a number, `2 < "8"`, whose order as text is not its order as a number (row
+            // REPAIR-literal-string-order). The text is the literal as the program writes it,
+            // with its `-`, as `==` offers it (`"8" == "2"` for `"8" == 2`, [`Self::never_equal`]),
+            // so `2.5` is offered as `"2.5"`, not as the `"5/2"` a `String` cast of the `rat`
+            // gives. A literal with a suffix is offered nothing. Complexity tradeoff: none; the
+            // naive repair, `String(2)`, writes a call where a literal says the same; this
+            // writes the literal, O(d) for d digits, and checks the ordering once with it, as
+            // the cast is checked.
+            if let Some(Arg {
+                lit: Some(l),
+                at: Some(at),
+                ..
+            }) = a
+                && ordering
+                && !number_text
+                && l.bare
+            {
+                if let Some(r) = self.text_literal(what, sig, args, (i, l, *at, kept), pass, span) {
+                    literals.push(r);
+                }
+                continue;
+            }
             let Some(Arg {
                 lit: None,
                 at: Some(at),
@@ -11400,6 +11426,45 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         literals.append(&mut out);
         literals
+    }
+
+    /// The repair of [`Self::repairs`] that writes the number literal `l`, argument `i` at
+    /// `at`, as text, `"2"` for `2`, where the application checks with it and does not take
+    /// the literal as written; `kept` as in [`Self::repairs`]. O(d) for a literal of d digits,
+    /// and the checks of the application [`Self::takes_some`] and the repaired one make.
+    fn text_literal(
+        &mut self,
+        what: Label<'_>,
+        sig: &Sig,
+        args: &[Option<Arg<'a>>],
+        (i, l, at, kept): (usize, &Lit, Span, bool),
+        pass: bool,
+        span: Span,
+    ) -> Option<Repaired> {
+        let a = args[i].as_ref()?;
+        if self.takes_some(what, sig, args, (i, &a.ty, kept.then_some(at)), pass, span) {
+            return None;
+        }
+        let text = format!("\"{}\"", l.written());
+        let was = self.t.text?.get(at.start..at.end)?;
+        let Mapped::Args(mut one) = self.written_arg(&text, was, a, at) else {
+            return None;
+        };
+        let with = one.pop().flatten()?;
+        let got = self.repaired(what, sig, args, (i, with), pass, span)?;
+        let note = quoting(
+            &format_args!("repair: write `{text}`; the checker accepts that"),
+            || "repair: write this literal as text; the checker accepts that".to_string(),
+        );
+        let holds = format_args!("the literal is then the String {text}");
+        Some(Repaired {
+            note: Note {
+                span: at,
+                text: note,
+            },
+            got,
+            fix: Rewrite::new(&[(at, &text)], &holds, &text),
+        })
     }
 
     /// Whether the application takes, as written, some value of argument `i`, of type `held`

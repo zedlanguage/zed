@@ -804,3 +804,100 @@ fn the_message_of_a_long_literal_with_a_suffix_scales() {
         },
     );
 }
+
+/// Row REPAIR-literal-string-order: an ordering of a number with a text no number cast reads
+/// offers the number as text, a literal as a string literal, `"2" < "a"`, and anything else
+/// cast, `String(2 + 13) < "a"`; it offered the operation's cast and nothing for the literal.
+/// Each case is the comparison as written and its repair, in both orders of the operands, at
+/// each ordering, with the number grouped and not.
+const ORDERED_AS_TEXT: [(&str, &str); 12] = [
+    ("2 < \"a\"", "\"2\" < \"a\""),
+    ("\"a\" < 2", "\"a\" < \"2\""),
+    ("(2) <= \"a\"", "\"2\" <= \"a\""),
+    ("\"a\" > ((2))", "\"a\" > \"2\""),
+    ("-2 >= \"x8\"", "\"-2\" >= \"x8\""),
+    ("\"a\" >= (-2)", "\"a\" >= \"-2\""),
+    ("2.5 < \"a\"", "\"2.5\" < \"a\""),
+    ("\"a\" > 2.5", "\"a\" > \"2.5\""),
+    ("(2 + 13) < \"a\"", "String(2 + 13) < \"a\""),
+    ("\"a\" < (2 + 13)", "\"a\" < String(2 + 13)"),
+    ("2 + 13 <= \"a\"", "String(2 + 13) <= \"a\""),
+    ("\"a\" >= 2 + 13", "\"a\" >= String(2 + 13)"),
+];
+
+#[test]
+fn a_literal_ordered_with_a_text_is_offered_as_text_where_an_operation_is_cast() {
+    for (compare, repair) in ORDERED_AS_TEXT {
+        let src = program(&format!("f() {{ c = {compare}; return c; }}"));
+        let out = rejected(&src);
+        let headline = out.lines().next().expect("a headline");
+        assert!(
+            headline.ends_with(&format!(" Try `{repair}` instead.")),
+            "{compare}\n{out}"
+        );
+        checks(&program(&format!("f() {{ c = {repair}; return c; }}")));
+    }
+}
+
+/// Orderings of a number with a text a number cast reads, in both orders of the operands,
+/// with the number a literal and an operation, grouped and not: none is offered as text
+/// (row REPAIR-string-compare-offer), and each is offered the text's number, `8`, alone.
+const ORDERED_WITH_A_NUMBER_TEXT: [&str; 8] = [
+    "2 < \"8\"",
+    "\"8\" < 2",
+    "(2) <= \"8\"",
+    "\"8\" >= (2)",
+    "(2 + 13) > \"8\"",
+    "\"8\" > (2 + 13)",
+    "2 + 13 < \"8\"",
+    "\"8\" <= 2 + 13",
+];
+
+#[test]
+fn a_literal_ordered_with_a_text_written_as_a_number_is_offered_no_text() {
+    for compare in ORDERED_WITH_A_NUMBER_TEXT {
+        let src = program(&format!("f() {{ c = {compare}; return c; }}"));
+        let out = rejected(&src);
+        assert!(!out.contains("String("), "{compare}\n{out}");
+        assert!(!out.contains("write `\"2\"`"), "{compare}\n{out}");
+        let offers = menu(&src);
+        assert_eq!(offers.first(), Some(&entry("8")), "{compare}\n{out}");
+        assert!(offers.iter().all(|o| !o.contains('"')), "{compare}\n{out}");
+    }
+}
+
+#[test]
+fn a_literal_compared_by_equality_with_a_text_is_offered_as_text_in_both_orders() {
+    // `==` and `!=` write the literal as text beside any text, a number's or not: equality of
+    // two texts does not depend on their order, and `"8" == 2` always gives `false` as written.
+    for (compare, repair) in [
+        ("\"8\" == 2", "\"8\" == \"2\""),
+        ("2 == \"8\"", "\"2\" == \"8\""),
+        ("\"a\" != 2", "\"a\" != \"2\""),
+    ] {
+        let src = program(&format!("f() {{ c = {compare}; return c; }}"));
+        let line = format!("f() {{ c = {repair}; return c; }}");
+        assert!(fixed(&src).contains(&line), "{compare}\n{}", rejected(&src));
+        checks(&program(&line));
+    }
+}
+
+#[test]
+fn a_literal_of_many_digits_ordered_with_a_text_is_offered_as_text_and_scales() {
+    // The literal is written as text, O(d) for d digits, and the ordering checked once with it.
+    let srcs = scaling::inputs(4000, |d| {
+        program(&format!(
+            "f() {{ c = \"a\" < {}; return c; }}",
+            "7".repeat(d)
+        ))
+    });
+    scaling::check(
+        "the text repair of a literal of d digits ordered with a text",
+        4000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            let want = format!("Try `\"a\" < \"{}\"` instead.", "7".repeat(d));
+            assert!(out.contains(&want), "{out}");
+        },
+    );
+}
