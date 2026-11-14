@@ -1431,6 +1431,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | TEST-cov-scaling-noise | merged and pushed (the commit "TEST-cov-scaling-noise: ..." that marks the row Done); no spec change | Found by TEST-scaling-runs. In a coverage build, each pass of `spin` does a `lock incq` on one shared counter of the coverage map; tests running beside each other read up to 5% more instructions (n log n at 1000: 10.04 to 10.67 against the limit 10.5), one test at a time reads exactly. The near-limit checks in `tests/src/scaling_tests.rs` now count passes on their own meter (`meter_of_passes`), so their ratio is exact (10.408) in every build; the quarter-power check asserts its message names 13.5 times. Open: TEST-cov-run-settings |
 | TEST-flaky-constant-spin | merged and pushed (the commit "TEST-flaky-constant-spin: ..." that marks the row Done); no spec change | Found by TEST-bench-move-l0138 and TEST-bench-move-crates. The bench-line test of the scaling harness failed on time under load (2.21 and 2.53 times for the same work, 1.70 for 8 times the work). Counts now decide its ratios; times are held only to the lower bound of a sleep in each run (20 us per unit of n), which the meter does not count |
 | TEST-malloc-state-under-cov | merged and pushed (the commit "TEST-malloc-state-under-cov: ..." that marks the row Done); no spec change | Found by TEST-complete-kernel. Not the coverage runtime: `scaling_tests::malloc_keeps_no_state_from_earlier_threads` fails in either build without `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`, which a coverage run (the binary run directly) did not set, and passes in either with it. Doc and message corrected. Open: TEST-cov-run-settings |
+| TEST-l01_29-widen-flake | merged and pushed (the commit "TEST-l01_29-widen-flake: ..." that marks the row Done); no spec change | Found by TEST-complete-types. Not an order dependence of batch and single-file checking (50 of 50 alone and in the group, both builds), but a race on a shared fixture: `unit` in `tests/steps/l01_29_diagnostics/widen_test.rs` truncated and rewrote a file other processes of the binary might be checking. It now writes a per-process file and renames it over the name. l01_29 510 to 511 tests. Open: TEST-fixture-write-race, TEST-seed-test-once |
 
 ## Decisions made
 
@@ -2317,7 +2318,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
-| TEST-l01_29-widen-flake | running |  |  |
 | TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | started in wt/types-unreached; scope: unreached regions of crates/zedc-types/src/kernel_type.rs; load 39.06 50.66 51.88 |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
