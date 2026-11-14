@@ -4909,9 +4909,12 @@ mod cell_sweep {
             }
         }
 
-        let is_unit_cons = |idx: usize| -> bool {
-            items[idx].from_or.is_none() && items[idx].eqs[0].lin.terms.len() == 1
-        };
+        // A constant target on one atom, `q == val` or a disjunction of such (`(i <= 0 && q ==
+        // 5) || (i >= 1 && q == 6)`, FAIL-pres-overlap-every-level-refused), waits in the second
+        // tier: taken first it would steal `q` from the chain definition and leave that as the
+        // target.
+        let is_unit_cons =
+            |idx: usize| -> bool { items[idx].eqs.iter().all(|c| c.lin.terms.len() == 1) };
 
         let can_define = |idx: usize, known_defs: &HashMap<Atom, usize>| -> Option<Atom> {
             let mut unk = unit_common[idx]
@@ -5500,20 +5503,56 @@ mod cell_sweep {
     /// The bounds `orient.leftover_ineqs` (not empty) put on one defined atom, when each of them
     /// bounds that one atom alone: its id and its span, or `Some(None)` when they leave it no
     /// value. `None` when the rows are of another shape.
-    fn sink_span(orient: &Orientation) -> Option<Option<(usize, Span)>> {
-        let mut sink_atom: Option<&Atom> = None;
-        for c in &orient.leftover_ineqs {
-            let mut terms = c.lin.terms.keys();
-            let (Some(a), None) = (terms.next(), terms.next()) else {
-                return None;
-            };
-            if !orient.known_defs.contains_key(a) || sink_atom.is_some_and(|prev| prev != a) {
-                return None;
-            }
-            sink_atom = Some(a);
+    fn sink_span(orient: &Orientation, x: &Atom) -> Option<Option<(usize, Span)>> {
+        match sink_rows(orient, x)? {
+            None => Some(None),
+            Some((uid, bx, bk, sp)) => (bx.is_zero() && bk.is_zero()).then_some(Some((uid, sp))),
         }
-        let sa = sink_atom?;
-        Some(span_of(&orient.leftover_ineqs, sa).map(|sp| (orient.known_defs[sa], sp)))
+    }
+
+    /// The bounds `orient.leftover_ineqs` (not empty) put on one expression `e = u + bx * x +
+    /// bk * k` of one defined atom `u`, when every row bounds that same expression (`t_n >= 5`,
+    /// `t_n + i >= 3`, `-t_n - i >= -9`): `u`'s id, `bx`, `bk` and the span of `e`, or
+    /// `Some(None)` when they leave `e` no value. `None` when the rows are of another shape.
+    fn sink_rows(orient: &Orientation, x: &Atom) -> Option<Option<(usize, Int, Int, Span)>> {
+        let pk = orient.param_k.as_ref();
+        let mut shape: Option<(&Atom, Int, Int)> = None;
+        let mut sp: Span = (None, None);
+        for c in &orient.leftover_ineqs {
+            let mut u: Option<(&Atom, &Int)> = None;
+            let (mut bx, mut bk) = (Int::ZERO, Int::ZERO);
+            for (a, coef) in &c.lin.terms {
+                if a == x {
+                    bx = coef.clone();
+                } else if pk == Some(a) {
+                    bk = coef.clone();
+                } else if u.is_none() && coef.is_unit() && orient.known_defs.contains_key(a) {
+                    u = Some((a, coef));
+                } else {
+                    return None;
+                }
+            }
+            // The row is `s * e + constant >= 0` with `s = ±1` the coefficient of `u`, so
+            // `e`'s coefficients are the row's times `s`.
+            let (u, s) = u?;
+            let (bx, bk) = (&bx * s, &bk * s);
+            match &shape {
+                None => shape = Some((u, bx, bk)),
+                Some((pu, pbx, pbk)) if *pu == u && *pbx == bx && *pbk == bk => {}
+                Some(_) => return None,
+            }
+            let bound = if s.is_positive() {
+                (Some(-&c.lin.constant), None)
+            } else {
+                (None, Some(c.lin.constant.clone()))
+            };
+            let Some(next) = meet_span(&sp, &bound) else {
+                return Some(None);
+            };
+            sp = next;
+        }
+        let (u, bx, bk) = shape?;
+        Some(Some((orient.known_defs[u], bx, bk, sp)))
     }
 
     fn sweep_disjoint(
@@ -5566,7 +5605,7 @@ mod cell_sweep {
             if orient.leftover_ineqs.is_empty() {
                 TargetSpec::None
             } else {
-                let Some((uid, span)) = sink_span(orient)? else {
+                let Some((uid, span)) = sink_span(orient, x)? else {
                     return Some(Ok(false));
                 };
                 TargetSpec::SpanOn { uid, span }
@@ -5812,15 +5851,17 @@ mod cell_sweep {
     /// the 3-element monoid [`InvOp`] (`Id`, `Flip`, `Both`) in [`CellForest`]. `c_0` is a
     /// constant or `bk * k + c` in the bounded parameter `k`; since every flip has the same
     /// `c_0`, two flips still compose to `Id`. The target is an equation on one defined atom, a
-    /// bound or range on one defined atom, or nothing.
+    /// bound or range on one expression `u + bx * x + bk * k` of one defined atom `u`
+    /// ([`sink_rows`]), or nothing.
     // Complexity tradeoff (FAIL-pres-overlap-every-level-refused): naive version, a target
     // that is a bound, or a parameter `k`, handed on to the later stages, whose search takes
     // the first disjunct of each disjunction and so refuses with `Disjuncts` where the levels
     // overlap (`mid` in l01_38 cell_sweep.rs, 5 to 9 disjunctions over 13 values of `i`);
     // enumerating the choices instead costs 2^n for n levels. Used: in each cell the value set
-    // of the target's atom is exactly `{x}`, `{c_0 - x}` or both ([`InvOp`]), so a bound is
-    // checked on `x` and on `c_0 - x` over the cell in O(1) (with `k`, a system of two
-    // variables), the same O((n + cells) log n) sweep as an equation target.
+    // of the target's atom `u` is exactly `{x}`, `{c_0 - x}` or both ([`InvOp`]), so a bound on
+    // `u + bx * x + bk * k` is checked with `u = x` and `u = c_0 - x` over the cell in O(1)
+    // (with `k`, a system of two variables), the same O((n + cells) log n) sweep as an
+    // equation target.
     fn sweep_involution(
         num_ors: usize,
         whole: &Span,
@@ -5830,11 +5871,12 @@ mod cell_sweep {
         orient: &Orientation,
     ) -> Option<Result<bool, Refusal>> {
         let pk = orient.param_k.as_ref();
-        // A bound target: rows that bound one defined atom alone, with no equation target.
+        // A bound target: rows that bound one expression `u + bx * x + bk * k` of one defined atom
+        // `u`, with no equation target.
         let span_target = if orient.leftover_ineqs.is_empty() {
             None
         } else if orient.leftover_items.is_empty() {
-            let Some(found) = sink_span(orient)? else {
+            let Some(found) = sink_rows(orient, x)? else {
                 return Some(Ok(false));
             };
             Some(found)
@@ -6185,31 +6227,35 @@ mod cell_sweep {
             if active_ors < num_ors {
                 continue;
             }
-            if let Some((uid, tspan)) = &span_target {
+            if let Some((uid, ebx, ebk, tspan)) = &span_target {
                 let op = forest.query(rep_of_def[*uid]);
-                // `u = x` when `Id` or `Both`.
+                // Whether `m * x + kk * k + c` lies in `tspan` for some `x` in the cell (and `k`
+                // in its span).
+                let holds_span = |m: Int, kk: Int, c: &Int| -> Option<bool> {
+                    match pk {
+                        Some(k) if !kk.is_zero() => {
+                            let e = Aff {
+                                a: Slope::Zero,
+                                bx: m,
+                                bk: kk,
+                                c: c.clone(),
+                            };
+                            holds_2var_span(x, k, &e, tspan, cell_span, &orient.k_span)
+                        }
+                        _ => Some(holds_1var_span(&m, c, tspan, cell_span)),
+                    }
+                };
+                // `e = u + ebx * x + ebk * k` with `u = x` when `Id` or `Both`.
                 if matches!(op, InvOp::Id | InvOp::Both)
-                    && holds_1var_span(&Int::ONE, &Int::ZERO, tspan, cell_span)
+                    && holds_span(ebx + &Int::ONE, ebk.clone(), &Int::ZERO)?
                 {
                     return Some(Ok(true));
                 }
                 // `u = c0_k * k + c0 - x` when `Flip` or `Both`.
-                if matches!(op, InvOp::Flip | InvOp::Both) {
-                    let hit = match pk {
-                        Some(k) if !c0_k.is_zero() => {
-                            let flip = Aff {
-                                a: Slope::Zero,
-                                bx: -&Int::ONE,
-                                bk: c0_k.clone(),
-                                c: c0.clone(),
-                            };
-                            holds_2var_span(x, k, &flip, tspan, cell_span, &orient.k_span)?
-                        }
-                        _ => holds_1var_span(&-&Int::ONE, &c0, tspan, cell_span),
-                    };
-                    if hit {
-                        return Some(Ok(true));
-                    }
+                if matches!(op, InvOp::Flip | InvOp::Both)
+                    && holds_span(ebx - &Int::ONE, ebk + &c0_k, &c0)?
+                {
+                    return Some(Ok(true));
                 }
                 continue;
             }

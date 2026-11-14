@@ -72,6 +72,19 @@ pub(crate) enum Target {
     Ge(i128),
     Le(i128),
     Range(i128, i128),
+    /// `t_n >= v + 1 && t_n <= v`: bounds that leave no value.
+    Empty(i128),
+    /// `t_n + i >= v`: a bound on two atoms.
+    SumGe(i128),
+    /// `a <= t_n + i <= b`: two bounds on one expression of two atoms.
+    SumRange(i128, i128),
+    /// `t_n + k >= v`: a bound with the parameter `k` (the constant 2 where `k` is left out).
+    KGe(i128),
+    /// `(i <= 0 && t_n == v) || (i >= 1 && t_n == v + 1)`: a target split by disjoint guards.
+    Split(i128),
+    /// `(i <= 1 && v == t_n) || (i >= -1 && v + 1 == t_n)`: a target split by overlapping
+    /// guards, written with `t_n` on the right.
+    Swapped(i128),
     None,
 }
 
@@ -90,6 +103,11 @@ impl Family {
     /// The values `t_n` takes over every `i` and `k`, with the twin copies chosen
     /// independently below level `n`.
     pub(crate) fn reachable(&self, n: usize) -> BTreeSet<i128> {
+        self.points(n).into_iter().map(|(_, _, t)| t).collect()
+    }
+
+    /// The points `(k, i, t_n)` of the chain at level `n`.
+    fn points(&self, n: usize) -> BTreeSet<(i128, i128, i128)> {
         let mut out = BTreeSet::new();
         for k in self.ks() {
             for i in self.is() {
@@ -110,7 +128,7 @@ impl Family {
                     }
                     pairs = next;
                 }
-                out.extend(pairs.into_iter().map(|(t, _)| t));
+                out.extend(pairs.into_iter().map(|(t, _)| (k, i, t)));
             }
         }
         out
@@ -145,6 +163,24 @@ impl Family {
                 parts.push(Formula::Con(Con::ge(&t, &c(a))));
                 parts.push(Formula::Con(Con::ge(&c(b), &t)));
             }
+            Target::Empty(v) => {
+                parts.push(Formula::Con(Con::ge(&t, &c(v + 1))));
+                parts.push(Formula::Con(Con::ge(&c(v), &t)));
+            }
+            Target::SumGe(v) => parts.push(Formula::Con(Con::ge(&t.plus(&i_lin()), &c(v)))),
+            Target::SumRange(a, b) => {
+                parts.push(Formula::Con(Con::ge(&t.plus(&i_lin()), &c(a))));
+                parts.push(Formula::Con(Con::ge(&c(b), &t.plus(&i_lin()))));
+            }
+            Target::KGe(v) => parts.push(Formula::Con(Con::ge(&t.plus(&k), &c(v)))),
+            Target::Split(v) => parts.push(Formula::or(vec![
+                Formula::and(vec![le(0), Formula::Con(Con::eq(&t, &c(v)))]),
+                Formula::and(vec![ge(1), Formula::Con(Con::eq(&t, &c(v + 1)))]),
+            ])),
+            Target::Swapped(v) => parts.push(Formula::or(vec![
+                Formula::and(vec![le(1), Formula::Con(Con::eq(&c(v), &t))]),
+                Formula::and(vec![ge(-1), Formula::Con(Con::eq(&c(v + 1), &t))]),
+            ])),
             Target::None => {}
         }
         Formula::and(parts)
@@ -153,7 +189,18 @@ impl Family {
     fn check(&self, name: &str) {
         let mut wrong = Vec::new();
         for n in 1..=5 {
-            let reached = self.reachable(n);
+            let points = self.points(n);
+            let reached: BTreeSet<i128> = points.iter().map(|&(_, _, t)| t).collect();
+            let top_sum = points
+                .iter()
+                .map(|&(_, i, t)| t + i)
+                .max()
+                .expect("some point");
+            let top_k = points
+                .iter()
+                .map(|&(k, _, t)| t + k)
+                .max()
+                .expect("some point");
             let lo = *reached.first().expect("some value is reached");
             let hi = *reached.last().expect("some value is reached");
             let miss = (lo..=hi).find(|v| !reached.contains(v));
@@ -165,6 +212,19 @@ impl Family {
                 Target::Ge(hi + 1),
                 Target::Le(lo),
                 Target::Le(lo - 1),
+                Target::Empty(lo),
+                Target::SumGe(top_sum),
+                Target::SumGe(top_sum + 1),
+                Target::SumRange(top_sum - 1, top_sum),
+                Target::SumRange(top_sum + 1, top_sum + 2),
+                Target::KGe(top_k),
+                Target::KGe(top_k + 1),
+                Target::Split(lo),
+                Target::Split(hi),
+                Target::Split(hi + 1),
+                Target::Swapped(lo),
+                Target::Swapped(hi),
+                Target::Swapped(hi + 1),
                 Target::None,
             ];
             if let Some(m) = miss {
@@ -177,6 +237,18 @@ impl Family {
                     Target::Ge(v) => hi >= v,
                     Target::Le(v) => lo <= v,
                     Target::Range(a, b) => reached.range(a..=b).next().is_some(),
+                    Target::Empty(_) => false,
+                    Target::SumGe(v) => top_sum >= v,
+                    Target::SumRange(a, b) => {
+                        points.iter().any(|&(_, i, t)| a <= t + i && t + i <= b)
+                    }
+                    Target::KGe(v) => top_k >= v,
+                    Target::Split(v) => points
+                        .iter()
+                        .any(|&(_, i, t)| (i <= 0 && t == v) || (i >= 1 && t == v + 1)),
+                    Target::Swapped(v) => points
+                        .iter()
+                        .any(|&(_, i, t)| (i <= 1 && t == v) || (i >= -1 && t == v + 1)),
                     Target::None => true,
                 };
                 let got = decide(&self.chain(n, target));
