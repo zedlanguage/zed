@@ -20,6 +20,7 @@ mod lazy_carrier;
 mod lit_branch_ops;
 mod lit_branches;
 mod name_fixed;
+mod operations;
 mod param_follows;
 mod parts_type;
 mod positions;

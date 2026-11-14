@@ -100,7 +100,7 @@ fn several_files_report_as_each_file_alone() {
     );
     let b = unit(
         "batch-b.zed",
-        "limit = 10;\nscale(positional x: int) = x * (2 + 0) test { 3 -> 6 }\n",
+        "limit = 10;\nscale(positional x) = x * (2 + 0) test { 3 -> 6 }\n",
     );
     // A rejection unit has no mutants.
     let c = unit(

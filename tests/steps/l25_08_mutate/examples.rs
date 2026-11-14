@@ -35,10 +35,25 @@ fn a_boundary_the_table_checks_detects_its_mutants() {
 
 #[test]
 fn a_mutant_the_build_stage_proves_equal_is_skipped() {
-    // `2 + 0` and `2 - 0` are both built to 2; the other mutants change the factor. `x` is
-    // declared `int`: with `x` generic, `2 + 0` takes the carrier of `x` (L1.26a), one `match`
-    // on it per literal, and the build stage does not yet build the two to the same term
-    // (follow-up STAGE-generic-fold).
+    // `2 + 0` and `2 - 0` are both built to 2; the other mutants change the factor. With `x`
+    // generic, `2 + 0` takes the carrier of `x` (L1.26a) and is built once per carrier, one
+    // `match` on `x` whose arms are `2.0 + 0.0`, `2r + 0r`, … and, last, the marked `2 + 0`
+    // (STAGE-generic-fold): the build stage builds each arm to its constant, so the mutant
+    // is in the last arm, .4 (the `match` on `x` is .0), and is skipped.
+    let unit = "scale(positional x) = x * (2 + 0) test { 3 -> 6 }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:30: skipped: `+` replaced by `-` in `scale` at .0.1.4: the build stage gives the \
+             definition the original's term",
+            "5 mutants: 4 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+}
+
+#[test]
+fn a_mutant_of_an_int_parameter_the_build_stage_proves_equal_is_skipped() {
+    // The same at a parameter declared `int`: no `match`, the operation itself built to 2.
     let unit = "scale(positional x: int) = x * (2 + 0) test { 3 -> 6 }\n";
     assert_eq!(
         report(unit),
