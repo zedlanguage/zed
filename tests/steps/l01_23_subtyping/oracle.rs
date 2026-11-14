@@ -232,7 +232,10 @@ fn subtyping_agrees_with_the_oracle() {
             false => no += 1,
         }
     }
-    assert!(yes > 400 && no > 400, "{yes} {no} (ZED_SEED={seed})");
+    // Both answers occur often, so neither "always yes" nor "always no" would pass. Over 100 new
+    // seeds `no` averaged 457 (standard deviation 19) and `yes` 1043, so the floor of 400 that
+    // suited seed 5 would fail about one run in 1000; 300 lies over eight deviations below.
+    assert!(yes > 400 && no > 300, "{yes} {no} (ZED_SEED={seed})");
 }
 
 #[test]
