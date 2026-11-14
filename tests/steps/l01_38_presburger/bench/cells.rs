@@ -55,3 +55,19 @@ fn guarded_chains_up_to_96_levels_are_decided_as_run() {
 fn wide_nested_and_joined_guards_up_to_40_levels_are_decided_as_run() {
     guarded_families_up_to(40);
 }
+
+/// The chain with one guard of `n` points copied into all `n` levels, at `n` = 250 and 707 (about
+/// 67 000 and 514 000 atoms), in work linear in the formula's size. Control (once, not kept): with
+/// the merge over all runs in place of `cells_without`, this test fails, 11.4 times the work.
+#[test]
+fn one_guard_copied_into_every_level_scales_with_the_formula() {
+    let fs = scaling::inputs(250 * 250, |m| shared_guard(m.isqrt()));
+    scaling::check_order(
+        "decision of a chain with one guard in every level",
+        250 * 250,
+        1,
+        |m| {
+            assert!(!decide(&fs[&m]).expect("decided"), "{m}");
+        },
+    );
+}

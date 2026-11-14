@@ -6370,6 +6370,61 @@ fn cells_minus(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
     out
 }
 
+/// The cells of `a` not in `b`, as [`cells_minus`], found by search for each run of `b`.
+// Complexity tradeoff: a merge of the two lists reads every run of `a`, O(A + B). `spread`
+// takes the few runs where a disjunction holds from the many cells of its holder, once per
+// disjunction: O(D A) for D disjunctions, n³ runs for the n² disjunctions of shared_guard.
+// Here the runs of `a` in each gap of `b` within `a`'s span are found by exponential search
+// from where the last gap ended, and the first run of `b` the same way: O(B log(A / B + 1) +
+// log B + K) for the B runs of `b` in that span and K runs out, never more than the merge in
+// order. `cells_minus` keeps the merge for its other callers, whose lists are short: there its
+// cost per call is lower (by 0.3 % of the instructions of direct_cross_payload, measured).
+// This is adaptive merging (F. K. Hwang and S. Lin, "A simple algorithm for merging two
+// disjoint linearly ordered sets", SIAM J. Comput., 1972; E. D. Demaine, A. López-Ortiz and
+// J. I. Munro, "Adaptive set intersections, unions, and differences", SODA 2000).
+fn cells_without(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
+    let (Some(&(first, _)), Some(&(_, last))) = (a.first(), a.last()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let (mut i, mut lo, mut g) = (0, first, gallop(b, 0, first));
+    loop {
+        let (stop, next) = match b.get(g) {
+            Some(&(s, e)) if s <= last => (s, e + 1),
+            _ => (last + 1, last + 1),
+        };
+        if lo < stop {
+            i = gallop(a, i, lo);
+            let mut k = i;
+            while k < a.len() && a[k].0 < stop {
+                out.push((a[k].0.max(lo), a[k].1.min(stop - 1)));
+                k += 1;
+            }
+            // Runs before the last one read end inside this gap; the last may reach the next.
+            i = i.max(k.saturating_sub(1));
+        }
+        if stop > last {
+            return out;
+        }
+        lo = lo.max(next);
+        g += 1;
+    }
+}
+
+/// The first index from `from` of a run of `a` that ends at or after `x`, by exponential search.
+fn gallop(a: &[(usize, usize)], from: usize, x: usize) -> usize {
+    if a.get(from).is_none_or(|r| r.1 >= x) {
+        return from;
+    }
+    let (mut lo, mut step) = (from, 1);
+    while lo + step < a.len() && a[lo + step].1 < x {
+        lo += step;
+        step *= 2;
+    }
+    let hi = (lo + step + 1).min(a.len());
+    lo + a[lo..hi].partition_point(|r| r.1 < x)
+}
+
 /// The cells of a shared [`CellSet`] in `lo..=hi`: a part held by many parts with different
 /// spans of `x` reads its set through one window each, not a copy each.
 #[derive(Clone, Debug)]
@@ -6509,6 +6564,40 @@ impl CellView {
                     &self.extra.runs().collect::<Vec<_>>(),
                     &other.extra.runs().collect::<Vec<_>>(),
                 )),
+            };
+        }
+        // Complexity tradeoff: two views of one main set M through different windows w1 and w2
+        // were merged whole, O(R) per pair for R runs of M (distinct_extras_skew: O(n R)).
+        // Meet distributes over union: (M1 | E1) & (M2 | E2) = (M1 & M2) | (M1 & E2) |
+        // (E1 & M2) | (E1 & E2), and M1 & M2 is M through w1 & w2, kept by reference. Of a
+        // cross term only the cells outside w1 & w2 are new, M through w1 read by two binary
+        // searches per piece of an extra run outside that window: O((E1 + E2) log R + K) for
+        // E1 + E2 extra runs and K runs of M put in the extra.
+        if Rc::ptr_eq(&self.main.set, &other.main.set) {
+            let (lo, hi) = (
+                self.main.lo.max(other.main.lo),
+                self.main.hi.min(other.main.hi),
+            );
+            let mut extra: CellSet = Vec::new();
+            for (m, e) in [(&self.main, &other.extra), (&other.main, &self.extra)] {
+                for (a, b) in e.runs() {
+                    let outside = if lo > hi {
+                        vec![(a, b)]
+                    } else {
+                        cells_minus(&[(a, b)], &[(lo, hi)])
+                    };
+                    for (a, b) in outside {
+                        extra.extend(m.clamp(a, b).runs());
+                    }
+                }
+            }
+            extra.extend(cells_meet(
+                &self.extra.runs().collect::<Vec<_>>(),
+                &other.extra.runs().collect::<Vec<_>>(),
+            ));
+            return CellView {
+                main: self.main.clamp(lo, hi),
+                extra: CellPiece::of(cells_join(extra)),
             };
         }
         CellView::of(cells_meet(&self.runs(), &other.runs()))
@@ -6948,7 +7037,7 @@ impl CellWalk<'_> {
             let holds = self.of_or(o).1;
             let free = (frees.entry(holds.key()))
                 .or_insert_with(|| {
-                    let free = CellView::of(cells_minus(cells, &holds.runs()));
+                    let free = CellView::of(cells_without(cells, &holds.runs()));
                     (holds, free)
                 })
                 .1
@@ -8362,11 +8451,27 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     // model is not read again ([`Parts::witness`]).
     let mut stamp = fresh_stamp();
     // Whether a disjunction may be asked of the solver: one with no disjunct holding at the
-    // model, which only a taken disjunct changes.
+    // model, which only a taken disjunct changes. A disjunct read here is marked, held under
+    // a stamp of this reading alone or failed under the model's, so a disjunct shared by many
+    // disjunctions has its constraints read once (COMPLEXITY.md C55).
+    let first = fresh_stamp();
     let asks = fast
         && !batch.iter().all(|ds| {
-            ds.iter()
-                .any(|d| d.cons.iter().all(|c| c.holds_linear(&model)))
+            ds.iter().any(|d| {
+                if d.held.get() == first {
+                    return true;
+                }
+                if d.failed.get() == stamp {
+                    return false;
+                }
+                let holds = d.cons.iter().all(|c| c.holds_linear(&model));
+                if holds {
+                    d.held.set(first);
+                } else {
+                    d.failed.set(stamp);
+                }
+                holds
+            })
         });
     // Whether the model is a point of the constraints taken: not after a disjunct is taken on
     // the projection's word, until it is found again.
@@ -8406,6 +8511,14 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
             // take, the model being unchanged; so the nest below is read once, not again at
             // each level.
             for d in ds.iter().filter(|_| valid) {
+                // A disjunct taken already under this stamp, with the disjuncts below it, holds,
+                // and reading it again would take the same parts, whose constraints are all
+                // among those taken ([`Linked::meet`] keeps a constraint taken again once): so
+                // it is passed over, and a disjunct shared by many disjunctions is read once
+                // while the values stand.
+                if d.held.get() == stamp {
+                    continue 'next;
+                }
                 held.clear();
                 let holds = if deep {
                     d.witness(&model, stamp, &mut held)
@@ -8415,6 +8528,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                 };
                 if holds {
                     for h in &held {
+                        h.held.set(stamp);
                         take(&h.cons, &mut acc, &mut near);
                         added.extend(h.cons.iter().cloned());
                     }
@@ -9819,6 +9933,7 @@ fn probe_kept_status(
                                 atoms: OnceCell::new(),
                                 hull: OnceCell::new(),
                                 failed: Cell::new(0),
+                                held: Cell::new(0),
                                 id: Cell::new(0),
                             };
                             q.put(&d);
@@ -9953,6 +10068,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
             atoms: OnceCell::new(),
             hull: OnceCell::new(),
             failed: Cell::new(0),
+            held: Cell::new(0),
             id: Cell::new(0),
         };
         for (x, lo, hi) in d.cons.iter().filter_map(one_bound) {
@@ -10117,6 +10233,7 @@ fn refuted_by_links(p: &Parts, links: &[usize], base: &Near, d: &Parts) -> bool 
         atoms: OnceCell::new(),
         hull: OnceCell::new(),
         failed: Cell::new(0),
+        held: Cell::new(0),
         id: Cell::new(0),
     };
     for a in d.atoms() {
@@ -10483,6 +10600,7 @@ fn point_with(
         atoms: OnceCell::new(),
         hull: OnceCell::new(),
         failed: Cell::new(0),
+        held: Cell::new(0),
         id: Cell::new(0),
     };
     q.put(d);
@@ -10626,6 +10744,7 @@ fn search_by_halves(
             atoms: OnceCell::new(),
             hull: OnceCell::new(),
             failed: Cell::new(0),
+            held: Cell::new(0),
             id: Cell::new(0),
         };
         let mut unit_took: Vec<&Parts> = Vec::new();
@@ -10881,6 +11000,11 @@ struct Parts {
     /// The stamp of the last search ([`Parts::witness`]) that found the parts not to hold at its
     /// values, so that the search does not read them again while its values are unchanged.
     failed: Cell<u64>,
+    /// The stamp of the last reading of [`pick_by`] that found the parts to hold at its values:
+    /// their own constraints, in its first reading, or, in its search, their own constraints
+    /// and the disjuncts it took below them, all already taken. A disjunct held by many
+    /// disjunctions is then read once at given values, not once per disjunction.
+    held: Cell<u64>,
     /// The id of a disjunct, drawn the first time it is asked for ([`Parts::id`]), 0 until
     /// then. Like the atoms it is asked only of a disjunct, which is not changed once made.
     id: Cell<u64>,
@@ -10895,6 +11019,7 @@ impl Clone for Parts {
             atoms: self.atoms.clone(),
             hull: OnceCell::new(),
             failed: self.failed.clone(),
+            held: Cell::new(0),
             id: Cell::new(0),
         }
     }
@@ -27598,6 +27723,11 @@ mod r5_shared_arm_tests {
     use crate::scaling;
     mod bench;
     fn parts(n: usize, two_inputs: bool) -> Parts {
+        parts_in(n, two_inputs, false)
+    }
+    /// [`parts`], with the arm whose guard fails at the point first in each disjunction when
+    /// `failing_first`.
+    fn parts_in(n: usize, two_inputs: bool, failing_first: bool) -> Parts {
         let i = Lin::atom(Atom::Sym("i".into()));
         let k = Lin::atom(Atom::Sym("k".into()));
         let q = Lin::atom(Atom::Sym("q".into()));
@@ -27616,15 +27746,24 @@ mod r5_shared_arm_tests {
         if two_inputs {
             p.cons.extend([Con::ge(&k, &c(0)), Con::ge(&c(2), &k)]);
         }
-        p.ors = (0..n).map(|_| vec![a.clone(), b.clone()]).collect();
+        p.ors = (0..n)
+            .map(|_| match failing_first {
+                false => vec![a.clone(), b.clone()],
+                true => vec![b.clone(), a.clone()],
+            })
+            .collect();
         p
     }
 
-    /// The small instances of the benchmark in `bench.rs`: flat arms are read as one chain.
+    /// The small instances of the benchmarks in `bench.rs`: flat arms are read as one chain, and
+    /// two-input arms have a point, with the arm that holds at the point first or the one that
+    /// fails at it.
     #[test]
     fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
         for n in 1..=6 {
             assert!(GuardedChain::of(&parts(n, false)).is_some(), "{n}");
+            assert_eq!(has_point(parts(n, true)), Ok(true), "{n}");
+            assert_eq!(has_point(parts_in(n, true, true)), Ok(true), "{n}");
         }
     }
 }
@@ -27648,6 +27787,119 @@ mod r5_empty_view_tests {
         for empty in [CellView::of(Vec::new()), many.clamp(1, 1)] {
             assert!(walk.meet(&empty, &many).is_empty());
             assert!(walk.meet(&many, &empty).is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+mod r6_cells_minus_tests {
+    use super::*;
+    mod bench;
+    /// Every set of runs of the cells 0..6.
+    fn all_sets() -> Vec<CellSet> {
+        (0..1u32 << 6)
+            .map(|m| cells_join((0..6).filter(|c| m >> c & 1 == 1).map(|c| (c, c)).collect()))
+            .collect()
+    }
+    #[test]
+    fn cells_without_is_the_cells_of_one_set_not_in_the_other() {
+        let sets = all_sets();
+        for a in &sets {
+            for b in &sets {
+                let cells: Vec<usize> = (0..6)
+                    .filter(|&c| a.iter().any(|r| r.0 <= c && c <= r.1))
+                    .filter(|&c| !b.iter().any(|r| r.0 <= c && c <= r.1))
+                    .collect();
+                let want = cells_join(cells.into_iter().map(|c| (c, c)).collect());
+                assert_eq!(cells_without(a, b), want, "{a:?} minus {b:?}");
+            }
+        }
+    }
+    /// The small instances of the benchmark in `bench.rs`: each of `n` sets of two runs takes
+    /// away all `n` points of `a` but one, which it holds.
+    #[test]
+    fn few_runs_taken_from_many_leave_the_rest() {
+        for n in 1..=8usize {
+            let a: CellSet = (0..n).map(|j| (2 * j, 2 * j)).collect();
+            for j in 0..n {
+                assert!(cells_without(&a, &[(0, 2 * j), (2 * j + 2, 2 * n)]).is_empty());
+                assert_eq!(cells_without(&a, &[(2 * j + 1, 2 * n)]).len(), j + 1);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod r6_shared_window_tests {
+    use super::*;
+    mod bench;
+    /// n holders, each the meet of two views of one shared set of n points through windows
+    /// ending at `2n - j` and `2n - 2j`, each with a point of its own (distinct_extras_skew).
+    fn skew(n: usize) -> Parts {
+        let x = Atom::Sym("i".into());
+        let xl = Lin::atom(x.clone());
+        let c = |k: usize| Lin::constant(k as i128);
+        let at = |k: usize| Con::eq(&xl, &c(k));
+        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
+            let mut p = Parts::default();
+            p.cons = cons;
+            p.ors = ors;
+            Rc::new(p)
+        };
+        let h = make(
+            Vec::new(),
+            vec![(0..n).map(|j| make(vec![at(2 * j)], Vec::new())).collect()],
+        );
+        let below = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(8 * n), &xl)];
+        p.ors.push(
+            (0..n)
+                .map(|j| {
+                    let own = |k: usize| make(vec![at(k)], Vec::new());
+                    let a = make(Vec::new(), vec![vec![below(2 * n - j), own(4 * n + 2 * j)]]);
+                    let b = make(
+                        Vec::new(),
+                        vec![vec![below(2 * n - 2 * j), own(4 * n + 2 * j + 1)]],
+                    );
+                    make(Vec::new(), vec![vec![a], vec![b]])
+                })
+                .collect(),
+        );
+        p
+    }
+    /// The small instances of the benchmark in `bench.rs`.
+    #[test]
+    fn views_of_one_set_through_different_windows_have_a_point_at_small_sizes() {
+        for n in 1..=8 {
+            assert_eq!(has_point(skew(n)), Ok(true), "{n}");
+        }
+    }
+    #[test]
+    fn views_of_one_set_meet_as_their_runs() {
+        let set = CellPiece::of(vec![(0, 0), (2, 3), (5, 5), (7, 9)]);
+        let extras = [
+            vec![],
+            vec![(1, 1)],
+            vec![(3, 6)],
+            vec![(0, 10)],
+            vec![(4, 4), (8, 11)],
+        ];
+        let mut views = Vec::new();
+        for lo in 0..=10usize {
+            for hi in lo.saturating_sub(1)..=10 {
+                for e in &extras {
+                    views.push(CellView {
+                        main: set.clamp(lo, hi),
+                        extra: CellPiece::of(e.clone()),
+                    });
+                }
+            }
+        }
+        for a in &views {
+            for b in &views {
+                assert_eq!(a.meet(b).runs(), cells_meet(&a.runs(), &b.runs()));
+            }
         }
     }
 }

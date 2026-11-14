@@ -2299,7 +2299,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | FAIL-xst-s4-box-only-seed | running |  |  |
 | FAIL-xst-unbounded-holes-seed | running |  |  |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 6 merged (2026-11-14, Claude seat parts only; META6.md I6.1-I6.31): read-once stamp in `pick_by` (shared_rows R 62.9 -> 7.23), cross-term meet of one main set through two windows (distinct_extras_skew R 14.6 -> 8.21), galloping `cells_without` in `CellWalk::spread` (shared_guard R 11.4 -> 6.45); five groups 732 of 733 pieces pass, the one failure the load flake TEST-flaky-constant-spin; CD round 6 (6664553392322379777) completed, best candidate 55 not merged; open: HAS-point-overlap2c-mid; round 7 waits for QUESTIONS A104 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
 | TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
 | TEST-cov-scaling-noise | running |  |  |

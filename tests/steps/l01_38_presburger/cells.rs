@@ -264,3 +264,37 @@ pub(super) fn guarded_families_up_to(top: usize) {
 fn wide_nested_and_joined_guards_are_decided_as_run() {
     guarded_families_up_to(12);
 }
+
+/// The chain of `n` levels over `i` in `[0, 2n]`, `t_0 == 2i`, each level guarded by the one
+/// disjunction `h`: `i == 0 || i == 2 || .. || i == 2n - 2`, copied into every level; the
+/// then-branch keeps `t`, the else-branch adds 2. `t_n` is even and is asked to be odd, so there is
+/// no point. The formula has about `n * n` atoms, `not(h)` giving `n` disjunctions per level.
+pub(super) fn shared_guard(n: usize) -> Formula {
+    let i = level(0, false);
+    let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+    let h = Formula::or(
+        (0..n)
+            .map(|j| eq(&i, &Lin::constant(2 * j as i128)))
+            .collect(),
+    );
+    let mut parts = vec![bound(false, 0), bound(true, 2 * n as i128)];
+    parts.push(eq(&level(1, false), &i.times(2)));
+    for j in 2..=n + 1 {
+        let (t, q) = (level(j, false), level(j - 1, false));
+        parts.push(Formula::or(vec![
+            Formula::and(vec![h.clone(), eq(&t, &q)]),
+            Formula::and(vec![not(h.clone()), eq(&t, &q.plus(&Lin::constant(2)))]),
+        ]));
+    }
+    parts.push(eq(&level(n + 1, false), &Lin::constant(n as i128 | 1)));
+    Formula::and(parts)
+}
+
+/// The small instances of `bench::cells::one_guard_copied_into_every_level_scales_with_the_formula`:
+/// the chain with one guard copied into every level has no point.
+#[test]
+fn one_guard_copied_into_every_level_has_no_point() {
+    for n in 1..=12 {
+        assert!(!decide(&shared_guard(n)).expect("decided"), "{n}");
+    }
+}
