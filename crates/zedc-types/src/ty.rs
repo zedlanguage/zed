@@ -7206,13 +7206,17 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
         if s != q {
             return false;
         }
-        let mut vs = Vars::default();
-        for a in &s.arrows {
-            a.params.iter().for_each(|p| p.vars_in(&mut vs));
-            a.result.vars_in(&mut vs);
-        }
-        s.needs.iter().for_each(|n| n.vars_in(&mut vs));
-        return vs.order.iter().all(|v| se.get(v) == qe.get(v));
+        return read_alike(s, se, qe);
+    }
+    // A signature fits itself, read alike on both sides (FAIL-types-sig-reflexive): each
+    // variable of `s` bound to itself. Compared arrow by arrow instead, a tuple piece is held
+    // by the first shape in written order that holds it, which may bind a variable that the
+    // result then does not keep (`(x0: (T,) | (U,)) -> (T,)`, whose `(U,)` binds `T` in
+    // `(T,)`), and a bounded variable of `q` is read under a new name, so no arrow of `s` is
+    // equal to its arrow as read. Cost: the digests, kept with each signature, and where
+    // they agree a walk of both as written, which the comparison would have cost.
+    if s.digest() == q.digest() && s == q && read_alike(s, se, qe) {
+        return true;
     }
     let same_params = s.params.len() == q.params.len()
         && s.params
@@ -7238,6 +7242,17 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     }
     c.cx.borrow_mut().forget(mark);
     fits
+}
+
+/// Whether each variable of `s`, as written, reads alike by `se` and by `qe`.
+fn read_alike(s: &Sig, se: &Env, qe: &Env) -> bool {
+    let mut vs = Vars::default();
+    for a in &s.arrows {
+        a.params.iter().for_each(|p| p.vars_in(&mut vs));
+        a.result.vars_in(&mut vs);
+    }
+    s.needs.iter().for_each(|n| n.vars_in(&mut vs));
+    vs.order.iter().all(|v| se.get(v) == qe.get(v))
 }
 
 impl Cx<'_> {
@@ -7397,10 +7412,19 @@ async fn every_arrow_fits<'m>(
     let mut index: Option<ArrowIndex> = None;
     'qas: for qa in qas {
         let mut refused = None;
-        if let Some(sa) = equal.get(qa)
-            && arrow_fits_alone(s, sa, qa, c, &mut refused).await
-        {
-            continue;
+        if let Some(sa) = equal.get(qa) {
+            // An arrow fits the arrow equal to it, each variable of `s` bound to the one of
+            // the same name in `q` (FAIL-types-sig-reflexive), so it is taken without
+            // comparing, unless it holds a bounded variable of `s` whose bound the variable
+            // of `q` does not keep. Comparing would bind in written order and could miss
+            // that binding: in `(x0: (T,) | (U,)) -> (T,)`, `(U,)` is found in `(T,)` first,
+            // binding `T` to `U`. Cost: the size of `sa`, once per arrow of `q`, and nothing
+            // when `s` has no bounded variable.
+            if equal_fits(s, sa, &c.cx.borrow())
+                || arrow_fits_alone(s, sa, qa, c, &mut refused).await
+            {
+                continue;
+            }
         }
         let index = index.get_or_insert_with(|| ArrowIndex::new(sas, s.params.len()));
         for i in index.may_fit(qa) {
@@ -7417,6 +7441,25 @@ async fn every_arrow_fits<'m>(
         }
     }
     true
+}
+
+/// Whether the arrow `sa` of `s` fits the arrow of `q` equal to it with no comparison: each
+/// variable of `s` bound to the one of the same name in `q`. That holds where each bounded
+/// variable of `s` in `sa` is bound so within its bound ([`bounds_hold`]): the variable of `q`
+/// is bounded within it, as when `q` is `s`.
+fn equal_fits(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
+    if s.bounds.is_empty() {
+        return true;
+    }
+    let mut vs = Vars::default();
+    for t in sa.params.iter().chain([&sa.result]) {
+        t.vars_in(&mut vs);
+    }
+    let mut b = Binds::new();
+    for v in vs.order.into_iter().filter(|v| s.bounds.contains_key(v)) {
+        b.insert(v.clone(), Ty::var(v));
+    }
+    bounds_hold(s, sa, &b, cx)
 }
 
 /// [`arrow_fits`] as an attempt of its own ([`Comparing::begin_alone`]): an arrow whose
@@ -9992,7 +10035,8 @@ mod tests {
         'qas: for qa in qas {
             let mut refused = None;
             if let Some(sa) = equal.get(qa)
-                && arrow_fits_alone(s, sa, qa, c, &mut refused).await
+                && (equal_fits(s, sa, &c.cx.borrow())
+                    || arrow_fits_alone(s, sa, qa, c, &mut refused).await)
             {
                 continue;
             }
@@ -10615,6 +10659,115 @@ mod tests {
         }
     }
 
+    /// Every function type is a subtype of itself (subtyping is a preorder): for each arrow of
+    /// `q` the same arrow of `s` takes its parameters and returns within its result, each type
+    /// variable of `s` bound to the one of the same name in `q` (FAIL-types-sig-reflexive).
+    /// `(x0: (T,) | (U,)) -> (T,)` was a plain false: the one-tuple `(U,)` of `q`'s parameter was
+    /// found in the first one-tuple of `s`'s, `(T,)`, in written order, which binds `T` to `U`,
+    /// and the result read so, `(U,)`, is not in `(T,)`. Arrow 18 of seed 250, case 4 of the
+    /// generator of [`wider_case`],
+    /// `(x0: (int | String,) | (T,) | (U,) | (int, #a2) | #a6) -> rat | (_, _) | (int, #a2) |
+    /// #_`, was refused against itself by the cover rule ("would take part of `x0` only by
+    /// binding its type variable there").
+    #[test]
+    fn a_signature_fits_itself() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let mut a = sig(
+            vec![Arrow {
+                params: vec![tup(v("T")).union(&tup(v("U")))],
+                result: tup(v("T")),
+            }],
+            1,
+            false,
+        );
+        a.own.insert("U".into());
+        a.note_held();
+        assert!(fits_sig(&a, &a), "{a} in itself");
+        assert_eq!(why_unfit(&a, &a), None, "{a} in itself");
+
+        let mut rng = Rng(250);
+        let mut input = None;
+        for c in 0..=4 {
+            input = Some(wider_input(&mut rng, WIDER_SIZES[c % WIDER_SIZES.len()]));
+        }
+        let (_, qas, width, qm, _) = input.unwrap();
+        let q = sig_mask(vec![qas[18].clone()], width, qm);
+        assert_eq!(why_unfit(&q, &q), None, "{q} in itself");
+        assert!(fits_sig(&q, &q), "{q} in itself");
+    }
+
+    /// The signature of one parameter `x0: p` returning `r`, with `arrows` after it, its own
+    /// variables `T`, `B` and `U`, `B` bounded by `int | f64` when `bounded`.
+    fn one_param(p: Ty, r: Ty, more: &[Arrow], bounded: bool) -> Sig {
+        let mut arrows = vec![Arrow {
+            params: vec![p],
+            result: r,
+        }];
+        arrows.extend_from_slice(more);
+        let mut s = sig(arrows, 1, bounded);
+        s.own.insert("U".into());
+        s.note_held();
+        s
+    }
+
+    /// Neighbors of [`a_signature_fits_itself`]: with a bounded variable, whose variable in
+    /// `q` is read under a new name, and with arrows that need no binding beside the one that
+    /// does; and an overload passed where one of its arrows is expected, which takes its arrow
+    /// of `s` equal to it ([`equal_fits`]).
+    #[test]
+    fn signatures_with_a_variable_bound_in_a_tuple_fit_themselves_and_their_overloads() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let tu = tup(v("T")).union(&tup(v("U")));
+        let bu = tup(v("B")).union(&tup(v("U")));
+        let string = Arrow {
+            params: vec![Ty::carrier(Carrier::Str)],
+            result: Ty::carrier(Carrier::Str),
+        };
+        let int_to_u = Arrow {
+            params: vec![Ty::carrier(Carrier::Int)],
+            result: tup(v("U")),
+        };
+        for a in [
+            one_param(bu.clone(), tup(v("B")), &[], true),
+            one_param(tu.clone(), tup(v("T")), &[int_to_u], false),
+            one_param(
+                tu.clone(),
+                tup(v("U")),
+                std::slice::from_ref(&string),
+                false,
+            ),
+        ] {
+            assert!(fits_sig(&a, &a), "{a} in itself");
+            assert_eq!(why_unfit(&a, &a), None, "{a} in itself");
+        }
+        let one = one_param(tu.clone(), tup(v("T")), &[], false);
+        let both = one_param(tu.clone(), tup(v("T")), &[string], false);
+        assert!(fits_sig(&both, &one), "{one} in {both}");
+        assert_eq!(why_unfit(&both, &one), None, "{one} in {both}");
+    }
+
+    /// What fits itself still does not fit a signature that takes more or returns less: a
+    /// parameter that takes `(T,)` only where `(T,) | (U,)` is expected, a variable bounded
+    /// by `int | f64` where an unbounded one is expected, and a result `(T,) | (U,)` where
+    /// `(T,)` is expected.
+    #[test]
+    fn a_signature_does_not_fit_one_that_takes_more_or_returns_less() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let tu = tup(v("T")).union(&tup(v("U")));
+        let bu = tup(v("B")).union(&tup(v("U")));
+        let q = one_param(tu.clone(), tup(v("T")), &[], false);
+        for s in [
+            one_param(tup(v("T")), tup(v("T")), &[], false),
+            one_param(bu, tup(v("B")), &[], true),
+            one_param(tu.clone(), tu.clone(), &[], false),
+        ] {
+            assert!(!fits_sig(&s, &q), "{q} in {s}");
+        }
+    }
+
     /// A refusal with no arrow left that fits refuses the whole comparison, and the same
     /// comparison with an arrow added to `s` that takes every value and returns none is
     /// decided with no refusal. Seed 250, case 4, arrow 18 of `q`: the arrows of `s` tried for
@@ -10622,8 +10775,8 @@ mod tests {
     /// the refusal is kept ([`uncovered`]). Seed 195, case 4, arrow 27: no arrow alone is
     /// refused, the cover of the arrows together is. Found by a sweep of seeds 0 to 299 of the
     /// generator of [`wider_case`] (2026-11-14); these two are the kinds the sweep found. The
-    /// arrow added is not the arrow of `q` itself, since that arrow of seed 250 is refused
-    /// against itself (row FAIL-types-sig-reflexive).
+    /// arrow added is not the arrow of `q` itself, which would fit as the arrow equal to it
+    /// with no comparison ([`equal_fits`]) and test nothing of the refusal.
     #[test]
     fn a_refusal_with_no_arrow_that_fits_refuses_the_comparison() {
         for (seed, case, arrow) in [(250, 4, 18), (195, 4, 27)] {
