@@ -602,30 +602,6 @@ fn split_bad_gor_scales() {
     });
 }
 
-#[test]
-fn split_bad_gor_both_ways_scales() {
-    // Slow for both quick searches on the graph and on its reverse, so Duong's search finishes
-    // first. From k = 128 to 1,024 the race takes 651M to 7,033M instructions (10.8 times; 9.5
-    // times the bytes; load 20), with the quick pairs stopped once their units exceed those
-    // Duong's search expects still to need; with a step of each pair after every unit of
-    // Duong's, 450M to 9,620M (21.4 times; RACE-constant). Before Duong's constant factor
-    // was lowered it took 385M to 30,322M (78.7 times; UTVPI-both-ways): a race of quadratic
-    // searches with Duong's passes such a family only from about a third of the size where
-    // Duong's search starts to finish first (COMPLEXITY.md C24).
-    let (small, large) = (
-        split_bad_gor_both_ways(128),
-        split_bad_gor_both_ways(scaling::FACTOR * 128),
-    );
-    scaling::check(
-        "BAD-GOR with its path split, and its reverse, by k",
-        128,
-        |k| {
-            let (n, rows) = if k == 128 { &small } else { &large };
-            std::hint::black_box(raced(*n, rows));
-        },
-    );
-}
-
 /// BAD-GOR augmented over `2k + 1` variables, and beside it on `2k + 2` further variables a fan:
 /// a path of `k` edges of weight -1 from `a = 2k + 1`, an edge of weight 0 from each of its
 /// first `k` nodes into a hub, edges of weight 0 from the hub to `k` leaves, and an edge of

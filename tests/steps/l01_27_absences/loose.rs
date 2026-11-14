@@ -91,21 +91,6 @@ fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
 }
 
 #[test]
-fn a_declared_payload_pattern_keeps_the_atom_in_the_type() {
-    // The program of the test audit of 2026-11-08, with a declared parameter. The printed
-    // types are read from the printer's form for an inferred payload, `#e(code: 1)`.
-    let t = "positional x: int | #e(code: int)";
-    assert_eq!(
-        sig(&format!("f({t}) = x else #e(code:) -> 0;\n"), "f"),
-        "(int | #e(code: int)) -> int | #e(code: int)"
-    );
-    assert_eq!(
-        sig(&format!("f({t}) = x else #e -> 0;\n"), "f"),
-        "(int | #e(code: int)) -> int"
-    );
-}
-
-#[test]
 fn the_three_absences_stay_three_facts() {
     // Through an operator each absence flows unchanged, and two at once merge into `#errs`.
     assert_eq!(

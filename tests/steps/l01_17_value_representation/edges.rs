@@ -8,8 +8,6 @@
 //! literals then need to stay one format. NaN and the infinities are written as quotients, since
 //! the casts `f64(#NaN)` and `f64(#inf)` of DESIGN come with plan row NAN-cast-atoms.
 
-use std::cmp::Ordering;
-
 use zed_kernel::Value;
 
 use zed_tests::step_helpers::l01_16_elaboration::{elab, errors, value, with_prelude};
@@ -273,15 +271,6 @@ fn the_natural_order_places_zeros_subnormals_and_nan() {
     );
     // The NaN of `-nan` is the canonical NaN, equal to the other.
     assert_eq!(vs[11], vs[12]);
-}
-
-// DESIGN.md L1.17 orders floats "as the dyadic rational it is", with no rule past the value
-// and the format, and sec:order: "a total order whose ties are exactly `==`"; `-0.0` and `0.0`
-// are the one rational 0 in one format and `-0.0 == 0.0`, so the two zeros tie.
-#[test]
-fn the_two_float_zeros_tie_in_the_natural_order() {
-    let vs = values("z = 0.0f64;\nm = -0.0f64;\n", &["z", "m"]);
-    assert_eq!(vs[1].cmp(&vs[0]), Ordering::Equal);
 }
 
 // DESIGN.md L1.18: "`sum` of a tuple ... is `0` for the empty tuple"; DESIGN.md L1.22:

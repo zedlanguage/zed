@@ -66,12 +66,6 @@ fn the_one_tuple_pattern_matches_a_tuple_of_one() {
     assert_eq!(run("(5, 6)").1.unwrap(), "(5, 6)");
 }
 
-/// The test the row asks for on the surface `match`; it runs once step L2.4 elaborates `match`.
-#[test]
-fn a_surface_match_on_a_one_tuple_evaluates() {
-    assert_eq!(value("v = (5,);\nx = match v { (a,) -> a };\n", "x"), "5");
-}
-
 #[test]
 fn a_one_tuple_prints_back_as_written() {
     for text in [

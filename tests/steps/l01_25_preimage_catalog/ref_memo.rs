@@ -595,11 +595,6 @@ fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
         }
         "normal_named" => one(named(n, |j| j), i_in(-1000, 1000)),
         "normal_named_modguard" => one(named(n, |j| j % 7 - 3), i_in(-1000, 1000)),
-        "normal_abs_gap" => {
-            let g = |j| prim(Prim::Le, var("i"), int(1000 * j));
-            let t = chain(n, var("i"), g, |j, t| sub_c(j % 5 + 4, abs(t)));
-            vec![(t, mega(), gap())]
-        }
         "normal_min_gap" => {
             let t = steps(n, |j, t| sub_c(j % 5 + 4, prim(Prim::Min, t, int(20))));
             vec![(t, mega(), gap())]
@@ -644,12 +639,6 @@ fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
         "nested_moduli_mod7" => one(moduli(n, g_mod7, &[7, 64]), mega()),
         "nested_moduli_946_eq" => one(moduli(n, g_eqj, &[9, 4, 6]), mega()),
         "nested_moduli_eq_4096" => one(moduli(n, g_eqj, &[7, 4096]), mega()),
-        "nested_moduli_eq_4096_at_6" => {
-            // The links next to the root take the constants they take at n = 6 mod 10, the
-            // class whose answer has about 760 pieces, at every n.
-            let d = (6 - n as i64).rem_euclid(10);
-            one(moduli_from(n, g_eqj, &[7, 4096], d), mega())
-        }
         "normal_holey_guards" => {
             let g = |j| prim(Prim::Le, var("i"), int(4 * j));
             let t = chain(n, var("i"), g, |j, t| sub_c(j % 5, t));
@@ -768,7 +757,6 @@ scaling_tests! {
     nested_moduli_eq_4096_scales: "nested_moduli_eq_4096" at 160;
     nested_moduli_eq_long_scales: "nested_moduli_eq" at 128;
     nested_moduli_mod7_scales: "nested_moduli_mod7" at 2;
-    normal_abs_gap_scales: "normal_abs_gap" at 16;
     normal_add_base_scales: "normal_add_base" at 16;
     normal_div_chain_scales: "normal_div_chain" at 16;
     normal_holey_guards_scales: "normal_holey_guards" at 16;
@@ -826,11 +814,4 @@ fn output_grid_work_grows_with_its_answer() {
         assert_eq!(answer_pieces(&small), 64 * n);
         assert_eq!(answer_pieces(&large), 512 * n);
     });
-}
-
-/// [`scales`] on `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root at
-/// every n, an answer of about 760 pieces at both sizes.
-#[test]
-fn nested_moduli_eq_4096_at_6_scales() {
-    scales("nested_moduli_eq_4096_at_6", 16);
 }

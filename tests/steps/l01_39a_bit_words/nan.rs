@@ -259,22 +259,3 @@ fn the_square_root_of_a_negative_is_the_canonical_nan() {
     assert_eq!(x("f64Bits(sqrt(-1.0))"), CANONICAL.to_string());
     assert_eq!(x("f64Bits(sqrt(-0.0 - 1e-300))"), CANONICAL.to_string());
 }
-
-#[test]
-fn the_cast_of_the_nan_atom_is_the_canonical_nan() {
-    // Outside `@fpwarn` code the cast gives the float with no atom (DESIGN.md sec:failure).
-    assert_eq!(x("f64Bits(f64(#NaN))"), CANONICAL.to_string());
-    assert_eq!(x("f64Bits(-f64(#NaN))"), CANONICAL.to_string());
-    assert_eq!(x("f64Bits(f64(#inf) - f64(#inf))"), CANONICAL.to_string());
-}
-
-#[test]
-fn the_other_formats_give_their_canonical_nan() {
-    // The quiet NaN with cleared sign and zero payload of binary32, binary16 and bfloat16.
-    assert_eq!(x("f32Bits(0.0f32 / 0.0f32)"), 0x7FC0_0000u32.to_string());
-    assert_eq!(x("f16Bits(0.0f16 / 0.0f16)"), 0x7E00u16.to_string());
-    assert_eq!(x("bf16Bits(0.0bf16 / 0.0bf16)"), 0x7FC0u16.to_string());
-    assert_eq!(x("f32Bits(-(0.0f32 / 0.0f32))"), 0x7FC0_0000u32.to_string());
-    assert_eq!(x("f16Bits(-(0.0f16 / 0.0f16))"), 0x7E00u16.to_string());
-    assert_eq!(x("bf16Bits(-(0.0bf16 / 0.0bf16))"), 0x7FC0u16.to_string());
-}

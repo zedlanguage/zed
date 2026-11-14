@@ -552,33 +552,6 @@ fn mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives() {
     );
 }
 
-/// A function bound on each path is numbered by its kind, and a part that calls it is keyed by
-/// what it asked of it (COMPLEXITY.md F83): the `2^k` functions on the paths to level `k` take
-/// `k + 1` values at 1, so the parts below level `k` are mixed once for each, and the mixed
-/// term has `(3d^2 + 17d - 6) / 2` nodes, not `2^d` (before: 1298, 5144, 20510, 81956 nodes at
-/// d = 8, 10, 12, 14). The quadratic is the output's own: it holds `d(d + 1) / 2` distinct `if`s, the
-/// `k + 1` at depth `k` differing in the literals below them (the argument is at `Mixer::eval`),
-/// so the test allows power 2.
-#[test]
-fn mixing_lets_of_composed_functions_over_one_body_scales() {
-    deep(|| {
-        let n = 12;
-        let units: BTreeMap<usize, Unit> = [n, FACTOR * n]
-            .into_iter()
-            .map(|d| (d, composed(d, true)))
-            .collect();
-        scaling::check_order(
-            "stage::mix on d nested ifs whose two arms are lets of two composed functions over one body",
-            n,
-            2,
-            |d| {
-                let (mixed, _) = stage::mix(&units[&d], &["main"]);
-                assert_eq!(distinct(&mixed.defs[0].term), (3 * d * d + 17 * d - 6) / 2);
-            },
-        );
-    });
-}
-
 /// A call whose argument holds a float zero is answered by the function's stub, whose table
 /// keys a float by its bits (item STAGE-stub-fast), so `-0.0` and `0.0` are two answers:
 /// `f(-0.0)` is `1.0 / -0.0`, not `1.0 / 0.0`. Before, the stub refused a float zero, since

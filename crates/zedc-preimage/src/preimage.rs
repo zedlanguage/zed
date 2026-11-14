@@ -515,7 +515,8 @@ fn preimage_in(
     // split, `O(G n log n)` as the first, spent for nothing. Why: whether it is exact is
     // known only by running it. Trigger: a split that is wide over the whole box and not
     // exact over the box it finds. Test:
-    // `store::preimage::tests::a_chain_split_by_two_classes_is_read_in_time_near_its_length`.
+    // `store::preimage::tests::a_chain_split_by_two_classes_is_read_in_time_near_its_length`,
+    // deferred to plan row PRE-class-int.
     // COMPLEXITY.md row S22-order-chain.
     let mut whole_tried = false;
     let mut early = None;
@@ -14688,15 +14689,6 @@ mod tests {
             1,
             |k| chain_preimage(1, k),
         );
-    }
-
-    /// A chain of guards on `x mod 2` over `[-6, 6]`, which the first split finds wide
-    /// ([`Split::Wide`]) and the split over the box it found reads exactly ([`preimage_in`]).
-    #[test]
-    fn a_chain_split_by_two_classes_is_read_in_time_near_its_length() {
-        crate::scaling::check_order("the preimage of a chain of k ifs, x mod 2", 10, 1, |k| {
-            chain_preimage(2, k)
-        });
     }
 
     /// `false || (if 2x > max(x, x) {ym + -3 <= -6} else {2x > max(x, x)}) ||

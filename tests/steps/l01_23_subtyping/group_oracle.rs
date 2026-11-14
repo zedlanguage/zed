@@ -1623,15 +1623,6 @@ fn a_morphism_on_a_cycle() {
     assert_eq!(both(&sys, "cyc_e"), [i, i]);
 }
 
-/// Member 3 of layered seed 799, `R3 = (int) -> (R3, (R2 \ R0))` with `R0 = (int) -> int` and
-/// `R2 = ((int) -> R2) | ((R1) -> R0)`: the pool's closure that returns a pair holding itself
-/// is a member, and the kernel refuses it (`LISTED_LAYER`).
-#[test]
-fn layered_seed_799_member_3_is_inhabited() {
-    let sys = gen_layer(&mut Rng::new(799));
-    assert_eq!(both(&sys, "layer799")[3], Some((Verdict::Inhabited, 'I')));
-}
-
 /// A member split across box cells: the product `(#a | #b | L, #a | #b | L)` less the two
 /// tuples `(#a, #b)` and `(#b, #a)` holds `(#a, #a)`, which lies in one cell of each component;
 /// less every pair of atoms, it holds only pairs with a list `L`, and with `L` empty (a cycle

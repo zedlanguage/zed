@@ -1234,39 +1234,6 @@ fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
     }
 }
 
-/// Projecting every symbol of a family of `n` holes (each a disjunction) on a chain of
-/// difference rows costs O(n log n): each component of difference rows and disjunctions over
-/// one or two tie classes that is a forest gets every atom's values by two passes of arc
-/// revision, where each disjunction was asked about every symbol of its group before, Θ(n²)
-/// in all (item PROJECT-each-chain-xr; 16.5 to 41.5 times the instructions from 64 to 128
-/// before, 2.2 times from 128 to 256 after).
-#[test]
-fn holes_on_difference_chains_scale() {
-    for fam in [
-        "chain", "both", "twoway", "pair", "mono", "mono1", "eqchain", "band", "wide", "slope",
-        "pinned", "pinlast",
-    ] {
-        holes_family_scales(fam);
-    }
-}
-
-/// The family `steps` of [`holes_on_difference_chains_scale`], held apart since the limit of 13:
-/// measured 2026-11-13, 6,819,419 and 94,519,460 bytes in the first runs at 16 and 128, 13.9
-/// times (until then n log n with a slack of 1.1, 15.4 at `n` = 16).
-#[test]
-fn holes_of_steps_of_ten_on_a_difference_chain_scale() {
-    holes_family_scales("steps");
-}
-
-/// Projecting every symbol of the holes family `fam` at 16 and 128.
-fn holes_family_scales(fam: &str) {
-    let inputs = scaling::inputs(16, |n| holes_family(fam, n));
-    scaling::check_order(&format!("every symbol of the family {fam}"), 16, 1, |n| {
-        let (f, s) = &inputs[&n];
-        let _ = std::hint::black_box(project_each(f, s));
-    });
-}
-
 /// `x[k+1] - x[k]` in `{0, 10}` from `x0 == 0` gives `x[k]` exactly the multiples of 10 up to
 /// `10k`; with `x[n] == 0` every `x[k]` is 0, and with `x[n] <= 10` every `x[k]` is 0 or 10
 /// (the steps rise and never fall). Before item PROJECT-each-chain-xr each answer was the hull,

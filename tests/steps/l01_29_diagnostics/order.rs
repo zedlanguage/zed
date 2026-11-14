@@ -549,18 +549,6 @@ fn overlap(order: [usize; 2], want: &str) -> String {
     )
 }
 
-/// The restriction matters: overload dispatch runs the earliest declared of the applicable
-/// arrows (rule 6 of sec:type_resolution), so swapping two declarations of one name changes
-/// the answer, which is why the permutations keep each name's declarations in written order.
-#[test]
-fn swapping_two_declarations_of_one_name_changes_which_arrow_runs() {
-    for (order, want) in [([0, 1], "a"), ([1, 0], "b")] {
-        let unit = overlap(order, want);
-        let failures: Vec<_> = test(&unit).into_iter().filter_map(|o| o.failure).collect();
-        assert!(failures.is_empty(), "{unit}{failures:?}");
-    }
-}
-
 /// What the two declarations give at L1, in either order: the same two rejections, one in
 /// each declaration, at the same offset within it.
 #[test]

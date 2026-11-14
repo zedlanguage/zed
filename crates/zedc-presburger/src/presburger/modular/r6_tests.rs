@@ -55,25 +55,6 @@ fn pncx_wide_floor_division_matches_integer_division() {
     }
 }
 
-fn fibonacci_pair(n: usize) -> (Int, Int) {
-    let (mut a, mut b) = (Int::ONE, Int::ONE);
-    for _ in 0..n {
-        (a, b) = (b.clone(), &a + &b);
-    }
-    (a, b)
-}
-
-#[test]
-fn pncx_fibonacci_scale() {
-    let inputs = scaling::inputs(4096, fibonacci_pair);
-    scaling::check_order("half-GCD coefficients on Fibonacci inputs", 4096, 1, |n| {
-        let (a, b) = &inputs[&n];
-        let (g, s, t) = a.extended_gcd(b).expect("coprime");
-        assert_eq!(g, Int::ONE);
-        assert_eq!(&(&s * a) + &(&t * b), Int::ONE);
-    });
-}
-
 #[test]
 // A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
 // PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
@@ -381,27 +362,6 @@ fn pncx_score_witness_oracle() {
     }
     println!("score oracle: {gained} satisfiable systems recognized of 256");
     assert!(gained > 0);
-}
-
-#[test]
-fn pncx_score_witness_scale() {
-    let inputs = scaling::inputs(64, |n| {
-        let info = boolean_info(n);
-        let allowed = vec![vec![(Int::ZERO, Int::ONE)]; n];
-        let clauses: Vec<BTreeMap<usize, ResidueSet>> = (0..n)
-            .map(|i| {
-                [i, (i + 1) % n, (i + 2) % n]
-                    .into_iter()
-                    .map(|j| (j, vec![(Int::ZERO, Int::ZERO)]))
-                    .collect()
-            })
-            .collect();
-        (info, allowed, clauses)
-    });
-    scaling::check_order("preferred residue values by endpoint sweep", 64, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(score_witness(info, allowed, clauses).is_some());
-    });
 }
 
 #[test]

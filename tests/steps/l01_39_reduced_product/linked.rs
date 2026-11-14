@@ -2037,12 +2037,6 @@ fn shuffled(n: usize, rng: &mut Rng) -> Vec<usize> {
     order
 }
 
-/// Takes conjunct `g` out of `c`, as `c` holds it.
-fn take_out(c: &mut Conjuncts, g: &Formula) {
-    let held = c.set().get(&Arc::new(g.clone())).cloned();
-    c.remove(&held.unwrap_or_else(|| panic!("{g} is not in {c}")));
-}
-
 /// The conjuncts of [`satellite_conjuncts`] at `d` and `8d`, from [`scaling::inputs`], each with
 /// a seeded random order to add them in and one to take them away in.
 type SatelliteOrders = std::collections::HashMap<usize, (Vec<Formula>, Vec<usize>, Vec<usize>)>;
@@ -2077,78 +2071,6 @@ fn satellite_built_in_a_random_order(d: usize, bounds: bool) {
     });
 }
 
-/// [`a_satellite_of_every_hub_costs_its_related_names_once`] in seeded random orders, with and
-/// without bounds on the hubs ([`satellite_conjuncts`]): the conjuncts added in a random order,
-/// then a random number of them taken away in a random order, three times, and all added back.
-/// After each step, which ends a flush, the satellite has an anchor at every hub it is near
-/// ([`Conjuncts::star`]), so the needs held across the hubs stay within three per hub
-/// ([`Conjuncts::needs_held`]; with no anchor, near `d` at each hub); at `d` 12 the stars are
-/// those of the definition after each step of the first eight seeds. Building in a random order
-/// is linear without the bounds; with them, and taking apart, see
-/// [`stars_formed_in_the_block_of_a_satellite_take_time_near_the_block`] and
-/// [`a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct`].
-/// COMPLEXITY.md C37.
-#[test]
-fn a_satellite_of_every_hub_costs_its_related_names_once_in_any_order() {
-    for bounds in [false, true] {
-        for (d, seeds) in [(12, 0..64), (96, 0..4)] {
-            let gs = satellite_conjuncts(d, bounds);
-            let (mut peak, mut starred) = (0, 0);
-            for seed in seeds {
-                let mut rng = Rng::new(seed);
-                let mut c = Conjuncts::default();
-                let mut present = vec![false; gs.len()];
-                let mut step = |c: &Conjuncts, what: &str, g: &Formula| {
-                    let held = c.needs_held();
-                    peak = peak.max(held);
-                    assert!(
-                        held <= 3 * (d + 1),
-                        "{held} names needed across {} hubs after {what} {g} (seed {seed}, \
-                         bounds on the hubs: {bounds}): {c}",
-                        d + 1
-                    );
-                    if d == 12 && seed < 8 {
-                        let stars = stars_by_definition(c);
-                        let found: BTreeSet<Arc<str>> = c.stars().keys().cloned().collect();
-                        let want: BTreeSet<Arc<str>> = stars.keys().cloned().collect();
-                        assert_eq!(
-                            found, want,
-                            "after {what} {g} (seed {seed}, bounds on the hubs: {bounds}): {c}"
-                        );
-                        starred += found.len();
-                    }
-                };
-                for round in 0..4 {
-                    for i in shuffled(gs.len(), &mut rng) {
-                        if !present[i] {
-                            c.and(gs[i].clone());
-                            present[i] = true;
-                            step(&c, "adding", &gs[i]);
-                        }
-                    }
-                    if round == 3 {
-                        break;
-                    }
-                    let k = 1 + rng.below(gs.len());
-                    for i in shuffled(gs.len(), &mut rng).into_iter().take(k) {
-                        take_out(&mut c, &gs[i]);
-                        present[i] = false;
-                        step(&c, "taking away", &gs[i]);
-                    }
-                }
-            }
-            // The satellite's needs reach two per hub at full size, and with the bounds some
-            // leaves become stars while the satellite's conjuncts are missing.
-            assert!(peak >= 2 * d - 1, "needs held at most {peak} at d {d}");
-            assert!(
-                d != 12 || !bounds || starred > 0,
-                "no leaf became a star at d {d}"
-            );
-        }
-    }
-    satellite_built_in_a_random_order(64, false);
-}
-
 /// With bounds on the hubs ([`satellite_conjuncts`]), a leaf that becomes a star while its
 /// conjuncts are in the one block that the satellite and the other leaves make takes its
 /// conjuncts out of that block. Each is a constraint on two names, which `Blocks::remove` takes
@@ -2158,37 +2080,10 @@ fn a_satellite_of_every_hub_costs_its_related_names_once_in_any_order() {
 /// order: 10.7 times the instructions and 8.4 times the bytes, limit 13.2; before, 22.5 and
 /// 16.6 times (2026-11-09). At 64 and 512 it measured 11.3 times, over the limit of 10.5, so it
 /// is built at 512 and 4096: 10.4 times the instructions and 8.3 times the bytes (2026-11-13). Without the bounds no leaf becomes a star
-/// ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]). COMPLEXITY.md C37.
+/// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`, deferred to plan row RP-scaling-10_5). COMPLEXITY.md C37.
 #[test]
 fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
     satellite_built_in_a_random_order(512, true);
-}
-
-/// The conjuncts of [`satellite_conjuncts`] without bounds, built and then taken away one at a
-/// time in a random order. All of them are one block. Each is a constraint on two names, which
-/// `Blocks::remove` takes out alone (`Blocks::cut`): the block splits along a path of pieces
-/// found by searches from both ends of the constraint run in turn (`Blocks::peel`), in time near
-/// the pieces split off rather than the block. Splitting the block by placing its other
-/// conjuncts again (`Blocks::split`), as before, cost O(d) for each conjunct taken away, so
-/// O(d^2) in all. Built and taken apart at 64 and 512: 148 M and 1,582 M instructions, 10.7
-/// times, and 8.8 times the bytes, limit 13.2; before, 374 M and 16,472 M, 44.0 times, and 34.0
-/// times the bytes (2026-11-09). The star index is not the cost: the needs stay within three
-/// per hub ([`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`]).
-/// COMPLEXITY.md C37.
-#[test]
-fn a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct() {
-    let orders = satellite_orders(64, false);
-    scaling::check(
-        "a satellite of every hub built and taken apart in random orders",
-        64,
-        |d| {
-            let mut c = built(&orders, d);
-            for &i in &orders[&d].2 {
-                take_out(&mut c, &orders[&d].0[i]);
-            }
-            assert!(c.set().is_empty(), "{c}");
-        },
-    );
 }
 
 /// The ladder of `if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear` at size

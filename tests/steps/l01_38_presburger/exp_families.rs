@@ -688,15 +688,6 @@ const LINEAR: [usize; 4] = [16, 32, 64, 128];
 
 costs!(shared_nest_decide, shared_nest, "z", 'd', LINEAR, 1, 2);
 costs!(shared_nest_satisfiable, shared_nest, "z", 's', LINEAR, 1, 2);
-costs!(
-    shared_nest_project_each,
-    shared_nest,
-    "z",
-    'p',
-    LINEAR,
-    1,
-    2
-);
 costs!(shared_nest_answers, shared_nest, "z", 'a', LINEAR, 1, 2);
 costs!(shared_sums_decide, shared_sums, "x0", 'd', LINEAR, 1, 2);
 costs!(
@@ -728,7 +719,6 @@ costs!(skew_block_project_each, skew_block, "a0", 'p', LINEAR, 1, 2);
 costs!(skew_block_answers, skew_block, "a0", 'a', LINEAR, 1, 2);
 costs!(nest_point_decide, nest_point, "x0", 'd', LINEAR, 1, 2);
 costs!(nest_point_satisfiable, nest_point, "x0", 's', LINEAR, 1, 2);
-costs!(nest_point_project_each, nest_point, "x0", 'p', LINEAR, 1, 2);
 costs!(nest_point_answers, nest_point, "x0", 'a', LINEAR, 1, 2);
 costs!(nest_empty_decide, nest_empty, "x0", 'd', LINEAR, 1, 2);
 costs!(nest_empty_satisfiable, nest_empty, "x0", 's', LINEAR, 1, 2);

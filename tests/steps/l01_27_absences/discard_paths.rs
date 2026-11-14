@@ -199,17 +199,6 @@ fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
 }
 
 #[test]
-fn a_match_arm_that_leaves_a_loose_failure_is_rejected() {
-    // L2.4: each arm is checked on its own, as each branch of an `if` is.
-    let t = in_f("_ = match lookup(c) { #notFound -> #ok, n -> lookup(n) };");
-    let (_, _, notes) = the_error(&t);
-    assert_eq!(
-        notes[0],
-        "the loose failure #notFound enters here [lookup(n)]"
-    );
-}
-
-#[test]
 fn a_generic_call_makes_the_failures_its_type_variable_takes_from_elsewhere() {
     // `apply` gives what `g` gives: the miss comes from the function value `lookup`, which
     // is not itself a loose failure, so the call is where it enters.

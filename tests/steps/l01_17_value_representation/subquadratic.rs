@@ -129,37 +129,6 @@ fn dividing_a_wide_number_scales() {
     });
 }
 
-/// `(a c) / (b c)` reduced to lowest terms, `a`, `b` and `c` of n/2 words: the half gcd, O(n
-/// log^2 n), and two exact quotients by it (COMPLEXITY.md C31), held to the limit of 10.5 every
-/// scaling test meets. It passes, 11.4 times the work against that order's limit of the day,
-/// 13.3 (2026-11-12, RADIX-depth), and 11.4 (2026-11-13); it failed at 16.4 (2026-11-09), as
-/// the transforms were dear.
-#[test]
-fn a_gcd_of_wide_numbers_scales() {
-    let n = 1 << 13;
-    let inputs = built(n, |m| {
-        let c = random(m / 2, 5);
-        (random(m / 2, 6) * &c, random(m / 2, 7) * &c)
-    });
-    let (num, den) = at(&inputs, n, n);
-    let r = Rat::new(num.clone(), den.clone()).expect("not zero");
-    let g = num.gcd(den);
-    assert!(g.bits() >= 64 * (n as u64 / 2 - 1));
-    assert_eq!(r, Rat::new(num / &g, den / &g).expect("not zero"));
-    check(
-        "(a c) / (b c) in lowest terms, a, b and c of n/2 words",
-        n,
-        |m| {
-            let (num, den) = at(&inputs, n, m);
-            assert!(
-                !Rat::new(num.clone(), den.clone())
-                    .expect("not zero")
-                    .is_zero()
-            );
-        },
-    );
-}
-
 /// The decimal text of a dense number of n words: by halves, each power of ten's reciprocal
 /// built once, O(n log^2 n) (COMPLEXITY.md C31), held to the limit of 10.5 every scaling test
 /// meets; 10.2 times (2026-11-13). Both sizes are

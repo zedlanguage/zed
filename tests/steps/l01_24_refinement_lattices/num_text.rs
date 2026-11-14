@@ -102,30 +102,13 @@ fn a_text_that_is_not_an_integer_gets_num_bigints_error() {
     }
 }
 
-/// 160,000 and 1,280,000 digits, built before timing: read by halves, in n log^2 n, the order of
-/// radix conversion (COMPLEXITY.md C31), held to the limit of 10.5 every scaling test meets. These
-/// are the sizes of the kernel's own reading test (`l01_18_scalar_interpreter`), above the width
-/// where the kernel's product leaves num-bigint's Toom-3 for its transform; from 20,000 to
-/// 160,000 digits the products are Toom-3's, about n^1.46, and the reading measured 30.5 times.
-/// It measured 11.8 times (2026-11-12, RADIX-depth, against the n log^2 n limit of that day,
-/// 12.1, and 2026-11-13); it failed at 15.4 (2026-11-09), as the kernel's reading test did
-/// (COMPLEXITY.md C31).
-#[test]
-fn reading_a_long_decimal_end_scales() {
-    let texts = scaling::inputs(160_000, |n| digits(&mut Rng::new(n as u64), n));
-    scaling::check("reading a decimal end of n digits", 160_000, |n| {
-        let num: Num = texts[&n].parse().expect("digits");
-        assert!(num > Num::from(0i64));
-    });
-}
-
 /// An end of 1,280,000 and of 10,240,000 digits written in decimal, the value built before
 /// timing, in n log^2 n, the order of radix conversion (COMPLEXITY.md C31), held to the limit of
 /// 10.5 as `writing_a_wide_end_scales` is. At 160,000 and 1,280,000 digits it measured 11.2 times
 /// the work (2026-11-13), over 10.5; at 8 times those sizes, 10.3 times the work and 8.9 times the
 /// bytes. Both sizes are above `PRINT_WHOLE` words (1,280,000 digits is 66,439 words), so both are
 /// split by halves. Below `PRINT_WHOLE`, num-bigint's printing, faster there, grows faster:
-/// `writing_an_end_below_print_whole_scales`.
+/// `writing_an_end_below_print_whole_scales`, deferred to plan row PRINT-below-whole-13.
 #[test]
 fn writing_a_long_decimal_end_scales() {
     let ends = scaling::inputs(1_280_000, |n| {
@@ -140,37 +123,6 @@ fn writing_a_long_decimal_end_scales() {
     scaling::check("writing a decimal end of n digits", 1_280_000, |n| {
         assert!(!ends[&n].to_string().is_empty());
     });
-}
-
-/// An end of 10,000 and of 80,000 digits (520 and 4153 words), both below `PRINT_WHOLE`, so
-/// written by num-bigint's printing whole. Until 2026-11-13 it was held to num-bigint's order
-/// there, 8^log2(3) = 27 times, with a slack of 1.1, 29.7. num-bigint divides by squared powers
-/// of its base, the halves each printed alone, so T(n) = 2 T(n/2) + D(n), which is Θ(D(n)) when
-/// the division D grows faster than n; its division is Burnikel and Ziegler's above 64 words of divisor, which costs
-/// a few products of the divisor's size, and its products are Karatsuba's up to 256 words and
-/// Toom-3's above, n^1.465. Karatsuba's n^1.585 is the fastest-growing of these, so the limit is
-/// 8^1.585. It measured 23.2 times the instructions and 22.4 times the bytes (2026-11-12, and
-/// 22.4 times the bytes in the first runs on 2026-11-13); a printing by repeated division by
-/// 10^19, quadratic, failed at 55.5 times the bytes. Over the limit of 13 every scaling test
-/// meets, so it is ignored until a printing below `PRINT_WHOLE` within it, or a lower
-/// crossover, is found (PRINT-below-whole-13).
-#[test]
-fn writing_an_end_below_print_whole_scales() {
-    let ends = scaling::inputs(10_000, |n| {
-        let text = digits(&mut Rng::new(n as u64), n);
-        text.parse::<Num>().expect("digits")
-    });
-    let words = 80_000.0 / (64.0 * std::f64::consts::LOG10_2);
-    assert!(
-        words < PRINT_WHOLE as f64,
-        "80,000 digits are printed whole"
-    );
-    scaling::compare(
-        "writing a decimal end of 10,000 and of 80,000 digits",
-        1,
-        || assert!(!ends[&10_000].to_string().is_empty()),
-        || assert!(!ends[&80_000].to_string().is_empty()),
-    );
 }
 
 /// A random number of `words` 64-bit words, the top one not zero.

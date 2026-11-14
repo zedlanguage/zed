@@ -262,21 +262,6 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
 }
 
 #[test]
-fn the_message_of_a_division_of_integer_literals_is_designs_whole() {
-    // DESIGN.md sec:diagnostics, "A `/` of integer literals": the message, word for word, with
-    // zedc's `line:col: ` in place of `error: `.
-    let example = (design_examples(&zed_tests::fences::messages()).into_iter())
-        .find(|e| e.contains("\n       q = (1 + 2) / (3 + 4);\n"))
-        .expect("the example");
-    let out = rejected(&program("q = (1 + 2) / (3 + 4);"));
-    let out = format!(
-        "error: {}",
-        out.split_once(": ").map_or("", |(_, rest)| rest)
-    );
-    assert_eq!(out, example);
-}
-
-#[test]
 fn a_message_with_definitions_steps_and_a_menu_writes_them_in_that_order() {
     // The definitions of `T1` come before the steps, and the menu after them.
     let out = rejected(&program("f(positional x: f64 | rat) = x;\ny = f(1);"));

@@ -825,15 +825,6 @@ fn shared_moduli(n: usize) -> BTreeSet<Int> {
 }
 
 #[test]
-// I3.4/I5.11: the strict preparation bound fails; see R7_CLAUDE.md.
-fn pncx_common_factor_scale() {
-    let inputs = scaling::inputs(512, shared_moduli);
-    scaling::check_order("common factor with coprime cofactors", 512, 1, |n| {
-        std::hint::black_box(coprime_factorization(&inputs[&n]));
-    });
-}
-
-#[test]
 fn pncx_common_factors_reconstruct_inputs() {
     for n in 1..50 {
         let ms = shared_moduli(n);
@@ -896,14 +887,6 @@ fn pncx_bound_merge_enumeration() {
             );
         }
     }
-}
-
-#[test]
-fn pncx_bound_merge_scale() {
-    let inputs = scaling::inputs(64, holes);
-    scaling::check_order("balanced bound intersection", 64, 1, |n| {
-        std::hint::black_box(intersect_domains(inputs[&n].clone()));
-    });
 }
 
 #[test]

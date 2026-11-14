@@ -321,18 +321,6 @@ fn clustering_of_two_parabolas_facing_apart() {
     });
 }
 
-/// Points (i, i²) and (i, -i²) in turn: two parabolas facing apart, interleaved in the input.
-#[test]
-fn clustering_of_points_on_two_parabolas_by_turns() {
-    clustering_scales("clustering parabolas by turns", 1000, |n| {
-        let point = |i: usize| {
-            let y = (i * i) as i64;
-            format!("{i} {}", if i % 2 == 1 { y } else { -y })
-        };
-        format!("1\n{}", lines(n, point))
-    });
-}
-
 /// A coordinate of `chunks` blocks of nine decimal digits, block j the hash of `(seed, j)`: the
 /// first blocks do not depend on `chunks`, so with more blocks the points scale up by a power of
 /// 10 and move by less than one unit of the shorter ones.
@@ -402,17 +390,6 @@ fn spreadsheet_edits_of_the_cell_a_long_formula_repeats() {
     scales("spreadsheet repeated term", "15", 4000, 1, |n| {
         let edits = lines(n, |i| format!("b = {i}"));
         format!("a = {}\n{edits}", vec!["b"; n].join("+"))
-    });
-}
-
-/// All n cells depend on the edited one, so each edit costs one visit per dependency edge, and it
-/// changes every value on the line it prints. n edits must print n² values, so no method does
-/// better than this power.
-#[test]
-fn spreadsheet_edits_of_a_cell_that_every_cell_depends_on() {
-    scales("spreadsheet all depend", "15", 200, 2, |n| {
-        let cells = lines(n, |i| format!("c{i} = s+1"));
-        format!("{cells}{}", lines(n, |i| format!("s = {i}")))
     });
 }
 

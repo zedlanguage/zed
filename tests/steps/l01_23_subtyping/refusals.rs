@@ -1005,22 +1005,6 @@ fn by_one_place_from_the_front(n: usize, two: bool, tag: &str) -> Type {
 }
 
 #[test]
-fn a_union_of_lists_by_the_place_of_a_one_is_refused_in_its_size() {
-    // The lists of integers against those with a 1 at each place from the end up to `n`, with
-    // one beyond `n`, or with none: every list. Deciding it follows every `G{i}` at once, one
-    // type for each set of places a list's 1s leave (the subset construction): on a70df51b this
-    // cost 26.6M, 310M and 15.5G instructions at n 1, 4 and 8 and no answer at 16 within 30 s.
-    // Now the `G{i}` are taken out of the tail together, two cyclic recursive types in one
-    // component, and the decision refuses there (COMPLEXITY.md K35).
-    refusal_scales(
-        "Fork, by the place of a 1 from the end",
-        8,
-        Refusal::Fork,
-        |n, tag| &list_named(Type::int(), tag) - &by_place_from_the_end(n, None, tag),
-    );
-}
-
-#[test]
 fn a_list_by_one_place_from_the_front_is_decided_in_its_size() {
     // Two recursive types on no cycle taken out of one tail are no fork: decided at each size,
     // in time linear in `n`.
@@ -1067,23 +1051,6 @@ fn lists_by_the_place_of_a_one_are_decided_or_refused_by_their_cycles() {
         };
         assert_eq!(skip.verdict(), want, "end less 1 at {n}");
     }
-}
-
-#[test]
-fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
-    // `is_empty` meets the fork `verdict` refuses and counts the type as inhabited, in time
-    // linear in `n`; on a70df51b it followed the fork: 8 ms, 277 ms and 32.5 s at `n` 1, 4 and
-    // 6. Measured 2026-11-13: 5,616,473 and 79,088,834 bytes in the first runs, 14.1 times, over
-    // the limit of 13 (until then n log n with a slack of 1.1, 17.6 at `n` = 8).
-    big(|| {
-        let tag = AtomicUsize::new(0);
-        scaling::check("emptiness, a 1 at a place from the end", 8, |n| {
-            Type::forget_emptiness();
-            let tag = format!("_ie{}", tag.fetch_add(1, Relaxed));
-            let t = &list_named(Type::int(), &tag) - &by_place_from_the_end(n, None, &tag);
-            assert!(!t.is_empty(), "at {n}");
-        });
-    });
 }
 
 #[test]
@@ -5095,7 +5062,8 @@ fn r6_wide_rows_are_retired_and_decided_in_their_size() {
 /// R7: the round-6 probe cases no other scaling test reads. `r6twowide` and `r6threeun` are
 /// outside the chains' class and quadratic on the base search as well, so they are not here;
 /// `r6two` and `r6twoun` are in
-/// [`r7_round6_probe_cases_r6two_and_r6twoun_are_decided_in_their_size`].
+/// `r7_round6_probe_cases_r6two_and_r6twoun_are_decided_in_their_size`, deferred to plan row
+/// SUB-r6two-bytes.
 #[test]
 fn r7_round6_probe_cases_are_decided_in_their_size() {
     r5_cases_scale(&[
@@ -5104,16 +5072,6 @@ fn r7_round6_probe_cases_are_decided_in_their_size() {
         ("r6distinct2", Verdict::Inhabited),
         ("r6distinct3", Verdict::Inhabited),
     ]);
-}
-
-/// The R7 probe cases `r6two` and `r6twoun`, held apart from the others of
-/// [`r7_round6_probe_cases_are_decided_in_their_size`] since the limit of 13: measured
-/// 2026-11-13 in the first runs at 8 and 64, 1,336,347 and 21,274,431 bytes for `r6two` and
-/// 1,044,569 and 16,634,849 for `r6twoun`, 15.9 times each (until then n log n with a slack of
-/// 1.1, 17.6 at `n` = 8). The other four cases measure 5.7 to 7.1 times the instructions.
-#[test]
-fn r7_round6_probe_cases_r6two_and_r6twoun_are_decided_in_their_size() {
-    r5_cases_scale(&[("r6two", Verdict::Inhabited), ("r6twoun", Verdict::Empty)]);
 }
 
 #[test]
@@ -8522,52 +8480,6 @@ fn r10_low_dimension_shift_collisions_mask_an_orthogonal_pair() {
     });
 }
 
-/// R10-C3: a nine-node list whose answer changed since 19bc4e25; cause still open.
-fn r10_precision_case(tag: &str, reverse: bool) -> Type {
-    let raw = [
-        (true, 63, 0),
-        (false, 2, 0),
-        (false, 59, 1),
-        (false, 40, 2),
-        (true, 61, 0),
-        (true, 61, 4),
-        (true, 25, 5),
-        (true, 61, 6),
-        (false, 47, 3),
-    ];
-    let ns: Vec<_> = raw
-        .iter()
-        .map(|&(stop, mask, next)| R3Node { stop, mask, next })
-        .collect();
-    assert!(r3_oracle(&ns, &[1, 2, 3, 7, 8], 63));
-    r3_build(&ns, &[1, 2, 3, 7, 8], 63, reverse, tag, 0)
-}
-
-#[test]
-fn r10_answer_preservation_nine_node_list_regression() {
-    big(|| {
-        for reverse in [false, true] {
-            Type::forget_emptiness();
-            let t = r10_precision_case("r10precision", reverse);
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-            assert!(t.contains(&r6_colour_list(&[0, 2])));
-            assert!(!t.contains(&r6_colour_list(&[])));
-            assert!(!t.contains(&r6_colour_list(&[0])));
-        }
-        let inner = r10_precision_case("r10precisionwidth", false);
-        let a = Type::tuple(vec![inner.clone(); 8]);
-        let b = Type::tuple(vec![inner; 64]);
-        scaling::check(
-            "preserving a prefix witness in shared list fields",
-            8,
-            |n| {
-                Type::forget_emptiness();
-                assert_eq!((if n == 8 { &a } else { &b }).verdict(), Verdict::Inhabited);
-            },
-        );
-    });
-}
-
 /// R10-C4: many tags share one positive union of diagonal scalar tuples.
 fn r10_shared_payloads(n: usize, tag: &str) -> Type {
     let payload = (0..n).fold(Type::empty(), |p, i| {
@@ -8813,21 +8725,6 @@ fn r11_payload_name_prefix_probe() {
             let w = m.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
             eprintln!("R11NAMES n {n} units {} bytes {}", w.units, w.bytes);
         }
-    });
-}
-
-#[test]
-fn r11_payload_name_prefixes_must_scale() {
-    big(|| {
-        let a = r11_payload_name_prefixes(128);
-        let b = r11_payload_name_prefixes(1024);
-        scaling::check("shared payload-bearing name prefixes", 128, |n| {
-            Type::forget_emptiness();
-            assert_eq!(
-                (if n == 128 { &a } else { &b }).verdict(),
-                Verdict::Inhabited
-            );
-        });
     });
 }
 

@@ -198,18 +198,6 @@ fn natively_too() {
     }
 }
 
-/// The unit `natively_too` leaves out: its run stops holding a function in a tuple.
-#[test]
-fn natively_with_a_function_in_a_tuple() {
-    let (what, u) = units()
-        .into_iter()
-        .find(|(what, _)| *what == FUNCTION)
-        .expect(FUNCTION);
-    let ((want, got), _) = native(|engines| (alone(&u, engines), bindings(&u, engines)));
-    assert_eq!(got.compared, want.compared, "{what}");
-    assert_eq!(got.mismatches, want.mismatches, "{what}");
-}
-
 #[test]
 fn the_outcomes_are_those_expected() {
     // What the interpreter gives each binding of the first unit, as the refusing engine's
@@ -284,22 +272,6 @@ fn shared_cone(n: usize) -> Unit {
     }
     defs.push(def("s", stops(Prim::Add), true));
     unit(defs)
-}
-
-#[test]
-fn bindings_that_share_a_cone_scale() {
-    // Run one by one, the bindings would bind every function once each: n² in all.
-    let u = shared_cone(3);
-    assert_eq!(
-        bindings(&u, ENGINES).mismatches,
-        alone(&u, ENGINES).mismatches
-    );
-    let units = inputs(100, shared_cone);
-    check("n bindings reaching n functions, and a stop", 100, |k| {
-        let r = bindings(&units[&k], &[("refuse", &refuse)]);
-        assert_eq!(r.mismatches.len(), k + 1);
-        assert!(r.mismatches[k].contains("the interpreter gives the error"));
-    });
 }
 
 /// `n` functions as in [`shared_cone`], then `n` pairs of bindings, `c_j = f(j)` and

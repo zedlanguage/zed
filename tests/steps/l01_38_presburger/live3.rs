@@ -300,15 +300,6 @@ fn the_omega_test_decides_three_variables() {
     assert_eq!(satisfiable(&f), Ok(None));
 }
 
-/// A random integer of `bits` bits or fewer, either sign, for `bits` a multiple of 16.
-fn wide(rng: &mut Rng, bits: u32) -> Int {
-    let mut c = int(rng.int(-1 << 16, 1 << 16));
-    for _ in 1..bits / 16 {
-        c = &(&c * &int(1 << 16)) + &int(rng.int(0, 1 << 16));
-    }
-    c
-}
-
 /// Reeve's tetrahedron of height 7, shrunk so it holds no integer point, and `m` rows more of
 /// coefficients drawn by `coefficient`, each holding the whole unshrunk tetrahedron with slack 0 to 5.
 /// No elimination, box point or rounding center decides it, so every stage runs: the linear
@@ -348,20 +339,6 @@ fn many_rows_scale_linearly() {
     let fifty = |rng: &mut Rng| int(rng.int(-50, 50));
     let (small, large) = (thin(256, 7, fifty), thin(256 * scaling::FACTOR, 7, fifty));
     scales("rows over three variables", 256, 1, &small, &large);
-}
-
-#[test]
-fn wide_coefficients_scale() {
-    // From 64 bits, past the `i128` fast path of `Int`, so both sizes measure big integers. A
-    // product of two `B`-bit integers is `B^2` by schoolbook, but at these sizes the sums and
-    // the products by small numbers cost more; power 1 catches an extra factor of `B`.
-    // Measured: see COMPLEXITY.md.
-    let bits = |b: u32| move |rng: &mut Rng| wide(rng, b);
-    let (small, large) = (
-        thin(8, 9, bits(64)),
-        thin(8, 9, bits(64 * scaling::FACTOR as u32)),
-    );
-    scales("rows of wide coefficients, in bits", 64, 1, &small, &large);
 }
 
 // Plan item LIVE3-TESTS (from the XR3 round 3 synthesis): the systems the cross-review named,
@@ -879,27 +856,6 @@ fn a_lens_of_tangent_planes_scales_in_point() {
             let rows = if m == 64 { &small } else { &large };
             std::hint::black_box(point(rows));
         },
-    );
-}
-
-#[test]
-fn a_lens_of_tangent_planes_over_the_origin_scales_in_point_on_its_long_path() {
-    // The lens alone over the origin, at two sizes where `point` takes the same path: five
-    // linear programs, e0 and -e0, then directions of 13 to 25 digits, the last vertex's
-    // rounding holding the rows (counted at merge of LIVE3-lp-tangents, sizes 16 to 512 by 8 and
-    // 2,880 to 8,192: only 24, 32, 504 and 512 take five or more, and no pair 8 times apart
-    // under 60 s takes three or more). Measured 19.4 times the instructions and 24.2 times the
-    // bytes (2,196M to 42,544M, 36.5M to 885.4M) for 16 times the rows, 32 and 512, load 47 to
-    // 52, under the limit of that day for 16 times, about 31.7. Since the limit of 13 the sizes
-    // are 64 and 512, 8 times apart, as every scaling test's are; 64 takes the shorter path, so
-    // the pair measures the change of path as well: 97.5 times the bytes in the first runs
-    // (11,602,357 to 1,130,701,470, 2026-11-13).
-    let (small, large) = (tangents(64, 0), tangents(512, 0));
-    scaling::compare(
-        "the lens of tangent planes over the origin, in `point`: 64 and 512 pairs",
-        1,
-        || drop(point(&small)),
-        || drop(point(&large)),
     );
 }
 

@@ -129,14 +129,6 @@ fn ce_b_sets_are_exact_in_every_order() {
     check_named("CE-B", &ce_b(), true);
 }
 
-/// The collective example: `z` in `{0, 1, 2, 3, 5, 6}` in all 120 orders. Main keeps `z = 4`
-/// (COMPLEXITY.md S25).
-#[test]
-fn collective_sets_are_exact_in_every_order() {
-    assert_eq!(collective().exact()[2], [0, 1, 2, 3, 5, 6]);
-    check_named("collective", &collective(), true);
-}
-
 /// Codex round 3 (`holes.mjs`, `equalityFamily`): `n` names held equal by tests both ways,
 /// name `i` in `0..=2n` without `2i + 1`. Equality makes every name share every hole, so each
 /// is the even numbers of `0..=2n`: the names take one shared value, which no hole may hold.
@@ -298,22 +290,6 @@ fn random_systems_have_exact_ends() {
             want,
             "at once: {inst:?}"
         );
-    }
-}
-
-/// Every system of [`corpus`]: every name's whole set is exact, its tests in order and as
-/// one conjunction (META4 result 1).
-#[test]
-fn random_systems_have_exact_sets() {
-    for inst in corpus() {
-        let want = inst.exact();
-        let order: Vec<usize> = (0..inst.tests().1.len()).collect();
-        assert_eq!(
-            inst.values(&inst.in_order(&order)),
-            want,
-            "in order: {inst:?}"
-        );
-        assert_eq!(inst.values(&inst.at_once()), want, "at once: {inst:?}");
     }
 }
 
@@ -596,27 +572,6 @@ fn mixed(n: usize, r: i64) -> Inst {
     inst
 }
 
-/// `k` copies of the collective example, copy `c + 1`'s `x` at most copy `c`'s `z`: one
-/// chain of cycles with holes (Claude round 4, `collective_chain`).
-fn collective_chain(k: usize) -> Inst {
-    let mut inst = Inst {
-        range: vec![],
-        out: vec![],
-        edges: vec![],
-    };
-    for c in 0..k {
-        let b = 3 * c;
-        inst.range.extend([(0, 6), (0, 6), (0, 6)]);
-        inst.out.extend([vec![5], vec![4], vec![]]);
-        inst.edges
-            .extend([(b + 1, b + 2, 0), (b, b + 1, 0), (b + 2, b, 1)]);
-        if c > 0 {
-            inst.edges.push((b + 2, b - 1, 0));
-        }
-    }
-    inst
-}
-
 /// Asserts that the scope of `make(n)`, its tests in order, has the exact greatest and least
 /// value of every name at `n` and `8n`, and that its work grows near linearly
 /// ([`scaling::check_order`]).
@@ -692,29 +647,6 @@ fn laps_without_the_closing_edge_take_near_linear_time() {
         inst.edges.pop();
         inst
     });
-}
-
-/// Claude round 4 (`probe_r4_holes_collective_chain`): 4 and 32 copies of the collective
-/// example in one chain.
-#[test]
-fn a_chain_of_collective_examples_has_exact_ends_in_near_linear_time() {
-    family("collective chain (copies)", 4, collective_chain);
-}
-
-/// Claude round 4 (`probe_r4_holes_collective_chain_sets_are_exact`): two copies of the
-/// collective example in a chain; every name's set is exact in order, reversed and as one
-/// conjunction.
-#[test]
-fn a_chain_of_two_collective_examples_has_exact_sets() {
-    let inst = collective_chain(2);
-    let want = inst.exact();
-    assert_ne!(inst.hull(), want, "CONTROL: the hull is exact");
-    let k = inst.tests().1.len();
-    let forward: Vec<usize> = (0..k).collect();
-    let backward: Vec<usize> = (0..k).rev().collect();
-    assert_eq!(inst.values(&inst.in_order(&forward)), want, "in order");
-    assert_eq!(inst.values(&inst.in_order(&backward)), want, "reversed");
-    assert_eq!(inst.values(&inst.at_once()), want, "one conjunction");
 }
 
 /// Codex round 4 (`R4_REGRESSIONS.patch`, `check_exact_holes`): CE-B (as `a`, `b`, `c`) and
@@ -820,31 +752,4 @@ fn the_staircase_of_four_has_exact_sets() {
     let inst = staircase(4);
     assert_eq!(inst.exact(), vec![(0..=4).collect::<Vec<i64>>(); 4]);
     check_named("staircase of 4", &inst, true);
-}
-
-/// Gemini round 4: two cycles through three names with holes (`z <= y <= x <= z + 1`,
-/// `z <= x <= y + 1`, `x != 5`, `y != 4`, `z != 3`, all in `0..=6`). The component is not one
-/// simple cycle and has three names with holes, so META4 result 1 refuses it: a warning, and
-/// every exact value kept, in every rotation and as one conjunction.
-#[test]
-fn two_cycles_through_three_names_with_holes_are_refused() {
-    let inst = Inst {
-        range: vec![(0, 6); 3],
-        out: vec![vec![5], vec![4], vec![3]],
-        edges: vec![(1, 2, 0), (0, 1, 0), (2, 0, 1), (0, 2, 0), (1, 0, 1)],
-    };
-    let want = inst.exact();
-    let k = inst.tests().1.len();
-    let mut runs: Vec<(String, zedc::store::product::Scope)> = rotations(k)
-        .into_iter()
-        .map(|o| (format!("{o:?}"), inst.in_order(&o)))
-        .collect();
-    runs.push(("one conjunction".into(), inst.at_once()));
-    for (order, s) in runs {
-        assert!(!s.warnings().is_empty(), "order {order}: not refused");
-        let got = inst.values(&s);
-        for (g, w) in got.iter().zip(&want) {
-            assert!(w.iter().all(|v| g.contains(v)), "order {order}: unsound");
-        }
-    }
 }

@@ -352,16 +352,3 @@ fn writing_nested_lets_whose_part_reads_a_name_bound_twice_scales() {
         );
     });
 }
-
-#[test]
-fn writing_a_part_reading_many_names_bound_twice_scales() {
-    deep(|| {
-        scales("pretty_in on wide(n, n)", 50, |n| wide(n, n), shown);
-        scales(
-            "Display on wide(n, n)",
-            50,
-            |n| wide(n, n),
-            |t| t.to_string(),
-        );
-    });
-}

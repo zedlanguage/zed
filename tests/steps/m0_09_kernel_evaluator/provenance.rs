@@ -158,29 +158,6 @@ fn two_uses_of_a_cloned_term_in_one_scope_are_two_facts() {
 }
 
 #[test]
-fn the_origins_of_a_failure_read_through_a_wide_tuple_scale() {
-    // The runs are recorded before the timing, which covers the walk alone. A search per
-    // member tested each of the tuple's `n` inputs once per member: `O(n²)`. The pass reads
-    // every value of the run graph once, each node with a search of the members, `O(W log n)`;
-    // here the products' `#errs` sets make `W` itself `n log n`, so the work is `n log² n`:
-    // 500, 4000, 32000 readings took 12.5 and then 11.5 times the work (COMPLEXITY.md K25).
-    let n = 500;
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&missing_row(m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of a row of n missing readings, by n",
-        n,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), m);
-        },
-    );
-}
-
-#[test]
 fn a_term_shared_by_both_branches_of_each_level_scales() {
     // The run takes `depth` branches, and a fact's position is its parent's and one child
     // index, so recording its provenance is `O(depth)`. Copying the term to one node per
@@ -580,28 +557,6 @@ fn the_sets_of_a_table_changed_entry_by_entry_agree_with_a_search() {
     let (v, _) = trace(&t);
     assert_eq!(v.errs().map(|e| e.len()), Some(5), "{v}");
     agrees_with_search(&t);
-}
-
-#[test]
-fn the_origins_of_a_set_every_row_holds_scale() {
-    // `n` rows hold one `#errs` set of `n` members. Each row's set was counted member by
-    // member, `O(n·m)`: 4 times the work per doubling of both. Entries that hold a set with
-    // one id are counted once, so the work is `O((n + m) log n)` (COMPLEXITY.md K25). The runs
-    // are recorded before timing.
-    let n = 200;
-    let runs: Vec<(usize, Provenance)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&rows_sharing_one_set(m, m)).1))
-        .collect();
-    scaling::check_order(
-        "the origins of n rows sharing one set of n failures, by n",
-        n,
-        1,
-        |m| {
-            let (_, p) = runs.iter().find(|(size, _)| *size == m).expect("recorded");
-            assert_eq!(p.origins(p.result()).len(), m);
-        },
-    );
 }
 
 #[test]

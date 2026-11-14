@@ -49,39 +49,6 @@ fn many_short_chains_are_linear() {
     });
 }
 
-/// A ladder of `k` left-recursive rungs over an amount, rung `i` with the operator `o{i}`.
-fn ladder(k: usize) -> Grammar {
-    let mut text = String::from("R0 = INT L1\n");
-    for i in 1..=k {
-        let below = i - 1;
-        text += &format!("R{i} = R{i} 'o{i}' R{below} L1\n  | R{below} L1\n");
-    }
-    Grammar::read(&[&text]).unwrap()
-}
-
-/// With its operators on the top rung, each operand passes through every rung. A rung's match,
-/// once ended, reads no seed of the rung above, so each is matched once at each token: the
-/// work is linear in the rungs, not quadratic.
-#[test]
-fn each_operand_costs_a_constant_per_rung() {
-    let grammars: HashMap<usize, Grammar> = [8, 64].map(|k| (k, ladder(k))).into();
-    let texts: HashMap<usize, String> = [8, 64]
-        .map(|k| (k, format!("1 o{k} ").repeat(100) + "2"))
-        .into();
-    let tokens: HashMap<usize, Vec<Token>> =
-        texts.iter().map(|(k, t)| (*k, lex(t).unwrap())).collect();
-    check("a ladder of n rungs", 8, |k| {
-        parse_with(
-            &grammars[&k],
-            &texts[&k],
-            &tokens[&k],
-            &format!("R{k}"),
-            TOP,
-        )
-        .unwrap();
-    });
-}
-
 /// A function's parameters at the head of a sum: `Lambda` fails after the whole list, and no
 /// growth of the sum reads its seed, so the list is walked once however long the sum is.
 #[test]

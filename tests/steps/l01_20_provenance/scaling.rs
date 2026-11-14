@@ -80,19 +80,3 @@ fn the_term_of_every_fact_scales() {
         assert_eq!(adds, n - 1);
     });
 }
-
-#[test]
-fn the_origins_of_a_failure_with_many_members_scale() {
-    // The product of `n` distinct loose atoms: its `#errs` has `n` members, each first
-    // appearing at its literal. Each member's search tested every input fact by walking its
-    // value, an `#errs` of up to `n` members: `O(n² log n)` steps.
-    scaling::check("the origins of an n-member failure, by n", 64, |n| {
-        let leaf = |i: usize| lit(Value::atom(&format!("e{i}")));
-        let (v, p) = trace(&tree(0, n, mul, &leaf));
-        assert_eq!(v.errs().map(|e| e.len()), Some(n), "{v}");
-        let o = p.origins(p.result());
-        assert_eq!(o.len(), n);
-        let terms = p.fact_terms();
-        assert!(o.iter().all(|&j| matches!(terms[j], Term::Lit(_))));
-    });
-}

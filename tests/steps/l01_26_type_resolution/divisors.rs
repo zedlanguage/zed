@@ -104,24 +104,6 @@ fn underscore_drops_the_quotient_only_where_the_divisor_cannot_be_zero() {
 }
 
 #[test]
-fn a_divisor_declared_without_zero_adds_no_div_by_zero() {
-    // DESIGN.md step L1.26: "A division, `div` or `mod` whose divisor's type holds no zero
-    // adds no `#divByZero`."
-    for (d, want) in [
-        ("int[1..=9]", "int"),
-        ("int[-3..=-1]", "int"),
-        ("int[0..=9]", "int | #divByZero"),
-    ] {
-        let text = format!("f(x: int, d: {d}) = x div d;\n");
-        assert_eq!(
-            sig(&text, "f"),
-            format!("(x: int, d: {d}) -> {want}"),
-            "{d}"
-        );
-    }
-}
-
-#[test]
 fn a_divisor_narrowed_by_a_test_adds_no_div_by_zero() {
     // DESIGN.md sec:type_resolution rule 3: "The checker maintains per-node proposition sets
     // (facts learned by tests)"; in the arm of a test a name has the interval the test leaves

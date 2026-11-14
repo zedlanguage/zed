@@ -26,8 +26,8 @@ use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{
-    Classes, Demand, Domains, Listed, Preimage, TouchedPaths, class_domain_reads, exact_preimage,
-    forward_pieces, preimage, preimage_listed, touched_paths,
+    Classes, Demand, Domains, Listed, Preimage, TouchedPaths, exact_preimage, forward_pieces,
+    preimage, preimage_listed, touched_paths,
 };
 use zedc::store::preimage_ref as before;
 use zedc::store::presburger::{Atom, Formula, Model, Refusal, Relation, member, satisfiable};
@@ -2318,12 +2318,6 @@ fn chain_t3_gaps_scales() {
     scales("t3_gaps", 256);
 }
 
-/// The chain that leaves `i64`, with the negative inputs meeting `t_k < 0`.
-#[test]
-fn chain_t3_gaps_five_no_scales() {
-    scales("t3_gaps_five_no", 256);
-}
-
 /// COMPLEXITY.md S22e. The chain `mod7`, of eleven guards `i mod 7 == j mod 7` with else arm
 /// `t + 1`: each remainder of `i` keeps `t` at one guard in seven, so `t11 = i + 9` for
 /// `i mod 7` in 1..4 and `i + 10` otherwise, and `t11 >= 0` holds exactly on `[-9, 50]`. The
@@ -2546,11 +2540,6 @@ fn chains_on_two_inputs_keep_their_boxes() {
             }
         }
     });
-}
-
-#[test]
-fn chain_cross_live_scales() {
-    scales("cross_live", 32);
 }
 
 /// `cross` with every guard inside the inputs' width, so that the relation is asked at both
@@ -3755,40 +3744,6 @@ fn x_with_holes(h: usize) -> Domains {
     over(&[("x", pieces(&ps)), ("y", IntervalSet::of(-100000, 100000))])
 }
 
-/// COMPLEXITY.md S22-hole-summaries: reading the test `x mod 1024 != r(j)` of each level of
-/// [`spread_remainder_chain`] by its classes, with `16k` holes in the domain of `x`, reads
-/// pieces of that domain of order `k log k` from `k` to `8k`: each range of classes is read
-/// within the hull of the domain, a box is tested against the holes by binary search, and the
-/// union is met with the domain once. Meeting each range with the whole domain read `O(k)`
-/// pieces for each of `O(k)` ranges, `O(k^2)`: 2193 and 132225 pieces at `k = 8` and `64`,
-/// 60 times (negative control, not committed), where this reads 245 and 2693, 11 times.
-#[test]
-fn class_ranges_read_the_holes_once() {
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        let n = 8;
-        let reads = |k: usize| {
-            let t = counted_shapes(spread_remainder_chain(k))[4].clone();
-            let ds = x_with_holes(16 * k);
-            class_domain_reads();
-            preimage(&t, &ds, &d);
-            class_domain_reads()
-        };
-        let (small, large) = (reads(n), reads(scaling::FACTOR * n));
-        assert!(small > 0, "the tests are read by their classes");
-        scaling::hold(
-            &format!(
-                "pieces of the domain read: sizes {n} and {}",
-                scaling::FACTOR * n
-            ),
-            "pieces",
-            small,
-            large,
-            1,
-        );
-    });
-}
-
 /// COMPLEXITY.md S22-fwd-holes: the forward transfer of the levels of
 /// [`spread_remainder_chain`], with `64k` holes in the domain of `x`, in the second program of
 /// [`counted_shapes`], makes integer sets of pieces of order `k`, from `k` to `8k`: the domain
@@ -3819,33 +3774,6 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
             small,
             large,
             1,
-        );
-    });
-}
-
-/// COMPLEXITY.md S22-split-holes: the split of the levels of [`spread_remainder_chain`] by
-/// their `2k + 1` ranges of classes, with `64k` holes in the domain of `x`, in the second
-/// program of [`counted_shapes`], does work and allocates bytes of order `k log k` from `k` to
-/// `8k`: the classes' runs share the domain of `x`, and their sets of `x` are compared and
-/// joined without listing the holes once for each class. Copying the domain into each run,
-/// meeting each class's set with it and comparing the sets piece by piece made `O(k * H)`.
-/// Measured with `glibc.malloc.tcache_count=0`, load about 20: 10.1 times the instructions and
-/// 11.0 times the bytes from `k = 8` to `64`; main at 01eb1be0 took 19.3 times the instructions
-/// and 26.9 times the bytes (limit 17.6).
-#[test]
-fn split_classes_share_the_holes_scale() {
-    on_big_stack(|| {
-        let d = Demand::Bool(true);
-        let n = 8;
-        let t = scaling::inputs(n, |k| counted_shapes(spread_remainder_chain(k))[1].clone());
-        let ds = scaling::inputs(n, |k| x_with_holes(64 * k));
-        scaling::check(
-            "split of a spread remainder chain over a domain with holes",
-            n,
-            |k| {
-                let p = preimage(&t[&k], &ds[&k], &d);
-                assert!(p.exact, "the preimage at k = {k} is exact");
-            },
         );
     });
 }

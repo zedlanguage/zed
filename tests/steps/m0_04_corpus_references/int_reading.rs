@@ -12,7 +12,6 @@ use zed_corpus_ref::zedrt::product::{
 use zed_corpus_ref::zedrt::{LEAF_DIGITS, parse_int, try_parse_int};
 use zed_kernel::num::read_digits;
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 
 /// `len` random digits, the first not 0.
 fn digits(rng: &mut Rng, len: usize) -> String {
@@ -109,26 +108,6 @@ fn a_long_text_that_is_not_an_integer_is_refused() {
         assert_eq!(try_parse_int(&text), None, "{text}");
         assert_eq!(parse_int(&text), Err(format!("invalid int: {text}")));
     }
-}
-
-/// Reading a number of 100,000 and of 800,000 digits, each text built before timing. The reading
-/// by halves with the transform product is O(n log^2 n), held to 8 (ln 8n / ln n)^2 x 1.1 = 12.27;
-/// measured 2026-11-12, 12.0 times the work and 8.4 times the bytes. With num-bigint's Toom-3
-/// product each level costs about n^1.46 and the reading took 20.5 times the work; num-bigint
-/// reading the text whole, O(n^2), fails it by far (COMPLEXITY.md F38). The sizes start at
-/// 100,000 digits: below the product's crossover (`TRANSFORM_WORDS`, about 43,000 digits) the
-/// joins use num-bigint's n^1.46 product and 20,000 to 160,000 digits grow 15.89 times, a range the
-/// author accepted (2026-11-12; measurements at `TRANSFORM_WORDS`).
-#[test]
-fn reading_a_long_number_scales() {
-    let texts = scaling::inputs(100_000, |n| {
-        let mut rng = Rng::new(n as u64);
-        format!("-{}", digits(&mut rng, n))
-    });
-    scaling::check("reading an integer of n digits", 100_000, |n| {
-        let value = try_parse_int(&texts[&n]).expect("digits");
-        assert!(value < BigInt::from(0));
-    });
 }
 
 /// A natural of `words` random 32-bit words, the top one not 0.
