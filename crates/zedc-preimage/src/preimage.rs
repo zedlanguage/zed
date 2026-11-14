@@ -6348,6 +6348,24 @@ impl<'m, 't> Walk<'m, 't> {
                 if a.is_int() && b.is_int() {
                     return compare(p, &a.ints, &b.ints);
                 }
+                // `==` and `!=` compare a failure as data: an integer equals no failure, so
+                // where one operand is certainly an integer and the other an integer or a
+                // failure, the comparison is that of the integers, or the two differ
+                // (`(x div 0) == 0` is false at every x). Two operands that may both fail
+                // may be the same failure, and a float or rational may equal an integer, so
+                // those keep both outcomes.
+                let int_or_fail = |f: &Fwd| !f.other && !f.has_bools();
+                if matches!(p, Eq | Ne)
+                    && ((a.is_int() && int_or_fail(&b)) || (b.is_int() && int_or_fail(&a)))
+                {
+                    let mut out = compare(p, &a.ints, &b.ints);
+                    if p == Eq {
+                        out.bools.1 = true;
+                    } else {
+                        out.bools.0 = true;
+                    }
+                    return out;
+                }
                 // Values of other kinds compare as data under `==` and `!=`, and otherwise
                 // fail or compare in an order this transfer does not follow.
                 Fwd {

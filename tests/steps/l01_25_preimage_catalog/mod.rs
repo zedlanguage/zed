@@ -13,6 +13,7 @@ mod bench;
 mod completeness;
 mod constant_minus;
 mod deep;
+mod div0_false;
 mod entries;
 mod exact;
 mod exact_oracle;

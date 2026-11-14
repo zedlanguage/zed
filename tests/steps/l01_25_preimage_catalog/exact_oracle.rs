@@ -319,6 +319,12 @@ fn mixed(seed: u64, cases: usize) -> Run {
 // more_deep_1 35195 -> 35196 and more_deep_2 35178 -> 35182, 26 more exact marks of the
 // transfer before in all, with no disagreement with the interpreter in either transfer. The
 // transfer itself is unchanged.
+//
+// Since FAIL-preimage-div0-false-exact, whose forward transfer of `==` and `!=` finds that an
+// integer differs from a failure, one count rose and no other: EXACT_OF_TWO_RUNS 915 -> 916,
+// the transfer's box of `(-3 * if (6 != 1) { 4 } else { x }) != (4 mod (-6 * 0))` under true,
+// every `x`, now exact: the left side is -12 and the right `#divByZero`, so the two differ at
+// every point. The interpreter refutes no box.
 
 /// The first two runs of `s22.rs` (500 mixed terms, the second with tests), with their count
 /// of exact preimages pinned, so that a change in precision shows.
@@ -328,7 +334,7 @@ fn s22_random_terms_match_the_interpreter() {
 }
 
 /// The count of exact preimages of [`s22_random_terms_match_the_interpreter`].
-const EXACT_OF_TWO_RUNS: usize = 915;
+const EXACT_OF_TWO_RUNS: usize = 916;
 
 /// Mixed terms from a new seed each run, every other case a test and every third term reading
 /// through calls.
