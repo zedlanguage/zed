@@ -8,7 +8,7 @@ use zed_tests::check::{holds, refuted};
 use zed_tests::instances::{Rng, bmc_floats, partial_maps, shortlex};
 use zed_tests::kernel::*;
 
-use super::laws_11_20::{N, compose, nodes, or_else, pf, relation, relations, union};
+use super::laws_11_20::{N, compose, or_else, pf, relation, relations, row_of, set_image, union};
 use super::{ints, seq};
 
 fn plus() -> Term {
@@ -761,21 +761,34 @@ fn law_24_one_class_of_a_reduce_by_key_is_the_fold_of_its_fiber() {
 
 /// The row `s` of a relation, as a set of nodes.
 fn row(r: Term, s: i64) -> Term {
-    discard_with(
-        fam_with(nodes(), |w| found(get(get(r, lit(s)), w))),
-        |_, e| e,
-    )
+    row_of(r, lit(s))
 }
 
 /// `v · E` for a set of nodes `v`: the successors of the nodes of `v`.
 fn successors(v: Term, e: Term) -> Term {
-    discard_with(
-        fam_with(nodes(), |w| {
-            let via = discard_with(v, |p, _| found(get(get(e, key(p, 0)), w)));
-            lt(lit(0), count(via))
-        }),
-        |_, x| x,
-    )
+    set_image(v, e)
+}
+
+#[test]
+fn row_and_successors_give_the_sets_computed_here() {
+    // Both sides of law 25 read rows with `row` and step with `successors`: each is checked
+    // against the set computed in Rust, on every relation, a missing row 0 included.
+    let n = holds(relations(), |pairs| {
+        let r0: Vec<i64> = pairs.iter().filter(|p| p.0 == 0).map(|p| p.1).collect();
+        let succ: Vec<i64> = (0..N)
+            .filter(|&w| pairs.iter().any(|&(v, x)| x == w && r0.contains(&v)))
+            .collect();
+        let set = |xs: Vec<i64>| lit(Value::Family(Family::of(xs.into_iter().map(|w| (w, true)))));
+        let e = relation(pairs);
+        (
+            prim(
+                Prim::Tuple,
+                vec![row(e.clone(), 0), successors(row(e.clone(), 0), e)],
+            ),
+            prim(Prim::Tuple, vec![set(r0), set(succ)]),
+        )
+    });
+    assert_eq!(n, 512 + 256);
 }
 
 #[test]
@@ -805,23 +818,27 @@ fn law_25_one_row_of_a_closure_is_a_search_from_its_source() {
 pub(super) fn left_multiplied_invariant(pairs: &[(i64, i64)]) -> (Term, Term) {
     let e = relation(pairs);
     let mut checks = Vec::new();
-    let mut x = e.clone();
     let mut binds = Vec::new();
+    // Each iterate, `E · x` and the row `x[0]` are bound to names and read by them: written out
+    // in place, the checks evaluated `next` once per node of its row and `E · x` twice, and the
+    // test took 9.4 ms a relation (TEST-law25-time).
+    let mut bind = |stem: &str, t: Term| {
+        let name = fresh(stem);
+        binds.push((name.clone(), t));
+        var(&name)
+    };
+    let mut xv = bind("x", e.clone());
     for _ in 0..N {
-        let name = fresh("x");
-        binds.push((name.clone(), x));
-        let xv = var(&name);
-        let next = union(xv.clone(), compose(e.clone(), xv.clone()));
-        let commutes = eq(
-            compose(e.clone(), xv.clone()),
-            compose(xv.clone(), e.clone()),
-        );
+        let ex = bind("ex", compose(e.clone(), xv.clone()));
+        let next = bind("x", union(xv.clone(), ex.clone()));
+        let commutes = eq(ex, compose(xv.clone(), e.clone()));
+        let row0 = bind("row", row(xv, 0));
         let fused = eq(
             row(next.clone(), 0),
-            union(row(xv.clone(), 0), successors(row(xv, 0), e.clone())),
+            union(row0.clone(), successors(row0, e.clone())),
         );
         checks.push(and(commutes, fused));
-        x = next;
+        xv = next;
     }
     let all = checks.into_iter().reduce(and).unwrap();
     let term = binds

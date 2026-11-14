@@ -233,19 +233,38 @@ fn affine_then(f: Term, g: Term) -> Term {
     )
 }
 
-/// `step^n` by repeated squaring, built for the static `n`.
+/// `step^n` by repeated squaring, built for the static `n`. Each square and each partial
+/// product is bound to a name and read by it: `affine_then` reads each operand two or three
+/// times, so written in place the term grew five-fold at each squaring, and every copy was
+/// evaluated (TEST-m0_10-slow-laws).
 fn power(step: Term, n: u32) -> Term {
+    let mut binds = Vec::new();
+    let mut bind = |stem: &str, t: Term| {
+        let name = fresh(stem);
+        binds.push((name.clone(), t));
+        var(&name)
+    };
     let mut acc = lit(Value::tuple(vec![Value::Int(1), Value::Int(0)]));
     let mut square = step;
     let mut k = n;
     while k > 0 {
         if k & 1 == 1 {
-            acc = affine_then(acc, square.clone());
+            acc = bind("acc", affine_then(acc, square.clone()));
         }
-        square = affine_then(square.clone(), square);
         k >>= 1;
+        if k > 0 {
+            square = bind("sq", affine_then(square.clone(), square));
+        }
     }
-    acc
+    binds
+        .into_iter()
+        .rev()
+        .fold(acc, |body, (name, value)| let_(&name, value, body))
+}
+
+/// `p(x0)` for the affine map `p`, evaluated once.
+fn apply_affine(p: Term, x0: i64) -> Term {
+    shared(p, |p| add(mul(nth(p.clone(), 0), lit(x0)), nth(p, 1)))
 }
 
 /// The loop `gen` from `(0, x0)`, stepping `(t, x) -> (t + 1, next(t, x))` while `t < n`, and
@@ -288,10 +307,9 @@ fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
     // Compound interest with a fee, `x -> a * x + b`, run for n periods.
     let n = holds(affine_cases(), |&(a, b, x0, n)| {
         let step = lit(Value::tuple(vec![Value::Int(a), Value::Int(b)]));
-        let p = power(step, n);
         (
             counted(x0, n, |_, x| add(mul(lit(a), x), lit(b))),
-            add(mul(nth(p.clone(), 0), lit(x0)), nth(p, 1)),
+            apply_affine(power(step, n), x0),
         )
     });
     assert_eq!(n, 5 * 5 * 5 * 11);
@@ -300,10 +318,9 @@ fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
     // every later one.
     let (_, a, b) = refuted(affine_cases(), |&(_, _, x0, n)| {
         let first_action = lit(Value::tuple(vec![Value::Int(1), Value::Int(0)]));
-        let p = power(first_action, n);
         (
             counted(x0, n, add),
-            add(mul(nth(p.clone(), 0), lit(x0)), nth(p, 1)),
+            apply_affine(power(first_action, n), x0),
         )
     });
     assert_ne!(a, b);
@@ -313,29 +330,7 @@ fn law_14_a_counted_affine_loop_is_one_power_of_its_step() {
 fn law_14_holds_out_to_the_sixteenth_generation() {
     // DESIGN.md M0.10 bounds the instances at 16 generations, and the test above stops at 10:
     // here every rate of `int[-8..=8]` from generation 11 to 16 (8^16 = 2^48, inside an i64),
-    // with the fees and starts of `-2..=2`, 2,550 instances within the budget of 4,096. Each
-    // square is bound to a name and read twice, where `power` writes it out twice, so the term
-    // grows with the number of squarings and not five-fold at each.
-    let shared_power = |step: Term, n: u32| {
-        let mut binds = Vec::new();
-        let (mut acc, mut square, mut k) = (
-            lit(Value::tuple(vec![Value::Int(1), Value::Int(0)])),
-            step,
-            n,
-        );
-        while k > 0 {
-            if k & 1 == 1 {
-                let a = fresh("acc");
-                binds.push((a.clone(), affine_then(acc, square.clone())));
-                acc = var(&a);
-            }
-            let s = fresh("sq");
-            binds.push((s.clone(), affine_then(square.clone(), square)));
-            square = var(&s);
-            k >>= 1;
-        }
-        (binds, acc)
-    };
+    // with the fees and starts of `-2..=2`, 2,550 instances within the budget of 4,096.
     let mut cases = Vec::new();
     for a in -8..=8 {
         for b in -2..=2 {
@@ -348,12 +343,10 @@ fn law_14_holds_out_to_the_sixteenth_generation() {
     }
     let n = holds(cases, |&(a, b, x0, n)| {
         let step = lit(Value::tuple(vec![Value::Int(a), Value::Int(b)]));
-        let (binds, p) = shared_power(step, n);
-        let rhs = binds.into_iter().rev().fold(
-            add(mul(nth(p.clone(), 0), lit(x0)), nth(p, 1)),
-            |body, (name, value)| let_(&name, value, body),
-        );
-        (counted(x0, n, |_, x| add(mul(lit(a), x), lit(b))), rhs)
+        (
+            counted(x0, n, |_, x| add(mul(lit(a), x), lit(b))),
+            apply_affine(power(step, n), x0),
+        )
     });
     assert_eq!(n, 2_550);
     // And the left side is the generation-16 value computed in Rust, for one rate and start.
@@ -368,10 +361,6 @@ fn law_14_holds_out_to_the_sixteenth_generation() {
 
 /// A relation on the nodes `0..N` as the two-level family `u -> v -> true`.
 pub(super) const N: i64 = 4;
-
-pub(super) fn nodes() -> Term {
-    lit(Value::Family(Family::set(0..N)))
-}
 
 pub(super) fn relation(pairs: &[(i64, i64)]) -> Term {
     let leaves: Vec<_> = pairs
@@ -398,21 +387,50 @@ pub(super) fn prune(mut f: Term, depth: i64) -> Term {
 }
 
 /// `r · s`: the pairs `(u, w)` with some `v` such that `(u, v)` is in `r` and `(v, w)` in `s`.
+/// Each of `r` and `s` is evaluated once (`shared`): every row reads both.
 pub(super) fn compose(r: Term, s: Term) -> Term {
-    let rows = fam_with(nodes(), |u| {
-        let row = fam_with(nodes(), |w| {
-            let via = discard_with(nodes(), |p, _| {
-                let v = key(p, 0);
-                and(
-                    found(get(get(r.clone(), u.clone()), v.clone())),
-                    found(get(get(s.clone(), v), w.clone())),
-                )
-            });
-            lt(lit(0), count(via))
-        });
-        discard_with(row, |_, e| e)
-    });
+    shared(r, |r| shared(s, |s| compose_named(r, s)))
+}
+
+/// `r · s` for `r` and `s` that are names or literals: row `u` is `r[u] · s`, the union of the
+/// rows `s[v]` over the `v` of `r[u]`, and a row left empty is dropped.
+///
+/// Cost: for each row of `r`, `N` tests and at most `N` lookups and unions of sets of at most
+/// `N` nodes, `O(N²)` element steps and `O(N)` evaluation steps. The form that tested each
+/// cell `(u, w)` by a search of `r[u]` for a `v` with `(v, w)` in `s` took `O(N · |r[u]|)`
+/// evaluation steps a row, each a call with its own bindings, and the first form tested every
+/// triple `(u, v, w)`, `N³ = 64` whatever `r` held, evaluating `r` and `s` again in each;
+/// those were most of the time of laws 15 and 25 (TEST-m0_10-slow-laws). All three give the
+/// same relation.
+fn compose_named(r: Term, s: Term) -> Term {
+    let rows = fam_with(r.clone(), |u| set_image(get(r, u), s));
     prune(rows, 2)
+}
+
+/// `x · s` for a set of nodes `x` and a relation `s` that is a name or a literal: the union of
+/// the rows `s[v]` over the `v` of `x`, as a set of nodes. `x` is evaluated once (`shared`).
+/// One test of `x` for each of the `N` nodes, unrolled here, since `N` is fixed: no call and
+/// no binding per node.
+pub(super) fn set_image(x: Term, s: Term) -> Term {
+    shared(x, |x| {
+        (0..N)
+            .map(|v| {
+                if_(
+                    found(get(x.clone(), lit(v))),
+                    row_of(s.clone(), lit(v)),
+                    empty(),
+                )
+            })
+            .reduce(union)
+            .unwrap()
+    })
+}
+
+/// The row `u` of a relation, as a set of nodes: the entry at `u`, or the empty set where the
+/// relation has no row `u`. A relation's rows hold only `true`, so this is the set of the `w`
+/// with `(u, w)` in it.
+pub(super) fn row_of(r: Term, u: Term) -> Term {
+    shared(get(r, u), |g| if_(found(g.clone()), g, empty()))
 }
 
 pub(super) fn union(a: Term, b: Term) -> Term {
@@ -434,10 +452,16 @@ fn minus(a: Term, b: Term) -> Term {
 /// candidates `cand(delta, old, old ∪ delta)` less what is known, until the delta is empty.
 fn semi_naive(e: Term, cand: impl Fn(Term, Term, Term) -> Term) -> Term {
     let step = func(|[f]| {
-        let (old, delta) = (nth(f.clone(), 0), nth(f, 1));
-        let new = union(old.clone(), delta.clone());
-        let fresh_pairs = minus(cand(delta, old, new.clone()), new.clone());
-        prim(Prim::Tuple, vec![new, fresh_pairs])
+        // `old`, `delta` and `new` are each evaluated once and read by name: `minus` reads
+        // `new` in each candidate pair, and `cand` reads its arguments in each cell.
+        shared(nth(f.clone(), 0), |old| {
+            shared(nth(f, 1), |delta| {
+                shared(union(old.clone(), delta.clone()), |new| {
+                    let fresh_pairs = minus(cand(delta, old, new.clone()), new.clone());
+                    prim(Prim::Tuple, vec![new, fresh_pairs])
+                })
+            })
+        })
     });
     let frames = Term::Gen {
         init: rc(prim(Prim::Tuple, vec![empty(), e])),
@@ -472,6 +496,25 @@ pub(super) fn relations() -> Vec<Vec<(i64, i64)>> {
         out.push(r);
     }
     out
+}
+
+#[test]
+fn compose_gives_the_composition_of_two_relations() {
+    // Both sides of laws 15 and 25 compose with `compose`, so a wrong `compose` could agree
+    // with itself: it is checked here against the composition computed in Rust, on every
+    // relation paired with another, the empty relation and missing rows included.
+    let rs = relations();
+    let pairs = (0..rs.len()).map(|i| (rs[i].clone(), rs[(i * 7 + 3) % rs.len()].clone()));
+    let n = holds(pairs, |(r, s)| {
+        let mut rs: Vec<(i64, i64)> = r
+            .iter()
+            .flat_map(|&(u, v)| s.iter().filter(move |p| p.0 == v).map(move |p| (u, p.1)))
+            .collect();
+        rs.sort();
+        rs.dedup();
+        (compose(relation(r), relation(s)), relation(&rs))
+    });
+    assert_eq!(n, 512 + 256);
 }
 
 #[test]
@@ -835,17 +878,24 @@ fn present(m: &Term, i: Term, j: Term) -> Term {
 }
 
 /// `(a · b)[i][k]`: the `⊕`-fold over `j` of `a[i][j] ⊗ b[j][k]`, over the `j` where both
-/// cells are present.
+/// cells are present. `a` and `b` are each evaluated once (`shared`): every cell reads both, so
+/// in a chain `(a · b) · c` written in place the inner product was evaluated again in each of
+/// the outer one's cells (TEST-m0_10-slow-laws).
 fn contract(a: Term, b: Term, sum: &Term, times: &Term) -> Term {
+    shared(a, |a| shared(b, |b| contract_named(a, b, sum, times)))
+}
+
+/// `contract` for `a` and `b` that are names or literals.
+fn contract_named(a: Term, b: Term, sum: &Term, times: &Term) -> Term {
     let joined = fam_with(dims(), |i| {
         fam_with(dims(), |k| {
-            let shared = discard_with(dims(), |p, _| {
+            let common = discard_with(dims(), |p, _| {
                 and(
                     present(&a, i.clone(), key(p.clone(), 0)),
                     present(&b, key(p, 0), k.clone()),
                 )
             });
-            fam_with(shared, |j| {
+            fam_with(common, |j| {
                 app(
                     times.clone(),
                     vec![

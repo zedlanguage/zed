@@ -124,6 +124,28 @@ pub fn fresh(stem: &str) -> String {
     format!("{stem}'{}", FRESH.fetch_add(1, Ordering::Relaxed))
 }
 
+/// `body(t)` with `t` evaluated once: `t` is bound to a fresh name that `body` reads, unless it
+/// is a name or a literal already, which cost one step to read.
+///
+/// The reference evaluator evaluates a subterm each time the run reaches it and shares nothing,
+/// so a family whose body holds a term is a loop that evaluates the term once per entry. A
+/// builder that reads its argument inside a family body therefore binds it with `shared`, as a
+/// program's call binds its arguments: `compose(new, delta)` with `new = old ∪ delta` evaluated
+/// the union in each of its 64 cells, and the law 15 and 25 tests spent most of their time
+/// there (TEST-m0_10-slow-laws). The `let` is strict, so the caller uses `shared` only where
+/// every run evaluates `t` at least once anyway (a body over a domain that is never empty,
+/// under strict operators), and the outcome is unchanged.
+pub fn shared(t: Term, body: impl FnOnce(Term) -> Term) -> Term {
+    match t {
+        Term::Var(_) | Term::Lit(_) => body(t),
+        _ => {
+            let name = fresh("s");
+            let v = var(&name);
+            let_(&name, t, body(v))
+        }
+    }
+}
+
 /// A function of `N` fresh parameters, whose body `body` builds from the parameters.
 pub fn func<const N: usize>(body: impl FnOnce([Term; N]) -> Term) -> Term {
     let names: [String; N] = std::array::from_fn(|i| fresh(&format!("x{i}")));
@@ -227,33 +249,39 @@ pub fn disjoint_union(a: Term, b: Term, depth: usize) -> Term {
     )
 }
 
-/// The dense rank of `x` among the classes `f(v)` of `F`'s entries: how many distinct classes
-/// `c` have `less(c, x)`. With `less` a strict total order this is the densified sort order.
-pub fn rank_of(
-    family: Term,
-    f: &dyn Fn(Term) -> Term,
-    less: &dyn Fn(Term, Term) -> Term,
-    x: Term,
-) -> Term {
-    count(discard_with(group_by(family, f), |q, _| less(key(q, 0), x)))
+/// The dense rank of `x` among the classes of `F`'s entries, `classes = group_by(F, f)`: how
+/// many distinct classes `c` have `less(c, x)`. With `less` a strict total order this is the
+/// densified sort order.
+pub fn rank_of(classes: Term, less: &dyn Fn(Term, Term) -> Term, x: Term) -> Term {
+    count(discard_with(classes, |q, _| less(key(q, 0), x)))
 }
 
 /// `F.orderedValues` by sort key `f`: the widen `k -> (rank(f(v)), k)` of (sec:order), keeping the
 /// original key beneath the rank so that tied entries stay a group in key order.
+///
+/// `F` and its classes are each evaluated once (`shared`) and read by every entry's rank:
+/// written in place, each of the `n` entries evaluated `F` and grouped it again, `O(n)` steps
+/// each and `O(n²)` in all on top of the ranks' own `O(n · classes)` (TEST-m0_10-slow-laws).
 pub fn rank_widen(
     family: Term,
     f: &dyn Fn(Term) -> Term,
     less: &dyn Fn(Term, Term) -> Term,
 ) -> Term {
-    let kf = func(|[p, v]| path(vec![rank_of(family.clone(), f, less, f(v)), key(p, 0)]));
-    reindex(family, kf, func(|[_, v]| v))
+    shared(family, |family| {
+        shared(group_by(family.clone(), f), |classes| {
+            let kf = func(|[p, v]| path(vec![rank_of(classes, less, f(v)), key(p, 0)]));
+            reindex(family, kf, func(|[_, v]| v))
+        })
+    })
 }
 
 /// `F.scan(op)` as the prefix-fold family: entry `i` is the fold of the entries at keys
-/// `<= i`.
+/// `<= i`. `F` is evaluated once (`shared`), where each entry's fold read it again.
 pub fn scan(family: Term, op: Term) -> Term {
-    fam_with(family.clone(), |i| {
-        fold(discard_with(family, |p, _| le(key(p, 0), i)), op, None)
+    shared(family, |family| {
+        fam_with(family.clone(), |i| {
+            fold(discard_with(family, |p, _| le(key(p, 0), i)), op, None)
+        })
     })
 }
 
