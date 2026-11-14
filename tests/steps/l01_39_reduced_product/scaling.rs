@@ -1039,7 +1039,7 @@ fn as_made_again(end: &Scope, names: &[&str], k: usize) {
     again.forget_projections();
     again.reduce();
     for h in names {
-        assert_eq!(end.get(*h), again.get(*h), "k = {k}: {h}");
+        assert_eq!(end.get(h), again.get(h), "k = {k}: {h}");
     }
 }
 

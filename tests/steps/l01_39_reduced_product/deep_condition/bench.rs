@@ -45,11 +45,9 @@ fn arms_of_a_test_with_two_choices_per_level_take_time_near_linear_in_its_depth(
             .map(|d| (d, if_(two_choices(d), lit(1), lit(2))))
             .into();
         let scope = ints(&["x".into(), "y".into(), "z".into()]);
-        for n in [400] {
-            scaling::check("arms of a test with two choices per level", n, |d| {
-                std::hint::black_box(arms(&tests[&d], &scope));
-            });
-        }
+        scaling::check("arms of a test with two choices per level", 400, |d| {
+            std::hint::black_box(arms(&tests[&d], &scope));
+        });
     });
 }
 
