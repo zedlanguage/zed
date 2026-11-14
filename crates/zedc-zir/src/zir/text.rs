@@ -591,6 +591,14 @@ fn build(lines: &mut Lines) -> Result<Region, String> {
                     open.push(head(lines, &path)?);
                     continue;
                 }
+                // A line inside the region looked for next, when that region has no header
+                // line: its node or results line sorts where the header would be.
+                if let Some((_, no)) = lines.peek().filter(|(l, _)| l.path.starts_with(&path)) {
+                    return Err(format!(
+                        "line {no}: region {} has no header line",
+                        show(&path)
+                    ));
+                }
                 let Some(Open::Node(n)) = open.pop() else {
                     unreachable!("the top is this node")
                 };
@@ -1392,20 +1400,15 @@ impl<'a> P<'a> {
             if self.peek() != Some('(') {
                 return Ok(Some(Pattern::Atom(name, Vec::new())));
             }
-            if self.rest().starts_with("()") {
-                self.i += 2;
-                return Ok(Some(Pattern::Fields(name, Vec::new())));
-            }
             let save = self.i;
             self.i += 1;
             let named = self.word().is_ok() && self.rest().starts_with(": ");
             self.i = save;
             self.expect("(")?;
+            // `#a()` and `#a( )` are both the pattern of an atom with no fields, the form the
+            // writer gives it; the bare atom `Atom(a, [])` is written `#a`, with no parentheses.
             if self.eat(")") {
-                return Ok(Some(match named {
-                    true => Pattern::Fields(name, Vec::new()),
-                    false => Pattern::Atom(name, Vec::new()),
-                }));
+                return Ok(Some(Pattern::Fields(name, Vec::new())));
             }
             open.push(match named {
                 true => OpenPattern::Fields(name, Vec::new(), self.field_name()?),
@@ -1590,7 +1593,8 @@ fn ty_form(head: &str, ts: Vec<Type>) -> Result<Type, String> {
         match ts.len() == n {
             true => Ok(()),
             false => Err(format!(
-                "`({head} …)` takes {n} types, and has {}",
+                "`({head} …)` takes {n} {}, and has {}",
+                if n == 1 { "type" } else { "types" },
                 ts.len()
             )),
         }
@@ -1603,6 +1607,7 @@ fn ty_form(head: &str, ts: Vec<Type>) -> Result<Type, String> {
             !&ts[0]
         }
         "\\" if !ts.is_empty() => ts[1..].iter().fold(ts[0].clone(), |a, t| &a - t),
+        "\\" => return Err("`(\\ …)` takes 1 type or more, and has 0".to_string()),
         "tuple" => Type::tuple(ts),
         "->" if ts.len() == 2 => Type::morphism(ts[0].clone(), ts[0].clone(), ts[1].clone()),
         "->" => {

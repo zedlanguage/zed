@@ -4,6 +4,7 @@
 
 mod bench;
 mod binary_forms;
+mod fail_reader_messages;
 mod graphs;
 mod items;
 mod names;
