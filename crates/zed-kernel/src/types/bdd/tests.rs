@@ -569,11 +569,34 @@ fn an_exclusive_or_is_found_again_when_only_its_complement_lives() {
 
 #[test]
 fn exclusive_ors_agree_with_their_values() {
-    // Random parts over six atoms, each built with its set of values beside it as a mask of
-    // the 64 assignments; exclusive ors in their one form of one function are one node while
-    // they live. The first part of each function is held, so that a later one is compared with
-    // a live node: a node freed and made again takes a new id.
-    const ROUNDS: usize = 2000;
+    let reached = exclusive_or_rounds(
+        crate::seed::seed("exclusive_ors_agree_with_their_values"),
+        XOR_ROUNDS,
+    );
+    // 2 · 64 - 2 functions are exclusive ors and no leaf.
+    assert!(reached >= 100, "{reached}");
+}
+
+/// The rounds of [`exclusive_or_rounds`] in a run. 2000 rounds reached 77 exclusive ors on
+/// seed 81 and 85 on seed 3601000514119134698, about 1 run in 200 below 100; 4000 rounds
+/// reached 117 to 126 on 5,600 seeds, all but 4 at 123 or more, in about 0.3 s a run.
+const XOR_ROUNDS: usize = 4000;
+
+/// The seeds on which 2000 rounds reached too few exclusive ors.
+#[test]
+fn exclusive_ors_reach_their_count_on_the_seeds_that_failed() {
+    for seed in [3601000514119134698, 81] {
+        let reached = exclusive_or_rounds(seed, XOR_ROUNDS);
+        assert!(reached >= 100, "seed {seed}: {reached}");
+    }
+}
+
+/// Random parts over six atoms, each built with its set of values beside it as a mask of
+/// the 64 assignments; exclusive ors in their one form of one function are one node while
+/// they live. The first part of each function is held, so that a later one is compared with
+/// a live node: a node freed and made again takes a new id. Returns the number of distinct
+/// exclusive-or functions the `rounds` rounds from `seed` reached.
+fn exclusive_or_rounds(mut seed: u64, rounds: usize) -> usize {
     const POOL: usize = 50;
     let lits: Vec<(Part<Row>, u64)> = (0..6)
         .map(|i| {
@@ -600,8 +623,7 @@ fn exclusive_ors_agree_with_their_values() {
     };
     let (mut pool, mut xors) = (lits.clone(), lits.clone());
     let mut firsts: HashMap<u64, Part<Row>> = HashMap::new();
-    let mut seed = crate::seed::seed("exclusive_ors_agree_with_their_values");
-    for _ in 0..ROUNDS {
+    for _ in 0..rounds {
         seed = seed
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
@@ -629,8 +651,7 @@ fn exclusive_ors_agree_with_their_values() {
         }
         put(&mut pool, &made, pick);
     }
-    // 2 · 64 - 2 functions are exclusive ors and no leaf; 40 runs reached 122 to 126.
-    assert!(firsts.len() >= 100, "{}", firsts.len());
+    firsts.len()
 }
 
 #[test]
