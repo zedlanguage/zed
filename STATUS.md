@@ -2357,16 +2357,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CHECK-arm-test-if-and-operand-calls | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
 | CHECK-spine-tests-per-body | impl attempt 1 | 2026-11-14 13:27 | started in wt/arm-reads at c95bec442; load 38 |
+| FAIL-abs-hull-rows-tie | running |  |  |
 | FAIL-check-finished-names-clash | impl attempt 1 | 2026-11-14 13:54 | started in wt/fix-names-sub (also FAIL-types-sub-level-variables next) |
 | FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
-| FAIL-print-kernel-parens | running | 2026-11-14 15:06 |  |
+| FAIL-print-kernel-parens | impl attempt 1 | 2026-11-14 15:06 | started in wt/kernel-parens-hash |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
 | PRESBURGER-or-if-disjuncts-refusal | impl attempt 1 | 2026-11-14 14:24 | started; worktree pres-orif-disj at 49c35d07a |
 | STUDY-memo-arenas | impl attempt 1 | 2026-11-14 15:08 | started: design of @memoized + unified arenas (P198/P199) |
+| TEST-kernel-hash-keys | impl attempt 1 | 2026-11-14 15:13 | started in wt/kernel-parens-hash |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
 | TEST-renamed-relation-same-set | running | 2026-11-14 14:17 |  |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | l01_39 split into l01_39_reduced_product + l01_39_scope_relations, 645 tests, 224 pieces 472 passed before and after; pushed 7b104f6b8 |
