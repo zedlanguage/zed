@@ -27,6 +27,8 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::Relaxed;
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
@@ -1882,7 +1884,7 @@ impl Watch {
     pub(crate) fn start() -> Watch {
         Watch {
             was: WATCHED.replace(true),
-            outer: REFUSED.take(),
+            outer: replace_refused(None),
         }
     }
 }
@@ -1890,19 +1892,47 @@ impl Watch {
 impl Drop for Watch {
     fn drop(&mut self) {
         WATCHED.set(self.was);
-        REFUSED.set(self.outer.take());
+        replace_refused(self.outer.take());
     }
+}
+
+/// How many threads hold a refusal in [`REFUSED`]: every write of `REFUSED` goes through
+/// [`replace_refused`], which keeps the count.
+// Complexity tradeoff (KERNEL-eval-step-cost): the evaluator reads the record after every
+// step (`Machine::run`), and a refusal is rare. The old read took `REFUSED` on each step: a
+// thread-local access, which in this crate's dylib build is a call of `__tls_get_addr` and of
+// `LocalKey::take`, about 80 instructions a step and 3% of a law test (callgrind, law_04). Used:
+// one relaxed load of this count, about 2 instructions, and the thread-local only when some
+// thread holds a refusal. A thread that sees 0 holds none: its own increment precedes the load
+// in the count's modification order, and every other thread's decrement follows that thread's
+// own increment, so the count it loads is at least 1 while it holds one. Cost: an atomic
+// add or subtract on a refusal and on a `Watch` that saves or restores one, all rare.
+static HOLDING: AtomicUsize = AtomicUsize::new(0);
+
+/// Sets this thread's [`REFUSED`] to `new` and returns what it held, keeping [`HOLDING`].
+fn replace_refused(new: Option<(Test, TooLarge)>) -> Option<(Test, TooLarge)> {
+    let holds = new.is_some();
+    let old = REFUSED.replace(new);
+    match (old.is_some(), holds) {
+        (false, true) => HOLDING.fetch_add(1, Relaxed),
+        (true, false) => HOLDING.fetch_sub(1, Relaxed),
+        _ => 0,
+    };
+    old
 }
 
 /// The first comparison refused since the last call, under a [`Watch`], and its test.
 pub(crate) fn refused() -> Option<(Test, TooLarge)> {
-    REFUSED.take()
+    if HOLDING.load(Relaxed) == 0 {
+        return None;
+    }
+    replace_refused(None)
 }
 
 /// Records the refusal `e` of the test `t` for [`refused`], after any recorded before it.
 fn record(t: Test, e: TooLarge) {
-    let first = REFUSED.take().unwrap_or((t, e));
-    REFUSED.set(Some(first));
+    let first = replace_refused(None).unwrap_or((t, e));
+    replace_refused(Some(first));
 }
 
 impl Rat {
