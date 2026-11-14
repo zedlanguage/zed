@@ -2303,9 +2303,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CONST-coprime-base-shared-primes | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
 | CONST-coprime-check-many-sets | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
-| DOC-renamed-links | running |  |  |
-| DOC-sec-operators-refs | running |  |  |
-| DOC-sync-dangling-refs | running |  |  |
+| DOC-renamed-links | impl attempt 1 | 2026-11-14 09:50 | started in /home/luke/Work/wt/doc-refs; load 33.17 |
+| DOC-sec-operators-refs | impl attempt 1 | 2026-11-14 09:50 | started in /home/luke/Work/wt/doc-refs; load 33.17 |
+| DOC-sync-dangling-refs | impl attempt 1 | 2026-11-14 09:50 | started in /home/luke/Work/wt/doc-refs; load 33.17 |
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
@@ -2327,7 +2327,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
-| TEST-types-unreached-paths | kernel_type.rs part merged; rest open | 2026-11-14 08:15 | 7 to 2 regions unreached in kernel_type.rs; the 2 are unreachable! guards |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
