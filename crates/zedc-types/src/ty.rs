@@ -2655,6 +2655,11 @@ pub enum NeedKind {
         param: usize,
         /// The calls that passed the parameter on, the last first.
         via: Option<Arc<Via>>,
+        /// For the `width` of a bit word curried with `...`, as `r = bitReverse(256, ...)`,
+        /// the span of that call: each call of the function it gives checks every domain of
+        /// the word, with the operands the curried call gave and the width the call gives,
+        /// so `domain` is only the width's own `int[0..]` (FAIL-bitword-curry-domain).
+        bits: Option<Span>,
     },
 }
 
@@ -2851,10 +2856,16 @@ impl Need {
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
                 NeedKind::Power(p) => NeedKind::Power(p.clone()),
                 NeedKind::Sum => NeedKind::Sum,
-                NeedKind::InDomain { domain, param, via } => NeedKind::InDomain {
+                NeedKind::InDomain {
+                    domain,
+                    param,
+                    via,
+                    bits,
+                } => NeedKind::InDomain {
                     domain: domain.clone(),
                     param: *param,
                     via: via.clone(),
+                    bits: *bits,
                 },
                 NeedKind::Into { what, ty } => NeedKind::Into {
                     what: what.clone(),

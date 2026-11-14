@@ -128,3 +128,25 @@ fn the_pext_transfer_is_linear_in_the_digits_of_the_mask_hull() {
         }
     });
 }
+
+#[test]
+fn a_curried_word_is_checked_in_time_linear_in_its_calls() {
+    // Each call of a function a bit word curried with `...` gives checks the word's domains
+    // once, with the operands kept by the curried call's span: one hash lookup and the check of
+    // a direct call, O(1) for the fixed operands, so O(n) for n curried words, each called once.
+    let n = 300;
+    let srcs = scaling::inputs(n, |m| {
+        let body: String = (0..m)
+            .map(|i| {
+                format!(
+                    "r{i} = bitReverse({}, ...);\nx{i} = r{i}(width: 8);\n",
+                    i % 256
+                )
+            })
+            .collect();
+        format!("{body}main(m: MainArgs) {{\n  m.stdout <- \"\";\n}}\n")
+    });
+    scaling::check("n bit words curried with `...`, each called once", n, |m| {
+        assert!(zedc::run::load(srcs[&m].as_bytes()).is_ok());
+    });
+}

@@ -8,6 +8,7 @@
 
 mod bench;
 mod completeness;
+mod curry_domain;
 mod errors;
 mod native;
 mod pext_popcount;

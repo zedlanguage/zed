@@ -563,6 +563,8 @@ pub(super) struct CallSigF<'a> {
     got: Vec<Option<Arg<'a>>>,
     missing: Vec<usize>,
     curry: bool,
+    /// For a bit word curried with `...`, its primitive ([`Ck::bit_curries`]).
+    bits: Option<Prim>,
     span: Span,
     what: Rc<str>,
     waiting: bool,
@@ -4204,7 +4206,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
             let what: Rc<str> = self.t.funcs[&id].name.as_str().into();
             let args = Args::of(positional, named);
-            return self.call_sig(m, sig, true, None, args, curry, span, what);
+            return self.call_sig(m, sig, true, None, args, curry, None, span, what);
         }
         m.k(Frame::Callee {
             callee,
@@ -4600,17 +4602,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let sig = bit_sig(p);
         self.put(Undo::Call(span, Some(sig.clone())));
         if curry {
+            // The function of `width` the call gives checks the word's domains at each of its
+            // calls, with the operands given here ([`Ck::curried_bits_at`]).
             let args = Args::of(positional, named);
-            return self.call_sig(
-                m,
-                sig,
-                true,
-                receiver.map(|r| r.0),
-                args,
-                true,
-                span,
-                w.into(),
-            );
+            let receiver = receiver.map(|(a, e)| Arg {
+                expr: a.expr.or(Some(e)),
+                ..a
+            });
+            return self.call_sig(m, sig, true, receiver, args, true, Some(p), span, w.into());
         }
         let mut slots = vec![None; sig.params.len()];
         let first = usize::from(receiver.is_some());
@@ -4771,7 +4770,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let (receiver, args, what) =
                         (s.receiver.clone(), s.args.clone(), s.what.clone());
                     m.k(Frame::CallValue(s));
-                    return self.call_sig(m, sig, false, receiver, args, curry, span, what);
+                    return self.call_sig(m, sig, false, receiver, args, curry, None, span, what);
                 }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     s.checked = true;
@@ -4879,6 +4878,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         receiver: Option<Arg<'a>>,
         args: Rc<Args<'a>>,
         curry: bool,
+        bits: Option<Prim>,
         span: Span,
         what: Rc<str>,
     ) {
@@ -4973,6 +4973,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             got: Vec::new(),
             missing,
             curry,
+            bits,
             span,
             what,
             waiting: false,
@@ -5013,7 +5014,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let args = std::mem::take(&mut s.got);
         let t = match s.curry {
-            true => self.partial(&s.sig, args, &s.missing, false, &s.what, s.span),
+            true => match s.bits {
+                Some(p) => {
+                    let given = (args.iter())
+                        .map(|a| a.clone().and_then(|a| Some((a.clone(), a.expr?))))
+                        .collect();
+                    let t = self.partial(&s.sig, args, &s.missing, false, &s.what, s.span);
+                    self.curried_bits(t, s.what.clone(), p, given, s.span)
+                }
+                None => self.partial(&s.sig, args, &s.missing, false, &s.what, s.span),
+            },
             false => {
                 let what = callee(&s.what);
                 // Inside a function with a widened parameter, each call records the atoms it
@@ -5114,9 +5124,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let args = Args::of(positional, named);
                 if self.t.funcs.contains_key(&id) {
                     match only_fn(&f) {
-                        Some(sig) => {
-                            self.call_sig(m, sig, true, Some(x), args, curry, span, name.into())
-                        }
+                        Some(sig) => self.call_sig(
+                            m,
+                            sig,
+                            true,
+                            Some(x),
+                            args,
+                            curry,
+                            None,
+                            span,
+                            name.into(),
+                        ),
                         None => m.ty(Ty::dynamic()),
                     }
                 } else {
@@ -9351,6 +9369,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             domain,
                             param: 0,
                             via: None,
+                            bits: None,
                         },
                         result: None,
                         span,
@@ -9834,6 +9853,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         domain: d,
                         param: 0,
                         via: None,
+                        bits: None,
                     },
                     result: None,
                     span,
@@ -9988,10 +10008,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) {
         let int = KType::int();
         for n in &sig.needs {
-            let NeedKind::InDomain { domain, param, via } = &n.kind else {
+            let NeedKind::InDomain {
+                domain,
+                param,
+                via,
+                bits,
+            } = &n.kind
+            else {
                 continue;
             };
             if leaving.contains(param) {
+                continue;
+            }
+            if let Some(at) = bits {
+                if let Some(width) = args.get(*param).and_then(Option::as_ref) {
+                    self.curried_bits_at(*at, width, span);
+                }
                 continue;
             }
             let p = sig
@@ -10119,6 +10151,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 domain: domain.clone(),
                                 param: 0,
                                 via: Some(Arc::new(link)),
+                                bits: None,
                             },
                             result: None,
                             span: n.span,
@@ -11419,6 +11452,126 @@ impl<'t, 'a> Ck<'t, 'a> {
                 );
             }
         }
+    }
+
+    /// `t`, the function of `width` that the bit word `w`, the primitive `p`, curried with `...`
+    /// at `span` gives, with a need on `width` that each of its calls checks the word's domains
+    /// with ([`Self::curried_bits_at`]); `given` holds the operands at their parameters, `None`
+    /// at the width. The operands are kept by the call's span ([`Ck::bit_curries`]), not in the
+    /// type, which holds no expression.
+    fn curried_bits(
+        &mut self,
+        t: Ty,
+        w: Rc<str>,
+        p: Prim,
+        given: Vec<Option<(Arg<'a>, &'a Expr)>>,
+        span: Span,
+    ) -> Ty {
+        // A call that did not apply gives no function, and its error is reported.
+        let [s] = t.fns.as_slice() else { return t };
+        let Some(j) = s.params.iter().position(|q| &*q.name == "width") else {
+            return t;
+        };
+        let mut rest = (**s).clone();
+        rest.needs.push(Need {
+            on: Ty::empty(),
+            kind: NeedKind::InDomain {
+                domain: IntDomain {
+                    what: format!("`{w}` takes `width` in int[0..]").into(),
+                    name: "width".into(),
+                    below_two_pow: None,
+                },
+                param: j,
+                via: None,
+                bits: Some(span),
+            },
+            result: None,
+            span,
+        });
+        self.bit_curries.insert(span, (w, p, given.into()));
+        Ty::func(Arc::new(rest))
+    }
+
+    /// Checks, at the call at `span` whose `width` is `width`, the domains of the bit word
+    /// curried with `...` at `at` ([`Ck::bit_curries`]): the word's own check of a call
+    /// ([`Self::bit_domains`]) with the operands the curried call gave, so that
+    /// `r = bitReverse(256, ...)` and then `r(width: 8)` is refused as `bitReverse(256,
+    /// width: 8)` is, and `r(width: 9)` accepted. A width with no expression, as in the check
+    /// of `g(width: 8)` in `ap(g) = g(width: 8)` at `ap(r)`, stands for the ints its type
+    /// lists: it is accepted when each of them is a width that holds the operands.
+    ///
+    /// Complexity tradeoff: the check of a direct call, O(operands) at each call of the
+    /// function, and one hash lookup for the operands. Naive version: the word's domains
+    /// carried in the function's type as needs on `width` alone, which cannot say that a width
+    /// must hold the other operands; a need per relation would grow the type language for one
+    /// word. Trigger: a bit word curried with `...`. Test:
+    /// `l01_39f_int_machine_ops::curry_domain::a_word_curried_with_dots_checks_its_domain_at_compile_time`.
+    fn curried_bits_at(&mut self, at: Span, width: &Arg<'a>, span: Span) {
+        let Some((w, p, given)) = self.bit_curries.get(&at).cloned() else {
+            // A function curried in another unit: its operands are not kept here, and the
+            // call is refused rather than accepted unchecked.
+            let message = "the checker cannot read the operands of the bit word curried with \
+                           `...` that this call calls, so it cannot show that `width` fits them";
+            let menu = ["repair: call the word with all its arguments here".to_string()];
+            return self.error_offering(span, message, menu);
+        };
+        let last = given.len() - 1;
+        if let Some(e) = width.expr {
+            // The operands the call gave and the width: every parameter but the width is
+            // given, since currying is by `width` alone.
+            let slots: Option<Vec<(Arg<'a>, &'a Expr)>> = (given.iter().enumerate())
+                .map(|(j, s)| match s {
+                    Some(s) => Some(s.clone()),
+                    None => (j == last).then(|| (width.clone(), e)),
+                })
+                .collect();
+            if let Some(slots) = slots {
+                return self.bit_domains(&w, p, &slots, span);
+            }
+        }
+        // A width with no expression, or an operand the curried call gave with none: the
+        // ints the types list. An operand with no expression is not shown to fit.
+        let complete = given[..last].iter().all(Option::is_some);
+        let operands: Vec<(Arg<'a>, &'a Expr)> = given.iter().flatten().cloned().collect();
+        let ranges: Vec<Option<IntRange>> = (operands.iter())
+            .map(|(a, e)| self.int_range(a, e))
+            .collect();
+        let nonneg = IntervalSet::range(End::of(0), PosInf);
+        let shift = matches!(p, Prim::Shl | Prim::Shr);
+        let operands_fit = (operands.iter().zip(&ranges).enumerate()).all(|(i, ((a, _), r))| {
+            shift && i == 0
+                || a.ty.vars.is_empty() && r.as_ref().is_none_or(|r| r.ints.is_subset(&nonneg))
+        });
+        let least = least_width(p, &operands, &ranges).filter(|_| complete && operands_fit);
+        let within = Within::width(p, least.unwrap_or(0));
+        let ints = &width.ty.set & &KType::int();
+        let listed = ints.ints_listed();
+        let fits = least.is_some()
+            && width.ty.vars.is_empty()
+            && !width.ty.dynamic
+            && listed.is_some_and(|vs| vs.iter().all(|v| within.holds(v)));
+        if fits {
+            return;
+        }
+        let shown = self.show(&width.ty);
+        let code = self.code(Some(at)).unwrap_or("…").to_string();
+        let takes = format!("`{w}` takes `width` {}", within.takes());
+        let mut notes = vec![Note {
+            span: at,
+            text: format!("`{code}` gives the function called here, of `width`"),
+        }];
+        if least.is_none() {
+            notes.push(Note {
+                span: at,
+                text: format!("the checker cannot show that the operands of `{code}` fit a width"),
+            });
+        }
+        notes.push(Note {
+            span,
+            text: format!("repair: pass as `width` {}", within.value()),
+        });
+        let piece = format!("width : {shown}");
+        self.error_with(span, domain_message(&takes, &piece, None), notes);
     }
 
     /// The error for the operand `name` of `w`, at `ax`, not shown to lie below the bound the

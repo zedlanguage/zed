@@ -40,7 +40,7 @@ Tests in `completeness.rs` unless a file is named.
 | An array display as an operand | | this zedc does not compile array displays yet |
 | Currying by `width` alone, values | `a_word_curries_by_its_width_alone` | |
 | Currying that leaves out an operand, leaves out nothing, or on `pdep`/`pext` (no named parameter) | `a_word_curries_by_its_width_alone` | |
-| The domain of a word curried with `...` | | fails: accepted, and the run stops with a zedc bug: FAIL-bitword-curry-domain |
+| The domain of a word curried with `...`: each word, both sides of the width and of a funnel shift's `k`, through renaming, returning and passing | `a_word_curried_with_dots_checks_its_domain_at_compile_time`, `the_width_boundary_and_the_funnel_shift_k_are_checked_through_the_curried_function`, `the_curried_function_is_checked_when_it_is_renamed_returned_or_passed` | |
 | A failure atom as an operand passes through each word; `else` gives the default | `a_failure_passes_through_each_word` | |
 | Forward transfer: `mulHi`, `bitReverse`, `byteSwap` below `2^w`, `pdep` at most `mask`, read back by a second word's domain at the width that fits and one narrower | `the_bounds_of_forward_transfer_are_read_by_a_second_word`; `transfer.rs` `the_bounds_design_states` | |
 | Forward transfer of `pext` below `2^m`, `m` the most one digits of a mask in its hull: a single mask, a range, an all-ones end, a one-digit mask, an unbounded mask, a kept end; the count checked against every member on machine and wide words | `pext_popcount.rs` all four; `transfer.rs` `the_bounds_design_states` | FAIL-pext-transfer-popcount, fixed |

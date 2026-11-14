@@ -608,6 +608,10 @@ impl Demand {
     }
 }
 
+/// A bit word curried with `...` ([`Ck::bit_curries`]): the word as written, its primitive,
+/// and each operand the call gave with its expression, at its parameter, `None` at the width.
+type BitCurry<'a> = (Rc<str>, Prim, Rc<[Option<(Arg<'a>, &'a Expr)>]>);
+
 /// An argument: its type, the literal it is, if it is one, the expression it is, if any, and
 /// the literals written in it, by component, if it is a tuple that holds one at any depth.
 /// `expr` is the expression itself, whose ints a call shows to a parameter with an
@@ -1409,6 +1413,12 @@ struct Ck<'t, 'a> {
     /// its position not yet filled in: the first use that takes its ints at least 0. The
     /// signature of the function takes it with the position.
     floors: HashMap<usize, Need>,
+    /// Each bit word curried with `...`, by the span of the call: the word, its primitive and
+    /// the operands the call gave, at their parameters, the width left out. The function the
+    /// call gives carries a need with that span ([`NeedKind::InDomain`]'s `bits`), and each of
+    /// its calls checks the word's domains with these operands and its width
+    /// ([`Ck::curried_bits_at`]).
+    bit_curries: HashMap<Span, BitCurry<'a>>,
     /// The parameters the next [`Self::apply`] leaves out for a partial call: their
     /// [`NeedKind::InDomain`] needs go to the function of the rest, not to a default.
     leaving: Vec<usize>,
@@ -1662,6 +1672,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             need_from: None,
             open_params: HashSet::new(),
             floors: HashMap::new(),
+            bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
             defer: BTreeSet::new(),
