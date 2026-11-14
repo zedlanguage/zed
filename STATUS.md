@@ -2320,12 +2320,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
-| FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
+| FAIL-linked-piled-holes-count | impl attempt 1 | 2026-11-14 07:09 | done, pushed 346aa91bb; the test's count assertions were wrong, trees drawn until counts are met, 4 seeds pinned; filed FAIL-check-arm-call-bench-hang (19514ef8 |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
-| FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
+| FAIL-product-refused-box-renamed | impl attempt 1 | 2026-11-14 07:09 | done, pushed 346aa91bb; signs from coefficients and constant (flips), names only on a full tie (row PRES-sign-tie-names); groups 1263 pieces 0 failed |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
 | FAIL-types-payload-vars-unread | running | 2026-11-14 11:00 |  |
@@ -2335,8 +2335,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
 | PERF-l139-persist-due | impl attempt 1 | 2026-11-14 11:00 | start, worktree wt/perf-l139 from origin/main 10fb070e9; load 34.30 42.93 45.18 |
-| POLY-square-choice-cost | merged and pushed (the commit "POLY-square-choice-cost: ..." that marks the row Done); no spec change | 2026-11-14 10:56 | `Poly::plan`'s dense or sparse choice charged a square its whole transform cost while the work charge took `SQUARE_SHARE` (2/3) of it; now both take the share. `crossover poly-square 256 pair` (new, in `all`): sparse from gap 25 at up to 1.547 times the dense product's instructions before, from gap 32 at up to 1.124 now, crossover 34. Calibration ratios 0.66 to 1.05 (floor 0.5). Tests: zed_kernel 311 of 311 (new `poly::tests::a_square_is_chosen_at_its_share`, red on the old choice), l03_09_egraph 36 of 36 and its 15 benchmarks. Follow-up row POLY-square-sparse-half |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
+| TEST-l0123-leftovers | impl attempt 1 | 2026-11-14 10:33 | done, pushed 7a3970a94; fresh seeds, index 521/1042 (mutant red), exact sweeps 14,200 + 14,263 in bench; new row TEST-l0124-fixed-seeds; 83 pieces 0 failed; loa |
+| TEST-l0123-slow-pieces | impl attempt 1 | 2026-11-14 10:33 | done, pushed 7a3970a94; no code change, already fixed by TEST-bench-move-l0123 (refusals 2.3 s, group_oracle 1.4 s at load 43); load 38.31 35.56 39.82 |
+| TEST-largest-group-scc | running |  |  |
 | TEST-law25-time | running | 2026-11-14 10:54 |  |
 | TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
 | TEST-op-table-div-mod | running | 2026-11-14 10:54 |  |
