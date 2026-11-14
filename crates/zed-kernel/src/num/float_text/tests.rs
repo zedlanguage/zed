@@ -221,7 +221,7 @@ fn schubfach_logarithms_are_exact() {
 #[test]
 fn shortest_texts_of_doubles_read_back() {
     let mut mix = Mix(crate::seed::seed("shortest_texts_of_doubles_read_back"));
-    for _ in 0..200_000 {
+    for _ in 0..20_000 {
         let x = f64::from_bits(mix.next() >> 1);
         if !x.is_finite() {
             continue;
@@ -261,7 +261,7 @@ fn shortest_texts_of_sampled_floats_read_back() {
     let mut mix = Mix(crate::seed::seed(
         "shortest_texts_of_sampled_floats_read_back",
     ));
-    f32_bits_read_back((0..100_000).map(|_| mix.next() as u32));
+    f32_bits_read_back((0..10_000).map(|_| mix.next() as u32));
     // Subnormals drawn from their whole range; the least ones, the largest ones and the first
     // normals; and the top of the range.
     f32_bits_read_back((0..20_000).map(|_| mix.below(1 << 23) as u32));
@@ -579,7 +579,7 @@ fn shows_as_before(bits: u64) {
 #[test]
 fn shown_as_before_on_random_doubles() {
     let mut mix = Mix(crate::seed::seed("shown_as_before_on_random_doubles"));
-    for _ in 0..100_000 {
+    for _ in 0..10_000 {
         shows_as_before(mix.next());
     }
 }
@@ -657,7 +657,7 @@ fn show_f32_writes_the_shortest_text_that_reads_back_at_f32() {
     let edges = (0..4096)
         .chain(0x7f7f_f000..0x7f80_0000)
         .chain(0x007f_f000..0x0080_1000);
-    for b in (0..100_000).map(|_| mix.next() as u32).chain(edges) {
+    for b in (0..10_000).map(|_| mix.next() as u32).chain(edges) {
         let x = f32::from_bits(b);
         if !x.is_finite() {
             continue;

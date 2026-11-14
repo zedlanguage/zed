@@ -982,8 +982,8 @@ mod tests {
     #[test]
     fn a_long_chain_either_way_is_balanced_read_and_dropped() {
         let piece = long('z');
-        let n = 100_000;
-        // `n` blocks: at most `log2(n/2 + 1)` levels, 16.
+        let n = 4096;
+        // `n` blocks: at most `log2(n/2 + 1)` levels, 11.
         for left in [true, false] {
             let mut t = Text::from("");
             for _ in 0..n {

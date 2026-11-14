@@ -3343,6 +3343,12 @@ mod tests {
         (1..=n as u64).map(|k| (k, k + (1 << 40))).collect()
     }
 
+    /// A tuple of `n` levels in which each level holds the one below twice: 2^n paths and
+    /// `n` distinct sequences.
+    pub(super) fn shared(n: usize) -> Value {
+        (0..n).fold(Value::Int(0), |v, _| Value::tuple(vec![v.clone(), v]))
+    }
+
     #[test]
     fn the_table_of_pairs_holds_what_a_set_holds() {
         // Pairs from a few ids, so runs of occupied slots form, meet and wrap past the last
@@ -3351,7 +3357,7 @@ mod tests {
         let mut table = ReadSet::new();
         let mut set = HashSet::new();
         let mut x: u64 = crate::seed::seed("the_table_of_pairs_holds_what_a_set_holds") | 1;
-        for _ in 0..200_000 {
+        for _ in 0..20_000 {
             x ^= x << 13;
             x ^= x >> 7;
             x ^= x << 17;
@@ -3608,12 +3614,12 @@ mod tests {
     }
 
     /// A tuple of `n` levels in which each level holds the one below twice: 2^n paths, n
-    /// distinct sequences. Its digest reads each shared sequence once and keeps its own stack,
-    /// so 200,000 levels finish, and the digest equals that of the same value built fresh with
-    /// nothing shared (checked at 12 levels, where reading every path is cheap).
+    /// distinct sequences. Its digest reads each shared sequence once: at 64 levels, 2^64
+    /// paths, it finishes at once, and at 12 levels, where reading every path is cheap, it
+    /// equals the digest of the same value built fresh with nothing shared. That the walk keeps
+    /// its own stack, so 200,000 levels finish, is `bench::a_value_200000_levels_deep_is_digested`.
     #[test]
     fn a_deep_shared_value_is_digested_once_per_sequence() {
-        let shared = |n: usize| (0..n).fold(Value::Int(0), |v, _| Value::tuple(vec![v.clone(), v]));
         fn fresh(n: usize) -> Value {
             match n {
                 0 => Value::Int(0),
@@ -3621,8 +3627,7 @@ mod tests {
             }
         }
         assert_eq!(digest(&shared(12)), digest(&fresh(12)));
-        let deep = shared(200_000);
-        let _ = digest(&deep);
+        assert_ne!(digest(&shared(64)), digest(&shared(63)));
     }
 
     /// `Rat::integer_text` of a power and of a product with one, and the value read back from

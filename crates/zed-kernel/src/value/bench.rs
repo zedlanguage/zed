@@ -1,10 +1,11 @@
-//! The benchmark of the table of pairs, run by `tools/run_tests.sh --bench` and left out of
-//! its default run (TEST-bench-move-crates). What it checks besides the ratio, that each pair
-//! enters once, that the half taken out are entered again and the rest are found, is checked
-//! at small sizes by `the_pairs_of_one_comparison_are_entered_taken_out_and_met_again` in the
-//! tests of `value.rs`.
+//! The benchmarks of `value`, run by `tools/run_tests.sh --bench` and left out of its default
+//! run (TEST-bench-move-crates). What the table benchmark checks besides the ratio, that each
+//! pair enters once, that the half taken out are entered again and the rest are found, is
+//! checked at small sizes by `the_pairs_of_one_comparison_are_entered_taken_out_and_met_again`
+//! in the tests of `value.rs`; the deep value is digested at 12 and 64 levels by
+//! `a_deep_shared_value_is_digested_once_per_sequence`.
 
-use super::tests::drawn_pairs;
+use super::tests::{drawn_pairs, shared};
 use super::*;
 
 #[test]
@@ -34,4 +35,13 @@ fn the_table_of_pairs_scales() {
             table.clear();
         },
     );
+}
+
+/// A value 200,000 levels deep, each level holding the one below twice, is digested: the walk
+/// keeps its own stack, so the depth is not limited by the thread's (author P178: an unusual
+/// depth is a benchmark).
+#[test]
+fn a_value_200000_levels_deep_is_digested() {
+    let deep = shared(200_000);
+    let _ = digest(&deep);
 }

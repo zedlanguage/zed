@@ -126,7 +126,7 @@ fn a_compare_against_a_tree_costs_its_length() {
 
 /// A chain of a million blocks joined at either end stays balanced, reads whole and drops
 /// without a deep recursion (COMPLEXITY.md K16, C29). Small instance:
-/// `a_long_chain_either_way_is_balanced_read_and_dropped` (100,000 blocks).
+/// `a_long_chain_either_way_is_balanced_read_and_dropped` (4096 blocks).
 #[test]
 fn a_chain_a_million_long_either_way_is_balanced_read_and_dropped() {
     let piece = long('z');

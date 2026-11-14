@@ -2222,11 +2222,14 @@ pub(crate) fn exact_f32(r: &Rat) -> Result<Option<f32>, TooLarge> {
 }
 
 #[cfg(test)]
+mod bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     /// `b^k` for a small base, kept as exponents.
-    fn power(b: u64, k: u64) -> Rat {
+    pub(super) fn power(b: u64, k: u64) -> Rat {
         Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
     }
 
@@ -2259,13 +2262,9 @@ mod tests {
         // CONST-too-large-kept-powers: the checker says writing a number needs at least
         // `text_least` bytes, so it must not pass the digits written; `text_size`, which asks
         // for the memory, must not fall below them. `5^1300000` has 908660 digits, which
-        // `text_size` put above 1 MiB.
-        let five = power(5, 1_300_000);
-        assert!(five.text_least() > BigUint::from(908_600u32));
-        assert!(five.text_size().1 > BigUint::from(1u32 << 20));
+        // `text_size` put above 1 MiB, is `bench::five_to_the_1300000_has_text_bounds_around_its_digits`.
         let wide = Rat::int((BigInt::one() << 200u32) + 7);
         for r in [
-            five,
             power(2, 1),
             power(2, 100_000),
             power(3, 77_777),
@@ -2279,13 +2278,18 @@ mod tests {
             Rat::int(-BigInt::from(999)),
             Rat::int(BigInt::zero()),
         ] {
-            let mut digits = r.numer_text().unwrap().trim_start_matches('-').len();
-            if !r.is_integer() {
-                digits += r.denom_text().unwrap().len();
-            }
-            let digits = BigUint::from(digits);
-            assert!(r.text_least() <= digits && digits <= r.text_size().1, "{r}");
+            text_bounds_hold(&r);
         }
+    }
+
+    /// `r.text_least()` is at most the digits `r` writes, and `r.text_size()` at least.
+    pub(super) fn text_bounds_hold(r: &Rat) {
+        let mut digits = r.numer_text().unwrap().trim_start_matches('-').len();
+        if !r.is_integer() {
+            digits += r.denom_text().unwrap().len();
+        }
+        let digits = BigUint::from(digits);
+        assert!(r.text_least() <= digits && digits <= r.text_size().1, "{r}");
     }
 
     #[test]
