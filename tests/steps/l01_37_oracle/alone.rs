@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 use zed_tests::oracle::{Engine, Report, bindings, native};
-use zed_tests::scaling::{check, inputs};
 use zedc::elab::{Cones, Def, Unit};
 use zedc::interp;
 use zedc::run;
@@ -223,7 +222,7 @@ fn the_outcomes_are_those_expected() {
 
 /// `x0 = 0; x1 = x0 + 1; …` to `n` bindings, the last of which stops, so that the bindings
 /// cannot run as one tuple.
-fn stopped_chain(n: usize) -> Unit {
+pub(super) fn stopped_chain(n: usize) -> Unit {
     let name = |i: usize| format!("x{i}");
     unit(
         (0..n)
@@ -236,14 +235,17 @@ fn stopped_chain(n: usize) -> Unit {
     )
 }
 
+/// Compares the `n` bindings of [`stopped_chain`] with an engine that refuses: each differs,
+/// and the last stops with the interpreter's error.
+pub(super) fn the_last_stops(u: &Unit, n: usize) {
+    let r = bindings(u, &[("refuse", &refuse)]);
+    assert_eq!(r.mismatches.len(), n);
+    assert!(r.mismatches[n - 1].contains("the interpreter gives the error"));
+}
+
 #[test]
-fn a_chain_that_stops_scales() {
-    let units = inputs(500, stopped_chain);
-    check("a chain of n bindings, the last stopping", 500, |k| {
-        let r = bindings(&units[&k], &[("refuse", &refuse)]);
-        assert_eq!(r.mismatches.len(), k);
-        assert!(r.mismatches[k - 1].contains("the interpreter gives the error"));
-    });
+fn a_chain_whose_last_binding_stops_is_compared() {
+    the_last_stops(&stopped_chain(3), 3);
 }
 
 /// `n` functions, each `(x) -> if false { f(x) } else { x }` with `f` the one before, `n`
@@ -277,7 +279,7 @@ fn shared_cone(n: usize) -> Unit {
 /// `n` functions as in [`shared_cone`], then `n` pairs of bindings, `c_j = f(j)` and
 /// `b_j = f(j) + (true + 1)` with `f` the last function: `n` stops, each reaching every
 /// function.
-fn stops_reaching_functions(n: usize) -> Unit {
+pub(super) fn stops_reaching_functions(n: usize) -> Unit {
     let mut u = shared_cone(n);
     u.defs.truncate(n);
     let last = Shared::new(var(&format!("f{}", n - 1)));
@@ -295,18 +297,20 @@ const AFTER_B0: &str = "no outcome, as the run of the definitions from `b1` on, 
                         stop at `b0`, binds again definitions with a function component, and \
                         stops";
 
+/// Compares the bindings of [`stops_reaching_functions`] at `n` with [`marked`]. Run to each
+/// stop, the bindings would bind every function once per stop: n² in all. The walk ends at the
+/// second stop, so `b0`, whose error differs, is the one mismatch, `c0` and `c1` are compared,
+/// and the 2n − 3 bindings from `b1` on are not.
+pub(super) fn the_walk_ends_at_the_second_stop(u: &Unit, n: usize) {
+    let r = bindings(u, &[("marked", &marked)]);
+    assert_eq!(r.mismatches.len(), 1, "{:?}", r.mismatches);
+    assert_eq!(r.compared, 3);
+    assert_eq!(r.not_compared.len(), 2 * n - 3);
+}
+
 #[test]
-fn stops_that_reach_functions_scale() {
-    // Run to each stop, the bindings would bind every function once per stop: n² in all.
-    // The walk ends at the second stop, so `b0`, whose error differs, is the one mismatch,
-    // `c0` and `c1` are compared, and the 2n − 3 bindings from `b1` on are not.
-    let units = inputs(100, stops_reaching_functions);
-    check("n stops each reaching n functions", 100, |k| {
-        let r = bindings(&units[&k], &[("marked", &marked)]);
-        assert_eq!(r.mismatches.len(), 1, "{:?}", r.mismatches);
-        assert_eq!(r.compared, 3);
-        assert_eq!(r.not_compared.len(), 2 * k - 3);
-    });
+fn stops_that_reach_functions_end_the_walk_at_the_second() {
+    the_walk_ends_at_the_second_stop(&stops_reaching_functions(3), 3);
 }
 
 #[test]

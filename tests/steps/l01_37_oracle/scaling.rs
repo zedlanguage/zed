@@ -1,21 +1,19 @@
 //! The oracle against the size of what it compares (the rule of low complexity, DESIGN.md
 //! Part G): a unit of many bindings, a wave of many lines, and a report of many mismatches
-//! each cost near linear in their number. Each input is built, and each unit elaborated,
-//! before it is measured.
+//! each cost near linear in their number (`bench.rs`). The inputs and the checks of those
+//! benchmarks, each run here at a small size.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Term, Value};
 use zed_tests::oracle::{Engine, Report, bindings, counterexamples, native, program};
-use zed_tests::scaling::check;
 use zedc::elab::Unit;
 use zedc::front::Front;
 use zedc::query::Db;
 use zedc::run;
 
 /// `x0 = 0; x1 = 1; …`: `n` first-order bindings, elaborated.
-fn numbers(n: usize) -> Arc<Front> {
+pub(super) fn numbers(n: usize) -> Arc<Front> {
     let text: String = (0..n).map(|i| format!("x{i} = {i};\n")).collect();
     let front = Db::new().front(&text);
     assert!(front.is_ok(), "the unit of {n} bindings is accepted");
@@ -23,24 +21,24 @@ fn numbers(n: usize) -> Arc<Front> {
 }
 
 /// The unit `front` holds.
-fn unit_of(front: &Front) -> &Unit {
+pub(super) fn unit_of(front: &Front) -> &Unit {
     let Ok((_, u, _)) = front else {
-        unreachable!("`numbers` checks that its unit is accepted")
+        unreachable!("`numbers` and `chain` check that their unit is accepted")
     };
     u
 }
 
-const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
+pub(super) const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
 
 /// `n` lines of input.
-fn lines(n: usize) -> Vec<u8> {
+pub(super) fn lines(n: usize) -> Vec<u8> {
     (0..n)
         .flat_map(|i| format!("line {i}\n").into_bytes())
         .collect()
 }
 
 /// A report of `n` mismatches.
-fn mismatched(n: usize) -> Report {
+pub(super) fn mismatched(n: usize) -> Report {
     Report {
         compared: n,
         mismatches: (0..n).map(|i| format!("m{i}")).collect(),
@@ -61,11 +59,36 @@ fn off_by_one(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
     run::direct(t, ev).map(bump)
 }
 
-const OFF: &[Engine<'_>] = &[("off by one", &off_by_one)];
+pub(super) const OFF: &[Engine<'_>] = &[("off by one", &off_by_one)];
 
-/// The inputs of `make` at `n` and `8n`, built before any is measured.
-fn inputs<T>(n: usize, make: impl Fn(usize) -> T) -> HashMap<usize, T> {
-    [n, 8 * n].into_iter().map(|k| (k, make(k))).collect()
+/// Compares the `n` bindings of `front` natively: each is compared under both engines, and
+/// none differs.
+pub(super) fn agree_natively(front: &Front, n: usize) {
+    let (r, _) = native(|engines| bindings(unit_of(front), engines));
+    assert_eq!((r.compared, r.mismatches.len()), (2 * n, 0));
+}
+
+/// Compares the `n` bindings of `front` with [`OFF`]: each differs.
+pub(super) fn each_off_by_one(front: &Front, n: usize) {
+    let r = bindings(unit_of(front), OFF);
+    assert_eq!(r.mismatches.len(), n);
+}
+
+/// Runs [`ECHO`] on `input` natively: the engines agree, and it writes the first line.
+pub(super) fn echoes_the_first_line(input: &[u8]) {
+    let ((r, want), _) = native(|engines| program(ECHO, input, engines));
+    assert_eq!(r.mismatches, Vec::<String>::new());
+    assert_eq!(
+        want.as_deref(),
+        Some(r#"port `m.stdout` writes "line 0\n""#)
+    );
+}
+
+/// Builds a report of `n` mismatches and adds it to another.
+pub(super) fn adds_a_report(n: usize) {
+    let mut r = Report::default();
+    r.add("at", mismatched(n));
+    assert_eq!(r.mismatches.len(), n);
 }
 
 #[test]
@@ -83,12 +106,7 @@ fn the_inputs_are_compared_as_they_should_be() {
             "binding `x2`: the interpreter gives the value 2, and off by one gives the value 3",
         ]
     );
-    let ((r, want), _) = native(|engines| program(ECHO, &lines(2), engines));
-    assert_eq!(r.mismatches, Vec::<String>::new());
-    assert_eq!(
-        want.as_deref(),
-        Some(r#"port `m.stdout` writes "line 0\n""#)
-    );
+    echoes_the_first_line(&lines(2));
     let mut at = Report::default();
     at.add("at", mismatched(2));
     assert_eq!(
@@ -123,49 +141,8 @@ fn a_unit_of_one_binding_or_none_is_compared() {
     assert_eq!(bindings(u, OFF).compared, 0);
 }
 
-#[test]
-fn a_unit_of_many_bindings_scales() {
-    let units = inputs(25, numbers);
-    check("a unit of n bindings, run natively", 25, |k| {
-        let (r, _) = native(|engines| bindings(unit_of(&units[&k]), engines));
-        assert_eq!((r.compared, r.mismatches.len()), (2 * k, 0));
-    });
-}
-
-#[test]
-fn a_unit_of_many_bindings_scales_in_the_interpreter() {
-    let units = inputs(500, numbers);
-    check("a unit of n bindings, each mismatched", 500, |k| {
-        let r = bindings(unit_of(&units[&k]), OFF);
-        assert_eq!(r.mismatches.len(), k);
-    });
-}
-
-#[test]
-fn a_wave_of_many_lines_scales() {
-    let input = inputs(2000, lines);
-    check("a wave of n lines", 2000, |k| {
-        let ((r, want), _) = native(|engines| program(ECHO, &input[&k], engines));
-        assert_eq!(r.mismatches, Vec::<String>::new());
-        assert_eq!(
-            want.as_deref(),
-            Some(r#"port `m.stdout` writes "line 0\n""#)
-        );
-    });
-}
-
-#[test]
-fn a_report_of_many_mismatches_scales() {
-    // `Report::add` takes the report it adds, so each run builds its own, at linear cost.
-    check("a report of n mismatches, built and added", 10000, |k| {
-        let mut r = Report::default();
-        r.add("at", mismatched(k));
-        assert_eq!(r.mismatches.len(), k);
-    });
-}
-
 /// `double(positional x) = x * 2` with a table of `n` rows, each wrong.
-fn wrong_rows(n: usize) -> String {
+pub(super) fn wrong_rows(n: usize) -> String {
     let rows: Vec<String> = (0..n).map(|i| format!("{i} -> {}", 2 * i + 1)).collect();
     format!(
         "double(positional x) = x * 2\ntest {{ {} }}\n",
@@ -173,23 +150,24 @@ fn wrong_rows(n: usize) -> String {
     )
 }
 
+/// Replays the `n` failing rows of `text`: each failure names its row's result, which the
+/// interpreter gives again, so none differs.
+pub(super) fn replays_each_row(text: &str, n: usize) {
+    let (r, replayed) = counterexamples(text, &[]);
+    assert_eq!((replayed, r.compared, r.mismatches.len()), (n, n, 0));
+}
+
 #[test]
-fn many_wrong_rows_are_replayed() {
-    // Each failure names its row's result, which the interpreter gives again; the replay of
-    // each row finds its failure by a lookup, not a pass over the failures.
+fn wrong_rows_are_replayed() {
     let (r, replayed) = counterexamples(&wrong_rows(3), &[]);
     assert_eq!((replayed, r.compared), (3, 3));
     assert_eq!(r.mismatches, Vec::<String>::new());
-    let texts = inputs(50, wrong_rows);
-    check("a table of n wrong rows, each replayed", 50, |k| {
-        let (r, replayed) = counterexamples(&texts[&k], &[]);
-        assert_eq!((replayed, r.mismatches.len()), (k, 0));
-    });
+    replays_each_row(&wrong_rows(3), 3);
 }
 
 /// `x0 = 0; x1 = x0 + 1; …`: `n` first-order bindings, each reading the one before,
 /// elaborated.
-fn chain(n: usize) -> Arc<Front> {
+pub(super) fn chain(n: usize) -> Arc<Front> {
     let text: String = (0..n)
         .map(|i| match i {
             0 => "x0 = 0;\n".to_string(),
@@ -202,19 +180,15 @@ fn chain(n: usize) -> Arc<Front> {
 }
 
 #[test]
-fn a_chain_of_bindings_scales_in_the_interpreter() {
-    let units = inputs(500, chain);
-    check("a chain of n bindings, each mismatched", 500, |k| {
-        let r = bindings(unit_of(&units[&k]), OFF);
-        assert_eq!(r.mismatches.len(), k);
-    });
-}
-
-#[test]
-fn a_chain_of_bindings_scales_natively() {
-    let units = inputs(25, chain);
-    check("a chain of n bindings, run natively", 25, |k| {
-        let (r, _) = native(|engines| bindings(unit_of(&units[&k]), engines));
-        assert_eq!((r.compared, r.mismatches.len()), (2 * k, 0));
-    });
+fn a_chain_of_bindings_is_compared() {
+    // Each binding of the chain reads the one before; each runs with the others.
+    let three = chain(3);
+    assert_eq!(
+        bindings(unit_of(&three), OFF).mismatches,
+        [
+            "binding `x0`: the interpreter gives the value 0, and off by one gives the value 1",
+            "binding `x1`: the interpreter gives the value 1, and off by one gives the value 2",
+            "binding `x2`: the interpreter gives the value 2, and off by one gives the value 3",
+        ]
+    );
 }

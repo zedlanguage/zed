@@ -5,6 +5,7 @@
 //! step on, so every later step keeps the two in agreement.
 
 mod alone;
+mod bench;
 mod counts;
 mod oracle;
 mod scaling;

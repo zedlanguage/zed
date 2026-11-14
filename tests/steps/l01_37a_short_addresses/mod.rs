@@ -10,6 +10,7 @@
 //! address of `l01_32_canonical_zir`) and the scaling tests, whose costs assume few collisions,
 //! are for the full build only.
 
+mod bench;
 mod cex;
 mod collide;
 mod record;

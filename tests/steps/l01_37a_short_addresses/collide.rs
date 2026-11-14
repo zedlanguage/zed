@@ -149,10 +149,12 @@ fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
     // With 8-bit digests the levels of a chain tie in digest at every depth, so building one
     // orders each new level against older ones level after level down, as ordering two chains
     // over different bases does where their digests tie. That order was a recursion, which
-    // overflowed a 256 KiB stack 500 levels down, and a 2 MiB stack about 3,000 levels down
+    // overflowed a 256 KiB stack 425 levels down (421 ran; the code before 7a79799d3, dev
+    // profile, measured 2026-11-14), and a 2 MiB stack about 3,000 levels down
     // (SHORT-stack-l01_22); it is a loop with a stack of its own. Each comparison still reads
-    // the levels on which the digests tie, so building the chain is quadratic in this build.
-    const DEPTH: usize = 1000;
+    // the levels on which the digests tie, so building the chain is quadratic in this build:
+    // the depth is the smallest round one past the overflow.
+    const DEPTH: usize = 500;
     const STACK: usize = 256 << 10;
     std::thread::scope(|scope| {
         let thread = std::thread::Builder::new().stack_size(STACK);

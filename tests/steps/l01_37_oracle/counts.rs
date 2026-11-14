@@ -4,7 +4,6 @@
 
 use zed_kernel::Value;
 use zed_rt::{Heap, Obj, Survivor, Word};
-use zed_tests::scaling;
 
 #[test]
 fn live_cells_are_listed_by_type_and_allocating_node() {
@@ -54,7 +53,7 @@ fn reading_the_runs_counted_starts_the_count_again() {
 }
 
 /// A heap with `n` live cells, allocated by `n / 8 + 1` nodes in turn, built once.
-fn heap(n: usize) -> Heap {
+pub(super) fn heap(n: usize) -> Heap {
     let mut h = Heap::new();
     for i in 0..n {
         h.allocating(Some(i % (n / 8 + 1)));
@@ -63,17 +62,14 @@ fn heap(n: usize) -> Heap {
     h
 }
 
+/// Lists the live cells of [`heap`] at `n`: they are `n` in all.
+pub(super) fn lists_every_cell(h: &Heap, n: usize) {
+    let total: u64 = h.survivors().iter().map(|s| s.cells).sum();
+    assert_eq!(total, n as u64);
+}
+
 #[test]
-fn listing_the_live_cells_scales() {
-    let n = 20_000;
-    let heaps = [(n, heap(n)), (8 * n, heap(8 * n))];
-    scaling::check("listing n live cells by type and node", n, |size| {
-        let h = &heaps
-            .iter()
-            .find(|(m, _)| *m == size)
-            .expect("a built size")
-            .1;
-        let total: u64 = h.survivors().iter().map(|s| s.cells).sum();
-        assert_eq!(total, size as u64);
-    });
+fn the_live_cells_of_many_nodes_are_each_listed() {
+    // 17 cells allocated by 3 nodes in turn.
+    lists_every_cell(&heap(17), 17);
 }
