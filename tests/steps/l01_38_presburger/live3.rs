@@ -59,13 +59,26 @@ fn random_rows(rng: &mut Rng, n: usize, c: i64, k: i64) -> Vec<Row3> {
         .collect()
 }
 
+/// 600 random systems in the cube `[-3, 3]^3` of a new seed each run, against enumeration; both
+/// answers occur. The 3000 systems of seed 0x13a01 (1.5 s at load 25) are in `bench::live3`.
 #[test]
 fn random_bounded_systems_match_enumeration() {
-    let mut rng = Rng::new(0x1_3a01);
+    let (mut rng, seed) = Rng::fresh("live3 bounded systems");
+    let (sat, unsat) = bounded_systems_match_enumeration(&mut rng, 600);
+    // Both answers occur, so neither check passes by never being asked.
+    assert!(
+        sat > 60 && unsat > 60,
+        "seed {seed}: {sat} with a point, {unsat} without"
+    );
+}
+
+/// `count` random systems of 1 to 6 rows in the cube `[-3, 3]^3`, each answered as enumeration
+/// answers; the counts with and without a point.
+pub(super) fn bounded_systems_match_enumeration(rng: &mut Rng, count: usize) -> (usize, usize) {
     let (mut sat, mut unsat) = (0, 0);
-    for _ in 0..3000 {
+    for _ in 0..count {
         let n = 1 + rng.below(6);
-        let mut rows = random_rows(&mut rng, n, 6, 12);
+        let mut rows = random_rows(rng, n, 6, 12);
         rows.extend(cube(3));
         let truth = enumerate(&rows, 3);
         assert_eq!(solve(&rows).is_some(), truth, "{rows:?}");
@@ -75,11 +88,7 @@ fn random_bounded_systems_match_enumeration() {
             unsat += 1;
         }
     }
-    // Both answers occur, so neither check passes by never being asked.
-    assert!(
-        sat > 300 && unsat > 300,
-        "{sat} with a point, {unsat} without"
-    );
+    (sat, unsat)
 }
 
 #[test]
@@ -102,19 +111,31 @@ fn random_unbounded_systems_match_enumeration_in_a_window() {
     assert!(inside > 100 && none > 20, "{inside}, {outside}, {none}");
 }
 
+/// 600 equalities in the cube `[-3, 3]^3` of a new seed each run, against enumeration; both
+/// answers occur. The 2000 of seed 0x13a03 (1.25 s at load 25) are in `bench::live3`.
 #[test]
 fn flat_and_equality_systems_match_enumeration() {
+    let (mut rng, seed) = Rng::fresh("live3 flat and equality systems");
+    let (sat, unsat) = flat_and_equality_systems_match(&mut rng, 600);
+    assert!(
+        sat > 60 && unsat > 60,
+        "seed {seed}: {sat} with a point, {unsat} without"
+    );
+}
+
+/// `count` equalities with up to two other rows in the cube `[-3, 3]^3`, each answered as
+/// enumeration answers; the counts with and without a point.
+pub(super) fn flat_and_equality_systems_match(rng: &mut Rng, count: usize) -> (usize, usize) {
     // An equality `a·x + k = 0` as two rows, with a bound; `a` with a common factor half of
     // the time, so that some have real points and no integer point.
-    let mut rng = Rng::new(0x1_3a03);
     let (mut sat, mut unsat) = (0, 0);
-    for _ in 0..2000 {
+    for _ in 0..count {
         let g = rng.pick(&[1, 2, 3]);
         let a = [0; 3].map(|_| g * rng.int(-4, 4));
         let k = rng.int(-15, 15);
         let mut rows = vec![row(a, k), row(a.map(|c| -c), -k)];
         let extra = rng.below(3);
-        rows.extend(random_rows(&mut rng, extra, 4, 8));
+        rows.extend(random_rows(rng, extra, 4, 8));
         rows.extend(cube(3));
         let truth = enumerate(&rows, 3);
         assert_eq!(solve(&rows).is_some(), truth, "{rows:?}");
@@ -124,10 +145,7 @@ fn flat_and_equality_systems_match_enumeration() {
             unsat += 1;
         }
     }
-    assert!(
-        sat > 200 && unsat > 200,
-        "{sat} with a point, {unsat} without"
-    );
+    (sat, unsat)
 }
 
 #[test]
@@ -243,9 +261,30 @@ fn corner_cases() {
     assert!(x.iter().zip(&p).all(|(x, p)| (x - p).abs() <= int(1)));
 }
 
+/// Random systems of a new seed each run, under each order of the variables and with the rows
+/// reversed: 30 unbounded, most of which have a point, and 30 in the cube `[-3, 3]^3`, about 40%
+/// of which have none (fewer than 2 on either side about 5 times in a million), so both answers
+/// are moved. The 400 unbounded systems of seed 0x13a06 (2.5 s at load 25) are in
+/// `bench::live3`.
 #[test]
 fn the_answer_does_not_depend_on_the_order_of_variables_or_rows() {
-    let mut rng = Rng::new(0x1_3a06);
+    let (mut rng, seed) = Rng::fresh("live3 order of variables and rows");
+    let free = order_does_not_change_the_answer(&mut rng, 30, false);
+    let (sat, unsat) = order_does_not_change_the_answer(&mut rng, 30, true);
+    assert!(
+        sat >= 2 && unsat >= 2,
+        "seed {seed}: in the cube, {sat} with a point, {unsat} without; unbounded {free:?}"
+    );
+}
+
+/// `count` random systems of 2 to 6 rows, in the cube `[-3, 3]^3` when `bounded`, each with
+/// the same answer under every order of the variables and with its rows reversed; the counts
+/// with and without a point.
+pub(super) fn order_does_not_change_the_answer(
+    rng: &mut Rng,
+    count: usize,
+    bounded: bool,
+) -> (usize, usize) {
     let perms = [
         [0, 1, 2],
         [0, 2, 1],
@@ -254,9 +293,13 @@ fn the_answer_does_not_depend_on_the_order_of_variables_or_rows() {
         [2, 0, 1],
         [2, 1, 0],
     ];
-    for _ in 0..400 {
+    let (mut sat, mut unsat) = (0, 0);
+    for _ in 0..count {
         let n = 2 + rng.below(5);
-        let mut rows = random_rows(&mut rng, n, 7, 15);
+        let mut rows = random_rows(rng, n, 7, 15);
+        if bounded {
+            rows.extend(cube(3));
+        }
         let first = solve(&rows).is_some();
         for p in perms {
             let moved: Vec<Row3> = rows
@@ -267,7 +310,13 @@ fn the_answer_does_not_depend_on_the_order_of_variables_or_rows() {
         }
         rows.reverse();
         assert_eq!(solve(&rows).is_some(), first, "{rows:?} reversed");
+        if first {
+            sat += 1;
+        } else {
+            unsat += 1;
+        }
     }
+    (sat, unsat)
 }
 
 #[test]

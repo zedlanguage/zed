@@ -2,6 +2,7 @@
 
 use crate::live3::*;
 use crate::scaling::decides;
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::live3::point;
 
@@ -85,5 +86,39 @@ fn a_lens_of_tangent_planes_scales_in_point() {
             let rows = if m == 70 { &small } else { &large };
             std::hint::black_box(point(rows));
         },
+    );
+}
+
+/// `live3::random_bounded_systems_match_enumeration` as first written, 1.5 s (2026-11-14, load
+/// 25): 3000 systems of seed 0x13a01.
+#[test]
+fn the_3000_bounded_systems_of_seed_0x13a01_match_enumeration() {
+    let (sat, unsat) = bounded_systems_match_enumeration(&mut Rng::new(0x1_3a01), 3000);
+    assert!(
+        sat > 300 && unsat > 300,
+        "{sat} with a point, {unsat} without"
+    );
+}
+
+/// `live3::flat_and_equality_systems_match_enumeration` as first written, 1.25 s (2026-11-14,
+/// load 25): 2000 equalities of seed 0x13a03.
+#[test]
+fn the_2000_flat_and_equality_systems_of_seed_0x13a03_match_enumeration() {
+    let (sat, unsat) = flat_and_equality_systems_match(&mut Rng::new(0x1_3a03), 2000);
+    assert!(
+        sat > 200 && unsat > 200,
+        "{sat} with a point, {unsat} without"
+    );
+}
+
+/// `live3::the_answer_does_not_depend_on_the_order_of_variables_or_rows` as first written,
+/// 2.5 s (2026-11-14, load 25): 400 systems of seed 0x13a06.
+#[test]
+fn the_answers_to_the_400_systems_of_seed_0x13a06_do_not_depend_on_order() {
+    let (sat, unsat) = order_does_not_change_the_answer(&mut Rng::new(0x1_3a06), 400, false);
+    // Unbounded, most systems have a point: 366 with and 34 without on 2026-11-14.
+    assert!(
+        sat > 300 && unsat > 20,
+        "{sat} with a point, {unsat} without"
     );
 }
