@@ -3203,11 +3203,13 @@ mod tests {
 
     /// Item SCALE-fix-strip-odd: `strip` by a factor that is not a power of 2, odd, even,
     /// composite, a power of another, or wider than a word, against dividing once per factor,
-    /// on `c ^ k * u` for multiplicities `k` around powers of 2 and random `u`, some past the
-    /// widths at which the kernel divides by a reciprocal.
+    /// on `c ^ k * u` for multiplicities `k` around powers of 2 and random `u`, some with a
+    /// divisor and a quotient past the kernel's division leaf of 4096 bits, where it weighs
+    /// num-bigint's division against its others (it picks num-bigint at these widths).
     #[test]
     fn stripping_any_factor_agrees_with_dividing_once_per_factor() {
-        let mut seed = 0x5eed_u64;
+        let mut seed =
+            crate::seed::seed("stripping_any_factor_agrees_with_dividing_once_per_factor");
         let mut next = move || {
             seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
             let z = (seed ^ (seed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -3225,14 +3227,24 @@ mod tests {
             BigUint::from(u64::MAX),
             wide,
         ];
+        let ks = [
+            0u64, 1, 2, 3, 7, 8, 9, 63, 64, 65, 255, 1000, 4095, 4096, 6000,
+        ];
         for c in &factors {
-            for k in [
-                0u64, 1, 2, 3, 7, 8, 9, 63, 64, 65, 255, 1000, 4095, 4096, 6000,
-            ] {
+            // The largest `k` with `c ^ k` of at most 20,000 bits: from 6435 bits (`wide ^ 65`)
+            // to 18,000 (`5 ^ 6000`).
+            let top = ks.iter().copied().filter(|k| k * c.bits() <= 20_000).max();
+            for k in ks {
                 if k * c.bits() > 20_000 {
                     continue;
                 }
                 for words in [1usize, 2, 40, 300] {
+                    // A `u` of 300 words only at the largest `k`, once for each factor: the
+                    // last division then has a divisor and a quotient past 4096 bits, and
+                    // the test stays small.
+                    if words == 300 && Some(k) != top {
+                        continue;
+                    }
                     let u = BigUint::from_slice(
                         &(0..2 * words).map(|_| next() as u32).collect::<Vec<_>>(),
                     ) + 1u32;
@@ -3251,7 +3263,7 @@ mod tests {
 
     #[test]
     fn a_root_in_one_word_is_the_root_by_big_numbers() {
-        let mut x = 7u64;
+        let mut x = crate::seed::seed("a_root_in_one_word_is_the_root_by_big_numbers");
         for p in [3u64, 5, 7, 11, 13, 31, 61, 127, 509, 4093, 65_521] {
             for _ in 0..200 {
                 x = x.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
