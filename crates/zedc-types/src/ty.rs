@@ -10149,8 +10149,9 @@ enum Print<'a> {
 /// type (DESIGN.md sec:grammar, `Type`, `Arrow`, `TypeUnion`). A text is parenthesized exactly
 /// where the grammar needs it (author P191): where the rule that produces it is not reachable
 /// from the rule the place expects through `~` alternatives alone, or where PEG ordered choice
-/// would read it otherwise. tests/steps/l01_29_repairs_and_printing/parens.rs checks both, the kernel's
-/// places against the grammar's rules and the printed text by deleting each pair in turn.
+/// would read it otherwise. tests/steps/l01_29_repairs_and_printing/parens.rs checks both, the
+/// kernel's places against the grammar's rules and the printed text by deleting each pair in
+/// turn.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PrintAt {
     /// Where a whole `Type` stands: the top, a component of a tuple, a parameter, a payload.
