@@ -3,6 +3,7 @@
 //! split with a GPU, compared by the scalar cost and by content address.
 
 mod bench;
+mod cases;
 mod overlap;
 mod peak;
 
