@@ -507,25 +507,34 @@ fn shifted_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Form
     (t, join(vec![c, r]))
 }
 
+/// [`grouped_sequences_compare_as_written_out`] at depths 0 to 10. Depths 0 to 12 (1.5 s at
+/// load 25; 0.33 s of 0.76 s at depth 12 at load 50, whose sequences written out are longest)
+/// are in `bench::shared`.
 #[test]
 fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out() {
-    for d in 0..=12 {
-        for join in [and as fn(Vec<Formula>) -> Formula, or] {
-            let (t, r) = shifted_chains(d, join);
-            let (split_a, split_b) = split_chains(d, join);
-            let fs = [t, r, split_a, split_b];
-            for p in &fs {
-                for q in &fs {
-                    let o = written(p).cmp(&written(q));
-                    assert_eq!(p.cmp(q), o, "d = {d}: {p} against {q}");
-                    if o == Ordering::Equal {
-                        assert_eq!(hash(p), hash(q), "d = {d}: {p}");
-                    }
+    for d in 0..=10 {
+        grouped_sequences_compare_as_written_out(d);
+    }
+}
+
+/// The chains of [`shifted_chains`] and [`split_chains`] of depth `d`, joined by `and` and by
+/// `or`, compare and hash as written out, and each pair is equal.
+pub(super) fn grouped_sequences_compare_as_written_out(d: usize) {
+    for join in [and as fn(Vec<Formula>) -> Formula, or] {
+        let (t, r) = shifted_chains(d, join);
+        let (split_a, split_b) = split_chains(d, join);
+        let fs = [t, r, split_a, split_b];
+        for p in &fs {
+            for q in &fs {
+                let o = written(p).cmp(&written(q));
+                assert_eq!(p.cmp(q), o, "d = {d}: {p} against {q}");
+                if o == Ordering::Equal {
+                    assert_eq!(hash(p), hash(q), "d = {d}: {p}");
                 }
             }
-            assert_eq!(fs[0], fs[1]);
-            assert_eq!(fs[2], fs[3]);
         }
+        assert_eq!(fs[0], fs[1]);
+        assert_eq!(fs[2], fs[3]);
     }
 }
 
@@ -856,7 +865,7 @@ fn random_row(rng: &mut Rng, names: &[&'static str]) -> Formula {
 /// rows of their own over `c` and `d`; at times a disjunct also reads `a`, or lacks `u`, so
 /// that the part may not be taken out. Under a conjunction with rows over all four atoms, at
 /// times negated.
-fn random_tiers(rng: &mut Rng) -> Formula {
+pub(super) fn random_tiers(rng: &mut Rng) -> Formula {
     let mut u: Vec<Formula> = (0..1 + rng.below(3))
         .map(|_| random_row(rng, &["a", "b"]))
         .collect();
@@ -898,12 +907,49 @@ fn random_tiers(rng: &mut Rng) -> Formula {
     and(top)
 }
 
+/// 200 formulas of [`random_tiers`] of a new seed each run, through
+/// [`factoring_loses_no_precision`]. A projection narrower than as written is rare (none to two
+/// in 200; one in the 600 of seed 0x5f5b), so [`a_shared_part_taken_out_narrows_a_projection`]
+/// checks one that narrows. The 600 formulas of seed 0x5f5b (1.06 s at load 25) are in
+/// `bench::shared`.
 #[test]
 fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
-    // `presburger::factored` takes a part every disjunct holds out of the disjunction when it
-    // is linked to nothing else in the disjuncts (ST-formula-sibling). Each decision and each
-    // refusal is the one the formula as written gives, and each projection is the one it
-    // gives or within it, and holds every value of a point of the formula in a window.
+    let (mut rng, seed) = Rng::fresh("shared part out of a disjunction");
+    let c = factoring_loses_no_precision((0..200).map(|i| (i, random_tiers(&mut rng))));
+    assert!(c.same > c.narrower, "seed {seed}: {c:?}");
+}
+
+/// Formula 9 of seed 0x5f5b, `2 c >= -4 && !(...)`, whose projection narrows when the shared
+/// part `2 b >= 2` is taken out of the negated disjunction: the narrower sets hold every value
+/// of a point in the window. The random tests reach this case about once in 200 formulas.
+#[test]
+fn a_shared_part_taken_out_narrows_a_projection() {
+    let mut rng = Rng::new(0x5F5B);
+    let f = (0..10)
+        .map(|_| random_tiers(&mut rng))
+        .last()
+        .expect("ten formulas");
+    let c = factoring_loses_no_precision([(9, f)]);
+    assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
+}
+
+/// The counts of [`factoring_loses_no_precision`]: projections the same as the formula's as
+/// written, narrower than them, and decisions refused as written that are now answered.
+#[derive(Debug)]
+pub(super) struct FactoredCounts {
+    pub(super) same: usize,
+    pub(super) narrower: usize,
+    pub(super) answered: usize,
+}
+
+/// The formulas `fs`, numbered: `presburger::factored` takes a part every disjunct holds out of
+/// the disjunction when it is linked to nothing else in the disjuncts (ST-formula-sibling).
+/// Each decision and each refusal is the one the formula as written gives, and each projection
+/// is the one it gives or within it, and holds every value of a point of the formula in a
+/// window.
+pub(super) fn factoring_loses_no_precision(
+    fs: impl IntoIterator<Item = (usize, Formula)>,
+) -> FactoredCounts {
     use zedc::store::presburger::{UNFACTORED, project_each};
     let names = ["a", "b", "c", "d"];
     let syms: Vec<Atom> = names.map(|n| Atom::Sym(n.into())).into();
@@ -913,10 +959,8 @@ fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
         UNFACTORED.with(|u| u.set(false));
         r
     }
-    let mut rng = Rng::new(0x5F5B);
     let (mut same, mut narrower, mut answered) = (0, 0, 0);
-    for i in 0..600 {
-        let f = random_tiers(&mut rng);
+    for (i, f) in fs {
         let what = format!("formula {i}: {f}");
         // A refusal as written may become an answer, never the other way.
         match (decide(&f), as_written(|| decide(&f))) {
@@ -955,10 +999,11 @@ fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
             }
         }
     }
-    assert!(
-        narrower > 0 && same > narrower,
-        "{same} the same, {narrower} narrower, {answered} answered"
-    );
+    FactoredCounts {
+        same,
+        narrower,
+        answered,
+    }
 }
 
 /// Two nodes whose parts are all constraints are compared as their two lists of constraints

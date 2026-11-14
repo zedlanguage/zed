@@ -150,3 +150,23 @@ fn unequal_formulas_grouped_at_other_places_compare_in_time_near_linear_in_the_d
         },
     );
 }
+
+/// `shared::one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out` as
+/// first written, 1.5 s (2026-11-14, load 25): depths 0 to 12.
+#[test]
+fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out_to_depth_12() {
+    for d in 0..=12 {
+        grouped_sequences_compare_as_written_out(d);
+    }
+}
+
+/// `shared::taking_a_shared_part_out_of_a_disjunction_loses_no_precision` as first written,
+/// 1.06 s (2026-11-14, load 25): 600 formulas of seed 0x5f5b.
+#[test]
+fn taking_a_shared_part_out_of_the_600_disjunctions_of_seed_0x5f5b_loses_no_precision() {
+    let mut rng = zed_tests::instances::Rng::new(0x5F5B);
+    let c = factoring_loses_no_precision((0..600).map(|i| (i, random_tiers(&mut rng))));
+    // On 2026-11-14 one projection, of formula 9, is narrower than as written, and no refusal
+    // as written is answered.
+    assert_eq!((c.same, c.narrower, c.answered), (599, 1, 0), "{c:?}");
+}
