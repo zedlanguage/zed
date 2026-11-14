@@ -51,6 +51,9 @@
 //!   at a random offset, `g` from 1 to 4096.
 //! - `poly-wide [terms]`: univariate sums of `terms` terms (2 and 8), coefficients of 1 to
 //!   1024 words.
+//! - `poly-square [terms]`: the square of a sum of `terms` terms (256), one about every `g`
+//!   indices, `g` from 1 to 512; run for `pair` only, where a square charged
+//!   `SQUARE_SHARE` of its transform cost moves the crossover (POLY-square-choice-cost).
 //!
 //! In `zed_corpus_ref::zedrt` (the corpus's reference programs):
 //!
@@ -918,7 +921,7 @@ fn poly_dense(args: &[String]) -> ExitCode {
 /// common step closes the gaps. The sparse product wins from some gap on, as the dense
 /// product's span grows as `t g` against its own `t^2`.
 fn poly_gaps(args: &[String]) -> ExitCode {
-    let t: u128 = args.first().map_or(64, |s| s.parse().expect("terms"));
+    let t: u128 = args.first().map_or(256, |s| s.parse().expect("terms"));
     let note = move |_: usize| format!(" ({t} terms a side)");
     let inputs = move |g: usize| {
         let mut rng = Rng::new(g as u64);
@@ -1002,6 +1005,56 @@ fn poly_wide(args: &[String]) -> ExitCode {
     status(verdict.holds())
 }
 
+/// The dense product against the sparse one on the square of a sum of `t` terms (256 in `all`),
+/// one a gap of about `g` from the next as in [`poly_gaps`], `g` from 1 to 512 in eighths of a
+/// doubling: the packed
+/// integer is squared by transforms with one forward transform fewer than a product of two
+/// numbers, which `Poly::mul`'s choice counts (`SQUARE_SHARE`). The sparse product wins from
+/// some gap on. At 64 terms the packed integer is squared by Toom in a release build, not by
+/// transforms, so the share does not apply and the choice is as for two numbers.
+fn poly_square(args: &[String]) -> ExitCode {
+    let t: u128 = args.first().map_or(256, |s| s.parse().expect("terms"));
+    let note = move |_: usize| format!(" ({t} terms, squared)");
+    let inputs = move |g: usize| {
+        let mut rng = Rng::new(g as u64);
+        let g = g as u128;
+        let mut square = || {
+            let at: Vec<u128> = (0..t)
+                .map(|i| g * i + u128::from(rng.next_u64()) % g)
+                .collect();
+            let a = sum_at(&mut rng, at.into_iter(), 1);
+            (a.clone(), a)
+        };
+        vec![square(), square()]
+    };
+    let bench = Crossover {
+        unit: "gap",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "dense",
+            run: &|(a, b): &Sums| px::dense(a, b),
+        },
+        above: Method {
+            name: "sparse",
+            run: &|(a, b): &Sums| px::sparse(a, b),
+        },
+        takes_above: &|(a, b): &Sums| !px::takes_dense(a, b),
+        constant: Some(poly_constant(args.get(1), false)),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!(
+            "poly-square {t} {}",
+            args.get(1).map_or("pair", String::as_str)
+        ),
+        &poly_constants(),
+        &ladder(1, 512, 8),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
 fn print_never_slower(args: &[String]) -> ExitCode {
     let digits: Vec<u32> = match args.is_empty() {
         true => vec![
@@ -1055,7 +1108,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 40] = [
+const BENCHES: [Bench; 41] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -1084,6 +1137,7 @@ const BENCHES: [Bench; 40] = [
     ("poly-gaps", poly_gaps, &["16", "pair"]),
     ("poly-wide", poly_wide, &["2", "pair"]),
     ("poly-wide", poly_wide, &["8", "pair"]),
+    ("poly-square", poly_square, &["256", "pair"]),
     ("poly-dense", poly_dense, &["1", "slot"]),
     ("poly-dense", poly_dense, &["4", "slot"]),
     ("poly-gaps", poly_gaps, &["64", "slot"]),

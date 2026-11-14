@@ -934,3 +934,33 @@ fn a_chain_of_sums_is_one_sum() {
     let r = |s: &str| normal_form(&t(s), &b, Carrier::Rat).expect("expanded");
     assert_eq!(r("x / 2 + x / 3 + y / 6 - x"), r("y / 6 - x / 6"));
 }
+
+#[test]
+fn a_square_is_chosen_at_its_share() {
+    // 64 terms about every `g` indices, squared. The test build squares from 48 packed words
+    // by transforms, so each of these is charged two thirds of a product of two numbers.
+    let square = |g: u128| {
+        let at: Vec<u128> = (0..64).map(|i| g * i + (i * 7) % g).collect();
+        packed(&at, 3)
+    };
+    // About every 24 indices: the dense product at its share, where the whole cost would
+    // have taken the sparse one (POLY-square-choice-cost). Both give the same square.
+    let a = square(24);
+    let plan = a.plan(&a).expect("packed keys");
+    let whole = Choice {
+        packed: plan.choice.packed / SQUARE_SHARE,
+        ..plan.choice
+    };
+    assert!(
+        plan.takes_dense && !whole.takes_dense(),
+        "{:?}",
+        plan.choice
+    );
+    let sparse = a.sparse_mul(&a);
+    assert_eq!(a.dense_mul(&a, plan.slot, plan.step), sparse);
+    // About every 256 indices: past the crossover even at the share, the sparse product.
+    let a = square(256);
+    let plan = a.plan(&a).expect("packed keys");
+    assert!(!plan.takes_dense, "{:?}", plan.choice);
+    assert_eq!(a.dense_mul(&a, plan.slot, plan.step), a.sparse_mul(&a));
+}

@@ -1877,7 +1877,8 @@ impl<K: Key> Poly<K> {
     /// exponents, and the degree bound leaves no carry between digits), and multiplies the two
     /// integers with `num::mul_int`, `O(L log L)` in their `L` words by the number-theoretic
     /// transform (BIGINT-fast-mul). The dense product is taken when its estimate,
-    /// [`DENSE_COST`] + [`SLOT_COST`] per output slot + `num::mul_cost` of the packed integers, is
+    /// [`DENSE_COST`] + [`SLOT_COST`] per output slot + `num::mul_cost` of the packed integers
+    /// ([`SQUARE_SHARE`] of it for a square squared by transforms), is
     /// at most the sparse product's, `t1 t2` times [`PAIR_COST`] + `num::mul_cost` of the
     /// coefficients ([`Choice`]); the three constants are fitted by `crossover poly-*` (QUESTIONS
     /// A96). The naive choice, `L log2 L` against `t1 t2 w1 w2` with unit constants, took the
@@ -2023,11 +2024,22 @@ impl<K: Key> Poly<K> {
         // (schoolbook, Toom or transform, as `num::mul` takes it) were not counted, so it took
         // the slower method by up to 9.6 times. This estimate costs two `num::mul_cost` calls,
         // `O(log L)` each, beside the `O(t1 + t2)` pass above; measured by `crossover poly-*`.
+        //
+        // A square squared by transforms is estimated at `share` of `num::mul_cost`, as it is
+        // charged above: `SQUARE_SHARE` (2/3) `mul_cost(L, L)`, where a product of two numbers
+        // of `L` words is estimated at the whole `mul_cost(L, L)`. The 2/3 is a transform
+        // count, not a fit: `num::fast::transform_mul` squares with two transforms per prime
+        // (one forward, one inverse) in place of three (TEST-calibration-split-margin,
+        // 813cc94f2, measured 0.52 to 0.56). Estimated at the whole cost, a square near the
+        // crossover took the sparse product where the dense one was cheaper: `crossover
+        // poly-square 256 pair` (POLY-square-choice-cost, 2026-11-14) took it from gap 25, at
+        // up to 1.55 times the dense product's instructions; at the share, from gap 32, at up
+        // to 1.12 times, the rest the error of `PAIR_COST` (68 fits squares best).
         let choice = Choice {
             pairs: ta as f64 * tb as f64,
             pair: mul_cost(words(self), words(o)),
             slots: span as f64,
-            packed: mul_cost(packed(hi_a, lo_a), packed(hi_b, lo_b)),
+            packed: share * mul_cost(packed(hi_a, lo_a), packed(hi_b, lo_b)),
         };
         Some(Plan {
             slot: slot_words,
@@ -2322,7 +2334,8 @@ struct Choice {
     pair: f64,
     /// The dense product's output slots, its span.
     slots: f64,
-    /// The cost of the product of the two packed integers.
+    /// The cost of the product of the two packed integers, [`SQUARE_SHARE`] of it for a square
+    /// squared by transforms.
     packed: f64,
 }
 

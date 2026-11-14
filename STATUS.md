@@ -2335,7 +2335,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
 | PERF-l139-persist-due | impl attempt 1 | 2026-11-14 11:00 | start, worktree wt/perf-l139 from origin/main 10fb070e9; load 34.30 42.93 45.18 |
-| POLY-square-choice-cost | impl attempt 1 | 2026-11-14 10:56 | started; worktree /home/luke/Work/wt/poly-square |
+| POLY-square-choice-cost | merged and pushed (the commit "POLY-square-choice-cost: ..." that marks the row Done); no spec change | 2026-11-14 10:56 | `Poly::plan`'s dense or sparse choice charged a square its whole transform cost while the work charge took `SQUARE_SHARE` (2/3) of it; now both take the share. `crossover poly-square 256 pair` (new, in `all`): sparse from gap 25 at up to 1.547 times the dense product's instructions before, from gap 32 at up to 1.124 now, crossover 34. Calibration ratios 0.66 to 1.05 (floor 0.5). Tests: zed_kernel 311 of 311 (new `poly::tests::a_square_is_chosen_at_its_share`, red on the old choice), l03_09_egraph 36 of 36 and its 15 benchmarks. Follow-up row POLY-square-sparse-half |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-law25-time | running | 2026-11-14 10:54 |  |
 | TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
