@@ -1026,14 +1026,13 @@ fn c26_given_at_once_narrows_in_near_linear_time() {
 }
 
 /// Base churn given as one conjunction: near linear time, as one at a time. Before
-/// ST-churn-at-once 11.1 at 8n by bytes at n = 16 and 10.7 at n = 32: the conjunction the
+/// PERF-l139-family 11.1 at 8n by bytes at n = 16 and 10.7 at n = 32: the conjunction the
 /// paths do not take is narrowed as one node, whose cases project blocks of a few rows each,
 /// a linear number of them, but the hull of each asked O(log k) questions for a side inside a
 /// row of two atoms (`x - y >= 2k + j`) at distance about k from the point (`hull_side`).
 /// Since PERF-l139-family each side is asked first at the real bound of its rows (`real_end`),
-/// and since ST-churn-at-once a side the elimination of the other atoms settles exactly is
-/// read with no question (`exact_side`): 8.1 at 8n. The
-/// answers in this order are checked by [`unbounded_family`].
+/// one question a side: 8.1 at 8n. The answers in this order are checked by
+/// [`unbounded_family`].
 #[test]
 fn churn_given_at_once_narrows_in_near_linear_time() {
     let inputs = scaling::inputs(16, |k| c26(k, true));

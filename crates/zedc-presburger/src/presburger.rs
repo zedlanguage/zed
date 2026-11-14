@@ -17860,9 +17860,7 @@ pub fn hull_sides_asked() -> u64 {
 
 /// The greatest value (`dir` 1) or the least (`dir` -1) of a symbol over a formula, given a
 /// point `m` of it; `None` when there is none. A bound is found by the monotone question "is
-/// there a point with the symbol at least `v`" (or at most). Where `c` is a conjunction of
-/// constraints from which every other atom is eliminated exactly, the rows left give the side
-/// and no question is asked ([`exact_side`]). Where `c`'s constraints with the
+/// there a point with the symbol at least `v`" (or at most). Where `c`'s constraints with the
 /// symbol alone bound that side ([`alone_end`]), the bound lies between the point's value and
 /// that end, and it is searched from both, [`side_within`]: no question of an unbounded side
 /// is asked, and a bound at the end, or a few steps inside it, is found by a few questions
@@ -17887,9 +17885,6 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
     // its questions are answered; where one is refused, the search below is run as before
     // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
     // `x == 2 * e`, `x` in a gap's bounds, read about 20 questions for each side, and now 3).
-    if let Some(side) = exact_side(c, sym, dir) {
-        return Ok(side);
-    }
     // Complexity tradeoff: naive version, the search below from the point and the bound of
     // the symbol alone, O(log d) questions for a side at distance d inside both: about 24
     // questions for each side `(1000 + c) / i` of `hopb` (PERF-l139-family), whose number grows
@@ -18104,50 +18099,6 @@ fn alone_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
         .filter_map(|k| Some((k.lin.terms.get(sym)?.clone(), k.lin.constant.clone(), k.rel)));
     let (lo, hi) = int_bounds(alone)?;
     if dir > 0 { hi } else { lo }
-}
-
-/// The side of `sym` over `c` going `dir` (`None` inside: no bound), found with no question,
-/// when `c` is a constraint or a conjunction of constraints alone, with a point, no atom of
-/// it a product (which the solver may read more tightly than as an atom of its own), and
-/// [`shadow`] eliminates every atom but `sym` exactly over the integers: the rows left are
-/// then the projection of `c`'s integer points on `sym`, and their bound is the side. `None`
-/// otherwise.
-// Complexity tradeoff: naive (as before ST-churn-at-once), the questions of [`hull_side`], each
-// a decision of the whole of `c`, about 234,000 instructions in base churn at any k: one at
-// the real bound ([`real_end`], since PERF-l139-family) or one to find a side unbounded, and
-// before that O(log d) for a side at distance d from the point, 11 to 14 at k = 32 in base
-// churn given at once (`x - y >= 2k + j`, l01_39 `xst::s4`), 11.1 times at 8n by bytes. Used:
-// Fourier-Motzkin elimination with the dark shadow (Pugh, "The Omega test: a fast and
-// practical integer programming algorithm for dependence analysis", Supercomputing 1991),
-// exact over the integers where [`shadow`] does it, so a conjunction it fully eliminates
-// gives its side with no question; [`shadow`] makes no more rows than it takes out, O(m log m)
-// for m terms, below the cost of one question on the same constraints. Measured on base
-// churn at once at n = 16 and 128: 1.68e9 and 13.6e9 instructions, 321 and 2,607 MB with the
-// one question at the real bound, 1.05e9 and 8.50e9, 204 and 1,655 MB with this first (8.1
-// times at 8n either way, 37% less of each).
-fn exact_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
-    let rows: Vec<Con> = match c {
-        Formula::Con(k) => vec![k.clone()],
-        Formula::And(fs) => (fs.iter())
-            .map(|f| match f {
-                Formula::Con(k) => Some(k.clone()),
-                _ => None,
-            })
-            .collect::<Option<_>>()?,
-        _ => return None,
-    };
-    if (rows.iter()).any(|k| (k.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)))) {
-        return None;
-    }
-    let out = shadow(&rows, &|a| a == sym, true)?;
-    if !(out.iter()).all(|k| k.lin.terms.keys().all(|a| a == sym)) {
-        return None;
-    }
-    let alone = (out.iter())
-        .filter(|k| k.lin.terms.len() == 1)
-        .map(|k| (k.lin.terms[sym].clone(), k.lin.constant.clone(), k.rel));
-    let (lo, hi) = int_bounds(alone)?;
-    Some(if dir > 0 { hi } else { lo })
 }
 
 /// The hull of every atom of `cons`, constraints with a point `m`, when each is a difference
@@ -22993,13 +22944,12 @@ pub(super) mod tests {
         }
     }
 
-    /// The sides [`hull_side`] finds by elimination alone ([`exact_side`]) are the sides: the
-    /// shapes of base churn given at once (ST-churn-at-once), a side inside a row of two atoms
-    /// with the point far from it, and the corner cases: an atom no row names (no bound either
-    /// way), an equality whose coefficient is not 1 (`2·x == y`), a disjunction and a product
-    /// atom (neither settled by elimination: the questions find the side).
+    /// The sides [`hull_side`] finds are the sides: the shapes of base churn given at once
+    /// (ST-churn-at-once), a side inside a row of two atoms with the point far from it, and the
+    /// corner cases: an atom no row names (no bound either way), an equality whose coefficient
+    /// is not 1 (`2·x == y`), a disjunction and a product atom.
     #[test]
-    fn sides_found_by_elimination_are_the_sides() {
+    fn hull_sides_of_corner_cases_are_the_sides() {
         let con =
             |t: &[(&str, i128)], k: i128| Formula::Con(Con::ge(&lin(t, k), &Lin::constant(0)));
         let eq = |t: &[(&str, i128)], k: i128| {
@@ -23042,38 +22992,32 @@ pub(super) mod tests {
             )),
             con(&[("x", -1)], 7),
         ]);
-        let cases: [(&Formula, &str, i64, Option<i128>, bool); 12] = [
-            (&churn, "q", -1, Some(52), true),
-            (&churn, "q", 1, None, true),
-            (&churn, "p", 1, None, true),
-            (&sum, "s", -1, Some(0), true),
-            (&sum, "s", 1, None, true),
-            (&sum, "z", 1, None, true),
-            (&twice, "x", -1, Some(2), true),
-            (&twice, "x", 1, Some(4), true),
-            (&either, "x", -1, Some(40), false),
-            (&either, "y", 1, Some(60), false),
-            (&product, "x", 1, Some(7), false),
-            (&product, "y", 1, None, false),
+        let cases: [(&Formula, &str, i64, Option<i128>); 12] = [
+            (&churn, "q", -1, Some(52)),
+            (&churn, "q", 1, None),
+            (&churn, "p", 1, None),
+            (&sum, "s", -1, Some(0)),
+            (&sum, "s", 1, None),
+            (&sum, "z", 1, None),
+            (&twice, "x", -1, Some(2)),
+            (&twice, "x", 1, Some(4)),
+            (&either, "x", -1, Some(40)),
+            (&either, "y", 1, Some(60)),
+            (&product, "x", 1, Some(7)),
+            (&product, "y", 1, None),
         ];
-        for (f, n, dir, want, exact) in cases {
+        for (f, n, dir, want) in cases {
             let a = sym(n);
             let model = satisfiable_inner(f).unwrap().expect("the case has a point");
             let side = hull_side(f, &a, &model, dir).unwrap();
             assert_eq!(side, want.map(Int::from), "{f}: {n} going {dir}");
             is_side(f, &a, dir, &side);
-            assert_eq!(
-                exact_side(f, &a, dir).is_some(),
-                exact,
-                "{f}: {n} going {dir}"
-            );
         }
     }
 
     /// The sides [`hull_side`] finds are the sides, on random conjunctions of up to 6 rows over
     /// 4 names with coefficients from -3 to 3, some with a disjunction of two conjunctions of
-    /// such rows; and many are found by elimination alone ([`exact_side`]), so that path is
-    /// compared, not passed by.
+    /// such rows.
     #[test]
     fn hull_sides_on_random_conjunctions_are_the_sides() {
         let names = ["a", "b", "c", "d"];
@@ -23092,7 +23036,7 @@ pub(super) mod tests {
                 rel,
             })
         };
-        let (mut sides, mut exact) = (0, 0);
+        let mut sides = 0;
         for _ in 0..600 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
@@ -23112,11 +23056,10 @@ pub(super) mod tests {
                     };
                     is_side(&whole, &a, dir, &side);
                     sides += 1;
-                    exact += usize::from(exact_side(&whole, &a, dir).is_some());
                 }
             }
         }
-        assert!(sides > 1000 && exact > sides / 4, "{exact} of {sides}");
+        assert!(sides > 1000, "{sides} sides");
     }
 
     /// Calls `f` with each order of `0..n`, by Heap's method.
