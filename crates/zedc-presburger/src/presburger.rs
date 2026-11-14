@@ -11345,6 +11345,33 @@ impl Parts {
                     at.yes.insert(k);
                 }
                 match &mut g {
+                    // A constraint with no atom, such as `0 == 0` or `-1 >= 0` (the negation
+                    // of `0 == 0`, from a comparison of two equal sums), is decided here: one
+                    // that holds is left out, and one that does not makes the part false, so
+                    // that its disjunct is left out of the disjunction that holds it. Kept as
+                    // a constraint, it was read only where the part's own constraints are
+                    // read, and not by the bounds that [`narrow_or`] reads one level down, so
+                    // a disjunct false by it inside a disjunction kept whole as one disjunct
+                    // of another (`Formula::or_keeping`) was kept, and the search was refused
+                    // on a formula with no point (PRESBURGER-or-if-disjuncts-refusal). Costs
+                    // O(1) per constraint.
+                    Formula::Con(c) if c.lin.terms.is_empty() => {
+                        let holds = match c.rel {
+                            Rel::Ge => !c.lin.constant.is_negative(),
+                            Rel::Eq => c.lin.constant.is_zero(),
+                        };
+                        if !holds {
+                            let mut p = Parts::default();
+                            p.ors.push(Vec::new());
+                            return Frame {
+                                p,
+                                todo: Vec::new(),
+                                arms: None,
+                                id,
+                                at,
+                            };
+                        }
+                    }
                     Formula::Con(c) => p.cons.push(Con::take(c)),
                     // Reversed, so the conjuncts are added in order.
                     Formula::And(_) => {

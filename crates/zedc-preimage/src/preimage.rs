@@ -14017,7 +14017,7 @@ mod tests {
     /// stays exact as `||` (FAIL-or-ifs-no-longer-exact-seed) except where the `||` box is wider, a
     /// projection that is not the exact set (FAIL-or-if-projection-not-exact, a wrong answer
     /// fixed by PRES-switchover-not-race), or where the solver refuses the `||` shape's question
-    /// (PRESBURGER-or-if-disjuncts-refusal); each is named apart from "no longer exact".
+    /// (FAIL-or-if-tie-refusal); each is named apart from "no longer exact".
     fn holds_where_it_held_as_ifs(
         t: &Term,
         preimages: bool,
@@ -14085,10 +14085,12 @@ mod tests {
             // FAIL-or-if-projection-not-exact holds them, fixed by the exact projection of
             // PRES-switchover-not-race; then this class goes. A preimage whose question of
             // exactness the solver refuses for the `||` shape and decides for the `if` shape is
-            // marked necessary (refusal `Disjuncts`: the search through the disjunctions found
-            // no point and removed none), as the doc above allows; it is counted apart, and the
-            // refusal has its own row (PRESBURGER-or-if-disjuncts-refusal). A preimage with the
-            // same box that is no longer exact is the failure this test looks for.
+            // marked necessary, as the doc above allows; it is counted apart. In 2500 fresh seeds
+            // each such refusal is `Unordered`: the `||` shape is symmetric in `x` and `y`, so the
+            // coloring ties them, and that refusal has its own row (FAIL-or-if-tie-refusal). The
+            // `Disjuncts` refusal of seed 10347845748276606162 came from a constraint with no atom
+            // and is fixed (PRESBURGER-or-if-disjuncts-refusal). A preimage with the same box that
+            // is no longer exact is the failure this test looks for.
             let refused_now = pn.refusal.is_some() && po.refusal.is_none();
             let wider = !refused_now && looser && !tighter;
             differ.extend(
@@ -15476,6 +15478,24 @@ mod tests {
             let t = program(&mut g);
             let (_, _, how) = holds_where_it_held_as_ifs(&t, round % 4 == 0);
             assert!(!how.contains(&"no longer exact"), "round {round}: {t:?}");
+        }
+    }
+
+    /// The rounds of seed 10347845748276606162 of [`or_ifs_hold_where_they_held_as_ifs`] give
+    /// the same preimages in both readings (PRESBURGER-or-if-disjuncts-refusal). In round 0, for
+    /// `false`, the `||` reading was refused (`Disjuncts`) where the `if` reading was exact with
+    /// the same box: the comparison `v + 2 != 2 + v` gave `0 == 0`, and its negation `-1 >= 0`
+    /// left a disjunct with no point inside a disjunction kept whole as one disjunct of another,
+    /// where no bound of the disjunction above it read it (`l01_38_presburger::ground`).
+    #[test]
+    fn or_ifs_of_seed_10347845748276606162_give_what_they_gave_as_ifs() {
+        let mut g = Gen::new(10347845748276606162, false);
+        g.and_ifs = true;
+        g.or_ifs = true;
+        for round in 0..OR_IF_ROUNDS {
+            let t = program(&mut g);
+            let (_, _, how) = holds_where_it_held_as_ifs(&t, round % 4 == 0);
+            assert!(how.is_empty(), "round {round}: {how:?} {t:?}");
         }
     }
 
