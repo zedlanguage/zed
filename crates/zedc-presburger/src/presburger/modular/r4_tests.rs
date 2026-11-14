@@ -1,5 +1,6 @@
 use super::*;
 use crate::scaling;
+mod bench;
 
 #[test]
 fn pncx_affine_alias_names_match() {
@@ -124,41 +125,6 @@ fn pure_constraints(n: usize, modular: bool) -> Formula {
 }
 
 #[test]
-fn pncx_pure_bounds_scale() {
-    let inputs = scaling::inputs(64, |n| pure_constraints(n, false));
-    scaling::check_order("pure bounds with separate holes", 64, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
-}
-
-#[test]
-fn pncx_pure_residues_scale() {
-    let inputs = scaling::inputs(64, |n| pure_constraints(n, true));
-    scaling::check_order("pure residue constraints with separate holes", 64, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
-}
-
-#[test]
-fn pncx_domain_membership_scale() {
-    let inputs = scaling::inputs(64, |n| {
-        Domain::from_pieces(
-            (0..n)
-                .map(|i| (Some(Int::from(3 * i as i64)), Some(Int::from(3 * i as i64))))
-                .collect(),
-        )
-    });
-    scaling::check_instructions_only("membership in disjoint bound intervals", 64, 1, |n| {
-        for i in 0..n {
-            let yes = Some(Int::from(3 * i as i64));
-            let no = Some(Int::from(3 * i as i64 + 1));
-            assert!(inputs[&n].contains_span(&yes, &yes));
-            assert!(!inputs[&n].contains_span(&no, &no));
-        }
-    });
-}
-
-#[test]
 fn pncx_domain_membership_matches_scan() {
     let domain = Domain::from_pieces(vec![
         (None, Some(Int::from(-3))),
@@ -182,14 +148,6 @@ fn pncx_domain_membership_matches_scan() {
             assert_eq!(domain.contains_span(lo, hi), expected);
         }
     }
-}
-
-#[test]
-fn pncx_kept_prefix_scale() {
-    let inputs = scaling::inputs(64, prefix_formula);
-    scaling::check_order("kept conjunction prefixes", 64, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
 }
 
 #[test]
@@ -422,15 +380,6 @@ fn connected_color_system(
 }
 
 #[test]
-fn pncx_connected_colors_scale() {
-    let inputs = scaling::inputs(32, connected_color_system);
-    scaling::check_order("color connected triangles by removal order", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
-}
-
-#[test]
 fn pncx_coloring_small_graphs_match_enumeration() {
     let (mut info, mut allowed, _) = color_system(2);
     info.truncate(5);
@@ -550,20 +499,6 @@ fn pncx_coloring_relabelings() {
 }
 
 #[test]
-fn pncx_independent_components_scale() {
-    let inputs = scaling::inputs(32, color_system);
-    scaling::check_order("independent residue components", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        // Keep the measured assertion weak so the old path's slower
-        // Undecided result is caught by the cost check itself.
-        assert!(!matches!(
-            solve_coprime_system(&None, &None, info, allowed.clone(), clauses.clone(), true),
-            RegimeOut::Empty
-        ));
-    });
-}
-
-#[test]
 fn pncx_independent_components_keep_their_witnesses() {
     for n in 1..20 {
         let (info, allowed, clauses) = color_system(n);
@@ -628,19 +563,6 @@ fn pncx_lower_witness_enumeration() {
 }
 
 #[test]
-fn pncx_lower_witness_scale() {
-    let inputs = scaling::inputs(64, |n| {
-        (2..n + 2)
-            .map(|m| (Int::from(m), vec![(Int::ONE, Int::from(m - 1))]))
-            .collect::<BTreeMap<_, _>>()
-    });
-    // This routine allocates no bytes on word-sized inputs.
-    scaling::check_instructions_only("one candidate from residue lower bounds", 64, 1, |n| {
-        std::hint::black_box(lower_witness(&Int::from(1000003), &None, &inputs[&n], &[]));
-    });
-}
-
-#[test]
 fn pncx_bound_merge_enumeration() {
     for n in 0..40 {
         let ds = holes(n);
@@ -657,60 +579,106 @@ fn pncx_bound_merge_enumeration() {
     }
 }
 
-#[test]
-fn pncx_bound_merge_formula_scale() {
-    fn formula(n: usize) -> Formula {
-        let x = Lin::atom(Atom::Sym("x".into()));
-        let mut fs = vec![Formula::Con(Con::ge(&x, &Lin::constant(1)))];
-        let mut residues = Vec::new();
-        for (i, m) in [3, 5].into_iter().enumerate() {
-            let q = Lin::atom(Atom::Aux(2 * i as u32));
-            let r = Lin::atom(Atom::Aux(2 * i as u32 + 1));
-            fs.push(Formula::Con(Con::eq(&x, &q.times(m).plus(&r))));
-            fs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
-            fs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
-            residues.push(Formula::Con(Con::eq(&r, &Lin::constant(0))));
-        }
-        for i in 0..n {
-            let mut cl = residues.clone();
-            cl.push(Formula::negate(Formula::Con(Con::eq(
-                &x,
-                &Lin::constant(3 * i + 1),
-            ))));
-            fs.push(Formula::or(cl));
-        }
-        Formula::and(fs)
+/// The formula of the bound-merging benchmark: `x >= 1`, `x mod 3` and `x mod 5` named by
+/// remainders, and `n` clauses each allowing either remainder to be 0 or `x != 3i + 1`.
+fn bound_merge_formula(n: usize) -> Formula {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let mut fs = vec![Formula::Con(Con::ge(&x, &Lin::constant(1)))];
+    let mut residues = Vec::new();
+    for (i, m) in [3, 5].into_iter().enumerate() {
+        let q = Lin::atom(Atom::Aux(2 * i as u32));
+        let r = Lin::atom(Atom::Aux(2 * i as u32 + 1));
+        fs.push(Formula::Con(Con::eq(&x, &q.times(m).plus(&r))));
+        fs.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+        fs.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r)));
+        residues.push(Formula::Con(Con::eq(&r, &Lin::constant(0))));
     }
-    let inputs = scaling::inputs(64, formula);
-    scaling::check_order("bound merging in a modular formula", 64, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
+    for i in 0..n {
+        let mut cl = residues.clone();
+        cl.push(Formula::negate(Formula::Con(Con::eq(
+            &x,
+            &Lin::constant(3 * i + 1),
+        ))));
+        fs.push(Formula::or(cl));
+    }
+    Formula::and(fs)
 }
 
+/// The input of the bound-partition benchmark: `n` disjoint global pieces `[10i, 10i + 4]` and
+/// a clause `x >= 10i + 2` for each, which cuts every piece in two.
+fn bound_partition_input(n: usize) -> (Domain, Vec<FlatClause>) {
+    let global = Domain::from_pieces(
+        (0..n)
+            .map(|i| {
+                let x = Int::from(10 * i as i64);
+                (Some(x.clone()), Some(&x + &Int::from(4)))
+            })
+            .collect(),
+    );
+    let clauses = (0..n)
+        .map(|i| FlatClause {
+            bounds: Domain::ge(Int::from(10 * i as i64 + 2)),
+            mods: BTreeMap::new(),
+        })
+        .collect();
+    (global, clauses)
+}
+
+/// The small instances of the benchmarks in `bench.rs`, with the answers they assert, and the
+/// answers of the two routines that the benchmarks only time: membership in disjoint bound
+/// intervals, and the first `x >= 1000003` that no modulus `2..n+2` divides.
 #[test]
-fn pncx_bound_partition_scale() {
-    fn input(n: usize) -> (Domain, Vec<FlatClause>) {
-        let global = Domain::from_pieces(
+fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+    for n in 1..=6 {
+        for residues in [false, true] {
+            let f = pure_constraints(n, residues);
+            assert!(matches!(solve_modular(&f, false), Some(Some(_))), "{n}");
+        }
+        assert!(
+            matches!(solve_modular(&prefix_formula(n), false), Some(Some(_))),
+            "{n}"
+        );
+        let f = bound_merge_formula(n);
+        assert!(matches!(solve_modular(&f, false), Some(Some(_))), "{n}");
+        let (info, allowed, clauses) = connected_color_system(n);
+        assert!(
+            graph_coloring_witness(&info, &allowed, &clauses).is_some(),
+            "{n}"
+        );
+        let (info, allowed, clauses) = color_system(n);
+        assert!(
+            !matches!(
+                solve_coprime_system(&None, &None, &info, allowed, clauses, true),
+                RegimeOut::Empty
+            ),
+            "{n}"
+        );
+        let domain = Domain::from_pieces(
             (0..n)
-                .map(|i| {
-                    let x = Int::from(10 * i as i64);
-                    (Some(x.clone()), Some(&x + &Int::from(4)))
-                })
+                .map(|i| (Some(Int::from(3 * i as i64)), Some(Int::from(3 * i as i64))))
                 .collect(),
         );
-        let clauses = (0..n)
-            .map(|i| FlatClause {
-                bounds: Domain::ge(Int::from(10 * i as i64 + 2)),
-                mods: BTreeMap::new(),
-            })
-            .collect();
-        (global, clauses)
+        for i in 0..n {
+            let yes = Some(Int::from(3 * i as i64));
+            let no = Some(Int::from(3 * i as i64 + 1));
+            assert!(domain.contains_span(&yes, &yes), "{n} {i}");
+            assert!(!domain.contains_span(&no, &no), "{n} {i}");
+        }
+        let units = (2..n + 2)
+            .map(|m| (Int::from(m), vec![(Int::ONE, Int::from(m - 1))]))
+            .collect::<BTreeMap<_, _>>();
+        let lo = 1_000_003usize;
+        let first = (lo..).find(|x| (2..n + 2).all(|m| x % m != 0));
+        assert_eq!(
+            lower_witness(&Int::from(lo), &None, &units, &[]),
+            first.map(Int::from),
+            "{n}"
+        );
+        let (global, clauses) = bound_partition_input(n);
+        assert_eq!(
+            partition_into_regimes(&global, &clauses).len(),
+            2 * n,
+            "{n}"
+        );
     }
-    let inputs = scaling::inputs(64, input);
-    scaling::check_order("partition disjoint global bounds", 64, 1, |n| {
-        let (global, clauses) = &inputs[&n];
-        let out = partition_into_regimes(global, clauses);
-        assert_eq!(out.len(), 2 * n);
-        std::hint::black_box(out);
-    });
 }

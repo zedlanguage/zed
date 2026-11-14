@@ -270,7 +270,7 @@ fn exclusive_ors_scale() {
 
 #[test]
 fn ordering_types_whose_digests_tie_at_every_depth_scales() {
-    // Small instances: `types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack`.
+    // Small instances: `types_whose_digests_tie_at_every_depth_are_ordered`.
     // One step per level: the two chains are equal, so every level is read.
     let n = 100_000;
     let built: BTreeMap<usize, (Type, Type)> = [n, scaling::FACTOR * n]
@@ -345,7 +345,7 @@ fn the_walks_over_parts_scale() {
 
 #[test]
 fn the_connectives_on_parts_scale_by_depth() {
-    // Small instances: `the_connectives_on_parts_nested_deep_run_on_the_default_stack`.
+    // Small instances: `the_connectives_on_parts_hold_at_small_depths`.
     // Inputs Θ(m) deep, built before any run is timed; each connective meets each node or
     // expression a constant number of times.
     let n = 1 << 13;
@@ -451,4 +451,59 @@ fn a_long_meet_joined_to_short_meets_scales() {
             assert!(matches!(long.zip(s, Op::Or), Part::Expr(_)));
         }
     });
+}
+
+/// How deep the chains of tied digests go: the order reads them that many levels down. It was
+/// a recursion, which overflowed a 2 MiB stack at 5,761 levels in a debug build (measured on
+/// e3795900d, before SHORT-stack-l01_22); it is a loop with a stack of its own, here half as
+/// deep again.
+const TIED_DEPTH: usize = 9_000;
+
+#[test]
+fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
+    // Small instances: `types_whose_digests_tie_at_every_depth_are_ordered`. A depth that
+    // overflowed a small stack (author P178).
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| tied_chains_are_ordered(TIED_DEPTH))
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// The walks on expressions and diagrams nested this deep, on a 2 MiB stack. Of the walks the
+/// test runs, the recursive ones before T2-types-rest part 3 overflowed that stack at 13,085 to
+/// 32,812 levels in a debug build (measured on 8e4fdf932); half as deep again as the deepest.
+const DEEP: usize = 50_000;
+
+#[test]
+fn the_walks_over_parts_nested_deep_run_on_a_small_stack() {
+    // Small instances: `the_walks_over_parts_hold_at_small_depths`. Each walk was a recursion,
+    // which overflowed this stack (see the negative control in STATUS.md, T2-types-rest part
+    // 3); each is now a loop with a stack of its own.
+    std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(|| the_walks_over_parts_hold(DEEP))
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+/// How deep the lists of the depth test go: the diagrams' `apply` and `flip`, as
+/// recursions, overflowed a 2 MiB stack at 13,085 and 14,647 levels in a debug build
+/// (measured on faf792d10, before T2-types-rest-4), and the 8 MiB stack of a main thread at
+/// 60,000. Half as deep again, so that the old code overflows here with room to spare.
+const DIAGRAM_DEPTH: usize = 22_000;
+
+/// How deep the choices of the depth test go: `Part::not` and `Part::zip`, as a mutual
+/// recursion through `choice`, `choice_of`, `same_as_not` and `choose`, overflowed a 2 MiB
+/// stack at 1,684 levels (measured as above), and the 8 MiB stack at 10,000; half as deep again.
+const CHOICE_DEPTH: usize = 2_600;
+
+#[test]
+fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
+    // Small instances: `the_connectives_on_parts_hold_at_small_depths`. On the test thread's
+    // own stack (2 MiB unless RUST_MIN_STACK says otherwise), which the depths above
+    // overflowed in the old recursions.
+    the_connectives_on_parts_hold(DIAGRAM_DEPTH, CHOICE_DEPTH);
 }

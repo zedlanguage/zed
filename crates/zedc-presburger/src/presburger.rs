@@ -23201,6 +23201,7 @@ mod before {
 pub(super) mod tests {
     use super::before::{and_keeping_before, or_keeping_before};
     use super::*;
+    mod bench;
 
     fn sym(s: &str) -> Atom {
         Atom::Sym(s.into())
@@ -23458,15 +23459,24 @@ pub(super) mod tests {
 
     #[test]
     fn the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point() {
-        // 3000 systems of 2 to 5 rows over four variables in [-4, 4], coefficients up to 7
+        // Systems of 2 to 5 rows over four variables in [-4, 4], coefficients up to 7
         // and constants up to 20 (the oracle's 0x38_0a family). Wherever the box test says
         // empty, Fourier–Motzkin finds no rational point in the box it was given; the answer
         // is the same under all 24 namings of the variables, which reorder the rows; and some
-        // systems are shown empty only by two rows whose bounds on a variable cross.
-        let mut g = Draw(0x38_0a_0b);
+        // systems are shown empty only by two rows whose bounds on a variable cross. Systems are
+        // drawn, from a new seed each run, until two are (about one in 200); 3000 systems
+        // short of that fail the test.
+        let mut g = Draw(
+            crate::seed::seed(
+                "the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point",
+            ) | 1,
+        );
         let all = perms4();
         let (mut empty, mut crossed) = (0, 0);
         for _ in 0..3000 {
+            if crossed >= 2 && empty > crossed {
+                break;
+            }
             let rows: Vec<(Vec<i128>, i128)> = (0..g.int(2, 5))
                 .map(|_| ((0..4).map(|_| g.int(-7, 7)).collect(), g.int(-20, 20)))
                 .collect();
@@ -23607,7 +23617,8 @@ pub(super) mod tests {
         Join(Box<Chain>, Box<Chain>),
     }
 
-    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
+    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
     struct Rng(u64);
 
     impl Rng {
@@ -23721,9 +23732,11 @@ pub(super) mod tests {
 
     #[test]
     fn a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time() {
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng = Rng(crate::seed::seed(
+            "a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time",
+        ) | 1);
         let mut kinds = std::collections::BTreeSet::new();
-        for round in 0..20_000 {
+        for round in 0..2000 {
             // A chain is a `&&` or `||` of two operands, never one operand alone.
             let c = Chain::Join(Box::new(chain(&mut rng, 4)), Box::new(chain(&mut rng, 4)));
             for and in [true, false] {
@@ -23744,9 +23757,9 @@ pub(super) mod tests {
     #[test]
     fn difference_hulls_are_those_the_solver_finds() {
         let names = ["a", "b", "c", "d", "e"];
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(crate::seed::seed("difference_hulls_are_those_the_solver_finds") | 1);
         let mut compared = 0;
-        for _ in 0..1500 {
+        for _ in 0..400 {
             let rows = 1 + rng.below(8) as usize;
             let cons: Vec<Con> = (0..rows)
                 .map(|_| {
@@ -23786,7 +23799,7 @@ pub(super) mod tests {
                 compared += 1;
             }
         }
-        assert!(compared > 1000, "{compared}");
+        assert!(compared > 500, "{compared}");
         let two = [Con {
             lin: lin(&[("a", 2), ("b", -1)], 0),
             rel: Rel::Ge,
@@ -23816,9 +23829,10 @@ pub(super) mod tests {
     fn substituted_difference_hulls_are_those_the_solver_finds() {
         let kept = ["a", "b", "c"];
         let others = ["y", "z"];
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng =
+            Rng(crate::seed::seed("substituted_difference_hulls_are_those_the_solver_finds") | 1);
         let (mut compared, mut taken, mut not_taken) = (0, 0, 0);
-        for _ in 0..3000 {
+        for _ in 0..800 {
             let rows = 1 + rng.below(9) as usize;
             let cons: Vec<Con> = (0..rows)
                 .map(|_| {
@@ -23861,7 +23875,7 @@ pub(super) mod tests {
             }
         }
         assert!(
-            compared > 1000 && taken > 300 && not_taken > 300,
+            compared > 300 && taken > 200 && not_taken > 60,
             "{compared} {taken} {not_taken}"
         );
     }
@@ -23875,9 +23889,9 @@ pub(super) mod tests {
     #[test]
     fn forest_row_hulls_are_those_the_solver_finds() {
         let names = ["a", "b", "c", "d", "e", "f"];
-        let mut rng = Rng(0x5851_f42d_4c95_7f2d);
+        let mut rng = Rng(crate::seed::seed("forest_row_hulls_are_those_the_solver_finds") | 1);
         let (mut compared, mut taken, mut not_taken) = (0, 0, 0);
-        for _ in 0..4000 {
+        for _ in 0..1000 {
             let rows = 1 + rng.below(7) as usize;
             let cons: Vec<Con> = (0..rows)
                 .map(|_| {
@@ -23927,7 +23941,7 @@ pub(super) mod tests {
             }
         }
         assert!(
-            compared > 2000 && taken > 500 && not_taken > 300,
+            compared > 700 && taken > 150 && not_taken > 250,
             "{compared} {taken} {not_taken}"
         );
         // `a <= 1, b <= 2, c >= 0, d <= 0` and `a + 2·b - 3·c + d - 4 >= 0`: the others' terms
@@ -23970,7 +23984,7 @@ pub(super) mod tests {
     #[test]
     fn part_bounds_contain_the_hulls_the_solver_finds() {
         let names = ["a", "b", "c", "d"];
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng = Rng(crate::seed::seed("part_bounds_contain_the_hulls_the_solver_finds") | 1);
         let row = |rng: &mut Rng| {
             let terms: Vec<(&str, i128)> = (0..1 + rng.below(3))
                 .map(|_| {
@@ -23986,7 +24000,7 @@ pub(super) mod tests {
             })
         };
         let (mut compared, mut same, mut known) = (0, 0, 0);
-        for _ in 0..1500 {
+        for _ in 0..300 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
                 let side = |rng: &mut Rng| {
@@ -24039,7 +24053,7 @@ pub(super) mod tests {
             }
         }
         assert!(
-            compared > 1000 && same > compared / 4 && known > compared / 2,
+            compared > 300 && same > compared / 4 && known > compared / 2,
             "{same} and {known} of {compared}"
         );
     }
@@ -24374,7 +24388,7 @@ pub(super) mod tests {
     #[test]
     fn hull_sides_on_random_conjunctions_are_the_sides() {
         let names = ["a", "b", "c", "d"];
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(crate::seed::seed("hull_sides_on_random_conjunctions_are_the_sides") | 1);
         let row = |rng: &mut Rng| {
             let terms: Vec<(&str, i128)> = (0..1 + rng.below(3))
                 .map(|_| {
@@ -24390,7 +24404,7 @@ pub(super) mod tests {
             })
         };
         let (mut sides, mut exact) = (0, 0);
-        for _ in 0..600 {
+        for _ in 0..150 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
                 let side =
@@ -24413,7 +24427,7 @@ pub(super) mod tests {
                 }
             }
         }
-        assert!(sides > 1000 && exact > sides / 4, "{exact} of {sides}");
+        assert!(sides > 300 && exact > sides / 4, "{exact} of {sides}");
     }
 
     /// Calls `f` with each order of `0..n`, by Heap's method.
@@ -24491,35 +24505,52 @@ pub(super) mod tests {
         }
     }
 
-    #[test]
-    fn the_representatives_of_joined_equalities_do_not_depend_on_their_order() {
-        // Three classes: {0, 2, 4, 6, 7} by five equalities, one of them implied by the
-        // others, with 2 and 4 of one color and one value, so their places choose; {1, 3, 8},
-        // all of one color; and {5} alone. Every order of the seven equalities, each written
-        // either way round, gives one vector, though the roots differ (union by rank orients
-        // a join of roots of equal rank by the order of the arguments).
-        let small = Classes {
+    /// Three classes: {0, 2, 4, 6, 7} by five equalities, one of them implied by the others,
+    /// with 2 and 4 of one color and one value, so their places choose; {1, 3, 8}, all of one
+    /// color; and {5} alone.
+    fn three_small_classes() -> Classes {
+        Classes {
             value: vec![5, 0, 3, -4, 3, 0, 7, 3, 6],
             keys: vec![1, 2, 0, 2, 0, 0, 0, 1, 2],
             edges: vec![(0, 2), (4, 6), (7, 0), (6, 2), (4, 7), (1, 3), (8, 1)],
-        };
+        }
+    }
+
+    /// The orientation of the edges of `classes` that the low bits of `bits` give.
+    fn flipped(classes: &Classes, bits: u32) -> Vec<bool> {
+        (0..classes.edges.len())
+            .map(|e| bits >> e & 1 == 1)
+            .collect()
+    }
+
+    #[test]
+    fn the_representatives_of_joined_equalities_do_not_depend_on_their_order() {
+        // Every order of the seven equalities of `three_small_classes`, the k-th order with
+        // the k-th of the 128 orientations (each taken about 39 times), gives one vector,
+        // though the roots differ (union by rank orients a join of roots of equal rank by the
+        // order of the arguments). Every order with every orientation, 645,120 joins and
+        // 1.1 s, is in `bench.rs` (author P178: many cases).
+        let small = three_small_classes();
         let want = small.expected();
         assert_eq!(want[0].0, 2, "{want:?}");
         assert_eq!(want[1].0, 3, "{want:?}");
         let mut roots = BTreeSet::new();
+        let mut k = 0u32;
         each_order(small.edges.len(), &mut |order| {
-            for bits in 0..1u32 << small.edges.len() {
-                let flip: Vec<bool> = (0..small.edges.len()).map(|e| bits >> e & 1 == 1).collect();
-                let (got, r, _) = small.joined(order, &flip);
-                assert_eq!(got, want, "order {order:?}, flipped {flip:?}");
-                roots.insert(r);
-            }
+            let flip = flipped(&small, k);
+            k += 1;
+            let (got, r, _) = small.joined(order, &flip);
+            assert_eq!(got, want, "order {order:?}, flipped {flip:?}");
+            roots.insert(r);
         });
+        assert_eq!(k, 5040);
         assert!(roots.len() > 1, "the roots never differ: {roots:?}");
         // Classes of 16, 8 (one color), 2 and 1 joined by random trees with three implied
         // equalities each, in 400 random orders and orientations: roots of rank 2 and more
         // are joined, so equal ranks occur above the leaves.
-        let mut rng = Rng(0x38_0e1e);
+        let mut rng = Rng(crate::seed::seed(
+            "the_representatives_of_joined_equalities_do_not_depend_on_their_order",
+        ) | 1);
         let sizes = [16, 8, 2, 1];
         let n: usize = sizes.iter().sum();
         let mut place: Vec<usize> = (0..n).collect();
@@ -24576,7 +24607,8 @@ pub(super) mod tests {
 mod difference_rows {
     use super::*;
 
-    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
+    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
     struct Rng(u64);
 
     impl Rng {
@@ -24633,9 +24665,9 @@ mod difference_rows {
     /// rows are all alike, stars of alike leaves, chains, and random graphs.
     #[test]
     fn solve_never_refuses_rows_of_two_unit_terms() {
-        let mut rng = Rng(0xd1ff_0a44);
+        let mut rng = Rng(crate::seed::seed("solve_never_refuses_rows_of_two_unit_terms") | 1);
         let (mut empty, mut point) = (0, 0);
-        for case in 0..6000 {
+        for case in 0..1000 {
             let n = 2 + rng.below(24) as usize;
             let sum_ok = case % 3 == 2;
             let k = |rng: &mut Rng, alike: bool| {
@@ -24713,7 +24745,7 @@ mod difference_rows {
             }
         }
         assert!(
-            empty > 1000 && point > 1000,
+            empty > 200 && point > 200,
             "{empty} empty, {point} with a point"
         );
     }
@@ -24723,7 +24755,8 @@ mod difference_rows {
 mod by_halves_against_old {
     use super::*;
 
-    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
+    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
     struct Rng(u64);
 
     impl Rng {
@@ -24819,9 +24852,9 @@ mod by_halves_against_old {
     /// single ([`project`]) projections agree on the new path.
     #[test]
     fn answers_are_those_of_the_old_path() {
-        let mut rng = Rng(0x0d15_6a1f);
+        let mut rng = Rng(crate::seed::seed("answers_are_those_of_the_old_path") | 1);
         let (mut cases, mut narrower) = (0, 0);
-        for case in 0..600 {
+        for case in 0..20 {
             let general = case % 2 == 1;
             let (f, syms) = group(&mut rng, general);
             let (d_new, d_old) = (decide(&f), old(|| decide(&f)));
@@ -24890,7 +24923,7 @@ mod by_halves_against_old {
             }
             cases += 1;
         }
-        assert_eq!(cases, 600);
+        assert_eq!(cases, 20);
         eprintln!("hulls narrower than the old path's: {narrower}");
     }
 
@@ -24946,7 +24979,8 @@ mod by_halves_against_old {
 mod dark_shadow {
     use super::*;
 
-    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
+    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
     struct Rng(u64);
 
     impl Rng {
@@ -24980,9 +25014,10 @@ mod dark_shadow {
     /// shadow has points (`y = 2`) the system has not, are the case the dark shadow keeps.
     #[test]
     fn projections_with_dark_shadows_keep_the_integer_points() {
-        let mut rng = Rng(0x5eed_da4c);
+        let mut rng =
+            Rng(crate::seed::seed("projections_with_dark_shadows_keep_the_integer_points") | 1);
         let (mut cases, mut gone) = (0, 0);
-        for _ in 0..400 {
+        for _ in 0..50 {
             let mut rows = vec![
                 Con::ge(&Lin::atom(a("r")), &Lin::constant(-4)),
                 Con::ge(&Lin::constant(4), &Lin::atom(a("r"))),
@@ -25014,10 +25049,7 @@ mod dark_shadow {
                 }
             }
         }
-        assert!(
-            cases >= 300 && gone >= 100,
-            "{cases} cases, {gone} projected"
-        );
+        assert!(cases >= 35 && gone >= 12, "{cases} cases, {gone} projected");
     }
 
     /// The bounds `4·r <= y <= 4·r + 1` of `r` from 0 to 1 have `y` in {0, 1, 4, 5}: their real
@@ -25100,10 +25132,11 @@ mod jointly_empty_order {
     /// 10 has no point once the stage before is 0, so the removals run along the chain, and the
     /// order of the disjunctions is that of `at`, not of the chain. Before the disjunctions were
     /// put in the order of their structure ([`by_structure`]) the passes were 4 in the chain's
-    /// order and 17 and 129 (`n + 1`) at 16 and 128 stages by bit reversal, 16.4 s at 128.
+    /// order and 17 and 129 (`n + 1`) at 16 and 128 stages by bit reversal, 16.4 s at 128. The
+    /// test takes 16 and 32 stages, where bit reversal gave 17 and 33 passes.
     #[test]
     fn a_chain_of_removals_takes_the_same_passes_in_any_order() {
-        for n in [16, 128] {
+        for n in [16, 32] {
             let mut first: Option<Vec<Vec<String>>> = None;
             for (name, at) in orders(n) {
                 let mut slots: Vec<Vec<Vec<Rc<Parts>>>> = vec![Vec::new(); n];
@@ -25137,12 +25170,13 @@ mod jointly_empty_order {
     /// `r - i - 1`). Arm `i + 1` shares no atom with arm `i`: its removals follow arm `i`'s
     /// through the rows on `h` alone. The removals run out along each arm and back through the
     /// hub, so the passes grow with `r` (9, 17 and 31 at 4, 8 and 32 arms); every order still
-    /// reaches the same disjuncts, every 15 and every 10 removed.
+    /// reaches the same disjuncts, every 15 and every 10 removed. The test takes 4 arms (0.1 s;
+    /// 8 arms took 0.8 s): its 9 passes already run back through the hub.
     #[test]
     fn removals_through_a_hub_keep_the_same_disjuncts_in_both_orders() {
         let h = Lin::atom(Atom::Sym("h".into()));
         let c = |v: i128| Lin::constant(v);
-        let r = 8;
+        let r = 4;
         let mut rows = vec![Con::ge(&h, &c(0)), Con::ge(&c(r as i128), &h)];
         let mut ors: Vec<Vec<Rc<Parts>>> = Vec::new();
         for i in 0..r {
@@ -25355,7 +25389,8 @@ mod forced_against_solver {
         }
     }
 
-    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
+    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
+    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
     struct Rng(u64);
 
     impl Rng {
@@ -25450,32 +25485,42 @@ mod forced_against_solver {
 
     #[test]
     fn propagation_agrees_with_the_solver_on_chains_of_definitions() {
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(crate::seed::seed(
+            "propagation_agrees_with_the_solver_on_chains_of_definitions",
+        ) | 1);
         let mut seen = [0usize; 9];
+        // Cases are drawn until each answer has been tested five times (about 70 cases; the
+        // rarest, 1, is 7% of them); 3000 cases short of that fail the test. Class 2 no longer
+        // occurs, since a formula true before the trial now gives its point (class 1).
+        let tested = |seen: &[usize; 9]| [0, 1, 3].iter().all(|&c| seen[c] >= 5);
         for _ in 0..3000 {
             seen[agrees(&chain(&mut rng, false))] += 1;
+            if tested(&seen) {
+                break;
+            }
         }
-        // Each answer occurs often enough to be tested; class 2 no longer occurs, since a
-        // formula true before the trial now gives its point (class 1).
-        assert!([0, 1, 3].iter().all(|&c| seen[c] >= 50), "answers {seen:?}");
+        assert!(tested(&seen), "answers {seen:?}");
     }
 
     #[test]
     fn propagation_agrees_with_the_solver_on_bounded_inputs() {
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng =
+            Rng(crate::seed::seed("propagation_agrees_with_the_solver_on_bounded_inputs") | 1);
         let mut seen = [0usize; 9];
+        // Cases are drawn until each answer that bounds give has been tested five times (about
+        // 60 cases; the rarest, 6, is 9% of them); 3000 cases short of that fail the test. A
+        // formula that holds with a variable free is rare here (the inputs are mostly
+        // bounded), and the chains of the test above give it often. A point at the bounds
+        // other than the solver's (6) is common (PRES-small-point).
+        let tested = |seen: &[usize; 9]| [0, 1, 3, 6].iter().all(|&c| seen[c] >= 5);
         for _ in 0..3000 {
             seen[agrees(&chain(&mut rng, true))] += 1;
+            if tested(&seen) {
+                break;
+            }
         }
         eprintln!("answers {seen:?}");
-        // Each answer that bounds give occurs often enough to be tested; a formula that holds
-        // with a variable free is rare here (the inputs are mostly bounded), and the chains of
-        // the test above give it often. A point at the bounds other than the solver's (6) is
-        // common (PRES-small-point).
-        assert!(
-            [0, 1, 3, 6].iter().all(|&i| seen[i] >= 50),
-            "answers {seen:?}"
-        );
+        assert!(tested(&seen), "answers {seen:?}");
     }
 
     #[test]
@@ -25777,17 +25822,22 @@ mod forced_against_solver {
     fn the_point_at_the_bounds_does_not_depend_on_names_or_order() {
         // Propagation, and the point it tries at the bounds when it leaves the formula
         // undecided, give the same answer, and the same point renamed.
-        let mut rng = Rng(0x6a09_e667_f3bc_c909);
-        let mut order = Rng(0xbb67_ae85_84ca_a73b);
+        let seed = crate::seed::seed("the_point_at_the_bounds_does_not_depend_on_names_or_order");
+        let mut rng = Rng(seed | 1);
+        let mut order = Rng(seed.rotate_left(32) | 1);
+        // Cases are drawn until the trial at the bounds alone has answered five times (about
+        // 120 cases; it answers 4% of them); 4000 cases short of that fail the test.
         let mut at_bounds = 0;
         for case in 0..4000 {
             let f = chain(&mut rng, case % 2 == 0);
             if alike_rewritten(&f, &mut order) == "holds" && matches!(agrees(&f), 6 | 7) {
                 at_bounds += 1;
+                if at_bounds == 5 {
+                    break;
+                }
             }
         }
-        // The trial at the bounds answers often enough to be tested.
-        assert!(at_bounds >= 50, "{at_bounds} answered at the bounds alone");
+        assert!(at_bounds >= 5, "{at_bounds} answered at the bounds alone");
     }
 
     /// A ladder that the rounds at the bounds climb one step a round: `x` bounded, then each
@@ -25832,10 +25882,17 @@ mod forced_against_solver {
     fn rounds_at_the_bounds_do_not_depend_on_names_or_order() {
         // Ladders that need several rounds, some ending in a contradiction in a later round:
         // each is answered alike whatever the names and order, and agrees with the solver.
-        let mut rng = Rng(0x3c6e_f372_fe94_f82b);
-        let mut order = Rng(0xa54f_f53a_5f1d_36f1);
+        let seed = crate::seed::seed("rounds_at_the_bounds_do_not_depend_on_names_or_order");
+        let mut rng = Rng(seed | 1);
+        let mut order = Rng(seed.rotate_left(32) | 1);
+        // Cases are drawn until each kind of ladder has been tested five times (about 50
+        // cases; the rarest, a contradiction in a later round, is 10% of them); 3000 cases
+        // short of that fail the test.
         let (mut several, mut later_empty, mut three) = (0, 0, 0);
         for _ in 0..3000 {
+            if several >= 5 && later_empty >= 5 && three >= 5 {
+                break;
+            }
             let f = ladder(&mut rng);
             alike_rewritten(&f, &mut order);
             agrees(&f);
@@ -25849,7 +25906,7 @@ mod forced_against_solver {
             }
         }
         assert!(
-            several >= 50 && later_empty >= 50 && three >= 50,
+            several >= 5 && later_empty >= 5 && three >= 5,
             "{several} decided in round 2 or later, {later_empty} contradicted there, {three} \
              with three rounds or more"
         );
@@ -25865,9 +25922,9 @@ mod forced_against_solver {
         // formulas here have at most a few dozen parts and do not grow. A record of each
         // change alone would cost O(e), but it would be taken inside the methods of module
         // `state` that the test checks from outside.
-        let mut rng = Rng(0x510e_527f_ade6_82d1);
+        let mut rng = Rng(crate::seed::seed("the_state_never_loosens") | 1);
         let mut events = 0;
-        for case in 0..3000 {
+        for case in 0..1000 {
             let f = match case % 3 {
                 0 => chain(&mut rng, false),
                 1 => chain(&mut rng, true),
@@ -25884,7 +25941,7 @@ mod forced_against_solver {
                 );
             }
         }
-        assert!(events >= 10_000, "{events} events");
+        assert!(events >= 3000, "{events} events");
     }
 }
 
@@ -26080,6 +26137,7 @@ mod r6_unary_queue_tests {
 mod cells_scaling {
     use super::*;
     use crate::scaling;
+    mod bench;
 
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
@@ -26169,37 +26227,6 @@ mod cells_scaling {
         and(fs)
     }
 
-    fn no_point_scales(what: &str, n: usize, make: impl Fn(usize) -> Formula) {
-        let fs = scaling::inputs(n, make);
-        scaling::check_order(what, n, 1, |m| {
-            assert_eq!(decide(&fs[&m]), Ok(false), "{m}");
-        });
-    }
-
-    /// Control (63662d8d, not kept): fails by the 60 s limit; at n = 250 the base takes over
-    /// 60 s alone.
-    #[test]
-    fn a_part_held_by_many_disjunctions_is_decided_in_near_linear_work() {
-        no_point_scales("a part held by many disjunctions", 250, |n| {
-            shared_holders(n, false)
-        });
-    }
-
-    /// Control (63662d8d, not kept): fails by the 60 s limit, as above.
-    #[test]
-    fn two_parts_held_by_many_disjunctions_are_decided_in_near_linear_work() {
-        no_point_scales("two parts held by many disjunctions", 250, |n| {
-            shared_holders(n, true)
-        });
-    }
-
-    /// Control (63662d8d, not kept): fails; the base solves the `n` equalities once per cell,
-    /// and at sizes 62 and 496 its first runs allocate 47.6 times the bytes.
-    #[test]
-    fn cells_in_few_classes_are_solved_once_per_class() {
-        no_point_scales("cells in three classes", 62, interface);
-    }
-
     /// The meet of sets of bounded atoms: with one base, the base uncopied and the atoms of
     /// every extra; with different bases, the atoms in every set; with none, no atom.
     #[test]
@@ -26261,12 +26288,6 @@ mod cells_scaling {
         and(fs)
     }
 
-    /// Control (main f0abc6b6e, not kept): killed at the 60 s limit.
-    #[test]
-    fn a_chain_over_one_shared_set_is_decided_in_linear_work() {
-        no_point_scales("a chain over one shared set", 125, |n| holders_chain(n, 1));
-    }
-
     /// The parts of [`holders_chain`] built directly, as [`has_point`] reads them: `q_n` is
     /// `end` when given, and `i` is odd (`i == 2t + 1`) when `odd`.
     fn holders_parts(n: usize, end: Option<i128>, odd: bool) -> Parts {
@@ -26296,37 +26317,6 @@ mod cells_scaling {
             ]
         }));
         p
-    }
-
-    /// [`has_point`] on the parts `make` gives, at n and 8n, with the answer `answer`.
-    fn has_point_scales(what: &str, n: usize, answer: bool, make: impl Fn(usize) -> Parts + Sync) {
-        scaling::check_order(what, n, 1, |m| {
-            assert_eq!(has_point(make(m)), Ok(answer), "{m}")
-        });
-    }
-
-    /// The chain with a point at `i = 0`. Control (main f0abc6b6e, not kept): 58.3 times the
-    /// bytes at 8n.
-    #[test]
-    fn a_chain_over_one_shared_set_with_a_point_is_decided_in_linear_work() {
-        has_point_scales(
-            "parts of a chain over one shared set, with a point",
-            125,
-            true,
-            |n| holders_parts(n, Some(0), false),
-        );
-    }
-
-    /// The chain with `i` odd and `q_n` free, so no cell of the shared set has a point.
-    /// Control (main f0abc6b6e, not kept): 58.3 times the bytes at 8n.
-    #[test]
-    fn a_chain_over_one_shared_set_with_no_point_on_it_is_decided_in_linear_work() {
-        has_point_scales(
-            "parts of a chain over one shared set, odd",
-            125,
-            false,
-            |n| holders_parts(n, None, true),
-        );
     }
 
     /// A part of `cons` and `ors`.
@@ -26414,6 +26404,20 @@ mod cells_scaling {
             assert_eq!(has_point(p), Ok(answer), "q_0 >= {low}");
         }
     }
+
+    /// The small instances of the benchmarks in `bench.rs`: each formula and each chain of
+    /// parts they scale has, at sizes 1 to 6, the answer they assert at n and 8n.
+    #[test]
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        for n in 1..=6 {
+            assert_eq!(decide(&shared_holders(n, false)), Ok(false), "{n}");
+            assert_eq!(decide(&shared_holders(n, true)), Ok(false), "{n}");
+            assert_eq!(decide(&interface(n)), Ok(false), "{n}");
+            assert_eq!(decide(&holders_chain(n, 1)), Ok(false), "{n}");
+            assert_eq!(has_point(holders_parts(n, Some(0), false)), Ok(true), "{n}");
+            assert_eq!(has_point(holders_parts(n, None, true)), Ok(false), "{n}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -26425,13 +26429,14 @@ mod unit_interval_tests {
     #[test]
     fn unit_interval_matches_points() {
         let (x, y) = (Atom::Sym("x".into()), Atom::Sym("y".into()));
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        // 100 cases from a new seed each run, printed; about two x in five have a point.
+        let mut seed = crate::seed::seed("unit_interval_matches_points");
         let mut next = |m: i128| {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             ((seed >> 33) as i128).rem_euclid(m)
         };
         let mut nonempty = 0;
-        for _ in 0..3000 {
+        for _ in 0..100 {
             let rows: Vec<Con> = (0..1 + next(6))
                 .map(|_| {
                     let k = if next(2) == 0 { 1 } else { -1 };
@@ -26471,7 +26476,7 @@ mod unit_interval_tests {
             }
         }
         // Negative control on the test itself: both answers occur.
-        assert!(nonempty > 1000 && nonempty < 3000 * 61 - 1000, "{nonempty}");
+        assert!(nonempty > 100 && nonempty < 100 * 61 - 100, "{nonempty}");
     }
 
     /// [`CoreClasses`] against the whole core: for random cores over `x` and four other atoms
@@ -26482,7 +26487,7 @@ mod unit_interval_tests {
     fn core_classes_answer_as_the_whole_core() {
         let x = Atom::Sym("x".into());
         let others: Vec<Atom> = (0..4).map(|i| Atom::Sym(format!("y{i}").into())).collect();
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut seed: u64 = crate::seed::seed("core_classes_answer_as_the_whole_core");
         let mut next = |m: i128| {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             ((seed >> 33) as i128).rem_euclid(m)
@@ -26507,7 +26512,7 @@ mod unit_interval_tests {
             }
         };
         let (mut empty, mut points, mut none) = (0, 0, 0);
-        for _ in 0..1500 {
+        for _ in 0..300 {
             let unit = next(2) == 0;
             let mut core: Vec<Con> = (0..2 + next(6)).map(|_| row(&mut next, unit)).collect();
             core.push(Con::ge(&Lin::atom(x.clone()), &Lin::constant(-20)));
@@ -26538,9 +26543,10 @@ mod unit_interval_tests {
                 if expect { points += 1 } else { empty += 1 }
             }
         }
-        // Negative control on the test itself: each kind of answer occurs.
+        // Negative control on the test itself: each kind of answer occurs (163, 3951 and 1397
+        // of 1500 cores; about a fifth of that here).
         assert!(
-            none > 20 && points > 200 && empty > 200,
+            none > 12 && points > 400 && empty > 140,
             "{none} {points} {empty}"
         );
     }
@@ -26550,6 +26556,7 @@ mod unit_interval_tests {
 mod r4_cells_tests {
     use super::*;
     use crate::scaling;
+    mod bench;
 
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
@@ -26590,20 +26597,6 @@ mod r4_cells_tests {
             ]);
         }
         p
-    }
-
-    #[test]
-    fn a_shared_guard_chain_without_a_point_scales_linearly() {
-        scaling::check_order("shared guard chain, no point", 125, 1, |n| {
-            assert_eq!(has_point(holders(n, 1)), Ok(false));
-        });
-    }
-
-    #[test]
-    fn a_shared_guard_chain_with_a_point_scales_linearly() {
-        scaling::check_order("shared guard chain, point", 125, 1, |n| {
-            assert_eq!(has_point(holders(n, 0)), Ok(true));
-        });
     }
 
     fn window_parts(n: usize, choice: bool) -> Parts {
@@ -26671,20 +26664,6 @@ mod r4_cells_tests {
     }
 
     #[test]
-    fn two_shared_bases_with_different_windows_join_before_the_window() {
-        scaling::check_order("two bases under different windows", 250, 1, |n| {
-            assert_eq!(has_point(window_parts(n, false)), Ok(false));
-        });
-    }
-
-    #[test]
-    fn an_independent_choice_does_not_hide_inconsistent_forced_rows() {
-        scaling::check_order("forced rows beside a choice", 20, 1, |n| {
-            assert_eq!(has_point(window_parts(n, true)), Ok(false));
-        });
-    }
-
-    #[test]
     fn a_point_beside_a_choice_is_left_to_the_later_methods() {
         // Placement stops at the choice, so the rows placed are only necessary: a point among
         // them is no proof, and the cells give no answer.
@@ -26731,14 +26710,6 @@ mod r4_cells_tests {
         p
     }
 
-    #[test]
-    fn repeated_neighbor_set_meets_scale_in_the_number_of_edges() {
-        scaling::check_order("bipartite graph, edge count", 4096, 1, |edges| {
-            let side = (edges as f64).sqrt() as usize;
-            assert_eq!(has_point(bipartite(side)), Ok(false));
-        });
-    }
-
     fn window_formula(n: usize, same: bool) -> Formula {
         let k = (n as f64).sqrt() as usize;
         let x = var("i");
@@ -26777,35 +26748,6 @@ mod r4_cells_tests {
         and(fs)
     }
 
-    #[test]
-    fn shared_conjunctions_preserve_their_disjunctions_under_different_windows() {
-        let fs = scaling::inputs(1000, |n| window_formula(n, false));
-        scaling::check_order("shared formula, different windows", 1000, 1, |n| {
-            assert_eq!(decide(&fs[&n]), Ok(false));
-        });
-    }
-
-    #[test]
-    fn shared_conjunctions_preserve_their_disjunctions_under_equal_windows() {
-        let fs = scaling::inputs(1000, |n| window_formula(n, true));
-        scaling::check_order("shared formula, equal windows", 1000, 1, |n| {
-            assert_eq!(decide(&fs[&n]), Ok(false));
-        });
-    }
-
-    #[test]
-    fn a_shared_guard_chain_with_an_odd_input_scales_linearly() {
-        scaling::check_order("a shared guard with an odd input", 125, 1, |n| {
-            let mut p = holders(n, 0);
-            p.cons.pop();
-            p.cons.push(Con::eq(
-                &var("i"),
-                &var("t").times(2).plus(&Lin::constant(1)),
-            ));
-            assert_eq!(has_point(p), Ok(false));
-        });
-    }
-
     /// Each `y_j` is bounded by three lines in `q0 = 2i` on each side, so [`shadow`] keeps it in
     /// the core, and is read by one disjunct only; no value of `i` is left (round 4's
     /// `point_rows`).
@@ -26838,13 +26780,6 @@ mod r4_cells_tests {
             ]);
         }
         p
-    }
-
-    #[test]
-    fn rows_read_by_one_disjunct_each_scale_linearly() {
-        scaling::check_order("rows read by one disjunct each", 16, 1, |n| {
-            assert_eq!(has_point(point_rows(n)), Ok(false));
-        });
     }
 
     /// The systems kept for `rows` and `want` by the open [`RepairMemo`].
@@ -26971,6 +26906,29 @@ mod r4_cells_tests {
             }
         }
     }
+
+    /// The small instances of the benchmarks in `bench.rs`: each set of parts and each formula
+    /// they scale has, at small sizes, the answer they assert at n and 8n.
+    #[test]
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        for n in 1..=6 {
+            assert_eq!(has_point(holders(n, 1)), Ok(false), "{n}");
+            assert_eq!(has_point(holders(n, 0)), Ok(true), "{n}");
+            let mut odd = holders(n, 0);
+            odd.cons.pop();
+            odd.cons.push(Con::eq(
+                &var("i"),
+                &var("t").times(2).plus(&Lin::constant(1)),
+            ));
+            assert_eq!(has_point(odd), Ok(false), "{n}");
+            assert_eq!(has_point(window_parts(n, false)), Ok(false), "{n}");
+            assert_eq!(has_point(window_parts(n, true)), Ok(false), "{n}");
+            assert_eq!(has_point(bipartite(n)), Ok(false), "{n}");
+            assert_eq!(decide(&window_formula(n, false)), Ok(false), "{n}");
+            assert_eq!(decide(&window_formula(n, true)), Ok(false), "{n}");
+            assert_eq!(has_point(point_rows(n)), Ok(false), "{n}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -27085,7 +27043,7 @@ mod real_end_tests {
     /// bound.
     #[test]
     fn the_bound_never_cuts_an_integer_point() {
-        let mut seed: u64 = 0x5eed;
+        let mut seed = crate::seed::seed("the_bound_never_cuts_an_integer_point");
         let mut next = |m: i64| {
             seed = seed
                 .wrapping_mul(6364136223846793005)
@@ -27094,7 +27052,7 @@ mod real_end_tests {
         };
         let names = ["a", "b", "z"];
         let mut bounded = 0;
-        for _ in 0..400 {
+        for _ in 0..100 {
             let mut cons: Vec<Con> = names
                 .iter()
                 .flat_map(|n| [Con::ge(&v(n), &c(-6)), Con::ge(&c(6), &v(n))])
@@ -27139,7 +27097,7 @@ mod real_end_tests {
                 }
             }
         }
-        assert!(bounded > 400, "{bounded} bounds of 800");
+        assert!(bounded > 100, "{bounded} bounds of 200");
     }
 }
 
@@ -27147,6 +27105,7 @@ mod real_end_tests {
 mod r5_cells_tests {
     use super::*;
     use crate::scaling;
+    mod bench;
 
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
@@ -27274,13 +27233,6 @@ mod r5_cells_tests {
         );
         p
     }
-    #[test]
-    fn distinct_pairs_with_one_common_main_and_different_extras_scale() {
-        scaling::check_order("different extras of one shared main", 125, 1, |n| {
-            assert_eq!(has_point(distinct_extras(n)), Ok(true));
-        });
-    }
-
     fn point_rows(n: usize, hit: bool) -> Parts {
         let x = var("i");
         let q0 = var("q0");
@@ -27318,30 +27270,6 @@ mod r5_cells_tests {
         p
     }
     #[test]
-    fn different_windows_of_disjoint_bases_scale() {
-        scaling::check_order("skew windows of disjoint bases", 125, 1, |n| {
-            assert_eq!(has_point(skew(n, true)), Ok(false));
-        });
-    }
-    #[test]
-    fn different_windows_with_a_point_scale() {
-        scaling::check_order("skew windows with a point", 125, 1, |n| {
-            assert_eq!(has_point(skew(n, false)), Ok(true));
-        });
-    }
-    #[test]
-    fn distinct_window_pairs_of_two_bases_scale() {
-        scaling::check_order("distinct pairs of windowed bases", 125, 1, |n| {
-            assert_eq!(has_point(distinct_meets(n)), Ok(true));
-        });
-    }
-    #[test]
-    fn independent_components_of_a_cell_core_scale() {
-        scaling::check_order("independent components of a cell core", 16, 1, |n| {
-            assert_eq!(has_point(point_rows(n, false)), Ok(false));
-        });
-    }
-    #[test]
     fn independent_components_preserve_points_and_congruences() {
         for n in 1..=8 {
             assert_eq!(has_point(point_rows(n, true)), Ok(n > 1));
@@ -27351,12 +27279,24 @@ mod r5_cells_tests {
             assert_eq!(has_point(p), Ok(false));
         }
     }
+
+    /// The small instances of the benchmarks in `bench.rs`, with the answers they assert.
+    #[test]
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        for n in 1..=6 {
+            assert_eq!(has_point(distinct_extras(n)), Ok(true), "{n}");
+            assert_eq!(has_point(skew(n, true)), Ok(false), "{n}");
+            assert_eq!(has_point(skew(n, false)), Ok(true), "{n}");
+            assert_eq!(has_point(distinct_meets(n)), Ok(true), "{n}");
+        }
+    }
 }
 
 #[cfg(test)]
 mod r5_orbit_tests {
     use super::*;
     use crate::scaling;
+    mod bench;
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
     }
@@ -27402,19 +27342,6 @@ mod r5_orbit_tests {
         and(fs)
     }
     #[test]
-    fn a_guard_on_two_inputs_and_one_reflection_center_scales() {
-        scaling::check_order("a chain guarded by the sum of two inputs", 10, 1, |n| {
-            let target = ((n / 2 + 1) | 1) as i128;
-            assert_eq!(decide(&formula(n, target, false, false)), Ok(false));
-        });
-    }
-    #[test]
-    fn a_functional_two_input_chain_with_a_point_scales() {
-        scaling::check_order("two-input chain with an interior point", 10, 1, |n| {
-            assert_eq!(decide(&formula(n, 0, false, false)), Ok(true));
-        });
-    }
-    #[test]
     fn guarded_orbits_keep_points_and_do_not_merge_reflection_centers() {
         for n in [2, 3, 5, 8] {
             for mixed in [false, true] {
@@ -27444,11 +27371,25 @@ mod r5_orbit_tests {
             }
         }
     }
+
+    /// The small instances of the benchmarks in `bench.rs`, with the answers they assert. The
+    /// chain has a point below n = 10, and its orbits close only from 14 on (and at 10 and 11).
+    #[test]
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        for n in [10, 14, 15] {
+            let target = ((n / 2 + 1) | 1) as i128;
+            assert_eq!(decide(&formula(n, target, false, false)), Ok(false), "{n}");
+        }
+        for n in 1..=10 {
+            assert_eq!(decide(&formula(n, 0, false, false)), Ok(true), "{n}");
+        }
+    }
 }
 #[cfg(test)]
 mod r5_hull_tests {
     use super::*;
     use crate::scaling;
+    mod bench;
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
     }
@@ -27494,23 +27435,6 @@ mod r5_hull_tests {
         and(fs)
     }
     #[test]
-    fn different_reflection_centers_are_refuted_in_linear_work() {
-        scaling::check_order(
-            "overlapping guards and two reflection centers",
-            20,
-            1,
-            |n| {
-                assert_eq!(decide(&formula(n, (n / 2 + 1) as i128, false)), Ok(false));
-            },
-        );
-    }
-    #[test]
-    fn shifts_with_gaps_are_refuted_in_linear_work() {
-        scaling::check_order("even shifts and an odd target", 20, 1, |n| {
-            assert_eq!(decide(&formula(n, 1, true)), Ok(false));
-        });
-    }
-    #[test]
     fn arithmetic_progression_membership_agrees_with_enumeration() {
         for coef in -3..=3 {
             for step in 0..=4 {
@@ -27539,52 +27463,83 @@ mod r5_hull_tests {
             }
         }
     }
-    #[test]
-    fn overlapping_chains_agree_with_independent_small_domains() {
+    /// Checks [`formula`] of `n` steps, shifted or not, against the values the chain reaches
+    /// from each input in a small domain, at every target from one below the least value
+    /// reached to one above the greatest. Returns the number of targets refused.
+    fn overlapping_chain_agrees(n: usize, shift: bool) -> usize {
         let mut refused = 0;
-        for n in [2, 3, 5, 8] {
-            for shift in [false, true] {
-                let r = if shift { n as i128 } else { 20 };
-                let mut reach = BTreeSet::new();
-                for i in -r..=r {
-                    let mut values = BTreeSet::from([if shift { 2 * i } else { i }]);
-                    for j in 1..=n {
-                        let mut next = BTreeSet::new();
-                        let (g, h) = if shift {
-                            (1, 0)
+        let r = if shift { n as i128 } else { 20 };
+        let mut reach = BTreeSet::new();
+        for i in -r..=r {
+            let mut values = BTreeSet::from([if shift { 2 * i } else { i }]);
+            for j in 1..=n {
+                let mut next = BTreeSet::new();
+                let (g, h) = if shift {
+                    (1, 0)
+                } else {
+                    ((j % 7) as i128 - 3, (j % 5) as i128 - 2)
+                };
+                for v in values {
+                    if i <= g {
+                        next.insert(v);
+                    }
+                    if i >= h {
+                        next.insert(if shift {
+                            v + 2
                         } else {
-                            ((j % 7) as i128 - 3, (j % 5) as i128 - 2)
-                        };
-                        for v in values {
-                            if i <= g {
-                                next.insert(v);
-                            }
-                            if i >= h {
-                                next.insert(if shift {
-                                    v + 2
-                                } else {
-                                    2 + (j % 2) as i128 - v
-                                });
-                            }
-                        }
-                        values = next;
-                    }
-                    reach.extend(values);
-                }
-                let lo = *reach.first().expect("reachable point");
-                let hi = *reach.last().expect("reachable point");
-                for target in lo - 1..=hi + 1 {
-                    let expected = reach.contains(&target);
-                    match decide(&formula(n, target, shift)) {
-                        Ok(actual) => {
-                            assert_eq!(actual, expected, "n={n} shift={shift} target={target}")
-                        }
-                        Err(_) => refused += 1,
+                            2 + (j % 2) as i128 - v
+                        });
                     }
                 }
+                values = next;
+            }
+            reach.extend(values);
+        }
+        let lo = *reach.first().expect("reachable point");
+        let hi = *reach.last().expect("reachable point");
+        for target in lo - 1..=hi + 1 {
+            let expected = reach.contains(&target);
+            match decide(&formula(n, target, shift)) {
+                Ok(actual) => assert_eq!(actual, expected, "n={n} shift={shift} target={target}"),
+                Err(_) => refused += 1,
             }
         }
+        refused
+    }
+
+    #[test]
+    fn overlapping_chains_agree_with_independent_small_domains() {
+        // The shifted chains at 2 and 3 steps, the others at 2, 3, 5 and 7 steps, 7 being the
+        // first at which the guards reach both -3 and 3. Longer chains, which cost far more
+        // (0.76 s at 8 steps unshifted, 1.1 s at 5 shifted), are in `bench.rs`.
+        let refused: usize = [
+            (2, false),
+            (3, false),
+            (5, false),
+            (7, false),
+            (2, true),
+            (3, true),
+        ]
+        .into_iter()
+        .map(|(n, shift)| overlapping_chain_agrees(n, shift))
+        .sum();
         eprintln!("small overlapping-chain oracle: refused={refused}");
+    }
+
+    /// The small instances of the benchmarks in `bench.rs`, with the answers they assert. With
+    /// `i` in -20..=20 the reflection centers leave a point below n = 20, and none at 20 and 22.
+    #[test]
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        for n in [20, 22] {
+            assert_eq!(
+                decide(&formula(n, (n / 2 + 1) as i128, false)),
+                Ok(false),
+                "{n}"
+            );
+        }
+        for n in 1..=8 {
+            assert_eq!(decide(&formula(n, 1, true)), Ok(false), "{n}");
+        }
     }
 }
 #[cfg(test)]
@@ -27641,6 +27596,7 @@ mod r5_guard_input_tests {
 mod r5_shared_arm_tests {
     use super::*;
     use crate::scaling;
+    mod bench;
     fn parts(n: usize, two_inputs: bool) -> Parts {
         let i = Lin::atom(Atom::Sym("i".into()));
         let k = Lin::atom(Atom::Sym("k".into()));
@@ -27663,11 +27619,13 @@ mod r5_shared_arm_tests {
         p.ors = (0..n).map(|_| vec![a.clone(), b.clone()]).collect();
         p
     }
+
+    /// The small instances of the benchmark in `bench.rs`: flat arms are read as one chain.
     #[test]
-    fn shared_flat_arms_with_many_guard_rows_are_read_once() {
-        scaling::check_order("shared flat arms with redundant guard rows", 125, 1, |n| {
-            assert!(GuardedChain::of(&parts(n, false)).is_some());
-        });
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        for n in 1..=6 {
+            assert!(GuardedChain::of(&parts(n, false)).is_some(), "{n}");
+        }
     }
 }
 

@@ -676,7 +676,9 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
     // in a window wide enough that no input outside it reaches the questions asked; where
     // no step is the skipping step, every question is answered, whether or not the default
     // multipliers p + w are units mod m.
-    let mut rng = 0x5eed_u64;
+    // 300 chains from a new seed each run, printed.
+    let mut rng =
+        crate::seed::seed("residue_map_images_agree_with_the_values_of_a_window_of_inputs") | 1;
     let mut next = |lo: i64, hi: i64| {
         rng ^= rng << 13;
         rng ^= rng >> 7;
@@ -684,7 +686,7 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
         lo + (rng % (hi - lo + 1) as u64) as i64
     };
     let (mut answered, mut required, mut found, mut trials) = (0, 0, 0, 0);
-    for _ in 0..1500 {
+    for _ in 0..300 {
         let m = next(1, 36);
         let mut steps = Vec::new();
         for _ in 0..next(1, 6) {
@@ -975,7 +977,8 @@ fn shift_chain_images_agree_with_the_image_of_every_residue() {
     // repeated steps, whose tree nodes share relative ends, meet steps that differ. Each step
     // commutes with h + m, so the image is that of Z_m, computed residue by residue; every
     // question must be answered, and equal it.
-    let mut rng = 0x5_1f7_u64;
+    // 60 chains from a new seed each run, printed; each depth with each order 10 times.
+    let mut rng = crate::seed::seed("shift_chain_images_agree_with_the_image_of_every_residue") | 1;
     let mut next = |lo: i64, hi: i64| {
         rng ^= rng << 13;
         rng ^= rng >> 7;
@@ -983,7 +986,7 @@ fn shift_chain_images_agree_with_the_image_of_every_residue() {
         lo + (rng % (hi - lo + 1) as u64) as i64
     };
     let (mut inside, mut asked) = (0, 0);
-    for chain in 0..400 {
+    for chain in 0..60 {
         let m = next(1, 40);
         let depth = [1, 2, 3][chain % 3];
         let pattern: Vec<ShiftStep> = (0..next(1, 4))

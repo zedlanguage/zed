@@ -136,6 +136,7 @@ impl<V: Unpin> Future for Deep<'_, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod bench;
 
     /// What the calls saw, in order.
     struct Trace<'m> {
@@ -160,13 +161,6 @@ mod tests {
         }
     }
 
-    fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-        (std::thread::Builder::new().stack_size(64 << 10).spawn(f))
-            .expect("a test thread")
-            .join()
-            .expect("the test passes on a 64 KiB stack");
-    }
-
     /// The same numbers as [`Trace::sum`] on the thread's stack.
     fn plain(n: u64, seen: &mut u64) -> u64 {
         if n == 0 {
@@ -187,17 +181,6 @@ mod tests {
         let mut seen = 0;
         assert_eq!(t.stack.run(t.sum(100)), plain(100, &mut seen));
         assert_eq!(t.seen.get(), seen);
-    }
-
-    #[test]
-    fn a_million_calls_deep_need_no_more_of_the_threads_stack() {
-        on_small_stack(|| {
-            let t = Trace {
-                stack: Stack::default(),
-                seen: Cell::new(0),
-            };
-            assert_eq!(t.stack.run(t.sum(1_000_000)), 500_000_500_000);
-        });
     }
 
     /// A call that keeps 4 KiB of its own across a call it makes.

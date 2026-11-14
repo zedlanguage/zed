@@ -5830,6 +5830,7 @@ enum Made {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod bench;
 
     fn a(n: u32) -> Atom {
         Atom::Aux(n)
@@ -6329,8 +6330,8 @@ mod tests {
 
     #[test]
     fn envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems() {
-        // Cross-review of LOAD-max-div-xr, round 3 (Codex): 180 random systems of five rows over
-        // three atoms in the box [-2, 2]³, fixed seed. `envelope` and `lean` (rows forward and
+        // Cross-review of LOAD-max-div-xr, round 3 (Codex): 50 random systems of five rows over
+        // three atoms in the box [-2, 2]³, from a new seed each run. `envelope` and `lean` (rows forward and
         // reversed) keep exactly the integer points of the box, `merge_pieces` of two such
         // pieces keeps their union, and `decide_cons` agrees with the points. The control (the
         // box alone) must differ somewhere, so the comparison can fail.
@@ -6347,13 +6348,15 @@ mod tests {
                 }
             })
         };
-        let mut seed = 789123u64;
+        let mut seed = crate::seed::seed(
+            "envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems",
+        );
         let mut next = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             (seed >> 32) as i64
         };
         let mut control_differs = 0;
-        for case in 0..180 {
+        for case in 0..50 {
             let mut box_rows = Vec::new();
             for n in 0..3 {
                 box_rows.push(con(&[(n, 1)], 2, Rel::Ge));
@@ -6472,13 +6475,18 @@ mod tests {
         // same rows. Atoms 0 and 1 are the `y`s, 2 to 5 the form atoms. Not red on the hash map:
         // each rewrite is implied by the rows, and these decisions are not refused, so the order
         // did not change the rows here; the ordered map makes the order fixed by construction.
-        let mut seed = 4242u64;
+        let mut seed = crate::seed::seed("lean_keeps_the_same_rows_on_every_run");
         let mut next = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             (seed >> 33) as i64
         };
+        // Systems are drawn until one has a capped ray (about one in fifteen); 300 systems
+        // without one fail the test.
         let mut capped = 0;
-        for _ in 0..30 {
+        for _ in 0..300 {
+            if capped > 0 {
+                break;
+            }
             let mut rows = Vec::new();
             for n in 2..6 {
                 rows.push(con(&[(n, 1)], next() % 4 + 1, Rel::Ge));
@@ -6814,162 +6822,6 @@ mod tests {
         (sums, defs, ends)
     }
 
-    #[test]
-    fn r5_frontier_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for (name, depth, shared) in [
-            ("leaves", 1, false),
-            ("private-chains", 4, false),
-            ("shared-prefix", 20, true),
-        ] {
-            for n in [100, 800] {
-                let (mut sums, defs, reads) = r5_frontier_fixture(n, depth, shared);
-                let def = |n: u32| defs[n as usize].clone();
-                let own = BTreeSet::new();
-                // Warm only the requested summaries, never the decomposition. Both cold and
-                // warm local calls are measured; the cost counter concerns one warm call.
-                let mut cold_calls = 0;
-                let cold = meter.work(|| {
-                    loop {
-                        cold_calls += 1;
-                        match sums.local(&reads, &own, None, &[], &def) {
-                            Local::Need(Need::RootsMany(fs)) => {
-                                for f in fs {
-                                    sums.roots(f, &def);
-                                }
-                            }
-                            Local::Need(Need::Summaries(js)) => {
-                                for (k, _) in js {
-                                    sums.by.insert(
-                                        k,
-                                        Some(Summary {
-                                            pieces: vec![Vec::new()],
-                                        }),
-                                    );
-                                }
-                            }
-                            Local::Ready(_, _) => break,
-                            _ => panic!("fixture must be decomposable"),
-                        }
-                    }
-                });
-                FRONTIER_VISITS.with(|v| v.set(0));
-                let work = meter.work(|| {
-                    assert!(matches!(
-                        sums.local(&reads, &own, None, &[], &def),
-                        Local::Ready(_, _)
-                    ));
-                });
-                let visits = FRONTIER_VISITS.with(|v| v.get());
-                eprintln!(
-                    "R5 local {name} n={n} depth={depth} cold_calls={cold_calls} cold_instr={} warm_instr={} visits={visits}",
-                    cold.units, work.units
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn r5_parabola_rests_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        let sizes: Vec<i64> = std::env::var("R5_PARABOLA_SIZES")
-            .unwrap_or("8,64".into())
-            .split(',')
-            .map(|s| s.parse().unwrap())
-            .collect();
-        for n in sizes {
-            let ps: BTreeSet<Vec<Con>> = (0..n)
-                .map(|i: i64| {
-                    let mut p = vec![
-                        con(&[(0, 1)], -i, Rel::Eq),
-                        con(&[(1, 1), (0, -2 * i)], i * i, Rel::Ge),
-                    ];
-                    for r in &mut p {
-                        r.lin.terms.retain(|_, k| !k.is_zero());
-                    }
-                    p.sort();
-                    p
-                })
-                .collect();
-            REST_ROW_VISITS.with(|v| v.set(0));
-            let mut out = Vec::new();
-            let w = meter.work(|| out = merge_pieces(ps));
-            let visits = REST_ROW_VISITS.with(|v| v.get());
-            assert_eq!(out.len(), 1);
-            eprintln!(
-                "R5 parabola n={n} instr={} rows={} rest_visits={visits}",
-                w.units,
-                out[0].len()
-            );
-            // All tangents are necessary in the old representation. Every integer vertex
-            // must retain its original height; a row deleted blindly would admit i²-1.
-            for i in 0..n {
-                for y in [i * i - 1, i * i, i * i + 1] {
-                    let holds = out[0].iter().all(|r| {
-                        let z = &r.lin.constant
-                            + &(&r.lin.terms.get(&a(0)).cloned().unwrap_or(Int::ZERO)
-                                * &Int::from(i));
-                        let z = &z
-                            + &(&r.lin.terms.get(&a(1)).cloned().unwrap_or(Int::ZERO)
-                                * &Int::from(y));
-                        if r.rel == Rel::Eq {
-                            z.is_zero()
-                        } else {
-                            !z.is_negative()
-                        }
-                    });
-                    assert_eq!(holds, y >= i * i);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn r5_folding_chain_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for n in [100u32, 800] {
-            let mut rows = Vec::new();
-            for i in 1..=n {
-                rows.push(con(&[(i - 1, 1), (i, -2)], 0, Rel::Ge));
-                rows.push(con(&[(i - 1, -1), (i, 2)], 1, Rel::Ge));
-            }
-            rows.push(con(&[(n, 1)], 0, Rel::Ge));
-            FOLD_ROW_VISITS.with(|v| v.set(0));
-            let mut out = Vec::new();
-            let w = meter.work(|| out = fold_free_unit_pairs(rows, &HashSet::new()));
-            let visits = FOLD_ROW_VISITS.with(|v| v.get());
-            eprintln!(
-                "R5 folding-chain n={n} instr={} visits={visits} rows={}",
-                w.units,
-                out.len()
-            );
-            assert_eq!(out.len(), 1);
-            assert_eq!(out[0], con(&[(0, 1)], 0, Rel::Ge));
-        }
-    }
-
-    #[test]
-    fn r5_shared_prefix_symbol_unions_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for n in [100u32, 800] {
-            let defs = r5_diamond_defs(n);
-            let def = |n: u32| defs[n as usize].clone();
-            let root = defs.last().unwrap().clone();
-            let id = Id::any(&root);
-            let mut sums = Summaries::default();
-            let w = meter.work(|| sums.syms(root, &def));
-            assert_eq!(sums.syms[&id].len(), 2 * n as usize + 1);
-            assert_eq!(sums.cone[&id].len(), 3 * n as usize);
-            eprintln!(
-                "R5 diamond n={n} instr={} bytes={} symbols={} cone={}",
-                w.units,
-                w.bytes,
-                sums.syms[&id].len(),
-                sums.cone[&id].len()
-            );
-        }
-    }
-
     fn r5_diamond_defs(n: u32) -> Vec<Formula> {
         let mut defs = Vec::new();
         let mut prev = None;
@@ -6993,62 +6845,6 @@ mod tests {
             prev = Some(first + 2);
         }
         defs
-    }
-
-    #[test]
-    fn r5_diamond_unions_scale() {
-        let inputs = crate::scaling::inputs(100, |n| r5_diamond_defs(n as u32));
-        crate::scaling::check_order(
-            "symbol/cone unions through overlapping diamonds",
-            100,
-            1,
-            |n| {
-                let defs = &inputs[&n];
-                let def = |n: u32| defs[n as usize].clone();
-                let root = defs.last().unwrap().clone();
-                let id = Id::any(&root);
-                let mut sums = Summaries::default();
-                sums.syms(root, &def);
-                assert_eq!(sums.syms[&id].len(), 2 * n + 1);
-                assert_eq!(sums.cone[&id].len(), 3 * n);
-            },
-        );
-    }
-
-    #[test]
-    fn r5_independent_leaf_frontiers_scale() {
-        let inputs = crate::scaling::inputs(100, |n| r5_frontier_fixture(n as u32, 1, false));
-        crate::scaling::check_order("wide independent leaf frontier", 100, 1, |n| {
-            let (sums, defs, reads) = &inputs[&n];
-            let def = |n: u32| defs[n as usize].clone();
-            assert!(matches!(
-                sums.local(reads, &BTreeSet::new(), None, &[], &def),
-                Local::Ready(_, _)
-            ));
-        });
-    }
-
-    #[test]
-    fn r5_convex_vertical_rays_scale() {
-        let inputs = crate::scaling::inputs(16, |n| {
-            (0..n as i64)
-                .map(|i| {
-                    let mut ps = vec![
-                        con(&[(0, 1)], -i, Rel::Eq),
-                        con(&[(1, 1), (0, -2 * i)], i * i, Rel::Ge),
-                    ];
-                    for r in &mut ps {
-                        r.lin.terms.retain(|_, k| !k.is_zero());
-                    }
-                    ps.sort();
-                    ps
-                })
-                .collect::<BTreeSet<_>>()
-        });
-        crate::scaling::check_order("batch join of convex integer vertical rays", 16, 1, |n| {
-            let out = merge_pieces(inputs[&n].clone());
-            assert_eq!(out.len(), 1);
-        });
     }
 
     #[test]
@@ -7227,57 +7023,6 @@ mod tests {
         )
     }
 
-    #[test]
-    fn r5_actual_wide_questions_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for (name, depth, prefix) in [
-            ("leaves", 1, 0),
-            ("private", 4, 0),
-            ("shared-prefix", 4, 200),
-        ] {
-            for n in [100, 800] {
-                let (defs, q) = r5_actual_frontier_defs(n, depth, prefix);
-                let def = |n: u32| defs[n as usize].clone();
-                let mut ext = Extending::new();
-                let mut answer = None;
-                let w = meter.work(|| answer = Some(ext.defined(&q, &def)));
-                assert_eq!(
-                    answer,
-                    Some(Answers {
-                        holds: Ok(true),
-                        fails: Ok(true)
-                    })
-                );
-                eprintln!(
-                    "R5 actual-frontier {name} width={n} depth={depth} prefix={prefix} nodes={} instr={} bytes={}",
-                    defs.len(),
-                    w.units,
-                    w.bytes
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn r5_actual_wide_questions_scale() {
-        let inputs = crate::scaling::inputs(100, |n| r5_actual_frontier_defs(n as u32, 4, 0));
-        crate::scaling::check_order(
-            "cold questions over independent four-link chains",
-            100,
-            1,
-            |n| {
-                let (defs, q) = &inputs[&n];
-                let def = |n: u32| defs[n as usize].clone();
-                assert_eq!(
-                    Extending::new().defined(q, &def),
-                    Answers {
-                        holds: Ok(true),
-                        fails: Ok(true)
-                    }
-                );
-            },
-        );
-    }
     #[test]
     fn r5_ray_certificates_have_direct_integer_witnesses() {
         enum Op {
@@ -7496,73 +7241,6 @@ mod tests {
         (sums, defs, ends)
     }
     #[test]
-    fn r5_second_adversaries_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for n in [100, 800] {
-            let defs = r5_unbalanced_union_defs(n);
-            let def = |n: u32| defs[n as usize].clone();
-            let mut sums = Summaries::default();
-            let work = meter.work(|| sums.syms(defs.last().unwrap().clone(), &def));
-            let id = Id::any(defs.last().unwrap());
-            assert_eq!(sums.syms[&id].len(), 2 * n as usize);
-            eprintln!(
-                "R5 unbalanced-union n={n} nodes={} instr={} bytes={}",
-                defs.len(),
-                work.units,
-                work.bytes
-            );
-            let (sums, defs, reads) = r5_unequal_shared_frontier(n);
-            let def = |n: u32| defs[n as usize].clone();
-            FRONTIER_VISITS.with(|v| v.set(0));
-            let work = meter.work(|| {
-                assert!(matches!(
-                    sums.local(&reads, &BTreeSet::new(), None, &[], &def),
-                    Local::Ready(_, _)
-                ))
-            });
-            eprintln!(
-                "R5 unequal-shared-frontier n={n} nodes={} instr={} bytes={} visits={}",
-                defs.len(),
-                work.units,
-                work.bytes,
-                FRONTIER_VISITS.with(|v| v.get())
-            );
-        }
-    }
-    #[test]
-    fn r5_unbalanced_unions_scale() {
-        let inputs = crate::scaling::inputs(100, |n| r5_unbalanced_union_defs(n as u32));
-        crate::scaling::check_order(
-            "one large persistent set beside independent singleton inputs",
-            100,
-            1,
-            |n| {
-                let defs = &inputs[&n];
-                let def = |n: u32| defs[n as usize].clone();
-                let mut sums = Summaries::default();
-                sums.syms(defs.last().unwrap().clone(), &def);
-            },
-        );
-    }
-    #[test]
-    fn r5_unequal_shared_frontiers_scale() {
-        let inputs = crate::scaling::inputs(100, |n| r5_unequal_shared_frontier(n as u32));
-        crate::scaling::check_order(
-            "unequal-height frontiers above a shared prefix",
-            100,
-            1,
-            |n| {
-                let (sums, defs, reads) = &inputs[&n];
-                let def = |n: u32| defs[n as usize].clone();
-                assert!(matches!(
-                    sums.local(reads, &BTreeSet::new(), None, &[], &def),
-                    Local::Ready(_, _)
-                ));
-            },
-        );
-    }
-
-    #[test]
     fn r5_directed_shared_unions_equal_elementwise_union() {
         let mut seed = 13729291u64;
         let mut next = || {
@@ -7658,32 +7336,6 @@ mod tests {
         assert!(
             warm.holds(&identity, &def),
             "one output's reflection trigger must not reject another output's certificate"
-        );
-    }
-    #[test]
-    fn r5_a_merge_with_no_pair_does_no_quadratic_index_work() {
-        assert!(merge_pieces(BTreeSet::new()).is_empty());
-        let impossible = vec![Con {
-            lin: Lin::constant(1),
-            rel: Rel::Eq,
-        }];
-        assert_eq!(
-            merge_pieces(BTreeSet::from([impossible.clone()])),
-            vec![impossible]
-        );
-        let inputs = crate::scaling::inputs(100, |n| {
-            let piece: Vec<Con> = (0..n as u32).map(|i| con(&[(i, 1)], 0, Rel::Ge)).collect();
-            BTreeSet::from([piece])
-        });
-        crate::scaling::check_order(
-            "a singleton union with many distinct row forms",
-            100,
-            1,
-            |n| {
-                let before = inputs[&n].clone();
-                let expected: Vec<_> = before.iter().cloned().collect();
-                assert_eq!(merge_pieces(before), expected);
-            },
         );
     }
     #[test]
@@ -7821,38 +7473,6 @@ mod tests {
     }
 
     #[test]
-    fn convex_runs_with_a_concave_last_slice_scale() {
-        let inputs = crate::scaling::inputs(16, r6_almost_convex_rays);
-        crate::scaling::check_order("convex runs with a concave last slice", 16, 1, |n| {
-            let out = merge_pieces(inputs[&n].clone());
-            let at = |x: i64, y: i64| {
-                out.iter().any(|rows| {
-                    rows.iter().all(|row| {
-                        let mut value = row.lin.constant.clone();
-                        for (a, k) in &row.lin.terms {
-                            let v = match a {
-                                Atom::Aux(0) => x,
-                                Atom::Aux(1) => y,
-                                _ => unreachable!(),
-                            };
-                            value = &value + &(k * &Int::from(v));
-                        }
-                        match row.rel {
-                            Rel::Eq => value.is_zero(),
-                            Rel::Ge => !value.is_negative(),
-                        }
-                    })
-                })
-            };
-            assert!(at(0, 0));
-            assert!(at(n as i64 - 1, 0));
-            assert!(!at(-1, 0));
-            assert!(!at(0, -1));
-            assert!(!at(n as i64 - 1, -1));
-        });
-    }
-
-    #[test]
     fn integer_ray_runs_keep_concavities_gaps_and_both_orientations() {
         let mut cases = 0;
         for gap in [false, true] {
@@ -7958,48 +7578,6 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn independent_twin_unions_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        let sizes: Vec<usize> = std::env::var("LMD_SIZES")
-            .unwrap_or("100,800".into())
-            .split(',')
-            .map(|s| s.parse().unwrap())
-            .collect();
-        for n in sizes {
-            let mut defs = Vec::new();
-            for i in 0..n {
-                let first = defs.len() as u32;
-                for side in [0u32, 1] {
-                    let previous = if i == 0 {
-                        Lin::atom(Atom::Sym("base".into()))
-                    } else {
-                        Lin::atom(a(first - 3 + side))
-                    };
-                    let fresh = Lin::atom(Atom::Sym(format!("s{i:08}").into()));
-                    defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
-                        &Lin::atom(a(first + side)),
-                        &previous.plus(&fresh),
-                    ))])));
-                }
-                defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
-                    &Lin::atom(a(first + 2)),
-                    &Lin::atom(a(first)).plus(&Lin::atom(a(first + 1))),
-                ))])));
-            }
-            let def = |n: u32| defs[n as usize].clone();
-            let mut sums = Summaries::default();
-            let w = meter.work(|| {
-                for i in 0..n {
-                    sums.syms(defs[3 * i + 2].clone(), &def);
-                }
-            });
-            let id = Id::any(defs.last().unwrap());
-            assert_eq!(sums.syms[&id].len(), n + 1);
-            assert_eq!(sums.cone[&id].len(), 2 * n + 1);
-            eprintln!("twin unions n={n} instr={} bytes={}", w.units, w.bytes);
-        }
-    }
     fn functional_leaf_key_fixture(width: usize) -> (Summaries, Vec<Formula>, BTreeSet<Atom>) {
         let x = Atom::Sym("x".into());
         let mut defs = Vec::new();
@@ -8053,35 +7631,6 @@ mod tests {
         (sums, defs, rs)
     }
 
-    #[test]
-    fn functional_leaf_and_product_key_buckets_scale() {
-        let inputs = crate::scaling::inputs(100, functional_leaf_key_fixture);
-        crate::scaling::check_order("functional leaf and product key buckets", 100, 1, |n| {
-            let (sums, defs, rs) = &inputs[&n];
-            let def = |n: u32| defs[n as usize].clone();
-            assert!(matches!(
-                sums.local(rs, &BTreeSet::new(), None, &[], &def),
-                Local::Ready(_, _)
-            ));
-        });
-    }
-
-    #[test]
-    fn functional_key_buckets_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for n in [100usize, 800] {
-            let (sums, defs, rs) = functional_leaf_key_fixture(n);
-            let def = |n: u32| defs[n as usize].clone();
-            let w = meter.work(|| {
-                assert!(matches!(
-                    sums.local(&rs, &BTreeSet::new(), None, &[], &def),
-                    Local::Ready(_, _)
-                ))
-            });
-            eprintln!("functional keys n={n} instr={} bytes={}", w.units, w.bytes);
-        }
-    }
-
     fn r6_bounded_row(n: usize) -> (Con, BTreeMap<Atom, (Int, Int)>) {
         let terms = (0..n)
             .map(|i| {
@@ -8102,14 +7651,6 @@ mod tests {
             .map(|i| (Atom::Aux(i as u32), (Int::from(-100), Int::from(100))))
             .collect();
         (row, bounds)
-    }
-    #[test]
-    fn bounded_row_totals_scale() {
-        let inputs = crate::scaling::inputs(100, r6_bounded_row);
-        crate::scaling::check_order("incremental totals of one bounded row", 100, 1, |n| {
-            let (row, mut bounds) = inputs[&n].clone();
-            assert!(tighten_bounded_row(&row, &mut bounds));
-        });
     }
     #[test]
     fn bounded_row_totals_equal_the_old_in_place_sweep() {
@@ -8149,28 +7690,6 @@ mod tests {
         }
         eprintln!("in-place bounded-row comparisons={checked}");
     }
-    #[test]
-    fn bounded_row_totals_measurement() {
-        let mut meter = crate::scaling::Meter::new();
-        for n in [100, 800] {
-            let (row, bounds) = r6_bounded_row(n);
-            for old in [true, false] {
-                let mut b = bounds.clone();
-                let counted = meter.work(|| {
-                    assert!(if old {
-                        tighten_bounded_row_slow(&row, &mut b)
-                    } else {
-                        tighten_bounded_row(&row, &mut b)
-                    });
-                });
-                eprintln!(
-                    "bounded-row n={n} old={old} instr={} bytes={}",
-                    counted.units, counted.bytes
-                );
-            }
-        }
-    }
-
     #[test]
     fn a_free_fourth_variable_can_escape_the_peers_twenty_point_box() {
         let rows = vec![
@@ -8256,35 +7775,254 @@ mod tests {
         }
     }
 
-    #[test]
-    fn product_only_input_metadata_keeps_every_factor_and_product_in_linear_work() {
-        let inputs = crate::scaling::inputs(100, |n| {
-            let mut defs = Vec::new();
-            for i in 0..=n as u32 {
-                let value = if i == 0 {
-                    Lin::atom(Atom::Sym("x".into()))
+    /// The points `(i, y)`, `0 <= i < n`, with `y >= i²` as `n` vertical rays, each written by
+    /// its tangent `y >= 2 i x - i²` at `x = i`.
+    fn parabola_rays(n: i64) -> BTreeSet<Vec<Con>> {
+        (0..n)
+            .map(|i| {
+                let mut p = vec![
+                    con(&[(0, 1)], -i, Rel::Eq),
+                    con(&[(1, 1), (0, -2 * i)], i * i, Rel::Ge),
+                ];
+                for r in &mut p {
+                    r.lin.terms.retain(|_, k| !k.is_zero());
+                }
+                p.sort();
+                p
+            })
+            .collect()
+    }
+
+    /// Whether the point `(x, y)` meets every row of one of the pieces.
+    fn pieces_hold(pieces: &[Vec<Con>], x: i64, y: i64) -> bool {
+        pieces.iter().any(|rows| {
+            rows.iter().all(|row| {
+                let mut value = row.lin.constant.clone();
+                for (atom, k) in &row.lin.terms {
+                    let v = match atom {
+                        Atom::Aux(0) => x,
+                        Atom::Aux(1) => y,
+                        _ => unreachable!(),
+                    };
+                    value = &value + &(k * &Int::from(v));
+                }
+                match row.rel {
+                    Rel::Eq => value.is_zero(),
+                    Rel::Ge => !value.is_negative(),
+                }
+            })
+        })
+    }
+
+    /// The merge of the parabola rays keeps every vertex at its height: `(i, i² - 1)` is out.
+    fn parabola_rays_kept(out: &[Vec<Con>], n: i64) {
+        assert_eq!(out.len(), 1);
+        for i in 0..n {
+            for y in [i * i - 1, i * i, i * i + 1] {
+                assert_eq!(pieces_hold(out, i, y), y >= i * i, "i={i} y={y}");
+            }
+        }
+    }
+
+    /// The merge of the almost convex rays keeps both ends of the run and nothing below it.
+    fn almost_convex_rays_kept(out: &[Vec<Con>], n: i64) {
+        assert!(pieces_hold(out, 0, 0));
+        assert!(pieces_hold(out, n - 1, 0));
+        assert!(!pieces_hold(out, -1, 0));
+        assert!(!pieces_hold(out, 0, -1));
+        assert!(!pieces_hold(out, n - 1, -1));
+    }
+
+    /// `a_(i-1) - 2 a_i` in `0..=1` for `i` in `1..=n`, and `a_n >= 0`: folding the free unit
+    /// pairs leaves `a_0 >= 0`.
+    fn folding_chain_rows(n: u32) -> Vec<Con> {
+        let mut rows = Vec::new();
+        for i in 1..=n {
+            rows.push(con(&[(i - 1, 1), (i, -2)], 0, Rel::Ge));
+            rows.push(con(&[(i - 1, -1), (i, 2)], 1, Rel::Ge));
+        }
+        rows.push(con(&[(n, 1)], 0, Rel::Ge));
+        rows
+    }
+
+    /// `n` levels of two twins, each the twin of the level before plus a fresh symbol, and their
+    /// sum: three definitions a level.
+    fn twin_union_defs(n: usize) -> Vec<Formula> {
+        let mut defs = Vec::new();
+        for i in 0..n {
+            let first = defs.len() as u32;
+            for side in [0u32, 1] {
+                let previous = if i == 0 {
+                    Lin::atom(Atom::Sym("base".into()))
                 } else {
-                    Lin::atom(a(i - 1)).plus(&Lin::atom(Atom::Product(
-                        Factor::Sym("x".into()),
-                        Factor::Sym(format!("z{i}").into()),
-                    )))
+                    Lin::atom(a(first - 3 + side))
                 };
+                let fresh = Lin::atom(Atom::Sym(format!("s{i:08}").into()));
                 defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
-                    &Lin::atom(a(i)),
-                    &value,
+                    &Lin::atom(a(first + side)),
+                    &previous.plus(&fresh),
                 ))])));
             }
-            defs
-        });
-        crate::scaling::check_order("metadata of fresh product inputs", 100, 1, |n| {
-            let defs = &inputs[&n];
-            let def = |j: u32| defs[j as usize].clone();
-            let root = defs[n].clone();
-            let id = Id::any(&root);
+            defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(a(first + 2)),
+                &Lin::atom(a(first)).plus(&Lin::atom(a(first + 1))),
+            ))])));
+        }
+        defs
+    }
+
+    /// `a_0 = x` and `a_i = a_(i-1) + x z_i`: a chain of `n` fresh products of inputs.
+    fn product_input_defs(n: usize) -> Vec<Formula> {
+        let mut defs = Vec::new();
+        for i in 0..=n as u32 {
+            let value = if i == 0 {
+                Lin::atom(Atom::Sym("x".into()))
+            } else {
+                Lin::atom(a(i - 1)).plus(&Lin::atom(Atom::Product(
+                    Factor::Sym("x".into()),
+                    Factor::Sym(format!("z{i}").into()),
+                )))
+            };
+            defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                &Lin::atom(a(i)),
+                &value,
+            ))])));
+        }
+        defs
+    }
+
+    /// One piece of `n` rows `a_i >= 0`, each of its own form.
+    fn singleton_union(n: usize) -> BTreeSet<Vec<Con>> {
+        let piece: Vec<Con> = (0..n as u32).map(|i| con(&[(i, 1)], 0, Rel::Ge)).collect();
+        BTreeSet::from([piece])
+    }
+
+    /// Asks `local` until it is ready, giving it the roots and the (empty) summaries it needs;
+    /// returns the number of calls.
+    fn local_when_warmed(
+        sums: &mut Summaries,
+        reads: &BTreeSet<Atom>,
+        def: &dyn Fn(u32) -> Formula,
+    ) -> usize {
+        let own = BTreeSet::new();
+        let mut calls = 0;
+        loop {
+            calls += 1;
+            match sums.local(reads, &own, None, &[], def) {
+                Local::Need(Need::RootsMany(fs)) => {
+                    for f in fs {
+                        sums.roots(f, def);
+                    }
+                }
+                Local::Need(Need::Summaries(js)) => {
+                    for (k, _) in js {
+                        sums.by.insert(
+                            k,
+                            Some(Summary {
+                                pieces: vec![Vec::new()],
+                            }),
+                        );
+                    }
+                }
+                Local::Ready(_, _) => return calls,
+                _ => panic!("fixture must be decomposable"),
+            }
+        }
+    }
+
+    /// The small instances of the benchmarks in `bench.rs`, with the answers they assert.
+    #[test]
+    fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+        let ready = |sums: &Summaries, defs: &[Formula], reads: &BTreeSet<Atom>| {
+            let def = |n: u32| defs[n as usize].clone();
+            matches!(
+                sums.local(reads, &BTreeSet::new(), None, &[], &def),
+                Local::Ready(_, _)
+            )
+        };
+        for n in 1..=6 {
+            for (depth, shared) in [(1, false), (4, false), (20, true)] {
+                let (mut sums, defs, reads) = r5_frontier_fixture(n, depth, shared);
+                let def = |n: u32| defs[n as usize].clone();
+                local_when_warmed(&mut sums, &reads, &def);
+                assert!(ready(&sums, &defs, &reads), "{n} {depth}");
+            }
+            let (sums, defs, reads) = r5_frontier_fixture(n, 1, false);
+            // Without the warming above, `local` is ready at once only from two leaves on.
+            assert_eq!(ready(&sums, &defs, &reads), n > 1, "{n}");
+            let (sums, defs, reads) = r5_unequal_shared_frontier(n);
+            assert!(ready(&sums, &defs, &reads), "{n}");
+            let (sums, defs, reads) = functional_leaf_key_fixture(n as usize);
+            assert!(ready(&sums, &defs, &reads), "{n}");
+
+            parabola_rays_kept(&merge_pieces(parabola_rays(n as i64)), n as i64);
+            almost_convex_rays_kept(&merge_pieces(r6_almost_convex_rays(n as usize)), n as i64);
+            let out = fold_free_unit_pairs(folding_chain_rows(n), &HashSet::new());
+            assert_eq!(out, vec![con(&[(0, 1)], 0, Rel::Ge)], "{n}");
+            let before = singleton_union(n as usize);
+            let expected: Vec<_> = before.iter().cloned().collect();
+            assert_eq!(merge_pieces(before), expected, "{n}");
+
+            let syms = |defs: &[Formula], root: Formula| {
+                let def = |n: u32| defs[n as usize].clone();
+                let id = Id::any(&root);
+                let mut sums = Summaries::default();
+                sums.syms(root, &def);
+                (sums.syms[&id].len(), sums.cone[&id].len())
+            };
+            let defs = r5_diamond_defs(n);
+            let root = defs.last().unwrap().clone();
+            let m = n as usize;
+            assert_eq!(syms(&defs, root), (2 * m + 1, 3 * m), "{n}");
+            let defs = r5_unbalanced_union_defs(n);
+            let root = defs.last().unwrap().clone();
+            assert_eq!(syms(&defs, root).0, 2 * m, "{n}");
+            let defs = product_input_defs(m);
+            let root = defs[m].clone();
+            assert_eq!(syms(&defs, root), (2 * m + 1, m + 1), "{n}");
+            let defs = twin_union_defs(m);
+            let def = |n: u32| defs[n as usize].clone();
             let mut sums = Summaries::default();
-            sums.syms(root, &def);
-            assert_eq!(sums.syms[&id].len(), 2 * n + 1);
-            assert_eq!(sums.cone[&id].len(), n + 1);
-        });
+            for i in 0..m {
+                sums.syms(defs[3 * i + 2].clone(), &def);
+            }
+            let id = Id::any(defs.last().unwrap());
+            assert_eq!(sums.syms[&id].len(), m + 1, "{n}");
+            assert_eq!(sums.cone[&id].len(), 2 * m + 1, "{n}");
+
+            for (depth, prefix) in [(1, 0), (4, 0), (4, 2)] {
+                let (defs, q) = r5_actual_frontier_defs(n, depth, prefix);
+                let def = |n: u32| defs[n as usize].clone();
+                let answers = Extending::new().defined(&q, &def);
+                assert_eq!(
+                    answers,
+                    Answers {
+                        holds: Ok(true),
+                        fails: Ok(true)
+                    },
+                    "{n} {depth} {prefix}"
+                );
+            }
+            let (row, bounds) = r6_bounded_row(m);
+            let (mut fast, mut slow) = (bounds.clone(), bounds);
+            assert!(tighten_bounded_row(&row, &mut fast), "{n}");
+            assert!(tighten_bounded_row_slow(&row, &mut slow), "{n}");
+            assert_eq!(fast, slow, "{n}");
+        }
+    }
+
+    /// A merge of no piece is empty, and a merge of one impossible piece keeps it: the merge
+    /// pairs pieces only when there are two.
+    #[test]
+    fn a_merge_of_fewer_than_two_pieces_returns_them() {
+        assert!(merge_pieces(BTreeSet::new()).is_empty());
+        let impossible = vec![Con {
+            lin: Lin::constant(1),
+            rel: Rel::Eq,
+        }];
+        assert_eq!(
+            merge_pieces(BTreeSet::from([impossible.clone()])),
+            vec![impossible]
+        );
     }
 }

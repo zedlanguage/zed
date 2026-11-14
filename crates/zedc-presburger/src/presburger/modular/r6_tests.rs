@@ -1,6 +1,7 @@
 use super::*;
 use crate::scaling;
 use num_bigint::BigInt;
+mod bench;
 
 #[test]
 fn pncx_fast_bezout_matches_euclid() {
@@ -17,9 +18,12 @@ fn pncx_fast_bezout_matches_euclid() {
         pairs.push((Int::ZERO, Int::from(y)));
     }
     let (mut a, mut b) = (Int::ONE, Int::ONE);
-    for i in 0..12_000 {
+    // Fibonacci pairs, the longest run of Euclid's steps for their width, to 2780 bits: below
+    // the lift width of the half gcd (`LIFT_BITS`, 29376 bits as built), as the 8300 bits of
+    // 12000 steps were, at an eighth of the reference's quadratic work.
+    for i in 0..4000 {
         (a, b) = (b.clone(), &a + &b);
-        if i % 197 == 0 {
+        if i % 61 == 0 {
             pairs.push((a.clone(), b.clone()));
             pairs.push((&a * &Int::from(12), &b * &Int::from(12)));
         }
@@ -105,15 +109,6 @@ fn pncx_bipartite_core() {
 }
 
 #[test]
-fn pncx_bipartite_core_scale() {
-    let inputs = scaling::inputs(32, bipartite_core);
-    scaling::check_order("color a bipartite three-core", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
-}
-
-#[test]
 fn pncx_coprime_base_exhaustive_small_inputs() {
     for a in 2..24 {
         for b in a..32 {
@@ -181,27 +176,6 @@ fn pncx_bound_matching_is_order_independent() {
     assert_eq!(forced_pair_bounds(&clauses), Domain::ge(Int::from(100)));
 }
 
-#[test]
-fn pncx_bound_matching_scale() {
-    let inputs = scaling::inputs(128, |n| {
-        (0..n)
-            .map(|i| FlatClause {
-                bounds: Domain::ge(Int::from(100)),
-                mods: BTreeMap::from([
-                    (
-                        Int::from(100_003),
-                        vec![(Int::from(i % 2), Int::from(i % 2))],
-                    ),
-                    (Int::from(100_019), vec![(Int::from(i), Int::from(i))]),
-                ]),
-            })
-            .collect::<Vec<_>>()
-    });
-    scaling::check_order("three-pair implication by matching", 128, 1, |n| {
-        assert_eq!(forced_pair_bounds(&inputs[&n]), Domain::all());
-    });
-}
-
 fn power_inputs(bits: usize) -> (BTreeMap<Int, ResidueSet>, Int) {
     let mut k = 0usize;
     while (k + 1) * (k + 1) <= bits {
@@ -215,18 +189,6 @@ fn power_inputs(bits: usize) -> (BTreeMap<Int, ResidueSet>, Int) {
         sets.insert(q.clone(), vec![(r.clone(), r)]);
     }
     (sets, q)
-}
-
-#[test]
-fn pncx_power_propagation_scale() {
-    let inputs = scaling::inputs(65_536, power_inputs);
-    scaling::check_order("propagate the highest fixed residue once", 65_536, 1, |n| {
-        let (sets, max) = &inputs[&n];
-        let ConsolidateOut::Ok(info, _) = consolidate_prime_powers(sets, max) else {
-            panic!("fixed residue");
-        };
-        assert_eq!(info.u, max - &Int::ONE);
-    });
 }
 
 #[test]
@@ -341,8 +303,11 @@ fn pncx_score_witness_oracle() {
 #[test]
 fn pncx_wide_arithmetic_random_oracle() {
     use num_bigint::Sign;
-    let mut state = 0x36ab_94f1_2d6e_1a39u64;
-    for i in 0..1200usize {
+    // A new seed each run, printed. Every fifth case of 1200: as 5 is prime to 2, 3, 71 and
+    // 91, the signs and shifts still take every value they took, and the lengths, 17 to 516
+    // bytes, every fifth.
+    let mut state = crate::seed::seed("pncx_wide_arithmetic_random_oracle");
+    for i in (0..1200usize).step_by(5) {
         let mut make = |n: usize| {
             let mut bytes = Vec::with_capacity(n);
             for _ in 0..n {
@@ -453,15 +418,6 @@ fn prism_core(
 }
 
 #[test]
-fn pncx_prism_core_scale() {
-    let inputs = scaling::inputs(32, prism_core);
-    scaling::check_order("Brooks coloring on odd prism cores", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
-}
-
-#[test]
 fn pncx_prism_models() {
     for n in 1..40 {
         let (info, allowed, clauses) = prism_core(n);
@@ -508,15 +464,6 @@ fn pncx_wheel_models() {
 }
 
 #[test]
-fn pncx_wheel_core_scale() {
-    let inputs = scaling::inputs(32, wheel_core);
-    scaling::check_order("a universal vertex and a bipartite remainder", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
-}
-
-#[test]
 fn pncx_empty_pair_implication() {
     for mask in 0..512usize {
         let clauses: Vec<_> = (0..3)
@@ -552,27 +499,6 @@ fn pncx_empty_pair_implication() {
     assert!(forced_pair_bounds(&clauses).is_empty());
 }
 
-#[test]
-fn pncx_empty_pair_bound_scale() {
-    let inputs = scaling::inputs(128, |n| {
-        (0..n)
-            .map(|i| FlatClause {
-                bounds: Domain::empty(),
-                mods: BTreeMap::from([
-                    (
-                        Int::from(100003),
-                        vec![(Int::from(i % 2), Int::from(i % 2))],
-                    ),
-                    (Int::from(100019), vec![(Int::from(i), Int::from(i))]),
-                ]),
-            })
-            .collect::<Vec<_>>()
-    });
-    scaling::check_order("empty shared bounds tested by matching", 128, 1, |n| {
-        assert_eq!(forced_pair_bounds(&inputs[&n]), Domain::all());
-    });
-}
-
 fn alias_chain(n: usize) -> (UnitUf, Vec<Atom>, Formula) {
     let atoms: Vec<_> = (0..=n)
         .map(|i| Atom::Sym(format!("n{:06}", n - i).into()))
@@ -602,50 +528,48 @@ fn alias_chain(n: usize) -> (UnitUf, Vec<Atom>, Formula) {
     (uf, atoms, f)
 }
 
+/// The small instances of the benchmarks in `bench.rs` that no test above holds, with the answers
+/// they assert: the matched pair clauses force no bound, with the shared bounds `x >= 100` or
+/// empty; the highest fixed residue reaches every lower power; and the alias chain has its
+/// unit-union-find answer, a witness, and a point found by both solvers. The graph cores are
+/// held by `pncx_bipartite_core`, `pncx_prism_models` and `pncx_wheel_models`.
 #[test]
-fn pncx_alias_chain_axis() {
-    let mut meter = scaling::Meter::new();
-    for n in [256, 512, 1024, 2048] {
+fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+    for n in 1..=8 {
+        for bounds in [Domain::ge(Int::from(100)), Domain::empty()] {
+            let clauses: Vec<_> = (0..n)
+                .map(|i| FlatClause {
+                    bounds: bounds.clone(),
+                    mods: BTreeMap::from([
+                        (
+                            Int::from(100_003),
+                            vec![(Int::from(i % 2), Int::from(i % 2))],
+                        ),
+                        (Int::from(100_019), vec![(Int::from(i), Int::from(i))]),
+                    ]),
+                })
+                .collect();
+            assert_eq!(forced_pair_bounds(&clauses), Domain::all(), "{n}");
+        }
+        let (sets, max) = power_inputs(n * n);
+        let ConsolidateOut::Ok(info, _) = consolidate_prime_powers(&sets, &max) else {
+            panic!("fixed residue at {n}");
+        };
+        assert_eq!(info.u, &max - &Int::ONE, "{n}");
         let (uf, atoms, f) = alias_chain(n);
-        assert_eq!(uf.get(&atoms[0]), (atoms[n].clone(), 1, Int::from(n)));
-        let work = meter.work(|| {
-            for a in &atoms {
-                std::hint::black_box(uf.get(a));
-            }
-        });
-        let printed = f.to_string().len();
+        assert_eq!(
+            uf.get(&atoms[0]),
+            (atoms[n].clone(), 1, Int::from(n)),
+            "{n}"
+        );
         let mut witness = Model::new();
         for (i, a) in atoms.iter().enumerate() {
             witness.insert(a.clone(), Int::from(2i64 - i as i64));
         }
         witness.insert(Atom::Aux(0), Int::ZERO);
         witness.insert(Atom::Aux(1), Int::from(2));
-        assert!(f.holds(&witness));
-        println!(
-            "ALIAS_GET n={n} input_bytes={printed} work={} bytes={}",
-            work.units, work.bytes
-        );
-        let mut result = None;
-        let work = meter.work(|| result = solve_modular(&f, false));
-        assert!(matches!(result, Some(Some(_))));
-        println!(
-            "ALIAS_FORMULA n={n} input_bytes={printed} work={} bytes={}",
-            work.units, work.bytes
-        );
-        let mut d = None;
-        let work = meter.work(|| d = Some(crate::presburger::decide(&f)));
-        assert_eq!(d, Some(Ok(true)));
-        println!(
-            "ALIAS_DECIDE n={n} input_bytes={printed} work={} bytes={}",
-            work.units, work.bytes
-        );
+        assert!(f.holds(&witness), "{n}");
+        assert!(matches!(solve_modular(&f, false), Some(Some(_))), "{n}");
+        assert_eq!(crate::presburger::decide(&f), Ok(true), "{n}");
     }
-}
-
-#[test]
-fn pncx_affine_alias_chain_scale() {
-    let inputs = scaling::inputs(256, |n| alias_chain(n).2);
-    scaling::check_order("affine aliases before one remainder", 256, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
 }

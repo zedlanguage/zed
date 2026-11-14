@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::scaling;
+mod bench;
 
 /// `x mod 3 == 2`, `0 <= x <= 10000`, and `n` atoms fixed one after another: `a_n == 1` and
 /// `2 a_i == 2 a_(i+1)`, the rows written so that each pass of the constant propagation of
@@ -33,14 +34,6 @@ fn fixed_chain(n: usize) -> Formula {
         Formula::Con(Con::ge(&Lin::constant(10000), &x)),
     ]);
     Formula::And(crate::presburger::Shared::new(parts))
-}
-
-#[test]
-fn pncx_fixed_chain_scale() {
-    let inputs = scaling::inputs(64, fixed_chain);
-    scaling::check_order("atoms fixed one after another", 64, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
 }
 
 /// `(x mod 6) mod 2 == 1 && 0 <= x <= 20`: `x = 6 q + r`, `r = 2 p + s`, the rows of the two
@@ -90,4 +83,15 @@ fn nested_remainder_answers_do_not_depend_on_row_order() {
     }
     println!("NESTED {got:?}");
     assert!(got.iter().all(|g| g.2 == got[0].2), "{got:?}");
+}
+
+/// The small instances of the benchmark in `bench.rs`: each chain of fixed atoms has a point.
+#[test]
+fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+    for n in 1..=8 {
+        assert!(
+            matches!(solve_modular(&fixed_chain(n), false), Some(Some(_))),
+            "{n}"
+        );
+    }
 }

@@ -15,3 +15,8 @@ pub mod presburger;
     reason = "presburger's tests use only some of the shared checks"
 )]
 mod scaling;
+
+/// The seed of a random test, new on each run and printed, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/seed.rs"]
+mod seed;

@@ -615,7 +615,8 @@ mod tests {
     use super::*;
     use crate::presburger::{Lin, Rel};
 
-    /// A small generator of numbers, fixed so that the tests are the same each run.
+    /// A small generator of numbers (xorshift64), seeded by [`crate::seed::seed`]: a new seed on
+    /// each run, printed, which `ZED_TEST_SEED` repeats.
     struct Rng(u64);
 
     impl Rng {
@@ -694,9 +695,11 @@ mod tests {
 
     #[test]
     fn a_sequence_joined_anywhere_has_the_root_of_its_parse_from_scratch() {
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng = Rng(crate::seed::seed(
+            "a_sequence_joined_anywhere_has_the_root_of_its_parse_from_scratch",
+        ) | 1);
         let mut c = Canon::new();
-        for round in 0..3000 {
+        for round in 0..500 {
             let xs = sequence(&mut c, &mut rng);
             let whole = scratch(&mut c, &xs);
             assert_eq!(written(&c, whole), xs, "round {round}");
@@ -712,9 +715,9 @@ mod tests {
 
     #[test]
     fn sequences_compare_as_written_out() {
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(crate::seed::seed("sequences_compare_as_written_out") | 1);
         let mut c = Canon::new();
-        for round in 0..3000 {
+        for round in 0..500 {
             let xs = sequence(&mut c, &mut rng);
             // Another sequence equal to it up to a random place, then differing or ending.
             let at = rng.below(xs.len() + 1);

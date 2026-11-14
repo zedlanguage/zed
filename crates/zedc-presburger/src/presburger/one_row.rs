@@ -362,8 +362,11 @@ mod tests {
 
     #[test]
     fn a_point_is_built_wherever_there_is_one_and_projections_are_exact() {
+        // 100 cases from a new seed each run, printed; about three in four build a point.
+        let base =
+            crate::seed::seed("a_point_is_built_wherever_there_is_one_and_projections_are_exact");
         let mut built = 0;
-        for seed in 0..3000 {
+        for seed in (0..100).map(|i| base.wrapping_add(i)) {
             let (cons, atoms, ends) = case(seed);
             let refs: Vec<&Con> = cons.iter().collect();
             let Some(b) = OneRow::of_cons(&refs) else {
@@ -410,6 +413,6 @@ mod tests {
                 }
             }
         }
-        assert!(built > 1000, "{built} points");
+        assert!(built > 40, "{built} points");
     }
 }

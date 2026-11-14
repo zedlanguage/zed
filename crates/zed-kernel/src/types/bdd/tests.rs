@@ -711,30 +711,30 @@ pub(super) fn tied(bottom: &str, depth: usize) -> Type {
     t
 }
 
+/// The order of chains of [`tied`] `depth` levels deep: equal chains are equal, chains whose
+/// bottoms differ are ordered by them, read `depth` levels down, and a chain a level shorter is
+/// ordered one way, the same both ways round.
+pub(super) fn tied_chains_are_ordered(depth: usize) {
+    let (a, b, c) = (tied("z", depth), tied("z", depth), tied("y", depth));
+    assert_eq!(a.digest(), c.digest());
+    assert_eq!(a.cmp(&b), Ordering::Equal);
+    assert_eq!(a, b);
+    // The bottoms differ: `#y` before `#z`.
+    assert_eq!(a.cmp(&c), Ordering::Greater);
+    assert_eq!(c.cmp(&a), Ordering::Less);
+    // A chain that stops a level short has no payload where the other has one.
+    let d = tied("z", depth - 1);
+    assert_eq!(d.cmp(&a), a.cmp(&d).reverse());
+    assert_ne!(d.cmp(&a), Ordering::Equal);
+}
+
 #[test]
-fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
-    // The order reads such types n levels down. It was a recursion, which overflowed this
-    // 2 MiB stack at 5,761 levels in a debug build (measured on e3795900d, before
-    // SHORT-stack-l01_22); it is a loop with a stack of its own, here half as deep again.
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| {
-            let depth = 9_000;
-            let (a, b, c) = (tied("z", depth), tied("z", depth), tied("y", depth));
-            assert_eq!(a.digest(), c.digest());
-            assert_eq!(a.cmp(&b), Ordering::Equal);
-            assert_eq!(a, b);
-            // The bottoms differ: `#y` before `#z`, read 9,000 levels down.
-            assert_eq!(a.cmp(&c), Ordering::Greater);
-            assert_eq!(c.cmp(&a), Ordering::Less);
-            // A chain that stops a level short has no payload where the other has one.
-            let d = tied("z", depth - 1);
-            assert_eq!(d.cmp(&a), a.cmp(&d).reverse());
-            assert_ne!(d.cmp(&a), Ordering::Equal);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn types_whose_digests_tie_at_every_depth_are_ordered() {
+    // From one level, where the shorter chain is the bare bottom, up. The depth at which the
+    // old recursion overflowed a small stack is in `bench.rs` (author P178).
+    for depth in [1, 2, 5] {
+        tied_chains_are_ordered(depth);
+    }
 }
 
 /// `x_0 | x_1 | … | x_{m-1}` as expressions nested `m - 1` deep, the first operand the
@@ -782,41 +782,28 @@ pub(super) fn meet(base: u64, m: usize) -> Bdd<Row> {
     })
 }
 
-/// The walks on expressions and diagrams nested this deep, on a 2 MiB stack. Of the walks the
-/// test runs, the recursive ones before T2-types-rest part 3 overflowed that stack at 13,085 to
-/// 32,812 levels in a debug build (measured on 8e4fdf932); half as deep again as the deepest.
-const DEEP: usize = 50_000;
-
-#[test]
-fn the_walks_over_parts_nested_deep_run_on_a_small_stack() {
-    // Each walk was a recursion, which overflowed this stack (see the negative control in
-    // STATUS.md, T2-types-rest part 3); each is now a loop with a stack of its own.
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| {
-            let p = ors(0, DEEP, Part::literal);
-            assert_eq!(p.union_rows().map(|r| r.len()), Some(DEEP));
-            assert!(!p.eval(&|_| false));
-            assert!(p.eval(&|a| *a == atom(0)));
-            assert_eq!(p.eval3(&|_| None), None);
-            assert_eq!(p.eval3(&|a| Some(*a == atom(0))), Some(true));
-            assert_eq!(p.distinct_atoms().len(), DEEP);
-            assert_eq!(p.forced(), (Vec::new(), Vec::new()));
-            let only = |x: Row| move |a: &Row| (*a != x).then_some(false);
-            assert_eq!(p.restrict(&only(atom(0))), Part::literal(atom(0)));
-            let q = settled_by_one_pin(0, DEEP);
-            assert_eq!(q.settle().distinct_atoms().len(), 2 * (DEEP - 1));
-            let b = Part::Bdd(meet(0, DEEP));
-            assert_eq!(b.eval3(&|_| None), None);
-            assert_eq!(b.eval3(&|_| Some(true)), Some(true));
-            assert_eq!(b.distinct_atoms().len(), DEEP);
-            assert_eq!(b.restrict(&|_| None), b);
-            let all_but = |x: Row| move |a: &Row| (*a != x).then_some(true);
-            assert_eq!(b.restrict(&all_but(atom(0))), Part::literal(atom(0)));
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+/// The walks on expressions and diagrams nested `depth` deep: union rows, eval, eval3, the
+/// atoms, the forced atoms, restrict and settle, each on the input whose answer is known.
+pub(super) fn the_walks_over_parts_hold(depth: usize) {
+    let p = ors(0, depth, Part::literal);
+    assert_eq!(p.union_rows().map(|r| r.len()), Some(depth));
+    assert!(!p.eval(&|_| false));
+    assert!(p.eval(&|a| *a == atom(0)));
+    assert_eq!(p.eval3(&|_| None), None);
+    assert_eq!(p.eval3(&|a| Some(*a == atom(0))), Some(true));
+    assert_eq!(p.distinct_atoms().len(), depth);
+    assert_eq!(p.forced(), (Vec::new(), Vec::new()));
+    let only = |x: Row| move |a: &Row| (*a != x).then_some(false);
+    assert_eq!(p.restrict(&only(atom(0))), Part::literal(atom(0)));
+    let q = settled_by_one_pin(0, depth);
+    assert_eq!(q.settle().distinct_atoms().len(), 2 * (depth - 1));
+    let b = Part::Bdd(meet(0, depth));
+    assert_eq!(b.eval3(&|_| None), None);
+    assert_eq!(b.eval3(&|_| Some(true)), Some(true));
+    assert_eq!(b.distinct_atoms().len(), depth);
+    assert_eq!(b.restrict(&|_| None), b);
+    let all_but = |x: Row| move |a: &Row| (*a != x).then_some(true);
+    assert_eq!(b.restrict(&all_but(atom(0))), Part::literal(atom(0)));
 }
 
 #[test]
@@ -853,44 +840,43 @@ pub(super) fn choices(base: u64, leaves: u64, m: usize) -> Part<Row> {
     })
 }
 
-/// How deep the lists of the depth test go: the diagrams' `apply` and `flip`, as
-/// recursions, overflowed a 2 MiB stack at 13,085 and 14,647 levels in a debug build
-/// (measured on faf792d10, before T2-types-rest-4), and the 8 MiB stack of a main thread at
-/// 60,000. Half as deep again, so that the old code overflows here with room to spare.
-const DIAGRAM_DEPTH: usize = 22_000;
-
-/// How deep the choices of the depth test go: `Part::not` and `Part::zip`, as a mutual
-/// recursion through `choice`, `choice_of`, `same_as_not` and `choose`, overflowed a 2 MiB
-/// stack at 1,684 levels (measured as above), and the 8 MiB stack at 10,000; half as deep again.
-const CHOICE_DEPTH: usize = 2_600;
-
-#[test]
-fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
-    // On the test thread's own stack (2 MiB unless RUST_MIN_STACK says otherwise), which the
-    // depths above overflowed in the old recursions.
-    let (a, b) = (meet(0, DIAGRAM_DEPTH), meet_but_last(0, DIAGRAM_DEPTH));
+/// The connectives on lists `lists` literals long and on choices nested `choice` deep: the
+/// meet of a list with one that differs in its last literal, the complement and its
+/// complement, the union with the complement, and the union of two chains of choices on the
+/// same conditions, each against the answer known.
+pub(super) fn the_connectives_on_parts_hold(lists: usize, choice: usize) {
+    let (a, b) = (meet(0, lists), meet_but_last(0, lists));
     assert_eq!(a.zip_chain(&b, Op::And), Some(Bdd::Leaf(false)));
     let not_a = a.not();
     assert_eq!(not_a.not(), a);
     assert_eq!(a.zip_chain(&not_a, Op::Or), Some(Bdd::Leaf(true)));
     let l = b.list();
     assert_eq!(l.blocks.len(), 1);
-    assert_eq!(l.blocks[0].1.len(), DIAGRAM_DEPTH);
-    let base = 10 * DIAGRAM_DEPTH as u64;
-    let p = choices(base, base + 2 * CHOICE_DEPTH as u64, CHOICE_DEPTH);
-    let q = choices(base, base + 4 * CHOICE_DEPTH as u64, CHOICE_DEPTH);
+    assert_eq!(l.blocks[0].1.len(), lists);
+    let base = 10 * lists as u64;
+    let p = choices(base, base + 2 * choice as u64, choice);
+    let q = choices(base, base + 4 * choice as u64, choice);
     let not_p = p.not();
     assert_eq!(not_p.not(), p);
     assert_eq!(p.zip(&not_p, Op::And), Part::leaf(false));
     let both = p.zip(&q, Op::Or);
     // Every condition and `x_0` held: both chains take the deepest branch, `x_0`.
-    let deepest: BTreeSet<Row> = (1..=CHOICE_DEPTH as u64).map(|k| atom(base + k)).collect();
+    let deepest: BTreeSet<Row> = (1..=choice as u64).map(|k| atom(base + k)).collect();
     assert!(p.eval(&|a| deepest.contains(a)));
     assert!(both.eval(&|a| deepest.contains(a)));
     // No condition held, and the top leaf of `q`: only `q` takes it.
-    let top_of_q = atom(base + 4 * CHOICE_DEPTH as u64 + CHOICE_DEPTH as u64 - 1);
+    let top_of_q = atom(base + 4 * choice as u64 + choice as u64 - 1);
     assert!(both.eval(&|a| *a == top_of_q));
     assert!(!p.eval(&|a| *a == top_of_q));
+}
+
+#[test]
+fn the_connectives_on_parts_hold_at_small_depths() {
+    // The depths at which the old recursions overflowed the default stack are in `bench.rs`
+    // (author P178).
+    for (lists, choice) in [(2, 2), (3, 3), (9, 9)] {
+        the_connectives_on_parts_hold(lists, choice);
+    }
 }
 
 /// The entries of this thread's tables of tuple nodes, in all: sets, cells, exclusive ors and
@@ -1953,6 +1939,9 @@ fn the_walks_over_parts_hold_at_small_depths() {
         assert_eq!(or.restrict(&|_| Some(false)), Part::leaf(false));
         assert_eq!(meet.restrict(&|_| None), meet);
         assert_eq!(pin.settle().distinct_atoms().len(), 2 * (m - 1));
+        // The depths at which the old recursions overflowed a small stack are in `bench.rs`
+        // (author P178).
+        the_walks_over_parts_hold(m);
     }
 }
 

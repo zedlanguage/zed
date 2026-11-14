@@ -533,6 +533,7 @@ mod tests {
     use super::super::formula::Lin;
     use super::*;
     use crate::scaling;
+    mod bench;
 
     fn atom(name: &str) -> Lin {
         Lin::atom(Atom::Sym(name.into()))
@@ -645,17 +646,5 @@ mod tests {
         let mut ors = vec![vec![is(&x, 1), is(&atom("y"), 2)]];
         assert!(drop_outside_values(&[], &mut ors, Vec::as_slice));
         assert_eq!(ors[0].len(), 2);
-    }
-
-    /// Both families at `n` and `8n`: O(r log r) in the `r` ranges, a removal at a time along
-    /// the chain and many gaps on one form.
-    #[test]
-    fn removals_scale() {
-        scaling::check_order("removals by the values of each form", 1000, 1, |n| {
-            let mut ors = chain(n);
-            assert!(drop_outside_values(&[], &mut ors, Vec::as_slice));
-            let mut ors = wide(i128::try_from(n).expect("a size fits"));
-            assert!(drop_outside_values(&[], &mut ors, Vec::as_slice));
-        });
     }
 }

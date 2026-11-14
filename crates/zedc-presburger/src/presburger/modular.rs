@@ -498,7 +498,7 @@ impl UnitUf {
     /// most one link.
     // Complexity tradeoff: `get` takes `&self` and cannot compress, so after a chain of unions
     // written in descending name order each `get` walked the whole chain, Omega(n^2) over the
-    // atoms (I6.11, `r6_tests::pncx_affine_alias_chain_scale`, 61.0 times the work for 8 times
+    // atoms (I6.11, `r6_tests::bench::pncx_affine_alias_chain_scale`, 61.0 times the work for 8 times
     // the aliases). Compressing every path once after the unions costs O(n log n) amortized
     // (path compression with linking by name, Tarjan and van Leeuwen 1984), and the roots, signs
     // and offsets are the same, so no answer depends on it. Nothing is given up.
@@ -717,7 +717,7 @@ fn solve_modular_whole(
 
     // Complexity tradeoff: repeating the pass over every row until a pass fixes nothing costs
     // one pass per atom fixed in a chain (`2 a_i == 2 a_(i+1)` written so that each pass fixes
-    // one more), O(n^2) rows read (R7-CLAUDE-1, `r7_tests::pncx_fixed_chain_scale`), and a pass
+    // one more), O(n^2) rows read (R7-CLAUDE-1, `r7_tests::bench::pncx_fixed_chain_scale`), and a pass
     // that only joined two classes stopped the loop, so a row read before the join was never
     // read again and the result followed the order of the rows. A worklist reads each row once,
     // and again only when its class is fixed (once per row) or joined with a smaller class
@@ -2011,7 +2011,7 @@ fn partition_into_regimes(global_bounds: &Domain, clauses: &[FlatClause]) -> Vec
     // Complexity tradeoff: scanning every cut for every disjoint global span
     // costs O(g c). Binary searches select only the cuts inside each span,
     // O(g log c + c) comparisons in total; disjoint spans cannot share a cut.
-    // Nothing is given up. Test: r4_tests::pncx_bound_partition_scale.
+    // Nothing is given up. Test: r4_tests::bench::pncx_bound_partition_scale.
     for (g_lo, g_hi) in &global_bounds.pieces {
         let mut cur_lo = g_lo.clone();
         let start = g_lo
