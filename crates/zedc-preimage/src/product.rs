@@ -2485,6 +2485,27 @@ impl Order {
         self.names = names.clone();
     }
 
+    /// Notes that the star of `x` is not known to be at its projection, and places `x` again,
+    /// against the relation and names the order was last brought up to date with, so that
+    /// every bound cuts it ([`Order::projected`]).
+    ///
+    /// Placing it against another relation, as the join did with its own, left the order
+    /// recording one relation and holding the places of another: where the join's relation
+    /// had not yet found `x` a leaf, `x` was taken out, and the next [`Order::sync`], which
+    /// places only the leaves whose star differs between the relation recorded and the one
+    /// given, never put it back, so a move of its hub did not project its star again
+    /// (FAIL-linked-held-wider-seed). Placed this way, a leaf whose star the next relation
+    /// changes is placed again by that sync, as every other leaf is. In O(log n), as
+    /// [`Order::place`].
+    fn unmark(&mut self, x: &Arc<str>) {
+        self.projected.remove(x);
+        if let Some(relation) = self.relation.take() {
+            let names = std::mem::take(&mut self.names);
+            self.place(&relation, &names, x);
+            (self.relation, self.names) = (Some(relation), names);
+        }
+    }
+
     /// Notes that the star of `x` was projected, `refused` when a question was refused in
     /// it, and places `x` again.
     fn mark(
@@ -7334,8 +7355,7 @@ impl Scope {
                 .collect()
         };
         for x in &unmarked {
-            seen.order.projected.remove(x);
-            seen.order.place(&relation, &names, x);
+            seen.order.unmark(x);
         }
         // This side's point, which goes with this side's last enumeration, kept below as the
         // join's: the constraints on a name the join changed are searched again, and the

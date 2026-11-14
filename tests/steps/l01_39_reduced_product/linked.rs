@@ -2352,3 +2352,59 @@ mod bench;
 fn holes_in_the_tree_of_differences_of_seed_1597508919132665080() {
     holes_in_trees(1597508919132665080, false, |n| n.trees == 4);
 }
+
+/// The piled trees of seed 7824212788089549554 give the projection from scratch: the join of
+/// the cases of a test placed a star whose hub moved against its own relation, where the star
+/// was not yet a leaf, so the order lost it and a later move of the hub left the star's
+/// projection as it was (FAIL-linked-held-wider-seed, `Order::unmark`).
+#[test]
+fn holes_piled_in_the_trees_of_seed_7824212788089549554_give_the_projection_from_scratch() {
+    holes_in_trees(7824212788089549554, true, met_with_piling);
+}
+
+/// The piled trees of seed 5509389503070729707 give the projection from scratch, as those of
+/// seed 7824212788089549554.
+#[test]
+fn holes_piled_in_the_trees_of_seed_5509389503070729707_give_the_projection_from_scratch() {
+    holes_in_trees(5509389503070729707, true, met_with_piling);
+}
+
+/// The trees of seed 14632382012997512814 give the projection from scratch, as those of
+/// seed 7824212788089549554.
+#[test]
+fn holes_in_the_trees_of_seed_14632382012997512814_give_the_projection_from_scratch() {
+    holes_in_trees(14632382012997512814, false, met_without_piling);
+}
+
+/// Seed 7824212788089549554 made minimal: after the join of the cases of
+/// `x4 != -1 && x3 - x4 >= 2`, the star of `x2` at its hub `x3` is placed in the order again,
+/// so that `x3 != 0` failing, which fixes `x3` at 0, also moves `x2` to `[..0]`, where
+/// the held projection left it at `[..1]`. Each step's intervals are those of the projection
+/// from scratch.
+#[test]
+fn a_star_unmarked_by_a_join_is_projected_again_when_its_hub_moves() {
+    let p = Premises::new();
+    let ns = named(5, "x");
+    let v = |n: usize| var(&ns[n]);
+    let d = |a: usize, b: usize| prim(Prim::Sub, v(a), v(b));
+    let mut s = ints(&ns);
+    s = s.assume(&prim(Prim::Ge, v(0), int(-3)), true, &p);
+    s = s.assume(&prim(Prim::Le, v(3), int(1)), true, &p);
+    s = s.assume(&prim(Prim::Ge, d(4, 0), int(2)), true, &p);
+    s = s.assume(&prim(Prim::Ge, d(3, 2), int(0)), true, &p);
+    let t = prim(
+        Prim::And,
+        prim(Prim::Ne, v(4), int(-1)),
+        prim(Prim::Ge, d(3, 4), int(2)),
+    );
+    let mut s = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
+    s.reduce();
+    let hole = prim(Prim::Ne, v(3), int(0));
+    let got = s.assume(&hole, false, &p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&hole, false, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+}
