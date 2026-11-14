@@ -46,8 +46,8 @@ fn cap_by_rule(s: &IntervalSet, limit: usize) -> IntervalSet {
 
 #[test]
 fn cap_follows_the_merge_rule() {
-    let mut rng = Rng::new(24);
-    let mut tried = 0;
+    let (mut rng, seed) = Rng::fresh("caps of random sets");
+    let mut merged = 0;
     for _ in 0..2000 {
         let n = rng.below(30);
         let open = rng.below(2) == 0;
@@ -56,16 +56,23 @@ fn cap_follows_the_merge_rule() {
         assert_eq!(
             s.cap(limit),
             cap_by_rule(&s, limit),
-            "{s} capped to {limit}"
+            "{s} capped to {limit}, ZED_TEST_SEED={seed}"
         );
-        tried += 1;
+        if n > limit.max(1) {
+            merged += 1;
+        }
     }
-    assert_eq!(tried, 2000);
+    // Most caps merge pieces, so the heap is tested. The test counted its draws, 2000 always,
+    // until TEST-l0124-fixed-seeds; it now counts the caps that merge. `pieces` gives exactly
+    // `n` pieces, so a cap merges when `n > max(limit, 1)`: with `n` in 0..30 and `limit` in
+    // 0..12 that has chance 281/360, so 1561 of 2000 on average, sd 18.5, and 1000 is 30 sd
+    // below.
+    assert!(merged > 1000, "{merged} caps merged, ZED_TEST_SEED={seed}");
 }
 
 #[test]
 fn join_and_contains_agree_with_membership() {
-    let mut rng = Rng::new(7);
+    let (mut rng, seed) = Rng::fresh("joins of random sets");
     for _ in 0..500 {
         let (n, m) = (rng.below(12), rng.below(12));
         let (a, b) = (pieces(&mut rng, n, false), pieces(&mut rng, m, false));
@@ -74,12 +81,13 @@ fn join_and_contains_agree_with_membership() {
             assert_eq!(
                 j.contains(v),
                 a.contains(v) || b.contains(v),
-                "{a} ∪ {b} at {v}"
+                "{a} ∪ {b} at {v}, ZED_TEST_SEED={seed}"
             );
         }
         assert_eq!(
             j,
-            IntervalSet::from_pieces(a.pieces().chain(b.pieces()).cloned().collect())
+            IntervalSet::from_pieces(a.pieces().chain(b.pieces()).cloned().collect()),
+            "ZED_TEST_SEED={seed}"
         );
     }
 }
@@ -153,15 +161,19 @@ fn apply(op: &Op, a: i64, b: i64) -> Option<i64> {
     })
 }
 
-/// Each of the six operators on `draws` pairs of small sets drawn with the fixed seed 325:
+/// Each of the six operators on `draws` pairs of small sets drawn with a fresh seed (it was 325
+/// until TEST-l0124-fixed-seeds; `ZED_TEST_SEED=<seed>` repeats a run):
 /// the image holds every result of members, and keeps to the most pieces any region of an
-/// operand has. `checked` counts the member pairs, at least `at_least`.
+/// operand has. `checked` counts the member pairs, more than `at_least`: over fresh seeds
+/// (TEST-l0124-fixed-seeds) 60 draws checked 35,107 pairs on average, sd 3632, fewest 21,787
+/// of 20,000 seeds, and 600 draws 351,136, sd 11,481, fewest 309,525 of 4000 seeds, so
+/// the floors 10,000 and 100,000 lie 6.9 and 21.9 sd below and stay.
 ///
 /// TEST-bench-move-l0123, author P178 (many cases are a benchmark): the test drew 600 pairs
 /// (0.64 s alone at load 25); it now draws 60, and the 600 run as
 /// `bench::an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region`.
 fn image_holds(draws: usize, at_least: usize) {
-    let mut rng = Rng::new(325);
+    let (mut rng, seed) = Rng::fresh("images of small sets");
     let mut checked = 0;
     for _ in 0..draws {
         let (a, b) = (small(&mut rng), small(&mut rng));
@@ -175,7 +187,7 @@ fn image_holds(draws: usize, at_least: usize) {
                     {
                         assert!(
                             z.contains(r),
-                            "{op:?} {a} {b}: {x}, {y} gives {r}, not in {z}"
+                            "{op:?} {a} {b}: {x}, {y} gives {r}, not in {z}, ZED_TEST_SEED={seed}"
                         );
                         checked += 1;
                     }
@@ -188,11 +200,14 @@ fn image_holds(draws: usize, at_least: usize) {
                 .unwrap();
             assert!(
                 per_region(&z).into_iter().all(|n| n <= most),
-                "{op:?} {a} {b} gives {z}"
+                "{op:?} {a} {b} gives {z}, ZED_TEST_SEED={seed}"
             );
         }
     }
-    assert!(checked > at_least, "{checked}");
+    assert!(
+        checked > at_least,
+        "{checked} pairs checked, ZED_TEST_SEED={seed}"
+    );
 }
 
 #[test]
@@ -204,7 +219,7 @@ fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
 fn an_image_with_a_one_piece_operand_is_the_join_of_the_pieces_images() {
     // With one operand of one piece nothing is merged before the image is taken, so when the
     // join of each piece's image keeps to the region bound, the image is that join.
-    let mut rng = Rng::new(326);
+    let (mut rng, seed) = Rng::fresh("images with a one-piece operand");
     let mut equal = 0;
     for _ in 0..2000 {
         let a = small(&mut rng);
@@ -224,12 +239,21 @@ fn an_image_with_a_one_piece_operand_is_the_join_of_the_pieces_images() {
                 .max()
                 .unwrap();
             if per_region(&join).into_iter().all(|n| n <= most) {
-                assert_eq!(revision::forward(op, &a, &b), join, "{op:?} {a} {b}");
+                assert_eq!(
+                    revision::forward(op, &a, &b),
+                    join,
+                    "{op:?} {a} {b}, ZED_TEST_SEED={seed}"
+                );
                 equal += 1;
             }
         }
     }
-    assert!(equal > 6000, "{equal}");
+    // Over 1600 fresh seeds (TEST-l0124-fixed-seeds) 10,812 of the 12,000 images were the join
+    // on average, sd 38, fewest 10,665: the floor 6000 is 126 sd below and stays.
+    assert!(
+        equal > 6000,
+        "{equal} images were the join, ZED_TEST_SEED={seed}"
+    );
 }
 
 /// `k` lower and `k` upper bounds, each on a symbol of its own and each with a floor.

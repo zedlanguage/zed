@@ -26,7 +26,7 @@ fn digits(rng: &mut Rng, len: usize) -> String {
 /// `_` between some digits.
 #[test]
 fn a_decimal_end_reads_as_num_bigint_reads_it_at_every_length() {
-    let mut rng = Rng::new(14);
+    let (mut rng, seed) = Rng::fresh("decimal texts of every length");
     let lengths = (1..=1500).chain([2047, 2048, 2049, 4095, 4096, 4097, 8193, 20_000]);
     for len in lengths {
         let plain = digits(&mut rng, len);
@@ -44,7 +44,7 @@ fn a_decimal_end_reads_as_num_bigint_reads_it_at_every_length() {
             assert_eq!(
                 text.parse::<Num>(),
                 by_num_bigint(&text),
-                "{len} digits: {text}"
+                "{len} digits: {text}, ZED_TEST_SEED={seed}"
             );
         }
     }
@@ -183,7 +183,7 @@ fn a_written_end_is_num_bigints_text() {
 /// by the split. The split's own edges are in `both_printing_methods_write_the_same_text`.
 #[test]
 fn a_written_end_is_num_bigints_text_at_the_edges() {
-    let mut rng = Rng::new(2026);
+    let (mut rng, seed) = Rng::fresh("ends at the printer's edges");
     let ten = BigInt::from(10);
     let mut values: Vec<BigInt> = (0..10).map(BigInt::from).collect();
     for k in 1..=40u32 {
@@ -197,7 +197,12 @@ fn a_written_end_is_num_bigints_text_at_the_edges() {
     for x in &values {
         for x in [x.clone(), -x] {
             let text = x.to_string();
-            assert_eq!(Num::from(&x).to_string(), text, "{} digits", text.len());
+            assert_eq!(
+                Num::from(&x).to_string(),
+                text,
+                "{} digits, ZED_TEST_SEED={seed}",
+                text.len()
+            );
         }
     }
 }
@@ -276,7 +281,7 @@ fn a_long_decimal_end_read_as_num_is_written_as_its_text() {
 /// it.
 #[test]
 fn both_printing_methods_write_the_same_text() {
-    let mut rng = Rng::new(597);
+    let (mut rng, seed) = Rng::fresh("both printing methods");
     let ones = |w: usize| (BigUint::from(1u32) << (64 * w)) - 1u32;
     let mut values: Vec<BigUint> = (1..=40)
         .flat_map(|w| [wide(&mut rng, w).into_parts().1, ones(w)])
@@ -302,7 +307,12 @@ fn both_printing_methods_write_the_same_text() {
     let first = ten.pow(597 << i);
     values.extend([&first - 1u32, &first + 1u32, first]);
     for x in &values {
-        assert_eq!(to_decimal_split(x), x.to_string(), "{} bits", x.bits());
+        assert_eq!(
+            to_decimal_split(x),
+            x.to_string(),
+            "{} bits, ZED_TEST_SEED={seed}",
+            x.bits()
+        );
     }
 }
 

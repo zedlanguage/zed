@@ -10,13 +10,17 @@ use super::{WINDOW, affine, at, envs, members, random_bounds};
 
 #[test]
 fn meet_is_exact_and_join_and_widening_hold_both_sides() {
-    let mut rng = Rng::new(0x124);
+    let (mut rng, seed) = Rng::fresh("meets, joins and widenings of bounds");
     let envs = envs();
     for _ in 0..RANDOM_INSTANCES {
         let (a, b) = (random_bounds(&mut rng), random_bounds(&mut rng));
         let (meet, join) = (a.meet(&b), a.join(&b));
         let widened = a.widen(&join, &Landmarks::none());
-        assert_eq!(join, b.join(&a), "join of {a} and {b} is not symmetric");
+        assert_eq!(
+            join,
+            b.join(&a),
+            "join of {a} and {b} is not symmetric, ZED_TEST_SEED={seed}"
+        );
         for &env in &envs {
             let at = at(env);
             for x in WINDOW {
@@ -24,16 +28,16 @@ fn meet_is_exact_and_join_and_widening_hold_both_sides() {
                 assert_eq!(
                     meet.contains(x, &at),
                     ia && ib,
-                    "{x} at {env:?}: {a} meet {b} is {meet}"
+                    "{x} at {env:?}: {a} meet {b} is {meet}, ZED_TEST_SEED={seed}"
                 );
                 if ia || ib {
                     assert!(
                         join.contains(x, &at),
-                        "{x} at {env:?}: {a} join {b} is {join}"
+                        "{x} at {env:?}: {a} join {b} is {join}, ZED_TEST_SEED={seed}"
                     );
                     assert!(
                         widened.contains(x, &at),
-                        "{x} at {env:?}: {a} widened by {join} is {widened}"
+                        "{x} at {env:?}: {a} widened by {join} is {widened}, ZED_TEST_SEED={seed}"
                     );
                 }
             }
@@ -43,16 +47,19 @@ fn meet_is_exact_and_join_and_widening_hold_both_sides() {
 
 #[test]
 fn the_order_is_sound_and_holds_of_meets_and_joins() {
-    let mut rng = Rng::new(0x1240);
+    let (mut rng, seed) = Rng::fresh("the order of bounds");
     let envs = envs();
     let mut below = 0;
     for _ in 0..RANDOM_INSTANCES {
         let (a, b) = (random_bounds(&mut rng), random_bounds(&mut rng));
-        assert!(a.leq(&a), "{a} is not below itself");
-        assert!(a.leq(&a.join(&b)), "{a} is not below its join with {b}");
+        assert!(a.leq(&a), "{a} is not below itself, ZED_TEST_SEED={seed}");
+        assert!(
+            a.leq(&a.join(&b)),
+            "{a} is not below its join with {b}, ZED_TEST_SEED={seed}"
+        );
         assert!(
             a.meet(&b).leq(&a),
-            "the meet of {a} and {b} is not below {a}"
+            "the meet of {a} and {b} is not below {a}, ZED_TEST_SEED={seed}"
         );
         if a.leq(&b) {
             below += 1;
@@ -60,18 +67,21 @@ fn the_order_is_sound_and_holds_of_meets_and_joins() {
                 let (ma, mb) = (members(&a, env), members(&b, env));
                 assert!(
                     ma.iter().all(|x| mb.contains(x)),
-                    "{a} is taken as below {b}, but not at {env:?}"
+                    "{a} is taken as below {b}, but not at {env:?}, ZED_TEST_SEED={seed}"
                 );
             }
         }
     }
-    // The bottom and the tops of the random elements make the order hold sometimes.
-    assert!(below > 0);
+    // The bottom and the tops of the random elements make the order hold sometimes: over
+    // 20000 fresh seeds (TEST-l0124-fixed-seeds) 82.5 of the 512 pairs on average were ordered,
+    // sd 8.3, fewest 51. A pair is ordered with chance about 0.16, so no pair being ordered has
+    // chance about 0.84^512 < 10^-38, and the floor stays as it is.
+    assert!(below > 0, "no pair was ordered, ZED_TEST_SEED={seed}");
 }
 
 #[test]
 fn an_offset_moves_every_member() {
-    let mut rng = Rng::new(0x1241);
+    let (mut rng, seed) = Rng::fresh("offsets of bounds");
     for _ in 0..RANDOM_INSTANCES {
         let a = random_bounds(&mut rng);
         let c = rng.int(-5, 5);
@@ -81,26 +91,30 @@ fn an_offset_moves_every_member() {
                 assert_eq!(
                     moved.contains(x, &at(env)),
                     a.contains(x - c, &at(env)),
-                    "{x} at {env:?}: {a} moved by {c} is {moved}"
+                    "{x} at {env:?}: {a} moved by {c} is {moved}, ZED_TEST_SEED={seed}"
                 );
             }
         }
         // Past `i64` in either direction and back: every end and bound is exact, so the
         // element comes back unchanged.
         let far = a.offset(i64::MAX);
-        assert_eq!(far.offset(-i64::MAX), a, "{a} moved by i64::MAX is {far}");
+        assert_eq!(
+            far.offset(-i64::MAX),
+            a,
+            "{a} moved by i64::MAX is {far}, ZED_TEST_SEED={seed}"
+        );
         let below = a.offset(i64::MIN);
         assert_eq!(
             below.offset(i64::MAX).offset(1),
             a,
-            "{a} moved by i64::MIN is {below}"
+            "{a} moved by i64::MIN is {below}, ZED_TEST_SEED={seed}"
         );
     }
 }
 
 #[test]
 fn widening_chains_are_finite() {
-    let mut rng = Rng::new(0x1242);
+    let (mut rng, seed) = Rng::fresh("widening chains of bounds");
     let mut longest = 0;
     for _ in 0..RANDOM_INSTANCES {
         let mut x = random_bounds(&mut rng);
@@ -117,8 +131,13 @@ fn widening_chains_are_finite() {
         longest = longest.max(steps);
     }
     // Each step either drops a symbolic bound or moves an end of the union to infinity or
-    // removes a piece, and an element has at most 9 pieces and a few bounds.
-    assert!(longest <= 24, "a widening chain took {longest} steps");
+    // removes a piece, and an element has at most 9 pieces and a few bounds. Over 800 fresh
+    // seeds (TEST-l0124-fixed-seeds) the longest chain of a run was 4.0 steps on average, sd
+    // 0.37, at most 6: the ceiling is the argument above, not the draw, and stays.
+    assert!(
+        longest <= 24,
+        "a widening chain took {longest} steps, ZED_TEST_SEED={seed}"
+    );
 }
 
 #[test]

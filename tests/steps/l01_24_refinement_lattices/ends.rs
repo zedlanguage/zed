@@ -246,7 +246,7 @@ fn a_kept_power_equals_the_same_value_written_out() {
 fn kept_powers_order_and_hash_as_their_values_written_out() {
     // Powers of bases in -40..=40, many sharing a root (4, 8, 16, 27, ...), with exponents
     // up to 300, against the same values written out and against neighbors one apart.
-    let mut rng = zed_tests::instances::Rng::new(29);
+    let (mut rng, seed) = zed_tests::instances::Rng::fresh("kept powers against their values");
     let values: Vec<(Num, BigInt)> = (0..400)
         .map(|_| {
             let (b, k) = (rng.int(-40, 40), rng.int(0, 300) as u32);
@@ -260,14 +260,22 @@ fn kept_powers_order_and_hash_as_their_values_written_out() {
         })
         .collect();
     for (a, x) in &values {
-        assert_eq!(*a, Num::from(x), "{x}");
-        assert_eq!(hash_of(a), hash_of(&Num::from(x)), "{x}");
-        assert_eq!(a.to_string(), x.to_string());
+        assert_eq!(*a, Num::from(x), "{x}, ZED_TEST_SEED={seed}");
+        assert_eq!(
+            hash_of(a),
+            hash_of(&Num::from(x)),
+            "{x}, ZED_TEST_SEED={seed}"
+        );
+        assert_eq!(a.to_string(), x.to_string(), "ZED_TEST_SEED={seed}");
         for (b, y) in &values {
-            assert_eq!(a.cmp(b), x.cmp(y), "{x} against {y}");
-            assert_eq!(a == b, x == y, "{x} against {y}");
+            assert_eq!(a.cmp(b), x.cmp(y), "{x} against {y}, ZED_TEST_SEED={seed}");
+            assert_eq!(a == b, x == y, "{x} against {y}, ZED_TEST_SEED={seed}");
             let adjacent = End::Fin(a.clone()).at_most_succ(&End::Fin(b.clone()));
-            assert_eq!(adjacent, *x <= y + 1, "{x} at most one past {y}");
+            assert_eq!(
+                adjacent,
+                *x <= y + 1,
+                "{x} at most one past {y}, ZED_TEST_SEED={seed}"
+            );
         }
     }
 }

@@ -136,6 +136,15 @@ fn verdicts_of_undecided_groups_scale() {
 /// run of each size, which `scaling::check` also holds to the limit, does about 4 times the
 /// work of the later runs, and the inputs at 524288 take seconds to build. With the old
 /// helper, 8192 passed the 21 s limit before its first run.
+///
+/// Set-up and warm-up measured (TEST-l0124-fixed-seeds, load 41): at 1024, 8192 and 65536
+/// definitions, making the system took 0.7, 4.8 and 26 ms, `largest_group` 0.6, 4.7 and 49 ms,
+/// and building the group (`kernel`) 42 ms, 0.35 s and 3.28 s, 8.4 and 9.3 times per step of 8,
+/// within O(n log n) (9.85 for n log n from 8192 to 65536). The first run of a size does about 4
+/// times the instructions of the later ones, 8.0 times from n to 8n, so it is linear too and
+/// done once; nothing is built twice. The test took 8.9 to 11.3 s at load 44 to 47. At 16384
+/// it took 15.3 and 16.0 s at load 40 (1x 0.18 s, ratio 8.105), too close to the 20 s limit
+/// at the usual load, so n stays 8192.
 #[test]
 fn the_verdicts_of_the_largest_undecided_x14_group_scale() {
     let one = |n: usize| -> Vec<Type> {
@@ -169,10 +178,15 @@ fn the_verdicts_of_the_largest_undecided_x14_group_scale() {
 /// 2^21 the 1x took 1.07 s but the test 15 s, too close to the 20 s limit. The walk from each
 /// node that this replaced took 62 times the instructions and 63 times the bytes at 1024 and
 /// 8192.
+///
+/// The graphs were of the fixed seed 5 until TEST-l0124-fixed-seeds; now of a new seed each run,
+/// printed (author P169: random tests take a new seed each run; `ZED_TEST_SEED` repeats it),
+/// both sizes from the same seed, as `sum_chain` in the l01_24 benchmarks does.
 #[test]
 fn largest_component_scales() {
+    let (_, seed) = Rng::fresh("random graphs for the largest component");
     let graph = |n: usize| -> Vec<Vec<usize>> {
-        let mut rng = Rng::new(5);
+        let mut rng = Rng::new(seed);
         (0..n)
             .map(|_| (0..rng.below(4)).map(|_| rng.below(n)).collect())
             .collect()

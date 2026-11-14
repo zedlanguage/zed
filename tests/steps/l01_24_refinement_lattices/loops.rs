@@ -189,7 +189,7 @@ fn a_loop_counting_down_keeps_its_symbolic_bound() {
 
 #[test]
 fn every_solution_holds_every_value_a_run_takes() {
-    let mut rng = Rng::new(0x1243);
+    let (mut rng, seed) = Rng::fresh("loop systems over symbolic bounds");
     let envs = envs();
     let mut symbolic = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
@@ -207,7 +207,7 @@ fn every_solution_holds_every_value_a_run_takes() {
             })
             .collect();
         let s = System::new(init, terms);
-        let solved = solve(&s).unwrap();
+        let solved = solve(&s).unwrap_or_else(|e| panic!("{s:?}: {e:?}, ZED_TEST_SEED={seed}"));
         symbolic += solved
             .iter()
             .filter(|c| c.to_string().contains('n'))
@@ -218,13 +218,18 @@ fn every_solution_holds_every_value_a_run_takes() {
                 for &x in values {
                     assert!(
                         solved[v].contains(x, &at(env)),
-                        "cell {v} takes {x} at {env:?}, outside {}: {s:?}",
+                        "cell {v} takes {x} at {env:?}, outside {}: {s:?}, ZED_TEST_SEED={seed}",
                         solved[v]
                     );
                 }
             }
         }
     }
-    // The solutions keep symbolic bounds, so the check above tests them.
-    assert!(symbolic > 0);
+    // The solutions keep symbolic bounds, so the check above tests them. Over 1600 fresh seeds
+    // (TEST-l0124-fixed-seeds) the 128 systems of a run had 243 symbolic cells on average, sd
+    // 13, fewest 194: the floor of one has a margin of about 18 sd and stays as it is.
+    assert!(
+        symbolic > 0,
+        "no solution kept a symbol, ZED_TEST_SEED={seed}"
+    );
 }

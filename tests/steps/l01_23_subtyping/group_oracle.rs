@@ -1675,16 +1675,20 @@ fn a_member_split_across_box_cells() {
 // Seeded systems of the families against the classical solver
 // ---------------------------------------------------------------------------------------------
 
-/// `random(seed, rate, n)` over many seeds, rates and sizes: every answer `decide` gives agrees
-/// with the classical solver of the Büchi game, and so does every verdict of the group the
-/// definitions admit; `is_empty` never calls an inhabited member empty.
-fn seeded(seeds: std::ops::Range<u64>) {
+/// `random(seed, rate, n)` over 40 seeds drawn from a generator made with [`Rng::fresh`] and
+/// printed with `what` (`ZED_TEST_SEED` repeats a run), and over many rates and sizes: every
+/// answer `decide` gives agrees with the classical solver of the Büchi game, and so does every
+/// verdict of the group the definitions admit; `is_empty` never calls an inhabited member empty.
+/// The two tests swept seeds 0 to 79 until TEST-l0124-fixed-seeds.
+fn seeded(what: &str) {
+    let (mut rng, rng_seed) = Rng::fresh(what);
+    let seeds = pick_seeds(&mut rng, what, 0..u64::MAX, 40);
     let (mut decided, mut refused, mut groups, mut verdicts) = (0, 0, 0, 0);
     for rate in [0, 2, 5, 9, 14, 18] {
         for n in [2, 3, 5, 8, 13, 21] {
-            for seed in seeds.clone() {
+            for &seed in &seeds {
                 let g = bes_families::random(seed, rate, n);
-                let at = format!("random({seed}, {rate}, {n})");
+                let at = format!("random({seed}, {rate}, {n}), ZED_TEST_SEED={rng_seed}");
                 let want = reference::answers(&g);
                 for (v, a) in decide(&g.bes()).answers.iter().enumerate() {
                     match a {
@@ -1718,17 +1722,24 @@ fn seeded(seeds: std::ops::Range<u64>) {
         }
     }
     eprintln!("decided {decided}, refused {refused}; groups admitted {groups}, members {verdicts}");
-    assert!(decided > 0 && groups > 0);
+    // Over 4000 fresh seeds, each summed over the 36 rates and sizes, `decide` decided 311.1
+    // answers a seed (standard deviation 4.0, fewest 274) and the definitions of 21.6 systems a
+    // seed were admitted as a group (standard deviation 6.1, fewest 6); no seed gave zero of
+    // either, so 40 seeds cannot.
+    assert!(
+        decided > 0 && groups > 0,
+        "decided {decided}, groups {groups}, ZED_TEST_SEED={rng_seed}"
+    );
 }
 
 #[test]
 fn seeded_random_systems_agree_with_the_reference_0() {
-    seeded(0..40);
+    seeded("random systems against the reference, first");
 }
 
 #[test]
 fn seeded_random_systems_agree_with_the_reference_1() {
-    seeded(40..80);
+    seeded("random systems against the reference, second");
 }
 
 /// `n` definitions in one group, `R_i = (R_j, R0) | (R_{i+1}, #stop)` with `j` random and
@@ -1925,17 +1936,25 @@ fn permutations(n: usize) -> Vec<Vec<usize>> {
 /// The members of a group asked in every order give the same verdicts, each the verdict it has
 /// when asked alone (a unit checked by itself) and in a batch: groups of three in all six
 /// orders, and with their definitions written in all six orders, larger groups in every
-/// rotation. Groups the decider refuses (`\ #none` on each body) and groups it decides.
+/// rotation. Groups the decider refuses (`\ #none` on each body) and groups it decides. The
+/// X14 and layered systems are of 40 seeds of each family drawn from a generator made with
+/// [`Rng::fresh`] (`ZED_TEST_SEED` repeats a run); they were of seeds 0 to 39 until
+/// TEST-l0124-fixed-seeds. The systems of meets and differences stay of seeds 0 to 39 until
+/// FAIL-print-height-cycle-seed is fixed (about 1 in 10,000 other seeds makes `kernel` panic),
+/// whose fix draws them too. The chain of 64 and the X14 system of 24 are recorded cases.
 #[test]
 fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
+    let (mut rng, rng_seed) = Rng::fresh("members asked in every order");
     let mut systems: Vec<(String, Vec<E>)> = Vec::new();
-    for seed in 0..40 {
+    for seed in pick_seeds(&mut rng, "x14", 0..u64::MAX, 40) {
         let sys = claude_of(&mut Rng::new(seed), 3);
         systems.push((format!("x14_{seed}"), sys.clone()));
         systems.push((format!("x14u_{seed}"), undecided(sys)));
     }
     for seed in 0..40 {
         systems.push((format!("cells{seed}"), gen_cells(&mut Rng::new(seed))));
+    }
+    for seed in pick_seeds(&mut rng, "layer", 0..u64::MAX, 40) {
         systems.push((format!("layer{seed}"), gen_layer(&mut Rng::new(seed))));
     }
     systems.push(("chainu".into(), undecided(chain_of(&mut Rng::new(7), 64))));
@@ -1956,7 +1975,7 @@ fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
             assert_eq!(
                 in_order(&types, order),
                 want,
-                "{tag}: asked in the order {order:?}: {}",
+                "{tag}: asked in the order {order:?}: {}, ZED_TEST_SEED={rng_seed}",
                 show_system(sys)
             );
             orders += 1;
@@ -1974,7 +1993,7 @@ fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
                 assert_eq!(
                     got,
                     want,
-                    "{tag}: definitions in the order {order:?}: {}",
+                    "{tag}: definitions in the order {order:?}: {}, ZED_TEST_SEED={rng_seed}",
                     show_system(&moved)
                 );
             }
@@ -2411,6 +2430,13 @@ fn prints_as_syntax(t: &Type, what: &str) -> String {
 /// printer meets that part again below itself, through the recursive type of the part kept
 /// unevaluated: 503 of these 1364 members stopped the printer, which ordered the parts by the
 /// order its walk left them in.
+///
+/// The seeds stay 0 to 599 until FAIL-print-height-cycle-seed is fixed: about 1 in 10,000 other
+/// seeds makes `kernel` panic in `heights` (print.rs) while it builds the group, so 600 fresh
+/// seeds would fail about 6% of runs. That row's fix makes this test draw 600 seeds with
+/// `pick_seeds(&mut rng, .., 0..u64::MAX, 600)` from `Rng::fresh` and replaces the count with
+/// `members > 900`: over 166 runs of 600 fresh seeds the count had mean 1342.9, standard
+/// deviation 75.1, least 1162 and most 1552 (TEST-l0124-fixed-seeds).
 #[test]
 fn every_member_of_systems_of_meets_and_differences_prints_as_syntax() {
     let mut members = 0;
@@ -3033,7 +3059,7 @@ fn the_first_tuples_are_those_of_the_whole_product() {
         }
         rows
     };
-    let mut g = Rng::new(23);
+    let (mut g, seed) = Rng::fresh("choices of values for the first tuples");
     for _ in 0..400 {
         let opts: Vec<Vec<usize>> = (0..g.below(6))
             .map(|_| (0..g.below(7)).map(|_| g.below(100)).collect())
@@ -3042,9 +3068,13 @@ fn the_first_tuples_are_those_of_the_whole_product() {
         assert_eq!(
             first_tuples(&opts, 36),
             all[..all.len().min(36)],
-            "{opts:?}"
+            "{opts:?}, ZED_TEST_SEED={seed}"
         );
-        assert_eq!(first_tuples(&opts, all.len()), all, "{opts:?}");
+        assert_eq!(
+            first_tuples(&opts, all.len()),
+            all,
+            "{opts:?}, ZED_TEST_SEED={seed}"
+        );
     }
     // A tuple type of no components has one tuple, and one with a component of no values none.
     assert_eq!(first_tuples(&[], 36), [Vec::<usize>::new()]);
