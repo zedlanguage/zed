@@ -1409,6 +1409,9 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | FAIL-lattice-f32-literal | merged and pushed (the commit that marks the row Done); no spec change | An `f32` literal's cell left the float class at the top: `Cell::literal` (crates/zedc-lattice/src/cell.rs) matched `Value::Float` only. New arm for `Value::Float32`, through the exact conversion to `f64`. l01_24 f32_literal.rs, 3 tests: 92 passed 2 failed before, 94 passed after. l01_24, m0_05, zedc_lattice, l01_39, l01_39b, l01_21, l01_37a, m0_01, m0_12: 222 pieces, 0 failed; the twelve checker groups that use `f32`: 1595 pieces, the two failures being the tests of FAIL-check-decimal-past-f64-at-rat and FAIL-check-if-carrier-branch-literal-at-rat, not yet committed. |
 | FAIL-check-memory-limit-2-63 | merged and pushed (the commit "FAIL-check-memory-limit-2-63: ..." that marks the row Done); DESIGN sec:ports states the largest memory limit, 2^64 bytes (zed 13d5b87) | Found by TEST-complete-crates. `@limits(memory: 2^63)`, the limit the rejection named, was rejected too; the limit is now 1 to 2^64 bytes, the target's address space, and the rejection past it names `2^64`. |
 | FAIL-initial-reads-shadowed | merged and pushed (the commit "FAIL-initial-reads-shadowed: ..." that marks the row Done); no spec change | Found by TEST-complete-parse. A read of the loop in an `initial` value outside the scope of a binder of the same name inside the value, as the first `t` of `t + (t -> t)(1)`, is refused; the builder kept one set of names bound anywhere in the value. |
+| FAIL-ambiguous-qualifier-repair | merged and pushed (the commit "zedc-resolve: an ambiguous import qualifier gets repairs that work" and the commit that marks the row Done); no spec change | `import a.shapes; import b.shapes; y = shapes.o;` offered `shapes.shapes` after `import a.shapes;`, a member neither unit has. `ambiguous` in crates/zedc-resolve/src/resolve.rs now renames one import with `as` for a qualifier or alias: `` `shapes` is ambiguous between two imports. Try `import a.shapes as a_shapes;` or `import b.shapes as b_shapes;` instead `` (the last path name when free, else the joined path, else that with a number, memoized per import so u uses beside k numbered names cost O(u + k)). l02_03 ambiguous_qualifier.rs 6 tests, red before; l02_03 91 to 97 passing; scaling test and bench, ratio about 8. llvm-cov: `ambiguous` and `alias` every line covered. |
+| FAIL-diagnostics-member-headline | merged and pushed (the commit "zedc-elab: a member call of a name in no scope on a literal gets the short headline" and the commit that marks the row Done); no spec change | `t() = 1.e;` now gives `` 1:7: `e` is not defined. `` with the rule in a note (a literal has no fields, so `.e` calls a function `e`, and none is in scope); a receiver that is not a literal keeps the field-read clause. l01_29 member_headline.rs 4 tests, red before. llvm-cov: the new arm in crates/zedc-elab/src/elab/walk.rs covered. |
+| FAIL-diagnostics-follow-on | merged and pushed (the commit "zedc-check: a member that elaboration rejected has the empty type" and the commit that marks the row Done); no spec change | `member_end` in crates/zedc-check/src/check/walk.rs gave a member call elaboration rejected the type `_`, so the use `"${t()}"` was rejected again; it now gives the empty type, which no use rejects, so only the cause is reported, in either order. l01_29 follow_on.rs 3 tests, red before. Five l01_29 tests (quoted.rs, sum_plus.rs and their benches) used `x.a` as an untracked component and now use a failing `x + 1` with `x` a String; COMPLEXITY.md updated. Found on the way: FAIL-kernel-xor-firsts-seed (zed_kernel seed-dependent bound). |
 
 ## Decisions made
 
@@ -2273,7 +2276,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | item | stage | started | last event |
 |---|---|---|---|
 | CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | red-before-green: on origin/main (ctl tree) too_large::a_product_through_a_part_with_several_roots_is_rejected and main_limits::a_product_through_a_part_with_se |
-| FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
 | FAIL-check-arm-test-through-call | running | 2026-11-14 07:10 |  |
@@ -2281,8 +2283,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-generic-need-ignores-arm | running |  |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
-| FAIL-diagnostics-follow-on | running | 2026-11-14 07:10 |  |
-| FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
