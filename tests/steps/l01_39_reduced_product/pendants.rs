@@ -980,67 +980,45 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 }
 
 /// On random parts from a new seed each run, the projection by pendants, where it is taken,
-/// and that of the whole part, where neither refuses, are each sound and no coarser than the
-/// union of hulls, and are the same wherever both have the same precision
+/// and that of the whole part, where neither refuses, are each sound, over the same names
 /// ([`pendants_against_whole`]); parts are drawn until [`PENDANT_COMPARED`] are compared.
+/// Each must be the exact set (author P197); until PRES-switchover-not-race makes both
+/// exact, the test asserts soundness and prints how many names of each are wider.
 /// Seed 0x7e4d at 400 parts took 1.6 s.
 #[test]
-fn the_projections_by_pendants_and_of_the_whole_part_differ_only_in_precision() {
+fn the_projections_by_pendants_and_of_the_whole_part_are_sound() {
     let (r, seed) = Rng::fresh("the projection by pendants");
     pendants_against_whole(r, seed);
 }
 
-/// How near the answer for one name comes to the set of its values: that set, the union of
-/// the hulls of its values over the disjuncts of the part, or between the two.
+/// Whether the answer for one name is the exact set of its values or a sound set wider
+/// than it. A wider answer is wrong (author P197) and is counted, not yet failed, until
+/// PRES-switchover-not-race.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Precision {
     Exact,
-    Hull,
-    Between,
+    Wider,
 }
 
-/// The precision of `answer` for `name`, given the exact set of its values and the union
-/// of their hulls over the disjuncts, both by brute force, or why it is wrong: it misses a
-/// value (unsound), or holds one outside that union (coarser than the projection
-/// presburger.rs documents).
-///
-/// The route is taken only on parts with at most one disjunction (a disjunction,
-/// `!(t == 0)` or a name of two intervals or more), so the documented projection, the meet
-/// over the disjunctions of the union over each one's disjuncts of the hull of the base with
-/// that disjunct, is here the union of the hulls over the disjuncts, which [`brute`] finds;
-/// with no disjunction nothing is moved inward by halving.
-fn precision(
-    name: &str,
-    answer: &IntervalSet,
-    exact: &IntervalSet,
-    hull: &IntervalSet,
-) -> Result<Precision, String> {
-    let within = |x: &IntervalSet, y: &IntervalSet| x.meet(y) == *x;
-    if !within(exact, answer) {
+/// How `answer` for `name` stands to `exact`, the set of its values by brute force: the
+/// same, wider, or an error if it misses a value (unsound).
+fn precision(name: &str, answer: &IntervalSet, exact: &IntervalSet) -> Result<Precision, String> {
+    if exact.meet(answer) != *exact {
         Err(format!(
             "{name}: {} misses values of {} (unsound)",
             show(answer),
             show(exact)
         ))
-    } else if !within(answer, hull) {
-        Err(format!(
-            "{name}: {} holds values outside {} (coarser than the hulls)",
-            show(answer),
-            show(hull)
-        ))
     } else if answer == exact {
         Ok(Precision::Exact)
-    } else if answer == hull {
-        Ok(Precision::Hull)
     } else {
-        Ok(Precision::Between)
+        Ok(Precision::Wider)
     }
 }
 
 /// Two answers for the part `items` within `bs`, the projection by pendants (`route`) and
-/// that of the whole part, checked against brute force: each name of each answer sound and
-/// no coarser than the hulls ([`precision`]), both answers over the same names, and equal
-/// wherever both have the same precision. On success, each name where they differ with the
+/// that of the whole part, checked against brute force: both over the same names and each
+/// name of each sound ([`precision`]). On success, each name where they differ with the
 /// precision of each.
 fn compared(
     items: &[Item],
@@ -1059,27 +1037,16 @@ fn compared(
     let mut differ = Vec::new();
     let mut faults = Vec::new();
     for (n, r) in route {
-        let (hull, exact) = &truth[n];
-        let (hull, exact) = (shown_set(hull), shown_set(exact));
-        let judge = |x: &str| precision(n, &shown_set(x), &exact, &hull);
-        let (p, q) = match (judge(r), judge(&whole[n])) {
-            (Ok(p), Ok(q)) => (p, q),
+        let exact = shown_set(&truth[n].1);
+        let judge = |x: &str| precision(n, &shown_set(x), &exact);
+        match (judge(r), judge(&whole[n])) {
+            (Ok(p), Ok(q)) if *r != whole[n] => differ.push((n.clone(), p, q)),
+            (Ok(_), Ok(_)) => {}
             (p, q) => {
                 faults.extend(p.err().map(|e| format!("by pendants {e}")));
                 faults.extend(q.err().map(|e| format!("whole {e}")));
-                continue;
             }
-        };
-        if *r == whole[n] {
-            continue;
         }
-        if p == q {
-            faults.push(format!(
-                "{n}: {r} by pendants and {} whole differ, both {p:?}",
-                whole[n]
-            ));
-        }
-        differ.push((n.clone(), p, q));
     }
     if faults.is_empty() {
         Ok(differ)
@@ -2502,9 +2469,9 @@ fn answers(seed: u64, part: usize) -> Answers {
 }
 
 /// Three random parts whose projection by pendants lost a parity or a hole while the new name
-/// of each pendant form took every value (FAIL-pendants-route-parity, QUESTIONS A105): with
-/// the name bounded by the range of its form over the boxes (`Scope::form_hull`), each is
-/// projected as the whole part is, and both are sound and no coarser than the hulls.
+/// of each pendant form took every value (FAIL-pendants-route-parity): with the name bounded
+/// by the range of its form over the boxes (`Scope::form_hull`), each is projected as the
+/// whole part is, and both are sound.
 #[test]
 fn the_route_by_pendants_keeps_parities_and_holes() {
     for (seed, part) in [
@@ -2523,47 +2490,48 @@ fn the_route_by_pendants_keeps_parities_and_holes() {
 }
 
 /// A part where `2 * b + 2 * c + z3 == 7` makes `z3` odd (FAIL-whole-projection-parity): the
-/// projection by pendants gives the exact set `{1, 3, 5}`, and that of the whole part, where
-/// the solver answers first, the hull `[1, 5]`, which presburger.rs documents; QUESTIONS
-/// A105 accepts the difference in precision. Every other name is the same both ways.
+/// projection by pendants gives the exact set `{1, 3, 5}`, and both it and that of the whole
+/// part are sound. The whole part gives `[1, 5]`, which is wrong (author P197): the test that
+/// it gives `{1, 3, 5}` waits on PRES-switchover-not-race.
 #[test]
-fn seed_12035647242373093243_part_52_by_pendants_is_exact_and_whole_is_the_hull() {
+fn seed_12035647242373093243_part_52_by_pendants_is_exact_and_both_are_sound() {
     let (items, bs, f, route, all) = answers(12035647242373093243, 52);
     assert_eq!(route["z3"], "[1,1 3,3 5,5]", "{f}");
-    assert_eq!(all["z3"], "[1,5]", "{f}");
-    assert_eq!(
-        compared(&items, &bs, &route, &all),
-        Ok(vec![("z3".to_string(), Precision::Exact, Precision::Hull)]),
-        "{f}"
+    let differ = compared(&items, &bs, &route, &all).expect("both sound");
+    assert!(
+        differ.iter().all(|(_, p, _)| *p == Precision::Exact),
+        "{f}: {differ:?}"
     );
 }
 
-/// Negative controls of [`compared`] on the part of
-/// [`seed_12035647242373093243_part_52_by_pendants_is_exact_and_whole_is_the_hull`], with
-/// `z3` of the projection by pendants (and of the whole) replaced: a set that misses the value
-/// 3 is unsound, one that holds 7 is coarser than the hull, and two sets between the exact
-/// set and the hull that differ have the same precision; each is caught.
+/// Negative controls of [`compared`] on part 52 of seed 12035647242373093243, where
+/// `2 * b + 2 * c + z3 == 7` makes `z3` odd: with `z3` of the projection by pendants
+/// replaced, a set that misses the value 3 is caught as unsound, and a set that holds 7 is
+/// sound but counted wider, not exact; answers over different names are caught.
 #[test]
-fn the_comparison_of_projections_catches_unsound_coarser_and_same_precision_answers() {
+fn the_comparison_of_projections_catches_unsound_answers_and_counts_wider_ones() {
     let (items, bs, _, route, all) = answers(12035647242373093243, 52);
-    let with = |m: &BTreeMap<String, String>, z3: &str| {
-        let mut m = m.clone();
+    let with = |z3: &str| {
+        let mut m = route.clone();
         m.insert("z3".to_string(), z3.to_string());
         m
     };
-    let caught = |r: &BTreeMap<String, String>, w: &BTreeMap<String, String>, want: &str| {
-        let got = compared(&items, &bs, r, w);
-        assert!(
-            got.as_ref().is_err_and(|e| e.contains(want)),
-            "want an error with {want:?}, got {got:?}"
-        );
-    };
-    caught(&with(&route, "[1,1 5,5]"), &all, "(unsound)");
-    caught(&with(&route, "[1,7]"), &all, "(coarser than the hulls)");
-    caught(
-        &with(&route, "[1,3 5,5]"),
-        &with(&all, "[1,1 3,5]"),
-        "both Between",
+    let got = compared(&items, &bs, &with("[1,1 5,5]"), &all);
+    assert!(
+        got.as_ref().is_err_and(|e| e.contains("(unsound)")),
+        "want unsound, got {got:?}"
+    );
+    let got = compared(&items, &bs, &with("[1,7]"), &with("[1,1 3,3 5,5]"));
+    assert_eq!(
+        got,
+        Ok(vec![("z3".to_string(), Precision::Wider, Precision::Exact)])
+    );
+    let mut fewer = route.clone();
+    fewer.remove("z3");
+    let got = compared(&items, &bs, &fewer, &all);
+    assert!(
+        got.as_ref().is_err_and(|e| e.contains("different names")),
+        "want different names, got {got:?}"
     );
 }
 
