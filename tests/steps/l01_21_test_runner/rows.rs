@@ -335,14 +335,15 @@ fn no_message_names_a_kernel_rule() {
     let mut lines = 0;
     let fences = zed_tests::fences::dir();
     // This file names the words to test the search for them, the list of the words names each,
-    // and the tests of `sync` name them to test the list.
+    // and the tests of `sync` and of its prose checks name them to test the list.
     let this = zed_tests::steps_dir().join("l01_21_test_runner/rows.rs");
     let sync = zed_tests::steps_dir().join("m0_03_grammar_tools/sync.rs");
+    let prose = zed_tests::steps_dir().join("m0_03_grammar_tools/prose_checks.rs");
     let list = fences.join("kernel-rules.txt");
     for p in files_under(&zed_tests::steps_dir())
         .into_iter()
         .chain(files_under(&fences))
-        .filter(|p| *p != this && *p != sync && *p != list)
+        .filter(|p| *p != this && *p != sync && *p != prose && *p != list)
     {
         let text = std::fs::read_to_string(&p).expect("a readable test file");
         for (k, line) in expected_lines(&text) {
