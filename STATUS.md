@@ -2325,7 +2325,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | merged and pushed 41b345ced (constant mutant changes every arm; l25_08 41 pass; bench instructions 7.93x at 8n; negative control clone 32.5x fails) / 59.43 49.2 |
-| SPEC-and-or-failing-operand | impl attempt 1 | 2026-11-14 10:21 | start; DESIGN kernel desugaring has a && b = if(a, b, false), a // b = if(a, true, b); checking implementations |
+| SPEC-and-or-failing-operand | merged and pushed (the commit that marks the row Done); DESIGN 6771e26 | DESIGN decides it: `&&` and `||` are the `if`s of sec:grammar Kernel desugaring, so a failing operand fails the term only where it is taken (`false && d` is false, `true || d` is true); the strict kernel primitives `and`/`or` (L1.25) are never built from surface code. Kernel, machine, interpreter, native and preimage agree (tests l01_34_memory::and_or, l01_36a_executables::and_or, l01_25 exact_oracle); no FAIL rows. |  |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |

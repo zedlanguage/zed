@@ -12586,8 +12586,9 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
     };
     match (p, xs.as_slice()) {
         (Prim::Not, [a]) => class_test(a, classes).map(|b| !b),
-        // The kernel's `&&` and `||` read both operands, so a failing one fails the term, as
-        // `((0 mod x) < -4) && false` at `x == 0` (DESIGN.md sec:failure): a decided operand
+        // The kernel primitives `and` and `or` read both operands, so a failing one fails the
+        // term, as `and((0 mod x) < -4, false)` at `x == 0` (DESIGN.md step L1.25; the surface
+        // `a && b` is the `if` of sec:failure, which this match does not read): a decided operand
         // decides the term only when the other is decided too, and so cannot fail, since
         // `class_test` decides only forms that cannot. Reading one decided operand alone kept
         // the points where the other fails (FAIL-exact-oracle-mod-zero-seed). Complexity: both

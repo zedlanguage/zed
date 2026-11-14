@@ -483,10 +483,11 @@ fn exact_terms_of_seed_17731988998593301615_match_the_interpreter() {
     check_runs(&runs, 100, None);
 }
 
-/// Under `@exact`, the classes decided `a && false` as `false` and `a || true` as `true`, either
-/// order, without `a`, so `((0 mod x) < -4) && false` with `x` in `[0, 4]` was exact over every
-/// `x`, though `0 mod 0` fails and fails the term (the kernel's `&&` and `||` read both operands;
-/// DESIGN.md sec:failure). Each case here agrees with the interpreter in both transfers; the
+/// Under `@exact`, the classes decided `and(a, false)` as `false` and `or(a, true)` as `true`,
+/// either order, without `a`, so `and((0 mod x) < -4, false)` with `x` in `[0, 4]` was exact over
+/// every `x`, though `0 mod 0` fails and fails the term (the kernel primitives `and` and `or` read
+/// both operands, DESIGN.md step L1.25; the surface `&&` and `||` are `if`s, sec:failure, and
+/// are not these terms). Each case here agrees with the interpreter in both transfers; the
 /// last two, whose operands the classes decide in full, stay exact.
 #[test]
 fn a_decided_operand_of_and_or_does_not_hide_a_failing_one() {
@@ -529,5 +530,39 @@ fn a_decided_operand_of_and_or_does_not_hide_a_failing_one() {
         let f = check(&c);
         assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
         assert_eq!(f.exact, 2, "{}", c.term);
+    }
+}
+
+/// The surface `a && b` and `a || b`, which elaborate to `if a { b } else { false }` and
+/// `if a { true } else { b }` (DESIGN.md sec:failure): a failing right operand fails the term
+/// only where the left one takes it, so `false && ((0 mod x) < -4)` is `false` at every `x`,
+/// `0` included, while the other order fails at `x == 0`. Each agrees with the interpreter in
+/// both transfers, with and without `@exact`.
+#[test]
+fn a_surface_and_or_fails_only_where_its_left_operand_takes_the_right() {
+    let fails = || prim(Prim::Lt, prim(Prim::Mod, int(0), var("x")), int(-4));
+    let lit = |b: bool| Term::Lit(Value::Bool(b));
+    let and = |a: Term, b: Term| Term::If(a.into(), b.into(), lit(false).into());
+    let or = |a: Term, b: Term| Term::If(a.into(), lit(true).into(), b.into());
+    for exact in [false, true] {
+        for d in [false, true] {
+            for t in [
+                and(lit(false), fails()),
+                and(fails(), lit(false)),
+                and(lit(true), fails()),
+                or(lit(true), fails()),
+                or(fails(), lit(true)),
+                or(lit(false), fails()),
+            ] {
+                let c = case(t, xy((0, 4), (-3, 2)), Demand::Bool(d), exact);
+                let f = check(&c);
+                assert_eq!(
+                    f.disagreements,
+                    Vec::<String>::new(),
+                    "{} demand {d}, exact {exact}",
+                    c.term
+                );
+            }
+        }
     }
 }
