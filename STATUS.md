@@ -2253,24 +2253,30 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-generic-need-ignores-arm | running |  |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
+| FAIL-check-memory-limit-2-63 | running |  |  |
 | FAIL-diagnostics-follow-on | running | 2026-11-14 07:10 |  |
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
+| FAIL-initial-reads-shadowed | running |  |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
+| FAIL-layer-mcu-target-value | running |  |  |
 | FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
+| FAIL-memory-callee-no-plan | running |  |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
-| FAIL-ports-key-past-i64 | running |  |  |
+| FAIL-ports-key-past-i64 | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-preimage-arity-stop-unreported | running | 2026-11-14 07:09 |  |
 | FAIL-preimage-div0-false-exact | running | 2026-11-14 07:09 |  |
 | FAIL-preimage-foreign-constant-unreported | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
+| FAIL-queries-reorder | running |  |  |
 | FAIL-ref-text-reading | running |  |  |
 | FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
-| FAIL-values-cast-negzero | running |  |  |
-| FAIL-values-function-in-tuple | running |  |  |
+| FAIL-types-sig-reflexive | running |  |  |
+| FAIL-values-cast-negzero | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
+| FAIL-values-function-in-tuple | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-zir-canon-misplaced-level-binder | running |  |  |
 | FAIL-zir-lower-port-in-family-message | running |  |  |
 | FAIL-zir-text-reader-messages | running |  |  |
