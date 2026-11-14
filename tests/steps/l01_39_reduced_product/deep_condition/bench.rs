@@ -16,13 +16,13 @@ fn arms_of_a_deep_test_take_time_near_linear_in_its_depth() {
 
 #[test]
 fn arms_of_a_deeper_test_take_time_near_linear_in_its_depth() {
-    // Depths 250 and 2000, where a cost quadratic in the depth is plain.
+    // Depths 600 and 4800, where a cost quadratic in the depth is plain.
     on_a_deep_stack(|| {
-        let tests: BTreeMap<usize, Term> = [250, 2000]
+        let tests: BTreeMap<usize, Term> = [600, 4800]
             .map(|d| (d, if_(fallbacks(d), lit(1), lit(2))))
             .into();
         let scope = ints(&["x".into(), "y".into()]);
-        scaling::check("arms of a test nested d deep", 250, |d| {
+        scaling::check("arms of a test nested d deep", 600, |d| {
             std::hint::black_box(arms(&tests[&d], &scope));
         });
     });
@@ -31,11 +31,11 @@ fn arms_of_a_deeper_test_take_time_near_linear_in_its_depth() {
 #[test]
 fn arms_of_a_test_with_two_choices_per_level_take_time_near_linear_in_its_depth() {
     on_a_deep_stack(|| {
-        let tests: BTreeMap<usize, Term> = [60, 480, 250, 2000]
+        let tests: BTreeMap<usize, Term> = [400, 3200]
             .map(|d| (d, if_(two_choices(d), lit(1), lit(2))))
             .into();
         let scope = ints(&["x".into(), "y".into(), "z".into()]);
-        for n in [60, 250] {
+        for n in [400] {
             scaling::check("arms of a test with two choices per level", n, |d| {
                 std::hint::black_box(arms(&tests[&d], &scope));
             });
@@ -48,9 +48,9 @@ fn relations_of_a_deep_test_take_time_near_linear_in_its_depth() {
     // The translation of the test into the linear-relation domain, alone: each level is
     // translated once, not once for each level above it.
     on_a_deep_stack(|| {
-        let tests: BTreeMap<usize, Term> = [250, 2000].map(|d| (d, fallbacks(d))).into();
+        let tests: BTreeMap<usize, Term> = [6000, 48000].map(|d| (d, fallbacks(d))).into();
         let names: [Arc<str>; 2] = ["x".into(), "y".into()];
-        scaling::check("relations of a test nested d deep", 250, |d| {
+        scaling::check("relations of a test nested d deep", 6000, |d| {
             std::hint::black_box(relations(&[&tests[&d]], &names, false));
         });
     });
@@ -123,11 +123,11 @@ fn arms_of_a_capped_test_take_time_near_linear_in_its_depth() {
     // Two disjunctions and a hull with two finite bounds at each level, the case a level
     // tightens; a tightening over the whole nest below each level would cost its depth.
     on_a_deep_stack(|| {
-        let tests: BTreeMap<usize, Term> = [30, 240]
+        let tests: BTreeMap<usize, Term> = [300, 2400]
             .map(|d| (d, if_(capped(d), lit(1), lit(2))))
             .into();
         let scope = ints(&["x".into(), "y".into(), "z".into()]);
-        scaling::check("arms of a capped test nested d deep", 30, |d| {
+        scaling::check("arms of a capped test nested d deep", 300, |d| {
             std::hint::black_box(arms(&tests[&d], &scope));
         });
     });
@@ -138,11 +138,11 @@ fn arms_of_a_test_whose_bound_moves_at_each_level_take_time_near_linear_in_its_d
     // Each level tightens the hull of `x`; a tightening over the whole nest below each level,
     // or a search that reads again the nest below each level, would cost its depth.
     on_a_deep_stack(|| {
-        let tests: BTreeMap<usize, Term> = [60, 480]
+        let tests: BTreeMap<usize, Term> = [120, 960]
             .map(|d| (d, if_(moving(d), lit(1), lit(2))))
             .into();
         let scope = ints(&level_names());
-        scaling::check("arms of a test whose bound moves at each level", 60, |d| {
+        scaling::check("arms of a test whose bound moves at each level", 120, |d| {
             std::hint::black_box(arms(&tests[&d], &scope));
         });
     });
@@ -153,15 +153,24 @@ fn arms_of_a_test_whose_small_choice_misses_the_bound_take_time_near_linear_in_i
     // A point at the bound is found only below every level, so a search that read the nest
     // below each level again would cost its depth.
     on_a_deep_stack(|| {
-        let tests: BTreeMap<usize, Term> =
-            [60, 480].map(|d| (d, if_(heavy(d), lit(1), lit(2)))).into();
+        let tests: BTreeMap<usize, Term> = [180, 1440]
+            .map(|d| (d, if_(heavy(d), lit(1), lit(2))))
+            .into();
         let scope = ints(&level_names());
         scaling::check(
             "arms of a test whose small choice misses the bound",
-            60,
+            180,
             |d| {
                 std::hint::black_box(arms(&tests[&d], &scope));
             },
         );
     });
+}
+
+#[test]
+fn the_search_for_a_point_tests_each_part_of_a_deeper_test_a_bounded_number_of_times() {
+    // A count, not a time: at depths 60 and 480 a search without `Parts::failed` tests 516 and
+    // 3876 parts per level of `heavy`, far above the bound of 48 (see
+    // `the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`).
+    parts_tested_per_level([60, 480]);
 }

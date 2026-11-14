@@ -5,17 +5,19 @@ use super::*;
 
 #[test]
 fn arms_of_a_named_rule_at_each_tier_take_time_near_linear_in_the_depth() {
-    // Depths 30 and 240. With the rule's formula copied at each tier the work grew 43 times
-    // (1.25 to 54.0 billion instructions); shared, it grows 7.7 times.
+    // Depths 120 and 960. At 30 and 240, before TEST-bench-move, with the rule's formula copied
+    // at each tier the work grew 43 times (1.25 to 54.0 billion instructions); shared, it grows
+    // 7.7 times.
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            let tests: BTreeMap<usize, Term> =
-                [30, 240].map(|d| (d, if_(named(d), lit(1), lit(2)))).into();
+            let tests: BTreeMap<usize, Term> = [120, 960]
+                .map(|d| (d, if_(named(d), lit(1), lit(2))))
+                .into();
             let scope = ints(&names());
             scaling::check(
                 "arms of a rule named once, used at each of d tiers",
-                30,
+                120,
                 |d| {
                     std::hint::black_box(arms(&tests[&d], &scope));
                 },
@@ -102,7 +104,7 @@ fn arms_of_a_named_conjunction_of_k_limits_take_time_near_linear_in_k() {
     // instructions (8.3 times) and 7.6 times the bytes, 2.4 s.
     limit_scaling(
         "arms of a conjunction of k credit limits named once",
-        240,
+        600,
         approval_within,
     );
 }
@@ -115,7 +117,7 @@ fn arms_of_a_named_disjunction_of_k_limits_take_time_near_linear_in_k() {
     // pass: 1.21 to 9.41 G instructions (7.7 times) and 7.6 times the bytes, 2.6 s.
     limit_scaling(
         "arms of any of k credit limits named once, required of a small request",
-        240,
+        600,
         approval_any_limit,
     );
 }
@@ -127,7 +129,7 @@ fn arms_of_k_named_exemptions_take_time_near_linear_in_k() {
     // one pass: 0.29 to 2.36 G instructions (8.3 times) and 7.6 times the bytes.
     limit_scaling(
         "arms of any of k exemptions named once",
-        120,
+        600,
         approval_exempt,
     );
 }
@@ -139,7 +141,7 @@ fn arms_of_a_tier_needing_k_named_limits_take_time_near_linear_in_k() {
     // one pass: 0.36 to 3.72 G instructions (10.4 times) and 8.7 times the bytes.
     limit_scaling(
         "arms of a tier needing k credit limits named once",
-        120,
+        480,
         approval_any_tier,
     );
 }

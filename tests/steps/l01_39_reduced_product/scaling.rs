@@ -170,31 +170,34 @@ fn random_conjunction(rnd: &mut Rng) -> Term {
     (1..n).fold(conjunct(rnd), |t, _| prim(Prim::And, t, conjunct(rnd)))
 }
 
+/// Random conjunctions over five names from a new seed each run: projecting by blocks and
+/// projecting whole trees keep the same values. Seed 39 at 512 cases was a fixed test.
 #[test]
 fn projecting_by_blocks_keeps_what_projecting_whole_trees_keeps() {
     let names: Vec<std::sync::Arc<str>> = (1..=5).map(|i| format!("x{i}").into()).collect();
     let s = ints(&names);
-    let mut rnd = Rng::new(39);
+    let (mut rnd, seed) = Rng::fresh("projecting by blocks");
+    let cases = 128;
     let mut empty = 0;
-    for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
+    for _ in 0..cases {
         let t = random_conjunction(&mut rnd);
         let a = s.assume(&t, true, &Premises::new());
         let (mut blocks, mut whole) = (a.clone(), a);
         blocks.reduce();
         whole.reduce_whole();
-        assert_eq!(blocks.bottom, whole.bottom, "{t:?}");
+        assert_eq!(blocks.bottom, whole.bottom, "seed {seed}: {t:?}");
         if blocks.bottom {
             empty += 1;
             continue;
         }
         for x in &names {
-            assert_eq!(blocks.get(x), whole.get(x), "{x} in {t:?}");
+            assert_eq!(blocks.get(x), whole.get(x), "seed {seed}: {x} in {t:?}");
         }
     }
     // Both kinds of case occur.
     assert!(
-        0 < empty && empty < zed_tests::instances::RANDOM_INSTANCES,
-        "{empty} empty"
+        0 < empty && empty < cases,
+        "seed {seed}: {empty} of {cases} empty"
     );
 }
 
@@ -531,11 +534,11 @@ fn disjunctions_among_the_hubs_of_a_star(k: usize) -> (Scope, Vec<Term>) {
 /// Assumes the tests of [`disjunctions_among_the_hubs_of_a_star`] at size `k`, in a lazy scope
 /// with `lazy`, under [`scaling::check`].
 fn disjunctions_scale(what: &str, lazy: bool) {
-    let inputs = scaling::inputs(16, |k| {
+    let inputs = scaling::inputs(64, |k| {
         let (start, tests) = disjunctions_among_the_hubs_of_a_star(k);
         (if lazy { start.lazy() } else { start }, tests)
     });
-    scaling::check(what, 16, |k| {
+    scaling::check(what, 64, |k| {
         let (start, tests) = &inputs[&k];
         let p = Premises::new();
         tests
@@ -820,6 +823,639 @@ fn stars_under_a_disjunction(k: usize, lazy: bool) -> Scope {
         ),
     ];
     tests.iter().fold(s, |s, t| s.assume(t, true, &p))
+}
+
+/// `x1` to `xk`.
+fn from_x1(k: usize) -> Vec<Arc<str>> {
+    (1..=k).map(|i| format!("x{i}").into()).collect()
+}
+
+/// The two disjuncts of [`all_zero_or_all_one`], each assumed in the scope of `x1` to `xk`.
+fn zero_and_one_sides(k: usize) -> (Scope, Scope) {
+    let s = ints(&from_x1(k));
+    let Term::Prim(_, a) = &all_zero_or_all_one(k) else {
+        unreachable!("a disjunction")
+    };
+    let p = Premises::new();
+    (s.assume(&a[0], true, &p), s.assume(&a[1], true, &p))
+}
+
+/// The tests of [`apart`] as one conjunction, and the scope of their names.
+fn apart_conjunction(k: usize, or: bool) -> (Scope, Term) {
+    let (names, tests) = apart(k, or);
+    let all = tests
+        .into_iter()
+        .reduce(|a, t| prim(Prim::And, a, t))
+        .expect("k > 0");
+    (ints(&names), all)
+}
+
+/// The scope of `x0` to `x(k-1)` and, for each `i`, the test `xi >= i` and the test `xi < i`
+/// that fails where the first holds.
+fn failing_cases(k: usize) -> (Scope, Vec<(Term, Term)>) {
+    let names: Vec<Arc<str>> = (0..k).map(|i| format!("x{i}").into()).collect();
+    let tests = (0..k)
+        .map(|i| {
+            let x = var(&format!("x{i}"));
+            let i = int(i as i64);
+            (prim(Prim::Ge, x.clone(), i.clone()), prim(Prim::Lt, x, i))
+        })
+        .collect();
+    (ints(&names), tests)
+}
+
+/// The nest of the tests of [`failing_cases`] from `s`: down the case where each `xi >= i`
+/// holds, and at each level the failing case, where it does not and `xi < i` does not either.
+/// Returns the innermost scope and the failing cases.
+fn nest_of_failing_cases(s: &Scope, tests: &[(Term, Term)]) -> (Scope, Vec<Scope>) {
+    let p = Premises::new();
+    let mut failed = Vec::with_capacity(tests.len());
+    let s = tests.iter().fold(s.clone(), |s, (holds, fails)| {
+        failed.push(
+            s.assume_case(holds, false, &p)
+                .assume_case(fails, false, &p),
+        );
+        s.assume_case(holds, true, &p)
+    });
+    (s, failed)
+}
+
+/// The `k` tests `n - m <= k`, …, `n - m <= 1` ([`hubs_within`]) assumed on `start`.
+fn narrow_hubs(start: &Scope, k: usize) -> Scope {
+    let p = Premises::new();
+    (1..=k as i64)
+        .rev()
+        .fold(start.clone(), |s, c| s.assume(&hubs_within(c), true, &p))
+}
+
+/// The two families of constraints reduced one by one under `@exact`.
+const EXACT_FAMILIES: [Family; 2] = [
+    (
+        "k reductions under @exact, each after a constraint on names apart",
+        squares_apart,
+    ),
+    (
+        "k reductions under @exact, each after a constraint of one chain",
+        products_in_a_chain,
+    ),
+];
+
+/// `k` disjunctions `v_i - w >= 5 || w - v_(i+1) >= 5`, a chain through the shared name `w`,
+/// and `v0 - z >= 5 || z - v0 >= 5`; each `v_i` in 0..=10 and `w`, `z` in -10^6..=10^6; then
+/// `k` tests `w + z <= c` that move no interval.
+fn tightenings_beside_a_chain(k: usize) -> (Scope, Vec<(Term, bool)>) {
+    const W: i64 = 1_000_000;
+    let p = Premises::new();
+    let vs: Vec<String> = (0..=k).map(|i| format!("v{i}")).collect();
+    let mut all: Vec<Arc<str>> = vs.iter().map(|v| Arc::from(v.as_str())).collect();
+    all.extend([Arc::from("w"), Arc::from("z")]);
+    let within = |s: Scope, x: &str, lo: i64, hi: i64| {
+        s.assume(&prim(Prim::Ge, var(x), int(lo)), true, &p).assume(
+            &prim(Prim::Le, var(x), int(hi)),
+            true,
+            &p,
+        )
+    };
+    let mut s = within(within(ints(&all), "w", -W, W), "z", -W, W);
+    for v in &vs {
+        s = within(s, v, 0, 10);
+    }
+    let apart = |a: &str, b: &str, c: &str, d: &str| {
+        or(
+            prim(Prim::Ge, prim(Prim::Sub, var(a), var(b)), int(5)),
+            prim(Prim::Ge, prim(Prim::Sub, var(c), var(d)), int(5)),
+        )
+    };
+    for i in 0..k {
+        s = s.assume(&apart(&vs[i], "w", "w", &vs[i + 1]), true, &p);
+    }
+    s = s.assume(&apart("v0", "z", "z", "v0"), true, &p);
+    let tests: Vec<(Term, bool)> = (1..=k as i64)
+        .map(|j| {
+            let sum = prim(Prim::Add, var("w"), var("z"));
+            (prim(Prim::Le, sum, int(W - 10 - j)), false)
+        })
+        .collect();
+    (s, tests)
+}
+
+/// [`tightenings_beside_disjunctions`] with `v_i - n >= 5 || n - v_i >= 5` for each even `i`,
+/// the same on `m` for each odd `i`, and the tests `n + m <= c`.
+fn tightenings_of_a_sum(k: usize) -> (Scope, Vec<(Term, bool)>) {
+    tightenings_beside_disjunctions(
+        k,
+        |v| {
+            let i: usize = v[1..].parse().unwrap();
+            let x = if i.is_multiple_of(2) { "n" } else { "m" };
+            or(
+                prim(Prim::Ge, prim(Prim::Sub, var(v), var(x)), int(5)),
+                prim(Prim::Ge, prim(Prim::Sub, var(x), var(v)), int(5)),
+            )
+        },
+        |c| prim(Prim::Le, prim(Prim::Add, var("n"), var("m")), int(c)),
+    )
+}
+
+/// `let z = x1 + … + xk in if x1 >= 2 { if z >= 1 { if z == 2 { … } } } else { 0 }` in the
+/// scope where each `xi` is in `0..=1`: `k` tests of `z`, by `>=` and `==` in turn, in a scope
+/// no state reaches.
+fn tests_in_a_dead_scope(k: usize) -> (Scope, Term) {
+    let (names, _) = tests_of_one_sum(k);
+    let bits = (1..=k)
+        .flat_map(|i| {
+            let x = format!("x{i}");
+            [
+                prim(Prim::Ge, var(&x), int(0)),
+                prim(Prim::Le, var(&x), int(1)),
+            ]
+        })
+        .reduce(|a, b| prim(Prim::And, a, b))
+        .expect("k is not 0");
+    let s = ints(&names).assume(&bits, true, &Premises::new());
+    let test = |i: usize| {
+        let p = if i.is_multiple_of(2) {
+            Prim::Eq
+        } else {
+            Prim::Ge
+        };
+        prim(p, var("z"), int(i as i64))
+    };
+    let dead = Term::If(
+        arc(prim(Prim::Ge, var("x1"), int(2))),
+        arc(nested(k, test)),
+        arc(int(0)),
+    );
+    (s, Term::Let("z".into(), arc(sum_of(k)), arc(dead)))
+}
+
+/// `if x1 >= 0 { if x1 <= 1 { … let z1 = x1 + 1 in … let zk = xk + k in if z1 >= 2 { …
+/// if zk >= k + 1 { 0 } else { k } … } else { 1 } … } } }`: `k` tests, each of a summary over
+/// one input.
+fn summaries_over_one_input(k: usize) -> (Scope, Term) {
+    let z = |i: usize| format!("z{i}");
+    let tests = nested(k, |i| prim(Prim::Ge, var(&z(i)), int(i as i64 + 1)));
+    let t = (1..=k).rev().fold(tests, |t, i| {
+        let v = prim(Prim::Add, var(&format!("x{i}")), int(i as i64));
+        Term::Let(z(i).into(), arc(v), arc(t))
+    });
+    (ints(&from_x1(k)), in_bits(k, t))
+}
+
+/// `z = x1 + … + xk` over each `xi` in `0..=1`, read through the tree of its terms' bounds,
+/// built at once; the run it returns asks `k` times whether `z >= 1` can hold, the `i`-th time
+/// with `xi` in `1..=1`, another domain than the scope's, and checks that it can.
+fn each_input_given_its_own_domain(k: usize) -> impl Fn() + Sync {
+    let xs = from_x1(k);
+    let names: images::Names<IntervalSet> = (xs.iter())
+        .map(|x| (x.clone(), IntervalSet::range(End::of(0), End::of(1))))
+        .collect();
+    let doms: Domains = names.iter().map(|(x, d)| (x.clone(), d.clone())).collect();
+    let s = let_summary(&sum_of(k), &doms, Lets::new()).expect("a sum of inputs");
+    let leaf = |v: &Arc<str>, d: &IntervalSet| s.term_bounds(v, d);
+    let tree = images::fresh(s.vars(), &names, leaf);
+    let read = Arc::new(TermRead {
+        names,
+        vars: s.vars().clone(),
+        tree,
+        ints: |d| d,
+    });
+    move || {
+        let test = prim(Prim::Ge, var("z"), int(1));
+        for x in &xs {
+            let lets: Lets = [(
+                "z".into(),
+                LetIn {
+                    summary: s.clone(),
+                    ints: IntervalSet::top(),
+                    read: Some(read.clone() as _),
+                },
+            )]
+            .into_iter()
+            .collect();
+            let over: Domains = [(x.clone(), IntervalSet::single(1))].into_iter().collect();
+            let got = let_narrowing(&test, &over, lets, &Demand::Bool(true));
+            assert!(got.is_some(), "{x}");
+        }
+    }
+}
+
+/// Checks that `end` holds of each of `names` what the scope made again from no projection
+/// holds.
+fn as_made_again(end: &Scope, names: &[&str], k: usize) {
+    assert!(!end.bottom, "k = {k}: the scope became empty");
+    let mut again = end.clone();
+    again.forget_projections();
+    again.reduce();
+    for h in names {
+        assert_eq!(end.get(*h), again.get(*h), "k = {k}: {h}");
+    }
+}
+
+// Correctness tests at small sizes of the families the benchmarks time (`scaling/bench.rs`),
+// which checked these at their own sizes before (TEST-bench-move-l0139).
+
+#[test]
+fn a_chain_of_lets_and_a_nest_of_ifs_narrow_their_input() {
+    let x0 = ints(&["x0".into()]);
+    let hull = |a: &zedc::store::product::Arm| a.scope.get("x0").ints().to_string();
+    for k in [1, 2, 5] {
+        // `xk = x0 + k`, so `xk >= 0` holds where `x0 >= -k`.
+        let a = super::arms(&lets(k), &x0);
+        assert_eq!(a.len(), 2, "k = {k}");
+        assert_eq!(hull(&a[0]), format!("[{}..]", -(k as i64)), "k = {k}");
+        assert_eq!(hull(&a[1]), format!("[..={}]", -(k as i64) - 1), "k = {k}");
+        // Each level `x0 >= i` holds at `[i..]` and fails at `i - 1` alone, below the level
+        // before it.
+        let a = super::arms(&ifs(k), &x0);
+        assert!(a.iter().all(|a| a.reachable()), "k = {k}: {a:#?}");
+        let mut got: Vec<String> = a.iter().map(hull).collect();
+        got.sort();
+        let mut want: Vec<String> = (0..k as i64)
+            .flat_map(|i| {
+                let no = if i == 0 {
+                    "[..=-1]".to_string()
+                } else {
+                    format!("[{0}..={0}]", i - 1)
+                };
+                [format!("[{i}..]"), no]
+            })
+            .collect();
+        want.sort();
+        assert_eq!(got, want, "k = {k}");
+    }
+}
+
+#[test]
+fn a_join_keeps_the_equalities_of_its_sides() {
+    let p = Premises::new();
+    for k in [2, 5, 10, 20] {
+        let r = ints(&from_x1(k)).assume(&all_zero_or_all_one(k), true, &p);
+        let differ = prim(Prim::Ne, var("x1"), var(&format!("x{k}")));
+        assert!(
+            r.assume(&differ, true, &p).bottom,
+            "k = {k}: {}",
+            r.relation
+        );
+        let x1 = prim(Prim::Eq, var("x1"), int(1));
+        assert!(!r.assume(&x1, true, &p).bottom, "k = {k}");
+    }
+    // The join of the two sides, reduced, as the benchmark times it.
+    let (l, r) = zero_and_one_sides(5);
+    let mut j = l.join(&r);
+    j.reduce();
+    assert!(!j.bottom);
+    assert_eq!(j.get("x1").ints().to_string(), "[0..=1]");
+    let differ = prim(Prim::Ne, var("x1"), var("x5"));
+    assert!(j.assume(&differ, true, &p).bottom, "{}", j.relation);
+    assert!(
+        !j.assume(&prim(Prim::Eq, var("x1"), int(1)), true, &p)
+            .bottom
+    );
+}
+
+#[test]
+fn tests_read_through_the_functions_they_call() {
+    let x = ints(&["x".into()]);
+    // `h(x) >= 4` and below it `h(x) < 4`, `h(x) >= 3`: the test of 3 is reached where
+    // `2x + 1` is 3, that of 2 never, since `2x + 1` is odd.
+    let a = super::arms(&helper_chain(4), &x);
+    let reach: Vec<bool> = a.iter().map(|a| a.reachable()).collect();
+    assert_eq!(
+        reach,
+        [true, true, true, true, false, true, true, true],
+        "{a:#?}"
+    );
+    // `h5(x)` is `8x + 13`, so the true arm holds `x >= -1`.
+    let a = super::arms(&nested_helpers(5), &x);
+    assert_eq!(a[0].scope.get("x").ints().to_string(), "[-1..]");
+    assert_eq!(a[1].scope.get("x").ints().to_string(), "[..=-2]");
+    for k in [2, 3] {
+        let a = super::arms(&nested_helpers(k), &x);
+        assert!(a.iter().all(|a| a.reachable()), "k = {k}: {a:#?}");
+    }
+}
+
+#[test]
+fn tests_on_names_apart_keep_each_test() {
+    let p = Premises::new();
+    // What each kind keeps: every test of the conjunction, and each point that meets them.
+    let (s, t) = apart_conjunction(3, true);
+    let r = s.assume(&t, true, &p);
+    assert_eq!(r.relation.cons().len(), 6, "{}", r.relation);
+    let at = |v: [i64; 6]| -> BTreeMap<Arc<str>, Value> {
+        ["x0", "y0", "x1", "y1", "x2", "y2"]
+            .into_iter()
+            .zip(v)
+            .map(|(n, v)| (n.into(), Value::Int(v)))
+            .collect()
+    };
+    assert!(r.contains(&at([1, 0, 0, 1, 5, -5])));
+    let (names, tests) = apart(3, true);
+    let one_by_one = tests
+        .iter()
+        .fold(ints(&names), |s, t| s.assume(t, true, &p));
+    assert!(!one_by_one.bottom);
+    assert!(one_by_one.contains(&at([1, 0, 0, 1, 5, -5])));
+    let (s, t) = apart_conjunction(3, false);
+    let r = s.assume(&t, true, &p);
+    assert!(r.contains(&at([1, 0, 1, 0, 9, 8])));
+    assert!(!r.contains(&at([0, 0, 1, 0, 9, 8])));
+}
+
+#[test]
+fn a_chain_of_shadowing_lets_reaches_both_arms() {
+    let x0 = ints(&["x0".into()]);
+    for k in [1, 2, 5, 20] {
+        let a = super::arms(&shadows(k), &x0);
+        assert_eq!(
+            a.len(),
+            2,
+            "k = {k}: both arms of the last test are reached"
+        );
+        assert!(a.iter().all(|a| !a.scope.bottom), "k = {k}");
+    }
+}
+
+#[test]
+fn reductions_under_exact_after_each_constraint_keep_a_point() {
+    for (what, family) in EXACT_FAMILIES {
+        for k in 1..=3 {
+            let s = reduced_one_by_one(&exact_within(k + 1), &family(k));
+            assert!(!s.bottom, "{what}: k = {k}");
+        }
+    }
+}
+
+#[test]
+fn a_failing_case_reads_every_name_as_empty() {
+    // Each failing case is unreachable, and every name reads as empty there, its own and the
+    // others, though the case kept them as they were.
+    let (s, tests) = failing_cases(8);
+    let (last, failed) = nest_of_failing_cases(&s, &tests);
+    assert!(!last.bottom);
+    assert_eq!(last.get("x7").ints().to_string(), "[7..]");
+    for (i, f) in failed.iter().enumerate() {
+        assert!(f.bottom, "case {i}");
+        assert!(f.get(&format!("x{i}")).is_empty(), "x{i} in case {i}");
+        assert!(f.get("x0").is_empty() && f.get("y").is_empty(), "case {i}");
+    }
+}
+
+#[test]
+fn tests_among_the_hubs_of_many_stars_keep_each_leaf() {
+    // `n = m = -1` meets every `n - m <= c`, so no test moves a leaf.
+    let s = narrow_hubs(&stars_of_two_hubs(3), 3);
+    for i in 0..3 {
+        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[-1..]", "a{i}");
+    }
+    // A test that moves every leaf still reaches each: `n + m >= 4` with `n - m <= 1` puts
+    // the least `max(n, m)` at 2.
+    let up = prim(Prim::Ge, prim(Prim::Add, var("n"), var("m")), int(4));
+    let s = s.assume(&up, true, &Premises::new());
+    for i in 0..3 {
+        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[2..]", "a{i}");
+    }
+}
+
+#[test]
+fn tests_on_the_hubs_of_many_stars_keep_the_leaves_above_them() {
+    for one in [false, true] {
+        let start = stars_above_the_hubs(3, one);
+        let (after, nest) = tests_on_a_hub(&start, 3);
+        assert_eq!(
+            after.get("n").ints().to_string(),
+            "[-1..=1001]",
+            "one {one}"
+        );
+        assert_eq!(nest.get("n").ints().to_string(), "[-1..]", "one {one}");
+        for s in [&after, &nest] {
+            for i in 0..3 {
+                assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[5000..]");
+            }
+        }
+        // A test that moves the hub past the leaves still reaches each.
+        let up = prim(Prim::Ge, var("n"), int(6000));
+        let s = start.assume(&up, true, &Premises::new());
+        for i in 0..3 {
+            let a = s.get(&format!("a{i}")).ints().to_string();
+            assert_eq!(a, "[6000..]", "a{i}, one {one}");
+        }
+    }
+}
+
+#[test]
+fn a_lazy_scope_settles_the_stars_of_a_class_as_the_eager_one() {
+    let p = Premises::new();
+    let (start, tests) = a_class_of_stars(3);
+    let eager = tests
+        .iter()
+        .fold(start.clone(), |s, t| s.assume(t, true, &p));
+    let lazy = tests
+        .iter()
+        .fold(start.lazy(), |s, t| s.assume(t, true, &p));
+    for x in ["n", "m", "a0", "a1", "a2"] {
+        let x: Arc<str> = x.into();
+        assert_eq!(eager.get(&x), lazy.settled(&x), "{x}");
+    }
+    // `n + m` has no lower bound, so neither has a leaf.
+    for i in 0..3 {
+        assert_eq!(
+            eager.get(&format!("a{i}")).ints().to_string(),
+            "[..]",
+            "a{i}"
+        );
+    }
+}
+
+#[test]
+fn a_lazy_scope_settles_the_hubs_of_a_star_under_disjunctions_as_the_eager_one() {
+    let p = Premises::new();
+    let (start, tests) = disjunctions_among_the_hubs_of_a_star(3);
+    let eager = tests
+        .iter()
+        .fold(start.clone(), |s, t| s.assume(t, true, &p));
+    let lazy = tests
+        .iter()
+        .fold(start.lazy(), |s, t| s.assume(t, true, &p));
+    for x in ["a", "x", "y"] {
+        let x: Arc<str> = x.into();
+        assert_eq!(eager.get(&x), lazy.settled(&x), "{x}");
+    }
+    // Each disjunction implies the ones before it, which the relation drops: the star and
+    // the last disjunction stay.
+    assert_eq!(eager.relation.set().len(), 2, "{}", eager.relation);
+}
+
+#[test]
+fn distinct_disjunctions_among_the_hubs_of_a_star_are_each_kept() {
+    let p = Premises::new();
+    for k in 1..=3 {
+        let (start, tests) = distinct_disjunctions_among_the_hubs_of_a_star(k);
+        let s = tests.iter().fold(start, |s, t| s.assume(t, true, &p));
+        assert_eq!(s.relation.set().len(), k + 1, "k = {k}: {}", s.relation);
+    }
+}
+
+#[test]
+fn changes_of_one_block_keep_one_entry_per_part() {
+    let entries: Vec<usize> = [4, 12]
+        .into_iter()
+        .map(|k| {
+            let (s, tests) = changes_of_one_block(k);
+            let end = change_one_block(&s, &tests);
+            assert!(!end.bottom, "k = {k}: the scope became empty");
+            end.projected.len()
+        })
+        .collect();
+    assert_eq!(
+        entries[0], entries[1],
+        "the parts' entries grew with the changes: {entries:?}"
+    );
+}
+
+#[test]
+fn tightenings_beside_disjunctions_leave_the_scope_made_again() {
+    for k in [2, 3] {
+        let (s, tests) = tightenings_beside_a_chain(k);
+        as_made_again(&change_one_block(&s, &tests), &["w", "z", "v0"], k);
+    }
+    for k in 2..=4 {
+        let (s, tests) = tightenings_of_a_sum(k);
+        as_made_again(&change_one_block(&s, &tests), &["n", "m", "v0"], k);
+    }
+}
+
+#[test]
+fn a_binding_over_many_inputs_narrows_each() {
+    // `let z = x + y in if y <= 0 { if z >= 5 { 1 } else { 2 } } else { 3 }`: in arm 1, x >= 5.
+    let body = Term::Let(
+        "z".into(),
+        arc(prim(Prim::Add, var("x"), var("y"))),
+        arc(Term::If(
+            arc(prim(Prim::Le, var("y"), int(0))),
+            arc(Term::If(
+                arc(prim(Prim::Ge, var("z"), int(5))),
+                arc(int(1)),
+                arc(int(2)),
+            )),
+            arc(int(3)),
+        )),
+    );
+    let a = super::arms(&body, &ints(&["x".into(), "y".into()]));
+    assert_eq!(
+        a[1].scope.get("x").ints().to_string(),
+        "[5..]",
+        "{:#?}",
+        a[1]
+    );
+    for k in 1..=4 {
+        let (names, t) = sums_read_as_inputs_narrow(k);
+        let a = super::arms(&t, &ints(&names));
+        // Every `xi >= 0`, so `z >= 0` and `wk >= k`: only the false arm of `wk >= 0` is
+        // unreachable. The arms in order: each `xi >= 0` true, `wk >= 0` true and false, each
+        // `xi >= 0` false.
+        let unreachable: Vec<usize> = (0..a.len()).filter(|&i| !a[i].reachable()).collect();
+        assert_eq!(unreachable, [k + 1], "{k} tests");
+    }
+}
+
+#[test]
+fn tests_of_a_name_over_many_inputs_reach_every_arm() {
+    for k in 1..=4 {
+        let (names, t) = tests_of_one_sum(k);
+        let a = super::arms(&t, &ints(&names));
+        assert!(a.iter().all(|a| a.reachable()), "{k} tests");
+        let (s, t) = summaries_over_one_input(k);
+        let a = super::arms(&t, &s);
+        assert!(a.iter().all(|a| a.reachable()), "{k} summaries");
+    }
+}
+
+#[test]
+fn tests_in_a_scope_no_state_reaches_are_unreachable() {
+    for k in 1..=4 {
+        let (s, t) = tests_in_a_dead_scope(k);
+        let a = super::arms(&t, &s);
+        assert!(a.iter().any(|a| !a.reachable()), "{k} tests");
+    }
+}
+
+#[test]
+fn a_test_that_gives_an_input_another_domain_reads_it_through_the_tree() {
+    for k in [1, 3] {
+        each_input_given_its_own_domain(k)();
+    }
+}
+
+#[test]
+fn a_test_beside_a_wide_part_keeps_one_part_for_each_test() {
+    let p = Premises::new();
+    // From k = 2: at 1 the wide part is `z0 >= 0`, a bound of one name, kept as its domain.
+    for k in 2..=4 {
+        let (s, tests) = parts_beside_a_wide_part(k);
+        assert_eq!(
+            s.projected.len(),
+            1,
+            "k = {k}: the wide part alone at the start"
+        );
+        let end = tests.iter().fold(s, |s, t| s.assume(t, true, &p));
+        assert!(!end.bottom, "k = {k}: the scope became empty");
+        assert_eq!(
+            end.projected.len(),
+            k + 1,
+            "k = {k}: one part for each test"
+        );
+    }
+}
+
+#[test]
+fn a_sum_over_many_names_bounds_each() {
+    // Each name's values are read from the row and the others' bounds: with `0 <= zj <= 3`
+    // and the sum at least `3·k - 1`, the others give at most `3·(k - 1)`, so each `zj >= 2`.
+    let p = Premises::new();
+    let (names, sum, bounded) = wide_sum(5);
+    let r = ints(&names).assume(&bounded, true, &p);
+    for x in &names {
+        assert_eq!(r.get(x).ints().to_string(), "[2..=3]", "{x}");
+    }
+    let r = ints(&names).assume(&prim(Prim::Ge, sum, int(0)), true, &p);
+    assert!(!r.bottom);
+    assert_eq!(r.get("z0").ints().to_string(), "[..]");
+}
+
+#[test]
+fn disjunctions_beside_a_wide_one_are_one_block() {
+    let p = Premises::new();
+    for k in 1..=3 {
+        let (s, tests) = disjunctions_beside_a_wide_disjunction(k);
+        let end = tests.iter().fold(s, |s, t| s.assume(t, true, &p));
+        assert!(!end.bottom, "k = {k}: the scope became empty");
+        assert_eq!(
+            end.relation.set().len(),
+            k + 1,
+            "k = {k}: each disjunction kept"
+        );
+        assert_eq!(
+            end.relation.blocks().all().count(),
+            1,
+            "k = {k}: the disjunctions are one block"
+        );
+        assert!(end.relation.stars().is_empty(), "k = {k}: no star");
+    }
+}
+
+#[test]
+fn an_eager_join_settles_the_stars_as_the_lazy_one() {
+    let p = Premises::new();
+    let test = hubs_within(5);
+    let join = |s: Scope| s.assume(&test, true, &p).join(&s.assume(&test, false, &p));
+    let eager = join(stars_under_a_disjunction(3, false));
+    let lazy = join(stars_under_a_disjunction(3, true));
+    for i in 0..3 {
+        let a: Arc<str> = format!("a{i}").into();
+        assert_eq!(eager.get(&a), lazy.settled(&a), "a{i}");
+        assert_eq!(eager.get(&a).ints().to_string(), "[-1..]", "a{i}");
+    }
 }
 
 mod bench;

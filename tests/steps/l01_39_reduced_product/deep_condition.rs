@@ -455,18 +455,13 @@ fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
     assert_eq!(xs, want);
 }
 
-#[test]
-fn the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times() {
-    // The search marks a part it finds not to hold and does not test it again while its values
-    // are unchanged (`Parts::failed`). Without the marks a nest that fails deep is tested again
-    // below each level: 516 parts per level at d = 60 and 3876 at d = 480 for `heavy`, 152 and
-    // 992 for `moving`. With them `heavy` measures 40 parts per level and `moving` 34, at both
-    // depths (2026-11-07). Each nest is searched at every level, so fewer than `d` parts tested
-    // means the search was not reached (as when `heavy`'s atoms shared a color).
-    on_a_deep_stack(|| {
+/// Searches `if nest(d) { 1 } else { 2 }` for each nest of [`heavy`] and [`moving`] and each
+/// depth of `depths`, and checks that the search tests from one to 48 parts per level.
+fn parts_tested_per_level(depths: [usize; 2]) {
+    on_a_deep_stack(move || {
         let scope = ints(&level_names());
         for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
-            for d in [60, 480] {
+            for d in depths {
                 let test = if_(nest(d), lit(1), lit(2));
                 presburger::parts_tested();
                 std::hint::black_box(arms(&test, &scope));
@@ -482,6 +477,38 @@ fn the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_tim
             }
         }
     });
+}
+
+#[test]
+fn the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times() {
+    // The search marks a part it finds not to hold and does not test it again while its values
+    // are unchanged (`Parts::failed`). Without the marks a nest that fails deep is tested again
+    // below each level: 516 parts per level at d = 60 and 3876 at d = 480 for `heavy`, 152 and
+    // 992 for `moving`. With them `heavy` measures 40 parts per level and `moving` 34, at both
+    // depths (2026-11-07). Each nest is searched at every level, so fewer than `d` parts tested
+    // means the search was not reached (as when `heavy`'s atoms shared a color). Depths 60 and
+    // 480, where the count without the marks is well above the bound, are checked in
+    // `bench::the_search_for_a_point_tests_each_part_of_a_deeper_test_a_bounded_number_of_times`.
+    parts_tested_per_level([5, 40]);
+}
+
+#[test]
+fn the_relation_of_a_deep_test_holds_where_the_test_does() {
+    // `x >= 0` holds the test at every `y`; below 0 each level's `x >= i` fails, so no point
+    // has `x < 0`.
+    let names: [Arc<str>; 2] = ["x".into(), "y".into()];
+    for d in [1, 2, 20] {
+        let rs = relations(&[&fallbacks(d)], &names, false).expect("in the domain");
+        assert_eq!(rs.len(), 1, "d = {d}");
+        let f = presburger::Formula::and(vec![rs[0].defined(), rs[0].body.clone()]);
+        let hull = |n: &Arc<str>| {
+            presburger::project(&f, &presburger::Atom::Sym(n.clone()))
+                .expect("answered")
+                .to_string()
+        };
+        assert_eq!(hull(&names[0]), "[0..]", "d = {d}");
+        assert_eq!(hull(&names[1]), "[..]", "d = {d}");
+    }
 }
 
 mod bench;

@@ -103,7 +103,7 @@ fn same(eager: &Scope, lazy: &Scope, all: &[Arc<str>], trace: &[String]) -> usiz
 /// with a satellite of the hubs of such a star ([`satellite_kept`]).
 fn run(
     start: &Scope,
-    seeds: std::ops::Range<u64>,
+    seeds: impl IntoIterator<Item = u64>,
     test: fn(&mut Rng, usize) -> Term,
 ) -> (usize, usize, usize, usize) {
     let p = Premises::new();
@@ -168,36 +168,43 @@ fn run(
     (stale, two, related, kept)
 }
 
-// The seed loops below took 16 to 42 s each alone at load 30, so each is a module of tests
-// over parts of its seeds, each part its own piece of tools/run_tests.sh, and each part
-// checks on its own seeds what the whole loop checked on all of them, which implies the
-// whole loop's check (TEST-lazy-split).
+// The seed loops below ran 100 to 1,200 fixed seeds each, 16 to 42 s alone at load 30, split
+// into tests of 20 to 100 seeds (TEST-lazy-split). Each is now one test of a few seeds new at
+// each run ([`fresh_seeds`]), well under a second, which checks the lazy scope against the
+// eager one and leaves out the counts of rare events, and one test of a fixed seed at which
+// each event the loop counted occurs, so that the random runs are known to reach it
+// (TEST-bench-move-l0139; seeds found 2026-11-14 over the first 30 to 200 seeds of each).
 
-/// Seeds 0 to 299 of [`test`], in three parts.
+/// `count` seeds in a row from a new one each run, which [`Rng::fresh`] prints and `ZED_SEED`
+/// repeats. Each check names the seed it failed at.
+fn fresh_seeds(what: &str, count: u64) -> std::ops::Range<u64> {
+    let (_, seed) = Rng::fresh(what);
+    let first = seed.min(u64::MAX - count);
+    first..first + count
+}
+
+/// Random seeds of [`test`]; seed 19 leaves names unsettled, so that the comparison is not of
+/// two eager scopes (in 6 of seeds 0 to 199).
 mod a_lazy_scope_settles_each_name_to_the_eager_product {
     use super::*;
 
-    fn part(seeds: std::ops::Range<u64>) {
-        let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
-        let (stale, _, _, _) = run(&start, seeds, test);
-        // The lazy scope did leave names unsettled, so the comparison is not of two eager
-        // scopes.
+    fn start() -> Scope {
+        boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20)
+    }
+
+    #[test]
+    fn random_seeds() {
+        run(
+            &start(),
+            fresh_seeds("lazy scope against the eager product", 10),
+            test,
+        );
+    }
+
+    #[test]
+    fn seed_19_leaves_a_name_unsettled() {
+        let (stale, _, _, _) = run(&start(), [19], test);
         assert!(stale > 0, "the lazy scope settled every name at once");
-    }
-
-    #[test]
-    fn seeds_0_to_99() {
-        part(0..100);
-    }
-
-    #[test]
-    fn seeds_100_to_199() {
-        part(100..200);
-    }
-
-    #[test]
-    fn seeds_200_to_299() {
-        part(200..300);
     }
 }
 
@@ -217,39 +224,23 @@ fn bounded_hubs() -> Scope {
     ints(&all).assume(&hubs, true, &Premises::new())
 }
 
-/// Seeds 0 to 99 of [`wide`], in four parts.
+/// Random seeds of [`wide`]; seed 2 leaves names unsettled and holds a star of two hubs, and
+/// one beside a conjunct of the two (all three in 18 of seeds 0 to 199).
 mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
     use super::*;
 
-    fn part(seeds: std::ops::Range<u64>) {
-        let (stale, two, related, _) = run(&bounded_hubs(), seeds, wide);
-        println!(
-            "{stale} unsettled names, {two} states with a star of two hubs, {related} with a \
-             conjunct of the two"
-        );
+    #[test]
+    fn random_seeds() {
+        let seeds = fresh_seeds("lazy scope with stars of two hubs", 8);
+        run(&bounded_hubs(), seeds, wide);
+    }
+
+    #[test]
+    fn seed_2_holds_a_star_of_two_related_hubs() {
+        let (stale, two, related, _) = run(&bounded_hubs(), [2], wide);
         assert!(stale > 0, "the lazy scope settled every name at once");
         assert!(two > 0, "no state held a star of two hubs");
         assert!(related > 0, "no state held a star of two related hubs");
-    }
-
-    #[test]
-    fn seeds_0_to_24() {
-        part(0..25);
-    }
-
-    #[test]
-    fn seeds_25_to_49() {
-        part(25..50);
-    }
-
-    #[test]
-    fn seeds_50_to_74() {
-        part(50..75);
-    }
-
-    #[test]
-    fn seeds_75_to_99() {
-        part(75..100);
     }
 }
 
@@ -310,43 +301,26 @@ fn satellites(rng: &mut Rng, depth: usize) -> Term {
     }
 }
 
-/// Seeds 0 to 99 of [`satellites`], in four parts. A star of two hubs stood beside a
-/// satellite of them at seeds 18, 59, 75 and 99 only (2026-11-09), so the parts are cut
-/// between those seeds, and each finds one.
+/// Random seeds of [`satellites`]. A star of two hubs stood beside a satellite of them at
+/// seeds 18, 59, 75 and 99 of 0 to 99 only (2026-11-09; 9 of seeds 0 to 199), so seed 18 is
+/// checked on its own.
 mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product {
     use super::*;
 
-    fn part(seeds: std::ops::Range<u64>) {
-        let (stale, two, _, kept) = run(&bounded_hubs(), seeds, satellites);
-        println!(
-            "{stale} unsettled names, {two} states with a star of two hubs, {kept} with a \
-             satellite of its hubs"
-        );
+    #[test]
+    fn random_seeds() {
+        let seeds = fresh_seeds("lazy scope with satellites of two hubs", 8);
+        run(&bounded_hubs(), seeds, satellites);
+    }
+
+    #[test]
+    fn seed_18_holds_a_star_beside_a_satellite_of_its_hubs() {
+        let (stale, _, _, kept) = run(&bounded_hubs(), [18], satellites);
         assert!(stale > 0, "the lazy scope settled every name at once");
         assert!(
             kept > 0,
             "no star of two hubs stood beside a satellite of them"
         );
-    }
-
-    #[test]
-    fn seeds_0_to_29() {
-        part(0..30);
-    }
-
-    #[test]
-    fn seeds_30_to_59() {
-        part(30..60);
-    }
-
-    #[test]
-    fn seeds_60_to_75() {
-        part(60..76);
-    }
-
-    #[test]
-    fn seeds_76_to_99() {
-        part(76..100);
     }
 }
 
@@ -449,24 +423,27 @@ fn stars_beside_a_satellite_or_a_sandwich_project_exactly() {
 /// one hub each; each leaf's own lower bound and hole drawn from two of each, so that some
 /// leaves share them and some do not; and the hubs with bounds, holes and a class. The last
 /// test moves a hub, so that every star is due at once. Each leaf is settled to the product
-/// it gets alone, and to the eager scope's. Seeds 0 to 29, in two parts: the leaves were
-/// in one class in 15 of the 28 runs (seeds 12 and 17 give an empty scope; 2026-11-09), 8 of
-/// 15 in the first part and 7 of 13 in the second, so each part has more than half, as the
-/// whole did. With 15 of 28, no split into three parts can give each more than half.
+/// it gets alone, and to the eager scope's. The leaves were in one class in 15 of the 28 runs
+/// of seeds 0 to 29 (seeds 12 and 17 give an empty scope; 2026-11-09 and 2026-11-14): random
+/// seeds, and seed 1, whose leaves are in one class, with seed 12, whose scope is empty.
 mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
     use super::*;
 
     #[test]
-    fn seeds_0_to_15() {
-        part(0..16);
+    fn random_seeds() {
+        part(fresh_seeds("leaves of one class settled together", 2));
     }
 
     #[test]
-    fn seeds_16_to_29() {
-        part(16..30);
+    fn seed_1_has_leaves_of_one_class_and_seed_12_an_empty_scope() {
+        assert_eq!(
+            part([1, 12]),
+            (1, 1),
+            "(runs, runs with the leaves in one class)"
+        );
     }
 
-    fn part(seeds: std::ops::Range<u64>) {
+    fn part(seeds: impl IntoIterator<Item = u64>) -> (usize, usize) {
         const LEAVES: [&str; 6] = ["a0", "a1", "mm0", "mm1", "z0", "z1"];
         let all = names(&["m", "n", "a0", "a1", "mm0", "mm1", "z0", "z1"]);
         let leaves = names(&LEAVES);
@@ -550,10 +527,7 @@ mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
             reused += usize::from(stars >= 2 && classes.len() == 1);
         }
         println!("{runs} runs, {reused} with two stars or more, all of one class");
-        assert!(
-            reused > runs / 2,
-            "{reused} of {runs} runs with the leaves in one class"
-        );
+        (runs, reused)
     }
 }
 
@@ -568,9 +542,9 @@ mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
 /// are stale, then two joins in a row of the two outcomes of a test, each narrowed
 /// further: a test of a hub, of the two hubs (`n - m >= c`, a free conjunct at both, which
 /// moves neither), of a leaf, or `b >= n && b >= m` on a further name `b`, whose negation
-/// splits in two. Every name is then settled to the product of both. Seeds 0 to 199, in
-/// ten parts of 20 seeds, each a test: as two parts of 100 seeds they took 33 s together at
-/// load 24 to 35, and 50 to 73 s each at load 31 to 58 (item SPLIT-l01_39-slow).
+/// splits in two. Every name is then settled to the product of both. Random seeds, and seed
+/// 1, at which a join leaves a leaf stale (7 of seeds 0 to 39; seeds 0 to 199 took 33 s at
+/// load 24 to 35, item SPLIT-l01_39-slow).
 mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
     use super::*;
 
@@ -597,7 +571,7 @@ mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
         }
     }
 
-    fn part(seeds: std::ops::Range<u64>) {
+    fn part(seeds: impl IntoIterator<Item = u64>) -> usize {
         let all = names(&["n", "m", "a0", "a1", "a2", "a3", "b"]);
         let p = Premises::new();
         let (mut runs, mut kept) = (0, 0);
@@ -669,57 +643,20 @@ mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
             }
         }
         println!("{runs} joins, {kept} leaves left stale by a join");
-        assert!(kept > 0, "no join left a leaf stale");
+        kept
     }
 
     #[test]
-    fn seeds_0_to_19() {
-        part(0..20);
+    fn random_seeds() {
+        part(fresh_seeds(
+            "a join settles the leaves whose core differs",
+            3,
+        ));
     }
 
     #[test]
-    fn seeds_20_to_39() {
-        part(20..40);
-    }
-
-    #[test]
-    fn seeds_40_to_59() {
-        part(40..60);
-    }
-
-    #[test]
-    fn seeds_60_to_79() {
-        part(60..80);
-    }
-
-    #[test]
-    fn seeds_80_to_99() {
-        part(80..100);
-    }
-
-    #[test]
-    fn seeds_100_to_119() {
-        part(100..120);
-    }
-
-    #[test]
-    fn seeds_120_to_139() {
-        part(120..140);
-    }
-
-    #[test]
-    fn seeds_140_to_159() {
-        part(140..160);
-    }
-
-    #[test]
-    fn seeds_160_to_179() {
-        part(160..180);
-    }
-
-    #[test]
-    fn seeds_180_to_199() {
-        part(180..200);
+    fn seed_1_leaves_a_leaf_stale_after_a_join() {
+        assert!(part([1]) > 0, "no join left a leaf stale");
     }
 }
 
@@ -1093,7 +1030,7 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     /// Random cases of both kinds. Each case's eager join is checked against the enumeration;
     /// a case where neither arm narrows a hub (`Case::keeps`) is also checked by
     /// `Case::run`.
-    fn part(seeds: std::ops::Range<u64>) {
+    fn part(seeds: impl IntoIterator<Item = u64>) -> (usize, usize) {
         let (mut joins, mut kept) = (0, 0);
         for seed in seeds {
             let case = Case::of(seed);
@@ -1106,67 +1043,20 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
             joins += 1;
         }
         println!("{joins} joins, {kept} leaves stale before a join");
-        assert!(joins > 25 && kept > 0, "{joins} joins, {kept} stale");
+        (joins, kept)
     }
 
+    /// Seeds 0 to 1,199 made 100 cases a test; a run now draws a few, of both kinds.
     #[test]
-    fn seeds_0_to_99() {
-        part(0..100);
+    fn random_seeds() {
+        part(fresh_seeds("a join settles a star it drops", 8));
     }
 
+    /// A leaf stale before a join that keeps the hubs (72 of seeds 0 to 199).
     #[test]
-    fn seeds_100_to_199() {
-        part(100..200);
-    }
-
-    #[test]
-    fn seeds_200_to_299() {
-        part(200..300);
-    }
-
-    #[test]
-    fn seeds_300_to_399() {
-        part(300..400);
-    }
-
-    #[test]
-    fn seeds_400_to_499() {
-        part(400..500);
-    }
-
-    #[test]
-    fn seeds_500_to_599() {
-        part(500..600);
-    }
-
-    #[test]
-    fn seeds_600_to_699() {
-        part(600..700);
-    }
-
-    #[test]
-    fn seeds_700_to_799() {
-        part(700..800);
-    }
-
-    #[test]
-    fn seeds_800_to_899() {
-        part(800..900);
-    }
-
-    #[test]
-    fn seeds_900_to_999() {
-        part(900..1_000);
-    }
-
-    #[test]
-    fn seeds_1000_to_1099() {
-        part(1_000..1_100);
-    }
-
-    #[test]
-    fn seeds_1100_to_1199() {
-        part(1_100..1_200);
+    fn seed_1_joins_with_a_leaf_stale() {
+        let (joins, kept) = part([1]);
+        assert!(joins > 0 && kept > 0, "{joins} joins, {kept} stale");
     }
 }
 

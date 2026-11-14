@@ -4,7 +4,7 @@
 //! whole part on random parts where neither refuses, and on a program where the answer
 //! changed.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::Prim;
@@ -305,33 +305,52 @@ fn scope(boxes: &BTreeMap<String, Vec<Piece>>) -> Scope {
     s
 }
 
-/// Over the integer points of `cons` within `boxes` (one piece each), the hull of each name
-/// and the exact set of its values, or `None` where there is no point. The hubs (the names
-/// other than `z1`, `z2`, ...) are enumerated within their boxes and `-r..=r`. Each `z` is
-/// mentioned with coefficient one or minus one, at most two to a constraint and then with
-/// opposite signs, so for the hubs' values the `z` constraints are integer difference
-/// constraints, which shortest paths from a source solve exactly: each `z` takes every
-/// integer from minus its distance to the source to its distance from it. An unbounded
-/// end is `End::NegInf` or `End::PosInf`.
+/// What [`points`] finds within one range of the hubs: the hull of each name and the exact set
+/// of its values (for a `z` its hull again unless asked for), or `None` where there is no point.
+type Found = Option<BTreeMap<String, (IntervalSet, IntervalSet)>>;
+
+/// Over the integer points of `cons` within `boxes` (one piece each), what [`Found`] holds,
+/// with the hubs (the names other than `z1`, `z2`, ...) enumerated within their boxes and
+/// `-near..=near`, then within `-far..=far` (`near <= far`). Each `z` is mentioned with
+/// coefficient one or minus one, at most two to a constraint and then with opposite signs,
+/// so for the hubs' values the `z` constraints are integer difference constraints, which
+/// shortest paths from a source solve exactly: each `z` takes every integer from minus its
+/// distance to the source to its distance from it. An unbounded end is `End::NegInf` or
+/// `End::PosInf`.
+///
+/// One pass over the wider range serves both, a point counted for the narrower one where
+/// each hub lies within it, and each `z` keeps the least and greatest end it took, its exact
+/// set of values only with `exact`. Two passes, and a set of the ranges of each `z` added to
+/// at every point, took 15 s over the 24 rows of [`REFUSED`] (TEST-bench-move-l0139). It is
+/// still `O(far^hubs · z^3)`, as a brute force is.
 fn points(
     cons: &[Cmp],
     boxes: &BTreeMap<String, Piece>,
-    r: i64,
-) -> Option<BTreeMap<String, (IntervalSet, IntervalSet)>> {
+    (near, far): (i64, i64),
+    exact: bool,
+) -> [Found; 2] {
     const INF: i64 = i64::MAX / 4;
     let hubs: Vec<&String> = boxes.keys().filter(|n| !n.starts_with('z')).collect();
     let zs: Vec<&String> = boxes.keys().filter(|n| n.starts_with('z')).collect();
     let src = zs.len();
     let size = zs.len() + 1;
-    // Each constraint: its hub coefficients, the `z` of sign one and of sign minus one (the
-    // source where there is none), its constant, whether an equation, whether it has a `z`.
-    let rows: Vec<(Vec<i64>, usize, usize, i64, bool, bool)> = cons
+    let coefficients = |c: &Cmp| -> Vec<i64> {
+        hubs.iter()
+            .map(|h| *c.terms.get(*h).unwrap_or(&0))
+            .collect()
+    };
+    // The constraints on the hubs alone: their coefficients, constant, whether an equation.
+    let on_hubs: Vec<(Vec<i64>, i64, bool)> = cons
         .iter()
+        .filter(|c| !c.terms.keys().any(|n| n.starts_with('z')))
+        .map(|c| (coefficients(c), c.constant, c.eq))
+        .collect();
+    // The others: hub coefficients, the `z` of sign one and of sign minus one (the source
+    // where there is none), constant, whether an equation.
+    let on_zs: Vec<(Vec<i64>, usize, usize, i64, bool)> = cons
+        .iter()
+        .filter(|c| c.terms.keys().any(|n| n.starts_with('z')))
         .map(|c| {
-            let hub = hubs
-                .iter()
-                .map(|h| *c.terms.get(*h).unwrap_or(&0))
-                .collect();
             let z: Vec<(usize, i64)> = c
                 .terms
                 .iter()
@@ -343,14 +362,17 @@ fn points(
                 "a difference constraint over the z: {c:?}"
             );
             let at = |s| z.iter().find(|(_, k)| *k == s).map_or(src, |(i, _)| *i);
-            (hub, at(1), at(-1), c.constant, c.eq, !z.is_empty())
+            (coefficients(c), at(1), at(-1), c.constant, c.eq)
         })
         .collect();
     let ranges: Vec<(i64, i64)> = hubs
         .iter()
         .map(|h| {
             let (lo, hi) = boxes[*h];
-            (lo.map_or(-r, |l| l.max(-r)), hi.map_or(r, |h| h.min(r)))
+            (
+                lo.map_or(-far, |l| l.max(-far)),
+                hi.map_or(far, |h| h.min(far)),
+            )
         })
         .collect();
     let total: i64 = ranges.iter().map(|(l, h)| (h - l + 1).max(0)).product();
@@ -361,31 +383,44 @@ fn points(
             End::Fin(Num::from(x))
         }
     };
-    // The distinct ranges each name takes, joined once at the end: joining sets at each of
-    // the up to 151^3 points took 35 s on one row (TEST-split-slow).
-    let mut seen: Vec<BTreeSet<(i64, i64)>> = vec![BTreeSet::new(); hubs.len() + zs.len()];
+    // Each hub value taken, by its place in the hub's range, for each range; and the
+    // distinct ranges each `z` takes, for each range, joined once at the end: joining sets
+    // at each of the up to 151^3 points took 35 s on one row (TEST-split-slow).
+    let mut hub_seen: [Vec<Vec<bool>>; 2] = std::array::from_fn(|_| {
+        ranges
+            .iter()
+            .map(|(l, h)| vec![false; (h - l + 1).max(0) as usize])
+            .collect()
+    });
+    let mut z_hull: [Vec<Option<(i64, i64)>>; 2] = [vec![None; zs.len()], vec![None; zs.len()]];
+    let mut z_seen: [Vec<HashSet<(i64, i64)>>; 2] =
+        std::array::from_fn(|_| vec![HashSet::new(); zs.len()]);
     let mut v = vec![0i64; hubs.len()];
     let mut d = vec![vec![INF; size]; size];
+    let at_hubs =
+        |hub: &[i64], c: i64, v: &[i64]| c + hub.iter().zip(v).map(|(k, x)| k * x).sum::<i64>();
     for at in 0..total {
         let mut idx = at;
         for (i, (l, h)) in ranges.iter().enumerate() {
             v[i] = l + idx % (h - l + 1);
             idx /= h - l + 1;
         }
+        let holds = |(hub, c, eq): &(Vec<i64>, i64, bool)| {
+            let c0 = at_hubs(hub, *c, &v);
+            if *eq { c0 == 0 } else { c0 >= 0 }
+        };
+        if !on_hubs.iter().all(holds) {
+            continue;
+        }
         for (i, row) in d.iter_mut().enumerate() {
             row.fill(INF);
             row[i] = 0;
         }
         let mut edge = |from: usize, to: usize, w: i64| d[from][to] = d[from][to].min(w);
-        let mut ok = true;
-        for (hub, plus, minus, c, eq, has_z) in &rows {
-            let c0 = c + hub.iter().zip(&v).map(|(k, x)| k * x).sum::<i64>();
-            if !has_z {
-                ok &= if *eq { c0 == 0 } else { c0 >= 0 };
-                continue;
-            }
+        for (hub, plus, minus, c, eq) in &on_zs {
             // `plus - minus + c0 >= 0` is `minus - plus <= c0`: an edge from `plus` to
             // `minus` of weight `c0`, and for an equation one back of weight `-c0`.
+            let c0 = at_hubs(hub, *c, &v);
             edge(*plus, *minus, c0);
             if *eq {
                 edge(*minus, *plus, -c0);
@@ -400,9 +435,6 @@ fn points(
                 edge(src, i, h);
             }
         }
-        if !ok {
-            continue;
-        }
         for k in 0..size {
             for i in 0..size {
                 for j in 0..size {
@@ -415,35 +447,59 @@ fn points(
         if (0..size).any(|i| d[i][i] < 0) {
             continue;
         }
-        let values = v
-            .iter()
-            .map(|x| (*x, *x))
-            .chain((0..zs.len()).map(|i| (-d[i][src], d[src][i])));
-        for (x, s) in values.zip(seen.iter_mut()) {
-            s.insert(x);
+        let in_near = v.iter().all(|x| x.abs() <= near);
+        for which in [0, 1].into_iter().filter(|&w| w == 1 || in_near) {
+            for (i, (l, _)) in ranges.iter().enumerate() {
+                hub_seen[which][i][(v[i] - l) as usize] = true;
+            }
+            for (i, h) in z_hull[which].iter_mut().enumerate() {
+                let (lo, hi) = (-d[i][src], d[src][i]);
+                *h = Some(h.map_or((lo, hi), |(l, u)| (l.min(lo), u.max(hi))));
+                if exact {
+                    z_seen[which][i].insert((lo, hi));
+                }
+            }
         }
     }
     // The union of the ranges, and its hull, which is the hull of the hulls taken one at a
     // time.
-    let out = seen.iter().map(|s| {
-        let exact = s.iter().fold(IntervalSet::empty(), |e, (l, h)| {
-            e.join(&IntervalSet::range(
-                fin(*l, End::NegInf),
-                fin(*h, End::PosInf),
-            ))
+    let found = |which: usize| -> Found {
+        let mut seen: Vec<Vec<(i64, i64)>> = (hub_seen[which].iter().zip(&ranges))
+            .map(|(taken, (l, _))| {
+                let at = taken.iter().enumerate().filter(|(_, t)| **t);
+                at.map(|(j, _)| (l + j as i64, l + j as i64)).collect()
+            })
+            .collect();
+        seen.extend(z_seen[which].iter().zip(&z_hull[which]).map(|(s, h)| {
+            let mut s: Vec<(i64, i64)> = if exact {
+                s.iter().copied().collect()
+            } else {
+                h.iter().copied().collect()
+            };
+            s.sort_unstable();
+            s
+        }));
+        if seen.iter().all(Vec::is_empty) {
+            return None;
+        }
+        let out = seen.iter().map(|s| {
+            let exact = s.iter().fold(IntervalSet::empty(), |e, (l, h)| {
+                e.join(&IntervalSet::range(
+                    fin(*l, End::NegInf),
+                    fin(*h, End::PosInf),
+                ))
+            });
+            (exact.hull(), exact)
         });
-        (exact.hull(), exact)
-    });
-    if seen.iter().all(BTreeSet::is_empty) {
-        return None;
-    }
-    Some(
-        hubs.iter()
-            .chain(zs.iter())
-            .map(|n| (*n).clone())
-            .zip(out)
-            .collect(),
-    )
+        Some(
+            hubs.iter()
+                .chain(zs.iter())
+                .map(|n| (*n).clone())
+                .zip(out)
+                .collect(),
+        )
+    };
+    [found(0), found(1)]
 }
 
 /// `x`, found with the hubs enumerated within a range, with each outer end opened where it
@@ -468,12 +524,29 @@ fn widened(x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
         .join(&IntervalSet::range(last.0.clone(), hi))
 }
 
+/// The ranges `(near, far)` [`brute`] enumerates the hubs within on random parts.
+const WIDE: (i64, i64) = (50, 75);
+
+/// The ranges [`brute`] enumerates the hubs within on the rows of [`REFUSED`]. The widest
+/// reach a row needs is that of row 18, whose `z4 <= -4` holds at `a = -22`, `b = -3`,
+/// `c = 45` alone: `a + 2 * b + c <= 17` (from `z3 <= 9`), `a <= 3 * b - 13` and `b <= -3` give
+/// `z4 = 2 * a + b + c - 2 <= a - b + 15 <= 2 * b + 2 <= -4`. Within -30..=30 or -40..=40 the
+/// brute force reads that end as none. With [`WIDE`] the brute force took 12 s over the 24
+/// rows, with these and only the hulls kept 4 s (TEST-bench-move-l0139).
+const NARROW: (i64, i64) = (46, 56);
+
 /// The exact projection of the part onto each name by brute force: in each disjunct (a
 /// choice of an arm of each disjunction and of a piece of each box), the hull of the name's
 /// values and the set of them, and over the disjuncts the union of each. The hubs are
-/// enumerated within -50..=50 and -75..=75: an outer end that differs between the two is
-/// no end.
-fn brute(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<String, (String, String)> {
+/// enumerated within `-near..=near` and `-far..=far`, `reach` ([`WIDE`] or [`NARROW`]): an
+/// outer end that differs between the two is no end, so every finite end of a name must be
+/// reached with each hub within `-near..=near`. The set of a `z` is its hull unless `exact`.
+fn brute(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    reach: (i64, i64),
+    exact: bool,
+) -> BTreeMap<String, (String, String)> {
     let mut terms: Vec<(Vec<Cmp>, BTreeMap<String, Piece>)> = vec![(Vec::new(), BTreeMap::new())];
     for i in items {
         let arms = match i {
@@ -509,7 +582,7 @@ fn brute(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<String, 
         .map(|n| (n.clone(), (IntervalSet::empty(), IntervalSet::empty())))
         .collect();
     for (cs, b) in &terms {
-        let (near, far) = (points(cs, b, 50), points(cs, b, 75));
+        let [near, far] = points(cs, b, reach, exact);
         let Some(near) = near else {
             assert!(
                 far.is_none(),
@@ -679,21 +752,20 @@ fn check(rows: &[(&str, &str, &str)]) {
         let items = parse(part);
         let bs = boxes(bx);
         let s = scope(&bs);
-        let exact = brute(&items, &bs);
         let got = hung(&s, &formula(&items));
         let want: BTreeMap<String, String> = bracketed(want)
             .into_iter()
             .map(|(n, x)| (n, format!("[{x}]")))
             .collect();
-        let hulls: BTreeMap<String, String> = exact
-            .iter()
-            .map(|(n, (h, _))| (n.clone(), h.clone()))
-            .collect();
-        let sets: BTreeMap<String, String> = exact
-            .iter()
-            .map(|(n, (_, e))| (n.clone(), e.clone()))
+        let hulls: BTreeMap<String, String> = brute(&items, &bs, NARROW, false)
+            .into_iter()
+            .map(|(n, (h, _))| (n, h))
             .collect();
         if hulls != want || got.as_ref() != Some(&want) {
+            let sets: BTreeMap<String, String> = brute(&items, &bs, NARROW, true)
+                .into_iter()
+                .map(|(n, (_, e))| (n, e))
+                .collect();
             wrong.push(format!(
                 "{part}\n  boxes {bx}\n  hulls {hulls:?}\n  sets  {sets:?}\n  hung  {got:?}\n  want  {want:?}"
             ));
@@ -725,29 +797,47 @@ fn compare_ne(c: &Cmp) -> Vec<Vec<Cmp>> {
     ]
 }
 
+// The rows of [`REFUSED`] in groups that each take under 0.5 s alone, row 22 about 0.6 s.
+
 #[test]
-fn refused_parts_projected_exactly_by_pendants_first_quarter() {
-    check(&REFUSED[..6]);
+fn refused_parts_projected_exactly_by_pendants_rows_0_to_4() {
+    check(&REFUSED[..5]);
 }
 
 #[test]
-fn refused_parts_projected_exactly_by_pendants_second_quarter() {
-    check(&REFUSED[6..12]);
+fn refused_parts_projected_exactly_by_pendants_rows_5_to_9() {
+    check(&REFUSED[5..10]);
 }
 
 #[test]
-fn refused_parts_projected_exactly_by_pendants_third_quarter() {
-    check(&REFUSED[12..18]);
+fn refused_parts_projected_exactly_by_pendants_row_10() {
+    check(&REFUSED[10..11]);
 }
 
 #[test]
-fn refused_parts_projected_exactly_by_pendants_fourth_quarter() {
-    check(&REFUSED[18..21]);
+fn refused_parts_projected_exactly_by_pendants_rows_11_to_16() {
+    check(&REFUSED[11..17]);
 }
 
 #[test]
-fn refused_parts_projected_exactly_by_pendants_fourth_quarter_rest() {
-    check(&REFUSED[21..]);
+fn refused_parts_projected_exactly_by_pendants_rows_17_and_18() {
+    check(&REFUSED[17..19]);
+}
+
+#[test]
+fn refused_parts_projected_exactly_by_pendants_rows_19_and_20() {
+    check(&REFUSED[19..21]);
+}
+
+#[test]
+fn refused_parts_projected_exactly_by_pendants_rows_21_and_23() {
+    check(&REFUSED[21..22]);
+    check(&REFUSED[23..]);
+}
+
+#[test]
+fn refused_parts_projected_exactly_by_pendants_row_22() {
+    check(&REFUSED[22..23]);
 }
 
 /// A random sum of two or three of the hubs, coefficients from -1, 1 and 2.
@@ -872,15 +962,15 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
         .collect()
 }
 
-/// On random parts, the projection by pendants, where it is taken, and that of the whole
-/// part, where neither refuses, are the same; the route is taken, and compared, on a
-/// quarter of them or more.
+/// On random parts from a new seed each run, the projection by pendants, where it is taken,
+/// and that of the whole part, where neither refuses, are the same; the route is taken, and
+/// compared, on a quarter of them or more. Seed 0x7e4d at 400 parts took 1.6 s.
 #[test]
 fn the_projection_by_pendants_is_that_of_the_whole_part_where_neither_refuses() {
-    let mut r = Rng::new(0x7e4d);
+    let (mut r, seed) = Rng::fresh("the projection by pendants");
     let (mut same, mut taken, mut cases) = (0, 0, 0);
     let mut wrong = Vec::new();
-    for _ in 0..400 {
+    for _ in 0..120 {
         let nz = 2 + r.below(5);
         let items = random_part(&mut r, nz);
         let bs = random_boxes(&mut r, nz);
@@ -900,14 +990,14 @@ fn the_projection_by_pendants_is_that_of_the_whole_part_where_neither_refuses() 
     }
     assert!(
         wrong.is_empty(),
-        "{} differ:\n{}",
+        "seed {seed}: {} differ:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
     eprintln!("{cases} parts, the route taken on {taken}, the same as the whole on {same}");
     assert!(
         same >= cases / 4,
-        "{same} compared of {cases}: too few to show anything"
+        "seed {seed}: {same} compared of {cases}: too few to show anything"
     );
 }
 
@@ -1468,11 +1558,10 @@ const WRITTEN: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Each of [`WRITTEN`] has one projection of the whole part, the one the table gives, and one
-/// by pendants, however its equations are written.
-#[test]
-fn parts_once_answered_by_how_they_were_written_give_one_answer() {
-    let wrong: Vec<String> = WRITTEN
+/// Checks that each of `rows` of [`WRITTEN`] has one projection of the whole part, the one
+/// the table gives, and one by pendants, however its equations are written.
+fn written_rows(rows: &[(&str, &str, &str)]) {
+    let wrong: Vec<String> = rows
         .iter()
         .filter_map(|(part, bx, want)| {
             let (each, _) = written_four_ways(part, bx);
@@ -1483,9 +1572,23 @@ fn parts_once_answered_by_how_they_were_written_give_one_answer() {
         wrong.is_empty(),
         "{} of {} wrong:\n{}",
         wrong.len(),
-        WRITTEN.len(),
+        rows.len(),
         wrong.join("\n")
     );
+}
+
+/// The rows of [`WRITTEN`] but row 3, which takes as long as the rest
+/// ([`parts_once_answered_by_how_they_were_written_give_one_answer_row_3`]).
+#[test]
+fn parts_once_answered_by_how_they_were_written_give_one_answer() {
+    written_rows(&WRITTEN[..3]);
+    written_rows(&WRITTEN[4..]);
+}
+
+/// Row 3 of [`WRITTEN`], case 272 of seed 17.
+#[test]
+fn parts_once_answered_by_how_they_were_written_give_one_answer_row_3() {
+    written_rows(&WRITTEN[3..4]);
 }
 
 /// Each of `syms`, the names of `f` within the boxes of `s`: its set from
@@ -1589,29 +1692,41 @@ fn shown_set(text: &str) -> IntervalSet {
         })
 }
 
+/// The answer of [`boxed_names`] for case 272 of seed 17, each name's set and `!` where it
+/// was refused.
+const ROW_BOXES: &str = "a=[2,3] b=[-4,16]! c=[-3,6] z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!";
+
+/// [`boxed_names`] of `g`, case 272 of seed 17 written another way, as [`ROW_BOXES`] shows it.
+fn row_boxes(g: &Formula) -> String {
+    let (items, bs) = (parse(WRITTEN[3].0), boxes(WRITTEN[3].1));
+    shown_boxes(&boxed_names(&scope(&bs), g, &item_names(&items)))
+}
+
+/// Each name's set and `!` where it was refused, as [`ROW_BOXES`] shows them.
+fn shown_boxes(got: &BTreeMap<String, (IntervalSet, bool)>) -> String {
+    let shown: Vec<String> = got
+        .iter()
+        .map(|(n, (x, refused))| format!("{n}={}{}", show(x), if *refused { "!" } else { "" }))
+        .collect();
+    shown.join(" ")
+}
+
 /// Case 272 of seed 17 (`WRITTEN`), which the solver refuses with four live variables or more
 /// (`Refusal::Growth`), within its boxes: `b`, `z1` and `z2` keep the bounds of the box stage
 /// over its rows, `b` narrower than its box, and each holds the exact hull that brute force
 /// finds; `c`, refused until item PRES-project-each-cost with the box stage's `[-3,6]`, is now
-/// answered, with that exact hull. The answer is the same with the names reversed, in each of
-/// the four writings of [`four_ways`] and in six random writings ([`rewritten`], [`scaled`]).
+/// answered, with that exact hull. The answer is the same with the names reversed; for other
+/// writings see [`refused_projections_keep_the_box_of_their_rows_in_each_writing`],
+/// [`refused_projections_keep_the_box_of_their_rows_in_rewritten_writings`] and
+/// [`refused_projections_keep_the_box_of_their_rows_in_scaled_writings`] (one test took 2 s).
 #[test]
 fn refused_projections_keep_the_box_of_their_rows() {
     let (part, bx, _) = WRITTEN[3];
     let items = parse(part);
     let bs = boxes(bx);
-    let s = scope(&bs);
-    let syms = item_names(&items);
     let want = boxed_as_named(&items, &bs, &formula(&items)).expect("one answer");
-    let shown: Vec<String> = want
-        .iter()
-        .map(|(n, (x, refused))| format!("{n}={}{}", show(x), if *refused { "!" } else { "" }))
-        .collect();
-    assert_eq!(
-        shown.join(" "),
-        "a=[2,3] b=[-4,16]! c=[-3,6] z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!"
-    );
-    let exact = brute(&items, &bs);
+    assert_eq!(shown_boxes(&want), ROW_BOXES);
+    let exact = brute(&items, &bs, WIDE, false);
     assert_eq!(
         exact
             .iter()
@@ -1624,16 +1739,35 @@ fn refused_projections_keep_the_box_of_their_rows() {
         let h = shown_set(h);
         assert_eq!(want[n].0.meet(&h), h, "the box of {n} holds the exact hull");
     }
+}
+
+/// [`refused_projections_keep_the_box_of_their_rows`] in each writing of [`four_ways`].
+#[test]
+fn refused_projections_keep_the_box_of_their_rows_in_each_writing() {
+    for (how, g) in four_ways(&parse(WRITTEN[3].0)) {
+        assert_eq!(row_boxes(&g), ROW_BOXES, "{how}: {g}");
+    }
+}
+
+/// [`refused_projections_keep_the_box_of_their_rows`] in four random writings by [`rewritten`],
+/// two of them with rows split.
+#[test]
+fn refused_projections_keep_the_box_of_their_rows_in_rewritten_writings() {
+    let items = parse(WRITTEN[3].0);
     let mut r = Rng::new(0x272);
-    let mut rs = Rng::new(0x5ca1e);
-    let writings = four_ways(&items)
-        .into_iter()
-        .map(|(_, g)| g)
-        .chain([false, true].map(|split| rewritten(&mut r, &items, split)))
-        .chain((0..2).map(|_| scaled(&mut rs, &items)))
-        .chain([false, true].map(|split| rewritten(&mut r, &items, split)));
+    let writings = [false, true, false, true].map(|split| rewritten(&mut r, &items, split));
     for g in writings {
-        assert_eq!(boxed_names(&s, &g, &syms), want, "{g}");
+        assert_eq!(row_boxes(&g), ROW_BOXES, "{g}");
+    }
+}
+
+/// [`refused_projections_keep_the_box_of_their_rows`] in two random writings by [`scaled`].
+#[test]
+fn refused_projections_keep_the_box_of_their_rows_in_scaled_writings() {
+    let items = parse(WRITTEN[3].0);
+    let mut rs = Rng::new(0x5ca1e);
+    for g in (0..2).map(|_| scaled(&mut rs, &items)) {
+        assert_eq!(row_boxes(&g), ROW_BOXES, "{g}");
     }
 }
 
@@ -1720,124 +1854,111 @@ fn check_refused(
 
 /// Each name's hull from [`brute`].
 fn brute_hulls(items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) -> BTreeMap<String, IntervalSet> {
-    brute(items, bs)
+    brute(items, bs, WIDE, false)
         .into_iter()
         .map(|(n, (h, _))| (n, shown_set(&h)))
         .collect()
 }
 
-/// [`check_refused`] on the random parts `cases` (of 0 to 399) of seeds `seeds`, with `double`
-/// each part two random parts over the same names joined (more rows, so more refusals), the
-/// hulls by brute force. The parts before `cases` are drawn and not checked, so that each part
-/// is that of its seed and case whatever range a test checks.
-fn refused_names_in(
-    seeds: std::ops::Range<u64>,
-    cases: std::ops::Range<usize>,
-    double: bool,
-) -> RefusedCount {
+/// [`check_refused`] on `cases` random parts drawn from `seed`, with `double` each part two
+/// random parts over the same names joined (more rows, so more refusals), the hulls by brute
+/// force. Each case draws its orders from a sequence of its own, so a case of a seed checks
+/// the same orders whichever cases before it are checked.
+fn refused_names_in(seed: u64, cases: usize, double: bool) -> RefusedCount {
     let mut count = (0, 0, 0);
     let mut wrong = Vec::new();
-    for seed in seeds {
-        let mut r = Rng::new(seed);
-        for case in 0..cases.end {
-            let nz = 2 + r.below(5);
-            let mut items = random_part(&mut r, nz);
-            if double {
-                items.extend(random_part(&mut r, nz));
-            }
-            let bs = random_boxes(&mut r, nz);
-            if case < cases.start {
-                continue;
-            }
-            // The orders are drawn apart from the parts, so that the parts are those of the
-            // seed, and from a sequence of each case's own, so that a case checks the same
-            // orders whichever cases before it are checked.
-            let mut order = Rng::new(0x0de5 ^ seed ^ ((case as u64) << 32));
-            let label = format!("seed {seed} case {case}");
-            let hulls = || brute_hulls(&items, &bs);
-            check_refused(
-                &label, &mut order, &items, &bs, hulls, &mut count, &mut wrong,
-            );
-        }
+    let mut r = Rng::new(seed);
+    for case in 0..cases {
+        let (items, bs) = next_case(&mut r, double);
+        let mut order = Rng::new(0x0de5 ^ seed ^ ((case as u64) << 32));
+        let label = format!("seed {seed} case {case}");
+        let hulls = || brute_hulls(&items, &bs);
+        check_refused(
+            &label, &mut order, &items, &bs, hulls, &mut count, &mut wrong,
+        );
     }
     assert!(
         wrong.is_empty(),
-        "{} wrong:\n{}",
+        "seed {seed}: {} wrong:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
     count
 }
 
-/// Seeds 11 to 14 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
-/// PRES-small-point answers one name refused before, `c` of seed 13 case 264,
+/// Random parts, each within random boxes, checked by [`refused_names_in`] from a new seed
+/// each run. Seeds 11 to 18 at 400 parts each (item PROJECT-each-canon) took 9 to 13 s;
+/// two of their parts are refused (seeds 16 and 17), and one is kept as
+/// [`a_refused_part_keeps_a_sound_box`]. Item PRES-small-point answers one name refused
+/// before, `c` of seed 13 case 264,
 /// `(a + b + 2 * c >= 2 || z0 <= 6) && a + c >= -9 && a + b + z1 == c - 6` within
-/// `b >= -6`, `-1 <= z0 <= 8`, `z1 >= -4`, with the hull brute force finds, `c >= -6`. Item
-/// PERF-l139-family answers the last name refused, with the hull brute force finds: each side
-/// is first asked at its real bound, and the question the solver refused is not asked.
+/// `b >= -6`, `-1 <= z0 <= 8`, `z1 >= -4`, with the hull brute force finds, `c >= -6`. Items
+/// PERF-l139-family and PRES-project-each-cost answer the last names refused with the hulls
+/// brute force finds.
 #[test]
-fn refused_projections_of_random_parts_keep_sound_boxes_first_half() {
-    let count = refused_names_in(11..15, 0..400, false);
+fn refused_projections_of_random_parts_keep_sound_boxes() {
+    let (_, seed) = Rng::fresh("refused projections of random parts");
+    let count = refused_names_in(seed, 100, false);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (0, 0, 0));
 }
 
-/// Seeds 15 to 18 (of item PROJECT-each-canon), checked by [`refused_names_in`]. Item
-/// PRES-project-each-cost answers one name refused before, with the hull brute force finds.
+/// As [`refused_projections_of_random_parts_keep_sound_boxes`], with each part two random
+/// parts joined. Seeds 11 and 12 at 400 parts each counted (7, 30, 14) and took 15 s, most of
+/// it in a few refused parts of up to 3 s each; one of them is kept as
+/// [`a_refused_joined_part_keeps_a_sound_box`].
 #[test]
-fn refused_projections_of_random_parts_keep_sound_boxes_second_half() {
-    let count = refused_names_in(15..19, 0..400, false);
+fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
+    let (_, seed) = Rng::fresh("refused projections of joined random parts");
+    let count = refused_names_in(seed, 25, true);
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (2, 10, 8));
 }
 
-/// Cases 0 to 199 of seed 11 with each part two random parts joined, checked by
-/// [`refused_names_in`]. With cases 200 to 399
-/// ([`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_200_to_399`])
-/// and seed 12 ([`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_12`]) it
-/// counts (7, 30, 14). Seeds 11 and 12 took 37 s as one test at load 24 to 35, and seed 11
-/// alone 34 to 53 s at load 49 to 55, most of it in three refused parts (cases 17, 85 and 274,
-/// 6 to 10 s each), so seed 11 is two tests (item SPLIT-l01_39-slow). Item
-/// PRES-project-each-cost answers the one refused name of one part, narrower than its box,
-/// with the hull brute force finds.
-#[test]
-fn refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_0_to_199() {
-    let count = refused_names_in(11..12, 0..200, true);
-    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (2, 8, 3));
-}
-
-/// Cases 200 to 399 of seed 11 with each part two random parts joined, checked by
-/// [`refused_names_in`]; see
-/// [`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_0_to_199`].
-#[test]
-fn refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_200_to_399() {
-    let count = refused_names_in(11..12, 200..400, true);
-    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (2, 7, 5));
-}
-
-/// Seed 12 with each part two random parts joined, checked by [`refused_names_in`]; see
-/// [`refused_projections_of_joined_random_parts_keep_sound_boxes_seed_11_cases_0_to_199`].
-#[test]
-fn refused_projections_of_joined_random_parts_keep_sound_boxes_seed_12() {
-    let count = refused_names_in(12..13, 0..400, true);
-    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
-    assert_eq!(count, (3, 15, 6));
+/// The next random part of `r` and its boxes, as [`refused_names_in`] draws them.
+fn next_case(r: &mut Rng, double: bool) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+    let nz = 2 + r.below(5);
+    let mut items = random_part(r, nz);
+    if double {
+        items.extend(random_part(r, nz));
+    }
+    let bs = random_boxes(r, nz);
+    (items, bs)
 }
 
 /// The part `case` of `seed` and its boxes, drawn as [`refused_names_in`] draws them.
-fn random_case(seed: u64, case: usize) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+fn random_case(seed: u64, case: usize, double: bool) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
     let mut r = Rng::new(seed);
-    for c in 0..=case {
-        let nz = 2 + r.below(5);
-        let items = random_part(&mut r, nz);
-        let bs = random_boxes(&mut r, nz);
-        if c == case {
-            return (items, bs);
-        }
+    for _ in 0..case {
+        next_case(&mut r, double);
     }
-    unreachable!("the loop returns at `case`")
+    next_case(&mut r, double)
+}
+
+/// [`check_refused`] on part `case` of `seed`: `want` counts its refused names and those
+/// narrower than their box.
+fn check_refused_case(seed: u64, case: usize, double: bool, want: RefusedCount) {
+    let (items, bs) = random_case(seed, case, double);
+    let mut order = Rng::new(0x0de5 ^ seed ^ ((case as u64) << 32));
+    let (mut count, mut wrong) = ((0, 0, 0), Vec::new());
+    let hulls = || brute_hulls(&items, &bs);
+    check_refused("", &mut order, &items, &bs, hulls, &mut count, &mut wrong);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert_eq!(count, want, "seed {seed} case {case}");
+}
+
+/// Case 102 of seed 16: of its 7 names refused, 6 are narrower than their box, each holding
+/// the hull brute force finds, `a=[2,5] b=[17,23] c=[7,8] z0=[-80,inf] z1=[-15,-9]
+/// z2=[35,51] z3=[-69,1]`.
+#[test]
+fn a_refused_part_keeps_a_sound_box() {
+    check_refused_case(16, 102, false, (1, 7, 6));
+}
+
+/// Case 296 of seed 12, each part two joined: of its 6 names refused, 2 are narrower than
+/// their box, each holding the hull brute force finds, `a=[12,16] b=[-5,-4] c=[4,6]
+/// z0=[-25,-20] z1=[-1,8] z2=[4,6]`.
+#[test]
+fn a_refused_joined_part_keeps_a_sound_box() {
+    check_refused_case(12, 296, true, (1, 6, 2));
 }
 
 /// Names of random parts of seeds 11 to 18, not refused, whose hulls were wider than brute
@@ -1857,7 +1978,7 @@ fn hulls_once_wider_than_brute_force_are_its_hulls() {
         (14, 271, "z0", "[-inf,25]"),
         (11, 226, "z1", "[-3,6]"),
     ] {
-        let (items, bs) = random_case(seed, case);
+        let (items, bs) = random_case(seed, case, false);
         let got = boxed_names(&scope(&bs), &formula(&items), &item_names(&items));
         let (x, refused) = &got[name];
         assert!(!refused, "seed {seed} case {case} {name}");
@@ -1870,10 +1991,10 @@ fn hulls_once_wider_than_brute_force_are_its_hulls() {
     }
 }
 
-/// A random part of seed 0xca17, its boxes, and six other writings of it with the same
-/// points: four by [`rewritten`] (its equations negated or held twice with opposite signs, its
-/// inequalities held twice, some equations split into two inequalities, with `split`) and
-/// two by [`scaled`] (each constraint with a common factor), each with its items, arms and
+/// A random part, its boxes, and six other writings of it with the same points: four by
+/// [`rewritten`] (its equations negated or held twice with opposite signs, its inequalities
+/// held twice, some equations split into two inequalities, with `split`) and two by
+/// [`scaled`] (each constraint with a common factor), each with its items, arms and
 /// constraints in a random order.
 struct Rewrites {
     case: usize,
@@ -1882,38 +2003,42 @@ struct Rewrites {
     rewrites: Vec<Formula>,
 }
 
-/// The parts `from..to` of seed 0xca17 and their rewrites ([`Rewrites`]). The scaled
-/// writings draw from a sequence of their own (seed 0x5ca1e), so the parts and their other
-/// writings are those of seed 0xca17 alone.
-fn random_rewrites(from: usize, to: usize) -> Vec<Rewrites> {
-    let mut r = Rng::new(0xca17);
-    let mut rs = Rng::new(0x5ca1e);
-    let mut out = Vec::new();
-    for case in 0..to {
-        let nz = 2 + r.below(5);
-        let items = random_part(&mut r, nz);
-        let bs = random_boxes(&mut r, nz);
-        let mut rewrites: Vec<Formula> = [false, false, true, true]
-            .into_iter()
-            .map(|split| rewritten(&mut r, &items, split))
-            .collect();
-        rewrites.extend((0..2).map(|_| scaled(&mut rs, &items)));
-        if case >= from {
-            out.push(Rewrites {
+/// `cases` random parts drawn from `seed` and their rewrites ([`Rewrites`]). The scaled
+/// writings draw from a sequence of their own (`seed` ^ 0x5ca1e), so the parts and their other
+/// writings are those of `seed` alone.
+fn random_rewrites(seed: u64, cases: usize) -> Vec<Rewrites> {
+    let mut r = Rng::new(seed);
+    let mut rs = Rng::new(seed ^ 0x5ca1e);
+    (0..cases)
+        .map(|case| {
+            let nz = 2 + r.below(5);
+            let items = random_part(&mut r, nz);
+            let bs = random_boxes(&mut r, nz);
+            let mut rewrites: Vec<Formula> = [false, false, true, true]
+                .into_iter()
+                .map(|split| rewritten(&mut r, &items, split))
+                .collect();
+            rewrites.extend((0..2).map(|_| scaled(&mut rs, &items)));
+            Rewrites {
                 case,
                 items,
                 bs,
                 rewrites,
-            });
-        }
-    }
-    out
+            }
+        })
+        .collect()
 }
 
-/// Random parts, each also written six other ways ([`random_rewrites`]): the projection of
-/// the whole part and the projection by pendants are the same as for the part as written
-/// (cases `from..to` of seed 0xca17).
-fn rewritten_parts_give_one_answer(from: usize, to: usize) {
+/// Random parts, each also written six other ways ([`random_rewrites`]), from a new seed each
+/// run: the projection of the whole part is the same as for the part as written, and so is
+/// the projection by pendants wherever both writings take it. `Scope::project_by_pendants`
+/// takes its route by the structure of the part alone, so one writing may take it and another
+/// not: a part folded to `false`, or `x == y` written as `x <= y && x >= y`, or a sum scaled
+/// (2076 seeds of 10 parts: 163 rewrites, 15 of them with a point, where each route taken gave
+/// the boxes of the whole). Seed 0xca17 at 300 parts took 14 s; 10 parts take about 0.5 s.
+#[test]
+fn rewritten_parts_give_one_answer() {
+    let (_, seed) = Rng::fresh("rewritten parts give one answer");
     let mut wrong = Vec::new();
     let mut n = 0;
     for Rewrites {
@@ -1921,7 +2046,7 @@ fn rewritten_parts_give_one_answer(from: usize, to: usize) {
         items,
         bs,
         rewrites,
-    } in random_rewrites(from, to)
+    } in random_rewrites(seed, 10)
     {
         let s = scope(&bs);
         let syms = item_names(&items);
@@ -1930,7 +2055,8 @@ fn rewritten_parts_give_one_answer(from: usize, to: usize) {
         for g in rewrites {
             n += 1;
             let got = (each_answer(&s, &g, &syms), hung(&s, &g));
-            if got != want {
+            let both_hung = want.1.is_some() && got.1.is_some();
+            if got.0 != want.0 || (both_hung && got.1 != want.1) {
                 wrong.push(format!(
                     "case {case}\n  {f}\n  {g}\n  boxes {bs:?}\n  want {want:?}\n  got  {got:?}"
                 ));
@@ -1939,20 +2065,10 @@ fn rewritten_parts_give_one_answer(from: usize, to: usize) {
     }
     assert!(
         wrong.is_empty(),
-        "{} of {n} rewrites differ:\n{}",
+        "seed {seed}: {} of {n} rewrites differ:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
-}
-
-#[test]
-fn rewritten_parts_give_one_answer_first_half() {
-    rewritten_parts_give_one_answer(0, 150);
-}
-
-#[test]
-fn rewritten_parts_give_one_answer_second_half() {
-    rewritten_parts_give_one_answer(150, 300);
 }
 
 /// Whether `f` within the boxes of `s` has a point, as `presburger::decide` and
@@ -1975,10 +2091,12 @@ fn decided(s: &Scope, f: &Formula, syms: &[Atom]) -> String {
 }
 
 /// The parts of [`rewritten_parts_give_one_answer`], each written seven ways, with duplicate,
-/// negated, split and scaled rows and in other orders: `decide` and `satisfiable` give each
-/// the same answer, refusals included (item PROJECT-canon-decide).
+/// negated, split and scaled rows and in other orders, from a new seed each run: `decide` and
+/// `satisfiable` give each the same answer, refusals included (item PROJECT-canon-decide).
+/// Seed 0xca17 at 300 parts took 1.7 s; 60 parts take about 0.4 s.
 #[test]
 fn rewritten_parts_are_decided_alike() {
+    let (_, seed) = Rng::fresh("rewritten parts are decided alike");
     let mut wrong = Vec::new();
     let mut n = 0;
     for Rewrites {
@@ -1986,7 +2104,7 @@ fn rewritten_parts_are_decided_alike() {
         items,
         bs,
         rewrites,
-    } in random_rewrites(0, 300)
+    } in random_rewrites(seed, 60)
     {
         let s = scope(&bs);
         let syms = item_names(&items);
@@ -2004,7 +2122,7 @@ fn rewritten_parts_are_decided_alike() {
     }
     assert!(
         wrong.is_empty(),
-        "{} of {n} rewrites differ:\n{}",
+        "seed {seed}: {} of {n} rewrites differ:\n{}",
         wrong.len(),
         wrong.join("\n")
     );

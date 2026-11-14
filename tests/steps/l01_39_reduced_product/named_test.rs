@@ -150,14 +150,15 @@ fn named_limits_and_exemptions_at_each_tier_narrow_as_if_written_out() {
         assert_eq!(tier, summary(&arms_of(approval_any_tier(d, k, false))));
     }
 }
-/// Runs the scaling check of `arms` on `family(d, d, true)` at d = 30 and 240.
+/// Runs the scaling check of `arms` on `family(d, d, true)` at d = 120 and 960 (30 and 240
+/// before TEST-bench-move).
 fn wide_scaling(what: &str, family: fn(usize, usize, bool) -> Term) {
     scaling::on_a_thread(1 << 29, || {
-        let tests: BTreeMap<usize, Term> = [30, 240]
+        let tests: BTreeMap<usize, Term> = [120, 960]
             .map(|d| (d, if_(family(d, d, true), lit(1), lit(2))))
             .into();
         let scope = ints(&names());
-        scaling::check(what, 30, |d| {
+        scaling::check(what, 120, |d| {
             std::hint::black_box(arms(&tests[&d], &scope));
         });
     });
@@ -212,14 +213,15 @@ fn a_chain_of_names_narrows_as_if_written_out() {
     }
 }
 
-/// Runs the scaling check of `arms` on `chain(d, join, true)` at d = 30 and 240.
+/// Runs the scaling check of `arms` on `chain(d, join, true)` at d = 480 and 3840 (30 and 240
+/// before TEST-bench-move).
 fn chain_scaling(what: &str, join: fn(Term, Term) -> Term) {
     scaling::on_a_thread(1 << 29, || {
-        let tests: BTreeMap<usize, Term> = [30, 240]
+        let tests: BTreeMap<usize, Term> = [480, 3840]
             .map(|d| (d, if_(chain(d, join, true), lit(1), lit(2))))
             .into();
         let scope = ints(&names());
-        scaling::check(what, 30, |d| {
+        scaling::check(what, 480, |d| {
             std::hint::black_box(arms(&tests[&d], &scope));
         });
     });

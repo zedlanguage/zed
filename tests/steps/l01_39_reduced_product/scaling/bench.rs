@@ -1,12 +1,13 @@
 //! Benchmarks of `scaling`: each times the work at a size and at 8 times it, run apart from
-//! the correctness tests (`tools/run_tests.sh --bench`).
+//! the correctness tests (`tools/run_tests.sh --bench`). What each family computes is checked
+//! at small sizes in `scaling.rs`.
 
 use super::*;
 
 #[test]
 fn narrowing_by_a_conjunction_of_disjunctions_scales() {
     let s = ints(&["x".into(), "y".into()]);
-    scaling::check("a conjunction of disjunctions of linear tests", 8, |k| {
+    scaling::check("a conjunction of disjunctions of linear tests", 128, |k| {
         s.assume(&clauses(k), true, &Premises::new());
     });
 }
@@ -14,42 +15,19 @@ fn narrowing_by_a_conjunction_of_disjunctions_scales() {
 #[test]
 fn a_chain_of_lets_and_a_nest_of_ifs_scale() {
     let x0 = ints(&["x0".into()]);
-    scaling::check("a chain of `let`s", 50, |k| {
+    scaling::check("a chain of `let`s", 400, |k| {
         super::super::arms(&lets(k), &x0);
     });
     // Each level's test implies the one before, so the relation keeps one constraint.
-    scaling::check("`if`s nested on one name", 64, |k| {
+    scaling::check("`if`s nested on one name", 512, |k| {
         super::super::arms(&ifs(k), &x0);
     });
 }
 
 #[test]
 fn a_join_keeps_the_equalities_of_its_sides_and_scales() {
-    let names = |k: usize| -> Vec<std::sync::Arc<str>> {
-        (1..=k).map(|i| format!("x{i}").into()).collect()
-    };
-    for k in [2, 5, 10, 20] {
-        let r = ints(&names(k)).assume(&all_zero_or_all_one(k), true, &Premises::new());
-        let differ = prim(Prim::Ne, var("x1"), var(&format!("x{k}")));
-        assert!(
-            r.assume(&differ, true, &Premises::new()).bottom,
-            "k = {k}: {}",
-            r.relation
-        );
-        let x1 = prim(Prim::Eq, var("x1"), int(1));
-        assert!(!r.assume(&x1, true, &Premises::new()).bottom, "k = {k}");
-    }
     // The two sides, built before the timing; the join of the two, reduced, is timed.
-    let sides = |k: usize| {
-        let s = ints(&names(k));
-        let Term::Prim(_, a) = &all_zero_or_all_one(k) else {
-            unreachable!("a disjunction")
-        };
-        let p = Premises::new();
-        (s.assume(&a[0], true, &p), s.assume(&a[1], true, &p))
-    };
-    let built: BTreeMap<usize, (Scope, Scope)> =
-        [32, 256].into_iter().map(|k| (k, sides(k))).collect();
+    let built = scaling::inputs(32, zero_and_one_sides);
     scaling::check("the join of two sides that fix k names, reduced", 32, |k| {
         let (l, r) = &built[&k];
         l.join(r).reduce();
@@ -59,28 +37,12 @@ fn a_join_keeps_the_equalities_of_its_sides_and_scales() {
 #[test]
 fn tests_read_through_the_functions_they_call_scale() {
     let x = ints(&["x".into()]);
-    // `h(x) >= 4` and below it `h(x) < 4`, `h(x) >= 3`: the test of 3 is reached where
-    // `2x + 1` is 3, that of 2 never, since `2x + 1` is odd.
-    let a = super::super::arms(&helper_chain(4), &x);
-    let reach: Vec<bool> = a.iter().map(|a| a.reachable()).collect();
-    assert_eq!(
-        reach,
-        [true, true, true, true, false, true, true, true],
-        "{a:#?}"
-    );
-    // `h5(x)` is `8x + 13`, so the true arm holds `x >= -1`.
-    let a = super::super::arms(&nested_helpers(5), &x);
-    assert_eq!(a[0].scope.get("x").ints().to_string(), "[-1..]");
-    assert_eq!(a[1].scope.get("x").ints().to_string(), "[..=-2]");
     // The terms, built before the timing; walking their arms is timed. Each test closes over
     // the functions it reaches, each once however many paths reach it, so both are linear.
-    let chains: BTreeMap<usize, Term> = [64, 512]
-        .into_iter()
-        .map(|k| (k, helper_chain(k)))
-        .collect();
+    let chains = scaling::inputs(512, helper_chain);
     scaling::check_order(
         "an `else if` chain of k tests, each calling a function",
-        64,
+        512,
         1,
         |k| {
             super::super::arms(&chains[&k], &x);
@@ -89,14 +51,11 @@ fn tests_read_through_the_functions_they_call_scale() {
     // The preimage still recurses on the depth of the term (item T2-mid), about 4 KB a level
     // here, so the nest runs on a stack of its own: at 256 levels it needs about as much as a
     // test thread holds (2 MiB).
-    let nests: BTreeMap<usize, Term> = [32, 256]
-        .into_iter()
-        .map(|k| (k, nested_helpers(k)))
-        .collect();
+    let nests = scaling::inputs(256, nested_helpers);
     on_big_stack(|| {
         scaling::check_order(
             "one test through k functions, each calling the two before it",
-            32,
+            256,
             1,
             |k| {
                 super::super::arms(&nests[&k], &x);
@@ -109,79 +68,42 @@ fn tests_read_through_the_functions_they_call_scale() {
 fn tests_on_names_apart_narrow_in_time_near_their_number() {
     // A test projects the names it is linked to, not the whole relation: the scope, the
     // conjunction and the list of tests are built before the timing.
-    let conjunction = |k: usize, or: bool| {
-        let (names, tests) = apart(k, or);
-        let all = tests
-            .into_iter()
-            .reduce(|a, t| prim(Prim::And, a, t))
-            .expect("k > 0");
-        (ints(&names), all)
-    };
-    let sizes = [50, 400];
+    let n = 50;
     for or in [false, true] {
-        let built: BTreeMap<usize, (Scope, Term)> =
-            sizes.into_iter().map(|k| (k, conjunction(k, or))).collect();
+        let built = scaling::inputs(n, |k| apart_conjunction(k, or));
         let what = if or {
             "a conjunction of k disjunctions on names apart"
         } else {
             "a conjunction of k tests on names apart"
         };
-        scaling::check(what, 50, |k| {
+        scaling::check(what, n, |k| {
             let (s, t) = &built[&k];
             s.assume(t, true, &Premises::new());
         });
     }
-    let one_by_one: BTreeMap<usize, (Scope, Vec<Term>)> = sizes
-        .into_iter()
-        .map(|k| {
-            let (names, tests) = apart(k, true);
-            (k, (ints(&names), tests))
-        })
-        .collect();
+    let one_by_one = scaling::inputs(n, |k| {
+        let (names, tests) = apart(k, true);
+        (ints(&names), tests)
+    });
     scaling::check(
         "k disjunctions on names apart, assumed one by one",
-        50,
+        n,
         |k| {
             let (s, tests) = &one_by_one[&k];
             let p = Premises::new();
             tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
         },
     );
-    // What each kind keeps: every test of the conjunction, and each point that meets them.
-    let (s, t) = conjunction(3, true);
-    let r = s.assume(&t, true, &Premises::new());
-    assert_eq!(r.relation.cons().len(), 6, "{}", r.relation);
-    let at = |v: [i64; 6]| -> BTreeMap<std::sync::Arc<str>, Value> {
-        ["x0", "y0", "x1", "y1", "x2", "y2"]
-            .into_iter()
-            .zip(v)
-            .map(|(n, v)| (n.into(), Value::Int(v)))
-            .collect()
-    };
-    assert!(r.contains(&at([1, 0, 0, 1, 5, -5])));
-    let (s, tests) = &one_by_one[&50];
-    let p = Premises::new();
-    let r = tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
-    assert!(!r.bottom);
-    let (s, t) = conjunction(3, false);
-    let r = s.assume(&t, true, &Premises::new());
-    assert!(r.contains(&at([1, 0, 1, 0, 9, 8])));
-    assert!(!r.contains(&at([0, 0, 1, 0, 9, 8])));
 }
 
 #[test]
 fn a_chain_of_shadowing_lets_scales() {
     // `arms` recurses on the depth of the term (T2-mid), so the chain runs on a thread whose
-    // stack holds it: 1,600 `let`s at the larger size.
+    // stack holds it: 1,600 `let`s at the larger size. Kept at 100: in TEST-bench-move the work
+    // grew 9.6 times from 100 and 10.1 from 800.
     let t = std::thread::Builder::new().stack_size(1 << 28).spawn(|| {
         let x0 = ints(&["x0".into()]);
-        let terms: BTreeMap<usize, Term> = [100, scaling::FACTOR * 100]
-            .into_iter()
-            .map(|k| (k, shadows(k)))
-            .collect();
-        let a = super::super::arms(&terms[&100], &x0);
-        assert_eq!(a.len(), 2, "both arms of the last test are reached");
-        assert!(a.iter().all(|a| !a.scope.bottom));
+        let terms = scaling::inputs(100, shadows);
         scaling::check("a chain of shadowing `let`s", 100, |k| {
             super::super::arms(&terms[&k], &x0);
         });
@@ -196,19 +118,9 @@ fn many_reductions_under_exact_scale() {
     // kept from an earlier search that the new constraint extends is not searched again, so
     // the k reductions cost about k, for constraints on names apart and for one group linked
     // in a chain. The scopes and constraints are built before the timing.
-    let families: [Family; 2] = [
-        (
-            "k reductions under @exact, each after a constraint on names apart",
-            squares_apart,
-        ),
-        (
-            "k reductions under @exact, each after a constraint of one chain",
-            products_in_a_chain,
-        ),
-    ];
-    for (what, family) in families {
-        let built = scaling::inputs(32, |k| (exact_within(k + 1), family(k)));
-        scaling::check(what, 32, |k| {
+    for (what, family) in EXACT_FAMILIES {
+        let built = scaling::inputs(256, |k| (exact_within(k + 1), family(k)));
+        scaling::check(what, 256, |k| {
             let (s, cs) = &built[&k];
             assert!(!reduced_one_by_one(s, cs).bottom);
         });
@@ -220,49 +132,14 @@ fn many_reductions_under_exact_scale() {
 /// when one case of each test is unreachable.
 #[test]
 fn a_failing_case_costs_its_test_and_not_the_names_in_scope() {
-    let ge = |i: usize| prim(Prim::Ge, var(&format!("x{i}")), int(i as i64));
-    let lt = |i: usize| prim(Prim::Lt, var(&format!("x{i}")), int(i as i64));
-    let names =
-        |k: usize| -> Vec<std::sync::Arc<str>> { (0..k).map(|i| format!("x{i}").into()).collect() };
-    let built: BTreeMap<usize, (Scope, Vec<(Term, Term)>)> = [300, 2400]
-        .into_iter()
-        .map(|k| {
-            (
-                k,
-                (ints(&names(k)), (0..k).map(|i| (ge(i), lt(i))).collect()),
-            )
-        })
-        .collect();
-    let p = Premises::new();
-    let nest = |s: &Scope, tests: &[(Term, Term)]| {
-        let mut failed = Vec::with_capacity(tests.len());
-        let s = tests.iter().fold(s.clone(), |s, (holds, fails)| {
-            failed.push(
-                s.assume_case(holds, false, &p)
-                    .assume_case(fails, false, &p),
-            );
-            s.assume_case(holds, true, &p)
-        });
-        (s, failed)
-    };
-    // Each failing case is unreachable, and every name reads as empty there, its own and the
-    // others, though the case kept them as they were.
-    let (s, tests) = &built[&300];
-    let (last, failed) = nest(s, tests);
-    assert!(!last.bottom);
-    assert_eq!(last.get("x7").ints().to_string(), "[7..]");
-    for (i, f) in failed.iter().enumerate() {
-        assert!(f.bottom, "case {i}");
-        assert!(f.get(&format!("x{i}")).is_empty(), "x{i} in case {i}");
-        assert!(f.get("x0").is_empty() && f.get("y").is_empty(), "case {i}");
-    }
+    let built = scaling::inputs(1200, failing_cases);
     // Emptying each name of a failing case costs the names in scope: O(k²) for the nest.
     scaling::check(
         "a nest of k tests on k names, each failing in one case",
-        300,
+        1200,
         |k| {
             let (s, tests) = &built[&k];
-            nest(s, tests);
+            nest_of_failing_cases(s, tests);
         },
     );
 }
@@ -276,32 +153,12 @@ fn tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time() {
     // the size (item NARROW-eager-scope). The stars of one class, the same conjuncts but for
     // the leaf, are now projected again only when the class's bound on its leaf changes
     // (`Scope::leaf_bound_stays`).
-    let p = Premises::new();
-    let built: BTreeMap<usize, Scope> = [16, 128]
-        .into_iter()
-        .map(|k| (k, stars_of_two_hubs(k)))
-        .collect();
-    let narrow = |k: usize| {
-        (1..=k as i64).rev().fold(built[&k].clone(), |s, c| {
-            s.assume(&hubs_within(c), true, &p)
-        })
-    };
-    let s = narrow(16);
-    for i in 0..16 {
-        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[-1..]", "a{i}");
-    }
-    // A test that moves every leaf still reaches each: `n + m >= 4` with `n - m <= 1` puts
-    // the least `max(n, m)` at 2.
-    let up = prim(Prim::Ge, prim(Prim::Add, var("n"), var("m")), int(4));
-    let s = s.assume(&up, true, &p);
-    for i in 0..16 {
-        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[2..]", "a{i}");
-    }
+    let built = scaling::inputs(128, stars_of_two_hubs);
     scaling::check(
         "k tests among the hubs of k stars of two hubs, in an eager scope",
-        16,
+        128,
         |k| {
-            narrow(k);
+            narrow_hubs(&built[&k], k);
         },
     );
 }
@@ -316,36 +173,15 @@ fn tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale() {
     // projected (`Scope::moved_blocks`) or refreshed by a join (`Scope::join`); the search by
     // shortest paths reads a hub's conjuncts in the forest alone, not those of the stars
     // apart from it (`Blocks::in_forest`). COMPLEXITY.md row C49.
-    let inputs = scaling::inputs(16, |k| {
+    let inputs = scaling::inputs(128, |k| {
         (
             stars_above_the_hubs(k, false),
             stars_above_the_hubs(k, true),
         )
     });
-    for one in [false, true] {
-        let start = stars_above_the_hubs(16, one);
-        let (after, nest) = tests_on_a_hub(&start, 16);
-        assert_eq!(after.get("n").ints().to_string(), "[-1..=1001]");
-        assert_eq!(nest.get("n").ints().to_string(), "[-1..]");
-        for s in [&after, &nest] {
-            for i in 0..16 {
-                assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[5000..]");
-            }
-        }
-        // A test that moves the hub past the leaves still reaches each.
-        let up = prim(Prim::Ge, var("n"), int(6000));
-        let s = start.assume(&up, true, &Premises::new());
-        for i in 0..16 {
-            assert_eq!(
-                s.get(&format!("a{i}")).ints().to_string(),
-                "[6000..]",
-                "a{i}"
-            );
-        }
-    }
     scaling::check(
         "k tests on a hub of k stars of two hubs and of one, in turn and nested, eager",
-        16,
+        128,
         |k| {
             let (two, one) = &inputs[&k];
             tests_on_a_hub(two, k);
@@ -362,13 +198,13 @@ fn a_lazy_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
     // a star moves no hub that the hubs' own block does not, so the leaves stay stale until
     // read (item NARROW-lazy-settle). Projecting one star of each class, `k` projections per
     // test, took 73.3 times the bytes for 8 times the size (negative control, not committed).
-    let inputs = scaling::inputs(16, |k| {
+    let inputs = scaling::inputs(128, |k| {
         let (start, tests) = a_class_of_stars(k);
         (start.lazy(), tests)
     });
     scaling::check(
         "k tests among the hubs of a class of k stars, lazy",
-        16,
+        128,
         |k| {
             let (start, tests) = &inputs[&k];
             let p = Premises::new();
@@ -405,18 +241,11 @@ fn an_eager_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
     // projected every star again, the disjunction among the hubs keeping each class's bound
     // from being shown to stay: `k` projections per test, O(k²) (item
     // NARROW-eager-star-redo).
-    let inputs = scaling::inputs(16, a_class_of_stars);
+    let inputs = scaling::inputs(96, a_class_of_stars);
     let p = Premises::new();
-    let (start, tests) = &inputs[&16];
-    let s = tests
-        .iter()
-        .fold(start.clone(), |s, t| s.assume(t, true, &p));
-    for i in 0..16 {
-        assert_eq!(s.get(&format!("a{i}")).ints().to_string(), "[..]", "a{i}");
-    }
     scaling::check(
         "k tests among the hubs of a class of k stars, eager",
-        16,
+        96,
         |k| {
             let (start, tests) = &inputs[&k];
             tests
@@ -432,16 +261,11 @@ fn an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scale
     // hold `k` of them. Each test made both blocks again from all their conjuncts, and
     // checked and recorded every part of each: O(k) per test though one part is new, O(k²)
     // in all (item NARROW-eager-star-redo).
-    let inputs = scaling::inputs(16, distinct_disjunctions_among_the_hubs_of_a_star);
+    let inputs = scaling::inputs(80, distinct_disjunctions_among_the_hubs_of_a_star);
     let p = Premises::new();
-    let (start, tests) = &inputs[&16];
-    let s = tests
-        .iter()
-        .fold(start.clone(), |s, t| s.assume(t, true, &p));
-    assert_eq!(s.relation.set().len(), 17);
     scaling::check(
         "k distinct disjunctions among the hubs of a star, eager",
-        16,
+        80,
         |k| {
             let (start, tests) = &inputs[&k];
             tests
@@ -461,7 +285,7 @@ fn changes_of_one_block_hold_bounded_memory() {
     // 103536 then 813712 bytes, at k = 40 then 320 (negative control, not committed; item
     // ST-projected-stale). The bytes the whole scope leaves allocated still grow, by the
     // nodes of the union-find of `Blocks`, one for each change (item ST-blocks-stale).
-    let n = 40;
+    let n = 160;
     let inputs = scaling::inputs(n, changes_of_one_block);
     let (mut entries, mut held) = (Vec::new(), Vec::new());
     for k in [n, scaling::FACTOR * n] {
@@ -504,58 +328,13 @@ fn changes_of_one_block_hold_bounded_memory() {
 /// as with the fix; at 40 and 320 main already takes 18.0 times the work, in
 /// `Scope::project_part` under `Scope::project_block` at each test (gdb samples), so the
 /// family cannot show the cost of reading the parts: reading the parts of `w` and `z` both
-/// gave the same counts at 40 and 320 (negative control, run once, not committed).
+/// gave the same counts at 40 and 320 (negative control, run once, not committed). Kept at 12:
+/// in TEST-bench-move the work grew 9.1 times from 12, 10.8 from 24 and 13.9 from 48.
 /// COMPLEXITY.md C52.
 #[test]
 fn tightenings_beside_a_chain_of_disjunctions_scale() {
-    const W: i64 = 1_000_000;
     let n = 12;
-    let family = |k: usize| {
-        let p = Premises::new();
-        let vs: Vec<String> = (0..=k).map(|i| format!("v{i}")).collect();
-        let mut all: Vec<Arc<str>> = vs.iter().map(|v| Arc::from(v.as_str())).collect();
-        all.extend([Arc::from("w"), Arc::from("z")]);
-        let within = |s: Scope, x: &str, lo: i64, hi: i64| {
-            s.assume(&prim(Prim::Ge, var(x), int(lo)), true, &p).assume(
-                &prim(Prim::Le, var(x), int(hi)),
-                true,
-                &p,
-            )
-        };
-        let mut s = within(within(ints(&all), "w", -W, W), "z", -W, W);
-        for v in &vs {
-            s = within(s, v, 0, 10);
-        }
-        let apart = |a: &str, b: &str, c: &str, d: &str| {
-            or(
-                prim(Prim::Ge, prim(Prim::Sub, var(a), var(b)), int(5)),
-                prim(Prim::Ge, prim(Prim::Sub, var(c), var(d)), int(5)),
-            )
-        };
-        for i in 0..k {
-            s = s.assume(&apart(&vs[i], "w", "w", &vs[i + 1]), true, &p);
-        }
-        s = s.assume(&apart("v0", "z", "z", "v0"), true, &p);
-        let tests: Vec<(Term, bool)> = (1..=k as i64)
-            .map(|j| {
-                let sum = prim(Prim::Add, var("w"), var("z"));
-                (prim(Prim::Le, sum, int(W - 10 - j)), false)
-            })
-            .collect();
-        (s, tests)
-    };
-    let inputs = scaling::inputs(n, family);
-    for k in [n, scaling::FACTOR * n] {
-        let (s, tests) = &inputs[&k];
-        let end = change_one_block(s, tests);
-        assert!(!end.bottom, "k = {k}: the scope became empty");
-        let mut again = end.clone();
-        again.forget_projections();
-        again.reduce();
-        for h in ["w", "z", "v0"] {
-            assert_eq!(end.get(h), again.get(h), "k = {k}: {h}");
-        }
-    }
+    let inputs = scaling::inputs(n, tightenings_beside_a_chain);
     scaling::check("k tightenings beside a chain of k disjunctions", n, |k| {
         let (s, tests) = &inputs[&k];
         change_one_block(s, tests);
@@ -570,22 +349,8 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// projections each test costs. COMPLEXITY.md C52.
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
-    let n = 12;
-    let family = |k| {
-        tightenings_beside_disjunctions(
-            k,
-            |v| {
-                let i: usize = v[1..].parse().unwrap();
-                let x = if i.is_multiple_of(2) { "n" } else { "m" };
-                or(
-                    prim(Prim::Ge, prim(Prim::Sub, var(v), var(x)), int(5)),
-                    prim(Prim::Ge, prim(Prim::Sub, var(x), var(v)), int(5)),
-                )
-            },
-            |c| prim(Prim::Le, prim(Prim::Add, var("n"), var("m")), int(c)),
-        )
-    };
-    let inputs = scaling::inputs(n, family);
+    let n = 256;
+    let inputs = scaling::inputs(n, tightenings_of_a_sum);
     scaling::check(
         "k tightenings of n + m beside k disjunctions each on n or m",
         n,
@@ -602,27 +367,6 @@ fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
 /// every input each time grows with its square.
 #[test]
 fn a_binding_over_many_inputs_narrows_each_and_is_read_in_linear_time() {
-    // `let z = x + y in if y <= 0 { if z >= 5 { 1 } else { 2 } } else { 3 }`: in arm 1, x >= 5.
-    let body = Term::Let(
-        "z".into(),
-        arc(prim(Prim::Add, var("x"), var("y"))),
-        arc(Term::If(
-            arc(prim(Prim::Le, var("y"), int(0))),
-            arc(Term::If(
-                arc(prim(Prim::Ge, var("z"), int(5))),
-                arc(int(1)),
-                arc(int(2)),
-            )),
-            arc(int(3)),
-        )),
-    );
-    let a = super::super::arms(&body, &ints(&["x".into(), "y".into()]));
-    assert_eq!(
-        a[1].scope.get("x").ints().to_string(),
-        "[5..]",
-        "{:#?}",
-        a[1]
-    );
     let built: BTreeMap<usize, (Scope, Term)> = [40, 320]
         .into_iter()
         .map(|k| {
@@ -688,37 +432,10 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
 /// arms shown below it share its names, emptied once (item PA-letpre-linear).
 #[test]
 fn tests_in_a_scope_no_state_reaches_read_nothing() {
-    let built = scaling::inputs(40, |k| {
-        let (names, _) = tests_of_one_sum(k);
-        let bits = (1..=k)
-            .flat_map(|i| {
-                let x = format!("x{i}");
-                [
-                    prim(Prim::Ge, var(&x), int(0)),
-                    prim(Prim::Le, var(&x), int(1)),
-                ]
-            })
-            .reduce(|a, b| prim(Prim::And, a, b))
-            .expect("k is not 0");
-        let s = ints(&names).assume(&bits, true, &Premises::new());
-        let test = |i: usize| {
-            let p = if i.is_multiple_of(2) {
-                Prim::Eq
-            } else {
-                Prim::Ge
-            };
-            prim(p, var("z"), int(i as i64))
-        };
-        let dead = Term::If(
-            arc(prim(Prim::Ge, var("x1"), int(2))),
-            arc(nested(k, test)),
-            arc(int(0)),
-        );
-        (s, Term::Let("z".into(), arc(sum_of(k)), arc(dead)))
-    });
+    let built = scaling::inputs(3200, tests_in_a_dead_scope);
     scaling::check(
         "k tests of a sum over k inputs in a scope no state reaches",
-        40,
+        3200,
         |k| {
             let (s, t) = &built[&k];
             let a = super::super::arms(t, s);
@@ -732,16 +449,7 @@ fn tests_in_a_scope_no_state_reaches_read_nothing() {
 /// one input, which reads that input as an input (item PA-letpre-linear).
 #[test]
 fn tests_of_summaries_over_one_input_read_that_input() {
-    let built = scaling::inputs(40, |k| {
-        let names: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
-        let z = |i: usize| format!("z{i}");
-        let tests = nested(k, |i| prim(Prim::Ge, var(&z(i)), int(i as i64 + 1)));
-        let t = (1..=k).rev().fold(tests, |t, i| {
-            let v = prim(Prim::Add, var(&format!("x{i}")), int(i as i64));
-            Term::Let(z(i).into(), arc(v), arc(t))
-        });
-        (ints(&names), in_bits(k, t))
-    });
+    let built = scaling::inputs(40, summaries_over_one_input);
     scaling::check("k tests, each of a summary over one input", 40, |k| {
         let (s, t) = &built[&k];
         let a = super::super::arms(t, s);
@@ -770,45 +478,11 @@ fn tests_of_summaries_over_one_input_read_that_input() {
 /// reads that input over its own domain and the rest through the tree (item PA-letpre-linear).
 #[test]
 fn tests_that_give_an_input_another_domain_read_it_through_the_tree() {
-    let built = scaling::inputs(40, |k| {
-        let xs: Vec<Arc<str>> = (1..=k).map(|i| format!("x{i}").into()).collect();
-        let names: images::Names<IntervalSet> = (xs.iter())
-            .map(|x| (x.clone(), IntervalSet::range(End::of(0), End::of(1))))
-            .collect();
-        let doms: Domains = names.iter().map(|(x, d)| (x.clone(), d.clone())).collect();
-        let s = let_summary(&sum_of(k), &doms, Lets::new()).expect("a sum of inputs");
-        let leaf = |v: &Arc<str>, d: &IntervalSet| s.term_bounds(v, d);
-        let tree = images::fresh(s.vars(), &names, leaf);
-        let read = Arc::new(TermRead {
-            names,
-            vars: s.vars().clone(),
-            tree,
-            ints: |d| d,
-        });
-        (xs, s, read)
-    });
+    let built = scaling::inputs(6400, each_input_given_its_own_domain);
     scaling::check(
         "k tests of a sum over k inputs, each giving one input its own domain",
-        40,
-        |k| {
-            let (xs, s, read) = &built[&k];
-            let test = prim(Prim::Ge, var("z"), int(1));
-            for x in xs {
-                let lets: Lets = [(
-                    "z".into(),
-                    LetIn {
-                        summary: s.clone(),
-                        ints: IntervalSet::top(),
-                        read: Some(read.clone() as _),
-                    },
-                )]
-                .into_iter()
-                .collect();
-                let over: Domains = [(x.clone(), IntervalSet::single(1))].into_iter().collect();
-                let got = let_narrowing(&test, &over, lets, &Demand::Bool(true));
-                assert!(got.is_some(), "{x}");
-            }
-        },
+        6400,
+        |k| built[&k](),
     );
 }
 
@@ -825,24 +499,9 @@ fn a_test_beside_a_wide_part_costs_its_own_part() {
     // passes the limit of 13.2 too: each test costs about 1M bytes besides the copies, and a
     // wider part takes too long to build (its projection costs the square of its names), so
     // at sizes a test can afford this one bounds the order and does not tell the two apart.
-    let n = 64;
+    let n = 256;
     let inputs = scaling::inputs(n, parts_beside_a_wide_part);
     let p = Premises::new();
-    for k in [n, scaling::FACTOR * n] {
-        let (s, tests) = &inputs[&k];
-        assert_eq!(
-            s.projected.len(),
-            1,
-            "k = {k}: the wide part alone at the start"
-        );
-        let end = tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
-        assert!(!end.bottom, "k = {k}: the scope became empty");
-        assert_eq!(
-            end.projected.len(),
-            k + 1,
-            "k = {k}: one part for each test"
-        );
-    }
     scaling::check("k tests beside a part of k names", n, |k| {
         let (s, tests) = &inputs[&k];
         tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
@@ -852,29 +511,20 @@ fn a_test_beside_a_wide_part_costs_its_own_part() {
 #[test]
 fn a_sum_over_many_names_is_assumed_in_time_near_linear() {
     // Each name's values are read from the row and the others' bounds, not asked of the solver
-    // one name at a time (item PERF-wide-sum-project, COMPLEXITY.md F154): with `0 <= zj <= 3`
-    // and the sum at least `3·k - 1`, the others give at most `3·(k - 1)`, so each `zj >= 2`.
+    // one name at a time (item PERF-wide-sum-project, COMPLEXITY.md F154).
     let p = Premises::new();
-    let (names, sum, bounded) = wide_sum(5);
-    let r = ints(&names).assume(&bounded, true, &p);
-    for x in &names {
-        assert_eq!(r.get(x).ints().to_string(), "[2..=3]", "{x}");
-    }
-    let r = ints(&names).assume(&prim(Prim::Ge, sum, int(0)), true, &p);
-    assert!(!r.bottom);
-    assert_eq!(r.get("z0").ints().to_string(), "[..]");
     // The scopes and tests, built before the timing.
-    let built = scaling::inputs(128, |k| {
+    let built = scaling::inputs(1024, |k| {
         let (names, sum, bounded) = wide_sum(k);
         (ints(&names), prim(Prim::Ge, sum, int(0)), bounded)
     });
-    scaling::check("z0 + … + z(k-1) >= 0 assumed on k names", 128, |k| {
+    scaling::check("z0 + … + z(k-1) >= 0 assumed on k names", 1024, |k| {
         let (s, t, _) = &built[&k];
         s.assume(t, true, &p);
     });
     scaling::check(
         "0 <= zj <= 3 for each of k names and their sum at least 3·k - 1",
-        128,
+        1024,
         |k| {
             let (s, _, t) = &built[&k];
             s.assume(t, true, &p);
@@ -891,25 +541,9 @@ fn a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part() {
     // the term of `k + 1` names; held by value, that term was copied with each such path copy
     // (item PERF-block-terms-key). The blocks themselves, kept in a persistent map of the scope,
     // are shared as well (item PERF-seen-blocks-arc). COMPLEXITY.md C44.
-    let n = 64;
+    let n = 128;
     let inputs = scaling::inputs(n, disjunctions_beside_a_wide_disjunction);
     let p = Premises::new();
-    for k in [n, scaling::FACTOR * n] {
-        let (s, tests) = &inputs[&k];
-        let end = tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
-        assert!(!end.bottom, "k = {k}: the scope became empty");
-        assert_eq!(
-            end.relation.set().len(),
-            k + 1,
-            "k = {k}: each disjunction kept"
-        );
-        assert_eq!(
-            end.relation.blocks().all().count(),
-            1,
-            "k = {k}: the disjunctions are one block"
-        );
-        assert!(end.relation.stars().is_empty(), "k = {k}: no star");
-    }
     scaling::check(
         "k disjunctions beside one on k names in one block",
         n,
@@ -930,23 +564,10 @@ fn an_eager_join_projects_again_the_stars_it_settles_and_scales() {
     // `an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales`.
     let p = Premises::new();
     let test = hubs_within(5);
-    let inputs = scaling::inputs(16, |k| stars_under_a_disjunction(k, false));
-    let eager = &inputs[&16];
-    let joined = eager
-        .assume(&test, true, &p)
-        .join(&eager.assume(&test, false, &p));
-    let lazy = stars_under_a_disjunction(16, true);
-    let lazy = lazy
-        .assume(&test, true, &p)
-        .join(&lazy.assume(&test, false, &p));
-    for i in 0..16 {
-        let a: Arc<str> = format!("a{i}").into();
-        assert_eq!(joined.get(&a), lazy.settled(&a), "a{i}");
-        assert_eq!(joined.get(&a).ints().to_string(), "[-1..]", "a{i}");
-    }
+    let inputs = scaling::inputs(64, |k| stars_under_a_disjunction(k, false));
     scaling::check(
         "the join of an if among the hubs of k stars, eager",
-        16,
+        64,
         |k| {
             let s = &inputs[&k];
             s.assume(&test, true, &p).join(&s.assume(&test, false, &p));
