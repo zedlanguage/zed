@@ -8928,14 +8928,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 at,
                 ..Arg::of(Ty::carrier(c))
             };
-            return self.written_with(&w.form.what(), w.span, i, with);
+            return self.written_with(&w.form.what(), w.span, [(i, with)]);
         }
         let j = (w.args.iter()).position(|a| a.as_ref().and_then(|a| a.at) == Some(p.at))?;
         let with = Arg {
             at: Some(p.at),
             ..Arg::of(Ty::carrier(result))
         };
-        self.written_with(&w.form.what(), w.span, j, with)
+        self.written_with(&w.form.what(), w.span, [(j, with)])
     }
 
     /// The repairs of the int power `p`, whose exponent is not shown to be at least 0, each
@@ -11412,10 +11412,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             else {
                 continue;
             };
-            let held = match self.class_of_ty(ty) {
-                Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
-                _ => ty.clone(),
-            };
+            let held = self.held_by(ty);
             let t = self.t;
             let (name, written, literal) = match self.seen.get(at) {
                 Some((_, Src::Name(id))) => (Some(&t.res.binders[*id].name), None, false),
@@ -11437,7 +11434,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         ..Arg::of(ty.clone())
                     };
                     if self
-                        .repaired(what, sig, args, (i, at_carrier), pass, span)
+                        .repaired(what, sig, args, [(i, at_carrier)], pass, span)
                         .is_none()
                     {
                         continue;
@@ -11473,7 +11470,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             at: kept.then_some(*at),
                             ..Arg::of(ty.clone())
                         });
-                        if let Some(got) = self.repaired(what, sig, args, (i, with), pass, span) {
+                        if let Some(got) = self.repaired(what, sig, args, [(i, with)], pass, span) {
                             // The fix writes the literal of the form, `-3` for `-3r`.
                             let fix = (lit.as_deref().zip(carrier)).and_then(|(l, c)| {
                                 let holds =
@@ -11505,7 +11502,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     at: kept.then_some(*at),
                     ..Arg::of(r)
                 };
-                if let Some(got) = self.repaired(what, sig, args, (i, with), pass, span) {
+                if let Some(got) = self.repaired(what, sig, args, [(i, with)], pass, span) {
                     if w == "String"
                         && self.takes_some(
                             what,
@@ -11522,7 +11519,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // cast gives, `8` for `int("8")`, which says the same (REPAIR-literal-cast).
                     if literal
                         && let Some(lit) = self.literal_repair(w, a, &held, *at)
-                        && let Some(got) = self.repaired(what, sig, args, (i, lit.arg), pass, span)
+                        && let Some(got) =
+                            self.repaired(what, sig, args, [(i, lit.arg)], pass, span)
                     {
                         let text = quoting(
                             &format_args!("repair: write `{}`; the checker accepts that", lit.text),
@@ -11567,6 +11565,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        // An ordering of a number with a text written as a number that no repair of one
+        // operand keeps, as `n < "1/3"` with `n: int`, is offered both operands cast to one
+        // carrier, `rat(n) < rat("1/3")` ([`Self::both_cast`]).
+        if number_text && literals.is_empty() && out.is_empty() {
+            out = self.both_cast(what, sig, args, kept, pass, span);
+        }
         literals.append(&mut out);
         literals
     }
@@ -11594,7 +11598,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         };
         let with = one.pop().flatten()?;
-        let got = self.repaired(what, sig, args, (i, with), pass, span)?;
+        let got = self.repaired(what, sig, args, [(i, with)], pass, span)?;
         let note = quoting(
             &format_args!("repair: write `{text}`; the checker accepts that"),
             || "repair: write this literal as text; the checker accepts that".to_string(),
@@ -11607,6 +11611,131 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             got,
             fix: Rewrite::new(&[(at, &text)], &holds, &text),
+        })
+    }
+
+    /// The type a repair of `repairs` casts for an argument of type `ty`: the carriers its
+    /// class still holds, where it is a class of numbers alone, else `ty`.
+    fn held_by(&self, ty: &Ty) -> Ty {
+        match self.class_of_ty(ty) {
+            Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
+            _ => ty.clone(),
+        }
+    }
+
+    /// The repairs of the ordering `what` of two operands, one a text written as a number,
+    /// where no repair of one operand keeps what the program compares ([`Self::repairs`]):
+    /// both operands cast to one number carrier, each cast one that cannot fail or lose
+    /// information on the operand (DESIGN.md sec:diagnostics, "A repair never narrows a
+    /// type"), offered where the ordering then checks. So `n < "1/3"` with `n: int` is offered
+    /// `rat(n) < rat("1/3")`, and `n < "0.5"` is offered `rat(n) < 0.5r`, the literal the
+    /// cast gives on the text written in its place ([`Self::literal_repair`]); neither cast
+    /// alone is a repair, since `rat(n) < "1/3"` still orders a number with a text and `n <
+    /// rat("1/3")` an `int` with a `rat` (row REPAIR-text-number-both-sides). `int` and `f64`
+    /// are tried too, and refused by the same test where a cast could fail: `int("1/3")` is
+    /// `#invalid`, and `f64(n)` of an unbounded `int` is inexact above 2^53.
+    ///
+    /// Complexity tradeoff: none. The naive search tries every pair of the three number words
+    /// on the two operands, nine checks of the ordering. An arrow of an ordering takes two
+    /// values of one carrier, so a cast to two different carriers never checks; one word on
+    /// both operands is tried, three checks of the ordering at most, each after one cast of
+    /// each operand ([`Self::wrapped`]) and, on a text literal of d characters, one run of the
+    /// cast on it ([`Self::literal_repair`]; COMPLEXITY.md C39 and K41: O(d log^2 d) to read
+    /// the digits, a linear lowest-terms test where one part is a word). It runs only where no
+    /// one-operand repair was found. Scaling tests:
+    /// `l01_29_diagnostics::scaling::repairing_an_ordering_of_an_int_with_a_long_fraction_text_scales`
+    /// (4.6 times the work at 8d) and `repairing_orderings_of_ints_with_fraction_texts_scales`
+    /// (8.0 times at 8n).
+    fn both_cast(
+        &mut self,
+        what: Label<'_>,
+        sig: &Sig,
+        args: &[Option<Arg<'a>>],
+        kept: bool,
+        pass: bool,
+        span: Span,
+    ) -> Vec<Repaired> {
+        let mut out = Vec::new();
+        let Some(Operator::Binary(
+            op @ (BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge),
+        )) = what.operator()
+        else {
+            return out;
+        };
+        let [Some(x), Some(y)] = args else {
+            return out;
+        };
+        for w in ["int", "rat", "f64"] {
+            let Some(cx) = self.cast_side(w, x, kept) else {
+                continue;
+            };
+            let Some(cy) = self.cast_side(w, y, kept) else {
+                continue;
+            };
+            let with = [(0, cx.arg), (1, cy.arg)];
+            let Some(got) = self.repaired(what, sig, args, with, pass, span) else {
+                continue;
+            };
+            let written = cx.written.zip(cy.written);
+            let fix = written.as_ref().and_then(|(a, b)| {
+                let edits: Vec<(Span, &dyn fmt::Display)> = (cx.edits.iter())
+                    .chain(&cy.edits)
+                    .map(|(s, t)| (*s, t as &dyn fmt::Display))
+                    .collect();
+                Rewrite::new(
+                    &edits,
+                    &format_args!("both operands are cast to {w}"),
+                    &format_args!("{a} {op} {b}"),
+                )
+            });
+            let text = match &written {
+                Some((a, b)) => quoting(
+                    &format_args!("repair: write `{a} {op} {b}`; the checker accepts that"),
+                    || format!("repair: cast both operands to `{w}`; the checker accepts that"),
+                ),
+                None => format!("repair: cast both operands to `{w}`; the checker accepts that"),
+            };
+            out.push(Repaired {
+                note: Note { span, text },
+                got,
+                fix,
+            });
+        }
+        out
+    }
+
+    /// The operand `a` cast to the number carrier `w` for [`Self::both_cast`], where the cast
+    /// cannot fail or lose information on it, so gives no atom it does not hold: a text
+    /// literal as the literal the cast gives, `0.5r` for `rat("0.5")`, where one writes it,
+    /// else the cast written around the operand, `rat("1/3")` or `rat(n)`. `None` where the
+    /// operand is a number literal, which takes its carrier from the other operand, or has no
+    /// place. The cost of one cast of the operand ([`Self::wrapped`]), and on a text literal
+    /// of one run of the cast ([`Self::literal_repair`]).
+    fn cast_side(&mut self, w: &'static str, a: &Arg<'a>, kept: bool) -> Option<CastSide<'a>> {
+        let at = a.at.filter(|_| a.lit.is_none())?;
+        let held = self.held_by(&a.ty);
+        let text = matches!(
+            self.seen.get(&at),
+            Some((_, Src::Other(e))) if matches!(e.kind, ExprKind::Str(_))
+        );
+        if text && let Some(lit) = self.literal_repair(w, a, &held, at) {
+            return Some(CastSide {
+                arg: lit.arg,
+                edits: vec![(at, lit.text.clone())],
+                written: Some(lit.text),
+            });
+        }
+        let r = self
+            .wrapped(w, a, &held, at)
+            .filter(|r| r.atoms() == held.atoms())?;
+        let ([before, after], code) = self.cast_edits(at);
+        Some(CastSide {
+            arg: Arg {
+                at: kept.then_some(at),
+                ..Arg::of(r)
+            },
+            edits: vec![(before, format!("{w}(")), (after, ")".to_string())],
+            written: code.map(|c| format!("{w}({c})")),
         })
     }
 
@@ -11645,7 +11774,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 at,
                 ..Arg::of(changed.of_piece(p))
             };
-            self.repaired(what, sig, args, (i, with), pass, span)
+            self.repaired(what, sig, args, [(i, with)], pass, span)
                 .is_some()
         })
     }
@@ -12196,27 +12325,31 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The construct being checked ([`Self::written`]), when it is the application at `span`
-    /// named `what`, checked with its argument `i` replaced by `with`: its type and the
-    /// errors it then has, each inside another argument ([`Pending::needs`]), or `None` where
-    /// it has another; `None` where it is not that application.
-    fn written_with(
+    /// named `what`, checked with each argument `i` of `with` replaced by its `Arg`: its type
+    /// and the errors it then has, each inside an argument left as it was
+    /// ([`Pending::needs`]), or `None` where it has another; `None` where it is not that
+    /// application. One argument is replaced for a repair of one operand, two for a repair
+    /// that casts both, `rat(n) < rat("1/3")` ([`Self::both_cast`]).
+    fn written_with<const N: usize>(
         &mut self,
         what: &str,
         span: Span,
-        i: usize,
-        with: Arg<'a>,
+        with: [(usize, Arg<'a>); N],
     ) -> Option<Option<(Ty, Vec<Span>)>> {
         let w = self.written.clone()?;
-        if w.span != span || w.form.what() != what || i >= w.args.len() {
+        let replaced = with.each_ref().map(|(i, _)| *i);
+        if w.span != span || w.form.what() != what || replaced.iter().any(|&i| i >= w.args.len()) {
             return None;
         }
         let mut args = w.args.clone();
-        args[i] = Some(with);
+        for (i, a) in with {
+            args[i] = Some(a);
+        }
         let form = w.form.clone();
         let (ty, needs) = self.trial(|ck| ck.construct(form, args, span));
         let within = |at: Span, s: Span| at.start <= s.start && s.end <= at.end;
         let others: Vec<Span> = (w.args.iter().enumerate())
-            .filter(|&(j, _)| j != i)
+            .filter(|(j, _)| !replaced.contains(j))
             .filter_map(|(_, a)| a.as_ref()?.at)
             .collect();
         let apart = |s: &Span| others.iter().any(|&a| within(a, *s));
@@ -12821,24 +12954,27 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.rejects_with(row, span, message, notes);
     }
 
-    /// Whether the application of `sig` to `args`, named `what`, checks with argument `i`
-    /// replaced by `with`, tried with the checker's state restored after: as written, where
-    /// it is the construct being checked ([`Self::written_with`]), with the type it then has
-    /// and the errors left in its other arguments, else as an application, with neither.
-    fn repaired(
+    /// Whether the application of `sig` to `args`, named `what`, checks with each argument
+    /// `i` of `with` replaced by its `Arg`, tried with the checker's state restored after: as
+    /// written, where it is the construct being checked ([`Self::written_with`]), with the
+    /// type it then has and the errors left in its other arguments, else as an application,
+    /// with neither.
+    fn repaired<const N: usize>(
         &mut self,
         what: Label<'_>,
         sig: &Sig,
         args: &[Option<Arg<'a>>],
-        (i, with): (usize, Arg<'a>),
+        with: [(usize, Arg<'a>); N],
         pass: bool,
         span: Span,
     ) -> Option<Option<(Ty, Vec<Span>)>> {
-        if let Some(got) = self.written_with(what.text(), span, i, with.clone()) {
+        if let Some(got) = self.written_with(what.text(), span, with.clone()) {
             return got.map(Some);
         }
         let mut args = args.to_vec();
-        args[i] = Some(with);
+        for (i, a) in with {
+            args[i] = Some(a);
+        }
         self.tried(|ck| ck.apply(what, sig, args, pass, span))
             .map(|_| None)
     }
@@ -16814,6 +16950,15 @@ struct Repaired {
     note: Note,
     got: Option<(Ty, Vec<Span>)>,
     fix: Option<Rewrite>,
+}
+
+/// One operand of an ordering cast to a number carrier ([`Ck::cast_side`]): the argument it
+/// then is, the edits that write it in the program's text, each a span and the text written
+/// in its place, and the operand as it is then written, where the checker has its text.
+struct CastSide<'a> {
+    arg: Arg<'a>,
+    edits: Vec<(Span, String)>,
+    written: Option<String>,
 }
 
 /// The literal a cast gives on a literal argument ([`Ck::literal_repair`]): its text as the

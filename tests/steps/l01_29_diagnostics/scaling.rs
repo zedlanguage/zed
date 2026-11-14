@@ -663,3 +663,57 @@ fn offering_the_cast_of_a_long_fraction_text_in_a_comparison_scales() {
         },
     );
 }
+
+#[test]
+fn repairing_an_ordering_of_an_int_with_a_long_fraction_text_scales() {
+    // One `int` ordered against the fraction text `10…0/3` of d + 3 characters, which `rat`
+    // reads and no `rat` literal writes: the casts run on the text to see it is a number, then
+    // both operands are cast to `rat` and the ordering checked (row
+    // REPAIR-text-number-both-sides). The denominator is one word, so the lowest-terms test
+    // of the cast is linear (COMPLEXITY.md K41); a fraction of two wide parts costs the
+    // cast's half-gcd, which the kernel's own scaling tests hold (NUM-subquad).
+    let srcs = scaling::inputs(2000, |d| {
+        format!("f(positional n: int) = n < \"1{}/3\";\n", "0".repeat(d))
+    });
+    scaling::check(
+        "an ordering of an int with a fraction text of d digits",
+        2000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            let want = format!("Try `rat(n) < rat(\"1{}/3\")` instead.", "0".repeat(d));
+            assert!(out.contains(&want), "{out}");
+        },
+    );
+}
+
+/// `n` functions, each ordering an `int` with the fraction text `1/(3i + 3)`, the text on
+/// either side and each of the four orderings in turn: each rejection is repaired by
+/// casting both operands to `rat` (row REPAIR-text-number-both-sides).
+fn int_orderings_with_fractions(n: usize) -> String {
+    (0..n)
+        .map(|i| {
+            let op = ["<", "<=", ">", ">="][i % 4];
+            let text = format!("\"1/{}\"", 3 * i + 3);
+            if i % 2 == 0 {
+                format!("h{i}(positional n: int) = n {op} {text};\n")
+            } else {
+                format!("h{i}(positional n: int) = {text} {op} n;\n")
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn repairing_orderings_of_ints_with_fraction_texts_scales() {
+    let srcs = scaling::inputs(200, int_orderings_with_fractions);
+    scaling::check(
+        "n orderings of an int with a fraction text, each repaired by casting both operands",
+        200,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(out.matches("Try `rat(n) ").count(), n.div_ceil(2), "{out}");
+            assert_eq!(out.matches("Try `rat(\"1/").count(), n / 2, "{out}");
+            assert!(out.contains("rat(n) < rat(\"1/3\")"), "{out}");
+        },
+    );
+}

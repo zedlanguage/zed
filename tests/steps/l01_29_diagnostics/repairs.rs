@@ -443,9 +443,18 @@ fn an_ordering_with_a_text_written_as_a_number_offers_no_comparison_of_texts() {
             "\"1/3\" > r",
             Some("rat(\"1/3\") > r"),
         ),
-        // No `int` is `1/3` and `n` has no cast that keeps it and meets the text: no repair.
-        ("f(positional n: int) = ", "n < \"1/3\"", None),
-        ("f(positional n: int) = ", "\"1/3\" <= n", None),
+        // No `int` is `1/3`, and neither operand cast alone meets the other: both are cast
+        // (row REPAIR-text-number-both-sides; the test after this one).
+        (
+            "f(positional n: int) = ",
+            "n < \"1/3\"",
+            Some("rat(n) < rat(\"1/3\")"),
+        ),
+        (
+            "f(positional n: int) = ",
+            "\"1/3\" <= n",
+            Some("rat(\"1/3\") <= rat(n)"),
+        ),
     ];
     for (before, expr, want) in cases {
         let out = rejected(&format!("{before}{expr};\n{MAIN}"));
@@ -464,5 +473,73 @@ fn an_ordering_with_a_text_written_as_a_number_offers_no_comparison_of_texts() {
     ] {
         let out = rejected(&format!("f(positional x: f64) = {expr};\n{MAIN}"));
         assert_eq!(first_tried(&out), Some(want), "{out}");
+    }
+}
+
+#[test]
+fn an_ordering_of_an_int_with_a_fraction_text_is_repaired_by_casting_both_sides() {
+    // Row REPAIR-text-number-both-sides. `n < "1/3"` with `n: int` orders a number with a text.
+    // No repair of one side keeps what it compares: `String(n) < "1/3"` compares texts,
+    // `rat(n) < "1/3"` still meets a text and `n < rat("1/3")` an `int` with a `rat`. Both
+    // operands cast to `rat` keep the numbers and check, at each ordering and in both orders
+    // of the operands; where the cast of the text has a literal, the literal is written.
+    const MAIN: &str = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n";
+    for op in ["<", "<=", ">", ">="] {
+        for (decl, n, text, cast_n, cast_text) in [
+            ("n: int", "n", "\"1/3\"", "rat(n)", "rat(\"1/3\")"),
+            ("n: int", "n", "\"-2/7\"", "rat(n)", "rat(\"-2/7\")"),
+            ("n: int", "n", "\"0.5\"", "rat(n)", "0.5r"),
+            // A `rat` among the operand's values: `rat(n)` keeps them as they are.
+            ("n: int | rat", "n", "\"1/3\"", "rat(n)", "rat(\"1/3\")"),
+            // An operand that is not a name is cast where it stands, in place of its
+            // parentheses.
+            ("n: int", "(n + 1)", "\"1/3\"", "rat(n + 1)", "rat(\"1/3\")"),
+        ] {
+            let before = format!("f(positional {decl}) = ");
+            for (expr, want) in [
+                (
+                    format!("{n} {op} {text}"),
+                    format!("{cast_n} {op} {cast_text}"),
+                ),
+                (
+                    format!("{text} {op} {n}"),
+                    format!("{cast_text} {op} {cast_n}"),
+                ),
+            ] {
+                let out = rejected(&format!("{before}{expr};\n{MAIN}"));
+                assert_eq!(first_tried(&out), Some(want.as_str()), "{expr}\n{out}");
+                assert!(
+                    out.contains(&format!("repair: write `{want}`; the checker accepts that")),
+                    "{out}"
+                );
+                assert!(!out.contains("String("), "{expr}\n{out}");
+                let fixed = format!("{before}{want};\n{MAIN}");
+                load(fixed.as_bytes()).unwrap_or_else(|e| panic!("{fixed}\n{e}"));
+            }
+        }
+    }
+    // No cast that cannot fail meets the two sides, so no repair: `rat` reads only a reduced
+    // fraction, so `rat("14/6")` is `#invalid`; it reads no exponent, so `rat("1e999")` is
+    // `#invalid` too; and `rat(x)` of an `f64` is `#invalid` at NaN and the infinities.
+    for (decl, expr) in [
+        ("n: int", "n < \"14/6\""),
+        ("n: int", "\"1e999\" >= n"),
+        ("x: f64", "x > \"1/3\""),
+    ] {
+        let out = rejected(&format!("f(positional {decl}) = {expr};\n{MAIN}"));
+        assert_eq!(first_tried(&out), None, "{expr}\n{out}");
+        assert!(!out.contains("repair:"), "{expr}\n{out}");
+    }
+    // Where one side's repair keeps the meaning, it is offered alone, and both are not cast:
+    // the literal the cast gives, or the cast of the text.
+    for (decl, expr, want) in [
+        ("n: int", "n < \"8\"", "n < 8"),
+        ("r: rat", "\"1/3\" <= r", "rat(\"1/3\") <= r"),
+        ("x: f64", "x >= \"0.5\"", "x >= 0.5"),
+    ] {
+        let out = rejected(&format!("f(positional {decl}) = {expr};\n{MAIN}"));
+        assert_eq!(first_tried(&out), Some(want), "{expr}\n{out}");
+        assert!(!out.contains("both operands"), "{expr}\n{out}");
+        assert_eq!(out.matches("repair:").count(), 1, "{expr}\n{out}");
     }
 }
