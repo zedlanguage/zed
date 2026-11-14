@@ -87,11 +87,17 @@
 //! where the solver alone ran for minutes. No family was found where the solver answered and
 //! the join passed its limit, except rows with weights far apart (`sparse`, the module
 //! `bench::disj_groups::switchover`), whose sums are one interval per value of the lighter
-//! atoms; there the solver answers by its bounds. No cheap predictor of the solver's cost is
-//! known (the A98/A99 predictor covers polynomial factoring, not this search), and the bound
-//! on the join's work read from the ranges was 10^6 to 10^15 times its runs, so neither side
-//! is predicted: the join's own count is the switch. Its cost past the limit is the limit
-//! itself, wasted, about 250 ms, before the solver starts.
+//! atoms; there the solver answers by its bounds, 100 to 3,000 times faster: with k = 2 and
+//! m = 10^4 the join decides in 9.3 ms and the solver in 0.066 ms; with m = 10^5, 18 ms
+//! against 0.066 ms; with m = 10^6 the join stops at the limit after 182-201 ms and the
+//! solver then answers in 0.06 ms; with k = 3 and m = 300 the join decides in 90 ms against
+//! 0.26 ms. On these the default path is slower than the solver alone by up to the limit's
+//! time, and its answers are the same. No cheap predictor of the solver's cost is known (the
+//! A98/A99 predictor covers polynomial factoring, not this search), and the bound on the
+//! join's work read from the ranges was 10^6 to 10^15 times its runs, so neither side is
+//! predicted: the join's own count is the switch (PRES-join-cost-predictor is the row for a
+//! predictor that would send `sparse` to the solver first). Its cost past the limit is the
+//! limit itself, wasted, about 200 ms here, before the solver starts.
 //!
 //! The race this replaces (Levin's universal search, 2026-11-13: the method and the solver run
 //! in alternation with doubling allowances, the first to finish answering) let the answer
@@ -550,11 +556,17 @@ fn after_stop<T>(old: impl FnOnce() -> Result<T, Refusal>) -> Result<T, Refusal>
     old()
 }
 
-/// The join's work limit, in units of its work (`Work`): about 250 ms on the machine below,
-/// the time A99 allows a predicted computation (poly.rs `LIMIT`). Past it, `decide` and
+/// The join's work limit, in units of its work (`Work`): at most 214 ms on the machine below,
+/// within the 250 ms A99 allows a predicted computation (poly.rs `LIMIT`). Past it, `decide` and
 /// `point` ask the solver and `project` refuses ([`Refusal::Work`]).
 // Measured on a Ryzen 9 5950X (x86_64, Linux, the test build at -j 4 with other work running,
-// load 30-60), 2026-11-14, by `bench::disj_groups::switchover`: TBD.
+// load 30-60), 2026-11-14, by `bench::disj_groups::switchover`: the time per unit, on cases
+// of at least 10^6 units (best of three), is 4.27 ns (`overlap_rows` k = 1,024, 3.40M units),
+// 10.28 ns (coefficients 1, 2, k = 512, 1.95M), 10.68 ns (`sparse` k = 2, m = 10^6, 20.6M) and
+// 6.39 ns (`sparse` k = 3, m = 300, 20.0M); the worst, 10.68 ns, gives 214 ms at 2·10^7
+// units. A join stopped at the limit took 182-201 ms (`sparse` k = 2, m = 10^6, stopped at
+// 16.6M units counted when the stop falls). The limit was 5·10^7 units before this
+// measurement, which took 211-218 ms at a stop and up to 600 ms at 12 ns per unit.
 // To be measured again on each other target (A96): run that benchmark there and set the limit
 // to 250 ms over its worst time per unit.
 pub const JOIN_LIMIT: u64 = 20_000_000;
@@ -3951,13 +3963,13 @@ mod tests {
             let mut keys: Vec<i64> = (0..next(20)).map(|_| next(top_key) as i64).collect();
             let mut fill: Vec<(i64, i64)> = (0..next(4))
                 .map(|_| {
-                    let a = next(top_key as u64) as i64;
+                    let a = next(top_key) as i64;
                     (a, a + next(700) as i64)
                 })
                 .collect();
             fill.sort_unstable();
             let set = Set::settled(Lits::of(&mut keys), joined(fill));
-            let top = next(2 * top_key as u64) as i64 - 20;
+            let top = next(2 * top_key) as i64 - 20;
             let delta = [1, 2, 3, 7, -1, -2, -5, 64][next(8) as usize];
             let n = [1, 2, 10, 100, 1000][next(5) as usize];
             let walk = (0..n).find(|&e| {

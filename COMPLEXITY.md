@@ -1077,6 +1077,53 @@ counts are instructions and do not depend on it): with `GCD_LEAF` set to 2048 wo
 `crossover all` exits with status 1 and reports `gcd-leaf` MOVED, 2.18 times the least work at
 2048 words against the measured 300; every other row stays at its crossover. Restored to 299.
 
+### PRES-switchover-not-race, `zedc-presburger/src/presburger/row_sums.rs` `JOIN_LIMIT`, measured 2026-11-14
+
+This switch is not a crossover in the sense above: past it the result changes. The join of
+row sums answers `decide`, `point` and `project` exactly; past `JOIN_LIMIT` (2·10^7 units of
+its work, counted, not timed) `decide` and `point` go to the solver, whose answers there are
+the same (tested), and `project` refuses (`Refusal::Work`), because the solver's projection is
+the union of the hulls of its disjuncts, a coarser set (author P197). It replaces the race of
+2026-11-13 (Levin's universal search), whose answer depended on which side finished first. The
+switch is the join's own count; neither side's cost is predicted (PRES-join-cost-predictor).
+
+Measured on a Ryzen 9 5950X, x86_64 Linux, test build, load 40-56, best of three, by
+`l01_38_presburger::bench::disj_groups::switchover` (`--bench`). Time per unit of the join, on
+cases of at least 10^6 units:
+
+| Case | Units | Time | ns per unit |
+|---|---|---|---|
+| `overlap_rows` k = 1,024 | 3,396,681 | 14.5 ms | 4.27 |
+| coefficients 1, 2, k = 512 | 1,952,038 | 20.1 ms | 10.28 |
+| `sparse` k = 2, m = 10^6 | 20,583,324 | 219.8 ms | 10.68 |
+| `sparse` k = 3, m = 300 | 19,958,845 | 127.5 ms | 6.39 |
+
+The worst, 10.68 ns, puts the limit at 214 ms, within A99's 250 ms. Both sides (decide; the
+default path's side is named):
+
+| Case | Units | Join | Solver | Default path |
+|---|---|---|---|---|
+| `sparse` k = 2, m = 10^4 | 675,637 | 9.34 ms | 0.066 ms | 7.82 ms, join |
+| `sparse` k = 2, m = 10^5 | 2,373,218 | 18.4 ms | 0.066 ms | 18.0 ms, join |
+| `sparse` k = 2, m = 10^6 | stops at 16.6M | 182 ms | 0.057 ms | 194 ms, solver after the stop |
+| `sparse` k = 3, m = 300 | 19,958,809 | 90.2 ms | 0.26 ms | 90.9 ms, join |
+| `wide` k = 16 | 5,064 | 0.156 ms | 0.664 ms | 0.164 ms, join |
+| `wide` k = 32 | 10,024 | 0.297 ms | 1.31 ms | 0.323 ms, join |
+
+Projections: `wide` k = 32 by the join 0.28 ms (the solver's projection took 502 ms at k = 16
+and is coarser); `sparse` k = 2, m = 10^6 and k = 3, m = 300 refuse (`Refusal::Work`). The
+race took 1.1-1.8 s to decide `wide` k = 32 (326M units) and 7-9 s for a point (2.3G units).
+`sparse` is the family where the default path is slower than the solver alone, by up to the
+limit's time; no other family of `disj_groups` was found where the solver is faster.
+
+Both sides of the limit are tested (`l01_38_presburger::disj_groups::row_sums`): four families
+at the limit equal to the join's units and one unit below, and 200 fresh-seed formulas per run
+(four runs: 185, 179, 177 and 173 with a plan; the solver below the limit decided 179, 169,
+172 and 165 of them, each the same as the join, and refused the rest).
+
+To be measured again on each other target (A96): run the benchmark there and set the limit to
+250 ms over its worst time per unit.
+
 ## Kept
 
 | Where | Why |
