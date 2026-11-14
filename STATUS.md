@@ -2211,7 +2211,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 2 | 2026-11-13 23:20 | resumed from handoff; load 0.67 0.52 1.32 |
 | REPAIR-text-cast-spelling | impl attempt 2 | 2026-11-13 23:35 | resumed from handoff; rebasing both trees |
-| SPEC-sigint-override | impl attempt 2 | 2026-11-13 22:56 | merged: zed cd6a72c, zed-impl 42ba1df96; affected groups 30 pieces 0 failed, --bench l01_19 2 pieces 0 failed; new row SIGNALS-rt needs STOP-releases-rt, L7.2,  |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
