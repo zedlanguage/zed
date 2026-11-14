@@ -2923,16 +2923,38 @@ enum Node<'t> {
 
 /// The literal's own term in the match the elaborator writes for a literal compared with a
 /// value whose carrier is inferred: an arm `is f64`, `is rat` or `is f32` for each carrier it follows,
-/// each to a literal, and last the literal itself. Any other match is outside the catalog.
+/// each to a literal, and last the literal itself. The same for an operation on generic
+/// literals alone built once per carrier (`elab::walk::per_carrier`, L1.26a), whose arms are
+/// that operation on the literals at each carrier and whose last arm is the operation on
+/// their own values, `match y { is f64 -> (4.0 * 2.0), …, _ -> (4 * 2) }`: each arm a
+/// constant, built of literals by primitives alone ([`constant_arm`]). Any other match is
+/// outside the catalog.
 pub(super) fn follow_own(arms: &[(Pattern, Term)]) -> Option<&Term> {
     let ((Pattern::Wild, own), rest) = arms.split_last()? else {
         return None;
     };
     let carrier = |(p, v): &(Pattern, Term)| {
         matches!(p, Pattern::Is(t) if *t == Type::f64() || *t == Type::rat() || *t == Type::f32())
-            && matches!(v, Term::Lit(_))
+            && constant_arm(v)
     };
     (!rest.is_empty() && rest.iter().all(carrier)).then_some(own)
+}
+
+/// Whether `t` is a literal or a primitive on such terms, which reads no name, so that
+/// [`Node::Follow`] can keep it as written when the match is closed.
+// Complexity tradeoff: one visit per node of the arm, O(its size), with an explicit stack, so
+// a deep arm does not grow the call stack; each arm is visited once where its match is
+// numbered, and its size is that of the operation on literals the source writes.
+fn constant_arm(t: &Term) -> bool {
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        match t {
+            Term::Lit(_) => {}
+            Term::Prim(_, args) => todo.extend(args),
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// A term the transfer makes, by what fixes it: a literal, a parameter's name, the primitive
