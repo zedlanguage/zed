@@ -6,10 +6,13 @@
 //! functions the commands call.
 
 mod bench;
+mod cases_runs;
 mod cite;
 mod conflicts;
+mod layer_roles;
 mod llp;
 mod plan;
+mod prose_checks;
 mod scaling;
 mod split;
 mod sync;
