@@ -47,8 +47,6 @@ fn a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level() {
         // A literal joined to it by `+` takes `f64` with it, `1/2` too.
         ("0.5 + 2^0.5", "1.9142135623730951"),
         ("2^0.5 + 1/2", "1.9142135623730951"),
-        // An exponent that is no integer literal leaves the decimal base no `rat`.
-        ("0.5^(1 + 1)", "0.25"),
         // A bare literal compared with it follows it.
         ("2^-1.0 == 0.5", "true"),
         ("2^(1/2) == 0.5", "false"),
@@ -57,7 +55,6 @@ fn a_line_that_takes_f64_in_a_body_takes_it_at_the_top_level() {
         // `<` makes one class of its sides.
         ("2^0.5 < 1.5", "true"),
         ("1 < 2^0.5", "true"),
-        ("2^(1 + 1) < 0.5", "false"),
         ("0.5 > 2^(1/2)", "false"),
         ("2^0.5 < 0.5^2", "false"),
         // Tuples, and tuples compared pair by pair.
@@ -104,6 +101,12 @@ fn a_line_rejected_in_a_body_is_rejected_at_the_top_level() {
         "(2^0.5, 0.5) == (1.0, 0.5)",
         "2^(1 + 1) == 0.5",
         "0.5 < 1 + 1",
+        // An exponent that is an operation on integer literals is an `int`, as `2` is, so
+        // these leave `rat` among the carriers as `0.5^2` does (plan row
+        // LIT-rat-int-op-exponent); before, the top level read them at `f64`.
+        "0.5^(1 + 1)",
+        "2^(1 + 1) < 0.5",
+        "0.5^(2^100 - 2^100 + 3)",
     ];
     for e in lines {
         for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
@@ -274,7 +277,7 @@ fn a_top_level_line_of_many_powers_takes_f64_in_linear_time() {
 
 #[test]
 fn a_power_whose_exponent_is_no_int_takes_no_rat_in_any_place() {
-    // At `rat`, `^` takes an `int` exponent alone (DESIGN.md sec:operators), so a `^` whose
+    // At `rat`, `^` takes an `int` exponent alone (DESIGN.md sec:lexical), so a `^` whose
     // exponent holds a decimal literal, a `/`, a `rat` literal or an `int` power with a
     // negative exponent is no `rat`, and an operand of `rat` beside it is rejected in every
     // place (plan row LIT-rat-decimal-exponent). The top level took each as a `rat`: the run
@@ -334,4 +337,145 @@ fn a_power_whose_exponent_is_no_int_takes_no_rat_in_any_place() {
         );
         assert_eq!(out.stdout, want, "{place}:\n{src}");
     }
+}
+
+/// The lines of `cases` in the three places ([`places`]), each accepted, each place running
+/// with status 0 and printing the values of `cases` on one line. The run's message that a
+/// `^` widens past a machine word is allowed where `widens` (the `2^100` in an exponent, at
+/// run time a big integer): each of the run's messages is that one, under the name of the place.
+fn same_in_every_place(tag: &str, cases: &[(&str, &str)], widens: bool) {
+    let lines: Vec<&str> = cases.iter().map(|(e, _)| *e).collect();
+    let want: Vec<&str> = cases.iter().map(|(_, v)| *v).collect();
+    let want = format!("{}\n", want.join(" "));
+    let warning = "widens past a machine word: this `^` of an i8 and an i8 gives a big integer.";
+    for (src, place) in places(&lines).iter().zip(["top", "body", "block"]) {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{place}:\n{src}");
+        let out = run(
+            &format!("l01_26a_top_body_agree_{tag}_{place}"),
+            src,
+            "",
+            &[],
+        );
+        assert_eq!(out.status, 0, "{place}:\n{src}\n{}", out.stderr);
+        let warned: Vec<&str> = (out.stderr.lines())
+            .filter(|l| l.contains("prog.zed:"))
+            .collect();
+        match widens {
+            true => assert!(
+                !warned.is_empty() && warned.iter().all(|w| w.ends_with(warning)),
+                "{place}:\n{src}\n{}",
+                out.stderr
+            ),
+            false => assert_eq!(out.stderr, "", "{place}:\n{src}"),
+        }
+        assert_eq!(out.stdout, want, "{place}:\n{src}");
+    }
+}
+
+#[test]
+fn a_power_whose_exponent_is_an_int_operation_takes_rat_in_every_place() {
+    // At `rat`, `^` takes any `int` exponent (DESIGN.md sec:lexical), and an operation on
+    // integer literals alone is an `int` there as one integer literal is ("An integer
+    // exponent stays an `int`"), so each line takes `rat` and gives the same value in all three
+    // places (plan row LIT-rat-int-op-exponent). A body rejected each: "The suffix makes the
+    // literal `2r` a `rat`, never `int | f32 | f64`".
+    same_in_every_place(
+        "int_op",
+        &[
+            ("2^(1 + 1) + 2r", "6r"),
+            ("2^(1 + 1) == 4r", "true"),
+            ("(1/2)^(3 - 1) * 2r", "1r/2r"),
+        ],
+        false,
+    );
+    same_in_every_place("int_op_big", &[("2r * 2^(2^100 - 2^100 + 3)", "16r")], true);
+    // The corner cases: a negative exponent, which `rat` takes; an exponent that is itself a
+    // power with such an exponent; one under `-`; the power meeting an `f64` or an `f32`,
+    // where the exponent stays an `int` (`f32 ^ int`) or takes `f64` with the base; and the
+    // power alone, an `int`.
+    same_in_every_place(
+        "int_op_corner",
+        &[
+            ("2^(-(1 + 1)) * 2r", "1r/2r"),
+            ("2^(1 - 3) + 0r", "1r/4r"),
+            ("2^(1^(1 + 1)) + 2r", "4r"),
+            ("(2^(1 + 1))^(3 - 1) == 16r", "true"),
+            ("-(2^(2 * 2)) + 1r", "-15r"),
+            ("2^(1 + 1) + 0.5f64", "4.5"),
+            ("2^(1 + 1) + 1.5f32", "5.5"),
+            ("2^(1 + 1)", "4"),
+            ("0.5^(1 + 1) * 1.0f64", "0.25"),
+        ],
+        false,
+    );
+}
+
+#[test]
+fn a_power_whose_exponent_is_an_int_operation_follows_a_parameter() {
+    // In a function whose parameter is of no declared type, the power's class is a type
+    // variable: at run time the exponent takes the carrier of the argument, as a literal
+    // exponent does, `f64` at an `f64` (there is no `f64 ^ int`), and stays an `int` at a
+    // `rat` and an `int`.
+    for (arg, want) in [
+        ("2r", "6r"),
+        ("0.5f64", "4.5"),
+        ("3", "7"),
+        ("1.5f32", "5.5"),
+    ] {
+        let src = format!(
+            "g(positional x) = 2^(1 + 1) + x;\n\
+             main(args: MainArgs) -> int = {{ args.stdout <- \"${{g({arg})}}\"; 0 }};\n"
+        );
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        let out = run("l01_26a_top_body_agree_int_op_param", &src, "", &[]);
+        assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{src}");
+        assert_eq!(out.stdout, format!("{want}\n"), "{src}");
+    }
+}
+
+#[test]
+fn a_power_whose_exponent_is_no_int_operation_stays_rejected() {
+    // LIT-rat-decimal-exponent's rejections stand: an exponent holding a decimal, a `/` or a
+    // `rat` literal, or an `int` power with a negative exponent, is no `int`.
+    for e in [
+        "2^(4/2) + 2r",
+        "2^(1 + 1.0) + 2r",
+        "2^(1 + 2r)",
+        "2^(2^-1) + 2r",
+        "2^(1 - 2^-1) == 2r",
+    ] {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            assert!(!type_errors(src).is_empty(), "{place}: accepted\n{src}");
+        }
+    }
+}
+
+/// A top-level binding and a function's value, each `2r` times a power whose exponent is `n`
+/// powers of `1` nested by `^` over `(1 + 1)`: `y = 2r * 2^1^1^…^(1 + 1);`.
+fn nested_int_exponents(n: usize) -> String {
+    let e = format!("2r * 2^{}(1 + 1)", "1^".repeat(n));
+    format!("y = {e};\ng() = {e};\n")
+}
+
+#[test]
+fn nested_int_operation_exponents_are_read_in_linear_time() {
+    // Each `^` reads its exponent as an `int` (plan row LIT-rat-int-op-exponent): read anew
+    // at each of the n powers, as the text walk does, that is O(n^2); kept by operation, and
+    // not entered again at the top level, O(n).
+    std::thread::Builder::new()
+        .stack_size(1 << 29)
+        .spawn(|| {
+            assert_eq!(type_errors(&nested_int_exponents(3)), Vec::<String>::new());
+            let n = 300;
+            let srcs = [
+                nested_int_exponents(n),
+                nested_int_exponents(scaling::FACTOR * n),
+            ];
+            scaling::check("checking n nested int exponents", n, |m| {
+                type_errors(&srcs[usize::from(m != n)]);
+            });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

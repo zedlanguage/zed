@@ -1426,6 +1426,10 @@ struct Ck<'t, 'a> {
     /// carrier ([`Ck::lit_fit`]), by its span and the carrier: read off the text alone, as
     /// [`Ck::lit_ops`] is, so it is kept after the trial.
     lit_fits: HashMap<(Span, Carrier), LitFit>,
+    /// The value at `int` of each operation that is an `int` exponent of `^` ([`int_exponent`])
+    /// by its span, `None` where its fold fails ([`Ck::int_exponent_at`]): read off the text
+    /// alone, so it is kept across trials.
+    int_exponents: HashMap<Span, Option<Value>>,
     /// What the text gives at `rat` of each operation at `rat`, or in a class of literals, whose
     /// operands are literals and such operations, by its span ([`Ck::rat_folded`]): its value,
     /// or for a power only that it is no zero; read off the text alone, so kept after a trial.
@@ -1664,6 +1668,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             applied: None,
             lit_refused: Vec::new(),
             lit_fits: HashMap::new(),
+            int_exponents: HashMap::new(),
             rat_folds: HashMap::new(),
             top_parts: Vec::new(),
             tail_reach: None,
@@ -2240,13 +2245,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A step prints a literal value as the program writes it in the expression the
             // step is about, `-0r` for `x / -0r` and `0r` for its `0r` ([`Ck::spelling`]).
             let at = Some(self.written_at(span, &mut written));
-            let ty = match (kept, src) {
-                (Some(t), _) => self.near(at, |ck| ck.show(t)),
-                (None, Src::Other(e)) => match self.tuple_seen(e) {
+            // An `int` exponent in a body is read by its value and keeps the class of literals
+            // it has, which no use fixes ([`Ck::int_exponent_at`]), so it is shown by the value:
+            // "this `-` gives -2", not the class's carriers. One lookup.
+            let ty = match (kept, src, self.int_exponents.get(&span)) {
+                (Some(_), _, Some(Some(v))) => self.near(at, |ck| ck.show(&Ty::lit(v))),
+                (Some(t), _, _) => self.near(at, |ck| ck.show(t)),
+                (None, Src::Other(e), _) => match self.tuple_seen(e) {
                     Some(t) => self.near(at, |ck| ck.show(&t)),
                     None => continue,
                 },
-                (None, _) => continue,
+                (None, _, _) => continue,
             };
             // What this expression shows, in order; pushed reversed so it pops in order.
             let mut next = Vec::new();
@@ -6772,8 +6781,8 @@ fn written_alone(src: &str, at: Span, edits: &[(Span, &dyn fmt::Display)]) -> Op
 /// fix that gives one of them that carrier gives it to all. The literals are folded as A54
 /// permits, each operation by the kernel's one evaluator ([`eval()`]); the checker runs no code
 /// of the program. `None` where a literal is not exactly a `c` or an operation gives an atom,
-/// as `1 / 0`. At `rat` a `^` takes an `int` exponent, so there its exponent is an `int`
-/// literal, read at `int` ([`rat_exponent`]), and `None` otherwise: `(3/2)^-2` is `4/9` at
+/// as `1 / 0`. At `rat` a `^` takes an `int` exponent, so there its exponent is read at
+/// `int` ([`int_exponent_value`]), and `None` where it is no `int`: `(3/2)^-2` is `4/9` at
 /// `rat`. The walk keeps its own stack, since the operations nest as deep as the text; it
 /// costs one operation per node of `e`, and the reading of its literals ([`lit_value`]).
 ///
@@ -6802,8 +6811,10 @@ fn folded(e: &Expr, c: Carrier) -> Option<Value> {
                     continue;
                 }
                 match &x.kind {
+                    // The exponent is read at `int` apart from this walk, which does not
+                    // enter it: each node is folded once, at `rat` or at `int`.
                     ExprKind::Binary(BinaryOp::Pow, a, b) if c == Carrier::Rat => {
-                        let k = rat_exponent(b)?;
+                        let k = int_exponent_value(b)?;
                         todo.extend([Step::Apply(Prim::Pow, 2), Step::Push(k), Step::Visit(a)]);
                     }
                     ExprKind::Binary(op, a, b) => {
@@ -7140,6 +7151,31 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
 /// under `-`: `^` takes (rat, int), so at `rat` the exponent keeps its own carrier, `int`.
 fn rat_exponent(b: &Expr) -> Option<Value> {
     literal(b, None).and_then(|l| lit_value(&l, Carrier::Int))
+}
+
+/// The value of `b`, the exponent of a `^` at `rat`, where it is an `int`: a literal read at
+/// `int` ([`rat_exponent`]), or an operation whose text is that of an `int` ([`int_exponent`])
+/// and whose fold at `int` gives an integer ([`folded`]). DESIGN.md sec:lexical gives a `rat`
+/// base an `int` exponent of either sign, and an operation on integer literals is an `int`
+/// (plan row LIT-rat-int-op-exponent), so `(1/2)^(3 - 1)` is `1r/4r` at `rat`, and
+/// `2r * 2^(2^100 - 2^100 + 3)` is `16r`. `None` for `0.5`, `1/2`, `2r` and for `2^-1`, an
+/// `int` power that is refused, so a `^` with such an exponent is no `rat`.
+///
+/// Complexity tradeoff: the naive reading, an `int` literal alone (the method before), costs
+/// O(1) but makes `2^(1 + 1)` no `rat` at the top level of a value while the same line in a
+/// body takes `rat`. Used: one walk of the text of `b` and one fold of it, O(size of `b`)
+/// besides the kernel's powers in it, each O(M(n) log k) for an n-bit result
+/// ([`kernel_folded`], bounded). The walks that call it for each `^` ([`open_lits`],
+/// [`unfixed_binding`]) do not enter an exponent read so again, which keeps them O(size of
+/// the value) over nested powers such as `1^(1^(1^1))`.
+fn int_exponent_value(b: &Expr) -> Option<Value> {
+    if let Some(v) = rat_exponent(b) {
+        return Some(v);
+    }
+    if !int_exponent(b) {
+        return None;
+    }
+    folded(b, Carrier::Int).filter(|v| v.number_kind() == Some(0))
 }
 
 /// Whether the text of `b`, the exponent of a `^` at `rat`, is that of an `int`, which `^`
@@ -7661,7 +7697,8 @@ struct OpenLits {
     decimal: bool,
     /// A `/`, which has no arrow at `int`.
     div: bool,
-    /// A `^` whose exponent is no integer literal: `^` has no arrow that takes two `rat`s.
+    /// A `^` whose exponent is no `int` ([`int_exponent_value`]): `^` has no arrow that takes
+    /// two `rat`s.
     no_rat: bool,
 }
 
@@ -7688,8 +7725,10 @@ impl OpenLits {
 /// stack.
 fn open_lits(e: &Expr) -> Option<OpenLits> {
     let mut o = OpenLits::default();
-    let mut todo = vec![e];
-    while let Some(x) = todo.pop() {
+    // Each node with whether it is inside an exponent already read as an `int`, whose own
+    // powers then have `int` exponents too, since its fold folded them.
+    let mut todo = vec![(e, false)];
+    while let Some((x, int)) = todo.pop() {
         if let Some(l) = literal(x, None) {
             if !l.bare {
                 return None;
@@ -7705,10 +7744,18 @@ fn open_lits(e: &Expr) -> Option<OpenLits> {
                 b,
             ) => {
                 o.div |= *op == BinaryOp::Div;
-                o.no_rat |= *op == BinaryOp::Pow && rat_exponent(b).is_none();
-                todo.extend([&**b, &**a]);
+                // Complexity tradeoff: reading the exponent of every `^` ([`int_exponent_value`])
+                // costs its size, O(n^2) over a nest of n powers; read only outside an exponent
+                // read already, and only until one is found no `int`, each node is read at most
+                // twice, O(n).
+                let mut int_b = int;
+                if *op == BinaryOp::Pow && !int && !o.no_rat {
+                    int_b = int_exponent_value(b).is_some();
+                    o.no_rat = !int_b;
+                }
+                todo.extend([(&**b, int_b), (&**a, int)]);
             }
-            ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+            ExprKind::Unary(UnaryOp::Neg, a) => todo.push((a, int)),
             _ => return None,
         }
     }
@@ -7969,15 +8016,20 @@ fn unfixed_comparison(
 /// need not have the carrier of its base, and `^` has no arrow that takes an `f64` and an
 /// `int`. So where the literal written lies in one operand of a `^` and the other operand is
 /// an operation, that operand's first literal is written too, and so on inside it: `1` in
-/// `y = 2 ^ (1 + 1) / 2`, written `y = 2.0f64 ^ (1.0f64 + 1) / 2`. One walk down the path from
-/// the root to each literal written, on its own stack, since the operations nest as deep as
-/// the text: each node is on one path at most, so O(|e|), and O(k log k) to sort the k
-/// literals it returns.
+/// `y = 2 ^ (1 + 1) / 2`, written `y = 2.0f64 ^ (1.0f64 + 1) / 2`. Where the fix writes
+/// `rat` (`at_rat`), an exponent that is an `int` ([`int_exponent_value`]) is left as it is,
+/// since a `rat` base takes an `int` exponent (DESIGN.md sec:lexical; plan row
+/// LIT-rat-int-op-exponent): `y = 2r ^ (1 + 1) / 2`, where `2r ^ (1r + 1)` would be rejected,
+/// `^` having no arrow at (`rat`, `rat`). One walk down the path from the root to each literal
+/// written, on its own stack, since the operations nest as deep as the text: each node is on
+/// one path at most, so O(|e|), and O(k log k) to sort the k literals it returns.
 ///
 /// Complexity tradeoff: the naive test walks each operation to see whether a written literal
 /// reaches it, O(|e| · depth), O(|e|²) for `((1 ^ 2) ^ 3) ^ …`; here only the operations on
-/// the path to a written literal are visited, and the paths lie in disjoint operands.
-fn unreached(roots: &[&Expr], written: Span, src: Option<&str>) -> Vec<Lit> {
+/// the path to a written literal are visited, and the paths lie in disjoint operands. An
+/// exponent left as it is was read once by [`int_exponent_value`] and is not entered again,
+/// so the walk stays O(|e|).
+fn unreached(roots: &[&Expr], written: Span, src: Option<&str>, at_rat: bool) -> Vec<Lit> {
     let holds = |x: &Expr, at: usize| x.span.start <= at && at < x.span.end;
     let mut out: Vec<Lit> = Vec::new();
     let mut todo: Vec<(&Expr, usize)> = (roots.iter())
@@ -7997,6 +8049,7 @@ fn unreached(roots: &[&Expr], written: Span, src: Option<&str>) -> Vec<Lit> {
                 todo.push((with, at));
                 if *op == BinaryOp::Pow
                     && literal(other, None).is_none()
+                    && !(at_rat && std::ptr::eq(other, &**b) && int_exponent_value(b).is_some())
                     && let Some(l) = first_literal(other, src)
                 {
                     todo.push((other, l.span.start));
@@ -8028,10 +8081,10 @@ fn first_literal(mut e: &Expr, src: Option<&str>) -> Option<Lit> {
 /// The rejection of the value `e` bound to the name `n` outside a function when nothing gives
 /// its literals a carrier (DESIGN.md step L1.26b): `e` is literals with no suffix alone, under
 /// `+`, `-`, `*`, `/`, `^` and a `-`, with a decimal among them or a `/`; with a `^` among them
-/// a fix gives `rat` only where each `^` has an `int` literal for its exponent, which `^` takes
-/// at `rat` ([`rat_exponent`]), and never to a decimal (POW-domains). Each fix writes one literal
-/// with a carrier ([`leaves_with`]), and the operators carry it to the rest, since an
-/// operation on literals alone takes the carrier of what it meets ([`Ck::lit_op_meets`]): the
+/// a fix gives `rat` only where each `^` has an `int` for its exponent, which `^` takes
+/// at `rat` ([`int_exponent_value`]), and never to a decimal (POW-domains). Each fix writes
+/// one literal with a carrier ([`leaves_with`]), and the operators carry it to the rest, since
+/// an operation on literals alone takes the carrier of what it meets ([`Ck::lit_op_meets`]): the
 /// first decimal, which the message names ([`unfixed`]), `y = 0.5f64` and `y = 0.5r`, and
 /// `y = 0.5f64 * (1 + 2)`; or else, for a `/` of integer literals, which is rejected at the
 /// `/`, the first literal of the value (DESIGN.md sec:diagnostics, "A `/` of integer
@@ -8081,12 +8134,17 @@ fn unfixed_binding(
     let mut lits = Vec::new();
     let mut div = None;
     let mut pow = false;
-    // At `rat`, `^` takes an `int` exponent alone, so `rat` checks only where each `^` has an
-    // `int` literal for its exponent ([`rat_exponent`]): `q = (3/2)^-2` holds `4/9`, but in
-    // `q = (3/2)^(1 + 1)` the exponent would be a `rat`. The text decides it, and no power is
-    // computed, whose size grows with its exponent's value, as `3^200000` does.
+    // At `rat`, `^` takes an `int` exponent alone, of either sign, so `rat` checks only where
+    // each `^` has an `int` for its exponent ([`int_exponent_value`]): `q = (3/2)^-2` holds
+    // `4/9` and `q = (3/2)^(1 + 1)` holds `9/4`, but in `q = (3/2)^(1/2)` the exponent would
+    // be a `rat`. No power of the value is computed, whose size grows with its exponent's
+    // value, as `3^200000` does; only the exponent is folded, within the fold's bound.
+    // Complexity tradeoff: reading the exponent of every `^` costs its size, O(n^2) over a
+    // nest of n powers; read only outside an exponent read already, whose own powers its fold
+    // folded, and only while `at_rat` holds, each node is read at most twice, O(n).
     let mut at_rat = true;
-    while let Some(x) = stack.pop() {
+    let mut stack: Vec<(&Expr, bool)> = stack.into_iter().map(|x| (x, false)).collect();
+    while let Some((x, int)) = stack.pop() {
         match &x.kind {
             ExprKind::Binary(
                 op
@@ -8098,10 +8156,14 @@ fn unfixed_binding(
                     div = Some(x);
                 }
                 pow |= *op == BinaryOp::Pow;
-                at_rat &= *op != BinaryOp::Pow || rat_exponent(b).is_some();
-                stack.extend([&**b, &**a]);
+                let mut int_b = int;
+                if *op == BinaryOp::Pow && !int && at_rat {
+                    int_b = int_exponent_value(b).is_some();
+                    at_rat = int_b;
+                }
+                stack.extend([(&**b, int_b), (&**a, int)]);
             }
-            ExprKind::Unary(UnaryOp::Neg, a) if literal(x, None).is_none() => stack.push(a),
+            ExprKind::Unary(UnaryOp::Neg, a) if literal(x, None).is_none() => stack.push((a, int)),
             _ => {
                 let l = literal(x, src).filter(|l| l.bare)?;
                 lits.push(l);
@@ -8121,7 +8183,7 @@ fn unfixed_binding(
         // A decimal under a `^` with nothing to fix it is left to the fixes at `f64`, the
         // default POW-domains settles.
         let forms = forms.filter(|f| *f != Form::Cast && (!pow || f.carrier() != Carrier::Rat));
-        let mut leaves = unreached(&roots, l.span, src);
+        let mut leaves = unreached(&roots, l.span, src, false);
         leaves.push(l.clone());
         leaves.sort_by_key(|l| l.span.start);
         m.fixes = forms
@@ -8155,10 +8217,14 @@ fn unfixed_binding(
     );
     // The first literal of the value, whose carrier reaches the rest ([`unreached`]), in a
     // cast, `f64(1)`; with the suffix, `1.0f64`, where each is written in decimal digits,
-    // since otherwise that form is the cast; and at `rat`, but for a `^`.
-    let mut leaves = unreached(&roots, lits[0].span, src);
-    leaves.insert(0, lits[0].clone());
-    let leaves = &leaves[..];
+    // since otherwise that form is the cast; and at `rat`, but for a `^` whose exponent is no
+    // `int`. At `rat` an `int` exponent is left as it is ([`unreached`]).
+    let leaves_at = |at_rat: bool| {
+        let mut leaves = unreached(&roots, lits[0].span, src, at_rat);
+        leaves.insert(0, lits[0].clone());
+        leaves
+    };
+    let (leaves, rat_leaves) = (leaves_at(false), leaves_at(true));
     let digits = (leaves.iter()).all(|p| lit_digits(p).bytes().all(|b| b.is_ascii_digit()));
     let forms = forms.filter(|f| digits || *f != Form::Suffix(Carrier::F64));
     // Without decimal digits both forms are casts, written `f64(0xFF)` then `rat(0xFF)`.
@@ -8168,8 +8234,10 @@ fn unfixed_binding(
     }
     let divisor = literal(b, src).filter(|_| two);
     let bound = whole.then_some(n);
-    let fixes =
-        (forms.into_iter()).map(|f| leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src));
+    let fixes = (forms.into_iter()).map(|f| {
+        let leaves = if f.carrier() == Carrier::Rat { &rat_leaves } else { &leaves };
+        leaves_with(leaves, f, place, bound, e, divisor.as_ref(), src)
+    });
     Some((d.span, Msg::new(m, fixes.collect())))
 }
 

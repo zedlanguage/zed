@@ -122,22 +122,42 @@ fn a_power_of_a_division_of_integer_literals_is_offered_the_exact_rat_power() {
             assert_eq!(value(&format!("{line}\n"), "q"), named("q", q), "{line}");
         }
     }
-    // An exponent that is not a literal takes the base's carrier, and `^` has no arrow
-    // (rat, rat), so there the menu offers `f64` alone.
+    // An exponent that is an operation on integer literals alone is an `int` at `rat` as one
+    // integer literal is, and keeps `int` under the `rat` base (DESIGN.md sec:lexical; plan row
+    // LIT-rat-int-op-exponent), so the menu offers the exact `rat` power too, with the
+    // exponent left as it is: `^` has no arrow (rat, rat).
+    let fixes = [
+        ("q = (3.0f64/2)^(1.0f64+1);", "q is 2.25"),
+        ("q = (3r/2)^(1+1);", "q is (3r/2)^(1+1)"),
+        ("q = (f64(3)/2)^(f64(1)+1);", "q is 2.25"),
+    ];
     assert_eq!(
         type_errors("q = (3/2)^(1+1);\n"),
-        [{
-            let fixes = [
-                ("q = (3.0f64/2)^(1.0f64+1);", "q is 2.25"),
-                ("q = (f64(3)/2)^(f64(1)+1);", "q is 2.25"),
-            ];
-            format!(
-                "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
-                 at `rat` with this exponent: `q = (3/2)^(1+1)`{}{} [(3/2)]",
-                tried(&fixes),
-                menu(&fixes)
-            )
-        }]
+        [format!(
+            "{why}: `q = (3/2)^(1+1)`{}{} [(3/2)]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
+    );
+    for (line, holds) in fixes {
+        let q = holds.strip_prefix("q is ").unwrap();
+        assert_eq!(value(&format!("{line}\n"), "q"), named("q", q), "{line}");
+    }
+    assert_eq!(value("q = (3r/2)^(1+1);\n", "q"), named("q", "9r/4r"));
+    // An exponent that is no `int`, as its `2^-1` makes it, would be a `rat` at `rat`, and
+    // `^` has no arrow (rat, rat), so there the menu offers `f64` alone.
+    let fixes = [
+        ("q = (3.0f64/2)^(1.0f64-2^-1);", "q is 1.224744871391589"),
+        ("q = (f64(3)/2)^(f64(1)-2^-1);", "q is 1.224744871391589"),
+    ];
+    assert_eq!(
+        type_errors("q = (3/2)^(1-2^-1);\n"),
+        [format!(
+            "Nothing gives the integer literals a carrier, `/` has none at `int`, and `^` none \
+             at `rat` with this exponent: `q = (3/2)^(1-2^-1)`{}{} [(3/2)]",
+            tried(&fixes),
+            menu(&fixes)
+        )]
     );
 }
 
@@ -229,16 +249,30 @@ fn a_slash_among_operations_on_literals_is_rejected_once_at_the_literal_that_fix
             ],
             "2 ^ 2 / 3",
         ),
-        // An exponent that is an operation takes the base's carrier, and `^` has no arrow
-        // (rat, rat), so the menu offers `f64` alone.
+        // An exponent that is an operation on integer literals alone keeps `int` under a base
+        // at `rat`, as one integer literal does (plan row LIT-rat-int-op-exponent), so the
+        // `rat` fix leaves it as it is; at `f64` it is written too, since `^` has no arrow
+        // (f64, int).
         (
             "y = 2 ^ (1 + 1) / 3;\n",
-            slash(pow),
+            slash(why),
             vec![
                 ("y = 2.0f64 ^ (1.0f64 + 1) / 3;", "y is 1.3333333333333333"),
+                ("y = 2r ^ (1 + 1) / 3;", "y is 2r ^ (1 + 1) / 3"),
                 ("y = f64(2) ^ (f64(1) + 1) / 3;", "y is 1.3333333333333333"),
             ],
             "2 ^ (1 + 1) / 3",
+        ),
+        // An exponent that is no `int`, as its `2^-1` makes it, takes the base's carrier, and
+        // `^` has no arrow (rat, rat), so the menu offers `f64` alone.
+        (
+            "y = 2 ^ (1 - 2^-1) / 3;\n",
+            slash(pow),
+            vec![
+                ("y = 2.0f64 ^ (1.0f64 - 2^-1) / 3;", "y is 0.47140452079103173"),
+                ("y = f64(2) ^ (f64(1) - 2^-1) / 3;", "y is 0.47140452079103173"),
+            ],
+            "2 ^ (1 - 2^-1) / 3",
         ),
         // One carrier reaches both `/` of two literals: they meet at the outer `/`.
         (

@@ -152,10 +152,12 @@ fn an_unfixed_decimal_lists_a_line_for_each_carrier() {
     );
 }
 
-/// A power whose exponent is an integer literal lists `rat` as well, by the arrow (rat, int)
-/// of `^`; one whose exponent is an operation does not, as `^` has no arrow (rat, rat).
+/// A power whose exponent is an `int` lists `rat` as well, by the arrow (rat, int) of `^`:
+/// an integer literal, or an operation on integer literals alone, which the `rat` fix leaves
+/// as it is (plan row LIT-rat-int-op-exponent). One whose exponent is no `int`, as `2^-1`
+/// makes it, does not, as `^` has no arrow (rat, rat).
 #[test]
-fn a_power_lists_rat_only_with_an_integer_literal_exponent() {
+fn a_power_lists_rat_only_with_an_int_exponent() {
     assert_eq!(
         checked("y = (2 ^ 3) / 4;\n"),
         pairs(&[
@@ -164,9 +166,16 @@ fn a_power_lists_rat_only_with_an_integer_literal_exponent() {
             ("y = (f64(2) ^ 3) / 4;", "y is 2.0"),
         ])
     );
-    let fixes = checked("y = (2 ^ (1 + 2)) / 4;\n");
+    assert_eq!(
+        checked("y = (2 ^ (1 + 2)) / 4;\n"),
+        pairs(&[
+            ("y = (2.0f64 ^ (1.0f64 + 2)) / 4;", "y is 2.0"),
+            ("y = (2r ^ (1 + 2)) / 4;", "y is (2r ^ (1 + 2)) / 4"),
+            ("y = (f64(2) ^ (f64(1) + 2)) / 4;", "y is 2.0"),
+        ])
+    );
+    let fixes = checked("y = (2 ^ (3 - 2^-1)) / 4;\n");
     assert!(fixes.iter().all(|(l, _)| !l.contains('r')), "{fixes:?}");
-    assert!(fixes.iter().all(|(_, h)| h == "y is 2.0"), "{fixes:?}");
 }
 
 #[test]

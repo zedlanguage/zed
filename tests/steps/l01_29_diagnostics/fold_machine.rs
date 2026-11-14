@@ -122,7 +122,7 @@ const NOT_FOLDED: &str = r#"4:24: Int power with an exponent that may be negativ
   [9]  2:9: this literal, 2, is 2
   [10] 2:11: this literal, 64, is 64
   [11] 2:16: this literal, 13, is 13
-  [12] 3:13: this `^` gives int
+  [12] 3:13: this `^` gives 1048576
   [13] 3:14: this literal, 2, is 2
   [14] 3:16: this literal, 20, is 20
   [15] 4:33: `x` is int here

@@ -162,16 +162,20 @@ fn a_tuple_menu_names_the_value_where_a_pair_is_an_operation() {
 fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
     // "the menu writes the carrier at the first literal of the value": the carrier of `2`
     // reaches the `/` and the base of `^`, but not its exponent, since `^` has no arrow that
-    // takes an `f64` and an `int`, so the exponent's first literal is written too.
+    // takes an `f64` and an `int`, so the exponent's first literal is written too. At `rat`
+    // the exponent, an operation on integer literals alone, keeps `int` as one integer literal
+    // does, and is left as it is (plan row LIT-rat-int-op-exponent).
     let src = "y = 2 ^ (1 + 1) / 2;\n";
     assert_eq!(
         checked(src),
         pairs(&[
             ("y = 2.0f64 ^ (1.0f64 + 1) / 2;", "y is 2.0"),
+            ("y = 2r ^ (1 + 1) / 2;", "y is 2r ^ (1 + 1) / 2"),
             ("y = f64(2) ^ (f64(1) + 1) / 2;", "y is 2.0"),
         ])
     );
     assert_eq!(y("y = 2.0f64 ^ (1.0f64 + 1) / 2;\n"), "2.0");
+    assert_eq!(y("y = 2r ^ (1 + 1) / 2;\n"), "2r");
     assert_eq!(y("y = f64(2) ^ (f64(1) + 1) / 2;\n"), "2.0");
     // A literal exponent takes the carrier `f64` of the base it meets, and keeps `int` under a
     // base at `rat`, so only the first literal of the value is written: `2 ^ 2` meets
@@ -187,36 +191,48 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
     assert_eq!(y("y = rat(0xFF) / 2 ^ 2;\n"), "255r/4r");
 }
 
-/// Item NUM-huge-div: in a body, an exponent that is an operation on literals joins its base's
-/// literals, `^` narrows them to `int | f32 | f64` and `/` to `f32 | f64`, and they used to
-/// take `f64` there as the literal of a float-only word does, so `2 ^ 2 ^ 100 / 3` gave `inf`
-/// and `2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)` gave `nan`. DESIGN.md sec:domains: "an operation on
-/// literals alone ... takes the carrier of what it meets", and nothing gives these one, so
-/// each is rejected, as at the top level, with the carrier written at its first literal.
+/// Item NUM-huge-div: in a body, the literals of `2 ^ 2 ^ 100 / 3` used to take `f64` as the
+/// literal of a float-only word does, so it gave `inf` and `2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)`
+/// gave `nan`. DESIGN.md sec:domains: "an operation on literals alone ... takes the carrier of
+/// what it meets", and nothing gives these one, so each is rejected, as at the top level, with
+/// the carrier written at its first literal. An exponent that is an operation on integer
+/// literals alone is an `int` as one integer literal is (DESIGN.md sec:lexical; plan row
+/// LIT-rat-int-op-exponent), so `^` keeps `rat` and the `rat` fix is offered beside `f64`. An
+/// exponent whose value is no exact `f64`, as `2 ^ 100 - 1`, removes `f64` as that value
+/// written as one literal does, and the exact `rat` fix alone is offered.
 #[test]
 fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
-    for (body, fix) in [
-        ("2 ^ (1 + 1) / 3", "2.0f64 ^ (1 + 1) / 3"),
-        ("2 ^ 2 ^ 10 / 3", "2.0f64 ^ 2 ^ 10 / 3"),
-        ("2 ^ 2 ^ 100 / 3", "2.0f64 ^ 2 ^ 100 / 3"),
+    for (body, carriers, fix) in [
+        ("2 ^ (1 + 1) / 3", "f32 | f64 | rat", "2.0f64 ^ (1 + 1) / 3"),
+        ("2 ^ 2 ^ 10 / 3", "f32 | f64 | rat", "2.0f64 ^ 2 ^ 10 / 3"),
+        ("2 ^ 2 ^ 100 / 3", "f32 | f64 | rat", "2.0f64 ^ 2 ^ 100 / 3"),
         (
             "2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
-            "2.0f64 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
+            "f32 | rat",
+            "2r ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
+        ),
+        (
+            "2 ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375",
+            "f32 | rat",
+            "2r ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375",
         ),
     ] {
         let src = format!("h(positional c: bool) = {body};\n");
         assert_eq!(
             first(&src),
             format!(
-                "Nothing gives the literal `2` a carrier of `f32 | f64`. \
+                "Nothing gives the literal `2` a carrier of `{carriers}`. \
                  Try `h(positional c: bool) = {fix}` instead."
             ),
             "{src}"
         );
     }
+    // The `rat` fix is exact: `2r`, where the `f64` arithmetic gives `nan`.
+    let at = |body: &str| y(&format!("h(positional c: bool) = {body};\ny = h(true);\n"));
+    assert_eq!(at("2r ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)"), "2r");
+    assert_eq!(at("2r ^ (1 + 1) / 3"), "4r/3r");
     // A word that takes float formats alone still gives its literals `f64` (`sqrt(2)`), with
     // an operation on them as its argument, and a decimal literal still does.
-    let at = |body: &str| y(&format!("h(positional c: bool) = {body};\ny = h(true);\n"));
     assert_eq!(at("sqrt(2)"), "1.4142135623730951");
     assert_eq!(at("sqrt(2 ^ (1 + 1) / 3)"), "1.1547005383792515");
     assert_eq!(at("2 ^ -1.0 / 3"), "0.16666666666666666");

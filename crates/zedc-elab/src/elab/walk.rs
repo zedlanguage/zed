@@ -1943,8 +1943,12 @@ impl<'a> Elab<'a> {
     /// The literal is a constant, so evaluating the other operand first changes nothing.
     fn follow(&mut self, l: &Expr, r: &Expr, p: Prim, mut args: Vec<Term>) -> Term {
         let follows = &self.info.follows;
+        // An exponent that is an operation on integer literals alone, `(1 + 1)` in `x ^ (1 + 1)`,
+        // follows as a literal, by its own span (plan row LIT-rat-int-op-exponent): an `f64`
+        // base has no `int` power at run time. One more lookup per operand, O(1).
         let Some((at, values)) = [l, r].into_iter().enumerate().find_map(|(i, e)| {
-            let s = lit_span(e).filter(|s| !self.info.witness.contains_key(s))?;
+            let s = Some(lit_span(e).unwrap_or(e.span))
+                .filter(|s| !self.info.witness.contains_key(s))?;
             Some((i, follows.get(&s)?))
         }) else {
             return Term::Prim(p, args);

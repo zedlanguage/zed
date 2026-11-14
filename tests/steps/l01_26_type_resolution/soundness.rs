@@ -219,15 +219,20 @@ fn an_int_power_rejection_through_a_name_shows_its_value() {
 
 #[test]
 fn an_int_power_rejection_through_an_expression_shows_its_derivation() {
+    // An exponent that is an operation on integer literals alone is an `int` known as its
+    // value, as one integer literal is (plan row LIT-rat-int-op-exponent), so the note gives
+    // -2 and the exact `rat` power is a repair too.
     let out = rejected("", r#""${2^(1 - 3)}""#);
     assert!(
-        out.contains("Int power with an exponent that may be negative: `2 : int ^ (1 - 3) : int`. Try `2.0f64^(1 - 3)` instead."),
+        out.contains("Int power with a negative exponent: `2 : int ^ (1 - 3) : -2`. Try `2.0f64^(1 - 3)` instead."),
         "{out}"
     );
-    assert!(out.contains("this `-` gives int"), "{out}");
+    assert!(out.contains("this `-` gives -2"), "{out}");
     assert!(out.contains("repair: `2.0f64^(1 - 3)`"), "{out}");
+    assert!(out.contains("repair: `2r^(1 - 3)`"), "{out}");
     assert!(!out.contains("`v"), "{out}");
     assert_eq!(runs("", r#""${2.0f64^(1 - 3)}""#, ""), "0.25\n");
+    assert_eq!(runs("", r#""${2r^(1 - 3)}""#, ""), "1r/4r\n");
     // An expression of an int that may be at least 0: a test of a name that holds it, and
     // no float, which only a cast that may fail would give.
     let read = "  n = int(m.stdin[0]) else 0;\n";

@@ -3395,8 +3395,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }),
                     }
                 }
+                // The exponent's value at `int`, a literal's or an operation's, as `2` for
+                // `1 + 1` (plan row LIT-rat-int-op-exponent): the guard above kept only an
+                // exponent that is an `int`, and [`Self::int_exponent_at`] keeps what it reads,
+                // so this costs O(size of the exponent) once.
                 Step::Exponent(b) => fits.push(LitFit {
-                    value: rat_exponent(b).map(RatFact::Value),
+                    value: self.int_exponent_at(b).map(RatFact::Value),
                     div: false,
                     pow: false,
                     refused: None,
@@ -3640,16 +3644,47 @@ impl<'t, 'a> Ck<'t, 'a> {
             // in its class: at `rat` it could be `0r` and give `#divByZero`, which the class's
             // result would then carry at every carrier. O(1): what the text gives of the base
             // is a lookup ([`Self::rat_fact`]).
-            if op == BinaryOp::Pow
+            let known_base = op == BinaryOp::Pow
                 && x.expr.is_some_and(|a| {
                     self.rat_fact(a)
                         .is_some_and(|f| matches!(f, RatFact::Value(_)) || f.nonzero())
-                })
+                });
+            if known_base
                 && let Some(l) = &mut y.lit
                 && l.bare
                 && lit_carrier(&l.value) == Carrier::Int
             {
                 l.exponent = true;
+            }
+            // An exponent that is an operation on integer literals alone, as `(1 + 1)` in
+            // `2^(1 + 1)`, is an `int` as one literal is (DESIGN.md sec:lexical; plan row
+            // LIT-rat-int-op-exponent): it stands for its value, a bare literal at its span, so
+            // it is an exponent as above, and `2^(1 + 1) + 2r` is `6r` here as at the top level.
+            // Its own class, of the literals in it, is then joined by nothing and is an `int`.
+            // Elaboration reads the exponent at `f64`, where the class takes it, by its span,
+            // as it reads a literal ([`Ck::lit_follows`]). The naive way, the exponent's class
+            // joined to the base's, removes `rat`, since `^` takes no two `rat`s, and rejected
+            // `2r` there. One lookup of the class and a read of the exponent kept by operation
+            // ([`Self::int_exponent_at`]), so O(1) per node over the body.
+            if known_base
+                && self.level > 0
+                && y.lit.is_none()
+                && let Some(k) = self.class_of_ty(&y.ty)
+                && self.classes[self.find(k)].generic
+                && let Some(v) = self.int_exponent_at(b)
+            {
+                y.ty = Ty::lit(&v);
+                y.lit = Some(Lit {
+                    span: b.span,
+                    site: b.span,
+                    text: Rc::new(v.to_string()),
+                    value: v,
+                    spelled: None,
+                    bare: true,
+                    generic: true,
+                    witness: false,
+                    exponent: true,
+                });
             }
             // Two generic operands, as in `1 + 2`, make a class of their own inside a
             // function: generic, it takes the carrier of what it meets, the first operand
@@ -3957,8 +3992,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// there. What the text gives of an operand ([`Self::rat_fact`]) is its value where it is a
     /// `rat` literal, a bare literal at `rat` or a sum, difference, product or quotient of such
     /// values, and that it is no zero where it is a power of a base that is no zero; a `^`'s
-    /// exponent is known where it is an `int` literal. The operation's own fact is kept
-    /// ([`Ck::rat_folds`]): a value by the kernel's one evaluator as A54 permits
+    /// exponent is known where it is an `int` ([`Self::int_exponent_at`]). The operation's own
+    /// fact is kept ([`Ck::rat_folds`]): a value by the kernel's one evaluator as A54 permits
     /// ([`prim_folded`]), unless the operation gives an atom, as `1r / (1r - 1r)` does.
     ///
     /// A power's value is not computed, except at a base of `0`, `1` or `-1`, which the kernel
@@ -3988,7 +4023,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let x = self.rat_fact(a);
         let y = match op {
-            BinaryOp::Pow => rat_exponent(b).map(RatFact::Value),
+            BinaryOp::Pow => self.int_exponent_at(b).map(RatFact::Value),
             _ => self.rat_fact(b),
         };
         // Only the divisor of a `/` can give `#divByZero`: one known to be no zero rules it out
@@ -4017,6 +4052,64 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => literal(e, None).and_then(|l| lit_value(&l, Carrier::Rat)),
         }
         .map(RatFact::Value)
+    }
+
+    /// The value of `b`, the exponent of a `^`, where it is an `int` as [`int_exponent_value`]
+    /// reads it: an integer literal, perhaps under `-`, or `+`, `-`, `*` and `^` of such
+    /// literals whose fold at `int` gives an integer, `2` for `1 + 1` and `3` for
+    /// `2^100 - 2^100 + 3`; `None` for `2^-1`, `1/2`, `0.5`, `2r` or a name. A `rat` base takes
+    /// an `int` exponent of either sign (DESIGN.md sec:lexical), so such a `^` is at `rat` in a
+    /// body as at the top level (plan row LIT-rat-int-op-exponent).
+    ///
+    /// Complexity tradeoff: [`int_exponent_value`], the text walk and fold of all of `b`, costs
+    /// its size each time; a body asks it of each `^` it walks, so over a nest of n powers,
+    /// `1^(1^(1^1))`, the naive way costs O(n^2). Kept by operation ([`Ck::int_exponents`]),
+    /// the walk stops at an operation read already, so each node is read once, O(size of the
+    /// program) in all, besides the kernel's powers, each folded once within the fold's bound
+    /// ([`kernel_folded`]).
+    fn int_exponent_at(&mut self, b: &Expr) -> Option<Value> {
+        enum Step<'e> {
+            Visit(&'e Expr),
+            Done(&'e Expr, Prim, usize),
+        }
+        let mut todo = vec![Step::Visit(b)];
+        let mut values: Vec<Option<Value>> = Vec::new();
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Visit(x) => {
+                    if let Some(v) = self.int_exponents.get(&x.span) {
+                        values.push(v.clone());
+                    } else if let Some(l) = literal(x, None) {
+                        values.push(lit_value(&l, Carrier::Int));
+                    } else {
+                        match &x.kind {
+                            ExprKind::Binary(
+                                op
+                                @ (BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow),
+                                a,
+                                c,
+                            ) => {
+                                let p = binary_prim(*op).expect("an arithmetic operator's");
+                                todo.extend([Step::Done(x, p, 2), Step::Visit(c), Step::Visit(a)]);
+                            }
+                            ExprKind::Unary(UnaryOp::Neg, a) => {
+                                todo.extend([Step::Done(x, Prim::Neg, 1), Step::Visit(a)])
+                            }
+                            _ => values.push(None),
+                        }
+                    }
+                }
+                Step::Done(x, p, n) => {
+                    let args = values.split_off(values.len() - n);
+                    let v = (args.into_iter().collect::<Option<Vec<Value>>>())
+                        .and_then(|vs| prim_folded(p, vs))
+                        .filter(|v| v.number_kind() == Some(0));
+                    self.int_exponents.insert(x.span, v.clone());
+                    values.push(v);
+                }
+            }
+        }
+        values.pop().flatten()
     }
 
     /// The one carrier `e`'s value has where the walk read it, if it knows one: the carrier
