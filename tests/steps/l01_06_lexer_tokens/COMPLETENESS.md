@@ -27,5 +27,7 @@ floor: `mod.rs` 88.24% of regions before, 100% after; `comment.rs` and `punct.rs
 | A whole program | `expected_example_program` | |
 | Each lexical error's message | `expected_lexical_errors` | |
 | Long runs and deep nesting | | Benchmarks (P178) |
+| Probe (coordinator, 2026-11-14): `(1, )`. DESIGN: `Space` only separates tokens, and `TupleExpr` takes a trailing `,`, so `(1, )` is the one-tuple `(1,)`. Compiler: same tokens and parse, and `zedc run` prints `(1,)`. Agrees | `edges.rs` `space_before_a_closing_bracket_changes_no_token_and_no_parse` | |
+| Probe: `x'` alone and `{ 1 }` alone. DESIGN: every `Decl` of a `Unit` ends in `;`, so each is a syntax error at the top level; with the `;` each is an `ExprStmt`, a form of layer L6. Compiler: without `;`, a syntax error with the repair `x';` (no "not yet"); with `;`, "an expression statement ... does not compile it yet", the honest layer message. Agrees | `edges.rs` `an_expression_at_the_top_level_needs_its_semicolon` | The "not yet" message is the front end's layer check, outside this group |
 | `token.rs:198`, the message for an unexpected `\` | | Cannot be reached: `\` is an operator |
 | `token.rs` `Unread` and `unread_literal` | | Unusual size (P178); see `l01_03` |

@@ -4,7 +4,9 @@
 //! forms. The case list is `COMPLETENESS.md`.
 
 use super::render;
+use zed_tests::step_helpers::l01_10_lambdas_types_else_tuples::sx;
 use zedc::lex::{ErrorKind, Span, Tok, comments, lex, lex_fence, lex_with_docs};
+use zedc::parse::{TOP, parse};
 
 fn ok(src: &str) -> String {
     render(&lex(src).unwrap_or_else(|e| panic!("{src:?}: {e}")))
@@ -190,4 +192,35 @@ fn the_comments_of_a_file_are_listed_in_order_without_those_in_strings() {
     // A comment in a string or in a hole is part of the string's token.
     assert_eq!(spans(r#"s = "// a ${x /* b */}"; // c"#), ["// c"]);
     assert_eq!(spans("a/**//**/b"), ["/**/", "/**/"]);
+}
+
+#[test]
+fn space_before_a_closing_bracket_changes_no_token_and_no_parse() {
+    // DESIGN.md sec:lexical: `Space` only separates tokens, so `(1, )` is the token list of
+    // `(1,)`, which rule `TupleExpr` reads as the one-tuple.
+    for (spaced, tight) in [("(1, )", "(1,)"), ("(1, 2, )", "(1,2,)"), ("{ 1 }", "{1}")] {
+        let toks = |s: &str| {
+            lex(s)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.tok)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(toks(spaced), toks(tight), "{spaced}");
+        assert_eq!(sx(spaced), sx(tight), "{spaced}");
+    }
+    assert_eq!(sx("(1, )"), "(tuple 1)");
+    assert_eq!(sx("( , )"), "syntax");
+}
+
+#[test]
+fn an_expression_at_the_top_level_needs_its_semicolon() {
+    // DESIGN.md sec:grammar: every `Decl` of a `Unit` ends in `;` (`ExprStmt = Expr ';'`), so
+    // `x'` and `{ 1 }` are expressions but not units; with the `;` each is a unit.
+    for e in ["x'", "{ 1 }"] {
+        assert!(!sx(e).starts_with("syntax"), "{e}");
+        let unit = |s: &str| parse(s, &lex(s).unwrap(), "Unit", TOP).is_ok();
+        assert!(!unit(e), "{e}");
+        assert!(unit(&format!("{e};")), "{e}");
+    }
 }

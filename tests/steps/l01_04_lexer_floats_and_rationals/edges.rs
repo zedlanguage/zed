@@ -153,3 +153,23 @@ fn a_float_in_a_hole_is_lexed_as_in_code() {
     let e = lex(r#""${1.5f16}""#).unwrap_err();
     assert_eq!((e.span.start, e.span.end), (3, 9));
 }
+
+#[test]
+fn a_dot_with_no_digit_after_it_ends_the_integer_before_a_letter() {
+    // DESIGN.md sec:lexical: `Real = Decimal '.' Decimal Exponent? | Decimal Exponent`, so `1.e`
+    // is the integer `1`, the operator `.` and the name `e`: a member access, not a float.
+    assert_eq!(
+        toks("t() = 1.e;")[4..7],
+        [int("1"), Tok::Op("."), Tok::Name("e".into())]
+    );
+    assert_eq!(toks("1.E"), [int("1"), Tok::Op("."), Tok::Name("E".into())]);
+}
+
+#[test]
+fn a_decimal_beyond_the_range_of_every_float_format_is_one_float_token() {
+    // The lexer keeps the digits; whether the value fits a format is the checker's question
+    // (DESIGN.md L1.26b), and at `rat` every decimal is exact.
+    for s in ["1e999999999999", "1e-999999999999", "1e400", "1.5e-400"] {
+        assert_eq!(toks(s), [float(s)], "{s}");
+    }
+}
