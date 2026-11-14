@@ -1459,3 +1459,16 @@ fn r8_x39_deep_type_drop_does_not_overflow_stack() {
     run_forget_first.join().unwrap();
     run_external_tls.join().unwrap();
 }
+
+/// Every seed of `PREFIX_CHAIN_SEEDS`, of which the correctness test
+/// `lists_by_the_place_from_the_front_variants_agree_with_the_oracle` asks 20 each run: each
+/// family is decided as the oracle finds, or refused with Fork where `PREFIX_CHAIN_FORK_SEEDS`
+/// lists it (row REFUSAL-list-front-chain-fork), so that list stays exact for the range the
+/// correctness test draws from. Many cases, so a benchmark (author P178): 1024 families in about
+/// 0.55 s at load 19.
+#[test]
+fn every_random_prefix_chain_agrees_with_the_oracle() {
+    for chain in PREFIX_CHAIN_SEEDS {
+        check_random_prefix_chain(chain, &format!("_prc{chain}"), "every seed");
+    }
+}

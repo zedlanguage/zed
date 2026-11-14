@@ -1976,8 +1976,6 @@ fn permute_defs(defs: Vec<Def>, perm: &[usize]) -> (Vec<Def>, Vec<usize>) {
 #[test]
 fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
     let int_samples = [Value::Int(0), Value::Int(1), Value::Int(2)];
-    // X18: the random heads list 0, 1 and 2; 3 stands for every other integer.
-    let random_int_samples = [Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)];
     let bool_samples = [Value::Bool(false), Value::Bool(true)];
     let bool_tys = [
         Type::lit(&Value::Bool(false)).unwrap(),
@@ -2164,8 +2162,41 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
         }
     }
 
-    // Random small prefix-chain families over int (including cofinite heads) and bool, from the
-    // seed printed above (40 from one fixed seed until TEST-bench-move-l0123).
+    // Random small prefix-chain families over int (including cofinite heads) and bool: 20 of the
+    // seeds of `PREFIX_CHAIN_SEEDS`, drawn afresh each run (40 from one fixed seed until
+    // TEST-bench-move-l0123); `refusals/bench.rs` asks every one.
+    for chain in pick_seeds(&mut pick, "random prefix chains", PREFIX_CHAIN_SEEDS, 20) {
+        check_random_prefix_chain(chain, &next_tag(), &format!("ZED_SEED={seed}"));
+    }
+}
+
+/// The seeds of the random prefix-chain families of
+/// `lists_by_the_place_from_the_front_variants_agree_with_the_oracle`, which asks 20 of them
+/// each run (author P169) and `bench::every_random_prefix_chain_agrees_with_the_oracle` every
+/// one. Each case was drawn from one generator before TEST-bench-move-l0123, so a run with a new
+/// seed could meet a case that no run had checked; drawing from a range checked whole keeps the
+/// regular test from failing at random.
+const PREFIX_CHAIN_SEEDS: std::ops::Range<u64> = 0..1024;
+
+/// The seeds of [`PREFIX_CHAIN_SEEDS`] whose family the kernel refuses with Fork while the oracle
+/// finds a value in it (row REFUSAL-list-front-chain-fork, found 2026-11-14 when the cases were
+/// first drawn afresh). The test asserts that refusal, so a fix that decides one fails here and
+/// moves the seed out of this list.
+const PREFIX_CHAIN_FORK_SEEDS: &[u64] = &[19, 68, 476, 744];
+
+/// Random small prefix-chain family `chain`: a list of `int` (with cofinite heads) or of `bool`
+/// less the union of 2 to 4 chains of 1 to 4 conses, each of whose steps may also be `nil`.
+/// Returns the list, its verdict, whether the kernel calls it empty, and whether the oracle finds
+/// a value in it.
+fn random_prefix_chain(chain: u64, tag: &str) -> (Type, Verdict, bool, bool) {
+    // X18: the random heads list 0, 1 and 2; 3 stands for every other integer.
+    let random_int_samples = [Value::Int(0), Value::Int(1), Value::Int(2), Value::Int(3)];
+    let bool_samples = [Value::Bool(false), Value::Bool(true)];
+    let bool_tys = [
+        Type::lit(&Value::Bool(false)).unwrap(),
+        Type::lit(&Value::Bool(true)).unwrap(),
+    ];
+    let mut pick = Rng::new(chain);
     let mut rng = || pick.next_u64();
     let head_for = |bits: u64, is_bool: bool| -> Type {
         if is_bool {
@@ -2195,60 +2226,79 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle() {
             }
         }
     };
-    for case in 0..20 {
-        Type::forget_emptiness();
-        let is_bool = (rng() & 1) != 0;
-        let all = if is_bool { Type::bool() } else { Type::int() };
-        let samples: &[Value] = if is_bool {
-            &bool_samples
-        } else {
-            &random_int_samples
-        };
-        let tag = next_tag();
-        let mut defs = vec![def(
-            &format!("L{tag}"),
-            Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
-        )];
-        let num_chains = 2 + (rng() % 3) as usize;
-        let mut endpoints = Vec::new();
-        let mut max_depth = 1usize;
-        for c in 0..num_chains {
-            let depth = 1 + (rng() % 4) as usize;
-            max_depth = max_depth.max(depth);
-            let allow_nil = (rng() & 1) != 0;
-            for k in 1..=depth {
-                let h = head_for(rng(), is_bool);
-                let prev = if k == 1 { 0 } else { defs.len() - 1 };
-                let step = cons(Expr::Type(h), r(prev));
-                let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
-                    Expr::Union(vec![nil(), step])
-                } else {
-                    step
-                };
-                defs.push(def(&format!("C{c}_{k}{tag}"), body));
-            }
-            endpoints.push(defs.len() - 1);
+    Type::forget_emptiness();
+    let is_bool = (rng() & 1) != 0;
+    let all = if is_bool { Type::bool() } else { Type::int() };
+    let samples: &[Value] = if is_bool {
+        &bool_samples
+    } else {
+        &random_int_samples
+    };
+    let mut defs = vec![def(
+        &format!("L{tag}"),
+        Expr::Union(vec![nil(), cons(Expr::Type(all.clone()), r(0))]),
+    )];
+    let num_chains = 2 + (rng() % 3) as usize;
+    let mut endpoints = Vec::new();
+    let mut max_depth = 1usize;
+    for c in 0..num_chains {
+        let depth = 1 + (rng() % 4) as usize;
+        max_depth = max_depth.max(depth);
+        let allow_nil = (rng() & 1) != 0;
+        for k in 1..=depth {
+            let h = head_for(rng(), is_bool);
+            let prev = if k == 1 { 0 } else { defs.len() - 1 };
+            let step = cons(Expr::Type(h), r(prev));
+            let body = if allow_nil && ((rng() & 1) != 0 || k == 1) {
+                Expr::Union(vec![nil(), step])
+            } else {
+                step
+            };
+            defs.push(def(&format!("C{c}_{k}{tag}"), body));
         }
-        let ts = Group::new(defs).unwrap().instance(vec![]);
-        let u = endpoints
-            .iter()
-            .map(|&i| &ts[i])
-            .fold(Type::empty(), |u, t| &u | t);
-        let l = list_named(all, &tag);
-        let t = &l - &u;
-        let inhab = list_oracle_inhabited(&t, samples, max_depth + 1);
-        let want = if inhab {
-            Verdict::Inhabited
-        } else {
-            Verdict::Empty
-        };
-        assert_eq!(t.verdict(), want, "random chain {case}, ZED_SEED={seed}");
-        assert_eq!(
-            t.is_empty(),
-            !inhab,
-            "is_empty random chain {case}, ZED_SEED={seed}"
-        );
+        endpoints.push(defs.len() - 1);
     }
+    let ts = Group::new(defs).unwrap().instance(vec![]);
+    let u = endpoints
+        .iter()
+        .map(|&i| &ts[i])
+        .fold(Type::empty(), |u, t| &u | t);
+    let l = list_named(all, tag);
+    let t = &l - &u;
+    let inhabited = list_oracle_inhabited(&t, samples, max_depth + 1);
+    let (verdict, empty) = (t.verdict(), t.is_empty());
+    (t, verdict, empty, inhabited)
+}
+
+/// Checks random prefix-chain family `chain` against the oracle: decided as the oracle finds,
+/// or, for a seed of [`PREFIX_CHAIN_FORK_SEEDS`], refused with Fork where the oracle finds a
+/// value. `run` names the run in failure messages.
+fn check_random_prefix_chain(chain: u64, tag: &str, run: &str) {
+    let (t, verdict, empty, inhabited) = random_prefix_chain(chain, tag);
+    if PREFIX_CHAIN_FORK_SEEDS.contains(&chain) {
+        assert!(
+            inhabited,
+            "random chain {chain} ({run}): the oracle finds no value in {t}"
+        );
+        assert_eq!(
+            verdict,
+            Verdict::Refused(Refusal::Fork),
+            "random chain {chain} ({run}) is no longer refused: take it out of \
+             PREFIX_CHAIN_FORK_SEEDS (row REFUSAL-list-front-chain-fork); {t}"
+        );
+        assert!(!empty, "random chain {chain} ({run}) called empty: {t}");
+        return;
+    }
+    let want = if inhabited {
+        Verdict::Inhabited
+    } else {
+        Verdict::Empty
+    };
+    assert_eq!(verdict, want, "random chain {chain} ({run}): {t}");
+    assert_eq!(
+        empty, !inhabited,
+        "is_empty random chain {chain} ({run}): {t}"
+    );
 }
 
 #[test]
