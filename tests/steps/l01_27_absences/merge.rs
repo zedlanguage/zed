@@ -130,3 +130,31 @@ fn the_readme_examples_give_these_values() {
     assert_eq!(value(orders, "first"), "#errs({#invalid, #notFound})");
     assert_eq!(value(orders, "second"), "#errs({#invalid, #notFound})");
 }
+
+/// An `#errs` the program writes itself, with a payload that is not a set of failures (a
+/// number, two numbers, a function with one or two parameters, a prelude function of several
+/// signatures, a generic function, a choice of two functions), has members the checker does
+/// not know, so the merge of it with another failure is `#errs` with any payload, `#errs(..)`
+/// (item TEST-types-unreached-paths).
+#[test]
+fn a_merge_with_an_errs_the_program_wrote_has_unknown_members() {
+    for payload in [
+        "5",
+        "5, 6",
+        "g",
+        "h",
+        "min",
+        "abs",
+        "q",
+        "if p { g } else { q }",
+    ] {
+        let t = format!(
+            "g(positional k: int) = k;\nh(positional k: int, positional j: int) = k;\nq(positional k) = k;\n\
+             a(positional p: bool) = if p {{ 1 }} else {{ #errs({payload}) }};\n\
+             c(positional p: bool) = if p {{ 2 }} else {{ #bad }};\n\
+             x(positional p: bool) = a(p) + c(p);\n"
+        );
+        assert_eq!(type_errors(&t), Vec::<String>::new(), "{t}");
+        assert_eq!(sig(&t, "x"), "(bool) -> int | #bad | #errs(..)", "{t}");
+    }
+}

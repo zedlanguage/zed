@@ -275,3 +275,46 @@ fn a_long_run_of_union_edges_is_one_cycle() {
 }
 
 mod bench;
+
+/// Four tuple cycles, `C0` (`x0 y0 z0`), `C1` (`x y1 z1`), `C2` (`a b c`) and `C3` (`d e f`),
+/// none with a way out, so every node is empty: a value is finite, and a morphism type whose
+/// value type is empty is empty. `C0` feeds `C1` through the union `u` over the morphism
+/// `m0 = (…) -> x0`, `C1` feeds `C2` through the union `w` over `m = (…) -> x`, and `C2`
+/// alone feeds `C3`, through `d`'s child `a`; the morphisms `p1`..`p4` back to `a` and `q`
+/// from `b` to `d` put `C2` and `C3` in one component. The deletion cascade receives `C2`,
+/// which nothing outside it feeds, and `C3`, whose one seed is `a`: it kills `C2` at its
+/// start, and the death of `a` leaves `C3` without its seed, which kills `C3` too (item
+/// TEST-types-unreached-paths: before it, no test reached either kill). Without the kills no
+/// node the cascade decides here would die, and each would be inhabited.
+#[test]
+fn a_cycle_left_without_a_seed_is_killed_by_the_cascade() {
+    let mut g = G::new();
+    // Places: x0 y0 z0 m0 u x y1 z1 m w a b c p1 p2 p3 d e f p4 q.
+    let x0 = g.add(K::Or, vec![1]);
+    g.add(K::And, vec![2, 15]);
+    g.add(K::Or, vec![x0]);
+    g.add(K::Mor, vec![x0]);
+    g.add(K::Or, vec![3]);
+    let x = g.add(K::Or, vec![6, 4]);
+    g.add(K::And, vec![7, 14]);
+    g.add(K::Or, vec![x]);
+    g.add(K::Mor, vec![x]);
+    g.add(K::Or, vec![8]);
+    let a = g.add(K::Or, vec![9, 11]);
+    g.add(K::And, vec![12, 13, 20]);
+    g.add(K::Or, vec![a, x]);
+    for _ in 0..3 {
+        g.add(K::Mor, vec![a]);
+    }
+    let d = g.add(K::Or, vec![17, a]);
+    g.add(K::And, vec![18, 19]);
+    g.add(K::Or, vec![d]);
+    g.add(K::Mor, vec![a]);
+    g.add(K::Mor, vec![d]);
+    g.seal();
+    let got = decide(&g.bes());
+    assert!(got.refusals.is_empty(), "{:?}", got.refusals);
+    assert_eq!(got.answers, vec![Answer::Empty; 21]);
+    assert_eq!(checked("four cycles", &g), 0);
+    assert_eq!(checked("four cycles reversed", &reversed(&g)), 0);
+}

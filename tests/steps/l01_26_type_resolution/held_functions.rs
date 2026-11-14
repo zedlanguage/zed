@@ -231,3 +231,45 @@ fn an_integer_put_twice_in_atoms_is_data() {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
     }
 }
+
+/// A choice between two generic functions hashes each one's signature with its needs
+/// (`Sig::digest`, which reads every type of a need): an `Index` need (`d[k]`), an `Order`
+/// need (`min` with a tuple), an `Into` need (an argument at a tuple parameter) and the
+/// chain of calls of an `InDomain` need passed on by a wrapper (`2 ^ k`). Each program is
+/// accepted (item TEST-types-unreached-paths).
+#[test]
+fn a_choice_between_generic_functions_with_needs_is_accepted() {
+    for src in [
+        "get(positional d, positional k) = d[k];\npick(positional b: bool) = if b { get } else { get };\n",
+        "m(positional a) = min(a, (1, 2));\npick(positional b: bool) = if b { m } else { m };\n",
+        "g(positional x: (int, int)) = x;\nf(positional y) = g(y);\npick(positional b: bool) = if b { f } else { f };\n",
+        "w(positional k) = 2 ^ k;\nv(positional k) = w(k);\nu(positional k) = w(k);\npick(positional b: bool) = if b { v } else { u };\nx = pick(true)(3);\n",
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    }
+}
+
+/// A function that returns a generic function, passed where a function with a function result
+/// is expected. With no need on the returned function, its signature fits as written. With a
+/// need, the signatures are compared with each solved variable read as its type (`fits_in`
+/// under `fits_sig_with`): `2 ^ k` needs `k` in `int[0..]` (an integer power by a negative
+/// integer is refused), so it does not fit a result `(k: int) -> int` (item
+/// TEST-types-unreached-paths).
+#[test]
+fn a_returned_generic_function_fits_a_function_result_by_its_needs() {
+    for src in [
+        "add(positional a, positional b) = a + b;\nf(x: int) = add;\nh(g: (x: int) -> ((positional a: int, positional b: int) -> int)) = 1;\ny = h(g: f);\n",
+        "m(positional a, positional b) = min(a, b);\nf(x: int) = m;\nh(g: (x: int) -> ((positional a: int, positional b: int) -> int)) = 1;\ny = h(g: f);\n",
+        "w(positional k) = k * k;\nf(x: int) = w;\nh(g: (x: int) -> ((positional k: f64) -> f64)) = 1;\ny = h(g: f);\n",
+    ] {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    }
+    assert_eq!(
+        type_errors(
+            "w(positional k) = 2 ^ k;\nf(x: int) = w;\nh(g: (x: int) -> ((k: int) -> int)) = 1;\ny = h(g: f);\n"
+        ),
+        [
+            "`f` is `(x: int) -> ((T) -> T for T in int | f32 | f64)`, not `(x: int) -> (k: int) -> int`: it is passed where a function of that type is expected, and its own type does not fit that one. [f]"
+        ]
+    );
+}

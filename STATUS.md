@@ -2344,7 +2344,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-law25-time | running | 2026-11-14 10:54 |  |
 | TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
 | TEST-op-table-div-mod | running | 2026-11-14 10:54 |  |
-| TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
+| TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 11:30 | part 2 pushed (this commit): bes.rs, print/order.rs done; types.rs, ty.rs reduced; empty.rs open; rows DOC-port-in-bound-errors, DOC-user-errs-payload, FAIL-returned-generic-need-fit, FAIL-codex-r3-order-seed filed; row open / load 30.33 39.97 40.53 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 

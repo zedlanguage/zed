@@ -263,4 +263,25 @@ mod tests {
         want.reverse();
         assert_eq!(format!("{sorted:?}"), format!("{want:?}"));
     }
+
+    /// Each kind of value takes its literal type's place: the checker sorts only atoms by
+    /// [`cmp_values`] (a cast whose operand fails with two), so the other kinds are read here
+    /// (item TEST-types-unreached-paths).
+    #[test]
+    fn values_sort_as_their_literal_types() {
+        let want = [
+            Value::Int(1),
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::str("s"),
+            Value::tuple(vec![]),
+            Value::Family(crate::value::Family::new()),
+            Value::atom("a"),
+            Value::atom("b"),
+        ];
+        let mut sorted = want.clone();
+        sorted.reverse();
+        sorted.sort_by(cmp_values);
+        assert_eq!(sorted, want);
+    }
 }

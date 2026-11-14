@@ -932,3 +932,50 @@ fn complement_columns_of_every_scalar_kind_are_listed() {
 }
 
 mod bench;
+
+/// A tuple type taken out of a finite type, whose first column is one of two types recursive
+/// through each other's first components, `R1 = () | (R2, int)` and `R2 = () | (R1, int)`: the
+/// types reached through first columns are filed together, as one strongly connected group
+/// (`Filer::file`), and the listing is the finite type's, since no value of it is in the
+/// tuple type (item TEST-types-unreached-paths).
+#[test]
+fn a_tuple_type_of_types_recursive_through_each_other_is_taken_out() {
+    use zed_kernel::types::rec::{Def, Expr, Group};
+    let def = |name: &str, other: usize| Def {
+        name: name.into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Tuple(vec![]),
+            Expr::Tuple(vec![Expr::Ref(other, vec![]), Expr::Type(Type::int())]),
+        ]),
+    };
+    let group = Group::new(vec![def("ListingR1", 1), def("ListingR2", 0)]).expect("a group");
+    let r1 = group.instance(vec![]).remove(0);
+    let s = Type::union_all((0..3).map(lit));
+    let square = Type::tuple(vec![s.clone(), s]);
+    let t = &square - &Type::tuple(vec![r1, lit(0)]);
+    assert_eq!(listed(&t), listed(&square));
+    assert_eq!(listed(&t).map(|v| v.len()), Some(9));
+}
+
+/// A finite tuple type met with the complement of the complement of an exclusive or: the union
+/// `!e | !a` has no choice, so its complement is kept as written, a negated expression, whose
+/// boxes are read through the negation down to the negated diagram `!a`, the finite one
+/// (`part_boxes`: item TEST-types-unreached-paths). With `e` the exclusive or of `(s, 0)` and
+/// `(0, s)` for `s = 0 | 1 | 2`, the meet with `(s, 0)` lists `(1, 0)` and `(2, 0)`, and the
+/// meet with `(1, 1)`, in neither half, lists nothing.
+#[test]
+fn a_negated_union_with_no_choice_lists_its_values() {
+    let s = Type::union_all((0..3).map(lit));
+    let a = Type::tuple(vec![s.clone(), lit(0)]);
+    let e = xor(&a, &Type::tuple(vec![lit(0), s]));
+    let not_e = !&e;
+    let met = |t: &Type| !&(&not_e | &!t);
+    let ones = Type::tuple(vec![&lit(1) | &lit(2), lit(0)]);
+    assert_eq!(listed(&met(&a)), listed(&ones));
+    assert_eq!(listed(&met(&a)).map(|v| v.len()), Some(2));
+    assert_eq!(
+        listed(&met(&Type::tuple(vec![lit(1), lit(1)]))),
+        Some(BTreeSet::new())
+    );
+}

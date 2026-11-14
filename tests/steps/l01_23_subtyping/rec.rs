@@ -659,3 +659,56 @@ fn membership_in_two_mutual_definitions() {
 }
 
 mod bench;
+
+/// The atom names of a recursive type are read from its unfolding and kept with it: `#cons`
+/// with a payload only, and the bare `#nil` (item TEST-types-unreached-paths).
+#[test]
+fn a_recursive_type_names_its_atoms() {
+    let ints = list(Type::int());
+    fn names(t: &Type) -> Option<Vec<(&str, bool)>> {
+        t.atom_names().map(|i| i.collect())
+    }
+    assert_eq!(names(&ints), Some(vec![("cons", false), ("nil", true)]));
+    // Read twice, from the names kept.
+    assert_eq!(names(&ints), Some(vec![("cons", false), ("nil", true)]));
+}
+
+/// A group's debug text writes each body's tree, node by node, as a derived `Debug` would
+/// (module `walk`, which writes from a stack so that a deep tree takes no deep recursion):
+/// each kind of node once (item TEST-types-unreached-paths: no test wrote a tree before).
+#[test]
+fn a_group_writes_its_trees_for_debugging() {
+    let a = || Expr::Param(0);
+    let int = || Box::new(ty(Type::int()));
+    let body = or(vec![
+        Expr::Tuple(vec![a(), r(0, vec![a()])]),
+        atom("a", vec![a()]),
+        Expr::And(vec![ty(Type::int()), a()]),
+        Expr::Not(int()),
+        Expr::Diff(int(), Box::new(ty(Type::top()))),
+        Expr::Morphism(
+            Box::new(ty(Type::empty())),
+            Box::new(ty(Type::top())),
+            Box::new(a()),
+        ),
+    ]);
+    let text = format!(
+        "{:?}",
+        Group::new(vec![def("Shapes", &["A"], body)]).unwrap()
+    );
+    for head in [
+        "bodies: [Node { digest: ",
+        "recursive: true, open: true, e: Union([Node {",
+        "e: Tuple([Node {",
+        "e: Param(0) }",
+        "e: Ref(0, [Node {",
+        "e: Atom(\"a\", [Node {",
+        "e: And([Node {",
+        "e: Type(Type(",
+        "e: Not(Node {",
+        "e: Diff(Node {",
+        "e: Morphism(Node {",
+    ] {
+        assert!(text.contains(head), "{head} in {text}");
+    }
+}

@@ -3380,11 +3380,6 @@ impl Binds {
         self.map.get_mut(&v).expect("bound just now")
     }
 
-    /// What `v` is bound to, to change.
-    pub fn get_mut(&mut self, v: &str) -> Option<&mut Ty> {
-        self.map.get_mut(v)
-    }
-
     /// The types bound, to change.
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Ty> {
         self.map.values_mut()
@@ -3457,24 +3452,6 @@ impl From<BTreeMap<Arc<str>, Ty>> for Binds {
             keys: std::sync::OnceLock::new(),
             bounds: None,
         }
-    }
-}
-
-impl IntoIterator for Binds {
-    type Item = (Arc<str>, Ty);
-    type IntoIter = std::collections::btree_map::IntoIter<Arc<str>, Ty>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.map.into_iter()
-    }
-}
-
-impl<'b> IntoIterator for &'b Binds {
-    type Item = (&'b Arc<str>, &'b Ty);
-    type IntoIter = std::collections::btree_map::Iter<'b, Arc<str>, Ty>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.map.iter()
     }
 }
 
@@ -9220,21 +9197,9 @@ impl Ty {
         write_parts(Print::Ty(self, PrintAt::Any), out, scope, None);
     }
 
-    /// Its text, in type syntax, as one operand of a union: a function in it is parenthesized,
-    /// as in `((int) -> int) | String`, since `->` binds looser than `|`.
-    pub fn text_in_union(&self) -> String {
-        let mut out = String::new();
-        write_parts(
-            Print::Ty(self, PrintAt::Union),
-            &mut out,
-            &mut Scope::default(),
-            None,
-        );
-        out
-    }
-
     /// Its text, in type syntax, as its Display writes it, or as one operand of a union with
-    /// `union` ([`Ty::text_in_union`]), each literal value that `spell` spells written as the
+    /// `union` (a function in it then parenthesized, as in `((int) -> int) | String`, since
+    /// `->` binds looser than `|`), each literal value that `spell` spells written as the
     /// program wrote it, as a message prints a literal (DESIGN.md sec:diagnostics), and any
     /// other in canonical form.
     pub fn text_spelled(&self, union: bool, spell: Spell<'_>) -> String {
@@ -12191,6 +12156,41 @@ mod tests {
         assert!(
             found > 5000 && several > 1000,
             "{found} found, {several} several"
+        );
+    }
+
+    /// Two chains of calls built apart are equal link by link, and differ where a call, its
+    /// text or the length differs; only the first call is hashed. The checker compares two
+    /// chains only when it compares two signatures that each hold one (`Same::sig`), which
+    /// no program in the tests makes it do, so the comparison and the hash are read here
+    /// (item TEST-types-unreached-paths).
+    #[test]
+    fn two_chains_of_calls_are_equal_link_by_link() {
+        use std::hash::{BuildHasher, RandomState};
+        let link = |at: usize, text: &str, next: Option<Via>| Via {
+            at: Span {
+                start: at,
+                end: at + 1,
+            },
+            text: text.into(),
+            next: next.map(Arc::new),
+        };
+        let chain =
+            |last: &str, n: usize| (1..n).fold(link(0, last, None), |v, i| link(i, "w", Some(v)));
+        assert_eq!(chain("f", 3), chain("f", 3));
+        assert_ne!(chain("f", 3), chain("g", 3));
+        assert_ne!(chain("f", 3), chain("f", 2));
+        assert_ne!(chain("f", 2), chain("f", 3));
+        assert_ne!(link(0, "w", None), link(1, "w", None));
+        // Equal first links, then one chain ends: they differ by their length.
+        assert_ne!(link(0, "w", Some(link(1, "f", None))), link(0, "w", None));
+        let one = chain("f", 3);
+        assert_eq!(one, one.clone());
+        let s = RandomState::new();
+        assert_eq!(s.hash_one(chain("f", 3)), s.hash_one(chain("g", 3)));
+        assert_ne!(
+            s.hash_one(link(0, "w", None)),
+            s.hash_one(link(0, "v", None))
         );
     }
 }

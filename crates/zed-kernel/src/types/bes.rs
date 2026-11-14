@@ -56,11 +56,18 @@ impl Bes {
         Self::default()
     }
 
-    /// Adds a node and returns its number. A `Mor` node has exactly one child.
+    /// Adds a node and returns its number. A `Mor` node has exactly one child, and a `Top` or
+    /// `Bot` node none, so that no constant node is on a cycle: the arms for them in the
+    /// passes over a component with a cycle are never taken (tests/steps/l01_23_subtyping/
+    /// COMPLETENESS.md).
     pub fn add(&mut self, kind: Kind, children: Vec<u32>) -> u32 {
         assert!(
             kind != Kind::Mor || children.len() == 1,
             "a morphism node has its value type as its one child"
+        );
+        assert!(
+            !matches!(kind, Kind::Top | Kind::Bot) || children.is_empty(),
+            "a constant node has no child"
         );
         let v = u32::try_from(self.kind.len()).expect("a group has fewer than 2^32 nodes");
         self.kind.push(kind);
@@ -74,6 +81,10 @@ impl Bes {
         assert!(
             kind != Kind::Mor || children.len() == 1,
             "a morphism node has its value type as its one child"
+        );
+        assert!(
+            !matches!(kind, Kind::Top | Kind::Bot) || children.is_empty(),
+            "a constant node has no child"
         );
         self.kind[v as usize] = kind;
         self.children[v as usize] = children;
@@ -425,10 +436,10 @@ fn lfp(
     while let Some(w) = sc.queue.pop() {
         for &p_u32 in &g.parents[w as usize] {
             let p = p_u32 as usize;
+            // A `Mor` parent is counted down only under `MorRead::Joint`: under `False` and
+            // `FromTmp` its child `w`, in `sub`, gave it a need of 0 (so it is inhabited) or of
+            // `u32::MAX`, and this test skips it.
             if !sc.in_sub[p] || sc.cur[p] || sc.need[p] == u32::MAX {
-                continue;
-            }
-            if g.kind(p_u32) == Kind::Mor && mor != MorRead::Joint {
                 continue;
             }
             sc.need[p] -= 1;
@@ -1089,4 +1100,26 @@ pub fn decide(raw: &Bes) -> Decision {
         })
         .collect();
     Decision { answers, refusals }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Stamp;
+
+    /// After 2^32 - 1 advances the marks are cleared: a node marked under the first stamp is
+    /// seen fresh again under the stamp of the same number (item TEST-types-unreached-paths;
+    /// the count is set here, since advancing it 2^32 times is no correctness test).
+    #[test]
+    fn a_stamp_at_its_last_value_clears_the_marks_when_advanced() {
+        let mut s = Stamp::new(2);
+        s.advance();
+        assert!(s.first(1));
+        s.cur = u32::MAX;
+        assert!(s.first(0));
+        assert!(!s.first(0));
+        s.advance();
+        assert_eq!(s.cur, 1);
+        assert!(s.first(0));
+        assert!(s.first(1));
+    }
 }

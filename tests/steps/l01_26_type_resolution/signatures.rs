@@ -195,3 +195,21 @@ fn a_generic_literal_compared_for_equality_does_not_bound_a_parameter() {
     assert_eq!(s.own.len(), 1);
     assert!(type_errors(src).is_empty(), "{:?}", type_errors(src));
 }
+
+/// A variable a written function type names sits in a union by its name, before `String`
+/// when its name sorts before `String`'s and after it otherwise (DESIGN.md sec:diagnostics,
+/// author decision A92), in the signature that holds the function type
+/// (item TEST-types-unreached-paths).
+#[test]
+fn a_named_variable_prints_on_its_side_of_string() {
+    let a = "p(g: (x: A) -> A | String for A in int | f64) = g;\n";
+    assert_eq!(
+        sig(a, "p"),
+        "(g: (x: A) -> A | String for A in int | f64) -> ((x: A) -> A | String for A in int | f64)"
+    );
+    let z = "p(g: (x: Z) -> Z | String for Z in int | f64) = g;\n";
+    assert_eq!(
+        sig(z, "p"),
+        "(g: (x: Z) -> String | Z for Z in int | f64) -> ((x: Z) -> String | Z for Z in int | f64)"
+    );
+}
