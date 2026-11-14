@@ -6,6 +6,7 @@
 //! funnel shift's `k` that is not below `width`, and a width of `byteSwap` that is not a
 //! multiple of 8.
 
+mod arity_message;
 mod bench;
 mod completeness;
 mod curry_domain;

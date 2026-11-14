@@ -35,7 +35,7 @@ Tests in `completeness.rs` unless a file is named.
 | A word as a receiver (`x.bitReverse(width: 8)`) | `values.rs` `a_receiver_is_the_first_operand` | |
 | A word in a tuple, an interpolation, nested in another word and in itself, on an expression operand, with a named width, in a lambda | `each_word_in_other_positions` | |
 | A lambda passes the need of its word to its caller | `each_word_in_other_positions` | |
-| `width` missing, positional, unknown, twice; an operand named; a width given to `pdep`/`pext`; too many or too few operands | `the_width_is_the_only_named_parameter` | the message names the signature and has no repairs: FAIL-bitword-arity-message |
+| `width` missing, positional, unknown, twice; an operand named; a width given to `pdep`/`pext`; too many or too few operands | `the_width_is_the_only_named_parameter` | the message names the word and carries the repairs: `a_malformed_call_of_a_word_names_the_word_and_its_repairs`, `each_misfit_of_a_word_names_the_word_and_offers_no_declaration_edit` (FAIL-bitword-arity-message) |
 | An operand of another kind: a rat, a suffixed float, a string, a bool, a tuple | `an_operand_of_another_kind_is_rejected` | |
 | An array display as an operand | | this zedc does not compile array displays yet |
 | Currying by `width` alone, values | `a_word_curries_by_its_width_alone` | |

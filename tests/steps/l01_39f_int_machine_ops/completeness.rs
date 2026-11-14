@@ -146,7 +146,7 @@ fn the_width_is_the_only_named_parameter() {
         "x = funnelShr(1, 2, width: 8);\n",
         "x = bitReverse(1, width: 8, width: 8);\n",
     ] {
-        // The message naming the word, and a repair, is FAIL-bitword-arity-message.
+        // The word named in the message, and the repairs: `arity_message.rs`.
         let out = rejected(src);
         let named = out.contains("width") || out.contains("parameter") || out.contains("position");
         assert!(named, "{src}: {out}");

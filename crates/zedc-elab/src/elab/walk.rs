@@ -308,7 +308,7 @@ impl<'a> Callee<'a> {
     /// How an error names the function called.
     fn who(&self) -> String {
         match self {
-            Callee::Value(_, sig) => sig.to_string(),
+            Callee::Value(_, sig) => sig.who(),
             Callee::Declared(_, f) => f.name.clone(),
         }
     }
@@ -1258,12 +1258,12 @@ impl<'a> Elab<'a> {
                     return;
                 }
                 Some((_, _, false)) => {
-                    self.misfit(ff.call.span, Misfit::OpenDefault(&p.name), &sig.to_string())
+                    self.misfit(ff.call.span, Misfit::OpenDefault(&p.name), &sig.who())
                 }
                 None => self.misfit(
                     ff.call.span,
                     Misfit::Missing(&p.name, p.positional),
-                    &sig.to_string(),
+                    &sig.who(),
                 ),
             };
             m.give(t);

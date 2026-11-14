@@ -9749,6 +9749,15 @@ impl fmt::Display for Sig {
 }
 
 impl Sig {
+    /// How a message names the function of this signature: the prelude word it is, as
+    /// `bitReverse`, else its type, as `(int, width: int) -> int`.
+    pub fn who(&self) -> String {
+        match &self.word {
+            Some(w) => w.to_string(),
+            None => self.to_string(),
+        }
+    }
+
     /// Writes its text, in type syntax, to `out`: its variables bounded by carriers by name, in
     /// a bounds clause after the arrows, and the others `_`.
     fn write(&self, out: &mut String, scope: &mut Scope) {

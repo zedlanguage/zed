@@ -4599,17 +4599,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         curry: bool,
         span: Span,
     ) {
-        let sig = bit_sig(p);
+        let sig = bit_sig(w, p);
         self.put(Undo::Call(span, Some(sig.clone())));
+        let args = Args::of(positional, named);
         if curry {
             // The function of `width` the call gives checks the word's domains at each of its
             // calls, with the operands given here ([`Ck::curried_bits_at`]).
-            let args = Args::of(positional, named);
             let receiver = receiver.map(|(a, e)| Arg {
                 expr: a.expr.or(Some(e)),
                 ..a
             });
             return self.call_sig(m, sig, true, receiver, args, true, Some(p), span, w.into());
+        }
+        // A call whose arguments do not fit the word's parameters is reported here, as a
+        // call of a function value is, by the word's name and with the repairs
+        // ([`Self::unfit`]); elaboration reports the same message, and the two merge.
+        if let Err(misfits) = fit(&sig, false, receiver.is_some(), &args, false, span) {
+            return self.unfit(m, &sig, false, &args, span, w, misfits);
         }
         let mut slots = vec![None; sig.params.len()];
         let first = usize::from(receiver.is_some());
@@ -4883,88 +4889,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: Rc<str>,
     ) {
         let sig = self.open(&sig);
-        let n = sig.params.len();
-        let mut slots: Vec<Option<At>> = vec![None; n];
-        let mut next = 0;
         let has_receiver = receiver.is_some();
-        if has_receiver {
-            if n == 0 {
-                let misfits = vec![(span, Misfit::NoReceiver)];
-                return self.unfit(m, &sig, declared, &args, span, &what, misfits);
-            }
-            next = 1;
-        }
-        for i in 0..args.positional.len() {
-            let misfit = match sig.params.get(next) {
-                Some(p) if p.positional || !declared && sig.params.iter().all(|p| p.positional) => {
-                    slots[next] = Some(At::Pos(i));
-                    next += 1;
-                    continue;
-                }
-                Some(p) => Misfit::Named(&p.name),
-                None => Misfit::TooMany(n),
-            };
-            let misfits = vec![(args.span_at(At::Pos(i), span), misfit)];
-            return self.unfit(m, &sig, declared, &args, span, &what, misfits);
-        }
-        // Each parameter's index by name, the first where a name repeats.
-        let at: HashMap<&str, usize> = sig
-            .params
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(j, p)| (&*p.name, j))
-            .collect();
-        for (i, (name, _)) in args.named.iter().enumerate() {
-            let misfit = match at.get(&**name).copied() {
-                None => Misfit::NoParam(name),
-                Some(j) if sig.params[j].positional => Misfit::Positional(name),
-                Some(j) if slots[j].is_some() || has_receiver && j == 0 => Misfit::Supplied(name),
-                Some(j) => {
-                    slots[j] = Some(At::Named(i));
-                    continue;
-                }
-            };
-            let misfits = vec![(args.span_at(At::Named(i), span), misfit)];
-            return self.unfit(m, &sig, declared, &args, span, &what, misfits);
-        }
-        let missing: Vec<usize> = (0..n)
-            .filter(|&j| slots[j].is_none() && !(has_receiver && j == 0))
-            .collect();
-        // As elaboration finds them: for `...`, the first positional parameter left out, or
-        // that none is; for a declared function, each parameter left out with no default;
-        // through a value, the first left out with no default it can fill.
-        let misfits: Vec<(Span, Misfit)> = match curry {
-            true => match missing.iter().find(|&&j| sig.params[j].positional) {
-                Some(&j) => vec![(span, Misfit::CurriedPositional(&sig.params[j].name))],
-                None if missing.is_empty() => vec![(span, Misfit::NothingLeftOut)],
-                None => Vec::new(),
-            },
-            false if declared => (missing.iter())
-                .filter(|&&j| sig.params[j].default.is_none())
-                .map(|&j| {
-                    (
-                        span,
-                        Misfit::Missing(&sig.params[j].name, sig.params[j].positional),
-                    )
-                })
-                .collect(),
-            false => (missing.iter())
-                .find_map(|&j| {
-                    let p = &sig.params[j];
-                    match p.default {
-                        Some((_, _, true)) => None,
-                        Some((_, _, false)) => Some((span, Misfit::OpenDefault(&p.name))),
-                        None => Some((span, Misfit::Missing(&p.name, p.positional))),
-                    }
-                })
-                .into_iter()
-                .collect(),
+        let (slots, missing) = match fit(&sig, declared, has_receiver, &args, curry, span) {
+            Ok(fitted) => fitted,
+            Err(misfits) => return self.unfit(m, &sig, declared, &args, span, &what, misfits),
         };
-        if !misfits.is_empty() {
-            return self.unfit(m, &sig, declared, &args, span, &what, misfits);
-        }
-        drop(at);
         let s = CallSigF {
             sig,
             receiver,
@@ -5061,14 +4990,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) {
         let found = args.all().any(|a| matches!(a, ArgSrc::Got(_)));
         if declared || !found && self.info.calls.contains_key(&span) {
+            // A prelude word is named by the word, as `bitReverse`, not by its type.
             let who = match declared {
                 true => what.to_string(),
-                false => self.info.calls[&span].to_string(),
+                false => self.info.calls[&span].who(),
+            };
+            let called = match (sig.word.is_some(), declared) {
+                (true, _) => CalledKind::Word,
+                (false, true) => CalledKind::Declared,
+                (false, false) => CalledKind::Value,
             };
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
                 let menu = misfit
-                    .menu(&who, declared)
+                    .menu(&who, called)
                     .into_iter()
                     .map(|text| Note { span: at, text });
                 match misfit.row() {
@@ -5090,7 +5025,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.sig_text(sig),
             misfit.message(what)
         );
-        let menu = misfit.menu(what, false);
+        let menu = misfit.menu(what, CalledKind::Value);
         m.k(Frame::Fail(Some((at, message, menu))));
         m.each(args.exprs());
     }
@@ -16079,6 +16014,107 @@ fn unparen(s: &str) -> &str {
         }
     }
     inner
+}
+
+/// Places a call's arguments at the parameters of `sig`, as elaboration does: each positional
+/// argument at the next parameter, each named one at its parameter, `has_receiver` filling
+/// the first. It gives each parameter's argument and the parameters left out, or the misfits
+/// that keep the arguments from fitting, as elaboration finds them. `declared` is whether the
+/// call is of the declared function itself, which fills every default, and not of a value
+/// of its type, which fills only closed ones, and whose all-positional parameters take named
+/// arguments by position too; `curry` is whether the call ends in `...`.
+///
+/// Complexity: O(parameters + arguments), one hash map of the parameter names.
+#[allow(clippy::type_complexity)]
+fn fit<'s>(
+    sig: &'s Sig,
+    declared: bool,
+    has_receiver: bool,
+    args: &'s Args<'_>,
+    curry: bool,
+    span: Span,
+) -> Result<(Vec<Option<At>>, Vec<usize>), Vec<(Span, Misfit<'s>)>> {
+    let n = sig.params.len();
+    let mut slots: Vec<Option<At>> = vec![None; n];
+    let mut next = 0;
+    if has_receiver {
+        if n == 0 {
+            let misfits = vec![(span, Misfit::NoReceiver)];
+            return Err(misfits);
+        }
+        next = 1;
+    }
+    for i in 0..args.positional.len() {
+        let misfit = match sig.params.get(next) {
+            Some(p) if p.positional || !declared && sig.params.iter().all(|p| p.positional) => {
+                slots[next] = Some(At::Pos(i));
+                next += 1;
+                continue;
+            }
+            Some(p) => Misfit::Named(&p.name),
+            None => Misfit::TooMany(n),
+        };
+        let misfits = vec![(args.span_at(At::Pos(i), span), misfit)];
+        return Err(misfits);
+    }
+    // Each parameter's index by name, the first where a name repeats.
+    let at: HashMap<&str, usize> = sig
+        .params
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(j, p)| (&*p.name, j))
+        .collect();
+    for (i, (name, _)) in args.named.iter().enumerate() {
+        let misfit = match at.get(&**name).copied() {
+            None => Misfit::NoParam(name),
+            Some(j) if sig.params[j].positional => Misfit::Positional(name),
+            Some(j) if slots[j].is_some() || has_receiver && j == 0 => Misfit::Supplied(name),
+            Some(j) => {
+                slots[j] = Some(At::Named(i));
+                continue;
+            }
+        };
+        let misfits = vec![(args.span_at(At::Named(i), span), misfit)];
+        return Err(misfits);
+    }
+    let missing: Vec<usize> = (0..n)
+        .filter(|&j| slots[j].is_none() && !(has_receiver && j == 0))
+        .collect();
+    // As elaboration finds them: for `...`, the first positional parameter left out, or
+    // that none is; for a declared function, each parameter left out with no default;
+    // through a value, the first left out with no default it can fill.
+    let misfits: Vec<(Span, Misfit)> = match curry {
+        true => match missing.iter().find(|&&j| sig.params[j].positional) {
+            Some(&j) => vec![(span, Misfit::CurriedPositional(&sig.params[j].name))],
+            None if missing.is_empty() => vec![(span, Misfit::NothingLeftOut)],
+            None => Vec::new(),
+        },
+        false if declared => (missing.iter())
+            .filter(|&&j| sig.params[j].default.is_none())
+            .map(|&j| {
+                (
+                    span,
+                    Misfit::Missing(&sig.params[j].name, sig.params[j].positional),
+                )
+            })
+            .collect(),
+        false => (missing.iter())
+            .find_map(|&j| {
+                let p = &sig.params[j];
+                match p.default {
+                    Some((_, _, true)) => None,
+                    Some((_, _, false)) => Some((span, Misfit::OpenDefault(&p.name))),
+                    None => Some((span, Misfit::Missing(&p.name, p.positional))),
+                }
+            })
+            .into_iter()
+            .collect(),
+    };
+    match misfits.is_empty() {
+        true => Ok((slots, missing)),
+        false => Err(misfits),
+    }
 }
 
 /// The words that name a callee written as an expression when its code cannot be shown: the

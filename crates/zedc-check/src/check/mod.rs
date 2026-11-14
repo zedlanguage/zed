@@ -111,6 +111,18 @@ pub enum Fit {
     Read(Carrier),
 }
 
+/// What a call names, for the repairs of a [`Misfit`]: a declared function, a prelude word, or
+/// a value of function type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CalledKind {
+    /// A function the program declares, whose declaration a repair may edit.
+    Declared,
+    /// A prelude word, as `bitReverse`, called by its name, with no declaration to edit.
+    Word,
+    /// A value of function type, as a lambda or a parameter, with no name a repair can write.
+    Value,
+}
+
 /// Why a call's arguments do not fill its function's parameters. The checker and
 /// elaboration both report these, each from its own pass over the arguments, with the
 /// message and row given here, so that the two agree on every call.
@@ -213,15 +225,17 @@ impl Misfit<'_> {
 
     /// The menu of the misfit (DESIGN.md sec:diagnostics), in the table's order for a misfit
     /// in a row, each entry a `repair:` note's text, for the function called `who`.
-    /// `declared` is whether the call names a declared function: a call through a value, such
-    /// as a lambda, has no declaration to edit, so no entry edits one, and `who` is then the
-    /// value's type, so no entry writes it as code.
-    pub(crate) fn menu(self, who: &str, declared: bool) -> Vec<String> {
+    /// `called` is what the call names: a declared function, whose declaration an entry may
+    /// edit; a prelude word, which has no declaration to edit, called by its name; or a value,
+    /// such as a lambda, which has no declaration either, and whose `who` is its type, so no
+    /// entry writes it as code.
+    pub(crate) fn menu(self, who: &str, called: CalledKind) -> Vec<String> {
         // How a code form names the function called: its name, or `f` for a value.
-        let (f, where_f) = match declared {
-            true => (who, ""),
-            false => ("f", ", where `f` is the function called here"),
+        let (f, where_f) = match called {
+            CalledKind::Declared | CalledKind::Word => (who, ""),
+            CalledKind::Value => ("f", ", where `f` is the function called here"),
         };
+        let declared = called == CalledKind::Declared;
         // The repair that a value whose function has no declaration takes in place of editing
         // the declaration: a named function, whose parameters a call may pass by name.
         let named_function = |name: &str| {
@@ -254,23 +268,28 @@ impl Misfit<'_> {
             (Misfit::Named(name), false) => {
                 vec![format!("repair: pass `{name}` by name, as `{name}: …`")]
             }
-            (Misfit::Positional(name), declared) => {
+            (Misfit::Positional(name), _) => {
                 let mut menu = vec![format!(
                     "repair: pass `{name}` by position: remove `{name}: ` and put the value in \
                      `{name}`'s place among the arguments"
                 )];
-                menu.push(match declared {
-                    true => format!(
+                match called {
+                    CalledKind::Declared => menu.push(format!(
                         "repair: remove `positional` from the declaration of `{name}` in `{who}`"
-                    ),
-                    false => named_function(name),
-                });
+                    )),
+                    CalledKind::Word => {}
+                    CalledKind::Value => menu.push(named_function(name)),
+                }
                 menu
             }
             (Misfit::NoParam(name), true) => vec![
                 format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
                 "repair: remove this argument".into(),
                 format!("repair: add a parameter `{name}` to the declaration of `{who}`"),
+            ],
+            (Misfit::NoParam(name), false) if called == CalledKind::Word => vec![
+                format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
+                "repair: remove this argument".into(),
             ],
             (Misfit::NoParam(name), false) => {
                 vec!["repair: remove this argument".into(), named_function(name)]
@@ -9068,8 +9087,9 @@ fn bit_prim(w: &str) -> Option<Prim> {
 }
 
 /// A bit word's signature: its parameters, every one positional but `width`, each an `int` but
-/// the `x` of `f64Bits`, an `f64`, and an `int` result.
-fn bit_sig(p: Prim) -> Arc<Sig> {
+/// the `x` of `f64Bits`, an `f64`, and an `int` result. It is the prelude word `w`, so a
+/// message names the call by `w`, not by the signature's type ([`Sig::who`]).
+fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
     let names = zed_kernel::bits::params(p);
     let from = match p {
         Prim::F64Bits => Carrier::F64,
@@ -9091,7 +9111,7 @@ fn bit_sig(p: Prim) -> Arc<Sig> {
         bounds: BTreeMap::new(),
         data: false,
         dense: false,
-        word: None,
+        word: Some(w.into()),
         needs: Vec::new(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
