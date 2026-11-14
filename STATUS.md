@@ -2196,7 +2196,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
-| TESTS-defer-leftovers | impl attempt 1 | 2026-11-13 18:38 | started |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | fix done: rejection inside an argument that takes its call's carrier not built (Ck::lit_spares); n=100 calls bare vs 2.0f64: 4.8x instr / 4.4x bytes before, 1.4 |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
 | XR-l139-family | impl attempt 1 | 2026-11-13 18:59 | start: worktree xr-l139-family from origin/main 370abe3aa; load 36.27 36.15 40.29 |
