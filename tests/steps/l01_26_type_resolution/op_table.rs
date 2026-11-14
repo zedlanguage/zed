@@ -301,14 +301,19 @@ fn run(name: &str) {
     run_part(name, 0, 1);
 }
 
+/// The cases of part `part` of `parts` of `len` cases in their order: the parts cover each case
+/// once, and their sizes differ by one at most.
+fn part_of(len: usize, part: usize, parts: usize) -> std::ops::Range<usize> {
+    len * part / parts..len * (part + 1) / parts
+}
+
 /// Checks part `part` of `parts` equal parts of the cases of the fixture `name`, in their order,
 /// and panics with every line of it that disagrees. A fixture whose check takes near a second is
 /// checked in parts, each a test of its own, so that each test stays well under a second
 /// (TEST-op-table-speed).
 fn run_part(name: &str, part: usize, parts: usize) {
     let table = read_table(name);
-    let len = table.cases.len();
-    let all: Vec<usize> = (len * part / parts..len * (part + 1) / parts).collect();
+    let all: Vec<usize> = part_of(table.cases.len(), part, parts).collect();
     // A unit that does not get past resolution (a form not compiled yet in some case) is read one
     // case at a time up to resolution, and the cases that get past it alone are checked as one
     // unit: n front-end passes and one check of size n, linear in the cases. Should that unit
@@ -409,6 +414,62 @@ fn run_part(name: &str, part: usize, parts: usize) {
         println!("  {k:5} cases of `{t}`");
     }
     assert!(report.is_empty(), "{name}:\n{report}");
+}
+
+/// The parts of a fixture cover each case once, in order, with sizes that differ by one at most:
+/// no case, one case, fewer cases than parts, and an even and an odd count.
+#[test]
+fn the_parts_of_a_fixture_cover_each_case_once() {
+    for len in [0, 1, 2, 3, 1176, 1537] {
+        for parts in 1..=4 {
+            let ranges: Vec<_> = (0..parts).map(|p| part_of(len, p, parts)).collect();
+            let cases: Vec<usize> = ranges.iter().flat_map(|r| r.clone()).collect();
+            assert_eq!(
+                cases,
+                (0..len).collect::<Vec<_>>(),
+                "{len} cases in {parts} parts"
+            );
+            let sizes = ranges.iter().map(|r| r.len());
+            let (lo, hi) = (sizes.clone().min(), sizes.max());
+            assert!(
+                hi.unwrap() - lo.unwrap() <= 1,
+                "{len} cases in {parts} parts: {ranges:?}"
+            );
+        }
+    }
+}
+
+/// Each result a case can give alone before the checker runs, and the result of a case that gets
+/// past resolution, which only the checker gives: no fixture has a case of the first three
+/// (TEST-op-table-speed, P188).
+#[test]
+fn each_case_alone_is_read_up_to_resolution() {
+    let case = |template: &str, operand: &str| Case {
+        line: 1,
+        text: String::new(),
+        template: template.to_string(),
+        operands: vec![operand.to_string()],
+        expected: String::new(),
+        known: None,
+    };
+    let cases = [
+        (case("$0", "=\"open"), Some("error lex")),
+        (case("$0 +", "int"), Some("error parse")),
+        (case("$0", "={ x = 1; }"), Some("error -")),
+        (case("$0", "=@foo 1"), Some("notyet")),
+        (case("$0", "=nowhere"), Some("error -")),
+        (case("$0", "f16"), Some("notyet")),
+        (case("$0 + 1", "int"), None),
+    ];
+    let want: Vec<Option<&str>> = cases.iter().map(|(_, w)| *w).collect();
+    let table = Table {
+        tops: Vec::new(),
+        cases: cases.into_iter().map(|(c, _)| c).collect(),
+    };
+    for (n, w) in want.iter().enumerate() {
+        assert_eq!(front_end(&table, n).as_deref(), *w, "case {n}");
+        assert_eq!(check_alone(&table, n), w.unwrap_or("int"), "case {n}");
+    }
 }
 
 /// Every fixture file has its test below.
