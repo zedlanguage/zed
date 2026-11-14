@@ -644,13 +644,21 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_holding_no_union_as_before(
     );
 }
 
-/// MSG-wide-value-notes: `b = 2^64 + 13;` read by `rat(b) ^ (2^64)`. The notes on `b`, its
+/// MSG-wide-value-notes: `b = 2^64 + 13;` read by `f64(b) ^ (2^64)`. The notes on `b`, its
 /// `+` and its `^` printed `2 | 13`, and the note on the exponent `2^64` printed `2`: the
-/// literals of the operation, not its value. An operation on literals asks its class for a
-/// carrier, so its values are what it computes; each note now gives its type as the program
-/// could write it, the carriers the class may still take.
+/// literals of the operation, not its value. Each note now gives the type as the program could
+/// write it, `int` for `b` (a name bound to literals alone fixes its carrier where it is bound,
+/// QUESTIONS A63), or the value, `2^64` for the exponent, written as the program wrote it and
+/// not as its twenty digits.
+///
+/// The test first read `rat(b) ^ (2^64)`. Since QUESTIONS A100 (answered B, 2026-11-13) that
+/// power is a compile error, as it needs at least 128 EiB and Linux x86_64 addresses 16 EiB,
+/// and `rat` of an `int` no longer gives `#invalid`; the next test pins that rejection. The cast
+/// `f64(b)` keeps the program's shape and its rejection at 3:15: `2^64 + 13` has no exact `f64`,
+/// so the cast gives `#inexact`, and a float power builds no exact number, so the size rule
+/// does not apply.
 const WIDE: &str =
-    "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(b) ^ (2^64));\n}\n";
+    "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(f64(b) ^ (2^64));\n}\n";
 
 #[test]
 fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() {
@@ -660,34 +668,69 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
         format!(
             "{}:{}",
             f.display(),
-            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(b) ^ (2^64)) : String | #invalid`. Try `m.stdout <- (String(rat(b) ^ (2^64))) else "";` instead.
-  [1]  3:15: this call of `String` gives String | #invalid
-       3 |   m.stdout <- String(rat(b) ^ (2^64));
+            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(f64(b) ^ (2^64)) : String | #inexact`. Try `m.stdout <- (String(f64(b) ^ (2^64))) else "";` instead.
+  [1]  3:15: this call of `String` gives String | #inexact
+       3 |   m.stdout <- String(f64(b) ^ (2^64));
          |               ^^^^^^^^^^^^^^^^^^^^^^^ [1, 14, 15, 16]
          |                      ^^^^^^ [3]  ^^ [13]
          |                      ^^^^^^^^^^^^^^^ [2]
          |                          ^ [4] ^ [12]
          |                               ^^^^^^ [11]
-  [2]  3:22: this `^` gives rat | #invalid
-  [3]  3:22: this call of `rat` gives rat | #invalid
-  [4]  3:26: `b` is int | f32 | f64 | rat here
-  [5]  2:7: `b` is defined as this expression, int | f32 | f64 | rat
+  [2]  3:22: this `^` gives f64 | #inexact
+  [3]  3:22: this call of `f64` gives f64 | #inexact
+  [4]  3:26: `b` is int here
+  [5]  2:7: `b` is defined as this expression, int
        2 |   b = 2^64 + 13;
          |       ^ [8]  ^^ [10]
          |       ^^^^ [7]
          |       ^^^^^^^^^ [5, 6]
          |         ^^ [9]
-  [6]  2:7: this `+` gives int | f32 | f64 | rat
-  [7]  2:7: this `^` gives int | f32 | f64 | rat
+  [6]  2:7: this `+` gives int
+  [7]  2:7: this `^` gives int
   [8]  2:7: this literal, 2, is 2
   [9]  2:9: this literal, 64, is 64
   [10] 2:14: this literal, 13, is 13
-  [11] 3:31: this `^` gives int
+  [11] 3:31: this `^` gives 2^64
   [12] 3:32: this literal, 2, is 2
   [13] 3:34: this literal, 64, is 64
   [14] 3:15: the port `m.stdout` writes each value pushed to it as one line of text
-  [15] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(rat(b) ^ (2^64))) else "";`
+  [15] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(f64(b) ^ (2^64))) else "";`
   [16] 3:15: repair: handle each atom of the value with `match`, giving the line to write for it
+"#
+        )
+    );
+}
+
+/// QUESTIONS A100 (answered B, 2026-11-13), DESIGN sec:checking_in_zed and the sec:diagnostics
+/// row "Number too large for any memory of the target": `rat(b) ^ (2^64)` with
+/// `b = 2^64 + 13` builds a numerator of at least `2^64 * 64 + 1` bits, 128 EiB, past the
+/// 16 EiB that Linux x86_64 addresses, so it is a compile error. The message gives the least
+/// size of the base and of the exponent, the bound that follows from them, the menu (a smaller
+/// exponent, an exponent read from the input, the operation deleted) and the smaller exponent
+/// checked: `2^60` needs at least 8 EiB, which fits.
+const TOO_LARGE: &str =
+    "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(b) ^ (2^64));\n}\n";
+
+#[test]
+fn zedc_run_rejects_a_power_of_wide_literals_too_large_for_any_memory_of_the_target() {
+    let f = file("too_large.zed", TOO_LARGE);
+    assert_eq!(
+        rejection("run", &f),
+        format!(
+            "{}:{}",
+            f.display(),
+            r#"3:22: Number too large for any memory of the target: `rat(b) ^ (2^64)` needs at least 128 EiB; Linux x86_64 addresses 16 EiB. Try `m.stdout <- String(rat(b) ^ (2^60))` instead.
+  [1] 3:22: the numerator p of the base `rat(b)` is at least 2^64 in magnitude, so ⌊log₂ |p|⌋ is 64
+      3 |   m.stdout <- String(rat(b) ^ (2^64));
+        |                      ^^^^^^ [1]
+        |                      ^^^^^^^^^^^^^^^ [3, 4, 5]
+        |                               ^^^^^^ [2]
+  [2] 3:31: the exponent k, `(2^64)`, is at least 2^64
+  [3] 3:22: so `rat(b) ^ (2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
+  [4] 3:22: or read the exponent from the input: the run then stops if no memory holds the result
+  [5] 3:22: or delete `rat(b) ^ (2^64)` if its result is not used
+  fixes, each checked here:
+    m.stdout <- String(rat(b) ^ (2^60));    needs at least 8 EiB
 "#
         )
     );
