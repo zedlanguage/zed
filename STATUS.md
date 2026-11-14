@@ -2182,16 +2182,16 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CONST-fold-machine | running | 2026-11-13 16:26 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | start: worktree from origin/main 25a9b75b4, re-measuring all l01_39 families |
 | POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
-| SPEC-ffi-release-apply | impl attempt 1 | 2026-11-13 16:29 | started; spec worktree /home/luke/Work/wt/spec-ffi-release-apply-spec; load 63.31 57.12 51.32 |
-| SPEC-stop-releases | running |  |  |
+| SPEC-stop-releases | impl attempt 1 | 2026-11-13 17:14 | started; load 39.98 35.49 37.52 |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
 | STUDY-consume-on-success | impl attempt 1 | 2026-11-13 17:13 | started: study of take-on-success ownership (fdopen); load 34.32 33.97 37.19 |
-| STUDY-ffi-stateful | impl attempt 1 | 2026-11-13 17:06 | started; reading author answers E2 G2 L and DESIGN sec:ffi/memory/ports |
+| STUDY-ffi-stateful | impl attempt 1 | 2026-11-13 17:06 | report written (E2-A 9, G2-A 9, L-A 9; G2-D guard form to QUESTIONS); zed-impl worktree made; waiting on SPEC-ffi-release-apply push before sec:ffi edits; load  |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
 | TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | started; load 41.38 47.39 48.09 |
 
