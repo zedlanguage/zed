@@ -10,6 +10,7 @@
 //! DIAG-control with them.
 
 mod bench;
+mod completeness;
 
 use std::path::{Path, PathBuf};
 
