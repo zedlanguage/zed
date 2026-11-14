@@ -176,26 +176,64 @@ fn expr(e: &E, pos: &[Option<usize>], built: &[Option<Type>]) -> Option<Expr> {
 /// after those it names, as a source file's mutually recursive `type` declarations are
 /// grouped. `None` for a definition its group's admission rejects, and for every definition
 /// that names one. Definition `i` is named `{tag}_{i}`, so systems do not share names. The
-/// components are found by Tarjan's algorithm on an explicit stack, which emits each after
-/// every component it reaches, so the whole costs the definitions and their references, where a
-/// search from each definition cost their square and a pass per component their cube.
+/// components are those of [`components`].
 fn kernel(sys: &[E], tag: &str) -> Vec<Option<Type>> {
     kernel_named(sys, tag, None)
 }
 
 fn kernel_named(sys: &[E], tag: &str, names: Option<&[usize]>) -> Vec<Option<Type>> {
     let n = sys.len();
-    let edges: Vec<Vec<usize>> = sys
-        .iter()
+    let mut built: Vec<Option<Type>> = vec![None; n];
+    // The place of each definition in the component being built, `None` outside it.
+    let mut pos: Vec<Option<usize>> = vec![None; n];
+    components(&ref_edges(sys), |comp| {
+        for (k, &d) in comp.iter().enumerate() {
+            pos[d] = Some(k);
+        }
+        let defs: Option<Vec<Def>> = comp
+            .iter()
+            .map(|&d| {
+                expr(&sys[d], &pos, &built).map(|body| Def {
+                    name: format!("{tag}_{}", names.map_or(d, |ns| ns[d])),
+                    params: vec![],
+                    body,
+                })
+            })
+            .collect();
+        if let Some(Ok(g)) = defs.map(Group::new) {
+            for (k, t) in g.instance(vec![]).into_iter().enumerate() {
+                built[comp[k]] = Some(t);
+            }
+        }
+        for &d in comp {
+            pos[d] = None;
+        }
+    });
+    built
+}
+
+/// The definitions each definition of `sys` names, in the order [`refs`] finds them: the edges
+/// of the system's reference graph.
+fn ref_edges(sys: &[E]) -> Vec<Vec<usize>> {
+    (sys.iter())
         .map(|d| {
             let mut out = Vec::new();
             refs(d, &mut out);
             out
         })
-        .collect();
-    let mut built: Vec<Option<Type>> = vec![None; n];
-    // The place of each definition in the component being built, `None` outside it.
-    let mut pos: Vec<Option<usize>> = vec![None; n];
+        .collect()
+}
+
+/// Calls `each` on every strongly connected component of the graph `edges`, its members in
+/// increasing order, each component after every component it reaches.
+///
+/// Tarjan's algorithm (R. Tarjan, "Depth-first search and linear graph algorithms", SIAM
+/// Journal on Computing 1(2), 1972) on an explicit stack of frames, so a long chain does not
+/// overflow the thread's stack: O(V + E) for the search, and O(c log c) to sort a component of
+/// c, where a search from each definition costs O(V (V + E)) and a pass per component
+/// O(V^2 (V + E)). The sort is there so a group's definitions keep their order in the source.
+fn components(edges: &[Vec<usize>], mut each: impl FnMut(&[usize])) {
+    let n = edges.len();
     let (mut index, mut low) = (vec![usize::MAX; n], vec![0; n]);
     let (mut on_stack, mut stack) = (vec![false; n], Vec::new());
     let mut next = 0;
@@ -229,37 +267,20 @@ fn kernel_named(sys: &[E], tag: &str, names: Option<&[usize]>) -> Vec<Option<Typ
             if low[v] != index[v] {
                 continue;
             }
+            // The component is `v` and everything pushed after it, so this search from the
+            // top costs the component's size.
             let at = stack
                 .iter()
                 .rposition(|&x| x == v)
                 .expect("v is on the stack");
             let mut comp = stack.split_off(at);
             comp.sort_unstable();
-            for (k, &d) in comp.iter().enumerate() {
-                on_stack[d] = false;
-                pos[d] = Some(k);
-            }
-            let defs: Option<Vec<Def>> = comp
-                .iter()
-                .map(|&d| {
-                    expr(&sys[d], &pos, &built).map(|body| Def {
-                        name: format!("{tag}_{}", names.map_or(d, |ns| ns[d])),
-                        params: vec![],
-                        body,
-                    })
-                })
-                .collect();
-            if let Some(Ok(g)) = defs.map(Group::new) {
-                for (k, t) in g.instance(vec![]).into_iter().enumerate() {
-                    built[comp[k]] = Some(t);
-                }
-            }
             for &d in &comp {
-                pos[d] = None;
+                on_stack[d] = false;
             }
+            each(&comp);
         }
     }
-    built
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1982,19 +2003,45 @@ fn every_member_of_an_undecided_short_chain_is_inhabited() {
     every_member_of_an_undecided_chain_is_inhabited(16);
 }
 
-/// The definitions of the largest group of `sys`, those that reach each other, in order: a
-/// walk from each definition, O(n^2) for the test's inputs, outside the runs it measures.
+/// The definitions of the largest group of `sys`, those that reach each other, in order:
+/// [`largest_component`] of its references.
 fn largest_group(sys: &[E]) -> Vec<usize> {
-    let edges: Vec<Vec<usize>> = (sys.iter())
-        .map(|d| {
-            let mut out = Vec::new();
-            refs(d, &mut out);
-            out
-        })
-        .collect();
-    let reach: Vec<Vec<bool>> = (0..sys.len())
+    largest_component(&ref_edges(sys))
+}
+
+/// The largest strongly connected component of `edges` that holds a cycle (two or more
+/// members, or one that names itself), its members in increasing order, or none when no
+/// component holds one. Of two such components of one size, the one holding the larger
+/// member. That is the answer of [`largest_component_by_walks`], which this replaced
+/// (TEST-largest-group-scc), and the test `largest_component_agrees_with_walks` holds the two
+/// equal.
+///
+/// Complexity tradeoff: the walk from each node that this replaced costs O(V (V + E)) time and
+/// a V-by-V table, which held the benchmark
+/// `bench::the_verdicts_of_the_largest_undecided_x14_group_scale` at 1024 definitions; the
+/// components of Tarjan's algorithm ([`components`]) cost O(V + E) and O(c log c) to sort a
+/// component of c, so O((V + E) log V) at worst, and O(V) memory. Nothing is given up.
+fn largest_component(edges: &[Vec<usize>]) -> Vec<usize> {
+    let mut best: Vec<usize> = Vec::new();
+    components(edges, |comp| {
+        let cyclic = comp.len() > 1 || edges[comp[0]].contains(&comp[0]);
+        if cyclic && (comp.len(), comp.last()) > (best.len(), best.last()) {
+            best = comp.to_vec();
+        }
+    });
+    best
+}
+
+/// [`largest_component`] by a walk from each node, O(V (V + E)) time and a V-by-V table: the
+/// helper `largest_group` was this until TEST-largest-group-scc, kept as the reference that
+/// `largest_component_agrees_with_walks` compares with at small sizes. For each node, the nodes
+/// it and they reach (itself only when it is on a cycle); the longest such list, the last one
+/// of the longest when they tie.
+fn largest_component_by_walks(edges: &[Vec<usize>]) -> Vec<usize> {
+    let n = edges.len();
+    let reach: Vec<Vec<bool>> = (0..n)
         .map(|s| {
-            let mut seen = vec![false; sys.len()];
+            let mut seen = vec![false; n];
             let mut stack = edges[s].clone();
             while let Some(v) = stack.pop() {
                 if !std::mem::replace(&mut seen[v], true) {
@@ -2004,14 +2051,86 @@ fn largest_group(sys: &[E]) -> Vec<usize> {
             seen
         })
         .collect();
-    (0..sys.len())
+    (0..n)
         .map(|i| {
-            (0..sys.len())
+            (0..n)
                 .filter(|&j| reach[i][j] && reach[j][i])
                 .collect::<Vec<_>>()
         })
         .max_by_key(Vec::len)
         .unwrap_or_default()
+}
+
+/// `largest_component` gives what the walk from each node gave: on the corner cases, each with
+/// its answer written out, on 3000 random graphs of up to 12 nodes and 3 edges each, and on
+/// the largest group of X14 systems of up to 24 definitions.
+#[test]
+fn largest_component_agrees_with_walks() {
+    let cases = [
+        ("no nodes", vec![], vec![]),
+        ("one node", vec![vec![]], vec![]),
+        ("a node that names itself", vec![vec![0]], vec![0]),
+        ("a chain", vec![vec![1], vec![2], vec![]], vec![]),
+        ("a cycle", vec![vec![1], vec![2], vec![0]], vec![0, 1, 2]),
+        (
+            "a chain into a cycle",
+            vec![vec![1], vec![2], vec![1]],
+            vec![1, 2],
+        ),
+        (
+            "a pair and a self-loop",
+            vec![vec![0], vec![2], vec![1]],
+            vec![1, 2],
+        ),
+        (
+            "two pairs",
+            vec![vec![1], vec![0], vec![3], vec![2]],
+            vec![2, 3],
+        ),
+        // Tarjan's algorithm emits {2, 3} before {0, 1}, which reaches it.
+        (
+            "a pair that reaches a pair",
+            vec![vec![1, 2], vec![0], vec![3], vec![2]],
+            vec![2, 3],
+        ),
+        // Tarjan's algorithm emits {1, 2} before {0, 3}; the larger member decides the tie.
+        (
+            "two pairs, one around the other",
+            vec![vec![3, 1], vec![2], vec![1], vec![0]],
+            vec![0, 3],
+        ),
+        (
+            "a reference named twice",
+            vec![vec![1, 1], vec![0, 0]],
+            vec![0, 1],
+        ),
+    ];
+    for (what, edges, want) in &cases {
+        assert_eq!(largest_component(edges), *want, "{what}");
+        assert_eq!(largest_component_by_walks(edges), *want, "{what} by walks");
+    }
+    let (mut rng, seed) = Rng::fresh("largest component");
+    for _ in 0..3000 {
+        let n = rng.below(13);
+        let edges: Vec<Vec<usize>> = (0..n)
+            .map(|_| (0..rng.below(4)).map(|_| rng.below(n)).collect())
+            .collect();
+        assert_eq!(
+            largest_component(&edges),
+            largest_component_by_walks(&edges),
+            "seed {seed}: {edges:?}"
+        );
+    }
+    for n in [1, 2, 8, 24] {
+        let sys = undecided(claude_of(&mut rng, n));
+        let edges = ref_edges(&sys);
+        assert_eq!(
+            largest_group(&sys),
+            largest_component_by_walks(&edges),
+            "seed {seed}, n = {n}: {}",
+            show_system(&sys)
+        );
+    }
 }
 
 /// A definition outside a group the decider refuses reads each member of it by the group's

@@ -128,10 +128,14 @@ fn verdicts_of_undecided_groups_scale() {
 /// The verdicts of the members of the largest undecided X14 group, as in
 /// [`verdicts_of_undecided_groups_scale`].
 ///
-/// Size (TEST-bench-move-l0123, author P169): n 128 before, now 1024; 1x 5.1 ms at load
-/// 16.99. The 1x stays far under 0.5 s because the inputs set the size: `largest_group`
-/// (in `group_oracle.rs`) walks from every definition and keeps an n-by-n table, O(n²), so
-/// at 4096 (inputs at 32768) and 16384 the test passed the 25 s limit before its first run.
+/// Size: n 128 until TEST-bench-move-l0123 (author P169), then 1024, held there because
+/// `largest_group` walked from every definition, O(n²); now 8192 (TEST-largest-group-scc,
+/// `largest_group` by Tarjan's algorithm), 1x 85 to 106 ms, ratio 8.0 to 8.1 by instructions
+/// and 7.9 by bytes, at load 31. The 1x stays short of 1 s because the whole test is held
+/// under 20 s: at 65536 the 1x took 0.88 s (ratio 8.09) but the test 85 s, since the first
+/// run of each size, which `scaling::check` also holds to the limit, does about 4 times the
+/// work of the later runs, and the inputs at 524288 take seconds to build. With the old
+/// helper, 8192 passed the 21 s limit before its first run.
 #[test]
 fn the_verdicts_of_the_largest_undecided_x14_group_scale() {
     let one = |n: usize| -> Vec<Type> {
@@ -146,12 +150,41 @@ fn the_verdicts_of_the_largest_undecided_x14_group_scale() {
             })
             .collect()
     };
-    let n = 1024;
+    let n = 8192;
     let ones = scaling::inputs(n, one);
     scaling::check(
         "the verdicts of the members of the largest undecided X14 group of n definitions",
         n,
         |m| every(&ones[&m]),
+    );
+}
+
+/// `largest_component` of a random graph of n nodes with 0 to 3 edges each, at n and 8n: one
+/// pass of Tarjan's algorithm, O(n log n) with the sort of the largest component (which holds
+/// about half the nodes here). Small instance `largest_component_agrees_with_walks`.
+///
+/// Size (TEST-largest-group-scc): n = 2^20, 1x 0.54 s, ratio 8.0 by instructions and bytes
+/// at load 34; 6.3 by instructions under `tools/run_tests.sh`, whose
+/// `glibc.malloc.tcache_count=0` adds work at 1x (1.21e9 against 0.69e9 instructions). At
+/// 2^21 the 1x took 1.07 s but the test 15 s, too close to the 20 s limit. The walk from each
+/// node that this replaced took 62 times the instructions and 63 times the bytes at 1024 and
+/// 8192.
+#[test]
+fn largest_component_scales() {
+    let graph = |n: usize| -> Vec<Vec<usize>> {
+        let mut rng = Rng::new(5);
+        (0..n)
+            .map(|_| (0..rng.below(4)).map(|_| rng.below(n)).collect())
+            .collect()
+    };
+    let n = 1 << 20;
+    let graphs = scaling::inputs(n, graph);
+    scaling::check(
+        "the largest strongly connected component of a random graph of n nodes",
+        n,
+        |m| {
+            std::hint::black_box(largest_component(&graphs[&m]));
+        },
     );
 }
 
