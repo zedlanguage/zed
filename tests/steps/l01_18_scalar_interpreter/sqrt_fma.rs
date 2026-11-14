@@ -417,7 +417,9 @@ fn components(v: &Value) -> Vec<Value> {
 
 #[test]
 fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
-    let seed = super::seed("ZED_SQRT_FMA_SEED");
+    let seed = zed_tests::seed::seed(
+        "random_operands_give_the_same_bits_in_the_kernel_and_in_native_code",
+    );
     let mut rng = Rng::new(seed);
     // 200 cases from a new seed each run (was 400 from a fixed one): the test took 0.13 s, against
     // 0.34 s at 400, as native code for one tuple of all the calls is built.

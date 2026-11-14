@@ -57,7 +57,7 @@ fn whole(r: &Rat) -> &BigInt {
 /// since num-bigint's own text is slow there.
 #[test]
 fn wide_products_quotients_and_texts_agree_with_num_bigint() {
-    let seed = super::seed("ZED_SUBQUADRATIC_SEED");
+    let seed = zed_tests::seed::seed("wide_products_quotients_and_texts_agree_with_num_bigint");
     let n = 1 << 16;
     let x = random(n, seed);
     let s = int(sparse(n));
@@ -118,7 +118,7 @@ fn wide_products_quotients_and_texts_agree_with_num_bigint() {
 #[test]
 fn products_agree_with_num_bigint_across_the_crossovers() {
     use zed_kernel::num::{mul_int, mul_uint, pow_uint};
-    let seed = super::seed("ZED_CROSSOVER_PRODUCTS_SEED");
+    let seed = zed_tests::seed::seed("products_agree_with_num_bigint_across_the_crossovers");
     let ones = |w: usize| (BigUint::one() << (64 * w)) - 1u32;
     let two = |w: usize| BigUint::one() << (64 * w - 1);
     let forms = |w: usize, seed: u64| {

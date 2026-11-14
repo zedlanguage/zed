@@ -143,7 +143,7 @@ fn read_f64(text: &str) -> f64 {
 fn every_sampled_tie_prints_the_larger_magnitude() {
     // 300 samples a binade, 15,600 ties, from a new seed each run (was 1000 from a fixed one).
     const PER_BINADE: usize = 300;
-    let drawn = super::seed("ZED_TIE_SEED");
+    let drawn = zed_tests::seed::seed("every_sampled_tie_prints_the_larger_magnitude");
     let mut seed = drawn;
     let mut binades_with_ties = Vec::new();
     let mut ties = 0usize;

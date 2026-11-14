@@ -67,7 +67,7 @@ fn random(rng: &mut Rng) -> Rat {
 
 #[test]
 fn kept_powers_agree_with_the_built_value() {
-    let seed = super::seed("ZED_KEPT_POWERS_SEED");
+    let seed = zed_tests::seed::seed("kept_powers_agree_with_the_built_value");
     let mut rng = Rng::new(seed);
     for _ in 0..2000 {
         let (a, b) = (random(&mut rng), random(&mut rng));
@@ -151,7 +151,7 @@ where
 
 #[test]
 fn projection_matches_the_standard_reading() {
-    let seed = super::seed("ZED_PROJECTION_SEED");
+    let seed = zed_tests::seed::seed("projection_matches_the_standard_reading");
     let mut rng = Rng::new(seed);
     let digits = |rng: &mut Rng, n: usize| -> String {
         (0..n)
@@ -465,7 +465,7 @@ fn a_rat_takes_an_int_exponent_of_either_sign() {
     assert_eq!(p(&int(1), -7), Some(int(1)));
     // A base with kept powers of primes: `2^-200` to the `-2` is `2^400`.
     assert_eq!(p(&two_to(-200), -2), Some(two_to(400)));
-    let seed = super::seed("ZED_RAT_POWER_SEED");
+    let seed = zed_tests::seed::seed("a_rat_takes_an_int_exponent_of_either_sign");
     let mut rng = Rng::new(seed);
     for _ in 0..300 {
         let r = random(&mut rng);

@@ -25,20 +25,6 @@ use super::{kernel, planned};
 const MIN: i128 = i64::MIN as i128;
 const MAX: i128 = i64::MAX as i128;
 
-/// The seed of the sampled pairs: `ZED_MUL_SEED` when it is set, to run a failure again, else a
-/// new one from the clock, so each run draws other pairs. Printed either way.
-fn seed() -> u64 {
-    let s = std::env::var("ZED_MUL_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| {
-            let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-            t.expect("a clock after 1970").as_nanos() as u64
-        });
-    eprintln!("seed {s}; ZED_MUL_SEED={s} draws the same pairs");
-    s
-}
-
 /// The integer `n` as a value: a word when it fits in 64 bits.
 fn int(n: i128) -> Value {
     Value::int(BigInt::from(n))
@@ -251,7 +237,7 @@ fn differential(
             let (x, y) = &pairs[k];
             if let Err(e) = same(k, wv, gv) {
                 panic!(
-                    "{what}, seed {seed} (rerun with ZED_MUL_SEED={seed}), pair {k}: {x} * {y}: {e}"
+                    "{what}, seed {seed} (rerun with ZED_TEST_SEED={seed}), pair {k}: {x} * {y}: {e}"
                 );
             }
         }
@@ -269,7 +255,7 @@ const PAIRS: usize = 2 * CHUNK;
 
 #[test]
 fn sampled_integer_pairs_agree_with_the_kernel_and_are_exact() {
-    let seed = seed();
+    let seed = zed_tests::seed::seed("sampled_integer_pairs_agree_with_the_kernel_and_are_exact");
     let pairs = int_pairs(seed, PAIRS);
     let values: Vec<(Value, Value)> = pairs.iter().map(|&(x, y)| (int(x), int(y))).collect();
     let overflows = pairs.iter().filter(|&&(x, y)| !inline(x, y)).count();
@@ -364,7 +350,7 @@ fn bits(v: &Value) -> u64 {
 
 #[test]
 fn sampled_float_pairs_over_every_class_agree_bit_for_bit() {
-    let seed = seed();
+    let seed = zed_tests::seed::seed("sampled_float_pairs_over_every_class_agree_bit_for_bit");
     let mut r = Rng::new(seed);
     let mut pairs: Vec<(f64, f64)> = Vec::new();
     for x in FLOAT_CORNERS {
@@ -450,7 +436,7 @@ const SPEED_PAIRS: usize = 500;
 /// reorder what `None` leaves alone: integer pairs and float pairs (was 2,000 of each).
 #[test]
 fn the_optimizing_level_agrees_on_a_sample() {
-    let seed = seed();
+    let seed = zed_tests::seed::seed("the_optimizing_level_agrees_on_a_sample");
     let pairs = int_pairs(seed, SPEED_PAIRS);
     let values: Vec<(Value, Value)> = pairs.iter().map(|&(x, y)| (int(x), int(y))).collect();
     differential(
