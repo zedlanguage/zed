@@ -8,7 +8,6 @@
 //! `h(1)` of the same body does (item CHK-replay-pair); it was rejected with "`h` gives 1
 //! here, which is not int".
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 use zed_tests::step_helpers::l01_26_type_resolution::{info, type_errors};
 
@@ -529,7 +528,7 @@ fn every_printed_fix_of_a_decimal_component_runs() {
 /// `n` decimal components and a call with `n` decimal literals: a tuple of the components each
 /// added to `1r`, or the sum of all of them and `1r`. Each literal keeps a class of its own in
 /// both, and the sum reads all of them in one expression.
-fn decimals(n: usize, together: bool) -> String {
+pub(super) fn decimals(n: usize, together: bool) -> String {
     let reads: Vec<String> = (0..n).map(|i| format!("p[{i}]")).collect();
     let body = match together {
         true => format!("{} + 1r", reads.join(" + ")),
@@ -546,38 +545,9 @@ fn decimals(n: usize, together: bool) -> String {
     format!("h(positional p) = {body};\nr = h(({}));\n", args.join(", "))
 }
 
-#[test]
-fn many_decimal_components_check_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            for together in [false, true] {
-                assert_eq!(type_errors(&decimals(3, together)), Vec::<String>::new());
-                let n = 100;
-                let srcs = [
-                    decimals(n, together),
-                    decimals(scaling::FACTOR * n, together),
-                ];
-                let what = match together {
-                    false => "checking a call of n decimal components, each added to 1r",
-                    true => "checking a call of n decimal components summed",
-                };
-                scaling::check(what, n, |m| {
-                    assert_eq!(
-                        type_errors(&srcs[usize::from(m != n)]),
-                        Vec::<String>::new()
-                    );
-                });
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 /// `n` components, each returned beside a literal, and a call with `n` integer literals: the
 /// replay restricts each component's class once.
-fn picks(n: usize) -> String {
+pub(super) fn picks(n: usize) -> String {
     let body: Vec<String> = (0..n)
         .map(|i| format!("if p[{i}] < 5 {{ p[{i}] }} else {{ 0 }}"))
         .collect();
@@ -591,7 +561,7 @@ fn picks(n: usize) -> String {
 
 /// `n` functions, each passing its parameter's first component to the next beside `1r`, and a
 /// call of the first with a pair of literals: the replay runs through `n` nested calls.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let mut src = String::from("h0(positional p) = p[0] + 1r;\n");
     for i in 1..n {
         src.push_str(&format!(
@@ -603,38 +573,9 @@ fn chain(n: usize) -> String {
     src
 }
 
-#[test]
-fn many_components_and_nested_calls_check_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&picks(3)), Vec::<String>::new());
-            assert_eq!(type_errors(&chain(3)), Vec::<String>::new());
-            let n = 100;
-            let srcs = [picks(n), picks(scaling::FACTOR * n)];
-            scaling::check("checking a call of n literal components", n, |m| {
-                assert_eq!(
-                    type_errors(&srcs[usize::from(m != n)]),
-                    Vec::<String>::new()
-                );
-            });
-            let n = 40;
-            let srcs = [chain(n), chain(scaling::FACTOR * n)];
-            scaling::check("checking n nested calls of a pair of literals", n, |m| {
-                assert_eq!(
-                    type_errors(&srcs[usize::from(m != n)]),
-                    Vec::<String>::new()
-                );
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 /// `n` components, each returned beside a literal, and a call with `n` `f64` literals: each
 /// literal branch takes its carrier from its own component (item LIT-tuple-branch-carrier).
-fn branches(n: usize) -> String {
+pub(super) fn branches(n: usize) -> String {
     let body: Vec<String> = (0..n)
         .map(|i| format!("if p[{i}] < 5 {{ p[{i}] }} else {{ 0 }}"))
         .collect();
@@ -648,7 +589,7 @@ fn branches(n: usize) -> String {
 
 /// A component read `n` levels deep, `p[0][0]…[0]`, returned beside a literal: the literal takes
 /// its carrier from the read, whose term is built once, in steps of one level each.
-fn deep(n: usize) -> String {
+pub(super) fn deep(n: usize) -> String {
     let read = format!("p{}", "[0]".repeat(n));
     let nest = (1..n).fold(String::from("1.5f64"), |a, _| format!("({a}, 1)"));
     format!("h(positional p) = if p[1] {{ {read} }} else {{ 0 }};\nr = h(({nest}, false));\n")
@@ -656,7 +597,7 @@ fn deep(n: usize) -> String {
 
 /// `n` branches, each returning `p[0][0]` beside a literal of its own: the reads share one
 /// class, so every literal takes its carrier from the first read, whose term is built once.
-fn shared(n: usize) -> String {
+pub(super) fn shared(n: usize) -> String {
     let body: Vec<String> = (0..n)
         .map(|i| format!("if p[1] {{ p[0][0] }} else {{ {i} }}"))
         .collect();
@@ -666,40 +607,22 @@ fn shared(n: usize) -> String {
     )
 }
 
+
 #[test]
-fn many_branches_beside_components_check_and_elaborate_in_linear_time() {
-    use zed_tests::step_helpers::l01_16_elaboration::{checked, value};
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(value(&branches(3), "r"), "(0.5, 1.5, 2.5)");
-            assert_eq!(value(&deep(3), "r"), "0.0");
-            assert_eq!(value(&shared(3), "r"), "(0.0, 1.0, 2.0)");
-            for (what, make, n) in [
-                (
-                    "checking and elaborating n literal branches beside n components",
-                    branches as fn(usize) -> String,
-                    100,
-                ),
-                (
-                    "checking and elaborating a literal branch beside a read n deep",
-                    deep,
-                    60,
-                ),
-                (
-                    "checking and elaborating n literal branches beside reads of one component",
-                    shared,
-                    100,
-                ),
-            ] {
-                let srcs = [make(n), make(scaling::FACTOR * n)];
-                scaling::check(what, n, |m| {
-                    let c = checked(&srcs[usize::from(m != n)]);
-                    c.elab();
-                });
-            }
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn many_decimal_components_and_nested_calls_check() {
+    // Small instances of the benchmarks `bench::tuple_arg_pair`.
+    for together in [false, true] {
+        assert_eq!(type_errors(&decimals(3, together)), Vec::<String>::new());
+    }
+    assert_eq!(type_errors(&picks(3)), Vec::<String>::new());
+    assert_eq!(type_errors(&chain(3)), Vec::<String>::new());
+}
+
+#[test]
+fn literal_branches_beside_components_take_the_carriers_of_the_components() {
+    // Small instances of the benchmarks `bench::tuple_arg_pair`, each also elaborated.
+    use zed_tests::step_helpers::l01_16_elaboration::value;
+    assert_eq!(value(&branches(3), "r"), "(0.5, 1.5, 2.5)");
+    assert_eq!(value(&deep(3), "r"), "0.0");
+    assert_eq!(value(&shared(3), "r"), "(0.0, 1.0, 2.0)");
 }

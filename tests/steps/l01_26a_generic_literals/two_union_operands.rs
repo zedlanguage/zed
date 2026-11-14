@@ -12,7 +12,6 @@
 
 use std::ffi::OsString;
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
 use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
@@ -276,7 +275,7 @@ fn the_executable_prints_the_interpreter_s_values() {
 /// them, so its type lists about n/2 integers beside `f64`; `k` adds two calls of `f`, whose
 /// pairs of values number about n²/4, and reads at `rat` an inline `if` of n branches, each a
 /// decimal literal or `r`.
-fn nest(n: usize) -> String {
+pub(super) fn nest(n: usize) -> String {
     let mut body = String::new();
     let mut decimals = String::new();
     for i in 0..n {
@@ -300,32 +299,12 @@ fn nest(n: usize) -> String {
     )
 }
 
+
 #[test]
-fn scaling() {
-    // Complexity tradeoff (DESIGN.md Part G): the carrier of `f(c, x) + f(c, x)` is found from
-    // the parts each operand holds whole, once per operand, and each operand's v listed values
-    // are read at it once, O(v log v); the decimal literals of the inline `if` are found by
-    // one walk over its branches and each adopted once, O(n log n) with the join. Checking
-    // each pair of values of the two operands, as each would be alone, costs O(v²).
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&nest(5)), Vec::<String>::new());
-            assert_eq!(sig(&nest(5), "f"), "(int, f64) -> 1 | 3 | 5 | f64");
-            assert_eq!(sig(&nest(5), "k"), "(int, f64) -> f64");
-            assert_eq!(sig(&nest(5), "kr"), "(int, rat) -> rat");
-            let n = 250;
-            let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
-            scaling::check(
-                "adding two calls of n listed values beside f64, and reading an `if` of n \
-                 decimal literals at `rat`",
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn two_calls_of_many_listed_values_and_an_if_of_many_decimals_check() {
+    // A small instance of the benchmark `bench::two_union_operands::scaling`.
+    assert_eq!(type_errors(&nest(5)), Vec::<String>::new());
+    assert_eq!(sig(&nest(5), "f"), "(int, f64) -> 1 | 3 | 5 | f64");
+    assert_eq!(sig(&nest(5), "k"), "(int, f64) -> f64");
+    assert_eq!(sig(&nest(5), "kr"), "(int, rat) -> rat");
 }

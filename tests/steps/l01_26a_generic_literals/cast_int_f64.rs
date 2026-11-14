@@ -5,10 +5,9 @@
 //! bound (QUESTIONS A63), so `int(b)` with `b = 2^64 + 13` is an `int`, and `f64(b)` with
 //! `b = 2^3 + 1` an `f64`, and neither asks for an `else`.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 /// The signature of `f` in `src`, which checks with no error.
 fn sig_f(src: &str) -> String {
@@ -132,7 +131,7 @@ fn a_cast_of_a_parameter_keeps_its_atoms() {
 /// A body of `n` names, each bound to the last plus `1` from `2^3`, `n` casts of the last to
 /// `int` and to `f64`, and `n` casts of operations on integer literals written in place,
 /// `int(2^3 + i)` and `f64(2^3 + i)`, each its own class taken at `int` by the cast.
-fn many(n: usize) -> String {
+pub(super) fn many(n: usize) -> String {
     let mut src = String::from("f() {\n    b0 = 2^3;\n");
     for i in 1..n {
         src += &format!("    b{i} = b{} + 1;\n", i - 1);
@@ -148,18 +147,9 @@ fn many(n: usize) -> String {
     src + ");\n}\n"
 }
 
+
 #[test]
-fn casts_of_many_operations_on_literals_check_in_linear_time() {
-    scaling::on_a_thread(1 << 28, || {
-        assert!(!sig_f(&many(3)).contains('#'));
-        let n = 200;
-        let units = scaling::inputs(n, |m| Resolved::new(&many(m)));
-        scaling::check(
-            "checking n casts `int` and `f64` of a name of n literals and of n operations on literals",
-            n,
-            |m| {
-                units[&m].check();
-            },
-        );
-    });
+fn casts_of_names_and_operations_on_literals_keep_no_atom() {
+    // A small instance of the benchmark `bench::cast_int_f64`.
+    assert!(!sig_f(&many(3)).contains('#'));
 }

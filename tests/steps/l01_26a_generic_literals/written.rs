@@ -3,7 +3,6 @@
 //! sec:diagnostics: a message uses the program's words). The lexer drops the `_`, so each
 //! literal here is written with them, and each message is compared whole.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 /// The rendered rejection of `src`, with its notes.
@@ -265,12 +264,15 @@ fn the_repair_of_a_rat_literal_writes_its_digits_as_the_program_does() {
 /// as text without the `_` (REPAIR-literal-text-spelling). A literal in another base is written
 /// in decimal, by the kernel's conversion (COMPLEXITY.md K81), which no linear method gives;
 /// `a_literal_in_another_base_is_quoted_with_its_prefix_and_underscores` quotes one.
-fn long(n: usize) -> String {
+pub(super) fn long(n: usize) -> String {
     format!("f(x: String) = x == ({}1);\n", "1_".repeat(n))
 }
 
+
 #[test]
-fn quoting_a_literal_of_n_digits_with_underscores_scales() {
+fn a_literal_of_digits_with_underscores_is_quoted_as_written() {
+    // A small instance of the benchmark
+    // `bench::written::quoting_a_literal_of_n_digits_with_underscores_scales`.
     let lit = format!("{}1", "1_".repeat(3));
     let errors = type_errors(&long(3));
     assert_eq!(errors.len(), 1);
@@ -282,9 +284,4 @@ fn quoting_a_literal_of_n_digits_with_underscores_scales() {
     );
     // The repair writes the text `String` gives, the digits without the `_`.
     assert!(errors[0].contains("x == \"1111\""), "{errors:?}");
-    let n = 20_000;
-    let srcs = scaling::inputs(n, long);
-    scaling::check("quoting a literal of n digits with `_`", n, |m| {
-        type_errors(&srcs[&m]);
-    });
 }

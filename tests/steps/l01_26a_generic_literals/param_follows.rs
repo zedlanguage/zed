@@ -150,3 +150,19 @@ fn an_operation_with_a_need_of_its_own_keeps_its_carrier() {
     let out = prints("l01_26a_param_follows_power_repair", def, &["g(0.5f64)"]);
     assert_eq!(out, "true\n");
 }
+
+/// A body of `n` comparisons of the parameter `x` with operations on literals alone:
+/// `g(positional x) = { c0 = x == 0 + 1; …; c0 };` (plan row LIT-generic-class-follows).
+pub(super) fn comparisons(n: usize) -> String {
+    let lines: String = (0..n)
+        .map(|i| format!("c{i} = x == {i} + {}; ", i % 7))
+        .collect();
+    format!("g(positional x) = {{ {lines}c0 }};\n")
+}
+
+#[test]
+fn comparisons_of_a_parameter_with_operations_on_literals_check() {
+    // A small instance of the benchmark
+    // `bench::param_follows::comparisons_with_a_parameter_are_checked_in_linear_time`.
+    assert_eq!(type_errors(&comparisons(4)), Vec::<String>::new());
+}

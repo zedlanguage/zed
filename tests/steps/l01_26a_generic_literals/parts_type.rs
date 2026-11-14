@@ -6,8 +6,7 @@
 //! `f(x: 1r, p: (2r, 1))` is `rat`, which holds its value `3r`; it was `1r | 2r`, the literals
 //! the call passed, which does not.
 
-use zed_tests::scaling;
-use zed_tests::step_helpers::l01_16_elaboration::{checked, elab, with_prelude};
+use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 use zed_tests::step_helpers::l01_26_type_resolution::info;
 
 /// The static type of `name` in `src`, its value, and whether the type holds the value; and
@@ -202,7 +201,7 @@ fn the_static_type_of_each_generated_call_holds_its_value() {
 /// A function that reads `n` parts of its tuple parameter, called with a tuple of `n` distinct
 /// `r` literals: the binding of its bounded variable has `n + 1` pieces, each widened to `rat`
 /// once (COMPLEXITY.md F170).
-fn parts(n: usize) -> String {
+pub(super) fn parts(n: usize) -> String {
     let reads: Vec<String> = (0..n).map(|i| format!("p[{i}]")).collect();
     let tuple: Vec<String> = (0..n).map(|i| format!("{}r", i + 2)).collect();
     format!(
@@ -213,42 +212,30 @@ fn parts(n: usize) -> String {
 }
 
 /// `n` calls of one function, each with its own `r` literals (COMPLEXITY.md F170).
-fn calls(n: usize) -> String {
+pub(super) fn calls(n: usize) -> String {
     let ys: Vec<String> = (0..n)
         .map(|i| format!("y{i} = f(x: {}r, p: ({}r, 1));\n", i + 1, i + 2))
         .collect();
     format!("f(x, p) = x + p[0];\n{}", ys.concat())
 }
 
+
 #[test]
-fn a_call_that_reads_many_parts_checks_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(
-                typed_value(&parts(3), "y"),
-                ("rat".into(), "10r".into(), true)
-            );
-            let n = 1000;
-            let srcs = [parts(n), parts(scaling::FACTOR * n)];
-            scaling::check("checking a call that reads n parts of its tuple", n, |m| {
-                checked(&srcs[usize::from(m != n)]);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn a_call_that_reads_many_parts_widens_each_to_rat() {
+    // A small instance of the benchmark
+    // `bench::parts_type::a_call_that_reads_many_parts_checks_in_linear_time`.
+    assert_eq!(
+        typed_value(&parts(3), "y"),
+        ("rat".into(), "10r".into(), true)
+    );
 }
 
 #[test]
-fn many_calls_through_a_bounded_variable_check_in_linear_time() {
+fn many_calls_through_a_bounded_variable_each_take_rat() {
+    // A small instance of the benchmark
+    // `bench::parts_type::many_calls_through_a_bounded_variable_check_in_linear_time`.
     assert_eq!(
         typed_value(&calls(3), "y2"),
         ("rat".into(), "7r".into(), true)
     );
-    let n = 1000;
-    let srcs = [calls(n), calls(scaling::FACTOR * n)];
-    scaling::check("checking n calls through a bounded variable", n, |m| {
-        checked(&srcs[usize::from(m != n)]);
-    });
 }

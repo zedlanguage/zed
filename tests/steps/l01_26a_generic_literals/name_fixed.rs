@@ -6,9 +6,8 @@
 //! `4611686018427388000.0`, and `q = 1.5 + 1; z = q * 2.0f64` printed `5.0`. A class that holds a
 //! parameter is not fixed: a call gives it its carrier.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, info, sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{info, sig, type_errors};
 
 /// `main` with the lines `body`, each indented, and the one error its check gives: the error's
 /// line, counted from 1, and its message.
@@ -147,7 +146,7 @@ fn a_class_of_a_parameter_is_left_to_the_call() {
 
 /// A body of `n` names, each bound to the last plus `2^3`, an operation on literals alone and so
 /// a class of its own at each binding, from `2^3`, returning the last.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let mut src = String::from("f() {\n    b0 = 2^3;\n");
     for i in 1..n {
         src += &format!("    b{i} = b{} + 2^3;\n", i - 1);
@@ -157,7 +156,7 @@ fn chain(n: usize) -> String {
 
 /// A body binding a tuple of `n` parts `1.5 + 1`, rejected at the binding in one error that
 /// names each part, as outside every function.
-fn decimals(n: usize) -> String {
+pub(super) fn decimals(n: usize) -> String {
     let parts: Vec<&str> = vec!["1.5 + 1"; n];
     format!(
         "f() {{\n    t = ({});\n    return t;\n}}\n",
@@ -165,37 +164,21 @@ fn decimals(n: usize) -> String {
     )
 }
 
+
 #[test]
-fn bindings_of_literals_check_in_linear_time() {
-    scaling::on_a_thread(1 << 28, || {
-        assert_eq!(sig(&chain(3), "f"), "() -> int");
-        let n = 200;
-        let units = scaling::inputs(n, |m| Resolved::new(&chain(m)));
-        scaling::check("checking a chain of n bindings of literals", n, |m| {
-            units[&m].check();
-        });
-    });
+fn a_chain_of_bindings_of_literals_is_an_int() {
+    // A small instance of the benchmark `bench::name_fixed::bindings_of_literals_check_in_linear_time`.
+    assert_eq!(sig(&chain(3), "f"), "() -> int");
 }
 
 #[test]
-fn rejected_parts_of_a_binding_check_in_linear_time() {
-    // Each rejected literal finds its part of the value by a binary search of the parts, and the
-    // fixes write the binding once per carrier.
-    scaling::on_a_thread(1 << 28, || {
-        let errors = type_errors(&decimals(3));
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].starts_with("3 parts of the value of `t`"),
-            "{errors:?}"
-        );
-        let n = 40;
-        let units = scaling::inputs(n, |m| Resolved::new(&decimals(m)));
-        scaling::check(
-            "checking a binding of a tuple of n rejected parts",
-            n,
-            |m| {
-                units[&m].check();
-            },
-        );
-    });
+fn rejected_parts_of_a_binding_are_one_error() {
+    // A small instance of the benchmark
+    // `bench::name_fixed::rejected_parts_of_a_binding_check_in_linear_time`.
+    let errors = type_errors(&decimals(3));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].starts_with("3 parts of the value of `t`"),
+        "{errors:?}"
+    );
 }

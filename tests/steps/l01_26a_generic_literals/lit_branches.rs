@@ -3,9 +3,8 @@
 //! `if`; and a negated `rat` literal is a literal (DESIGN.md step L1.26a). Item
 //! LIT-branch-carrier, from the findings of TESTS-L1.26-refined-divisor.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 const H: &str = "h(positional z: f64) = z;\n";
 
@@ -202,7 +201,7 @@ fn a_negated_zero_rat_divisor_keeps_div_by_zero() {
 
 /// A call of a parameter of type `f64` on a nest of `n` `if`s, each branch its own integer
 /// literal: a union of `n + 1` literal values, each fixed at `f64`.
-fn nest(n: usize) -> String {
+pub(super) fn nest(n: usize) -> String {
     let mut body = String::new();
     for i in 0..n {
         body += &format!("if c == {i} {{ {i} }} else ");
@@ -211,23 +210,10 @@ fn nest(n: usize) -> String {
     format!("{H}f(positional c: int) = h({body});\n")
 }
 
+
 #[test]
-fn scaling() {
-    // Complexity tradeoff (DESIGN.md Part G): the branches are read once, each adopts once,
-    // and their singletons are joined in pairs, O(n log n); joined one at a time, each union
-    // copies the type so far, O(n^2).
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
-            assert_eq!(sig(&nest(3), "f"), "(int) -> f64");
-            let n = 250;
-            let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
-            scaling::check("checking an `if` of n literal branches at `f64`", n, |m| {
-                units[&m].check();
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn an_if_of_many_literal_branches_takes_f64_at_a_parameter() {
+    // A small instance of the benchmark `bench::lit_branches::scaling`.
+    assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
+    assert_eq!(sig(&nest(3), "f"), "(int) -> f64");
 }

@@ -9,9 +9,8 @@
 //! after it. `rat` of a `String` or an `f64` keeps `#invalid`, and so does `rat` of a parameter,
 //! which may be any value of its carrier.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, info, sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{info, sig, type_errors};
 
 /// The signature of `f` in `src`, which checks with no error.
 fn sig_f(src: &str) -> String {
@@ -168,7 +167,7 @@ fn the_headline_prints_a_bound_name_as_its_type() {
 
 /// A body of `n` names, each bound to the last plus `1` from `2^3`, so one class of `n + 1`
 /// literals, and `n` casts of the last, summed.
-fn many(n: usize) -> String {
+pub(super) fn many(n: usize) -> String {
     let mut src = String::from("f() {\n    b0 = 2^3;\n");
     for i in 1..n {
         src += &format!("    b{i} = b{} + 1;\n", i - 1);
@@ -180,19 +179,9 @@ fn many(n: usize) -> String {
     src + ";\n}\n"
 }
 
+
 #[test]
-fn casts_of_a_name_of_many_literals_check_in_linear_time() {
-    // Each cast reads the class's flags and restricts its mask once: no walk of its literals.
-    scaling::on_a_thread(1 << 28, || {
-        assert!(!sig_f(&many(3)).contains('#'));
-        let n = 200;
-        let units = scaling::inputs(n, |m| Resolved::new(&many(m)));
-        scaling::check(
-            "checking n casts `rat(b)` of a name of n literals",
-            n,
-            |m| {
-                units[&m].check();
-            },
-        );
-    });
+fn casts_of_a_name_of_literals_keep_no_atom() {
+    // A small instance of the benchmark `bench::cast_rat_int`.
+    assert!(!sig_f(&many(3)).contains('#'));
 }

@@ -3,7 +3,6 @@
 //! The printer looks the value up among the literals the checker read, so the spelling is a
 //! span of the program's text and no literal is read again or copied before it is printed.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 /// Each program's one message holds the literal as written there.
@@ -70,7 +69,7 @@ fn a_computed_value_prints_as_the_program_could_write_it() {
 
 /// `n` functions that each misuse a `rat` literal, of `n / 2` values each written two ways:
 /// each message finds its own spelling among the `n` literals.
-fn misuses(n: usize) -> String {
+pub(super) fn misuses(n: usize) -> String {
     (0..n)
         .map(|i| {
             let zeros = ["", "0"][i % 2];
@@ -79,38 +78,31 @@ fn misuses(n: usize) -> String {
         .collect()
 }
 
+/// One misuse of a tuple of `n` `rat` literals of `n` values: its one message prints each.
+pub(super) fn tuple(n: usize) -> String {
+    let items: Vec<String> = (0..n).map(|i| format!("{i}.50r")).collect();
+    format!("f(x: String) = x + ({});\n", items.join(", "))
+}
+
+
 #[test]
-fn printing_the_spellings_of_many_literals_scales() {
+fn each_message_of_many_misused_literals_prints_its_own_spelling() {
+    // A small instance of the benchmark
+    // `bench::spelling::printing_the_spellings_of_many_literals_scales`.
     let errors = type_errors(&misuses(4));
+    assert_eq!(errors.len(), 4, "{errors:?}");
     for (e, part) in errors
         .iter()
         .zip(["(String, 0.5r)", "0.50r", "1.5r", "1.50r"])
     {
         assert!(e.contains(part), "{errors:?}");
     }
-    let n = 200;
-    let texts = scaling::inputs(n, misuses);
-    scaling::check("checking n misused literals and printing each", n, |m| {
-        assert_eq!(type_errors(&texts[&m]).len(), m);
-    });
-}
-
-/// One misuse of a tuple of `n` `rat` literals of `n` values: its one message prints each.
-fn tuple(n: usize) -> String {
-    let items: Vec<String> = (0..n).map(|i| format!("{i}.50r")).collect();
-    format!("f(x: String) = x + ({});\n", items.join(", "))
 }
 
 #[test]
-fn printing_a_tuple_of_many_literals_scales() {
-    assert!(type_errors(&tuple(2))[0].contains("(String, (0.50r, 1.50r))"));
-    let n = 400;
-    let texts = scaling::inputs(n, tuple);
-    scaling::check("checking a tuple of n literals and printing it", n, |m| {
-        let errors = type_errors(&texts[&m]);
-        assert!(
-            errors[0].contains(&format!("{}.50r))", m - 1)),
-            "{errors:?}"
-        );
-    });
+fn the_message_of_a_misused_tuple_of_literals_prints_each() {
+    // A small instance of the benchmark `bench::spelling::printing_a_tuple_of_many_literals_scales`.
+    let errors = type_errors(&tuple(2));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("(String, (0.50r, 1.50r))"), "{errors:?}");
 }

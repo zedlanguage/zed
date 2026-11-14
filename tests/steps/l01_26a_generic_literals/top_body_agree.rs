@@ -6,7 +6,6 @@
 //! `y = 2^-1.0` was rejected at the top level while `g() = 2^-1.0` gave `0.5`. A line that
 //! leaves `rat` among the carriers, `0.5^2` or `0.5 * 2`, is rejected in both places.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
@@ -190,7 +189,7 @@ fn a_comparison_in_a_body_reads_its_operations_at_their_carriers() {
 
 /// A body of `n` comparisons of operations on literals alone, then one of two tuples of `n`
 /// such operations each: `g() = { c0 = 0 + 1 == 1 * 1; …; (2^0.5, 1 + 1, …) == (…) };`.
-fn comparisons(n: usize) -> String {
+pub(super) fn comparisons(n: usize) -> String {
     let lines: String = (0..n)
         .map(|i| format!("c{i} = {i} + 1 == {} * 1; ", i + 1))
         .collect();
@@ -199,27 +198,6 @@ fn comparisons(n: usize) -> String {
         .collect();
     let t = items.join(", ");
     format!("g() = {{ {lines}({t}) == ({t}) }};\n")
-}
-
-#[test]
-fn comparisons_in_a_body_are_checked_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&comparisons(4)), Vec::<String>::new());
-            let n = 1000;
-            let srcs = [comparisons(n), comparisons(scaling::FACTOR * n)];
-            scaling::check(
-                "checking a body of n comparisons of operations on literals alone",
-                n,
-                |m| {
-                    type_errors(&srcs[usize::from(m != n)]);
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
 }
 
 #[test]
@@ -249,30 +227,9 @@ fn a_name_bound_to_a_line_that_took_f64_is_an_f64() {
 
 /// A top-level binding of `n` powers that take `f64`, added, and compared by `<` with an
 /// operation on literals alone: `y = 2^0.5 + 2^0.5 + … < 2^(1 + 1) + 0.5;`.
-fn powers(n: usize) -> String {
+pub(super) fn powers(n: usize) -> String {
     let terms = vec!["2^0.5"; n].join(" + ");
     format!("y = {terms};\nz = {terms} < 2^(1 + 1) + 0.5;\n")
-}
-
-#[test]
-fn a_top_level_line_of_many_powers_takes_f64_in_linear_time() {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&powers(3)), Vec::<String>::new());
-            let n = 500;
-            let srcs = [powers(n), powers(scaling::FACTOR * n)];
-            scaling::check(
-                "checking a top-level line of n powers that take f64",
-                n,
-                |m| {
-                    type_errors(&srcs[usize::from(m != n)]);
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
 }
 
 #[test]
@@ -451,8 +408,8 @@ fn a_power_whose_exponent_is_no_int_operation_stays_rejected() {
 }
 
 /// A top-level binding and a function's value, each `2r` times a power whose exponent is `n`
-/// powers of `1` nested by `^` over `(1 + 1)`: `y = 2r * 2^1^1^…^(1 + 1);`. The benchmark of
-/// this family is in `bench.rs`.
+/// powers of `1` nested by `^` over `(1 + 1)`: `y = 2r * 2^1^1^…^(1 + 1);`. Its benchmark is
+/// `bench::top_body_agree::nested_int_operation_exponents_are_read_in_linear_time`.
 pub(super) fn nested_int_exponents(n: usize) -> String {
     let e = format!("2r * 2^{}(1 + 1)", "1^".repeat(n));
     format!("y = {e};\ng() = {e};\n")
@@ -467,4 +424,18 @@ fn nested_int_operation_exponents_take_rat() {
             "n = {n}"
         );
     }
+}
+
+#[test]
+fn a_body_of_comparisons_of_operations_on_literals_checks() {
+    // A small instance of the benchmark
+    // `bench::top_body_agree::comparisons_in_a_body_are_checked_in_linear_time`.
+    assert_eq!(type_errors(&comparisons(4)), Vec::<String>::new());
+}
+
+#[test]
+fn a_top_level_line_of_powers_takes_f64() {
+    // A small instance of the benchmark
+    // `bench::top_body_agree::a_top_level_line_of_many_powers_takes_f64_in_linear_time`.
+    assert_eq!(type_errors(&powers(3)), Vec::<String>::new());
 }

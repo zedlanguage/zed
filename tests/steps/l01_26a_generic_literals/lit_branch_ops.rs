@@ -14,10 +14,9 @@
 //! numeric literals ascending, so `if c { 2 + 1 } else { 1 }` prints as `1 | 3`, not the `3 | 1`
 //! of the item's note. Every union pinned here is in that order, which zedc prints today.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_19_whole_file_ports::{dir, run};
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 const H: &str = "h(positional z: f64) = z;\n";
 const G: &str = "g(positional c: bool) = if c { 2 } else { 1 };\n";
@@ -902,7 +901,7 @@ fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
 }
 
 /// A body of `n` calls `k((if c { 2 + 1 } else { 1 }, 1))`, each `if` read at `f64`.
-fn tuple_calls(n: usize) -> String {
+pub(super) fn tuple_calls(n: usize) -> String {
     let mut body = String::new();
     for i in 0..n {
         body += &format!("p{i} = k((if c {{ {i} + 1 }} else {{ 1 }}, 1)); ");
@@ -912,7 +911,7 @@ fn tuple_calls(n: usize) -> String {
 
 /// A call of a parameter of type `f64` on a nest of `n` `if`s, each branch its own operation
 /// on literals: `n + 1` operations, each fixed at `f64`.
-fn nest(n: usize) -> String {
+pub(super) fn nest(n: usize) -> String {
     let mut body = String::new();
     for i in 0..n {
         body += &format!("if c == {i} {{ 2 * {i} + 1 }} else ");
@@ -922,7 +921,7 @@ fn nest(n: usize) -> String {
 }
 
 /// The same nest as the body of `g`, whose result `h(g(c))` reads at `f64`.
-fn through_a_call(n: usize) -> String {
+pub(super) fn through_a_call(n: usize) -> String {
     let mut body = String::new();
     for i in 0..n {
         body += &format!("if c == {i} {{ 2 * {i} + 1 }} else ");
@@ -932,7 +931,7 @@ fn through_a_call(n: usize) -> String {
 }
 
 /// A body of `n` products `x * g(c)`, each call read at the `f64` of `x`.
-fn products(n: usize) -> String {
+pub(super) fn products(n: usize) -> String {
     let mut body = String::new();
     for i in 0..n {
         body += &format!("p{i} = x * g(c); ");
@@ -940,59 +939,15 @@ fn products(n: usize) -> String {
     format!("{G}f(positional c: bool, x: f64) = {{ {body}x }};\n")
 }
 
+
 #[test]
-fn scaling() {
-    // Complexity tradeoff (DESIGN.md Part G): each operation is kept once as its `if` is
-    // walked, read and folded once as a branch of the argument, and adopts once, O(n) in the
-    // size of the nest; the call's `n + 1` values are cast once each and their singletons
-    // joined in pairs, O(n log n). Joined one at a time, each union copies the type so far,
-    // O(n^2).
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
-            assert_eq!(sig(&nest(3), "f"), "(int) -> f64");
-            assert_eq!(type_errors(&through_a_call(3)), Vec::<String>::new());
-            assert_eq!(sig(&through_a_call(3), "g"), "(int) -> 1 | 3 | 5 | 7");
-            assert_eq!(sig(&through_a_call(3), "f"), "(int) -> f64");
-            let n = 250;
-            let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
-            scaling::check(
-                "checking an `if` of n operation branches at `f64`",
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-            let units = scaling::inputs(n, |m| Resolved::new(&through_a_call(m)));
-            scaling::check("reading a call of n operation branches at `f64`", n, |m| {
-                units[&m].check();
-            });
-            // Item LIT-op-reads-call: each operator application reads its call once per
-            // arrow, O(A v log v) for A arrows and v values, so n products cost O(n).
-            assert_eq!(type_errors(&products(3)), Vec::<String>::new());
-            let n = 1000;
-            let units = scaling::inputs(n, |m| Resolved::new(&products(m)));
-            scaling::check(
-                "reading the calls of n products `x * g(c)` at `f64`",
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-            // Item LIT-tuple-branch-ops: each tuple's components are read once, and each `if`
-            // there is walked once and adopts once, O(its size), so n calls cost O(n).
-            assert_eq!(type_errors(&tuple_calls(3)), Vec::<String>::new());
-            let units = scaling::inputs(n, |m| Resolved::new(&tuple_calls(m)));
-            scaling::check(
-                "reading the `if`s of n tuple arguments at `(f64, f64)`",
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn many_operation_branches_take_f64_at_a_parameter_or_through_a_call() {
+    // Small instances of the benchmarks `bench::lit_branch_ops`.
+    assert_eq!(type_errors(&nest(3)), Vec::<String>::new());
+    assert_eq!(sig(&nest(3), "f"), "(int) -> f64");
+    assert_eq!(type_errors(&through_a_call(3)), Vec::<String>::new());
+    assert_eq!(sig(&through_a_call(3), "g"), "(int) -> 1 | 3 | 5 | 7");
+    assert_eq!(sig(&through_a_call(3), "f"), "(int) -> f64");
+    assert_eq!(type_errors(&products(3)), Vec::<String>::new());
+    assert_eq!(type_errors(&tuple_calls(3)), Vec::<String>::new());
 }

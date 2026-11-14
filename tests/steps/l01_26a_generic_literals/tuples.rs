@@ -9,9 +9,8 @@
 //! at L1 ("part of the Zed language … does not compile it yet"), so they have no case here.
 
 use super::fixes::{fixes, pairs};
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 /// Checks each fix of the one rejection of `src`, whose rejected line is its last: the
 /// program with that line replaced is accepted, and where the fix names a position of a
@@ -292,13 +291,13 @@ fn a_decimal_that_its_context_gives_a_carrier_stays_accepted() {
 /// `value_parts` that wrote the path of each tuple from the root as it reached it, `O(n^2)`,
 /// failed at n = 2,000 with 18.5 times the bytes; at n = 500 it passed, since the checker's
 /// own work on each tuple hides it there.
-fn deep(n: usize) -> String {
+pub(super) fn deep(n: usize) -> String {
     format!("y = {}0.5{};\n", "(1, ".repeat(n), ")".repeat(n))
 }
 
 /// `y = (1, 1, …, 0.5)`, `n` components with the decimal last, or the same tuple passed to a
 /// generic `id`.
-fn wide(n: usize, call: bool) -> String {
+pub(super) fn wide(n: usize, call: bool) -> String {
     let t = format!("({}0.5)", "1, ".repeat(n));
     match call {
         false => format!("y = {t};\n"),
@@ -306,50 +305,32 @@ fn wide(n: usize, call: bool) -> String {
     }
 }
 
+
 #[test]
-fn a_deeply_nested_tuple_checks_in_linear_time() {
-    scaling::on_a_thread(1 << 29, || {
-        assert_eq!(
-            checked(&deep(2)),
-            pairs(&[
-                ("y = (1, (1, 0.5f64));", "y[1][1] is 0.5"),
-                ("y = (1, (1, 0.5r));", "y[1][1] is 1r/2r"),
-            ])
-        );
-        let n = 2000;
-        let units = scaling::inputs(n, |m| Resolved::new(&deep(m)));
-        for (m, u) in &units {
-            let [e] = &u.type_errors()[..] else {
-                panic!("one rejection")
-            };
-            assert!(e.contains(&format!("{} is 0.5\n", "[1]".repeat(*m))), "{e}");
-        }
-        scaling::check_order("rejecting a decimal n tuples deep", n, 1, |m| {
-            std::hint::black_box(units[&m].type_errors());
-        });
-    });
+fn a_decimal_nested_deep_in_tuples_is_one_rejection_naming_its_path() {
+    // A small instance of the benchmark
+    // `bench::tuples::a_deeply_nested_tuple_checks_in_linear_time`.
+    assert_eq!(
+        checked(&deep(2)),
+        pairs(&[
+            ("y = (1, (1, 0.5f64));", "y[1][1] is 0.5"),
+            ("y = (1, (1, 0.5r));", "y[1][1] is 1r/2r"),
+        ])
+    );
+    let [e] = &type_errors(&deep(3))[..] else {
+        panic!("one rejection")
+    };
+    assert!(e.contains("[1][1][1] is 0.5\n"), "{e}");
 }
 
 #[test]
-fn a_wide_tuple_checks_in_linear_time() {
-    scaling::on_a_thread(1 << 29, || {
-        for call in [false, true] {
-            assert_eq!(rejected_at(&wide(3, call)), ["0.5"]);
-            let n = 1000;
-            let units = scaling::inputs(n, |m| Resolved::new(&wide(m, call)));
-            for (m, u) in &units {
-                let [e] = &u.type_errors()[..] else {
-                    panic!("one rejection")
-                };
-                assert!(call || e.contains(&format!("y[{m}] is 0.5\n")), "{e}");
-            }
-            let what = match call {
-                false => "rejecting the decimal of a tuple of n components",
-                true => "rejecting the decimal of a tuple of n components passed to `id`",
-            };
-            scaling::check_order(what, n, 1, |m| {
-                std::hint::black_box(units[&m].type_errors());
-            });
-        }
-    });
+fn the_decimal_of_a_wide_tuple_is_one_rejection_naming_its_component() {
+    // Small instances of the benchmarks `bench::tuples::a_wide_tuple_checks_in_linear_time_*`.
+    for call in [false, true] {
+        assert_eq!(rejected_at(&wide(3, call)), ["0.5"]);
+        let [e] = &type_errors(&wide(3, call))[..] else {
+            panic!("one rejection")
+        };
+        assert!(call || e.contains("y[3] is 0.5\n"), "{e}");
+    }
 }

@@ -9,7 +9,6 @@
 //! the bytes printed grow with the line, not with its square. A literal that a carrier reaches
 //! stays accepted: `x: 1r` gives the `2` of `p: (2, 1)` its carrier in `f(x, p) = x + p[0]`.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
 
@@ -370,55 +369,19 @@ fn the_decimals_a_value_ends_in_are_rejected_in_one_message() {
 }
 
 /// `y = (0.5, 1.5, …);`, `n` decimals on one line.
-fn decimals(n: usize) -> String {
+pub(super) fn decimals(n: usize) -> String {
     let parts: Vec<String> = (0..n).map(|i| format!("{i}.5")).collect();
     format!("y = ({});\n", parts.join(", "))
 }
 
 /// The diagnostics `zedc` prints for `src`, which it rejects.
-fn printed(src: &str) -> String {
+pub(super) fn printed(src: &str) -> String {
     zedc::run::load(src.as_bytes()).err().expect("rejected")
-}
-
-#[test]
-fn many_decimals_on_one_line_print_the_line_once() {
-    // Negative control (run once, not committed): one message for each decimal, each quoting
-    // the line, as before this item, printed 16.2 times the bytes for 4 times the decimals
-    // (964335 bytes for n = 200, 15605535 for 800), and failed the bound below. One message
-    // prints 4.0 times (zedc: 51340 bytes for 200, 207641 for 800). Held at 200 and 1,600
-    // decimals since the limit of 13 (TESTS-scaling-limit-13).
-    scaling::on_a_thread(1 << 28, || {
-        let n = 200;
-        let bytes = |m: usize| printed(&decimals(m)).len() as u64;
-        scaling::hold_linear(
-            &format!(
-                "{n} and {} decimals on one line, rejected",
-                scaling::FACTOR * n
-            ),
-            "bytes printed",
-            bytes(n),
-            bytes(scaling::FACTOR * n),
-        );
-        assert_eq!(
-            printed(&decimals(n)).matches(&decimals(n)[..20]).count(),
-            1,
-            "the line is printed once"
-        );
-        let units = scaling::inputs(n, decimals);
-        scaling::check_order(
-            "printing the rejection of n decimals on one line",
-            n,
-            1,
-            |m| {
-                std::hint::black_box(printed(&units[&m]));
-            },
-        );
-    });
 }
 
 /// A chain of `n` functions, each returning a call of the one before, the first returning
 /// `0.5`, and `n` bindings, each a call of the last.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let mut src = String::from("c0() = 0.5;\n");
     for k in 1..=n {
         src += &format!("c{k}() = c{}();\n", k - 1);
@@ -429,19 +392,23 @@ fn chain(n: usize) -> String {
     src
 }
 
+
 #[test]
-fn many_calls_of_a_long_chain_check_in_linear_time() {
-    scaling::on_a_thread(1 << 28, || {
-        let errors = type_errors(&chain(2));
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&chain(m)));
-        scaling::check(
-            "checking n calls of a chain of n functions that returns a decimal",
-            n,
-            |m| {
-                units[&m].check();
-            },
-        );
-    });
+fn many_decimals_on_one_line_print_the_line_once_in_one_message() {
+    // A small instance of the benchmark
+    // `bench::tuple_rest::many_decimals_on_one_line_print_the_line_once`.
+    let src = decimals(5);
+    assert_eq!(
+        printed(&src).matches(&src[..20]).count(),
+        1,
+        "the line is printed once"
+    );
+}
+
+#[test]
+fn calls_of_a_chain_that_returns_a_decimal_are_one_error() {
+    // A small instance of the benchmark
+    // `bench::tuple_rest::many_calls_of_a_long_chain_check_in_linear_time`.
+    let errors = type_errors(&chain(2));
+    assert_eq!(errors.len(), 1, "{errors:?}");
 }

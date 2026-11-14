@@ -12,9 +12,8 @@
 //! every carrier, gives none either: `String(g(c))` is rejected at the `2.5`, as `String(0.5)`
 //! is.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, info, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{info, type_errors};
 
 use super::tuple_rest::{fixes_check, unfixed};
 
@@ -205,7 +204,7 @@ fn every_repair_offered_checks_as_written() {
 
 /// A function `g` of `values` branches, each giving an integer, and one more giving `2.5`
 /// written `last`, and `casts` bindings each casting a call of it with `word`.
-fn many(values: usize, casts: usize, last: &str, word: &str) -> String {
+pub(super) fn many(values: usize, casts: usize, last: &str, word: &str) -> String {
     let mut src = String::from("g(positional k: int) = if k == 0 { 0 }");
     for i in 1..values {
         src += &format!(" else if k == {i} {{ {i} }}");
@@ -217,36 +216,15 @@ fn many(values: usize, casts: usize, last: &str, word: &str) -> String {
     src
 }
 
+
 #[test]
-fn casts_of_a_call_of_many_values_check_in_linear_time() {
-    // A cast splits the values of the call among the arrows, or reads the body for the `2.5`,
-    // or tries the four wraps as written: linear in the values, at each cast.
-    scaling::on_a_thread(1 << 28, || {
-        assert!(type_errors(&many(3, 3, "2.5f64", "f64")).is_empty());
-        assert_eq!(
-            type_errors(&many(3, 3, "2.5", "f64")).len(),
-            1,
-            "one literal, one error"
-        );
-        assert_eq!(type_errors(&many(3, 3, "2.5", "scalar")).len(), 3);
-        let n = 200;
-        for (last, word) in [("2.5f64", "f64"), ("2.5", "f64"), ("2.5", "scalar")] {
-            let units = scaling::inputs(n, |m| Resolved::new(&many(m, 1, last, word)));
-            scaling::check(
-                &format!("checking `{word}(g(0))`, `g` of n values and {last}"),
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-            let units = scaling::inputs(n, |m| Resolved::new(&many(2, m, last, word)));
-            scaling::check(
-                &format!("checking n casts `{word}(g(k))`, `g` of two values and {last}"),
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-        }
-    });
+fn casts_of_a_call_of_many_values_take_each_value_at_its_arrow() {
+    // Small instances of the benchmarks `bench::cast_of_union`.
+    assert!(type_errors(&many(3, 3, "2.5f64", "f64")).is_empty());
+    assert_eq!(
+        type_errors(&many(3, 3, "2.5", "f64")).len(),
+        1,
+        "one literal, one error"
+    );
+    assert_eq!(type_errors(&many(3, 3, "2.5", "scalar")).len(), 3);
 }

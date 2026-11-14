@@ -9,9 +9,8 @@
 
 use std::ffi::OsString;
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::value;
-use zed_tests::step_helpers::l01_26_type_resolution::{Resolved, sig, type_errors};
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
 const G: &str = "g(positional c: bool, positional x: f64) = if c { x } else { 1 };\n\
@@ -190,7 +189,7 @@ fn the_executable_prints_the_interpreter_s_values() {
 /// `n` nested `if`s whose branches are, in turn, `x`, a call of `g` and an integer literal:
 /// `f` returns them, so its type lists about n/3 integers beside `f64`, and `k` reads `f`'s
 /// result at an `f64` parameter and beside an `f64` operand, and the `if`s themselves at `h`.
-fn nest(n: usize) -> String {
+pub(super) fn nest(n: usize) -> String {
     let mut body = String::new();
     for i in 0..n {
         let leaf = match i % 3 {
@@ -209,29 +208,9 @@ fn nest(n: usize) -> String {
 }
 
 #[test]
-fn scaling() {
-    // Complexity tradeoff (DESIGN.md Part G): whether an argument may be read is found by
-    // one walk over the branches of its `if`s, each visited once, O(n); then the values of
-    // its type outside `f64` are listed once, each is cast once, and the parts are joined in
-    // pairs, as for a cast of the union, O(n log n). Listing them again for each value, or
-    // walking the branches again for each, would be O(n^2).
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            assert_eq!(type_errors(&nest(5)), Vec::<String>::new());
-            assert_eq!(sig(&nest(5), "f"), "(int, bool, f64) -> 1 | 2 | 5 | f64");
-            assert_eq!(sig(&nest(5), "k"), "(int, bool, f64) -> f64");
-            let n = 250;
-            let units = scaling::inputs(n, |m| Resolved::new(&nest(m)));
-            scaling::check(
-                "reading a call of n listed values and an `if` of n branches at `f64`",
-                n,
-                |m| {
-                    units[&m].check();
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+fn a_call_of_many_listed_values_and_an_if_of_many_branches_are_read_at_f64() {
+    // A small instance of the benchmark `bench::call_union_at_f64::scaling`.
+    assert_eq!(type_errors(&nest(5)), Vec::<String>::new());
+    assert_eq!(sig(&nest(5), "f"), "(int, bool, f64) -> 1 | 2 | 5 | f64");
+    assert_eq!(sig(&nest(5), "k"), "(int, bool, f64) -> f64");
 }
