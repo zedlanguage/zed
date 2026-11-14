@@ -5897,6 +5897,33 @@ fn only_numbers(t: &Ty) -> bool {
         && (u.bases.iter().enumerate()).all(|(i, &b)| !b || numeric.contains(&i))
 }
 
+/// Whether `t` lists its values and one of them is a text that a number cast, `int`, `rat` or
+/// `f64`, reads as a number: `"1/3"`, `"8"` or `"1e999"`, not `"x8"`. Each cast is run on the
+/// text itself, as the program would run it, so the test agrees with what the cast gives: a
+/// text is a number where some cast gives anything but `#invalid`, so `"1e999"`, which `f64`
+/// reads and finds too large (`#overflow`), is one. A fraction whose two sides `int` reads,
+/// `"14/6"`, is one too, though `rat` reads only a reduced fraction. O(d) for listed texts of d
+/// characters in all, at most five runs of a cast on each.
+fn reads_as_number(t: &Ty) -> bool {
+    let Some(values) = t.kernel().and_then(|k| k.values_listed()) else {
+        return false;
+    };
+    let reads = |w: &str, v: &Value| {
+        zedc_base::interp::prim(w)
+            .and_then(|p| run(p, v))
+            .is_some_and(|x| !matches!(&x, Value::Atom(a) if &*a.name == "invalid"))
+    };
+    values.iter().any(|v| {
+        let Value::Str(s) = v else {
+            return false;
+        };
+        ["int", "rat", "f64"].iter().any(|w| reads(w, v))
+            || s.flat()
+                .split_once('/')
+                .is_some_and(|(p, q)| [p, q].iter().all(|side| reads("int", &Value::str(side))))
+    })
+}
+
 /// An operand of `==` that a message names as the program writes it.
 #[derive(Clone, Copy)]
 enum Operand<'e> {

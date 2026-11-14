@@ -10842,6 +10842,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             && Carrier::NUMBERS
                 .iter()
                 .any(|c| sig.word.as_deref() == Some(c.name()));
+        // An ordering with an operand that is a text written as a number, `x < "1/3"`, is not
+        // offered the other operand as text, `String(x) < "1/3"`: that compares the texts
+        // character by character, so `"10"` comes before `"8"`, and changes what the program
+        // means without saying so (row REPAIR-string-compare-offer). The literal repairs, `x <
+        // 0.1` for `x < "0.1"`, are offered still; where none keeps the meaning, as for an
+        // `f64` against `"1/3"`, no repair is offered. A text no number cast reads, `"x8"`,
+        // keeps the offer, since the program then compares texts. Complexity tradeoff: none;
+        // the naive test, a trial of the ordering with each number cast written around the
+        // text, costs a check of the application per cast; used: the three casts run on each
+        // text the operands' types list, once per rejected ordering, O(d) for texts of d
+        // characters in all ([`reads_as_number`]).
+        let number_text = matches!(
+            what.operator(),
+            Some(Operator::Binary(
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+            ))
+        ) && args.iter().flatten().any(|a| reads_as_number(&a.ty));
         for (i, a) in args.iter().enumerate() {
             let Some(Arg {
                 lit: None,
@@ -10932,7 +10949,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             for w in ["String", "int", "rat", "f64"] {
-                if cast_word && w == "String" {
+                if (cast_word || number_text) && w == "String" {
                     continue;
                 }
                 let Some(r) = self

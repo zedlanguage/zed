@@ -407,3 +407,62 @@ fn a_comparison_with_a_cast_of_a_literal_is_repaired_by_the_literal_its_value_ha
         }
     }
 }
+
+#[test]
+fn an_ordering_with_a_text_written_as_a_number_offers_no_comparison_of_texts() {
+    // Row REPAIR-string-compare-offer. `String(x) < "1/3"` compares the two texts character by
+    // character, not the numbers, so it would change what the program means: it is never
+    // offered where the text reads as a number, whichever side the text is on, for each
+    // ordering. For `x : f64` no repair keeps the meaning: no `f64` literal is `1/3`, `rat(x)`
+    // gives `#invalid` at NaN and the infinities, and `f64("1/3")` rounds. The headline then
+    // ends with no repair.
+    const MAIN: &str = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n";
+    for op in ["<", "<=", ">", ">="] {
+        for text in ["\"1/3\"", "\"1e999\"", "\"-2/7\"", "\"14/6\""] {
+            for expr in [format!("x {op} {text}"), format!("{text} {op} x")] {
+                let out = rejected(&format!("f(positional x: f64) = {expr};\n{MAIN}"));
+                assert_eq!(first_tried(&out), None, "{expr}\n{out}");
+                assert!(!out.contains("String("), "{expr}\n{out}");
+            }
+        }
+    }
+    // Where a literal keeps the meaning, it is offered alone, with no comparison of texts after
+    // it in the menu.
+    let cases = [
+        ("f(positional n: int) = ", "n < \"8\"", Some("n < 8")),
+        ("f(positional n: int) = ", "\"8\" >= n", Some("8 >= n")),
+        ("f(positional x: f64) = ", "x <= \"0.5\"", Some("x <= 0.5")),
+        ("f(positional x: f64) = ", "\"-0\" > x", Some("-0.0 > x")),
+        (
+            "f(positional r: rat) = ",
+            "r < \"1/3\"",
+            Some("r < rat(\"1/3\")"),
+        ),
+        (
+            "f(positional r: rat) = ",
+            "\"1/3\" > r",
+            Some("rat(\"1/3\") > r"),
+        ),
+        // No `int` is `1/3` and `n` has no cast that keeps it and meets the text: no repair.
+        ("f(positional n: int) = ", "n < \"1/3\"", None),
+        ("f(positional n: int) = ", "\"1/3\" <= n", None),
+    ];
+    for (before, expr, want) in cases {
+        let out = rejected(&format!("{before}{expr};\n{MAIN}"));
+        assert_eq!(first_tried(&out), want, "{out}");
+        assert!(!out.contains("String("), "{out}");
+        if let Some(fix) = want {
+            let fixed = format!("{before}{fix};\n{MAIN}");
+            load(fixed.as_bytes()).unwrap_or_else(|e| panic!("{fixed}\n{e}"));
+        }
+    }
+    // A text no number cast reads is compared as text, so the cast of the other side to text
+    // keeps the program's meaning and stays offered, in both orders.
+    for (expr, want) in [
+        ("x < \"x8\"", "String(x) < \"x8\""),
+        ("\"x8\" >= x", "\"x8\" >= String(x)"),
+    ] {
+        let out = rejected(&format!("f(positional x: f64) = {expr};\n{MAIN}"));
+        assert_eq!(first_tried(&out), Some(want), "{out}");
+    }
+}

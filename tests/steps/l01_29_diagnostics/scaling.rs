@@ -495,7 +495,9 @@ fn offering_the_literal_first_in_comparisons_scales() {
         |n| {
             let out = rejected(&srcs[&n]);
             assert_eq!(out.matches("Try `x == ").count(), n.div_ceil(4), "{out}");
-            assert_eq!(out.matches("String(x)").count(), n / 2, "{out}");
+            // Each text reads as a number, so no ordering offers to compare texts, `String(x)`
+            // (row REPAIR-string-compare-offer).
+            assert_eq!(out.matches("String(x)").count(), 0, "{out}");
             let last = n - 1;
             assert!(
                 out.contains(&format!("Try `{last} >= x` instead.")),
@@ -522,6 +524,29 @@ fn offering_the_literal_of_a_long_text_in_a_comparison_scales() {
                 "7".repeat(d)
             );
             assert!(out.contains(&want), "{out}");
+        },
+    );
+}
+
+#[test]
+fn deciding_an_ordering_with_a_long_number_text_offers_no_text_comparison_scales() {
+    // One `f64` ordered against a fraction text of 2d + 1 characters, which the cast `rat` reads
+    // and no `f64` literal writes: the casts run on the text to see it is a number (row
+    // REPAIR-string-compare-offer), then no repair.
+    let srcs = scaling::inputs(2000, |d| {
+        format!(
+            "f(positional x: f64) = x < \"{}/{}\";\n",
+            "7".repeat(d),
+            "3".repeat(d)
+        )
+    });
+    scaling::check(
+        "an ordering of an f64 with a fraction text of d digits on each side",
+        2000,
+        |d| {
+            let out = rejected(&srcs[&d]);
+            assert!(!out.contains("String(x)"), "{out}");
+            assert!(!out.lines().next().unwrap_or("").contains("Try"), "{out}");
         },
     );
 }
