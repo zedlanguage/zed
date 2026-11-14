@@ -2,6 +2,7 @@
 //! keywords: the lexical grammar whole.
 
 mod bench;
+mod doc_in_hole;
 mod edges;
 mod program;
 mod scaling;

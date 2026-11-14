@@ -33,7 +33,9 @@ pub fn lex_fence(text: &str) -> Result<Vec<Token>, Error> {
 }
 
 /// The tokens of `text` and its doc comments: a comment that starts with exactly three `/`
-/// (`////` is an ordinary comment). Doc comments inside a string's hole are not collected.
+/// (`////` is an ordinary comment), in text order, those in a string's hole included: a hole
+/// holds code, and a doc comment there is reported when it documents no declaration (DESIGN.md
+/// sec:lexical, the comment row).
 pub fn lex_with_docs(text: &str) -> Result<(Vec<Token>, Vec<Doc>), Error> {
     let mut docs = Vec::new();
     let tokens = lex_from(text, 0, &mut docs, false, &mut Holes::new(text))?;
@@ -74,7 +76,7 @@ struct Level<'t> {
 
 /// The tokens of `text` from byte `pos` to its end, with spans in `text`, and its doc
 /// comments pushed onto `docs`; with `elisions`, `…` is a name. A hole is lexed as text of its
-/// own ending at its `}`, with neither doc comments nor elisions; holes nest, so the strings
+/// own ending at its `}`, with its doc comments but no elisions; holes nest, so the strings
 /// around the current text are on a stack.
 fn lex_from<'t>(
     mut text: &'t str,
@@ -128,10 +130,7 @@ fn lex_from<'t>(
         } else if let Some(end) = comment::comment(text, pos) {
             pos = end?;
             let body = &text[start..pos];
-            if let Some(doc) = body
-                .strip_prefix("///")
-                .filter(|d| top && !d.starts_with('/'))
-            {
+            if let Some(doc) = body.strip_prefix("///").filter(|d| !d.starts_with('/')) {
                 docs.push(Doc {
                     text: doc.strip_prefix(' ').unwrap_or(doc).into(),
                     span: Span { start, end: pos },

@@ -125,3 +125,45 @@ fn doc_blocks_linking_to_each_other_load() {
     // A small instance of the benchmark `bench::docs::checking_n_doc_blocks_with_links_scales`.
     assert_eq!(load_errors(&doc_blocks_with_links(3)), "");
 }
+
+/// A string's hole holds code, so a `///` comment in it is a doc comment, which attaches to the
+/// declaration after it in the same hole or else is reported (FAIL-lex-doc-in-hole, found by
+/// TEST-complete-lex, author P189). One at the end of a hole, at the top level or in a body, or
+/// in a hole of a string in a hole, documents no declaration; a doc block before the binding of
+/// that string still attaches.
+#[test]
+fn a_doc_comment_in_a_hole_that_documents_nothing_is_reported() {
+    let none = "this doc comment documents no declaration; a `///` block comes right before a \
+                binding, a function or another declaration.";
+    for (src, at) in [
+        (
+            "s = \"\"\"\n${1 /// d\n}\n\"\"\";\nmain(m: MainArgs) {\n  m.stdout <- s;\n}\n",
+            "2:5",
+        ),
+        (
+            "s = \"\"\"\n  a ${1 /// d\n} b\n  \"\"\";\nmain(m: MainArgs) {\n  m.stdout <- s;\n}\n",
+            "2:9",
+        ),
+        (
+            "main(m: MainArgs) {\n  /// The text.\n  s = \"\"\"\n${1 /// d\n}\n\"\"\";\n  \
+             m.stdout <- s;\n}\n",
+            "4:5",
+        ),
+        (
+            "s = \"\"\"\n${\"\"\"\n${1 /// d\n}\n\"\"\"}\n\"\"\";\nmain(m: MainArgs) {\n  \
+             m.stdout <- s;\n}\n",
+            "3:5",
+        ),
+    ] {
+        assert_eq!(load_errors(src), format!("{at}: {none}"), "{src:?}");
+    }
+}
+
+/// A doc comment in a hole before a local binding of a function body in that hole attaches to
+/// that binding, as it would outside the string.
+#[test]
+fn a_doc_comment_in_a_hole_attaches_to_a_binding_in_the_hole() {
+    let src = "f = (x: int) -> \"\"\"\n${((y: int) -> {\n  /// One more than `y`.\n  \
+               z = y + 1;\n  z\n})(x)}\n\"\"\";\nmain(m: MainArgs) {\n  m.stdout <- f(1);\n}\n";
+    assert_eq!(load_errors(src), "");
+}
