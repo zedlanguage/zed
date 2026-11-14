@@ -2159,3 +2159,33 @@ fn rows_with_a_common_factor_give_the_answer_of_the_rows_divided_by_it() {
         "{odd}"
     );
 }
+
+// FAIL-product-refused-box-renamed, found by TEST-complete-preimage (author P189) in an
+// instrumented run of l01_39_reduced_product. Append this test to
+// tests/steps/l01_39_reduced_product/pendants.rs (it uses `refused_names_in` there). Case 11 of
+// seed 6277671696228035587 is the part
+//   2 * a + b + z2 >= 5 && a + 2 * b + c >= z1 - 12 && a + b + c + z1 >= 4
+//   && 2 * a + b + c == z2 - 4 && 2 * b + c >= -5 && a + b == c + z0 - 5
+//   && a + z1 >= c - 10 && a + 2 * b + 2 * c >= -5 && 2 * b + 2 * c + z2 >= 1
+// within its random boxes. As written, the solver refuses `z2` and keeps the box [6..=10];
+// with the names renamed it projects `z2` to [6..=7], not refused. The other names agree
+// (a = -3, b = 5, c in [3..=4], z0 in [3..=4], z1 in [1..=13]). The answer depends on the
+// names, so batch and single-file checking can disagree. Expected: one box for `z2` however
+// the names are spelled; [6..=7] holds the hull, since 2a + b + c == z2 - 4 with a = -3,
+// b = 5 and c in [3..=4] gives z2 in [6..=7].
+
+/// Case 11 of seed 6277671696228035587 gives one box for each name however the names are
+/// spelled (cases 0 to 10 of the seed pass).
+#[test]
+fn a_refused_box_does_not_depend_on_the_names_seed_6277671696228035587() {
+    refused_names_in(6277671696228035587, 12, false);
+}
+
+/// Case 10 of seed 15900465239627589939, parts within two boxes each, gives one box for each
+/// name however the names are spelled: written so, the solver refused all seven names, and
+/// with the names reversed it projected each, because each equation was signed by its first
+/// coefficient in name order. The sign is now chosen by the structure of the part.
+#[test]
+fn a_refused_box_does_not_depend_on_the_names_seed_15900465239627589939() {
+    refused_names_in(15900465239627589939, 11, true);
+}

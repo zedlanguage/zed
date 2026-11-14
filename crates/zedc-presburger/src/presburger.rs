@@ -1542,22 +1542,40 @@ pub fn with_parts_reversed<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// The sign of each equation in a writing of [`signed`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Signs {
+    /// The sign [`flips`] chooses.
+    Chosen,
+    /// Each equation held with both signs (one, as chosen, under a negation).
+    Both,
+    /// The sign opposite to the one [`flips`] chooses.
+    Opposite,
+}
+
 /// `f` written one way whatever way an equal formula was written (items PROJECT-each-canon and
 /// PROJECT-canon-gcd): each constraint divided by the greatest common divisor of its
 /// coefficients ([`Con::reduced`]: `2t == 0` as `t == 0`, `2t == 1` as `false`, `2t + 1 >= 0`
-/// as `t >= 0`); each equation `t == 0` with the sign of `t` whose first coefficient is
-/// positive, or, with `both`, held with both signs ([`equation`]); and in each conjunction,
-/// `t >= 0` beside `-t >= 0`, after the division, as `t == 0`, so that an equation written
-/// with either sign, with a common factor, twice with opposite signs, or as two inequalities
-/// is one constraint, and [`Formula::and`] holds it once. Each later step reads the signs of
-/// the rows (the colors of [`stable_colors`] and the order of [`canonical`] among them), and
-/// a question that one writing answered another refused with [`Refusal::Growth`]. In time
-/// O(n log n) in the size of `f`; a node that is written so already is kept, with its id.
+/// as `t >= 0`); each equation `t == 0` with the sign that [`flips`] chooses by the structure
+/// of `f`, not its names, or the other sign, or held with both signs, as `how` asks
+/// ([`equation`]); and in each conjunction, `t >= 0` beside `-t >= 0`, after the division, as
+/// `t == 0`, so that an equation written with either sign, with a common factor, twice with
+/// opposite signs, or as two inequalities is one constraint, and [`Formula::and`] holds it
+/// once. Each later step reads the signs of the rows (the colors of [`stable_colors`] and the
+/// order of [`canonical`] among them), and a question that one writing answered another
+/// refused with [`Refusal::Growth`]. In time O(n log n) in the size of `f`; a node that is
+/// written so already is kept, with its id.
 ///
-/// Neither writing answers every question the other does: the solver refuses some systems with
-/// one sign of an equation and answers them with the other, and [`project_each`] asks with the
-/// second writing only where the first is refused.
-fn signed(f: &Formula, both: bool) -> Formula {
+/// No writing answers every question another does: the solver refuses some systems with one
+/// sign of an equation and answers them with the other, and [`project_each`] asks with the
+/// second writing only where the first is refused, and with the third only where both are.
+fn signed(f: &Formula, how: Signs) -> Formula {
+    let both = how == Signs::Both;
+    let opposite = how == Signs::Opposite;
+    // The colors are found only for a formula with an equation that its coefficients and
+    // constant leave tied ([`flips`]), once.
+    let colors: OnceCell<HashMap<Atom, usize>> = OnceCell::new();
+    let color = |a: &Atom| colors.get_or_init(|| sign_free_colors(f))[a];
     // Each node's writing, or `None` where it is written so already: an unchanged node is kept
     // as it is, with its id, so that what later steps keep by id still finds it.
     let changed = f.fold(
@@ -1566,10 +1584,12 @@ fn signed(f: &Formula, both: bool) -> Formula {
         |g, negated, parts: Vec<Option<Formula>>| match g {
             Formula::Con(c) => match c.reduced() {
                 Some(r) => Some(match &r {
-                    Formula::Con(e) if e.rel == Rel::Eq => equation(e, negated, both).unwrap_or(r),
+                    Formula::Con(e) if e.rel == Rel::Eq => {
+                        equation(e, negated, both, opposite, &color).unwrap_or(r)
+                    }
                     _ => r,
                 }),
-                None if c.rel == Rel::Eq => equation(c, negated, both),
+                None if c.rel == Rel::Eq => equation(c, negated, both, opposite, &color),
                 None => None,
             },
             Formula::And(gs) => {
@@ -1590,7 +1610,8 @@ fn signed(f: &Formula, both: bool) -> Formula {
                                 lin: c.lin.clone(),
                                 rel: Rel::Eq,
                             };
-                            equation(&eq, negated, both).unwrap_or(Formula::Con(eq))
+                            equation(&eq, negated, both, opposite, &color)
+                                .unwrap_or(Formula::Con(eq))
                         }
                         k => (*k).clone(),
                     })
@@ -1668,18 +1689,99 @@ fn opposite_lins(a: &Lin, b: &Lin) -> bool {
         && (a.terms.iter().zip(&b.terms)).all(|((x, k), (y, m))| x == y && *k == -m)
 }
 
-/// The equation `c`, `t == 0`, with the sign of `t` whose first coefficient, in the order of
-/// the names, is positive (of a row with no names, whose constant is not negative), which no
-/// writing of the equation changes, or `None` when that is `c` as written. With `both`, and not
-/// under a negation (`negated`), `t == 0 && -t == 0`; under a negation, where
-/// `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has, the one sign.
-fn equation(c: &Con, negated: bool, both: bool) -> Option<Formula> {
+/// The equation `c`, `t == 0`, with the sign [`flips`] chooses, or with `opposite` the other
+/// sign, which no writing of the equation and no name changes, or `None` when that is `c` as
+/// written. With `both`, and not under a negation (`negated`), `t == 0 && -t == 0`; under a
+/// negation, where `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has,
+/// the one sign. `color` gives each atom of the formula its color in [`sign_free_colors`].
+fn equation(
+    c: &Con,
+    negated: bool,
+    both: bool,
+    opposite: bool,
+    color: &dyn Fn(&Atom) -> usize,
+) -> Option<Formula> {
     let eq = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Eq });
     if both && !negated {
         return Some(Formula::and(vec![eq(c.lin.clone()), eq(c.lin.times(-1))]));
     }
-    let lead = c.lin.terms.values().next().unwrap_or(&c.lin.constant);
-    lead.is_negative().then(|| eq(c.lin.times(-1)))
+    (flips(&c.lin, color) != opposite).then(|| eq(c.lin.times(-1)))
+}
+
+/// Whether the equation `t == 0` is written `-t == 0`: the sign whose coefficients, sorted, are
+/// the greater list; where `t` and `-t` have the same coefficients, the one with the positive
+/// constant; where the constant is zero too, the greater list of the pairs (color, coefficient)
+/// sorted, by the colors of `color`; and only where those agree as well, the sign whose first
+/// coefficient, in the order of the names, is positive. Each of the first three reads the
+/// equation and the structure of the formula, not the names, so that a formula renamed is
+/// written with the same signs: the sign changes the order in which the solver eliminates
+/// (the colors of [`stable_colors`] read it), and so which systems it refuses with
+/// [`Refusal::Growth`]. FAIL-product-refused-box-renamed: with the sign of the first name,
+/// `2a + b + c == z2 - 4` and `a + b == c + z0 - 5` within boxes refused `z2` as written and
+/// projected it to [6, 7] with the names reversed. O(k log k) for the k terms of `t`.
+// Complexity tradeoff: two equations that the coloring cannot tell apart from their
+// opposites (as `a - b == 0` where `a` and `b` share a color) keep the sign of the first
+// name. Why: telling them apart is canonical labeling, exponential in the worst case (see
+// [`Renamed`]); the coloring is the same that [`Renamed::of`] relies on.
+fn flips(t: &Lin, color: &dyn Fn(&Atom) -> usize) -> bool {
+    fn order<T: Ord>(mut up: Vec<T>, mut down: Vec<T>) -> Ordering {
+        up.sort_unstable();
+        down.sort_unstable();
+        up.cmp(&down)
+    }
+    let by_coefficient = || {
+        order(
+            t.terms.values().cloned().collect(),
+            t.terms.values().map(|k| -k).collect(),
+        )
+    };
+    let by_color = || {
+        order(
+            (t.terms.iter())
+                .map(|(a, k)| (color(a), k.clone()))
+                .collect(),
+            (t.terms.iter()).map(|(a, k)| (color(a), -k)).collect(),
+        )
+    };
+    match (by_coefficient())
+        .then_with(|| t.constant.cmp(&Int::ZERO))
+        .then_with(by_color)
+    {
+        Ordering::Less => true,
+        Ordering::Greater => false,
+        Ordering::Equal => t.terms.values().next().is_some_and(Int::is_negative),
+    }
+}
+
+/// The color of each atom of `f` in the coarsest stable coloring ([`stable_colors`]) of its
+/// constraints, each divided by the gcd of its coefficients ([`Con::reduced`]) and each
+/// equation held with both signs, so that no sign or factor an equation is written with, and
+/// no name, changes a color. O(T log T) for the T terms of `f`'s distinct constraints.
+fn sign_free_colors(f: &Formula) -> HashMap<Atom, usize> {
+    // The constraints a division changes, divided; the others are read in place.
+    let (mut cons, mut divided): (Vec<&Con>, Vec<Formula>) = (Vec::new(), Vec::new());
+    for c in f.cons() {
+        match c.reduced() {
+            Some(g) => divided.push(g),
+            None => cons.push(c),
+        }
+    }
+    cons.extend(divided.iter().filter_map(|g| match g {
+        Formula::Con(c) => Some(c),
+        _ => None,
+    }));
+    let opposite: Vec<Con> = (cons.iter())
+        .filter(|c| c.rel == Rel::Eq)
+        .map(|c| Con {
+            lin: c.lin.times(-1),
+            rel: Rel::Eq,
+        })
+        .collect();
+    cons.extend(opposite.iter());
+    let atoms: BTreeSet<&Atom> = cons.iter().flat_map(|c| c.lin.terms.keys()).collect();
+    let atoms: Vec<Atom> = atoms.into_iter().cloned().collect();
+    let color = stable_colors(&atoms, &cons);
+    atoms.into_iter().zip(color).collect()
 }
 
 /// `run`, and when the solver refuses it, `run` again on the path before DISJ-diff-fast and
@@ -16013,23 +16115,42 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 
 /// [`project_each`] of `f` as it is written, with no part taken out of its disjunctions.
 fn project_each_written(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    let first = project_each_signed(&signed(f, false), syms);
+    let chosen = signed(f, Signs::Chosen);
+    let first = project_each_signed(&chosen, syms);
     if matches!(&first, Ok(each) if !refused(each)) {
         return first;
     }
-    // The second writing where the first is refused; where both
-    // refuse something, the meet of the two (each sound, so the meet is), with the causes the
-    // first gives.
-    match (first, project_each_signed(&signed(f, true), syms)) {
-        (_, Ok(other)) if !refused(&other) => Ok(other),
-        (Ok((mut each, skipped)), Ok((others, _))) => {
-            meet_each(&mut each, others);
-            Ok((each, skipped))
+    // The second writing where the first is refused, and the third where both are; where
+    // each refuses something, the meet of them (each sound, so the meet is), with the causes
+    // the first gives. The third, each equation with the other sign, is not asked where it
+    // writes `f` as the first does (no equation outside a negation).
+    // Complexity tradeoff: naive version, the two writings of before FAIL-product-refused-box-
+    // renamed, which leave refused some questions that the opposite signs answer (case 11 of
+    // seed 6277671696228035587 in l01_39 `pendants`, and the solver alone on case 1063 of
+    // l01_38 `disj_groups`). Used: a third projection, asked only where the first two
+    // refuse, so a question either answers costs what it cost; a question all three refuse
+    // costs at most three projections, a constant factor, and the writing is O(n log n).
+    let mut answer = first;
+    for how in [Signs::Both, Signs::Opposite] {
+        let g = signed(f, how);
+        if how == Signs::Opposite && g == chosen {
+            break;
         }
-        (Ok(each), Err(_)) => Ok(each),
-        (Err(_), Ok(other)) => Ok(other),
-        (Err(e), Err(_)) => Err(e),
+        answer = match (answer, project_each_signed(&g, syms)) {
+            (_, Ok(other)) if !refused(&other) => return Ok(other),
+            (Ok((mut each, skipped)), Ok((others, _))) => {
+                meet_each(&mut each, others);
+                Ok((each, skipped))
+            }
+            (Ok(each), Err(_)) => Ok(each),
+            (Err(_), Ok(other)) => Ok(other),
+            (Err(e), Err(_)) => Err(e),
+        };
+        if matches!(&answer, Ok(each) if !refused(each)) {
+            break;
+        }
     }
+    answer
 }
 
 /// Each of `each` met with the same symbol's projection in `others`, both sound: a refused

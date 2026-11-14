@@ -632,7 +632,9 @@ fn projected_two_values(
 /// main's instructions on `overlap_rows` projected at k = 16; it was removed
 /// (PRES-disj-regressions, comment at `ask` in `project_parts`). The other hulls are exact.
 /// With the method of PRES-overlap-fast (module `row_sums`), which answers first here, every
-/// hull is exact.
+/// hull is exact. Since FAIL-product-refused-box-renamed, which signs each equation by the
+/// structure of the formula and asks a third writing, with each equation's sign the other
+/// way, where the first two refuse, the solver alone also gives the exact hull `17..=17`.
 #[test]
 fn a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point() {
     let doms = [
@@ -649,8 +651,6 @@ fn a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point() {
     presburger::ROW_SUMS_OFF.with(|o| o.set(true));
     let alone = projected_two_values(&doms, &cs, 88);
     presburger::ROW_SUMS_OFF.with(|o| o.set(false));
-    let mut want = want;
-    want[4] = Some((16, 17));
     assert_eq!(alone, want);
 }
 
