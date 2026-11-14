@@ -2408,3 +2408,109 @@ fn a_star_unmarked_by_a_join_is_projected_again_when_its_hub_moves() {
     want.reduce();
     assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
 }
+
+/// The trees of seed 15479193071854034191 give the projection from scratch.
+#[test]
+fn holes_in_the_trees_of_seed_15479193071854034191_give_the_projection_from_scratch() {
+    holes_in_trees(15479193071854034191, false, met_without_piling);
+}
+
+/// The steps of `steps` and then `hole` assumed false give the projection from scratch.
+fn hole_false_gives_the_projection_from_scratch(k: usize, steps: &[(Term, bool)], hole: &Term) {
+    let p = Premises::new();
+    let ns = named(k, "x");
+    let mut s = ints(&ns);
+    for (t, h) in steps {
+        s = s.assume(t, *h, &p);
+    }
+    let got = s.assume(hole, false, &p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(hole, false, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+}
+
+/// Seed 15479193071854034191 made minimal: one case of the hole survives.
+#[test]
+fn a_hole_left_with_one_case_wakes_the_parts_of_its_groups() {
+    let ns = named(4, "x");
+    let v = |n: usize| var(&ns[n]);
+    let d = |a: usize, b: usize| prim(Prim::Sub, v(a), v(b));
+    let and = |a: Term, b: Term| prim(Prim::And, a, b);
+    let steps = [
+        (prim(Prim::Le, v(1), int(4)), true),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(7)),
+                prim(Prim::Ge, d(0, 2), int(-2)),
+            ),
+            true,
+        ),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(-4)),
+                prim(Prim::Ge, d(1, 2), int(2)),
+            ),
+            true,
+        ),
+        (prim(Prim::Ge, d(2, 1), int(-2)), true),
+        (prim(Prim::Ge, d(1, 0), int(2)), true),
+        (prim(Prim::Ge, d(1, 3), int(2)), true),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(1)),
+                prim(Prim::Ge, d(3, 2), int(-1)),
+            ),
+            false,
+        ),
+    ];
+    let hole = and(
+        prim(Prim::Ne, v(3), int(2)),
+        prim(Prim::Ge, d(0, 3), int(2)),
+    );
+    hole_false_gives_the_projection_from_scratch(4, &steps, &hole);
+}
+
+/// The test above with the hole's two conditions swapped, so that the case left is the first
+/// one split off and the empty one (`x3 == 2`) the second.
+#[test]
+fn a_hole_left_with_its_first_case_wakes_the_parts_of_its_groups() {
+    let ns = named(4, "x");
+    let v = |n: usize| var(&ns[n]);
+    let d = |a: usize, b: usize| prim(Prim::Sub, v(a), v(b));
+    let and = |a: Term, b: Term| prim(Prim::And, a, b);
+    let steps = [
+        (prim(Prim::Le, v(1), int(4)), true),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(7)),
+                prim(Prim::Ge, d(0, 2), int(-2)),
+            ),
+            true,
+        ),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(-4)),
+                prim(Prim::Ge, d(1, 2), int(2)),
+            ),
+            true,
+        ),
+        (prim(Prim::Ge, d(2, 1), int(-2)), true),
+        (prim(Prim::Ge, d(1, 0), int(2)), true),
+        (prim(Prim::Ge, d(1, 3), int(2)), true),
+        (
+            and(
+                prim(Prim::Ne, v(2), int(1)),
+                prim(Prim::Ge, d(3, 2), int(-1)),
+            ),
+            false,
+        ),
+    ];
+    let hole = and(
+        prim(Prim::Ge, d(0, 3), int(2)),
+        prim(Prim::Ne, v(3), int(2)),
+    );
+    hole_false_gives_the_projection_from_scratch(4, &steps, &hole);
+}

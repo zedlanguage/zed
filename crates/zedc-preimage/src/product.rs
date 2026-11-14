@@ -5109,8 +5109,12 @@ impl Block {
         let split = Arc::new(split);
         // The groups each constraint added or gone since the groups were last read was in and
         // is in ([`Split::with`]), when they are read now: outside the cases of a test. Within
-        // them, a case's constraint is gone again once the cases are joined, and the parts keep
-        // the groups of `outer` (COMPLEXITY.md C52).
+        // them the parts keep the groups of `outer`: a case's constraint is gone again once two
+        // cases or more are joined, and one case left is projected again outside them
+        // ([`Scope::join_kept`]). Two cases or more lose a narrowing that reaches a part only
+        // through a group (COMPLEXITY.md C52, FAIL-linked-case-group-wake): reading the groups
+        // here is exact but reads every part of the group in each case, 3k^2 reads on the star
+        // of k disjunctions on `x` and `y`, past that benchmark's limit.
         let mut vars: BTreeSet<BTreeSet<Factor>> = BTreeSet::new();
         if groups {
             let mut groups: BTreeSet<(bool, usize)> = BTreeSet::new();
@@ -8862,7 +8866,29 @@ impl Scope {
         let in_case = self.in_case;
         if cases.len() < 2 {
             match cases.into_iter().next() {
-                Some(s) => *self = s,
+                Some(s) => {
+                    let outer = self.seen.projection.take();
+                    *self = s;
+                    // One case left outside the cases of a test: its constraints stay, and the
+                    // groups its blocks hold were last read within the case ([`Block::outer`]),
+                    // so a part the case's constraint reaches only through a group has not been
+                    // projected with it. The conjuncts as last projected are made those outside
+                    // the case, so that the next reduction finds the case's conjuncts new and
+                    // updates their blocks with the groups read ([`Block::update`]).
+                    // Complexity tradeoff: naive version, the case's own projection kept, O(1),
+                    // which loses that narrowing (seed 15479193071854034191 of `holes_in_trees`:
+                    // held x0 [0..=2], from scratch [0..=1]; COMPLEXITY.md C52). Used: the
+                    // blocks of the conjuncts the case changed projected again outside, as a test
+                    // outside the cases is, O(c log n) for its c changes, each part due only when
+                    // the groups it reads changed or its names moved. Measured 2026-11-14: the
+                    // l01_39 benchmarks within 0.1% of the instructions without it.
+                    if !in_case
+                        && !self.bottom
+                        && let (Some((_, was)), Some((names, _))) = (outer, &self.seen.projection)
+                    {
+                        self.seen.projection = Some((names.clone(), was));
+                    }
+                }
                 None => self.bottom = true,
             }
             self.in_case = in_case;
