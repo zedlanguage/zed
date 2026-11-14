@@ -10665,6 +10665,38 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some((self.code(Some(span))?, before, after))
     }
 
+    /// The failures `atoms` of the operands of `what`, each given at its span in `froms`, where
+    /// two of them can fail at once ([`ty::merges`]): they then merge into `#errs` of the set
+    /// of the distinct failures (DESIGN.md sec:failure; step M0.9, reference semantics (a)),
+    /// which compares them, so each is checked as data ([`Self::data`]), and a failure whose
+    /// payload may hold a function is a use that needs data (step L1.17, QUESTIONS A43):
+    /// `#box(f) + #bag(f)`, which the kernel refuses with "`+` given several failures, one of
+    /// which holds a function, which `#errs` cannot hold". One failure alone passes through
+    /// with its payload as it is, so nothing is checked when no merge can happen.
+    // Complexity tradeoff: one [`ty::merges`] over the operands' atom sets, O(operands)
+    // comparisons of shared types, then where they merge one [`Self::data`] walk per operand,
+    // O(size of its failures' payload types), the walk the memo of checked rows already bounds.
+    // The naive form, no check, accepts a program the kernel stops in, which soundness forbids.
+    // COMPLEXITY.md row CHK-merged-data. Test:
+    // `l01_26_type_resolution::held_functions::failures_holding_functions_that_merge_are_refused`.
+    fn merged_data(&mut self, what: Label<'_>, atoms: &[Ty], froms: &[Span]) {
+        let sets: Vec<KType> = atoms
+            .iter()
+            .map(Ty::atoms)
+            .filter(|a| !a.is_empty())
+            .collect();
+        if !ty::merges(sets.iter()) {
+            return;
+        }
+        let what = format!(
+            "`#errs`, which {} merges the failures of its operands into,",
+            what.text()
+        );
+        for (t, &at) in atoms.iter().zip(froms) {
+            self.data(t, &what, at, at);
+        }
+    }
+
     /// Checks that a value of `t` is data, as `what` at `span` needs (L1.17): it holds no
     /// function at any depth. A function it holds is reported at `span` with the derivation of
     /// the expression at `from`, which gave the value.
@@ -14611,18 +14643,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
         }
         if pass {
-            let atoms: Vec<Ty> = args
-                .iter()
-                .flatten()
+            let given: Vec<&Arg<'a>> = (args.iter().flatten())
                 .filter(|a| a.lit.is_none())
-                .map(|a| a.ty.loose_ty())
                 .collect();
+            let atoms: Vec<Ty> = given.iter().map(|a| a.ty.loose_ty()).collect();
+            let froms: Vec<Span> = given.iter().map(|a| a.at.unwrap_or(span)).collect();
+            self.merged_data(what, &atoms, &froms);
             passed(&mut out, atoms.iter());
             for a in args.iter_mut().flatten() {
                 a.ty = a.ty.without_loose();
             }
         } else {
             let mut atoms = Vec::new();
+            let mut froms = Vec::new();
             for (i, a) in args.iter_mut().enumerate() {
                 let Some(a) = a else {
                     continue;
@@ -14642,6 +14675,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // A check of a need, as of `f(v)` in `ap(f, v) = f(v)`: the atoms pass by
                     // at the call whose argument gave them, which [`Self::apply_one`] finds.
                     atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
+                    froms.push(span);
                     a.ty = a.ty.without(&refused);
                     self.refused.push((what.text().into(), i, refused));
                     continue;
@@ -14653,8 +14687,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     atoms.push(a.ty.of_piece(&Piece::Set(refused.clone())));
                     a.ty = a.ty.without(&refused);
                 }
+                froms.push(at);
                 self.pass_at(span, at, &refused);
             }
+            self.merged_data(what, &atoms, &froms);
             passed(&mut out, atoms.iter());
         }
         // `min` and `max` take two tuples, wherever they are called from; they are told apart by
@@ -18556,7 +18592,7 @@ mod tests {
         let at = Span { start: 1, end: 2 };
         let saved = ck.mark();
         ck.trying = true;
-        ck.data(&row, "a tuple", at, at);
+        ck.data(&row, "interpolation", at, at);
         assert_eq!(ck.bound(&row, &mut Binds::new()), row);
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
@@ -18566,7 +18602,7 @@ mod tests {
         assert!(!ck.classes[k].data);
         assert!(!ck.data_checked.contains(&node));
         assert!(!ck.clean.contains_key(&node));
-        ck.data(&row, "a tuple", at, at);
+        ck.data(&row, "interpolation", at, at);
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
     }

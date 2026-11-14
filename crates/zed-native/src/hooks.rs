@@ -13,9 +13,9 @@ use std::sync::Arc;
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
-use zedc::zir::memory::Mode;
+use zedc::zir::memory::{Mode, held_term};
 
-use zed_rt::{Heap, Obj, Paths, Word};
+use zed_rt::{Heap, HeldObj, Obj, Paths, Word};
 
 use crate::tables::{NodeInfo, Tables};
 
@@ -354,10 +354,11 @@ extern "C" fn rt_error(id: i64) -> Word {
     })
 }
 
-/// Whether every word of `ins` is data: not a function and not a port's state.
+/// Whether every word of `ins` is data: not a function, not a value that holds one, and not a
+/// port's state.
 fn all_data(s: &Run, ins: &[Word]) -> Result<bool, String> {
     for w in ins {
-        if w.tag == Word::STATE || s.heap.is_function(*w)? {
+        if w.tag == Word::STATE || s.heap.holds_function(*w)? {
             return Ok(false);
         }
     }
@@ -454,6 +455,45 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         Op::Prim(Prim::Tuple) if !ins.is_empty() && all_data(s, ins)? => {
             Ok(s.heap.alloc(Obj::Tuple(ins.into())))
         }
+        // A tuple or an atom with a part that is no data is a held value, its parts moved into
+        // its cell as a data tuple's are, as the machine makes it (`Mv::Held`).
+        Op::Prim(Prim::Tuple) if any_holds_function(s, ins)? => {
+            Ok(s.heap.alloc(Obj::Held(Box::new(HeldObj {
+                atom: None,
+                parts: ins.into(),
+            }))))
+        }
+        Op::Prim(Prim::Atom)
+            if ins.len() > 2 && all_data(s, &ins[..2])? && any_holds_function(s, &ins[2..])? =>
+        {
+            match shape(t, s, id, ins)? {
+                None => slow(t, s, ni, ins),
+                Some(sh) => Ok(s.heap.alloc(Obj::Held(Box::new(HeldObj {
+                    parts: sh.order.iter().map(|&i| ins[2 + i]).collect(),
+                    atom: Some((sh.name, sh.fields)),
+                })))),
+            }
+        }
+        // A held tuple read at a key: the part, or what the kernel gives for a key outside it.
+        Op::Prim(Prim::TupleGet | Prim::At)
+            if ins.len() == 2 && s.heap.held(ins[0])?.is_some_and(|h| h.atom.is_none()) =>
+        {
+            match read_held(s, ins[0], ins[1])? {
+                Some(w) => give(s, ni, ins, w),
+                None => slow(t, s, ni, ins),
+            }
+        }
+        // Any other primitive given a held value: an atom that holds a function passes
+        // through as a failure does, and anything else is the kernel's error.
+        Op::Prim(p) if any_held(s, ins)? => match passed(s, *p, ins)? {
+            Some(w) => give(s, ni, ins, w),
+            None => slow(t, s, ni, ins),
+        },
+        // A call that is not a closure's, of a held value or on one.
+        Op::Apply if any_held(s, ins)? => match called(t, s, ins)? {
+            Some(w) => give(s, ni, ins, w),
+            None => slow(t, s, ni, ins),
+        },
         // The atom is made from its words, as the kernel would make it: the payload moves
         // into the cell, and the name and field names are borrowed.
         Op::Prim(Prim::Atom) if ins.len() >= 2 && all_data(s, ins)? => {
@@ -541,6 +581,96 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
     }
 }
 
+/// Whether some word of `ins` holds a function.
+fn any_holds_function(s: &Run, ins: &[Word]) -> Result<bool, String> {
+    for w in ins {
+        if s.heap.holds_function(*w)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether some word of `ins` is a held tuple or atom.
+fn any_held(s: &Run, ins: &[Word]) -> Result<bool, String> {
+    for w in ins {
+        if s.heap.held(*w)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The node gives `w`, a part of its inputs or one of them: `w` gets a reference before the
+/// owned inputs are dropped, so dropping them frees nothing `w` holds. As the machine's
+/// `give`.
+fn give(s: &mut Run, ni: &NodeInfo, ins: &[Word], w: Word) -> Result<Word, String> {
+    s.heap.inc(w)?;
+    consume(s, ni, ins)?;
+    Ok(w)
+}
+
+/// What held tuple `h` read at key `k` gives when it is not the kernel's to make: the part at
+/// an integer key inside the tuple, or `k` itself when it is an atom that holds a function.
+/// As the machine's `read_held`.
+fn read_held(s: &Run, h: Word, k: Word) -> Result<Option<Word>, String> {
+    if k.tag == Word::INT {
+        let h = s.heap.held(h)?.expect("a held tuple");
+        return Ok(usize::try_from(k.bits)
+            .ok()
+            .and_then(|i| h.parts.get(i))
+            .copied());
+    }
+    Ok(s.heap.is_held_atom(k)?.then_some(k))
+}
+
+/// The input that primitive `p` gives back on `ins`, one of which is a held value, when `p`
+/// passes an atom that holds a function through as a failure does. As the machine's `passed`
+/// and the kernel's `Machine::held`.
+fn passed(s: &Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, String> {
+    if matches!(
+        p,
+        Prim::Tuple | Prim::Atom | Prim::Eq | Prim::Ne | Prim::Path
+    ) || p.arity().is_some_and(|n| n != ins.len())
+    {
+        return Ok(None);
+    }
+    let (mut failures, mut held) = (0, None);
+    for &w in ins {
+        if s.heap.is_held_atom(w)? {
+            failures += 1;
+            held = Some(w);
+        } else if w.tag == Word::STATE || s.heap.holds_function(w)? {
+            return Ok(None);
+        } else if s.heap.is_data_atom(w)? {
+            failures += 1;
+        }
+    }
+    Ok(held.filter(|_| failures == 1))
+}
+
+/// What a call `ins[0](ins[1..])` of a held value, or of a primitive on one, gives, as the
+/// kernel calls it. As the machine's `called`.
+fn called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<Word>, String> {
+    let held_tuple =
+        |w: Word| -> Result<bool, String> { Ok(s.heap.held(w)?.is_some_and(|h| h.atom.is_none())) };
+    if ins.len() == 2 && held_tuple(ins[0])? {
+        return read_held(s, ins[0], ins[1]);
+    }
+    if s.heap.is_held_atom(ins[0])? {
+        return Ok(Some(ins[0]));
+    }
+    if ins[0].tag != Word::PRIM {
+        return Ok(None);
+    }
+    let p = t.prims[ins[0].bits as usize];
+    let args = &ins[1..];
+    if matches!(p, Prim::TupleGet | Prim::At) && args.len() == 2 && held_tuple(args[0])? {
+        return read_held(s, args[0], args[1]);
+    }
+    passed(s, p, args)
+}
+
 /// The kernel runs the node, the owned inputs are dropped, and the value is allocated.
 fn slow(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Word, String> {
     let v = kernel(t, s, ni, ins)?;
@@ -575,10 +705,11 @@ fn run(s: &mut Run, q: &Term) -> Result<Value, String> {
 }
 
 /// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`, and each
-/// closure's term is built once, in `lets.closures`.
+/// closure's and held value's term is built once, in `lets.closures`. A held value is the
+/// tuple or atom primitive on its parts' terms, as the machine builds it (`held_term`).
 fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, String> {
-    // Closures capture closures as deep as a program builds them, so the closures in progress
-    // are on a stack, each with the terms of its captures so far.
+    // Closures capture closures, and held values hold them, as deep as a program builds them,
+    // so the values in progress are on a stack, each with the terms of its parts so far.
     let mut stack: Vec<(Word, Vec<Term>)> = Vec::new();
     let mut made = term_of(t, s, w, lets, &mut stack)?;
     loop {
@@ -586,14 +717,24 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
             return Ok(made.expect("an empty stack follows a finished term"));
         };
         terms.extend(made.take());
-        let Some(Obj::Clo { lambda, caps }) = s.heap.obj(*clo)? else {
-            unreachable!("only closures are entered")
+        let (lambda, caps) = match s.heap.obj(*clo)? {
+            Some(Obj::Clo { lambda, caps }) => (Some(*lambda), &**caps),
+            Some(Obj::Held(h)) => (None, &*h.parts),
+            _ => unreachable!("only closures and held values are entered"),
         };
         match caps.get(terms.len()) {
             Some(&c) => made = term_of(t, s, c, lets, &mut stack)?,
             None => {
-                let ni = &t.nodes[t.lambdas[*lambda].node];
-                let q = raise_node(ni.node(), ni.number, &t.swapped, terms)?;
+                let q = match lambda {
+                    Some(lambda) => {
+                        let ni = &t.nodes[t.lambdas[lambda].node];
+                        raise_node(ni.node(), ni.number, &t.swapped, terms)?
+                    }
+                    None => {
+                        let h = s.heap.held(*clo)?.expect("a held value");
+                        held_term(h.atom.as_ref(), clo.bits as u64, std::mem::take(terms))
+                    }
+                };
                 let (clo, _) = stack.pop().expect("the closure finished");
                 lets.closures.insert(clo.bits, q.clone());
                 made = Some(q);
@@ -602,8 +743,8 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
     }
 }
 
-/// The term of `w` when it is not a closure or is a closure whose term is built; any other
-/// closure is entered on `stack`.
+/// The term of `w` when it is not a closure or held value or is one whose term is built; any
+/// other is entered on `stack`.
 fn term_of(
     t: &Tables,
     s: &mut Run,
@@ -621,7 +762,7 @@ fn term_of(
             }
             Term::Var(port_var(&p))
         }
-        Word::CELL if s.heap.is_function(w)? => match lets.closures.get(&w.bits) {
+        Word::CELL if s.heap.holds_function(w)? => match lets.closures.get(&w.bits) {
             Some(q) => q.clone(),
             None => {
                 stack.push((w, Vec::new()));
@@ -644,16 +785,16 @@ fn wrap(ports: Lets, t: Term) -> Term {
 }
 
 /// The lookup ports a kernel term reads, each once, in the order first met, and the term of
-/// each closure it holds.
+/// each closure and held value it holds.
 #[derive(Default)]
 struct Lets {
     seen: HashSet<Arc<str>>,
     order: Vec<Arc<str>>,
-    /// The term of each closure met, by its cell word's bits: a closure captured on many paths
-    /// is built once, so the term is a graph the size of the closures, not a tree of every
-    /// path (COMPLEXITY.md R9). No cell is freed while a term is built, so each word names one
-    /// closure. A closure's term is a lambda whose body is shared, so a copy costs its
-    /// parameter names.
+    /// The term of each closure and held value met, by its cell word's bits: a closure
+    /// captured on many paths is built once, so the term is a graph the size of the closures,
+    /// not a tree of every path (COMPLEXITY.md R9). No cell is freed while a term is built, so
+    /// each word names one value. A closure's term is a lambda whose body is shared, so a copy
+    /// costs its parameter names; a held value's is a `let`, as cheap to copy.
     // Complexity tradeoff: the naive build walks a closure once per path to it, 2^d for d
     // levels each capturing the level below twice (R9: 4 times per 2 levels, 17.6 s at 20).
     // Here each closure's term is built once per kernel call and kept by its cell word (index
@@ -677,6 +818,14 @@ fn branch(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Strin
     let ni = &t.nodes[id];
     if ins[0].tag == Word::BOOL {
         return Ok(i64::from(ins[0].bits == 0));
+    }
+    // An atom that holds a function passes through an `if` as any failure does, as the
+    // machine passes it.
+    if s.heap.is_held_atom(ins[0])? {
+        s.heap.inc(ins[0])?;
+        consume(s, ni, ins)?;
+        s.pending = ins[0];
+        return Ok(2);
     }
     // A lookup port as the condition is read by a `let`, as in every other kernel term.
     let mut lets = Lets::default();
@@ -915,7 +1064,8 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
         ));
     }
     let function = s.heap.is_function(w)?;
-    let v = if function {
+    let held = s.heap.held(w)?.is_some();
+    let v = if function || held {
         None
     } else {
         Some(s.heap.value(w)?)
@@ -938,7 +1088,10 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
             ),
         ));
     }
-    v.ok_or_else(|| KernelError::Type("the program's result is a function".into()).to_string())
+    v.ok_or_else(|| {
+        let what = if held { "holds" } else { "is" };
+        KernelError::Type(format!("the program's result {what} a function")).to_string()
+    })
 }
 
 #[cfg(test)]

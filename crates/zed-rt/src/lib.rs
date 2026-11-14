@@ -27,7 +27,7 @@ pub mod stack;
 mod scaling;
 
 pub use bug::bug;
-pub use heap::{Heap, Obj, Parts, Stats, Word};
+pub use heap::{Heap, HeldObj, Obj, Parts, Stats, Word};
 #[cfg(feature = "counts")]
 pub use heap::{Released, Survivor};
 // What `Heap::matches` records and `Heap::release` reads, shared with the counting machine.

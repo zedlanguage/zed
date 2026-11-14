@@ -2338,6 +2338,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 _ => return None,
             },
+            // A name whose type holds no function, as `n` in `if n > 2 { #box(f) } else { n }`,
+            // which the walk reaches through the `if`'s condition, is shown as any other
+            // expression is, and not said to hold the function.
+            Src::Name(_) if kept.as_ref().is_some_and(|t| t.held_function().is_none()) => {
+                return None;
+            }
             Src::Name(id) => {
                 let name = &self.t.res.binders[*id].name;
                 let mut notes = vec![Note {

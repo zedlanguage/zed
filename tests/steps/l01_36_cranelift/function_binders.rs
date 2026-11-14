@@ -41,13 +41,13 @@ pub(crate) fn calls(n: usize, m: Term) -> Term {
 }
 
 /// `(0, 1, …, n-1)`.
-fn ints(n: i64) -> Value {
+pub(crate) fn ints(n: i64) -> Value {
     Value::tuple((0..n).map(Value::Int).collect())
 }
 
 /// The value `t` gives in the kernel; asserts that the counting machine and native code give
 /// it too, with the release fused and not, and that native code counts as the machine does.
-fn agree(t: &Term) -> Result<Value, String> {
+pub(crate) fn agree(t: &Term) -> Result<Value, String> {
     let want = kernel(t);
     let g = zed_native::legalize(lower(t).unwrap_or_else(|e| panic!("{e}")));
     for fuse in [true, false] {
@@ -201,19 +201,16 @@ fn a_function_under_is_and_under_wild_binds_nothing() {
     }
 }
 
-/// `match (f, 1) { (h, n) -> h(n) }`: a tuple holds no function, so building the scrutinee
-/// is the kernel's type error, and the machine and native code give the same error.
+/// `match (f, z) { (h, n) -> h(n) }`: a tuple may hold a function (DESIGN.md step L1.17), so
+/// the scrutinee is a held tuple, the pattern binds its parts, and the kernel, the machine and
+/// native code give the same value and native code counts as the machine does.
 #[test]
-fn a_function_inside_a_tuple_pattern_is_the_kernels_error() {
+fn a_function_inside_a_tuple_pattern_binds_its_part() {
     let s = prim(Prim::Tuple, vec![var("f"), var("z")]);
     let m = match1(
         s,
         Pattern::Tuple(vec![bind("h"), bind("n")]),
         app(var("h"), vec![var("n")]),
     );
-    let got = agree(&calls(3, m));
-    assert_eq!(
-        got,
-        Err(zed_kernel::KernelError::Type("`(..)` applied to a function".into()).to_string())
-    );
+    assert_eq!(agree(&calls(3, m)), Ok(ints(3)));
 }

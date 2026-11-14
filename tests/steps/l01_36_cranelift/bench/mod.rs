@@ -6,6 +6,7 @@
 mod deep_calls;
 mod drops;
 mod function_binders;
+mod held_values;
 mod kernel_inputs;
 mod kinds;
 mod legalize;

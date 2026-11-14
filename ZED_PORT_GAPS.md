@@ -859,6 +859,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Vec` of frames as an explicit stack, each frame growing its own `Vec` of results | `Making`, `Reading`, `Matching`, `hooks::term` | Mutation | As for `Machine::run`: a state receiver |
 | `slice::Iter` held in a frame across steps, to resume a walk | `Making::rest` | None | An index into the list |
 | Reborrowing `&mut` to each sub-pattern through a stack | `hooks::rename` | Mutation | Zed builds the renamed pattern as a new value |
+
+## Entries from FIX-functions-in-tuples (`zedc-zir/src/zir/memory.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A second enum variant for a tuple or atom that holds a function, `Mv::Held(Rc<Held>)` and `Obj::Held(Box<HeldObj>)`, beside the data forms | `Machine::held`, `Heap::held`, `HeldObj`, `hooks::node` | None | A union member of the machine's value type, `#held(atom: …, parts: [Mv])` |
+| The kernel run on marks (`Int i` in each payload place) to learn an atom's field order and its refusals | `Machine::held_shape`, `hooks::node` (held `Atom`) | None | The same call of the kernel's atom rule, on a payload of keys |
+| A held tuple built by applying a primitive value, `apply((,), …)`, falls to the kernel and stops, since no prelude word is bound to `Prim::Tuple` or `Prim::Atom` and no program can write it | `Machine::slow`, `hooks::called` | None (unreachable from source) | The held arms reached from `Apply` as from `Prim`, if such a word is added |
+
 ## Entries from T2-eval-repair (`zed-kernel/src/deep.rs`, `value.rs`, `family.rs`, `types.rs`)
 
 | Rust construct | Sites | Gap | At the port |

@@ -391,3 +391,30 @@ fn a_returned_generic_function_fits_a_function_result_by_its_needs() {
         ]
     );
 }
+
+/// Two operands that may fail at once merge their failures into `#errs`, the set of the
+/// distinct ones (DESIGN.md sec:failure), which compares them: a failure whose payload may
+/// hold a function is then a use that needs data, reported at its operand. The kernel stops
+/// such a run with "`+` given several failures, one of which holds a function, which `#errs`
+/// cannot hold". One such operand beside data passes its failure through as it is, and
+/// failures whose payloads are data merge.
+#[test]
+fn failures_holding_functions_that_merge_are_refused() {
+    let pick = "g(positional a) = a;\nbox(positional n: int) = if n > 2 { g(#box(scale)) } else \
+                { n };\nbag(positional n: int) = if n > 3 { g(#bag(scale)) } else { n };\n";
+    let merged = format!("{SCALE}{pick}both(positional n: int) = box(n) + bag(n);\n");
+    let held = |at: &str| {
+        format!(
+            "`#errs`, which `+` merges the failures of its operands into, takes data, and this \
+             value may hold a function, `(int) -> int`: data is a value that holds no function \
+             at any depth. [{at}]"
+        )
+    };
+    assert_eq!(type_errors(&merged), [held("box(n)"), held("bag(n)")]);
+    let one = format!("{SCALE}{pick}one(positional n: int) = box(n) + n;\n");
+    assert_eq!(type_errors(&one), Vec::<String>::new());
+    let data = "g(positional a) = a;\nbox(positional n: int) = if n > 2 { g(#box(1)) } else { n \
+                };\nbag(positional n: int) = if n > 3 { g(#bag(2)) } else { n };\nboth(positional \
+                n: int) = box(n) + bag(n);\n";
+    assert_eq!(type_errors(data), Vec::<String>::new());
+}

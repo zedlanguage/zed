@@ -309,15 +309,15 @@ fn equality_on_an_atom_whose_payload_holds_a_function_shows_where_the_function_c
     assert_eq!(
         out,
         "3:8: `==` takes data, and this value may hold a function, `(T) -> T for T in int | f32 | f64 | rat`: data is a value that holds no function at any depth.
-  [1] 3:8: `boxed` is #box((T) -> T for T in int | f32 | f64 | rat) here
+  [1] 3:8: `boxed` holds the function here
       3 | same = boxed == boxed;
         |        ^^^^^ [1]
         |        ^^^^^^^^^^^^^^ [7, 8]
-  [2] 2:9: `boxed` is defined as this expression, #box((T) -> T for T in int | f32 | f64 | rat)
+  [2] 2:9: `boxed` is defined here
       2 | boxed = #box(inc);
         |         ^^^^^^^^^ [2, 3]
         |              ^^^ [4]
-  [3] 2:9: this atom `#box` with its payload gives #box((T) -> T for T in int | f32 | f64 | rat)
+  [3] 2:9: this atom `#box` holds the function in its payload
   [4] 2:14: `inc` is (T) -> T for T in int | f32 | f64 | rat here
   [5] 1:7: `inc` is defined as this expression, (T) -> T for T in int | f32 | f64 | rat
       1 | inc = x -> x + 1;
@@ -353,4 +353,46 @@ s = g(h);
         |     ^^^^
   [4] 4:5: repair: keep the function under its own name, out of the value"
     );
+}
+
+/// Two operands whose failures may hold a function merge into `#errs`, which takes data, so each
+/// is refused with a derivation to the function. The walk reaches `n` through the `if`'s
+/// condition: `n` is int and holds no function, so its step gives its type and does not say it
+/// holds the function.
+#[test]
+fn a_merge_of_failures_that_hold_a_function_follows_each_to_the_function() {
+    let out = rejected(
+        "scale(positional x: int) = x;\nboth(positional n: int) = (if n > 2 { #box(scale) } else { n }) + (if n > 3 { #bag(scale) } else { n });\n",
+    );
+    assert_eq!(
+        out.matches("`#errs`, which `+` merges the failures of its operands into, takes data")
+            .count(),
+        2,
+        "{out}"
+    );
+    for step in [
+        "[3]  2:31: `n` is int here",
+        "[7]  2:39: this atom `#box` holds the function in its payload",
+        "[8]  2:44: `scale` is (int) -> int here",
+        "[7]  2:79 to 2:89: this atom `#bag` holds the function in its payload",
+    ] {
+        assert!(out.contains(step), "{step}:\n{out}");
+    }
+    assert!(!out.contains("`n` holds the function"), "{out}");
+}
+
+/// A held tuple whose part is a call, `(id(scale), 1)`: the derivation follows the tuple to the
+/// call and from there gives the call's type, as for any expression.
+#[test]
+fn a_held_tuple_with_a_call_for_its_function_part_shows_the_call() {
+    let out = rejected(
+        "scale(positional x: int) = x;\nid(positional a) = a;\nt = (id(scale), 1);\nsame = t == t;\n",
+    );
+    for step in [
+        "[3] 3:5: this tuple holds the function",
+        "[4] 3:6: this call of `id` gives (int) -> int",
+        "the type the checker found for `id` is `(T) -> T`",
+    ] {
+        assert!(out.contains(step), "{step}:\n{out}");
+    }
 }

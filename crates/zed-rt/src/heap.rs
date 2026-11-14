@@ -30,7 +30,7 @@ use std::{mem, slice};
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::Pattern;
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::value::{Atom, Fields, Items, SharedParts, Value};
+use zed_kernel::value::{Atom, Family, Fields, Items, SharedParts, Value};
 
 use zed_kernel::Text;
 
@@ -177,6 +177,26 @@ pub enum Obj {
         /// The captures, in the lambda node's input order.
         caps: Box<[Word]>,
     },
+    /// A tuple or an atom with a part that is no data, a function or a value that holds one
+    /// (DESIGN.md step L1.17): no data value, so never read as one, and its parts are words as
+    /// a data tuple's are. The machine's `Mv::Held` (zedc-zir's memory.rs).
+    Held(Box<HeldObj>),
+}
+
+/// The contents of an [`Obj::Held`].
+// Complexity tradeoff: the naive form puts a function word in an `Obj::Tuple`, and every read
+// of a tuple as data would then walk its parts to find out whether it holds one, O(size) per
+// read. Here a held value is its own kind of cell, known from its tag in O(1); its parts are
+// counted and released as a tuple's are, and a type test on it builds a data stand-in, O(the
+// parts above the data). Boxed, so `Obj` keeps its size. Tests
+// `l01_36_cranelift::held_values` and `bench::held_values` (COMPLEXITY.md row HELD-cells).
+#[derive(Clone, Debug)]
+pub struct HeldObj {
+    /// `None` for a tuple; for an atom, its name and its field names, sorted, empty for a
+    /// payload by position.
+    pub atom: Option<(Arc<str>, Fields)>,
+    /// The components of a tuple, or the payload of an atom in the order of its field names.
+    pub parts: Box<[Word]>,
 }
 
 impl Obj {
@@ -195,6 +215,8 @@ impl Obj {
                 _ => "kernel value",
             },
             Obj::Clo { .. } => "closure",
+            Obj::Held(h) if h.atom.is_none() => "tuple",
+            Obj::Held(_) => "atom",
         }
     }
 
@@ -203,6 +225,7 @@ impl Obj {
             Obj::Tuple(xs) => xs,
             Obj::Atom { args, .. } => args,
             Obj::Clo { caps, .. } => caps,
+            Obj::Held(h) => &h.parts,
             Obj::Str(_) | Obj::Data(_) => &[],
         }
     }
@@ -770,6 +793,40 @@ impl Heap {
         })
     }
 
+    /// Whether `w` holds a function: is one, or is a tuple or an atom with one at some depth.
+    pub fn holds_function(&self, w: Word) -> Result<bool, String> {
+        Ok(self.is_function(w)? || self.held(w)?.is_some())
+    }
+
+    /// The held tuple or atom `w` is, when it is one.
+    pub fn held(&self, w: Word) -> Result<Option<&HeldObj>, String> {
+        Ok(match w.tag {
+            Word::CELL => match self.obj(w)? {
+                Some(Obj::Held(h)) => Some(h),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// Whether `w` is an atom that holds a function.
+    pub fn is_held_atom(&self, w: Word) -> Result<bool, String> {
+        Ok(self.held(w)?.is_some_and(|h| h.atom.is_some()))
+    }
+
+    /// Whether data word `w` is an atom, a failure.
+    pub fn is_data_atom(&self, w: Word) -> Result<bool, String> {
+        Ok(match w.tag {
+            Word::VAL => matches!(self.vals[w.bits as usize].value, Value::Atom(_)),
+            Word::CELL => match self.obj(w)? {
+                Some(Obj::Atom { .. }) => true,
+                Some(Obj::Data(v)) => matches!(**v, Value::Atom(_)),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+
     /// The kernel value of data word `w`; a string is shared, not written out. Each tuple or atom
     /// cell keeps the sequence made from it until it is freed, so a cell met again, on another
     /// path or in a later call, is read once: the value shares its parts as the cells do, and a
@@ -823,7 +880,7 @@ impl Heap {
                     return Ok(None);
                 }
                 Some(Obj::Data(v)) => (**v).clone(),
-                Some(Obj::Clo { .. }) => return Err(closure_as_data()),
+                Some(Obj::Clo { .. } | Obj::Held(_)) => return Err(closure_as_data()),
                 None => unreachable!("obj_in checks the cell is live"),
             },
             t => return Err(not_data(t)),
@@ -1015,6 +1072,11 @@ impl Heap {
                     Some(Obj::Atom { name, fields, args }) => {
                         (Some((&**name, &**fields)), false, args.len(), holder)
                     }
+                    // A held atom has a payload, with a function in it, so it is never bare.
+                    Some(Obj::Held(h)) => {
+                        let atom = h.atom.as_ref().map(|(n, f)| (&**n, &**f));
+                        (atom, false, h.parts.len(), holder)
+                    }
                     _ => return Ok(None),
                 }
             }
@@ -1060,6 +1122,7 @@ impl Heap {
         match h {
             Holder::Cell(c) => match &self.cells[c].obj {
                 Some(Obj::Atom { fields, .. }) => fields,
+                Some(Obj::Held(h)) => h.atom.as_ref().map_or(&[], |(_, f)| f),
                 _ => &[],
             },
             Holder::Table { entry, .. } => match &self.vals[entry].value {
@@ -1103,6 +1166,9 @@ impl Heap {
                         }
                         _ => false,
                     },
+                    // A value that holds a function equals no data value: a pattern's literal is
+                    // data, as the kernel's matching has it.
+                    Some(Obj::Held(_)) => false,
                     Some(Obj::Clo { .. }) => return Err(closure_as_data()),
                     None => unreachable!("obj_in checks the cell is live"),
                 },
@@ -1137,6 +1203,7 @@ impl Heap {
             Some(Obj::Str(_)) => Type::string(),
             Some(Obj::Tuple(_)) => Type::universe(Universe::Tuple),
             Some(Obj::Atom { name, .. }) => Type::atom(name) | Type::atom_with(name, &Type::top()),
+            Some(Obj::Held(_)) => return Ok(t.contains(&self.stand_in(w)?)),
             Some(Obj::Clo { .. }) | None => return Ok(t.contains(&self.value(w)?)),
         };
         let held = t & &kind;
@@ -1147,6 +1214,44 @@ impl Heap {
             return Ok(false);
         }
         Ok(t.contains(&self.value(w)?))
+    }
+
+    /// Held value `w` with each function in it replaced by the empty family, as the kernel's
+    /// `Held::stand_in` makes it: a type holds a family exactly when it holds every function,
+    /// so the stand-in is in a type exactly when `w` is. The held values in progress are on a
+    /// stack, so any depth uses none of the thread's stack; O(the parts above the data).
+    fn stand_in(&mut self, w: Word) -> Result<Value, String> {
+        let mut stack: Vec<(Word, Vec<Value>)> = vec![(w, Vec::new())];
+        loop {
+            let (top, done) = stack.last().expect("the root is popped last");
+            let h = self.held(*top)?.expect("only held values are entered");
+            match h.parts.get(done.len()).copied() {
+                Some(p) if self.held(p)?.is_some() => stack.push((p, Vec::new())),
+                Some(p) => {
+                    let v = match p.tag {
+                        Word::PRIM | Word::SOURCE => Value::Family(Family::default()),
+                        _ if self.is_function(p)? => Value::Family(Family::default()),
+                        _ => self.value(p)?,
+                    };
+                    stack.last_mut().expect("a top").1.push(v);
+                }
+                None => {
+                    let (top, done) = stack.pop().expect("the top read above");
+                    let v = match &self.held(top)?.expect("a held value").atom {
+                        None => Value::tuple(done),
+                        Some((name, fields)) => Value::Atom(Atom {
+                            name: name.clone(),
+                            fields: fields.clone(),
+                            payload: Some(done.into()),
+                        }),
+                    };
+                    match stack.last_mut() {
+                        Some((_, up)) => up.push(v),
+                        None => return Ok(v),
+                    }
+                }
+            }
+        }
     }
 
     /// Whether `w` matches `p`, as the kernel matches a value: `out` gets each binder's word

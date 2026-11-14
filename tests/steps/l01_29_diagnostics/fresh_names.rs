@@ -70,7 +70,7 @@ fn every_derivation_step_of_the_message_uses_the_same_free_name() {
     let out =
         rejected("T = 1;\nU = 2;\ninc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
     assert!(
-        out.contains("`boxed` is #box((V) -> V for V in int | f32 | f64 | rat) here"),
+        out.contains("`inc` is (V) -> V for V in int | f32 | f64 | rat here"),
         "{out}"
     );
     assert!(
