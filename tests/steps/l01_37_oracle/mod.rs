@@ -8,4 +8,5 @@ mod alone;
 mod bench;
 mod counts;
 mod oracle;
+mod report;
 mod scaling;

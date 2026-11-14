@@ -349,3 +349,58 @@ fn a_second_stop_through_functions_is_not_compared() {
     assert!(r.mismatches.is_empty(), "{:?}", r.mismatches);
     assert_eq!((r.compared, r.not_compared.len()), (4, 3));
 }
+
+/// `n` bindings `x0`, …, where `x{k}` stops and the others are `i`; in a chain each binding
+/// after `x0` reads the one before, so those after the stop stop with its error, and among
+/// independent bindings none reads another, so those after it run.
+fn one_stop(n: usize, k: usize, chain: bool) -> Unit {
+    let name = |i: usize| format!("x{i}");
+    unit(
+        (0..n)
+            .map(|i| {
+                let own = if i == k {
+                    stops(Prim::Add)
+                } else {
+                    int(i as i64)
+                };
+                let term = if chain && i > 0 {
+                    add(var(&name(i - 1)), own)
+                } else {
+                    own
+                };
+                def(&name(i), term, true)
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn a_stop_at_each_place_gives_each_binding_what_its_run_alone_gives() {
+    // Each place of the stop, in chains and among independent bindings of 1 to 6, takes the
+    // prefixes of 1, 2, 4, … definitions and the halvings between them each way they go.
+    for n in 1..=6 {
+        for k in 0..n {
+            for chain in [true, false] {
+                let u = one_stop(n, k, chain);
+                let what = format!("{n} bindings, the stop at {k}, chained: {chain}");
+                let (want, got) = (alone(&u, ENGINES), bindings(&u, ENGINES));
+                assert_eq!(got.compared, want.compared, "{what}");
+                assert_eq!(got.mismatches, want.mismatches, "{what}");
+                assert_eq!(got.not_compared, Vec::<String>::new(), "{what}");
+                // `refuse` differs on every binding, and `marked` on each that stops: the
+                // stop and, in a chain, each binding after it.
+                let stopped = if chain { n - k } else { 1 };
+                assert_eq!(
+                    got.mismatches.len(),
+                    n + stopped,
+                    "{what}: {:?}",
+                    got.mismatches
+                );
+                let ((want, got), _) =
+                    native(|engines| (alone(&u, engines), bindings(&u, engines)));
+                assert_eq!(got.compared, want.compared, "{what}, natively");
+                assert_eq!(got.mismatches, want.mismatches, "{what}, natively");
+            }
+        }
+    }
+}
