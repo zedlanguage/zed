@@ -2359,6 +2359,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-finished-names-clash | impl attempt 1 | 2026-11-14 13:54 | started in wt/fix-names-sub (also FAIL-types-sub-level-variables next) |
 | FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
+| FAIL-print-kernel-parens | running | 2026-11-14 15:06 |  |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
