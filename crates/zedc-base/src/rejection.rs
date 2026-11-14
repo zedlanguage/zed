@@ -181,8 +181,10 @@ rows! {
     // emitted at a division whose divisor is 0 at a root where a constraint fails (ROOTS-listed).
     OneTargetForResults => "One target for a call with several results",
     RootConstraintFails => "A root of an obligation's equation at which a written constraint does not yield `true` or `false`",
-    // No diagnostic uses the next three rows yet: plan rows L2.12d, L15.8b and L21.0b emit them.
+    // No diagnostic uses the next four rows yet: plan rows L2.12d, IMPL-reached-effects, L15.8b
+    // and L21.0b emit them.
     UnreadBinding => "Block binding that nothing reads",
+    PortOpInLogLine => "Port operation in a log line",
     ProgramHole => "Hole in the program",
     UngrantedReach => "Dependency reaching what its importer did not grant",
     // No diagnostic uses this row yet: plan row L7.2 emits it.

@@ -600,6 +600,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   9 | @foreign ( str["c"] , str["freeaddrinfo"] ) @nonblocking freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
  10 | @foreign ( str["c"] , str["getaddrinfo"] ) @blocking getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
 == DESIGN.md [sec:ffi] 2 L7
+  1 | @foreign ( str["counter"] , str["counter_next"] ) @blocking next : ( ) -> i32 ;
+  3 | f ( y : bool ) -> i32 | #none {
+  4 | x = next ( ) «else» 0₍10₎ ;
+  5 | «return» «if» y { x } «else» { #none } ;
+  6 | }
+== DESIGN.md [sec:ffi] 3 L7
   1 | @foreign «struct» Device { }
   2 | @foreign «struct» Buffer { }
   3 | @foreign «struct» Extension { }
@@ -610,23 +616,23 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | }
   9 | @foreign ( str["vulkan"] , str["vkDestroyBuffer"] ) @nonblocking destroyBuffer : ( device : Ptr ( Device ) , buffer : Ptr ( Buffer ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> #ok ;
  10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) @blocking createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) ;
-== DESIGN.md [sec:ffi] 3 L7
+== DESIGN.md [sec:ffi] 4 L7
   1 | @foreign «struct» Env { }
   2 | @foreign «struct» Txn { }
   3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok ;
   4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) @blocking begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
   5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) @blocking commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
-== DESIGN.md [sec:ffi] 4 L7
+== DESIGN.md [sec:ffi] 5 L7
   1 | @foreign «struct» File { }
   2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
   3 | @foreign ( str["c"] , str["fputs"] ) @blocking fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 ;
   4 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
   5 | @foreign ( str["c"] , str["fopen"] ) @blocking openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
-== DESIGN.md [sec:ffi] 5 L7
+== DESIGN.md [sec:ffi] 6 L7
   1 | @foreign «struct» Lock { }
   2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok ;
   3 | @foreign ( str["locks"] , str["lock_acquire"] ) @blocking acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
-== DESIGN.md [sec:ffi] 6 L7
+== DESIGN.md [sec:ffi] 7 L7
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
   3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) @blocking close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
@@ -646,7 +652,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  21 | } ,
  22 | }
  23 | }
-== DESIGN.md [sec:ffi] 7 L7
+== DESIGN.md [sec:ffi] 8 L7
   1 | @foreign «struct» Curl { }
   2 | @teardown @foreign ( str["curl"] , str["curl_global_cleanup"] ) @nonblocking globalCleanup : ( ) -> #ok ;
   3 | @foreign ( str["curl"] , str["curl_global_init"] ) @blocking globalInit : ( flags : i64 ) -> i32 ;

@@ -115,6 +115,7 @@ Statement that writes nothing, or drops a declared result
 One target for a call with several results
 A root of an obligation's equation at which a written constraint does not yield `true` or `false`
 Block binding that nothing reads
+Port operation in a log line
 Hole in the program
 Dependency reaching what its importer did not grant
 Two operations on one port that may not commute, with nothing ordering them
