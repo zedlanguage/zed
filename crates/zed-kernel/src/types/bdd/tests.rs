@@ -1275,6 +1275,37 @@ fn an_exclusive_or_made_again_from_its_pair_is_made_on_first_read() {
 }
 
 #[test]
+fn the_complement_of_an_exclusive_or_is_its_live_mate() {
+    // An exclusive or dropped while its complement lives, and built again from the same tree
+    // node of its atoms, is the complement's complement, taken from the table (`xor::mate`),
+    // not made a third time (TEST-bench-move-l0123, author P188: before, only a benchmark of
+    // l01_23 reached it, 2 times in 15,000 complements). Built again by `parity`, the tree node
+    // is a new one, and the complement is made again from its pair, as in
+    // `an_exclusive_or_made_again_from_its_pair_is_made_on_first_read`.
+    for k in [2, 3, 9] {
+        let base = 9970 + 10 * k;
+        let first = parity(base, k);
+        let (atoms, constant) = first.xor_tag().expect("an exclusive or in its one form");
+        let n = first.not();
+        drop(first);
+        let x = Part::xor(Some(atoms), constant);
+        let again = n.not();
+        assert!(
+            matches!((&again, &x), (Part::Expr(a), Part::Expr(b)) if Arc::ptr_eq(a, b)),
+            "{k}"
+        );
+        // `x` was made with a complement of its own beside it (`xor::xor2`): equal to `n`, not
+        // the same node.
+        assert_eq!(x.not(), n, "{k}");
+        for bits in 0..1u32 << k {
+            let holds = |a: &Row| (0..k).any(|i| bits >> i & 1 == 1 && *a == atom(base + i));
+            assert_eq!(x.eval(&holds), odd(bits, k as u32), "{k} {bits:b}");
+            assert_eq!(n.eval(&holds), !odd(bits, k as u32), "{k} {bits:b}");
+        }
+    }
+}
+
+#[test]
 fn the_halves_of_an_exclusive_or_read_on_many_threads_are_made_once() {
     // An exclusive or shared by threads that read its form at once: each reads the one form,
     // made by one of them (`OnceLock`).

@@ -48,6 +48,7 @@ fn holds(e: &E, p: Probe) -> bool {
             ("int", Value::Int(_) | Value::Big(_))
                 | ("rat", Value::Rat(_))
                 | ("f64", Value::Float(_))
+                | ("f32", Value::Float32(_))
                 | ("bool", Value::Bool(_))
                 | ("String", Value::Str(_))
         ),
@@ -82,6 +83,7 @@ fn build(e: &E) -> Type {
         E::Base("int") => Type::int(),
         E::Base("rat") => Type::rat(),
         E::Base("f64") => Type::f64(),
+        E::Base("f32") => Type::f32(),
         E::Base("bool") => Type::bool(),
         E::Base(_) => Type::string(),
         E::Lit(v) => Type::lit(v).unwrap(),
@@ -107,10 +109,12 @@ fn small() -> Vec<Value> {
         Value::str("a"),
         Value::atom("a"),
         Value::Bool(true),
+        Value::float32(0.5),
     ]
 }
 
-/// Values of every universe: scalars of each base type, bare atoms, atoms with an empty
+/// Values of every universe: scalars of each base type (`f32` too, from TEST-bench-move-l0123
+/// under author P188: no test of the step held an `f32` value), bare atoms, atoms with an empty
 /// payload `#a()`, atoms with tuple and struct payloads, tuples of length 0 to 2, a keypath and
 /// a family.
 fn values() -> Vec<Value> {
@@ -122,6 +126,7 @@ fn values() -> Vec<Value> {
         Value::rat(zed_kernel::Rat::decimal("0.5").unwrap().unwrap()),
         Value::float(0.5),
         Value::float(-1.0),
+        Value::float32(-1.0),
         Value::Bool(false),
         Value::str("b"),
         Value::atom("b"),
@@ -151,7 +156,7 @@ fn random(r: &mut Rng, depth: usize) -> E {
     let leaf = depth == 0 || r.below(3) == 0;
     if leaf {
         return match r.below(6) {
-            0 => E::Base(r.pick(&["int", "rat", "f64", "bool", "String"])),
+            0 => E::Base(r.pick(&["int", "rat", "f64", "f32", "bool", "String"])),
             1 => E::Lit(r.pick(&small())),
             2 => E::Atom(r.pick(&["a", "b", "c"])),
             3 => E::Universe(r.pick(&[

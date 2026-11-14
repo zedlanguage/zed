@@ -8407,4 +8407,16 @@ fn r6_three_clause_formulas_sampled_by_kind_are_decided_correctly() {
     r5_sat_sample("r6 SAT formulas of three clauses", [3, 3, 3, 0], 8);
 }
 
+#[test]
+fn the_prefix_chains_whose_stop_heads_cover_the_witness_agree_with_the_oracle() {
+    // Families 560 and 675 of `PREFIX_CHAIN_SEEDS` reach the step of the chain plan where the
+    // stop heads that meet the step's head leave no witness, so the walk goes on to the next
+    // step. Before, only `bench::every_random_prefix_chain_agrees_with_the_oracle` reached it,
+    // and the regular test's draw of 20 seeds only by chance (TEST-bench-move-l0123, author
+    // P188; found by running each seed alone under llvm-cov).
+    for chain in [560, 675] {
+        check_random_prefix_chain(chain, &format!("_prc{chain}"), "a pinned seed");
+    }
+}
+
 mod bench;

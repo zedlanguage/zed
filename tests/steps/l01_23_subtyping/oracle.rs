@@ -704,4 +704,33 @@ fn the_recorded_cases_are_decided_by_the_simulation() {
     }
 }
 
+/// Systems (seed, index) that reach branches of the emptiness search no other regular test
+/// reaches; before, only the benchmark of every system reached them, and the regular test
+/// above only when its fresh draw of 1500 included one (TEST-bench-move-l0123, author P188).
+/// Found by running each system alone under llvm-cov.
+const SYSTEMS_REACHING_RARE_BRANCHES: [(u64, usize); 5] = [
+    // `affine_lists_empty`: an operand of the meet met a second time; `decide_counted`: pair
+    // payload rows whose forced atoms do not satisfy the rows.
+    (1, 1041),
+    // The escape walk: a second stop that differs from the first.
+    (1, 1663),
+    // The escape walk: an element type over an alphabet that is not only integers.
+    (1, 3612),
+    // `affine_lists_empty`: two own states, neither with a step on a value, and a step that
+    // neither keeps nor swaps them; a value named by an operand outside the swap.
+    (1, 3800),
+    // A chain plan's step whose link or stop differs from the chain's (`step_of`); and pair
+    // payload rows as in (1, 1041).
+    (2, 2916),
+];
+
+#[test]
+fn the_systems_reaching_rare_branches_agree_with_the_oracle() {
+    let (_, accepted) = recursive_routes(
+        SYSTEMS_REACHING_RARE_BRANCHES.into_iter(),
+        "the systems reaching rare branches",
+    );
+    assert_eq!(accepted, SYSTEMS_REACHING_RARE_BRANCHES.len());
+}
+
 mod bench;

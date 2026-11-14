@@ -162,4 +162,80 @@ fn checks_on_recursive_groups_release_their_instances() {
     recursive_checks_hold_bounded_memory(4);
 }
 
+/// Tuple, union, complement, morphism and recursive-group types on literals from `base`, each
+/// with a node in one of the thread's tables (rows, morphism types, diagram nodes, groups).
+fn kept(base: u64) -> Vec<Type> {
+    let tuple = |k: u64| Type::tuple(vec![lit(base + k), Type::int()]);
+    let (a, b) = (tuple(0), tuple(1));
+    let ab = &a | &b;
+    let list = Group::new(vec![Def {
+        name: format!("TableLifeKept{base}"),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Tuple(vec![]),
+            Expr::Tuple(vec![Expr::Type(lit(base + 2)), Expr::Ref(0, vec![])]),
+        ]),
+    }])
+    .expect("a recursive group")
+    .instance(vec![])
+    .remove(0);
+    vec![
+        a.clone(),
+        b,
+        !&ab,
+        Type::exact(lit(base + 3), ab.clone()),
+        ab,
+        list,
+    ]
+}
+
+/// `got` holds the types of [`kept`]`(base)`, made on this thread or another: each equals the
+/// one made here, and the subtyping and emptiness among them hold.
+fn check_kept(base: u64, got: &[Type]) {
+    Type::forget_emptiness();
+    let here = kept(base);
+    assert_eq!(got, &here[..]);
+    let [a, b, not_ab, f, ab, list] = got else {
+        panic!("six types")
+    };
+    assert!(a.subtype(ab) && b.subtype(ab) && !ab.subtype(a));
+    assert!((ab & not_ab).is_empty() && !not_ab.is_empty());
+    assert!(f.subtype(&Type::exact(lit(base + 3), Type::top())));
+    assert!(!list.is_empty() && Type::tuple(vec![]).subtype(list));
+    assert!(!list.subtype(&here[0]));
+}
+
+/// Types made on one thread and dropped on another (TEST-bench-move-l0123, author P188: before,
+/// only the benchmarks, each of whose runs is on a thread of its own, dropped a node where the
+/// thread's table does not hold it). A node made on a thread that has ended is dropped here,
+/// after that thread's tables are gone; a node made here is dropped on a thread that is still
+/// running, whose tables hold no entry for it. Afterward both threads build equal types, and
+/// subtyping and emptiness on them still hold.
+#[test]
+fn types_dropped_on_another_thread_leave_both_threads_correct() {
+    let made_there = std::thread::spawn(|| {
+        let made = kept(0);
+        check_kept(0, &made);
+        made
+    })
+    .join()
+    .expect("the thread that made the types");
+    check_kept(0, &made_there);
+    drop(made_there);
+    check_kept(0, &kept(0));
+
+    let made_here = kept(100);
+    check_kept(100, &made_here);
+    std::thread::spawn(move || {
+        let own = kept(100);
+        check_kept(100, &made_here);
+        drop(made_here);
+        check_kept(100, &own);
+        check_kept(100, &kept(100));
+    })
+    .join()
+    .expect("the thread that dropped the types");
+    check_kept(100, &kept(100));
+}
+
 mod bench;

@@ -8,22 +8,23 @@ use super::*;
 /// with no search; with all operands inhabited, in
 /// [`meets_of_k_inhabited_members_scale`], only the meet is searched.
 ///
-/// Size (TEST-bench-move-l0123, author P169): n 8 before, now 16384; 1x 215 ms at load
-/// 23.33.
+/// Size (TEST-bench-move-l0123, author P169): n 8 before, now 8192: 1x 93 ms, 8x 1.42 s, the
+/// whole test 8.9 s at load 23, most of it building the inputs. At 16384 the test passed the
+/// 20 s limit at load 27.
 #[test]
 fn meets_of_k_members_scale() {
-    let n = 16384;
+    let n = 8192;
     let empty = scaling::inputs(n, |k| meet_of_k(k, true));
     scaling::check("the verdict on a meet of k members, one empty", n, |k| {
         assert_eq!(verdict_and_searched(&empty[&k]), (Verdict::Empty, 0));
     });
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 8 before, now 16384; 1x 206 ms at load
-/// 23.33.
+/// Size (TEST-bench-move-l0123, author P169): n 8 before, now 8192, for the reason given at
+/// [`meets_of_k_members_scale`].
 #[test]
 fn meets_of_k_inhabited_members_scale() {
-    let n = 16384;
+    let n = 8192;
     let full = scaling::inputs(n, |k| meet_of_k(k, false));
     scaling::check("the verdict on a meet of k inhabited members", n, |k| {
         assert_eq!(verdict_and_searched(&full[&k]), (Verdict::Inhabited, 1));

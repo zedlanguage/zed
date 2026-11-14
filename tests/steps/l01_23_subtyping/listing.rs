@@ -879,4 +879,53 @@ fn a_type_of_two_boxes_at_each_depth_lists_each_value_once() {
     assert_eq!(listed(&doubling_two_boxes(2)).map(|v| v.len()), Some(24));
 }
 
+/// Complement columns of each scalar kind, not only `int`: four literals `k0..k3` of a kind `K`
+/// paired with `0 | 1 | 7.5f32`, met with `(K - k1, 0 | 7.5f32)` and `(K - k3, 1 | 7.5f32)`, less
+/// `(K - k0, 0)`, and the same inside a one-tuple, for `K` each of `rat`, `f64`, `f32` and
+/// `String`. The open rows are filed by the complement's kind, so each kind takes its own
+/// branch where the rows are read by kind and where a first component is replaced by a value
+/// of its kind no open row lists. Each list is checked against `contains` over the candidates
+/// and its size against the count worked out by hand. Added by TEST-bench-move-l0123 under
+/// author P188: the listing tests had complements of `int` only, and no `f32` value.
+#[test]
+fn complement_columns_of_every_scalar_kind_are_listed() {
+    type KindValue = fn(i64) -> Value;
+    let kinds: [(Type, KindValue); 4] = [
+        (Type::rat(), |i| Value::rat(zed_kernel::Rat::int(i.into()))),
+        (Type::f64(), |i| Value::float(i as f64 + 0.25)),
+        (Type::f32(), |i| Value::float32(i as f32 + 0.25)),
+        (Type::string(), |i| Value::str(&format!("s{i}"))),
+    ];
+    let v = |x: Value| Type::lit(&x).expect("a literal");
+    let seven = Value::float32(7.5);
+    for (all, k) in kinds {
+        let firsts: Vec<Value> = (0..5).map(k).collect();
+        let seconds = [int(0), int(1), seven.clone()];
+        let mut cands: Vec<Value> = Vec::new();
+        for a in &firsts {
+            for b in &seconds {
+                cands.push(pair(a.clone(), b.clone()));
+                cands.push(one_of(pair(a.clone(), b.clone())));
+            }
+        }
+        let exact = |t: &Type| -> usize {
+            let want: BTreeSet<Value> = cands.iter().filter(|x| t.contains(x)).cloned().collect();
+            assert_eq!(listed(t), Some(want.clone()), "{t}");
+            want.len()
+        };
+        let lits = Type::union_all(firsts[..4].iter().cloned().map(v));
+        let square = Type::tuple(vec![lits, Type::union_all(seconds.iter().cloned().map(v))]);
+        let but = |i: usize, w: Type| Type::tuple(vec![&all - &v(firsts[i].clone()), w]);
+        let met = &(&square & &but(1, &lit(0) | &v(seven.clone())))
+            & &but(3, &lit(1) | &v(seven.clone()));
+        // `k0` and `k2` with `7.5f32`, the one second component both rows hold.
+        assert_eq!(exact(&met), 2, "{all}");
+        assert_eq!(exact(&Type::tuple(vec![met.clone()])), 2, "{all}");
+        // `k0` with each second component, and the others with `1` and `7.5f32`.
+        let less = &square - &but(0, lit(0));
+        assert_eq!(exact(&less), 9, "{all}");
+        assert_eq!(exact(&Type::tuple(vec![less])), 9, "{all}");
+    }
+}
+
 mod bench;
