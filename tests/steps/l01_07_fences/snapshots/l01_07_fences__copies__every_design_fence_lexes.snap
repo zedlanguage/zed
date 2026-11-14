@@ -684,7 +684,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | }
   6 | @foreign ( str["c"] , str["tcgetattr"] ) @blocking tcgetattr : ( fd : i32 ) -> ( i32 , Termios «with» arg ( 1₍10₎ ) ) ;
   7 | @foreign ( str["c"] , str["tcsetattr"] ) @blocking tcsetattr : ( fd : i32 , when : i32 , mode : Ptr ( Termios ) ) -> i32 ;
-  9 | @thread ( #keys ) @foreign ( str["c"] , str["getchar"] ) @blocking getKey : ( raw : Termios «with» notPassed ( ) ) -> i32 ;
+  9 | @thread ( #keys ) @foreign ( str["c"] , str["getchar"] ) @blocking getKey : ( raw : Termios «with» notPassed ( duringStop : #release ) ) -> i32 «with» anyThread ( ) ;
  12 | makeRaw ( t : Termios ) -> Termios {
  13 | t «with» {
  14 | iflag = t . iflag . bitAnd ( bitNot ( 1515₍10₎ , width : 32₍10₎ ) ) ,
@@ -766,12 +766,15 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) @blocking terminate : ( ) -> #ok ;
   4 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) @blocking pollEvents : ( glfw : Glfw «with» notPassed ( ) ) -> #ok ;
   5 | @foreign «struct» Window { }
-  6 | @thread ( #render ) @foreign ( str["glfw"] , str["glfwMakeContextCurrent"] ) @blocking makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) ) -> #ok ;
-  7 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) @nonblocking clear : ( mask : u32 ) -> #ok ;
-  8 | @thread ( #render ) drawFrame ( ) -> #ok { clear ( mask : 16384₍10₎ ) }
- 11 | startGlfw ( ) -> Glfw | #none «with» release ( terminate ) {
- 12 | «return» «if» glfwInit ( ) != 1₍10₎ { #none } «else» { Glfw ( ) } ;
- 13 | }
+  6 | @thread ( #render ) @foreign ( str["glfw"] , str["glfwMakeContextCurrent"] ) @blocking makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) ) -> #ok «with» anyThread ( ) ;
+  7 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) @nonblocking clear : ( glfw : Glfw «with» notPassed ( ) , mask : u32 ) -> #ok ;
+  8 | @thread ( #render ) drawFrame ( glfw : Glfw , current : #ok ) -> #ok {
+  9 | @after ( current ) r = clear ( glfw : , mask : 16384₍10₎ ) «else» #ok ;
+ 10 | r
+ 11 | }
+ 14 | startGlfw ( ) -> Glfw | #none «with» release ( terminate ) {
+ 15 | «return» «if» glfwInit ( ) != 1₍10₎ { #none } «else» { Glfw ( ) } ;
+ 16 | }
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;

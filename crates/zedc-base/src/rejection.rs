@@ -124,6 +124,7 @@ rows! {
     NotPassedMisused =>
         "Parameter declared `with notPassed()` that cannot keep its argument",
     SecondRelease => "Value given a second release",
+    ReleaseCallWithoutToken => "Call of a token's release that names no token",
     UseOfHeldValue => "Use of a value after a call that holds it",
     HoldNeverEnds => "Hold that Zed cannot end",
     HolderCallUnordered =>
