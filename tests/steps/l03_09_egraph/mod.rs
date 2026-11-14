@@ -8,8 +8,9 @@
 //! `rows` holds the plan row's tests, `refusal` the refusal of a law whose expansion is
 //! predicted to take more than 250 ms, `calibration` that prediction against the time taken,
 //! `choice` the choice between the dense and the sparse product, `witness` the points and
-//! witnesses, `measure` the corpus's obligations, each far within the limit, `factored` the
-//! products of powers of the same factors, and `scaling` the rule of low complexity.
+//! witnesses, `forms` the normal form as printed and the refusal of a wide exponent, `measure`
+//! the corpus's obligations, each far within the limit, `factored` the products
+//! of powers of the same factors, and `scaling` the rule of low complexity.
 //!
 //! The tests sit in the folder of step L3.9, whose group and ring normal forms this library
 //! gives; the row exists so that L3.9 does not wait.
@@ -18,6 +19,7 @@ mod bench;
 mod calibration;
 mod choice;
 mod factored;
+mod forms;
 mod measure;
 mod refusal;
 mod rows;
