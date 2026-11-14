@@ -2236,11 +2236,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAIL-scaling-cold-8n-bytes | impl attempt 1 | 2026-11-14 06:09 | started; worktree /home/luke/Work/wt/fail-scaling-cold-8n |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | started; worktree test-complete-crates seeded / 65.87 56.46 48.35 |
 | TEST-complete-kernel | impl attempt 1 | 2026-11-14 06:21 | started; worktree created and seeded |
-| TEST-complete-lattices | impl attempt 1 | 2026-11-14 06:09 | started; worktree test-complete-lattices on 28be33f10 |
 | TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
 | TEST-complete-presburger | impl attempt 1 | 2026-11-14 06:40 | started; worktree seeded |
 | TEST-complete-zir | impl attempt 1 | 2026-11-14 06:15 | baseline: l01_31 39, l01_32 28, l01_33 39, l03_09 27, zedc_zir unit 5 passed, 0 failed / 53.91 55.76 49.18 |
