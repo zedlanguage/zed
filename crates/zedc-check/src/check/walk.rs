@@ -11,8 +11,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arms::{Item, Node, Summarized, Translated, prim_of, var};
+use super::limits::target_text;
 use super::*;
 use zed_kernel::Shared;
+use zed_kernel::limits::{Kill, MainLimits};
 use zedc_lattice::cell::Premises;
 use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
@@ -8016,6 +8018,81 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Reads the limits written before the unit's `main` in `unit` into [`Info::limits`]
+    /// (DESIGN.md sec:ports, "`main` may limit its own run"), rejecting each argument that is
+    /// not a positive constant, and keeps the memory limit with its spans for
+    /// [`Self::powers_over_main_limit`]. Called after the walk: each argument is checked as an
+    /// expression of the top scope ([`Self::walk_alone`]), where a name reads the binding the
+    /// walk found and an operation on literals is folded, as `1r/2r`; `check/limits.rs` judges
+    /// the value the text fixes for it. It is here, with the walk it calls, so that
+    /// `check/limits.rs` calls nothing of the walk (step S.1f: no cycle between files).
+    /// O(number of top-level statements + size of the arguments).
+    pub(super) fn main_limits(&mut self, unit: &'a [Stmt]) {
+        let Some(annots) = unit.iter().find_map(|s| match &s.kind {
+            StmtKind::Annotated { annots, decl }
+                if matches!(&decl.bare().kind, StmtKind::Function(f) if f.main.is_some()) =>
+            {
+                Some(annots)
+            }
+            _ => None,
+        }) else {
+            return;
+        };
+        let mut limits = MainLimits::default();
+        for a in annots {
+            let args = a.positional.iter().chain(a.named.iter().map(|(_, e)| e));
+            for e in args.filter(|e| !matches!(e.kind, ExprKind::Atom(_))) {
+                self.walk_alone(e);
+            }
+            let arg = |n: &str| a.named.iter().find(|(w, _)| w == n).map(|(_, e)| e);
+            match a.name.as_str() {
+                "limits" => {
+                    if let Some(e) = arg("memory") {
+                        let (code, value) = self.limit_value(e);
+                        limits.memory = self.bytes_limit(e.span, code, value);
+                        if let Some(b) = limits.memory {
+                            self.main_memory = Some((b, a.span, e.span));
+                        }
+                    }
+                    if let Some(e) = arg("cpu") {
+                        let (code, value) = self.limit_value(e);
+                        limits.cpu = self.duration_limit(e.span, code, "cpu: ", value);
+                    }
+                }
+                "timeout" => {
+                    if let Some(e) = a.positional.first() {
+                        let (code, value) = self.limit_value(e);
+                        limits.timeout = self.duration_limit(e.span, code, "", value);
+                    }
+                }
+                "kill" => match arg("grace") {
+                    Some(e) => {
+                        let (code, value) = self.limit_value(e);
+                        let d = self.duration_limit(e.span, code, "grace: ", value);
+                        limits.kill = Kill::Term(d.unwrap_or(limits.kill.grace()));
+                    }
+                    None if matches!(
+                        a.positional.first().map(|e| &e.kind),
+                        Some(ExprKind::Atom(x)) if x == "kill"
+                    ) =>
+                    {
+                        limits.kill = Kill::Kill;
+                    }
+                    None => {}
+                },
+                _ => {}
+            }
+        }
+        self.info.limits = limits;
+    }
+
+    /// The code of `e`, an argument of a limit of `main`, and the value the text fixes for it
+    /// ([`Self::fixed_value`]), read through a chain of names ([`Self::through_names`]).
+    fn limit_value(&mut self, e: &'a Expr) -> (&'a str, Option<Value>) {
+        let code = self.code(Some(e.span)).unwrap_or("the limit");
+        (code, self.fixed_value(self.through_names(e)))
+    }
+
     /// The powers [`Self::too_large_power`] found within the address space, rejected where
     /// their least size passes the memory limit written before `main` (DESIGN.md sec:ports,
     /// "`main` may limit its own run"; sec:diagnostics, row "Number too large for any memory
@@ -14939,21 +15016,6 @@ type Repair = (String, String);
 /// 2^64 bytes, 16 EiB. A result larger than this is held by no memory of the target, whatever
 /// the machine that builds it ([`Ck::too_large_power`]).
 const ADDRESS_BYTES_LOG2: u32 = 64;
-
-/// The target `target`, as `build.target` names it (`x86_64-linux`), as a message names it:
-/// the system, then the architecture, `Linux x86_64`. A name of another form is kept as it is.
-pub(super) fn target_text(target: &str) -> String {
-    let Some((arch, os)) = target.split_once('-') else {
-        return target.to_string();
-    };
-    let os = match os {
-        "linux" => "Linux",
-        "macos" => "macOS",
-        "windows" => "Windows",
-        other => other,
-    };
-    format!("{os} {arch}")
-}
 
 /// The number `v` as a `rat`, as `rat(v)` widens an `int`; `None` for any other value.
 fn at_rat(v: Value) -> Option<Value> {

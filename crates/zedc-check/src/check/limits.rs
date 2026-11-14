@@ -7,81 +7,51 @@
 //! before step L12 gives units). The limits found go to [`Info::limits`], which the run and an
 //! executable carry, and the memory limit bounds the numbers the checker can size
 //! (`Ck::powers_over_main_limit`).
+//!
+//! `Ck::main_limits` in `check/walk.rs` checks each argument with the walk and reads the value
+//! the text fixes for it; this file judges that value and writes the rejection. The walk calls
+//! this file and this file calls nothing of the walk: a call each way would be a cycle between
+//! files, which Zed forbids (step S.1f, `tests/steps/s_01f_import_graph`). For the same reason
+//! `seconds` is here and not in `zed_kernel::limits`, which the kernel's numbers read for the
+//! memory limit in force and which therefore imports no number.
 
 use std::time::Duration;
 
-use zed_kernel::limits::{Kill, MainLimits, seconds};
-
-use super::walk::target_text;
 use super::*;
 
-impl<'a> Ck<'_, 'a> {
-    /// Reads the limits written before the unit's `main` in `unit` into [`Info::limits`],
-    /// rejecting each argument that is not a positive constant, and keeps the memory limit with
-    /// its spans for [`Ck::powers_over_main_limit`]. Called after the walk: each argument is
-    /// checked as an expression of the top scope ([`Ck::walk_alone`]), where a name reads the
-    /// binding the walk found and an operation on literals is folded, as `1r/2r`. O(number of
-    /// top-level statements + size of the arguments).
-    pub(super) fn main_limits(&mut self, unit: &'a [Stmt]) {
-        let Some(annots) = unit.iter().find_map(|s| match &s.kind {
-            StmtKind::Annotated { annots, decl }
-                if matches!(&decl.bare().kind, StmtKind::Function(f) if f.main.is_some()) =>
-            {
-                Some(annots)
-            }
-            _ => None,
-        }) else {
-            return;
-        };
-        let mut limits = MainLimits::default();
-        for a in annots {
-            let args = a.positional.iter().chain(a.named.iter().map(|(_, e)| e));
-            for e in args.filter(|e| !matches!(e.kind, ExprKind::Atom(_))) {
-                self.walk_alone(e);
-            }
-            let arg = |n: &str| a.named.iter().find(|(w, _)| w == n).map(|(_, e)| e);
-            match a.name.as_str() {
-                "limits" => {
-                    if let Some(e) = arg("memory") {
-                        limits.memory = self.bytes_limit(e);
-                        if let Some(b) = limits.memory {
-                            self.main_memory = Some((b, a.span, e.span));
-                        }
-                    }
-                    if let Some(e) = arg("cpu") {
-                        limits.cpu = self.duration_limit(e, "cpu: ");
-                    }
-                }
-                "timeout" => {
-                    if let Some(e) = a.positional.first() {
-                        limits.timeout = self.duration_limit(e, "");
-                    }
-                }
-                "kill" => match arg("grace") {
-                    Some(e) => {
-                        let d = self.duration_limit(e, "grace: ");
-                        limits.kill = Kill::Term(d.unwrap_or(limits.kill.grace()));
-                    }
-                    None if matches!(
-                        a.positional.first().map(|e| &e.kind),
-                        Some(ExprKind::Atom(x)) if x == "kill"
-                    ) =>
-                    {
-                        limits.kill = Kill::Kill;
-                    }
-                    None => {}
-                },
-                _ => {}
-            }
-        }
-        self.info.limits = limits;
-    }
+/// The target `target`, as `build.target` names it (`x86_64-linux`), as a message names it:
+/// the system, then the architecture, `Linux x86_64`. A name of another form is kept as it is.
+pub(super) fn target_text(target: &str) -> String {
+    let Some((arch, os)) = target.split_once('-') else {
+        return target.to_string();
+    };
+    let os = match os {
+        "linux" => "Linux",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        other => other,
+    };
+    format!("{os} {arch}")
+}
 
+/// `r` seconds as a [`Duration`], rounded up to a whole nanosecond, so that a limit is never
+/// shorter than written; `None` where `r` is not above 0 or is longer than `u64::MAX`
+/// nanoseconds (585 years). O(size of `r`).
+fn seconds(r: &Rat) -> Option<Duration> {
+    if r.is_negative() || r.is_zero() {
+        return None;
+    }
+    let (n, d) = r.built_parts().ok()?;
+    let nanos = (&*n * 1_000_000_000u32 + &*d - 1u32) / &*d;
+    u64::try_from(&nanos).ok().map(Duration::from_nanos)
+}
+
+impl<'a> Ck<'_, 'a> {
     /// The expression `e` names: the value of the `name = value` binder a name reads, followed
     /// through a chain of names, as `d` in `d = 1r/2r; @limits(cpu: d)`, since [`Ck::fixed_value`]
     /// reads a `rat` only from its literals and their operations. A visited set ends a chain
     /// that comes back to a name; O(length of the chain).
-    fn through_names(&self, e: &'a Expr) -> &'a Expr {
+    pub(super) fn through_names(&self, e: &'a Expr) -> &'a Expr {
         let mut x = e;
         let mut seen = HashSet::new();
         while seen.insert(x.span)
@@ -92,11 +62,16 @@ impl<'a> Ck<'_, 'a> {
         x
     }
 
-    /// The bytes `e` fixes for `memory: e`, a positive `int`; `None`, with the rejection,
-    /// where it fixes none, or one that is not positive or passes the target's address space.
-    fn bytes_limit(&mut self, e: &'a Expr) -> Option<u64> {
-        let code = self.code(Some(e.span)).unwrap_or("the limit");
-        let why = match self.fixed_value(self.through_names(e)) {
+    /// The bytes of `memory: code`, written at `at`, whose fixed value is `value`, a positive
+    /// `int`; `None`, with the rejection, where the text fixes no value, or one that is not
+    /// positive or passes the target's address space.
+    pub(super) fn bytes_limit(
+        &mut self,
+        at: Span,
+        code: &str,
+        value: Option<Value>,
+    ) -> Option<u64> {
+        let why = match value {
             Some(Value::Int(b)) if b > 0 => return Some(b.unsigned_abs()),
             Some(Value::Int(_)) => format!(
                 "`memory: {code}` leaves the run no memory: the memory limit of `main` is a \
@@ -117,16 +92,22 @@ impl<'a> Ck<'_, 'a> {
                  the program is built. Write the number of bytes, as `memory: 1048576`."
             ),
         };
-        self.error_with(e.span, why, Vec::new());
+        self.error_with(at, why, Vec::new());
         None
     }
 
-    /// The duration `e` fixes, written after `field` (`cpu: `, `grace: ` or nothing for
-    /// `@timeout`): a positive number of seconds, an `int` or a `rat`; `None`, with the
-    /// rejection, where it fixes none or one that is not positive.
-    fn duration_limit(&mut self, e: &'a Expr, field: &str) -> Option<Duration> {
-        let code = self.code(Some(e.span)).unwrap_or("the limit");
-        let d = match self.fixed_value(self.through_names(e)) {
+    /// The duration of `code`, written at `at` after `field` (`cpu: `, `grace: ` or nothing for
+    /// `@timeout`), whose fixed value is `value`: a positive number of seconds, an `int` or a
+    /// `rat`; `None`, with the rejection, where the text fixes no value or one that is not
+    /// positive.
+    pub(super) fn duration_limit(
+        &mut self,
+        at: Span,
+        code: &str,
+        field: &str,
+        value: Option<Value>,
+    ) -> Option<Duration> {
+        let d = match value {
             Some(Value::Int(s)) if s > 0 => Some(Duration::from_secs(s.unsigned_abs())),
             Some(Value::Int(_)) => None,
             Some(Value::Big(r) | Value::Rat(r)) => seconds(&r),
@@ -135,7 +116,7 @@ impl<'a> Ck<'_, 'a> {
                     "`{field}{code}` is not a number of seconds: write an `int` or a `rat` \
                      above 0, as `{field}2r` for 2 s or `{field}1r/2r` for half a second."
                 );
-                self.error_with(e.span, why, Vec::new());
+                self.error_with(at, why, Vec::new());
                 return None;
             }
             None => {
@@ -143,7 +124,7 @@ impl<'a> Ck<'_, 'a> {
                     "`{field}{code}` is not a constant: a limit of `main` is fixed when the \
                      program is built. Write the number of seconds, as `{field}60r`."
                 );
-                self.error_with(e.span, why, Vec::new());
+                self.error_with(at, why, Vec::new());
                 return None;
             }
         };
@@ -152,8 +133,32 @@ impl<'a> Ck<'_, 'a> {
                 "`{field}{code}` is not a time the run can have: a limit of `main` is a number \
                  of seconds above 0 and below 2^64 nanoseconds, as `{field}60r`."
             );
-            self.error_with(e.span, why, Vec::new());
+            self.error_with(at, why, Vec::new());
         }
         d
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_number_of_seconds_is_rounded_up_to_a_nanosecond() {
+        let rat = |n: i64, d: i64| Rat::new(n.into(), d.into()).expect("a nonzero denominator");
+        assert_eq!(seconds(&rat(5, 2)), Some(Duration::from_millis(2500)));
+        assert_eq!(seconds(&rat(1, 3)), Some(Duration::from_nanos(333_333_334)));
+        assert_eq!(seconds(&rat(0, 1)), None);
+        assert_eq!(seconds(&rat(-1, 1)), None);
+        assert_eq!(seconds(&rat(i64::MAX, 1)), None);
+    }
+
+    #[test]
+    fn a_target_is_named_system_first() {
+        assert_eq!(target_text("x86_64-linux"), "Linux x86_64");
+        assert_eq!(target_text("aarch64-macos"), "macOS aarch64");
+        assert_eq!(target_text("riscv64-windows"), "Windows riscv64");
+        assert_eq!(target_text("riscv64-plan9"), "plan9 riscv64");
+        assert_eq!(target_text("wasm"), "wasm");
     }
 }

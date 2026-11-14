@@ -4,11 +4,14 @@
 //! runtime (`zed_rt::limits`) enforces them in the program's own process. The memory limit in
 //! force is kept here too, so that the kernel's message for an allocation the system refuses
 //! names it ([`crate::num::memory_clause`]).
+//!
+//! This file imports no other file of the crate: the numbers (`num/room.rs`) and the values
+//! read the memory limit in force from it, so an import back would close a cycle between files
+//! (step S.1f). The checker turns a written number of seconds into a [`Duration`] itself
+//! (`seconds` in zedc-check's `check/limits.rs`).
 
 use std::sync::OnceLock;
 use std::time::Duration;
-
-use crate::num::Rat;
 
 /// The limits written before `main`; every field `None` when none is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,18 +105,6 @@ impl MainLimits {
     }
 }
 
-/// `r` seconds as a [`Duration`], rounded up to a whole nanosecond, so that a limit is never
-/// shorter than written; `None` where `r` is not above 0 or is longer than `u64::MAX`
-/// nanoseconds (585 years). O(size of `r`).
-pub fn seconds(r: &Rat) -> Option<Duration> {
-    if r.is_negative() || r.is_zero() {
-        return None;
-    }
-    let (n, d) = r.built_parts().ok()?;
-    let nanos = (&*n * 1_000_000_000u32 + &*d - 1u32) / &*d;
-    u64::try_from(&nanos).ok().map(Duration::from_nanos)
-}
-
 /// `d` as a message writes a limit: `5 min`, `2 h` or `60 s` where it is a whole number of
 /// those, else in seconds with the decimals it has, `0.25 s`.
 pub fn duration_text(d: Duration) -> String {
@@ -189,16 +180,6 @@ mod tests {
         assert_eq!(MainLimits::default().to_text(), "");
         assert!(MainLimits::from_text("memory x\n").is_err());
         assert!(MainLimits::from_text("kill soon\n").is_err());
-    }
-
-    #[test]
-    fn a_number_of_seconds_is_rounded_up_to_a_nanosecond() {
-        let rat = |n: i64, d: i64| Rat::new(n.into(), d.into()).expect("a nonzero denominator");
-        assert_eq!(seconds(&rat(5, 2)), Some(Duration::from_millis(2500)));
-        assert_eq!(seconds(&rat(1, 3)), Some(Duration::from_nanos(333_333_334)));
-        assert_eq!(seconds(&rat(0, 1)), None);
-        assert_eq!(seconds(&rat(-1, 1)), None);
-        assert_eq!(seconds(&rat(i64::MAX, 1)), None);
     }
 
     #[test]
