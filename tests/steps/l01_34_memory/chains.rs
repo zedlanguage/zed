@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, World};
-use zed_tests::scaling::{check_order, inputs};
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{self, Mode};
 use zedc::zir::{Op, Region};
@@ -22,7 +21,7 @@ use super::{cat, machine, planned, run};
 /// `v0 = "a" ++ "v0"; …; v{k-1} = …;` then `if v0 == "av0" then … if v0 == "av0" then (v0, …,
 /// v{k-1}) else "no" … else "no"`, the `if`s `d` deep: every then arm captures all `k` names,
 /// and whether it consumes one asks the arm under it, down to the tuple.
-fn nest(k: usize, d: usize) -> Term {
+pub(super) fn nest(k: usize, d: usize) -> Term {
     let names: Vec<String> = (0..k).map(|i| format!("v{i}")).collect();
     let mut t = prim(Prim::Tuple, names.iter().map(|n| var(n)).collect());
     for _ in 0..d {
@@ -38,7 +37,7 @@ fn nest(k: usize, d: usize) -> Term {
 /// `f0 = (x) -> len(x)`, or `(x) -> len((x, 1).0)`, whose tuple consumes `x`, when
 /// `consume_leaf`; `f{i} = (x) -> f{i-1}(x) + f{i-1}(x)` for `i` up to `d`; then
 /// `f{d}("a" ++ "b")`: how each `f{i}` takes `x` is how `f0` does, asked twice per level.
-fn call_chain(d: usize, consume_leaf: bool) -> Term {
+pub(super) fn call_chain(d: usize, consume_leaf: bool) -> Term {
     let mut t = app(var(&format!("f{d}")), vec![cat("a", "b")]);
     for i in (1..=d).rev() {
         let prev = format!("f{}", i - 1);
@@ -63,7 +62,7 @@ fn call_chain(d: usize, consume_leaf: bool) -> Term {
 /// nested as the else arms of `if`s (`c{i} = f(s) + f(s); if s == "{i}" then … else c{i}`), or,
 /// with `lambdas`, as the bodies of lambdas (`(p{i}) -> (f(s) + f(s), …)`): each call finds `f`
 /// through the captures of every level above it.
-fn capture_chain(d: usize, lambdas: bool) -> Term {
+pub(super) fn capture_chain(d: usize, lambdas: bool) -> Term {
     let mut t = app(var("f"), vec![var("s")]);
     for i in 0..d {
         let twice = vec![app(var("f"), vec![var("s")]), app(var("f"), vec![var("s")])];
@@ -117,7 +116,7 @@ fn kernel(t: &Term) -> String {
 }
 
 /// The path of the body of the `i`th lambda node of `g`'s root region.
-fn body_path(g: &Region, i: usize) -> String {
+pub(super) fn body_path(g: &Region, i: usize) -> String {
     let k = (0..g.nodes.len())
         .filter(|k| matches!(g.nodes[*k].op, Op::Lambda))
         .nth(i)
@@ -212,54 +211,4 @@ fn wrappers_sharing_one_body_take_their_argument_as_their_callee_does() {
             assert_eq!((vs, ss), (va, sa));
         }
     }
-}
-
-#[test]
-fn nested_ifs_reading_four_names_plan_in_linear_time() {
-    let gs = inputs(200, |d| lower(&nest(4, d)).unwrap());
-    check_order("planning 4 names read under n nested `if`s", 200, 1, |d| {
-        memory::plan(&gs[&d], true);
-    });
-}
-
-#[test]
-fn many_names_read_under_nested_ifs_plan_in_linear_time() {
-    let gs = inputs(100, |k| lower(&nest(k, 4)).unwrap());
-    check_order("planning n names read under 4 nested `if`s", 100, 1, |k| {
-        memory::plan(&gs[&k], true);
-    });
-}
-
-#[test]
-fn capture_chains_plan_in_linear_time() {
-    for (lambdas, what) in [
-        (
-            false,
-            "planning 2 calls of a captured function in each of n nested arms",
-        ),
-        (
-            true,
-            "planning 2 calls of a captured function in each of n nested lambdas",
-        ),
-    ] {
-        let gs = inputs(200, |d| lower(&capture_chain(d, lambdas)).unwrap());
-        check_order(what, 200, 1, |d| {
-            memory::plan(&gs[&d], true);
-        });
-    }
-}
-
-#[test]
-fn call_chains_plan_in_linear_time() {
-    let gs = inputs(24, |d| lower(&call_chain(d, false)).unwrap());
-    check_order(
-        "planning n functions each calling the one before twice",
-        24,
-        1,
-        |d| {
-            let g = &gs[&d];
-            let p = memory::plan(g, true);
-            assert_eq!(p[body_path(g, 0).as_str()].args, [Mode::Borrowed]);
-        },
-    );
 }

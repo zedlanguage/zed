@@ -7,9 +7,8 @@ use std::sync::Arc;
 
 use zed_kernel::Prim;
 use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
-use zed_kernel::{Evaluator, Family, Term, Value, World};
+use zed_kernel::{Family, Term, Value};
 use zed_tests::kernel::{add, fold};
-use zed_tests::scaling::check_order;
 use zedc::zir::lower::lower;
 use zedc::zir::memory;
 use zedc::zir::{Op, Region};
@@ -21,7 +20,7 @@ use super::{cat, planned, run};
 /// every body runs a kernel node, and the fold hands the kernel a closure that captures a
 /// closure that captures a closure. `keep` is called between
 /// the parts built, so a caller can place other allocations among them.
-fn callers(n: usize, keep: &mut dyn FnMut()) -> Term {
+pub(super) fn callers(n: usize, keep: &mut dyn FnMut()) -> Term {
     let ones = Value::Family(Family::of(
         [(0, 1), (1, 2)].map(|(k, x)| (Value::Int(k), Value::Int(x))),
     ));
@@ -152,27 +151,4 @@ fn a_body_shared_by_two_lambdas_runs_as_two_occurrences() {
         assert_eq!(va, r#"("pa!", "qc?", 3)"#);
         assert_eq!((vs, ss), (va, sa));
     }
-}
-
-/// Running `n` lambdas, each called twice and once handed to the kernel inside a closure, is
-/// linear in `n`: each node occurrence finds its one-node region by its id.
-#[test]
-fn running_many_node_occurrences_is_linear() {
-    let (small, large) = (lower(&callers(1_000, &mut || {})).unwrap(), {
-        lower(&callers(8_000, &mut || {})).unwrap()
-    });
-    let (ps, pl) = (memory::plan(&small, true), memory::plan(&large, true));
-    check_order(
-        "running n lambdas, each node by its occurrence id",
-        1_000,
-        1,
-        |n| {
-            let (g, p) = if n == 1_000 {
-                (&small, &ps)
-            } else {
-                (&large, &pl)
-            };
-            memory::run(g, p, &mut Evaluator::new(World::new())).unwrap();
-        },
-    );
 }

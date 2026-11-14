@@ -7,11 +7,6 @@ use zed_kernel::Shared;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::{Evaluator, Pattern, Prim, Term, Value, World};
-use zed_tests::deep::on_small_stack;
-use zed_tests::scaling::check_order;
-use zedc::zir::Region;
-use zedc::zir::lower::lower;
-use zedc::zir::memory::{self, Plan};
 
 use super::{planned, run};
 
@@ -32,7 +27,7 @@ fn invoice(depth: usize) -> Term {
 /// `match invoice { (l0, (l1, … total)) => (the binders in `used`) }`: a binder at each level,
 /// the arm keeping those it uses. With `shared`, the invoice is also held by a pair, so the
 /// scrutinee's cells are shared and the arm's entry gives each kept line a reference.
-fn read_lines(depth: usize, used: &[usize], shared: bool) -> Term {
+pub(super) fn read_lines(depth: usize, used: &[usize], shared: bool) -> Term {
     let name = |k: usize| {
         if k == depth {
             "total".to_string()
@@ -107,35 +102,4 @@ fn a_held_once_invoice_moves_its_kept_lines_out_with_no_count_write() {
     let (v, s) = run(&g, &p).unwrap();
     assert_eq!(v, r#"((0,), (2,), ("total",))"#);
     assert_eq!(s.increments, 0, "{s:?}");
-}
-
-/// The lowered and planned form of `read_lines` at depths `n` and `8n`, every binder used.
-fn plans(n: usize, shared: bool) -> [(Region, Plan); 2] {
-    [n, 8 * n].map(|d| {
-        let all: Vec<usize> = (0..=d).collect();
-        let g = lower(&read_lines(d, &all, shared)).unwrap();
-        let p = memory::plan(&g, true);
-        (g, p)
-    })
-}
-
-/// Matching an invoice `n` deep and keeping every line is linear in `n`, held once (each spine
-/// cell freed, each line moved out) and shared (each line given a reference).
-#[test]
-fn a_binder_at_every_level_of_a_deep_match_scales() {
-    on_small_stack(|| {
-        for shared in [false, true] {
-            const N: usize = 500;
-            let [small, large] = plans(N, shared);
-            check_order(
-                &format!("a match keeping each of n levels, shared {shared}"),
-                N,
-                1,
-                |d| {
-                    let (g, p) = if d == N { &small } else { &large };
-                    memory::run(g, p, &mut Evaluator::new(World::new())).unwrap();
-                },
-            );
-        }
-    });
 }

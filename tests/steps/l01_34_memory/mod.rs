@@ -3,6 +3,7 @@
 //! graph under the plan and checks, after every node, that each live cell's count is the
 //! number of references to it.
 
+mod bench;
 mod binders;
 mod borrow;
 mod cells;
