@@ -6,6 +6,7 @@
 mod bench;
 mod bytes;
 mod checks;
+mod completeness;
 mod native;
 mod values;
 
