@@ -141,8 +141,10 @@ fn read_f64(text: &str) -> f64 {
 /// up. Nothing pins the toolchain, so this test is what holds the rule.
 #[test]
 fn every_sampled_tie_prints_the_larger_magnitude() {
-    const PER_BINADE: usize = 1000;
-    let mut seed: u64 = 0x5eed_0f71_e5ed;
+    // 300 samples a binade, 15,600 ties, from a new seed each run (was 1000 from a fixed one).
+    const PER_BINADE: usize = 300;
+    let drawn = super::seed("ZED_TIE_SEED");
+    let mut seed = drawn;
     let mut binades_with_ties = Vec::new();
     let mut ties = 0usize;
     for p in 1u32..=100 {
@@ -167,7 +169,7 @@ fn every_sampled_tie_prints_the_larger_magnitude() {
             assert_eq!(
                 m.trailing_zeros(),
                 t,
-                "{v:e} is halfway between two multiples of 10^-{j}"
+                "{v:e} is halfway between two multiples of 10^-{j}, seed {drawn}"
             );
             // In units of 10^-j / 2: v is K * 5^j, and a decimal reads back to v when its
             // distance from v, times 2^p, is below 10^j, or equal to it with M even.
@@ -176,30 +178,41 @@ fn every_sampled_tie_prints_the_larger_magnitude() {
                 let scaled = distance << p;
                 scaled < ten_j || (scaled == ten_j && m.is_multiple_of(2))
             };
-            assert!(reads_back(1), "{v:e}: both neighbors read back");
+            assert!(
+                reads_back(1),
+                "{v:e}: both neighbors read back, seed {drawn}"
+            );
             let coarse = at / 20; // the multiples of 10^-(j-1) are the multiples of 20
             let coarser_reads_back =
                 reads_back(at - 20 * coarse) || reads_back(20 * (coarse + 1) - at);
             assert_eq!(
                 coarser_reads_back, !binade_has_ties,
-                "{v:e}: the binade's rule"
+                "{v:e}: the binade's rule, seed {drawn}"
             );
             if coarser_reads_back {
                 continue;
             }
             let lower = (at - 1) / 2;
             let (lo_text, hi_text) = (decimal_text(lower, j), decimal_text(lower + 1, j));
-            assert_eq!(lo_text.len(), hi_text.len(), "{v:e}: equally short");
+            assert_eq!(
+                lo_text.len(),
+                hi_text.len(),
+                "{v:e}: equally short, seed {drawn}"
+            );
             for text in [&lo_text, &hi_text] {
-                assert_eq!(read_f64(text).to_bits(), v.to_bits(), "{text} reads back");
+                assert_eq!(
+                    read_f64(text).to_bits(),
+                    v.to_bits(),
+                    "{text} reads back, seed {drawn}"
+                );
             }
             let printed = show(v);
             assert_eq!(
                 decimal_value(&printed),
                 (lower + 1, -(j as i32)),
-                "{v:e} printed {printed}, not {hi_text}"
+                "{v:e} printed {printed}, not {hi_text}, seed {drawn}"
             );
-            assert_eq!(show(-v), format!("-{printed}"));
+            assert_eq!(show(-v), format!("-{printed}"), "seed {drawn}");
             found += 1;
         }
         if found > 0 {

@@ -53,7 +53,7 @@ fn check_refusal(p: Prim, w: &str, message: &str) {
 }
 
 /// The end of the refusal of a step on key paths that ran in no call that generates one.
-const OUTSIDE: &str = "outside every `reindex` key map and value map and `discard` test, the \
+pub(crate) const OUTSIDE: &str = "outside every `reindex` key map and value map and `discard` test, the \
                        only places the compiler generates it";
 
 #[test]
@@ -307,33 +307,35 @@ fn a_refusal_names_an_atom_by_its_name() {
     );
 }
 
-/// The refusal of a step on key paths looks down the calls running for the one that generated
-/// it, once: under n and 8n calls of `y -> y` and no `reindex`, the whole run, the walk to the
-/// bottom included, grows as n.
-#[test]
-fn naming_the_call_of_a_key_path_step_scales_with_the_depth() {
-    use std::collections::HashMap;
+/// A step on key paths under `n` calls of `y -> y` and no `reindex`.
+pub(crate) fn key_path_step_under_calls(n: usize) -> Term {
     use zed_kernel::term::build::{app, lam, var};
-    let nested = |n: usize| {
-        let mut t = prim(Prim::PathKey, vec![lit(1), lit(0)]);
-        for _ in 0..n {
-            t = app(lam(&["y"], var("y")), vec![t]);
-        }
-        t
-    };
-    let inputs: HashMap<usize, Term> = [2000, 16000].into_iter().map(|n| (n, nested(n))).collect();
-    let refusal = |t: &Term| match Evaluator::new(World::new()).run(t) {
+    let mut t = prim(Prim::PathKey, vec![lit(1), lit(0)]);
+    for _ in 0..n {
+        t = app(lam(&["y"], var("y")), vec![t]);
+    }
+    t
+}
+
+/// The type error of running `t`.
+pub(crate) fn type_error(t: &Term) -> String {
+    match Evaluator::new(World::new()).run(t) {
         Err(KernelError::Type(m)) => m,
         other => panic!("no type error but {other:?}"),
-    };
-    assert_eq!(
-        refusal(&inputs[&2000]),
-        format!(
-            "the step that reads the key at a given position of a key path applied to `int`, \
-             `int`, {OUTSIDE}"
-        )
-    );
-    zed_tests::scaling::check_order("a key path step refused under n calls", 2000, 1, |n| {
-        refusal(&inputs[&n]);
-    });
+    }
+}
+
+#[test]
+fn a_key_path_step_under_calls_that_do_not_generate_it_says_so() {
+    // The refusal looks down the calls running for the one that generated the step, and finds
+    // none (the input of `bench::prim_names` at a small size).
+    for n in [0, 3] {
+        assert_eq!(
+            type_error(&key_path_step_under_calls(n)),
+            format!(
+                "the step that reads the key at a given position of a key path applied to \
+                 `int`, `int`, {OUTSIDE}"
+            )
+        );
+    }
 }

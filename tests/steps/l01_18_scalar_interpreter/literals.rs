@@ -4,8 +4,6 @@
 //! an f64 is written with `f64`: a decimal literal that nothing gives a carrier is rejected
 //! (L1.26b).
 
-use std::collections::HashMap;
-
 use zed_kernel::num::{LiteralRounding, literal_f32, literal_f64};
 
 use super::x;
@@ -121,49 +119,30 @@ fn every_out_of_range_literal_of_a_unit_is_reported() {
     assert_eq!(e.len(), 2, "{e:?}");
 }
 
+/// A literal of `n` threes, a one and an exponent that brings it near 1, so every digit counts.
+pub(crate) fn digits_near_one(n: usize) -> String {
+    format!("{}1.0e-{n}", "3".repeat(n))
+}
+
+/// Just above the point halfway between 1 and the next `f64`, with `n` zeros before the last
+/// digit, so the digits are compared with the halfway point's to the last one.
+pub(crate) fn digits_above_a_tie(n: usize) -> String {
+    format!(
+        "1.00000000000000011102230246251565404236316680908203125{}1",
+        "0".repeat(n)
+    )
+}
+
 #[test]
-fn rounding_a_literal_of_n_digits_scales() {
-    // A literal of n digits and an exponent that brings it near 1, so every digit counts.
-    let text = |n: usize| format!("v = {}1.0e-{n}f64;\n", "3".repeat(n));
-    let inputs: HashMap<usize, String> = [2000, 16000].into_iter().map(|n| (n, text(n))).collect();
-    zed_tests::scaling::check_order("a float literal of n digits", 2000, 1, |n| {
-        elab(&inputs[&n]).unwrap();
-    });
-    // The rounding alone: the rest of the pipeline did about 2.6 times its work at 2000
-    // digits, enough to hide a quadratic added to it (COMPLEXITY.md F85). It allocates nothing.
-    let digits: HashMap<usize, String> = inputs
-        .iter()
-        .map(|(&n, t)| (n, t["v = ".len()..t.len() - "f64;\n".len()].to_string()))
-        .collect();
-    zed_tests::scaling::check_instructions_only(
-        "rounding a float literal of n digits",
-        2000,
-        1,
-        |n| {
-            assert!(literal_f64(&digits[&n]).is_ok());
-        },
-    );
-    // Just above the point halfway between 1 and the next `f64`, so the digits are compared with
-    // the halfway point's to the last one.
-    let above: HashMap<usize, String> = [2000, 16000]
-        .into_iter()
-        .map(|n| {
-            (
-                n,
-                format!(
-                    "1.00000000000000011102230246251565404236316680908203125{}1",
-                    "0".repeat(n)
-                ),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check_order(
-        "rounding a float literal of n digits near a tie",
-        2000,
-        1,
-        |n| {
-            assert_eq!(literal_f64(&above[&n]), Ok(1.0 + f64::EPSILON));
-        },
+fn a_long_literal_rounds_by_every_digit() {
+    // The inputs of `bench::literals` at a small size: 3331.0e-3 and the digits above a tie.
+    assert_eq!(x(&format!("{}f64", digits_near_one(3))), "3.331");
+    assert_eq!(literal_f64(&digits_near_one(3)), Ok(3.331));
+    assert_eq!(literal_f64(&digits_above_a_tie(3)), Ok(1.0 + f64::EPSILON));
+    // Exactly at the tie, the even significand, 1.
+    assert_eq!(
+        literal_f64("1.00000000000000011102230246251565404236316680908203125"),
+        Ok(1.0)
     );
     assert_eq!(x(&format!("0.{}1e3f64", "3".repeat(3))), "333.1");
 }

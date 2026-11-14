@@ -1,32 +1,23 @@
-//! The scalar tier at the rule of low complexity (DESIGN.md Part G).
+//! The inputs of the benchmarks in `bench/scaling.rs`, the scalar tier at the rule of low
+//! complexity (DESIGN.md Part G), and their results at a small size.
 
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
 
-#[test]
-fn a_chain_of_n_failures_merging_scales() {
-    // Each `+` merged the failures so far with one more by copying them into a new set. The
-    // chain is a kernel term, so that only the evaluator is timed; it nests n deep, past the
-    // default thread stack.
-    let chain = |n: usize| {
-        (1..n).fold(Term::Lit(Value::atom("e0")), |t, i| {
-            Term::Prim(Prim::Add, vec![t, Term::Lit(Value::atom(&format!("e{i}")))])
-        })
-    };
-    let run = move |n: usize| {
-        Evaluator::new(World::new())
-            .run(&chain(n))
-            .unwrap()
-            .to_string()
-    };
-    zed_tests::scaling::check("n failures merged by a chain of `+`", 1000, |n| {
-        run(n);
-    });
-    assert_eq!(run(3), "#errs({#e0, #e1, #e2})");
+/// `#e0 + #e1 + … + #e{n - 1}`, a kernel term nested `n` deep.
+pub(crate) fn chain_of_failures(n: usize) -> Term {
+    (1..n).fold(Term::Lit(Value::atom("e0")), |t, i| {
+        Term::Prim(Prim::Add, vec![t, Term::Lit(Value::atom(&format!("e{i}")))])
+    })
+}
+
+/// The value of `t` printed, by the kernel's evaluator.
+pub(crate) fn evaluated(t: &Term) -> String {
+    Evaluator::new(World::new()).run(t).unwrap().to_string()
 }
 
 /// A chain of `n` bindings of `f32` arithmetic, each the one before through `*`, `+`, `/`, a
 /// power with an `int` exponent, `abs`, `min` and casts to `f64` and back (FLOAT-f32).
-fn f32_chain(n: usize) -> String {
+pub(crate) fn f32_chain(n: usize) -> String {
     let mut src = String::from("whole(positional v: int) = v;\na0 = 0.5f32;\n");
     for i in 1..n {
         let p = i - 1;
@@ -43,12 +34,13 @@ fn f32_chain(n: usize) -> String {
 }
 
 #[test]
-fn checking_and_running_a_chain_of_f32_arithmetic_scales() {
+fn a_chain_of_failures_merges_them_all() {
+    assert_eq!(evaluated(&chain_of_failures(3)), "#errs({#e0, #e1, #e2})");
+}
+
+#[test]
+fn a_chain_of_f32_arithmetic_runs_to_a_string() {
+    // Nine links reach each of the four steps twice.
     use zed_tests::step_helpers::l01_16_elaboration::value;
-    let srcs: std::collections::HashMap<usize, String> =
-        [100, 800].into_iter().map(|n| (n, f32_chain(n))).collect();
-    assert!(value(&srcs[&100], "x").starts_with('"'));
-    zed_tests::scaling::check_order("a chain of n f32 bindings", 100, 1, |n| {
-        value(&srcs[&n], "x");
-    });
+    assert!(value(&f32_chain(9), "x").starts_with('"'));
 }

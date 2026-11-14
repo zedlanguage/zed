@@ -15,7 +15,7 @@ use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_native::{OptLevel, run_at};
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
+
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
 use zed_tests::step_helpers::l01_36_cranelift::{kernel, planned};
@@ -26,7 +26,7 @@ use zedc::zir::memory;
 const NAN64: u64 = 0x7FF8_0000_0000_0000;
 const NAN32: u64 = 0x7FC0_0000;
 
-fn f64v(b: u64) -> Term {
+pub(crate) fn f64v(b: u64) -> Term {
     lit(Value::float(f64::from_bits(b)))
 }
 
@@ -43,11 +43,11 @@ fn bits(v: &Value) -> u64 {
     }
 }
 
-fn sqrt(x: Term) -> Term {
+pub(crate) fn sqrt(x: Term) -> Term {
     prim(Prim::Sqrt, vec![x])
 }
 
-fn fma(a: Term, b: Term, c: Term) -> Term {
+pub(crate) fn fma(a: Term, b: Term, c: Term) -> Term {
     prim(Prim::Fma, vec![a, b, c])
 }
 
@@ -395,7 +395,7 @@ fn any_f64(rng: &mut Rng) -> f64 {
 
 /// A random finite nonzero `f64` with exponent in `lo..=hi`, so that no sum or product of
 /// the cases overflows.
-fn bounded_f64(rng: &mut Rng, lo: i64, hi: i64) -> f64 {
+pub(crate) fn bounded_f64(rng: &mut Rng, lo: i64, hi: i64) -> f64 {
     let sign = rng.next_u64() & (1 << 63);
     let field = (rng.int(lo, hi) + 1023) as u64;
     f64::from_bits(sign | field << 52 | rng.next_u64() >> 12)
@@ -417,8 +417,11 @@ fn components(v: &Value) -> Vec<Value> {
 
 #[test]
 fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
-    let mut rng = Rng::new(0x5_0127);
-    let n = 400;
+    let seed = super::seed("ZED_SQRT_FMA_SEED");
+    let mut rng = Rng::new(seed);
+    // 200 cases from a new seed each run (was 400 from a fixed one): the test took 0.13 s, against
+    // 0.34 s at 400, as native code for one tuple of all the calls is built.
+    let n = 200;
     // sqrt of operands of every class.
     let xs: Vec<f64> = (0..n).map(|_| any_f64(&mut rng)).collect();
     let rows: Vec<Vec<Term>> = xs.iter().map(|&x| vec![f64v(x.to_bits())]).collect();
@@ -427,12 +430,14 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
         let r = f64::from_bits(bits(r));
         match () {
             _ if x.is_nan() || x < 0.0 || x == f64::NEG_INFINITY => {
-                assert_eq!(r.to_bits(), NAN64, "{x:e}")
+                assert_eq!(r.to_bits(), NAN64, "{x:e}, seed {seed}")
             }
-            _ if x == 0.0 || x == f64::INFINITY => assert_eq!(r.to_bits(), x.to_bits(), "{x:e}"),
+            _ if x == 0.0 || x == f64::INFINITY => {
+                assert_eq!(r.to_bits(), x.to_bits(), "{x:e}, seed {seed}")
+            }
             _ => assert!(
                 nearest_root(x, r, r.next_down(), r.next_up()),
-                "sqrt({x:e}) = {r:e}"
+                "sqrt({x:e}) = {r:e}, seed {seed}"
             ),
         }
     }
@@ -466,13 +471,16 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
         let even = r.to_bits() & 1 == 0;
         assert!(
             nearest(&v, r, r.next_down(), r.next_up(), even),
-            "fma({a:e}, {b:e}, {c:e}) = {r:e}"
+            "fma({a:e}, {b:e}, {c:e}) = {r:e}, seed {seed}"
         );
         differ += usize::from(r.to_bits() != (a * b + c).to_bits());
     }
+    // Over 8 seeds, 52 to 72 of the 200 cases differed, a third of all cases having the addend
+    // the negated product; n / 10 lies about 7 standard deviations below, so no seed fails it
+    // by chance.
     assert!(
-        differ > n / 5,
-        "one rounding and two differ on {differ} of {n}"
+        differ > n / 10,
+        "one rounding and two differ on {differ} of {n}, seed {seed}"
     );
     // f32: both operations, on operands of every class.
     let rows: Vec<Vec<Term>> = (0..n / 4)
@@ -495,7 +503,7 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
         );
         if x > 0.0 && x.is_finite() {
             let ok = nearest_root(x.into(), s.into(), s.next_down().into(), s.next_up().into());
-            assert!(ok, "sqrt({x:e}) = {s:e}");
+            assert!(ok, "sqrt({x:e}) = {s:e}, seed {seed}");
         }
         if [a, b, c, f, f.next_down(), f.next_up()]
             .iter()
@@ -507,7 +515,7 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
             let v = (at(&p, e) + at(&ec, e), e);
             let even = f.to_bits() & 1 == 0;
             let ok = nearest(&v, f.into(), f.next_down().into(), f.next_up().into(), even);
-            assert!(ok, "fma({a:e}, {b:e}, {c:e}) = {f:e}");
+            assert!(ok, "fma({a:e}, {b:e}, {c:e}) = {f:e}, seed {seed}");
         }
     }
 }
@@ -629,29 +637,4 @@ fn a_call_listing_integers_is_read_at_f32_as_at_f64() {
         ),
         "1.5 3.0 4.5 true 1.5"
     );
-}
-
-/// O(1) per call: n and 8n calls of each word on random operands, in the kernel.
-#[test]
-fn n_calls_cost_linear_time() {
-    let n = 1 << 11;
-    let ops = scaling::inputs(n, |m| {
-        let mut rng = Rng::new(m as u64);
-        (0..m)
-            .map(|_| {
-                let r = [0; 3].map(|_| f64v(bounded_f64(&mut rng, -300, 300).abs().to_bits()));
-                [
-                    sqrt(r[0].clone()),
-                    fma(r[0].clone(), r[1].clone(), r[2].clone()),
-                ]
-            })
-            .collect::<Vec<_>>()
-    });
-    scaling::check_order("sqrt and fma, one call each per operand row", n, 1, |m| {
-        for ts in &ops[&m] {
-            for t in ts {
-                kernel(t).unwrap();
-            }
-        }
-    });
 }

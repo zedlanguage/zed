@@ -3,7 +3,7 @@
 
 use super::x;
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::step_helpers::l01_16_elaboration::{checked, errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::{Checked, checked, errors, value};
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
 
 #[test]
@@ -134,7 +134,7 @@ fn an_operator_of_the_same_signature_does_not_take_tuples() {
 }
 
 /// `min` (`min` true) or `max` of `a` and `b` by the kernel.
-fn pick(min: bool, a: &Value, b: &Value) -> Value {
+pub(crate) fn pick(min: bool, a: &Value, b: &Value) -> Value {
     let p = if min { Prim::Min } else { Prim::Max };
     zed_kernel::eval(&Term::Prim(
         p,
@@ -189,75 +189,6 @@ fn the_laws_hold_over_every_triple_of_small_tuples() {
 }
 
 #[test]
-fn min_of_two_tuples_of_n_components_scales() {
-    let pair = |n: usize| {
-        let t = |last: i64| {
-            let mut v: Vec<Value> = (0..n).map(|i| Value::float(i as f64)).collect();
-            v.push(Value::int(last.into()));
-            Value::tuple(v)
-        };
-        (t(2), t(1))
-    };
-    let built = zed_tests::scaling::inputs(20_000, pair);
-    zed_tests::scaling::check("`min` of two tuples of n components", 20_000, |n| {
-        let (a, b) = &built[&n];
-        pick(true, a, b);
-    });
-    let (a, b) = pair(3);
-    assert_eq!(pick(true, &a, &b), b);
-}
-
-#[test]
-fn min_of_two_tuples_nested_n_deep_through_shared_parts_scales() {
-    // `t(k + 1) = (t(k), t(k))`: 2^n paths, n distinct pairs of parts. Two equal tuples built
-    // apart are read to the end; the walk reads each pair of shared parts once.
-    let deep = |n: usize| {
-        let t = || {
-            (0..n).fold(Value::tuple(vec![Value::float(1.0)]), |t, _| {
-                Value::tuple(vec![t.clone(), t])
-            })
-        };
-        (t(), t())
-    };
-    let built = zed_tests::scaling::inputs(1000, deep);
-    zed_tests::scaling::check("`min` of two tuples nested n deep", 1000, |n| {
-        let (a, b) = &built[&n];
-        pick(true, a, b);
-    });
-}
-
-#[test]
-fn checking_a_chain_of_n_tuple_mins_scales() {
-    let unit = |n: usize| {
-        let mut text = String::from("a0 = (0, 1.0f64, 0);\n");
-        for i in 1..n {
-            text.push_str(&format!("a{i} = min(a{}, ({i}, 0.5f64, {i}));\n", i - 1));
-        }
-        checked(&text)
-    };
-    let built = zed_tests::scaling::inputs(1000, unit);
-    zed_tests::scaling::check("checking n `min`s of tuples in a chain", 1000, |n| {
-        built[&n].check();
-    });
-}
-
-#[test]
-fn checking_min_of_two_tuples_of_n_components_scales() {
-    let unit = |n: usize| {
-        let parts = |last: usize| {
-            let mut v: Vec<String> = (0..n).map(|i| format!("{i}.0f64")).collect();
-            v.push(last.to_string());
-            v.join(", ")
-        };
-        checked(&format!("x = min(({}), ({}));\n", parts(2), parts(1)))
-    };
-    let built = zed_tests::scaling::inputs(2000, unit);
-    zed_tests::scaling::check("checking `min` of two tuples of n components", 2000, |n| {
-        built[&n].check();
-    });
-}
-
-#[test]
 fn min_and_max_through_a_function_value_take_two_tuples() {
     // The word itself is passed, so a call through the name or parameter that holds it takes
     // two tuples as a call of `min` by name does.
@@ -292,50 +223,6 @@ fn a_function_of_the_arrows_of_min_that_is_not_min_does_not_take_tuples() {
         [
             "`h` does not take ((int, int), (int, int)): no arrow of `h` takes these types. [h(p, q)]"
         ]
-    );
-}
-
-/// The unit `a0 = (1.0f64, 0); b0 = (2.0f64, 0);`, then `a{k}` and `b{k}` for k up to `n` as
-/// `link` makes them from the name of the one before, then `x = min(a{n}, b{n});`.
-fn nested_unit(
-    n: usize,
-    link: fn(&str, usize) -> String,
-) -> zed_tests::step_helpers::l01_16_elaboration::Checked {
-    let mut text = String::from("a0 = (1.0f64, 0);\nb0 = (2.0f64, 0);\n");
-    for k in 1..=n {
-        for side in ["a", "b"] {
-            let before = format!("{side}{}", k - 1);
-            text.push_str(&format!("{side}{k} = {};\n", link(&before, k)));
-        }
-    }
-    text.push_str(&format!("x = min(a{n}, b{n});\n"));
-    checked(&text)
-}
-
-#[test]
-fn checking_min_of_two_tuples_nested_n_deep_scales() {
-    // `a{k} = (a{k - 1}, k)`: the type of `x` joins the two shapes at each of n levels.
-    let built = zed_tests::scaling::inputs(400, |n| {
-        nested_unit(n, |before, k| format!("({before}, {k})"))
-    });
-    zed_tests::scaling::check("checking `min` of two tuples nested n deep", 400, |n| {
-        built[&n].check();
-    });
-}
-
-#[test]
-fn checking_min_of_two_tuples_nested_n_deep_through_shared_parts_scales() {
-    // `a{k} = (a{k - 1}, a{k - 1})`: 2^n paths through n distinct types on each side, each
-    // joined once.
-    let built = zed_tests::scaling::inputs(400, |n| {
-        nested_unit(n, |before, _| format!("({before}, {before})"))
-    });
-    zed_tests::scaling::check(
-        "checking `min` of two tuples nested n deep through shared parts",
-        400,
-        |n| {
-            built[&n].check();
-        },
     );
 }
 
@@ -454,62 +341,6 @@ fn messages_through_a_function_value_name_the_word() {
 }
 
 #[test]
-fn checking_a_chain_of_n_functions_whose_parameter_meets_a_tuple_scales() {
-    // `g{i}(a) = g{i - 1}(min(a, k((i, 0))))`: the use of `a` by `min` is met with the same type
-    // in each function, so each class records it once, and each call checks it once.
-    let unit = |n: usize| {
-        let mut text = String::from(
-            "k(positional p: (int, int)) = p;\ng0(positional a) = min(a, k((0, 0)));\n",
-        );
-        for i in 1..n {
-            text.push_str(&format!(
-                "g{i}(positional a) = g{}(min(a, k(({i}, 0))));\n",
-                i - 1
-            ));
-        }
-        text.push_str(&format!("x = g{}((5, 9));\n", n - 1));
-        checked(&text)
-    };
-    let built = zed_tests::scaling::inputs(200, unit);
-    zed_tests::scaling::check(
-        "checking n functions whose parameter meets a tuple in `min`",
-        200,
-        |n| {
-            built[&n].check();
-        },
-    );
-}
-
-#[test]
-fn checking_a_chain_of_n_functions_whose_parameter_meets_a_literal_tuple_scales() {
-    // `g{i}(a) = g{i - 1}(min(a, (i, 0)))`: each operand is a literal tuple of its own type, so
-    // the class of `a` in `g{i}` meets `i + 1` distinct types through the chain. `min` joins
-    // the shapes of its operands (DESIGN.md sec:reduction, item 5): its result is a variable a
-    // call binds to that join, and a `min` of that result joins its operand into the same use,
-    // so each function keeps one use and its result one shape. From 40 to 1280 links the work
-    // grows 2.0 to 2.3 times per doubling, as for a chain whose results do not pass on.
-    let unit = |n: usize| {
-        let mut text = String::from("g0(positional a) = min(a, (0, 0));\n");
-        for i in 1..n {
-            text.push_str(&format!(
-                "g{i}(positional a) = g{}(min(a, ({i}, 0)));\n",
-                i - 1
-            ));
-        }
-        text.push_str(&format!("x = g{}((5, 9));\n", n - 1));
-        checked(&text)
-    };
-    let built = zed_tests::scaling::inputs(40, unit);
-    zed_tests::scaling::check(
-        "checking n functions whose parameter meets a literal tuple in `min`",
-        40,
-        |n| {
-            built[&n].check();
-        },
-    );
-}
-
-#[test]
 fn a_call_joins_the_result_of_min_as_min_joins_it() {
     let g = "g(positional a) = min(a, (1, 2));\n";
     // The result of `g((0, 5))` is that of `min((0, 5), (1, 2))`, whose type joins the two
@@ -575,5 +406,134 @@ fn branches_of_an_if_stay_a_union_through_a_call() {
     assert_eq!(
         sig(&format!("{g}{p}h(positional c) = (p(c), g(p(c)));\n"), "h"),
         "(bool) -> ((0, 5) | (1, 2), (0 | 1, 2 | 5))"
+    );
+}
+
+// The inputs of the benchmarks in `bench/tuple_min_max.rs`, which the test below checks at a
+// small size.
+
+/// Two tuples of `n` floats `0.0, 1.0, …` and a last int, 2 in the first and 1 in the second,
+/// so only the last component decides.
+pub(crate) fn tuples_differing_last(n: usize) -> (Value, Value) {
+    let t = |last: i64| {
+        let mut v: Vec<Value> = (0..n).map(|i| Value::float(i as f64)).collect();
+        v.push(Value::int(last.into()));
+        Value::tuple(v)
+    };
+    (t(2), t(1))
+}
+
+/// Two equal tuples built apart, `t(k + 1) = (t(k), t(k))` to depth `n`: 2^n paths through n
+/// distinct pairs of parts.
+pub(crate) fn equal_tuples_of_shared_parts(n: usize) -> (Value, Value) {
+    let t = || {
+        (0..n).fold(Value::tuple(vec![Value::float(1.0)]), |t, _| {
+            Value::tuple(vec![t.clone(), t])
+        })
+    };
+    (t(), t())
+}
+
+/// `a0 = (0, 1.0f64, 0);` and `a{i} = min(a{i - 1}, (i, 0.5f64, i));` for `i` below `n`.
+pub(crate) fn chain_of_tuple_mins(n: usize) -> Checked {
+    let mut text = String::from("a0 = (0, 1.0f64, 0);\n");
+    for i in 1..n {
+        text.push_str(&format!("a{i} = min(a{}, ({i}, 0.5f64, {i}));\n", i - 1));
+    }
+    checked(&text)
+}
+
+/// `x = min((0.0f64, …, 2), (0.0f64, …, 1));`, two tuples of `n` floats and a last int.
+pub(crate) fn min_of_tuples_of_n_components(n: usize) -> Checked {
+    let parts = |last: usize| {
+        let mut v: Vec<String> = (0..n).map(|i| format!("{i}.0f64")).collect();
+        v.push(last.to_string());
+        v.join(", ")
+    };
+    checked(&format!("x = min(({}), ({}));\n", parts(2), parts(1)))
+}
+
+/// The unit `a0 = (1.0f64, 0); b0 = (2.0f64, 0);`, then `a{k}` and `b{k}` for k up to `n` as
+/// `link` makes them from the name of the one before, then `x = min(a{n}, b{n});`.
+fn nested_unit(n: usize, link: fn(&str, usize) -> String) -> Checked {
+    let mut text = String::from("a0 = (1.0f64, 0);\nb0 = (2.0f64, 0);\n");
+    for k in 1..=n {
+        for side in ["a", "b"] {
+            let before = format!("{side}{}", k - 1);
+            text.push_str(&format!("{side}{k} = {};\n", link(&before, k)));
+        }
+    }
+    text.push_str(&format!("x = min(a{n}, b{n});\n"));
+    checked(&text)
+}
+
+/// `a{k} = (a{k - 1}, k)`: the type of `x` joins the two shapes at each of `n` levels.
+pub(crate) fn min_of_tuples_nested(n: usize) -> Checked {
+    nested_unit(n, |before, k| format!("({before}, {k})"))
+}
+
+/// `a{k} = (a{k - 1}, a{k - 1})`: 2^n paths through `n` distinct types on each side.
+pub(crate) fn min_of_tuples_nested_through_shared_parts(n: usize) -> Checked {
+    nested_unit(n, |before, _| format!("({before}, {before})"))
+}
+
+/// `g{i}(a) = g{i - 1}(min(a, k((i, 0))))` for `i` below `n`, and `x = g{n - 1}((5, 9));`: the
+/// use of `a` by `min` is met with the same type in each function.
+pub(crate) fn chain_of_functions_meeting_a_tuple(n: usize) -> Checked {
+    let mut text =
+        String::from("k(positional p: (int, int)) = p;\ng0(positional a) = min(a, k((0, 0)));\n");
+    for i in 1..n {
+        text.push_str(&format!(
+            "g{i}(positional a) = g{}(min(a, k(({i}, 0))));\n",
+            i - 1
+        ));
+    }
+    text.push_str(&format!("x = g{}((5, 9));\n", n - 1));
+    checked(&text)
+}
+
+/// `g{i}(a) = g{i - 1}(min(a, (i, 0)))` for `i` below `n`, and `x = g{n - 1}((5, 9));`: each
+/// operand is a literal tuple of its own type.
+pub(crate) fn chain_of_functions_meeting_a_literal_tuple(n: usize) -> Checked {
+    let mut text = String::from("g0(positional a) = min(a, (0, 0));\n");
+    for i in 1..n {
+        text.push_str(&format!(
+            "g{i}(positional a) = g{}(min(a, ({i}, 0)));\n",
+            i - 1
+        ));
+    }
+    text.push_str(&format!("x = g{}((5, 9));\n", n - 1));
+    checked(&text)
+}
+
+#[test]
+fn the_benchmark_inputs_give_their_results_at_a_small_size() {
+    // The benchmarks time these inputs at thousands of components, links or levels; here each
+    // is checked at 3. `checked` asserts the unit has no error.
+    let (a, b) = tuples_differing_last(3);
+    assert_eq!(pick(true, &a, &b), b);
+    assert_eq!(pick(false, &a, &b), a);
+    let (a, b) = equal_tuples_of_shared_parts(3);
+    assert_eq!(pick(true, &a, &b).to_string(), a.to_string());
+    assert_eq!(
+        a.to_string(),
+        "((((1.0,), (1.0,)), ((1.0,), (1.0,))), (((1.0,), (1.0,)), ((1.0,), (1.0,))))"
+    );
+    for unit in [
+        chain_of_tuple_mins,
+        min_of_tuples_of_n_components,
+        min_of_tuples_nested,
+        min_of_tuples_nested_through_shared_parts,
+        chain_of_functions_meeting_a_tuple,
+        chain_of_functions_meeting_a_literal_tuple,
+    ] {
+        unit(3);
+    }
+    assert_eq!(
+        value(
+            "a0 = (0, 1.0f64, 0);\na1 = min(a0, (1, 0.5f64, 1));\na2 = min(a1, (2, 0.5f64, 2));\n",
+            "a2"
+        ),
+        "(0, 1.0, 0)"
     );
 }

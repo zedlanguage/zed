@@ -4,7 +4,6 @@
 //! not the parameters `x0`, `x1` of its signature, and gives the call rewritten where one
 //! rewriting repairs it. Each rejected call has a contrast that runs.
 
-use zed_tests::scaling;
 use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
 
 /// `main`, printing `f(arg)` as a line.
@@ -182,16 +181,31 @@ fn an_int_argument_is_rewritten_with_its_cast_where_the_cast_is_exact() {
     );
 }
 
+/// `x = min(0, 1, …, n - 1);`, a call of `min` with `n` arguments.
+pub(crate) fn min_of_n_arguments(n: usize) -> String {
+    let args: Vec<String> = (0..n).map(|i| i.to_string()).collect();
+    format!("x = min({});\n", args.join(", "))
+}
+
 #[test]
-fn a_call_with_n_arguments_too_many_scales() {
-    // The checker counts the arguments once and writes the message from the first two and the
-    // call's text, so the work grows with the length of the call.
-    let src = |n: usize| {
-        let args: Vec<String> = (0..n).map(|i| i.to_string()).collect();
-        format!("x = min({});\n", args.join(", "))
-    };
-    let built = scaling::inputs(2000, src);
-    scaling::check("a call of `min` with n arguments", 2000, |n| {
-        assert!(zedc::run::load(built[&n].as_bytes()).is_err());
-    });
+fn a_call_of_min_with_three_arguments_is_rejected() {
+    // The input of `bench::word_args` at a small size. The file has no `main`, which is
+    // reported only once the call is accepted.
+    assert_eq!(
+        zedc::run::load(min_of_n_arguments(3).as_bytes()).err(),
+        Some(
+            "1:5: `min` takes 2 arguments, `min(a, b)`, and `min(0, 1, 2)` passes 3. Try `min(0, 1)` instead.
+  [1] 1:5: repair: `min(0, 1)`
+      1 | x = min(0, 1, 2);
+        |     ^^^^^^^^^^^^"
+                .to_string()
+        )
+    );
+    let two = zedc::run::load(min_of_n_arguments(2).as_bytes())
+        .err()
+        .unwrap();
+    assert!(
+        two.starts_with("1:1: This file declares no `main`"),
+        "{two}"
+    );
 }
