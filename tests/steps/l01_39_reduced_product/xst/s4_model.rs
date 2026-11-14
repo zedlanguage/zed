@@ -502,27 +502,39 @@ fn control_promotion_on_arrival_depends_on_the_order() {
     }
 }
 
-/// Property P (Claude round 4, `pcheck`): if `o` implies `a` in box `b` (no point of `b` meets
-/// `o` and not `a`) and `o` is live with `phi`, then `a` is live with `phi`. Counts, over
-/// `count` random draws, the draws where the premises hold and where P fails, for the
-/// implication tested in the box alone with `o` one atom, relative to `phi`, and in the box
-/// alone with `o` two atoms. Claude drew from seed `0x9c4ec`.
-fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 2]; 3] {
+/// Property P (Claude round 4, `pcheck`): if `o` implies `a` in box `b` and `o` is live with
+/// `phi`, then `a` is live with `phi`. Counts, over `count` random draws, the draws where the
+/// premises hold, those where P fails, and those where P fails and `phi` and `o` have a point
+/// in `b` (the base would then lose a point), for four tests of the implication, by index:
+///
+/// 0. `o` one atom, no point of `b` meets `o` and not `a`;
+/// 1. as 0, relative to `phi`;
+/// 2. `o` two atoms, as a whole: no point of `b` meets both and not `a`;
+/// 3. `o` two atoms, atom by atom as DESIGN L1.39 promotes: an atom `o_i` with no point of `b`
+///    meeting `o_i` and not `a`.
+///
+/// Claude drew from seed `0x9c4ec`.
+fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 3]; 4] {
     let mut g = Lcg(seed);
-    let mut tally = [[0usize; 2]; 3];
+    let mut tally = [[0usize; 3]; 4];
     for _ in 0..count {
         let b = sub_box(FULL, &mut g);
         let phi: Vec<Atom> = (0..1 + g.next(3)).map(|_| atom(&mut g)).collect();
         let a = atom(&mut g);
         let o = [atom(&mut g), atom(&mut g)];
         for (k, t) in tally.iter_mut().enumerate() {
-            let o: &[Atom] = if k == 2 { &o } else { &o[..1] };
-            let mut imp = o.to_vec();
-            imp.push(negate(a));
-            if k == 1 {
-                imp.extend(&phi);
-            }
-            if proj(pi, b, &imp) != BOT {
+            let o: &[Atom] = if k >= 2 { &o } else { &o[..1] };
+            let implied = if k == 3 {
+                o.iter().any(|&oi| proj(pi, b, &[oi, negate(a)]) == BOT)
+            } else {
+                let mut imp = o.to_vec();
+                imp.push(negate(a));
+                if k == 1 {
+                    imp.extend(&phi);
+                }
+                proj(pi, b, &imp) == BOT
+            };
+            if !implied {
                 continue;
             }
             let mut with_o = phi.clone();
@@ -533,31 +545,113 @@ fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 2]; 3] {
             let mut with_a = phi.clone();
             with_a.push(a);
             t[0] += 1;
-            t[1] += (proj(pi, b, &with_a) == BOT) as usize;
+            if proj(pi, b, &with_a) == BOT {
+                t[1] += 1;
+                t[2] += (proj_exact(b, &with_o) != BOT) as usize;
+            }
         }
     }
     tally
 }
 
 /// Property P holds for the box-only implication test under each projection, on 50,000 draws
-/// from a new seed each run (200,000 of Claude's draws before: 1.4 s at load 27). Claude, all
-/// 2,000,000 draws: with `o` one atom the premises held on 266,497 draws under exact projection
-/// and 266,499 under arc and bounds, with `o` two atoms on 198,946 and 198,949, and P failed on
-/// none.
+/// from a new seed each run (200,000 of Claude's draws before: 1.4 s at load 27): with `o` one
+/// atom, and with `o` two atoms tested atom by atom. Claude, all 2,000,000 draws: with `o` one
+/// atom the premises held on 266,497 draws under exact projection and 266,499 under arc and
+/// bounds, and P failed on none. With `o` two atoms tested as a whole (198,946 and 198,949
+/// premises there, none failing), P is a theorem only under exact projection: DESIGN L1.39
+/// records that test failing on 8 of 1,259,169 premises under propagation, every answer sound,
+/// and seeds 1227236632955857713 and 994944786207889674 each drew one such failure under arc
+/// projection ([`control_the_whole_case_implication_test_fails_property_p`]). On those, `phi`
+/// and `o` have no common point in the box, so no point is lost; the test asserts that.
 #[test]
 fn property_p_holds_for_the_box_only_implication_test() {
     const DRAWS: usize = 50_000;
     let (_, seed) = Rng::fresh("draws of property P");
+    property_p_on(seed, DRAWS);
+}
+
+/// The assertions of [`property_p_holds_for_the_box_only_implication_test`] on `draws` draws
+/// from `seed`.
+fn property_p_on(seed: u64, draws: usize) {
     for pi in PIS {
-        let t = pcheck(pi, DRAWS, seed);
+        let t = pcheck(pi, draws, seed);
+        // Seeds 1227236632955857713 and 1326223764648093085: 6,645 and 6,573 premises of
+        // one atom, 4,901 and 4,864 of two atoms atom by atom, under exact projection.
         assert!(
-            t[0][0] > 5_000,
-            "seed {seed}, {pi:?}: premises held on {}",
-            t[0][0]
+            t[0][0] > 5_000 && t[3][0] > 4_000,
+            "seed {seed}, {pi:?}: premises held on {} and {}",
+            t[0][0],
+            t[3][0]
         );
         assert_eq!(t[0][1], 0, "seed {seed}, {pi:?}: box-only, one atom");
-        assert_eq!(t[2][1], 0, "seed {seed}, {pi:?}: box-only, two atoms");
+        assert_eq!(
+            t[3][1], 0,
+            "seed {seed}, {pi:?}: box-only, two atoms, atom by atom"
+        );
+        if pi == Pi::Exact {
+            assert_eq!(
+                t[2][1], 0,
+                "seed {seed}: box-only, two atoms as a whole, exact"
+            );
+        }
+        assert_eq!(
+            t[2][2], 0,
+            "seed {seed}, {pi:?}: two atoms as a whole lose a point"
+        );
     }
+}
+
+/// The two seeds on which the test of two atoms as a whole broke property P under arc
+/// projection (row FAIL-xst-s4-box-only-seed); the assertions of
+/// [`property_p_holds_for_the_box_only_implication_test`] hold on them.
+#[test]
+fn property_p_holds_on_the_seeds_that_failed() {
+    for seed in [1227236632955857713, 994944786207889674] {
+        property_p_on(seed, 50_000);
+    }
+}
+
+/// CONTROL (row FAIL-xst-s4-box-only-seed): the test of two atoms as a whole fails P under arc
+/// and bounds projection; seed 1227236632955857713, draw 22493. In `x` in `{0, 2, 3, 4}`, `y`
+/// in `{0, 4, 5, 6}` with `phi` = `x + y <= 4`, `0 <= 0`, `y - x <= 3`, the case `o` =
+/// `x + y >= 1 && x - y <= 0` implies `a` = `y >= 4` (with `y <= 3`, `y` is 0, and `o` asks
+/// `1 <= x <= 0`); propagation keeps `phi` and `o` live, though they have no common point, and
+/// empties `phi` and `a`. No atom of `o` implies `a` alone, so the atom-by-atom test of DESIGN
+/// L1.39 does not promote `a`.
+#[test]
+fn control_the_whole_case_implication_test_fails_property_p() {
+    let b = bx(&[0, 2, 3, 4], &[0, 4, 5, 6]);
+    let phi = [
+        at(-1, -1, -4, true),
+        at(0, 0, 0, false),
+        at(-1, 1, 3, false),
+    ];
+    let a = at(0, -1, -4, false);
+    let o = [at(1, 1, 1, true), at(1, -1, 0, false)];
+    let mut with_o = phi.to_vec();
+    with_o.extend(o);
+    let mut with_a = phi.to_vec();
+    with_a.push(a);
+    for pi in [Pi::Arc, Pi::Bounds] {
+        assert_eq!(
+            proj(pi, b, &[o[0], o[1], negate(a)]),
+            BOT,
+            "{pi:?}: o implies a"
+        );
+        assert_ne!(proj(pi, b, &with_o), BOT, "{pi:?}: o is live");
+        assert_eq!(proj(pi, b, &with_a), BOT, "{pi:?}: a is not live: P fails");
+        for oi in o {
+            assert_ne!(proj(pi, b, &[oi, negate(a)]), BOT, "{pi:?}: {oi:?} alone");
+        }
+    }
+    assert_eq!(
+        proj_exact(b, &with_o),
+        BOT,
+        "phi and o have no common point"
+    );
+    assert_eq!(pcheck(Pi::Arc, 22_494, 1227236632955857713)[2][1], 1);
+    assert_eq!(pcheck(Pi::Arc, 22_493, 1227236632955857713)[2][1], 0);
 }
 
 /// CONTROL (Claude round 4): the implication tested relative to the base (`phi`) fails P under
