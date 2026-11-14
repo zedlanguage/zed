@@ -4,7 +4,7 @@ Row TEST-complete-diagnostics (author P189). The code under test is `crates/zedc
 (`key`, `Db` and its queries: front end, parse, check, resolution, address, exports, row) and its
 callers in `crates/zedc/src/testing.rs` and `crates/zedc/src/unit.rs`, with the work report
 (`Counter`, `Report`) and `zedc --report`. Expected results are from DESIGN.md step L1.30 (queries
-keyed by content hashes, syntactic hashes enough here) and L1.30a (the work report).
+keyed by content hashes, syntactic hashes enough here) and plan row TIME-report (the work report).
 
 Coverage of `crates/zedc/src/query.rs` by this group (llvm-cov, benchmarks skipped): regions
 88.64% before the pass, 100% after; lines 82.74% to 100%.

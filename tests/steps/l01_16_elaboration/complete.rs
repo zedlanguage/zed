@@ -358,7 +358,7 @@ fn atoms_with_and_without_payloads_are_values() {
 
 #[test]
 fn each_prelude_word_of_l1_computes_on_its_corner_cases() {
-    // DESIGN.md L1.18 and sec:text: `len` counts code points, `lower`/`upper` map case in
+    // DESIGN.md L1.18 and sec:order: `len` counts code points, `lower`/`upper` map case in
     // full (`ß` upper-cases to `SS`), `trim` removes Unicode white space, `sum` of a tuple of
     // one kind is its total, an int beside a rat taking the rat.
     values(&[

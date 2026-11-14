@@ -1,4 +1,4 @@
-//! The tree of a function whose test table has a `test with` clause (DESIGN.md sec:testing,
+//! The tree of a function whose test table has a `test with` clause (DESIGN.md sec:ports,
 //! step L1.21): the rows the clause gives to, then each port with its value, in the order
 //! written: one table of one row gives to row 0, the next, of two rows, to rows 1 and 2. What
 //! the clause means is tested with its step, l01_21_test_runner/ports.rs.

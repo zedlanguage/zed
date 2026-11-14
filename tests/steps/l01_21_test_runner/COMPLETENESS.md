@@ -4,7 +4,7 @@ Row TEST-complete-diagnostics (author P189). The code under test is `crates/zedc
 (`test`, `command`, the outcomes of a unit's rows and ✗ marks, the counts and the exit status of
 `zedc test`) and the row names of `crates/zedc-base/src/rejection.rs` (`Row::named_by`). Expected
 results are from DESIGN.md step L1.21, sec:diagnostics (the ✗ mark names a row by its first
-column "up to any parenthesis") and "The document is the first test suite" (sec:roadmap).
+column "up to any parenthesis") and "The document is the first test suite" (sec:plan).
 
 Coverage by this group (llvm-cov, benchmarks skipped): `crates/zedc/src/testing.rs` regions 82.95%
 before the pass, 84.49% after (lines 82.11% to 83.20%);

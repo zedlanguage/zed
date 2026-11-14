@@ -1,6 +1,6 @@
 //! The completeness pass over the runner (row TEST-complete-diagnostics): the cases
 //! COMPLETENESS.md lists that the other files leave out. Expected results are from DESIGN.md
-//! step L1.21 and "The document is the first test suite" (sec:roadmap).
+//! step L1.21 and "The document is the first test suite" (sec:plan).
 
 use zedc::rejection::Row;
 use zedc::testing::command;

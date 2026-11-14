@@ -8,8 +8,9 @@ use zed_tools::spec_checks::{kernel_rules, prelude_laws};
 #[test]
 fn the_kernel_rules_are_the_generators_and_every_t_rule_the_spec_names() {
     let kernel = format!("Intro.\n{KERNEL}");
-    let design =
-        format!("Intro: T-Var and xT-Not and T-lower.\n{KERNEL}\n# (sec:next) Next\nT-App.\n");
+    let design = format!(
+        "Intro: T-Var and xT-Not and T-lower.\n{KERNEL}\n# (sec:categories) Next\nT-App.\n"
+    );
     let generators = [
         "Boom",
         "T-Discard",
@@ -37,7 +38,7 @@ fn the_kernel_rules_are_the_generators_and_every_t_rule_the_spec_names() {
         Ok(generators.map(String::from).to_vec())
     );
     // A generator in a later section is not read.
-    let after = format!("{kernel}\n# (sec:next) Next\n    | extra(x)\n");
+    let after = format!("{kernel}\n# (sec:categories) Next\n    | extra(x)\n");
     assert_eq!(
         kernel_rules(&after),
         Ok(generators.map(String::from).to_vec())

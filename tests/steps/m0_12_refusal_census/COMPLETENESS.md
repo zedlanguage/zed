@@ -1,9 +1,9 @@
-# M0.12 completeness: the refusal census
+# Completeness: the refusal census (plan row REFUSAL-census-now)
 
 Code under test: the census of plan item REFUSAL-census-now (this folder: `refusals`, `line`,
 `totals`, `report` and `census` in `mod.rs`, the kinds and their phrases in `kinds.rs`, the
 reader of `programs.txt` in `programs.rs`) and, through it, the refusals `zedc::run::load` and
-the front end report on the corpus. DESIGN.md has no step M0.12 of its own; the kinds are those
+the front end report on the corpus. The folder's name is no step of DESIGN.md; the kinds are those
 the checker's code names (the header of `kinds.rs`), and the census lists them as the plan row
 says. Lines of the three files reached (llvm-cov, without the `bench` module): 99.0% before and
 after (2 of 242 missed, both with their reasons at the end of the table); the new tests pin
