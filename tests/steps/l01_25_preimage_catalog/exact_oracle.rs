@@ -468,3 +468,66 @@ fn min_and_max_read_where_the_other_operand_fails() {
         }
     }
 }
+
+/// The two runs of seed 17731988998593301615 agree with the interpreter.
+#[test]
+fn exact_terms_of_seed_17731988998593301615_match_the_interpreter() {
+    let seed = 17731988998593301615;
+    let runs = [
+        Run::Exact { seed, test: false },
+        Run::Exact {
+            seed: seed.wrapping_add(1),
+            test: true,
+        },
+    ];
+    check_runs(&runs, 100, None);
+}
+
+/// Under `@exact`, the classes decided `a && false` as `false` and `a || true` as `true`, either
+/// order, without `a`, so `((0 mod x) < -4) && false` with `x` in `[0, 4]` was exact over every
+/// `x`, though `0 mod 0` fails and fails the term (the kernel's `&&` and `||` read both operands;
+/// DESIGN.md sec:failure). Each case here agrees with the interpreter in both transfers; the
+/// last two, whose operands the classes decide in full, stay exact.
+#[test]
+fn a_decided_operand_of_and_or_does_not_hide_a_failing_one() {
+    let fails = || prim(Prim::Lt, prim(Prim::Mod, int(0), var("x")), int(-4));
+    let lit = |b: bool| Term::Lit(Value::Bool(b));
+    // `x * 2 mod 2 == 0` is `b` at every `x` by the classes, and cannot fail.
+    let fixed = |b: bool| {
+        prim(
+            Prim::Eq,
+            prim(Prim::Mod, prim(Prim::Mul, var("x"), int(2)), int(2)),
+            int(if b { 0 } else { 1 }),
+        )
+    };
+    let dom = || xy((0, 4), (-3, 2));
+    for d in [false, true] {
+        for (p, k) in [(Prim::And, false), (Prim::Or, true)] {
+            for t in [
+                prim(p, fails(), lit(k)),
+                prim(p, lit(k), fails()),
+                prim(p, fails(), fixed(k)),
+                prim(p, fixed(k), fails()),
+                Term::Let("z".into(), fails().into(), lit(k).into()),
+            ] {
+                let c = case(t, dom(), Demand::Bool(d), true);
+                let f = check(&c);
+                assert_eq!(
+                    f.disagreements,
+                    Vec::<String>::new(),
+                    "{} demand {d}",
+                    c.term
+                );
+            }
+        }
+    }
+    for t in [
+        prim(Prim::And, fixed(false), lit(true)),
+        prim(Prim::Or, lit(false), fixed(false)),
+    ] {
+        let c = case(t, dom(), Demand::Bool(false), true);
+        let f = check(&c);
+        assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
+        assert_eq!(f.exact, 2, "{}", c.term);
+    }
+}

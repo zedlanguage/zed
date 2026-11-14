@@ -12564,16 +12564,16 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
     };
     match (p, xs.as_slice()) {
         (Prim::Not, [a]) => class_test(a, classes).map(|b| !b),
-        (Prim::And, [a, b]) => match (class_test(a, classes), class_test(b, classes)) {
-            (Some(false), _) | (_, Some(false)) => Some(false),
-            (Some(true), Some(true)) => Some(true),
-            _ => None,
-        },
-        (Prim::Or, [a, b]) => match (class_test(a, classes), class_test(b, classes)) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (Some(false), Some(false)) => Some(false),
-            _ => None,
-        },
+        // The kernel's `&&` and `||` read both operands, so a failing one fails the term, as
+        // `((0 mod x) < -4) && false` at `x == 0` (DESIGN.md sec:failure): a decided operand
+        // decides the term only when the other is decided too, and so cannot fail, since
+        // `class_test` decides only forms that cannot. Reading one decided operand alone kept
+        // the points where the other fails (FAIL-exact-oracle-mod-zero-seed). Complexity: both
+        // operands are read where one was, O(size of the term) as before.
+        (Prim::And | Prim::Or, [a, b]) => {
+            let (x, y) = (class_test(a, classes)?, class_test(b, classes)?);
+            Some(if *p == Prim::And { x && y } else { x || y })
+        }
         (Prim::Eq | Prim::Ne, [a, b]) => {
             let (x, y) = (class_of(a, classes)?, class_of(b, classes)?);
             let eq = match (&x, &y) {
