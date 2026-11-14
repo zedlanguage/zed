@@ -3,6 +3,7 @@
 //! elaborates to a match on a type. The connectives are checked against membership computed
 //! from the type expression itself, over a sample of values from every universe.
 
+mod complete;
 mod forms;
 mod is;
 mod kinds;

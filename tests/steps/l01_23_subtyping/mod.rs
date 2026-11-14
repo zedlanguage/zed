@@ -13,6 +13,7 @@ mod bound_paths;
 mod bound_sameness;
 mod cases;
 mod cells;
+mod complete;
 mod cycle_dup;
 mod deep_rec;
 mod group_oracle;
