@@ -41,6 +41,10 @@ pub mod words;
 )]
 mod scaling;
 
+/// The completeness tests of plan row TEST-complete-kernel (COMPLETENESS.md).
+#[cfg(test)]
+mod completeness;
+
 /// The seed of a random test, new on each run and printed, shared with the step tests.
 #[cfg(test)]
 #[path = "../../../tests/src/seed.rs"]
