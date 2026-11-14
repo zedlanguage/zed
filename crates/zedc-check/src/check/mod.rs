@@ -10826,6 +10826,8 @@ pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
 mod tests {
     use super::*;
 
+    mod bench;
+
     /// A check with the binder tables `t` that keeps the fixes of its rejections as they are.
     /// These tests record no construct ([`Ck::written`]), and with none recorded
     /// [`Ck::fixes_checked`], which `walk.rs` defines, keeps them as they are too.
@@ -10949,27 +10951,37 @@ mod tests {
         BuildHasherDefault::<DefaultHasher>::default().hash_one(t)
     }
 
-    /// The type of `min` of two tuples nested 200,000 deep, one with an `int` at the bottom and
-    /// one with an `f64`, is joined at every level on the 8 MiB stack of a main thread: one
-    /// shape per level, `int | f64` at the bottom. Joined by recursion, once per level, it
-    /// overflowed that stack.
+    /// `one_shape_per_length` at small sizes, each case of its walk: a type with no tuple is
+    /// kept; shapes of one length are joined position by position, and down through their
+    /// components, while shapes of another length and the parts that are not tuples stay as
+    /// they are; and a type whose components share their parts, `t(k + 1) = (t(k), t(k))`, is
+    /// joined once per distinct type (part by part it would cost 2^k, here k = 40). The same
+    /// join 20,000 levels deep on a main thread's stack is
+    /// `bench::one_shape_per_length_joins_a_tuple_nested_deep_on_a_main_sized_stack`.
     #[test]
-    fn one_shape_per_length_joins_a_tuple_nested_deep_on_a_main_sized_stack() {
-        const DEPTH: usize = 20_000;
-        let (int, f64) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::F64));
-        let both = nested(int.clone(), DEPTH).union(&nested(f64.clone(), DEPTH));
+    fn one_shape_per_length_joins_each_length_once_through_shared_parts() {
+        let int = Ty::carrier(Carrier::Int);
+        let f64 = Ty::carrier(Carrier::F64);
+        let n = |k: i64| Ty::lit(&Value::int(k.into()));
+        assert_eq!(one_shape_per_length(&int), int);
+        assert_eq!(one_shape_per_length(&int.union(&f64)), int.union(&f64));
+        // Two pairs and a triple, beside an int: the pairs are joined, the triple kept.
+        let t = Ty::tuple(vec![n(1), n(2)])
+            .union(&Ty::tuple(vec![n(3), n(4)]))
+            .union(&Ty::tuple(vec![n(5), n(6), n(7)]))
+            .union(&int);
+        let want = Ty::tuple(vec![n(1).union(&n(3)), n(2).union(&n(4))])
+            .union(&Ty::tuple(vec![n(5), n(6), n(7)]))
+            .union(&int);
+        assert_eq!(one_shape_per_length(&t), want);
+        // Three levels: the join reaches the bottom, `int | f64`.
+        let both = nested(int.clone(), 3).union(&nested(f64.clone(), 3));
         assert_eq!(both.tuples.len(), 2);
-        let want = digest(&nested(int.union(&f64), DEPTH));
-        let joined = std::thread::Builder::new()
-            .stack_size(8 << 20)
-            .spawn(move || {
-                let joined = one_shape_per_length(&both);
-                (joined.tuples.len(), digest(&joined))
-            })
-            .expect("starting the thread")
-            .join()
-            .expect("joining on an 8 MiB stack");
-        assert_eq!(joined, (1, want));
+        assert_eq!(one_shape_per_length(&both), nested(int.union(&f64), 3));
+        // Shared parts, 40 levels: two shapes at every level, one after the join.
+        let doubled = |leaf: Ty| (0..40).fold(leaf, |t, _| Ty::tuple(vec![t.clone(), t]));
+        let joined = one_shape_per_length(&doubled(int.clone()).union(&doubled(f64.clone())));
+        assert_eq!(joined, doubled(int.union(&f64)));
     }
 
     /// The steps `emptied` gives for the written type `text`, each with the text it is placed
