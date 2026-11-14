@@ -309,30 +309,7 @@ fn decide(name: &str, m: usize, (t, expected, _): &(Type, Verdict, usize)) {
     assert_eq!(t.verdict(), *expected, "{name} {m}");
 }
 
-/// The variable counts of [`scales`]. The input's size is that of the type: about one clause
-/// per variable, each a union of tuple types of one component per variable, so of order
-/// `vars^2`, and 45 and 128 variables give it 8 times over.
-const VARS: (usize, usize) = (45, 128);
-
-/// The cost of deciding a shape at the variable counts `VARS`, the types built before the runs,
-/// under the limit of 13 times ([`scaling::limit`]); the sizes of the types are 7.9 to 8.2 times
-/// apart.
-fn scales(name: &str) {
-    let ((a, b), small, large) = (VARS, instance(name, VARS.0), instance(name, VARS.1));
-    let ratio = large.2 as f64 / small.2 as f64;
-    assert!((7.9..8.2).contains(&ratio), "{name}: size ratio {ratio}");
-    scaling::compare(
-        &format!(
-            "2-CNF {name}: {a} and {b} variables, sizes {} and {}, {ratio:.2} times",
-            small.2, large.2
-        ),
-        1,
-        || decide(name, a, &small),
-        || decide(name, b, &large),
-    );
-}
-
-/// Small instance of the four benchmarks of [`scales`] (TEST-bench-move-l0123, author P170):
+/// Small instance of the benchmarks of `bench::scales_at` (TEST-bench-move-l0123, author P170):
 /// the chain, the open chain and the parity cycle at every small number of variables, odd and
 /// even, decided as enumeration decides them. At an even count the parity cycle is on all but
 /// the last variable, which no clause reads; `chains_and_parity_cycles_are_decided` runs it

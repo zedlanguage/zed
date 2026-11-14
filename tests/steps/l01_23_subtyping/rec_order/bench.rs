@@ -10,10 +10,11 @@ fn the_members_of_a_group_are_ordered_in_n_log_n() {
     // united; each comparison of two members is decided by their keys, so the order costs
     // O(n log n) comparisons of constant cost, and the whole O(n log n). It runs on the default
     // stack of a test thread.
+    // TEST-bench-move-l0123, author P169: n 512 before, now 8192; 1x 0.44 s by `ns`, load 39.
     let tag = AtomicUsize::new(0);
     scaling::check(
         "a group's members, built, sorted and united, by n",
-        512,
+        8192,
         |n| {
             let cell = format!("scale{}", tag.fetch_add(1, Relaxed));
             let ts = periods(&cell, n, 0);

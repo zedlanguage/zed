@@ -13,7 +13,8 @@ use super::*;
 /// cold they are 2,141,806 and 17,071,066, 8.0 times.
 #[test]
 fn deciding_a_group_scales() {
-    let (n, small, large) = (256, pair_ring(256), pair_ring(scaling::FACTOR * 256));
+    // TEST-bench-move-l0123, author P169: n 256 before, now 32768; 1x 0.20 s by `ns`, load 33.
+    let (n, small, large) = (32768, pair_ring(32768), pair_ring(scaling::FACTOR * 32768));
     let run = |g: &Group| {
         Type::forget_emptiness();
         let types = g.instance(vec![]);
@@ -28,7 +29,8 @@ fn deciding_a_group_scales() {
 /// O(n log n): each group is new, so no table holds its form.
 #[test]
 fn the_canonical_form_of_a_component_scales() {
-    let (n, (small_runs, large_runs)) = (2048, scaling::Meter::new().runs());
+    // TEST-bench-move-l0123, author P169: n 2048 before, now 65536; 1x 0.31 s by `ns`, load 36.
+    let (n, (small_runs, large_runs)) = (65536, scaling::Meter::new().runs());
     let pool = |m: usize, runs: usize| {
         std::sync::Mutex::new((0..runs).map(|_| marked_ring(m)).collect::<Vec<_>>())
     };
@@ -47,7 +49,8 @@ fn the_canonical_form_of_a_component_scales() {
 
 #[test]
 fn a_nest_of_key_types_is_decided_in_one_search() {
-    let n = 128;
+    // TEST-bench-move-l0123, author P169: n 128 before, now 40_000; 1x 0.47 s by `ns`, load 36.
+    let n = 40_000;
     let nests = scaling::inputs(n, key_nest);
     scaling::check("the verdict of a nest of n key types", n, |m| {
         Type::forget_emptiness();

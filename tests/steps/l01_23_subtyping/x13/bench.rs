@@ -6,11 +6,12 @@ use super::*;
 
 #[test]
 fn e4b_scales() {
+    // TEST-bench-move-l0123, author P169: n 64 before, now 3072; 1x 0.24 s by `ns`, load 33.
     // Input Θ(n). Neither of `nth_from_end(n)` and `nth_from_end(n + 1)` contains the other.
     // A chain of plain lists was walked once from each of its definitions, Θ(n²) in all.
     big(|| {
         let tag = AtomicUsize::new(0);
-        scaling::check_order("E4b, by n", 64, 1, |n| {
+        scaling::check_order("E4b, by n", 3072, 1, |n| {
             Type::forget_emptiness();
             let tag = format!("_{}", tag.fetch_add(1, Relaxed) + 1);
             let (a, b) = (nth_from_end_named(n, &tag), nth_from_end_named(n + 1, &tag));
@@ -21,9 +22,11 @@ fn e4b_scales() {
 
 #[test]
 fn the_union_of_nth_from_end_is_built_in_its_size() {
-    // The input is Θ(n²) definitions; the build reads each once.
+    // The input is Θ(n²) definitions; the build reads each once. TEST-bench-move-l0123,
+    // author P169: `NTH_SIZES`, n 64 and 186, before; now n 256 and 729, 8.0 times the
+    // definitions (2,210 and 17,765 at the old size); 1x 0.28 s by `ns`, load 33.
     big(|| {
-        let ((n, m), tag) = (NTH_SIZES, AtomicUsize::new(0));
+        let ((n, m), tag) = ((256, 729), AtomicUsize::new(0));
         let build = |k: usize| {
             black_box(nth_pair(k, &format!("_b{}", tag.fetch_add(1, Relaxed) + 1)));
         };
@@ -44,7 +47,9 @@ fn the_union_of_nth_from_end_is_decided_in_its_size() {
     // integers that starts with 1 is in `nth_from_end(n + 1)` alone. Each run decides a pair
     // built before any run is timed, under its own tag.
     big(|| {
-        let (n, m) = NTH_SIZES;
+        // TEST-bench-move-l0123, author P169: `NTH_SIZES`, n 64 and 186, before; now n 128
+        // and 367, 8.0 times the definitions; 1x 0.39 s by `ns`, load 36.
+        let (n, m) = (128, 367);
         let (runs_small, runs_large) = scaling::Meter::new().runs();
         let pool = |k: usize, runs: usize| {
             let pairs = (0..runs).map(|i| nth_pair(k, &format!("_{k}_{i}")));
@@ -74,8 +79,10 @@ fn the_union_of_nth_from_end_is_decided_in_its_size() {
 #[test]
 fn the_choice_chain_scales() {
     // Input Θ(d²): power 2 in d. The build alone at d = 23 took more than 60 s.
+    // TEST-bench-move-l0123, author P169: d 23 before, now 512; 1x 0.085 s by `ns`, load 33.
+    // Power 2: 8x took 2.8 s; a 1x of 0.5 s would put 8x past 15 s.
     big(|| {
-        scaling::check_order("the choice chain, built and compared, by d", 23, 2, |d| {
+        scaling::check_order("the choice chain, built and compared, by d", 512, 2, |d| {
             Type::forget_emptiness();
             assert!(mux(d).equiv(&mux2(d)));
         })
@@ -88,11 +95,25 @@ fn the_choice_chain_with_a_choice_swapped_scales() {
         // The rows fix their column to one of `SHAPES` values, each giving the hash-consed
         // nodes another random shape, so the work at each size is summed over the shapes.
         const SHAPES: i64 = 8;
-        scaling::check_order("the choice chain against a swapped one, by d", 4, 2, |d| {
+        // TEST-bench-move-l0123, author P169: d 4 before, now 8; 1x 0.060 s by `ns`, load 36.
+        // Power 2: 8x took 5.6 s, and d 12 ran past the 25 s stop.
+        scaling::check_order("the choice chain against a swapped one, by d", 8, 2, |d| {
             for v in 1..=SHAPES {
                 Type::forget_emptiness();
                 assert!(!mux_at(d, v).equiv(&swapped_at(d, v)));
             }
         })
     });
+}
+
+/// Runs `f` on a thread of its own, of the default stack size, as these benchmarks ran in
+/// `x13.rs`; the small tests there run on the test thread (TEST-bench-move-l0123, author P178).
+fn big(f: impl FnOnce() + Send) {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .spawn_scoped(s, f)
+            .unwrap()
+            .join()
+            .unwrap()
+    })
 }

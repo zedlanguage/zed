@@ -9,10 +9,12 @@ use super::*;
 /// 5,513M instructions at 32 and 128 tuple types (order `c²`).
 #[test]
 fn exclusive_ors_and_chains_of_overlapping_tuple_types_are_decided_in_one_pass() {
-    let types = scaling::inputs(32, families);
+    // TEST-bench-move-l0123, author P169: c 32 before, now 320 (the sizes above are the old
+    // ones); 1x 0.36 s by `ns`, load 41.
+    let types = scaling::inputs(320, families);
     scaling::check(
         "one pass over exclusive ors and chains, by tuple types",
-        32,
+        320,
         |c| {
             for (t, expected) in &types[&c] {
                 Type::forget_emptiness();
@@ -28,6 +30,9 @@ fn exclusive_ors_and_chains_of_overlapping_tuple_types_are_decided_in_one_pass()
 /// are equal in time linear in the tuple types.
 #[test]
 fn an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time() {
+    // Left at its old size, 32 (TEST-bench-move-l0123, author P169): the timed work is one
+    // comparison of two hash-consed nodes, about 15 µs at either size (ratio 0.998, load 39),
+    // so no size brings the 1x run near 0.5 s.
     let types = scaling::inputs(32, |c| (parity(c, false).ty(2), parity(c, true).ty(2)));
     scaling::check(
         "an exclusive or against its reverse build, by tuple types",
@@ -46,10 +51,12 @@ fn an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time() {
 /// chains (order `c²`).
 #[test]
 fn overlapping_exclusive_ors_and_chains_are_compared_in_n_log_n() {
-    let types = scaling::inputs(32, comparisons);
+    // TEST-bench-move-l0123, author P169: c 32 before, now 320 (the sizes above are the old
+    // ones); 1x 0.43 s by `ns`, load 41.
+    let types = scaling::inputs(320, comparisons);
     scaling::check(
         "an exclusive or or a chain against one more and against each other, by tuple types",
-        32,
+        320,
         |c| {
             let (pairs, meet) = &types[&c];
             for (x, y) in pairs {
@@ -72,14 +79,16 @@ fn overlapping_exclusive_ors_and_chains_are_compared_in_n_log_n() {
 /// instructions at 32, 64, 128 and 256 (order `c²`).
 #[test]
 fn a_chain_less_a_longer_one_is_decided_in_n_log_n() {
+    // TEST-bench-move-l0123, author P169: c 32 before, now 3072 (the sizes above are the old
+    // ones); 1x 0.14 s by `ns`, load 27; at 4096 the run took 16.5 s, over 15 s.
     let all = Type::tuple(vec![Type::top(), Type::top()]);
-    let types = scaling::inputs(32, |c| {
+    let types = scaling::inputs(3072, |c| {
         [c, c + 1].map(|c| {
             let (l, l1) = (chain(c).ty(2), chain(c + 1).ty(2));
             (&l & &(&all - &l1), c % 2 == 1)
         })
     });
-    scaling::check("a chain less one a tuple type longer", 32, |c| {
+    scaling::check("a chain less one a tuple type longer", 3072, |c| {
         for (t, inhabited) in &types[&c] {
             Type::forget_emptiness();
             let want = if *inhabited {
@@ -97,7 +106,9 @@ fn a_chain_less_a_longer_one_is_decided_in_n_log_n() {
 /// them against the enumeration up to 30 (TEST-bench-move-l0123, author P170).
 #[test]
 fn chains_sharing_two_of_four_components_are_met_in_n_log_n() {
-    let types = scaling::inputs(30, wide);
+    // TEST-bench-move-l0123, author P169: c 30 before, now 1600 (the sizes above are the old
+    // ones); 1x 0.37 s by `ns`, load 36.
+    let types = scaling::inputs(1600, wide);
     let all = Type::tuple(vec![Type::top(); 4]);
     let run = |c: usize| {
         let (x, y) = &types[&c];
@@ -112,7 +123,7 @@ fn chains_sharing_two_of_four_components_are_met_in_n_log_n() {
     };
     scaling::check(
         "chains on three components sharing two, by tuple types",
-        30,
+        1600,
         |c| {
             run(c);
         },

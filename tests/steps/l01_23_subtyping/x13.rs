@@ -79,10 +79,6 @@ fn nth_pair_size(n: usize) -> usize {
     (1..=n + 1).map(|i| i + 1).sum()
 }
 
-/// The sizes of the union compared: 64, and 186, whose input has 8.04 times the definitions
-/// (2,210 and 17,765).
-const NTH_SIZES: (usize, usize) = (64, 186);
-
 /// A tuple type of width `w` that fixes column `k` to 1 and no other.
 fn row(k: usize, w: usize) -> Type {
     row_at(k, w, 1)
@@ -132,35 +128,23 @@ fn swapped_at(d: usize, v: i64) -> Type {
     &(&y & &row(0, w)) | &(&!&y & &row(1, w))
 }
 
-fn big(f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
-}
-
 #[test]
 fn the_families_are_decided_exactly_at_small_sizes() {
-    big(|| {
-        for n in 1..=4 {
-            let (a, b) = (nth_from_end(n), nth_from_end(n + 1));
-            assert!(a.subtype(&nth_from_end(n)), "n = {n}");
-            assert!(!a.subtype(&b) && !b.subtype(&a), "n = {n}");
-            let t = nth_union(n);
-            assert!(t.subtype(&(&t | &b)) && !(&t | &b).subtype(&t), "n = {n}");
-            let u = (1..=n)
-                .rev()
-                .fold(Type::empty(), |t, i| &t | &nth_from_end(i));
-            assert!(t.equiv(&u), "n = {n}");
-        }
-        for d in 1..=4 {
-            assert!(mux(d).equiv(&mux2(d)), "d = {d}");
-            assert!(!mux(d).equiv(&swapped(d)), "d = {d}");
-        }
-    });
+    for n in 1..=4 {
+        let (a, b) = (nth_from_end(n), nth_from_end(n + 1));
+        assert!(a.subtype(&nth_from_end(n)), "n = {n}");
+        assert!(!a.subtype(&b) && !b.subtype(&a), "n = {n}");
+        let t = nth_union(n);
+        assert!(t.subtype(&(&t | &b)) && !(&t | &b).subtype(&t), "n = {n}");
+        let u = (1..=n)
+            .rev()
+            .fold(Type::empty(), |t, i| &t | &nth_from_end(i));
+        assert!(t.equiv(&u), "n = {n}");
+    }
+    for d in 1..=4 {
+        assert!(mux(d).equiv(&mux2(d)), "d = {d}");
+        assert!(!mux(d).equiv(&swapped(d)), "d = {d}");
+    }
 }
 
 #[test]
@@ -198,15 +182,13 @@ fn the_choice_forms_keep_their_meaning() {
 /// value 1 only.
 #[test]
 fn the_choice_chain_keeps_its_answers_on_every_shape() {
-    big(|| {
-        for d in 1..=4 {
-            for v in 1..=8 {
-                Type::forget_emptiness();
-                assert!(mux_at(d, v).equiv(&mux2_at(d, v)), "d = {d}, v = {v}");
-                assert!(!mux_at(d, v).equiv(&swapped_at(d, v)), "d = {d}, v = {v}");
-            }
+    for d in 1..=4 {
+        for v in 1..=8 {
+            Type::forget_emptiness();
+            assert!(mux_at(d, v).equiv(&mux2_at(d, v)), "d = {d}, v = {v}");
+            assert!(!mux_at(d, v).equiv(&swapped_at(d, v)), "d = {d}, v = {v}");
         }
-    });
+    }
 }
 
 mod bench;

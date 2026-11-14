@@ -9,7 +9,8 @@ use super::*;
 /// stay decided by the decider.
 #[test]
 fn a_group_of_refused_components_scales() {
-    let n = 64;
+    // TEST-bench-move-l0123, author P169: n 64 before, now 128; 1x 0.63 s by `ns`, load 33.
+    let n = 128;
     Type::forget_emptiness();
     let types = group(copies(n));
     assert!(
@@ -35,7 +36,8 @@ fn a_group_of_refused_components_scales() {
 /// walk the decided part again for each member (COMPLEXITY.md K85).
 #[test]
 fn refused_members_sharing_a_decided_part_scale() {
-    let n = 128;
+    // TEST-bench-move-l0123, author P169: n 128 before, now 1280; 1x 0.33 s by `ns`, load 36.
+    let n = 1280;
     Type::forget_emptiness();
     let types = group(boxes(n, n));
     assert!((types[SIZE..SIZE + n].iter()).all(|t| t.decided_by_group() == Some(false)));
@@ -60,7 +62,8 @@ fn refused_members_sharing_a_decided_part_scale() {
 /// message of each names only the definitions its refusal rests on, those of `A0`'s copy.
 #[test]
 fn refused_members_reaching_many_refused_components_scale() {
-    let n = 64;
+    // TEST-bench-move-l0123, author P169: n 64 before, now 112; 1x 0.70 s by `ns`, load 33.
+    let n = 112;
     Type::forget_emptiness();
     let types = group(reach(n, n));
     let opt = SIZE * n;
@@ -94,7 +97,8 @@ fn refused_members_reaching_many_refused_components_scale() {
 /// decider refuses, at n and 8n, within the limit of the scaling test.
 #[test]
 fn the_refused_ladder_scales() {
-    scaling::check("the ladder the decider refuses, n definitions", 32, |n| {
+    // TEST-bench-move-l0123, author P169: n 32 before, now 4096; 1x 0.59 s by `ns`, load 33.
+    scaling::check("the ladder the decider refuses, n definitions", 4096, |n| {
         Type::forget_emptiness();
         for t in &group(ladder(n, false)) {
             std::hint::black_box(t.verdict());

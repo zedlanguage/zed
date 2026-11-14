@@ -8,6 +8,8 @@ use super::*;
 /// tuple component and a member of a union in turn, decides each part's parentheses once.
 #[test]
 fn writing_an_irregular_occurrence_scales_with_its_depth() {
+    // TEST-bench-move-l0123, author P169: depth 200 before, now 38_400; 1x 0.40 s by `ns`,
+    // load 34.
     let a = || Expr::Param(0);
     let arg = |d: usize| {
         (0..d).fold(a(), |x, k| match k % 3 {
@@ -26,7 +28,7 @@ fn writing_an_irregular_occurrence_scales_with_its_depth() {
             ]),
         )
     };
-    zed_tests::scaling::check("writing an irregular occurrence, by depth", 200, |d| {
+    zed_tests::scaling::check("writing an irregular occurrence, by depth", 38_400, |d| {
         assert!(!rejected(vec![nest(d)]).is_empty());
     });
 }
@@ -40,33 +42,57 @@ fn recursive_definitions_scale() {
     // value, each once per level: `O(d²)` (ratio 68). The body is now a shared tree whose
     // nodes know whether they mention the group, a part's name is made when it is printed,
     // and a payload is tested in place. Unfolding the chain dominates its time, so the checks
-    // made when the definitions are given are also timed alone, on a longer chain.
-    use zed_tests::scaling;
+    // made when the definitions are given are also timed alone, on a longer chain, in
+    // `checking_a_chain_of_definitions_scales`; the nested body is `a_nested_body_scales`.
+    // TEST-bench-move-l0123, author P169: these three checks were one test, at d = 100, 1000
+    // and 100. Chain of definitions: d 100 before, now 12_800; 1x 0.30 s by `ns`, load 52.
+    on_a_spawned_thread(|| {
+        zed_tests::scaling::check("chain of definitions", 12_800, |d| {
+            let t = one(chain(d));
+            assert!(t.contains(&Value::atom("end")));
+        });
+    });
+}
+
+/// Runs `f` on a thread of its own, of the default stack size, as these checks ran before
+/// they were split.
+fn on_a_spawned_thread(f: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
-        .spawn(|| {
-            scaling::check("chain of definitions", 100, |d| {
-                let t = one(chain(d));
-                assert!(t.contains(&Value::atom("end")));
-            });
-            scaling::check("checking a chain of definitions", 1000, |d| {
-                assert!(Group::new(chain(d)).is_ok());
-            });
-            scaling::check("nested body", 100, |d| {
-                let mut body = Expr::Tuple(vec![r(0, vec![]), ty(Type::int())]);
-                for _ in 0..d {
-                    body = atom("n", vec![body]);
-                }
-                let t = one(vec![def("T", &[], or(vec![body, bare("z")]))]);
-                let mut v = Value::tuple(vec![Value::atom("z"), Value::Int(1)]);
-                for _ in 0..d {
-                    v = Value::atom_with("n", vec![v]);
-                }
-                assert!(t.contains(&v));
-            });
-        })
+        .spawn(f)
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn checking_a_chain_of_definitions_scales() {
+    // Split from `recursive_definitions_scale` (TEST-bench-move-l0123, author P169): d 1000
+    // before, now 40_000; 1x 0.37 s by `ns`, load 52.
+    on_a_spawned_thread(|| {
+        zed_tests::scaling::check("checking a chain of definitions", 40_000, |d| {
+            assert!(Group::new(chain(d)).is_ok());
+        });
+    });
+}
+
+#[test]
+fn a_nested_body_scales() {
+    // Split from `recursive_definitions_scale` (TEST-bench-move-l0123, author P169): d 100
+    // before, now 25_600; 1x 0.27 s by `ns`, load 34.
+    on_a_spawned_thread(|| {
+        zed_tests::scaling::check("nested body", 25_600, |d| {
+            let mut body = Expr::Tuple(vec![r(0, vec![]), ty(Type::int())]);
+            for _ in 0..d {
+                body = atom("n", vec![body]);
+            }
+            let t = one(vec![def("T", &[], or(vec![body, bare("z")]))]);
+            let mut v = Value::tuple(vec![Value::atom("z"), Value::Int(1)]);
+            for _ in 0..d {
+                v = Value::atom_with("n", vec![v]);
+            }
+            assert!(t.contains(&v));
+        });
+    });
 }
 
 /// A value `d` levels deep whose two halves are one shared value at every level has `2^d`
@@ -74,9 +100,11 @@ fn recursive_definitions_scale() {
 /// order `d`. Without the kept tests it is of order `2^d` and does not end at depth 512.
 #[test]
 fn membership_of_a_value_whose_halves_share_scales() {
+    // TEST-bench-move-l0123, author P169: depths 64 and 512 before, now 131_072 and
+    // 1_048_576; 1x 0.35 s by `ns`, load 28.
     let t = tree().instance(vec![Type::int()]).remove(0);
     let shared = |d: usize, x: Value| (0..d).fold(x, |v, _| fork(v.clone(), v));
-    let built: std::collections::HashMap<usize, (Value, Value)> = [64, 512]
+    let built: std::collections::HashMap<usize, (Value, Value)> = [131_072, 1_048_576]
         .into_iter()
         .map(|d| {
             let good = shared(d, leaf(Value::Int(1)));
@@ -86,7 +114,7 @@ fn membership_of_a_value_whose_halves_share_scales() {
         .collect();
     zed_tests::scaling::check(
         "membership of a value whose halves share, by depth",
-        64,
+        131_072,
         |d| {
             let (good, bad) = &built[&d];
             assert!(t.contains(good));
@@ -101,6 +129,8 @@ fn membership_of_a_value_whose_halves_share_scales() {
 /// ints that ends in a string, not in `#nil`, is in neither, and every reading must be refuted.
 #[test]
 fn membership_in_two_mutual_definitions_scales() {
+    // TEST-bench-move-l0123, author P169: lengths 1000 and 8000 before, now 192_000 and
+    // 1_536_000; 1x 0.52 s by `ns`, load 28.
     let body = || {
         or(vec![
             bare("nil"),
@@ -114,13 +144,13 @@ fn membership_in_two_mutual_definitions_scales() {
             Value::atom_with("cons", vec![Value::Int(i as i64), v])
         })
     };
-    let built: std::collections::HashMap<usize, Value> = [1000, 8000]
+    let built: std::collections::HashMap<usize, Value> = [192_000, 1_536_000]
         .into_iter()
         .map(|l| (l, ending(l, Value::str("end"))))
         .collect();
     zed_tests::scaling::check(
         "membership in two mutual definitions, by length",
-        1000,
+        192_000,
         |l| {
             assert!(!t.contains(&built[&l]));
         },
