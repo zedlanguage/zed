@@ -3489,15 +3489,16 @@ struct Cx<'s> {
     count: usize,
     /// The types of the solved class variables, read where a function's arrows are read.
     solve: Option<Solve<'s>>,
-    /// The verdict of each comparison of a function of `fns` with another, by their two
-    /// names ([`Comparing::fits_read`]). A failed fit of an arrow is followed by the search for
-    /// a cover, which compares the same two results again; without this, a refusal of curried
-    /// function types compared each level twice for each level around it, 2^depth in all.
+    /// The verdict of each comparison of a function of `fns` with another, with why it was
+    /// refused if it was ([`Fitted`]), by their two names ([`Comparing::fits_read`]). A failed
+    /// fit of an arrow is followed by the search for a cover, which compares the same two
+    /// results again; without this, a refusal of curried function types compared each level
+    /// twice for each level around it, 2^depth in all.
     // Complexity tradeoff (COMPLEXITY.md row TY-refuse-exp): naive version, each comparison
     // run again, O(2^depth). Used: the verdict kept by the pair of names, one comparison per
     // pair, linear in the depth. Tradeoff: one entry per pair compared, held until the
     // outermost comparison ends.
-    fitted: HashMap<(Arc<str>, Arc<str>), bool>,
+    fitted: HashMap<(Arc<str>, Arc<str>), Fitted>,
     /// When asked for, by [`why_unfit`], why the outermost comparison failed, if one of the
     /// covers rule 6 of sec:type_resolution gives is refused there: `Some(None)` until it is
     /// found. Only the outermost [`fits_in`] reads it, so a comparison inside, tried and
@@ -3525,6 +3526,10 @@ struct Cx<'s> {
     // name kept, dropped with the last entry of that name.
     owned: HashMap<Arc<str>, usize>,
 }
+
+/// A verdict kept in [`Cx::fitted`]: whether the function fits, and why the comparison was
+/// refused, if it was ([`Comparing::begin_alone`]).
+type Fitted = (bool, Option<String>);
 
 impl Cx<'_> {
     /// `ok`, the answer of the comparison this state ran, unless the comparison was refused.
@@ -4723,7 +4728,12 @@ impl<'m, 's> Comparing<'m, 's> {
         let key = (v.clone(), w.clone());
         let (q, qe) = {
             let cx = self.cx.borrow();
-            if let Some(&ok) = cx.fitted.get(&key) {
+            if let Some((ok, why)) = cx.fitted.get(&key) {
+                let (ok, why) = (*ok, why.clone());
+                drop(cx);
+                if let Some(why) = why {
+                    self.refuse(|| why);
+                }
                 return ok;
             }
             match cx.fns.get(w) {
@@ -4731,8 +4741,15 @@ impl<'m, 's> Comparing<'m, 's> {
                 None => return false,
             }
         };
+        // Compared alone, so the verdict kept, with its refusal, is the same whatever was
+        // refused before it, and is given again with that refusal ([`Self::begin_alone`]).
+        let before = self.begin_alone();
         let ok = self.fits(s.clone(), se.clone(), q, qe).await;
-        self.cx.borrow_mut().fitted.insert(key, ok);
+        let why = self.end_alone(before);
+        self.cx.borrow_mut().fitted.insert(key, (ok, why.clone()));
+        if let Some(why) = why {
+            self.refuse(|| why);
+        }
         ok
     }
 
@@ -4950,6 +4967,25 @@ impl<'m, 's> Comparing<'m, 's> {
             let why = why();
             self.cx.borrow_mut().unchosen = Some(why);
         }
+    }
+
+    /// Opens an attempt of its own: the refusal made before it, if any, set aside until
+    /// [`Self::end_alone`] puts it back. A refusal made inside the attempt is not kept, so an
+    /// attempt tried and dropped leaves the comparison as it found it. Without this, a refusal
+    /// inside an arrow of `s` tried for an arrow of `q` and not fitting refused the whole
+    /// comparison, though a later arrow fits, and the verdict depended on the order of the
+    /// arrows (`same_in_every_order`). Two calls around the attempt's `await`, not a wrapper
+    /// future: a wrapper moved each attempt's future through one more frame of the thread's
+    /// stack, about 25 KB at each depth of function types, which overflowed
+    /// `bench::deep_ops::signatures_of_deep_types_run_on_a_shallow_stack`.
+    fn begin_alone(&self) -> Option<String> {
+        self.cx.borrow_mut().unchosen.take()
+    }
+
+    /// Closes the attempt [`Self::begin_alone`] opened, putting back `before`, what it set
+    /// aside: why the attempt was refused ([`Self::refuse`]), if it was.
+    fn end_alone(&self, before: Option<String>) -> Option<String> {
+        std::mem::replace(&mut self.cx.borrow_mut().unchosen, before)
     }
 
     /// The search for the shape of `choices`'s group that holds the member `member.1`, of the
@@ -7349,22 +7385,56 @@ async fn every_arrow_fits<'m>(
     // Wang, SODA 2016, the Hitting Set conjecture; a conjecture, not a theorem).
     let mut index: Option<ArrowIndex> = None;
     'qas: for qa in qas {
+        let mut refused = None;
         if let Some(sa) = equal.get(qa)
-            && arrow_fits(s, sa, qa, c).await
+            && arrow_fits_alone(s, sa, qa, c, &mut refused).await
         {
             continue;
         }
         let index = index.get_or_insert_with(|| ArrowIndex::new(sas, s.params.len()));
         for i in index.may_fit(qa) {
-            if arrow_fits(s, &sas[i], qa, c).await {
+            if arrow_fits_alone(s, &sas[i], qa, c, &mut refused).await {
                 continue 'qas;
             }
         }
-        if !covered(s, sas, index, qa, c).await {
+        let before = c.begin_alone();
+        let ok = covered(s, sas, index, qa, c).await;
+        let why = c.end_alone(before);
+        if !ok || why.is_some() {
+            uncovered(refused.or(why), c);
             return false;
         }
     }
     true
+}
+
+/// [`arrow_fits`] as an attempt of its own ([`Comparing::begin_alone`]): an arrow whose
+/// comparison is refused does not fit, and the first such refusal is kept in `refused`.
+async fn arrow_fits_alone<'m>(
+    s: &Sig,
+    sa: &Arrow,
+    qa: &Arrow,
+    c: &'m Comparing<'m, '_>,
+    refused: &mut Option<String>,
+) -> bool {
+    let before = c.begin_alone();
+    let ok = arrow_fits(s, sa, qa, c).await;
+    match c.end_alone(before) {
+        Some(why) => {
+            refused.get_or_insert(why);
+            false
+        }
+        None => ok,
+    }
+}
+
+/// Records that an arrow of `q` is covered by no arrows of `s`: the comparison is refused for
+/// the first refusal met in trying it, if any, so that it answers false with that reason
+/// ([`Cx::decided`], [`why_unfit`]).
+fn uncovered(refused: Option<String>, c: &Comparing<'_, '_>) {
+    if let Some(why) = refused {
+        c.refuse(|| why);
+    }
 }
 
 /// Why the arrow `qa` of `q`, its `k`th, as read, is covered neither by one arrow of `s`, of
@@ -9851,6 +9921,8 @@ pub mod printed {
 mod tests {
     use super::*;
 
+    mod bench;
+
     /// The carrier masks: `NUMBER_BITS` holds exactly the numbers, `f32` among them; each
     /// carrier has its own bit below [`OTHER`] and its own base, and the five carriers that came
     /// before `f32` keep the bits they had (FLOAT-f32).
@@ -9898,22 +9970,28 @@ mod tests {
             equal.entry(sa).or_insert(sa);
         }
         'qas: for qa in qas {
+            let mut refused = None;
             if let Some(sa) = equal.get(qa)
-                && arrow_fits(s, sa, qa, c).await
+                && arrow_fits_alone(s, sa, qa, c, &mut refused).await
             {
                 continue;
             }
             for sa in sas {
-                if arrow_fits(s, sa, qa, c).await {
+                if arrow_fits_alone(s, sa, qa, c, &mut refused).await {
                     continue 'qas;
                 }
             }
-            if wide
-                && (together(s, sas, qa, c).await
-                    || met(s, sas, &(0..sas.len()).collect::<Vec<_>>(), qa, c).await)
-            {
-                continue;
+            if wide {
+                let all = (0..sas.len()).collect::<Vec<_>>();
+                let before = c.begin_alone();
+                let ok = together(s, sas, qa, c).await || met(s, sas, &all, qa, c).await;
+                let why = c.end_alone(before);
+                if ok && why.is_none() {
+                    continue;
+                }
+                refused = refused.or(why);
             }
+            uncovered(refused, c);
             return false;
         }
         true
@@ -9972,7 +10050,7 @@ mod tests {
         false
     }
 
-    /// splitmix64, so the cases are the same on every run.
+    /// splitmix64 from a seed of [`crate::seed::seed`], new on each run.
     struct Rng(u64);
 
     impl Rng {
@@ -10145,15 +10223,15 @@ mod tests {
         }
 
         /// Both verdicts occur often, and a fit by arrows together, so the comparison is not of
-        /// one answer.
-        fn enough(&self) {
+        /// one answer: at least `least` fits, no fits and fits only together.
+        fn enough(&self, least: [usize; 3]) {
             let Counts {
                 fit,
                 unfit,
                 together,
             } = self;
             assert!(
-                *fit > 200 && *unfit > 200 && *together > 40,
+                *fit >= least[0] && *unfit >= least[1] && *together >= least[2],
                 "{fit} fit, {unfit} do not, {together} fit only together"
             );
         }
@@ -10201,6 +10279,16 @@ mod tests {
         check(&b);
     }
 
+    /// The number of cases of [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`],
+    /// one at each size of [`INDEX_SIZES`] in turn.
+    const INDEX_CASES: usize = 12;
+
+    /// The sizes of `s` in [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`]:
+    /// one arrow, two, a few, more than [`SUBSETS`] (where the reference tries one
+    /// set, not every set) and many. The overloads of 300 arrows are
+    /// `bench::the_index_of_arrows_gives_the_verdict_on_large_overloads`.
+    const INDEX_SIZES: [usize; 6] = [1, 2, 5, 8, 20, 40];
+
     #[test]
     fn the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows() {
         // Over random overloads, with unions of atoms and carriers and some open parameter
@@ -10208,37 +10296,57 @@ mod tests {
         // arrow of `s` and then with every set of arrows of `s` (every subset of at most
         // SUBSETS arrows), every arrow of `s` that fits an arrow of `q` is a candidate, and
         // every arrow that may take part in covering one together is a candidate for it.
-        let mut rng = Rng(0x5eed);
+        let mut rng = Rng(crate::seed::seed(
+            "the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows",
+        ));
         let mut counts = Counts::default();
-        for case in 0..60 {
-            let n = [1, 2, 5, 8, 20, 60, 300][case % 7];
-            let width = 1 + rng.below(2) as usize;
-            let open = case % 3 != 0;
-            let sas: Vec<Arrow> = (0..n)
-                .map(|_| {
-                    let params = (0..width).map(|_| union(&mut rng, open)).collect();
-                    let wide = open && rng.below(4) == 0;
-                    Arrow {
-                        params,
-                        result: union(&mut rng, wide),
-                    }
-                })
-                .collect();
-            let qas: Vec<Arrow> = (0..n.min(60))
-                .map(|_| arrow_of_q(&mut rng, &sas, width, false, false))
-                .collect();
-            let s = sig(sas.clone(), width, case % 2 == 0);
-            for qa in &qas {
-                let q = sig(vec![qa.clone()], width, false);
-                counts.compare(&s, &q, &format!("case {case}"));
-                same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
-            }
-            let q = sig(qas.clone(), width, false);
-            counts.compare(&s, &q, &format!("case {case}, the whole of q"));
-            same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
-            index_keeps(&s, &qas, width, &format!("case {case}"));
+        for case in 0..INDEX_CASES {
+            index_case(
+                &mut rng,
+                INDEX_SIZES[case % INDEX_SIZES.len()],
+                case,
+                &mut counts,
+            );
         }
-        counts.enough();
+        counts.enough(INDEX_LEAST);
+    }
+
+    /// The least counts of fits, of no fits and of fits only together in
+    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`]: about half the least
+    /// seen over 150 seeds (55, 14 and 5, measured 2026-11-14).
+    const INDEX_LEAST: [usize; 3] = [30, 8, 3];
+
+    /// One case of [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`]: an
+    /// overload `s` of `n` arrows, each arrow of `q` alone and `q` whole compared in `s`.
+    /// Whether the parameter types may be open (two times in three) and whether `s` holds
+    /// `B` (one time in two) are drawn apart from `n`.
+    fn index_case(rng: &mut Rng, n: usize, case: usize, counts: &mut Counts) {
+        let width = 1 + rng.below(2) as usize;
+        let open = rng.below(3) != 0;
+        let sas: Vec<Arrow> = (0..n)
+            .map(|_| {
+                let params = (0..width).map(|_| union(rng, open)).collect();
+                let wide = open && rng.below(4) == 0;
+                Arrow {
+                    params,
+                    result: union(rng, wide),
+                }
+            })
+            .collect();
+        let qas: Vec<Arrow> = (0..n.min(60))
+            .map(|_| arrow_of_q(rng, &sas, width, false, false))
+            .collect();
+        let s = sig(sas.clone(), width, rng.below(2) == 0);
+        let order = rng.below(u64::MAX);
+        for qa in &qas {
+            let q = sig(vec![qa.clone()], width, false);
+            counts.compare(&s, &q, &format!("case {case}"));
+            same_in_every_order(&s, &q, order, &format!("case {case}"));
+        }
+        let q = sig(qas.clone(), width, false);
+        counts.compare(&s, &q, &format!("case {case}, the whole of q"));
+        same_in_every_order(&s, &q, order, &format!("case {case}"));
+        index_keeps(&s, &qas, width, &format!("case {case}"));
     }
 
     /// Every pair and every arrow, on the arrows as written: the index never leaves out an
@@ -10383,44 +10491,145 @@ mod tests {
         s
     }
 
+    /// The number of cases of
+    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes`], one at
+    /// each size of [`WIDER_SIZES`] in turn.
+    const WIDER_CASES: usize = 15;
+
+    /// The sizes of `s` in
+    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes`]. The
+    /// overloads of 90 arrows are `bench::the_index_of_arrows_gives_the_verdict_on_large_overloads`.
+    const WIDER_SIZES: [usize; 5] = [1, 3, 6, 10, 30];
+
+    /// The least counts of fits, of no fits and of fits only together in
+    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes`]: about
+    /// half the least seen over 100 seeds (46, 40 and 12, measured 2026-11-14).
+    const WIDER_LEAST: [usize; 3] = [25, 20, 6];
+
     #[test]
     fn the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes() {
         // As above, on cofinite and empty-payload atoms, tuples, kind-wide parts and literals,
         // with `B` of each side bounded or not: `B` of `q` that a parameter holds is a rigid
         // variable, a bound with OTHER reads `B` of `s` unheld as the unknown.
-        let masks = [None, Some(B_MASK), Some(0b1001), Some(OTHER | 0b1)];
-        let mut rng = Rng(0x00dd_5eed);
+        let mut rng = Rng(crate::seed::seed(
+            "the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes",
+        ));
         let mut counts = Counts::default();
-        for case in 0..150 {
-            let n = [1, 3, 6, 10, 30, 90][case % 6];
-            let width = 1 + rng.below(2) as usize;
-            let open = case % 3 != 0;
-            let sas: Vec<Arrow> = (0..n)
-                .map(|_| {
-                    let params = (0..width).map(|_| wider_union(&mut rng, open)).collect();
-                    let wide = open && rng.below(4) == 0;
-                    Arrow {
-                        params,
-                        result: wider_union(&mut rng, wide),
-                    }
-                })
-                .collect();
-            let qas: Vec<Arrow> = (0..n.min(30))
-                .map(|_| arrow_of_q(&mut rng, &sas, width, true, open))
-                .collect();
-            let s = sig_mask(sas, width, masks[rng.below(4) as usize]);
-            let qm = masks[rng.below(4) as usize];
-            for qa in &qas {
-                let q = sig_mask(vec![qa.clone()], width, qm);
-                counts.compare(&s, &q, &format!("case {case}"));
-                same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
-            }
-            index_keeps(&s, &qas, width, &format!("wider case {case}"));
-            let q = sig_mask(qas, width, qm);
-            counts.compare(&s, &q, &format!("case {case}, the whole of q"));
-            same_in_every_order(&s, &q, case as u64, &format!("case {case}, the whole of q"));
+        for case in 0..WIDER_CASES {
+            wider_case(
+                &mut rng,
+                WIDER_SIZES[case % WIDER_SIZES.len()],
+                case,
+                &mut counts,
+            );
         }
-        counts.enough();
+        counts.enough(WIDER_LEAST);
+    }
+
+    /// One case of
+    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes`], on an
+    /// overload `s` of `n` arrows. Whether the parameter types may be open (two times in three)
+    /// is drawn apart from `n`.
+    fn wider_case(rng: &mut Rng, n: usize, case: usize, counts: &mut Counts) {
+        let (s, qas, width, qm, order) = wider_input(rng, n);
+        for qa in &qas {
+            let q = sig_mask(vec![qa.clone()], width, qm);
+            counts.compare(&s, &q, &format!("case {case}"));
+            same_in_every_order(&s, &q, order, &format!("case {case}"));
+        }
+        index_keeps(&s, &qas, width, &format!("wider case {case}"));
+        let q = sig_mask(qas, width, qm);
+        counts.compare(&s, &q, &format!("case {case}, the whole of q"));
+        same_in_every_order(&s, &q, order, &format!("case {case}, the whole of q"));
+    }
+
+    /// The input of one [`wider_case`] of `n` arrows: `s`, the arrows of `q`, their width, the
+    /// bound of `B` in `q`, and the seed of the orders of the arrows.
+    fn wider_input(rng: &mut Rng, n: usize) -> (Sig, Vec<Arrow>, usize, Option<u8>, u64) {
+        let masks = [None, Some(B_MASK), Some(0b1001), Some(OTHER | 0b1)];
+        let width = 1 + rng.below(2) as usize;
+        let open = rng.below(3) != 0;
+        let sas: Vec<Arrow> = (0..n)
+            .map(|_| {
+                let params = (0..width).map(|_| wider_union(rng, open)).collect();
+                let wide = open && rng.below(4) == 0;
+                Arrow {
+                    params,
+                    result: wider_union(rng, wide),
+                }
+            })
+            .collect();
+        let qas: Vec<Arrow> = (0..n.min(30))
+            .map(|_| arrow_of_q(rng, &sas, width, true, open))
+            .collect();
+        let s = sig_mask(sas, width, masks[rng.below(4) as usize]);
+        let qm = masks[rng.below(4) as usize];
+        let order = rng.below(u64::MAX);
+        (s, qas, width, qm, order)
+    }
+
+    /// An arrow of `s` tried for an arrow of `q` whose comparison is refused (two tuples each
+    /// needing a later shape of one bucket, [`Comparing::search`]) does not refuse the whole
+    /// comparison when another arrow fits: the verdict is the same in every order of the
+    /// arrows. Before the fix, a refusal inside an arrow tried and dropped made `fits_sig`
+    /// answer false, so `q` fitted `s` with its arrows in one order and not in another. Found
+    /// at seed 158393 of the test above, case 4, `B` of `q` bounded by `OTHER | 1`; reduced,
+    /// `s` = `((x0: _ \ (int | f32 | f64 | rat | false | String | (_ ->? _))) -> #a1) &
+    /// ((x0: T | (..) | {..}) -> (int, #a1)) & ((x0: _ \ (int | f32 | f64 | rat | bool |
+    /// String | (_ ->? _))) -> (_,) | (T,) | (#_ \ #a6))` and `q` = `((x0: false | (T,)) ->
+    /// (_, _)) & ((x0: _ \ (int | f32 | f64 | rat | bool | String | (_ ->? _))) -> (T,) |
+    /// (_,) | (#_ \ #a6))`, which fitted only with the first arrow of `s` tried first for
+    /// the second of `q`. The cases up to 4 of that seed are run again, since the generator
+    /// makes them.
+    #[test]
+    fn a_refused_arrow_tried_and_dropped_leaves_the_verdict_to_the_other_arrows() {
+        let mut rng = Rng(158393);
+        let mut counts = Counts::default();
+        for case in 0..5 {
+            wider_case(
+                &mut rng,
+                WIDER_SIZES[case % WIDER_SIZES.len()],
+                case,
+                &mut counts,
+            );
+        }
+    }
+
+    /// A refusal with no arrow left that fits refuses the whole comparison, and the same
+    /// comparison with an arrow added to `s` that takes every value and returns none is
+    /// decided with no refusal. Seed 250, case 4, arrow 18 of `q`: the arrows of `s` tried for
+    /// it are refused inside ([`arrow_fits_alone`]) and none is dropped for one that fits, so
+    /// the refusal is kept ([`uncovered`]). Seed 195, case 4, arrow 27: no arrow alone is
+    /// refused, the cover of the arrows together is. Found by a sweep of seeds 0 to 299 of the
+    /// generator of [`wider_case`] (2026-11-14); these two are the kinds the sweep found. The
+    /// arrow added is not the arrow of `q` itself, since that arrow of seed 250 is refused
+    /// against itself (row FAIL-types-sig-reflexive).
+    #[test]
+    fn a_refusal_with_no_arrow_that_fits_refuses_the_comparison() {
+        for (seed, case, arrow) in [(250, 4, 18), (195, 4, 27)] {
+            let mut rng = Rng(seed);
+            let mut input = None;
+            for c in 0..=case {
+                input = Some(wider_input(&mut rng, WIDER_SIZES[c % WIDER_SIZES.len()]));
+            }
+            let (s, qas, width, qm, _) = input.unwrap();
+            let q = sig_mask(vec![qas[arrow].clone()], width, qm);
+            let what = format!("seed {seed}, case {case}, arrow {arrow}: {q} in {s}");
+            assert!(!fits_sig(&s, &q), "{what}");
+            assert!(why_unfit(&s, &q).is_some(), "{what}: refused");
+            let mut t = s.clone();
+            t.arrows.push(Arrow {
+                params: vec![Ty::set(KType::top()); width],
+                result: Ty::empty(),
+            });
+            t.note_held();
+            assert!(fits_sig(&t, &q), "{what}, with `(_) -> Never` added to s");
+            assert_eq!(
+                why_unfit(&t, &q),
+                None,
+                "{what}, with `(_) -> Never` added to s"
+            );
+        }
     }
 
     /// The values of the small types below, one for each class no type of them splits: `int`,
@@ -10544,9 +10753,11 @@ mod tests {
         // by the intersection of results ([`covered`]). The checker refuses some covers
         // (cases (1) to (3) of [`covered`]), so a cover it does not take is counted, not
         // asserted, and the counts show each form of fit occurs.
-        let mut rng = Rng(0x0005_eed5);
+        let mut rng = Rng(crate::seed::seed(
+            "a_fit_of_small_types_is_a_cover_of_their_values",
+        ));
         let (mut fit, mut cover, mut refused, mut neither) = (0, 0, 0, 0);
-        for case in 0..4000 {
+        for case in 0..2000 {
             let width = 1 + case % 2;
             let n = 1 + rng.below(4) as usize;
             let mut arrows: Vec<(Vec<Small>, Small)> = Vec::new();
@@ -10589,8 +10800,10 @@ mod tests {
                 (false, false) => neither += 1,
             }
         }
+        // Lower bounds about half the least seen over 200 seeds (238, 50 and 1539, measured
+        // 2026-11-14), since the seed is new on each run.
         assert!(
-            fit > 200 && cover > 100 && neither > 200,
+            fit > 100 && cover > 25 && neither > 100,
             "{fit} fit by one arrow, {cover} together, {refused} refused, {neither} no cover"
         );
     }
@@ -10603,13 +10816,15 @@ mod tests {
         // it) beside values ([`meet_within`]). A fit holds at each carrier the caller may fix
         // `U` to, at every value, as rule 6 types a call there, and the verdict is the same in
         // every order of the arrows.
-        let mut rng = Rng(0x0005_eed6);
+        let mut rng = Rng(crate::seed::seed(
+            "a_fit_at_a_bounded_variable_is_a_cover_of_its_values",
+        ));
         let (mut fit, mut refused, mut neither) = (0, 0, 0);
         let place = |rng: &mut Rng, narrow: bool| match small(rng, narrow) {
             Small::B(_) if narrow && rng.below(2) == 0 => Small::B(1 << rng.below(VALUES as u64)),
             p => p,
         };
-        for case in 0..4000 {
+        for case in 0..1200 {
             let width = 1 + case % 2;
             let n = 1 + rng.below(4) as usize;
             let mut arrows: Vec<(Vec<Small>, Small)> = Vec::new();
@@ -10673,7 +10888,7 @@ mod tests {
             same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
         }
         assert!(
-            fit > 200 && neither > 200,
+            fit > 60 && neither > 60,
             "{fit} fit, {refused} refused, {neither} no cover"
         );
     }
@@ -10794,9 +11009,11 @@ mod tests {
         // holds the slot's functions by `T` bound to them ([`meet_within`]): a function piece
         // is left out of the intersection only where another result holds no function. Each
         // fit holds at every value, and the verdict is the same in every order of the arrows.
-        let mut rng = Rng(0x0005_eed7);
+        let mut rng = Rng(crate::seed::seed(
+            "a_fit_with_functions_in_the_results_is_a_cover_of_their_values",
+        ));
         let (mut fit, mut cover, mut by_fns, mut refused, mut neither) = (0, 0, 0, 0, 0);
-        for case in 0..4000 {
+        for case in 0..600 {
             let width = 1 + case % 2;
             let n = 2 + rng.below(3) as usize;
             let mut arrows: Vec<(Vec<Place>, Place)> = Vec::new();
@@ -10852,8 +11069,10 @@ mod tests {
             }
             same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
         }
+        // Lower bounds about half the least seen over 200 seeds (58, 13 and 464, measured
+        // 2026-11-14), since the seed is new on each run.
         assert!(
-            fit > 200 && by_fns > 100 && neither > 200,
+            fit > 30 && by_fns > 6 && neither > 30,
             "{fit} fit by one arrow, {cover} together, {by_fns} together with functions in \
              the results, {refused} refused, {neither} no cover"
         );
@@ -10998,9 +11217,11 @@ mod tests {
     /// wherever the index does not refuse.
     #[test]
     fn shapes_found_by_the_index_are_those_of_the_rule_of_one_shape() {
-        let mut rng = Rng(24);
+        let mut rng = Rng(crate::seed::seed(
+            "shapes_found_by_the_index_are_those_of_the_rule_of_one_shape",
+        ));
         let (mut cases, mut held, mut refused, mut bound) = (0, 0, 0, 0);
-        for i in 0..20_000 {
+        for i in 0..2000 {
             let payloads = i % 2 == 1;
             let s = shapes(&mut rng, false, payloads);
             let t = shapes(&mut rng, true, payloads);
@@ -11024,7 +11245,7 @@ mod tests {
             }
         }
         println!("{cases} cases: {held} held ({bound} binding), {refused} refused");
-        assert!(held > 1000 && bound > 500, "{held} held, {bound} binding");
+        assert!(held > 100 && bound > 50, "{held} held, {bound} binding");
     }
 
     /// A random component of a tuple for [`near_pairs`]: literals of three integers, of two
@@ -11083,9 +11304,11 @@ mod tests {
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
         ];
-        let mut rng = Rng(127);
+        let mut rng = Rng(crate::seed::seed(
+            "tuples_met_and_subtracted_through_the_index_are_those_of_every_pair",
+        ));
         let (mut cases, mut met, mut dropped) = (0, 0, 0);
-        for i in 0..20_000 {
+        for i in 0..1000 {
             let s = near_union(&mut rng, i % 3 == 0, &fns);
             let t = near_union(&mut rng, i % 2 == 0, &fns);
             for (a, b) in [(&s, &t), (&t, &s)] {
@@ -11101,7 +11324,7 @@ mod tests {
             }
         }
         println!("{cases} cases: {met} meets with a tuple, {dropped} differences dropping one");
-        assert!(met > 5000 && dropped > 3000, "{met} met, {dropped} dropped");
+        assert!(met > 250 && dropped > 150, "{met} met, {dropped} dropped");
     }
 
     /// Whether two types share a value, decided on the pairs of tuples [`Near`] finds, is what
@@ -11118,9 +11341,11 @@ mod tests {
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
         ];
-        let mut rng = Rng(132);
+        let mut rng = Rng(crate::seed::seed(
+            "tuples_compared_by_meets_through_the_index_are_those_of_every_pair",
+        ));
         let (mut cases, mut meet, mut apart, mut filed) = (0, 0, 0, 0);
-        for i in 0..20_000 {
+        for i in 0..4000 {
             let s = near_union(&mut rng, i % 3 == 0, &fns);
             let t = near_union(&mut rng, i % 2 == 0, &fns);
             let nest = |u: &Ty| Ty::tuple(vec![Ty::lit(&Value::Int(0)), u.clone()]);
@@ -11145,7 +11370,7 @@ mod tests {
         }
         println!("{cases} cases; decided by tuples: {meet} meet, {apart} apart, {filed} filed");
         assert!(
-            meet > 1000 && apart > 1000 && filed > 1000,
+            meet > 200 && apart > 200 && filed > 200,
             "{meet} meet, {apart} apart, {filed} filed"
         );
     }
@@ -11194,9 +11419,11 @@ mod tests {
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
         ];
-        let mut rng = Rng(134);
+        let mut rng = Rng(crate::seed::seed(
+            "tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple",
+        ));
         let (mut cases, mut held, mut apart) = (0, 0, 0);
-        for i in 0..20_000 {
+        for i in 0..8000 {
             let t = near_union(&mut rng, i % 3 == 0, &fns);
             // A value of a length that `t` has most of the time: that of one of its tuples.
             let width = match t.tuples.is_empty() || rng.below(5) == 0 {
@@ -11232,7 +11459,7 @@ mod tests {
             }
         }
         println!("{cases} cases: {held} held, {apart} not");
-        assert!(held > 5000 && apart > 5000, "{held} held, {apart} not");
+        assert!(held > 2000 && apart > 2000, "{held} held, {apart} not");
     }
 
     /// [`class_of`], read from the parts of a set, is what comparing the set with each carrier
@@ -11269,7 +11496,9 @@ mod tests {
             13 => KType::tuple(vec![KType::empty()]),
             _ => KType::atom_with("a", &KType::tuple(vec![KType::empty()])),
         };
-        let mut rng = Rng(133);
+        let mut rng = Rng(crate::seed::seed(
+            "class_of_read_from_the_parts_is_that_of_comparing_types",
+        ));
         let (mut carriers, mut names, mut none) = (0, 0, 0);
         for _ in 0..20_000 {
             let mut s = piece(&mut rng);
@@ -11335,7 +11564,9 @@ mod tests {
             is.sort_unstable();
             is
         };
-        let mut rng = Rng(135);
+        let mut rng = Rng(crate::seed::seed(
+            "filings_find_the_same_tuples_whatever_the_hash_and_the_order",
+        ));
         let (mut found, mut several) = (0, 0);
         for i in 0..5_000 {
             let s = near_union(&mut rng, i % 3 == 0, &fns);

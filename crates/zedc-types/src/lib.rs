@@ -4,3 +4,8 @@
 
 pub mod kernel_type;
 pub mod ty;
+
+/// The seed of a random test, new on each run and printed, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/seed.rs"]
+mod seed;
