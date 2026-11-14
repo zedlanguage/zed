@@ -2259,7 +2259,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
+| CONST-too-large-coprime-base | impl attempt 2 | 2026-11-14 00:07 | resumed; WIP committed (566a0d3a5) and rebased on origin/main; bench moved into bench/too_large.rs |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
@@ -2277,6 +2277,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
+| FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
+| FAIL-pendants-route-quarter-seed | running |  |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-ports-key-past-i64 | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
@@ -2285,10 +2287,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | FAIL-values-function-in-tuple | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
-| FAIL-zir-canon-misplaced-level-binder | running |  |  |
-| FAIL-zir-lower-port-in-family-message | running |  |  |
-| FAIL-zir-text-reader-messages | running |  |  |
-| POLY-trivial-base-folded | running |  |  |
+| MSG-lower-port-repair-kind | running |  |  |
+| STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | started; worktree /home/luke/Work/wt/test-complete-types; load 6.96 13.08 18.93 |
 | TEST-m0_03-flake | running |  |  |
 | TEST-m0-layer-label | running |  |  |
