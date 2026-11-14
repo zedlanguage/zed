@@ -5830,7 +5830,7 @@ impl<'a> Ck<'_, 'a> {
     /// `a_tower_of_powers_under_a_test_scales`). Given up against it: a relation between the
     /// parts of an expression across a power, as in `2^n - 2^m` under `n >= m`, which reads
     /// as any int; the relation below a power (`n - m` in `2^(n - m)`) is kept, since the
-    /// scope reads each power operand whole. Test: `l01_29_diagnostics::power_repairs`;
+    /// scope reads each power operand whole. Test: `l01_29_repairs_and_printing::power_repairs`;
     /// COMPLEXITY.md C60.
     pub(super) fn ints_here(&mut self, e: &'a Expr) -> (IntervalSet, bool) {
         let k = self.known(e);
@@ -6216,7 +6216,7 @@ impl<'a> Ck<'_, 'a> {
     /// not by reading each question of the scope, O(k) for each rejection, which `r`
     /// rejections under `k` refused tests would make O(r k). The read is taken again, at the
     /// cost of the read [`Ck::ints_here`] took, only for a rejection. Tests:
-    /// `l01_29_diagnostics::refused_in_rejection::many_rejections_under_many_refused_tests_scale`
+    /// `l01_29_repairs_and_printing::refused_in_rejection::many_rejections_under_many_refused_tests_scale`
     /// and `l01_39_reduced_product::refused::finding_the_refusals_on_many_names_scales`.
     pub(super) fn refused_notes(&mut self, e: &'a Expr) -> Vec<Note> {
         if self.trying || self.known(e).value.is_some() || self.arms.here() == 0 {
@@ -12983,7 +12983,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// cast on it ([`Self::literal_repair`]; COMPLEXITY.md C39 and K41: O(d log^2 d) to read
     /// the digits, a linear lowest-terms test where one part is a word). It runs only where no
     /// one-operand repair was found. Scaling tests:
-    /// `l01_29_diagnostics::scaling::repairing_an_ordering_of_an_int_with_a_long_fraction_text_scales`
+    /// `l01_29_repairs_and_printing::scaling::repairing_an_ordering_of_an_int_with_a_long_fraction_text_scales`
     /// (4.6 times the work at 8d) and `repairing_orderings_of_ints_with_fraction_texts_scales`
     /// (8.0 times at 8n).
     fn both_cast(
@@ -14114,20 +14114,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Complexity tradeoff: at most six casts and one component per index of the narrower
         // tuple, each one trial of the comparison with one operand replaced, which costs the
         // size of the other operand and of the replacement, never the replaced tuple again
-        // (test `l01_29_diagnostics::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
+        // (test `l01_29_repairs_and_printing::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
         // The naive way, checking the program again with each fix written in, costs the
         // size of the program per fix. A literal fix adds at most three more trials, each
         // after one run of its cast on the literal's one value ([`Ck::literal_repair`]) (test
-        // `l01_29_diagnostics::scaling::offering_the_literal_first_in_comparisons_scales`);
+        // `l01_29_repairs_and_printing::scaling::offering_the_literal_first_in_comparisons_scales`);
         // where no literal writes the value, one application of the cast to the literal
         // ([`Ck::wrapped`]) besides, the cost of checking `rat("1/3")` as written (test
-        // `l01_29_diagnostics::scaling::offering_the_cast_of_a_literal_in_comparisons_scales`).
+        // `l01_29_repairs_and_printing::scaling::offering_the_cast_of_a_literal_in_comparisons_scales`).
         // An operand that is a cast of a literal costs one more run of its cast on the
         // literal's value first (`cast_values`), O(d) for d digits, and no cast around it;
         // the naive way, a trial of the composed cast `w(rat("1/2"))` per word to read the
         // value it lists, costs a check of two calls per word, the same order with a larger
         // constant, and offers no repair where that check refuses the outer cast (tests
-        // `l01_29_diagnostics::scaling::offering_the_literal_of_a_cast_of_a_literal_in_comparisons_scales`
+        // `l01_29_repairs_and_printing::scaling::offering_the_literal_of_a_cast_of_a_literal_in_comparisons_scales`
         // and `offering_the_literal_of_a_long_cast_of_a_text_in_a_comparison_scales`).
         // The text of each literal kept, by side and word.
         let mut literals: Vec<(usize, &str, String)> = Vec::new();
@@ -14914,7 +14914,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// from each literal's place to it are made once per application, O(n), and the literals
     /// are one error with one fix of each rank, checked by one check of the call; the message
     /// writes the call once per fix. Test:
-    /// `l01_29_diagnostics::scaling::many_literal_arguments_refused_at_their_parameters_scale`.
+    /// `l01_29_repairs_and_printing::scaling::many_literal_arguments_refused_at_their_parameters_scale`.
     fn literals_refused(
         &mut self,
         what: Label<'_>,

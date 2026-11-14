@@ -86,7 +86,7 @@ fn a_number_too_large_is_placed_at_its_operation() {
 /// program's first word read as an integer, so 2^64 when there are none. With `k` read from
 /// the input the types do not fix the size, so the checker leaves the power to the run; with
 /// `k` written as `2^64`, the power is rejected at compile time (CONST-too-large,
-/// l01_29_diagnostics::too_large).
+/// l01_29_repairs_and_printing::too_large).
 fn input_power(base: &str) -> String {
     format!(
         "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    \

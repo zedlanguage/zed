@@ -15,6 +15,7 @@ pub mod l01_19a_command_line;
 pub mod l01_21_test_runner;
 pub mod l01_25_preimage_catalog;
 pub mod l01_26_type_resolution;
+pub mod l01_29_diagnostics;
 pub mod l01_31_zir;
 pub mod l01_33_lowering;
 pub mod l01_34_memory;

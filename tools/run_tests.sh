@@ -674,7 +674,8 @@ fi
 # and each test of casts and offered_repairs; the tests of repairs inside a sum and inside a call
 # (59 to 61 s each beside the other pieces at load 52) are each four parts, each a piece, and
 # the two tests of a menu's cost in a larger program (36 s each alone at load 46) check programs
-# half as large (2026-11-12, TESTS-l01_29-split).
+# half as large (2026-11-12, TESTS-l01_29-split). casts, offered_repairs and the other repair and
+# printing modules moved to l01_29_repairs_and_printing, split the same way (2026-11-14, TESTS-split).
 # l01_26a_generic_literals took 42 s whole at load 50; each module (one per test file, so a new
 # file is a piece of its own) and each test of mod.rs is a piece. The slowest pieces are scaling
 # and lit_branch_ops, 24 to 50 s and 26 to 45 s at load 35 to 51. libtest runs a module's tests on
@@ -690,9 +691,10 @@ split="
   l01_26_type_resolution l01_26_type_resolution::deep_ops l01_26_type_resolution::op_table
   l01_26a_generic_literals
   l01_28_staging l01_28_staging::scaling l01_28_staging::dag
-  l01_29_diagnostics l01_29_diagnostics::casts l01_29_diagnostics::offered_repairs
-  l01_29_diagnostics::offered_repairs::every_offered_repair_inside_a_sum_checks_as_written
-  l01_29_diagnostics::offered_repairs::every_offered_repair_inside_a_call_checks_as_written
+  l01_29_diagnostics l01_29_repairs_and_printing l01_29_repairs_and_printing::casts
+  l01_29_repairs_and_printing::offered_repairs
+  l01_29_repairs_and_printing::offered_repairs::every_offered_repair_inside_a_sum_checks_as_written
+  l01_29_repairs_and_printing::offered_repairs::every_offered_repair_inside_a_call_checks_as_written
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
   l01_36_cranelift::mul_edges
   l01_38_presburger l01_38_presburger::oracle l01_38_presburger::omega

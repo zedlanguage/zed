@@ -112,6 +112,9 @@ path = "steps/l01_28_staging/mod.rs"
 name = "l01_29_diagnostics"
 path = "steps/l01_29_diagnostics/mod.rs"
 [[test]]
+name = "l01_29_repairs_and_printing"
+path = "steps/l01_29_repairs_and_printing/mod.rs"
+[[test]]
 name = "l01_30_queries"
 path = "steps/l01_30_queries/mod.rs"
 [[test]]

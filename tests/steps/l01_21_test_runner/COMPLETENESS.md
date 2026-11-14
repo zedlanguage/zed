@@ -42,6 +42,6 @@ rows not run, `--mutate`, a refused staging, and a `--suppress` address left unm
 | A row not run because staging dropped its branch | none in this group | Covered by `l02_08d_build_constant/test_staged.rs` (step L2.8d). |
 | `zedc test --mutate` | none in this group | Covered by `l25_08_mutate/command.rs` (step L25.8). |
 | A run of a unit whose `main` staging is refused (`Accepted::Refused` in `command`) | none | Uncovered: no small program that reaches it was found; the staging refusals are tested in their own steps through `test`, not the command. |
-| `zedc test --suppress` with an address that names nothing | none in this group | Covered by `l01_29_diagnostics/suppress.rs` `an_address_that_names_nothing_is_reported`. |
+| `zedc test --suppress` with an address that names nothing | none in this group | Covered by `l01_29_repairs_and_printing/suppress.rs` `an_address_that_names_nothing_is_reported`. |
 | An outside test tool | none | DESIGN names none: the tests of a Zed program are its tables and marks. |
 | Many rows, many units | `scaling.rs`, `bench/` | Sizes beyond the small cases are benchmarks (P178). |

@@ -42,13 +42,14 @@ check "the full list is the names of the pieces file" "$(echo "$pieces" | cut -d
 # a piece per module and per slow test. l01_03 is 8 small lexer tests (TEST-step-one-piece).
 step03=$(ls tests/steps | grep '^l01_03_')
 check "a step folder is one piece" "$step03" "$(selected '^l01_03_')"
+# l01_29 is two folders, l01_29_diagnostics and l01_29_repairs_and_printing (TESTS-split), each a binary.
 step29=$(ls tests/steps | grep '^l01_29_')
 heap=$(by_binary deep_heap)
 check "deep_heap is one piece per test, more than one" "yes" "$([ "$(echo "$heap" | wc -l)" -gt 1 ] && echo yes)"
 check "deep_heap selects each of its tests" "$heap" "$(selected deep_heap)"
 check "a test of deep_heap matches as deep_heap::<test>" "$(echo "$heap" | head -1)" \
   "$(selected "^deep_heap::$(echo "$heap" | head -1)\$")"
-check "a union selects both groups" "$(by_binary "$step29" deep_heap)" "$(selected 'l01_29|deep_heap')"
+check "a union selects both groups" "$(by_binary $step29 deep_heap)" "$(selected 'l01_29|deep_heap')"
 check "deep_values and deep_scaling are split per test too" "$(by_binary deep_values deep_scaling)" \
   "$(selected '^deep_(values|scaling)$')"
 check "a step selects the deep binaries in its folder" \

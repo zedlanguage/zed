@@ -3327,7 +3327,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// O(log N) times and the merges of N classes O(N log N) in all; a path costs its
     /// length ([`Ck::merges_between`]). Tradeoff: one edge per class, logged while a repair
     /// is tried. COMPLEXITY.md row F195; test
-    /// `l01_29_diagnostics::scaling::the_merges_between_a_value_and_its_use_scale`.
+    /// `l01_29_repairs_and_printing::scaling::the_merges_between_a_value_and_its_use_scale`.
     fn link_proof(&mut self, a: usize, b: usize, why: Reason) {
         let mut at = a;
         let mut back = None;

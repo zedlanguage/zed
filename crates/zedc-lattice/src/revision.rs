@@ -279,7 +279,7 @@ pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
 // lower bound, by Bernoulli's inequality `b ^ k >= 1 + k (b - 1)` (O(1) words, below `b ^ k`
 // from k = 2 on, so `2^(5^(2^k + 1) - 10)` was rejected); the exact corner costs the same
 // order. Given up: precision on a base that may be negative (`(-2)^(2*k)` is any int), which
-// needs the parity of each exponent. Test: `l01_29_diagnostics::power_repairs`; COMPLEXITY.md
+// needs the parity of each exponent. Test: `l01_29_repairs_and_printing::power_repairs`; COMPLEXITY.md
 // C60.
 pub fn forward_pow(x: &IntervalSet, n: &IntervalSet) -> IntervalSet {
     let n = n.meet(&IntervalSet::range(End::of(0), PosInf));

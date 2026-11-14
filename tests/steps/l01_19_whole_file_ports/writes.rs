@@ -80,7 +80,7 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
 /// bits: the run stops with an error naming that size, before anything is written, and the
 /// process does not abort. `n` is read from the input (1 here), so the checker cannot prove
 /// the sum's size; with `n` written as 1 the sum is rejected at compile time
-/// (l01_29_diagnostics::too_large).
+/// (l01_29_repairs_and_printing::too_large).
 #[test]
 fn a_number_too_large_to_build_stops_the_run() {
     let src = "main(m: MainArgs) {\n  n = int(m.args[0] else \"\") else 1;\n  \

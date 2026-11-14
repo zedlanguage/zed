@@ -114,8 +114,9 @@ There are two kinds of test.
 
 - **Unit tests of the compiler's own code** sit beside that code, in `#[cfg(test)]` modules.
   They test internal functions that no Zed program can reach directly.
-- **Step tests** sit in `tests/steps/<step>/`, one folder per step of Part G. They test the
-  language: each one gives Zed source to the compiler and checks what comes out. Their purpose
+- **Step tests** sit in `tests/steps/<step>/`, one folder per step of Part G (two for a few
+  large steps, below). They test the language: each one gives Zed source to the compiler and
+  checks what comes out. Their purpose
   goes beyond checking. The user documentation is to be built from them, so that a reader can
   learn the language from the inside out, one layer at a time. So a step test is written as a
   small real-world example, simplified until it tests just the thing it is about.
@@ -154,6 +155,25 @@ named after the folder it came from. The exceptions are the files `binary.rs` th
 executable (in m0_09, l01_19a and l01_36a): they are not modules of their folder's binary but
 tests of zed-native, named in `crates/zed-native/Cargo.toml`, since only a test of that package
 can name the executable.
+
+**When a step's tests are split into two binaries** (TESTS-split, author A30: the size that
+suits both test edits and compiler edits). A large binary is slow to rebuild after an edit to
+one of its tests; every binary adds a fixed cost to each build of all tests, which an edit to a
+compiler crate or to `tests/src` causes. Measured on 2026-11-14 through zcargo with 4 jobs at
+load 40 to 56, three runs each: a one-line edit to a test rebuilds its binary in 0.6 s plus
+0.1 s per 1,000 lines of the folder (0.6 to 1.0 s for l01_09, 400 lines; 3.7 to 4.5 s for
+l01_23, 32,900 lines). After an edit to zedc-check each test binary takes 0.58 s of CPU plus
+0.16 s per 1,000 lines (all 81 binaries: 60 to 77 s, 86 to 97 s of CPU); after an edit to
+`tests/src`, 0.43 s plus 0.11 s per 1,000 lines. The agent transcripts of 2026-11-13 and 14
+show 5.1 builds of one test binary and 1.27 builds of all of them per commit. Halving a folder
+of L thousand lines that a share c of all commits edit saves 5.1 × c × 0.1 × L / 2 s per
+commit and costs 1.27 × 0.58 / 4 = 0.18 s per commit, so a folder is split in two when
+c × L > 0.73, and in three when c × L > 2.2. By the 2,690 commits of 2026-11-07 to 14 this
+splits l01_38 (1.96), l01_39 (1.57), l01_23 (1.49) and l01_29 (1.32) in two; the next is
+l01_26 at 0.61. The second folder keeps the step number with a description of its own
+(`l01_29_diagnostics` and `l01_29_repairs_and_printing`), modules that refer to each other stay
+in one folder, the edits fall about evenly between the two, and helpers both use move to
+`tests/src/step_helpers/`. Compute c × L again when a folder grows or its edits move.
 
 **The design document's fences.** From step L1.7 on, every `zed` fence of DESIGN.md and
 EXAMPLES.md is a test. The spec repository is private and this one is public, so this

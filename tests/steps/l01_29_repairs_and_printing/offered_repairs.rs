@@ -132,7 +132,7 @@ fn repaired(src: &str) -> Vec<(String, String)> {
 fn every_offered_repair_checks_as_written() {
     assert_eq!(type_errors(PRELUDE), Vec::<String>::new());
     let seed = zed_tests::seed::seed(
-        "l01_29_diagnostics::offered_repairs::every_offered_repair_checks_as_written",
+        "l01_29_repairs_and_printing::offered_repairs::every_offered_repair_checks_as_written",
     );
     let mut failed = Vec::new();
     let mut tried = 0;
@@ -165,7 +165,9 @@ fn every_offered_repair_checks_as_written() {
 /// P169: a correctness test runs well under 1 s) every `c` and `d` was taken, 768 programs
 /// for each outer construct in four tests of 4.8 to 6.0 s at load 52; now 48.
 fn nested_repairs_check(test: &str, outer: fn(&str, &str) -> String) {
-    let seed = zed_tests::seed::seed(&format!("l01_29_diagnostics::offered_repairs::{test}"));
+    let seed = zed_tests::seed::seed(&format!(
+        "l01_29_repairs_and_printing::offered_repairs::{test}"
+    ));
     let outers = ["2.5f64", "2.5r", "1", "n"];
     let mut failed = Vec::new();
     let mut tried = 0;
@@ -461,7 +463,7 @@ fn headline_repair(message: &str) -> Option<&str> {
 #[test]
 fn every_headline_repair_checks_as_written() {
     let seed = zed_tests::seed::seed(
-        "l01_29_diagnostics::offered_repairs::every_headline_repair_checks_as_written",
+        "l01_29_repairs_and_printing::offered_repairs::every_headline_repair_checks_as_written",
     );
     let mut failed = Vec::new();
     let mut tried = Vec::new();
