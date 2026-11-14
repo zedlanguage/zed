@@ -1,5 +1,8 @@
 //! A run with n variables that reads each of them does work O(n log n): the variables are
-//! taken once into a sorted map, and each read is one lookup in it.
+//! taken once into a sorted map, and each read is one lookup in it. The benchmarks of this step,
+//! run by `tools/run_tests.sh --bench` and left out of its default run; their small instance,
+//! a program reading two variables and writing them joined by `|`, is
+//! `reads::a_program_reads_a_variable`.
 
 use std::ffi::OsString;
 
@@ -21,7 +24,7 @@ fn reader(n: usize) -> String {
 
 #[test]
 fn a_run_reading_n_variables_scales() {
-    let n = 200;
+    let n = 1_500;
     // The programs and the environments of both sizes are made before the runs are measured.
     let input = |m: usize| -> (Vec<OsString>, Vec<(OsString, OsString)>) {
         let prog = dir_program(&format!("scaling{m}"), &reader(m));
@@ -49,7 +52,7 @@ fn a_run_reading_n_variables_scales() {
 fn taking_n_variables_and_reading_each_scales() {
     use zed_kernel::{Lookup, Value};
     use zedc::run::Environment;
-    let n = 20_000;
+    let n = 250_000;
     // The variables and the names of both sizes are made before the runs are measured.
     let input = |m: usize| -> (Vec<(OsString, OsString)>, Vec<Value>) {
         let env = (0..m)

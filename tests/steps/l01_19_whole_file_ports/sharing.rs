@@ -6,12 +6,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use zed_kernel::Lookup;
-use zed_tests::scaling::{check, inputs};
 use zedc::run::{Program, load};
 use zedc::testing::test;
 
 /// Writes the last of its `n` lines, so the wave reads the whole input.
-fn last_line(n: usize) -> Program {
+pub(super) fn last_line(n: usize) -> Program {
     let src = format!(
         "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else \"\";\n}}\n",
         n - 1
@@ -20,12 +19,12 @@ fn last_line(n: usize) -> Program {
 }
 
 /// `n` lines, `line 0` to `line n-1`.
-fn lines(n: usize) -> Arc<[u8]> {
+pub(super) fn lines(n: usize) -> Arc<[u8]> {
     let text: String = (0..n).map(|i| format!("line {i}\n")).collect();
     Arc::from(text.as_bytes())
 }
 
-fn no_files(_: &str) -> Arc<dyn Lookup> {
+pub(super) fn no_files(_: &str) -> Arc<dyn Lookup> {
     unreachable!("no `Files` port")
 }
 
@@ -66,22 +65,23 @@ fn a_record_read_back_from_bytes_replays_the_same_wave() {
     ));
 }
 
+/// Runs `program` and replays its record: the replay writes what the run wrote, and its
+/// record shares the input's bytes, copying none of them.
+pub(super) fn replays_sharing_the_input(program: &Program, input: &BTreeMap<String, Arc<[u8]>>) {
+    let wave = program.run(input, no_files).unwrap();
+    let again = program.replay(&wave.record).unwrap();
+    assert_eq!(again.writes, wave.writes);
+    assert!(Arc::ptr_eq(
+        &again.record.lines["m.stdin"],
+        &input["m.stdin"]
+    ));
+}
+
+/// `bench::a_wave_over_n_lines_and_its_replay_share_the_input_and_scale` at a small size.
 #[test]
-fn a_wave_over_n_lines_and_its_replay_share_the_input_and_scale() {
-    let waves = inputs(20_000, |n| {
-        let input = BTreeMap::from([("m.stdin".to_string(), lines(n))]);
-        (last_line(n), input)
-    });
-    check("a wave over n lines and its replay", 20_000, |n| {
-        let (p, input) = &waves[&n];
-        let wave = p.run(input, no_files).unwrap();
-        let again = p.replay(&wave.record).unwrap();
-        assert_eq!(again.writes, wave.writes);
-        assert!(Arc::ptr_eq(
-            &again.record.lines["m.stdin"],
-            &input["m.stdin"]
-        ));
-    });
+fn a_wave_and_its_replay_share_the_input() {
+    let input = BTreeMap::from([("m.stdin".to_string(), lines(3))]);
+    replays_sharing_the_input(&last_line(3), &input);
 }
 
 #[test]
@@ -145,30 +145,25 @@ fn a_second_main_is_a_duplicate_and_no_row_runs() {
     );
 }
 
+/// The program `zedc run` runs on a file of lines: it writes the first.
+pub(super) const FIRST_LINE: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
+
+/// `zedc run program` with the file `input` on standard input: it writes `line 0`.
+pub(super) fn runs_on_the_file(program: &std::path::Path, input: &std::path::Path) {
+    let args = ["run".to_string(), program.display().to_string()];
+    let mut input = std::fs::File::open(input).unwrap();
+    let mut out = Vec::new();
+    let status = zedc::run::command(&args, &mut input, &mut out, &mut std::io::sink());
+    assert_eq!((status, out), (0, b"line 0\n".to_vec()));
+}
+
+/// `bench::zedc_run_reading_a_file_of_n_lines_on_stdin_scales` at a small size.
 #[test]
-fn zedc_run_reading_a_file_of_n_lines_on_stdin_scales() {
-    let dir = std::env::temp_dir().join("zed-l01-19-sharing-scaling");
-    std::fs::create_dir_all(&dir).unwrap();
+fn zedc_run_reads_a_file_of_lines_on_stdin() {
+    let dir = super::dir("sharing_file_stdin");
     let program = dir.join("first.zed");
-    std::fs::write(
-        &program,
-        "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n",
-    )
-    .unwrap();
-    let files = inputs(20_000, |n| {
-        let path = dir.join(format!("input-{n}.txt"));
-        std::fs::write(&path, &*lines(n)).unwrap();
-        path
-    });
-    check("zedc run reading a file of n lines on stdin", 20_000, |n| {
-        let args = ["run".to_string(), program.display().to_string()];
-        let mut input = std::fs::File::open(&files[&n]).unwrap();
-        let mut out = Vec::new();
-        let status = zedc::run::command(&args, &mut input, &mut out, &mut std::io::sink());
-        assert_eq!((status, out), (0, b"line 0\n".to_vec()));
-    });
-    std::fs::remove_file(&program).unwrap();
-    for path in files.values() {
-        std::fs::remove_file(path).unwrap();
-    }
+    std::fs::write(&program, FIRST_LINE).unwrap();
+    let input = dir.join("input.txt");
+    std::fs::write(&input, &*lines(3)).unwrap();
+    runs_on_the_file(&program, &input);
 }

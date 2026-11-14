@@ -6,8 +6,8 @@
 // binary.rs is not a module of this target: crates/zed-native/Cargo.toml builds it as the test
 // `command_line_binary`, since only a test of that package can name the zedc executable.
 mod arguments;
+mod bench;
 mod replay;
-mod scaling;
 
 pub(crate) use zed_tests::step_helpers::l01_19a_command_line::{
     dir, program, run, run_words, zedc,

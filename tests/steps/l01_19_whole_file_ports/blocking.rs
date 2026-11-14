@@ -208,23 +208,34 @@ fn the_causes_are_recorded_by_binder() {
     assert!(!got.contains_key(&id("d")));
 }
 
-/// A chain of n functions, each calling the next, the last calling a function value, decides
-/// in linear time: one search backward over the calls, each function visited once.
+/// A chain of `n` functions, each calling the next, the last calling a function value.
+pub(super) fn call_chain(n: usize) -> String {
+    let mut text = String::from("c0(positional f) = f(1);\n");
+    for i in 1..n {
+        text.push_str(&format!("c{i}(positional f) = c{}(f);\n", i - 1));
+    }
+    text
+}
+
+/// Decides which functions of a [`call_chain`] of `n` can block: all `n`, by one search
+/// backward over the calls, each function visited once.
+pub(super) fn decides_the_chain(
+    text: &str,
+    stmts: &[zedc::ast::Stmt],
+    res: &zedc::resolve::Resolution,
+    n: usize,
+) {
+    let t = Tables::with_text(stmts, res, Some(text));
+    assert_eq!(facts(&t, stmts).len(), n);
+}
+
+/// Every function of a chain of calls ending in a call of a function value can block
+/// (`bench::a_long_chain_of_calls_is_decided_in_linear_time` at a small size).
 #[test]
-fn a_long_chain_of_calls_is_decided_in_linear_time() {
-    let units = zed_tests::scaling::inputs(4_000, |n| {
-        let mut text = String::from("c0(positional f) = f(1);\n");
-        for i in 1..n {
-            text.push_str(&format!("c{i}(positional f) = c{}(f);\n", i - 1));
-        }
-        let (stmts, res) = resolved(&text);
-        (text, stmts, res)
-    });
-    zed_tests::scaling::check_order("deciding a chain of n calls", 4_000, 1, |n| {
-        let (text, stmts, res) = &units[&n];
-        let t = Tables::with_text(stmts, res, Some(text));
-        assert_eq!(facts(&t, stmts).len(), n);
-    });
+fn every_function_of_a_chain_of_calls_blocks() {
+    let text = call_chain(3);
+    let (stmts, res) = resolved(&text);
+    decides_the_chain(&text, &stmts, &res, 3);
 }
 
 /// The helper of the L1.19 example blocks, since a push can wait while its reader does not

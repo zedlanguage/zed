@@ -224,32 +224,43 @@ fn a_misplaced_or_called_annotation_is_refused() {
     );
 }
 
-/// A chain of n functions, each calling the next and each marked, the last reading its
-/// argument passed `m.stdin`: every mark is decided by one lookup in the fact, found once, and
-/// each error's path stops at the next marked function, which has its own error, so the n
-/// errors are written in O(n), not the O(n²) of n whole paths.
-#[test]
-fn a_long_marked_chain_is_checked_in_linear_time() {
-    let units = zed_tests::scaling::inputs(4_000, |n| {
-        let mut text = String::from("@nonblocking\nc0(positional xs) = xs[0] else \"\";\n");
-        for i in 1..n {
-            text.push_str(&format!(
-                "@nonblocking\nc{i}(positional xs) = c{}(xs);\n",
-                i - 1
-            ));
-        }
+/// A chain of `n` functions, each calling the next and each marked, the last reading its
+/// argument passed `m.stdin`.
+pub(super) fn marked_chain(n: usize) -> String {
+    let mut text = String::from("@nonblocking\nc0(positional xs) = xs[0] else \"\";\n");
+    for i in 1..n {
         text.push_str(&format!(
-            "main(m: MainArgs) -> int {{\n  if c{}(m.stdin) == \"a\" {{ 1 }} else {{ 0 }}\n}}\n",
-            n - 1
+            "@nonblocking\nc{i}(positional xs) = c{}(xs);\n",
+            i - 1
         ));
-        let (stmts, res) = resolved(&text);
-        (text, stmts, res)
-    });
-    zed_tests::scaling::check_order("checking n marked functions", 4_000, 1, |n| {
-        let (text, stmts, res) = &units[&n];
-        let t = Tables::with_text(stmts, res, Some(text));
-        let (facts, marked) = facts_and_marks(&t, stmts);
-        assert_eq!(marked.len(), n);
-        assert_eq!(marked_errors(&facts, &marked, res, Some(text)).len(), n);
-    });
+    }
+    text.push_str(&format!(
+        "main(m: MainArgs) -> int {{\n  if c{}(m.stdin) == \"a\" {{ 1 }} else {{ 0 }}\n}}\n",
+        n - 1
+    ));
+    text
+}
+
+/// Checks the marks of a [`marked_chain`] of `n`: every mark is decided by one lookup in the
+/// fact, found once, and each error's path stops at the next marked function, which has its
+/// own error, so the `n` errors are written in O(n), not the O(n²) of `n` whole paths.
+pub(super) fn checks_the_marks(
+    text: &str,
+    stmts: &[zedc::ast::Stmt],
+    res: &zedc::resolve::Resolution,
+    n: usize,
+) {
+    let t = Tables::with_text(stmts, res, Some(text));
+    let (facts, marked) = facts_and_marks(&t, stmts);
+    assert_eq!(marked.len(), n);
+    assert_eq!(marked_errors(&facts, &marked, res, Some(text)).len(), n);
+}
+
+/// Every function of a marked chain that reaches `m.stdin` has its error
+/// (`bench::a_long_marked_chain_is_checked_in_linear_time` at a small size).
+#[test]
+fn every_function_of_a_marked_chain_has_its_error() {
+    let text = marked_chain(3);
+    let (stmts, res) = resolved(&text);
+    checks_the_marks(&text, &stmts, &res, 3);
 }

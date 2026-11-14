@@ -1,5 +1,8 @@
 //! A run reads its command line in time linear in the arguments, up to the family's sort: the
-//! words are split at `--` and decoded once each, and the family is built once.
+//! words are split at `--` and decoded once each, and the family is built once. The benchmark
+//! of this step, run by `tools/run_tests.sh --bench` and left out of its default run; its
+//! small instance, `ECHO` writing each argument on a line of its own, is
+//! `arguments::arguments_are_keyed_from_zero`.
 
 use std::ffi::OsString;
 
@@ -10,7 +13,7 @@ use super::{ECHO, program, run_words, zedc};
 #[test]
 fn a_run_with_many_arguments_scales() {
     let prog = program("scaling", ECHO);
-    let n = 2000;
+    let n = 8_000;
     // The words of both sizes are built before the runs are measured.
     let words = |n: usize| -> Vec<OsString> {
         let mut w = run_words(&prog, &["--"]);

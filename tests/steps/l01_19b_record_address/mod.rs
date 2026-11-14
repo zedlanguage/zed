@@ -2,12 +2,12 @@
 //! record of another program or of none. The address is that of the term a wave runs and the
 //! ports, so a change of local names or layout keeps it and a change of meaning does not.
 
-mod scaling;
+mod bench;
 
 use std::path::PathBuf;
 
 use zedc::address::ContentAddress;
-use zedc::run::{Record, load};
+use zedc::run::{Program, Record, load};
 
 /// A directory of its own for test `name`, under the test target's scratch directory; files
 /// in it are overwritten by each run, never deleted.
@@ -214,4 +214,29 @@ fn a_program_entry_must_be_first_and_well_formed() {
     for a in [ContentAddress([0; 32]), ContentAddress([255; 32]), a] {
         assert_eq!(ContentAddress::parse(&a.to_string()), Some(a));
     }
+}
+
+/// A program of `n` functions, `step{i}(x) = step{i-1}(x: x) + i`, whose `main` calls the last
+/// and writes `1 + (1 + 2 + … + (n-1))`.
+fn chain(n: usize) -> Program {
+    let mut src = String::from("step0(x: int) = x;\n");
+    for i in 1..n {
+        src.push_str(&format!("step{i}(x: int) = step{}(x: x) + {i};\n", i - 1));
+    }
+    src.push_str(&format!(
+        "main(m: MainArgs) {{\n  m.stdout <- \"${{step{}(x: 1)}}\";\n}}\n",
+        n - 1
+    ));
+    load(src.as_bytes()).unwrap()
+}
+
+/// The address `bench::the_address_of_a_program_scales` takes, from the ports and the term,
+/// is the program's address, the same each time it is taken, and a longer chain has another.
+#[test]
+fn a_chain_of_functions_has_an_address_of_its_own() {
+    let (three, four) = (chain(3), chain(4));
+    let address = three.ports().address(three.term()).unwrap();
+    assert_eq!(address, three.address().unwrap());
+    assert_eq!(address, three.ports().address(three.term()).unwrap());
+    assert_ne!(address, four.address().unwrap());
 }

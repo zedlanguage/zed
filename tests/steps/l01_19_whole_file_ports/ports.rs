@@ -203,34 +203,51 @@ fn a_port_given_to_a_helper_is_still_pushed_once() {
     );
 }
 
-/// A chain of n helpers, each passing its port to the next, the last pushing: whether each
-/// parameter is an output port is decided in linear time, each parameter visited once. The
-/// pass is timed alone: in the whole check it is too small a part for a slower pass to show.
-#[test]
-fn a_chain_of_helpers_passing_a_port_scales() {
-    let units = zed_tests::scaling::inputs(1_000, |n| {
-        let mut text = String::from("h0(positional s, out: Lines) { out <- s; }\n");
-        for i in 1..n {
-            text.push_str(&format!(
-                "h{i}(positional s, out: Lines) = h{}(s, out: out);\n",
-                i - 1
-            ));
-        }
+/// A chain of `n` helpers, each passing its port to the next, the last pushing, and a `main`
+/// that gives the last its `m.stdout`.
+pub(super) fn helper_chain(n: usize) -> String {
+    let mut text = String::from("h0(positional s, out: Lines) { out <- s; }\n");
+    for i in 1..n {
         text.push_str(&format!(
-            "main(m: MainArgs) {{\n  _ = h{}(\"x\", out: m.stdout);\n}}\n",
-            n - 1
+            "h{i}(positional s, out: Lines) = h{}(s, out: out);\n",
+            i - 1
         ));
-        let (stmts, res) = resolved(&text);
-        (text, stmts, res)
-    });
-    // The program is accepted, as a whole.
-    let (text, stmts, res) = &units[&1_000];
-    let info = check_text(stmts, res, Some(text));
+    }
+    text.push_str(&format!(
+        "main(m: MainArgs) {{\n  _ = h{}(\"x\", out: m.stdout);\n}}\n",
+        n - 1
+    ));
+    text
+}
+
+/// The output ports of a [`helper_chain`] of `n`: each parameter is an output port, decided
+/// once, and none is an error.
+pub(super) fn finds_the_ports(
+    text: &str,
+    stmts: &[zedc::ast::Stmt],
+    res: &zedc::resolve::Resolution,
+    n: usize,
+) {
+    let t = Tables::with_text(stmts, res, Some(text));
+    let found = ports(&t);
+    assert_eq!((found.params.len(), found.errors.len()), (n, 0));
+}
+
+/// A chain of helpers passing a port is accepted, each parameter is found an output port, and
+/// the run writes once through the chain
+/// (`bench::a_chain_of_helpers_passing_a_port_scales` at a small size).
+#[test]
+fn a_chain_of_helpers_passing_a_port_writes_once() {
+    let text = helper_chain(3);
+    let (stmts, res) = resolved(&text);
+    let info = check_text(&stmts, &res, Some(&text));
     assert!(info.errors.is_empty(), "{:?}", info.errors);
-    zed_tests::scaling::check("finding the output ports of n helpers", 1_000, |n| {
-        let (text, stmts, res) = &units[&n];
-        let t = Tables::with_text(stmts, res, Some(text));
-        let found = ports(&t);
-        assert_eq!((found.params.len(), found.errors.len()), (n, 0));
-    });
+    finds_the_ports(&text, &stmts, &res, 3);
+    let out = run("helper_chain", &text, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "x\n"),
+        "{}",
+        out.stderr
+    );
 }

@@ -2,7 +2,6 @@
 //! file port as `main::files`, in a unit with no `main` too and with `main` in parentheses; no
 //! function calls `main` or uses it as a value; and the old call `files()` is gone.
 
-use zed_tests::scaling::{check, inputs};
 use zed_tests::step_helpers::l01_21_test_runner::checks;
 use zedc::run::load;
 
@@ -295,7 +294,7 @@ fn a_record_of_a_helper_read_replays_and_names_main_files() {
 
 /// `n` helpers before `main` and `n` after it, each reading `main::files` once, and `main`
 /// calling each.
-fn helpers(n: usize) -> String {
+pub(super) fn helpers(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
         src.push_str(&format!("b{i}(positional p) = main::files[p] else \"\";\n"));
@@ -311,13 +310,18 @@ fn helpers(n: usize) -> String {
     src
 }
 
+/// Loads [`helpers`]: the program reads `main::files`. The builder finds the reads outside
+/// `main` in one walk of the tree before it builds `main`'s header, and the resolver gives
+/// each its port in constant time.
+pub(super) fn loads_the_helpers(src: &str) {
+    let program = load(src.as_bytes()).unwrap();
+    assert!(program.inputs().iter().any(|(p, _)| p == "main::files"));
+}
+
+/// Helpers before and after `main` that read `main::files` load, with the file port
+/// (`bench::reads_of_main_files_outside_main_load_in_linear_time` at a small size; a run of
+/// helpers before and after `main` is `a_function_other_than_main_reads_main_files`).
 #[test]
-fn reads_of_main_files_outside_main_load_in_linear_time() {
-    // The builder finds the reads outside `main` in one walk of the tree before it builds
-    // `main`'s header, and the resolver gives each its port in constant time.
-    let srcs = inputs(100, helpers);
-    check("loading n helpers that read main::files", 100, |n| {
-        let program = load(srcs[&n].as_bytes()).unwrap();
-        assert!(program.inputs().iter().any(|(p, _)| p == "main::files"));
-    });
+fn reads_of_main_files_before_and_after_main_load() {
+    loads_the_helpers(&helpers(2));
 }

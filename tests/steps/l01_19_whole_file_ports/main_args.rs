@@ -1,7 +1,6 @@
 //! `main(m: MainArgs) -> int` (DESIGN.md sec:ports, QUESTIONS Q51): the header `main` may
 //! have, the exit status its result gives, and the direction each field of `MainArgs` has.
 
-use zed_tests::scaling::{check, inputs};
 use zedc::run::load;
 
 use super::run;
@@ -185,7 +184,7 @@ fn a_field_is_used_only_in_its_direction() {
 }
 
 /// `main` whose result is an `if` chain of `n` branches, each giving a status from 0 to 255.
-fn chain(n: usize) -> String {
+pub(super) fn chain(n: usize) -> String {
     let mut src =
         String::from("main(m: MainArgs) -> int {\n  x = int(m.stdin[0] else \"\") else 0;\n  ");
     for i in 0..n {
@@ -195,22 +194,25 @@ fn chain(n: usize) -> String {
     src
 }
 
+/// Loads a [`chain`]: its status is proved a byte, and it reads `m.stdin`.
+pub(super) fn loads_the_chain(src: &str) {
+    let program = load(src.as_bytes()).unwrap();
+    assert!(program.inputs().iter().any(|(p, _)| p == "m.stdin"));
+}
+
+/// An `if` chain whose every branch gives a byte is a status, and the chain runs
+/// (`bench::the_status_of_a_long_if_chain_is_checked_in_linear_time` at a small size).
 #[test]
-fn the_status_of_a_long_if_chain_is_checked_in_linear_time() {
-    let srcs = inputs(400, chain);
-    check(
-        "checking the status of an if chain of n branches",
-        400,
-        |n| {
-            let program = load(srcs[&n].as_bytes()).unwrap();
-            assert!(program.inputs().iter().any(|(p, _)| p == "m.stdin"));
-        },
-    );
+fn the_status_of_an_if_chain_is_checked_and_given() {
+    let src = chain(3);
+    loads_the_chain(&src);
+    assert_eq!(run("status_chain", &src, "2\n", &[]).status, 2);
+    assert_eq!(run("status_chain", &src, "9\n", &[]).status, 0);
 }
 
 /// `n` `main`s, each reading `m.stdin`, then `n` functions that each read a field of their
 /// parameter: the builder asks of each read whether a `main`'s body holds it.
-fn mains_then_reads(n: usize) -> String {
+pub(super) fn mains_then_reads(n: usize) -> String {
     let mut src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n".repeat(n);
     for i in 0..n {
         src.push_str(&format!("f{i}(positional p) = p.x;\n"));
@@ -218,15 +220,17 @@ fn mains_then_reads(n: usize) -> String {
     src
 }
 
+/// Builds the syntax tree of [`mains_then_reads`] of `n`: `2n` statements. The resolver
+/// rejects the second `main`; the syntax tree is built before it.
+pub(super) fn builds_the_reads(text: &str, n: usize) {
+    let tokens = zedc::lex::lex(text).unwrap();
+    let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+    let stmts = zedc::ast::unit(text, &tokens, &tree).unwrap();
+    assert_eq!(stmts.len(), 2 * n);
+}
+
+/// `bench::building_the_reads_after_n_mains_is_linear` at a small size.
 #[test]
-fn building_the_reads_after_n_mains_is_linear() {
-    // The resolver rejects the second `main`; the syntax tree is built before it.
-    let srcs = inputs(3000, mains_then_reads);
-    check("building n field reads after n mains", 3000, |n| {
-        let text = &srcs[&n];
-        let tokens = zedc::lex::lex(text).unwrap();
-        let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
-        let stmts = zedc::ast::unit(text, &tokens, &tree).unwrap();
-        assert_eq!(stmts.len(), 2 * n);
-    });
+fn the_reads_after_several_mains_are_built() {
+    builds_the_reads(&mains_then_reads(3), 3);
 }
