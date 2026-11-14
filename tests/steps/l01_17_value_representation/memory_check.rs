@@ -6,8 +6,8 @@
 //!
 //! The refusal is real: each such test runs again in a child process, builds its operands,
 //! and then lowers the child's address-space limit (`RLIMIT_AS`) to what it already uses plus
-//! [`MARGIN`]. An allocation that was not asked for first would then abort the child, which
-//! the parent reports as a failure.
+//! a margin ([`margin`]). An allocation that was not asked for first would then abort the
+//! child, which the parent reports as a failure.
 
 use num_bigint::{BigInt, BigUint};
 use zed_kernel::num::{TooLarge, bits_of_digits, bytes_of, bytes_text, memory_clause};
@@ -16,7 +16,7 @@ use zed_kernel::{Evidence, Family, FixKind, KernelError, Pattern, Prim, Rat, Ter
 use zed_tests::kernel::{bin, get, path};
 
 pub(crate) use zed_tests::step_helpers::l01_17_value_representation::{
-    MARGIN, WIDE, in_child_at, lower_limit, lower_limit_by, margin,
+    WIDE, in_child_at, lower_limit, lower_limit_by, margin,
 };
 
 /// In the parent, runs the test `name` of this module again in a child process and returns
