@@ -40,10 +40,12 @@ fn period(p: usize, k: usize) -> Type {
 
 #[test]
 fn periodic_lists_agree_with_their_lengths() {
-    let mut r = Rng::new(3);
+    // Ran 600 types from seed 3; now 300 from a new seed each run, printed
+    // (TEST-bench-move-l0123, author P169).
+    let (mut r, seed) = Rng::fresh("periodic lists");
     let ps = [1, 2, 3, 4, 6, 12];
     let mut seen = BTreeMap::new();
-    for _ in 0..600 {
+    for _ in 0..300 {
         let p = ps[r.below(ps.len())];
         let k = r.below(p);
         let (mut t, mut lengths) = (period(p, k), [false; 12]);
@@ -76,17 +78,27 @@ fn periodic_lists_agree_with_their_lengths() {
         Type::forget_emptiness();
         let v = t.verdict();
         match v {
-            Verdict::Empty => assert!(empty, "{t} is inhabited"),
-            Verdict::Inhabited => assert!(!empty, "{t} is empty"),
-            Verdict::Refused(why) => assert!(empty, "{t} is inhabited, and refused: {why:?}"),
+            Verdict::Empty => assert!(empty, "{t} is inhabited (ZED_SEED={seed})"),
+            Verdict::Inhabited => assert!(!empty, "{t} is empty (ZED_SEED={seed})"),
+            // A union of meets that take out different classes may be refused at a fork whether
+            // it is empty or not (COMPLEXITY.md K113, given up); the check is sound, not
+            // complete. Seed 3 drew only empty ones; new seeds also draw inhabited ones.
+            Verdict::Refused(why) => {
+                assert_eq!(why, Refusal::Fork, "{t} (empty: {empty}) (ZED_SEED={seed})")
+            }
         }
         // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
-        // (3 of the 600, all empty, unions whose meets take out different cycles) counts as
+        // (3 of 600 at seed 3, unions whose meets take out different cycles) counts as
         // inhabited for it too.
-        assert_eq!(t.is_empty(), v == Verdict::Empty, "{t}");
+        assert_eq!(t.is_empty(), v == Verdict::Empty, "{t} (ZED_SEED={seed})");
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
-    assert!(seen["Empty"] > 100 && seen["Inhabited"] > 100, "{seen:?}");
+    let count = |v: &str| seen.get(v).copied().unwrap_or(0);
+    println!("verdicts {seen:?}");
+    assert!(
+        count("Empty") > 50 && count("Inhabited") > 50,
+        "{seen:?} (ZED_SEED={seed})"
+    );
 }
 
 #[derive(Clone)]

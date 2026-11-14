@@ -701,27 +701,30 @@ fn each_value_agrees_with_a_search_of_all_points() {
     let all = up(&up(&ints));
     let mentions_seven = |v: &Value| v.to_string().contains('7');
     let (mut listed_count, mut infinite, mut missed) = (0, 0, 0);
-    let mut seed = 7;
+    // The generator starts from a new seed each run, printed; it was 7 (TEST-bench-move-l0123,
+    // author P169).
+    let (_, first) = Rng::fresh("random mixed types");
+    let mut seed = first;
     for _ in 0..1500 {
         let t = random_mixed(&mut seed, 4, 2);
         let holds: Vec<&Value> = all.iter().filter(|v| t.contains(v)).collect();
         let finite = !holds.iter().any(|v| mentions_seven(v));
         match listed(&t) {
             Some(got) => {
-                assert!(finite, "an infinite type listed: {t}");
+                assert!(finite, "an infinite type listed: {t} (ZED_SEED={first})");
                 // Listing merges boxes (LIST-box-overlap), and is known finite exactly when
                 // `finite` says so.
-                assert!(t.finite(), "{t}");
+                assert!(t.finite(), "{t} (ZED_SEED={first})");
                 let want: BTreeSet<Value> = holds.into_iter().cloned().collect();
-                assert_eq!(got, want, "{t}");
+                assert_eq!(got, want, "{t} (ZED_SEED={first})");
                 listed_count += 1;
             }
             None if finite => {
-                assert!(!t.finite(), "{t}");
+                assert!(!t.finite(), "{t} (ZED_SEED={first})");
                 missed += 1
             }
             None => {
-                assert!(!t.finite(), "{t}");
+                assert!(!t.finite(), "{t} (ZED_SEED={first})");
                 infinite += 1
             }
         }
@@ -729,7 +732,7 @@ fn each_value_agrees_with_a_search_of_all_points() {
     eprintln!("listed {listed_count}, infinite {infinite}, finite but not known finite {missed}");
     assert!(
         listed_count > 300 && infinite > 300,
-        "{listed_count} listed, {infinite} infinite"
+        "{listed_count} listed, {infinite} infinite (ZED_SEED={first})"
     );
 }
 

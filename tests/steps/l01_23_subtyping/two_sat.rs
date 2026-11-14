@@ -140,7 +140,8 @@ fn deep(f: impl FnOnce() + Send) {
 #[test]
 fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
     deep(|| {
-        let mut g = Rng::new(23);
+        // A new seed each run, printed; it was seed 23 (TEST-bench-move-l0123, author P169).
+        let (mut g, seed) = Rng::fresh("random 2-CNF");
         let (mut empty, mut inhabited) = (0, 0);
         for vars in 1..=10 {
             for _ in 0..24 {
@@ -162,9 +163,17 @@ fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
                 } else {
                     Verdict::Empty
                 };
-                assert_eq!(t.verdict(), expected, "{vars} variables, {clauses:?}");
+                assert_eq!(
+                    t.verdict(),
+                    expected,
+                    "{vars} variables, {clauses:?} (ZED_SEED={seed})"
+                );
                 Type::forget_emptiness();
-                assert_eq!(t.is_empty(), !sat, "{vars} variables, {clauses:?}");
+                assert_eq!(
+                    t.is_empty(),
+                    !sat,
+                    "{vars} variables, {clauses:?} (ZED_SEED={seed})"
+                );
                 if sat {
                     inhabited += 1;
                 } else {
@@ -175,7 +184,7 @@ fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
         // Both answers are met.
         assert!(
             empty >= 20 && inhabited >= 20,
-            "{empty} empty, {inhabited} inhabited"
+            "{empty} empty, {inhabited} inhabited (ZED_SEED={seed})"
         );
     });
 }

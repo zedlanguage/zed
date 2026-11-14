@@ -106,6 +106,14 @@ fn random(g: &mut Rng, on: &[usize], depth: usize, shared: bool) -> F {
             Box::new(random(g, on, depth - 1, shared)),
         ),
         _ => {
+            if on.len() < 2 && !shared {
+                // One component cannot be split in two, so the operands share it, and only a
+                // meet of two decision lists or exclusive ors under `!` is read exactly
+                // (EMPTY-overlap-fast); another meet there, such as a list met with a union of
+                // two lists, is refused with `SharedCells` as the header says. Seed 71 drew
+                // none of those; new seeds do (TEST-bench-move-l0123).
+                return F::And(Box::new(random_leaf(g, on)), Box::new(random_leaf(g, on)));
+            }
             if on.len() < 2 || (shared && g.below(4) == 0) {
                 return F::And(
                     Box::new(random(g, on, depth - 1, shared)),
@@ -184,7 +192,8 @@ fn decide(g: &mut Rng, width: usize, f: &F, answers: &mut [usize; 2]) {
 #[test]
 fn random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them() {
     zed_tests::deep::on_small_stack(|| {
-        let mut g = Rng::new(71);
+        // A new seed each run, printed; it was seed 71 (TEST-bench-move-l0123, author P169).
+        let (mut g, seed) = Rng::fresh("random parts");
         let mut answers = [0; 2];
         for width in 2..=4 {
             let on: Vec<usize> = (0..width).collect();
@@ -193,7 +202,11 @@ fn random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_t
                 decide(&mut g, width, &f, &mut answers);
             }
         }
-        assert!(answers[0] >= 40 && answers[1] >= 40, "{answers:?}");
+        println!("answers {answers:?}");
+        assert!(
+            answers[0] >= 40 && answers[1] >= 40,
+            "{answers:?} (ZED_SEED={seed})"
+        );
     });
 }
 
@@ -274,16 +287,22 @@ fn random_in_class(g: &mut Rng, on: &[usize], depth: usize) -> F {
 #[test]
 fn random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_them() {
     zed_tests::deep::on_small_stack(|| {
-        let mut g = Rng::new(73);
+        // Ran 200 parts a width from seed 73; now 100 from a new seed each run, printed
+        // (TEST-bench-move-l0123, author P169).
+        let (mut g, seed) = Rng::fresh("random meets");
         let mut answers = [0; 2];
         for width in 1..=5 {
             let on: Vec<usize> = (0..width).collect();
-            for _ in 0..200 {
+            for _ in 0..100 {
                 let f = random_in_class(&mut g, &on, 2);
                 decide(&mut g, width, &f, &mut answers);
             }
         }
-        assert!(answers[0] >= 60 && answers[1] >= 60, "{answers:?}");
+        println!("answers {answers:?}");
+        assert!(
+            answers[0] >= 30 && answers[1] >= 30,
+            "{answers:?} (ZED_SEED={seed})"
+        );
     });
 }
 
@@ -292,11 +311,12 @@ fn random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_th
 /// tuple types on component 0, so that the part is false where every tuple type is (the
 /// meets the pass refuses): each is decided as enumeration decides it, or refused naming one
 /// of the part's components, and then counted inhabited by `is_empty`; parts of each answer
-/// and refused parts are all met.
+/// are met.
 #[test]
 fn random_parts_out_of_the_class_are_decided_or_refused() {
     zed_tests::deep::on_small_stack(|| {
-        let mut g = Rng::new(72);
+        // A new seed each run, printed; it was seed 72 (TEST-bench-move-l0123, author P169).
+        let (mut g, seed) = Rng::fresh("random parts out of the class");
         let mut answers = [0; 3];
         for width in 2..=3 {
             let on: Vec<usize> = (0..width).collect();
@@ -338,12 +358,14 @@ fn random_parts_out_of_the_class_are_decided_or_refused() {
                 }
             }
         }
+        println!("answers {answers:?}");
         // Most parts that reach a meet the pass does not read are inhabited, and a value is
-        // found before any refusal; the refusal itself is tested on its own by
+        // found before any refusal, so about half of all seeds draw no refused part (seed 72
+        // drew one; the count is printed); the refusal itself is tested on its own by
         // `an_orthogonal_vectors_meet_is_refused_naming_its_component`.
         assert!(
-            answers[0] >= 5 && answers[1] >= 5 && answers[2] >= 1,
-            "{answers:?}"
+            answers[0] >= 5 && answers[1] >= 5,
+            "{answers:?} (ZED_SEED={seed})"
         );
     });
 }

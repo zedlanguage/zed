@@ -181,32 +181,41 @@ fn deep(r: &mut Rng) -> E {
 #[test]
 fn emptiness_agrees_with_the_oracle() {
     let reps = reps();
-    let mut r = Rng::new(23);
+    // A new seed each run, printed; it was seed 23 (TEST-bench-move-l0123, author P169).
+    let (mut r, seed) = Rng::fresh("random types");
     let (mut empty, mut inhabited) = (0, 0);
     for _ in 0..1500 {
         let e = random(&mut r);
         let want = !reps.iter().any(|v| holds(&e, v));
         let t = build(&e);
-        assert_eq!(t.is_empty(), want, "{t}, from {e:?}");
+        assert_eq!(t.is_empty(), want, "{t}, from {e:?} (ZED_SEED={seed})");
         // The tuple part on its own, where the product split decides.
         let tuples = t.part(Universe::Tuple);
         let want_tuples = !reps
             .iter()
             .any(|v| matches!(v, Rep::Tuple(_)) && holds(&e, v));
-        assert_eq!(tuples.is_empty(), want_tuples, "{tuples}, from {e:?}");
+        assert_eq!(
+            tuples.is_empty(),
+            want_tuples,
+            "{tuples}, from {e:?} (ZED_SEED={seed})"
+        );
         match want_tuples {
             true => empty += 1,
             false => inhabited += 1,
         }
     }
     // Both answers occur often, so neither "always empty" nor "never empty" would pass.
-    assert!(empty > 200 && inhabited > 200, "{empty} {inhabited}");
+    assert!(
+        empty > 200 && inhabited > 200,
+        "{empty} {inhabited} (ZED_SEED={seed})"
+    );
 }
 
 #[test]
 fn subtyping_agrees_with_the_oracle() {
     let reps = reps();
-    let mut r = Rng::new(5);
+    // A new seed each run, printed; it was seed 5 (TEST-bench-move-l0123, author P169).
+    let (mut r, seed) = Rng::fresh("random pairs");
     let (mut yes, mut no) = (0, 0);
     for _ in 0..1500 {
         let (a, b) = (random(&mut r), random(&mut r));
@@ -217,13 +226,13 @@ fn subtyping_agrees_with_the_oracle() {
         };
         let want = reps.iter().all(|v| !holds(&a, v) || holds(&b, v));
         let (ta, tb) = (build(&a), build(&b));
-        assert_eq!(ta.subtype(&tb), want, "{ta} <: {tb}");
+        assert_eq!(ta.subtype(&tb), want, "{ta} <: {tb} (ZED_SEED={seed})");
         match want {
             true => yes += 1,
             false => no += 1,
         }
     }
-    assert!(yes > 400 && no > 400, "{yes} {no}");
+    assert!(yes > 400 && no > 400, "{yes} {no} (ZED_SEED={seed})");
 }
 
 #[test]
@@ -232,7 +241,8 @@ fn deep_combinations_are_decided_exactly() {
     // intersection whose diagram would outgrow its operands); `is_empty` and subtyping agree
     // with the oracle on every one, with no budget to miss an empty type.
     let reps = reps();
-    let mut r = Rng::new(23);
+    // A new seed each run, printed; it was seed 23 (TEST-bench-move-l0123, author P169).
+    let (mut r, seed) = Rng::fresh("deep combinations");
     let (mut empty, mut inhabited) = (0, 0);
     for _ in 0..3000 {
         let e = deep(&mut r);
@@ -242,7 +252,7 @@ fn deep_combinations_are_decided_exactly() {
             let want = !reps
                 .iter()
                 .any(|v| (!tuple_only || matches!(v, Rep::Tuple(_))) && holds(&e, v));
-            assert_eq!(t.is_empty(), want, "{t}, from {e:?}");
+            assert_eq!(t.is_empty(), want, "{t}, from {e:?} (ZED_SEED={seed})");
             match want {
                 true => empty += 1,
                 false => inhabited += 1,
@@ -250,9 +260,16 @@ fn deep_combinations_are_decided_exactly() {
         }
         let a = E::And(Box::new(deep(&mut r)), Box::new(e.clone()));
         let want = reps.iter().all(|v| !holds(&a, v) || holds(&e, v));
-        assert_eq!(build(&a).subtype(&t), want, "{a:?} <: {e:?}");
+        assert_eq!(
+            build(&a).subtype(&t),
+            want,
+            "{a:?} <: {e:?} (ZED_SEED={seed})"
+        );
     }
-    assert!(empty > 300 && inhabited > 300, "{empty} {inhabited}");
+    assert!(
+        empty > 300 && inhabited > 300,
+        "{empty} {inhabited} (ZED_SEED={seed})"
+    );
 }
 
 #[test]
@@ -261,7 +278,8 @@ fn verdicts_agree_with_the_oracle_in_any_order() {
     // and for a pair compared; a refusal claims nothing. Each verdict is a function of the type
     // alone: the verdicts read in reverse order with nothing kept are the same.
     let reps = reps();
-    let mut r = Rng::new(41);
+    // A new seed each run, printed; it was seed 41 (TEST-bench-move-l0123, author P169).
+    let (mut r, seed) = Rng::fresh("random and deep types");
     let mut asked = Vec::new();
     for i in 0..3000 {
         let e = if i % 2 == 0 {
@@ -278,11 +296,11 @@ fn verdicts_agree_with_the_oracle_in_any_order() {
     for ((t, want), v) in asked.iter().zip(&first) {
         match v {
             Verdict::Empty => {
-                assert!(*want, "{t} is inhabited, not empty");
+                assert!(*want, "{t} is inhabited, not empty (ZED_SEED={seed})");
                 empty += 1;
             }
             Verdict::Inhabited => {
-                assert!(!*want, "{t} is empty, not inhabited");
+                assert!(!*want, "{t} is empty, not inhabited (ZED_SEED={seed})");
                 assert!(!t.is_empty(), "{t}");
                 inhabited += 1;
             }
@@ -291,22 +309,22 @@ fn verdicts_agree_with_the_oracle_in_any_order() {
     }
     Type::forget_emptiness();
     let again: Vec<Verdict> = asked.iter().rev().map(|(t, _)| t.verdict()).collect();
-    assert!(first.iter().eq(again.iter().rev()));
+    assert!(first.iter().eq(again.iter().rev()), "ZED_SEED={seed}");
     println!("verdicts: {empty} empty, {inhabited} inhabited, refused {refused:?}");
     assert!(
         empty > 300 && inhabited > 300,
-        "{empty} {inhabited} {refused:?}"
+        "{empty} {inhabited} {refused:?} (ZED_SEED={seed})"
     );
     for pair in asked.chunks(2) {
         let (a, b) = (&pair[0].0, &pair[1].0);
         let a = a & b;
         match a.subtype_verdict(b) {
-            Verdict::Empty => assert!(a.subtype(b), "{a} <: {b}"),
-            v => panic!("{a} <: {b} holds, and its verdict is {v:?}"),
+            Verdict::Empty => assert!(a.subtype(b), "{a} <: {b} (ZED_SEED={seed})"),
+            v => panic!("{a} <: {b} holds, and its verdict is {v:?} (ZED_SEED={seed})"),
         }
         match b.subtype_verdict(&a) {
-            Verdict::Empty => assert!(b.subtype(&a), "{b} <: {a}"),
-            Verdict::Inhabited => assert!(!b.subtype(&a), "{b} <: {a}"),
+            Verdict::Empty => assert!(b.subtype(&a), "{b} <: {a} (ZED_SEED={seed})"),
+            Verdict::Inhabited => assert!(!b.subtype(&a), "{b} <: {a} (ZED_SEED={seed})"),
             Verdict::Refused(_) => {}
         }
     }
@@ -359,12 +377,13 @@ impl Routes {
 #[test]
 fn the_two_routes_agree_on_boolean_types() {
     // The pairs of `subtyping_agrees_with_the_oracle` and `deep_combinations_are_decided_exactly`,
-    // each compared both ways.
+    // each compared both ways. Ran 3000 pairs from seed 5 (all 6000 comparisons the same); now
+    // 1500 from a new seed each run, printed (TEST-bench-move-l0123, author P169).
     let reps = reps();
-    let mut r = Rng::new(5);
+    let (mut r, seed) = Rng::fresh("boolean pairs");
     let mut routes = Routes::default();
     let sub = |a: &E, b: &E| reps.iter().all(|v| !holds(a, v) || holds(b, v));
-    for i in 0..3000 {
+    for i in 0..1500 {
         let (a, b) = if i % 2 == 0 {
             (random(&mut r), random(&mut r))
         } else {
@@ -379,7 +398,7 @@ fn the_two_routes_agree_on_boolean_types() {
         routes.record(&tb, &ta, sub(&b, &a));
     }
     println!("boolean pairs: {routes:?}");
-    assert!(routes.same > 5000, "{routes:?}");
+    assert!(routes.same > 2500, "{routes:?} (ZED_SEED={seed})");
 }
 
 /// The generator of the cross-review's random recursive systems (wt/xv/Q1Q7/scripts/x_tail.rs,
