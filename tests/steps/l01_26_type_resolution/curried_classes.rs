@@ -79,3 +79,25 @@ fn lambdas_whose_classes_are_read_inside_check_as_when_replaced_at_every_depth()
     }
     assert_eq!(got.lines().count(), want.lines().count());
 }
+
+/// A class merged into another after a call's signature was kept is finished through the
+/// binding of the one to the other (`Ck::finished`): the call `h(x)` keeps `h`'s signature
+/// `(y) -> (y, z)` with the class of `z`, which `x + z` then merges into that of `x`, named `T`
+/// as `p` ends. Only the signature of `p` is checked here: the call's signature names `h`'s own
+/// variable and `p`'s `T` alike (row FAIL-check-finished-names-clash).
+#[test]
+fn a_class_merged_after_a_call_is_finished_as_the_class_it_joined() {
+    let program = "p(x, z) = { h = (y) -> (y, z); r = h(x); s = x + z; r };\n";
+    let got = findings(program);
+    let sig = got.lines().find(|l| l.starts_with("sig p = "));
+    assert_eq!(
+        sig,
+        Some("sig p = (x: T, z: T) -> (T, T) for T in int | f32 | f64 | rat"),
+        "{got}"
+    );
+    assert!(
+        got.lines().any(|l| l.starts_with("call \"h(x)\" = ")),
+        "{got}"
+    );
+    assert!(!got.lines().any(|l| l.starts_with("err ")), "{got}");
+}

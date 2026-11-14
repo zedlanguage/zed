@@ -9,7 +9,8 @@ use zed_tests::scaling;
 use zedc::check::ty;
 
 use super::super::deep_ops::{
-    self, functions, levels, shared, shared_value, sig, tuples, value, y, z,
+    self, functions, levels, shared, shared_payload_sig, shared_payloads, shared_value, sig,
+    tuples, value, y, z,
 };
 
 /// The depth of the deep checks here. They ran 100,000 deep on a 2 MiB stack (T2-ty), and the
@@ -356,5 +357,55 @@ fn subtype_fits_why_and_diff_cost_a_bounded_number_of_instructions_a_level() {
     assert!(
         over.is_empty(),
         "instructions a level over the bound: {over:?}"
+    );
+}
+
+/// Besides its ratio: payloads `#a(t, t)` n deep, each shared by both places that hold it,
+/// with a variable at the bottom, are within the same under another variable, which binds it.
+/// Small instance: `deep_ops::shared_payloads_with_a_variable_are_compared_once_a_level`.
+#[test]
+fn sub_of_shared_payloads_takes_linear_time() {
+    linear(
+        "sub of two shared payloads n deep, a variable at the bottom",
+        2000,
+        |k| (shared_payloads(k, "B"), shared_payloads(k, "C")),
+        |(a, b)| assert!(a.sub(b, &mut ty::Binds::new())),
+    );
+}
+
+/// Besides its ratio: a signature of payloads `#a(t, t)` n deep, each shared by both places
+/// that hold it, with a bounded variable at the bottom, fits itself under another name. Each
+/// side's payloads are read once each (`Cx::read`, its memo by shape), so the read is O(n).
+/// Small instance: `deep_ops::a_bounded_variable_in_shared_payloads_is_read_as_elsewhere`.
+#[test]
+fn a_signature_of_shared_payloads_fits_itself_renamed_in_linear_time() {
+    linear(
+        "a signature of shared payloads n deep, fitting itself renamed",
+        2000,
+        |k| {
+            (
+                shared_payload_sig(k, "B", "int | f64"),
+                shared_payload_sig(k, "C", "int"),
+            )
+        },
+        |(s, q)| assert!(ty::fits_sig(s, q)),
+    );
+}
+
+/// Besides its ratio: tuples `(t, t)` n deep, each shared by both places that hold it, with a
+/// variable at the bottom, are within the same under another variable, which binds it.
+/// Small instance: `deep_ops::shared_payloads_with_a_variable_are_compared_once_a_level`.
+#[test]
+fn sub_of_shared_tuples_with_a_variable_takes_linear_time() {
+    linear(
+        "sub of two shared tuples n deep, a variable at the bottom",
+        2000,
+        |k| {
+            (
+                shared(k, ty::Ty::var("B".into())),
+                shared(k, ty::Ty::var("C".into())),
+            )
+        },
+        |(a, b)| assert!(a.sub(b, &mut ty::Binds::new())),
     );
 }

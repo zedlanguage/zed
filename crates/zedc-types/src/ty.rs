@@ -3321,6 +3321,18 @@ pub struct Binds {
     /// the order of the names, when there is one: a variable is bound to a piece only where its
     /// type there may hold it ([`accepts`]). Shared, as `bounds` is.
     ceilings: Option<Ceilings>,
+    /// The sum, wrapping, of the hash of each binding ([`bind_digest`]), kept as the map
+    /// changes, so equal maps have equal digests, by which [`Compared`] files the binding in
+    /// `O(1)`, not in its size.
+    digest: u64,
+}
+
+/// The hash of the binding of `v` to `t`, a term of [`Binds`]'s digest. A sum of the terms,
+/// not a hash of the whole map, so a change to one binding changes the digest by its own
+/// terms only: `O(t)` for the type bound, which the change already cost.
+fn bind_digest(v: &str, t: &Ty) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    BuildHasherDefault::<DefaultHasher>::default().hash_one((v, t))
 }
 
 /// The map of a [`Binds`]: each variable bound, by name, with its type.
@@ -3420,39 +3432,58 @@ impl Binds {
         {
             keys.add(&v);
         }
-        self.map.insert(v, t)
+        self.digest = self.digest.wrapping_add(bind_digest(&v, &t));
+        let old = self.map.insert(v.clone(), t);
+        if let Some(o) = &old {
+            self.digest = self.digest.wrapping_sub(bind_digest(&v, o));
+        }
+        old
     }
 
     /// Unbinds `v`, giving what it was bound to.
     pub fn remove(&mut self, v: &str) -> Option<Ty> {
         let out = self.map.remove(v);
-        if let Some(keys) = self.keys.get_mut()
-            && out.is_some()
-        {
-            keys.remove(v);
+        if let Some(o) = &out {
+            self.digest = self.digest.wrapping_sub(bind_digest(v, o));
+            if let Some(keys) = self.keys.get_mut() {
+                keys.remove(v);
+            }
         }
         out
     }
 
-    /// What `v` is bound to, bound to `f()` first if it is not bound.
-    pub fn or_insert_with(&mut self, v: Arc<str>, f: impl FnOnce() -> Ty) -> &mut Ty {
+    /// What `v` is bound to, bound to `f()` first if it is not bound. Read only: a change made
+    /// in place would not reach the digest.
+    pub fn or_insert_with(&mut self, v: Arc<str>, f: impl FnOnce() -> Ty) -> &Ty {
         if !self.map.contains_key(&v) {
             self.insert(v.clone(), f());
         }
-        self.map.get_mut(&v).expect("bound just now")
+        self.map.get(&v).expect("bound just now")
+    }
+
+    /// Binds `v` to what it is bound to, if anything, and `t`.
+    pub fn unite(&mut self, v: Arc<str>, t: &Ty) {
+        let u = match self.map.get(&v) {
+            Some(b) => b.union(t),
+            None => Ty::empty().union(t),
+        };
+        self.insert(v, u);
     }
 
     /// Changes each type bound by `f`, in the order of the names. The map is persistent and
     /// lends no mutable iterator, so it is rebuilt from its sorted entries: O(n) for n
-    /// bindings, as the walk of a `BTreeMap` was, the names unchanged.
+    /// bindings, as the walk of a `BTreeMap` was, the names unchanged, and so is the digest.
     pub fn update_each(&mut self, mut f: impl FnMut(&mut Ty)) {
+        let mut digest = 0u64;
         self.map = std::mem::take(&mut self.map)
             .into_iter()
             .map(|(v, mut t)| {
                 f(&mut t);
+                digest = digest.wrapping_add(bind_digest(&v, &t));
                 (v, t)
             })
             .collect();
+        self.digest = digest;
     }
 
     /// Keeps the bindings `f` keeps: the names to drop are found in one walk and removed
@@ -3463,12 +3494,17 @@ impl Binds {
             .map(|(v, _)| v.clone())
             .collect();
         for v in &drop {
-            self.map.remove(v);
+            self.remove(v);
         }
-        if let Some(keys) = self.keys.get_mut() {
-            for v in &drop {
-                keys.remove(v);
-            }
+    }
+
+    /// The binding of `map`, its digest found.
+    fn of_map(map: BindMap) -> Binds {
+        let digest = (map.iter()).fold(0u64, |d, (v, t)| d.wrapping_add(bind_digest(v, t)));
+        Binds {
+            map,
+            digest,
+            ..Binds::default()
         }
     }
 }
@@ -3503,12 +3539,7 @@ impl Extend<(Arc<str>, Ty)> for Binds {
 
 impl FromIterator<(Arc<str>, Ty)> for Binds {
     fn from_iter<I: IntoIterator<Item = (Arc<str>, Ty)>>(iter: I) -> Binds {
-        Binds {
-            map: iter.into_iter().collect(),
-            keys: std::sync::OnceLock::new(),
-            bounds: None,
-            ceilings: None,
-        }
+        Binds::of_map(iter.into_iter().collect())
     }
 }
 
@@ -3520,12 +3551,7 @@ impl<const N: usize> From<[(Arc<str>, Ty); N]> for Binds {
 
 impl From<BTreeMap<Arc<str>, Ty>> for Binds {
     fn from(map: BTreeMap<Arc<str>, Ty>) -> Binds {
-        Binds {
-            map: map.into_iter().collect(),
-            keys: std::sync::OnceLock::new(),
-            bounds: None,
-            ceilings: None,
-        }
+        Binds::of_map(map.into_iter().collect())
     }
 }
 
@@ -3633,6 +3659,32 @@ struct Cx<'s> {
     /// `s` may bind as it likes, read as `Never` where its parameters do not bind them
     /// ([`Binds::of_arrow`]).
     free: SortedNames,
+    /// The answer of each comparison of a row or payload shape with another, with the binding
+    /// it gave, made in the innermost comparison of function types open now, or outside every
+    /// one, by the two nodes and the binding it was given ([`Compared`]): a pair of nodes met
+    /// again on another path with the same binding is not compared again
+    /// ([`Comparing::rows`], [`Comparing::shape_in`]). Set aside by [`Cx::open`] and given back
+    /// by [`Cx::forget`], as the names a comparison of function types reads may mean other
+    /// variables there: an own variable read as itself in one comparison and in another beside
+    /// it with another bound (`own_bounds`). Kept only where nothing was refused
+    /// ([`Comparing::keep`]).
+    //
+    // Complexity tradeoff (COMPLEXITY.md row FAIL-types-sub-shared-payloads): naive version,
+    // each pair compared once for each path to it: payloads or tuples `#a(t, t)` n deep, each
+    // shared by both places that hold it, with a variable at the bottom, cost O(2^n) (n = 14
+    // took 182 ms, n = 2,000 did not end). Used: the answer kept by the two nodes and the
+    // binding in force, so each pair is compared once for each binding it is met with, there
+    // one or two, and the comparison costs O(n); each comparison of a pair now costs a lookup,
+    // hashed by the digest the binding keeps (`O(1)`), and the binding is compared in full
+    // on a hash match only. Prior work: the memo by node of `Cx::read` (commit ced805157) and
+    // the pairs of nodes met of [`Same`] and of the meet's walk, which need no binding in the
+    // key, as their answers depend on the two nodes alone; `fitted`, which keeps a verdict
+    // with its refusal. Tradeoff: one entry per pair and binding met, held until the
+    // comparison of function types around ends, and the digest's upkeep on each change to a
+    // binding, a hash of the type bound, which the change already cost. Not done: a binding
+    // that differs on a variable neither node holds still misses; restricting the key to the
+    // variables the two nodes hold would need their variables at hand as a set.
+    compared: HashMap<Compared, (bool, Binds)>,
 }
 
 /// A verdict kept in [`Cx::fitted`]: whether the function fits, and why the comparison was
@@ -3803,8 +3855,10 @@ impl Cx<'_> {
         solved.iter().fold(out, |o, u| o.union(u))
     }
 
-    /// Forgets the names made and the own variables kept since `mark`.
+    /// Forgets the names made and the own variables kept since `mark`, and the comparisons of
+    /// rows and payload shapes made since, giving back those of the comparison around.
     fn forget(&mut self, mark: Mark) {
+        self.compared = mark.compared;
         for w in self.made.drain(mark.made..) {
             self.rigid.remove(&w);
             self.fns.remove(&w);
@@ -3871,12 +3925,70 @@ impl Cx<'_> {
     }
 }
 
-/// Where [`Cx::open`] left [`Cx::made`] and [`Cx::own`], for [`Cx::forget`].
-#[derive(Clone, Copy)]
+/// Where [`Cx::open`] left [`Cx::made`] and [`Cx::own`], and the comparisons of rows and
+/// payload shapes of the comparison around it ([`Cx::compared`]), for [`Cx::forget`].
 struct Mark {
     made: usize,
     own: usize,
+    compared: HashMap<Compared, (bool, Binds)>,
 }
+
+/// A comparison of the row or payload shape numbered `left` with the one numbered `right`
+/// ([`Comparing::rows`], [`Comparing::shape_in`]) under the binding `binds`, by which its
+/// answer is kept in [`Cx::compared`]. Hashed by the two numbers and the binding's digest, in
+/// `O(1)`; equal when the numbers are, and the bindings, with their bounds and ceilings, which
+/// [`accepts`] reads too. The bindings are compared on a hash match only, where two copies of
+/// one map are found equal at once (their roots are one node) and others in the size of the
+/// map.
+struct Compared {
+    left: NodeId,
+    right: NodeId,
+    binds: Binds,
+}
+
+impl Compared {
+    /// The comparison of `left` with `right` under `binds`; the copy of `binds` is `O(1)`.
+    fn new(left: NodeId, right: NodeId, binds: &Binds) -> Compared {
+        Compared {
+            left,
+            right,
+            binds: Binds {
+                map: binds.map.clone(),
+                keys: std::sync::OnceLock::new(),
+                bounds: binds.bounds.clone(),
+                ceilings: binds.ceilings.clone(),
+                digest: binds.digest,
+            },
+        }
+    }
+}
+
+impl std::hash::Hash for Compared {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        (self.left, self.right, self.binds.digest).hash(h);
+    }
+}
+
+impl PartialEq for Compared {
+    fn eq(&self, other: &Compared) -> bool {
+        fn same<T: PartialEq + ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
+            match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a == b,
+                _ => false,
+            }
+        }
+        let (a, b) = (&self.binds, &other.binds);
+        self.left == other.left
+            && self.right == other.right
+            && a.digest == b.digest
+            && a.map == b.map
+            && same(&a.bounds, &b.bounds)
+            && same(&a.ceilings, &b.ceilings)
+    }
+}
+
+impl Eq for Compared {}
 
 /// A comparison of function types running on an explicit stack on the heap
 /// ([`zed_kernel::frames`]). The comparisons that call each other through the parts of the
@@ -4926,19 +5038,47 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// Whether each component of `cs` is in the one of `ds` at its place
     /// ([`Comparing::sub_by_shape`]), in order, stopping at the first that is not, in a frame
-    /// of its own: with `b` and what it binds.
+    /// of its own: with `b` and what it binds. Compared once for each binding the pair is met
+    /// with ([`Cx::compared`]).
     fn rows(&'m self, cs: Row, ds: Row, mut b: Binds) -> Deep<'m, (bool, Binds)> {
         self.stack.call(move || async move {
+            let key = Compared::new(cs.node(), ds.node(), &b);
+            if let Some(kept) = self.recall(&key) {
+                return kept;
+            }
+            let mut ok = true;
             for (j, (c, d)) in cs.iter().zip(&ds).enumerate() {
                 if !self
                     .sub_by_shape(c, d, &mut b, Site::In(Holder::Row(&ds), j))
                     .await
                 {
-                    return (false, b);
+                    ok = false;
+                    break;
                 }
             }
-            (true, b)
+            self.keep(key, ok, &b);
+            (ok, b)
         })
+    }
+
+    /// The answer kept for the comparison `key` ([`Cx::compared`]), with the binding it gave;
+    /// none once the comparison is refused, as a comparison then answers at once
+    /// ([`Comparing::search`]), and the kept answer was found with nothing refused.
+    fn recall(&self, key: &Compared) -> Option<(bool, Binds)> {
+        let cx = self.cx.borrow();
+        if cx.unchosen.is_some() {
+            return None;
+        }
+        cx.compared.get(key).cloned()
+    }
+
+    /// Keeps the answer `ok` and the binding `b` of the comparison `key`, unless it was refused
+    /// ([`Self::refuse`]): a refused comparison's answer is not its own but the refusal's.
+    fn keep(&self, key: Compared, ok: bool, b: &Binds) {
+        let mut cx = self.cx.borrow_mut();
+        if cx.unchosen.is_none() {
+            cx.compared.insert(key, (ok, b.clone()));
+        }
     }
 
     /// [`Ty::sub`] of `t` and `other` inside the comparisons of function types the state holds.
@@ -5093,20 +5233,28 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// Whether each component and field of the payload `a` is in the one of `b` at its place
     /// ([`Comparing::sub_by_shape`]), `b` of as many items and the same field names, in a
-    /// frame of its own: with `b` and what it binds.
+    /// frame of its own: with `b` and what it binds. Compared once for each binding the pair
+    /// is met with ([`Cx::compared`]).
     fn shape_in(&'m self, a: Shape, b: Shape, mut binds: Binds) -> Deep<'m, (bool, Binds)> {
         self.stack.call(move || async move {
+            let key = Compared::new(a.node(), b.node(), &binds);
+            if let Some(kept) = self.recall(&key) {
+                return kept;
+            }
             let pairs =
                 (a.items.iter().zip(&b.items)).chain(a.fields.values().zip(b.fields.values()));
+            let mut ok = true;
             for (j, (x, y)) in pairs.enumerate() {
                 if !self
                     .sub_by_shape(x, y, &mut binds, Site::In(Holder::Shape(&b), j))
                     .await
                 {
-                    return (false, binds);
+                    ok = false;
+                    break;
                 }
             }
-            (true, binds)
+            self.keep(key, ok, &binds);
+            (ok, binds)
         })
     }
 
@@ -7355,8 +7503,7 @@ async fn accepts<'m>(
         });
     match found {
         Some(v) => {
-            let b = binds.or_insert_with(v.clone(), Ty::empty);
-            *b = b.union(&of.of_piece(p));
+            binds.unite(v.clone(), &of.of_piece(p));
             true
         }
         None => false,
@@ -7503,6 +7650,7 @@ impl Cx<'_> {
         let mark = Mark {
             made: cx.made.len(),
             own: cx.own.len(),
+            compared: std::mem::take(&mut cx.compared),
         };
         // Each own variable names its own binder here, so the reading of the same name around it
         // is dropped, or replaced by a new name. An own variable of `s` whose name `q` holds, as
@@ -10728,6 +10876,7 @@ mod tests {
             );
             assert_eq!(t.replace(b), t.replace(&fresh), "{b:?}");
             assert_eq!(t.subst(b), t.subst(&fresh), "{b:?}");
+            assert_eq!(b.digest, fresh.digest, "the digest kept as made: {b:?}");
         };
         let mut b: Binds = [("$1".into(), int.clone()), ("a".into(), int.clone())].into();
         check(&b);
@@ -10740,6 +10889,12 @@ mod tests {
         b.or_insert_with("$700".into(), || int.clone());
         b.or_insert_with("$65".into(), Ty::empty);
         b.extend([("c".into(), int.clone()), ("$3".into(), int.clone())]);
+        check(&b);
+        // A binding united with more, one made by uniting, and one bound again.
+        b.unite("c".into(), &Ty::carrier(Carrier::F64));
+        b.unite("d".into(), &int);
+        check(&b);
+        b.insert("c".into(), int.clone());
         check(&b);
         b.retain(|v, _| !v.starts_with('$') || &**v == "$3");
         check(&b);

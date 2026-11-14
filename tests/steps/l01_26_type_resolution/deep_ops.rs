@@ -371,3 +371,132 @@ fn a_type_with_a_function_at_every_place_prints_and_reads_back() {
     assert_eq!(again.to_string(), printed);
     assert!(again.subtype(&functions(5)) && functions(5).subtype(&again));
 }
+
+/// `#a(t, t)` (field `f` the atom `#z`) for `t` the same `n - 1` deep, `bottom` at the bottom.
+fn shared_payloads_of(n: usize, bottom: Ty) -> Ty {
+    (0..n).fold(bottom, |t, _| atom(vec![t.clone(), t], z()))
+}
+
+#[test]
+fn shared_payloads_with_a_variable_are_compared_once_a_level() {
+    // Small instances of `bench::deep_ops::sub_of_shared_payloads_takes_linear_time`: each
+    // pair of shared rows or payloads met again under the same bindings is not compared again
+    // (FAIL-types-sub-shared-payloads), and the verdict and bindings are those of a comparison
+    // of every path.
+    let var = |v: &str| Ty::var(v.into());
+    for n in 1..7 {
+        for (what, a, b, bottom) in [
+            (
+                "payloads",
+                shared_payloads(n, "B"),
+                shared_payloads(n, "C"),
+                var("B"),
+            ),
+            ("tuples", shared(n, var("B")), shared(n, var("C")), var("B")),
+            (
+                "payloads",
+                shared_payloads_of(n, z()),
+                shared_payloads(n, "C"),
+                z(),
+            ),
+            ("tuples", shared(n, z()), shared(n, var("C")), z()),
+        ] {
+            let mut binds = Binds::new();
+            assert!(a.sub(&b, &mut binds), "{what} {n} deep, {bottom}");
+            assert_eq!(
+                binds,
+                [("C".into(), bottom.clone())].into(),
+                "{what} {n} deep"
+            );
+        }
+        let on_y = shared_payloads_of(n, y());
+        assert!(
+            !shared_payloads(n, "B").sub(&on_y, &mut Binds::new()),
+            "{n} deep"
+        );
+        assert!(
+            !shared(n, var("B")).sub(&shared(n, y()), &mut Binds::new()),
+            "{n} deep"
+        );
+        // Two shared payloads, one on `#z` and one on `#y`, within the same on `C` twice: `C`
+        // is bound to both. Within the one on `C` and the one on `#z`, the second fails.
+        let one = Ty::tuple(vec![shared_payloads_of(n, z()), shared_payloads_of(n, y())]);
+        let both = Ty::tuple(vec![shared_payloads(n, "C"), shared_payloads(n, "C")]);
+        let mut binds = Binds::new();
+        assert!(one.sub(&both, &mut binds), "{n} deep");
+        assert_eq!(binds, [("C".into(), z().union(&y()))].into(), "{n} deep");
+        let on_z = Ty::tuple(vec![shared_payloads(n, "C"), shared_payloads_of(n, z())]);
+        assert!(!one.sub(&on_z, &mut Binds::new()), "{n} deep");
+    }
+}
+
+#[test]
+fn a_shared_pair_met_again_under_other_bindings_keeps_them() {
+    // The shared pair `(#z,)` in `(E,)` is met first with `C` bound and then with `C` and `D`
+    // bound. Its answer kept by the pair alone, and not by the bindings in force too, would
+    // give the second time the bindings of the first, with `D` dropped.
+    let x = Ty::set(Type::atom("x"));
+    let var = |v: &str| Ty::var(v.into());
+    let (r, q) = (Ty::tuple(vec![z()]), Ty::tuple(vec![var("E")]));
+    let pair = |a: Ty, b: Ty| Ty::tuple(vec![a, b]);
+    let left = pair(pair(x.clone(), r.clone()), pair(y(), r.clone()));
+    let right = pair(pair(var("C"), q.clone()), pair(var("D"), q.clone()));
+    let mut binds = Binds::new();
+    assert!(left.sub(&right, &mut binds));
+    let all: Binds = [
+        ("C".into(), x.clone()),
+        ("D".into(), y()),
+        ("E".into(), z()),
+    ]
+    .into();
+    assert_eq!(binds, all);
+    // The same in payloads.
+    let (r, q) = (atom(vec![z()], z()), atom(vec![var("E")], z()));
+    let left = atom(
+        vec![
+            atom(vec![x.clone(), r.clone()], z()),
+            atom(vec![y(), r], z()),
+        ],
+        z(),
+    );
+    let right = atom(
+        vec![
+            atom(vec![var("C"), q.clone()], z()),
+            atom(vec![var("D"), q], z()),
+        ],
+        z(),
+    );
+    let mut binds = Binds::new();
+    assert!(left.sub(&right, &mut binds));
+    assert_eq!(binds, all);
+}
+
+/// A comparison of rows made after the comparison is refused is neither read from nor kept in
+/// the memo of rows (`Cx::compared`): `search` then answers false at once, so that answer is the
+/// refusal's and not the rows'. Here the first shape of `g`'s parameter, `(B, bool)`, is
+/// refused, as `B`'s bucket cannot choose between `(int, int)` and `(int, int, int)`, and the
+/// second, `(A, bool)`, is then tried with the refusal in force; the verdict is the refusal.
+#[test]
+fn rows_compared_after_a_refusal_give_the_refusal() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let a = "((int, int),) | ((int, int, int),)";
+    let b = "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)";
+    let program = |g: &str| {
+        format!(
+            "p(f: (x: ({a}, bool)) -> int) = 0;\nq(g: (x: {g}) -> int for U in int) = p(f: g);\n"
+        )
+    };
+    let refusal = "the tuples ((int, int),) and ((int, int, int),) may each be held by one of the \
+                   shapes";
+    for g in [format!("({b}, bool)"), format!("({b}, bool) | ({a}, bool)")] {
+        let errs = type_errors(&program(&g));
+        assert_eq!(errs.len(), 1, "{g}: {errs:?}");
+        assert!(errs[0].contains(refusal), "{g}: {errs:?}");
+    }
+    // The control: with no shape refused, the parameter fits (`(U, int)`, which holds no
+    // value of `p`'s parameter, gives the bound its variable).
+    assert_eq!(
+        type_errors(&program(&format!("({a}, bool) | (U, int)"))),
+        Vec::<String>::new()
+    );
+}
