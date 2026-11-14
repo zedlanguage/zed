@@ -2310,15 +2310,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 |---|---|---|---|
 | CONST-coprime-base-shared-primes | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
 | CONST-coprime-check-many-sets | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
-| FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
-| FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
-| FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | started in wt/fix-types-overload at 9d4c6b7f1; load 37.18 49.72 50.76 |
+| FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | negative control (not committed): Binds::bound as a linear scan; bench::bounds::a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_si |
 | FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
@@ -2327,9 +2324,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
-| TEST-l0123-leftovers | running |  |  |
-| TEST-l0123-slow-pieces | running |  |  |
-| TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | started in wt/presburger-unreached on cac7c04ca, load 31.97 35.46 37.89 |
+| TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
+| TEST-l0123-slow-pieces | running | 2026-11-14 10:33 |  |
+| TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | cell_sweep tests committed (11 tests, cell_sweep unreached 556 -> 242 lines, crate 2,367 -> 2,050, tests only); row FAIL-pres-overlap-every-level-refused; row m |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
