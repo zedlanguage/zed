@@ -3,6 +3,7 @@
 //! outputs without the compiler, so the corpus tests the compiler rather than repeating it.
 
 mod bench;
+mod cases;
 mod int_reading;
 mod lattice_circles;
 mod p14_oracle;
