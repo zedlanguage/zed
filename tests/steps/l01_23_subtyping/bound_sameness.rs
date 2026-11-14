@@ -132,7 +132,8 @@ fn differing_chain(d: usize) -> Expr {
     })
 }
 
-/// A small instance of `bench::nested_bounds_scale`: bounds that differ at every level but name
+/// A small instance of `bench::a_group_whose_differing_bounds_nest_scales` (once part of
+/// `nested_bounds_scale`): bounds that differ at every level but name
 /// no definition of the group are accepted, at depth 1 to 6. Every other test with differing
 /// bounds has a recursive occurrence in them and is refused (TEST-bench-move-l0123, author
 /// P169). No guarantee here is within its permission (neither `bool` nor a function type is an

@@ -6,9 +6,10 @@ use super::*;
 
 /// The refusal of a chain of `n` definitions, whose path names all of them, is found and
 /// written in time linear in `n`.
+/// TEST-bench-move-l0123, author P169: n was 512, now 130_000; 1x 0.35 s at load 25.
 #[test]
 fn a_refusal_through_a_long_path_scales() {
-    let n = 512;
+    let n = 130_000;
     let groups = zed_tests::scaling::inputs(n, chain);
     zed_tests::scaling::check("refusing a group narrowed through a chain", n, |n| {
         let message = Group::new(groups[&n].clone()).unwrap_err().message;

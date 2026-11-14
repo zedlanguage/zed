@@ -152,11 +152,17 @@ fn apply(op: &Op, a: i64, b: i64) -> Option<i64> {
     })
 }
 
-#[test]
-fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
+/// Each of the six operators on `draws` pairs of small sets drawn with the fixed seed 325:
+/// the image holds every result of members, and keeps to the most pieces any region of an
+/// operand has. `checked` counts the member pairs, at least `at_least`.
+///
+/// TEST-bench-move-l0123, author P178 (many cases are a benchmark): the test drew 600 pairs
+/// (0.64 s alone at load 25); it now draws 60, and the 600 run as
+/// `bench::an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region`.
+fn image_holds(draws: usize, at_least: usize) {
     let mut rng = Rng::new(325);
     let mut checked = 0;
-    for _ in 0..600 {
+    for _ in 0..draws {
         let (a, b) = (small(&mut rng), small(&mut rng));
         for op in &OPS {
             let z = revision::forward(op, &a, &b);
@@ -185,7 +191,12 @@ fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
             );
         }
     }
-    assert!(checked > 100_000, "{checked}");
+    assert!(checked > at_least, "{checked}");
+}
+
+#[test]
+fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
+    image_holds(60, 10_000);
 }
 
 #[test]
@@ -283,8 +294,7 @@ fn run_ends(w: &EndsWork) {
     std::hint::black_box(project(&w.hull, &Atom::Sym("x".into())).unwrap());
 }
 
-fn check_ends(what: &str, base: num_bigint::BigInt) {
-    let n = 200;
+fn check_ends(what: &str, base: num_bigint::BigInt, n: usize) {
     let (small, large) = (ends_work(n, &base), ends_work(scaling::FACTOR * n, &base));
     for (w, m) in [(&small, n), (&large, scaling::FACTOR * n)] {
         let hull = zedc::store::presburger::project(
@@ -427,10 +437,11 @@ fn a_short_chain_of_sums_keeps_its_members_in_few_pieces() {
     }
 }
 
-/// Small instance of `bench::the_interval_operations_scale`: on an open set and a closed set
-/// of 1, 2, 5 and 12 pieces, the negation and the join agree with membership, the sign parts
-/// number at least the pieces, and the forward `*` and `/` by the negated closed set hold
-/// every product and quotient of members in a window.
+/// Small instance of the six tests `bench::capping_n_pieces_scales` to
+/// `bench::membership_tests_in_a_set_scale`, once `the_interval_operations_scale`: on an open
+/// set and a closed set of 1, 2, 5 and 12 pieces, the negation and the join agree with
+/// membership, the sign parts number at least the pieces, and the forward `*` and `/` by the
+/// negated closed set hold every product and quotient of members in a window.
 #[test]
 fn products_quotients_sign_parts_and_joins_of_open_sets_hold_their_members() {
     let (mut rng, seed) = Rng::fresh("open and closed sets");

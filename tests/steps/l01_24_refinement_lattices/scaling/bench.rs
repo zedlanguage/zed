@@ -4,6 +4,14 @@
 
 use super::*;
 
+/// `scaling.rs`'s sweep of the six operators at its old count, 600 pairs, moved here
+/// (TEST-bench-move-l0123, author P178: many cases are a benchmark); 60 pairs stay there as
+/// `an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region`.
+#[test]
+fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
+    image_holds(600, 100_000);
+}
+
 #[test]
 fn a_chain_of_operators_keeps_to_its_operands_pieces() {
     // Each step's image contains every sum of members, so the members are kept.
@@ -16,42 +24,74 @@ fn a_chain_of_operators_keeps_to_its_operands_pieces() {
         assert!(acc.contains(v), "{acc} has {v}");
     }
     assert!(acc.len() <= 2, "{acc}");
-    scaling::check("a chain of `+` over eight-piece operands", 200, |k| {
+    // TEST-bench-move-l0123, author P169: n was 200, now 120_000; 1x 0.45 s at load 37.
+    scaling::check("a chain of `+` over eight-piece operands", 120_000, |k| {
         sum_chain(k);
     });
 }
 
+/// An open and a closed set of `n` pieces, built inside the timed run as before the split.
+fn sets(n: usize) -> (IntervalSet, IntervalSet) {
+    let mut rng = Rng::new(n as u64);
+    (pieces(&mut rng, n, true), pieces(&mut rng, n, false))
+}
+
+// The six checks below were one test, `the_interval_operations_scale`, all at n = 4000; each
+// is now a test of its own, sized to 1x of about 0.5 s (TEST-bench-move-l0123, author P169).
+
+/// TEST-bench-move-l0123, author P169: n was 4000, now 280_000; 1x 0.31 s at load 51.
 #[test]
-fn the_interval_operations_scale() {
-    let sets = |n: usize| {
-        let mut rng = Rng::new(n as u64);
-        (pieces(&mut rng, n, true), pieces(&mut rng, n, false))
-    };
-    scaling::check("capping n pieces to 8", 4000, |n| {
+fn capping_n_pieces_scales() {
+    scaling::check("capping n pieces to 8", 280_000, |n| {
         let (a, _) = sets(n);
         assert_eq!(a.cap(8).len(), 8.min(n));
     });
-    scaling::check("the forward `*` of two sets of n pieces", 4000, |n| {
+}
+
+/// TEST-bench-move-l0123, author P169: n was 4000, now 170_000; 1x 0.31 s at load 43.
+#[test]
+fn the_forward_product_of_two_sets_scales() {
+    scaling::check("the forward `*` of two sets of n pieces", 170_000, |n| {
         let (a, b) = sets(n);
         let z = revision::forward(&Op::Mul, &a, &b.neg());
         assert!(!z.is_empty());
     });
-    // The sign parts are one walk over the pieces and the `/` reads the divisor's sign parts
-    // without 0, with no set built for either (PERF-refused-assume).
-    scaling::check("the sign parts of n pieces", 4000, |n| {
+}
+
+/// The sign parts are one walk over the pieces and the `/` reads the divisor's sign parts
+/// without 0, with no set built for either (PERF-refused-assume).
+/// TEST-bench-move-l0123, author P169: n was 4000, now 760_000; 1x 0.51 s at load 42.
+#[test]
+fn the_sign_parts_scale() {
+    scaling::check("the sign parts of n pieces", 760_000, |n| {
         let (a, _) = sets(n);
         assert!(a.sign_parts().len() >= n);
     });
-    scaling::check("the forward `/` of two sets of n pieces", 4000, |n| {
+}
+
+/// TEST-bench-move-l0123, author P169: n was 4000, now 170_000; 1x 0.40 s at load 42.
+#[test]
+fn the_forward_quotient_of_two_sets_scales() {
+    scaling::check("the forward `/` of two sets of n pieces", 170_000, |n| {
         let (a, b) = sets(n);
         let z = revision::forward(&Op::Div, &a, &b.neg());
         assert!(!z.is_empty());
     });
-    scaling::check("joining two sets of n pieces", 4000, |n| {
+}
+
+/// TEST-bench-move-l0123, author P169: n was 4000, now 330_000; 1x 0.46 s at load 32.
+#[test]
+fn joining_two_sets_scales() {
+    scaling::check("joining two sets of n pieces", 330_000, |n| {
         let (a, b) = sets(n);
         assert!(!a.join(&b).is_empty());
     });
-    scaling::check("n membership tests in a set of n pieces", 4000, |n| {
+}
+
+/// TEST-bench-move-l0123, author P169: n was 4000, now 680_000; 1x 0.86 s at load 32.
+#[test]
+fn membership_tests_in_a_set_scale() {
+    scaling::check("n membership tests in a set of n pieces", 680_000, |n| {
         let (_, b) = sets(n);
         let hits = (0..n as i64).filter(|&v| b.contains(v * 7)).count();
         assert!(hits <= n);
@@ -63,13 +103,15 @@ fn the_interval_operations_scale() {
 /// of them cost `O(p log p)`. With the pieces in a Vec each copied or scanned all p pieces, and
 /// the test allocated 63.8 times the bytes for 8 times the size, against a limit of 11.4; it
 /// now takes about 10.4 times the work and 10.4 times the bytes (COMPLEXITY.md
-/// INTERVAL-persistent).
+/// INTERVAL-persistent). Those ratios were measured at p = 1000.
+/// TEST-bench-move-l0123, author P169: p was 1000, now 40_000; 1x 0.58 s at load 34.
 #[test]
 fn interval_set_operations_scale() {
-    let sets = scaling::inputs(1000, |n| pieces(&mut Rng::new(n as u64), n, false));
+    let p = 40_000;
+    let sets = scaling::inputs(p, |n| pieces(&mut Rng::new(n as u64), n, false));
     scaling::check_order(
         "p one-piece updates and queries on a set of p pieces",
-        1000,
+        p,
         1,
         |n| {
             let b = &sets[&n];
@@ -100,7 +142,8 @@ fn interval_set_operations_scale() {
 #[test]
 fn bounds_on_many_symbols_scale() {
     use zedc::store::lattice::Lattice;
-    scaling::check("symbolic bounds on distinct symbols", 1600, |k| {
+    // TEST-bench-move-l0123, author P169: n was 1600, now 5000; 1x 0.46 s at load 51.
+    scaling::check("symbolic bounds on distinct symbols", 5000, |k| {
         let (a, b) = (many(k, 0), many(k, 1));
         let j = a.join(&b);
         assert_eq!(j.bounds(zedc::store::affine::Side::Lower).len(), k);
@@ -108,16 +151,24 @@ fn bounds_on_many_symbols_scale() {
     });
 }
 
+/// TEST-bench-move-l0123, author P169: n was 200, now 160_000; 1x 0.36 s at load 49.
 #[test]
 fn ends_in_one_word_scale_linearly() {
-    check_ends("ends in i64", num_bigint::BigInt::from(0));
+    check_ends("ends in i64", num_bigint::BigInt::from(0), 160_000);
 }
 
+/// TEST-bench-move-l0123, author P169: n was 200, now 95_000; 1x 0.29 s at load 47.
 #[test]
 fn ends_of_2_to_the_200_scale_linearly() {
-    check_ends("ends near 2^200", num_bigint::BigInt::from(1) << 200);
+    check_ends(
+        "ends near 2^200",
+        num_bigint::BigInt::from(1) << 200,
+        95_000,
+    );
 }
 
+/// Left at k = 10^6 by TEST-bench-move-l0123 (author P169): the work grows with the bits of
+/// `k`, a `u32`, so no `k` that fits brings 1x near 0.5 s (69 µs at 10^6).
 #[test]
 fn power_bounds_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
@@ -129,9 +180,10 @@ fn power_bounds_scale_with_the_bits_of_the_exponent() {
     );
 }
 
+/// TEST-bench-move-l0123, author P169: n was 200, now 500; 1x 0.53 s at load 44.
 #[test]
 fn kept_ends_scale_linearly() {
-    let n = 200;
+    let n = 500;
     let (small, large) = (kept_ends(n), kept_ends(scaling::FACTOR * n));
     for (w, m) in [(&small, n), (&large, scaling::FACTOR * n)] {
         let moved = revision::forward(&Op::Add, &w.0, &IntervalSet::single(3));
@@ -142,6 +194,8 @@ fn kept_ends_scale_linearly() {
     });
 }
 
+/// Left at k = 10^6 + 1 by TEST-bench-move-l0123 (author P169): the work grows with the bits
+/// of `k`, a `u32` (and `3k` must fit one), so no `k` brings 1x near 0.5 s (1.3 ms at 10^6).
 #[test]
 fn kept_arithmetic_scales_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
@@ -156,6 +210,8 @@ fn kept_arithmetic_scales_with_the_bits_of_the_exponent() {
     );
 }
 
+/// Left at e = 10^6 by TEST-bench-move-l0123 (author P169): the work grows with the bits of
+/// `e`, a `u32` (and `3e + 2` must fit one), so no `e` brings 1x near 0.5 s (0.16 ms at 10^6).
 #[test]
 fn equal_cores_scale_with_the_bits_of_the_exponent() {
     let n = 1_000_000;
@@ -181,6 +237,13 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
 /// the leaf no pair can keep that division on one side of `DIV_COST`'s crossover, since the
 /// product grows about 6 times for 8 times the bits; the work of the two methods is equal at
 /// the crossover, so crossing it changes the ratio little (8.5 times the work, 7.7 the bytes).
+/// The figures above were measured at the old sizes.
+/// TEST-bench-move-l0123, author P169: both pairs keep their sizes (4,096 and 131,072 bits;
+/// 1x 0.39 ms and 12.3 ms). The pair from 4,096 bits is the pair whose division stays within
+/// `DIV_LEAF`. The pair past the leaf, moved up to reach 1x of 0.5 s, fails its limit there (a
+/// finding of TEST-bench-move-l0123, measured at load 44–59 on 2026-11-14): from 2^22 bits it
+/// passes, 1x 0.24 s, 8.4 times the work and 9.5 times the bytes; from 2^23 bits, 1x 0.51 s, it
+/// does 9.0 times the work but its first runs allocate 10.6 times the bytes, over 10.5.
 #[test]
 fn the_cube_of_a_wide_end_scales_with_its_bits() {
     for n in [4096, 131_072] {
@@ -211,7 +274,9 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
     // in place of long division, so that its change of method is not read as the growth of
     // `strip` (from 8192 to 65536 bits the bytes allocated grow 26.3 times; from 65536 to
     // 524288, 17.2 times).
-    let n = 65536;
+    // TEST-bench-move-l0123, author P169: n was 65536, now 2^19, the largest power of 2 for
+    // which `1000 * 8n` fits the `u32` exponent of `pow`; 1x 5.3 ms at load 35.
+    let n = 1 << 19;
     let (small, large) = (pair(n), pair(scaling::FACTOR * n));
     scaling::check(
         "(2^n * 3)^1000 against 2^(1000 n) * 3^1000: n bits",
@@ -243,7 +308,8 @@ fn equality_over_a_wide_odd_base_scales_with_its_bits() {
             &Num::from(3).pow_by(&Num::from(1000 * n as u64)).unwrap() * &Num::from(2).pow(1000),
         )
     };
-    let n = 1 << 19;
+    // TEST-bench-move-l0123, author P169: n was 2^19, now 2^20; 1x 0.28 s at load 47.
+    let n = 1 << 20;
     let (small, large) = (pair(n), pair(scaling::FACTOR * n));
     scaling::check(
         "(3^n * 2) ** 1000 against 3 ** (1000 n) * 2 ** 1000: n digits base 3",

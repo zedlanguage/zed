@@ -358,7 +358,8 @@ fn an_exponent_with_no_exact_form_bounds_outward() {
     );
 }
 
-/// Small instance of `bench::classes_affine_bounds_and_powers_past_i64_scale_linearly`: four
+/// Small instance of the five tests in `bench` (once one,
+/// `classes_affine_bounds_and_powers_past_i64_scale_linearly`): four
 /// points past `i64` spaced unevenly, so that their class's modulus is the gcd of several
 /// different gaps; a chain of meets from every integer of one class written with four
 /// residues past its modulus; an affine bound of four terms times `i128::MIN`;
