@@ -628,6 +628,7 @@ impl<'t> Identity<'t> {
     /// The first product or power among the nodes `reach` marks whose exponent or degree is past
     /// `u64::MAX`, in the order the nodes were built, so the smallest.
     fn too_wide(&self, shapes: &[Shape], reach: &[bool]) -> Option<usize> {
+        let folded = self.folded_bases(shapes, reach);
         for (i, n) in self.nodes.iter().enumerate() {
             if !reach[i] {
                 continue;
@@ -637,10 +638,11 @@ impl<'t> Identity<'t> {
             // monomial holds its exponents as `u64` words, packed into `u128` keys or listed,
             // and an exponent of any width would cost a big integer per exponent in every
             // monomial for a shape no obligation of the corpus writes (COMPLEXITY.md
-            // POLY-nf-exponent). A base of 0, 1 or -1 is not refused: its power is a constant.
+            // POLY-nf-exponent). A base of 0, 1 or -1 is not refused, written so or with no name
+            // ([`Identity::folded_bases`]): its power is a constant.
             // Tested by `poly::tests::refused_shapes`.
             let wide = match n {
-                Node::Pow(a, e) => e.to_u64().is_none() && !self.trivial_base(*a),
+                Node::Pow(a, e) => e.to_u64().is_none() && !self.trivial_base(*a) && !folded[*a],
                 _ => false,
             };
             if wide || matches!(n, Node::Mul(..) | Node::Pow(..)) && shapes[i].degree.is_none() {
@@ -665,6 +667,60 @@ impl<'t> Identity<'t> {
             a = *b;
         }
         matches!(&self.nodes[a], Node::Const(n, d) if d.is_one() && n.magnitude() <= &BigUint::one())
+    }
+
+    /// Marks the bases of the wide powers `reach` marks (exponent past `u64::MAX`) that are
+    /// written with no name and whose value is 0, 1 or -1 though not written as one (`0 - 1`,
+    /// `1 * 1`, `2 - 2`, `-(0 - 1)`), so their powers are constants too.
+    ///
+    /// Complexity tradeoff: [`Identity::trivial_base`] alone reads only a constant under
+    /// negations, one step a node, and refused `(0 - 1) ^ 2 ^ 64` though `(-1) ^ 2 ^ 64` was
+    /// accepted. Here the bases of degree 0 (no name, so no monomial but 1) are expanded once,
+    /// together, as the expansion of the sides would expand them, charged to a budget of
+    /// [`LIMIT`] of their own; a base past it stays refused. So an identity with such a base
+    /// costs at most twice the expansion of its bases, and one without pays one pass over the
+    /// nodes. A base whose powers are wide in turn is sound to expand here: the nodes are in
+    /// topological order, so the first refused wide power (the one [`Identity::too_wide`]
+    /// names) has only accepted wide powers below it. Given up: a base with names whose normal
+    /// form is a constant (`x - x`) is still refused, since its written degree is 1 and the
+    /// degree bound passes `u64::MAX` before any expansion. Tested by
+    /// `l03_09_egraph::forms::a_base_whose_value_is_0_1_or_minus_1_takes_a_wide_exponent`.
+    fn folded_bases(&self, shapes: &[Shape], reach: &[bool]) -> Vec<bool> {
+        let mut folded = vec![false; self.nodes.len()];
+        let bases: Vec<usize> = (self.nodes.iter().enumerate())
+            .filter_map(|(i, n)| match n {
+                Node::Pow(a, e)
+                    if reach[i]
+                        && e.to_u64().is_none()
+                        && shapes[*a].degree == Some(0)
+                        && !self.trivial_base(*a) =>
+                {
+                    Some(*a)
+                }
+                _ => None,
+            })
+            .collect();
+        if bases.is_empty() {
+            return folded;
+        }
+        // No base reaches a name, so every key is the monomial 1 and needs no packing.
+        let mut budget = Budget::new(LIMIT);
+        let Ok(forms) = self.expand::<u128>(
+            &Packing::none(),
+            &self.reachable(&bases),
+            &bases,
+            &mut budget,
+        ) else {
+            return folded;
+        };
+        for (a, f) in bases.iter().zip(&forms) {
+            folded[*a] = match &f.terms[..] {
+                [] => true,
+                [(k, c)] => *k == u128::unit() && c.magnitude() == f.den.magnitude(),
+                _ => false,
+            };
+        }
+        folded
     }
 
     /// Whether a difference at a point refutes: the carrier is `int` or `rat` and every leaf

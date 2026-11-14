@@ -240,3 +240,86 @@ fn where_no_point_can_be_evaluated_the_witness_is_read_from_the_expanded_differe
     );
     assert_eq!((d.verdict, d.terms), (Verdict::Proved, Some([1, 1])));
 }
+
+#[test]
+fn a_base_whose_value_is_0_1_or_minus_1_takes_a_wide_exponent() {
+    // Written with no name, a base whose value is 0, 1 or -1 is read as that constant, as a
+    // base written `-1` is; its power is a constant at any exponent (POLY-trivial-base-folded).
+    const E: &str = "18446744073709551617";
+    let cases = [
+        ("0 - 1", "-1"),
+        ("1 * 1", "1"),
+        ("2 - 2", "0"),
+        ("-(0 - 1)", "1"),
+        // A wide power inside the base, accepted first.
+        ("(0 - 1) ^ 18446744073709551617 + 2", "1"),
+    ];
+    for (base, want) in cases {
+        let e = format!("({base}) ^ {E}");
+        assert_eq!(nf("x: int", &e, Carrier::Int).as_deref(), Ok(want), "{e}");
+        let d = law("x: int", &e, want, Carrier::Int);
+        assert_eq!(d.verdict, Verdict::Proved, "{e}");
+    }
+    forms(&[
+        (
+            "r: rat",
+            "(0.5r + 0.5r) ^ 18446744073709551617",
+            Carrier::Rat,
+            "1",
+        ),
+        (
+            "r: rat",
+            "(0.5r - 1.5r) ^ 18446744073709551616",
+            Carrier::Rat,
+            "1",
+        ),
+    ]);
+    // The controls: a base whose value is 2, -2 or 1/2 is still refused, as is a base with a
+    // name, and a wide power inside a base is refused before the base is read.
+    for (e, c, product) in [
+        (
+            "2 ^ 18446744073709551617",
+            Carrier::Int,
+            "(2^18446744073709551617)",
+        ),
+        (
+            "(3 - 1) ^ 18446744073709551617",
+            Carrier::Int,
+            "((3 - 1)^18446744073709551617)",
+        ),
+        (
+            "(0 - 2) ^ 18446744073709551617",
+            Carrier::Int,
+            "((0 - 2)^18446744073709551617)",
+        ),
+        (
+            "(0.25r + 0.25r) ^ 18446744073709551617",
+            Carrier::Rat,
+            "((1r/4r + 1r/4r)^18446744073709551617)",
+        ),
+        (
+            "(x - x) ^ 18446744073709551617",
+            Carrier::Int,
+            "((x - x)^18446744073709551617)",
+        ),
+        (
+            "(2 ^ 18446744073709551617 - 2 ^ 18446744073709551617) ^ 18446744073709551617",
+            Carrier::Int,
+            "(2^18446744073709551617)",
+        ),
+    ] {
+        let params = if c == Carrier::Rat {
+            "r: rat"
+        } else {
+            "x: int"
+        };
+        assert_eq!(
+            nf(params, e, c),
+            Err(format!(
+                "Cannot expand `{product}`: an exponent is above 18446744073709551615.\n  Try \
+                 `L proof {{ … }}` instead."
+            )),
+            "{e}"
+        );
+    }
+}
