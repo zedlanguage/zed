@@ -3630,26 +3630,47 @@ impl Cx<'_> {
 
     /// `t` as the comparison reads it on a side read by `env`: each variable `env` maps
     /// replaced, and each function, outside other functions, replaced by a new variable that
-    /// `fns` maps to it and `env`. The payloads stay as they are, since no comparison reads
-    /// them. The cost is that of `t` outside its functions, so each function type is read once
-    /// for each comparison of it. A class variable `solve` gives a type is read as that type.
+    /// `fns` maps to it and `env`, in its tuples and in its atoms' payloads. The cost is that of
+    /// `t` outside its functions, so each function type is read once for each comparison of
+    /// it. A class variable `solve` gives a type is read as that type.
     ///
-    /// The tuples are read on an explicit stack, each component before the type that holds it
-    /// and in order, as the recursive form read them, so the new names are made in the same
-    /// order, and a tuple nested to any depth needs no more of the thread's stack.
+    /// The payloads are read as the tuples are (FAIL-types-payload-vars-unread): left as they
+    /// were, `(x0: #p(C)) -> (C,) for C in int | f64` did not fit itself, as the `C` of
+    /// `q`'s payload, read as its own rigid name elsewhere, kept its written name there, and
+    /// [`Comparing::payloads_in`] bound the `C` of `s` to it, a variable of no known carrier,
+    /// which [`bounds_hold`] refused. A shape with no variable and no function reads as itself
+    /// and is not walked ([`ShapeData::fixed`]), and a shared shape is read once
+    /// (`memo`, by its number), so a type of n shapes that share their payloads, nested in
+    /// each other, costs O(n), not a walk of every path to each.
+    ///
+    /// The tuples and payloads are read on an explicit stack, each component before the type
+    /// that holds it and in order, as the recursive form read them, so the new names are made
+    /// in the same order, and a type nested to any depth needs no more of the thread's stack.
     fn read(&mut self, t: &Ty, env: &Env) -> Ty {
-        /// A type whose tuples are being read: the rows read, and the components read of the
-        /// next row.
+        /// A type being read: the rows read and the components read of the next row, then its
+        /// payload shapes not fixed, in order, the shapes read, and the components of the next
+        /// shape with those read.
         struct Reading<'t> {
             t: &'t Ty,
             rows: Vec<Row>,
             row: Vec<Ty>,
+            shapes: Vec<&'t Shape>,
+            read: Vec<Shape>,
+            comps: Vec<&'t Ty>,
+            shape: Vec<Ty>,
         }
-        let start = |t| Reading {
-            t,
-            rows: Vec::new(),
-            row: Vec::new(),
-        };
+        fn start(t: &Ty) -> Reading<'_> {
+            Reading {
+                t,
+                rows: Vec::new(),
+                row: Vec::new(),
+                shapes: t.payload_shapes().filter(|s| !s.fixed).collect(),
+                read: Vec::new(),
+                comps: Vec::new(),
+                shape: Vec::new(),
+            }
+        }
+        let mut memo: HashMap<NodeId, Shape> = HashMap::new();
         let mut stack = vec![start(t)];
         loop {
             let top = stack
@@ -3665,19 +3686,63 @@ impl Cx<'_> {
                 }
                 continue;
             }
-            let Reading { t, rows, .. } = stack.pop().expect("the type being read is on the stack");
-            let out = self.read_outer(t, rows, env);
+            if let Some(&sh) = top.shapes.get(top.read.len()) {
+                // A shape not fixed has a component, so no components means not started.
+                if top.comps.is_empty() {
+                    if let Some(done) = memo.get(&sh.node()) {
+                        top.read.push(done.clone());
+                        continue;
+                    }
+                    top.comps = sh.items.iter().chain(sh.fields.values()).collect();
+                }
+                match top.comps.get(top.shape.len()).copied() {
+                    Some(c) => stack.push(start(c)),
+                    None => {
+                        let mut items = std::mem::take(&mut top.shape);
+                        let fields = items.split_off(sh.items.len());
+                        let read =
+                            Shape::new(items, sh.fields.keys().cloned().zip(fields).collect());
+                        memo.insert(sh.node(), read.clone());
+                        top.comps.clear();
+                        top.read.push(read);
+                    }
+                }
+                continue;
+            }
+            let Reading { t, rows, read, .. } =
+                stack.pop().expect("the type being read is on the stack");
+            let out = self.read_outer(t, rows, read, env);
             match stack.last_mut() {
-                Some(up) => up.row.push(out),
+                Some(up) if up.rows.len() < up.t.tuples.len() => up.row.push(out),
+                Some(up) => up.shape.push(out),
                 None => return out,
             }
         }
     }
 
-    /// [`Self::read`] of `t` whose tuples read as `tuples`: its functions and variables.
-    fn read_outer(&mut self, t: &Ty, mut tuples: Vec<Row>, env: &Env) -> Ty {
+    /// [`Self::read`] of `t` whose tuples read as `tuples` and whose payload shapes not fixed
+    /// read as `shapes`, in order: its functions and variables.
+    fn read_outer(&mut self, t: &Ty, mut tuples: Vec<Row>, shapes: Vec<Shape>, env: &Env) -> Ty {
         // A variable read as the empty type leaves a row with no value.
         tuples.retain(|r| !r.0.void);
+        let payloads = match shapes.is_empty() {
+            true => t.payloads.clone(),
+            false => {
+                let mut read = shapes.into_iter();
+                let mut next = |s: &Shape| match s.fixed {
+                    true => s.clone(),
+                    false => read.next().expect("each shape not fixed is read"),
+                };
+                (t.payloads.iter())
+                    .map(|(n, ss)| {
+                        (
+                            n.clone(),
+                            ss.as_ref().map(|ss| ss.iter().map(&mut next).collect()),
+                        )
+                    })
+                    .collect()
+            }
+        };
         let mut out = Ty {
             set: t.set.clone(),
             tuples,
@@ -3685,7 +3750,7 @@ impl Cx<'_> {
             vars: BTreeSet::new(),
             dynamic: t.dynamic,
             family: t.family.clone(),
-            payloads: t.payloads.clone(),
+            payloads,
         };
         for s in &t.fns {
             let w = self.fresh("");
@@ -11422,6 +11487,33 @@ mod tests {
         let tup = |t: Ty| Ty::tuple(vec![t]);
         let s = one_param(tup(v("B")).union(&tup(v("U"))), tup(v("B")), &[], true);
         let q = owning(one_param(tup(v("B")), tup(v("B")), &[], false), &["B"], "B");
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    #[test]
+    fn a_variable_in_a_payload_is_read_as_elsewhere() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let p = |t: Ty| Ty::atom_of("p", vec![t], BTreeMap::new());
+        let s = owning(one_param(p(v("B")), tup(v("B")), &[], true), &["B"], "B");
+        let q = owning(one_param(p(v("C")), tup(v("C")), &[], true), &["C"], "C");
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        // Unbounded own variables in payloads are apart too: a piece `#p(T)` of `q` is not held
+        // by the `T` of `s` by its name (FAIL-types-own-same-name by a payload).
+        let int = Ty::carrier(Carrier::Int);
+        let s = owning(one_param(p(v("T")), v("T"), &[], false), &["T"], "T");
+        let q = owning(
+            one_param(p(v("T")).union(&p(int.clone())), int.clone(), &[], false),
+            &["T"],
+            "T",
+        );
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        let q = owning(one_param(p(int.clone()), int, &[], false), &[], "T");
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        // A bounded variable in a payload against an unbounded one: `s` returns `(B,)` of
+        // `int | f64`, not the `(C,)` of any `C` that `q` returns.
+        let s = owning(one_param(p(v("B")), tup(v("B")), &[], true), &["B"], "B");
+        let q = owning(one_param(p(v("C")), tup(v("C")), &[], false), &["C"], "C");
         assert!(!fits_sig(&s, &q), "{q} in {s}");
     }
 

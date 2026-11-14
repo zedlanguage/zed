@@ -384,9 +384,30 @@ pub(super) fn free_in_one_tuple(n: usize, other: &str, given: &str) -> (String, 
     (sig("T", other), sig("U", given))
 }
 
-/// `free_beside_a_carrier` and `free_in_one_tuple` at small sizes, both ways of each boundary.
+/// A signature of one parameter taking the atom `#p` of `n` components, component `i` the
+/// variable `Bi` bounded to `int | f64`, returning `(B0, ..., B(n-1))`, and the same under
+/// the names `Ci`, bounded to `bound`. Each `Ci` is read under a new name, in the payload too
+/// (FAIL-types-payload-vars-unread), so the first fits the second exactly where `bound` is
+/// within `int | f64`.
+pub(super) fn bounded_in_a_payload(n: usize, bound: &str) -> (String, String) {
+    let sig = |v: &str, m: &str| {
+        let vs: Vec<String> = (0..n).map(|i| format!("{v}{i}")).collect();
+        let bs: Vec<String> = (0..n).map(|i| format!("{v}{i} in {m}")).collect();
+        let comma = if n == 1 { "," } else { "" };
+        format!(
+            "(x0: #p({})) -> ({}{comma}) for {}",
+            vs.join(", "),
+            vs.join(", "),
+            bs.join(", ")
+        )
+    };
+    (sig("B", "int | f64"), sig("C", bound))
+}
+
+/// `free_beside_a_carrier`, `free_in_one_tuple` and `bounded_in_a_payload` at small sizes, both
+/// ways of each boundary.
 #[test]
-fn free_variables_fit_themselves_under_other_names() {
+fn free_and_bounded_variables_fit_themselves_under_other_names() {
     use zedc::check::ty::fits_sig;
     let fits = |(s, q): (String, String)| {
         let s = parse_type(&s).unwrap_or_else(|e| panic!("{e}"));
@@ -403,6 +424,10 @@ fn free_variables_fit_themselves_under_other_names() {
             let pair = free_beside_a_carrier(n, other, given);
             assert_eq!(fits(pair.clone()), want, "{pair:?}");
             let pair = free_in_one_tuple(n, other, given);
+            assert_eq!(fits(pair.clone()), want, "{pair:?}");
+        }
+        for (bound, want) in [("int | f64", true), ("int", true), ("int | String", false)] {
+            let pair = bounded_in_a_payload(n, bound);
             assert_eq!(fits(pair.clone()), want, "{pair:?}");
         }
     }

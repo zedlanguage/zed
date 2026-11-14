@@ -94,6 +94,12 @@ pub(super) fn shared(n: usize, bottom: Ty) -> Ty {
     (0..n).fold(bottom, |t, _| Ty::tuple(vec![t.clone(), t]))
 }
 
+/// `#a(t, t)` (field `f` the atom `#z`) for `t` the same `n - 1` deep, the variable `v` at
+/// the bottom: `2^n` paths through `n` payloads, each shared by both places that hold it.
+pub(super) fn shared_payloads(n: usize, v: &str) -> Ty {
+    (0..n).fold(Ty::var(v.into()), |t, _| atom(vec![t.clone(), t], z()))
+}
+
 /// The value of [`shared`] with `#z` at the bottom, its tuples shared too.
 pub(super) fn shared_value(n: usize) -> Value {
     (0..n).fold(Value::atom("z"), |v, _| Value::tuple(vec![v.clone(), v]))
@@ -225,6 +231,18 @@ pub(super) fn signatures(n: usize) {
     t.note_held();
 }
 
+/// A signature taking [`shared_payloads`] `n` deep with the variable `v` at the bottom,
+/// returning `v`, its own variable, bounded to `bound`.
+pub(super) fn shared_payload_sig(n: usize, v: &str, bound: &str) -> Sig {
+    let text = format!("(x: T) -> T for T in {bound}");
+    let read = zedc::check::read::parse_type(&text).unwrap_or_else(|e| panic!("{e}"));
+    let mut s = sig(shared_payloads(n, v), Ty::var(v.into()));
+    s.own = [Arc::from(v)].into();
+    s.bounds = [(Arc::from(v), read.fns[0].bounds["T"])].into();
+    s.note_held();
+    s
+}
+
 /// `fits_sig` and `why_unfit` of signatures of tuples `n` deep that differ at the bottom, `n`
 /// at least 1.
 pub(super) fn signatures_that_differ(n: usize) {
@@ -279,6 +297,21 @@ fn debug_writes_what_a_derived_debug_writes() {
         s.ends_with(", needs: [], own: {}, held: {}, named: 0, facts: _ }"),
         "{s}"
     );
+}
+
+#[test]
+fn a_bounded_variable_in_shared_payloads_is_read_as_elsewhere() {
+    // Each side's variable is read under a new name in every payload that holds it
+    // (FAIL-types-payload-vars-unread), each shared payload once.
+    for n in 1..6 {
+        let s = shared_payload_sig(n, "B", "int | f64");
+        for (bound, fits) in [("int | f64", true), ("int", true), ("int | String", false)] {
+            let q = shared_payload_sig(n, "C", bound);
+            assert_eq!(ty::fits_sig(&s, &q), fits, "{n} deep, C in {bound}");
+        }
+        let same = shared_payload_sig(n, "B", "int");
+        assert!(ty::fits_sig(&s, &same), "{n} deep, the same name");
+    }
 }
 
 #[test]
