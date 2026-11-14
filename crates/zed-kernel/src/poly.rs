@@ -33,7 +33,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::digest::{Digest, step};
-use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint};
+use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 
@@ -135,6 +135,16 @@ const DENSE_COST: f64 = 700.0;
 /// The units of [`LIMIT`] in one unit of `num::mul_cost`, as [`PAIR`] and [`PAIR_COST`] measure
 /// the same cost of a pair in each: about 2 ns, a word product's 16 instructions.
 const CHOICE_UNIT: f64 = PAIR / PAIR_COST;
+
+/// The share of a dense product's transforms ([`ntt_cost`]) a square is charged when its
+/// packed integer is squared by transforms (`num::squares_by_transform`): each of the three
+/// primes takes two transforms in place of three, one forward and the inverse. Measured on
+/// 2026-11-14 (TEST-calibration-split-margin, load 29), in the time per unit charged: squares
+/// of 513 and 1025 terms took 0.56 and 0.52 of the products of 489 by 513 and 1001 by 1001
+/// terms. Charged as every square, `(x + y) ^ 4096 - x`, all squares, took 0.49 to 0.75 of its
+/// prediction, against 0.7 to 1 for `(1 + x) ^ 1000 * (1 - x) ^ 1000`; the transform count
+/// is taken rather than the measured share, so a square is not charged less than it can take.
+const SQUARE_SHARE: f64 = 2.0 / 3.0;
 
 /// The work an expansion has spent, the most it may spend, and the work it would have reached
 /// at the charge it refused, in the units of [`LIMIT`].
@@ -1985,13 +1995,6 @@ impl<K: Key> Poly<K> {
         // The packed product's transforms, and the packing, setup and unpacking the choice
         // below counts, which a product of few terms spends mostly in (`(x + y) ^ 72 - x`
         // took 2.4 times its prediction without them).
-        let dense = span
-            .checked_mul(u128::from(slot_words))
-            .map_or(f64::INFINITY, |w| ntt_cost(w as f64))
-            + CHOICE_UNIT * (DENSE_COST + SLOT_COST * span as f64);
-        let sparse = self.sparse_cost(o);
-        let words =
-            |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
         let packed = |hi: u128, lo: u128| {
             ((hi - lo) / step)
                 .checked_add(1)
@@ -1999,6 +2002,22 @@ impl<K: Key> Poly<K> {
                 .and_then(|w| usize::try_from(w.div_ceil(2)).ok())
                 .unwrap_or(usize::MAX)
         };
+        // A square's packed integers are equal, and the transforms square it with one forward
+        // transform fewer (TEST-calibration-split-margin). The comparison is `O(t)` beside the
+        // `O(t)` passes above.
+        let share = match (std::ptr::eq(self, o) || self.terms == o.terms)
+            && squares_by_transform(packed(hi_a, lo_a))
+        {
+            true => SQUARE_SHARE,
+            false => 1.0,
+        };
+        let dense = span
+            .checked_mul(u128::from(slot_words))
+            .map_or(f64::INFINITY, |w| share * ntt_cost(w as f64))
+            + CHOICE_UNIT * (DENSE_COST + SLOT_COST * span as f64);
+        let sparse = self.sparse_cost(o);
+        let words =
+            |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
         // Complexity tradeoff: the choice was `dense <= sparse` on the charges above, both with
         // unit constants; the dense product's fixed cost and its packed product's method
         // (schoolbook, Toom or transform, as `num::mul` takes it) were not counted, so it took

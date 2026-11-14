@@ -1438,6 +1438,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | FAIL-agree-few-arms-seed | merged and pushed (the commit "FAIL-agree-few-arms-seed: ..." that marks the row Done); no code or spec change | Cause: the fixed count of shapes in `random::the_closed_path_condition_and_the_scope_agree_on_emptiness` (random.rs, `AGREE_SHAPES = 10`, more than 2 arms asked), not zedc-preimage: an arm is compared only on a conjunction of tests with exact preimages, and tests relating `x` and `y` are necessary boxes by DESIGN step L1.25; two shapes in three compare no arm. Fix: `agree_run` draws shapes until 20 arms are compared, failing after 100 shapes. Test `random::the_seeds_that_compared_too_few_arms_reach_the_count`, the row's test red before. Groups l01_39, l01_21, l01_37a, m0_01, m0_12: 219 pieces, 0 failed. |
 | FAIL-kernel-xor-firsts-seed | merged and pushed (the commit "FAIL-kernel-xor-firsts-seed: ..." that marks the row Done); no code or spec change | Cause: the test, not the kernel: `types::bdd::tests::exclusive_ors_agree_with_their_values` (crates/zed-kernel/src/types/bdd/tests.rs) ran 2000 rounds since TEST-bench-move-crates, which reached fewer than 100 exclusive ors on about 1 seed in 200 (85 on 3601000514119134698, 77 on 81). Fix: 4000 rounds (`XOR_ROUNDS`), which reached 117 to 126 on 5,600 seeds in about 0.3 s a run; the bound of 100 stays. Body factored into `exclusive_or_rounds(seed, rounds)`. Test `types::bdd::tests::exclusive_ors_reach_their_count_on_the_seeds_that_failed`, red at 2000 rounds. Piece zed_kernel: 1 piece, 0 failed. |
 | FAIL-exact-oracle-mod-zero-seed | merged and pushed (the commit that marks the row Done); no spec change | Under `@exact` with no classes, `class_test` (crates/zedc-preimage/src/preimage.rs, and preimage_ref.rs) decided `a && false` and `a || true` from the decided operand alone, so a box where `a` fails (`0 mod 0` at `x == 0`) was marked exact; the kernel reads both operands. It now decides only when both are decided. Seed 17731988998593301615 pinned and 16 neighbor cases added in exact_oracle.rs; l01_25, l01_38, l01_39, l01_39a, l01_39b, m0_10 and the standing groups: 801 pieces, 5 failed before, 3 after (only the two tracked rows FAIL-generic-fold-l0125 and the window seed of FAIL-window-two-shadows-seed). |
+| TEST-calibration-split-margin | merged and pushed (the commit "TEST-calibration-split-margin: ..."); no spec change | A dense product of a sum by itself was charged three transforms per prime where the transforms square with two, so `(x + y) ^ 4096 - x`, all squares, took 0.48 to 0.75 of its prediction and a quiet machine failed the floor 0.5. `Poly::plan` charges such a square 2/3 of its transforms when `num::squares_by_transform` holds; the split at 4096 now 0.70 to 1.08, the product law 0.68 to 1.15 (load 23 to 30). Test `poly::tests::a_square_is_charged_two_of_its_three_transforms`; COMPLEXITY.md POLY-nf-work row updated |
 
 ## Decisions made
 
@@ -2325,9 +2326,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
 | TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
+| TEST-cov-run-settings | running |  |  |
+| TEST-fixture-write-race | running |  |  |
+| TEST-seed-test-once | running |  |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
 | TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | pushed b5317f47c, d69e081ed (STATUS rows restored); kernel_type.rs part done, row open / load 26.89 31.97 37.90 |
+| TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | kernel_type.rs 7 to 2 regions unreached; committing, rebasing / load 21.19 34.16 43.34 |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:

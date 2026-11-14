@@ -1192,6 +1192,20 @@ pub(crate) fn mul_cost(a: usize, b: usize) -> f64 {
     }
 }
 
+/// Whether [`mul`] squares a number of `n` 64-bit words, every one nonzero, by transforms whole
+/// ([`transform_mul`]), as [`mul_method`] chooses for `a * a`: such a square takes one forward
+/// transform fewer than a product of two numbers, which [`mul_cost`] does not count. num-bigint's
+/// product and the rows over nonzero words square no faster than they multiply. `O(log n)`, as
+/// [`transform_plan`].
+pub(crate) fn squares_by_transform(n: usize) -> bool {
+    // Past `usize::MAX / 4` words the product's length does not fit, as in [`mul_cost`].
+    if n <= MUL_LEAF || n > usize::MAX / 4 {
+        return false;
+    }
+    let (cost, piece) = transform_plan(n, n);
+    toom_cost(n, n) > cost && n as f64 * n as f64 > cost && piece >= n
+}
+
 /// num-bigint's cost of a product of `short <= long` words, `TOOM_COST long short^0.465`, in
 /// the units of [`TRANSFORM_COST`].
 fn toom_cost(short: usize, long: usize) -> f64 {

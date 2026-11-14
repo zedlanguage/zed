@@ -36,12 +36,12 @@ use bound::{Format, Product};
 pub use factor::is_prime;
 #[doc(hidden)]
 pub use fast::crossover;
-pub(crate) use fast::mul_cost;
 use fast::{LEAF_DIGITS, built, read_digits_by};
 pub use fast::{
     PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
     to_decimal_split, to_decimal_split_at,
 };
+pub(crate) use fast::{mul_cost, squares_by_transform};
 pub use float_text::{FloatFormat, read_f32_ieee, read_f64_ieee, read_float, show_f32, show_f64};
 pub use room::{
     LiteralRounding, TooLarge, about, bits_of_digits, bytes_of, bytes_text, digits_of_bits,

@@ -635,6 +635,30 @@ fn the_choice_of_product_by_shape() {
 }
 
 #[test]
+fn a_square_is_charged_two_of_its_three_transforms() {
+    // The transforms of the dense product's charge, besides its fixed and per-slot costs.
+    let transforms = |a: &Poly<u128>, b: &Poly<u128>| {
+        let plan = a.plan(b).expect("packed keys");
+        let span = (a.terms.len() + b.terms.len() - 1) as f64;
+        plan.dense - CHOICE_UNIT * (DENSE_COST + SLOT_COST * span)
+    };
+    // 1000 terms at every index: 500 words packed, past the test build's leaf of 48 and with
+    // more word products by rows than by transforms, so the square goes to the transforms. `-3` has the bits of `3`, so the two products pack alike.
+    let every: Vec<u128> = (0..1000).collect();
+    let (a, b) = (packed(&every, 3), packed(&every, -3));
+    let ratio = transforms(&a, &a) / transforms(&a, &b);
+    assert!((ratio - SQUARE_SHARE).abs() < 1e-12, "{ratio}");
+    assert_eq!(transforms(&a, &a.clone()), transforms(&a, &a));
+    // 16 terms pack into 8 words, which num-bigint multiplies, and 200 into 100, which rows
+    // multiply: neither is faster for a square.
+    for n in [16, 200] {
+        let few: Vec<u128> = (0..n).collect();
+        let (a, b) = (packed(&few, 3), packed(&few, -3));
+        assert_eq!(transforms(&a, &a), transforms(&a, &b), "{n} terms");
+    }
+}
+
+#[test]
 fn mul_cost_at_its_corners() {
     // An empty factor is read as one word, so that no product is free.
     assert_eq!(mul_cost(0, 0), 1.0);
