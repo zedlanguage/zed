@@ -70,9 +70,8 @@ fn what_keeps_the_address_and_what_changes_it() {
         ),
         (
             "written_to_another_port",
-            format!(
-                "twice(x: int) = x * 2;\nmain(m: MainArgs) {{\n  m.stderr <- \"${{twice(x: 3)}}\";\n}}\n"
-            ),
+            "twice(x: int) = x * 2;\nmain(m: MainArgs) {\n  m.stderr <- \"${twice(x: 3)}\";\n}\n"
+                .to_string(),
             false,
         ),
         (
