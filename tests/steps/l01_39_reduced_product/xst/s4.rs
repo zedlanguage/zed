@@ -1791,9 +1791,10 @@ fn relation_points_written_after(k: usize) -> Sys {
 /// The second case `x_i <= -5`, so that each test has a linear relation: the tests are kept
 /// with their points as with the other case, and each constraint looks only at the tests that
 /// fix `x_i`; each `x_i` ends in `-20..=-5`, with one `y` ([`points_written_after`]) as with
-/// one `y_i` per test ([`relation_points_written_after`]), which is timed.
+/// one `y_i` per test ([`relation_points_written_after`], timed in
+/// `bench::points_of_relations_written_after_scale`).
 #[test]
-fn points_of_relations_written_after_scale() {
+fn points_of_relations_written_after_are_dropped() {
     let want: Vec<i64> = (-20..=-5).collect();
     for s in [
         points_written_after(5, low).narrowed(How::Backward),
@@ -1803,13 +1804,6 @@ fn points_of_relations_written_after_scale() {
             assert_eq!(kept(&s, &format!("x{i}"), -21, 21), want, "x{i}: {s}");
         }
     }
-    let inputs = scaling::inputs(16, relation_points_written_after);
-    scaling::check_order(
-        "points of relations written after, Backward, k tests",
-        16,
-        1,
-        |m| {
-            drop(inputs[&m].narrowed(How::Backward));
-        },
-    );
 }
+
+mod bench;
