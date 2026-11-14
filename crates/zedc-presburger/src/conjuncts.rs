@@ -446,7 +446,7 @@ impl StarIndex {
     /// move of the anchor, and admission counted per name, one membership test per name.
     /// Tradeoffs: none in the answers (exact, as argued above); memory for `anchor` and the
     /// hit counts of [`Admit`]; an anchor that moves re-counts the satellite's needs. Test
-    /// `l01_39_reduced_product::linked::a_satellite_of_every_hub_costs_its_related_names_once`
+    /// `l01_39_scope_relations::linked::a_satellite_of_every_hub_costs_its_related_names_once`
     /// (2d - 1 needs). COMPLEXITY.md row C37.
     fn place(&mut self, y: &Arc<str>, up: bool, log: &mut Moves) {
         let StarIndex {
@@ -1960,7 +1960,7 @@ pub struct Blocks {
     // expected a lookup. This map is only read by key, never in order, so no order is lost;
     // its hasher is fixed (`FxBuildHasher` over the formula's own fixed hash), so a run does
     // not depend on a random seed. Test
-    // `l01_39_reduced_product::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`;
+    // `l01_39_scope_relations::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`;
     // COMPLEXITY.md row ST-chain-raise-reverse-log.
     of: GenericHashMap<Arc<Formula>, BlockId, FxBuildHasher, DefaultSharedPtr>,
     /// Each block's conjuncts.
@@ -2027,7 +2027,7 @@ pub struct Blocks {
     // (`Scope::due`) costs O(k² log n). This index gives a block's names in O(log n) and
     // their number, at O(log n) per name of a conjunct each time the conjunct changes block,
     // the order `at` already costs. Test
-    // `l01_39_reduced_product::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
+    // `l01_39_scope_relations::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
     names_in: OrdMap<(BlockId, Arc<str>), usize>,
     /// For each block and two names `u < v`, the number of its conjuncts of those two names
     /// and no other atom ([`pair`]); none zero.
@@ -2038,7 +2038,7 @@ pub struct Blocks {
     // removals O(k² log n). A second conjunct of the same two names leaves the block whole
     // (a path through one can go through the other), which this count shows in O(log n), at
     // O(log n) each time a conjunct of two names changes block. Test
-    // `l01_39_reduced_product::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
+    // `l01_39_scope_relations::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
     pairs: OrdMap<(BlockId, Arc<str>, Arc<str>), usize>,
 }
 
@@ -2098,7 +2098,7 @@ impl Blocks {
     // the difference of its conjuncts then and now, whose persistent sets share all but the
     // paths to the changes (`OrdSet::diff` skips shared nodes), so O((c + 1) log n) for c
     // conjuncts moved in or out of `b` since, each already paid for when it moved; a block
-    // gone is read whole, as before. Test `l01_39_reduced_product::families::coordkk_scales`;
+    // gone is read whole, as before. Test `l01_39_scope_relations::families::coordkk_scales`;
     // COMPLEXITY.md row PERF-l139-due.
     pub fn now_of(&self, old: &Blocks, b: BlockId) -> BTreeSet<BlockId> {
         let Some(then) = old.member_set(b) else {
@@ -2834,7 +2834,7 @@ impl Blocks {
     // near linear (1.5 → 17.2 ms). Tradeoffs: one `BTreeMap` of the removed conjuncts per
     // call; a failed split rebuilds the blocks of every conjunct linked to `gs`. Results are
     // byte for byte those of the old code on 600 random joins. Tests:
-    // `l01_39_reduced_product::disjoint::the_join_of_arms_on_many_disjoint_groups_scales` and
+    // `l01_39_scope_relations::disjoint::the_join_of_arms_on_many_disjoint_groups_scales` and
     // `disjoint::the_blocks_of_a_join_are_those_of_the_definition`; COMPLEXITY.md row S29.
     pub fn remove(&mut self, gs: &[Arc<Formula>]) {
         // The conjuncts removed from each block, the blocks in the order `gs` first meets them.

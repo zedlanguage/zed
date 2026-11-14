@@ -6,6 +6,9 @@ of the lattices, the type, the linear relation and the binding time
 the lazy scope, holes, pendants, the `@exact` search), and the checker's reading of it at each
 arm (`crates/zedc-check/src/check/arms.rs` and the arm checks in `walk.rs`). Expected results
 are from DESIGN.md step L1.39, sec:domains and sec:constraints.
+The tests of how a scope relates its names, and the suites xst and families, moved to
+`../l01_39_scope_relations`, a test target of its own (TESTS-split, 2026-11-14); the table
+names them there.
 
 llvm-cov of this group's tests (benchmarks skipped), as a floor, regions (lines) before → after:
 `crates/zedc-check/src/check/arms.rs` 12.87% (17.46%) → 43.25% (45.93%);
@@ -35,20 +38,20 @@ Tests in `completeness.rs` unless a file is named.
 | Exclusion by complement of an exact element: `!=`, `i64::MAX` | `spec.rs` `a_negated_equality_excludes_the_literal_by_complement`, `a_negated_equality_with_i64_max_keeps_the_integers_past_it` | |
 | Complement read by the checker: `else` of `!=`, of `||`, of `!`, an `else if` chain, the `else` of `mod` | `the_complement_of_an_exact_test_bounds_the_other_arm` | |
 | No exclusion where the form does not show the element | `controls.rs` `a_constraint_whose_form_does_not_show_it_ends_removes_nothing` | |
-| Iteration to a fixed point; parts passing a bound back and forth | `nests.rs` `two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`, `a_walk_through_a_shared_name_reaches_the_fixed_point` | |
+| Iteration to a fixed point; parts passing a bound back and forth | `../l01_39_scope_relations/nests.rs` `two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`, `a_walk_through_a_shared_name_reaches_the_fixed_point` | |
 | The linear relation: two names bound by each other; a join keeping the affine relation; the hull | `spec.rs` `a_relation_between_two_names_bounds_each`, `a_join_keeps_the_affine_relation_of_its_sides`; `hull.rs` | |
 | Binding time: meet and join, a binding from a parameter is run time | `spec.rs` `a_meet_takes_the_earlier_binding_time_and_a_join_the_later` | |
 | Disjunction, relation and nesting read by the checker | `a_disjunction_a_relation_and_a_nest_each_bound_the_arm` | |
 | A `let` binding narrowing its inputs; a typed lambda; a static width | `let_terms.rs`; `a_binding_a_typed_lambda_and_a_static_width_carry_the_arm_bound` | |
 | A function or lambda with an untyped parameter: the need it passes on reads its arm's tests | `generic_need_arm::*` | fixed by FAIL-check-generic-need-ignores-arm: the need is read under the arm with the parameters taken as int (`Ck::ints_as_int`, COMPLEXITY C26) |
 | Unreachable arms by parity, a self-contradicting relation, the `else` of a test every value meets, a static `false` | `an_arm_no_value_reaches_is_accepted_whatever_its_body` (each with a reached control) | |
-| Nests of tests in every grouping and order; random nests | `nests.rs` all | |
+| Nests of tests in every grouping and order; random nests | `../l01_39_scope_relations/nests.rs` all | |
 | Tests on `||` alternatives that limit each other in a loop | `loops.rs` all | |
 | Literals following a parameter's carrier (L1.26a) | `follow.rs` all | |
 | The soundness of each arm against the interpreter on random bodies | `random.rs` all | |
-| Holes, pendants, refused disjuncts and their warnings, shortest-path seeds, linked components, two disjunctions, the lazy scope against the eager one, written constraints by address, integer roots | `holes.rs`, `pendants.rs`, `refused.rs`, `seed_edges.rs`, `linked.rs`, `two_disjunctions.rs`, `lazy.rs`, `written_address.rs`, `roots.rs`, `xst/` | |
+| Holes, pendants, refused disjuncts and their warnings, shortest-path seeds, linked components, two disjunctions, the lazy scope against the eager one, written constraints by address, integer roots | `../l01_39_scope_relations/holes.rs`, `pendants.rs`, `refused.rs`, `../l01_39_scope_relations/seed_edges.rs`, `../l01_39_scope_relations/linked.rs`, `../l01_39_scope_relations/two_disjunctions.rs`, `../l01_39_scope_relations/lazy.rs`, `written_address.rs`, `roots.rs`, `../l01_39_scope_relations/xst/` | |
 | Float `^` and the NaN class | `pow_nan.rs` | |
-| Deep terms, deep conditions, named rules and families from cross-review | `deep_let.rs`, `deep_condition.rs`, `named_test.rs`, `families.rs`, `disjoint.rs`, `path_check.rs`, `if_shortcut.rs` | |
+| Deep terms, deep conditions, named rules and families from cross-review | `deep_let.rs`, `../l01_39_scope_relations/deep_condition.rs`, `named_test.rs`, `../l01_39_scope_relations/families.rs`, `../l01_39_scope_relations/disjoint.rs`, `../l01_39_scope_relations/path_check.rs`, `if_shortcut.rs` | |
 | Scaling | `scaling.rs`, the `bench` modules | |
 | A call's result as an operand (`bitNot(clamp(n), width: 3)`) | | a call is an opaque int in the checker's arm scopes (`arms.rs`, COMPLEXITY C26); DESIGN asks narrowing through a call only for a test, which FAIL-check-arm-test-through-call holds |
 | Declared constraints making an empty element | | step L10.4 |

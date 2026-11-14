@@ -2694,7 +2694,7 @@ impl fmt::Debug for Seen {
 /// larger than the strongly connected ones, and a later search of one reads all of it; an edge
 /// against the order costs the components the search that ends first finds, O(n) at worst for
 /// one edge.
-/// Tests: `l01_39_reduced_product::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
+/// Tests: `l01_39_scope_relations::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
 /// `…::if_statements_on_skip_links_of_a_chain_take_time_near_their_number`,
 /// `…::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear`,
 /// `…::a_ladder_grown_by_k_if_statements_is_linear`,
@@ -3286,7 +3286,7 @@ fn put_in(
 // the components found move to new ranks between two neighbors, which an order-maintenance
 // list gives in O(log² n) amortized each ([`Potential::rank_after`]). Tradeoff: the ranks
 // are no longer reused, so a move costs the relabeling of a range now and then. Tests
-// `l01_39_reduced_product::linked::a_chain_put_in_against_the_order_reads_only_what_it_moves`
+// `l01_39_scope_relations::linked::a_chain_put_in_against_the_order_reads_only_what_it_moves`
 // and the tests of [`Potential`]; COMPLEXITY.md S25b.
 fn reorder(
     relation: &Conjuncts,
@@ -6032,7 +6032,7 @@ impl Scope {
     ///
     /// Settling can give a finer product than the eager scope holds: an eager part projected
     /// before a constraint on another term of its names is not due again, and keeps the
-    /// coarser product (`Scope::refresh`, seed 22671 of `l01_39_reduced_product::lazy`).
+    /// coarser product (`Scope::refresh`, seed 22671 of `l01_39_scope_relations::lazy`).
     pub fn lazy(mut self) -> Scope {
         self.lazy = true;
         self
@@ -6131,7 +6131,7 @@ impl Scope {
     /// reads only the part and the interval and class of each name it mentions
     /// (`Scope::framed`), and the parts of the two stars are one but for the leaf's name, so
     /// the two projections are one but for that name. Test
-    /// `l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone`.
+    /// `l01_39_scope_relations::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone`.
     ///
     /// Complexity tradeoff: naive version, each stale leaf's star projected alone, one
     /// projection per leaf, O(leaves × size of a star's core). Used: one projection per class
@@ -6160,7 +6160,7 @@ impl Scope {
     /// projected with the new ones. With leaves `a >= n && a >= -m` and `g` = `m + n <= -7 ||
     /// m + n >= 2`, a case that adds `m <= n + 5` reads `a >= -2` where the enumeration of
     /// the hubs in `-10..=10` gives `a >= -1`, and the eager join of two such cases took the
-    /// union of the coarse sides (`l01_39_reduced_product::lazy`, seed 22671). The lazy join
+    /// union of the coarse sides (`l01_39_scope_relations::lazy`, seed 22671). The lazy join
     /// escapes this because the tests that left the leaf stale made each part of its block
     /// due. If refreshing finds an eager scope empty, the join is the other side
     /// ([`Scope::join_refreshed`]).
@@ -6173,7 +6173,7 @@ impl Scope {
     /// one part per star, with the classes of `Scope::settle` (C37) shared. Tradeoff: a block
     /// of two such conjuncts or more keeps the parts its constraints did not make due, as
     /// before; S16 projects such a core one disjunction at a time in any case. Tests:
-    /// `l01_39_reduced_product::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction`
+    /// `l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction`
     /// (the eager join against the enumeration) and
     /// `l01_39_reduced_product::scaling::an_eager_join_projects_again_the_stars_it_settles_and_scales`;
     /// COMPLEXITY.md row C45.
@@ -7033,7 +7033,7 @@ impl Scope {
     // that fails the check costs its leaves as before, and a second `join_settled`; a class
     // that passes leaves its leaves stale in the join, settled when read. Tests:
     // `l01_39a_bit_words::scaling::reads_under_the_else_arms_of_satellites_of_two_hubs_scale`,
-    // `l01_39_reduced_product::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does`;
+    // `l01_39_scope_relations::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does`;
     // COMPLEXITY.md row C40.
     //
     // Complexity tradeoff (SETTLE-class-check-case): naive version, settle every stale leaf of
@@ -7043,7 +7043,7 @@ impl Scope {
     // differ, so O((stars and classes changed) log n); only the leaves whose star is gone or
     // whose class changed are settled. Tradeoffs: a dropped star costs its leaves'
     // projections and a second `join_settled`, as a class that fails the check does. Tests:
-    // `l01_39_reduced_product::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction`
+    // `l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction`
     // (its random part against the enumeration of the hubs) and the `reads_under_the_else_arms`
     // scaling test above; COMPLEXITY.md row C40.
     pub fn join(&self, other: &Scope) -> Scope {
@@ -7511,7 +7511,7 @@ impl Scope {
         // O(s log s) in all; the conjuncts live in the relation for the whole call, and the
         // map is only looked up, never walked, so no answer changes. One set of atoms per
         // conjunct read. COMPLEXITY.md C51; test
-        // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
+        // `l01_39_scope_relations::nests::excluded_sides_cost_the_names_they_change`.
         let mut atoms_of: HashMap<*const Formula, BTreeSet<Atom>> = HashMap::new();
         // The names of `mine`, once each: O(s log s) for `s` atoms, as the loop below.
         let shared: BTreeSet<Arc<str>> = mine.iter().flat_map(|g| syms(g)).collect();
@@ -7672,7 +7672,7 @@ impl Scope {
     //   products are its exact projection, which settling a star would only meet again; and
     //   `assume_case` and `reaches`, the lazy scope's entry points, try this first.
     // With the feature `preimage-ref`, `path_check` runs the solver beside each admitted test
-    // and compares the scopes (`l01_39_reduced_product::path_check`).
+    // and compares the scopes (`l01_39_scope_relations::path_check`).
     fn extend_path(&mut self, test: &Term, outcome: bool, prem: &Premises) -> bool {
         if self.bottom || self.exact || self.in_case || !self.written.is_empty() {
             return false;
@@ -9391,7 +9391,7 @@ impl Scope {
             // (one `Arc`) and put back only when it changed the interval (`Entry::meet`
             // reports every change): the same names, O(log m) per name changed and nothing
             // copied for one unchanged (COMPLEXITY.md C51). Test:
-            // `l01_39_reduced_product::nests::excluded_sides_cost_the_names_they_change`.
+            // `l01_39_scope_relations::nests::excluded_sides_cost_the_names_they_change`.
             // A test of one name keeps the ends it moved ([`Scope::direct`]).
             let one = (inputs.len() == 1 && through.is_empty()).then(|| inputs[0].clone());
             let ends = |s: &Scope, n: &Arc<str>| {
@@ -9724,7 +9724,7 @@ impl Scope {
                             // Used: the interval and the class read as the reduction would,
                             // O(1) more a name changed, and the case stops before its
                             // projection. Test:
-                            // `l01_39_reduced_product::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`,
+                            // `l01_39_scope_relations::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`,
                             // COMPLEXITY.md row ST-walk-orders.
                             if p.empties() {
                                 self.bottom = true;
@@ -9930,7 +9930,7 @@ impl Scope {
                     // conjuncts from the difference of its conjuncts then and now
                     // ([`conjuncts::Blocks::now_of`]), each read once for all the conjuncts
                     // removed from it, in O(log n) per name and per conjunct moved. Test
-                    // `l01_39_reduced_product::families::coordkk_scales`; COMPLEXITY.md row
+                    // `l01_39_scope_relations::families::coordkk_scales`; COMPLEXITY.md row
                     // PERF-l139-due.
                     let names = conjuncts::names(g);
                     let was = old.blocks().of(g);
@@ -11048,7 +11048,7 @@ impl Scope {
     /// projection block by block (`x_i + w_i >= 0`) between difference tests on the same tree:
     /// 661 MB at k = 40 and 5576 MB at k = 320, 8.4 times for 8 times k, the same on the code
     /// before the repair covered those edges, with no reseed in either. Test:
-    /// `l01_39_reduced_product::linked::if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear`.
+    /// `l01_39_scope_relations::linked::if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear`.
     /// COMPLEXITY.md row S25. A complete solution keeps the point the projection's own solver
     /// finds for each tree (`presburger::difference_hulls` reads one) and passes it back.
     fn reseed(&mut self, relation: &mut Conjuncts, t: BlockId, b: BlockId) {
@@ -11311,7 +11311,7 @@ impl Scope {
         // output per case (COMPLEXITY.md row S25, hard); measured at n = 320 the solve is 5% of
         // the time and the case split 88%. Trigger: a walk of N disjunctions on one shared
         // name, tested one at a time. Test:
-        // `l01_39_reduced_product::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`
+        // `l01_39_scope_relations::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`
         // (ignored). COMPLEXITY.md row S4-ti.
         //
         // Complexity tradeoff: naive version, `threshold::shape` read over every conjunct of

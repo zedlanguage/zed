@@ -4560,7 +4560,7 @@ impl<'t> Tx<'t> {
     /// Complexity tradeoff: the naive form built the whole set here, `O(p log p)` for the `p`
     /// pieces of the input domains, at every preimage, and copied it for each transfer over
     /// the box: `O(k p log p)` for `k` tests of one name with `p` holes, and `p` grows with `k`
-    /// (`l01_39_reduced_product::xst::holes::laps_have_exact_ends_in_near_linear_time`, where
+    /// (`l01_39_scope_relations::xst::holes::laps_have_exact_ends_in_near_linear_time`, where
     /// it was 35% of the work at 256 names). Now this costs the terms' literals and the
     /// demand's ends, `O(t log t)`, and a run that reads no call never builds the rest; one
     /// that does pays `O(p log p)` once, the same set as before, so no result changes. Kept:

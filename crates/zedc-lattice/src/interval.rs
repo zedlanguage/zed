@@ -1031,7 +1031,7 @@ impl IntervalSet {
     // so `m` holes cut one at a time cost `Θ(m²)`. Used: the walk of `is_subset`, `O(d log p
     // + r)` for sets that differ on `d` paths of their shared tree and `r` pieces taken out;
     // two sets that share no subtree cost the naive bound. Test
-    // `l01_39_reduced_product::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
+    // `l01_39_scope_relations::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
     pub fn lost_to(&self, other: &Self) -> Vec<(End, End)> {
         let mut out = Vec::new();
         let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));

@@ -17,7 +17,7 @@
 //! the hash. The shape depends on the set alone, so two trees of one set are equal as values.
 //! Tradeoff: a fixed hash is not random, so an adversary who knows it can make the tree deep;
 //! a McCreight tree would bound the depth for every input, at the cost of rebuilding on
-//! deletion. Test `l01_39_reduced_product::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
+//! deletion. Test `l01_39_scope_relations::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;

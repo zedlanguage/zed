@@ -404,7 +404,7 @@ fn rising(sys: &System) -> Answer {
     // not O(N log N). Why: whether a hub value passes depends on the whole component, and the
     // least member is not a function of the hub that one propagation could carry along.
     // Trigger: a hub whose values that pass end inside a wide interval. Test:
-    // `l01_39_reduced_product::xst::threshold::the_hub_search_scales_with_the_digits_of_its_width`.
+    // `l01_39_scope_relations::xst::threshold::the_hub_search_scales_with_the_digits_of_its_width`.
     // COMPLEXITY.md row S4-ti. A complete solution carries the least member as a piecewise
     // linear function of the hub through one propagation.
     let start: Int = match &p {

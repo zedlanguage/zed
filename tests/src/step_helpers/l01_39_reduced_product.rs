@@ -1,13 +1,17 @@
-//! Helpers of step L1.39 (tests/steps/l01_39_reduced_product) shared with the hand-run probes of
-//! PERF-negated-chain-unsolved (`benches/src/bin/pncx_probe.rs`): the scope of integer
-//! parameters, and the approval of `named_test.rs` whose tiers stand side by side.
+//! Helpers of step L1.39 (tests/steps/l01_39_reduced_product and l01_39_scope_relations), some
+//! shared with the hand-run probes of PERF-negated-chain-unsolved (`benches/src/bin/pncx_probe.rs`):
+//! the scope of integer parameters, the arms of a function and the approval of `named_test.rs`
+//! whose tiers stand side by side.
 
 use std::sync::Arc;
 
 use zed_kernel::term::build::{let_, lit, prim, var};
 use zed_kernel::types::Type;
 use zed_kernel::{Prim, Term};
-use zedc::store::product::{Product, Scope};
+use zedc::store::product::{Arm, Product, Scope, arms};
+
+use crate::step_helpers::l01_16_elaboration::elab;
+use crate::step_helpers::l01_25_preimage_catalog::{function, int_defs};
 
 /// The scope of integer parameters `ps`, known only when the program runs.
 pub fn ints(ps: &[Arc<str>]) -> Scope {
@@ -79,4 +83,37 @@ pub fn approval_any_tier(d: usize, k: usize, named: bool) -> Term {
     } else {
         tiers(&|| all(limits(k)))
     }
+}
+
+/// The arms of the function `ok` that `src` defines, its parameters integers: each written
+/// without a type is declared `int` ([`int_defs`]), as a bare literal no longer fixes it
+/// (L1.26a).
+pub fn arms_of(src: &str) -> (Vec<Arc<str>>, Term, Vec<Arm>) {
+    generic_arms_of(&int_defs(src))
+}
+
+/// [`arms_of`] with the parameters as written, integers in the scope: a literal compared with
+/// one whose type is not written follows its carrier, by a `match` on it (L1.26a).
+pub fn generic_arms_of(src: &str) -> (Vec<Arc<str>>, Term, Vec<Arm>) {
+    let (ps, body) = function(src);
+    let a = arms(&body, &ints(&ps));
+    (ps, body, a)
+}
+
+/// The arm of `arms` whose test prints as containing `guard`, taken by `outcome`.
+pub fn arm<'a>(arms: &'a [Arm], guard: &str, outcome: bool) -> &'a Arm {
+    arms.iter()
+        .find(|a| a.guard.contains(guard) && a.outcome == outcome)
+        .unwrap_or_else(|| {
+            let all: Vec<String> = arms.iter().map(|a| a.guard.clone()).collect();
+            panic!("no arm with test `{guard}` and outcome {outcome} among {all:?}")
+        })
+}
+
+/// The top-level binding `name` of the unit `src`, as a chain of `let` bindings.
+pub fn binding(src: &str, name: &str) -> Term {
+    elab(src)
+        .unwrap_or_else(|e| panic!("{src}: {e:?}"))
+        .get(name)
+        .unwrap_or_else(|| panic!("{src}: no binding `{name}`"))
 }

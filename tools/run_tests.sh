@@ -659,7 +659,8 @@ fi
 # each draws 4,000 pairs from a new printed seed and takes under 1 s.
 # l01_39 families holds four audit parts of 7 to 8 s each, the hop families of 13 s and a
 # scaling test of 6 s at load 22 to 24, about 70 s together; each test is a piece
-# (2026-11-11, TESTS-lhx-families).
+# (2026-11-11, TESTS-lhx-families). lazy, linked and families moved to l01_39_scope_relations,
+# split the same way (2026-11-14, TESTS-split).
 # l01_23 r6_reduction, one test of 384 formulas, took 38 to 77 s alone at load 27 to 41 and ran
 # past its limit of 90 s in a full run at load 48; it is four tests of 96 formulas, each a piece
 # (2026-11-11, REFUSAL-front-xr after batch merge 128).
@@ -702,23 +703,23 @@ split="
   l01_38_presburger::names l01_38_presburger::live3
   l01_38_presburger::shared l01_38_presburger::stages
   l01_38_presburger::one_scope
-  l01_39_reduced_product l01_39_reduced_product::random
-  l01_39_reduced_product::pendants l01_39_reduced_product::lazy
-  l01_39_reduced_product::lazy::a_lazy_scope_settles_each_name_to_the_eager_product
-  l01_39_reduced_product::lazy::a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product
-  l01_39_reduced_product::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
-  l01_39_reduced_product::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone
-  l01_39_reduced_product::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction
-  l01_39_reduced_product::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does
+  l01_39_reduced_product l01_39_scope_relations l01_39_reduced_product::random
+  l01_39_reduced_product::pendants l01_39_scope_relations::lazy
+  l01_39_scope_relations::lazy::a_lazy_scope_settles_each_name_to_the_eager_product
+  l01_39_scope_relations::lazy::a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product
+  l01_39_scope_relations::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
+  l01_39_scope_relations::lazy::leaves_of_one_class_settled_together_get_what_each_gets_alone
+  l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction
+  l01_39_scope_relations::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does
   l01_39_reduced_product::deep_let
   l01_39_reduced_product::if_shortcut
   l01_39_reduced_product::refused
-  l01_39_reduced_product::linked
-  l01_39_reduced_product::linked::holes_in_a_tree_of_differences_give_the_projection_from_scratch
-  l01_39_reduced_product::linked::holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch
+  l01_39_scope_relations::linked
+  l01_39_scope_relations::linked::holes_in_a_tree_of_differences_give_the_projection_from_scratch
+  l01_39_scope_relations::linked::holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch
   l01_39_reduced_product::exact
   l01_39_reduced_product::exact::constraints_reduced_one_at_a_time_decide_as_all_at_once
-  l01_39_reduced_product::families
+  l01_39_scope_relations::families
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
   m0_12_refusal_census

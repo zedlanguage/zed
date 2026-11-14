@@ -485,7 +485,7 @@ impl Ord for Formula {
         // their parts flattens into, compared as the two lists of constraints, the order the
         // walk gives them; O(k) for k parts and no allocation. Other pairs are read as before.
         // Tests `l01_38_presburger::shared::nodes_of_constraints_alone_compare_as_written_out`,
-        // `l01_39_reduced_product::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`.
+        // `l01_39_scope_relations::xst::s4::a_walk_of_disjunctions_narrows_in_near_linear_time`.
         let flat = |g: &Formula| g.kids().iter().all(|k| matches!(k, Formula::Con(_)));
         if flat(self) && flat(other) {
             fn con(g: &Formula) -> &Con {

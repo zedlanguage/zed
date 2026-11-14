@@ -536,7 +536,7 @@ impl Run<'_> {
         // value of a range, and contraction onto the names with holes leaves a system of
         // three names or more with cycles). Trigger: the graph and which names have holes, not
         // the values: a theta graph, two cycles sharing a path, with a hole in a name of each
-        // part. Test: `l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused`.
+        // part. Test: `l01_39_scope_relations::holes::holes_on_three_names_of_two_cycles_are_refused`.
         // COMPLEXITY.md row S25. A complete solution is an exact method for the snaps on a
         // component with any cycles, or a proof that none is near linear.
         // Naive version: snapping to a fixed point, a lap per value of a range, so time in the

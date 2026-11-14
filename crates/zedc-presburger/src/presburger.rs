@@ -212,7 +212,7 @@ impl Formula {
     // and `map_cons`, `nnf` and `forget` call `or` once per `Or` node, so a nested or/and
     // formula would cost its size times its depth (62 times the work for 8 times the depth,
     // measured at d = 500 to 4000). The trigger is a disjunct that is not a constraint. Tests
-    // in `l01_39_reduced_product::linked`: `a_disjunction_of_a_constraint_and_its_complement_is_true`
+    // in `l01_39_scope_relations::linked`: `a_disjunction_of_a_constraint_and_its_complement_is_true`
     // and `a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size`. A complete check
     // needs a hash of each formula kept in its node when it is built, so that the lookup costs
     // O(1) per disjunct.
@@ -993,7 +993,7 @@ impl Read {
 // and a join form by form over the smallest hull, O(n²) on a chain of two disjunctions each
 // held by both at the level above; and with the hulls kept for one call, O(n) again for
 // each question on a formula that holds the nest, O(n²) where `project_parts` asks one at
-// each level (`l01_39_reduced_product::deep_condition`, the bound that moves at each
+// each level (`l01_39_scope_relations::deep_condition`, the bound that moves at each
 // level). Used: each part is read once in its life, its hull kept on it, on an explicit
 // stack, so a question on a formula of parts read before reads only its top; a hull is
 // never built in full; a disjunction's hull is the join of its disjuncts' bases with the
@@ -8810,7 +8810,7 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
             // each was found to hold by that walk, and each disjunct on the way has its
             // constraints holding, so it is taken with the model unchanged. A disjunct taken
             // earlier in its disjunction leaves the part unread. So the model is the same when
-            // the part is reached again, and its mark holds. Test `l01_39_reduced_product::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
+            // the part is reached again, and its mark holds. Test `l01_39_scope_relations::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
             // counts the parts tested ([`parts_tested`]) (COMPLEXITY S31).
             if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
                 stamp = fresh_stamp();
@@ -10864,7 +10864,7 @@ fn point_with(
 /// the disjuncts [`pick`] took, read once each, not from a test of every disjunct at each
 /// point (`O(n)` per point). Tests: the scaling tests of
 /// `l01_38_presburger::disj_groups`, `l01_39_reduced_product::named_test` and
-/// `l01_39_reduced_product::deep_condition`, and `ladder::a_chain_of_guarded_remainders_scales`
+/// `l01_39_scope_relations::deep_condition`, and `ladder::a_chain_of_guarded_remainders_scales`
 /// (COMPLEXITY.md PROJECT-canon-precision).
 // Complexity tradeoff (PRES-stop-prefix): with `stop`, the searches end at the first point,
 // which is all [`has_point`] asks when it falls back to [`batched_prefix`], so that probe
@@ -18194,7 +18194,7 @@ type Projected = (Rc<Parts>, Vec<(usize, IntervalSet)>);
 // level's own, so a bound that only a choice two disjunctions or more inside a disjunct, jointly
 // with the rest of the level, pushes inward is left where the projections put it: a sound
 // hull, wider than the level's. Test
-// `l01_39_reduced_product::deep_condition::a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only`
+// `l01_39_scope_relations::deep_condition::a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only`
 // asserts the wider hull `[3..=4, 10..=10, 100..=200]` where the level's own is
 // `[3..=4, 100..=200]`; a choice one disjunction inside is read exactly
 // (`a_choice_one_level_inside_a_branch_is_read_with_the_rest_of_the_branch`). The level's own
@@ -18613,7 +18613,7 @@ impl Hull {
     // Complexity tradeoff: naive version, each end of each symbol's hull asked of the solver
     // where no point found shows it: a question of all of `f` for each of `s` symbols, O(s * F)
     // for `f` of size F. Two disjuncts of `k` rows on one name each (`z0 >= 1 && ...` or
-    // `z0 <= -1 && ...`, the family `unary_arms` of `l01_39_reduced_product::families`) asked
+    // `z0 <= -1 && ...`, the family `unary_arms` of `l01_39_scope_relations::families`) asked
     // two questions for each of the `k` names, O(k^2) in all, each answered by a point of one
     // disjunct. Used: before the first question, a point of the rows with each disjunct of the
     // disjunction with the most rows added, O(a * (R + F)) for `a` disjuncts and R rows, about
@@ -18622,7 +18622,7 @@ impl Hull {
     // question whose answer is that the formula has a point, which leaves the hull as it was,
     // so no hull changes; a disjunct whose point the rows' least or greatest values miss, or a
     // point that needs disjuncts of other disjunctions, still leaves its questions asked. Test
-    // `l01_39_reduced_product::families::unary_arms_scale` (`n` and `8n`); COMPLEXITY.md row
+    // `l01_39_scope_relations::families::unary_arms_scale` (`n` and `8n`); COMPLEXITY.md row
     // LAZY-unary-arms-growth.
     fn seed_arms(&mut self) {
         for d in mem::take(&mut self.arms) {

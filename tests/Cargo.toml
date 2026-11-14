@@ -154,6 +154,9 @@ path = "steps/l01_38_presburger/mod.rs"
 name = "l01_39_reduced_product"
 path = "steps/l01_39_reduced_product/mod.rs"
 [[test]]
+name = "l01_39_scope_relations"
+path = "steps/l01_39_scope_relations/mod.rs"
+[[test]]
 name = "l01_39a_bit_words"
 path = "steps/l01_39a_bit_words/mod.rs"
 [[test]]
