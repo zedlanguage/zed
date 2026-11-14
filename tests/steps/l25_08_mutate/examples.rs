@@ -300,10 +300,9 @@ fn a_mutant_of_a_generic_constant_replaces_it_at_every_carrier() {
         ["3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run"]
     );
     // A generic literal with no other operand, a branch, taking its carrier from the
-    // parameter (`elab::walk::witnessed`).
-    let unit = "floor(positional x) = if x > 0 { x } else { 1 } test {     // The 0 of `x > 0` follows `x` too: at `f64` it is replaced by `-1.0`, which the row
-    // detects, and by `1.0`, which it does not.
--0.5f64 -> 1.0f64 }\n";
+    // parameter (`elab::walk::witnessed`). The 0 of `x > 0` follows `x` too: at `f64` it is
+    // replaced by `-1.0`, which the row detects, and by `1.0`, which it does not.
+    let unit = "floor(positional x) = if x > 0 { x } else { 1 } test { -0.5f64 -> 1.0f64 }\n";
     assert_eq!(
         report(unit),
         [
@@ -312,6 +311,43 @@ fn a_mutant_of_a_generic_constant_replaces_it_at_every_carrier() {
             "1:30: undetected: `0` replaced by `1` in `floor` at .0.0.1.1.4: every row that \
              reaches it passes",
             "5 mutants: 3 detected, 2 undetected, 0 skipped, 0 not run",
+        ]
+    );
+}
+
+#[test]
+fn a_mutant_of_a_folded_decimal_or_power_is_skipped() {
+    // Plan row STAGE-generic-fold-div. `1.5 + 0` and `(2 + 0) ^ 2` are built once per carrier,
+    // `0` taking the decimal's arms and `2` the base's, and the build stage builds each arm to
+    // its constant; `- 0` in place of `+ 0` then gives the original's term and is skipped.
+    let unit = "f(positional x) = x * (1.5 + 0) test { 2r -> 3r }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:28: skipped: `+` replaced by `-` in `f` at .0.1.1: the build stage gives the \
+             definition the original's term",
+            "3 mutants: 2 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+    let unit = "f(positional x) = x * ((2 + 0) ^ 2) test { 1.5f64 -> 6.0f64 }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:27: skipped: `+` replaced by `-` in `f` at .0.1.1.0: the build stage gives the \
+             definition the original's term",
+            "7 mutants: 6 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+    // `1 / 2 + 0` is one `match` too, but its last arm, at `int`, is `(1 / 2) + 0r`: no call
+    // at `int` is accepted, and `/` has no arrow on two `int`s, so the build stage does not
+    // build that arm, and the mutant is run (plan row STAGE-generic-fold-int-arm).
+    let unit = "f(positional x) = x * (1 / 2 + 0) test { 2r -> 1r }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:30: undetected: `+` replaced by `-` in `f` at .0.1.1: every row that reaches it \
+             passes",
+            "8 mutants: 7 detected, 1 undetected, 0 skipped, 0 not run",
         ]
     );
 }

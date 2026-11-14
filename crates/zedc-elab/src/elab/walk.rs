@@ -1980,13 +1980,10 @@ impl<'a> Elab<'a> {
         let Some((w, keeps)) = w else {
             return Some(self.follow(l, r, p, args));
         };
-        let own = Some(self.own_carrier(l, &args[0]))
-            .filter(|c| keeps_carrier(p) && *c == self.own_carrier(r, &args[1]))
-            .flatten();
+        let (kept, own) = self.carried(p, l, r, &args);
         Some(match per_carrier(p, args, 2) {
             Ok(t) => {
-                self.split
-                    .insert(e.span, (w, keeps && keeps_carrier(p), own));
+                self.split.insert(e.span, (w, keeps && kept, own));
                 t
             }
             Err(args) => Term::Prim(p, args),
@@ -1995,22 +1992,27 @@ impl<'a> Elab<'a> {
 
     /// Whether the operand `o` at `args[at]` is a literal that takes the carrier of the other
     /// operand's value (`Info::follows`), the other operand being split on `w` with each arm
-    /// `is c` of carrier `c` ([`Elab::split`]) and the literal's carriers the patterns of those
-    /// arms; if so, `args[at]` becomes the literal taking the carrier of `w`'s value instead,
-    /// which picks in every case the value [`Elab::follow`] would pick, and both operands are then
-    /// split on `w`. `2 + 0` in a generic definition is such a case: the checker gives `2` the
-    /// parameter as its witness and has `0` follow `2`. `other` is the carrier of the value of
-    /// the other operand's last arm, and without it the operand is not split.
+    /// `is c` of carrier `c` ([`Elab::split`]); if so, `args[at]` becomes the literal split on
+    /// `w` with the other operand's patterns, which picks in every case the value
+    /// [`Elab::follow`] would pick, and both operands are then split on `w`. `2 + 0` in a
+    /// generic definition is such a case: the checker gives `2` the parameter as its witness and
+    /// has `0` follow `2`. `other` is the carrier of the value of the other operand's last arm,
+    /// and without it the operand is not split.
     ///
-    /// The same value: where `w`'s value is of a carrier `c` of the patterns, the other operand's
-    /// value is of carrier `c` and the literal takes its value at `c` either way; elsewhere the
-    /// other operand's value is that of its last arm, of carrier `other`, and the literal takes
-    /// its value at `other` where `Info::follows` lists it and keeps its own value elsewhere,
-    /// as `follow` does. That carrier is not always the literal's own: in `1 / 2` the checker
-    /// gives `1` the value `1.0` at a value of no carrier of the patterns, as `/` takes no
-    /// `int`, and `2`, following it, then takes `2.0`.
-    // Complexity tradeoff: O(C) pattern comparisons for C ≤ 6 carriers, against the O(C) arms
-    // `follow` builds anyway; the `let` of `follow` is not built.
+    /// The same value: in the arm `is c`, the other operand's value is of carrier `c` and the
+    /// literal takes its value at `c` where `Info::follows` lists `c`, else its own, as `follow`
+    /// does at that value; in the last arm the other operand's value is of carrier `other`, and
+    /// the literal takes its value at `other` where listed, else its own. The patterns need not
+    /// be the literal's carriers (STAGE-generic-fold-div): `1` in `1.5 + 1` lists `f64`, which
+    /// the decimal's arms leave to their last, and the exponent `2` in `(2 + 1) ^ 2` lists `f64`
+    /// and `f32` alone, keeping its own `int` at `rat`. The last arm's carrier is not always the
+    /// literal's own either: in `1 / 2` the checker gives `1` the value `1.0` at a value of no
+    /// carrier of the patterns, as `/` takes no `int`, and `2`, following it, then takes `2.0`.
+    // Complexity tradeoff: each listed carrier's pattern built once and compared with each of
+    // the other operand's, O(C²) comparisons for C ≤ 4 numeric carriers, against the O(C) arms
+    // `follow` builds anyway; the `let` of `follow` is not built. Before (STAGE-generic-fold):
+    // O(C) by requiring the patterns to be the listed carriers in order, which left a decimal
+    // and an exponent to `follow`.
     fn follow_split(
         &mut self,
         o: &Expr,
@@ -2027,17 +2029,79 @@ impl<'a> Elab<'a> {
         else {
             return false;
         };
-        let same = arms.len() == values.len() + 1
-            && (values.iter().zip(arms)).all(|((c, _), (q, _))| *q == KPattern::Is(c.ty()));
-        if same {
-            let own = mem::replace(&mut args[at], Term::Lit(Value::Bool(false)));
-            let own = match values.iter().find(|(c, _)| *c == other) {
-                Some((_, v)) => with_value(own, v.clone()),
-                None => own,
-            };
-            args[at] = self.witnessed(s, w, own);
+        let listed: Vec<(KPattern, &Value)> = (values.iter())
+            .map(|(c, v)| (KPattern::Is(c.ty()), v))
+            .collect();
+        let own = &args[at];
+        let split = (arms.iter())
+            .map(|(q, _)| {
+                let v = match q {
+                    KPattern::Wild => values.iter().find(|(c, _)| *c == other).map(|(_, v)| v),
+                    q => listed.iter().find(|(p, _)| p == q).map(|&(_, v)| v),
+                };
+                let t = match v {
+                    Some(v) => marked_as(own, v.clone()),
+                    None => own.clone(),
+                };
+                (q.clone(), t)
+            })
+            .collect();
+        args[at] = Term::Match(self.witness_term(w), split);
+        true
+    }
+
+    /// For `p` on the operands `l` and `r` of terms `args`, each built once per carrier on one
+    /// witness ([`per_carrier`]): whether `p` on the operands' arms `is c` gives a value of
+    /// carrier `c`, and the carrier of its value in the last arm, where known ([`Elab::split`]).
+    /// `+`, `-` and `*` keep the carrier, and the last arm's is the operands' where they agree.
+    /// `/` keeps it where no pattern is `is int` and the divisor is a nonzero literal, `int /
+    /// int` giving a `rat` in the last arm. `^` keeps it where the exponent is a whole-number
+    /// literal, in each arm an `int` or a float of the base's carrier there (DESIGN sec:power:
+    /// `int ^ k` is an `int` for `k ≥ 0`, `rat`, `f32` and `f64` to an `int` power keep theirs).
+    /// Elsewhere `(false, None)`: a literal following the operation then takes the old path
+    /// ([`Elab::follow`]), which keeps the value, one merge missed.
+    // Complexity tradeoff: O(C) for the C ≤ 4 arms of the divisor or exponent, against the O(C)
+    // arms `per_carrier` builds; a divisor or exponent that is an operation is not evaluated
+    // (that would be the build stage's work), so `1 / (2 + 1)` is built once per carrier but a
+    // literal following it takes the old path.
+    fn carried(&self, p: Prim, l: &Expr, r: &Expr, args: &[Term]) -> (bool, Option<Carrier>) {
+        let (lo, ro) = (self.own_carrier(l, &args[0]), self.own_carrier(r, &args[1]));
+        let same = lo.filter(|_| lo == ro);
+        let every = |t: &Term, f: &dyn Fn(&KPattern, &Value) -> bool| {
+            arms_of(t).is_some_and(|arms| {
+                (arms.iter()).all(|(q, t)| lit_value(t).is_some_and(|v| f(q, v)))
+            })
+        };
+        match p {
+            Prim::Add | Prim::Sub | Prim::Mul => (true, same),
+            Prim::Div => {
+                let int = KPattern::Is(Carrier::Int.ty());
+                let kept = arms_of(&args[0]).is_some_and(|a| a.iter().all(|(q, _)| *q != int))
+                    && every(&args[1], &|_, v| nonzero(v));
+                let own = same.map(|c| match c {
+                    Carrier::Int => Carrier::Rat,
+                    c => c,
+                });
+                (kept, own.filter(|_| kept))
+            }
+            Prim::Pow => {
+                // The base's carrier in the arm `q`: `c` for `is c`, its own in the last arm.
+                let at = |q: &KPattern, c: Carrier| match q {
+                    KPattern::Wild => lo == Some(c),
+                    q => *q == KPattern::Is(c.ty()),
+                };
+                let whole = |x: f64| x >= 0.0 && x.fract() == 0.0;
+                let kept = every(&args[1], &|q, v| match v {
+                    Value::Int(k) => *k >= 0,
+                    Value::Big(k) => !k.is_negative(),
+                    Value::Float(x) => at(q, Carrier::F64) && whole(x.get()),
+                    Value::Float32(x) => at(q, Carrier::F32) && whole(f64::from(x.get())),
+                    _ => false,
+                });
+                (kept, lo.filter(|_| kept))
+            }
+            _ => (false, None),
         }
-        same
     }
 
     /// The carrier of the value of the last arm of `t`, the term of `e`, where `e` is a
@@ -2368,41 +2432,53 @@ fn arms_of(t: &Term) -> Option<&[(KPattern, Term)]> {
     }
 }
 
-/// The carrier of the literal `t`, marked or not ([`Elab::constant`]), where it is one a
-/// generic literal's own value has: `int` for an integer, `f64` for a decimal or for an
-/// integer the checker reads as `f64`, as `1` in `1 / 2`. `None` for any other term, and the
-/// operation is then not split, which keeps its value (`Elab::follow`).
+/// The carrier of the literal `t`, marked or not ([`Elab::constant`]): `int` for an integer,
+/// `f64` for a decimal or for an integer the checker reads as `f64`, as `1` in `1 / 2`, and
+/// `rat` or `f32` for a literal that took that carrier from the operand it follows, as `3` in
+/// `1 / 2 + 3` takes `rat` from `1 / 2` at `int` ([`Elab::follow_split`]). `None` for any other
+/// term, and the operation is then not split, which keeps its value (`Elab::follow`).
 fn lit_carrier(t: &Term) -> Option<Carrier> {
+    match lit_value(t)? {
+        Value::Int(_) | Value::Big(_) => Some(Carrier::Int),
+        Value::Rat(_) => Some(Carrier::Rat),
+        Value::Float(_) => Some(Carrier::F64),
+        Value::Float32(_) => Some(Carrier::F32),
+        _ => None,
+    }
+}
+
+/// The value of the literal `t`, marked or not ([`Elab::constant`]).
+fn lit_value(t: &Term) -> Option<&Value> {
     let t = match t {
         Term::Prim(Prim::Neg, a) if mark_of(t).is_some() => &a[0],
         t => t,
     };
     match t {
-        Term::Lit(Value::Int(_) | Value::Big(_)) => Some(Carrier::Int),
-        Term::Lit(Value::Float(_)) => Some(Carrier::F64),
+        Term::Lit(v) => Some(v),
         _ => None,
     }
 }
 
-/// The literal `own`, a constant's term ([`Elab::constant`]), with the value `v`: marked as
-/// `own` is, so that a mutant of the constant replaces it (L25.8).
-fn with_value(mut own: Term, v: Value) -> Term {
-    if mark_of(&own).is_some()
-        && let Term::Prim(Prim::Neg, a) = &mut own
-    {
-        a[0] = Term::Lit(v);
-        return own;
+/// Whether the number `v` is not zero: a divisor that gives `/` a value of its carrier, not
+/// `#divByZero` (DESIGN sec:power, author decision POW-domains).
+fn nonzero(v: &Value) -> bool {
+    match v {
+        Value::Int(n) => *n != 0,
+        Value::Big(r) | Value::Rat(r) => !r.is_zero(),
+        Value::Float(x) => x.get() != 0.0,
+        Value::Float32(x) => x.get() != 0.0,
+        _ => false,
     }
-    Term::Lit(v)
 }
 
 /// The literal `v` at another carrier of the generic literal whose own term is `own`, marked
 /// with `own`'s mark where `own` is a marked constant ([`Elab::constant`]): an arm of
-/// [`Elab::witnessed`] or [`Elab::follow`], so that a mutant of the constant replaces it in
-/// every arm, at each arm's carrier (L25.8, plan row MUTATE-generic-constants). Unmarked
-/// elsewhere, as the elaboration without marks builds it.
-// Complexity tradeoff: O(1), the mark one integer literal; `with_value(own.clone(), v)` would
-// copy the whole of `own` per arm where `own` is an operation, as an exponent `(1 + 1)` is.
+/// [`Elab::witnessed`], [`Elab::follow`] or [`Elab::follow_split`], so that a mutant of the
+/// constant replaces it in every arm, at each arm's carrier (L25.8, plan row
+/// MUTATE-generic-constants). Unmarked elsewhere, as the elaboration without marks builds it.
+// Complexity tradeoff: O(1), the mark one integer literal; a copy of `own` with its value set
+// would copy the whole of `own` per arm where `own` is an operation, as an exponent `(1 + 1)`
+// is.
 fn marked_as(own: &Term, v: Value) -> Term {
     match own {
         Term::Prim(Prim::Neg, a) if mark_of(own).is_some() => {
@@ -2412,9 +2488,9 @@ fn marked_as(own: &Term, v: Value) -> Term {
     }
 }
 
-/// Whether `p` on values of one numeric carrier gives a value of that carrier: `+`, `-`, `*`
-/// and negation do; `/` on two `int`s gives a `rat`, a comparison a `bool`, and the others are
-/// left out, an operation on a split operand then only missing a merge, never a wrong value.
+/// Whether the unary operator `p` on a value of one numeric carrier gives a value of that
+/// carrier: negation does, and the others are left out, an operation on a split operand then
+/// only missing a merge, never a wrong value. A binary operator: [`Elab::carried`].
 fn keeps_carrier(p: Prim) -> bool {
     matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Neg)
 }
