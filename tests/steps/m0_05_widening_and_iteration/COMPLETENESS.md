@@ -15,7 +15,7 @@ modules):
 | iterate.rs | 99.4% (1 of 160) | 99.4% (1) |
 | wto.rs | 98.0% (5 of 255) | 99.6% (1, an instantiation of `same_or_cmp` no test makes; its lines run in the others) |
 | schedule.rs | 98.7% (3 of 228) | 100% |
-| revision.rs | 99.0% (7 of 690) | 99.1% (6 by the summary, 5 lines by the line listing: 614–616, 672, 886) |
+| revision.rs | 99.0% (7 of 690) | 99.1% (6 by the summary, 5 lines by the line listing: 614–616, 672, 886; LATTICE-pow-end-dead then deleted 614–616, and 672 and 886 are now 669 and 883) |
 
 The lines still not reached are listed at the end of the table, each with its reason.
 
@@ -44,6 +44,6 @@ The lines still not reached are listed at the end of the table, each with its re
 | interval.rs lines 1380, 1388: equality walks finding a differing piece, or one tree ending first | None: reached only when two sets have equal piece counts and equal 61-bit content hashes but differ, a hash collision a small test cannot build; 1388 not even then, since equal counts end both walks together |
 | interval.rs, the shared-subtree arms of `union` and `intersection` (regions on lines 463 and 490) | None needed for correctness: a fast path whose result equals the general one; `join` and `meet` return a shared operand when one holds the other, so the top-level call never meets equal trees, and the recursion did not meet one subtree held by both on the inputs of `set_operations_on_sets_that_share_most_pieces`. The difference arm (line 535) is reached |
 | iterate.rs line 316: `unreachable!` after phase two | None: a chain of narrowings is finite, so the loop returns |
-| revision.rs lines 614–616: `pow_end` for a base of 0, 1 or -1 | None: dead code. `Num::pow_by` (crates/zedc-int/src/int.rs) already returns a value for a base of magnitude at most 1, so the match after it is never reached |
+| `pow_end` for a base of 0, 1 or -1 | Deleted (LATTICE-pow-end-dead): the arms were dead, since `Num::pow_by` (crates/zedc-int/src/int.rs) returns a value for every `k` that fits `u32` and, past it, for every base of magnitude at most 1. These bases are covered through `pow_by` by `complete::backward_powers_with_a_kept_exponent_hold_every_root` (forward at -1, 0, 1 with a kept exponent) |
 | revision.rs line 672: `unreachable!` in `reduce_finite` | None: `FiniteSet::of` always builds a set |
 | revision.rs line 886: the panic of a test helper that reports a lost solution | None: it runs only when a revision loses a solution, which would fail the test that calls it |

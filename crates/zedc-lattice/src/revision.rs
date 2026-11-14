@@ -606,15 +606,12 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
 /// and `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`;
 /// COMPLEXITY.md S36. A complete solution would keep the exponent of a kept power as a kept
 /// value, and `s ^ k` as an atom.
+///
+/// A base of -1, 0 or 1 never reaches the bound: [`Num::pow_by`] reads it by the parity of
+/// `k`, kept or not.
 fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
     if let Some(v) = x.pow_by(k.num()) {
         return Fin(v);
-    }
-    match x.to_i64() {
-        Some(0) => return End::of(0),
-        Some(1) => return End::of(1),
-        Some(-1) => return End::of(if k.is_odd() { -1 } else { 1 }),
-        _ => {}
     }
     let least = Num::from(2).pow(u32::MAX);
     match (x.signum() < 0 && k.is_odd(), dir) {
