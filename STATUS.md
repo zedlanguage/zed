@@ -2189,18 +2189,17 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-products | impl attempt 1 | 2026-11-13 16:26 | after fix: too_large 19/19; scaling products 7.995 (instr) 8.086 (time), divisions 7.978, powers 7.995; negative control (memo cleared per query) fails both cha |
-| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
+| HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | POW-top-body-agree | impl attempt 1 | 2026-11-13 17:20 | started; worktree from origin/main 1e2d6855e |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
-| REPAIR-literal-string-order | running | 2026-11-13 20:06 |  |
+| REPAIR-literal-string-order | impl attempt 1 | 2026-11-13 20:06 | started; load 61.28 56.25 52.21 |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
 | STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
 | ST-walk-orders-nine | impl attempt 1 | 2026-11-13 20:00 | started; load 44.24 |
 | TEST-mutate-generic-time | impl attempt 1 | 2026-11-13 19:53 | started; worktree from origin/main d5f0ccb29; load 48.11 |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | fix done: rejection inside an argument that takes its call's carrier not built (Ck::lit_spares); n=100 calls bare vs 2.0f64: 4.8x instr / 4.4x bytes before, 1.4 |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
-| XR-l139-family | impl attempt 1 | 2026-11-13 18:59 | start: worktree xr-l139-family from origin/main 370abe3aa; load 36.27 36.15 40.29 |
+| XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
