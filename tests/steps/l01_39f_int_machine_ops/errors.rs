@@ -204,3 +204,30 @@ fn tried_is_accepted(out: &str) {
         assert!(accepted(&fixed), "{fixed}: {out}");
     }
 }
+
+/// DIAG-pdep-wrong-operand-note: where one operand of `pdep` or `pext` is of another kind,
+/// the note naming the `/` that gives it lies at that operand, first or second, and the
+/// carrier error that follows points at it too, never at the other operand.
+#[test]
+fn the_note_for_an_operand_of_another_kind_lies_at_that_operand() {
+    for word in ["pdep", "pext"] {
+        // `x = w(1, 1/2);`: the `/` starts after `x = `, the word, `(1, 1`.
+        let second = 4 + word.len() + 5;
+        let first = 4 + word.len() + 2;
+        for (src, at, other) in [
+            (format!("x = {word}(1, 1/2);\n"), second, first),
+            (format!("x = {word}(1/2, 1);\n"), first, first + 5),
+        ] {
+            let m = rejected(&src);
+            let note = format!("1:{at}: this `/`");
+            assert!(m.contains(&note), "{src}: no note `{note}` in\n{m}");
+            let wrong = format!("1:{other}: this `/`");
+            assert!(
+                !m.contains(&wrong),
+                "{src}: a `/` note at the other operand in\n{m}"
+            );
+            let carrier = format!("\n1:{at}: Nothing gives the literal");
+            assert!(m.contains(&carrier), "{src}: no `{carrier}` in\n{m}");
+        }
+    }
+}
