@@ -3,6 +3,7 @@
 //! the facts it read; a failure's origins are the facts where each of its members appeared.
 
 mod bench;
+mod completeness;
 mod kernel;
 mod programs;
 mod scaling;
