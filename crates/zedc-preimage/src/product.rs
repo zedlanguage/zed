@@ -3664,9 +3664,40 @@ pub type PartKey = (Arc<Formula>, Option<Arc<str>>);
 /// constraint costs the parts that hold two variables of its group and not the block's (the walk
 /// `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`). The
 /// constraints are shared, as the key is ([`PartKey`]).
-// Complexity tradeoff: as for [`PartKey`], O(1) for each copy of an entry instead of O(t) for
-// the t terms of the constraints together. COMPLEXITY.md C41.
-pub type PartWith = (Arc<[Con]>, Option<Arc<Formula>>);
+// Complexity tradeoff: naive version, `PartWith` materialized a fresh `Vec<Con>` sorted,
+// deduped, and wrapped in `Arc<Formula>` at every `Split::with` call, O(m log m) per part and
+// O(k^2 log k) across k reframes (`36.4M` instructions in `Split::with` and `7.5M` in
+// `Formula::eq` on `persist` at k = 16). Used: `WithCons` keeps a persistent `imbl::OrdSet<Con>`
+// per variable-connected group and unions only the groups and term buckets a part reads, sharing
+// unchanged B-tree nodes in O(1) and comparing via `ptr_eq` and `imbl::OrdSet::diff` in
+// O(1 + d log m) for d differing constraints (Gemini seat's prototype: `split_with` 9560 -> 752, `with_cmp`
+// 9032 -> 752 at k = 16). Reference: N. Sarnak and R. E. Tarjan, "Planar point location using
+// persistent search trees", Communications of the ACM 29(7), 1986, pp. 669-679.
+#[derive(Clone, Debug, Eq)]
+pub enum WithCons {
+    /// No constraints of the block outside the part.
+    None,
+    /// The constraints as one formula.
+    Base(Arc<Formula>),
+    /// The constraints as a persistent set, shared with the other parts of the group.
+    Shared(imbl::OrdSet<Con>),
+}
+
+impl PartialEq for WithCons {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (WithCons::None, WithCons::None) => true,
+            (WithCons::Base(a), WithCons::Base(b)) => Arc::ptr_eq(a, b) || a == b,
+            (WithCons::Shared(a), WithCons::Shared(b)) => {
+                a.ptr_eq(b) || (a.len() == b.len() && a.diff(b).next().is_none())
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The equalities and the other constraints of a block that a part is projected with.
+pub type PartWith = (Arc<[Con]>, WithCons);
 
 /// Whether a conjunct `g` of a class ([`conjuncts::Class`]) keeps the projection onto its leaf
 /// exact ([`Scope::core_leaf_bound`]): a constraint, the negation of a bound, or a conjunct
@@ -3789,73 +3820,381 @@ fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMa
 /// What [`split`] makes each part of a set of conjuncts with: their constraints and the leaf.
 /// A block keeps it ([`Block`]), so that a conjunct new to the block gets the part [`split`]
 /// would give it without the others being split again.
+// Complexity tradeoff: naive version, `Block::reframe` rebuilt `Split::new` from scratch over
+// all r constraints (`11.1M` instructions across 124 reframes on `persist` at k = 16) and kept
+// each group's constraints in a flat `Vec<Con>`, O(r log r) per reframe. Used: `Split` keeps
+// persistent `imbl` maps for `eqs_set`, `on`, `adj`, `groups`, `group`, `base_buckets`, and
+// `base_other`, so `Split::update` clones in O(1) and updates the c added or removed
+// constraints in O(c log r); the joined `base` is still written again from the buckets and the
+// other constraints, O(b + o) for b buckets and o others (at most r), and its names read again
+// (row PERF-l139-persist-due). Component splits on edge removal walk `adj` with an explicit
+// `visited` set. Proposed by Gemini in round 3 of XR-l139-family; measured with the rest of
+// that round's merge (COMPLEXITY.md XR-l139-gemini). References: N. Sarnak and R. E. Tarjan, "Planar point
+// location using persistent search trees", Communications of the ACM 29(7), 1986,
+// pp. 669-679 (persistent search trees).
+#[derive(Clone)]
 struct Split {
     /// The equalities among the constraints, in order.
     eqs: Arc<[Con]>,
+    eqs_set: imbl::OrdSet<Con>,
     /// The constraints on each term, either sign, which only the other conjuncts read.
-    on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>>,
+    on: imbl::OrdMap<BTreeMap<Atom, Int>, imbl::OrdSet<Con>>,
+    /// Variable adjacency counts from constraints, for incremental component maintenance.
+    adj: imbl::OrdMap<Factor, BTreeMap<Factor, usize>>,
     /// The constraints linked through shared variables ([`factors`]): each group's variables
     /// and constraints, and the group of each variable ([`Split::with`]).
-    groups: Vec<(BTreeSet<Factor>, Vec<Con>)>,
-    group: BTreeMap<Factor, usize>,
-    /// Each group's constraints as [`Split::with`] writes them for a part that holds two of
-    /// its variables and no other constraint, made the first time a part asks, and shared by
-    /// every such part.
-    // Complexity tradeoff: naive version, the group's g constraints copied, sorted and joined
-    // into a new formula for each part that holds two of its variables, O(g log g) per part,
-    // and the formula hashed again when it is compared with the part's old one, O(g): for
-    // `persist`'s k disjunctions on `x` and `y` under one group of its k constraints
-    // `x + j*y >= -1000`, each of the O(k) constraints added makes all O(k) parts read it
-    // again, O(k^3 log k) in all (36.4M instructions of 98.4M in `Block::update` at k = 16).
-    // Used: one formula per group per split, made once, O(g log g), and shared by the parts,
-    // O(log g) each; its hash is kept with it (`Formula::sig`), so the comparison with an old
-    // formula of another length costs O(1) after the first. The formula is the one the naive
-    // version makes, from the same sorted and deduplicated constraints, so every `PartWith`
-    // is equal to what it was, and no record or answer changes. Measured (`probe_l139`,
-    // persist, k = 16): 537.1M instructions before, 500.1M after. Prior work: one shared copy
-    // of a value built on first use (memoization, as in hash-consing). COMPLEXITY.md C64.
-    joined: Vec<OnceLock<Arc<Formula>>>,
+    groups: imbl::OrdMap<usize, (BTreeSet<Factor>, imbl::OrdSet<Con>)>,
+    group: imbl::OrdMap<Factor, usize>,
+    next_gid: usize,
+    /// Common-intercept two-symbol `Rel::Ge` buckets `(x, y, a, constant)` for [`extreme_base`],
+    /// and all other constraints in [`Formula`] order.
+    base_buckets: imbl::OrdMap<(Atom, Atom, Int, Int), imbl::OrdSet<Con>>,
+    base_other: imbl::OrdSet<Arc<Formula>>,
+    eligible_count: usize,
     // Complexity tradeoff: built once per split, O(t) in the t terms of the constraints; the
     // part's key and what it is projected with take a reference to it, O(1), where they took
     // a deep copy each, O(t). COMPLEXITY.md C41.
     /// The constraints together, in the order they came, shared with the [`PartWith`] of their
     /// own part.
     base: Arc<Formula>,
+    /// The symbols mentioned by `base`, sorted.
+    base_syms: Arc<[Arc<str>]>,
     /// The least constraint, the key of the constraints' own part, shared with the relation.
     least: Option<Arc<Formula>>,
     /// The leaf, when the conjuncts are a star's.
     leaf: Option<Arc<str>>,
 }
 
+fn extreme_bucket_key(c: &Con) -> Option<(Atom, Atom, Int, Int)> {
+    let mut terms = c.lin.terms.iter();
+    match (c.rel, terms.next(), terms.next(), terms.next()) {
+        (Rel::Ge, Some((x @ Atom::Sym(_), a)), Some((y @ Atom::Sym(_), _)), None) => {
+            Some((x.clone(), y.clone(), a.clone(), c.lin.constant.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Counts a constraint on the factors `fs` into `adj` (`add`) or out of it: each pair of them,
+/// both ways, the number of constraints that hold both, and each factor with itself, the number
+/// that mention it. A count that reaches 0 is removed. Returns whether a pair of distinct
+/// factors no longer shares a constraint. O(v^2 log n) for v factors of the constraint.
+fn count_links(
+    adj: &mut imbl::OrdMap<Factor, BTreeMap<Factor, usize>>,
+    fs: &[Factor],
+    add: bool,
+) -> bool {
+    let mut dropped = false;
+    for x in fs {
+        let links = if add {
+            Some(adj.entry(x.clone()).or_default())
+        } else {
+            adj.get_mut(x)
+        };
+        let Some(links) = links else { continue };
+        for y in fs {
+            if add {
+                *links.entry(y.clone()).or_insert(0) += 1;
+            } else if let Some(k) = links.get_mut(y) {
+                *k -= 1;
+                if *k == 0 {
+                    links.remove(y);
+                    dropped |= x != y;
+                }
+            }
+        }
+    }
+    dropped
+}
+
 impl Split {
     /// The context of the constraints `cons`, in the star of leaf `leaf` if any.
     fn new(cons: &[&Arc<Formula>], leaf: Option<&Arc<str>>) -> Split {
-        let mut eqs: Vec<Con> = cons
-            .iter()
-            .filter_map(|g| match &***g {
-                Formula::Con(c) if c.rel == Rel::Eq => Some(c.clone()),
-                _ => None,
-            })
-            .collect();
-        eqs.sort_unstable();
-        let mut on: BTreeMap<BTreeMap<Atom, Int>, Vec<Con>> = BTreeMap::new();
-        for g in cons {
-            if let Formula::Con(c) = &***g {
-                on.entry(unsigned(c)).or_default().push(c.clone());
+        let mut eqs_set = imbl::OrdSet::new();
+        let mut on: imbl::OrdMap<BTreeMap<Atom, Int>, imbl::OrdSet<Con>> = imbl::OrdMap::new();
+        let mut adj: imbl::OrdMap<Factor, BTreeMap<Factor, usize>> = imbl::OrdMap::new();
+        let mut base_buckets: imbl::OrdMap<(Atom, Atom, Int, Int), imbl::OrdSet<Con>> =
+            imbl::OrdMap::new();
+        let mut base_other: imbl::OrdSet<Arc<Formula>> = imbl::OrdSet::new();
+        let mut eligible_count = 0usize;
+        let mut seen_g: BTreeSet<&Arc<Formula>> = BTreeSet::new();
+        let mut dedup_cons: Vec<&Arc<Formula>> = Vec::with_capacity(cons.len());
+        for &g in cons {
+            if !seen_g.insert(g) {
+                continue;
+            }
+            dedup_cons.push(g);
+            match &**g {
+                Formula::Con(c) => {
+                    if c.rel == Rel::Eq {
+                        eqs_set.insert(c.clone());
+                    }
+                    on.entry(unsigned(c)).or_default().insert(c.clone());
+                    let fs: Vec<Factor> = factors_of(c.lin.terms.keys()).into_iter().collect();
+                    count_links(&mut adj, &fs, true);
+                    if let Some(key) = extreme_bucket_key(c) {
+                        let set = base_buckets.entry(key).or_default();
+                        if set.insert(c.clone()).is_none() {
+                            eligible_count += 1;
+                        }
+                    } else {
+                        base_other.insert(g.clone());
+                    }
+                }
+                _ => {
+                    base_other.insert(g.clone());
+                }
             }
         }
-        let (groups, group) = linked(cons);
-        let joined = groups.iter().map(|_| OnceLock::new()).collect();
+        let eqs: Vec<Con> = eqs_set.iter().cloned().collect();
+        let (raw_groups, raw_group) = linked(&dedup_cons);
+        let next_gid = raw_groups.len();
+        let groups: imbl::OrdMap<usize, (BTreeSet<Factor>, imbl::OrdSet<Con>)> = raw_groups
+            .into_iter()
+            .enumerate()
+            .map(|(i, (fs, cs))| (i, (fs, cs.into_iter().collect())))
+            .collect();
+        let group: imbl::OrdMap<Factor, usize> = raw_group.into_iter().collect();
+        let base = Arc::new(extreme_base(&dedup_cons));
+        let base_syms: Arc<[Arc<str>]> = syms(&base).into();
         Split {
             eqs: eqs.into(),
+            eqs_set,
             on,
+            adj,
             groups,
             group,
-            joined,
-            base: Arc::new(extreme_base(cons)),
-            least: cons.iter().min().map(|&c| c.clone()),
+            next_gid,
+            base_buckets,
+            base_other,
+            eligible_count,
+            base,
+            base_syms,
+            least: dedup_cons.iter().min().map(|&c| c.clone()),
             leaf: leaf.cloned(),
         }
+    }
+
+    /// Incrementally updates `self` for `removed` and `added` constraints, reading `cons` only
+    /// when fewer than two two-symbol `Rel::Ge` rows remain.
+    fn update(
+        &self,
+        cons: &imbl::OrdSet<Arc<Formula>>,
+        removed: &[Arc<Formula>],
+        added: &[Arc<Formula>],
+    ) -> Split {
+        if removed.is_empty() && added.is_empty() {
+            return self.clone();
+        }
+        let mut next = self.clone();
+        let mut eqs_changed = false;
+        for g in removed {
+            next.remove_one(g, &mut eqs_changed);
+        }
+        for g in added {
+            next.add_one(g, &mut eqs_changed);
+        }
+        if eqs_changed {
+            let eqs: Vec<Con> = next.eqs_set.iter().cloned().collect();
+            next.eqs = eqs.into();
+        }
+        next.least = cons.get_min().cloned();
+        let base = Arc::new(next.rebuild_base(cons));
+        next.base_syms = syms(&base).into();
+        next.base = base;
+        next
+    }
+
+    fn add_one(&mut self, g: &Arc<Formula>, eqs_changed: &mut bool) {
+        let Formula::Con(c) = &**g else {
+            self.base_other.insert(g.clone());
+            return;
+        };
+        if c.rel == Rel::Eq && self.eqs_set.insert(c.clone()).is_none() {
+            *eqs_changed = true;
+        }
+        self.on.entry(unsigned(c)).or_default().insert(c.clone());
+        if let Some(key) = extreme_bucket_key(c) {
+            let set = self.base_buckets.entry(key).or_default();
+            if set.insert(c.clone()).is_none() {
+                self.eligible_count += 1;
+            }
+        } else {
+            self.base_other.insert(g.clone());
+        }
+        let fs: Vec<Factor> = factors_of(c.lin.terms.keys()).into_iter().collect();
+        if fs.is_empty() {
+            return;
+        }
+        count_links(&mut self.adj, &fs, true);
+        let mut existing: BTreeSet<usize> = BTreeSet::new();
+        let mut fresh: Vec<Factor> = Vec::new();
+        for x in &fs {
+            match self.group.get(x) {
+                Some(&gid) => {
+                    existing.insert(gid);
+                }
+                None => fresh.push(x.clone()),
+            }
+        }
+        let target = if existing.is_empty() {
+            let gid = self.next_gid;
+            self.next_gid += 1;
+            self.groups
+                .insert(gid, (BTreeSet::new(), imbl::OrdSet::new()));
+            gid
+        } else {
+            let best = *existing
+                .iter()
+                .max_by_key(|&&gid| self.groups[&gid].1.len())
+                .unwrap();
+            for &gid in &existing {
+                if gid == best {
+                    continue;
+                }
+                let (old_fs, old_cs) = self.groups.remove(&gid).unwrap();
+                for x in &old_fs {
+                    self.group.insert(x.clone(), best);
+                }
+                let dst = self.groups.get_mut(&best).unwrap();
+                dst.0.extend(old_fs);
+                dst.1 = dst.1.clone().union(old_cs);
+            }
+            best
+        };
+        for x in fresh {
+            self.group.insert(x.clone(), target);
+            self.groups.get_mut(&target).unwrap().0.insert(x);
+        }
+        self.groups.get_mut(&target).unwrap().1.insert(c.clone());
+    }
+
+    fn remove_one(&mut self, g: &Arc<Formula>, eqs_changed: &mut bool) {
+        let Formula::Con(c) = &**g else {
+            self.base_other.remove(g);
+            return;
+        };
+        if c.rel == Rel::Eq && self.eqs_set.remove(c).is_some() {
+            *eqs_changed = true;
+        }
+        let u_key = unsigned(c);
+        if let Some(set) = self.on.get_mut(&u_key) {
+            set.remove(c);
+            if set.is_empty() {
+                self.on.remove(&u_key);
+            }
+        }
+        if let Some(key) = extreme_bucket_key(c) {
+            let mut empty_bucket = false;
+            if let Some(set) = self.base_buckets.get_mut(&key) {
+                if set.remove(c).is_some() {
+                    self.eligible_count -= 1;
+                }
+                empty_bucket = set.is_empty();
+            }
+            if empty_bucket {
+                self.base_buckets.remove(&key);
+            }
+        } else {
+            self.base_other.remove(g);
+        }
+        let fs: Vec<Factor> = factors_of(c.lin.terms.keys()).into_iter().collect();
+        if fs.is_empty() {
+            return;
+        }
+        let Some(&gid) = self.group.get(&fs[0]) else {
+            return;
+        };
+        let edge_dropped = count_links(&mut self.adj, &fs, false);
+        self.groups.get_mut(&gid).unwrap().1.remove(c);
+        // A variable of `c` that no constraint left mentions leaves the group, O(v log n) for
+        // the v variables of `c`, read from the counts `count_links` keeps, where reading every
+        // constraint left in the group cost O(g) per constraint gone.
+        for x in &fs {
+            if self.adj.get(x).is_none_or(|m| !m.contains_key(x)) {
+                self.groups.get_mut(&gid).unwrap().0.remove(x);
+                self.group.remove(x);
+                self.adj.remove(x);
+            }
+        }
+        if self.groups[&gid].0.is_empty() {
+            self.groups.remove(&gid);
+            return;
+        }
+        if !edge_dropped {
+            return;
+        }
+        // Check connectivity of the remaining variables in `gid` with an explicit `visited` set.
+        // Complexity tradeoff: a search over the group, O(v + e) for its v variables and e
+        // linked pairs, only when a pair of variables stops sharing a constraint; the families
+        // add constraints to a group of fixed variables, so this does not run in their tests.
+        // A fully dynamic connectivity structure (J. Holm, K. de Lichtenberg and M. Thorup,
+        // "Poly-logarithmic deterministic fully-dynamic algorithms for connectivity", JACM
+        // 48(4), 2001) answers in O(log^2 v) amortized, at a large constant; not needed yet.
+        let rem_vars = self.groups[&gid].0.clone();
+        let mut visited: BTreeSet<Factor> = BTreeSet::new();
+        let mut comps: Vec<BTreeSet<Factor>> = Vec::new();
+        for start in &rem_vars {
+            if !visited.insert(start.clone()) {
+                continue;
+            }
+            let mut comp = BTreeSet::new();
+            comp.insert(start.clone());
+            let mut stack = vec![start.clone()];
+            while let Some(u) = stack.pop() {
+                if let Some(nbrs) = self.adj.get(&u) {
+                    for v in nbrs.keys() {
+                        if rem_vars.contains(v) && visited.insert(v.clone()) {
+                            comp.insert(v.clone());
+                            stack.push(v.clone());
+                        }
+                    }
+                }
+            }
+            comps.push(comp);
+        }
+        if comps.len() <= 1 {
+            return;
+        }
+        let (_, old_cs) = self.groups.remove(&gid).unwrap();
+        let mut new_gids: Vec<usize> = Vec::with_capacity(comps.len());
+        for comp in comps {
+            let ngid = self.next_gid;
+            self.next_gid += 1;
+            for x in &comp {
+                self.group.insert(x.clone(), ngid);
+            }
+            self.groups.insert(ngid, (comp, imbl::OrdSet::new()));
+            new_gids.push(ngid);
+        }
+        for rc in old_cs {
+            if let Some(first_x) = factors_of(rc.lin.terms.keys()).into_iter().next()
+                && let Some(&ngid) = self.group.get(&first_x)
+            {
+                self.groups.get_mut(&ngid).unwrap().1.insert(rc);
+            }
+        }
+        for ngid in new_gids {
+            if self.groups[&ngid].0.is_empty() {
+                self.groups.remove(&ngid);
+            }
+        }
+    }
+
+    fn rebuild_base(&self, cons: &imbl::OrdSet<Arc<Formula>>) -> Formula {
+        if self.eligible_count < 2 {
+            return Formula::and(cons.iter().map(|g| (**g).clone()).collect());
+        }
+        let mut out: Vec<Formula> = self.base_other.iter().map(|g| (**g).clone()).collect();
+        for (_, set) in &self.base_buckets {
+            if let (Some(lo), Some(hi)) = (set.get_min(), set.get_max()) {
+                if lo != hi {
+                    out.push(Formula::Con(hi.clone()));
+                }
+                out.push(Formula::Con(lo.clone()));
+            }
+        }
+        Formula::and(out)
     }
 
     /// The part of `g`, a conjunct that is not a constraint: `g` with the constraints, keyed by
@@ -3880,8 +4219,8 @@ impl Split {
     // constraint added or gone made every part due, O(k) projections for k parts, O(k^2) for k
     // tests on a term no part compares (the walk through a shared name). Used: the groups that
     // hold two of `g`'s variables, found from the group of each, O(v log v) for v variables;
-    // the constraints copied are at most those `g` is projected with anyway (`Split::formula`).
-    // COMPLEXITY.md C52.
+    // persistent `imbl::OrdSet<Con>` union shares group trees in O(1) when a single group holds
+    // all constraints (`persist`), avoiding O(m log m) vector sort and dedup. COMPLEXITY.md C52.
     ///
     /// The groups are read from `groups`, the context as it was outside the cases of a test
     /// ([`Block::outer`]), which is `self` but within those cases.
@@ -3892,43 +4231,43 @@ impl Split {
                 *held.entry(i).or_insert(0) += 1;
             }
         }
-        let ts = terms(g);
-        // One group that holds two of `g`'s variables, and every constraint on `g`'s terms in
-        // it: the constraints are that group's, written once ([`Split::joined`]).
-        let mut two = held.iter().filter(|&(_, &k)| k >= 2).map(|(&i, _)| i);
-        if let (Some(i), None) = (two.next(), two.next()) {
-            let own = |c: &Con| -> bool {
-                let Some(x) = factors_of(c.lin.terms.keys()).into_iter().next() else {
-                    return false;
-                };
-                groups.group.get(&x) == Some(&i)
-                    && groups.on.get(&unsigned(c)).is_some_and(|cs| cs.contains(c))
-            };
-            if ts.iter().filter_map(|t| self.on.get(t)).flatten().all(own) {
-                let f = groups.joined[i].get_or_init(|| {
-                    let mut cs = groups.groups[i].1.clone();
-                    cs.sort_unstable();
-                    cs.dedup();
-                    Arc::new(Formula::and(cs.into_iter().map(Formula::Con).collect()))
+        let mut shared: Option<imbl::OrdSet<Con>> = None;
+        for (&i, &k) in &held {
+            if k >= 2
+                && let Some((_, set)) = groups.groups.get(&i)
+                && !set.is_empty()
+            {
+                shared = Some(match shared {
+                    None => set.clone(),
+                    Some(acc) => acc.union(set.clone()),
                 });
-                return (self.eqs.clone(), Some(f.clone()));
             }
         }
-        let mut boxed: Vec<Con> = ts
-            .iter()
-            .filter_map(|t| self.on.get(t))
-            .flatten()
-            .chain(
-                held.iter()
-                    .filter(|&(_, &k)| k >= 2)
-                    .flat_map(|(&i, _)| &groups.groups[i].1),
-            )
-            .cloned()
-            .collect();
-        boxed.sort_unstable();
-        boxed.dedup();
-        let boxed = Formula::and(boxed.into_iter().map(Formula::Con).collect());
-        (self.eqs.clone(), Some(Arc::new(boxed)))
+        for t in terms(g) {
+            if let Some(on_set) = self.on.get(&t)
+                && !on_set.is_empty()
+            {
+                shared = Some(match shared {
+                    None => on_set.clone(),
+                    Some(acc) => {
+                        if acc.len() >= on_set.len() {
+                            let mut a = acc;
+                            for c in on_set {
+                                a.insert(c.clone());
+                            }
+                            a
+                        } else {
+                            acc.union(on_set.clone())
+                        }
+                    }
+                });
+            }
+        }
+        let cons = match shared {
+            Some(s) if !s.is_empty() => WithCons::Shared(s),
+            _ => WithCons::None,
+        };
+        (self.eqs.clone(), cons)
     }
 
     /// The formula projected for the part of `g`, or for the constraints' own part when `g`
@@ -3948,7 +4287,7 @@ impl Split {
             .filter(|_| *self.base != Formula::top())?;
         Some((
             (least, self.leaf.clone()),
-            (self.eqs.clone(), Some(self.base.clone())),
+            (self.eqs.clone(), WithCons::Base(self.base.clone())),
             (*self.base).clone(),
         ))
     }
@@ -3972,6 +4311,87 @@ fn split<'a>(
     parts
 }
 
+/// When `g` is a non-empty disjunction of two-symbol `Rel::Ge` rows on the exact same pair of
+/// symbols `(u, v)`, returns `(u, v)` (`u < v`).
+fn pure_two_sym_pair(g: &Formula) -> Option<(Arc<str>, Arc<str>)> {
+    let Formula::Or(arms) = g else {
+        return None;
+    };
+    let mut pair: Option<(Arc<str>, Arc<str>)> = None;
+    for arm in arms.iter() {
+        let Formula::Con(c) = arm else {
+            return None;
+        };
+        if c.rel != Rel::Ge || c.lin.terms.len() != 2 {
+            return None;
+        }
+        let mut it = c.lin.terms.keys();
+        let (Some(Atom::Sym(u)), Some(Atom::Sym(v)), None) = (it.next(), it.next(), it.next())
+        else {
+            return None;
+        };
+        match &pair {
+            None => pair = Some((u.clone(), v.clone())),
+            Some((pu, pv)) if pu == u && pv == v => {}
+            Some(_) => return None,
+        }
+    }
+    pair
+}
+
+/// Four-bit finiteness mask of the lower and upper interval bounds of `u` and `v` in `names`.
+fn finiteness_mask(u: &str, v: &str, names: &imbl::OrdMap<Arc<str>, Product>) -> u8 {
+    let mut mask = 0u8;
+    for (shift, n) in [(0u8, u), (2u8, v)] {
+        if let Some(p) = names.get(n)
+            && let Some((lo, hi)) = p.ints().bounds()
+        {
+            if matches!(lo, End::Fin(_)) {
+                mask |= 1 << shift;
+            }
+            if matches!(hi, End::Fin(_)) {
+                mask |= 1 << (shift + 1);
+            }
+        }
+    }
+    mask
+}
+
+/// Canonical congruence class as observed by linear block projection, [`classed`], and [`gapped`]:
+/// any unclassed product — whether `(modulus = 1, residue = 0)` or a singleton interval `[v, v]`
+/// with `(modulus = 0, residue = v)` — maps to `(modulus = 1, residue = 0)`, while every classed
+/// product preserves `p.cell.congruence.element` unchanged.
+// Complexity tradeoff: naive version, `Block::update`, `Scope::reduce_with`, `Scope::project`,
+// `Scope::snapshot`, and `join_refreshed` compared raw `p.cell.congruence.element`, so narrowing a
+// binary variable `x in [0, 1]` to `1` caused a second form-only wake when reduction refined
+// `(modulus = 1, residue = 0)` to `(modulus = 0, residue = 1)` without changing the set of
+// integers (Gemini seat, round 3), doubling wake and idle checks across `3k` case arms.
+// Used: canonicalize unclassed products via `framed_class` in O(1), matching propagator-event
+// subsumption / idempotence in C. Schulte and P. J. Stuckey, "Efficient constraint propagation
+// engines", ACM TOPLAS 31(1), Article 2, 2008 (`KeptTests::dead` still reads raw `congruence` directly).
+fn framed_class(p: &Product) -> Congruence {
+    if !classed(p) {
+        Congruence::Class {
+            modulus: Num::ONE,
+            residue: Num::ZERO,
+        }
+    } else {
+        p.cell.congruence.element.clone()
+    }
+}
+
+fn same_framed(a: &Product, b: &Product) -> bool {
+    a.ints() == b.ints() && framed_class(a) == framed_class(b)
+}
+
+fn same_framed_opt(a: Option<&Product>, b: Option<&Product>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => same_framed(x, y),
+        (Some(x), None) | (None, Some(x)) => same_framed(x, &Product::top()),
+    }
+}
+
 /// A part of a block ([`split`]): its key, what it is projected with, its conjunct (`None` for
 /// the constraints' own part), and the names the formula projected mentions. The formula is
 /// made from the conjunct and the block's constraints when the part is projected
@@ -3986,6 +4406,9 @@ struct Part {
     role: Role,
     /// Its entries in [`Block::bounds`] ([`bounds_at`]).
     bounds: Vec<(BoundsKey, Turn)>,
+    /// Cached `(u, v, finiteness_mask)` for [`pure_two_sym_pair`] parts to skip invariant
+    /// [`bounds_at`] recomputation in O(1) when `split.eqs` is empty.
+    pure_two_sym: Option<(Arc<str>, Arc<str>, u8)>,
     /// Its conjunct's atoms and their ends ([`chain_shape`]), when it has that shape.
     chain: Option<Chain>,
 }
@@ -4480,6 +4903,10 @@ impl Block {
         let bounds = (of.as_ref()).map_or_else(Vec::new, |g| bounds_at(g, &with, &self.names_at));
         self.index_bounds(&at, &bounds);
         self.added.push(key.clone());
+        let pure_two_sym = of.as_deref().and_then(pure_two_sym_pair).map(|(u, v)| {
+            let m = finiteness_mask(&u, &v, &self.names_at);
+            (u, v, m)
+        });
         let chain = of.as_deref().and_then(chain_shape);
         if let Some((k, ends)) = &chain {
             self.chains
@@ -4494,6 +4921,7 @@ impl Block {
             names,
             role,
             bounds,
+            pure_two_sym,
             chain,
         };
         self.parts.insert(at, Arc::new(part));
@@ -4617,18 +5045,19 @@ impl Block {
     fn reframe(
         &mut self,
         changed: &BTreeSet<BTreeMap<Atom, Int>>,
+        removed_cons: &[Arc<Formula>],
+        added_cons: &[Arc<Formula>],
         due: &mut Vec<PartAt>,
         groups: bool,
         spent: &imbl::OrdSet<BoundsKey>,
     ) -> bool {
-        let cons: Vec<&Arc<Formula>> = self.cons.iter().collect();
-        let split = Split::new(&cons, self.leaf.as_ref());
+        let split = self.split.update(&self.cons, removed_cons, added_cons);
         if split.eqs != self.split.eqs {
             return false;
         }
         // A name the constraints mention now and not before, or before and not now, is
         // still mentioned by each conjunct's part when each conjunct mentions it.
-        let (then, now) = (syms(&self.split.base), syms(&split.base));
+        let (then, now) = (&self.split.base_syms, &split.base_syms);
         let constraints = usize::from(self.split.constraints().is_some());
         let conjuncts = self.parts.len() - constraints;
         let kept = |n: &Arc<str>| self.mentions.get(n).copied().unwrap_or(0) == conjuncts;
@@ -4662,7 +5091,7 @@ impl Block {
                 .into_iter()
                 .map(|(now, i)| {
                     let s = if now { &*split } else { &*self.outer };
-                    s.groups[i].0.clone()
+                    s.groups[&i].0.clone()
                 })
                 .collect();
             self.outer = split.clone();
@@ -4798,10 +5227,28 @@ impl Block {
             };
             let with = self.split.with(g, &self.outer);
             if with != part.with {
+                // Complexity tradeoff: naive version, the entries made again by `bounds_at` at
+                // each change of `with`, O(r) for the arm's r rows and their derived rows per
+                // part per reframe, O(k^2 r) over `persist`'s k reframes of k parts. Used: a part
+                // whose arms are rows on its two names alone, in a block with no equalities, has
+                // entries that do not read `with` and read the names only through which of the
+                // two names' ends are finite (`bounds_at`, the rule there), so they are kept
+                // while that mask holds, O(log n). The part is still due. Gemini seat, round 3.
+                if self.split.eqs.is_empty()
+                    && let Some((u, v, old_mask)) = &part.pure_two_sym
+                    && finiteness_mask(u, v, &names_at) == *old_mask
+                {
+                    Arc::make_mut(part).with = with;
+                    due.push(at);
+                    continue;
+                }
                 // The part's entries in `bounds` read what it is projected with.
                 let bounds = bounds_at(g, &with, &names_at);
                 let part = Arc::make_mut(part);
                 part.with = with;
+                if let Some((u, v, m)) = &mut part.pure_two_sym {
+                    *m = finiteness_mask(u, v, &names_at);
+                }
                 let was = (bounds != part.bounds)
                     .then(|| std::mem::replace(&mut part.bounds, bounds.clone()));
                 if let Some(was) = was {
@@ -4933,6 +5380,8 @@ impl Block {
         let mut due: Vec<PartAt> = Vec::new();
         // The constraints first, so that a part added after reads them as they are now.
         let mut changed: BTreeSet<BTreeMap<Atom, Int>> = BTreeSet::new();
+        let mut removed_cons: Vec<Arc<Formula>> = Vec::new();
+        let mut added_cons: Vec<Arc<Formula>> = Vec::new();
         for (g, (added, gone)) in &delta {
             let Formula::Con(c) = &**g else {
                 continue;
@@ -4944,14 +5393,29 @@ impl Block {
             if *added > 0 {
                 next.enter(g, *added);
             }
-            if was != next.cons.contains(g) {
+            let now_in = next.cons.contains(g);
+            if was != now_in {
                 changed.insert(unsigned(c));
+                if was {
+                    removed_cons.push(g.clone());
+                } else {
+                    added_cons.push(g.clone());
+                }
             }
         }
         // Outside the cases of a test, the groups are read again when they were last read within
         // them ([`Block::outer`]), though no constraint changed since.
         let stale = groups && next.outer_cons.diff(&next.cons).next().is_some();
-        if (!changed.is_empty() || stale) && !next.reframe(&changed, &mut due, groups, spent) {
+        if (!changed.is_empty() || stale)
+            && !next.reframe(
+                &changed,
+                &removed_cons,
+                &added_cons,
+                &mut due,
+                groups,
+                spent,
+            )
+        {
             return None;
         }
         let others = delta
@@ -4977,7 +5441,7 @@ impl Block {
         let renewed = |was: bool, next: &Block| {
             !was || !changed.is_empty()
                 || !next.added.is_empty()
-                || (next.users.keys()).any(|n| self.names_at.get(n) != names.get(n))
+                || (next.users.keys()).any(|n| !same_framed_opt(self.names_at.get(n), names.get(n)))
         };
         if manages && renewed(self.stair_managed, &next) {
             let first = next.of_role(Role::Stair).next().cloned();
@@ -4998,6 +5462,14 @@ impl Block {
         // are no more than its names, else each of its names compared.
         let mut walked = 0;
         for d in self.names_at.diff(names) {
+            if let DiffItem::Update {
+                old: (_, a),
+                new: (_, b),
+            } = &d
+                && same_framed(a, b)
+            {
+                continue;
+            }
             walked += 1;
             if walked > next.users.len() {
                 break;
@@ -5009,7 +5481,7 @@ impl Block {
         }
         if walked > next.users.len() {
             for n in next.users.keys() {
-                if self.names_at.get(n) != names.get(n) {
+                if !same_framed_opt(self.names_at.get(n), names.get(n)) {
                     due.extend(next.due_users(n).cloned());
                 }
             }
@@ -5723,7 +6195,7 @@ impl Scope {
             let others: Vec<Arc<str>> = b.names().into_iter().filter(|n| *n != leaf).collect();
             let own = |s: &Scope| {
                 let p = s.get(&leaf);
-                (p.ints().clone(), p.cell.congruence.element.clone())
+                (p.ints().clone(), framed_class(&p))
             };
             let before: Before = (self.snapshot(&others), own(self));
             if let Some((_, after)) = done.get(&class).filter(|(was, _)| *was == before) {
@@ -6821,11 +7293,7 @@ impl Scope {
                         .iter()
                         .map(|(n, _, _)| {
                             let p = names.get(n).cloned().unwrap_or_else(Product::top);
-                            (
-                                n.clone(),
-                                p.ints().clone(),
-                                p.cell.congruence.element.clone(),
-                            )
+                            (n.clone(), p.ints().clone(), framed_class(&p))
                         })
                         .collect();
                     projected.insert(k.clone(), (with.clone(), at));
@@ -8367,7 +8835,7 @@ impl Scope {
             return;
         }
         let free: Vec<Arc<str>> = stage::free(&test).into_iter().collect();
-        let joined = join_cases(cases.clone());
+        let joined = self.join_preserving_outer(cases.clone());
         let triggers = match watch {
             Watch::Cases => case_triggers(&cases, &free, &joined),
             Watch::Points => Vec::new(),
@@ -8428,7 +8896,68 @@ impl Scope {
         live: &mut Vec<bool>,
     ) -> Option<Scope> {
         let out = self.case_list(tree, n, value, prem, any, live);
-        (!out.is_empty()).then(|| join_cases(out))
+        (!out.is_empty()).then(|| self.join_preserving_outer(out))
+    }
+
+    // Complexity tradeoff: naive version, when a case constraint replaces a block's least
+    // constraint (`x - j * y >= 1 < x + y >= -1000` in Arm 2 of `persist`), that case removes
+    // `(old_least, leaf)` from its `projected` map, so `join_refreshed` drops the outer record
+    // even when the joined scope returns to the outer constraint set and unchanged hub domains
+    // (`30` redundant `project_each` calls on Star and Free at k = 16, Gemini seat, round 3).
+    // Used: restore outer `self.projected` entries missing from `s.projected` whose key formula
+    // remains in `s.relation`, whose hubs match `outer_snap`, and whose star leaf (whose
+    // half-line bound depends only on the hubs) narrowed monotonically within a single contiguous
+    // unclassed interval; `Scope::is_projected` still checks `outer_with == p.with` at the next
+    // block update. Reference: P. Cousot and R. Cousot, "Systematic design of program analysis
+    // frameworks", POPL '79, 1979, pp. 269-282 (monotone fixed-point preservation across joins).
+    fn join_preserving_outer(&self, cases: Vec<Scope>) -> Scope {
+        let mut s = join_cases(cases);
+        if s.bottom {
+            return s;
+        }
+        let mut restores: Vec<(PartKey, (PartWith, Projected))> = Vec::new();
+        for d in self.projected.diff(&s.projected) {
+            let DiffItem::Remove(k, (outer_with, outer_snap)) = d else {
+                continue;
+            };
+            if !s.relation.set().contains(&k.0) {
+                continue;
+            }
+            if let Some(leaf) = &k.1
+                && s.relation.star(leaf).is_none()
+            {
+                continue;
+            }
+            let mut ok = true;
+            let mut updated_snap: Vec<(Arc<str>, IntervalSet, Congruence)> =
+                Vec::with_capacity(outer_snap.len());
+            for (n, outer_ints, outer_cls) in outer_snap.iter() {
+                let p = s.get(n);
+                let cls = framed_class(&p);
+                if k.1.as_ref() == Some(n) {
+                    if classed(&p)
+                        || &cls != outer_cls
+                        || outer_ints.only().is_none()
+                        || p.ints().only().is_none()
+                        || !p.ints().is_subset(outer_ints)
+                    {
+                        ok = false;
+                        break;
+                    }
+                } else if p.ints() != outer_ints || &cls != outer_cls {
+                    ok = false;
+                    break;
+                }
+                updated_snap.push((n.clone(), p.ints().clone(), cls));
+            }
+            if ok {
+                restores.push((k.clone(), (outer_with.clone(), updated_snap.into())));
+            }
+        }
+        for (k, val) in restores {
+            s.projected.insert(k, val);
+        }
+        s
     }
 
     /// The cases of node `n` giving `value` that are not bottom, in the order they are made.
@@ -9139,8 +9668,19 @@ impl Scope {
             let mut differ = Vec::new();
             if moved_since {
                 for d in last.diff(&self.names) {
-                    let n = match d {
-                        DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. } => {
+                    let (n, keep_differ) = match d {
+                        DiffItem::Add(n, p) => {
+                            if p.empties() {
+                                self.bottom = true;
+                                break;
+                            }
+                            since.push(n.clone());
+                            (n, true)
+                        }
+                        DiffItem::Update {
+                            old: (_, a),
+                            new: (n, p),
+                        } => {
                             // Complexity tradeoff: naive version, a name is found empty by its
                             // type alone, which the reduction of its domains below empties
                             // only after the projection: an integer name a case empties by its
@@ -9157,11 +9697,13 @@ impl Scope {
                                 break;
                             }
                             since.push(n.clone());
-                            n
+                            (n, !same_framed(a, p))
                         }
-                        DiffItem::Remove(n, _) => n,
+                        DiffItem::Remove(n, _) => (n, true),
                     };
-                    differ.push(n.clone());
+                    if keep_differ {
+                        differ.push(n.clone());
+                    }
                 }
                 if self.bottom {
                     break;
@@ -9174,10 +9716,12 @@ impl Scope {
                 Some((names, _)) if moved_since && names.ptr_eq(&last) => differ,
                 Some((names, _)) => names
                     .diff(&self.names)
-                    .map(|d| match d {
-                        DiffItem::Add(n, _)
-                        | DiffItem::Remove(n, _)
-                        | DiffItem::Update { new: (n, _), .. } => n.clone(),
+                    .filter_map(|d| match d {
+                        DiffItem::Add(n, _) | DiffItem::Remove(n, _) => Some(n.clone()),
+                        DiffItem::Update {
+                            old: (_, a),
+                            new: (n, b),
+                        } => (!same_framed(a, b)).then(|| n.clone()),
                     })
                     .collect(),
                 None => self.names.keys().cloned().collect(),
@@ -9808,8 +10352,7 @@ impl Scope {
                     };
                     let top = Product::top();
                     let (old, new) = (old.unwrap_or(&top), new.unwrap_or(&top));
-                    let same = (old.ints(), &old.cell.congruence.element)
-                        == (new.ints(), &new.cell.congruence.element);
+                    let same = same_framed(old, new);
                     (!same && users.contains_key(n)).then(|| n.clone())
                 })
                 .collect();
@@ -10699,6 +11242,14 @@ impl Scope {
         let due = if covered.is_some() || b.ray_managed {
             let mut due: BTreeSet<PartAt> = due.into_iter().collect();
             for d in start.diff(&self.names) {
+                if let DiffItem::Update {
+                    old: (_, a),
+                    new: (_, nb),
+                } = &d
+                    && same_framed(a, nb)
+                {
+                    continue;
+                }
                 let (DiffItem::Add(n, _)
                 | DiffItem::Remove(n, _)
                 | DiffItem::Update { new: (n, _), .. }) = d;
@@ -10759,9 +11310,31 @@ impl Scope {
         // NARROW-lazy-settle).
         let leaf = b.leaf.clone();
         let mut work: std::collections::VecDeque<PartAt> = due.iter().cloned().collect();
+        // Complexity tradeoff: naive version, `PartAt` orders `(false, conjunct)` before
+        // `(true, least)`, so in a case of a star (`persist` Arm 2 `x - j * y >= 1`) a woke
+        // disjunction projects first under coarse hub bounds, `(true, least)` then narrows the
+        // hub tighter (`x` from `-531` to `-124`), and that second movement of `x` trips
+        // `again = true` (`30` extra `project_each` calls at k = 16, Gemini seat, round 3).
+        // Used: on a star block, run `(true, least)` at the front of the initial worklist and
+        // credit each hub it narrows once in `moved_by_base` so a single subsequent disjunctive
+        // tightening does not trip `again` as ping-pong (two disjunctive tightenings still trip
+        // `again`). Reference: C. Schulte and P. J. Stuckey, "Efficient constraint propagation
+        // engines", ACM TOPLAS 31(1), Article 2, 2008.
+        let mut initial_star_base: Option<PartAt> = None;
+        let mut moved_by_base: BTreeSet<Arc<str>> = BTreeSet::new();
+        if leaf.is_some()
+            && work.len() >= 2
+            && work.back().is_some_and(|at| at.0)
+            && let Some(base_at) = work.pop_back()
+        {
+            initial_star_base = Some(base_at.clone());
+            work.push_front(base_at);
+        }
         let mut queued: BTreeSet<PartAt> = due.iter().cloned().collect();
-        // The idle verdicts found since the names last moved ([`Scope::idle_by_chain`]).
+        // The idle verdicts and certified chain ends found since the names last moved
+        // ([`Scope::idle_by_chain`]).
         let mut certified: BTreeMap<PartAt, bool> = BTreeMap::new();
+        let mut certified_chains: BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>> = BTreeMap::new();
         while let Some(i) = work.pop_front() {
             queued.remove(&i);
             let part = &b.parts[&i].clone();
@@ -10805,7 +11378,7 @@ impl Scope {
             // element of a chain under implication is subsumption, as in clause subsumption.
             if !b.ray_managed
                 && self.projected.contains_key(&part.key)
-                && self.idle_by_chain(&b, &i, part, &mut certified)
+                && self.idle_by_chain(&b, &i, part, &mut certified, &mut certified_chains)
             {
                 continue;
             }
@@ -10819,6 +11392,7 @@ impl Scope {
             let part_before = (covered.is_none()).then(|| self.snapshot(&part.names));
             self.project_part(&b.formula(part));
             certified.clear();
+            certified_chains.clear();
             let after_part = self.names.view().clone();
             let was = (b.stair_managed, b.ray_managed);
             covered = self.cover(&mut b, covered.is_some());
@@ -10832,11 +11406,12 @@ impl Scope {
             // touches at most the two aggregate names and skips shared map structure.
             let aggregated: BTreeSet<Arc<str>> = after_part
                 .diff(&self.names)
-                .map(|d| {
-                    let (DiffItem::Add(n, _)
-                    | DiffItem::Remove(n, _)
-                    | DiffItem::Update { new: (n, _), .. }) = d;
-                    n.clone()
+                .filter_map(|d| match d {
+                    DiffItem::Add(n, _) | DiffItem::Remove(n, _) => Some(n.clone()),
+                    DiffItem::Update {
+                        old: (_, a),
+                        new: (n, nb),
+                    } => (!same_framed(a, nb)).then(|| n.clone()),
                 })
                 .collect();
             let mut again = false;
@@ -10845,19 +11420,27 @@ impl Scope {
             for old in before.iter() {
                 let n = &old.0;
                 let p = self.get(n);
-                if (p.ints(), &p.cell.congruence.element) == (&old.1, &old.2) {
+                if (p.ints(), &framed_class(&p)) == (&old.1, &old.2) {
                     continue;
                 }
                 empty |= p.ints().is_empty();
                 if leaf.as_ref() == Some(n) {
                     continue;
                 }
-                again |= !moved.insert(n.clone());
+                if initial_star_base.as_ref() == Some(&i) {
+                    moved_by_base.insert(n.clone());
+                    again |= !moved.insert(n.clone());
+                } else if !moved_by_base.remove(n) {
+                    again |= !moved.insert(n.clone());
+                }
                 for j in b.due_users(n) {
                     if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
                         work.push_back(j.clone());
                     }
                 }
+            }
+            if initial_star_base.as_ref() == Some(&i) {
+                initial_star_base = None;
             }
             if empty {
                 break;
@@ -10886,6 +11469,14 @@ impl Scope {
         let mut writes: BTreeSet<&PartAt> =
             due.iter().filter(|at| !b.managed(&b.parts[*at])).collect();
         for d in start.diff(&self.names) {
+            if let DiffItem::Update {
+                old: (_, a),
+                new: (_, nb),
+            } = &d
+                && same_framed(a, nb)
+            {
+                continue;
+            }
             let (DiffItem::Add(n, _)
             | DiffItem::Remove(n, _)
             | DiffItem::Update { new: (n, _), .. }) = d;
@@ -10967,11 +11558,7 @@ impl Scope {
             .iter()
             .map(|n| {
                 let p = self.get(n);
-                (
-                    n.clone(),
-                    p.ints().clone(),
-                    p.cell.congruence.element.clone(),
-                )
+                (n.clone(), p.ints().clone(), framed_class(&p))
             })
             .collect()
     }
@@ -10986,19 +11573,17 @@ impl Scope {
             b.names()
         } else {
             (names.diff(&self.names))
-                .map(|d| {
-                    let (DiffItem::Add(n, _)
-                    | DiffItem::Remove(n, _)
-                    | DiffItem::Update { new: (n, _), .. }) = d;
-                    n.clone()
+                .filter_map(|d| match d {
+                    DiffItem::Add(n, _) | DiffItem::Remove(n, _) => Some(n.clone()),
+                    DiffItem::Update {
+                        old: (_, a),
+                        new: (n, nb),
+                    } => (!same_framed(a, nb)).then(|| n.clone()),
                 })
                 .filter(|n| b.users.contains_key(n))
                 .collect()
         };
-        let read = |n: Arc<str>, p: &Product| {
-            let element = p.cell.congruence.element.clone();
-            (n, p.ints().clone(), element)
-        };
+        let read = |n: Arc<str>, p: &Product| (n, p.ints().clone(), framed_class(p));
         changed
             .into_iter()
             .map(|n| match names.get(&n) {
@@ -14253,21 +14838,30 @@ fn bounds_at(
     // not read when the rule above holds; otherwise as before. No entry changes, so no part is
     // due other than before and no answer changes. Measured (`probe_l139`, persist, k = 16):
     // 7.0M instructions fewer. Prior work: none beyond skipping a scan whose result is known.
+    // The entries then read `names` only through whether the ends of the two names are finite
+    // ([`dropped`]), which is what lets [`Block::reframe`] keep them when only `with` changed
+    // ([`Part::pure_two_sym`]).
     let closed = with.0.is_empty()
         && own.len() == 2
         && own.iter().all(|x| matches!(x, Atom::Sym(_)))
         && arms.iter().all(|a| {
             rows(a).all(|r| r.lin.terms.len() == 2 && r.lin.terms.keys().all(|x| own.contains(x)))
         });
-    let context_rows = with.0.iter().chain(with.1.iter().flat_map(|f| rows(f)));
-    for c in context_rows.filter(|_| !closed) {
-        let mut on = c.lin.terms.keys();
-        if on.clone().all(|x| own.contains(x))
-            || (c.rel == Rel::Eq
-                && c.lin.terms.len() == 2
-                && on.any(|x| own.contains(x) && renamed.insert(x.clone())))
-        {
-            context.push(c);
+    if !closed {
+        let with_rows: Vec<&Con> = match &with.1 {
+            WithCons::None => Vec::new(),
+            WithCons::Base(f) => rows(f).collect(),
+            WithCons::Shared(set) => set.iter().collect(),
+        };
+        for c in with.0.iter().chain(with_rows) {
+            let mut on = c.lin.terms.keys();
+            if on.clone().all(|x| own.contains(x))
+                || (c.rel == Rel::Eq
+                    && c.lin.terms.len() == 2
+                    && on.any(|x| own.contains(x) && renamed.insert(x.clone())))
+            {
+                context.push(c);
+            }
         }
     }
     let grouped: Vec<ArmNormals> = arms
@@ -14289,8 +14883,8 @@ fn bounds_at(
     for c in &context {
         let mut it = c.lin.terms.keys();
         if let (Some(Atom::Sym(u)), Some(Atom::Sym(v)), None) = (it.next(), it.next(), it.next())
-            && ones.contains_key(u)
-            && ones.contains_key(v)
+            && ones.contains_key(&u)
+            && ones.contains_key(&v)
         {
             held.entry((u.clone(), v.clone())).or_default();
         }
@@ -15509,23 +16103,37 @@ impl Scope {
         if !b.split.eqs.is_empty() {
             return false;
         }
-        let g = if let Some(g) = part.of.as_deref() {
-            g
-        } else {
-            let Some(leaf) = &b.leaf else { return false };
+        let (g, free_two_base) = if let Some(g) = part.of.as_deref() {
+            (g, false)
+        } else if let Some(leaf) = &b.leaf {
             let p = self.get(leaf);
             if classed(&p) || !matches!(p.ints().only(), Some((_, End::PosInf))) {
                 return false;
             }
-            &part.key.0
-        };
-        let mut allowed = factors(g);
-        if let Some(n) = &b.leaf {
-            allowed.insert(Factor::Sym(n.clone()));
-        }
-        if b.split.group.len() > allowed.len() || !b.split.group.keys().all(|n| allowed.contains(n))
+            (&*part.key.0, false)
+        } else if b.split.group.len() <= 2
+            && b.split.group.keys().all(|f| matches!(f, Factor::Sym(_)))
         {
+            // Complexity tradeoff: naive version, the base of a block with no leaf refused here,
+            // so it was projected again at each wake, one `project_each` per wake. Used: when the
+            // block's constraints hold at most two names, all plain, the base is tested like a
+            // part, by the same elimination over its rows, O(r log r) for r rows; the test reads
+            // every name of the base, so no name its projection could narrow is left out. Gemini
+            // seat, round 3.
+            (&*part.key.0, true)
+        } else {
             return false;
+        };
+        if !free_two_base {
+            let mut allowed = factors(g);
+            if let Some(n) = &b.leaf {
+                allowed.insert(Factor::Sym(n.clone()));
+            }
+            if b.split.group.len() > allowed.len()
+                || !b.split.group.keys().all(|n| allowed.contains(n))
+            {
+                return false;
+            }
         }
         let get = |m: &str| self.get(m);
         let (f, mut conjs) = (b.formula(part), vec![]);
@@ -15579,12 +16187,37 @@ impl Scope {
         at: &PartAt,
         part: &Part,
         certified: &mut BTreeMap<PartAt, bool>,
+        certified_chains: &mut BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>>,
     ) -> bool {
+        // Complexity tradeoff: naive version, `idle_by_chain` compared only against the single
+        // global minimum `b.chains[k].get_min()`; when that minimum failed Omega's dark shadow
+        // (`split_on_y(1)` in `persist` Arm 2), every subsequent member `split_on_y(2..j-1)` ran
+        // `self.idle` individually (`48.6M` instructions at k = 16, Gemini seat, round 3).
+        // Used: record the least ends certified idle so far in `certified_chains`, subsuming all
+        // higher members in O(e) comparisons (Gemini seat's prototype: `idle_calls` 269 -> 79 at k = 16).
+        // Reference: W. Pugh, "The Omega test: a fast and practical integer programming algorithm
+        // for dependence analysis", Communications of the ACM 35(8), 1992, pp. 102-114.
+        if let Some((k, ends)) = &part.chain
+            && let Some(q_ends) = certified_chains.get(k)
+            && chain_below(q_ends, ends)
+        {
+            return true;
+        }
         let mut verdict = |q: &PartAt, p: &Part| match certified.get(q) {
             Some(v) => *v,
             None => {
                 let v = self.idle(b, p);
                 certified.insert(q.clone(), v);
+                if v && let Some((ck, c_ends)) = &p.chain {
+                    certified_chains
+                        .entry(ck.clone())
+                        .and_modify(|cur| {
+                            if chain_below(c_ends, cur) {
+                                *cur = c_ends.clone();
+                            }
+                        })
+                        .or_insert_with(|| c_ends.clone());
+                }
                 v
             }
         };
