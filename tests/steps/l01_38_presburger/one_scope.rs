@@ -756,17 +756,25 @@ fn random_chain(rng: &mut zed_tests::instances::Rng) -> String {
 #[test]
 fn each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole() {
     // LOAD-call-summary: chains whose links extend the point of a small callee beside the
-    // chain, which they read through its face. The drifting chain; the same with a
-    // disjunction in its callee, whose face keeps it as a clause (LOAD-disj-residue); a chain
-    // moving a second parameter beside a callee of the first; and random chains of the
-    // drifting chain's shape.
+    // chain, which they read through its face, at 12 links, and 6 random chains of the
+    // drifting chain's shape of a fresh seed. The same at 30 links, as first written, and the
+    // 60 random chains of seed 0x1c5a are in `bench::one_scope` (2.2 s together at load 25).
+    chains_read_through_faces(12);
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains read through faces");
+    random_chains_read_through_faces(&mut rng, 6);
+}
+
+/// The drifting chain of `n` links; the same with a disjunction in its callee, whose face
+/// keeps it as a clause (LOAD-disj-residue); and a chain moving a second parameter beside a
+/// callee of the first: each answer is that of the relation whole.
+pub(super) fn chains_read_through_faces(n: usize) {
     let r = "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n";
-    answers_are_those_of_the_whole(&drifting_chain(r, 30));
+    answers_are_those_of_the_whole(&drifting_chain(r, n));
     let disjunction = "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n";
-    answers_are_those_of_the_whole(&drifting_chain(disjunction, 30));
+    answers_are_those_of_the_whole(&drifting_chain(disjunction, n));
     let mut second =
         String::from("s(x: int) = x > 0 && x mod 3 == 1;\np0(y: int, x: int) = y > 0 && x > 0;\n");
-    for i in 1..30 {
+    for i in 1..n {
         second.push_str(&format!(
             "p{i}(y: int, x: int) = s(x: x) && p{}(y: y + 3, x: x) && y < {};\n",
             i - 1,
@@ -774,9 +782,13 @@ fn each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole
         ));
     }
     answers_are_those_of_the_whole(&second);
-    let mut rng = zed_tests::instances::Rng::new(0x1c5a);
-    for _ in 0..60 {
-        answers_are_those_of_the_whole(&random_chain(&mut rng));
+}
+
+/// `count` random chains of the drifting chain's shape ([`random_chain`]): each answer is that
+/// of the relation whole.
+pub(super) fn random_chains_read_through_faces(rng: &mut zed_tests::instances::Rng, count: usize) {
+    for _ in 0..count {
+        answers_are_those_of_the_whole(&random_chain(rng));
     }
 }
 
@@ -830,33 +842,66 @@ fn random_disjunctive_chain(rng: &mut zed_tests::instances::Rng) -> String {
 }
 
 #[test]
-fn each_answer_of_a_disjunctive_chain_is_the_answer_of_the_relation_whole() {
+fn each_answer_of_a_disjunctive_chain_of_residues_is_the_answer_of_the_relation_whole() {
     // LOAD-disj-residue: the face of a callee with a disjunction keeps it as clauses, each said
-    // once. Drifting chains whose clauses repeat every few links (residues modulo 5), never
-    // repeat (modulo 1009), move a bound (the holes of `x < 10 || x > 20`), or share a
-    // remainder between two disjunctions, which keeps it. Each is checked against the answers
-    // made with no face, refusals too, and against the whole where the whole is decided, since
-    // the solver refuses some of these questions one way and not the other. The chain beside
-    // `x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)` is checked the same way by
-    // `a_link_decided_whole_is_answered_where_its_relation_is`; deciding its links whole takes
-    // 14 to 35 s (load 28 to 37), so it is not checked twice (SPLIT-one-scope).
-    for q in [
-        "(x mod 3 == 1 || x mod 5 == 2)",
-        "(x mod 1009 == 0 || x mod 3 == 1)",
-        "(x < 10 || x > 20)",
-        "(x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50)",
-    ] {
-        let q = format!("q(x: int) = {q} && x > 0 && x < 1000000;\n");
-        answers_with_faces_are_those_without(&drifting_chain(&q, 30));
+    // once. Drifting chains of 12 links whose clauses repeat every few links (residues modulo
+    // 5) or never repeat (modulo 1009).
+    disjunctive_chains_are_answered(
+        &[
+            "(x mod 3 == 1 || x mod 5 == 2)",
+            "(x mod 1009 == 0 || x mod 3 == 1)",
+        ],
+        12,
+    );
+}
+
+#[test]
+fn each_answer_of_a_disjunctive_chain_of_bounds_is_the_answer_of_the_relation_whole() {
+    // LOAD-disj-residue: drifting chains of 12 links that move a bound (the holes of `x < 10 ||
+    // x > 20`), or share a remainder between two disjunctions, which keeps it.
+    disjunctive_chains_are_answered(
+        &[
+            "(x < 10 || x > 20)",
+            "(x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50)",
+        ],
+        12,
+    );
+}
+
+/// The drifting chain of `n` links beside `q(x) = {q} && 0 < x < 1000000`, for each `q` of
+/// `qs`: each answer is checked against the answers made with no face, refusals too, and
+/// against the whole where the whole is decided, since the solver refuses some of these
+/// questions one way and not the other; and the whole of each is decided, both questions of
+/// each of its `n + 1` functions in both orders. The chains at 30 links, as first written, are
+/// in `bench::one_scope` (3.2 s together at load 25). The chain beside `x mod 4 != 1 && (x mod
+/// 6 == 2 || x mod 10 == 3)` is checked the same way by
+/// `a_link_decided_whole_is_answered_where_its_relation_is`; deciding its links whole takes 14
+/// to 35 s at 30 links (load 28 to 37), so it is not checked twice (SPLIT-one-scope).
+pub(super) fn disjunctive_chains_are_answered(qs: &[&str], n: usize) {
+    for q in qs {
+        let src = drifting_chain(&format!("q(x: int) = {q} && x > 0 && x < 1000000;\n"), n);
+        let decided = answers_with_faces_are_those_without(&src);
+        assert_eq!(decided, 4 * (n + 1), "the whole decided\n{src}");
     }
 }
 
 #[test]
 fn each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole() {
-    // Random chains of the shape of those above (LOAD-disj-residue), checked the same way.
-    let mut rng = zed_tests::instances::Rng::new(0xd15e);
-    for _ in 0..80 {
-        answers_with_faces_are_those_without(&random_disjunctive_chain(&mut rng));
+    // Random chains of the shape of those above (LOAD-disj-residue), checked the same way: 4
+    // of a fresh seed; the 80 of seed 0xd15e, as first written, are in `bench::one_scope` (3.4
+    // s at load 25).
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random disjunctive chains");
+    random_disjunctive_chains_are_answered(&mut rng, 4);
+}
+
+/// `count` chains of [`random_disjunctive_chain`]: each answer with faces is that without, and
+/// that of the whole where the whole is decided.
+pub(super) fn random_disjunctive_chains_are_answered(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) {
+    for _ in 0..count {
+        answers_with_faces_are_those_without(&random_disjunctive_chain(rng));
     }
 }
 
@@ -868,11 +913,13 @@ fn a_link_decided_whole_is_answered_where_its_relation_is() {
     // calls bind, `x@3 == x@4 + 3` beside both callees' remainders, the solver refused it
     // (Shadows), where it decided the relation written over the input (it holds). Now a
     // question refused so is asked again with each binding put in place of the atom it binds,
-    // as the relation is written.
-    let q =
-        "q(x: int) = x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3) && x > 0 && x < 1000000;\n";
-    answers_with_faces_are_those_without(&drifting_chain(q, 30));
+    // as the relation is written. At 12 links; at 30, as first written, in `bench::one_scope`
+    // (1.2 s at load 25).
+    disjunctive_chains_are_answered(&[LINK_DECIDED_WHOLE], 12);
 }
+
+/// The callee of [`a_link_decided_whole_is_answered_where_its_relation_is`].
+pub(super) const LINK_DECIDED_WHOLE: &str = "x mod 4 != 1 && (x mod 6 == 2 || x mod 10 == 3)";
 
 /// A random test of `x` with a negation: a remainder unequal to a constant, the negation of a
 /// conjunction of a remainder and a bound, or of a disjunction of two [`random_case`]s.
@@ -928,15 +975,26 @@ fn random_negated_chain(rng: &mut zed_tests::instances::Rng) -> String {
 fn no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided() {
     // LOAD-extend-refuses: random chains with congruences, negations and disjunctions, each
     // answer with faces and without equal, refusals too, and equal to `decide`'s on the
-    // relation written whole wherever that is decided, in both orders of the bodies. Before
-    // the fix, five of these ten chains had a question refused that the whole decided (the
-    // first at its first chain); the ten take about 9 s (dev build, load about 25).
-    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
-    let mut decided = 0;
-    for _ in 0..10 {
-        decided += answers_with_faces_are_those_without(&random_negated_chain(&mut rng));
-    }
-    assert!(decided >= 300, "{decided} answers of the whole");
+    // relation written whole wherever that is decided, in both orders of the bodies: 2 chains
+    // of a fresh seed. Before the fix, five of the ten chains of seed 0x5eed1 had a question
+    // refused that the whole decided (the first at its first chain); those ten, as first
+    // written, are in `bench::one_scope` (0.8 s at load 25). Of 160 chains of 40 seeds, the
+    // least had 12 answers of the whole (2026-11-14); one of them took 8 to 16 s alone at load
+    // 30 to 45, a case of PERF-negated-chain-unsolved, so a fresh seed may meet such a chain.
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains with negations");
+    let decided = random_negated_chains_decided(&mut rng, 2);
+    assert!(decided >= 12, "{decided} answers of the whole");
+}
+
+/// The answers of the whole decided over `count` chains of [`random_negated_chain`], each
+/// checked as [`answers_with_faces_are_those_without`] checks it.
+pub(super) fn random_negated_chains_decided(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) -> usize {
+    (0..count)
+        .map(|_| answers_with_faces_are_those_without(&random_negated_chain(rng)))
+        .sum()
 }
 
 #[test]
@@ -1875,7 +1933,7 @@ fn each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relatio
     // arguments; an integer function's value is written so too. Each relation and answer,
     // refusals too, is the one read with each such call reading its callee's body again, and
     // the one the body closed over the definitions it reaches has, decided whole, where both
-    // are decided. A chain of congruences, an integer chain, and random units.
+    // are decided. A chain of congruences, an integer chain, and 4 random units of a fresh seed.
     answers_are_those_reading_bodies(
         "h0(x: int) = x < 200;\nh1(x: int) = h0(x: x) && x mod 4 == 1 && x < 199;\n\
          h2(x: int) = h1(x: x + 1) && x mod 3 == 2;\np0(x: int) = x > 0;\n\
@@ -1889,9 +1947,20 @@ fn each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relatio
          p2(x: int) = v2(x: x - 2) == 7 && p1(x: x + 1) && x < 30;\n\
          p3(x: int) = v1(x: x) + v2(x: x + 3) > 20 || p2(x: x);",
     );
-    let mut rng = zed_tests::instances::Rng::new(0x1c4e);
-    for _ in 0..80 {
-        answers_are_those_reading_bodies(&random_congruence_unit(&mut rng));
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random units of congruences");
+    random_units_read_through_projections(&mut rng, 4);
+}
+
+/// `count` units of [`random_congruence_unit`]: each answer is the one read with each call
+/// reading its callee's body again, and the one of the whole where both are decided. The 80
+/// of seed 0x1c4e, as first written, are in `bench::one_scope` (5.1 s with the two fixed units
+/// at load 25).
+pub(super) fn random_units_read_through_projections(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) {
+    for _ in 0..count {
+        answers_are_those_reading_bodies(&random_congruence_unit(rng));
     }
 }
 
@@ -2756,15 +2825,34 @@ fn each_answer_of_a_random_chain_moving_holes_is_the_answer_of_the_relation_whol
     // other disjunctions, each answer with faces (holes, merged bounds, one remainder for each
     // divided term) the same as without, refusals too, but where only the faces answer, and
     // then the answer found point by point; and the same as `decide`'s on the relation written
-    // whole wherever that is decided, in both orders of the bodies. The 40 chains give 1510
-    // answers of the whole (measured); the 16th takes most of the time, and its `p9` holds
-    // where only the faces find the point (`Faces::free`).
+    // whole wherever that is decided, in both orders of the bodies: the 16th chain of seed
+    // 0x401e5, whose `p9` holds where only the faces find the point (`Faces::free`), and 3
+    // chains of a fresh seed. The 40 chains of seed 0x401e5, as first written, are in
+    // `bench::one_scope` (2.8 s at load 25; they give 1510 answers of the whole, measured).
     let mut rng = zed_tests::instances::Rng::new(0x401e5);
-    let mut decided = 0;
-    for _ in 0..40 {
-        decided += answers_with_faces_are_those_without(&random_hole_chain(&mut rng));
+    for _ in 0..15 {
+        random_hole_chain(&mut rng);
     }
-    assert!(decided >= 1200, "{decided} answers of the whole");
+    let src = random_hole_chain(&mut rng);
+    assert!(
+        src.contains("p9("),
+        "the 16th chain of seed 0x401e5 has a `p9`\n{src}"
+    );
+    assert!(answers_with_faces_are_those_without(&src) > 0, "{src}");
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains moving holes");
+    let decided = random_hole_chains_decided(&mut rng, 3);
+    assert!(decided >= 12, "{decided} answers of the whole");
+}
+
+/// The answers of the whole decided over `count` chains of [`random_hole_chain`], each checked
+/// as [`answers_with_faces_are_those_without`] checks it.
+pub(super) fn random_hole_chains_decided(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) -> usize {
+    (0..count)
+        .map(|_| answers_with_faces_are_those_without(&random_hole_chain(rng)))
+        .sum()
 }
 
 /// A chain of `n - 1` links over `q`: `p0(x) = {p0}`, and `p{i}(x) = q(x: x) && p{i-1}(x: x +
@@ -2981,9 +3069,11 @@ fn each_answer_of_a_chain_of_remainders_is_the_answer_of_the_relation_whole() {
     // without faces, refusals too, but where only the faces answer, and then the one found
     // point by point; and the one `decide` gives the relation written whole wherever that is
     // decided; in both orders of the bodies. The chains of the scaling test, bounded below so
-    // that the points can be counted, and random chains. Only the faces answer 12 questions of
-    // the chain by 3 moved by 1, 12 of the one not 2 by 3 moved by 4, and 14 of the random
-    // chains, which give 1156 answers of the whole (measured). Against the rows read one at a
+    // that the points can be counted, and 4 random chains of a fresh seed. Only the faces
+    // answer 12 questions of the chain by 3 moved by 1, 12 of the one not 2 by 3 moved by 4,
+    // and 14 of the 40 random chains of seed 0x40d3c, which give 1156 answers of the whole
+    // (measured); those 40, as first written, are in `bench::one_scope` (1.5 s with the rest at
+    // load 25). Against the rows read one at a
     // time, as before, on 364 random chains of these and of holes in both orders: 48 refusals
     // became `false`, and no other answer changed (measured once).
     let bounded = |test: &str, shift: i64| {
@@ -3010,17 +3100,25 @@ fn each_answer_of_a_chain_of_remainders_is_the_answer_of_the_relation_whole() {
         let decided = answers_with_faces_are_those_without(&src);
         assert!(decided > 0, "no answer of the whole in\n{src}");
     }
-    let mut rng = zed_tests::instances::Rng::new(0x40d3c);
-    let mut decided = 0;
-    for _ in 0..40 {
-        decided += answers_with_faces_are_those_without(&random_remainder_chain(&mut rng));
-    }
-    assert!(decided >= 1000, "{decided} answers of the whole");
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains of remainders");
+    let decided = random_remainder_chains_decided(&mut rng, 4);
+    assert!(decided >= 8, "{decided} answers of the whole");
     // The chains of the scaling test, unbounded below: the answers written over quotients
     // and remainders are those reading the bodies again, and those of the whole where decided.
     for chain in [mod3_chain, mod5_chain, mod7_chain, kept_residue_chain] {
         answers_are_those_reading_bodies(&chain(10));
     }
+}
+
+/// The answers of the whole decided over `count` chains of [`random_remainder_chain`], each
+/// checked as [`answers_with_faces_are_those_without`] checks it.
+pub(super) fn random_remainder_chains_decided(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) -> usize {
+    (0..count)
+        .map(|_| answers_with_faces_are_those_without(&random_remainder_chain(rng)))
+        .sum()
 }
 
 /// A chain of steps on the remainder by 10^9 + 7 (I49): `h{i}(x) = {step}` with `H` the link
@@ -3194,12 +3292,25 @@ fn random_interval_step(rng: &mut zed_tests::instances::Rng, m: i64, depth: usiz
 fn each_answer_of_a_random_chain_of_residue_intervals_is_the_answer_of_the_relation_whole() {
     // LOAD-max-div-unsolved: chains of one to three random steps repeated, on a small
     // modulus, so the images of the intervals of residues are checked against the relations
-    // decided whole, and against those read with the bodies, in both orders.
-    let mut rng = zed_tests::instances::Rng::new(0x1a7e5);
-    for _ in 0..30 {
+    // decided whole, and against those read with the bodies, in both orders: 2 chains of a
+    // fresh seed. The 30 of seed 0x1a7e5, as first written, are in `bench::one_scope` (5.5 s at
+    // load 25). Of 150 chains of 150 seeds, one took 3.4 s at load 50 (2026-11-14), so a fresh
+    // seed may meet such a chain.
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains of residue intervals");
+    random_residue_interval_chains_are_answered(&mut rng, 2);
+}
+
+/// `count` chains of one to three steps of [`random_interval_step`] repeated over a modulus
+/// up to 12: each answer is the one read with the bodies, and that of the whole where both
+/// are decided.
+pub(super) fn random_residue_interval_chains_are_answered(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) {
+    for _ in 0..count {
         let m = rng.int(1, 12);
         let steps: Vec<String> = (0..rng.int(1, 3))
-            .map(|_| random_interval_step(&mut rng, m, 3))
+            .map(|_| random_interval_step(rng, m, 3))
             .collect();
         let steps: Vec<&str> = steps.iter().map(String::as_str).collect();
         answers_are_those_reading_bodies(&residue_cycle_chain(&steps, 4));
@@ -3437,7 +3548,27 @@ fn periodic_joint_questions_keep_the_input_remainder_in_any_query_order() {
 }
 
 #[test]
-fn monotone_clamp_equalities_match_inverse_cuts_in_any_query_order() {
+fn monotone_clamp_equalities_of_5_7_less_9_match_inverse_cuts_in_any_query_order() {
+    clamp_equalities_match_inverse_cuts(5, 7, -9, 5);
+}
+
+#[test]
+fn monotone_clamp_equalities_of_1_3_plus_4_match_inverse_cuts_in_any_query_order() {
+    clamp_equalities_match_inverse_cuts(1, 3, 4, 5);
+}
+
+#[test]
+fn monotone_clamp_equalities_of_7_11_match_inverse_cuts_in_any_query_order() {
+    clamp_equalities_match_inverse_cuts(7, 11, 0, 5);
+}
+
+/// The chain `h{k}(x) = max(h{k-1}(x: x) div 2, x div a + x div b + offset)` of `depth` links,
+/// with the tests `h{k}(x: x) == c` for seven constants `c` and `x == 0 && h{k}(x: x) ==
+/// h{k}(0)` at each link: each answer is the one found by the inverse cuts of the value, in the
+/// unit's order, in reverse, and each test alone. The three cases of the one test first
+/// written are three tests, at 5 links; at 8, as first written, they are in `bench::one_scope`
+/// (2.6 s together at load 25).
+pub(super) fn clamp_equalities_match_inverse_cuts(a: i128, b: i128, offset: i128, depth: usize) {
     use std::collections::BTreeMap;
     use zedc::store::presburger::extend::Extending;
     let literal = |c: i128| {
@@ -3447,83 +3578,81 @@ fn monotone_clamp_equalities_match_inverse_cuts_in_any_query_order() {
             c.to_string()
         }
     };
-    for (a, b, offset) in [(5i128, 7i128, -9i128), (1, 3, 4), (7, 11, 0)] {
-        let mut src = "h0(x: int) = x;\n".to_string();
-        let mut expected = BTreeMap::new();
-        for k in 1..=8 {
-            let h = format!("h{}(x: x)", k - 1);
-            src += &format!(
-                "h{k}(x: int) = max({h} div 2, x div {a} + x div {b} + {});\n",
-                literal(offset)
-            );
-            let value = |x: i128| {
-                let bound = x.div_euclid(a) + x.div_euclid(b) + offset;
-                let mut h = x;
-                for _ in 0..k {
-                    h = h.div_euclid(2).max(bound);
-                }
-                h
-            };
-            let cut = |c: i128| {
-                let mut lo = -1;
-                let mut hi = 1;
-                while value(lo) >= c {
-                    lo *= 2;
-                }
-                while value(hi) < c {
-                    hi *= 2;
-                }
-                while hi - lo > 1 {
-                    let mid = (hi + lo).div_euclid(2);
-                    if value(mid) >= c {
-                        hi = mid;
-                    } else {
-                        lo = mid;
-                    }
-                }
-                hi
-            };
-            for (j, c) in [-12i128, -9, -1, 0, 1, 9, 12].into_iter().enumerate() {
-                let name = format!("t{k}c{j}");
-                src += &format!("{name}(x: int) = h{k}(x: x) == {};\n", literal(c));
-                expected.insert(name, cut(c) < cut(c + 1));
+    let mut src = "h0(x: int) = x;\n".to_string();
+    let mut expected = BTreeMap::new();
+    for k in 1..=depth {
+        let h = format!("h{}(x: x)", k - 1);
+        src += &format!(
+            "h{k}(x: int) = max({h} div 2, x div {a} + x div {b} + {});\n",
+            literal(offset)
+        );
+        let value = |x: i128| {
+            let bound = x.div_euclid(a) + x.div_euclid(b) + offset;
+            let mut h = x;
+            for _ in 0..k {
+                h = h.div_euclid(2).max(bound);
             }
-            let name = format!("t{k}joint");
-            src += &format!(
-                "{name}(x: int) = x == 0 && h{k}(x: x) == {};\n",
-                literal(value(0))
-            );
-            expected.insert(name, true);
+            h
+        };
+        let cut = |c: i128| {
+            let mut lo = -1;
+            let mut hi = 1;
+            while value(lo) >= c {
+                lo *= 2;
+            }
+            while value(hi) < c {
+                hi *= 2;
+            }
+            while hi - lo > 1 {
+                let mid = (hi + lo).div_euclid(2);
+                if value(mid) >= c {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            hi
+        };
+        for (j, c) in [-12i128, -9, -1, 0, 1, 9, 12].into_iter().enumerate() {
+            let name = format!("t{k}c{j}");
+            src += &format!("{name}(x: int) = h{k}(x: x) == {};\n", literal(c));
+            expected.insert(name, cut(c) < cut(c + 1));
         }
-        let unit = elab(&src).unwrap();
-        let ls = lets(&unit);
-        let functions: Vec<_> = functions(&unit)
-            .into_iter()
-            .filter(|(n, _, _)| n.starts_with('t'))
-            .collect();
-        for mode in 0..3 {
-            let mut scoped = Scoped::new(&ls);
-            let mut ext = Extending::new();
-            let order: Vec<_> = if mode == 1 {
-                (0..functions.len()).rev().collect()
-            } else {
-                (0..functions.len()).collect()
-            };
-            for i in order {
-                if mode == 2 {
-                    scoped = Scoped::new(&ls);
-                    ext = Extending::new();
-                }
-                let (name, ps, body) = functions[i];
-                let q = scoped.relation(body, ps, ps, true).unwrap();
-                let answer = ext.defined_with(&q, &|n| scoped.def(n), &|f| scoped.interface(f));
-                assert_eq!(
-                    answer.holds,
-                    Ok(expected[name]),
-                    "{name} a={a} b={b} C={offset} mode={mode}"
-                );
-                assert_eq!(answer.fails, Ok(true));
+        let name = format!("t{k}joint");
+        src += &format!(
+            "{name}(x: int) = x == 0 && h{k}(x: x) == {};\n",
+            literal(value(0))
+        );
+        expected.insert(name, true);
+    }
+    let unit = elab(&src).unwrap();
+    let ls = lets(&unit);
+    let functions: Vec<_> = functions(&unit)
+        .into_iter()
+        .filter(|(n, _, _)| n.starts_with('t'))
+        .collect();
+    for mode in 0..3 {
+        let mut scoped = Scoped::new(&ls);
+        let mut ext = Extending::new();
+        let order: Vec<_> = if mode == 1 {
+            (0..functions.len()).rev().collect()
+        } else {
+            (0..functions.len()).collect()
+        };
+        for i in order {
+            if mode == 2 {
+                scoped = Scoped::new(&ls);
+                ext = Extending::new();
             }
+            let (name, ps, body) = functions[i];
+            let q = scoped.relation(body, ps, ps, true).unwrap();
+            let answer = ext.defined_with(&q, &|n| scoped.def(n), &|f| scoped.interface(f));
+            assert_eq!(
+                answer.holds,
+                Ok(expected[name]),
+                "{name} a={a} b={b} C={offset} mode={mode}"
+            );
+            assert_eq!(answer.fails, Ok(true));
         }
     }
 }
@@ -3659,83 +3788,92 @@ fn periodic_adjacent_questions_keep_the_previous_link_remainder_in_any_order() {
 
 #[test]
 fn every_question_of_a_random_chain_with_negations_matches_enumeration() {
-    // PNCX-modular: every question of the ten random negated chains of seed 0x5eed1 (including
-    // chain 8) is decided in both orders of the definitions, with faces, without faces, and
-    // decided whole, with zero refusals, and each answer matches point-by-point enumeration.
+    // PNCX-modular: every question of chain 8 of the ten random negated chains of seed 0x5eed1
+    // (PERF-negated-chain) is checked as [`negated_chain_matches_enumeration`] checks it. The
+    // ten, as first written, are in `bench::one_scope` (3.5 s at load 25).
+    negated_chain_matches_enumeration(8, &negated_chains_of_seed_0x5eed1()[8]);
+}
+
+/// The ten random negated chains of seed 0x5eed1 ([`random_negated_chain`]).
+pub(super) fn negated_chains_of_seed_0x5eed1() -> Vec<String> {
+    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
+    (0..10).map(|_| random_negated_chain(&mut rng)).collect()
+}
+
+/// Every question of the negated chain `src` (number `chain_idx` in messages) is decided in
+/// both orders of the definitions, with faces, without faces, and decided whole, with zero
+/// refusals, and each answer matches point-by-point enumeration; the number of answers.
+pub(super) fn negated_chain_matches_enumeration(chain_idx: usize, src: &str) -> usize {
     use zedc::store::presburger::extend::Extending;
     use zedc::store::presburger::{Formula, decide};
-    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
     let mut total_decided = 0;
-    for chain_idx in 0..10 {
-        let src = random_negated_chain(&mut rng);
-        let unit = elab(&src).unwrap_or_else(|e| panic!("chain {chain_idx}: {e:?}"));
-        let cones = Cones::new(&unit);
-        let lets = lets(&unit);
-        let fs = functions(&unit);
-        let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
-        let want_by_fn: Vec<(bool, bool)> = {
-            let mut scoped = Scoped::new(&lets);
-            (0..fs.len())
-                .map(|i| {
-                    let (name, ps, body) = fs[i];
-                    let r = scoped.relation(body, ps, ps, true).expect(name);
-                    let w = scoped.written(&r);
-                    if name == "p0" {
-                        (true, true)
-                    } else {
-                        enumerated(&w)
-                    }
-                })
-                .collect()
-        };
-        for order in [
-            (0..fs.len()).collect::<Vec<_>>(),
-            (0..fs.len()).rev().collect(),
-        ] {
-            let mut scoped = Scoped::new(&lets);
-            let (mut faced, mut plain) = (Extending::new(), Extending::new());
-            for i in order {
+    let unit = elab(src).unwrap_or_else(|e| panic!("chain {chain_idx}: {e:?}"));
+    let cones = Cones::new(&unit);
+    let lets = lets(&unit);
+    let fs = functions(&unit);
+    let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+    let want_by_fn: Vec<(bool, bool)> = {
+        let mut scoped = Scoped::new(&lets);
+        (0..fs.len())
+            .map(|i| {
                 let (name, ps, body) = fs[i];
-                let expected = closed(&cones, ps, body).expect(name);
                 let r = scoped.relation(body, ps, ps, true).expect(name);
-                let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
-                let b = plain.defined(&r, &|n| scoped.def(n));
-                let (want_holds, want_fails) = want_by_fn[i];
-                assert_eq!(
-                    a.holds,
-                    Ok(want_holds),
-                    "chain {chain_idx} `{name}` holds (faced)"
-                );
-                assert_eq!(
-                    b.holds,
-                    Ok(want_holds),
-                    "chain {chain_idx} `{name}` holds (plain)"
-                );
-                assert_eq!(
-                    whole(&expected, expected.body.clone()),
-                    Ok(want_holds),
-                    "chain {chain_idx} `{name}` holds (whole)"
-                );
-                assert_eq!(
-                    a.fails,
-                    Ok(want_fails),
-                    "chain {chain_idx} `{name}` fails (faced)"
-                );
-                assert_eq!(
-                    b.fails,
-                    Ok(want_fails),
-                    "chain {chain_idx} `{name}` fails (plain)"
-                );
-                assert_eq!(
-                    whole(&expected, Formula::negate(expected.body.clone())),
-                    Ok(want_fails),
-                    "chain {chain_idx} `{name}` fails (whole)"
-                );
-                total_decided += 2;
-            }
+                let w = scoped.written(&r);
+                if name == "p0" {
+                    (true, true)
+                } else {
+                    enumerated(&w)
+                }
+            })
+            .collect()
+    };
+    for order in [
+        (0..fs.len()).collect::<Vec<_>>(),
+        (0..fs.len()).rev().collect(),
+    ] {
+        let mut scoped = Scoped::new(&lets);
+        let (mut faced, mut plain) = (Extending::new(), Extending::new());
+        for i in order {
+            let (name, ps, body) = fs[i];
+            let expected = closed(&cones, ps, body).expect(name);
+            let r = scoped.relation(body, ps, ps, true).expect(name);
+            let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+            let b = plain.defined(&r, &|n| scoped.def(n));
+            let (want_holds, want_fails) = want_by_fn[i];
+            assert_eq!(
+                a.holds,
+                Ok(want_holds),
+                "chain {chain_idx} `{name}` holds (faced)"
+            );
+            assert_eq!(
+                b.holds,
+                Ok(want_holds),
+                "chain {chain_idx} `{name}` holds (plain)"
+            );
+            assert_eq!(
+                whole(&expected, expected.body.clone()),
+                Ok(want_holds),
+                "chain {chain_idx} `{name}` holds (whole)"
+            );
+            assert_eq!(
+                a.fails,
+                Ok(want_fails),
+                "chain {chain_idx} `{name}` fails (faced)"
+            );
+            assert_eq!(
+                b.fails,
+                Ok(want_fails),
+                "chain {chain_idx} `{name}` fails (plain)"
+            );
+            assert_eq!(
+                whole(&expected, Formula::negate(expected.body.clone())),
+                Ok(want_fails),
+                "chain {chain_idx} `{name}` fails (whole)"
+            );
+            total_decided += 2;
         }
     }
-    assert_eq!(total_decided, 344);
+    total_decided
 }
 
 // A renaming of a test formula: its label, the name of alias `k`, and the new index of
@@ -3748,20 +3886,48 @@ type ResidueCase<'a> = (Vec<((i64, i64), &'a [i64])>, Option<(i64, i64)>, bool);
 
 #[test]
 fn one_variable_modular_formulas_match_enumeration() {
-    // PNCX-modular: 5,000 random one-variable modular formulas with unit equalities (`x@k =
-    // ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`), primes, prime
-    // powers and composite moduli, negative, zero-crossing and large positive intervals, short,
-    // long and semi-bounded intervals, negated conjunctions and disjunctive clauses: `decide`
-    // and `satisfiable` agree with point-by-point enumeration, and every witness satisfies `f`,
-    // wherever they answer.
+    // PNCX-modular: 800 random one-variable modular formulas of a fresh seed, checked as
+    // [`modular_formulas_match`] checks them. The 5,000 of seed 0x70de_c1de, as first written,
+    // with their counts of refusals and of empty answers, are in `bench::one_scope` (1.5 s at
+    // load 25).
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable modular formulas");
+    let counts = modular_formulas_match(&mut rng, 800);
+    assert!(
+        counts.sat >= 80 && counts.unsat >= 40 && counts.empty_agreed >= 40,
+        "{counts:?}"
+    );
+}
+
+/// What [`modular_formulas_match`] counted: answers with a point and with none, refusals,
+/// and the empty answers of the one-variable path the general path agreed with, refused, and
+/// refused with `x` unbounded above.
+#[derive(Debug)]
+pub(super) struct ModularCounts {
+    pub(super) sat: usize,
+    pub(super) unsat: usize,
+    pub(super) refused: usize,
+    pub(super) empty_agreed: usize,
+    pub(super) empty_refused: usize,
+    pub(super) empty_unchecked: usize,
+}
+
+/// `count` random one-variable modular formulas of [`modular_case`] with unit equalities
+/// (`x@k = ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`), primes,
+/// prime powers and composite moduli, negative, zero-crossing and large positive intervals,
+/// short, long and semi-bounded intervals, negated conjunctions and disjunctive clauses:
+/// `decide` and `satisfiable` agree with point-by-point enumeration, and every witness
+/// satisfies `f`, wherever they answer.
+pub(super) fn modular_formulas_match(
+    rng: &mut zed_tests::instances::Rng,
+    count: usize,
+) -> ModularCounts {
     use zedc::store::int::Int;
     use zedc::store::presburger::{Model, decide, satisfiable, with_modular_empty_checked};
-    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
     let (mut sat_count, mut unsat_count, mut refused) = (0usize, 0usize, 0usize);
     let (mut empty_agreed, mut empty_refused, mut empty_unchecked) = (0usize, 0usize, 0usize);
 
-    for case_idx in 0..5000 {
-        let (f, x0, copies, divs, lo, hi, is_bounded) = modular_case(&mut rng, case_idx);
+    for case_idx in 0..count {
+        let (f, x0, copies, divs, lo, hi, is_bounded) = modular_case(rng, case_idx);
         // Each answer of the one-variable path that a formula asked has no point is asked again
         // of the general path, which must not find one (R3-CLAUDE-6). One the general path
         // refuses is checked by the enumeration below where `x` is bounded, and by nothing
@@ -3836,24 +4002,14 @@ fn one_variable_modular_formulas_match_enumeration() {
             );
         }
     }
-    assert!(
-        sat_count >= 1000 && unsat_count >= 500,
-        "sat={sat_count}, unsat={unsat_count}"
-    );
-    println!("one-variable cases: satisfiable={sat_count} empty={unsat_count} refused={refused}");
-    // A formula the one-variable path does not decide goes to the general path, which may refuse
-    // it. 64 cases are refused, each refused by the general path alone too (704 refusals there,
-    // measured on d5714627 with the one-variable path off). Case 4609 is one: `decide` refuses
-    // it on main since 9bbeb1ff, where `satisfiable` answers it (I4.3).
-    assert!(refused <= 64, "refused={refused}");
-    // Measured on main 9bbeb1ff: 788 empty answers agreed, 10 refused by the general path, 0 of
-    // them with `x` unbounded above (on 4777a33e: 616, 182 and 2). An empty answer refused by the
-    // general path with `x` unbounded above is checked by nothing here.
-    println!(
-        "empty answers: {empty_agreed} agreed, {empty_refused} refused by the general path, \
-         {empty_unchecked} of them with x unbounded"
-    );
-    assert!(empty_agreed >= 500, "empty answers agreed={empty_agreed}");
+    ModularCounts {
+        sat: sat_count,
+        unsat: unsat_count,
+        refused,
+        empty_agreed,
+        empty_refused,
+        empty_unchecked,
+    }
 }
 
 /// `f` with each variable `x@k` (`x` for `k = 0`) named `name(k)` and each quotient or remainder
@@ -4178,7 +4334,6 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
     // path answers in milliseconds and the first version of the one-variable path refused: each
     // is answered, in both readings of the definition, as enumeration answers it. A pair with
     // three such clauses (`r` in 0, 1, 2) holds nowhere, since each modulus meets one of them.
-    use zedc::store::presburger::extend::Extending;
     let easy: &[i64] = &[0, 1];
     let three: &[i64] = &[0, 1, 2];
     let p57 = ((5, 7), easy);
@@ -4189,16 +4344,15 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
     let least = (1..)
         .find(|&x| pair_clauses_hold(&[p57, p1113], Some((x - 1, x + 1))))
         .unwrap();
-    // The third field: whether the solver answers `holds`. The two cases with `false` hold
-    // nowhere in a range shorter than the period of their moduli; the general path refuses them,
-    // as it did before the one-variable path (measured on d5714627).
+    // The third field: whether the solver answers `holds`. The two cases with `false`, which
+    // hold nowhere in a range shorter than the period of their moduli, are in
+    // `easy_clause_systems_held_nowhere_short_of_their_period_are_refused` and
+    // `bench::one_scope` (0.8 s and 2.7 s at load 50).
     let cases: Vec<ResidueCase<'_>> = vec![
         (vec![p57, p1113], None, true),
         (vec![p57, p1113], Some((0, 100_000)), true),
         (vec![p34, p57, p1113], None, true),
         (vec![p34, p57, p1113, p1719], None, true),
-        (vec![p34, p57, p1113, p1719], Some((0, 100_000)), false),
-        (vec![p57, p1113], Some((0, least)), false),
         (vec![p57, p1113], Some((0, least + 1)), true),
         (vec![p57, ((11, 13), three)], None, true),
         (vec![p34, ((5, 7), three), p1113], None, true),
@@ -4208,6 +4362,32 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
             true,
         ),
     ];
+    let seen = easy_clause_systems_keep_their_answers(cases);
+    assert!(seen[0] >= 3 && seen[1] >= 5, "{seen:?}");
+}
+
+#[test]
+fn easy_clause_systems_held_nowhere_short_of_their_period_are_refused() {
+    // PNCX-modular, R2: `(x mod 5 == 0 || x mod 7 == 0) && (x mod 5 == 1 || x mod 7 == 1)` and
+    // the same over 11 and 13 hold nowhere in `[0, least]`, a range shorter than the period of
+    // their moduli; the general path refuses `holds` there, as it did before the one-variable
+    // path (measured on d5714627), and `fails` is answered.
+    let easy: &[i64] = &[0, 1];
+    let (p57, p1113) = (((5, 7), easy), ((11, 13), easy));
+    let least = (1..)
+        .find(|&x| pair_clauses_hold(&[p57, p1113], Some((x - 1, x + 1))))
+        .unwrap();
+    let seen =
+        easy_clause_systems_keep_their_answers(vec![(vec![p57, p1113], Some((0, least)), false)]);
+    assert_eq!(seen, [1, 0]);
+}
+
+/// Each case `(pairs, bound, answered)` of [`pair_clauses`] is answered, in both readings of
+/// the definition, as enumeration answers it (`holds` refused where `answered` is false, and
+/// then false by enumeration); `fails` is always answered true. The number of cases false and
+/// true by enumeration.
+pub(super) fn easy_clause_systems_keep_their_answers(cases: Vec<ResidueCase<'_>>) -> [usize; 2] {
+    use zedc::store::presburger::extend::Extending;
     let mut seen = [0usize; 2];
     for (pairs, bound, answered) in cases {
         let src = pair_clauses(&pairs, bound);
@@ -4231,7 +4411,7 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
         assert_eq!(a.fails, Ok(true), "fails (faced)\n{src}");
         assert_eq!(b.fails, Ok(true), "fails (plain)\n{src}");
     }
-    assert!(seen[0] >= 4 && seen[1] >= 5, "{seen:?}");
+    seen
 }
 
 #[test]

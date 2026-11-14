@@ -1040,3 +1040,153 @@ fn summaries_of_two_chains_over_different_inputs_at_5_links_give_its_answers() {
 fn summaries_of_two_chains_sharing_an_input_at_5_links_give_their_answers() {
     summaries_of_definitions_give_their_answers([two_chains_sharing_x_and_x_div_7(5).as_str()]);
 }
+
+/// The chains of `one_scope::each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole`
+/// at 30 links and the 60 random chains of seed 0x1c5a, as first written: 2.2 s (2026-11-14,
+/// load 25), so a benchmark (author P178).
+#[test]
+fn each_answer_of_60_random_chains_and_three_of_30_links_read_through_faces_is_the_whole() {
+    chains_read_through_faces(30);
+    let mut rng = zed_tests::instances::Rng::new(0x1c5a);
+    random_chains_read_through_faces(&mut rng, 60);
+}
+
+/// The four disjunctive chains of `one_scope` at 30 links, as first written: 3.2 s (2026-11-14,
+/// load 25).
+#[test]
+fn each_answer_of_a_disjunctive_chain_of_30_links_is_the_answer_of_the_relation_whole() {
+    disjunctive_chains_are_answered(
+        &[
+            "(x mod 3 == 1 || x mod 5 == 2)",
+            "(x mod 1009 == 0 || x mod 3 == 1)",
+            "(x < 10 || x > 20)",
+            "(x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50)",
+        ],
+        30,
+    );
+}
+
+/// The 80 random disjunctive chains of seed 0xd15e, as first written: 3.4 s (2026-11-14, load
+/// 25).
+#[test]
+fn each_answer_of_80_random_disjunctive_chains_is_the_answer_of_the_relation_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0xd15e);
+    random_disjunctive_chains_are_answered(&mut rng, 80);
+}
+
+/// `one_scope::a_link_decided_whole_is_answered_where_its_relation_is` at 30 links, as first
+/// written: 1.2 s (2026-11-14, load 25).
+#[test]
+fn a_link_decided_whole_is_answered_where_its_relation_is_in_a_chain_of_30_links() {
+    disjunctive_chains_are_answered(&[LINK_DECIDED_WHOLE], 30);
+}
+
+/// The ten random chains with negations of seed 0x5eed1, as first written (LOAD-extend-refuses:
+/// before the fix five of them had a question refused that the whole decided): 0.8 s
+/// (2026-11-14, load 25).
+#[test]
+fn no_question_of_ten_random_chains_with_negations_is_refused_where_its_relation_is_decided() {
+    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
+    let decided = random_negated_chains_decided(&mut rng, 10);
+    assert!(decided >= 300, "{decided} answers of the whole");
+}
+
+/// The 80 random units of congruences of seed 0x1c4e, as first written: 5.1 s with the two
+/// fixed units of the correctness test (2026-11-14, load 25).
+#[test]
+fn each_answer_through_a_projection_of_80_random_units_is_the_answer_of_the_relation_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0x1c4e);
+    random_units_read_through_projections(&mut rng, 80);
+}
+
+/// The 40 random chains moving holes of seed 0x401e5, as first written: 2.8 s (2026-11-14,
+/// load 25); they give 1510 answers of the whole (measured).
+#[test]
+fn each_answer_of_40_random_chains_moving_holes_is_the_answer_of_the_relation_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0x401e5);
+    let decided = random_hole_chains_decided(&mut rng, 40);
+    assert!(decided >= 1200, "{decided} answers of the whole");
+}
+
+/// The 40 random chains of remainders of seed 0x40d3c, as first written: 1.5 s with the fixed
+/// chains of the correctness test (2026-11-14, load 25); they give 1156 answers of the whole
+/// (measured).
+#[test]
+fn each_answer_of_40_random_chains_of_remainders_is_the_answer_of_the_relation_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0x40d3c);
+    let decided = random_remainder_chains_decided(&mut rng, 40);
+    assert!(decided >= 1000, "{decided} answers of the whole");
+}
+
+/// The 30 random chains of residue intervals of seed 0x1a7e5, as first written: 5.5 s
+/// (2026-11-14, load 25).
+#[test]
+fn each_answer_of_30_random_chains_of_residue_intervals_is_the_answer_of_the_relation_whole() {
+    let mut rng = zed_tests::instances::Rng::new(0x1a7e5);
+    random_residue_interval_chains_are_answered(&mut rng, 30);
+}
+
+/// `one_scope::one_variable_modular_formulas_match_enumeration` on the 5,000 formulas of seed
+/// 0x70de_c1de, as first written: 1.5 s (2026-11-14, load 25).
+#[test]
+fn the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration() {
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let c = modular_formulas_match(&mut rng, 5000);
+    assert!(c.sat >= 1000 && c.unsat >= 500, "{c:?}");
+    println!(
+        "one-variable cases: satisfiable={} empty={} refused={}",
+        c.sat, c.unsat, c.refused
+    );
+    // A formula the one-variable path does not decide goes to the general path, which may refuse
+    // it. 64 cases are refused, each refused by the general path alone too (704 refusals there,
+    // measured on d5714627 with the one-variable path off). Case 4609 is one: `decide` refuses
+    // it on main since 9bbeb1ff, where `satisfiable` answers it (I4.3).
+    assert!(c.refused <= 64, "refused={}", c.refused);
+    // Measured on main 9bbeb1ff: 788 empty answers agreed, 10 refused by the general path, 0 of
+    // them with `x` unbounded above (on 4777a33e: 616, 182 and 2). An empty answer refused by the
+    // general path with `x` unbounded above is checked by nothing here.
+    println!(
+        "empty answers: {} agreed, {} refused by the general path, {} of them with x unbounded",
+        c.empty_agreed, c.empty_refused, c.empty_unchecked
+    );
+    assert!(
+        c.empty_agreed >= 500,
+        "empty answers agreed={}",
+        c.empty_agreed
+    );
+}
+
+/// `one_scope::every_question_of_a_random_chain_with_negations_matches_enumeration` on all ten
+/// chains of seed 0x5eed1, as first written: 3.5 s (2026-11-14, load 25).
+#[test]
+fn every_question_of_ten_random_chains_with_negations_matches_enumeration() {
+    let total: usize = (negated_chains_of_seed_0x5eed1().iter().enumerate())
+        .map(|(k, src)| negated_chain_matches_enumeration(k, src))
+        .sum();
+    assert_eq!(total, 344);
+}
+
+/// The three monotone clamp chains of `one_scope` at 8 links, as first written: 2.6 s together
+/// (2026-11-14, load 25).
+#[test]
+fn monotone_clamp_equalities_of_8_links_match_inverse_cuts_in_any_query_order() {
+    clamp_equalities_match_inverse_cuts(5, 7, -9, 8);
+    clamp_equalities_match_inverse_cuts(1, 3, 4, 8);
+    clamp_equalities_match_inverse_cuts(7, 11, 0, 8);
+}
+
+/// The case of `one_scope::easy_clause_systems_over_several_moduli_keep_their_answers` as first
+/// written that took 2.7 s at load 50 (2026-11-14): the four pairs of moduli 3 and 4, 5 and 7,
+/// 11 and 13, 17 and 19 in `[0, 100000]`, which hold nowhere there; `holds` is refused.
+#[test]
+fn easy_clause_systems_of_four_moduli_pairs_held_nowhere_in_a_box_are_refused() {
+    let easy: &[i64] = &[0, 1];
+    let pairs = vec![
+        ((3, 4), easy),
+        ((5, 7), easy),
+        ((11, 13), easy),
+        ((17, 19), easy),
+    ];
+    let seen = easy_clause_systems_keep_their_answers(vec![(pairs, Some((0, 100_000)), false)]);
+    assert_eq!(seen, [1, 0]);
+}

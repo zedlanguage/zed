@@ -347,7 +347,7 @@ fn brute_hulls(f: &Formula, case: Small) -> Option<Vec<(i128, i128)>> {
                     self.model.insert(self.ys[i].clone(), yv.into());
                     for next in value + yv..=end {
                         let step = next - value;
-                        let holds = i % every != 0
+                        let holds = !i.is_multiple_of(every)
                             || (sums.contains(&(step + yv))
                                 && (steps.is_empty() || steps.contains(&step)));
                         if holds {
