@@ -37,11 +37,12 @@ fn the_arms_of_a_binding_of_a_deep_block_scale() {
 }
 
 /// The forward transfer of a block of `d` bindings and of a sum `d` deep costs `O(d)`, at
-/// 1,250 and 10,000, on a 2 MiB stack; the terms are built before the timing.
+/// 10,000 and 80,000, on a 2 MiB stack; the terms are built before the timing. (The values
+/// are checked at [`DEEP`] by `a_value_nested_1500_deep_is_found_on_a_2_mib_stack`.)
 #[test]
 fn the_value_of_a_deep_term_scales() {
     on_small_stack(|| {
-        let n = DEEP / scaling::FACTOR;
+        let n = 10_000;
         let scope = ints(&["n".into()]);
         for (what, make) in [
             (
@@ -58,15 +59,15 @@ fn the_value_of_a_deep_term_scales() {
 
 /// The walk of `d` blocks one after another keeps the memory of the bindings in scope, not of
 /// every binding it has read: the most bytes it holds at once, and the bytes it leaves
-/// allocated in the scope it was given, are the same at 1,000 and 8,000 blocks, within 4 KiB;
+/// allocated in the scope it was given, are the same at 8,000 and 64,000 blocks, within 4 KiB;
 /// its work is `O(d log d)`. Each summary keeps its last read itself, so the read goes when
 /// its binding does; when the reads were kept in a map shared by the copies of the scope,
-/// keyed by each summary's number and never emptied, the walk at 8,000 held 8 times the
+/// keyed by each summary's number and never emptied, the walk at 8,000 blocks held 8 times the
 /// bytes at 1,000 and left them in the scope the walk was given (item PA-read-cache-free).
 #[test]
 fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
     on_small_stack(|| {
-        let n = 1_000;
+        let n = 8_000;
         let terms = scaling::inputs(n, blocks_in_a_call);
         let scope = ints(&["n".into()]);
         scaling::check("the arms of d blocks in a call", n, |d| {

@@ -101,10 +101,12 @@ fn a_dead_side_of_the_second_disjunction_drops_out_of_the_lazy_core() {
     assert_eq!(least(&d1, &d2, 2, 2), [Some(4); 3]);
 }
 
-/// Seeds `seeds` of random cores: two disjunctions of two or three hub tests, and offsets
-/// `k1, k2` in `[-3, 3]`. The lazy and the eager answers are each the enumerated one. A
-/// piece of 400 seeds takes about 10 s.
-fn random(seeds: std::ops::Range<u64>) {
+/// [`CORES`] random cores, with a new seed each run (author P169; was 3,200 cores of the seeds
+/// 0 to 3,199 in eight tests of 400, about 9 s each at load 30): two disjunctions of two or
+/// three hub tests, and offsets `k1, k2` in `[-3, 3]`. The lazy and the eager answers are each
+/// the enumerated one.
+#[test]
+fn random_cores() {
     let shapes = [
         (1, 0),
         (-1, 0),
@@ -115,8 +117,8 @@ fn random(seeds: std::ops::Range<u64>) {
         (1, -1),
         (-1, 1),
     ];
-    for seed in seeds {
-        let mut rng = Rng::new(seed);
+    let (mut rng, seed) = Rng::fresh("random_cores");
+    for core in 0..CORES {
         let test = |rng: &mut Rng| {
             let (a, b) = rng.pick(&shapes);
             HubTest(a, b, rng.int(-14, 14))
@@ -132,50 +134,13 @@ fn random(seeds: std::ops::Range<u64>) {
         assert_eq!(
             (eager, lazy),
             (exact, exact),
-            "seed {seed}: {d1:?} {d2:?} k {k1} {k2}: eager, lazy, exact"
+            "seed {seed}, core {core}: {d1:?} {d2:?} k {k1} {k2}: eager, lazy, exact"
         );
     }
 }
 
-#[test]
-fn random_cores_0() {
-    random(0..400);
-}
-
-#[test]
-fn random_cores_1() {
-    random(400..800);
-}
-
-#[test]
-fn random_cores_2() {
-    random(800..1200);
-}
-
-#[test]
-fn random_cores_3() {
-    random(1200..1600);
-}
-
-#[test]
-fn random_cores_4() {
-    random(1600..2000);
-}
-
-#[test]
-fn random_cores_5() {
-    random(2000..2400);
-}
-
-#[test]
-fn random_cores_6() {
-    random(2400..2800);
-}
-
-#[test]
-fn random_cores_7() {
-    random(2800..3200);
-}
+/// The random cores [`random_cores`] checks in a run.
+const CORES: usize = 20;
 
 /// `n + m >= 0 || n >= w + 1 || ... || n >= w + k - 1`, one disjunction: in the box `[-w, w]`
 /// of [`star`] every side but the first is dead.
@@ -210,6 +175,42 @@ fn live_sides(k: usize) -> Term {
     (1..k as i64)
         .map(|i| HubTest(1, 1, -i).term())
         .fold(HubTest(1, 1, 0).term(), or)
+}
+
+/// A disjunction of sides all dead but one in the star's box keeps the live side: it gives
+/// `n + m >= 0`, so `max(n, m) >= 0` and `a >= 2`, eager and lazy (the lazy case was the
+/// assert of the benchmark `a_disjunction_with_dead_sides_scales` until TEST-bench-move-l0139).
+#[test]
+fn dead_sides_settle_the_star() {
+    let p = Premises::new();
+    let a: Arc<str> = "a".into();
+    for lazy in [false, true] {
+        for k in [1, 2, 5] {
+            let s = star(lazy, 5).assume(&dead_sides(k, 5), true, &p);
+            assert_eq!(
+                s.settled(&a).ints().bounds().and_then(|(l, _)| l.to_i64()),
+                Some(2),
+                "lazy {lazy}, k {k}"
+            );
+        }
+    }
+}
+
+/// A disjunction of live sides keeps their join: the five sides give `n + m >= -4`, so
+/// `max(n, m) >= -2` and `a >= 0`, eager and lazy (the assert of the benchmark
+/// `a_disjunction_of_live_sides_scales` until TEST-bench-move-l0139).
+#[test]
+fn live_sides_settle_the_star() {
+    let p = Premises::new();
+    let a: Arc<str> = "a".into();
+    for lazy in [false, true] {
+        let s = star(lazy, 5).assume(&live_sides(5), true, &p);
+        assert_eq!(
+            s.settled(&a).ints().bounds().and_then(|(l, _)| l.to_i64()),
+            Some(0),
+            "lazy {lazy}"
+        );
+    }
 }
 
 mod bench;

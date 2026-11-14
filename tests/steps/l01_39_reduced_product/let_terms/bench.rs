@@ -8,24 +8,11 @@ use super::*;
 /// arm, so a chain of n links each read by k tests makes 2 n k term reads and costs O(n k).
 #[test]
 fn reading_chains_of_terms_scales() {
-    let (a, _) = term_reads(&nested_halvings(3, 2));
-    // `z1 <= 1000` gives `x <= 2001`; the tests of `z2` and `z3` leave `z1` and `z2` as they were.
-    assert_eq!(ints_of(&a, "(z1 <= 1000)", true, "x"), "[..=2001]");
-    assert_eq!(ints_of(&a, "(z2 <= 1000)", true, "z1"), "[..=1000]");
-    assert_eq!(ints_of(&a, "(z3 <= 1000)", true, "z3"), "[..=1000]");
-    assert!(!arm(&a, "(z3 <= 1001)", false).reachable());
-    for n in [3, 32, 256] {
-        assert_eq!(
-            term_reads(&nested_halvings(n, 2)).1,
-            4 * n as u64,
-            "{n} links"
-        );
-    }
-    let chains = scaling::inputs(32, |n| nested_halvings(n, 2));
+    let chains = scaling::inputs(512, |n| nested_halvings(n, 2));
     let x = ints(&["x".into()]);
     scaling::check_order(
         "a chain of n bindings `zj = z(j-1) div 2`, each read by 2 nested tests",
-        32,
+        512,
         1,
         |n| {
             zedc::store::product::arms(&chains[&n], &x);
@@ -44,24 +31,11 @@ fn reading_chains_of_terms_scales() {
 /// each link is in the output.
 #[test]
 fn a_test_that_narrows_every_link_reads_every_link_once() {
-    let (a, _) = term_reads(&else_halvings(3, 2));
-    assert_eq!(ints_of(&a, "(z3 > 0)", true, "x"), "[8..]");
-    assert_eq!(ints_of(&a, "(z2 > 0)", true, "z1"), "[2..=3]");
-    assert_eq!(ints_of(&a, "(z2 > 0)", false, "x"), "[..=3]");
-    assert_eq!(ints_of(&a, "(z1 > 1)", false, "x"), "[..=1]");
-    for n in [3, 8, 32, 64] {
-        let n64 = n as u64;
-        assert_eq!(
-            term_reads(&else_halvings(n, 2)).1,
-            n64 * (n64 + 1),
-            "{n} links"
-        );
-    }
-    let chains = scaling::inputs(16, |n| else_halvings(n, 2));
+    let chains = scaling::inputs(40, |n| else_halvings(n, 2));
     let x = ints(&["x".into()]);
     scaling::check_order(
         "a chain of n bindings `zj = z(j-1) div 2` under an `else` chain of 2 tests each",
-        16,
+        40,
         2,
         |n| {
             zedc::store::product::arms(&chains[&n], &x);

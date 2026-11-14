@@ -130,6 +130,9 @@ fn a_witness_still_within_the_bounds_is_kept() {
 /// A chain of four names, each pair of neighbors with a product ending in 1, and the last
 /// name's square ending in 9: the constraints of a scope that tracks, say, four gears whose
 /// tooth counts must mesh in turn.
+///
+/// Each name runs over `0..=17`, so the values ending in 3 or 7 come from two decades; at
+/// `0..=30` (until TEST-bench-move-l0139) the searches of [`allowed`] took 2.6 to 4.2 s a test.
 fn gear_chain() -> [Term; 4] {
     [
         product_mod_10("a", "b", 1),
@@ -139,16 +142,20 @@ fn gear_chain() -> [Term; 4] {
     ]
 }
 
+/// The four names of [`gear_chain`] and their bounds.
+const GEARS: [(&str, i64, i64); 4] = [("a", 0, 17), ("b", 0, 17), ("c", 0, 17), ("d", 0, 17)];
+
 /// A program that checks one constraint per line reduces after each; the exact sets must be
 /// those of reducing once after all of them. Building the two scopes takes about 50 ms; nearly
-/// all the time is the 31 searches of [`allowed`] for each name in each scope, about 40 ms each
+/// all the time is the 18 searches of [`allowed`] for each name in each scope (31 at `0..=30`,
+/// about 40 ms each)
 /// (COMPLEXITY.md S17). As one test of the four names it took 10.6 to 12.1 s alone at load 24
 /// and 32 s at load 39 as SPLIT-l01_39-slow measured it, so each pair of names is a test
 /// (item SPLIT-l01_39-rest).
 mod constraints_reduced_one_at_a_time_decide_as_all_at_once {
     use super::*;
 
-    const NAMES: [(&str, i64, i64); 4] = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
+    const NAMES: [(&str, i64, i64); 4] = GEARS;
 
     /// The values each of `checked` allows in the scope reduced after each constraint, which
     /// must be those it allows in the scope reduced once after all of them.
@@ -173,7 +180,7 @@ mod constraints_reduced_one_at_a_time_decide_as_all_at_once {
     fn names_a_and_b() {
         let got = part(&["a", "b"]);
         // `d` ends in 3 or 7, so `c`, `b` and `a` do too.
-        assert_eq!(got[0], [3, 7, 13, 17, 23, 27]);
+        assert_eq!(got[0], [3, 7, 13, 17]);
     }
 
     #[test]
@@ -186,8 +193,7 @@ mod constraints_reduced_one_at_a_time_decide_as_all_at_once {
 fn a_later_constraint_that_breaks_the_chain_makes_the_scope_bottom() {
     // After the chain is reduced, a last line asks for `a` ending in 5: no product of it
     // ends in 1, so no point is left. Only the group of `a` holds the change.
-    let names = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
-    let s = written(within(&names, true), &gear_chain());
+    let s = written(within(&GEARS, true), &gear_chain());
     assert!(!s.bottom);
     let five = prim(
         Prim::Eq,
@@ -201,13 +207,24 @@ fn a_later_constraint_that_breaks_the_chain_makes_the_scope_bottom() {
 fn a_name_fixed_in_the_middle_of_a_chain_still_decides_both_sides() {
     // Fixing `b` to 3 splits the chain in two; `a` must then end in 7 and so must `c`, and
     // with `b` ending in 5 no point is left.
-    let names = [("a", 0, 30), ("b", 0, 30), ("c", 0, 30), ("d", 0, 30)];
-    let s = written(within(&names, true), &gear_chain());
+    let s = written(within(&GEARS, true), &gear_chain());
     let three = s.assume(&is("b", 3), true, &none());
     assert!(!three.bottom);
-    assert_eq!(allowed(&three, "a", 0, 30), [7, 17, 27]);
-    assert_eq!(allowed(&three, "c", 0, 30), [7, 17, 27]);
+    assert_eq!(allowed(&three, "a", 0, 17), [7, 17]);
+    assert_eq!(allowed(&three, "c", 0, 17), [7, 17]);
     assert!(s.assume(&is("b", 5), true, &none()).bottom);
 }
 
-mod bench;
+/// Over `0..=10^12` the exact set of `n * n mod 10 == 9` has 4·10^11 members; excluding 4
+/// assumes `n == 4`, a box of one point, and a witness for the whole range is found by
+/// halving toward the first point. A listing of the range would not end; the test's time
+/// limit is the check. (Was a benchmark with a 5 s limit of its own until
+/// TEST-bench-move-l0139: one size, no ratio.)
+#[test]
+fn a_point_inside_a_huge_range_is_excluded_without_listing_the_range() {
+    let t = product_mod_10("n", "n", 9);
+    let s = written(within(&[("n", 0, 1_000_000_000_000)], true), &[t]);
+    assert!(!s.bottom);
+    assert!(s.assume(&is("n", 4), true, &none()).bottom);
+    assert!(!s.assume(&is("n", 999_999_999_997), true, &none()).bottom);
+}

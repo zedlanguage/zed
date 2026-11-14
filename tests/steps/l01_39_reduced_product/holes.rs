@@ -263,19 +263,16 @@ fn three_holes_on_a_cycle_that_leave_no_point_empty_the_scope() {
     .check_empty();
 }
 
-/// A staircase of four names, each with a hole one step lower than the last, on one cycle
-/// of equal values, `x0 >= x1 >= x2 >= x3 >= x0`, in `0..=8`: equal values leave out every
-/// hole of every name, so each name is `0..=4`, in every order.
+/// A staircase of three names, each with a hole one step lower than the last, on one cycle
+/// of equal values, `x0 >= x1 >= x2 >= x0`, in `0..=6`: equal values leave out every hole of
+/// every name, so each name is `0..=3`, in every order. (Four names in `0..=8`, 1.05 s at load
+/// 25, until TEST-bench-move-l0139; `one_cycle_of_holes_has_exact_ends` checks the staircase
+/// at 4, 9 and 16 names in one order.)
 #[test]
 fn a_staircase_of_holes_on_one_cycle_is_exact() {
     System {
-        names: &[
-            ("x0", 0, 8, &[8]),
-            ("x1", 0, 8, &[7]),
-            ("x2", 0, 8, &[6]),
-            ("x3", 0, 8, &[5]),
-        ],
-        differences: &["x0 >= x1", "x1 >= x2", "x2 >= x3", "x3 >= x0"],
+        names: &[("x0", 0, 6, &[6]), ("x1", 0, 6, &[5]), ("x2", 0, 6, &[4])],
+        differences: &["x0 >= x1", "x1 >= x2", "x2 >= x0"],
     }
     .check_exact();
 }
@@ -416,6 +413,58 @@ fn laps(n: usize, r: i64, more: impl Fn(usize) -> Vec<i64>) -> (Scope, Term) {
 /// The values each name of `s` keeps, as the scope prints them.
 fn printed(s: &Scope, n: usize) -> Vec<String> {
     (0..n).map(|i| s.get(&x(i)).ints().to_string()).collect()
+}
+
+/// A ring builder and the ends of its names, as [`printed`] gives them, at `n` names.
+type Ring = fn(usize) -> (Scope, Term);
+type Family = (&'static str, Ring, fn(usize) -> Vec<String>);
+
+/// Three rings of `n` names, each with its bounds and holes in the scope, narrowed by its `n`
+/// differences in one conjunction.
+///
+/// Laps: `x0` a multiple of 3 and `x{n / 2}` 0 or 1 more than one, within `0..=6n`, and
+/// `x0 >= x1 >= … >= x{n - 1} >= x0 - 1`: `x{n / 2}` is `x0` or `x0 - 1`, which only 0 is
+/// both, so every name is 0. Narrowing the names in turn takes one lap of the ring for each
+/// multiple of 3 it leaves out, `2n` laps of `n` names.
+///
+/// Staircase: within `0..=2n`, `x{i}` without `2n - i`, all equal: every name is in `0..=n`,
+/// and narrowing in turn takes a lap for each hole.
+///
+/// Mixed: the laps within `0..=3n`, and `x{i}` without `3n - i` too.
+fn families() -> [Family; 3] {
+    [
+        (
+            "a ring of n names, two with holes every third value, in 0..=6n",
+            |n| laps(n, 6 * n as i64, |_| Vec::new()),
+            |n| vec!["[0..=0]".to_string(); n],
+        ),
+        (
+            "a staircase of n names on one cycle, each with one hole, in 0..=2n",
+            |n| ring(n, 2 * n as i64, 0, |i| vec![2 * n as i64 - i as i64]),
+            |n| vec![format!("[0..={n}]"); n],
+        ),
+        (
+            "a ring of n names, two with holes every third value and each with one hole, in 0..=3n",
+            |n| laps(n, 3 * n as i64, |i| vec![3 * n as i64 - i as i64]),
+            |n| vec!["[0..=0]".to_string(); n],
+        ),
+    ]
+}
+
+/// The rings of [`families`] at 4, 9 and 16 names reach their exact ends.
+#[test]
+fn one_cycle_of_holes_has_exact_ends() {
+    let p = Premises::new();
+    for (what, family, expected) in families() {
+        for n in [4, 9, 16] {
+            let (s, d) = family(n);
+            assert_eq!(
+                printed(&s.assume(&d, true, &p), n),
+                expected(n),
+                "{what}, n = {n}"
+            );
+        }
+    }
 }
 
 mod bench;

@@ -278,4 +278,43 @@ fn term_reads(t: &Term) -> (Vec<Arm>, u64) {
     })
 }
 
+/// The chain of [`nested_halvings`] that the benchmark `reading_chains_of_terms_scales` times:
+/// `z1 <= 1000` gives `x <= 2001`, the tests of `z2` and `z3` leave `z1` and `z2` as they were,
+/// and a chain of `n` links each read by 2 tests makes `4 n` term reads.
+#[test]
+fn a_chain_of_terms_read_by_nested_tests_reads_each_link_twice() {
+    let (a, _) = term_reads(&nested_halvings(3, 2));
+    assert_eq!(ints_of(&a, "(z1 <= 1000)", true, "x"), "[..=2001]");
+    assert_eq!(ints_of(&a, "(z2 <= 1000)", true, "z1"), "[..=1000]");
+    assert_eq!(ints_of(&a, "(z3 <= 1000)", true, "z3"), "[..=1000]");
+    assert!(!arm(&a, "(z3 <= 1001)", false).reachable());
+    for n in [3, 32] {
+        assert_eq!(
+            term_reads(&nested_halvings(n, 2)).1,
+            4 * n as u64,
+            "{n} links"
+        );
+    }
+}
+
+/// The `else` chain of [`else_halvings`] that the benchmark
+/// `a_test_that_narrows_every_link_reads_every_link_once` times: the arms' ranges at 3 links,
+/// and `n (n + 1)` term reads at `n` links.
+#[test]
+fn an_else_chain_reads_every_link_once_in_each_arm() {
+    let (a, _) = term_reads(&else_halvings(3, 2));
+    assert_eq!(ints_of(&a, "(z3 > 0)", true, "x"), "[8..]");
+    assert_eq!(ints_of(&a, "(z2 > 0)", true, "z1"), "[2..=3]");
+    assert_eq!(ints_of(&a, "(z2 > 0)", false, "x"), "[..=3]");
+    assert_eq!(ints_of(&a, "(z1 > 1)", false, "x"), "[..=1]");
+    for n in [3, 8] {
+        let n64 = n as u64;
+        assert_eq!(
+            term_reads(&else_halvings(n, 2)).1,
+            n64 * (n64 + 1),
+            "{n} links"
+        );
+    }
+}
+
 mod bench;

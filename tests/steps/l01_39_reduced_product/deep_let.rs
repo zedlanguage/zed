@@ -1,11 +1,13 @@
 //! Terms nested deep (PA-let-stack): the walk of the arms (`store::product::arms`) and the
 //! forward transfer it runs on each bound term (`store::product::forward`) keep the nesting of
-//! `let`s, `if`s and primitives on frames on the heap, so a block of 10,000 bindings has its
+//! `let`s, `if`s and primitives on frames on the heap, so a block of 1,500 bindings has its
 //! arms on a 2 MiB thread stack. Before, both recursed on the thread's stack once per level,
 //! and a block of 512 bindings overflowed the stack of a scaling run (on a 2 MiB stack the
 //! walk overflowed at about 670 bindings).
 //!
-//! The fixed depths are 10 to 25 times the depth that overflowed, and no more, because each level
+//! The fixed depths are 1,000 to 1,500, above the 200 to 670 levels at which the old walk
+//! overflowed a default stack, and no more (author P169: the smallest depth that overflows a
+//! default stack; TEST-bench-move-l0139, which cut them from 4,000 and 10,000), because each level
 //! costs the checker's work on a binding or a test whatever the depth: at 100,000 bindings
 //! these tests took 324 billion instructions and up to 45 s each (TEST-deep-let-size). With
 //! the walk and the transfer recursing on the thread's stack again, every test here aborts
@@ -21,7 +23,7 @@ use super::ints;
 const STACK: usize = 2 << 20;
 
 /// How deep the terms are.
-const DEEP: usize = 10_000;
+const DEEP: usize = 1_500;
 
 /// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
 fn on_small_stack(f: impl FnOnce() + Send + 'static) {
@@ -80,7 +82,7 @@ fn fees(d: usize, every: usize) -> Term {
 /// with a fee on every day at 1,000, 4,000 and 12,500 days (and [`the_arms_of_a_deep_block_scale`]
 /// checks that cost), and the depth of the walk is the same.
 #[test]
-fn a_block_of_10000_bindings_has_its_arms_on_a_2_mib_stack() {
+fn a_block_of_1500_bindings_has_its_arms_on_a_2_mib_stack() {
     on_small_stack(|| {
         let every = 100;
         let a = arms(&fees(DEEP, every), &ints(&["n".into()]));
@@ -119,10 +121,10 @@ fn bound_to(value: Term, d: usize) -> Term {
     )
 }
 
-/// A binding whose value is a block of 10,000 `let`s, or a sum 10,000 deep: the forward
-/// transfer finds its value, `10,001`, and the test after it is taken only by its true arm.
+/// A binding whose value is a block of [`DEEP`] `let`s, or a sum [`DEEP`] deep: the forward
+/// transfer finds its value, `DEEP + 1`, and the test after it is taken only by its true arm.
 #[test]
-fn a_value_nested_10000_deep_is_found_on_a_2_mib_stack() {
+fn a_value_nested_1500_deep_is_found_on_a_2_mib_stack() {
     on_small_stack(|| {
         let scope = ints(&["n".into()]);
         for make in [block, sum] {
@@ -143,15 +145,15 @@ fn nested_ifs(d: usize) -> Term {
     })
 }
 
-/// `if`s nested 4,000 deep in their first arm, on a 2 MiB stack: the `k`-th test's true arm
+/// `if`s nested 1,000 deep in their first arm, on a 2 MiB stack: the `k`-th test's true arm
 /// holds `n > k`, its false arm `n == k` (`n <= 1` for the first), the arms in the order
 /// written (the true arms outside in, then the false arms inside out), and the value is
-/// 0 or 1. (Each test costs a reduction of the scope; the depth is 4,000, ten times the
-/// depth at which the old walk overflowed, to keep the test short.)
+/// 0 or 1. (Each test costs a reduction of the scope; the depth is 1,000, two and a half times
+/// the depth at which the old walk overflowed, to keep the test short.)
 #[test]
-fn ifs_nested_4000_deep_have_their_arms_on_a_2_mib_stack() {
+fn ifs_nested_1000_deep_have_their_arms_on_a_2_mib_stack() {
     on_small_stack(|| {
-        let d = 4_000;
+        let d = 1_000;
         let a = arms(&nested_ifs(d), &ints(&["n".into()]));
         assert_eq!(a.len(), 2 * d);
         for k in [1, d / 2, d] {
@@ -185,6 +187,31 @@ fn blocks_in_a_call(d: usize) -> Term {
         )
     };
     Term::App(Shared::new(var("f")), (1..=d).map(block).collect())
+}
+
+/// The block of [`fees`] with a fee every day, as the benchmark `the_arms_of_a_deep_block_scale`
+/// builds it, at 1 to 4 days: two arms a fee and two for the final test, the last fee's `2`
+/// taken only by `n > d`, every arm reachable.
+#[test]
+fn a_block_with_a_fee_every_day_has_its_arms() {
+    for d in 1..=4 {
+        let a = arms(&fees(d, 1), &ints(&["n".into()]));
+        assert_eq!(a.len(), 2 * d + 2, "{d} days");
+        let fee = &a[a.len() - 4];
+        assert_eq!(fee.guard, format!("(n > {d})"), "{d} days");
+        assert!(fee.outcome, "{d} days");
+        assert!(a.iter().all(|a| a.reachable()), "{d} days");
+    }
+}
+
+/// The blocks of [`blocks_in_a_call`], which the benchmark
+/// `the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block` walks, hold no test, so
+/// the call has no arms.
+#[test]
+fn blocks_one_after_another_in_a_call_have_no_arms() {
+    for d in 1..=3 {
+        assert!(arms(&blocks_in_a_call(d), &ints(&["n".into()])).is_empty());
+    }
 }
 
 mod bench;

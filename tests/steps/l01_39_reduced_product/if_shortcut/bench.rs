@@ -34,12 +34,12 @@ fn one_pass_and_transfer_scale_on_deep_nests() {
         ),
         (4, "`if`s nested `k` deep in arms", true),
     ] {
-        let terms = scaling::inputs(64, |k| nest(form, k as i64));
-        scaling::check(&format!("the one pass over {what}"), 64, |k| {
+        let terms = scaling::inputs(512, |k| nest(form, k as i64));
+        scaling::check(&format!("the one pass over {what}"), 512, |k| {
             arms_and_value(&terms[&k], &scope);
         });
         if reference {
-            scaling::check(&format!("the reference over {what}"), 64, |k| {
+            scaling::check(&format!("the reference over {what}"), 512, |k| {
                 arms_and_value_by_transfer(&terms[&k], &scope);
             });
         }

@@ -133,4 +133,48 @@ fn of_terms(n: usize, r: &BigInt) -> Sparse {
     Sparse::new(terms)
 }
 
+/// The polynomials of the benchmark `roots_scale_in_the_degree_and_in_the_bits`, at small
+/// sizes: `(x^n + 1)(x - 4)` has the root 4, and -1 too for odd `n`; the cubic of
+/// [`of_bits`] has its three roots.
+#[test]
+fn the_roots_of_sparse_and_wide_polynomials() {
+    for n in [3, 4, 1000, 1001] {
+        let expected: Vec<BigInt> = match n % 2 {
+            0 => vec![BigInt::from(4)],
+            _ => vec![BigInt::from(-1), BigInt::from(4)],
+        };
+        assert_eq!(
+            integer_roots(&of_degree(n), None, None),
+            Roots::Listed(expected),
+            "degree {n}"
+        );
+    }
+    for bits in [8, 64] {
+        let (f, a, b) = of_bits(bits);
+        let expected = vec![b, BigInt::from(5), a];
+        assert_eq!(
+            integer_roots(&f, None, None),
+            Roots::Listed(expected),
+            "{bits} bits"
+        );
+    }
+}
+
+/// The polynomial of [`of_terms`] of the benchmark `roots_are_linear_in_the_number_of_terms`
+/// has its one root, at 4, which the cuts of the interval reach, and at `2^40`, which
+/// Newton's method reaches.
+#[test]
+fn a_polynomial_of_many_terms_has_its_one_root() {
+    let large = BigInt::from(1u8) << 40u32;
+    for r in [BigInt::from(4), large] {
+        for n in [1, 2, 8, 64] {
+            assert_eq!(
+                integer_roots(&of_terms(n, &r), None, None),
+                Roots::Listed(vec![r.clone()]),
+                "{n} terms, root {r}"
+            );
+        }
+    }
+}
+
 mod bench;

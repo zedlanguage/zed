@@ -209,16 +209,4 @@ fn a_test_both_ways_of_a_path_member_matches_the_solver() {
     same_as_the_solver("both ways", &src);
 }
 
-/// Checks each program of `make` at `n = 16` and 128 and holds the work to the limit of order
-/// n. On main before ST-walk-checker-admit the checker took no test on paths and these grew
-/// 23.5 (chain), 25.9 (raise) and 21.1 (one input read) times in instructions.
-fn checked_in_linear_work(what: &str, make: fn(usize) -> String) {
-    let programs = zed_tests::scaling::inputs(16, make);
-    zed_tests::scaling::check(what, 16, |m| {
-        if let Err(e) = zedc::run::load(programs[&m].as_bytes()) {
-            panic!("{what}, n = {m}: rejected: {e}");
-        }
-    });
-}
-
 mod bench;

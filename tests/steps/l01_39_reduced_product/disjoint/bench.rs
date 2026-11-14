@@ -8,7 +8,7 @@ use super::*;
 /// decides and groups it does not, and with the reduction that follows a join.
 #[test]
 fn the_join_of_arms_on_many_disjoint_groups_scales() {
-    let n = 16;
+    let n = 128;
     for (what, group) in [("decided", decided as Group), ("refused", refused as Group)] {
         let built: BTreeMap<usize, (Scope, Scope)> = [n, scaling::FACTOR * n]
             .into_iter()

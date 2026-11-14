@@ -139,14 +139,16 @@ fn check_on(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
     Ok(checked)
 }
 
+/// Over [`SHAPES`] random shapes, with a new seed each run (author P169; was 300 shapes of the
+/// one seed `0x1_39`, 4.5 s at load 30).
 #[test]
 fn every_value_that_reaches_an_arm_is_in_its_scope() {
-    let mut rng = Rng::new(0x1_39);
+    let (mut rng, seed) = Rng::fresh("every_value_that_reaches_an_arm_is_in_its_scope");
     let (mut checked, mut unreachable, mut narrowed) = (0, 0, 0);
-    for _ in 0..300 {
+    for _ in 0..SHAPES {
         let s = Shape::random(&mut rng);
         let arms = s.arms();
-        checked += check(&s, &arms).unwrap_or_else(|e| panic!("{s:?}: {e}"));
+        checked += check(&s, &arms).unwrap_or_else(|e| panic!("seed {seed}, {s:?}: {e}"));
         unreachable += arms.iter().filter(|a| !a.reachable()).count();
         narrowed += arms
             .iter()
@@ -160,10 +162,17 @@ fn every_value_that_reaches_an_arm_is_in_its_scope() {
             .count();
     }
     // The check ran, found arms unreachable, and found arms the tests narrowed.
-    assert!(checked > 20_000, "{checked} checks");
-    assert!(unreachable > 40, "{unreachable} unreachable arms");
-    assert!(narrowed > 100, "{narrowed} narrowed arms");
+    eprintln!("seed {seed}: {checked} checks, {unreachable} unreachable, {narrowed} narrowed");
+    assert!(checked > 10_000, "seed {seed}: {checked} checks");
+    assert!(
+        unreachable > 10,
+        "seed {seed}: {unreachable} unreachable arms"
+    );
+    assert!(narrowed > 20, "seed {seed}: {narrowed} narrowed arms");
 }
+
+/// The random shapes [`every_value_that_reaches_an_arm_is_in_its_scope`] checks in a run.
+const SHAPES: usize = 40;
 
 /// The same shape with `z`'s term as a function `h` of `x` and `y` that the last test calls,
 /// and that function:
@@ -269,23 +278,52 @@ fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize
     Ok(compared)
 }
 
+/// [`agree`] on the shape `s`, with `z` bound and with `h` called: the arms compared, and
+/// whether the arm `3` of the call is unreachable only through what `h` returns.
+fn agree_both(s: &Shape) -> Result<(usize, bool), String> {
+    let mut compared = agree(&s.arms(), &paths(s, &s.last()), "z", &s.z)?;
+    let (body, last, h) = helper_body(s);
+    let arms = zedc::store::product::arms(&body, &ints(&["x".into(), "y".into()]));
+    compared += agree(&arms, &paths(s, &last), "h", &h)?;
+    Ok((compared, arms[3].reachable() && !arms[4].reachable()))
+}
+
+/// Over [`AGREE_SHAPES`] random shapes, with a new seed each run (author P169; was 300 shapes
+/// of the one seed `0x1_39_33`, 19 s at load 30).
 #[test]
 fn the_closed_path_condition_and_the_scope_agree_on_emptiness() {
-    let mut rng = Rng::new(0x1_39_33);
-    let (mut compared, mut through) = (0, 0);
-    for _ in 0..300 {
+    let (mut rng, seed) = Rng::fresh("the_closed_path_condition_and_the_scope_agree_on_emptiness");
+    let mut compared = 0;
+    for _ in 0..AGREE_SHAPES {
         let s = Shape::random(&mut rng);
-        compared += agree(&s.arms(), &paths(&s, &s.last()), "z", &s.z)
-            .unwrap_or_else(|e| panic!("{s:?}: {e}"));
-        let (body, last, h) = helper_body(&s);
-        let arms = zedc::store::product::arms(&body, &ints(&["x".into(), "y".into()]));
-        compared +=
-            agree(&arms, &paths(&s, &last), "h", &h).unwrap_or_else(|e| panic!("{s:?}: {e}"));
-        through += usize::from(arms[3].reachable() && !arms[4].reachable());
+        compared += agree_both(&s)
+            .unwrap_or_else(|e| panic!("seed {seed}, {s:?}: {e}"))
+            .0;
     }
-    // The comparison ran, and some arms are unreachable only through what `h` returns.
-    assert!(compared > 500, "{compared} arms compared");
-    assert!(through > 10, "{through} arms unreachable through `h`");
+    eprintln!("seed {seed}: {compared} arms compared");
+    assert!(compared > 2, "seed {seed}: {compared} arms compared");
+}
+
+/// The random shapes [`the_closed_path_condition_and_the_scope_agree_on_emptiness`] compares in
+/// a run.
+const AGREE_SHAPES: usize = 10;
+
+/// Some arms are unreachable only through what `h` returns, and the comparison holds there: the
+/// shapes 1, 4 and 15 drawn from the seed `0x1_39_33`, three of the 38 among its first 300 where
+/// the arm `3` of the call is reachable and the arm `4` inside it is not. One shape in eight
+/// is such a shape, too few to count on in a random run of
+/// [`the_closed_path_condition_and_the_scope_agree_on_emptiness`], which counted them over 300
+/// shapes of that seed before author P169 (TEST-bench-move-l0139).
+#[test]
+fn an_arm_unreachable_only_through_a_called_function_is_compared() {
+    let mut rng = Rng::new(0x1_39_33);
+    for i in 0..=15 {
+        let s = Shape::random(&mut rng);
+        if [1, 4, 15].contains(&i) {
+            let (_, through) = agree_both(&s).unwrap_or_else(|e| panic!("shape {i}, {s:?}: {e}"));
+            assert!(through, "shape {i}, {s:?}: the arm 4 of `h` is reachable");
+        }
+    }
 }
 
 /// `if y >= abs(-3 * y) { if y == (x - x) mod -3 { 1 } else { 2 } } else { 3 }`: the outer test
@@ -536,56 +574,50 @@ fn bodies(rng: &mut Rng) -> [Term; 3] {
 /// Every run of every random body, at every point of its grid, reaches only arms whose scope
 /// holds the run's values there, and no arm found unreachable; checked for every arm of the
 /// body, those in `z`'s term too. Item PA-walk-multi narrows inputs through bindings over
-/// several of them, which this tests at the narrowed ends. Each of the three seeds is its own
-/// test, 900 bodies each, so that each runs in a process of its own (TEST-split-slow: the three
-/// together took 43 to 58 s alone at load 18 to 40). Each seed makes over a million checks
-/// (1,025,066 to 1,028,509), as the three together had to.
-fn every_run_of_random_bodies_reaches_only_arms_that_hold_it(seed: u64) {
+/// several of them, which this tests at the narrowed ends. Over [`BODY_DRAWS`] draws of three
+/// bodies, with a new seed each run (author P169; was three tests of 300 draws, of the seeds
+/// `0x1_39`, `0x1_39_33` and 7, 17 to 18 s each at load 30).
+#[test]
+fn every_run_of_a_random_body_reaches_only_arms_that_hold_it() {
     let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    let (mut rng, seed) = Rng::fresh("every_run_of_a_random_body_reaches_only_arms_that_hold_it");
     let (mut checked, mut bodies_run) = (0, 0);
-    let mut rng = Rng::new(seed);
-    for _ in 0..300 {
+    for _ in 0..BODY_DRAWS {
         for body in bodies(&mut rng) {
             let arms = zedc::store::product::arms(&body, &ints(&xy));
             let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
-            let t = trace(&body, &xy, &arms, &holds).unwrap_or_else(|e| panic!("{body}: {e}"));
+            let t = trace(&body, &xy, &arms, &holds)
+                .unwrap_or_else(|e| panic!("seed {seed}, {body}: {e}"));
             checked += t.checked;
             bodies_run += 1;
         }
     }
-    assert_eq!(bodies_run, 900);
-    assert!(checked > 1_000_000, "{checked} checks");
+    eprintln!("seed {seed}: {checked} checks");
+    assert_eq!(bodies_run, 3 * BODY_DRAWS);
+    assert!(checked > 20_000, "seed {seed}: {checked} checks");
 }
 
-#[test]
-fn every_run_of_a_random_body_reaches_only_arms_that_hold_it_seed_1() {
-    every_run_of_random_bodies_reaches_only_arms_that_hold_it(0x1_39);
-}
-
-#[test]
-fn every_run_of_a_random_body_reaches_only_arms_that_hold_it_seed_2() {
-    every_run_of_random_bodies_reaches_only_arms_that_hold_it(0x1_39_33);
-}
-
-#[test]
-fn every_run_of_a_random_body_reaches_only_arms_that_hold_it_seed_3() {
-    every_run_of_random_bodies_reaches_only_arms_that_hold_it(7);
-}
+/// The draws of three bodies [`every_run_of_a_random_body_reaches_only_arms_that_hold_it`]
+/// checks in a run.
+const BODY_DRAWS: usize = 8;
 
 /// The check above fails on a scope one value too narrow: at each arm a run reached, an input
 /// whose least or greatest reached value is a finite end of its domain, with that one value
 /// taken out of the domain, makes the check report a run outside the arm's scope.
+///
+/// Over [`NARROW_DRAWS`] draws of three bodies, with a new seed each run (author P169; was 40
+/// draws of the one seed `0x1_39`, 5.3 s at load 30).
 #[test]
 fn the_check_finds_a_domain_one_value_too_narrow() {
     let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
-    let mut rng = Rng::new(0x1_39);
+    let (mut rng, seed) = Rng::fresh("the_check_finds_a_domain_one_value_too_narrow");
     let (mut ends, mut found) = (0, 0);
-    for _ in 0..40 {
+    for _ in 0..NARROW_DRAWS {
         for body in bodies(&mut rng) {
             let arms = zedc::store::product::arms(&body, &ints(&xy));
             let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
             let seen = trace(&body, &xy, &arms, &holds)
-                .unwrap_or_else(|e| panic!("{body}: {e}"))
+                .unwrap_or_else(|e| panic!("seed {seed}, {body}: {e}"))
                 .seen;
             for ((i, n), (least, most)) in seen {
                 let p = arms[i].scope.get(&n);
@@ -606,9 +638,13 @@ fn the_check_finds_a_domain_one_value_too_narrow() {
             }
         }
     }
-    assert!(ends > 50, "{ends} reached ends");
-    assert_eq!(found, ends, "every end taken out is found");
+    eprintln!("seed {seed}: {ends} reached ends");
+    assert!(ends > 20, "seed {seed}: {ends} reached ends");
+    assert_eq!(found, ends, "seed {seed}: every end taken out is found");
 }
+
+/// The draws of three bodies [`the_check_finds_a_domain_one_value_too_narrow`] checks in a run.
+const NARROW_DRAWS: usize = 4;
 
 /// `t`, a term of [`int_term`] or [`bool_term`], with each `x` in it replaced by `by`.
 fn with_x(t: &Term, by: &Term) -> Term {
@@ -768,210 +804,167 @@ struct ChainCounts {
     narrowed: usize,
 }
 
-/// Every run of each of the random chains `traced` among the first `draws` of `depth` links
-/// (bindings, or functions when `calls` is set), drawn from `seed`, at every point of its grid,
-/// reaches only arms whose scope holds the run's values there, and no arm found unreachable.
-/// With `counted` set, the arms of `e > c` cut and narrowed are counted over all `draws` chains,
-/// which needs their arms and not their runs. A failure names the seed, the draw, the body and
-/// the command that runs the test again; the draws are fixed by the seed, so a rerun repeats it.
+/// Every run of `draws` random chains of `depth` links (bindings, or functions when `calls` is
+/// set), drawn from `rng`, at every point of its grid, reaches only arms whose scope holds the
+/// run's values there, and no arm found unreachable; the arms of `e > c` cut and narrowed are
+/// counted too. A failure names the seed, the draw, the body and the command that runs the test
+/// again with that seed.
 fn chains_reach_only_arms_that_hold_them(
     test: &str,
-    seed: u64,
+    (mut rng, seed): (Rng, u64),
     (depth, calls): (usize, bool),
     draws: usize,
-    traced: std::ops::Range<usize>,
-    counted: bool,
 ) -> ChainCounts {
     let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
-    let mut rng = Rng::new(seed);
     let mut n = ChainCounts::default();
     for draw in 0..draws {
         let body = chain(&mut rng, depth, calls);
-        if !counted && !traced.contains(&draw) {
-            continue;
-        }
         let arms = zedc::store::product::arms(&body, &ints(&xy));
-        if traced.contains(&draw) {
-            let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
-            let t = trace(&body, &xy, &arms, &holds).unwrap_or_else(|e| {
-                panic!(
-                    "seed {seed:#x}, draw {draw} of {draws}, a chain of {} of depth {depth}:\n{body}\n{e}\n\
-                     To run this test again, from the root of the checkout:\n  \
-                     tools/run_tests.sh --no-doc --only 'l01_39_reduced_product::random::{test}$'",
-                    if calls { "calls" } else { "bindings" }
-                )
-            });
-            n.checked += t.checked;
-        }
-        if !counted {
-            continue;
-        }
-        // The arms of the tests at the chain's end, in the walk's order: `B1`, `B2` inside it,
-        // the `else` of `B1`, then `e > c` inside that.
-        let end = &arms[arms.len() - 6..];
-        if end[3].reachable() {
-            for a in &end[4..] {
-                if !a.reachable() {
-                    n.cut += 1;
-                } else if ["x", "y"]
-                    .iter()
-                    .any(|v| a.scope.get(v).ints() != end[3].scope.get(v).ints())
-                {
-                    n.narrowed += 1;
-                }
-            }
-        }
+        let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
+        let t = trace(&body, &xy, &arms, &holds).unwrap_or_else(|e| {
+            panic!(
+                "seed {seed}, draw {draw} of {draws}, a chain of {} of depth {depth}:\n{body}\n{e}\n\
+                 To run this test again, from the root of the checkout:\n  \
+                 ZED_SEED={seed} tools/run_tests.sh --no-doc --only 'l01_39_reduced_product::random::{test}$'",
+                if calls { "calls" } else { "bindings" }
+            )
+        });
+        n.checked += t.checked;
+        count_end(&arms, &mut n);
     }
     n
 }
 
-/// [`chains_reach_only_arms_that_hold_them`] on one half of the chains of a depth and form,
-/// `part` 1 or 2, with checks that it ran: over 1,000 (arm, run) pairs a traced chain, and, in
-/// part 1, over all the chains, some arms of `e > c` cut (over 100) and some narrowed through
-/// the chain (over 150). A depth draws the same terms for bindings and for calls, from one seed.
+/// Adds to `n` the arms of `e > c` that the chain's end cuts, and those it narrows, among the
+/// `arms` of a chain.
+fn count_end(arms: &[Arm], n: &mut ChainCounts) {
+    // The arms of the tests at the chain's end, in the walk's order: `B1`, `B2` inside it, the
+    // `else` of `B1`, then `e > c` inside that.
+    let end = &arms[arms.len() - 6..];
+    if end[3].reachable() {
+        for a in &end[4..] {
+            if !a.reachable() {
+                n.cut += 1;
+            } else if ["x", "y"]
+                .iter()
+                .any(|v| a.scope.get(v).ints() != end[3].scope.get(v).ints())
+            {
+                n.narrowed += 1;
+            }
+        }
+    }
+}
+
+/// [`chains_reach_only_arms_that_hold_them`] on [`CHAIN_DRAWS`] chains of a depth and form, with
+/// a new seed each run, and a check that it ran: over 1,000 (arm, run) pairs a chain (about
+/// 1,250 to 2,200 a chain over ten seeds). [`chains_cut_and_narrow`] shows that chains reach
+/// arms of `e > c` cut and narrowed.
 ///
 /// Every link really uses the one before ([`chain`]). A test of a bound name narrows the inputs
 /// through a summary of its value (`abs` and a `min` or `max` of two terms of one input have
 /// one), and a bound name with none, such as a `div`, a `mod` or a value over both inputs, is
-/// read through its term as a call is (item PA-let-unsummarized-narrow). Over the same 600
-/// chains, at depths 1, 2 and 3, bindings cut 110, 134 and 136 arms and narrow 641, 471 and
-/// 329; calls cut 113, 148 and 151 and narrow 691, 546 and 463. Before that item bindings cut
-/// 85 to 110 and narrowed 86 to 379. Bindings are drawn 1,200 times, calls 600 (bindings over
-/// 1,200 chains: cut 211, 277 and 290, narrowed 1,257, 884 and 667; before, cut 164 to 214,
-/// narrowed 159 to 734). The two halves of
-/// the traced chains are two pieces, 377,634 to 1,125,863 checks and 10 to 35 s each at load
-/// 34 with the twelve running together (item TESTS-walk-chains-strict-depth; item
-/// TESTS-l01_39-walk-chains made these tests, from chains of item PA-walk-multi).
-fn chains_of(test: &str, depth: usize, calls: bool, part: usize) {
-    let draws = if calls { 600 } else { 1200 };
-    let half = draws / 2;
-    let traced = if part == 1 { 0..half } else { half..draws };
-    let seed = 0x1_39_c0 + depth as u64;
+/// read through its term as a call is (item PA-let-unsummarized-narrow). Over 600 chains of the
+/// old fixed seeds, at depths 1, 2 and 3, bindings cut 110, 134 and 136 arms and narrow 641,
+/// 471 and 329; calls cut 113, 148 and 151 and narrow 691, 546 and 463. Before that item
+/// bindings cut 85 to 110 and narrowed 86 to 379. Until TEST-bench-move-l0139 (author P169)
+/// each depth and form was two tests over 600 or 1,200 chains of one fixed seed, 8 to 35 s each
+/// (item TESTS-walk-chains-strict-depth; item TESTS-l01_39-walk-chains made these tests, from
+/// chains of item PA-walk-multi).
+fn chains_of(test: &str, depth: usize, calls: bool) {
     let n =
-        chains_reach_only_arms_that_hold_them(test, seed, (depth, calls), draws, traced, part == 1);
-    assert!(n.checked > 1_000 * half, "{n:?}");
-    if part == 1 {
-        assert!(n.cut > 100, "{n:?}");
-        assert!(n.narrowed > 150, "{n:?}");
+        chains_reach_only_arms_that_hold_them(test, Rng::fresh(test), (depth, calls), CHAIN_DRAWS);
+    eprintln!("{n:?}");
+    assert!(n.checked > 1_000 * CHAIN_DRAWS, "{n:?}");
+}
+
+/// The chains [`chains_of`] draws and traces in a run.
+const CHAIN_DRAWS: usize = 6;
+
+/// At each depth, among the chains of the seed `0x1_39_c0` plus the depth, an arm of `e > c` is
+/// cut and one is narrowed through every link within the first [`WITNESS_DRAWS`] draws: about
+/// one chain in five cuts an arm and one in two narrows one over the old 600 chains of each
+/// seed. The draws are fixed by the seed, so this does not vary between runs.
+fn chains_cut_and_narrow(calls: bool) {
+    let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    for depth in 1..=3 {
+        let mut rng = Rng::new(0x1_39_c0 + depth as u64);
+        let mut n = ChainCounts::default();
+        let mut draws = 0;
+        while (n.cut == 0 || n.narrowed == 0) && draws < WITNESS_DRAWS {
+            let body = chain(&mut rng, depth, calls);
+            count_end(&zedc::store::product::arms(&body, &ints(&xy)), &mut n);
+            draws += 1;
+        }
+        assert!(
+            n.cut > 0 && n.narrowed > 0,
+            "depth {depth}, calls {calls}: {n:?} over {draws} draws"
+        );
     }
 }
 
+/// The draws [`chains_cut_and_narrow`] looks through at each depth.
+const WITNESS_DRAWS: usize = 20;
+
 #[test]
-fn every_run_of_a_chain_of_one_binding_reaches_only_arms_that_hold_it_part_1() {
+fn chains_of_bindings_cut_and_narrow_arms_of_their_end() {
+    chains_cut_and_narrow(false);
+}
+
+#[test]
+fn chains_of_calls_cut_and_narrow_arms_of_their_end() {
+    chains_cut_and_narrow(true);
+}
+
+#[test]
+fn every_run_of_a_chain_of_one_binding_reaches_only_arms_that_hold_it() {
     chains_of(
-        "every_run_of_a_chain_of_one_binding_reaches_only_arms_that_hold_it_part_1",
+        "every_run_of_a_chain_of_one_binding_reaches_only_arms_that_hold_it",
         1,
         false,
-        1,
     );
 }
 
 #[test]
-fn every_run_of_a_chain_of_one_binding_reaches_only_arms_that_hold_it_part_2() {
+fn every_run_of_a_chain_of_two_bindings_reaches_only_arms_that_hold_it() {
     chains_of(
-        "every_run_of_a_chain_of_one_binding_reaches_only_arms_that_hold_it_part_2",
-        1,
-        false,
+        "every_run_of_a_chain_of_two_bindings_reaches_only_arms_that_hold_it",
         2,
+        false,
     );
 }
 
 #[test]
-fn every_run_of_a_chain_of_two_bindings_reaches_only_arms_that_hold_it_part_1() {
+fn every_run_of_a_chain_of_three_bindings_reaches_only_arms_that_hold_it() {
     chains_of(
-        "every_run_of_a_chain_of_two_bindings_reaches_only_arms_that_hold_it_part_1",
-        2,
-        false,
-        1,
-    );
-}
-
-#[test]
-fn every_run_of_a_chain_of_two_bindings_reaches_only_arms_that_hold_it_part_2() {
-    chains_of(
-        "every_run_of_a_chain_of_two_bindings_reaches_only_arms_that_hold_it_part_2",
-        2,
-        false,
-        2,
-    );
-}
-
-#[test]
-fn every_run_of_a_chain_of_three_bindings_reaches_only_arms_that_hold_it_part_1() {
-    chains_of(
-        "every_run_of_a_chain_of_three_bindings_reaches_only_arms_that_hold_it_part_1",
+        "every_run_of_a_chain_of_three_bindings_reaches_only_arms_that_hold_it",
         3,
         false,
-        1,
     );
 }
 
 #[test]
-fn every_run_of_a_chain_of_three_bindings_reaches_only_arms_that_hold_it_part_2() {
+fn every_run_of_a_chain_of_one_call_reaches_only_arms_that_hold_it() {
     chains_of(
-        "every_run_of_a_chain_of_three_bindings_reaches_only_arms_that_hold_it_part_2",
-        3,
-        false,
-        2,
-    );
-}
-
-#[test]
-fn every_run_of_a_chain_of_one_call_reaches_only_arms_that_hold_it_part_1() {
-    chains_of(
-        "every_run_of_a_chain_of_one_call_reaches_only_arms_that_hold_it_part_1",
+        "every_run_of_a_chain_of_one_call_reaches_only_arms_that_hold_it",
         1,
         true,
-        1,
     );
 }
 
 #[test]
-fn every_run_of_a_chain_of_one_call_reaches_only_arms_that_hold_it_part_2() {
+fn every_run_of_a_chain_of_two_calls_reaches_only_arms_that_hold_it() {
     chains_of(
-        "every_run_of_a_chain_of_one_call_reaches_only_arms_that_hold_it_part_2",
-        1,
-        true,
-        2,
-    );
-}
-
-#[test]
-fn every_run_of_a_chain_of_two_calls_reaches_only_arms_that_hold_it_part_1() {
-    chains_of(
-        "every_run_of_a_chain_of_two_calls_reaches_only_arms_that_hold_it_part_1",
+        "every_run_of_a_chain_of_two_calls_reaches_only_arms_that_hold_it",
         2,
         true,
-        1,
     );
 }
 
 #[test]
-fn every_run_of_a_chain_of_two_calls_reaches_only_arms_that_hold_it_part_2() {
+fn every_run_of_a_chain_of_three_calls_reaches_only_arms_that_hold_it() {
     chains_of(
-        "every_run_of_a_chain_of_two_calls_reaches_only_arms_that_hold_it_part_2",
-        2,
-        true,
-        2,
-    );
-}
-
-#[test]
-fn every_run_of_a_chain_of_three_calls_reaches_only_arms_that_hold_it_part_1() {
-    chains_of(
-        "every_run_of_a_chain_of_three_calls_reaches_only_arms_that_hold_it_part_1",
+        "every_run_of_a_chain_of_three_calls_reaches_only_arms_that_hold_it",
         3,
         true,
-        1,
-    );
-}
-
-#[test]
-fn every_run_of_a_chain_of_three_calls_reaches_only_arms_that_hold_it_part_2() {
-    chains_of(
-        "every_run_of_a_chain_of_three_calls_reaches_only_arms_that_hold_it_part_2",
-        3,
-        true,
-        2,
     );
 }

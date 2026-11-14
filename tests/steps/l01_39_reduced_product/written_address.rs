@@ -106,4 +106,26 @@ fn a_written_constraint_keeps_its_free_names() {
     assert_eq!(names, [&vec![Arc::<str>::from("n")]]);
 }
 
+/// The writes the benchmark `writing_scales_with_the_constraints_and_the_parts` times, at a
+/// few sizes: `k` constraints and their renamed copies are `k` addresses, and two constraints
+/// of `d` shared parts alike up to their binder name are one.
+#[test]
+fn renamed_and_shared_constraints_are_one_address_each() {
+    let base = ints(&["n".into()]);
+    for k in 1..=3 {
+        let mut s = base.clone();
+        for c in renamed_pairs(k) {
+            s.write(c);
+        }
+        assert_eq!(s.written.len(), k, "{k} pairs");
+    }
+    for d in 0..=3 {
+        let mut s = base.clone();
+        for c in [doubled("x", d), doubled("y", d)] {
+            s.write(c);
+        }
+        assert_eq!(s.written.len(), 1, "{d} shared parts");
+    }
+}
+
 mod bench;

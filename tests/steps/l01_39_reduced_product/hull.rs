@@ -92,10 +92,16 @@ fn is_hull_of(h: &Hull, names: &[String], points: &[Vec<i128>]) {
     assert_eq!(h.rows().count(), names.len() - rank(&diffs), "{h}");
 }
 
-/// A small linear congruential generator, so the test needs no crate.
+/// A small linear congruential generator, so the test needs no crate. Its seed is new each
+/// run and printed ([`Rng::fresh`]; until TEST-bench-move-l0139 each test had a fixed seed).
 struct Rng(u64);
 
 impl Rng {
+    /// A generator of a new seed, printed with how to repeat it (author P169).
+    fn fresh(what: &str) -> Self {
+        Rng(zed_tests::instances::Rng::fresh(what).1)
+    }
+
     fn below(&mut self, n: u64) -> i128 {
         self.0 = self
             .0
@@ -174,7 +180,7 @@ fn a_contradiction_is_the_empty_hull_and_the_identity_of_join() {
 fn the_join_of_point_hulls_is_the_hull_of_the_points() {
     // Random points on random planes; the hulls of the points are joined one at a time, in
     // either order of the names, so the rows that differ lie first or last.
-    let mut rnd = Rng(7);
+    let mut rnd = Rng::fresh("the_join_of_point_hulls_is_the_hull_of_the_points");
     for _ in 0..200 {
         let d = 1 + rnd.below(7) as usize;
         let k = rnd.below(d as u64 + 1) as usize;
@@ -206,7 +212,7 @@ fn the_join_of_point_hulls_is_the_hull_of_the_points() {
 fn a_join_of_hulls_that_differ_in_a_few_names_is_exact() {
     // As at a loop head: the second side is the first with a few names moved by one, and the
     // join is the hull of both sides' points.
-    let mut rnd = Rng(11);
+    let mut rnd = Rng::fresh("a_join_of_hulls_that_differ_in_a_few_names_is_exact");
     for _ in 0..100 {
         let d = 4 + rnd.below(8) as usize;
         let k = 1 + rnd.below(3) as usize;
@@ -238,7 +244,7 @@ fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
     // the hull by a few equalities, which may rewrite many of its rows, so the second hull
     // shares part of its rows with the first and holds others rewritten. Either way round, the
     // join is the hull of the first's points.
-    let mut rnd = Rng(23);
+    let mut rnd = Rng::fresh("a_join_with_a_hull_narrowed_from_it_is_the_first_hull");
     for _ in 0..200 {
         let d = 3 + rnd.below(8) as usize;
         let k = rnd.below(4) as usize;
@@ -264,7 +270,7 @@ fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
 fn a_join_of_hulls_built_apart_is_exact() {
     // Two hulls of one set built in different orders share no rows in memory; the join
     // compares their rows by value and keeps the hull.
-    let mut rnd = Rng(31);
+    let mut rnd = Rng::fresh("a_join_of_hulls_built_apart_is_exact");
     for _ in 0..100 {
         let d = 3 + rnd.below(8) as usize;
         let k = rnd.below(4) as usize;
@@ -313,6 +319,21 @@ fn names_equal_to_one_name_and_then_fixed_are_all_fixed() {
         h.to_string(),
         "x0 - 7 == 0, x1 - 7 == 0, x2 - 7 == 0, x3 - 7 == 0"
     );
+}
+
+/// The joins the benchmarks `a_join_costs_near_the_rows_that_differ` and
+/// `a_join_costs_near_the_rows_that_differ_wherever_they_sort` time, at a few sizes: each join
+/// of the hull with itself and one more row keeps the hull's rows, whether the new row's pivot
+/// sorts before the rows' pivots (`x…`), among them (`y12a` between `y12` and `y120`) or after
+/// them (`zz…`).
+#[test]
+fn joins_with_a_row_added_keep_the_rows_wherever_the_row_sorts() {
+    for m in [1, 2, 3, 12] {
+        let h = rows_of(m);
+        loop_joins(&h, m, |i| format!("x{i}"));
+        loop_joins(&h, m, |i| format!("y{i}a"));
+        loop_joins(&h, m, |i| format!("zz{i}"));
+    }
 }
 
 mod bench;

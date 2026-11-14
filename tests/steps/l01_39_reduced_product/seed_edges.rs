@@ -285,13 +285,15 @@ fn a_hub_moved_by_a_star_moves_its_tree() {
 
 /// Random sequences of tests on readings related to one hub by `==`, `<=` and `>=` with an
 /// offset, bounds on readings and the hub, ties between readings, `if`s joined and names
-/// bound by `let`, each step compared with the projection from scratch.
+/// bound by `let`, each step compared with the projection from scratch: [`HUB_CASES`]
+/// sequences, with a new seed each run (author P169; was 200 of the seed 0x5eed_ed9e, 9.9 s
+/// at load 30).
 #[test]
 fn random_tests_around_a_hub_give_the_projection_from_scratch() {
     let p = Premises::new();
-    let mut r = Rng::new(0x5eed_ed9e);
+    let (mut r, seed) = Rng::fresh("random_tests_around_a_hub_give_the_projection_from_scratch");
     let (mut moved, mut empty, mut joined) = (0, 0, 0);
-    for case in 0..200 {
+    for case in 0..HUB_CASES {
         let k = 2 + r.below(6);
         let reads: Vec<String> = (0..k).map(|i| format!("a{i}")).collect();
         let mut all: Vec<String> = vec!["n".into()];
@@ -335,7 +337,7 @@ fn random_tests_around_a_hub_give_the_projection_from_scratch() {
             let got = agrees(
                 &s,
                 &ns,
-                &format!("case {case} step {step}: {trace:#?}"),
+                &format!("seed {seed}, case {case} step {step}: {trace:#?}"),
                 |s| {
                     if join {
                         let mut j = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
@@ -356,7 +358,12 @@ fn random_tests_around_a_hub_give_the_projection_from_scratch() {
             s = got;
         }
     }
-    assert!(moved > 1500, "{moved} steps moved an interval");
-    assert!(empty > 500, "{empty} steps left no state");
-    assert!(joined > 500, "{joined} steps joined both arms");
+    eprintln!("seed {seed}: {moved} moved, {empty} empty, {joined} joined, of {HUB_CASES} cases");
+    // Floors about half the least of ten seeds (88 moved, 29 empty, 27 joined).
+    assert!(moved > 40, "seed {seed}: {moved} steps moved an interval");
+    assert!(empty > 10, "seed {seed}: {empty} steps left no state");
+    assert!(joined > 10, "seed {seed}: {joined} steps joined both arms");
 }
+
+/// The random sequences [`random_tests_around_a_hub_give_the_projection_from_scratch`] runs.
+const HUB_CASES: usize = 12;

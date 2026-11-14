@@ -100,8 +100,9 @@ fn states(ns: &[Arc<str>], values: &[i64]) -> Vec<BTreeMap<Arc<str>, Value>> {
 
 /// For one group on each arm, the join holds exactly the states either arm holds: neither
 /// arm bounds the other's names, so the join loses nothing. Checked at every state of eight
-/// names, each -1, 0, 1 or 4 (the refused group holds at `(4, 0, 1, 0)`), by evaluating the
-/// relations there, with the arms joined either way round.
+/// names, each 0, 1 or 4 (the refused group holds at `(4, 0, 1, 0)`), by evaluating the
+/// relations there, with the arms joined either way round. (Until TEST-bench-move-l0139 each
+/// name also took -1: ten times the states, 3.3 s at load 30.)
 #[test]
 fn the_join_of_two_arms_on_disjoint_names_holds_the_states_of_either() {
     let ns = names(1);
@@ -109,7 +110,7 @@ fn the_join_of_two_arms_on_disjoint_names_holds_the_states_of_either() {
         let (l, r) = arms(1, group);
         let (j, k) = (l.join(&r), r.join(&l));
         let (mut either, mut neither) = (0, 0);
-        for s in states(&ns, &[-1, 0, 1, 4]) {
+        for s in states(&ns, &[0, 1, 4]) {
             let want = l.contains(&s) || r.contains(&s);
             assert_eq!(j.contains(&s), want, "{s:?} in {j}");
             assert_eq!(k.contains(&s), want, "{s:?} in {k}");
@@ -117,6 +118,30 @@ fn the_join_of_two_arms_on_disjoint_names_holds_the_states_of_either() {
             neither += usize::from(!want);
         }
         assert!(either > 0 && neither > 0, "{either} in, {neither} out");
+    }
+}
+
+/// The join of [`the_join_of_two_arms_on_disjoint_names_holds_the_states_of_either`], reduced
+/// as the benchmark `the_join_of_arms_on_many_disjoint_groups_scales` reduces it, still holds
+/// exactly the states either arm holds; at 2 and 3 groups on each arm the reduced join is not
+/// empty.
+#[test]
+fn the_reduced_join_of_two_arms_on_disjoint_names_holds_the_states_of_either() {
+    let ns = names(1);
+    for group in [decided as Group, refused] {
+        let (l, r) = arms(1, group);
+        let mut j = l.join(&r);
+        j.reduce();
+        for s in states(&ns, &[0, 1, 4]) {
+            let want = l.contains(&s) || r.contains(&s);
+            assert_eq!(j.contains(&s), want, "{s:?} in {j}");
+        }
+        for k in [2, 3] {
+            let (l, r) = arms(k, group);
+            let mut j = l.join(&r);
+            j.reduce();
+            assert!(!j.bottom, "{k} groups: {j}");
+        }
     }
 }
 

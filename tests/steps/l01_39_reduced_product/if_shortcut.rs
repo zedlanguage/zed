@@ -223,59 +223,45 @@ fn difference((a, p): &(Vec<Arm>, Product), (b, q): &(Vec<Arm>, Product)) -> Opt
     None
 }
 
-/// Checks that the one pass and the transfer agree on the blocks of `seeds`.
-fn agree_on(seeds: std::ops::Range<u64>) {
+/// The one pass and the transfer agree on [`BLOCKS`] random blocks, with a new seed each run
+/// (author P169; 8,000 seeds agreed when the test was written, and until TEST-bench-move-l0139
+/// it ran the seeds 0 to 799, one block each, in four tests of about 6.5 s at load 30).
+#[test]
+fn one_pass_and_transfer_agree_on_random_blocks() {
     let names: Vec<Arc<str>> = vec!["x".into(), "y".into()];
     let scope = ints(&names);
-    let (mut shortcuts, mut unreached) = (0, 0);
-    let n = seeds.clone().count();
-    for seed in seeds {
-        let mut g = Gen {
-            rng: Rng::new(seed),
-            fresh: 0,
-            shortcuts: 0,
-        };
+    let (rng, seed) = Rng::fresh("one_pass_and_transfer_agree_on_random_blocks");
+    let mut g = Gen {
+        rng,
+        fresh: 0,
+        shortcuts: 0,
+    };
+    let mut unreached = 0;
+    for block in 0..BLOCKS {
         let (t, _) = g.block(&names, 3);
         let one = arms_and_value(&t, &scope);
         let two = arms_and_value_by_transfer(&t, &scope);
         if let Some(d) = difference(&one, &two) {
-            panic!("seed {seed}: the one pass and the transfer differ on\n{t}\n{d}");
+            panic!("seed {seed}, block {block}: the one pass and the transfer differ on\n{t}\n{d}");
         }
-        shortcuts += g.shortcuts;
         unreached += one.0.iter().filter(|a| !a.reachable()).count();
     }
     // The blocks hold literal-armed `if`s and reach arms of both kinds, so both of the
     // shortcut's cases, an arm reached and an arm not, are compared.
+    let shortcuts = g.shortcuts;
+    eprintln!("seed {seed}: {shortcuts} literal-armed ifs, {unreached} unreachable arms");
     assert!(
-        shortcuts > 2 * n,
-        "{shortcuts} literal-armed ifs in {n} blocks"
+        shortcuts > 2 * BLOCKS,
+        "seed {seed}: {shortcuts} literal-armed ifs in {BLOCKS} blocks"
     );
     assert!(
-        unreached > n / 2,
-        "{unreached} unreachable arms in {n} blocks"
+        unreached > BLOCKS / 2,
+        "seed {seed}: {unreached} unreachable arms in {BLOCKS} blocks"
     );
 }
 
-// 8,000 seeds agreed when the test was written; each part takes about 14 s at load 35.
-#[test]
-fn one_pass_and_transfer_agree_on_random_blocks_1() {
-    agree_on(0..200);
-}
-
-#[test]
-fn one_pass_and_transfer_agree_on_random_blocks_2() {
-    agree_on(200..400);
-}
-
-#[test]
-fn one_pass_and_transfer_agree_on_random_blocks_3() {
-    agree_on(400..600);
-}
-
-#[test]
-fn one_pass_and_transfer_agree_on_random_blocks_4() {
-    agree_on(600..800);
-}
+/// The random blocks [`one_pass_and_transfer_agree_on_random_blocks`] compares in a run.
+const BLOCKS: usize = 20;
 
 /// A literal-armed `if` under a test that decides it, in each of the places the walk takes
 /// the shortcut: bound directly, inside an inner block, under arithmetic and in a nested arm.
@@ -399,18 +385,23 @@ fn random_product(rng: &mut Rng) -> Product {
     p
 }
 
+/// Over [`PRODUCTS`] random products, with a new seed each run (author P169; was 20,000 of the
+/// seed 7, 1.3 s at load 30).
 #[test]
 fn the_change_flag_matches_a_comparison() {
-    let mut rng = Rng::new(7);
+    let (mut rng, seed) = Rng::fresh("the_change_flag_matches_a_comparison");
     let mut changed = 0;
-    for i in 0..20_000 {
+    for i in 0..PRODUCTS {
         let start = random_product(&mut rng);
         // As the reduction does now: until no meet reports a change.
         let mut flagged = start.clone();
         let mut rounds = 0;
         while flagged.reduce_domains_once() {
             rounds += 1;
-            assert!(rounds < 64, "product {i} did not settle: {start:?}");
+            assert!(
+                rounds < 64,
+                "seed {seed}, product {i} did not settle: {start:?}"
+            );
         }
         // As it did before: until a round leaves the product equal to a copy taken before
         // it, and each round's flag says whether the round changed it.
@@ -421,17 +412,27 @@ fn the_change_flag_matches_a_comparison() {
             let moved = compared != before;
             assert_eq!(
                 flag, moved,
-                "product {i}: the flag says {flag} where the round went from\n{before:?}\nto\n{compared:?}"
+                "seed {seed}, product {i}: the flag says {flag} where the round went from\n{before:?}\nto\n{compared:?}"
             );
             if !moved {
                 break;
             }
         }
-        assert_eq!(flagged, compared, "product {i}, from {start:?}");
+        assert_eq!(
+            flagged, compared,
+            "seed {seed}, product {i}, from {start:?}"
+        );
         changed += usize::from(flagged != start);
     }
-    assert!(changed > 10_000, "{changed} products changed");
+    eprintln!("seed {seed}: {changed} of {PRODUCTS} products changed");
+    assert!(
+        changed > PRODUCTS / 2,
+        "seed {seed}: {changed} products changed"
+    );
 }
+
+/// The random products [`the_change_flag_matches_a_comparison`] reduces in a run.
+const PRODUCTS: usize = 4_000;
 
 /// A term `d` deep over the integer `x`, of one of five forms, each level `k` built around
 /// the one below, `t`:
@@ -458,11 +459,12 @@ fn nest(form: u8, d: i64) -> Term {
     })
 }
 
-/// The five forms of [`nest`], deep: the random blocks are at most three deep.
+/// The five forms of [`nest`], deep: the random blocks are at most three deep. (Until
+/// TEST-bench-move-l0139 twice these depths, 0.55 to 0.75 s at load 32.)
 #[test]
 fn one_pass_and_transfer_agree_on_deep_nests() {
     let scope = ints(&["x".into()]);
-    for (form, d) in [(0, 64), (1, 32), (2, 128), (3, 256), (4, 256)] {
+    for (form, d) in [(0, 32), (1, 16), (2, 64), (3, 128), (4, 128)] {
         let t = nest(form, d);
         let one = arms_and_value(&t, &scope);
         if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
@@ -471,29 +473,46 @@ fn one_pass_and_transfer_agree_on_deep_nests() {
     }
 }
 
-/// A chain of 100,000 bindings `z_k = z_(k-1) + 1`, read by one test at the end, makes each
+/// A chain of [`CHAIN`] bindings `z_k = z_(k-1) + 1`, read by one test at the end, makes each
 /// summary when the test reads it, the bindings before it first, on an explicit stack; read
-/// by none, it keeps a chain of 100,000 scopes, which is dropped by a loop (`Lazy` and `Basis`
-/// in `product.rs`). Neither recurses down the chain.
+/// by none, it keeps a chain of scopes, which is dropped by a loop (`Lazy` and `Basis` in
+/// `product.rs`). Neither recurses down the chain: on a thread of [`CHAIN_STACK`] bytes (on
+/// 64 KiB it overflowed at every depth tried, from the stack it takes whatever the depth), the
+/// walk passed at 2,000, 10,000 and 30,000 links, so its stack does not grow with the chain,
+/// and a walk that took over 66 bytes of stack a link overflows at 4,000 links. Until
+/// TEST-bench-move-l0139 (author P169) the chain was 100,000 links long on the test thread's
+/// stack, 9.6 s at load 30.
 #[test]
 fn a_deep_chain_of_bindings_is_walked_and_dropped() {
-    let scope = ints(&["x".into()]);
-    let d = 100_000;
-    let z = |k: i64| {
-        if k < 0 {
-            "x".to_string()
-        } else {
-            format!("z{k}")
-        }
-    };
-    for read in [&z(d - 1), "x"] {
-        let last = if_(prim(Prim::Gt, vec![var(read), int(3)]), int(1), int(2));
-        let t = (0..d).rev().fold(last, |b, k| {
-            let_(&z(k), prim(Prim::Add, vec![var(&z(k - 1)), int(1)]), b)
-        });
-        let (arms, _) = arms_and_value(&t, &scope);
-        assert_eq!(arms.len(), 2);
-    }
+    std::thread::Builder::new()
+        .stack_size(CHAIN_STACK)
+        .spawn(|| {
+            let scope = ints(&["x".into()]);
+            let d = CHAIN;
+            let z = |k: i64| {
+                if k < 0 {
+                    "x".to_string()
+                } else {
+                    format!("z{k}")
+                }
+            };
+            for read in [&z(d - 1), "x"] {
+                let last = if_(prim(Prim::Gt, vec![var(read), int(3)]), int(1), int(2));
+                let t = (0..d).rev().fold(last, |b, k| {
+                    let_(&z(k), prim(Prim::Add, vec![var(&z(k - 1)), int(1)]), b)
+                });
+                let (arms, _) = arms_and_value(&t, &scope);
+                assert_eq!(arms.len(), 2);
+            }
+        })
+        .expect("a test thread")
+        .join()
+        .expect("the chain is walked and dropped on a 256 KiB stack");
 }
+
+/// The links of the chain of [`a_deep_chain_of_bindings_is_walked_and_dropped`], and the stack
+/// it runs on.
+const CHAIN: i64 = 4_000;
+const CHAIN_STACK: usize = 256 << 10;
 
 mod bench;

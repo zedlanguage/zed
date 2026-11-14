@@ -230,16 +230,19 @@ fn every_point_that_meets_a_nested_test_is_in_its_scope() {
     const B: i64 = 3;
     let p = Premises::new();
     let base = boxed(&["x", "y", "z"], B);
-    let mut rnd = Rng::new(0x57);
+    let (mut rnd, seed) = Rng::fresh("every_point_that_meets_a_nested_test_is_in_its_scope");
     let (mut checked, mut caught, mut empty) = (0, 0, 0);
-    for _ in 0..200 {
+    for _ in 0..POINT_NESTS {
         let depth = rnd.int(1, 4) as usize;
         let t = random_nest(&mut rnd, depth);
         let o = rnd.below(2) == 0;
         let pts = meeting(&t, o, B);
         let r = base.assume(&t, o, &p);
         for e in &pts {
-            assert!(r.contains(e), "{t} is {o} at {e:?}, outside\n{r}");
+            assert!(
+                r.contains(e),
+                "seed {seed}: {t} is {o} at {e:?}, outside\n{r}"
+            );
         }
         checked += pts.len();
         empty += usize::from(r.bottom);
@@ -248,19 +251,24 @@ fn every_point_that_meets_a_nested_test_is_in_its_scope() {
         let q = base.assume(&t, !o, &p);
         caught += usize::from(pts.iter().any(|e| !q.contains(e)));
     }
-    assert!(checked > 10_000, "{checked} points checked");
-    assert!(
-        caught > 100,
-        "the opposite outcome missed points in {caught} tests"
+    eprintln!(
+        "seed {seed}: {checked} points, {caught} caught, {empty} empty, of {POINT_NESTS} nests"
     );
-    assert!(empty > 5, "{empty} empty scopes");
+    // Ten seeds at 40 nests gave 5,268 to 7,299 points and 26 to 34 caught.
+    assert!(checked > 3_000, "seed {seed}: {checked} points checked");
+    assert!(
+        caught > POINT_NESTS / 4,
+        "seed {seed}: the opposite outcome missed points in {caught} tests"
+    );
+    // Empty scopes, about 1 in 12 nests, are too rare for a floor at this count;
+    // `a_random_nest_no_point_meets_gives_an_empty_scope` checks one.
 }
 
 #[test]
 fn the_order_of_the_sides_of_a_disjunction_changes_nothing() {
     let p = Premises::new();
     let s = ints(&names(&["x", "y", "z"]));
-    let mut rnd = Rng::new(0x58);
+    let (mut rnd, seed) = Rng::fresh("the_order_of_the_sides_of_a_disjunction_changes_nothing");
     let right = |v: &[Term]| {
         v.iter()
             .cloned()
@@ -272,17 +280,21 @@ fn the_order_of_the_sides_of_a_disjunction_changes_nothing() {
     let same = |a: &Scope, b: &Scope| {
         a.bottom == b.bottom && ["x", "y", "z"].iter().all(|n| a.get(n) == b.get(n))
     };
-    for _ in 0..100 {
+    for _ in 0..ORDERS {
         let sides: Vec<Term> = (0..4).map(|_| random_nest(&mut rnd, 1)).collect();
         let first = s.assume(&right(&sides), true, &p);
-        assert!(same(&first, &s.assume(&left(&sides), true, &p)));
+        assert!(
+            same(&first, &s.assume(&left(&sides), true, &p)),
+            "seed {seed}: {}",
+            left(&sides)
+        );
         for _ in 0..6 {
             let mut v = sides.clone();
             for i in (1..v.len()).rev() {
                 v.swap(i, rnd.below(i + 1));
             }
             let q = s.assume(&right(&v), true, &p);
-            assert!(same(&first, &q), "{}\n{first}\n{q}", right(&v));
+            assert!(same(&first, &q), "seed {seed}: {}\n{first}\n{q}", right(&v));
         }
     }
 }
@@ -321,18 +333,6 @@ fn pairs(k: usize) -> (Term, Vec<Arc<str>>) {
         or(t, diff_ge(&ns[a], &ns[b], (i % 5) as i64))
     });
     (t, ns.iter().map(|n| Arc::from(n.as_str())).collect())
-}
-
-/// Times the narrowing of each scope by its test, the two built before the timing.
-fn check_built(what: &str, n: usize, build: impl Fn(usize) -> (Scope, Term)) {
-    let built: BTreeMap<usize, (Scope, Term)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|k| (k, build(k)))
-        .collect();
-    scaling::check(what, n, |k| {
-        let (s, t) = &built[&k];
-        s.assume(t, true, &Premises::new());
-    });
 }
 
 #[test]
@@ -409,9 +409,9 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
             )],
         ),
     );
-    let mut r = Rng::new(0xd15);
+    let (mut r, seed) = Rng::fresh("a_conjunction_of_tests_on_names_apart");
     let mut cases = vec![one];
-    for _ in 0..400 {
+    for _ in 0..CONJUNCTIONS {
         let a = zed_tests::step_helpers::l01_38_presburger::bool_term(&mut r, 2);
         let b = renamed(&zed_tests::step_helpers::l01_38_presburger::bool_term(
             &mut r, 2,
@@ -430,7 +430,7 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
             w.iter()
                 .zip(&n)
                 .all(|(w, n)| w.iter().all(|v| n.contains(v))),
-            "{a} && {b}: {w:?} is wider than {n:?}"
+            "seed {seed}: {a} && {b}: {w:?} is wider than {n:?}"
         );
         same += usize::from(w == n);
         narrowed += usize::from(shown(&both) != shown(&s));
@@ -440,8 +440,226 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
             .iter()
             .all(|(a, b)| s.assume(&and(a.clone(), b.clone()), true, &p).bottom)
     );
-    assert!(narrowed > 200, "{narrowed} of {} narrow", cases.len());
-    assert!(same > 350, "{same} of {} are the same", cases.len());
+    eprintln!(
+        "seed {seed}: {narrowed} narrow, {same} the same, of {}",
+        cases.len()
+    );
+    // Ten seeds at 50 pairs gave 41 to 48 narrowed of 51, and all 51 the same.
+    assert!(
+        narrowed > CONJUNCTIONS / 2,
+        "seed {seed}: {narrowed} of {} narrow",
+        cases.len()
+    );
+    assert!(
+        same > CONJUNCTIONS * 7 / 8,
+        "seed {seed}: {same} of {} are the same",
+        cases.len()
+    );
+}
+
+/// The random nests [`every_point_that_meets_a_nested_test_is_in_its_scope`] draws in a run
+/// (was 200 of the seed 0x57, 1.3 s at load 30), the disjunctions whose sides
+/// [`the_order_of_the_sides_of_a_disjunction_changes_nothing`] reorders (was 100 of 0x58,
+/// 2.1 s), and the pairs of tests
+/// [`a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_other`] joins
+/// (was 400 of 0xd15, 3.3 s). Each run draws a new seed (author P169).
+const POINT_NESTS: usize = 40;
+const ORDERS: usize = 15;
+const CONJUNCTIONS: usize = 50;
+
+/// The sides of a disjunction grouped to the left, last side first.
+fn sides(mut t: &Term) -> Vec<Term> {
+    let mut out = Vec::new();
+    while let Term::Prim(Prim::Or, v) = t {
+        out.push(v[1].clone());
+        t = &v[0];
+    }
+    out.push(t.clone());
+    out
+}
+
+/// The points of the cube `-b..=b` over `ns`.
+fn cube(ns: &[Arc<str>], b: i64) -> Vec<BTreeMap<Arc<str>, Value>> {
+    let mut pts = vec![BTreeMap::new()];
+    for n in ns {
+        pts = pts
+            .into_iter()
+            .flat_map(|e| {
+                (-b..=b).map(move |v| {
+                    let mut e = e.clone();
+                    e.insert(n.clone(), Value::Int(v));
+                    e
+                })
+            })
+            .collect();
+    }
+    pts
+}
+
+/// The nests the benchmarks time, at 4 tests, narrow soundly: every point of the cube
+/// `-3..=3` at which the nest is true, by the interpreter, is in the narrowed scope; and the
+/// three of one or two names leave out some point at which the nest is false, so the check
+/// can fail. (The disjunction of differences of [`pairs`] narrows no name, as
+/// [`excluded_sides_change_only_their_names`] checks.)
+#[test]
+fn the_built_nests_narrow_soundly() {
+    const B: i64 = 3;
+    let p = Premises::new();
+    let (pt, pn) = pairs(4);
+    let pn: Vec<&str> = pn.iter().map(|n| &**n).collect();
+    let nests = [
+        ("or_nest", vec!["x0"], or_nest(4), true),
+        ("if_chain", vec!["x0", "y"], if_chain(4), true),
+        ("thresholds", vec!["x0"], thresholds(4), true),
+        ("pairs", pn, pt, false),
+    ];
+    for (what, ns, t, cuts) in nests {
+        let r = boxed(&ns, B).assume(&t, true, &p);
+        let (yes, no): (Vec<_>, Vec<_>) = cube(&names(&ns), B)
+            .into_iter()
+            .partition(|e| at(&t, e) == Some(true));
+        assert!(!yes.is_empty(), "{what}: {t} is never true in the cube");
+        for e in &yes {
+            assert!(r.contains(e), "{what}: {t} is true at {e:?}, outside\n{r}");
+        }
+        if cuts {
+            assert!(
+                no.iter().any(|e| !r.contains(e)),
+                "{what}: {t} leaves out no point at which it is false\n{r}"
+            );
+        }
+    }
+}
+
+/// The nest of [`pairs`] at k = 8 and 16 narrows no name, and the nest written in the
+/// reverse order gives the same scope (the answer the benchmark
+/// `excluded_sides_cost_the_names_they_change` checks at 400).
+#[test]
+fn excluded_sides_change_only_their_names() {
+    let p = Premises::new();
+    for k in [8, 16] {
+        let (t, ns) = pairs(k);
+        let s = ints(&ns);
+        let q = s.assume(&t, true, &p);
+        let reversed = sides(&t).into_iter().reduce(or).expect("sides");
+        let r = s.assume(&reversed, true, &p);
+        assert!(!q.bottom && !r.bottom, "k = {k}");
+        for n in &ns {
+            assert_eq!(q.get(n), r.get(n), "k = {k}, {n}");
+            assert_eq!(q.get(n), s.get(n), "k = {k}: {n} is narrowed");
+        }
+    }
+}
+
+/// `x - y >= 1 || z - w >= 1` and `y - x >= 1 || w - z >= 1` in `-n..=n`.
+fn back_and_forth(n: i64) -> Scope {
+    let c = and(
+        or(diff_ge("x", "y", 1), diff_ge("z", "w", 1)),
+        or(diff_ge("y", "x", 1), diff_ge("w", "z", 1)),
+    );
+    boxed(&["x", "y", "z", "w"], n).assume(&c, true, &Premises::new())
+}
+
+/// The scope of [`back_and_forth`], then `z == w`: the two parts pass a bound back and forth
+/// until the box is empty, in one projection of both. Without `z == w` the scope is not
+/// empty.
+#[test]
+fn two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope() {
+    let zw = prim(Prim::Eq, var("z"), var("w"));
+    for n in [10, 100, 1000] {
+        let s = back_and_forth(n);
+        assert!(!s.bottom, "n = {n}");
+        assert!(s.assume(&zw, true, &Premises::new()).bottom, "n = {n}");
+    }
+}
+
+/// `v_i + w <= 0 || v_(i+1) - w >= 1` for each `i < n - 1`, with `w` in `0..=1` and each
+/// `v_i` in `0..=3`: the scope of the bounds, the clauses in order and in reverse, and the
+/// last name.
+fn walk(n: usize) -> (Scope, Term, Term, String) {
+    let p = Premises::new();
+    let vs: Vec<String> = (0..n).map(|i| format!("v{i}")).collect();
+    let mut all: Vec<&str> = vs.iter().map(|s| s.as_str()).collect();
+    all.push("w");
+    let bounds = all.iter().fold(
+        and(
+            prim(Prim::Ge, var("w"), int(0)),
+            prim(Prim::Le, var("w"), int(1)),
+        ),
+        |a, v| {
+            if *v == "w" {
+                a
+            } else {
+                let b = and(
+                    prim(Prim::Ge, var(v), int(0)),
+                    prim(Prim::Le, var(v), int(3)),
+                );
+                and(a, b)
+            }
+        },
+    );
+    let s = ints(&names(&all)).assume(&bounds, true, &p);
+    let each: Vec<Term> = (0..n - 1)
+        .map(|i| {
+            or(
+                prim(Prim::Le, prim(Prim::Add, var(&vs[i]), var("w")), int(0)),
+                diff_ge(&vs[i + 1], "w", 1),
+            )
+        })
+        .collect();
+    let clauses = each.iter().cloned().reduce(and).expect("two names");
+    let reversed = each.into_iter().rev().reduce(and).expect("two names");
+    (s, clauses, reversed, vs[n - 1].clone())
+}
+
+/// The clauses of [`walk`], then `v_0 - w >= 1`. Each case of a clause fixes `w`, and every
+/// earlier part mentions `w`. The scope reaches the fixed point, which a scope with its
+/// projections forgotten and reduced again also reaches, in either order of the clauses and
+/// with the start first or last; the last name loses 0.
+#[test]
+fn a_walk_through_a_shared_name_reaches_the_fixed_point() {
+    let p = Premises::new();
+    let start = diff_ge("v0", "w", 1);
+    for n in [3, 8, 20] {
+        let (s, clauses, reversed, last) = walk(n);
+        let r = s.assume(&clauses, true, &p).assume(&start, true, &p);
+        let mut f = r.clone();
+        f.forget_projections();
+        f.reduce();
+        assert_eq!(r.get(&last), f.get(&last), "n = {n}");
+        let back = s.assume(&reversed, true, &p).assume(&start, true, &p);
+        assert_eq!(back.get(&last), f.get(&last), "n = {n}, reversed");
+        let first = s.assume(&start, true, &p).assume(&clauses, true, &p);
+        assert_eq!(first.get(&last), f.get(&last), "n = {n}, start first");
+        assert!(
+            !r.bottom && !r.get(&last).contains(&Value::Int(0)),
+            "n = {n}: {r}"
+        );
+    }
+}
+
+/// A random nest of the seed 0x57 (the seed of
+/// [`every_point_that_meets_a_nested_test_is_in_its_scope`] until TEST-bench-move-l0139) that
+/// gives an empty scope: no point of the cube meets it, so the empty scope loses none, and
+/// the opposite outcome keeps the whole cube's points that meet it.
+#[test]
+fn a_random_nest_no_point_meets_gives_an_empty_scope() {
+    const B: i64 = 3;
+    let p = Premises::new();
+    let base = boxed(&["x", "y", "z"], B);
+    let mut rnd = Rng::new(0x57);
+    let found = (0..200).find_map(|_| {
+        let depth = rnd.int(1, 4) as usize;
+        let t = random_nest(&mut rnd, depth);
+        let o = rnd.below(2) == 0;
+        base.assume(&t, o, &p).bottom.then_some((t, o))
+    });
+    let (t, o) = found.expect("an empty scope among 200 nests of the seed 0x57");
+    assert!(meeting(&t, o, B).is_empty(), "{t} is {o} at a point");
+    let q = base.assume(&t, !o, &p);
+    for e in meeting(&t, !o, B) {
+        assert!(q.contains(&e), "{t} is {} at {e:?}, outside\n{q}", !o);
+    }
 }
 
 mod bench;
