@@ -8,8 +8,8 @@ use zed_tests::instances::Rng;
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
-    Atom, Con, Entailment, Formula, Lin, Refusal, Relation, Shared, decide, entails, project,
-    project_each, satisfiable,
+    Atom, Con, Entailment, Formula, Lin, Model, Refusal, Relation, Shared, decide, entails,
+    project, project_each, row_box, satisfiable,
 };
 
 pub(super) fn sym(s: &str) -> Atom {
@@ -595,6 +595,46 @@ pub(super) fn tied_fed_sum(n: usize) -> Formula {
         }
     }
     Formula::and(rows)
+}
+
+/// The check the benchmarks make of each family that has a point: one is found, and holds.
+pub(super) fn assert_a_point_holds(f: &Formula) -> Model {
+    let m = satisfiable(f).unwrap().expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+    m
+}
+
+/// The check of the benchmark of [`euclid_chain`] and [`euclid_chain3`] at `n` links: a point
+/// that holds, whose values have at most `8 n` digits.
+pub(super) fn assert_a_point_of_few_digits(f: &Formula, n: usize) {
+    let m = assert_a_point_holds(f);
+    let digits = m.values().map(|v| v.to_string().len()).max().unwrap();
+    assert!(digits <= 8 * n, "{digits} digits");
+}
+
+/// The names `x0`, …, `x{n-1}` of [`bounded_sum`].
+pub(super) fn bounded_sum_syms(n: usize) -> Vec<Atom> {
+    (0..n).map(|i| sym(&format!("x{i}"))).collect()
+}
+
+/// The check of the benchmark of the box of [`bounded_sum`]: each `x[i]` is in `[0, 49]`.
+pub(super) fn assert_each_count_in_its_budget(f: &Formula, s: &[Atom]) {
+    let want = IntervalSet::range(End::Fin(Num::from(0)), End::Fin(Num::from(49)));
+    assert!(row_box(f, s).iter().all(|b| *b == want));
+}
+
+/// The checks of the benchmarks of `bench/omega.rs` at small sizes.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    for n in [1, 2, 3, 10, 40] {
+        assert_a_point_of_few_digits(&euclid_chain(n), n);
+        assert_a_point_of_few_digits(&euclid_chain3(n), n);
+        assert!(satisfiable(&tied_sum(n)).unwrap().is_some(), "{n}");
+        assert_a_point_holds(&bounded_sum(n));
+        assert_each_count_in_its_budget(&bounded_sum(n), &bounded_sum_syms(n));
+        assert_a_point_holds(&fed_sum(n));
+        assert_a_point_holds(&tied_fed_sum(n));
+    }
 }
 
 #[test]

@@ -1,9 +1,8 @@
 //! The benchmarks of `scaling.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::scaling::*;
-use std::sync::Arc;
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
+use zedc::store::presburger::{Refusal, decide, satisfiable};
 
 #[test]
 fn a_chain_of_inexact_eliminations_with_a_point_scales() {
@@ -88,7 +87,7 @@ fn random_rows_of_two_unit_coefficients_scale() {
         "random rows of two unit coefficients",
         3900,
         Ok(true),
-        |n| random_unit_rows(n, 4 * n, 0xabc),
+        random_unit_rows_four_each,
     );
 }
 
@@ -113,7 +112,7 @@ fn the_box_stage_with_a_hub_in_one_row_per_block_scales() {
         "the box stage with a hub in one row per block",
         620,
         Err(Refusal::Growth),
-        |n| rows_of(&blocks_with_a_hub(n)),
+        hub_rows,
     );
 }
 
@@ -127,7 +126,7 @@ fn the_row_test_of_the_box_scales() {
         "the row test of the box with a crossing after the hub's blocks",
         670,
         Ok(false),
-        |n| rows_of(&blocks_with_a_hub_and_a_crossing(n)),
+        hub_rows_with_a_crossing,
     );
 }
 
@@ -219,31 +218,20 @@ fn splinters_of_splinters_scale() {
 /// for the map of the disjunctions of two constraints by their two terms (`Conjuncts::pair`).
 #[test]
 fn a_conjunct_beside_a_wide_one_costs_its_own_key() {
-    let wide = |k: usize| {
-        let sum = (0..k).fold(Lin::constant(0), |l, i| {
-            l.plus(&Lin::atom(Atom::Sym(Arc::from(format!("z{i:06}")))))
-        });
-        Formula::Con(Con::ge(&sum, &Lin::constant(0)))
-    };
-    let bounds = scaling::inputs(730, |k| {
-        let small: Vec<Formula> = (0..k).map(|i| at_least_zero(&format!("a{i:06}"))).collect();
-        (wide(k), small)
-    });
+    let bounds = scaling::inputs(730, bounds_beside_wide);
+    for k in [730, scaling::FACTOR * 730] {
+        let (wide, small) = &bounds[&k];
+        assert_each_copy_kept(&each_on_a_copy(wide, small), k);
+    }
     scaling::check("bounds beside a constraint on k names", 730, |k| {
         let (wide, small) = &bounds[&k];
         std::hint::black_box(each_on_a_copy(wide, small));
     });
-    let pairs = scaling::inputs(730, |k| {
-        let small: Vec<Formula> = (0..k)
-            .map(|i| {
-                Formula::or(vec![
-                    at_least_zero(&format!("a{i:06}")),
-                    at_least_zero(&format!("b{i:06}")),
-                ])
-            })
-            .collect();
-        (Formula::or(vec![wide(k), at_least_zero("y")]), small)
-    });
+    let pairs = scaling::inputs(730, pairs_beside_wide);
+    for k in [730, scaling::FACTOR * 730] {
+        let (wide, small) = &pairs[&k];
+        assert_each_copy_kept(&each_on_a_copy(wide, small), k);
+    }
     scaling::check(
         "disjunctions of two bounds beside one of a constraint on k names",
         730,

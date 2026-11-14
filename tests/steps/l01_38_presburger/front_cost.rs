@@ -161,3 +161,13 @@ pub(super) fn costs(meter: &mut Meter, n: usize) -> (u64, u64) {
     });
     (d, u)
 }
+
+/// The checks [`costs`] makes besides the ratio of the benchmark, at small sizes: `decide` and
+/// `integer_empty` both find the point of `utvpi(n)`.
+#[test]
+fn decide_and_the_search_both_find_the_point_of_unit_rows_at_small_sizes() {
+    let mut meter = Meter::new();
+    for n in [2, 8, 32] {
+        costs(&mut meter, n);
+    }
+}

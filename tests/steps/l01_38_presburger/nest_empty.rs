@@ -228,11 +228,38 @@ fn the_answers_are_those_of_the_formulas_written_out() {
     }
 }
 
-/// The least instructions of three runs of `decide` on each family member at depths 32 to 512,
-/// printed with the exponent of each step; then [`scaling::check_order`] at `n` and `8n`.
+/// [`decide_exponents`] at depths 32 to 512; then [`scaling::check_order`] at `n` and `8n`.
 pub(super) fn costs(what: &str, n: usize, family: fn(usize) -> Formula) {
+    decide_exponents(what, &[32, 64, 128, 256, 512], family);
+    let built = scaling::inputs(n, family);
+    scaling::check_order(&format!("{what}, decided"), n, 1, |n| {
+        std::hint::black_box(decide(&built[&n]).is_ok());
+    });
+    scaling::check_order(&format!("{what}, its point sought"), n, 1, |n| {
+        std::hint::black_box(satisfiable(&built[&n]).is_ok());
+    });
+}
+
+/// The checks of the benchmarks of `bench/nest_empty.rs` at small depths: each family answered
+/// `Ok(false)` by [`decide_exponents`].
+#[test]
+fn the_families_of_the_benchmarks_are_answered_false_at_small_depths() {
+    for (what, family) in [
+        ("empty", empty as fn(usize) -> Formula),
+        ("chain", chain),
+        ("one side", chain_one_side),
+        ("two atoms", chain_two_atoms),
+        ("pair", pair),
+    ] {
+        decide_exponents(what, &[1, 2, 4, 8], family);
+    }
+}
+
+/// The least instructions of three runs of `decide` on each family member at `sizes`, each
+/// checked to answer `Ok(false)`, printed with the exponent of each step against the size
+/// before, which is half of it.
+pub(super) fn decide_exponents(what: &str, sizes: &[usize], family: fn(usize) -> Formula) {
     let mut meter = Meter::new();
-    let sizes = [32, 64, 128, 256, 512];
     let built: Vec<Formula> = sizes.iter().map(|&k| family(k)).collect();
     let cost: Vec<u64> = (built.iter())
         .map(|f| {
@@ -251,11 +278,4 @@ pub(super) fn costs(what: &str, n: usize, family: fn(usize) -> Formula) {
             meter.unit()
         );
     }
-    let built = scaling::inputs(n, family);
-    scaling::check_order(&format!("{what}, decided"), n, 1, |n| {
-        std::hint::black_box(decide(&built[&n]).is_ok());
-    });
-    scaling::check_order(&format!("{what}, its point sought"), n, 1, |n| {
-        std::hint::black_box(satisfiable(&built[&n]).is_ok());
-    });
 }

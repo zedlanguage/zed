@@ -1056,3 +1056,39 @@ fn terms_compare_as_their_derived_order() {
         }
     }
 }
+
+/// The check the benchmark makes of a named chain `a`, one built apart equal to it, `b`, and
+/// [`extended_chain`] `c`: `a == b`, and `a` sorts before `c`.
+pub(super) fn assert_chain_equal_and_before_extended([a, b, c]: &[Formula; 3]) {
+    assert!(a == b);
+    assert_eq!(a.cmp(c), Ordering::Less);
+}
+
+/// The checks the benchmarks make of [`shifted_pairs`]`(d)`: each pair compares as its
+/// constraints written out compare, in both orders; the unequal pairs are `!=` both ways; and
+/// equal pairs hash alike.
+pub(super) fn assert_shifted_pairs_compare_as_written(d: usize) {
+    for (a, b, o) in shifted_pairs(d) {
+        assert_eq!(written(&a).cmp(&written(&b)), o, "d = {d}");
+        assert_eq!(a.cmp(&b), o, "d = {d}");
+        assert_eq!(b.cmp(&a), o.reverse(), "d = {d}");
+        if o == Ordering::Equal {
+            assert_eq!(hash(&a), hash(&b), "d = {d}");
+        } else {
+            assert!(a != b && b != a, "d = {d}");
+        }
+    }
+}
+
+/// The checks of the benchmarks of `bench/shared.rs` on [`extended_chain`] and
+/// [`shifted_pairs`], at small depths.
+#[test]
+fn chains_and_shifted_pairs_of_the_benchmarks_compare_at_small_depths() {
+    for d in [0, 1, 2, 7, 12] {
+        for and in [true, false] {
+            let three = [named_chain(d, and), named_chain(d, and), extended_chain(d, and)];
+            assert_chain_equal_and_before_extended(&three);
+        }
+        assert_shifted_pairs_compare_as_written(d);
+    }
+}

@@ -9,7 +9,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::live3::{self, Row3, point};
-use zedc::store::presburger::{Con, Formula, Lin, satisfiable};
+use zedc::store::presburger::{Con, Formula, Lin, decide, satisfiable};
 
 pub(super) fn int(n: i64) -> Int {
     Int::from(n)
@@ -767,4 +767,55 @@ pub(super) fn minus_calls(rows: &[Row3]) -> u64 {
     let before = live3::counts::minus();
     std::hint::black_box(point(rows));
     live3::counts::minus() - before
+}
+
+/// [`thin`] with seed 7 and coefficients up to 50, the family of the benchmark of many rows.
+pub(super) fn thin_with_coefficients_to_fifty(m: usize) -> Vec<Row3> {
+    thin(m, 7, |rng| int(rng.int(-50, 50)))
+}
+
+/// The empty slab `c·x = 1` of `parity_slabs_are_decided`, `c = (10^6 + 1, 10^6 + 3, 10^6 + 5)`,
+/// over the cube `|x_i| <= 5`, and `m` rows more with coefficients up to 50, each holding the
+/// whole cube with slack 0 to 5, so that no row bound settles it.
+pub(super) fn million_slab_with_rows(m: usize) -> Vec<Row3> {
+    let c = [1_000_001, 1_000_003, 1_000_005];
+    let mut rng = Rng::new(11);
+    let mut rows: Vec<Row3> = [slab(c, 1, 0), cube(5)].concat();
+    for _ in 0..m {
+        let a = [0; 3].map(|_| rng.int(-50, 50));
+        // The least of a·x over the cube is -5 Σ|a_i|.
+        let least = -5 * a.iter().map(|c| c.abs()).sum::<i64>();
+        rows.push(row(a, rng.int(0, 5) - least));
+    }
+    rows
+}
+
+/// The rows of [`tangents`]`(n, 5_000)` as a formula: a lens away from the origin, over which no
+/// point of the box stage holds, so that `satisfiable` reaches `live3`.
+pub(super) fn lens_away_from_the_origin(n: usize) -> Formula {
+    formula(&tangents(n, 5_000))
+}
+
+/// The check the benchmarks make of the rows they time in `point`: `point` finds none.
+pub(super) fn assert_no_point(rows: &[Row3]) {
+    assert_eq!(solve(rows), None);
+}
+
+/// The checks of the benchmarks of `bench/live3.rs` at small sizes: no point in the thin
+/// tetrahedron or the slab with rows added, `Lin2::minus` called on the slab, and a point of the
+/// lens away from the origin found, holding, and decided.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    for m in [0, 1, 8, 30] {
+        assert_no_point(&thin_with_coefficients_to_fifty(m));
+        let slab = million_slab_with_rows(m);
+        assert_no_point(&slab);
+        assert!(minus_calls(&slab) > 0, "m = {m}");
+    }
+    for n in [1, 4, 16] {
+        let f = lens_away_from_the_origin(n);
+        let m = satisfiable(&f).expect("answered").expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+        assert_eq!(decide(&f), Ok(true), "n = {n}");
+    }
 }

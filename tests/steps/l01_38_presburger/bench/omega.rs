@@ -16,10 +16,7 @@ fn chains_of_equalities_cost_the_digits_of_their_values() {
         let n = 490;
         let (small, large) = (build(n), build(scaling::FACTOR * n));
         for f in [&small, &large] {
-            let m = satisfiable(f).unwrap().expect("a point");
-            assert!(f.holds(&m));
-            let digits = m.values().map(|v| v.to_string().len()).max().unwrap();
-            assert!(digits <= n * scaling::FACTOR, "{digits} digits");
+            assert_a_point_of_few_digits(f, n);
         }
         scaling::check_order(name, n, 2, |m| {
             drop(satisfiable(if m == n { &small } else { &large }));
@@ -48,8 +45,7 @@ fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
     let n = 1400;
     let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
-        let m = satisfiable(f).unwrap().expect("a point");
-        assert!(f.holds(&m), "{m:?}");
+        assert_a_point_holds(f);
     }
     scaling::check_order("a sum of bounded terms", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
@@ -63,11 +59,9 @@ fn eliminating_the_terms_of_a_long_row_costs_the_row_each_time() {
 fn the_box_of_refused_rows_scales() {
     let n = 1400;
     let (small, large) = (bounded_sum(n), bounded_sum(scaling::FACTOR * n));
-    let syms = |m: usize| -> Vec<Atom> { (0..m).map(|i| sym(&format!("x{i}"))).collect() };
-    let (s_small, s_large) = (syms(n), syms(scaling::FACTOR * n));
-    let want = IntervalSet::range(End::Fin(Num::from(0)), End::Fin(Num::from(49)));
+    let (s_small, s_large) = (bounded_sum_syms(n), bounded_sum_syms(scaling::FACTOR * n));
     for (f, s) in [(&small, &s_small), (&large, &s_large)] {
-        assert!(row_box(f, s).iter().all(|b| *b == want));
+        assert_each_count_in_its_budget(f, s);
     }
     scaling::check_order("the box of one long row", n, 1, |m| {
         drop(if m == n {
@@ -85,8 +79,7 @@ fn a_value_between_a_long_sum_and_many_bounds_is_not_eliminated_first() {
     let n = 280;
     let (small, large) = (fed_sum(n), fed_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
-        let m = satisfiable(f).unwrap().expect("a point");
-        assert!(f.holds(&m), "{m:?}");
+        assert_a_point_holds(f);
     }
     scaling::check_order("a value below a sum", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));
@@ -100,8 +93,7 @@ fn a_value_that_alone_removes_a_row_is_eliminated_first_at_cubic_cost() {
     let n = 850;
     let (small, large) = (tied_fed_sum(n), tied_fed_sum(scaling::FACTOR * n));
     for f in [&small, &large] {
-        let m = satisfiable(f).unwrap().expect("a point");
-        assert!(f.holds(&m), "{m:?}");
+        assert_a_point_holds(f);
     }
     scaling::check_order("a value below a tied sum", n, 1, |m| {
         drop(satisfiable(if m == n { &small } else { &large }));

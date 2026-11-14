@@ -102,26 +102,29 @@ fn z_of(f: &Formula) -> IntervalSet {
     r.0[0].clone().expect("a projection of z")
 }
 
+/// The projection of `z` over [`cases`]`(m)`.
+pub(super) fn cases_z(m: usize) -> IntervalSet {
+    IntervalSet::of(0, 109 + m as i64)
+}
+
+/// The projection of `z` over [`middle`]`(m)`.
+pub(super) fn middle_z(m: usize) -> IntervalSet {
+    let h = (m / 2) as i64;
+    IntervalSet::of(h, 4 * m as i64 + h + 10)
+}
+
+/// The projection of `z` over [`own_stage`]`(m)`.
+pub(super) fn own_stage_z(m: usize) -> IntervalSet {
+    IntervalSet::of(0, 5 * m as i64 + 9)
+}
+
+/// The check the benchmarks of [`projects`] make at each size, at small sizes.
 #[test]
 fn every_case_of_the_match_is_projected_exactly() {
     for m in [1, 2, 3, 16, 40] {
-        let h = (m / 2) as i64;
-        let m_ = m as i64;
-        assert_eq!(
-            z_of(&cases(m)),
-            IntervalSet::of(0, 109 + m_),
-            "cases, m = {m}"
-        );
-        assert_eq!(
-            z_of(&middle(m)),
-            IntervalSet::of(h, 4 * m_ + h + 10),
-            "middle stage, m = {m}"
-        );
-        assert_eq!(
-            z_of(&own_stage(m)),
-            IntervalSet::of(0, 5 * m_ + 9),
-            "own stage, m = {m}"
-        );
+        assert_eq!(z_of(&cases(m)), cases_z(m), "cases, m = {m}");
+        assert_eq!(z_of(&middle(m)), middle_z(m), "middle stage, m = {m}");
+        assert_eq!(z_of(&own_stage(m)), own_stage_z(m), "own stage, m = {m}");
     }
 }
 

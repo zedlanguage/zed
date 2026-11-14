@@ -156,6 +156,47 @@ fn twin_linked_nests_project_as_written_out_and_keep_every_value() {
     }
 }
 
+/// The weights `w[i] = 2^(1 + i mod 50)` of the benchmarks, for `i` in `0..=k`: all even, so
+/// that no way through the nest has `x[k]` odd.
+pub(super) fn even_weights(k: usize) -> Vec<i64> {
+    (0..=k).map(|i| 1i64 << (1 + i % 50)).collect()
+}
+
+/// The weights `w[i] = 2^i` of the benchmarks of [`twin`], for `i` in `0..=k`.
+pub(super) fn powers_of_two(k: usize) -> Vec<i64> {
+    (0..=k).map(|i| 1i64 << i).collect()
+}
+
+/// The check the benchmark of [`nest`] makes at each depth: over [`even_weights`] with `x[k]`
+/// odd, the projection of `x0` is answered and empty.
+pub(super) fn assert_no_way_has_an_odd_top(f: &Formula) {
+    let (each, _) = project_each(f, &[v("x0")]).expect("an answer");
+    assert!(
+        matches!(&each[0], Ok(s) if s.is_empty()),
+        "no way has x[k] odd: {each:?}"
+    );
+}
+
+/// The check the benchmark of [`twin`] makes at each depth: the projection of `x0` and `y0` is
+/// answered, not refused.
+pub(super) fn assert_twin_answered(f: &Formula) {
+    project_each(f, &[v("x0"), v("y0")]).expect("an answer");
+}
+
+/// The checks of the benchmarks in `bench/linked_nest.rs`, at small depths.
+#[test]
+fn the_nests_of_the_benchmarks_are_answered_at_small_depths() {
+    for k in [1, 2, 3, 8] {
+        assert_no_way_has_an_odd_top(&nest(k, &even_weights(k), (2, 1), true));
+    }
+    for k in [1, 2, 4] {
+        assert_twin_answered(&twin(k, &powers_of_two(k), (2, 1), true));
+    }
+    exponents("the nest, x[k] odd", &[1, 2, 4], |k| {
+        assert_no_way_has_an_odd_top(&nest(k, &even_weights(k), (2, 1), true));
+    });
+}
+
 /// The instructions of `run` at each of `sizes`, each with its exponent against the size
 /// before: 1 for work linear in the size.
 pub(super) fn exponents(what: &str, sizes: &[usize], run: impl Fn(usize)) {

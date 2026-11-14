@@ -638,3 +638,105 @@ pub(super) fn each_on_a_copy(wide: &Formula, small: &[Formula]) -> Vec<Conjuncts
     kept.push(c);
     kept
 }
+
+/// The random rows of the benchmark: `4 n` rows over `n` variables, seed `0xabc`.
+pub(super) fn random_unit_rows_four_each(n: usize) -> Formula {
+    random_unit_rows(n, 4 * n, 0xabc)
+}
+
+/// The rows of [`blocks_with_a_hub`] as one formula.
+pub(super) fn hub_rows(n: usize) -> Formula {
+    rows_of(&blocks_with_a_hub(n))
+}
+
+/// The rows of [`blocks_with_a_hub_and_a_crossing`] as one formula.
+pub(super) fn hub_rows_with_a_crossing(n: usize) -> Formula {
+    rows_of(&blocks_with_a_hub_and_a_crossing(n))
+}
+
+/// `z0 + ... + z(k-1) >= 0`, the constraint on a term of `k` names.
+pub(super) fn wide(k: usize) -> Formula {
+    let sum = (0..k).fold(Lin::constant(0), |l, i| {
+        l.plus(&Lin::atom(Atom::Sym(Arc::from(format!("z{i:06}")))))
+    });
+    Formula::Con(Con::ge(&sum, &Lin::constant(0)))
+}
+
+/// [`wide`]`(k)` and the `k` bounds `ai >= 0` added to it one at a time.
+pub(super) fn bounds_beside_wide(k: usize) -> (Formula, Vec<Formula>) {
+    let small = (0..k).map(|i| at_least_zero(&format!("a{i:06}"))).collect();
+    (wide(k), small)
+}
+
+/// `wide(k) || y >= 0` and the `k` disjunctions `ai >= 0 || bi >= 0` added to it one at a time.
+pub(super) fn pairs_beside_wide(k: usize) -> (Formula, Vec<Formula>) {
+    let small = (0..k)
+        .map(|i| {
+            Formula::or(vec![
+                at_least_zero(&format!("a{i:06}")),
+                at_least_zero(&format!("b{i:06}")),
+            ])
+        })
+        .collect();
+    (Formula::or(vec![wide(k), at_least_zero("y")]), small)
+}
+
+/// The check the benchmark makes of [`each_on_a_copy`]: one conjunction kept per addition and
+/// one at the end, the `i`-th holding the wide constraint and the first `i` small ones.
+pub(super) fn assert_each_copy_kept(kept: &[Conjuncts], k: usize) {
+    assert_eq!(kept.len(), k + 1);
+    for (i, c) in kept.iter().enumerate() {
+        assert!(!c.is_bottom(), "copy {i}");
+        assert_eq!(c.set().len(), i + 1, "copy {i}");
+    }
+}
+
+/// The families the benchmarks time through [`decides`], with the answer each must give.
+type Decided = (&'static str, fn(usize) -> Formula, Result<bool, Refusal>);
+
+const DECIDED: [Decided; 11] = [
+    ("the shifted sparse family", sparse, Err(Refusal::Growth)),
+    ("rows of two unit coefficients", utvpi, Ok(true)),
+    ("an odd cycle", odd_cycle, Ok(false)),
+    ("disjoint copies of Pugh's example", pugh_pairs, Ok(false)),
+    ("a chain into a refused block", chain_into_block, Err(Refusal::Growth)),
+    ("random rows", random_unit_rows_four_each, Ok(true)),
+    ("Pugh's example in a chain", pugh_in_a_chain, Err(Refusal::Shadows)),
+    ("a hub in one row per block", hub_rows, Err(Refusal::Growth)),
+    ("a crossing after the hub's blocks", hub_rows_with_a_crossing, Ok(false)),
+    ("copies split twice", split_twice_copies, Ok(true)),
+    ("a chain into a block split twice", split_twice_in_a_chain, Ok(true)),
+];
+
+/// The checks of the benchmarks of `bench/scaling.rs` at small sizes: each family decided as
+/// its benchmark asks, each point found or not, each copy kept.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    // The shifted sparse family is refused from n = 4 on, and Pugh's example in a chain from 3.
+    for n in [4, 5, 16] {
+        for (what, make, answer) in DECIDED {
+            assert_eq!(decide(&make(n)), answer, "{what}, n = {n}");
+        }
+        for (what, point, make) in [
+            ("the chain with a point", true, chain(n, 3)),
+            ("the empty chain", false, chain(n, 0)),
+            ("the rising chain", false, rising(n)),
+            ("a cycle of rows", false, cycle(n)),
+            ("sorted indices", true, sorted(n, false)),
+            ("overlapping sums of three", true, sums(n)),
+        ] {
+            let found = satisfiable(&make).expect("answered");
+            assert_eq!(found.is_some(), point, "{what}, n = {n}");
+        }
+        point_of("an expander of differences", &expander(n));
+        assert_eq!(decide(&grid(n)), Ok(true), "a grid of differences, {n}");
+        let (w, small) = bounds_beside_wide(n);
+        assert_each_copy_kept(&each_on_a_copy(&w, &small), n);
+        let (w, small) = pairs_beside_wide(n);
+        assert_each_copy_kept(&each_on_a_copy(&w, &small), n);
+    }
+    for v in [2, 3, 4] {
+        point_of("all ordered pairs", &all_pairs(v));
+        point_of("a grid", &grid(v));
+    }
+}

@@ -249,3 +249,19 @@ fn relations_translated_in_two_calls_are_refused_by_entails() {
     let g = relations(&[&g], &ps, true).expect("in the domain");
     let _ = zedc::store::presburger::entails(&p[0], &g[0]);
 }
+
+/// The check the benchmark makes of [`splits`]`(k)`: translated over `x` and `n`, it gives one
+/// relation with `2k` auxiliary variables.
+pub(super) fn assert_splits_translated(t: &Term, k: usize) {
+    let inputs: [std::sync::Arc<str>; 2] = ["x".into(), "n".into()];
+    let rs = relations(&[t], &inputs, true).expect("in the domain");
+    assert_eq!(rs[0].defs.len(), 2 * k, "k = {k}");
+}
+
+/// The check of the benchmark of `bench/mod_symbol.rs` at small sizes, on the default stack.
+#[test]
+fn splits_by_symbolic_divisors_are_translated_at_small_sizes() {
+    for k in [1, 2, 3, 16] {
+        assert_splits_translated(&splits(k), k);
+    }
+}

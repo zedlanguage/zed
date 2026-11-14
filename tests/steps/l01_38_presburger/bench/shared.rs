@@ -25,9 +25,8 @@ fn comparing_a_named_chain_with_one_built_apart_takes_time_near_linear_in_its_le
         "a chain of d names compared with an equal and an extended one built apart",
         10000,
         |d| {
-            for [a, b, c] in &built[&d] {
-                assert!(a == b);
-                assert_eq!(a.cmp(c), Ordering::Less);
+            for three @ [a, b, c] in &built[&d] {
+                assert_chain_equal_and_before_extended(three);
                 std::hint::black_box((a.cmp(b), c.cmp(a)));
             }
         },
@@ -75,14 +74,6 @@ fn one_sequence_grouped_at_other_places_on_each_side_compares_in_time_near_quadr
             }
         },
     );
-    for d in [0, 1, 2, 7, 12] {
-        for (a, b, o) in shifted_pairs(d) {
-            assert_eq!(written(&a).cmp(&written(&b)), o, "d = {d}");
-            if o == Ordering::Equal {
-                assert_eq!(hash(&a), hash(&b), "d = {d}");
-            }
-        }
-    }
 }
 
 #[test]
