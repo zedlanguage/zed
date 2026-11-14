@@ -2276,7 +2276,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-ports-key-past-i64 | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
-| FAIL-ref-text-reading | running |  |  |
 | FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
