@@ -11935,8 +11935,16 @@ impl Scope {
         let tops = distinct_conjuncts(part);
         if tops.contains(&Formula::bottom()) {
             // A conjunct is `false` (`2t == 1`), so `part` has no point and each name is empty.
+            // A part that is `false` itself, as `Formula::and` folds two equations of one sum
+            // with different constants, mentions no name: an empty map would say nothing of
+            // the names an equal writing of it mentions and empties, so the route is not
+            // taken, as for any other part not of the form below.
+            let names = conjuncts::names(part);
+            if names.is_empty() {
+                return None;
+            }
             return Some(
-                conjuncts::names(part)
+                names
                     .into_iter()
                     .map(|n| (n, IntervalSet::empty()))
                     .collect(),
@@ -11979,6 +11987,17 @@ impl Scope {
             && let [p] = &hung[..]
             && let Some(out) = self.unbounded_unit(p, &rest)
         {
+            if out.iter().all(|(_, d)| d.is_empty()) {
+                // No conjunction of what is left has a point, so neither has `part`: each of
+                // its names is empty, as below where the whole is `false`, not only the names
+                // of the pendant and its form.
+                return Some(
+                    count
+                        .into_keys()
+                        .map(|n| (n, IntervalSet::empty()))
+                        .collect(),
+                );
+            }
             return Some(out);
         }
         // Each form, with a new name for it and the values at which each of its pendants has

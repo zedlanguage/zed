@@ -2210,6 +2210,100 @@ fn a_refused_box_does_not_depend_on_the_names_seed_15900465239627589939() {
     refused_names_in(15900465239627589939, 11, true);
 }
 
+/// Seed 8203920530908347152 of [`rewritten_parts_give_one_answer`]
+/// (FAIL-pendants-rewrite-empty-seed): case 5, a part with no point whose rows
+/// `a + b >= 2 * c + z2 + 10`, `a + b <= 2 * c + z2 + 10` and `a + b == 2 * c + z2 - 3`
+/// `Formula::and` folds to `false` as written. By pendants the part as written gave the empty
+/// map, naming none of its names, and three of its rewrites a map of each name empty; a part
+/// folded to `false` no longer takes the route.
+#[test]
+fn rewritten_parts_of_seed_8203920530908347152_give_one_answer() {
+    let seed = 8203920530908347152u64;
+    let mut wrong = Vec::new();
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(seed, 10)
+    {
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = (each_answer(&s, &f, &syms), hung(&s, &f));
+        for g in rewrites {
+            let got = (each_answer(&s, &g, &syms), hung(&s, &g));
+            let both_hung = want.1.is_some() && got.1.is_some();
+            if got.0 != want.0 || (both_hung && got.1 != want.1) {
+                wrong.push(format!(
+                    "case {case}\n  {g}\n  want {want:?}\n  got  {got:?}"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "seed {seed}:\n{}", wrong.join("\n"));
+}
+
+/// A part `Formula::and` folds to `false` (one sum equal to 1 and to 2) names no name, so
+/// the route by pendants is not taken on it: an empty map would leave out the names its
+/// other writings empty.
+#[test]
+fn a_part_folded_to_false_does_not_take_the_route() {
+    let s = scope(&boxes("a=[-5,5] b=[-5,5] c=[-5,5]"));
+    let f = formula(&parse("a + b == c + 1 && a + b == c + 2 && a >= b"));
+    assert_eq!(f, Formula::bottom(), "{f}");
+    assert_eq!(hung(&s, &f), None);
+}
+
+/// Part 23 of seed 1541603418123298951 of the projection by pendants against that of the
+/// whole part (FAIL-pendants-rewrite-empty-seed): its one pendant `b <= c + z2 - 5`, `z2`
+/// unbounded above, takes the shortcut of an unbounded unit sum, and the rows left have no
+/// point (`a + c + z0` is 3 and 6). By pendants it named only `b`, `c` and `z2` empty, the names
+/// of the pendant; each name of the part is empty, as in the projection of the whole part.
+#[test]
+fn an_empty_part_by_the_unbounded_shortcut_empties_each_of_its_names() {
+    let part = "b <= c + z2 - 5 && 3 == a + c + z0 && a + c == z0 + 4 && a + c + z0 == 6 \
+        && 2 * a + 2 * b + z0 >= -9 && (2 * b >= c - 6 || z0 <= 6) && a >= b - 6 \
+        && 2 * a + c + z0 >= 0";
+    let s = scope(&boxes(
+        "a=[-10,-8] b=[-7,-7] c=[3,inf] z0=[-inf,0] z1=[-inf,-10] z2=[-inf,inf] z3=[1,inf]",
+    ));
+    let f = formula(&parse(part));
+    let empty: BTreeMap<String, String> = ["a", "b", "c", "z0", "z2"]
+        .into_iter()
+        .map(|n| (n.to_string(), "[]".to_string()))
+        .collect();
+    assert_eq!(hung(&s, &f), Some(empty.clone()), "{f}");
+    assert_eq!(whole(&s, &f), Some(empty), "{f}");
+}
+
+/// Parts that take the shortcut of an unbounded unit sum, `z2` unbounded above in the pendant
+/// `b <= c + z2 - 5`, and whose rows left have a point: the names the shortcut answers are
+/// those of the projection of the whole part, with at least one not empty.
+#[test]
+fn a_part_with_a_point_by_the_unbounded_shortcut_is_projected_as_the_whole() {
+    for (bx, part) in [
+        (
+            "b=[-7,-7] c=[3,inf] z2=[-inf,inf]",
+            "b <= c + z2 - 5 && (2 * b >= c - 6 || c >= 10)",
+        ),
+        (
+            "b=[-7,inf] c=[3,inf] z2=[-inf,inf]",
+            "b <= c + z2 - 5 && b + c >= 0 && (c <= 20 || c >= 30)",
+        ),
+        (
+            "b=[0,9] c=[-inf,4] z2=[0,inf]",
+            "b <= c + z2 - 5 && (b >= c + 3 || c <= -2)",
+        ),
+    ] {
+        let s = scope(&boxes(bx));
+        let f = formula(&parse(part));
+        let got = hung(&s, &f).expect("taken");
+        assert!(got.values().any(|d| d != "[]"), "{part}: {got:?}");
+        assert_eq!(Some(got), whole(&s, &f), "{part}");
+    }
+}
+
 /// The seeds on which a fixed 120 parts compared fewer than a quarter of them
 /// (FAIL-pendants-route-quarter-seed), no part differing: 4023886734010713935 compared 28,
 /// 11312057540586612196 compared 26 and 6901888717729865865 compared 24. Drawn until
