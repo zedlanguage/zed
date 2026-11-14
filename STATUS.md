@@ -2203,6 +2203,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
+| CONST-too-large-coprime-base | running | 2026-11-14 00:07 |  |
+| DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-generic-class-follows | impl attempt 1 | 2026-11-13 23:24 | reproduced (g(positional x) = x == 1 + 1 gave false false false true at f64 f32 rat int); fix in Ck::equal_classes/follow_param; baseline run in progress |
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
