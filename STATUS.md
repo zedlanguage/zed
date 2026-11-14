@@ -2240,9 +2240,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-complete-kernel | impl attempt 1 | 2026-11-14 06:21 | started; worktree created and seeded |
 | TEST-complete-lattices | impl attempt 1 | 2026-11-14 06:09 | started; worktree test-complete-lattices on 28be33f10 |
 | TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
-| TEST-complete-reduced | impl attempt 1 | 2026-11-14 05:52 | started; worktree made and seeded; load 52.75 |
+| TEST-complete-presburger | running |  |  |
 | TEST-complete-zir | impl attempt 1 | 2026-11-14 06:15 | baseline: l01_31 39, l01_32 28, l01_33 39, l03_09 27, zedc_zir unit 5 passed, 0 failed / 53.91 55.76 49.18 |
-| TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
