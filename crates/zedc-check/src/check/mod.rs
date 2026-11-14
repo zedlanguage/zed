@@ -499,6 +499,12 @@ pub struct Info {
     pub dense: HashMap<Span, bool>,
     /// The type errors.
     pub errors: Vec<Error>,
+    /// The sites of the literals that the errors of rows `UnfixedDecimal` and `LiteralCarrier`
+    /// in [`Self::errors`] report, sorted: where such an error rejects a class of literals, or
+    /// a part of a value, at one literal, the site of each literal of the class or the part,
+    /// as `y = 1e400 + 1e400` is rejected at its first `1e400` for both. Elaboration does not
+    /// report the range of these literals again, and reports that of every other literal.
+    pub reported_literals: Vec<Span>,
     /// A warning for each question the integer solver left undecided while the checker
     /// narrowed by a test or read under one, placed at that test or read, with its derivation:
     /// in order of place, then of the question (DESIGN.md L1.39).
@@ -2245,12 +2251,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             m,
             notes,
             also: Vec::new(),
+            lits: Vec::new(),
         });
         // A trial's errors are undone after it, so they take no number of their own: the
         // number of the error a repair checked before it is found stays the one it gets.
         if !self.trying {
             self.next_found += 1;
         }
+    }
+
+    /// [`Self::reject`] for an error that rejects, at `span`, every literal at `lits`: the
+    /// literals of a class, or the parts of a value, that it reports at one of them
+    /// ([`Info::reported_literals`]).
+    fn reject_lits(&mut self, row: Row, span: Span, m: Msg, notes: Vec<Note>, lits: Vec<Span>) {
+        self.reject(Some(row), span, m, notes);
+        self.errors.last_mut().expect("the error just pushed").lits = lits;
     }
 
     /// The derivation of the expressions at `spans`: for each, its type, and for a name or a
@@ -3566,7 +3581,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             let notes = self.derive(&[l.site]);
             let m = unfixed(&l, &left);
-            self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+            let sites = lits.iter().map(|(l, _)| l.site).collect();
+            self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
         }
         // A bare literal compared with values of the class follows it without narrowing it, so
         // whether the class holds strings or `bool` and no number is known only now, whatever
@@ -4003,6 +4019,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 notes,
             );
         }
+        // Complexity tradeoff: none beyond the sort, O(l log l) for the l literal sites the
+        // errors list, so that elaboration finds a literal by binary search.
+        let mut reported: Vec<Span> = (self.errors.iter())
+            .filter(|f| matches!(f.row, Some(Row::UnfixedDecimal | Row::LiteralCarrier)))
+            .flat_map(|f| f.lits.iter().chain(&f.also).copied())
+            .collect();
+        reported.sort_unstable();
+        reported.dedup();
+        self.info.reported_literals = reported;
         let text = self.t.text;
         let mut errors: Vec<Error> = (std::mem::take(&mut self.errors).into_iter())
             .map(|f| f.written(text))
@@ -5182,7 +5207,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     {
                         let notes = self.derive(&[l.site]);
                         let m = unfixed(l, &takes);
-                        self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                        let sites = lits.iter().map(|l| l.site).collect();
+                        self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
                     }
                     Some(c)
                 }
@@ -6657,6 +6683,10 @@ struct Found {
     /// ([`grouped`]): a fix of one of them, checked as written, rejects the others alone
     /// ([`Ck::pending_settled`]).
     also: Vec<Span>,
+    /// The places of the literals an error rejects at one of them, a class of literals or a
+    /// part of a value ([`Ck::reject_lits`], [`Info::reported_literals`]); empty for an error
+    /// that reports only what lies in its span.
+    lits: Vec<Span>,
 }
 
 impl Found {

@@ -13,7 +13,7 @@ use zedc_check::check::{Info, Misfit, Witness};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Kind, Ref, prelude_layer};
 use zedc_stage::defs::Test;
-use zedc_syntax::ast::{Error, Expr, ExprKind, Pattern, Stmt, Type};
+use zedc_syntax::ast::{Error, Expr, ExprKind, Pattern, Type};
 use zedc_syntax::lex::Span;
 use zedc_types::kernel_type::kernel_type;
 use zedc_types::ty::Carrier;
@@ -114,25 +114,22 @@ impl<'a> Elab<'a> {
     }
 
     /// Keeps, for [`Self::in_checker_error`], the span of each of the checker's errors
-    /// `errors`, and for each that reports a literal's carrier (rows `UnfixedDecimal` and
-    /// `LiteralCarrier`) the span of the statement of `unit` it lies in: such an error stands
-    /// for every literal of the class it reports, at the site of one of them, as
-    /// `y = 1e400 + 1e400` is reported at its first `1e400`.
+    /// `errors`, and the site of each literal that an error of rows `UnfixedDecimal` and
+    /// `LiteralCarrier` reports at another literal ([`Info::reported_literals`]): such an error
+    /// stands for every literal of the class or the part of a value it rejects, at the site of
+    /// one of them, as `y = 1e400 + 1e400` is reported at its first `1e400`.
     // Complexity tradeoff: a test of each literal against each error costs O(k*e) for k
-    // literals asked about and e errors; used: each error's statement found by binary search
-    // over the statements, which are in text order, O(e log s), the spans sorted by start with
+    // literals asked about and e errors and literal sites; used: the spans sorted by start with
     // the greatest end so far, O(e log e) once, and a binary search per literal, O(log e).
-    pub(super) fn keep_checker_spans(&mut self, errors: &[Error], unit: &[Stmt]) {
-        let mut spans = Vec::with_capacity(errors.len() * 2);
-        for e in errors {
-            spans.push((e.span.start, e.span.end));
-            if matches!(e.row, Some(Row::UnfixedDecimal | Row::LiteralCarrier)) {
-                let k = unit.partition_point(|s| s.span.start <= e.span.start);
-                if let Some(s) = k.checked_sub(1).map(|k| unit[k].span) {
-                    spans.push((s.start, s.end));
-                }
-            }
-        }
+    // Until MSG-range-error-class-spans an error of those rows kept the span of its whole
+    // top-level statement, found by binary search over the statements, which hid the range
+    // error of a literal of another class in that statement; the checker now lists the
+    // literals, at the cost of one span per literal of a rejected class.
+    pub(super) fn keep_checker_spans(&mut self, errors: &[Error]) {
+        let lits = &self.info.reported_literals;
+        let mut spans = Vec::with_capacity(errors.len() + lits.len());
+        spans.extend(errors.iter().map(|e| (e.span.start, e.span.end)));
+        spans.extend(lits.iter().map(|s| (s.start, s.end)));
         spans.sort_unstable();
         let mut end = 0;
         for s in &mut spans {
@@ -143,9 +140,9 @@ impl<'a> Elab<'a> {
     }
 
     /// Whether `span` lies in one of the spans [`Self::keep_checker_spans`] kept: in an error
-    /// that reports the literal written there or rejects an expression around it, or in a
-    /// statement where the checker reported a literal's carrier. There the literal's carrier
-    /// may not be decided, or the checker has reported it.
+    /// that reports the literal written there or rejects an expression around it, or at a
+    /// literal whose class the checker reported at another of its literals. There the
+    /// literal's carrier may not be decided, or the checker has reported it.
     pub(super) fn in_checker_error(&self, span: Span) -> bool {
         let before = self
             .checker_spans

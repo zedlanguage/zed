@@ -2213,23 +2213,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let kept: Vec<Found> = found.into_iter().filter(|e| !inside(e)).collect();
         self.errors.extend(kept);
-        let parts = parts.into_iter().map(|(_, at, m)| (at, m)).collect();
         self.reject_unfixed(&what, parts);
     }
 
-    /// Rejects the literals of `parts`, each its place and its message, in the order of the
-    /// text, all in `what` (row UnfixedDecimal): one part with its derivation, as
-    /// [`Self::reject`]; two or more in one message ([`grouped`]), each part's derivation
-    /// after its step, with no step written twice.
-    fn reject_unfixed(&mut self, what: &dyn fmt::Display, parts: Vec<(Span, Msg)>) {
-        let Some(&(at, _)) = parts.first() else {
+    /// Rejects the literals of `parts`, each the part of the value it lies in, its place and its
+    /// message, in the order of the text, all in `what` (row UnfixedDecimal): one part with its
+    /// derivation, as [`Self::reject`]; two or more in one message ([`grouped`]), each part's
+    /// derivation after its step, with no step written twice. The error stands for every
+    /// literal of its parts ([`Ck::reject_lits`]), as `y = 1e400 + 1e400` is rejected at its
+    /// first `1e400` for both.
+    fn reject_unfixed(&mut self, what: &dyn fmt::Display, parts: Vec<(Span, Span, Msg)>) {
+        let Some(&(_, at, _)) = parts.first() else {
             return;
         };
+        let wholes: Vec<Span> = parts.iter().map(|(p, _, _)| *p).collect();
         if parts.len() == 1 {
-            let (at, m) = parts.into_iter().next().expect("one part");
+            let (_, at, m) = parts.into_iter().next().expect("one part");
             let notes = self.derive(&[at]);
-            return self.reject(Some(Row::UnfixedDecimal), at, m, notes);
+            return self.reject_lits(Row::UnfixedDecimal, at, m, notes, wholes);
         }
+        let parts: Vec<(Span, Msg)> = parts.into_iter().map(|(_, at, m)| (at, m)).collect();
         let sites: Vec<Span> = parts.iter().map(|(s, _)| *s).collect();
         let n = parts.len();
         let head = format!(
@@ -2249,7 +2252,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        self.reject(Some(Row::UnfixedDecimal), at, m, notes);
+        self.reject_lits(Row::UnfixedDecimal, at, m, notes, wholes);
     }
 
     /// The decimal literals with no suffix that the value `x`, bound outside every function
@@ -2869,9 +2872,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // function's body such a literal may join a parameter's class, which the call
             // fixes, so only holes outside every function are read so.
             if self.level == 0 {
-                let found = (self.unfixed_tails(h, &t).into_iter())
-                    .map(|(_, at, m)| (at, m))
-                    .collect();
+                let found = self.unfixed_tails(h, &t);
                 self.reject_unfixed(&"the interpolation", found);
             }
             s.holes.push(t);
@@ -4426,11 +4427,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // { 2.5 })`, and one a call gives through its body, `String(g(c))` with
             // `g(positional c: bool) = if c { 1 } else { 2.5 }` ([`Self::unfixed_calls`]).
             let bs = x.branches.iter().flat_map(|bs| bs.iter());
-            let found: Vec<(Span, Msg)> = (bs.filter_map(|b| match b {
+            let found: Vec<(Span, Span, Msg)> = (bs.filter_map(|b| match b {
                 Branch::Lit(l) if l.bare && lit_carrier(&l.value) != Carrier::Int => Some(l),
                 _ => None,
             }))
-            .map(|l| (l.site, unfixed(l, &[Carrier::F64, Carrier::Rat])))
+            .map(|l| (l.site, l.site, unfixed(l, &[Carrier::F64, Carrier::Rat])))
             .collect();
             self.reject_unfixed(&"the argument of `String`", found);
             if x.lit.is_none() {
@@ -11404,7 +11405,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut todo = vec![(x.clone(), y.clone(), written.clone())];
         // The decimal literals with no suffix written as components that meet only such
         // literals, with their messages.
-        let mut unfixed_found: Vec<(Span, Msg)> = Vec::new();
+        let mut unfixed_found: Vec<(Span, Span, Msg)> = Vec::new();
         let mut seen = HashSet::new();
         // What the application gives, where one operand is a class and nothing else and the
         // other is closed: what the class's use gives ([`Ck::order_given`]).
@@ -11514,7 +11515,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 .into_iter()
                                 .filter(|&c| fits(l, c))
                                 .collect();
-                            unfixed_found.push((l.site, unfixed(l, &cs)));
+                            unfixed_found.push((l.site, l.site, unfixed(l, &cs)));
                             fixed[side] = Some(Lit {
                                 bare: false,
                                 ..l.clone()
@@ -11637,7 +11638,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 seen.insert(pair);
             }
         }
-        unfixed_found.sort_by_key(|(s, _)| s.start);
+        unfixed_found.sort_by_key(|(s, _, _)| s.start);
         self.reject_unfixed(&format_args!("the arguments of {what}"), unfixed_found);
         // With an operand of no value the word gives none.
         if x.is_empty() || y.is_empty() {
@@ -13910,8 +13911,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
                                 })
                                 .to_vec();
+                            let sites = vec![l.site, m.site];
                             let m = unfixed(d, &[Carrier::F64, Carrier::Rat]);
-                            self.reject(Some(Row::UnfixedDecimal), d.site, m, notes);
+                            self.reject_lits(Row::UnfixedDecimal, d.site, m, notes, sites);
                         }
                         (true, false) => {
                             self.adopt_to(l, mc);
@@ -15364,7 +15366,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         .unwrap_or(&lits[0]);
                                     let notes = self.derive(&[l.site]);
                                     let m = unfixed(l, &takes);
-                                    self.reject(Some(Row::UnfixedDecimal), l.site, m, notes);
+                                    let sites = lits.iter().map(|l| l.site).collect();
+                                    self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
                                     c
                                 }
                                 [] => unreachable!("a carrier every literal takes"),
@@ -15845,7 +15848,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
             .flat_map(|c| c.lits.iter().map(|(l, _)| l.span))
             .collect();
-        let mut found: Vec<(Span, Msg)> = Vec::new();
+        let mut found: Vec<(Span, Span, Msg)> = Vec::new();
         for (v, from, l) in lits {
             let r = sets.find(v);
             if sets.fixed_for(r, from) || self.is_class(&sets.names[v]) || fixed.contains(&l.span) {
@@ -15861,16 +15864,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             if cs.is_empty() {
                 continue;
             }
-            found.push((l.site, unfixed(l, &cs)));
+            found.push((l.site, l.site, unfixed(l, &cs)));
         }
         for l in &payloads {
             let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
                 .into_iter()
                 .filter(|&c| fits(l, c))
                 .collect();
-            found.push((l.site, unfixed(l, &cs)));
+            found.push((l.site, l.site, unfixed(l, &cs)));
         }
-        found.sort_by_key(|(s, _)| s.start);
+        found.sort_by_key(|(s, _, _)| s.start);
         self.reject_unfixed(&format_args!("the arguments of {what}"), found);
     }
 
@@ -18273,20 +18276,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             });
             found.into_iter().flatten()
         });
-        let mut first = None;
-        for (l, left) in unfixed_lits {
-            let decimal = is_decimal(&l.value);
-            if first.is_none() || decimal {
-                first = Some((l.clone(), left));
-            }
-            if decimal {
-                break;
-            }
-        }
+        // The error stands for every such literal ([`Ck::reject_lits`]).
+        let unfixed_lits: Vec<_> = unfixed_lits.collect();
+        let first = (unfixed_lits.iter())
+            .find(|(l, _)| is_decimal(&l.value))
+            .or(unfixed_lits.first());
         let rejected = first.is_some();
         if let Some((l, left)) = first {
             let notes = self.derive(&[l.site]);
-            self.reject(Some(Row::UnfixedDecimal), l.site, unfixed(&l, &left), notes);
+            let m = unfixed(l, left);
+            let sites = unfixed_lits.iter().map(|(l, _)| l.site).collect();
+            self.reject_lits(Row::UnfixedDecimal, l.site, m, notes, sites);
         }
         // A call rejected so gives no value, as a rejected application gives, so that the
         // arrows it then meets do not report it again: `1 + g(c)`.
@@ -18362,9 +18362,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if generic || !(f64 && rat) {
                 continue;
             }
-            let found: Vec<(Span, Msg)> = (self.unfixed_tails(e, &a.ty).into_iter())
-                .map(|(_, at, m)| (at, m))
-                .collect();
+            let found = self.unfixed_tails(e, &a.ty);
             any |= !found.is_empty();
             self.reject_unfixed(&format!("the argument of {what}"), found);
         }

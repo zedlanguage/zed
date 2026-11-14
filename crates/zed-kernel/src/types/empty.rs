@@ -4159,8 +4159,6 @@ impl<'m> Searching<'m> {
         }
     }
 
-    /// Notes a fork met in the decision of a verdict: against the type being decided in a search
-    /// with several roots, else as the refusal that ends the search.
     /// Counts a trial of a component in [`Searching::any_empty`] begun (+1) or ended (-1).
     fn trial(&self, step: isize) {
         if let Some(n) = &mut self.s().trials {
@@ -4168,6 +4166,8 @@ impl<'m> Searching<'m> {
         }
     }
 
+    /// Notes a fork met in the decision of a verdict: against the type being decided in a search
+    /// with several roots, else as the refusal that ends the search.
     fn refuse_fork(&self) {
         let mut guard = self.s();
         let s = &mut *guard;

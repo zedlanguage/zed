@@ -164,3 +164,36 @@ fn an_unrelated_error_does_not_hide_the_range_error() {
         assert!(!e.iter().any(|m| m.starts_with(INFINITE)), "{src}: {e:?}");
     }
 }
+
+/// MSG-range-error-class-spans: the checker's error at a literal with no carrier stands for the
+/// literals of its class only, so a literal of another class in the same statement keeps its
+/// range error, and one of the rejected class does not.
+#[test]
+fn a_class_error_hides_the_range_error_of_its_own_literals_only() {
+    // Each rejects `1.5` and its class, and leaves `1e400` at `f64`, past its range.
+    for src in [
+        "t() = { y = 1.5 + 2.5; (y, 1e400) };\n",
+        "t() = (String(1.5), 1e400);\n",
+        "t() = (\"${1.5}\", 1e400);\n",
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), 2, "{src}: {e:?}");
+        assert!(!e[0].starts_with(INFINITE), "{src}: {e:?}");
+        assert!(e[1].starts_with(INFINITE), "{src}: {e:?}");
+    }
+    // The first `1e400` is the rejected literal, reported by the checker alone; the second,
+    // of another class, keeps its range error.
+    for src in [
+        "t() = (String(1e400), 1e400);\n",
+        "t() = (\"${1e400}\", 1e400);\n",
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), 2, "{src}: {e:?}");
+        assert!(e[0].contains("1e400r"), "{src}: {e:?}");
+        assert!(e[1].starts_with(INFINITE), "{src}: {e:?}");
+    }
+    // The second `1e400`, outside the span of the error at the first, is of its class.
+    let e = errors("y = 1e400 + 1e400;\n");
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(!e[0].starts_with(INFINITE), "{e:?}");
+}

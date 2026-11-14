@@ -749,9 +749,10 @@ impl<'a> Elab<'a> {
                 // reported again inside the span of a checker's error, where the checker has
                 // reported it where it decided its carrier, as in `h(1e400)` at an `f64`
                 // parameter, or rejected an expression around it, where its carrier may not be
-                // decided; nor in a statement where the checker reported a literal's carrier,
-                // which it reports for its whole class at one literal, as `y = 1e400 + 1e400`
-                // at the first (with the fix `1e400r + 1e400`). The term stands in and is never
+                // decided; nor at a literal of a class the checker reported at another of its
+                // literals, as `y = 1e400 + 1e400` at the first (with the fix
+                // `1e400r + 1e400`), while a literal of another class in the same statement keeps
+                // its range error (MSG-range-error-class-spans). The term stands in and is never
                 // run.
                 Err(LiteralRounding::Infinite | LiteralRounding::Zero)
                     if forced.is_none() && self.in_checker_error(e.span) =>
