@@ -383,9 +383,16 @@ fn step(rng: &mut Rng, v: &Num, want: &BigInt) -> (Num, BigInt) {
     }
 }
 
+/// TEST-bench-move-l0123, author P169: this ran the same starts and walks with `Rng::new(127)`
+/// and compared every pair of the about 1200 results, 1.4 million pairs: 1.2 s alone at load
+/// 38, 0.9 s of it in the pairs. It now runs every start and walk as before with a fresh seed,
+/// compares each result with the next in the order of the values (so each value's results
+/// compare equal and hash alike, and each lies below the next value's), and compares every
+/// pair of 200 results drawn at random.
 #[test]
 fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
-    let mut rng = Rng::new(127);
+    let (mut rng, seed) = Rng::fresh("values near the edges");
+    let walk = format!("a random walk, ZED_SEED={seed}");
     let mut seen: Vec<(Num, BigInt)> = Vec::new();
     // Every start, in every form, then three random walks of one to four operations from it,
     // each result checked.
@@ -399,7 +406,7 @@ fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
                         let (mut v, mut want) = start.clone();
                         for _ in 0..1 + rng.below(4) {
                             (v, want) = step(&mut rng, &v, &want);
-                            check("a random walk", &v, &want);
+                            check(&walk, &v, &want);
                             seen.push((v.clone(), want.clone()));
                         }
                     }
@@ -407,18 +414,57 @@ fn random_values_near_the_edges_hash_alike_exactly_when_equal() {
             }
         }
     }
-    // Over every pair: equal values hash alike, and the order agrees with the values.
-    for (a, wa) in &seen {
-        for (b, wb) in &seen {
-            assert_eq!(a.cmp(b), wa.cmp(wb), "{a} against {b}");
-            if a == b {
-                assert_eq!(hash_of(a), hash_of(b), "{a} against {b}");
-            }
+    // Complexity tradeoff: comparing every pair costs O(n^2) for n results; the neighbors in
+    // the order of the values, O(n log n), find every value whose results differ in equality
+    // or hash, and every pair of neighboring values out of order. The pairs drawn at random
+    // check the order between values that are not neighbors.
+    let mut by_value: Vec<&(Num, BigInt)> = seen.iter().collect();
+    by_value.sort_by(|a, b| a.1.cmp(&b.1));
+    let sample: Vec<&(Num, BigInt)> = (0..200).map(|_| &seen[rng.below(seen.len())]).collect();
+    let neighbors = by_value.windows(2).map(|w| (w[0], w[1]));
+    let sampled = sample
+        .iter()
+        .flat_map(|&a| sample.iter().map(move |&b| (a, b)));
+    for ((a, wa), (b, wb)) in neighbors.chain(sampled) {
+        assert_eq!(a.cmp(b), wa.cmp(wb), "{a} against {b}, ZED_SEED={seed}");
+        assert_eq!(b.cmp(a), wb.cmp(wa), "{b} against {a}, ZED_SEED={seed}");
+        if a == b {
+            assert_eq!(hash_of(a), hash_of(b), "{a} against {b}, ZED_SEED={seed}");
         }
     }
     let set: HashSet<Num> = seen.iter().map(|(v, _)| v.clone()).collect();
     let distinct: HashSet<BigInt> = seen.iter().map(|(_, w)| w.clone()).collect();
-    assert_eq!(set.len(), distinct.len(), "one entry per value");
+    assert_eq!(
+        set.len(),
+        distinct.len(),
+        "one entry per value, ZED_SEED={seed}"
+    );
+}
+
+/// `b ^ 200` over the odd `b` from `3 + 2 * lo` to below `3 + 2 * hi`, added in halves so
+/// that building it costs `n log n` term operations.
+fn kept_sum(lo: usize, hi: usize) -> Num {
+    if hi - lo == 1 {
+        return Num::from(3 + 2 * lo as i64).pow(200);
+    }
+    let mid = lo + (hi - lo) / 2;
+    &kept_sum(lo, mid) + &kept_sum(mid, hi)
+}
+
+/// Small instance of `bench::negating_a_kept_sum_scales_with_its_terms`: a kept sum of 16
+/// powers, built in halves so that it is a sum of sums, negates and divides by -7 as its value
+/// written out does, and both results are negative.
+#[test]
+fn a_kept_sum_of_many_powers_negates_and_divides_as_its_value() {
+    use num_integer::Integer;
+    let s = kept_sum(0, 16);
+    let x: BigInt = (0..16).map(|i| BigInt::from(3 + 2 * i).pow(200)).sum();
+    assert_eq!(s, Num::from(&x));
+    assert_eq!(-&s, Num::from(-&x));
+    assert!((-&s).signum() < 0);
+    let q = s.div_floor(&Num::from(-7));
+    assert_eq!(q, Num::from(x.div_floor(&BigInt::from(-7))));
+    assert!(q.signum() < 0);
 }
 
 mod bench;

@@ -123,4 +123,27 @@ fn equal_types_built_apart_are_the_same() {
     assert!(group(body).is_ok());
 }
 
+/// Morphism types into `int` with permission `int`, nested `d` deep, the guarantee of each level
+/// the level below and the innermost guarantee `bool`: `((bool) .. int -> int) .. int -> int` at
+/// depth 2. The bounds differ at every level and name no definition.
+fn differing_chain(d: usize) -> Expr {
+    (0..d).fold(ty(Type::bool()), |l, _| {
+        m(l, ty(Type::int()), ty(Type::int()))
+    })
+}
+
+/// A small instance of `bench::nested_bounds_scale`: bounds that differ at every level but name
+/// no definition of the group are accepted, at depth 1 to 6. Every other test with differing
+/// bounds has a recursive occurrence in them and is refused (TEST-bench-move-l0123, author
+/// P169). No guarantee here is within its permission (neither `bool` nor a function type is an
+/// `int`), so a program could not write this body without a bound error; admission asks only
+/// whether recursive occurrences in the bounds agree, and the bound itself is the checker's
+/// walk (`bound_paths.rs`).
+#[test]
+fn differing_bounds_that_name_no_definition_are_accepted() {
+    for d in 1..=6 {
+        assert!(group(differing_chain(d)).is_ok(), "depth {d}");
+    }
+}
+
 mod bench;

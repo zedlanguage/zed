@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
 fn r(i: usize) -> Expr {
@@ -353,6 +354,57 @@ fn marked_ring(n: usize) -> Group {
     Group::new(defs).unwrap()
 }
 
+/// A small instance of `bench::the_canonical_form_of_a_component_scales`: a ring of one to
+/// eight definitions, the first of which ends the list, is that many classes. Its instance has
+/// one type for each member, no two equal, and its first member holds the lists whose length is
+/// a multiple of the ring's size, as `residue` writes them in one definition. No other test
+/// makes a marked ring (TEST-bench-move-l0123, author P169).
+#[test]
+fn the_canonical_form_of_a_marked_ring_keeps_each_member_apart() {
+    for m in 1..=8 {
+        Type::forget_emptiness();
+        let types = marked_ring(m).instance(vec![]);
+        assert_eq!(types.len(), m);
+        for i in 1..m {
+            assert!(types[0] != types[i], "R0 and R{i} of {m}");
+        }
+        let lists = residue(m, 0);
+        assert!(types[0].subtype(&lists) && lists.subtype(&types[0]), "{m}");
+    }
+}
+
+/// A ring of `n` definitions `N{i} = (int) -> (N{i+1}, int)`, each a morphism type into a pair
+/// of the next and `int`.
+fn pair_ring(n: usize) -> Group {
+    let defs = (0..n)
+        .map(|i| Def {
+            name: format!("N{i}"),
+            params: vec![],
+            body: Expr::exact(
+                Expr::Type(Type::int()),
+                Expr::Tuple(vec![r((i + 1) % n), Expr::Type(Type::int())]),
+            ),
+        })
+        .collect();
+    Group::new(defs).unwrap()
+}
+
+/// A small instance of `bench::deciding_a_group_scales`: a ring of one to eight definitions,
+/// each a morphism type into a pair of the next and `int`, is inhabited in every member, by a
+/// function returning a pair that holds the next. The only other cycle through a morphism into
+/// a tuple has one member (TEST-bench-move-l0123, author P169).
+#[test]
+fn a_ring_of_morphisms_into_pairs_is_inhabited() {
+    for n in 1..=8 {
+        Type::forget_emptiness();
+        let types = pair_ring(n).instance(vec![]);
+        for (i, t) in types.iter().enumerate() {
+            assert!(!t.is_empty(), "N{i} of {n}");
+            assert_eq!(t.verdict(), Verdict::Inhabited, "N{i} of {n}");
+        }
+    }
+}
+
 /// The one type of a group of one definition, `name = body`.
 fn single(name: &str, body: Expr) -> Type {
     group_named(vec![(name, body)]).remove(0)
@@ -412,13 +464,8 @@ fn nth_from_end(n: usize) -> Type {
 }
 
 /// `n` types: the seeds below, then each a union, meet, difference, pair or morphism type of
-/// two earlier ones, picked by a fixed pseudo-random sequence from `seed`.
-fn corpus(seed: u64, n: usize) -> Vec<Type> {
-    let mut x = seed;
-    let mut next = move |n: usize| {
-        x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
-        (x >> 33) as usize % n
-    };
+/// two earlier ones, picked by `rng`.
+fn corpus(rng: &mut Rng, n: usize) -> Vec<Type> {
     let int = || Expr::Type(Type::int());
     let mut ts = vec![
         Type::int(),
@@ -438,8 +485,11 @@ fn corpus(seed: u64, n: usize) -> Vec<Type> {
         single("W", Expr::exact(r(0), int())),
     ];
     while ts.len() < n {
-        let (a, b) = (ts[next(ts.len())].clone(), ts[next(ts.len())].clone());
-        ts.push(match next(5) {
+        let (a, b) = (
+            ts[rng.below(ts.len())].clone(),
+            ts[rng.below(ts.len())].clone(),
+        );
+        ts.push(match rng.below(5) {
             0 => &a | &b,
             1 => &a & &b,
             2 => &a - &b,
@@ -450,34 +500,36 @@ fn corpus(seed: u64, n: usize) -> Vec<Type> {
     ts
 }
 
+/// The queries one run of `subtype_answers_do_not_depend_on_the_queries_before_them` asks.
+const QUERIES: usize = 200;
+
 /// No subtype answer depends on the questions asked before it (DESIGN.md sec:plan, standing
 /// rule of deterministic checking): on a corpus of 150 types with recursive lists, morphism
-/// cycles and Boolean combinations, 1500 queries `a <: b` are answered one at a time with the
-/// kept results dropped before each, in one batch keeping them, and in the batch reversed, and
-/// the three agree. A result kept that rested on an assumption, or that was read before the
-/// search finished, makes a later answer differ. One test per seed, so each runs on a thread of
-/// its own and none nears the 60 s limit. Answering each query alone is most of the work, so
-/// the slower seeds split it in `parts`: a test answers alone the queries whose index is `part`
-/// modulo `parts`, and checks them against both batches (COMPLEXITY.md K51).
-fn subtype_answers_agree(seed: u64, part: usize, parts: usize) {
+/// cycles and Boolean combinations, `QUERIES` queries `a <: b` are answered one at a time with
+/// the kept results dropped before each, in one batch keeping them, and in the batch reversed,
+/// and the three agree. A result kept that rested on an assumption, or that was read before the
+/// search finished, makes a later answer differ (COMPLEXITY.md K51).
+///
+/// It ran 1500 queries on each of six corpora of fixed seeds 1 to 6, in eleven tests (0.5 to
+/// 1.8 s each alone, the slower seeds split into parts by query index); now it runs `QUERIES`
+/// queries on one corpus, the corpus and the queries drawn from a new seed each run, printed
+/// (TEST-bench-move-l0123, author P169: random tests run fewer cases).
+/// Its time depends on the corpus: over 26 runs of 300 queries the median was 0.07 s and the
+/// slowest 1.09 s, so a run asks 200.
+#[test]
+fn subtype_answers_do_not_depend_on_the_queries_before_them() {
     // On the stack of its test thread, 2 MiB by default.
-    let ts = corpus(seed, 150);
-    let mut x = seed + 5;
-    let mut next = || {
-        x = x.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
-        (x >> 33) as usize % ts.len()
-    };
-    let qs: Vec<(usize, usize)> = (0..1500).map(|_| (next(), next())).collect();
+    let (mut rng, seed) = Rng::fresh("subtype answers alone and in batches");
+    let ts = corpus(&mut rng, 150);
+    let qs: Vec<(usize, usize)> = (0..QUERIES)
+        .map(|_| (rng.below(ts.len()), rng.below(ts.len())))
+        .collect();
     let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
-    let mine = |i: &usize| i % parts == part;
-    let alone: Vec<Option<bool>> = qs
+    let alone: Vec<bool> = qs
         .iter()
-        .enumerate()
-        .map(|(i, q)| {
-            mine(&i).then(|| {
-                Type::forget_emptiness();
-                ask(q)
-            })
+        .map(|q| {
+            Type::forget_emptiness();
+            ask(q)
         })
         .collect();
     Type::forget_emptiness();
@@ -486,74 +538,19 @@ fn subtype_answers_agree(seed: u64, part: usize, parts: usize) {
     let mut back: Vec<bool> = qs.iter().rev().map(ask).collect();
     back.reverse();
     let held = batch.iter().filter(|&&b| b).count();
-    assert!(0 < held && held < qs.len(), "seed {seed}: {held} hold");
-    for (i, &(a, b)) in qs.iter().enumerate().filter(|(i, _)| mine(i)) {
-        let alone = alone[i] == Some(true);
+    eprintln!("ZED_SEED={seed}: {held} of {} hold", qs.len());
+    assert!(0 < held && held < qs.len(), "ZED_SEED={seed}: {held} hold");
+    for (i, &(a, b)) in qs.iter().enumerate() {
         assert!(
-            alone == batch[i] && alone == back[i],
-            "seed {seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
+            alone[i] == batch[i] && alone[i] == back[i],
+            "ZED_SEED={seed}, query {i}: {} <: {}: alone {}, in the batch {}, reversed {}",
             ts[a],
             ts[b],
-            alone,
+            alone[i],
             batch[i],
             back[i]
         );
     }
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_1() {
-    subtype_answers_agree(1, 0, 1);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_2_part_0() {
-    subtype_answers_agree(2, 0, 3);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_2_part_1() {
-    subtype_answers_agree(2, 1, 3);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_2_part_2() {
-    subtype_answers_agree(2, 2, 3);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_3_part_0() {
-    subtype_answers_agree(3, 0, 3);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_3_part_1() {
-    subtype_answers_agree(3, 1, 3);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_3_part_2() {
-    subtype_answers_agree(3, 2, 3);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_4_part_0() {
-    subtype_answers_agree(4, 0, 2);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_4_part_1() {
-    subtype_answers_agree(4, 1, 2);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_5() {
-    subtype_answers_agree(5, 0, 1);
-}
-
-#[test]
-fn subtype_answers_do_not_depend_on_the_queries_before_them_seed_6() {
-    subtype_answers_agree(6, 0, 1);
 }
 
 /// A morphism cycle is inhabited, `W = (W) -> int` by a closure, except when what the cycle

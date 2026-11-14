@@ -27,7 +27,7 @@ use std::fmt;
 
 use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, pick_seeds};
 use zed_tests::scaling;
 
 // ---------------------------------------------------------------------------------------------
@@ -306,8 +306,8 @@ impl Flat {
     // Complexity tradeoff: the evaluator reads `F` at all 2^k values of `s` for a group of k
     // definitions, so the sweep builds groups of at most four (`group`); larger groups are not
     // swept. Deciding whether a boolean function given by a formula with complement is monotone
-    // is coNP-complete, so an exact answer for any k costs time exponential in k. The tests
-    // `random_groups_admitted_are_monotone_*` exercise it; COMPLEXITY.md row GROUP-admit. A
+    // is coNP-complete, so an exact answer for any k costs time exponential in k. The test
+    // `random_groups_admitted_are_monotone` exercises it; COMPLEXITY.md row GROUP-admit. A
     // complete test of large groups would need the admission check's own argument, which the
     // sweep exists to check.
     fn monotone(&self) -> Result<(), Flip> {
@@ -570,7 +570,7 @@ struct Refused {
 
 /// The sweep of the groups of `seeds`: no group fails, and at most `max_false` false rejections.
 /// The false rejections are printed by number for each arm of the check, with the smallest shrunk.
-fn sweep(name: &str, seeds: std::ops::Range<u64>, max_false: usize) {
+fn sweep(name: &str, seeds: impl IntoIterator<Item = u64>, max_false: usize) {
     let mut tally = Tally::default();
     let mut failures = Vec::new();
     // For each arm of the check, its false rejections and the smallest of them.
@@ -653,16 +653,58 @@ fn sweep(name: &str, seeds: std::ops::Range<u64>, max_false: usize) {
     );
 }
 
-// Each sweep is a piece of the seeds, sized to finish well under 60 s.
+/// The seeds the sweep draws from: the groups of `Rng::new(seed)` for each.
+const SWEPT: u64 = 50_000;
 
-#[test]
-fn random_groups_admitted_are_monotone_0() {
-    sweep("sweep0", 0..25_000, 14_200);
+/// The false rejections among the groups of all `SWEPT` seeds: 14,200 among seeds 0..25,000 and
+/// 14,263 among 25,000..50,000, the counts the two sweeps over them gave and held as their
+/// limits.
+const FALSE_IN_SWEPT: usize = 14_200 + 14_263;
+
+/// The seeds one run draws.
+const DRAWN: usize = 3_000;
+
+/// The most false rejections a draw of `drawn` of the `SWEPT` seeds may have: the number
+/// expected, `FALSE_IN_SWEPT` in proportion, and six standard deviations of the count of a draw
+/// without replacement (a hypergeometric count), which a draw exceeds with chance below 10^-8.
+/// Drawing every seed leaves no deviation, and the limit is `FALSE_IN_SWEPT` itself.
+fn false_rejection_limit(drawn: usize) -> usize {
+    let (n, k, d) = (SWEPT as f64, FALSE_IN_SWEPT as f64, drawn as f64);
+    let p = k / n;
+    let deviation = (d * p * (1.0 - p) * (n - d) / (n - 1.0)).sqrt();
+    (d * p + 6.0 * deviation).ceil() as usize
 }
 
+/// The sweep over seeds drawn from the `SWEPT`.
+///
+/// It ran every seed of 0..50,000, in two tests of 25,000 (2.2 s each alone), each held to the
+/// false rejections its seeds give; now it runs `DRAWN` seeds drawn from 0..50,000 from a new
+/// seed each run, printed, held to the count those seeds are expected to give
+/// (`false_rejection_limit`) (TEST-bench-move-l0123, author P169: random tests run fewer
+/// cases). The groups and the checks on each are as before. A rise in the rate of false
+/// rejections smaller than some 9% of it no longer fails a run, as a rise of one did.
 #[test]
-fn random_groups_admitted_are_monotone_1() {
-    sweep("sweep1", 25_000..50_000, 14_263);
+fn random_groups_admitted_are_monotone() {
+    let (mut rng, seed) = Rng::fresh("admission sweep");
+    let seeds = pick_seeds(&mut rng, "admission sweep", 0..SWEPT, DRAWN);
+    sweep(
+        &format!("sweep (ZED_SEED={seed})"),
+        seeds,
+        false_rejection_limit(DRAWN),
+    );
+}
+
+/// The limit of a draw of every seed is the count of all of them, and a draw of a part is held
+/// to its share and some deviation.
+#[test]
+fn the_limit_of_false_rejections_is_the_count_in_proportion() {
+    assert_eq!(false_rejection_limit(SWEPT as usize), FALSE_IN_SWEPT);
+    let limit = false_rejection_limit(DRAWN);
+    let expected = DRAWN * FALSE_IN_SWEPT / SWEPT as usize;
+    assert!(
+        expected < limit && limit < expected + expected / 10,
+        "{limit}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -807,6 +849,44 @@ fn wide(n: usize) -> Vec<T> {
     }
     let body = layer.pop().unwrap_or(T::Empty);
     vec![body.clone(), body.clone(), body]
+}
+
+/// A small instance of `bench::admitting_a_group_scales`: a ring of one to eight definitions,
+/// each naming the next in a tuple and in the guarantee of an exact morphism type, under a
+/// union, is accepted. No other test admits a group of two or more definitions whose cycle runs
+/// through such guarantees (TEST-bench-move-l0123, author P169).
+#[test]
+fn a_ring_group_is_accepted() {
+    for n in 1..=8 {
+        if let Err(e) = Group::new(ring(n)) {
+            panic!("a ring of {n}: {}", e.message);
+        }
+    }
+}
+
+/// A small instance of `bench::the_evaluator_scales`: the evaluator on a balanced union of one
+/// to a dozen leaves of `wide`, the only test of a union of more than two leaves, of
+/// `_ & (R2, int)` and of three definitions sharing one body (TEST-bench-move-l0123, author
+/// P169). Each group is monotone: from two leaves on the body holds a function whatever the
+/// members are, and one leaf, `(int, R0)`, is empty at every `s`. The check accepts one and two
+/// leaves and refuses three and more, a false rejection: `R2`, named under `&` in
+/// `_ & (R2, int)`, is narrowed where it is named, and `R2` names `R1`, which stands in the
+/// guarantee of `(R1) -> int`.
+#[test]
+fn the_evaluator_ends_on_a_wide_union() {
+    for n in 1..=12 {
+        let group = wide(n);
+        let flip = monotone(&group);
+        assert!(flip.is_ok(), "{n} leaves, {}: {flip:?}", show(&group));
+        match admission(&group) {
+            Admission::Accepted => assert!(n <= 2, "{n} leaves: accepted"),
+            Admission::Refused(m) => {
+                assert!(n >= 3, "{n} leaves: {m}");
+                assert_eq!(arm(&m), "narrowed where named", "{n} leaves: {m}");
+            }
+            Admission::Other(m) => panic!("{n} leaves: {m}"),
+        }
+    }
 }
 
 mod bench;

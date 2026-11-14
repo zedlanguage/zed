@@ -107,6 +107,31 @@ fn a_parameter_whose_morphism_bound_holds_is_taken() {
     }
 }
 
+/// A program whose `f` has `n` parameters, each a bound that holds in a tuple that is one arm of
+/// a union: `(int, #a .. #a | #b -> int) | int`.
+fn nested_bounds(n: usize) -> String {
+    let params: Vec<String> = (0..n)
+        .map(|i| format!("x{i}: (int, #a .. #a | #b -> int) | int"))
+        .collect();
+    format!("f({}) = 0;\nmain() = 0;\n", params.join(", "))
+}
+
+/// A small instance of `bench::the_bound_walk_scales_linearly`: one to three parameters, each a
+/// bound that holds in a tuple in a union, are checked with no error and loaded. No other test
+/// has a holding bound under a union, or more than one parameter (TEST-bench-move-l0123, author
+/// P169).
+#[test]
+fn several_parameters_with_nested_bounds_that_hold_are_taken() {
+    for n in 1..=3 {
+        let src = nested_bounds(n);
+        let (stmts, res) = zed_tests::deep::resolved(&src);
+        let info = zedc::check::walk::check(&stmts, &res);
+        assert!(info.errors.is_empty(), "{src}: {:?}", info.errors);
+        assert_eq!(through_check(&src), Vec::<String>::new(), "{src}");
+        assert!(zedc::run::load(src.as_bytes()).is_ok(), "{src}");
+    }
+}
+
 #[test]
 fn a_parameter_whose_morphism_bound_check_was_refused_says_why() {
     let src = "f(x: (int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int) = 0;\nmain() = 0;\n";

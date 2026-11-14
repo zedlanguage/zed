@@ -58,4 +58,41 @@ fn arrow_union(n: usize) -> Type {
     })
 }
 
+/// Small instance of `bench::the_text_of_a_deeply_nested_type_scales` (TEST-bench-move-l0123,
+/// author P169): a tuple of long strings nested 3 deep prints each tuple and each string in
+/// full.
+#[test]
+fn the_text_of_a_nested_type_of_long_strings_is_made() {
+    assert!(chain(2, 0).to_string().starts_with("(tuple (tuple \"sss"));
+    let text = chain(3, 0).to_string();
+    assert!(text.starts_with("(tuple (tuple (tuple \"sss"), "{text}");
+    assert!(text.len() > 1000 * 4, "{}", text.len());
+    assert_eq!(text.matches("(tuple").count(), 3, "{text}");
+}
+
+/// Small instance of `bench::a_union_of_many_tuple_types_scales` (TEST-bench-move-l0123, author
+/// P169): `is` against a union of 4 pairs elaborates alike checked or not, and the union of 4
+/// pairs and the intersection of their complements are not empty.
+#[test]
+fn a_union_of_a_few_tuple_types_elaborates_and_builds() {
+    let text = union(4);
+    let unit = checked(&text);
+    assert_eq!(unit.elab().defs, elab(&text).unwrap().defs);
+    let f = unit.elab().get("f").unwrap().to_string();
+    assert!(f.contains("is (#a0, int) | (#a1, int)"), "{f}");
+    assert!(!Type::union_all(pairs(4)).is_empty());
+    assert!(!Type::meet_all(pairs(4).iter().map(|p| !p)).is_empty());
+}
+
+/// Small instance of `bench::equal_morphism_types_built_apart_compare_in_linear_time`
+/// (TEST-bench-move-l0123, author P169): morphism types 6 deep, and unions of 6 morphism
+/// types, built apart are equal, and differ from those one level or one member short.
+#[test]
+fn equal_morphism_types_built_apart_are_equal() {
+    assert!(arrows(6) == arrows(6));
+    assert!(arrows(5) != arrows(6));
+    assert!(arrow_union(6) == arrow_union(6));
+    assert!(arrow_union(5) != arrow_union(6));
+}
+
 mod bench;

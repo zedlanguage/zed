@@ -130,12 +130,18 @@ fn a_kept_end_of_32_mib_is_refused_when_memory_is_short() {
 /// addressed, each as its written-out form is. A point's value is written three times (its
 /// two ends and its class, a modulus of 0 and the value as residue), and each ask comes while
 /// the bytes of the ends before it are held.
+///
+/// TEST-bench-move-l0123, author P169: this ran `2^(2^25)` and `2^(2^28)`, a value of 32 MiB
+/// built and written out twice, 2.2 s alone at load 38 with the child's start. It now runs
+/// `2^(2^22)` and `2^(2^25)` (512 KiB and 4 MiB) under the limit the same rule gives for the
+/// larger: two kept ends, each addressed after the ask of the one before, as before. The
+/// refusal at both 4 MiB and 32 MiB is still checked by the two tests above.
 #[test]
 fn a_kept_end_is_addressed_when_memory_is_given() {
     if !in_child("a_kept_end_is_addressed_when_memory_is_given") {
         return;
     }
-    let ks = [1u32 << 25, 1 << 28];
+    let ks = [1u32 << 22, 1 << 25];
     let want: Vec<_> = ks.iter().map(|&k| addr(&at(two_big(k)))).collect();
     // The ask for `2^k` is about `2k` bytes (a bound of two bits for each factor 2); the
     // bytes written before the last ask are two ends of `k / 8` bytes and the capacity the
@@ -160,6 +166,28 @@ fn wide(bytes: usize) -> Num {
         })
         .collect();
     Num::from(BigInt::from_bytes_le(Sign::Plus, &digits))
+}
+
+/// Small instance of `bench::addressing_a_wide_end_and_class_scales`: a dense number of 64 and
+/// of 4096 bytes is addressed as an end and as the modulus and residue of a class; its
+/// neighbor has another address, and the class written with another residue has the same.
+#[test]
+fn a_dense_wide_end_and_class_are_addressed() {
+    for bytes in [64, 4096] {
+        let v = wide(bytes);
+        assert_ne!(
+            addr(&at(v.clone())),
+            addr(&at(&v + &Num::ONE)),
+            "{bytes} bytes"
+        );
+        let m = &v + &v;
+        let r3 = &m + &v;
+        assert_eq!(
+            addr(&class(m.clone(), v.clone())),
+            addr(&class(m, r3)),
+            "v and 3v mod 2v, {bytes} bytes"
+        );
+    }
 }
 
 mod bench;

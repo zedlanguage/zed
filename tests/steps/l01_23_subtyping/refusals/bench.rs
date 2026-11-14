@@ -71,11 +71,7 @@ fn a_difference_of_forked_unions_is_refused_in_its_size() {
         "Fork, by a difference of unions",
         8,
         Refusal::Fork,
-        |n, tag| {
-            let (ins, outs): (Vec<Type>, Vec<Type>) = forked_pairs(n, tag).into_iter().unzip();
-            let union = |ts: Vec<Type>| ts.iter().fold(Type::empty(), |u, t| &u | t);
-            &union(ins) - &union(outs)
-        },
+        forked_difference_of_unions,
     );
 }
 
@@ -89,11 +85,7 @@ fn a_union_of_forked_differences_is_refused_in_its_size() {
         "Fork, by a union of differences",
         8,
         Refusal::Fork,
-        |n, tag| {
-            forked_pairs(n, tag)
-                .into_iter()
-                .fold(Type::empty(), |u, (a, b)| &u | &(&a - &b))
-        },
+        forked_union_of_differences,
     );
 }
 
@@ -110,13 +102,7 @@ fn a_pair_type_met_with_forked_differences_is_refused_in_its_size() {
         "Fork, by a pair type met with a union of differences",
         8,
         Refusal::Fork,
-        |n, tag| {
-            let l = list_named(Type::int(), tag);
-            let union = forked_pairs(n, tag)
-                .into_iter()
-                .fold(Type::empty(), |u, (a, b)| &u | &(&a - &b));
-            &Type::tuple(vec![l.clone(), l]) & &union
-        },
+        forked_differences_met_with_pairs,
     );
 }
 
@@ -205,11 +191,9 @@ fn refining_a_box_follows_no_fork_in_its_size() {
             assert!(!refined_pairs(n, false, &tag).is_empty(), "at {n}");
         });
     });
-    // At n 1, without the nonempty lists and with the end family's one place left out, the
-    // refusal names the fork refining meets, where following it named no value found.
-    Type::forget_emptiness();
-    let t = refined_pairs(1, true, "_rf1");
-    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork));
+    // The refusal at n 1 with the end family's one place left out is checked in
+    // `refining_a_box_of_pairs_is_refused_at_the_end_family_fork` of refusals.rs
+    // (TEST-bench-move-l0123, author P169).
 }
 
 #[test]
@@ -830,15 +814,9 @@ fn r9_active_groups_have_one_entry_across_simultaneous_reentry() {
                 );
             },
         );
-        for n in 1..=6 {
-            let t = r9_swapping_groups(n, false, "_r9swap_oracle");
-            // The last positive item is 1, previous items 0, and the first is 0.
-            let mut xs = vec![0; n + 1];
-            xs.push(1);
-            assert!(t.contains(&r6_colour_list(&xs)));
-            assert!(!t.contains(&r6_colour_list(&vec![0; n + 2])));
-            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
-        }
+        // The words held and not held at n 1 to 6 are checked in
+        // `chains_that_reenter_each_others_groups_are_inhabited` of refusals.rs
+        // (TEST-bench-move-l0123, author P169).
     });
 }
 
@@ -884,19 +862,9 @@ fn r9_decidable_shared_dag_scales_and_rejects_bounded_leaves() {
         scaling::check("decidability of a shared tuple DAG", 16, |n| {
             assert!((if n == 16 { &small } else { &large }).decidable());
         });
-        let bounded = || Type::exact(lit(0), Type::int());
-        for n in [0, 1, 16, 128, 1024] {
-            assert!(r9_shared_tuple_type(n, Type::bool()).decidable());
-            assert!(!r9_shared_tuple_type(n, bounded()).decidable());
-        }
-        assert!(list_named(Type::bool(), "_r9decidable_cycle").decidable());
-        assert!(!list_named(bounded(), "_r9undecidable_cycle").decidable());
-        let in_payload = |leaf: Type| {
-            Type::atom_with("r9dec", &Type::tuple(vec![r9_shared_tuple_type(64, leaf)]))
-                | Type::atom("r9other")
-        };
-        assert!(in_payload(Type::bool()).decidable());
-        assert!(!in_payload(bounded()).decidable());
+        // Bounded leaves, the cyclic list and the atom payload are checked in
+        // `shared_dags_are_decidable_unless_a_leaf_is_bounded` of refusals.rs
+        // (TEST-bench-move-l0123, author P169).
     });
 }
 
@@ -921,29 +889,9 @@ fn r10_a_boolean_list_tail_scales() {
 #[test]
 fn r10_a_wide_head_literal_is_decided_by_the_escape() {
     big(|| {
-        let big = Value::int("9223372036854775808".parse().unwrap());
-        for n in [16, 64] {
-            let t = r10_big_congruence(n, &format!("_r10big{n}"));
-            let word = |first: Value| {
-                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
-                    let h = if j == 1 {
-                        first.clone()
-                    } else {
-                        Value::Int(((4 - j % 3) % 3) as i64)
-                    };
-                    Value::atom_with("cons", vec![h, tail])
-                })
-            };
-            assert!(t.contains(&word(Value::Int(2))));
-            assert!(
-                !t.contains(&word(big.clone())),
-                "F2 must reject the wide head"
-            );
-            Type::forget_emptiness();
-            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited), "escape at {n}");
-            Type::forget_emptiness();
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-        }
+        // The witness and the escape at n 16 and 64 are checked in
+        // `a_wide_head_literal_is_decided_by_the_escape_at_small_sizes` of refusals.rs
+        // (TEST-bench-move-l0123, author P169).
         let small = r10_big_congruence(32, "_r10big_small");
         let large = r10_big_congruence(256, "_r10big_large");
         scaling::check("a wide head literal", 32, |n| {
@@ -1006,8 +954,9 @@ fn r10_shared_product_list_is_swept_and_checked_once() {
                 Verdict::Inhabited
             );
         });
-        let empty = rfx_case("chain", 3, "_r10sharedempty");
-        assert_eq!(Type::tuple(vec![empty; 16]).verdict(), Verdict::Empty);
+        // The empty case, a tuple of one empty list type 16 times, is in
+        // `a_list_type_shared_by_tuple_components_is_checked_once` of refusals.rs
+        // (TEST-bench-move-l0123, author P169).
     });
 }
 
@@ -1226,12 +1175,7 @@ fn r11_named_payload_probe() {
     big(move || {
         for n in sizes.split(',').map(|s| s.parse::<usize>().unwrap()) {
             Type::forget_emptiness();
-            let payload = (0..n).fold(Type::empty(), |p, i| {
-                &p | &Type::tuple(vec![Type::atom(&format!("r11q{i}_{n}")), lit(i as i64)])
-            });
-            let t = (0..n).fold(Type::empty(), |t, i| {
-                &t | &Type::atom_with(&format!("r11tag{i}_{n}"), &payload)
-            });
+            let t = r11_named_payloads(n, &format!("_{n}"));
             let mut v = None;
             let mut meter = scaling::Meter::new();
             let w = meter.work(|| v = Some(t.verdict()));
@@ -1243,27 +1187,11 @@ fn r11_named_payload_probe() {
 
 #[test]
 fn a_tuple_with_an_empty_component_is_empty_in_either_order() {
-    // A tuple is empty when one of its components is. The search of a verdict ends at the
-    // first fork it meets, so with the forked `fork_empty` first and an empty component after
-    // it the tuple was refused (Fork), and in the other order empty. A search that sets the
-    // fork aside and tries the later components proves it empty in both orders. Measured on
-    // r5-base e82e6cff: `(F, E)` Refused(Fork), `(E, F)` Empty.
-    let (fork, empty) = (fork_empty(), pair_meet_empty());
-    for t in [
-        Type::tuple(vec![fork.clone(), empty.clone()]),
-        Type::tuple(vec![empty.clone(), fork.clone()]),
-        Type::tuple(vec![fork.clone(), fork.clone(), empty.clone()]),
-    ] {
-        Type::forget_emptiness();
-        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
-        Type::forget_emptiness();
-        assert!(t.is_empty(), "{t}");
-    }
-    // With no empty component the fork still refuses the tuple.
-    Type::forget_emptiness();
-    let t = Type::tuple(vec![fork.clone(), Type::int()]);
-    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "{t}");
-    // n forked components before the empty one: the second search sets each fork aside once.
+    // The fixed cases of a fork beside an empty component, in either order, are in
+    // `a_tuple_with_an_empty_component_is_empty_beside_a_fork` of refusals.rs, and small chains in
+    // `a_few_distinct_forks_beside_an_empty_component_are_empty` (TEST-bench-move-l0123, author
+    // P169). n forked components before the empty one: the second search sets each fork aside
+    // once.
     big(|| {
         scaling::check("Empty, n forked components and an empty one", 8, |n| {
             Type::forget_emptiness();

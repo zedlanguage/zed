@@ -407,4 +407,255 @@ fn equal_over_a_wide_base((x, y): &(zedc::store::interval::Num, zedc::store::int
     assert_eq!(x, y);
 }
 
+/// Small instance of `bench::a_chain_of_operators_keeps_to_its_operands_pieces`: a chain of six
+/// `+` of `{0, 10}` holds every sum of members in two pieces, and a chain of one to four `+`
+/// over operands of eight sparse pieces keeps to eight pieces at every step (`sum_chain`
+/// asserts it at each step).
+#[test]
+fn a_short_chain_of_sums_keeps_its_members_in_few_pieces() {
+    let a = IntervalSet::from_pieces(vec![(End::of(0), End::of(0)), (End::of(10), End::of(10))]);
+    let mut acc = a.clone();
+    for _ in 0..6 {
+        acc = revision::forward(&Op::Add, &acc, &a);
+    }
+    for v in (0..=70).step_by(10) {
+        assert!(acc.contains(v), "{acc} has {v}");
+    }
+    assert!(acc.len() <= 2, "{acc}");
+    for k in 1..=4 {
+        assert!(sum_chain(k).len() <= 8, "{k}");
+    }
+}
+
+/// Small instance of `bench::the_interval_operations_scale`: on an open set and a closed set
+/// of 1, 2, 5 and 12 pieces, the negation and the join agree with membership, the sign parts
+/// number at least the pieces, and the forward `*` and `/` by the negated closed set hold
+/// every product and quotient of members in a window.
+#[test]
+fn products_quotients_sign_parts_and_joins_of_open_sets_hold_their_members() {
+    let (mut rng, seed) = Rng::fresh("open and closed sets");
+    for n in [1usize, 2, 5, 12] {
+        let (a, b) = (pieces(&mut rng, n, true), pieces(&mut rng, n, false));
+        let nb = b.neg();
+        let joined = a.join(&b);
+        let w = 14 * n as i64 + 10;
+        for v in -w..=w {
+            assert_eq!(
+                nb.contains(v),
+                b.contains(-v),
+                "-({b}) at {v}, ZED_SEED={seed}"
+            );
+            assert_eq!(
+                joined.contains(v),
+                a.contains(v) || b.contains(v),
+                "{a} join {b} at {v}, ZED_SEED={seed}"
+            );
+        }
+        assert!(a.sign_parts().len() >= n, "{a}, ZED_SEED={seed}");
+        for op in [Op::Mul, Op::Div] {
+            let z = revision::forward(&op, &a, &nb);
+            for x in (-w..=w).filter(|&x| a.contains(x)) {
+                for y in (-w..=w).filter(|&y| nb.contains(y)) {
+                    if let Some(r) = apply(&op, x, y) {
+                        assert!(z.contains(r), "{op:?} {a} {nb}: {x}, {y}, ZED_SEED={seed}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Small instance of `bench::interval_set_operations_scale`: the meet, the complement within a
+/// set and the subset test of one-piece sets against a set of 1 to 40 pieces agree with
+/// membership; a join with a member gives the set back; a set grown by one-point joins has
+/// those points, nothing between them, and their bounds.
+#[test]
+fn one_piece_updates_and_queries_agree_with_membership() {
+    let (mut rng, seed) = Rng::fresh("one-piece updates");
+    for n in [1usize, 2, 5, 40] {
+        let b = pieces(&mut rng, n, false);
+        let mut grown = IntervalSet::empty();
+        let w = 15 * n as i64 + 10;
+        for i in 0..n as i64 {
+            let v = 7 * i;
+            let one = IntervalSet::of(v, v + 3);
+            let meet = b.meet(&one);
+            let rest = one.complement_in(&b);
+            for x in -2..=w {
+                let (inb, inone) = (b.contains(x), one.contains(x));
+                assert_eq!(
+                    meet.contains(x),
+                    inb && inone,
+                    "{b} meet {one} at {x}, ZED_SEED={seed}"
+                );
+                assert_eq!(
+                    rest.contains(x),
+                    inb && !inone,
+                    "{b} minus {one} at {x}, ZED_SEED={seed}"
+                );
+            }
+            let inside = (v..=v + 3).all(|x| b.contains(x));
+            assert_eq!(one.is_subset(&b), inside, "{one} in {b}, ZED_SEED={seed}");
+            assert!(
+                b.is_subset(&b.join(&one)),
+                "{b} join {one}, ZED_SEED={seed}"
+            );
+            if b.contains(v) {
+                assert_eq!(
+                    b.join(&IntervalSet::single(v)),
+                    b,
+                    "{b} join {v}, ZED_SEED={seed}"
+                );
+            }
+            grown = grown.join(&IntervalSet::single(3 * v));
+        }
+        for i in 0..n as i64 {
+            assert!(grown.contains(21 * i), "{grown} has {}", 21 * i);
+            assert!(!grown.contains(21 * i + 1), "{grown} lacks {}", 21 * i + 1);
+        }
+        assert_eq!(
+            grown.bounds().map(|(lo, hi)| (lo.clone(), hi.clone())),
+            Some((End::of(0), End::of(21 * (n as i64 - 1)))),
+            "{grown}"
+        );
+    }
+}
+
+/// Small instance of `bench::bounds_on_many_symbols_scale`: the join of two sets of `k` bounds
+/// on `k` symbols, one shifted by 1, keeps a lower and an upper bound for each symbol and holds
+/// both sides; their meet lies under both.
+#[test]
+fn a_join_of_bounds_on_distinct_symbols_keeps_one_per_symbol() {
+    use zedc::store::affine::Side;
+    use zedc::store::lattice::Lattice;
+    for k in 1..=4 {
+        let (a, b) = (many(k, 0), many(k, 1));
+        let j = a.join(&b);
+        assert_eq!(j.bounds(Side::Lower).len(), k, "lower, {k}");
+        assert_eq!(j.bounds(Side::Upper).len(), k, "upper, {k}");
+        assert!(a.leq(&j) && b.leq(&j), "{k}");
+        let m = a.meet(&b);
+        assert!(m.leq(&a) && m.leq(&b), "{k}");
+    }
+}
+
+/// Small instance of `bench::ends_in_one_word_scale_linearly` and
+/// `bench::ends_of_2_to_the_200_scale_linearly`: with ends at 0 and near 2^200, the hull of
+/// `n` lower bounds and one upper bound is exact, the set moved by 3 is the shifted set, and
+/// the set times -2, negated, meets the shifted set by membership near 0 and not at all near
+/// 2^200.
+#[test]
+fn ends_near_0_and_2_to_the_200_move_scale_and_project_exactly() {
+    use zedc::store::interval::Num;
+    use zedc::store::presburger::{Atom, project};
+    for base in [
+        num_bigint::BigInt::from(0),
+        num_bigint::BigInt::from(1) << 200,
+    ] {
+        for n in [1usize, 3] {
+            let w = ends_work(n, &base);
+            let hull = project(&w.hull, &Atom::Sym("x".into())).unwrap();
+            let lo = Num::from(&base + 3 * (n - 1));
+            let hi = Num::from(&base + 3 * n + 5);
+            assert_eq!(hull, IntervalSet::range(Fin(lo), Fin(hi)), "{base} {n}");
+            let moved = revision::forward(&Op::Add, &w.set, &IntervalSet::single(3));
+            assert_eq!(moved, w.shifted, "{base} {n}");
+            assert_eq!(moved.join(&w.shifted), w.shifted, "{base} {n}");
+            let scaled = revision::forward(&Op::Mul, &w.set, &IntervalSet::single(-2)).neg();
+            let met = moved.join(&w.shifted).meet(&scaled);
+            if base == num_bigint::BigInt::from(0) {
+                for v in -5..=20 * n as i64 + 10 {
+                    assert_eq!(
+                        met.contains(v),
+                        w.shifted.contains(v) && scaled.contains(v),
+                        "{n} at {v}"
+                    );
+                }
+                assert!(!met.is_empty(), "{n}");
+            } else {
+                assert!(met.is_empty(), "{n}");
+            }
+        }
+    }
+}
+
+/// Small instance of `bench::kept_ends_scale_linearly`: on 1 and 3 pieces with kept ends past
+/// 2^(10^8), the set moved by 3 is the shifted set, and the set times -2, negated, keeps its
+/// pieces apart and meets nothing of the shifted set.
+#[test]
+fn kept_ends_past_2_to_the_10_to_the_8_move_and_scale_exactly() {
+    for n in [1usize, 3] {
+        let (set, shifted) = kept_ends(n);
+        let moved = revision::forward(&Op::Add, &set, &IntervalSet::single(3));
+        assert_eq!(moved.meet(&shifted), shifted, "{n}");
+        assert_eq!(moved, shifted, "{n}");
+        let scaled = revision::forward(&Op::Mul, &set, &IntervalSet::single(-2)).neg();
+        assert_eq!(scaled.len(), n, "{n}");
+        assert!(moved.join(&shifted).meet(&scaled).is_empty(), "{n}");
+    }
+}
+
+/// Small instance of `bench::kept_arithmetic_scales_with_the_bits_of_the_exponent`: the kept
+/// arithmetic and the cube root of `2^k` for `k` of both residues 1 and 2 modulo 3, at about
+/// 300 and 10^6 bits.
+#[test]
+fn kept_arithmetic_holds_for_both_irrational_cube_roots() {
+    for k in [301, 302, 1_000_001, 1_000_003] {
+        kept_arithmetic(k);
+    }
+}
+
+/// Small instance of `bench::the_cube_of_a_wide_end_scales_with_its_bits`: at 40,000 bits,
+/// where indices above 511 have roots wider than a word, and at 131,072 bits, where the
+/// remainder tree's first division is past `DIV_LEAF`, the cube of `2^n + 3` is the cube
+/// written out and the image of `x^3` up to the end ends at it.
+#[test]
+fn the_cube_of_a_wide_end_is_its_cube_written_out() {
+    use zedc::store::interval::Num;
+    for n in [40_000, 131_072] {
+        let base = (num_bigint::BigInt::from(1) << n) + 3;
+        cube_of_a_wide_end(&base);
+        assert_eq!(
+            Num::from(base.clone()).pow(3),
+            Num::from(base.pow(3)),
+            "{n}"
+        );
+    }
+}
+
+/// Small instance of `bench::equality_over_a_wide_base_scales_with_its_bits`: a power of
+/// `2^n 3` written out equals the product of the powers of its factors, at widths on either
+/// side of a word and past 64 words, and differs from a value of the same bits with another
+/// split of the factors.
+#[test]
+fn a_power_of_a_wide_even_base_equals_the_powers_of_its_factors() {
+    use zedc::store::interval::Num;
+    for n in [1u32, 63, 64, 65, 200, 4096] {
+        let wide = Num::from((num_bigint::BigInt::from(1) << n) * 3);
+        let x = wide.pow(1000);
+        let want = &Num::from(2).pow(1000 * n) * &Num::from(3).pow(1000);
+        equal_over_a_wide_base(&(x.clone(), want));
+        let off = &Num::from(2).pow(1000 * n + 1) * &Num::from(3).pow(999);
+        assert_ne!(x, off, "{n}");
+    }
+}
+
+/// Small instance of `bench::equality_over_a_wide_odd_base_scales_with_its_bits`: a power of
+/// `3^n 2` written out equals the product of the powers of its factors, below and past the
+/// width where the division that takes out the factor 3 passes `DIV_LEAF`, and differs from a
+/// value with another split of the factors.
+#[test]
+fn a_power_of_a_wide_odd_base_equals_the_powers_of_its_factors() {
+    use zedc::store::interval::Num;
+    for n in [1u32, 41, 300, 4000] {
+        let wide = Num::from(num_bigint::BigInt::from(3).pow(n) * 2);
+        let x = wide.pow(1000);
+        let three = |k: u64| Num::from(3).pow_by(&Num::from(k)).expect("a power");
+        let want = &three(1000 * u64::from(n)) * &Num::from(2).pow(1000);
+        equal_over_a_wide_base(&(x.clone(), want));
+        let off = &three(1000 * u64::from(n) - 1) * &Num::from(2).pow(1001);
+        assert_ne!(x, off, "{n}");
+    }
+}
+
 mod bench;

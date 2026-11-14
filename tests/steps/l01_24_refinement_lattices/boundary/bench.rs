@@ -8,16 +8,7 @@ use super::*;
 /// terms, not their product or the digits of the value.
 #[test]
 fn negating_a_kept_sum_scales_with_its_terms() {
-    /// `b ^ 200` over the odd `b` from `3 + 2 * lo` to below `3 + 2 * hi`, added in halves so
-    /// that building it costs `n log n` term operations.
-    fn sum(lo: usize, hi: usize) -> Num {
-        if hi - lo == 1 {
-            return Num::from(3 + 2 * lo as i64).pow(200);
-        }
-        let mid = lo + (hi - lo) / 2;
-        &sum(lo, mid) + &sum(mid, hi)
-    }
-    let sums = [sum(0, 200), sum(0, 1600)];
+    let sums = [kept_sum(0, 200), kept_sum(0, 1600)];
     scaling::check("negating a kept sum of n powers", 200, |n| {
         let s = &sums[usize::from(n != 200)];
         let neg = -s;

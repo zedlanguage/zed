@@ -35,58 +35,38 @@ fn the_function_part_of_a_kind_wide_part_is_found_in_linear_time() {
     // with `(..)` in place of `#a` in the last, which holds a function; and a pair nested n
     // deep whose two components are one node, which has 2^n paths and n nodes.
     let int = Type::int;
-    let lit = |i: usize| Type::lit(&zed_kernel::value::Value::Int(i as i64)).expect("an int");
-    let rows = |n: usize, last: Type| {
-        let row = |i: usize, c: Type| Type::tuple(vec![int(), Type::tuple(vec![lit(i), c])]);
-        let mut ts: Vec<Type> = (0..n)
-            .map(|i| {
-                &row(i, Type::atom("a"))
-                    - &Type::tuple(vec![lit(i), Type::tuple(vec![lit(i), Type::atom("a")])])
-            })
-            .collect();
-        ts.push(row(n, last));
-        Ty::set(Type::union_all(ts))
-    };
     let tuples = Type::universe(Universe::Tuple);
     scaling::check("the function part of n tuple types", 256, |n| {
-        assert_eq!(rows(n, Type::atom("a")).held_wide(), None);
-        assert_eq!(rows(n, tuples.clone()).held_wide(), Some(tuples.clone()));
-    });
-    let shared = |n: usize, last: Type| {
-        let t = (0..n).fold(last, |t, _| Type::tuple(vec![t.clone(), t]));
-        Ty::set(t)
-    };
-    scaling::check("the function part of a pair nested n deep", 256, |n| {
-        assert_eq!(shared(n, int()).held_wide(), None);
+        assert_eq!(wide_rows(n, Type::atom("a")).held_wide(), None);
         assert_eq!(
-            shared(n, &int() | &tuples).held_wide(),
+            wide_rows(n, tuples.clone()).held_wide(),
+            Some(tuples.clone())
+        );
+    });
+    scaling::check("the function part of a pair nested n deep", 256, |n| {
+        assert_eq!(pair_nested(n, int()).held_wide(), None);
+        assert_eq!(
+            pair_nested(n, &int() | &tuples).held_wide(),
             Some(tuples.clone())
         );
     });
     // `((..), int)` taken away from `(..)` n times, met with `(int, int | #a)`, which holds no
     // function, and with `(int | (..), int)`, which holds one when n is even and the tuple type
     // is kept.
-    let wide_int = Type::tuple(vec![tuples.clone(), int()]);
-    let nested = |n: usize| (0..n).fold(wide_int.clone(), |t, _| &tuples - &t);
     let shape = Type::tuple(vec![int(), &int() | &Type::atom("a")]);
     let kept = Type::tuple(vec![&int() | &tuples, int()]);
     scaling::check(
         "the function part of a tuple type taken away n times",
         256,
         |n| {
-            assert_eq!(Ty::set(&shape & &nested(n)).held_wide(), None);
+            assert_eq!(Ty::set(&shape & &taken_away(n)).held_wide(), None);
             let want = (n % 2 == 0).then(|| tuples.clone());
-            assert_eq!(Ty::set(&kept & &nested(n)).held_wide(), want);
+            assert_eq!(Ty::set(&kept & &taken_away(n)).held_wide(), want);
         },
     );
     // The exclusive or of n tuple types `(i, int)`, which hold data, and of the same with a
     // last `(n, (..))`, which holds a function: an expression each of whose nodes a path to
     // `true` reaches both kept and taken away, so 2^n paths and n nodes.
-    let parity = |n: usize, last: Type| {
-        let rows = (0..n).map(|i| Type::tuple(vec![lit(i), int()]));
-        let rows = rows.chain([Type::tuple(vec![lit(n), last])]);
-        Ty::set(rows.fold(Type::empty(), |p, r| &(&p - &r) | &(&r - &p)))
-    };
     scaling::check(
         "the function part of the exclusive or of n tuple types",
         256,
@@ -398,35 +378,7 @@ fn contains_of_tuples_of_many_patterns_costs_the_patterns() {
     // product of the tuples and the values; whether a tuple holds a value is the orthogonal
     // vectors problem, which no algorithm decides faster unless the strong exponential time
     // hypothesis fails (the comment at `Holders` in `zedc_types::ty`).
-    use zed_kernel::value::Value;
-    let inputs = scaling::inputs(128, |n| {
-        let width = 2 * n.ilog2() as usize;
-        // A different arrangement for each `i`, never all `int`, which would hold every value.
-        let bits =
-            |i: usize| ((i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - width)) | 1;
-        // The tuple `i`: the point 0 where `bits(i)` has a 1, `int` elsewhere.
-        let rows: Vec<Ty> = (0..n)
-            .map(|i| {
-                Ty::tuple(
-                    (0..width)
-                        .map(|j| match bits(i) >> j & 1 {
-                            1 => int(0),
-                            _ => ty("int"),
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
-        // The value `i`: 0 where `bits(i)` has a 1, 1 elsewhere, held by the tuple `i` and by
-        // each tuple whose points are among those places, which few are; so the tuples before
-        // the `i`th are looked through, group by group, for most values.
-        let value = |i: usize| {
-            tv((0..width)
-                .map(|j| Value::Int(i64::from(bits(i) >> j & 1 == 0)))
-                .collect())
-        };
-        (shared(&Ty::union_all(&rows), n), singles((0..n).map(value)))
-    });
+    let inputs = scaling::inputs(128, arrangements);
     scaling::check_order(
         "n tuple values in n tuples of n arrangements",
         128,
@@ -492,17 +444,7 @@ fn a_refused_bucket_of_tuples_of_many_functions_prints_in_linear_time() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     // Tuples of the bucket grown to `n` functions: each is put back once for each text that
     // prints it, so the message grows with `n`.
-    let inputs = scaling::inputs(64, |n| {
-        let hs = ", (y: int) -> int".repeat(n);
-        let shapes = format!(
-            "((int, bool{hs}) | (int, bool, bool{hs}),) | ((int, U{hs}) | (int, U, U{hs}),)"
-        );
-        let src = format!(
-            "p(f: (x: ((int, int{hs}),) | ((int, int, int{hs}),)) -> int) = 0;\n\
-             q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
-        );
-        (src, format!("one of the shapes {shapes}, which"))
-    });
+    let inputs = scaling::inputs(64, bucket_of_functions);
     scaling::check("a refused bucket of tuples of n functions", 64, |n| {
         let (src, shapes) = &inputs[&n];
         let errors = type_errors(src);
@@ -523,28 +465,11 @@ fn function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_
     // and then gives them new names. The type fits at every depth, as it does without the
     // clash. Eight variables a level make a search of the names kept, instead of their count,
     // cost the square of the depth times 64.
-    let nest = |n: usize, from: usize| {
-        (0..=n).fold(String::new(), |t, k| {
-            let vs: Vec<String> = (0..8).map(|j| format!("A{}_{j}", k + from)).collect();
-            let params = vs.iter().enumerate().map(|(j, v)| format!("y{j}: {v}"));
-            let bounds = vs.iter().map(|v| format!("{v} in int"));
-            let params: Vec<String> = match k {
-                0 => params.collect(),
-                _ => std::iter::once(format!("h: {t}")).chain(params).collect(),
-            };
-            format!(
-                "({}) -> {} for {}",
-                params.join(", "),
-                vs[0],
-                bounds.collect::<Vec<_>>().join(", ")
-            )
-        })
-    };
     let inputs = scaling::inputs(256, |n| {
         format!(
             "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
-            nest(n, 1),
-            nest(n, 0)
+            nested_functions(n, 1),
+            nested_functions(n, 0)
         )
     });
     scaling::check(

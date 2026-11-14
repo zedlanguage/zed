@@ -1228,12 +1228,15 @@ fn tuple_families(n: usize) -> Vec<(&'static str, Ty, Ty, usize, usize)> {
     let f = ty("(int) -> int");
     vec![
         // Points: `(i, i)` without and meet `(2i, 2i)`, decided by the kernel.
+        // The even `i` below `n` are met, `n.div_ceil(2)` of them, and the odd ones left
+        // (TEST-bench-move-l0123: the meet was `n / 2`, which the benchmark sizes, all even,
+        // did not tell apart; the small test at odd `n` does).
         (
             "points",
             rows(&|i| pair(int(i), int(i))),
             rows(&|i| pair(int(2 * i), int(2 * i))),
             n / 2,
-            n / 2,
+            n.div_ceil(2),
         ),
         // A function at a place: decided on the normal forms.
         (
@@ -1241,7 +1244,7 @@ fn tuple_families(n: usize) -> Vec<(&'static str, Ty, Ty, usize, usize)> {
             rows(&|i| pair(f.clone(), int(i))),
             rows(&|i| pair(f.clone(), int(2 * i))),
             n / 2,
-            n / 2,
+            n.div_ceil(2),
         ),
         // A variable on the expected side, which `String` would bind: every tuple is kept,
         // and no tuple meets.
@@ -2032,6 +2035,440 @@ fn an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_
              wrong.{clause}"
         )]
     );
+}
+
+/// The int literal `i` as a kernel type.
+fn klit(i: usize) -> Type {
+    Type::lit(&zed_kernel::value::Value::Int(i as i64)).expect("an int")
+}
+
+/// `n` tuple types `(int, (i, #a))` less `(i, (i, #a))`, which hold data, and a last
+/// `(int, (n, last))`: the input of `held_wide` that walks a union of rows.
+fn wide_rows(n: usize, last: Type) -> Ty {
+    let row = |i: usize, c: Type| Type::tuple(vec![Type::int(), Type::tuple(vec![klit(i), c])]);
+    let mut ts: Vec<Type> = (0..n)
+        .map(|i| {
+            &row(i, Type::atom("a"))
+                - &Type::tuple(vec![klit(i), Type::tuple(vec![klit(i), Type::atom("a")])])
+        })
+        .collect();
+    ts.push(row(n, last));
+    Ty::set(Type::union_all(ts))
+}
+
+/// A pair nested `n` deep whose two components are one node, on `last`: `2^n` paths and `n`
+/// nodes.
+fn pair_nested(n: usize, last: Type) -> Ty {
+    Ty::set((0..n).fold(last, |t, _| Type::tuple(vec![t.clone(), t])))
+}
+
+/// `((..), int)` taken away from `(..)` `n` times.
+fn taken_away(n: usize) -> Type {
+    let tuples = Type::universe(Universe::Tuple);
+    let wide_int = Type::tuple(vec![tuples.clone(), Type::int()]);
+    (0..n).fold(wide_int, |t, _| &tuples - &t)
+}
+
+/// The exclusive or of `n` tuple types `(i, int)` and a last `(n, last)`: each node reached by
+/// a path to `true` both kept and taken away, so `2^n` paths and `n` nodes.
+fn parity(n: usize, last: Type) -> Ty {
+    let rows = (0..n).map(|i| Type::tuple(vec![klit(i), Type::int()]));
+    let rows = rows.chain([Type::tuple(vec![klit(n), last])]);
+    Ty::set(rows.fold(Type::empty(), |p, r| &(&p - &r) | &(&r - &p)))
+}
+
+/// `n` tuples of `2·log2 n` components (`n` at least 2), the tuple `i` the point 0 where a
+/// different arrangement `bits(i)` has a 1 and `int` elsewhere, and the `n` values `i`, 0 where
+/// `bits(i)` has a 1 and 1 elsewhere, each held by the tuple `i` and by each tuple whose points
+/// are among those places, which few are.
+fn arrangements(n: usize) -> (Ty, zed_kernel::value::Value) {
+    use zed_kernel::value::Value;
+    let width = 2 * n.ilog2() as usize;
+    // A different arrangement for each `i`, never all `int`, which would hold every value.
+    let bits = |i: usize| ((i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - width)) | 1;
+    // The tuple `i`: the point 0 where `bits(i)` has a 1, `int` elsewhere.
+    let rows: Vec<Ty> = (0..n)
+        .map(|i| {
+            Ty::tuple(
+                (0..width)
+                    .map(|j| match bits(i) >> j & 1 {
+                        1 => int(0),
+                        _ => ty("int"),
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    // The value `i`: 0 where `bits(i)` has a 1, 1 elsewhere, held by the tuple `i` and by
+    // each tuple whose points are among those places, which few are; so the tuples before
+    // the `i`th are looked through, group by group, for most values.
+    let value = |i: usize| {
+        tv((0..width)
+            .map(|j| Value::Int(i64::from(bits(i) >> j & 1 == 0)))
+            .collect())
+    };
+    (shared(&Ty::union_all(&rows), n), singles((0..n).map(value)))
+}
+
+/// A program whose call is refused on a bucket of two tuple shapes, each tuple ending in `n`
+/// functions `(y: int) -> int`, and the text of the bucket its error names.
+fn bucket_of_functions(n: usize) -> (String, String) {
+    let hs = ", (y: int) -> int".repeat(n);
+    let shapes =
+        format!("((int, bool{hs}) | (int, bool, bool{hs}),) | ((int, U{hs}) | (int, U, U{hs}),)");
+    let src = format!(
+        "p(f: (x: ((int, int{hs}),) | ((int, int, int{hs}),)) -> int) = 0;\n\
+         q(g: (x: {shapes}) -> int for U in int) = p(f: g);\n"
+    );
+    (src, format!("one of the shapes {shapes}, which"))
+}
+
+/// A function type nested `n + 1` levels deep, level `k` from the inside binding the eight
+/// variables `A{k + from}_0` to `A{k + from}_7`, each held by a parameter, and holding the level
+/// inside it as its first parameter.
+fn nested_functions(n: usize, from: usize) -> String {
+    (0..=n).fold(String::new(), |t, k| {
+        let vs: Vec<String> = (0..8).map(|j| format!("A{}_{j}", k + from)).collect();
+        let params = vs.iter().enumerate().map(|(j, v)| format!("y{j}: {v}"));
+        let bounds = vs.iter().map(|v| format!("{v} in int"));
+        let params: Vec<String> = match k {
+            0 => params.collect(),
+            _ => std::iter::once(format!("h: {t}")).chain(params).collect(),
+        };
+        format!(
+            "({}) -> {} for {}",
+            params.join(", "),
+            vs[0],
+            bounds.collect::<Vec<_>>().join(", ")
+        )
+    })
+}
+
+/// Small instance of `bench::a_union_of_kind_wide_and_exact_members_scales`
+/// (TEST-bench-move-l0123, author P169): unions of 1 to 12 members, kind-wide differences and
+/// exact members in turn, print exactly and read back as a subtype of the union.
+#[test]
+fn a_union_of_kind_wide_and_exact_members_prints_and_reads_back() {
+    for n in 1..=12 {
+        let t = mixed(n);
+        let s = t.surface();
+        assert!(s.exact, "{n}: {s}");
+        let back = ty(&s.to_string());
+        assert!(back.subtype(&Ty::set(t)), "{n}: {s}");
+    }
+}
+
+/// Small instance of `bench::narrowing_tuple_shapes_by_a_kind_wide_type_scales`
+/// (TEST-bench-move-l0123, author P169): 1 to 8 shapes `(i, i)` narrowed by `(..) \ (0, 0)`:
+/// `is` keeps every shape but `(0, 0)`, and `is not` keeps `(0, 0)` alone.
+#[test]
+fn narrowing_tuple_shapes_by_a_kind_wide_type_keeps_the_shapes_on_each_side() {
+    for n in 1..=8 {
+        let (t, w) = shapes(n);
+        assert_eq!(t.meet(&w).tuples.len(), n - 1, "{n}");
+        assert_eq!(t.diff(&w).tuples.len(), 1, "{n}");
+    }
+}
+
+/// Small instance of `bench::the_function_part_of_a_kind_wide_part_is_found_in_linear_time`
+/// (TEST-bench-move-l0123, author P169): its four families of tuple types at sizes 1 to 5,
+/// each with and without a `(..)` that may hold a function.
+#[test]
+fn the_function_part_of_a_kind_wide_part_is_found() {
+    let int = Type::int;
+    let tuples = Type::universe(Universe::Tuple);
+    let shape = Type::tuple(vec![int(), &int() | &Type::atom("a")]);
+    let kept = Type::tuple(vec![&int() | &tuples, int()]);
+    for n in 1..=5 {
+        assert_eq!(wide_rows(n, Type::atom("a")).held_wide(), None, "{n}");
+        assert_eq!(
+            wide_rows(n, tuples.clone()).held_wide(),
+            Some(tuples.clone()),
+            "{n}"
+        );
+        assert_eq!(pair_nested(n, int()).held_wide(), None, "{n}");
+        assert_eq!(
+            pair_nested(n, &int() | &tuples).held_wide(),
+            Some(tuples.clone()),
+            "{n}"
+        );
+        assert_eq!(Ty::set(&shape & &taken_away(n)).held_wide(), None, "{n}");
+        // At even `n` the tuple type is kept and holds a function, as the benchmark checks at
+        // its sizes, all even. At odd `n` the meet is `(int, int)`, which holds none, but
+        // `function_part` walks `(int | (..), int)`, a tuple type a path to `true` takes, and
+        // `held_wide` gives `(..)`, so the checker refuses `String(p)` on it: the case
+        // `Type::function_part` gives up on (COMPLEXITY.md K103, coNP-hard in general), not
+        // checked here.
+        if n % 2 == 0 {
+            assert_eq!(
+                Ty::set(&kept & &taken_away(n)).held_wide(),
+                Some(tuples.clone()),
+                "{n}"
+            );
+        }
+        assert_eq!(parity(n, int()).held_wide(), None, "{n}");
+        assert_eq!(
+            parity(n, tuples.clone()).held_wide(),
+            Some(tuples.clone()),
+            "{n}"
+        );
+    }
+}
+
+/// Small instance of `bench::payloads_that_hold_functions_are_compared_in_the_size_of_the_union`
+/// (TEST-bench-move-l0123, author P169): 1 to 6 payloads that hold functions, of several atoms
+/// and of one atom in the other order, in their wider type and not in a type whose functions
+/// return another result.
+#[test]
+fn payloads_that_hold_functions_are_compared_payload_by_payload() {
+    let union = |n: usize, f: &dyn Fn(usize) -> String| {
+        let parts: Vec<String> = (0..n).map(|i| format!("#a{i}({})", f(i))).collect();
+        ty(&parts.join(" | "))
+    };
+    let one = |n: usize, order: &dyn Fn(usize) -> usize, r: &str| {
+        let parts: Vec<String> = (0..n)
+            .map(|i| format!("#a((int) -> {r}, {})", order(i)))
+            .collect();
+        ty(&parts.join(" | "))
+    };
+    for n in 1..=6 {
+        let small = union(n, &|i| format!("(int) -> #r{i}, {i}"));
+        let wide = union(n, &|i| format!("(int) -> #r{i} | #s, int"));
+        assert!(small.subtype(&wide), "{n}");
+        assert!(
+            !small.subtype(&union(n, &|i| format!("(int) -> #s, {i}"))),
+            "{n}"
+        );
+        let small = one(n, &|i| i, "int");
+        assert!(small.subtype(&one(n, &|i| n - 1 - i, "int")), "{n}");
+        assert!(!small.subtype(&one(n, &|i| n - 1 - i, "String")), "{n}");
+    }
+}
+
+/// Small instance of `bench::payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_of_the_union`
+/// (TEST-bench-move-l0123, author P169): 1 to 6 payloads with fields, one of them a function,
+/// in the payload with the wider field and not in the one whose function returns `String`.
+#[test]
+fn payloads_with_fields_that_hold_functions_are_compared_payload_by_payload() {
+    let whole = ty("#a(x: int, f: (int) -> int)");
+    let not = ty("#a(x: int, f: (int) -> String)");
+    for n in 1..=6 {
+        let fields: Vec<String> = (0..n)
+            .map(|i| format!("#a(x: {i}, f: (int) -> int)"))
+            .collect();
+        let fields = ty(&fields.join(" | "));
+        assert!(fields.subtype(&whole), "{n}");
+        assert!(!fields.subtype(&not), "{n}");
+    }
+}
+
+/// Small instance of `bench::payloads_with_a_variable_are_searched_by_their_keys`
+/// (TEST-bench-move-l0123, author P169): 1 to 6 payloads `#a(String, i)` in the shapes
+/// `#a(T, i)` listed in the other order bind `T` to `String`, and one payload more is not held.
+#[test]
+fn payloads_with_a_variable_are_found_by_their_keys_in_any_order() {
+    for n in 1..=6 {
+        let l = with_payloads("a", (0..n).map(|i| vec![ty("String"), int(i)]).collect());
+        let r = with_payloads("a", (0..n).rev().map(|i| vec![var("T"), int(i)]).collect());
+        let wrong = with_payloads("a", (0..=n).map(|i| vec![ty("String"), int(i)]).collect());
+        let want = Some(vec![("T".into(), "String".into())]);
+        assert_eq!(bound(&l, &r), want, "{n}");
+        assert_eq!(bound(&wrong, &r), None, "{n}");
+        assert_eq!(wrong.refused(&r), "", "{n}");
+    }
+}
+
+/// Small instance of `bench::tuples_with_a_variable_are_searched_by_their_keys`
+/// (TEST-bench-move-l0123, author P169): 1 to 6 tuples `(String, i)` in the tuples `(T, i)`
+/// listed in the other order bind `T` to `String`.
+#[test]
+fn tuples_with_a_variable_are_found_by_their_keys_in_any_order() {
+    for n in 1..=6 {
+        let l: Vec<Ty> = (0..n)
+            .map(|i| Ty::tuple(vec![ty("String"), int(i)]))
+            .collect();
+        let r: Vec<Ty> = (0..n)
+            .rev()
+            .map(|i| Ty::tuple(vec![var("T"), int(i)]))
+            .collect();
+        assert_eq!(
+            bound(&Ty::union_all(&l), &Ty::union_all(&r)),
+            Some(vec![("T".into(), "String".into())]),
+            "{n}"
+        );
+    }
+}
+
+/// Small instance of `bench::a_refused_bucket_of_long_shapes_that_repeat_a_variable_prints_in_linear_time`
+/// (TEST-bench-move-l0123, author P169): shapes of 2 to 5 components, `T` at each place after
+/// the first, print `T` at each place in the refusal.
+#[test]
+fn a_refused_bucket_of_long_shapes_prints_the_variable_at_each_place() {
+    let row = |head: Ty, rest: &dyn Fn() -> Ty, n: usize| {
+        Ty::tuple(
+            std::iter::once(head)
+                .chain((1..n).map(|_| rest()))
+                .collect(),
+        )
+    };
+    for n in 2..=5 {
+        let l = Ty::union_all(&[row(int(3), &|| int(5), n), row(int(4), &|| int(6), n)]);
+        let r = Ty::union_all(&[
+            row(ty("1 | 2"), &|| var("T"), n),
+            row(ty("int"), &|| var("T"), n),
+        ]);
+        let bucket = format!("(1 | 2{ts}) | (int{ts})", ts = ", T".repeat(n - 1));
+        let why = l.refused(&r);
+        assert!(
+            why.contains(&format!("one of the shapes {bucket}, which")),
+            "{n}: {why}"
+        );
+    }
+}
+
+/// Small instance of `bench::subtracting_tuples_scales` and `bench::meeting_tuples_scales`
+/// (TEST-bench-move-l0123, author P169): the four families at sizes 1 to 6 keep and meet the
+/// counted tuples; odd sizes check that `n / 2` rounds down.
+#[test]
+fn subtracting_and_meeting_tuples_keeps_the_tuples_that_share_a_value() {
+    for n in 1..=6 {
+        for (what, t, u, left, met) in tuple_families(n) {
+            assert_eq!(t.diff(&u).tuples.len(), left, "{what} at {n}");
+            // A tuple met twice, `(bool, i)` with `(true, i)` and `(false, i)`, gives two.
+            let met = if what == "together" { 2 * met } else { met };
+            assert_eq!(t.meet(&u).tuples.len(), met, "{what} at {n}");
+        }
+    }
+}
+
+/// Small instance of `bench::meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns`
+/// (TEST-bench-move-l0123, author P169): points against two arrangements of points and `int`
+/// at sizes 1 to 6, and tuples of many arrangements at 4 and 8 (`many_patterns` needs at least
+/// 2).
+#[test]
+fn meeting_and_subtracting_tuples_of_several_arrangements_keeps_the_right_tuples() {
+    for n in 1..=6 {
+        let (points, open) = two_patterns(n);
+        assert!(points.diff(&open).tuples.is_empty(), "{n}");
+        assert_eq!(points.meet(&open).tuples.len(), n, "{n}");
+        assert_eq!(open.meet(&points).tuples.len(), n, "{n}");
+    }
+    for n in [4, 8] {
+        let (ones, zeros) = many_patterns(n);
+        let met = ones.meet(&zeros).tuples.len();
+        assert!(met <= n * n, "{n}: {met}");
+        let left = ones.diff(&zeros).tuples.len();
+        assert!(left <= n, "{n}: {left}");
+    }
+}
+
+/// Small instance of `bench::meets_of_many_tuples_scales` (TEST-bench-move-l0123, author P169):
+/// the four families at sizes 1 to 6, each the same both ways round.
+#[test]
+fn meets_of_unions_of_tuples_finds_the_pair_that_shares_a_value() {
+    for n in 1..=6 {
+        for (what, t, u, shares) in meets_families(n) {
+            assert_eq!(t.meets(&u), shares, "{what} at {n}");
+            assert_eq!(u.meets(&t), shares, "{what} at {n}");
+        }
+    }
+}
+
+/// Small instance of `bench::meets_of_tuples_of_many_patterns_costs_the_patterns`
+/// (TEST-bench-move-l0123, author P169): tuples of many arrangements at 4 and 8 meet exactly
+/// when their meet has a tuple, both ways round.
+#[test]
+fn meets_of_tuples_of_many_arrangements_agrees_with_the_meet() {
+    for n in [4, 8] {
+        let (ones, zeros) = many_patterns(n);
+        let shares = !ones.meet(&zeros).tuples.is_empty();
+        assert_eq!(ones.meets(&zeros), shares, "{n}");
+        assert_eq!(zeros.meets(&ones), shares, "{n}");
+    }
+}
+
+/// Small instance of `bench::contains_of_many_tuples_scales` (TEST-bench-move-l0123, author
+/// P169): the four families at sizes 1 to 6.
+#[test]
+fn contains_of_unions_of_tuples_finds_each_value() {
+    for n in 1..=6 {
+        for (what, t, v, held) in contains_families(n) {
+            assert_eq!(t.contains(&v), held, "{what} at {n}");
+        }
+    }
+}
+
+/// Small instance of `bench::contains_of_tuples_of_many_patterns_costs_the_patterns`
+/// (TEST-bench-move-l0123, author P169): tuples of many arrangements at 2, 4 and 8 hold each
+/// value made to fit one of them.
+#[test]
+fn contains_of_tuples_of_many_arrangements_holds_each_value() {
+    for n in [2, 4, 8] {
+        let (t, v) = arrangements(n);
+        assert!(t.contains(&v), "{n}");
+    }
+}
+
+/// Small instance of `bench::the_meet_of_many_payloads_of_one_atom_scales` and
+/// `bench::the_difference_of_many_payloads_of_one_atom_scales` (TEST-bench-move-l0123, author
+/// P169): 1 to 6 payloads `#a(i, i)` met with `#a(i, int)` are themselves, and less them are
+/// empty.
+#[test]
+fn many_payloads_of_one_atom_met_with_or_less_wider_ones() {
+    for n in 1..=6 {
+        let (l, r) = payload_pairs(n);
+        let met = l.meet(&r);
+        assert!(met.subtype(&l) && l.subtype(&met), "{n}: {met}");
+        assert!(l.diff(&r).is_empty(), "{n}");
+    }
+}
+
+/// Small instance of `bench::the_difference_of_many_wide_tuple_types_scales`
+/// (TEST-bench-move-l0123, author P169): 1 to 6 tuple types `(i, (..))` less `(i, (int, int))`
+/// keep `(i, (1, 2, 3))` and lose `(i, (1, 2))`.
+#[test]
+fn many_wide_tuple_types_less_pairs_keep_the_other_tuples() {
+    for n in 1..=6 {
+        let (l, r) = wide_pairs(n);
+        let d = l.diff(&r);
+        assert!(!d.is_empty(), "{n}");
+        for i in [0, n - 1] {
+            assert!(ty(&format!("({i}, (1, 2, 3))")).subtype(&d), "{n}: {d}");
+            assert!(!ty(&format!("({i}, (1, 2))")).subtype(&d), "{n}: {d}");
+        }
+    }
+}
+
+/// Small instance of `bench::a_refused_bucket_of_tuples_of_many_functions_prints_in_linear_time`
+/// (TEST-bench-move-l0123, author P169): tuples of a refused bucket holding 1 to 3 functions
+/// print each function in the bucket.
+#[test]
+fn a_refused_bucket_of_tuples_of_several_functions_prints_each_function() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for n in 1..=3 {
+        let (src, shapes) = bucket_of_functions(n);
+        let errors = type_errors(&src);
+        assert!(
+            errors.len() == 1 && errors[0].contains(shapes.as_str()),
+            "{n}: {errors:?}"
+        );
+    }
+}
+
+/// Small instance of `bench::function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_linear_time`
+/// (TEST-bench-move-l0123, author P169): function types 1 to 4 levels deep, whose levels share
+/// variable names across the two, fit; 1 level has no clash and is the control.
+#[test]
+fn function_types_whose_variables_share_names_across_the_two_fit() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for n in 0..=3 {
+        let text = format!(
+            "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
+            nested_functions(n, 1),
+            nested_functions(n, 0)
+        );
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
 }
 
 mod bench;

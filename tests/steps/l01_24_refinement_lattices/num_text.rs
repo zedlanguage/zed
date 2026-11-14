@@ -114,12 +114,25 @@ fn wide(rng: &mut Rng, words: usize) -> BigInt {
 /// Item NUM-print-fast: an end's text, written by `zed_kernel::num::to_decimal`, is num-bigint's
 /// for both signs: zero and the edges of `i64` and `i128`, where the form changes; the powers
 /// of ten `10^(597 2^i)` that the printer divides by and their neighbors, where a half is zero
-/// or all nines; random numbers of every power's width in words `31 2^i` and one either side;
-/// and numbers of `PRINT_WHOLE` words and more, where the kernel's split takes over from
-/// num-bigint's, among them powers made by `pow`, which are kept unexpanded until written.
+/// or all nines, and random numbers of every such power's width in words `31 2^i` and one
+/// either side, up to the first power past `PRINT_WHOLE` words, where the kernel's split takes
+/// over from num-bigint's; that power, its neighbors and its sum with the power below it,
+/// whose low half is that power padded with zeros, all split; and powers made by `pow`, which
+/// are kept unexpanded until written, below and past `PRINT_WHOLE` words. Random numbers of
+/// `PRINT_WHOLE - 1` to `PRINT_WHOLE + 1` words are in
+/// `a_written_end_is_num_bigints_text_at_the_edges`.
+///
+/// TEST-bench-move-l0123, author P169: this ran the widths and powers for `i` up to 11
+/// (63,489 words, `10^1,222,656`), random numbers of `PRINT_WHOLE` and `2 PRINT_WHOLE` words,
+/// and the kept powers `3^300000`, `-3^300001`, `10^1300000` and `7^1000`, with `Rng::new(81)`:
+/// 10.9 s alone at load 38, nearly all of it in the sizes past `i` = 8, which take the same
+/// branches of the split as the first size past `PRINT_WHOLE`. It now stops at that first
+/// power (`i` = 8 with `PRINT_WHOLE` at 7845), and the kept powers are `3^30000`, `-3^30001`,
+/// `10^k` for the least `k` of more than `PRINT_WHOLE` words plus 1000, and `7^1000`, with a
+/// fresh seed.
 #[test]
 fn a_written_end_is_num_bigints_text() {
-    let mut rng = Rng::new(81);
+    let (mut rng, seed) = Rng::fresh("written ends");
     let one = BigInt::from(1);
     let mut values: Vec<BigInt> = vec![
         BigInt::from(0),
@@ -131,30 +144,33 @@ fn a_written_end_is_num_bigints_text() {
         BigInt::from(u128::MAX) + 1,
     ];
     let ten = BigInt::from(10);
-    for i in 0..12 {
+    let whole_bits = 64 * PRINT_WHOLE as u64;
+    for i in 0.. {
+        let p = ten.pow(597 << i);
+        if p.bits() > whole_bits {
+            let below = ten.pow(597 << (i - 1));
+            values.extend([&p - 1, &p + 1, &p + &below, p]);
+            break;
+        }
         let words = 31usize << i;
         for w in [words - 1, words, words + 1] {
             values.push(wide(&mut rng, w));
         }
-        let p = ten.pow(597 << i);
         values.extend([&p - 1, &p + 1, p.clone()]);
-        if i < 8 {
-            values.extend([&p * &p - 1, &p * &p + &p]);
-        }
     }
-    values.extend([wide(&mut rng, PRINT_WHOLE), wide(&mut rng, 2 * PRINT_WHOLE)]);
     for x in &values {
         for x in [x.clone(), -x] {
             let text = x.to_string();
-            assert_eq!(Num::from(&x).to_string(), text, "{} digits", text.len());
+            assert_eq!(
+                Num::from(&x).to_string(),
+                text,
+                "{} digits, ZED_SEED={seed}",
+                text.len()
+            );
         }
     }
-    for (base, k) in [
-        (3i64, 300_000u32),
-        (-3, 300_001),
-        (10, 1_300_000),
-        (7, 1000),
-    ] {
+    let past = (whole_bits as f64 * std::f64::consts::LOG10_2) as u32 + 1000;
+    for (base, k) in [(3i64, 30_000u32), (-3, 30_001), (10, past), (7, 1000)] {
         let text = BigInt::from(base).pow(k).to_string();
         assert_eq!(Num::from(base).pow(k).to_string(), text, "{base}^{k}");
     }
@@ -189,30 +205,63 @@ fn a_written_end_is_num_bigints_text_at_the_edges() {
 /// Item PRINT-below-whole: an end's text against a reference that shares no code with either
 /// way of printing: the text it was read from by num-bigint's parser (`BigInt::from_str`, by
 /// products of powers of the base), both signs. Random texts of the digits in the middle of
-/// 1, 2, 31, 500, `PRINT_WHOLE - 1`, `PRINT_WHOLE` and `2 PRINT_WHOLE` words, so that the
-/// smaller are printed by num-bigint whole and the larger by the split; and at the same lengths
+/// 1, 2, 31, 500, `PRINT_WHOLE - 1` and `PRINT_WHOLE` words, so that the smaller are printed by
+/// num-bigint whole and the last by the split; and at the same lengths but `PRINT_WHOLE - 1`
 /// the texts `99...9`, `10...0` and `10...01`, whose halves at every split are all nines or
 /// zeros.
+///
+/// TEST-bench-move-l0123, author P169: this ran the four texts at 1, 2, 31, 500,
+/// `PRINT_WHOLE - 1`, `PRINT_WHOLE` and `2 PRINT_WHOLE` words with `Rng::new(4096)`: 1.5 s alone
+/// at load 38, half of it at `2 PRINT_WHOLE` words, whose split takes the branches the split at
+/// `PRINT_WHOLE` words takes. It now stops at `PRINT_WHOLE` words, and at `PRINT_WHOLE - 1`
+/// words, printed whole as the smaller sizes are, runs only the random text; with a fresh seed.
 #[test]
 fn a_written_end_is_the_text_it_was_read_from_on_both_sides_of_print_whole() {
-    let mut rng = Rng::new(4096);
-    for w in [1, 2, 31, 500, PRINT_WHOLE - 1, PRINT_WHOLE, 2 * PRINT_WHOLE] {
+    let (mut rng, seed) = Rng::fresh("texts either side of PRINT_WHOLE");
+    for w in [1, 2, 31, 500, PRINT_WHOLE - 1, PRINT_WHOLE] {
         // In the middle of the numbers of `w` words: 32 bits, more than 9 digits, from each end.
         let len = ((64 * w - 32) as f64 * std::f64::consts::LOG10_2) as usize;
         let random = format!("{}{}", rng.int(1, 9), digits(&mut rng, len - 1));
-        let texts = [
-            random,
-            "9".repeat(len),
-            format!("1{}", "0".repeat(len - 1)),
-            format!("1{}1", "0".repeat(len - 2)),
-        ];
+        let mut texts = vec![random];
+        if w != PRINT_WHOLE - 1 {
+            texts.extend([
+                "9".repeat(len),
+                format!("1{}", "0".repeat(len - 1)),
+                format!("1{}1", "0".repeat(len - 2)),
+            ]);
+        }
         for text in texts {
             let x: BigInt = text.parse().expect("digits");
             assert_eq!(x.magnitude().bits().div_ceil(64), w as u64, "{len} digits");
-            assert_eq!(Num::from(&x).to_string(), text, "{w} words");
-            assert_eq!(Num::from(-&x).to_string(), format!("-{text}"), "{w} words");
+            assert_eq!(
+                Num::from(&x).to_string(),
+                text,
+                "{w} words, ZED_SEED={seed}"
+            );
+            assert_eq!(
+                Num::from(-&x).to_string(),
+                format!("-{text}"),
+                "{w} words, ZED_SEED={seed}"
+            );
         }
     }
+}
+
+/// Small instance of `bench::writing_a_long_decimal_end_scales`: a random text of digits of
+/// `PRINT_WHOLE + 1` words, its first digit not 0, read as a `Num` by its own reader (not
+/// num-bigint's) and written by the split, is the same text, with a sign too. The reader is
+/// checked against num-bigint's only up to 20,000 digits in
+/// `a_decimal_end_reads_as_num_bigint_reads_it_at_every_length`.
+#[test]
+fn a_long_decimal_end_read_as_num_is_written_as_its_text() {
+    let (mut rng, seed) = Rng::fresh("a long decimal end");
+    let len = ((64 * (PRINT_WHOLE + 1) - 32) as f64 * std::f64::consts::LOG10_2) as usize;
+    let text = format!("{}{}", rng.int(1, 9), digits(&mut rng, len - 1));
+    let end = text.parse::<Num>().expect("digits");
+    assert_eq!(end.to_string(), text, "ZED_SEED={seed}");
+    let negative = format!("-{text}");
+    let end = negative.parse::<Num>().expect("digits");
+    assert_eq!(end.to_string(), negative, "ZED_SEED={seed}");
 }
 
 /// Item PRINT-below-whole: the two ways of printing, forced, write the same text: num-bigint's

@@ -13,20 +13,7 @@ use super::*;
 /// cold they are 2,141,806 and 17,071,066, 8.0 times.
 #[test]
 fn deciding_a_group_scales() {
-    let ring = |n: usize| {
-        let defs = (0..n)
-            .map(|i| Def {
-                name: format!("N{i}"),
-                params: vec![],
-                body: Expr::exact(
-                    Expr::Type(Type::int()),
-                    Expr::Tuple(vec![r((i + 1) % n), Expr::Type(Type::int())]),
-                ),
-            })
-            .collect();
-        Group::new(defs).unwrap()
-    };
-    let (n, small, large) = (256, ring(256), ring(scaling::FACTOR * 256));
+    let (n, small, large) = (256, pair_ring(256), pair_ring(scaling::FACTOR * 256));
     let run = |g: &Group| {
         Type::forget_emptiness();
         let types = g.instance(vec![]);

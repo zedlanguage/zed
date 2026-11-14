@@ -13,14 +13,8 @@ fn nested_bounds_scale() {
     scaling::check("admitting a group whose equal bounds nest", 1 << d, |n| {
         assert!(group(equal[&n].clone()).is_ok());
     });
-    // `(((int) .. int -> int) .. int -> int)`: the guarantee of each level is the level below.
-    let differ = |d: usize| {
-        (0..d).fold(ty(Type::bool()), |l, _| {
-            m(l, ty(Type::int()), ty(Type::int()))
-        })
-    };
     let n = 512;
-    let differing = scaling::inputs(n, differ);
+    let differing = scaling::inputs(n, differing_chain);
     scaling::check("admitting a group whose differing bounds nest", n, |n| {
         assert!(group(differing[&n].clone()).is_ok());
     });

@@ -276,30 +276,30 @@ fn kept_powers_order_and_hash_as_their_values_written_out() {
     }
 }
 
-/// Values in kept forms with the same values written out: `(c * b ^ k + d) div n` for bases
-/// sharing roots and exponents past i128, with coefficients in and past i64; roots of powers
-/// that are kept as roots, and sums, products and powers of them; and neighbors one apart.
+/// Values in kept forms with the same values written out: `(c * b ^ k + d) div n` for each
+/// base sharing roots, with exponents past i128 and every pairing of a coefficient and an
+/// addend in or past i64; square and cube roots of powers that are kept as roots, exact and
+/// not, and sums, products and powers of them; sums and products of powers of different
+/// integers, and powers of sums; and neighbors one apart.
 fn kept_values(rng: &mut zed_tests::instances::Rng) -> Vec<(Num, BigInt)> {
     use num_integer::Integer;
     let mut values = Vec::new();
-    for _ in 0..40 {
-        let (b, k) = (rng.pick(&[2, 3, 4, 6, -3, 8]), rng.int(128, 200) as u32);
-        // One coefficient in three lies past i64.
-        let c = BigInt::from(rng.pick(&[-7, -2, -1, 1, 2, 3, 12, 50]))
-            << (70 * u32::from(rng.below(3) == 0));
-        let d = BigInt::from(rng.int(-1000, 1000)) << (90 * u32::from(rng.below(3) == 0));
+    for (i, b) in [2, 3, 4, 6, -3, 8].into_iter().enumerate() {
+        let k = rng.int(128, 200) as u32;
+        // The coefficient lies past i64 for even `i` and the addend for `i` a multiple of 3,
+        // so both, either and neither appear.
+        let c =
+            BigInt::from(rng.pick(&[-7, -2, -1, 1, 2, 3, 12, 50])) << (70 * u32::from(i % 2 == 0));
+        let d = BigInt::from(rng.int(-1000, 1000)) << (90 * u32::from(i % 3 == 0));
         let n = BigInt::from(rng.int(1, 30));
         let v = &(&(&pow(b, k) * &Num::from(&c)) + &Num::from(&d));
         let exact = BigInt::from(b).pow(k) * &c + &d;
         values.push((v.div_floor(&Num::from(&n)), exact.div_floor(&n)));
     }
-    for _ in 0..16 {
-        // Roots past 2^127: kept as roots of powers, exact or not.
-        let (b, k, r) = (
-            rng.pick(&[2, 3, 4]),
-            rng.int(390, 420) as u32,
-            rng.int(2, 3) as u32,
-        );
+    for (b, r, whole) in [(4, 2, true), (2, 2, false), (3, 3, true), (2, 3, false)] {
+        // Roots past 2^127: kept as roots of powers, exact when `r` divides `k`.
+        let k = rng.int(390, 420) as u32;
+        let k = k - k % r + u32::from(!whole);
         let root = pow(b, k).floor_root(r);
         let exact = BigInt::from(b).pow(k).nth_root(r);
         let c = BigInt::from(rng.pick(&[-3, -1, 1, 2]));
@@ -312,9 +312,8 @@ fn kept_values(rng: &mut zed_tests::instances::Rng) -> Vec<(Num, BigInt)> {
             if exact.pow(r) == up { exact } else { exact + 1 }
         }));
     }
-    for _ in 0..8 {
+    for (b1, b2) in [(2, 3), (5, -2), (-3, 10)] {
         // Sums and products of powers of different integers, and powers of sums.
-        let (b1, b2) = (rng.pick(&[2, 3, 5, -3]), rng.pick(&[3, 7, 10, -2]));
         let (k1, k2) = (rng.int(128, 200) as u32, rng.int(128, 200) as u32);
         let c = BigInt::from(rng.pick(&[-5, -1, 1, 4]));
         let d = BigInt::from(rng.int(-50, 50));
@@ -335,45 +334,81 @@ fn kept_values(rng: &mut zed_tests::instances::Rng) -> Vec<(Num, BigInt)> {
     values
 }
 
+/// TEST-bench-move-l0123, author P169: this ran 192 values (40 of the first kind with random
+/// bases, 16 random root groups, 8 random sum groups, and the neighbors of every fourth) with
+/// `Rng::new(31)`, the roots of index 2 to 5 of each, and the arithmetic over every pair: 18 s
+/// alone at load 38, nine tenths of it in the products, sums and differences of the pairs. It
+/// now runs each base, each pairing of coefficient and addend forms, each root kind and three
+/// sum pairs once, 47 values with a fresh seed; the square root and one index of 3 to 5 drawn
+/// for each value; the order over every pair; and the arithmetic of each value with itself
+/// and with five others drawn at random.
 #[test]
 fn kept_forms_compute_as_their_values_written_out() {
     use num_integer::Integer;
     use num_traits::{Signed, Zero};
-    let mut rng = zed_tests::instances::Rng::new(31);
+    let (mut rng, seed) = zed_tests::instances::Rng::fresh("kept forms");
+    let at = format!("ZED_SEED={seed}");
     let values = kept_values(&mut rng);
-    for (a, x) in &values {
-        assert_eq!(*a, Num::from(x), "{x}");
-        assert_eq!(hash_of(a), hash_of(&Num::from(x)), "{x}");
-        assert_eq!(a.to_string(), x.to_string());
-        assert_eq!(-a, Num::from(-x), "-{x}");
-        assert_eq!(a.pow(3), Num::from(x.pow(3)), "{x}^3");
-        for r in 2..=5u32 {
+    for (i, (a, x)) in values.iter().enumerate() {
+        assert_eq!(*a, Num::from(x), "{x}, {at}");
+        assert_eq!(hash_of(a), hash_of(&Num::from(x)), "{x}, {at}");
+        assert_eq!(a.to_string(), x.to_string(), "{at}");
+        assert_eq!(-a, Num::from(-x), "-{x}, {at}");
+        assert_eq!(a.pow(3), Num::from(x.pow(3)), "{x}^3, {at}");
+        for r in [2, rng.int(3, 5) as u32] {
             let m = x.abs();
             let (lo, hi) = (a.abs().floor_root(r), a.abs().ceil_root(r));
             let f = m.nth_root(r);
             let c = if f.pow(r) == m { f.clone() } else { &f + 1 };
-            assert_eq!((lo, hi), (Num::from(&f), Num::from(&c)), "roots {r} of {m}");
+            assert_eq!(
+                (lo, hi),
+                (Num::from(&f), Num::from(&c)),
+                "roots {r} of {m}, {at}"
+            );
         }
         for s in [1i64, -1, 2, 3, -7, 1000, 1 << 40, -(1 << 62)] {
             let (n, y) = (Num::from(s), BigInt::from(s));
-            assert_eq!(a.div_floor(&n), Num::from(x.div_floor(&y)), "{x} div {s}");
-            assert_eq!(a.mod_floor(&n), Num::from(x.mod_floor(&y)), "{x} mod {s}");
-            assert_eq!(a.gcd(&n), Num::from(x.gcd(&y)), "gcd {x} {s}");
-            assert_eq!(n.gcd(a), Num::from(x.gcd(&y)), "gcd {s} {x}");
-            assert_eq!(&n * a, Num::from(&y * x), "{s} * {x}");
+            assert_eq!(
+                a.div_floor(&n),
+                Num::from(x.div_floor(&y)),
+                "{x} div {s}, {at}"
+            );
+            assert_eq!(
+                a.mod_floor(&n),
+                Num::from(x.mod_floor(&y)),
+                "{x} mod {s}, {at}"
+            );
+            assert_eq!(a.gcd(&n), Num::from(x.gcd(&y)), "gcd {x} {s}, {at}");
+            assert_eq!(n.gcd(a), Num::from(x.gcd(&y)), "gcd {s} {x}, {at}");
+            assert_eq!(&n * a, Num::from(&y * x), "{s} * {x}, {at}");
         }
         for (b, y) in &values {
-            assert_eq!(a.cmp(b), x.cmp(y), "{x} against {y}");
-            assert_eq!(a == b, x == y, "{x} against {y}");
-            assert_eq!(a.at_most_succ(b), *x <= y + 1, "{x} at most one past {y}");
-            assert_eq!(a + b, Num::from(x + y), "{x} + {y}");
-            assert_eq!(a - b, Num::from(x - y), "{x} - {y}");
-            assert_eq!(a * b, Num::from(x * y), "{x} * {y}");
+            assert_eq!(a.cmp(b), x.cmp(y), "{x} against {y}, {at}");
+            assert_eq!(a == b, x == y, "{x} against {y}, {at}");
+            assert_eq!(
+                a.at_most_succ(b),
+                *x <= y + 1,
+                "{x} at most one past {y}, {at}"
+            );
+        }
+        let others = std::iter::once(i).chain((0..5).map(|_| rng.below(values.len())));
+        for (b, y) in others.map(|j| &values[j]) {
+            assert_eq!(a + b, Num::from(x + y), "{x} + {y}, {at}");
+            assert_eq!(a - b, Num::from(x - y), "{x} - {y}, {at}");
+            assert_eq!(a * b, Num::from(x * y), "{x} * {y}, {at}");
             if !y.is_zero() {
-                assert_eq!(a.div_floor(b), Num::from(x.div_floor(y)), "{x} div {y}");
-                assert_eq!(a.mod_floor(b), Num::from(x.mod_floor(y)), "{x} mod {y}");
+                assert_eq!(
+                    a.div_floor(b),
+                    Num::from(x.div_floor(y)),
+                    "{x} div {y}, {at}"
+                );
+                assert_eq!(
+                    a.mod_floor(b),
+                    Num::from(x.mod_floor(y)),
+                    "{x} mod {y}, {at}"
+                );
             }
-            assert_eq!(a.gcd(b), Num::from(x.gcd(y)), "gcd {x} {y}");
+            assert_eq!(a.gcd(b), Num::from(x.gcd(y)), "gcd {x} {y}, {at}");
         }
     }
 }

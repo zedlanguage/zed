@@ -714,10 +714,99 @@ fn reach(m: usize, n: usize) -> Vec<(String, Expr)> {
     defs
 }
 
+/// A small instance of `bench::a_group_of_refused_components_scales`: three copies of the
+/// refused component and three lists apart from it, in one group. Every member of every copy
+/// is refused, its message headed by its own name and naming the three definitions of its own
+/// copy, and every list stays decided by the decider (TEST-bench-move-l0123, author P169).
+#[test]
+fn a_group_of_copies_of_the_refused_component_keeps_the_lists_decided() {
+    let n = 3;
+    Type::forget_emptiness();
+    let types = group(copies(n));
+    assert_eq!(types.len(), (SIZE + 1) * n);
+    for (c, t) in types[SIZE * n..].iter().enumerate() {
+        assert_eq!(t.decided_by_group(), Some(false), "L{c}");
+        assert_eq!(t.verdict(), Verdict::Inhabited, "L{c}");
+    }
+    for (k, t) in types[..SIZE * n].iter().enumerate() {
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group), "member {k}");
+        let site = t.refusal_site(Refusal::Group).expect("a refused member");
+        let name = ["A", "B", "C"][k % SIZE];
+        assert_eq!(
+            site.head,
+            format!("{name}{}", k / SIZE),
+            "member {k}: {site:?}"
+        );
+        assert_eq!(site.defs.len(), SIZE, "member {k}: {site:?}");
+    }
+}
+
+/// A small instance of `bench::refused_members_sharing_a_decided_part_scale`: three members
+/// `Box{k} = (A, Ints0)` reading the refused component and a ring of three decided lists. Each
+/// is refused, and its message names the component's definitions and its own, not the ring's
+/// (TEST-bench-move-l0123, author P169).
+#[test]
+fn refused_members_sharing_a_decided_part_name_only_what_their_refusal_rests_on() {
+    let (m, n) = (3, 3);
+    Type::forget_emptiness();
+    let types = group(boxes(m, n));
+    assert!((types[SIZE..SIZE + n].iter()).all(|t| t.decided_by_group() == Some(false)));
+    for (k, t) in types[SIZE + n..].iter().enumerate() {
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
+        let site = t.refusal_site(Refusal::Group).expect("a refused member");
+        assert_eq!(site.head, format!("Box{k}"), "{site:?}");
+        // The definitions alone: `B` writes its `(_, _)` in full (MSG-derive-type-size).
+        assert_eq!(site.defs.len(), SIZE + 1, "{site:?}");
+        assert!(
+            !site.defs.iter().any(|d| d.starts_with("type Ints")),
+            "{site:?}"
+        );
+    }
+}
+
+/// A small instance of `bench::refused_members_reaching_many_refused_components_scale`: three
+/// copies of the refused component, a ring of three options each reading one copy, and three
+/// members `Box{j} = (A0, Opt0)`. The options are left to the search, which builds their values;
+/// each Box is refused, and its message names only the definitions of `A0`'s copy and its own,
+/// though it reaches every copy (GROUP-refusal-reach) (TEST-bench-move-l0123, author P169).
+#[test]
+fn refused_members_reaching_many_refused_components_name_only_the_first() {
+    let (m, n) = (3, 3);
+    Type::forget_emptiness();
+    let types = group(reach(m, n));
+    let opt = SIZE * n;
+    assert!((types[..opt].iter()).all(|t| t.verdict() == Verdict::Refused(Refusal::Group)));
+    assert!(
+        (types[opt..opt + n].iter())
+            .all(|t| (t.decided_by_group(), t.verdict()) == (None, Verdict::Inhabited))
+    );
+    for (j, t) in types[opt + n..].iter().enumerate() {
+        assert_eq!(t.verdict(), Verdict::Refused(Refusal::Group));
+        let site = t.refusal_site(Refusal::Group).expect("a refused member");
+        assert_eq!(site.head, format!("Box{j}"), "{site:?}");
+        // The definitions alone: `B` writes its `(_, _)` in full (MSG-derive-type-size).
+        assert_eq!(site.defs.len(), SIZE + 1, "{site:?}");
+        let own = [
+            format!("type Box{j} "),
+            "type A0 ".into(),
+            "type B0 ".into(),
+            "type C0 ".into(),
+        ];
+        assert!(
+            (site.defs.iter()).all(|d| own.iter().any(|p| d.starts_with(p.as_str()))),
+            "{site:?}"
+        );
+    }
+}
+
 /// Each refused member's message is the same when it is the first asked for in its group and
 /// when the messages of the members before it were asked for first, which re-checked repairs
 /// that the later ones read part of (GROUP-refusal-reach): the answers a re-check keeps and
 /// reads again are the ones a re-check of its own finds.
+///
+/// It ran three copies of the component in `copies`, `boxes` and `reach` (0.49 s alone, 0.69 s
+/// under load); now it runs two, the fewest that keep a second refused copy whose repair the
+/// first message re-checks, and two members and lists (TEST-bench-move-l0123, author P169).
 #[test]
 fn a_message_is_the_same_asked_for_first_or_after_the_others() {
     let mut both = placed(IN_ORDER);
@@ -745,9 +834,9 @@ fn a_message_is_the_same_asked_for_first_or_after_the_others() {
     for defs in [
         both,
         meets(false),
-        copies(3),
-        boxes(3, 3),
-        reach(3, 3),
+        copies(2),
+        boxes(2, 2),
+        reach(2, 2),
         crossed,
     ] {
         Type::forget_emptiness();

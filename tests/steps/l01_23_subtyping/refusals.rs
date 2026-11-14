@@ -2510,57 +2510,80 @@ fn r3_build(
     &ts[index(0)] - &u
 }
 
+/// The round-3 cofinite shapes `(m, skip, mode, holes, stagger)` at `n` names that the two
+/// tests `r3_cofinite_redundant_oracle_and_order` and `r3_cofinite_survey` run: every shape to
+/// 2 names; at 3, 4, 5 and 6 names, 10, 6, 3 and 1 of the `(m, skip)` pairs drawn by `pick` for
+/// each of the nine kinds `(mode, holes, stagger)`, so each kind is run at every size (author
+/// P169, TEST-bench-move-l0123).
+fn r3_cofinite_shapes(pick: &mut Rng, n: usize) -> Vec<(usize, usize, usize, usize, bool)> {
+    let per_kind = [usize::MAX, usize::MAX, usize::MAX, 10, 6, 3, 1][n];
+    let kinds = [
+        (0, 0, false),
+        (0, 1, false),
+        (0, n, false),
+        (1, 0, false),
+        (1, 1, false),
+        (1, n, false),
+        (2, 0, false),
+        (0, n, true),
+        (1, n, true),
+    ];
+    let mut shapes = vec![];
+    for (mode, holes, stagger) in kinds {
+        let mut pairs: Vec<(usize, usize)> = (1..=n + 2)
+            .flat_map(|m| (0..=n).map(move |skip| (m, skip)))
+            .collect();
+        // A partial Fisher-Yates shuffle draws the first `take` without repeats.
+        let take = per_kind.min(pairs.len());
+        for i in 0..take {
+            let j = i + pick.below(pairs.len() - i);
+            pairs.swap(i, j);
+        }
+        shapes.extend(
+            pairs[..take]
+                .iter()
+                .map(|&(m, skip)| (m, skip, mode, holes, stagger)),
+        );
+    }
+    shapes
+}
+
 #[test]
 fn r3_cofinite_redundant_oracle_and_order() {
     big(|| {
         let mut cases = 0;
-        // Every case to 4 names, one in six at 5 and one in 24 at 6, drawn afresh (author P169;
-        // every case, in 2.3 s, until TEST-bench-move-l0123).
-        let (mut pick, _) = Rng::fresh("R3 cofinite redundant oracle and order");
+        // Every shape to 2 names, and of each of the nine kinds 10, 6, 3 and 1 shapes drawn afresh
+        // at 3, 4, 5 and 6 names (author P169, TEST-bench-move-l0123; every case, in 2.3 s, until
+        // the first cut, every case to 4 names, one in six at 5 and one in 24 at 6, in 1.23 s
+        // alone).
+        let (mut pick, seed) = Rng::fresh("R3 cofinite redundant oracle and order");
         for n in 1..=6 {
-            for m in 1..=n + 2 {
-                for skip in 0..=n {
-                    for (mode, holes, stagger) in [
-                        (0, 0, false),
-                        (0, 1, false),
-                        (0, n, false),
-                        (1, 0, false),
-                        (1, 1, false),
-                        (1, n, false),
-                        (2, 0, false),
-                        (0, n, true),
-                        (1, n, true),
-                    ] {
-                        if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
-                            continue;
-                        }
-                        let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
-                        if mode == 2 {
-                            all = 3;
-                        }
-                        let expected = if r3_oracle(&ns, &roots, all) {
-                            Verdict::Inhabited
-                        } else {
-                            Verdict::Empty
-                        };
-                        let tag = format!("{n}_{m}_{skip}_{holes}_{stagger}");
-                        let a = r3_build(&ns, &roots, all, false, &tag, mode);
-                        let b = r3_build(&ns, &roots, all, true, &tag, mode);
-                        Type::forget_emptiness();
-                        let av = a.verdict();
-                        let bv = b.verdict();
-                        assert_eq!(
-                            av, expected,
-                            "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger}"
-                        );
-                        assert_eq!(bv, av, "definition/union order {tag}");
-                        assert_eq!(a.is_empty(), expected == Verdict::Empty, "is_empty {tag}");
-                        Type::forget_emptiness();
-                        assert_eq!(b.verdict(), bv, "b first {tag}");
-                        assert_eq!(a.verdict(), av, "a second {tag}");
-                        cases += 1;
-                    }
+            for (m, skip, mode, holes, stagger) in r3_cofinite_shapes(&mut pick, n) {
+                let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
+                if mode == 2 {
+                    all = 3;
                 }
+                let expected = if r3_oracle(&ns, &roots, all) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                let tag = format!("{n}_{m}_{skip}_{holes}_{stagger}");
+                let a = r3_build(&ns, &roots, all, false, &tag, mode);
+                let b = r3_build(&ns, &roots, all, true, &tag, mode);
+                Type::forget_emptiness();
+                let av = a.verdict();
+                let bv = b.verdict();
+                assert_eq!(
+                    av, expected,
+                    "oracle n={n} m={m} skip={skip} holes={holes} mode={mode} stagger={stagger} ZED_SEED={seed}"
+                );
+                assert_eq!(bv, av, "definition/union order {tag}");
+                assert_eq!(a.is_empty(), expected == Verdict::Empty, "is_empty {tag}");
+                Type::forget_emptiness();
+                assert_eq!(b.verdict(), bv, "b first {tag}");
+                assert_eq!(a.verdict(), av, "a second {tag}");
+                cases += 1;
             }
         }
         eprintln!("R3 cofinite oracle/order cases={cases}");
@@ -2749,60 +2772,47 @@ fn r3_all_probe_and_family_orders() {
 }
 
 /// Every shape of the round-3 cofinite cases up to 6 names (1,494 cases), built in both orders,
-/// has the verdict of the oracle `r3_oracle`: every case to 4 names, one in six at 5 and one in
-/// 24 at 6, drawn afresh (author P169; every case, in 1.8 s to 3.6 s, until
-/// TEST-bench-move-l0123).
+/// has the verdict of the oracle `r3_oracle`: the shapes of [`r3_cofinite_shapes`], every shape
+/// to 2 names and each kind at every size to 6 (author P169, TEST-bench-move-l0123; every case,
+/// in 1.8 s to 3.6 s, until the first cut, every case to 4 names, one in six at 5 and one in 24
+/// at 6, in 0.84 s to 1.34 s alone).
 #[test]
 fn r3_cofinite_survey() {
     big(|| {
         let (mut bad, mut cases) = (0, 0);
-        let (mut pick, _) = Rng::fresh("R3 cofinite survey");
+        let (mut pick, seed) = Rng::fresh("R3 cofinite survey");
         for n in 1..=6 {
-            for m in 1..=n + 2 {
-                for skip in 0..=n {
-                    for (mode, holes, stagger) in [
-                        (0, 0, false),
-                        (0, 1, false),
-                        (0, n, false),
-                        (1, 0, false),
-                        (1, 1, false),
-                        (1, n, false),
-                        (2, 0, false),
-                        (0, n, true),
-                        (1, n, true),
-                    ] {
-                        if pick.below([1, 1, 1, 1, 1, 6, 24][n]) != 0 {
-                            continue;
-                        }
-                        let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
-                        if mode == 2 {
-                            all = 3;
-                        }
-                        let expected = if r3_oracle(&ns, &roots, all) {
-                            Verdict::Inhabited
-                        } else {
-                            Verdict::Empty
-                        };
-                        let tag = format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
-                        let a = r3_build(&ns, &roots, all, false, &tag, mode);
-                        let b = r3_build(&ns, &roots, all, true, &tag, mode);
-                        Type::forget_emptiness();
-                        let av = a.verdict();
-                        Type::forget_emptiness();
-                        let bv = b.verdict();
-                        cases += 1;
-                        if av != expected || bv != expected {
-                            bad += 1;
-                            eprintln!(
-                                "MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}"
-                            );
-                        }
-                    }
+            for (m, skip, mode, holes, stagger) in r3_cofinite_shapes(&mut pick, n) {
+                let (ns, roots, mut all) = r3_spec(n, m, skip, holes, stagger);
+                if mode == 2 {
+                    all = 3;
+                }
+                let expected = if r3_oracle(&ns, &roots, all) {
+                    Verdict::Inhabited
+                } else {
+                    Verdict::Empty
+                };
+                let tag = format!("s{n}_{m}_{skip}_{holes}_{stagger}_{mode}");
+                let a = r3_build(&ns, &roots, all, false, &tag, mode);
+                let b = r3_build(&ns, &roots, all, true, &tag, mode);
+                Type::forget_emptiness();
+                let av = a.verdict();
+                Type::forget_emptiness();
+                let bv = b.verdict();
+                cases += 1;
+                if av != expected || bv != expected {
+                    bad += 1;
+                    eprintln!(
+                        "MISMATCH n={n} m={m} skip={skip} mode={mode} holes={holes} stagger={stagger} want={expected:?} fwd={av:?} rev={bv:?}"
+                    );
                 }
             }
         }
         eprintln!("survey cases={cases} mismatches={bad}");
-        assert_eq!(bad, 0, "cases whose verdict is not the oracle's");
+        assert_eq!(
+            bad, 0,
+            "cases whose verdict is not the oracle's ZED_SEED={seed}"
+        );
     });
 }
 
@@ -3345,7 +3355,8 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
         };
 
         // Every family to n = 3, one in two at n = 4 and one in four at n = 5, drawn afresh (author
-        // P169): every family until TEST-bench-move-l0123.
+        // P169): every family until TEST-bench-move-l0123 (1.37 s alone under load; 0.68 s
+        // before the cuts of the tuple kinds and the kinds with many heads below).
         let (mut pick, seed) = Rng::fresh("lists by the place from the front, gemini");
         for n in 1..=5 {
             for skip_idx in 0..=n {
@@ -3378,12 +3389,12 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                             assert_eq!(
                                 t.verdict(),
                                 want,
-                                "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                                "rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
                             );
                             assert_eq!(
                                 t.is_empty(),
                                 !inhab,
-                                "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool}"
+                                "is_empty rfx_family n={n} skip={skip:?} m={m} split={split} bool={is_bool} ZED_SEED={seed}"
                             );
                         }
                     }
@@ -3417,7 +3428,9 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                 assert_eq!(pair.verdict(), want_pair, "pair n={n} s1={s1:?} s2={s2:?}");
             }
 
-            // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes.
+            // Multi, groups, groupsholes, manyheads, stagger, and chain variants at small sizes. The
+            // twelve kinds with many heads run at n = 2 and one in three at n = 3, where their oracle
+            // reads 7^4 lists (each at n = 3 until TEST-bench-move-l0123, author P169).
             for m in 1..=n + 1 {
                 Type::forget_emptiness();
                 let tag = next_tag();
@@ -3453,7 +3466,8 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         if far { "emitheadsfar" } else { "emitheads" },
                         if far { "clmanyheadsfar" } else { "clmanyheads" },
                     ] {
-                        if n <= 3
+                        if n <= 2
+                            || (n == 3 && pick.below(3) == 0)
                             || !matches!(
                                 case,
                                 "manyheads"
@@ -3497,9 +3511,13 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                             } else {
                                 Verdict::Empty
                             };
-                            assert_eq!(t.sweep_verdict(), Some(want), "sweep {case} n={n}");
+                            assert_eq!(
+                                t.sweep_verdict(),
+                                Some(want),
+                                "sweep {case} n={n} ZED_SEED={seed}"
+                            );
                             Type::forget_emptiness();
-                            assert_eq!(t.verdict(), want, "{case} n={n}");
+                            assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
                         }
                     }
                 }
@@ -3537,25 +3555,46 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                         if case == "clstaggerholesout" {
                             // The prefix chains leave this case to the search (Gemini R4); in the
                             // combined tree the front sweep decides it.
-                            assert_eq!(t.chain_verdict(), None, "chains {case} n={n}");
-                            assert_eq!(t.sweep_verdict(), Some(want), "sweep {case} n={n}");
+                            assert_eq!(
+                                t.chain_verdict(),
+                                None,
+                                "chains {case} n={n} ZED_SEED={seed}"
+                            );
+                            assert_eq!(
+                                t.sweep_verdict(),
+                                Some(want),
+                                "sweep {case} n={n} ZED_SEED={seed}"
+                            );
                         } else {
-                            assert_eq!(t.sweep_verdict(), Some(want), "sweep {case} n={n}");
+                            assert_eq!(
+                                t.sweep_verdict(),
+                                Some(want),
+                                "sweep {case} n={n} ZED_SEED={seed}"
+                            );
                         }
                         Type::forget_emptiness();
-                        assert_eq!(t.verdict(), want, "{case} n={n}");
+                        assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
                     }
                 }
             }
 
-            // Tuple and tupleflip variants at small sizes.
+            // Tuple and tupleflip variants at small sizes: each to n = 3 and one drawn at n = 4 and at
+            // n = 5, whose oracle over 4^5 and 4^6 lists took 0.04 s and 0.16 s for the four (all
+            // four at every n until TEST-bench-move-l0123, author P169).
             let pair_samples = [
                 Value::tuple(vec![Value::Int(0), Value::Int(0)]),
                 Value::tuple(vec![Value::Int(1), Value::Int(0)]),
                 Value::tuple(vec![Value::Int(0), Value::Int(1)]),
                 Value::tuple(vec![Value::Int(1), Value::Int(1)]),
             ];
-            for case in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"] {
+            let drawn = pick.below(4);
+            for (i, case) in ["tuple", "tuplefar", "tupleflip", "tupleflipfar"]
+                .into_iter()
+                .enumerate()
+            {
+                if n >= 4 && i != drawn {
+                    continue;
+                }
                 Type::forget_emptiness();
                 let tag = next_tag();
                 let t = rfx_case(case, n, &tag);
@@ -3564,7 +3603,7 @@ fn lists_by_the_place_from_the_front_variants_agree_with_the_oracle_gemini() {
                 } else {
                     Verdict::Empty
                 };
-                assert_eq!(t.verdict(), want, "{case} n={n}");
+                assert_eq!(t.verdict(), want, "{case} n={n} ZED_SEED={seed}");
             }
         }
 
@@ -4066,9 +4105,14 @@ fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
     })
 }
 
-fn r5_sat_run(spec: Vec<usize>) {
-    // k variables, mlo..=mhi clauses of wmin..=3 literals on distinct variables, shard of nsh.
-    let (k, mlo, mhi, wmin, shard, nsh) = (spec[0], spec[1], spec[2], spec[3], spec[4], spec[5]);
+/// The clauses of `wmin..=3` literals on distinct variables of `1..=k`, and every set of
+/// `mlo..=mhi` distinct clauses, as indices into the clauses.
+fn r5_sat_formulas(
+    k: usize,
+    mlo: usize,
+    mhi: usize,
+    wmin: usize,
+) -> (Vec<Vec<(usize, bool)>>, Vec<Vec<usize>>) {
     let mut all: Vec<Vec<(usize, bool)>> = vec![];
     for vs in 1u32..1 << k {
         let vars: Vec<usize> = (1..=k).filter(|i| vs >> (i - 1) & 1 == 1).collect();
@@ -4084,99 +4128,156 @@ fn r5_sat_run(spec: Vec<usize>) {
             );
         }
     }
-    let mut seen = 0usize;
+    let mut sets = vec![];
+    let mut stack: Vec<Vec<usize>> = vec![vec![]];
+    while let Some(set) = stack.pop() {
+        if set.len() < mhi {
+            let from = set.last().map_or(0, |&l| l + 1);
+            for i in from..all.len() {
+                let mut s = set.clone();
+                s.push(i);
+                stack.push(s);
+            }
+        }
+        if set.len() >= mlo {
+            sets.push(set);
+        }
+    }
+    (all, sets)
+}
+
+fn r5_sat_run(spec: Vec<usize>) {
+    // k variables, mlo..=mhi clauses of wmin..=3 literals on distinct variables, shard of nsh.
+    let (k, mlo, mhi, wmin, shard, nsh) = (spec[0], spec[1], spec[2], spec[3], spec[4], spec[5]);
+    let (all, sets) = r5_sat_formulas(k, mlo, mhi, wmin);
+    let mine = sets
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| (i + 1) % nsh == shard)
+        .map(|(_, s)| s)
+        .collect();
+    r5_sat_decide(
+        k,
+        &all,
+        mine,
+        &format!("m {mlo}..{mhi} w {wmin} shard {shard}/{nsh}"),
+        None,
+    );
+}
+
+/// [`r5_sat_formulas`] grouped by kind (the clause count, the clause widths and whether the
+/// formula is satisfiable), with up to `per_kind` formulas of each kind drawn by a fresh rng
+/// and decided by [`r5_sat_decide`]. `spec` is `[k, mlo, mhi, wmin]`.
+fn r5_sat_sample(what: &str, spec: [usize; 4], per_kind: usize) {
+    let [k, mlo, mhi, wmin] = spec;
+    let (mut rng, seed) = Rng::fresh(what);
+    let (all, sets) = r5_sat_formulas(k, mlo, mhi, wmin);
+    let mut kinds = std::collections::BTreeMap::<_, Vec<Vec<usize>>>::new();
+    for set in sets {
+        let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
+        let mut widths: Vec<usize> = cls.iter().map(Vec::len).collect();
+        widths.sort();
+        kinds
+            .entry((set.len(), widths, r5_sat(k, &cls)))
+            .or_default()
+            .push(set);
+    }
+    let mut picked = vec![];
+    for mut group in kinds.into_values() {
+        // A partial Fisher-Yates shuffle draws the first `per_kind` without repeats.
+        let take = per_kind.min(group.len());
+        for i in 0..take {
+            let j = i + rng.below(group.len() - i);
+            group.swap(i, j);
+        }
+        group.truncate(take);
+        picked.extend(group);
+    }
+    r5_sat_decide(k, &all, picked, what, Some(seed));
+}
+
+/// Each formula of `sets` (indices into `all`, on `k` variables) decided by the verdict, the
+/// front sweep and the prefix chains, each checked against brute force [`r5_sat`].
+fn r5_sat_decide(
+    k: usize,
+    all: &[Vec<(usize, bool)>],
+    sets: Vec<Vec<usize>>,
+    label: &str,
+    seed: Option<u64>,
+) {
+    let seed = seed.map_or(String::new(), |s| format!(" ZED_SEED={s}"));
     big(move || {
         let mut counts = std::collections::BTreeMap::new();
         let (mut bad, mut units, mut most) = (0, 0u64, 0u64);
-        let n = all.len();
-        let mut stack: Vec<Vec<usize>> = vec![vec![]];
-        while let Some(set) = stack.pop() {
-            let mine = set.len() >= mlo && {
-                seen += 1;
-                seen % nsh == shard
+        for set in &sets {
+            let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
+            Type::forget_emptiness();
+            let t = r5_sat_type(
+                k,
+                &cls,
+                &format!(
+                    "_sat{k}_{}",
+                    set.iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join("_")
+                ),
+            );
+            let sat = r5_sat(k, &cls);
+            let mut m = scaling::Meter::new();
+            let mut v = None;
+            let w = m.work(|| v = Some(t.verdict()));
+            let v = v.unwrap();
+            units += w.units;
+            most = most.max(w.units);
+            let wrong = matches!(
+                (&v, sat),
+                (Verdict::Empty, true) | (Verdict::Inhabited, false)
+            );
+            if wrong {
+                bad += 1;
+                eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}{seed}");
+            }
+            *counts
+                .entry(format!("m{} sat {sat} {v:?}", set.len()))
+                .or_insert(0usize) += 1;
+            // Which mechanism answers on its own: the front sweep, the prefix chains, or
+            // neither (the instance is in the remainder and goes to the search).
+            Type::forget_emptiness();
+            let sw = t.sweep_verdict();
+            Type::forget_emptiness();
+            let ch = t.chain_verdict();
+            let by = match (&sw, &ch) {
+                (None, _) => "none",
+                (Some(_), Some(_)) => "chains",
+                (Some(_), None) => "front",
             };
-            if mine {
-                let cls: Vec<_> = set.iter().map(|&i| all[i].clone()).collect();
-                Type::forget_emptiness();
-                let t = r5_sat_type(
-                    k,
-                    &cls,
-                    &format!(
-                        "_sat{k}_{}",
-                        set.iter()
-                            .map(|i| i.to_string())
-                            .collect::<Vec<_>>()
-                            .join("_")
-                    ),
-                );
-                let sat = r5_sat(k, &cls);
-                let mut m = scaling::Meter::new();
-                let mut v = None;
-                let w = m.work(|| v = Some(t.verdict()));
-                let v = v.unwrap();
-                units += w.units;
-                most = most.max(w.units);
-                let wrong = matches!(
-                    (&v, sat),
-                    (Verdict::Empty, true) | (Verdict::Inhabited, false)
-                );
-                if wrong {
-                    bad += 1;
-                    eprintln!("r5sat WRONG k {k} {cls:?} sat {sat} {v:?}");
-                }
-                *counts
-                    .entry(format!("m{} sat {sat} {v:?}", set.len()))
-                    .or_insert(0usize) += 1;
-                // Which mechanism answers on its own: the front sweep, the prefix chains, or
-                // neither (the instance is in the remainder and goes to the search).
-                Type::forget_emptiness();
-                let sw = t.sweep_verdict();
-                Type::forget_emptiness();
-                let ch = t.chain_verdict();
-                let by = match (&sw, &ch) {
-                    (None, _) => "none",
-                    (Some(_), Some(_)) => "chains",
-                    (Some(_), None) => "front",
-                };
-                if matches!(
-                    (&sw, sat),
-                    (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
-                ) {
-                    bad += 1;
-                    eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}");
-                }
-                if matches!(
-                    (&ch, sat),
-                    (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
-                ) {
-                    bad += 1;
-                    eprintln!("r5sat WRONG CHAINS k {k} {cls:?} sat {sat} {ch:?}");
-                }
-                *counts
-                    .entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len()))
-                    .or_insert(0usize) += 1;
+            if matches!(
+                (&sw, sat),
+                (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
+            ) {
+                bad += 1;
+                eprintln!("r5sat WRONG SWEEP k {k} {cls:?} sat {sat} {sw:?}{seed}");
             }
-            if set.len() < mhi {
-                let from = set.last().map_or(0, |&l| l + 1);
-                for i in from..n {
-                    let mut s = set.clone();
-                    s.push(i);
-                    stack.push(s);
-                }
+            if matches!(
+                (&ch, sat),
+                (Some(Verdict::Empty), true) | (Some(Verdict::Inhabited), false)
+            ) {
+                bad += 1;
+                eprintln!("r5sat WRONG CHAINS k {k} {cls:?} sat {sat} {ch:?}{seed}");
             }
+            *counts
+                .entry(format!("mech m{} {by} {sw:?} chains {ch:?}", set.len()))
+                .or_insert(0usize) += 1;
         }
         for (key, c) in &counts {
             eprintln!("r5sat k {k} {key}: {c}");
         }
         eprintln!(
-            "r5sat k {k} m {mlo}..{mhi} w {wmin} shard {shard}/{nsh} cases {} wrong {bad} units {units} most {most}",
-            counts
-                .iter()
-                .filter(|(k, _)| !k.starts_with("mech"))
-                .map(|(_, c)| c)
-                .sum::<usize>()
+            "r5sat k {k} {label} cases {} wrong {bad} units {units} most {most}{seed}",
+            sets.len()
         );
-        assert_eq!(bad, 0);
+        assert_eq!(bad, 0, "{label}{seed}");
     });
 }
 
@@ -5082,9 +5183,11 @@ fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64
     });
 }
 
+/// 500 random inputs (800 until TEST-bench-move-l0123, author P169: 0.50 s alone, now about
+/// 0.3 s).
 #[test]
 fn r6_carrier_and_chains_against_brute_force_1() {
-    r6_oracle_run("r6 oracle 1", 800, 4, 6);
+    r6_oracle_run("r6 oracle 1", 500, 4, 6);
 }
 
 /// Longer pools and more refused rows, so that rows with three or more atoms (whose `Empty` the
@@ -5095,9 +5198,11 @@ fn r6_carrier_and_chains_against_brute_force_3() {
 }
 
 /// Pool nodes with a second row into the carrier, below the top of positive and refused chains.
+/// 500 random inputs (1,000 until TEST-bench-move-l0123, author P169: 0.85 s alone, now about
+/// 0.45 s).
 #[test]
 fn r6_carrier_and_chains_against_brute_force_4() {
-    r6_oracle_run_with("r6 oracle 4", 1000, 4, 6, true);
+    r6_oracle_run_with("r6 oracle 4", 500, 4, 6, true);
 }
 
 /// A comb where no place of a root separates except its first: `F_e = cons(int \ {e mod 2},
@@ -5573,12 +5678,24 @@ fn r7_bmm_out(n: usize, tag: &str) -> Type {
 /// by a 0 at a place i in 2q+1..=2q+3 with d-q+1 <= i <= d, where `F_d` excludes tm(d-i+1); so
 /// the set is inhabited exactly when each such root has one of those places with tm(d-i+1) = 0.
 /// At n 127 and 128 the root F_n has only places whose tm is 1, and the set is empty.
+///
+/// Every n of 12..=40 (holding the empty sizes 14, 23, 25, 26 and 35), 127 and 128, and 10 sizes
+/// of 41..=160 drawn afresh each run; until TEST-bench-move-l0123 (author P169) every n of
+/// 12..=160, 1.07 s alone under load.
 #[test]
 fn r7_aperiodic_matches_its_closed_form() {
-    big(|| {
+    let what = "r7aperiodic sizes";
+    let (mut rng, seed) = Rng::fresh(what);
+    let mut sizes: Vec<usize> = (12..=40).chain([127, 128]).collect();
+    sizes.extend(
+        pick_seeds(&mut rng, what, 41..161, 10)
+            .into_iter()
+            .map(|n| n as usize),
+    );
+    big(move || {
         let tm = |m: usize| m.count_ones() % 2;
         let mut empties = 0;
-        for n in 12..=160 {
+        for n in sizes {
             let q = n / 3;
             let inhabited = (2 * q + 3..=n).all(|d| {
                 (2 * q + 1..=2 * q + 3).any(|i| i + q > d && i <= d && tm(d - i + 1) == 0)
@@ -5591,7 +5708,7 @@ fn r7_aperiodic_matches_its_closed_form() {
             empties += usize::from(!inhabited);
             Type::forget_emptiness();
             let t = rfx_case("r7aperiodic", n, &format!("_r7ac{n}"));
-            assert_eq!(t.verdict(), want, "r7aperiodic at {n}");
+            assert_eq!(t.verdict(), want, "r7aperiodic at {n} ZED_SEED={seed}");
         }
         assert!(empties > 0, "the closed form must include empty sizes");
     });
@@ -5940,6 +6057,10 @@ fn r8_x39_deep_type_drop_does_not_overflow_stack() {
     // `r6two` at `n = 4096`) initializes `VERDICTS` before `types::FREED`, and an external
     // thread-local initialized first outlives `types::FREED`; both overflow a 2 MiB stack
     // (`SIGSEGV`, `rc = 139`) at thread exit without `hold()` and `ENDING`.
+    //
+    // The two threads run at once; until TEST-bench-move-l0123 (author P169) the second started
+    // after the first ended (1.36 s alone under load). The depth stays at 25,000: nothing shows
+    // a smaller chain still overflowed the 2 MiB stack in the code this guards against.
     let run_forget_first = std::thread::Builder::new()
         .name("r8-x39-forget".into())
         .stack_size(2 * 1024 * 1024)
@@ -5952,7 +6073,6 @@ fn r8_x39_deep_type_drop_does_not_overflow_stack() {
             assert_eq!(chain.verdict(), Verdict::Inhabited);
         })
         .unwrap();
-    run_forget_first.join().unwrap();
 
     let run_external_tls = std::thread::Builder::new()
         .name("r8-x39-ext-tls".into())
@@ -5969,6 +6089,7 @@ fn r8_x39_deep_type_drop_does_not_overflow_stack() {
             EXT.with(|slot| *slot.borrow_mut() = Some(chain));
         })
         .unwrap();
+    run_forget_first.join().unwrap();
     run_external_tls.join().unwrap();
 }
 
@@ -6394,26 +6515,29 @@ fn r9_product_all_ones(a: &[Vec<bool>], b: &[Vec<bool>]) -> bool {
 /// of side 2 to 5 at three densities (both verdicts occur), with the closed-form witness
 /// checked by `contains` when inhabited. Negative control: the same matrices with the whole
 /// row 0 of `a` cleared make the row of `(0, k)` atom-free, so the answer must be `Empty`.
+///
+/// Three pairs of matrices per side and density, drawn afresh each run, the first with a
+/// planted all-ones product; until TEST-bench-move-l0123 (author P169) six pairs from the fixed
+/// seeds 0..6.
 #[test]
 fn r9_bmm_encoding_decides_as_the_boolean_product() {
-    big(|| {
+    let (mut rng, seed) = Rng::fresh("r9bmm matrices");
+    big(move || {
         let mut seen = (0, 0);
         for m in 2usize..=5 {
             for num in [3u64, 4, 6] {
-                for seed in 0..6u64 {
-                    let (a, mut b) = r9_matrices(m, num, seed * 31 + m as u64);
-                    if seed == 0 {
+                for draw in 0..3 {
+                    let (mut a, mut b) = r9_matrices(m, num, rng.next_u64());
+                    if draw == 0 {
                         // One planted all-ones product per size: column 0 of `a` and row 0 of
                         // `b` all 1.
                         b[0] = vec![true; m];
-                    }
-                    let mut a = a;
-                    if seed == 0 {
                         for row in a.iter_mut() {
                             row[0] = true;
                         }
                     }
-                    let tag = format!("_r9bmm_{m}_{num}_{seed}");
+                    let tag = format!("_r9bmm_{m}_{num}_{draw}");
+                    let at = format!("m {m} num {num} draw {draw} ZED_SEED={seed}");
                     Type::forget_emptiness();
                     let t = r9_bmm(&a, &b, &tag);
                     let want = if r9_product_all_ones(&a, &b) {
@@ -6423,7 +6547,7 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
                         seen.1 += 1;
                         Verdict::Empty
                     };
-                    assert_eq!(t.verdict(), want, "r9bmm m {m} num {num} seed {seed}");
+                    assert_eq!(t.verdict(), want, "r9bmm {at}");
                     if want == Verdict::Inhabited {
                         let l0 = (m - 1) * (m + 1) + m + 1 + (m - 1) * m;
                         let w = (1..=l0).rev().fold(Value::atom("nil"), |tail, j| {
@@ -6434,17 +6558,20 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
                             };
                             Value::atom_with("cons", vec![Value::Int(v), tail])
                         });
-                        assert!(t.contains(&w), "r9bmm witness m {m} num {num} seed {seed}");
+                        assert!(t.contains(&w), "r9bmm witness {at}");
                         let mut a0 = a.clone();
                         a0[0] = vec![false; m];
                         Type::forget_emptiness();
                         let t0 = r9_bmm(&a0, &b, &format!("{tag}_z"));
-                        assert_eq!(t0.verdict(), Verdict::Empty, "r9bmm control m {m}");
+                        assert_eq!(t0.verdict(), Verdict::Empty, "r9bmm control {at}");
                     }
                 }
             }
         }
-        assert!(seen.0 >= 4 && seen.1 >= 4, "both verdicts occur: {seen:?}");
+        assert!(
+            seen.0 >= 4 && seen.1 >= 4,
+            "both verdicts occur: {seen:?} ZED_SEED={seed}"
+        );
     });
 }
 
@@ -6571,11 +6698,14 @@ fn r9_balanced(n: usize, tag: &str) -> Type {
     &ts[n + 1] - &u
 }
 
+/// 800 random inputs from a seed new each run; until TEST-bench-move-l0123 (author P169) 2,000
+/// from the fixed seed `0x91842aabbccd`, 0.88 s alone under load.
 #[test]
 fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
-    big(|| {
-        let mut rng = R6Rng(0x91842aabbccd);
-        for i in 0..2000 {
+    let (_, seed) = Rng::fresh("r9 compressed and expanded runs");
+    big(move || {
+        let mut rng = R6Rng(seed);
+        for i in 0..800 {
             let input = r6_random_input(&mut rng, 4, 4, true);
             let want = r6_oracle(&input);
             let t = r6_input_type(&input, &format!("_r9expand{i}"));
@@ -6590,7 +6720,7 @@ fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
                     assert_eq!(
                         v == Verdict::Inhabited,
                         want,
-                        "case {i} expanded {expanded}: {input:?} {v:?}"
+                        "case {i} expanded {expanded}: {input:?} {v:?} ZED_SEED={seed}"
                     );
                 }
             }
@@ -7695,6 +7825,725 @@ fn forks_nested_before_empty(n: usize) -> Type {
     (0..n as i64).rev().fold(pair_meet_empty(), |t, i| {
         Type::tuple(vec![fork_empty_at(i), t])
     })
+}
+
+// ---- Small instances of the benchmarks of `bench` (TEST-bench-move-l0123, author P169) ----
+//
+// Each test below checks at small sizes what a benchmark of `refusals/bench.rs` checks besides
+// its ratio, so that moving the benchmarks out of the default run keeps every kind of input
+// they reach (author P170).
+
+/// The verdict of `make(n, tag)` at each of `sizes` is refused for `cause`, with no
+/// measurement: the small instances of the benchmarks that call [`refusal_scales`].
+fn refused_at(
+    sizes: &[usize],
+    cause: Refusal,
+    prefix: &str,
+    make: impl Fn(usize, &str) -> Type + Send,
+) {
+    big(move || {
+        for &n in sizes {
+            Type::forget_emptiness();
+            let t = make(n, &format!("{prefix}{n}"));
+            assert_eq!(t.verdict(), Verdict::Refused(cause), "{prefix} at {n}");
+        }
+    });
+}
+
+/// The verdict of each probe case at each of `sizes`, as [`cases_scale_from`] asserts it at its
+/// two sizes, with no measurement.
+fn cases_at(cases: &[(&str, Verdict)], sizes: &[usize]) {
+    big(|| {
+        for &(case, want) in cases {
+            for &n in sizes {
+                Type::forget_emptiness();
+                let t = rfx_case(case, n, &format!("_small_{case}_{n}"));
+                assert_eq!(t.verdict(), want, "{case} at {n}");
+            }
+        }
+    });
+}
+
+/// The union of the first pairs of [`forked_pairs`] less the union of the pairs that hold them.
+fn forked_difference_of_unions(n: usize, tag: &str) -> Type {
+    let (ins, outs): (Vec<Type>, Vec<Type>) = forked_pairs(n, tag).into_iter().unzip();
+    let union = |ts: Vec<Type>| ts.iter().fold(Type::empty(), |u, t| &u | t);
+    &union(ins) - &union(outs)
+}
+
+/// The union over [`forked_pairs`] of each pair less the pair that holds it.
+fn forked_union_of_differences(n: usize, tag: &str) -> Type {
+    forked_pairs(n, tag)
+        .into_iter()
+        .fold(Type::empty(), |u, (a, b)| &u | &(&a - &b))
+}
+
+/// Pairs of lists of integers met with [`forked_union_of_differences`].
+fn forked_differences_met_with_pairs(n: usize, tag: &str) -> Type {
+    let l = list_named(Type::int(), tag);
+    &Type::tuple(vec![l.clone(), l]) & &forked_union_of_differences(n, tag)
+}
+
+/// `n` tags `#r11tag{i}{tag}` over one payload of the `n` rows `(#r11q{i}{tag}, i)`.
+fn r11_named_payloads(n: usize, tag: &str) -> Type {
+    let payload = (0..n).fold(Type::empty(), |p, i| {
+        &p | &Type::tuple(vec![Type::atom(&format!("r11q{i}{tag}")), lit(i as i64)])
+    });
+    (0..n).fold(Type::empty(), |t, i| {
+        &t | &Type::atom_with(&format!("r11tag{i}{tag}"), &payload)
+    })
+}
+
+/// Small instance of `bench::a_residues_refusal_is_reached_in_the_size_of_the_classes`: the
+/// Erdős cover written one to four times, each copy in groups of its own, is refused for its
+/// residues.
+#[test]
+fn a_repeated_residue_cover_is_refused_for_its_residues() {
+    refused_at(
+        &[1, 2, 3, 4],
+        Refusal::Residues,
+        "_rsr",
+        erdos_cover_repeated,
+    );
+}
+
+/// Small instance of `bench::a_tuple_split_refusal_is_reached_in_the_size_of_the_boxes`: one
+/// to four box covers over disjoint values, joined, are refused for the tuple split.
+#[test]
+fn joined_box_covers_are_refused_for_the_tuple_split() {
+    refused_at(&[1, 2, 3, 4], Refusal::TupleSplit, "_rst", |n, _| {
+        box_covers(n)
+    });
+}
+
+/// Small instance of `bench::a_morphism_split_refusal_is_reached_in_the_size_of_the_union`:
+/// morphisms into `int` less those into each of 1 to `n` and into the other integers are
+/// refused for the morphism split.
+#[test]
+fn morphisms_less_a_union_of_results_are_refused_for_the_split() {
+    refused_at(&[1, 2, 4, 8], Refusal::MorphismSplit, "_rsm", |n, _| {
+        morphism_split_by(n)
+    });
+}
+
+/// Small instance of `bench::a_no_witness_refusal_is_reached_in_the_size_of_the_keys`:
+/// morphisms that must take 1 to `n`, and the lists of them, are refused for want of a
+/// witness.
+#[test]
+fn morphisms_with_many_required_keys_are_refused_for_want_of_a_witness() {
+    refused_at(&[1, 2, 4, 8], Refusal::NoWitness, "_rsn", |n, _| {
+        morphism_between_by(n)
+    });
+}
+
+/// Small instance of `bench::a_fork_refusal_is_reached_in_the_size_of_the_pairs`: pairs of
+/// lists of integers less the pairs excluded for each of 2 to `n` are refused at the fork.
+#[test]
+fn pairs_less_many_excluded_pairs_are_refused_at_the_fork() {
+    refused_at(&[2, 3, 4, 8], Refusal::Fork, "_rsf", fork_by);
+}
+
+/// Small instance of `bench::a_difference_of_forked_unions_is_refused_in_its_size`: the union
+/// of a few forked pairs less the union of the pairs that hold them is refused at the fork.
+#[test]
+fn a_small_difference_of_forked_unions_is_refused() {
+    refused_at(
+        &[2, 3, 4, 8],
+        Refusal::Fork,
+        "_rsdu",
+        forked_difference_of_unions,
+    );
+}
+
+/// Small instance of `bench::a_union_of_forked_differences_is_refused_in_its_size`: a union of
+/// a few forked differences is refused at the fork.
+#[test]
+fn a_small_union_of_forked_differences_is_refused() {
+    refused_at(
+        &[2, 3, 4, 8],
+        Refusal::Fork,
+        "_rsud",
+        forked_union_of_differences,
+    );
+}
+
+/// Small instance of `bench::a_pair_type_met_with_forked_differences_is_refused_in_its_size`:
+/// a pair type met with a few forked differences is searched one difference at a time and
+/// refused at the fork.
+#[test]
+fn a_pair_type_met_with_a_few_forked_differences_is_refused() {
+    refused_at(
+        &[2, 3, 4, 8],
+        Refusal::Fork,
+        "_rspm",
+        forked_differences_met_with_pairs,
+    );
+}
+
+/// Small instance of `bench::refining_a_box_follows_no_fork_in_its_size`: refining the box of
+/// these pairs meets the fork of the end family and the verdict is refused for it, with the
+/// end family's place `n` kept or left out; `is_empty` counts the pairs as inhabited. At n 1,
+/// without the nonempty lists and with the end family's one place left out, the refusal names
+/// the fork refining meets, where following it named no value found (the benchmark's own tail
+/// until TEST-bench-move-l0123).
+#[test]
+fn refining_a_box_of_pairs_is_refused_at_the_end_family_fork() {
+    big(|| {
+        for n in 1..=4 {
+            for skip in [false, true] {
+                Type::forget_emptiness();
+                let t = refined_pairs(n, skip, &format!("_rfs{skip}{n}"));
+                assert_eq!(
+                    t.verdict(),
+                    Verdict::Refused(Refusal::Fork),
+                    "skip {skip} at {n}"
+                );
+            }
+            Type::forget_emptiness();
+            let t = refined_pairs(n, false, &format!("_rfse{n}"));
+            assert!(!t.is_empty(), "at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r4_diagnostic_routes_and_head_width`: the front sweep of `front`
+/// ends, and a list family over tuples of 4 and 8 Booleans whose excluded heads have a `true`
+/// first is inhabited.
+#[test]
+fn a_list_family_over_wide_boolean_heads_is_inhabited() {
+    big(|| {
+        Type::forget_emptiness();
+        std::hint::black_box(rfx_case("front", 8, "_r4route_front").sweep_verdict());
+        for w in [4, 8] {
+            Type::forget_emptiness();
+            let t = u4_width(w, &format!("_r4width{w}"));
+            assert_eq!(t.verdict(), Verdict::Inhabited, "width {w}");
+        }
+    });
+}
+
+/// Small instance of `bench::r5_probe_cases_are_decided_in_their_size_3`: the round-4 cases
+/// with a cofinite front, staggered holes, a boundary, and wide heads are decided at 4 and 8.
+#[test]
+fn round_four_probe_cases_are_decided_at_small_sizes() {
+    cases_at(
+        &[
+            ("u4cofrontones", Verdict::Empty),
+            ("u4cofrontsame", Verdict::Inhabited),
+            ("u4cofrontsameones", Verdict::Inhabited),
+            ("u4cofrontsameblock", Verdict::Empty),
+            ("u4cofrontshared", Verdict::Inhabited),
+            ("u4holesin", Verdict::Inhabited),
+            ("u4holesout", Verdict::Inhabited),
+            ("u4boundaryin", Verdict::Inhabited),
+            ("u4boundaryout", Verdict::Empty),
+            ("u4width", Verdict::Inhabited),
+        ],
+        &[4, 8],
+    );
+}
+
+/// Small instance of `bench::r5_probe_cases_are_decided_in_their_size_4`: the reduction with
+/// two literals and with one variable, the slots inside, and the remainder boundary inside are
+/// decided at 4 and 8.
+#[test]
+fn round_five_probe_cases_are_decided_at_small_sizes() {
+    cases_at(
+        &[
+            ("r5sat2lit", Verdict::Inhabited),
+            ("r5satk1n", Verdict::Inhabited),
+            ("r5slotsin", Verdict::Inhabited),
+            ("r5remin", Verdict::Inhabited),
+        ],
+        &[4, 8],
+    );
+}
+
+/// Small instance of `bench::r6_escape_families_are_decided_in_their_size` and
+/// `bench::r6_wide_rows_are_retired_and_decided_in_their_size`: the round-6 escape families of
+/// three-literal clauses, wide rows and a comb are decided at 4 and 8.
+#[test]
+fn round_six_escape_families_are_decided_at_small_sizes() {
+    cases_at(
+        &[
+            ("r6three", Verdict::Inhabited),
+            ("r6wide", Verdict::Inhabited),
+            ("r6comb", Verdict::Inhabited),
+        ],
+        &[4, 8],
+    );
+}
+
+/// Small instance of `bench::r7_round6_probe_cases_are_decided_in_their_size`,
+/// `bench::r7_peer_escape_families_scale` and the `r6parity` case of
+/// `bench::r7_congruence_scales`: parity, a repeated three-literal clause and distinct atoms
+/// are decided at 4 and 8.
+#[test]
+fn round_six_probe_cases_are_decided_at_small_sizes() {
+    cases_at(
+        &[
+            ("r6parity", Verdict::Inhabited),
+            ("r6repeat3", Verdict::Inhabited),
+            ("r6distinct2", Verdict::Inhabited),
+            ("r6distinct3", Verdict::Inhabited),
+        ],
+        &[4, 8],
+    );
+}
+
+/// Small instance of `bench::r7_congruence_scales` (`r7bmmout`) and
+/// `bench::r8_escape_alignment_reads_scale_with_the_input` (`r7bmmout`): the Boolean product
+/// encoding outside the cover is inhabited, and its escape reads at most `4n` empty cells.
+#[test]
+fn the_boolean_product_outside_its_cover_is_decided_at_small_sizes() {
+    big(|| {
+        for n in [8, 16, 32] {
+            Type::forget_emptiness();
+            let t = rfx_case("r7bmmout", n, &format!("_r7bmm_small{n}"));
+            let counts = t.escape_cell_counts();
+            assert!(counts.1 <= 4 * n, "r7bmmout {n}: {counts:?}");
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited, "r7bmmout at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r8_escape_and_width_instruction_scaling` (`r5varywidth`) and
+/// `bench::r8_varywidth_scales_within_input_size`: the list family of [`r5_varying_width`] over
+/// tuples of `w` Booleans is inhabited at widths 4, 8 and 16.
+#[test]
+fn a_list_of_varying_width_heads_is_inhabited() {
+    big(|| {
+        for w in [4, 8, 16] {
+            Type::forget_emptiness();
+            assert_eq!(
+                r5_varying_width(w).verdict(),
+                Verdict::Inhabited,
+                "width {w}"
+            );
+        }
+    });
+}
+
+/// Small instance of `bench::r8_a_list_in_a_field_is_decided_as_the_list_alone`: a list of
+/// the remainder boundary or of two clauses with a union, in a tuple or record field, gets the
+/// verdict of the list alone.
+#[test]
+fn a_list_in_a_field_gets_the_verdict_of_the_list_alone() {
+    big(|| {
+        for n in [8, 16] {
+            let tag = format!("_r8field_small{n}");
+            for case in ["chain", "r5remin", "r6twoun"] {
+                Type::forget_emptiness();
+                let want = rfx_case(case, n, &tag).verdict();
+                for wrap in ["tup:", "rec:"] {
+                    Type::forget_emptiness();
+                    let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
+                    assert_eq!(got, want, "{wrap}{case} at {n}");
+                }
+            }
+        }
+    });
+}
+
+/// Small instance of `bench::r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone`:
+/// a list of the front sweep's class, with a shared cofinite front, a boundary inside, or the
+/// same cofinite front, in a tuple or record field gets the verdict of the list alone.
+#[test]
+fn a_front_sweep_list_in_a_field_gets_the_verdict_of_the_list_alone() {
+    big(|| {
+        for n in [4, 16] {
+            let tag = format!("_r9field_small{n}");
+            for case in ["u4cofrontshared", "boundaryinside", "clcofrontsame"] {
+                Type::forget_emptiness();
+                let want = rfx_case(case, n, &tag).verdict();
+                for wrap in ["tup:", "rec:"] {
+                    Type::forget_emptiness();
+                    let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
+                    assert_eq!(got, want, "{wrap}{case} at {n}");
+                }
+            }
+        }
+    });
+}
+
+/// Small instance of `bench::r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone`: a
+/// list in a tagged atom's payload, alone or in a tuple or record field, gets the verdict of
+/// the list alone.
+#[test]
+fn a_list_in_an_atom_payload_gets_the_verdict_of_the_list_alone() {
+    big(|| {
+        for n in [4, 16] {
+            let tag = format!("_r9atom_small{n}");
+            for case in [
+                "r5remout",
+                "chain",
+                "r6twoun",
+                "clstagger",
+                "clstaggerholesout",
+            ] {
+                Type::forget_emptiness();
+                let want = rfx_case(case, n, &tag).verdict();
+                for wrap in ["atom:", "tup:atom:", "rec:atom:", "atom:tup:"] {
+                    Type::forget_emptiness();
+                    let got = rfx_case(&format!("{wrap}{case}"), n, &tag).verdict();
+                    assert_eq!(got, want, "{wrap}{case} at {n}");
+                }
+            }
+        }
+    });
+}
+
+/// Small instance of `bench::r8_stage_boundary_scale` (`r8stagein`): the congruence on the
+/// Stage A side of the boundary is decided inhabited.
+#[test]
+fn the_stage_boundary_inside_is_decided_inhabited() {
+    cases_at(&[("r8stagein", Verdict::Inhabited)], &[16, 32]);
+}
+
+/// Small instance of `bench::r9_wrapped_witness_cost_scales` (`u4cofrontshared`): a list with
+/// a shared cofinite front is inhabited inside each product wrapper.
+#[test]
+fn a_shared_cofinite_front_is_inhabited_inside_each_wrapper() {
+    big(|| {
+        for n in [4, 16, 32] {
+            for wrap in [
+                "tup", "rec", "atom", "atom2", "nested", "option", "map", "listhead",
+            ] {
+                Type::forget_emptiness();
+                let t = rfx_case(&format!("{wrap}:u4cofrontshared"), n, "_r9shared_small");
+                assert_eq!(t.verdict(), Verdict::Inhabited, "{wrap} at {n}");
+                Type::forget_emptiness();
+                assert!(!t.is_empty(), "{wrap} at {n}");
+            }
+        }
+    });
+}
+
+/// Small instance of `bench::r9_active_groups_have_one_entry_across_simultaneous_reentry`: two
+/// positive chains that re-enter each other's exhausted groups hold the word whose last
+/// positive item is 1 and not the all-zero word, and the chains decide them inhabited (the
+/// benchmark's own loop until TEST-bench-move-l0123).
+#[test]
+fn chains_that_reenter_each_others_groups_are_inhabited() {
+    big(|| {
+        for n in 1..=6 {
+            let t = r9_swapping_groups(n, false, "_r9swap_oracle");
+            // The last positive item is 1, previous items 0, and the first is 0.
+            let mut xs = vec![0; n + 1];
+            xs.push(1);
+            assert!(t.contains(&r6_colour_list(&xs)));
+            assert!(!t.contains(&r6_colour_list(&vec![0; n + 2])));
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+        }
+    });
+}
+
+/// Small instance of `bench::escape_cells_scale_on_the_coset_and_product_chains`: the escape
+/// cells of the coset cover and of two Boolean product encodings are counted, and the empty
+/// cells are among those read.
+#[test]
+fn escape_cells_of_cosets_and_products_are_counted() {
+    big(|| {
+        for case in ["r9cosets", "r9bmmlate", "r10alternating"] {
+            for n in [16, 64] {
+                let t = rfx_case(case, n, &format!("_esc_small_{case}_{n}"));
+                let (reads, empty) = t.escape_cell_counts();
+                assert!(
+                    empty <= reads,
+                    "{case} at {n}: {empty} empty of {reads} reads"
+                );
+            }
+        }
+    });
+}
+
+/// Small instance of `bench::r9_decidable_shared_dag_scales_and_rejects_bounded_leaves` (its
+/// own tail until TEST-bench-move-l0123): a shared tuple DAG, a cyclic list and an atom
+/// payload are decidable with Boolean leaves and not with a bounded leaf.
+#[test]
+fn shared_dags_are_decidable_unless_a_leaf_is_bounded() {
+    big(|| {
+        let bounded = || Type::exact(lit(0), Type::int());
+        for n in [0, 1, 16, 128, 1024] {
+            assert!(r9_shared_tuple_type(n, Type::bool()).decidable());
+            assert!(!r9_shared_tuple_type(n, bounded()).decidable());
+        }
+        assert!(list_named(Type::bool(), "_r9decidable_cycle").decidable());
+        assert!(!list_named(bounded(), "_r9undecidable_cycle").decidable());
+        let in_payload = |leaf: Type| {
+            Type::atom_with("r9dec", &Type::tuple(vec![r9_shared_tuple_type(64, leaf)]))
+                | Type::atom("r9other")
+        };
+        assert!(in_payload(Type::bool()).decidable());
+        assert!(!in_payload(bounded()).decidable());
+    });
+}
+
+/// Small instance of `bench::r10_a_wide_head_literal_is_decided_by_the_escape` (its own first
+/// loop until TEST-bench-move-l0123): one literal outside the 64-bit range in a head is
+/// decided by the escape; the word with head 2 is in the type and the word with the wide head
+/// is not.
+#[test]
+fn a_wide_head_literal_is_decided_by_the_escape_at_small_sizes() {
+    big(|| {
+        let big = Value::int("9223372036854775808".parse().unwrap());
+        for n in [16, 64] {
+            let t = r10_big_congruence(n, &format!("_r10big{n}"));
+            let word = |first: Value| {
+                (1..=n).rev().fold(Value::atom("nil"), |tail, j| {
+                    let h = if j == 1 {
+                        first.clone()
+                    } else {
+                        Value::Int(((4 - j % 3) % 3) as i64)
+                    };
+                    Value::atom_with("cons", vec![h, tail])
+                })
+            };
+            assert!(t.contains(&word(Value::Int(2))));
+            assert!(
+                !t.contains(&word(big.clone())),
+                "F2 must reject the wide head"
+            );
+            Type::forget_emptiness();
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited), "escape at {n}");
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        }
+    });
+}
+
+/// Small instance of `bench::r10_big_integer_escape_is_a_renaming_and_scales`: a wide integer
+/// in the escape heads is a renaming of a small one; both forms read the same cells and get
+/// the same verdict, Inhabited.
+#[test]
+fn a_wide_integer_in_escape_heads_is_a_renaming() {
+    big(|| {
+        for n in [16, 64] {
+            let small = r10_big_congruence_cx(n, false, "_r10bigsmall");
+            let wide = r10_big_congruence_cx(n, true, "_r10bigwide");
+            assert_eq!(wide.escape_cell_counts(), small.escape_cell_counts());
+            Type::forget_emptiness();
+            assert_eq!(wide.verdict(), Verdict::Inhabited, "wide at {n}");
+            Type::forget_emptiness();
+            assert_eq!(small.verdict(), Verdict::Inhabited, "small at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r10_shared_product_list_is_swept_and_checked_once`: a tuple whose
+/// components share one inhabited list type is inhabited, and a tuple whose components share
+/// one empty list type is empty (the benchmark's own tail until TEST-bench-move-l0123).
+#[test]
+fn a_list_type_shared_by_tuple_components_is_checked_once() {
+    big(|| {
+        for n in [2, 4, 8] {
+            Type::forget_emptiness();
+            let t = rfx_case("r10sharedfront", n, &format!("_r10shared_small{n}"));
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        }
+        Type::forget_emptiness();
+        let empty = rfx_case("chain", 3, "_r10sharedempty");
+        assert_eq!(Type::tuple(vec![empty; 16]).verdict(), Verdict::Empty);
+    });
+}
+
+/// Small instance of `bench::r10_shared_payload_probe` and
+/// `bench::r10_shared_payload_rows_must_scale`: tags sharing one payload of equal pairs are
+/// inhabited, hold an equal pair and not an unequal one.
+#[test]
+fn tags_sharing_one_payload_are_inhabited() {
+    big(|| {
+        for n in [1, 2, 8] {
+            Type::forget_emptiness();
+            let tag = format!("_shared_small{n}");
+            let t = r10_shared_payloads(n, &tag);
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+            let tagged = |a, b| Value::atom_with(format!("r10tag0{tag}"), vec![a, b]);
+            assert!(t.contains(&tagged(Value::Int(0), Value::Int(0))), "at {n}");
+            assert!(!t.contains(&tagged(Value::Int(0), Value::Int(1))), "at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r11_group_reads_skip_bare_atom_names_and_scale` and
+/// `bench::r11_failure_prefix_probe`: a tuple of the prefixes of a union of bare atoms is
+/// inhabited.
+#[test]
+fn a_tuple_of_prefixes_of_bare_atoms_is_inhabited() {
+    big(|| {
+        for n in [1, 2, 16] {
+            Type::forget_emptiness();
+            assert_eq!(
+                r11_failure_prefixes(n).verdict(),
+                Verdict::Inhabited,
+                "at {n}"
+            );
+        }
+    });
+}
+
+/// Small instance of `bench::r11_tagged_payload_probe`: outer tags sharing one payload whose
+/// components are tagged atoms are inhabited.
+#[test]
+fn outer_tags_over_a_tagged_payload_are_inhabited() {
+    big(|| {
+        for n in [1, 2, 16] {
+            Type::forget_emptiness();
+            assert_eq!(
+                r11_tagged_payloads(n).verdict(),
+                Verdict::Inhabited,
+                "at {n}"
+            );
+        }
+    });
+}
+
+/// Small instance of `bench::r11_literal_prefix_probe`: the remainder boundary behind a few
+/// integer links holds the word of zeros followed by `[5, 1, 1]`, and is inhabited.
+#[test]
+fn a_boolean_tail_behind_integer_links_holds_its_witness() {
+    big(|| {
+        for n in [1, 4, 16] {
+            let mut t = rfx_case("r5remout", 8, "_r11prefix_small");
+            for _ in 0..n {
+                t = cons_of(Type::int(), t);
+            }
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+            let mut word = vec![0; n];
+            word.extend([5, 1, 1]);
+            assert!(t.contains(&r6_colour_list(&word)), "at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r11_payload_name_prefix_probe`: a tuple of the prefixes of a
+/// union of payload-bearing atoms is inhabited.
+#[test]
+fn a_tuple_of_prefixes_of_payload_atoms_is_inhabited() {
+    big(|| {
+        for n in [1, 2, 16] {
+            Type::forget_emptiness();
+            let t = r11_payload_name_prefixes(n);
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r11_many_names_probe` and `bench::r11_many_names_must_scale`:
+/// tuples of types that share many atom names are inhabited.
+#[test]
+fn types_sharing_many_atom_names_are_inhabited() {
+    big(|| {
+        for n in [1, 2, 16] {
+            Type::forget_emptiness();
+            let t = r11_names_family(n, &format!("_n_small{n}"));
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        }
+    });
+}
+
+/// Small instance of `bench::r11_named_payload_probe`: tags sharing one payload whose rows
+/// each hold an atom name are inhabited.
+#[test]
+fn tags_sharing_a_payload_of_named_rows_are_inhabited() {
+    big(|| {
+        for n in [1, 2, 16] {
+            Type::forget_emptiness();
+            let t = r11_named_payloads(n, &format!("_small{n}"));
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
+        }
+    });
+}
+
+/// The ternary-density alignment family of [`r11_ternary_alignment`] at sides 4 and 8, which
+/// hold each row class (`bench::r11_ternary_alignment_is_inhabited` runs it to side 32; the
+/// test ran all four sizes in 1.44 s until TEST-bench-move-l0123, author P169).
+#[test]
+fn r11_ternary_alignment_is_inhabited_at_small_sizes() {
+    r11_ternary_alignment(&[16, 64]);
+}
+
+/// A tuple is empty when one of its components is. The search of a verdict ends at the first
+/// fork it meets, so with the forked `fork_empty` first and an empty component after it the
+/// tuple was refused (Fork), and in the other order empty. A search that sets the fork aside
+/// and tries the later components proves it empty in both orders. Measured on r5-base
+/// e82e6cff: `(F, E)` Refused(Fork), `(E, F)` Empty. With no empty component the fork still
+/// refuses the tuple. (The first part of `bench::a_tuple_with_an_empty_component_is_empty_in_
+/// either_order` until TEST-bench-move-l0123.)
+#[test]
+fn a_tuple_with_an_empty_component_is_empty_beside_a_fork() {
+    let (fork, empty) = (fork_empty(), pair_meet_empty());
+    for t in [
+        Type::tuple(vec![fork.clone(), empty.clone()]),
+        Type::tuple(vec![empty.clone(), fork.clone()]),
+        Type::tuple(vec![fork.clone(), fork.clone(), empty.clone()]),
+    ] {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+        Type::forget_emptiness();
+        assert!(t.is_empty(), "{t}");
+    }
+    Type::forget_emptiness();
+    let t = Type::tuple(vec![fork.clone(), Type::int()]);
+    assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "{t}");
+}
+
+/// Small instance of `bench::a_tuple_with_an_empty_component_is_empty_in_either_order` and
+/// `bench::a_chain_of_forks_before_an_empty_component_scales`: one to four distinct forked
+/// components and an empty one, the empty one last or first, are empty.
+#[test]
+fn a_few_distinct_forks_beside_an_empty_component_are_empty() {
+    big(|| {
+        for n in 1..=4 {
+            let mut parts: Vec<Type> = (0..n).map(fork_empty_at).collect();
+            parts.push(pair_meet_empty());
+            let last = Type::tuple(parts.clone());
+            parts.reverse();
+            for t in [last, Type::tuple(parts)] {
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+                Type::forget_emptiness();
+                assert!(t.is_empty(), "{t}");
+            }
+        }
+    });
+}
+
+/// Small instance of
+/// `bench::a_chain_of_forks_nested_before_an_empty_component_is_empty_in_its_size`: one to
+/// four forks, each met before the nested tuple that holds the empty component, are empty.
+#[test]
+fn a_few_forks_nested_before_an_empty_component_are_empty() {
+    big(|| {
+        for n in 1..=4 {
+            Type::forget_emptiness();
+            let t = forks_nested_before_empty(n);
+            assert_eq!(t.verdict(), Verdict::Empty, "at {n}");
+            Type::forget_emptiness();
+            assert!(t.is_empty(), "at {n}");
+        }
+    });
+}
+
+/// Formulas of one to four clauses of three literals over three variables (162 in all), as
+/// `bench::r5_sat_check` takes every one, decided as `r5_sat` decides them by the verdict and
+/// by each mechanism that answers alone: up to 24 of each kind, drawn afresh each run (author
+/// P169, TEST-bench-move-l0123).
+#[test]
+fn r5_sat_formulas_sampled_by_kind_are_decided_as_brute_force_decides_them() {
+    r5_sat_sample("r5 SAT formulas of three-literal clauses", [3, 1, 4, 3], 24);
+}
+
+/// Formulas of three clauses of one to three literals over three variables (2,600 in all), as
+/// `bench::r6_every_three_clause_formula_on_three_variables_is_decided_correctly` takes every
+/// one: up to 8 of each kind, drawn afresh each run (author P169, TEST-bench-move-l0123). Many
+/// have clauses of three literals, whose rows have three atoms in the escape solve, so a solve
+/// that gave `Empty` from the first two atoms of such a row answers some of them wrongly.
+#[test]
+fn r6_three_clause_formulas_sampled_by_kind_are_decided_correctly() {
+    r5_sat_sample("r6 SAT formulas of three clauses", [3, 3, 3, 0], 8);
 }
 
 mod bench;

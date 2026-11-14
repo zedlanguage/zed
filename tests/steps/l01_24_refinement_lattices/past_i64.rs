@@ -358,4 +358,78 @@ fn an_exponent_with_no_exact_form_bounds_outward() {
     );
 }
 
+/// Small instance of `bench::classes_affine_bounds_and_powers_past_i64_scale_linearly`: four
+/// points past `i64` spaced unevenly, so that their class's modulus is the gcd of several
+/// different gaps; a chain of meets from every integer of one class written with four
+/// residues past its modulus; an affine bound of four terms times `i128::MIN`;
+/// `x ^ (2^32 + 1)` over four pieces; and four pieces moved onto a class modulo `3 2^64`.
+#[test]
+fn classes_affine_bounds_and_powers_past_i64_on_several_pieces() {
+    let count = 4i128;
+    let step = two_big(64);
+    // `k^2 + k` is 0, 2, 6 and 12: the gaps' gcd is 2, so the class is `MAX mod 2^65`.
+    let ints = IntervalSet::from_pieces(
+        (0..count)
+            .map(|k| {
+                let p = &n(MAX) + &(&step * &n(k * k + k));
+                (End::Fin(p.clone()), End::Fin(p))
+            })
+            .collect(),
+    );
+    let d = Domain {
+        ints,
+        class: Congruence::top(),
+        finite: FiniteSet::Top,
+    };
+    assert_eq!(d.normal().class, class(&(&step * &n(2)), &n(MAX)));
+
+    let m = &step * &n(3);
+    let mut c = Congruence::top();
+    for k in 0..count {
+        c = c.meet(&class(&m, &(&n(MAX) + &(&m * &n(k)))));
+    }
+    assert_eq!(c, class(&m, &n(MAX)));
+
+    let mut a = Affine::constant(1);
+    a.terms = (0..count)
+        .map(|i| (Sym(format!("s{i}")), n(i + 1)))
+        .collect::<BTreeMap<_, _>>();
+    let scaled = a.times(n(i128::MIN));
+    assert_eq!(scaled.terms.len(), count as usize);
+    for i in 0..count {
+        let want = &n(i + 1) * &n(i128::MIN);
+        assert_eq!(scaled.terms[&Sym(format!("s{i}"))], want, "s{i}");
+    }
+
+    let k = n((1i128 << 32) + 1);
+    let x = IntervalSet::from_pieces(
+        (0..count as i64)
+            .map(|i| (End::of(10 * i + 2), End::of(10 * i + 5)))
+            .collect(),
+    );
+    let power = |b: i64| End::Fin(Num::from(b).pow_by(&k).expect("a power"));
+    let want = IntervalSet::from_pieces(
+        (0..count as i64)
+            .map(|i| (power(10 * i + 2), power(10 * i + 5)))
+            .collect(),
+    );
+    assert_eq!(forward(&pow(k.clone()), &x, &x), want);
+
+    let x = IntervalSet::from_pieces(
+        (0..count)
+            .map(|i| {
+                let lo = &n(MAX) + &(&m * &n(2 * i));
+                (End::Fin(lo.clone()), End::Fin(&lo + &m))
+            })
+            .collect(),
+    );
+    let (moved, _) = reduce_congruence(&x, &class(&m, &Num::ONE));
+    assert_eq!(moved.len(), count as usize);
+    for i in 0..count {
+        let lo = &n(MAX) + &(&m * &n(2 * i));
+        let first = &lo + &(&Num::ONE - &lo).rem_euclid(&m);
+        assert!(moved.contains_end(&End::Fin(first)), "piece {i}: {moved}");
+    }
+}
+
 mod bench;

@@ -749,15 +749,22 @@ fn points(seed: &mut Seed, depth: usize) -> Type {
     }
 }
 
+/// TEST-bench-move-l0123 (author P169): was 400 cases at the fixed seeds `s * 7919 + 5`
+/// (0.59 s under load); now 100 cases of the same depth, each from a seed drawn from a fresh
+/// generator whose seed is printed, so each run tries new types.
 #[test]
 fn a_type_of_points_prints_without_the_top_type_and_reads_back() {
     // A type made of points holds no value outside them, so its text needs no `_`, whatever
     // operands the kernel keeps (item PRINT-kept-meet-all).
-    for s in 0..400 {
-        let mut seed = Seed(s * 7919 + 5);
-        let t = points(&mut seed, 5);
+    let (mut rng, seed) = zed_tests::instances::Rng::fresh("types of points");
+    for _ in 0..100 {
+        let case = rng.next_u64();
+        let t = points(&mut Seed(case), 5);
         let s = round_trip(&t);
-        assert!(!s.to_string().contains('_'), "{s}");
+        assert!(
+            !s.to_string().contains('_'),
+            "{s}, case seed {case} (ZED_SEED={seed})"
+        );
     }
 }
 
@@ -784,6 +791,49 @@ fn meets_n_deep(n: usize) -> Type {
         t = &(&t | &both(a, 0, 1, 3)) - &point(a, 1);
     }
     t
+}
+
+/// Small instance of `bench::the_text_of_a_type_written_by_name_scales` (TEST-bench-move-l0123,
+/// author P169): a tuple of distinct literals nested 4 deep, written by name, is written where
+/// it stands, with no definitions.
+#[test]
+fn a_nested_tuple_written_by_name_has_no_definitions() {
+    let t = (0..4).fold(lit(-1), |t, i| tuple(&[lit(i), t]));
+    let s = t.surface_by_name(TextPlace::Any);
+    assert!(s.defs.is_empty(), "{:?}", s.defs);
+    assert_eq!(s.root, "(3, (2, (1, (0, -1))))");
+}
+
+/// Small instance of `bench::the_text_of_a_meet_with_a_long_list_scales` (TEST-bench-move-l0123,
+/// author P169): a meet less a decision list of 2 to 8 points prints without `_`, reads back,
+/// and writes each block once.
+#[test]
+fn a_meet_less_a_decision_list_prints_each_block_once() {
+    assert_eq!(
+        round_trip(&less_a_long_list(6)).to_string(),
+        r"(((0, 0) | (0, 1)) & ((0, 1) | (1, 1))) \ ((2, 0) | (3, 0) | (((6, 0) | (7, 0)) \ (4, 0) \ (5, 0)))"
+    );
+    for n in 2..=8 {
+        let s = round_trip(&less_a_long_list(n)).to_string();
+        assert!(!s.contains('_'), "{s}");
+        assert_eq!(
+            s.matches(" \\ ").count() + s.matches(" | ").count(),
+            n + 2,
+            "{s}"
+        );
+    }
+}
+
+/// Small instance of `bench::the_text_of_meets_n_deep_scales` (TEST-bench-move-l0123, author
+/// P169): 1 to 5 meets inside each other, each with its own point taken away, print without
+/// `_`, read back, and write each point taken away once.
+#[test]
+fn meets_inside_each_other_print_each_point_taken_away_once() {
+    for n in 1..=5 {
+        let s = round_trip(&meets_n_deep(n)).to_string();
+        assert!(!s.contains('_'), "{s}");
+        assert_eq!(s.matches(" \\ ").count(), n, "{s}");
+    }
 }
 
 mod bench;

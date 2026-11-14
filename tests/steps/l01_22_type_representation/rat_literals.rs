@@ -232,6 +232,19 @@ fn check_program(text: &str, n: &str) {
     assert_eq!((x | y).to_string().len(), 2 * n.len() + 11);
 }
 
+/// Small instance of `bench::a_rat_literal_costs_its_exponent_and_not_its_digits` and
+/// `bench::a_rat_literal_costs_the_length_of_its_text` (TEST-bench-move-l0123, author P169):
+/// literals of the exponents 400000 and 10^29, which fits no machine word, checked, compared
+/// and printed.
+#[test]
+fn literals_of_a_large_exponent_are_checked_compared_and_printed() {
+    let ns = ["400000".to_string(), format!("1{}", "0".repeat(29))];
+    let texts = programs(&ns);
+    for (i, n) in ns.iter().enumerate() {
+        check_program(&texts[&i], n);
+    }
+}
+
 /// A literal type hashes a `rat` by its residues modulo `2^61 - 1`, but compares, orders and
 /// tests membership on the exact value: two literals of equal residues stay two types.
 #[test]

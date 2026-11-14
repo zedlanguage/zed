@@ -191,18 +191,20 @@ fn edges_that_are_not_union_chords_stay_refused() {
 /// Random rings of unions and tuples with random morphism children and random union edges,
 /// most along the cycle and some not: every answer matches the Büchi reference and does not
 /// depend on numbering, and a ring whose added edges all run along the cycle is not refused
-/// (3318 of the 20000 rings have such edges; 329 of those were refused before the item).
+/// (3318 of 20000 rings of the old fixed seed had such edges; 329 of those were refused before
+/// the item).
+///
+/// It ran 20,000 rings drawn from one fixed xorshift seed (0.52 s alone); now it runs 5,000
+/// rings drawn from a new seed each run, printed (TEST-bench-move-l0123, author P169: random
+/// tests run fewer cases). The draws and checks on each ring are as before. The shares the end
+/// asserts, measured at about 0.29 and 0.16, sit some seven standard deviations of a draw of
+/// 5,000 above the quarter and the eighth they are held to.
 #[test]
 fn random_rings_with_union_chords_are_decided_right() {
-    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
-    let mut rnd = move |m: usize| {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        (x % m as u64) as usize
-    };
+    let (mut rng, seed) = zed_tests::instances::Rng::fresh("rings with union chords");
+    let mut rnd = |m: usize| rng.below(m);
     let (mut rings, mut along, mut kept) = (0, 0, 0);
-    for _ in 0..20_000 {
+    for _ in 0..5_000 {
         let n = 2 + rnd(10);
         let kinds: Vec<K> = (0..n)
             .map(|_| if rnd(3) == 0 { K::And } else { K::Or })
@@ -227,7 +229,7 @@ fn random_rings_with_union_chords_are_decided_right() {
         }
         let g = ring(&kinds, &extra, &mors);
         rings += 1;
-        let label = format!("{kinds:?} edges {extra:?} morphisms {mors:?}");
+        let label = format!("ZED_SEED={seed}: {kinds:?} edges {extra:?} morphisms {mors:?}");
         let refused = checked(&label, &g);
         let a = decide(&g.bes()).answers;
         let mut b = decide(&reversed(&g).bes()).answers;
@@ -239,9 +241,12 @@ fn random_rings_with_union_chords_are_decided_right() {
             kept += usize::from(!extra.is_empty());
         }
     }
+    eprintln!(
+        "ZED_SEED={seed}: {along} rings along the cycle, {kept} with added edges, of {rings}"
+    );
     assert!(
         along > rings / 4 && kept > rings / 8,
-        "{along} {kept} of {rings}"
+        "ZED_SEED={seed}: {along} {kept} of {rings}"
     );
 }
 

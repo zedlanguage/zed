@@ -8,15 +8,9 @@
 /// F85).
 #[test]
 fn the_bound_walk_scales_linearly() {
-    let program = |n: usize| {
-        let params: Vec<String> = (0..n)
-            .map(|i| format!("x{i}: (int, #a .. #a | #b -> int) | int"))
-            .collect();
-        format!("f({}) = 0;\nmain() = 0;\n", params.join(", "))
-    };
     let units: std::collections::HashMap<usize, _> = [250, 2000]
         .into_iter()
-        .map(|n| (n, zed_tests::deep::resolved(&program(n))))
+        .map(|n| (n, zed_tests::deep::resolved(&super::nested_bounds(n))))
         .collect();
     zed_tests::scaling::check_order("bound walk", 250, 1, |n| {
         let (stmts, res) = &units[&n];

@@ -159,9 +159,9 @@ fn missed(t: &Table, n: &Names) -> Type {
     &s - &Type::union_all(t.arms.iter().map(|a| n.tuple(a, true)))
 }
 
-fn tables(seed: u64, count: usize) -> Vec<Table> {
-    let mut r = Rng::new(seed);
-    (0..count).map(|_| table(&mut r)).collect()
+/// `count` tables drawn from `r`.
+fn tables(r: &mut Rng, count: usize) -> Vec<Table> {
+    (0..count).map(|_| table(r)).collect()
 }
 
 const PLAIN: Names = Names {
@@ -170,19 +170,31 @@ const PLAIN: Names = Names {
     perm: [0, 1, 2, 3, 4],
 };
 
+/// It ran 4,000 tables of the fixed seed 23 (1.49 s alone); now it runs 1,000 drawn from a new
+/// seed each run, printed, and the share of exhaustive tables is held to the same quarter to
+/// three quarters (TEST-bench-move-l0123, author P169: random tests run fewer cases).
 #[test]
 fn match_tables_agree_with_listing_their_values() {
+    let (mut r, seed) = Rng::fresh("match tables against listing");
+    let count = 1000;
     let mut empty = 0;
-    for (i, t) in tables(23, 4000).iter().enumerate() {
+    for (i, t) in tables(&mut r, count).iter().enumerate() {
         let expected = !missed_by_listing(t);
         empty += expected as usize;
         let ty = missed(t, &PLAIN);
-        assert_eq!(ty.is_empty(), expected, "table {i}: {ty}");
+        assert_eq!(ty.is_empty(), expected, "ZED_SEED={seed}, table {i}: {ty}");
     }
+    eprintln!("ZED_SEED={seed}: {empty} of {count} exhaustive");
     // Both answers are common, so the comparison means something either way.
-    assert!((1000..3000).contains(&empty), "{empty} of 4000 exhaustive");
+    assert!(
+        (count / 4..count * 3 / 4).contains(&empty),
+        "ZED_SEED={seed}: {empty} of {count} exhaustive"
+    );
 }
 
+/// It ran 1,500 tables of the fixed seed 29 under three renamings (2.84 s alone); now it runs
+/// 200 drawn from a new seed each run, printed, under the same renamings
+/// (TEST-bench-move-l0123, author P169: random tests run fewer cases).
 #[test]
 fn the_answers_do_not_depend_on_names() {
     let renamings = [
@@ -202,19 +214,30 @@ fn the_answers_do_not_depend_on_names() {
             perm: [3, 4, 0, 2, 1],
         },
     ];
-    for (i, t) in tables(29, 1500).iter().enumerate() {
+    let (mut r, seed) = Rng::fresh("match tables under renamings");
+    for (i, t) in tables(&mut r, 200).iter().enumerate() {
         let plain = missed(t, &PLAIN).is_empty();
         for (k, n) in renamings.iter().enumerate() {
-            assert_eq!(missed(t, n).is_empty(), plain, "table {i}, renaming {k}");
+            assert_eq!(
+                missed(t, n).is_empty(),
+                plain,
+                "ZED_SEED={seed}, table {i}, renaming {k}"
+            );
         }
     }
 }
 
+/// It ran 1,500 tables of the fixed seed 31 (0.72 s alone); now it runs 600 drawn from a new
+/// seed each run, printed (TEST-bench-move-l0123, author P169: random tests run fewer cases).
 #[test]
 fn the_answers_do_not_depend_on_the_order_of_queries() {
     // Each answer is decided once alone, after forgetting all others, and then all in one order
     // and in the reverse order, each sequence keeping what it decided.
-    let built: Vec<Type> = tables(31, 1500).iter().map(|t| missed(t, &PLAIN)).collect();
+    let (mut r, seed) = Rng::fresh("match tables in any order");
+    let built: Vec<Type> = tables(&mut r, 600)
+        .iter()
+        .map(|t| missed(t, &PLAIN))
+        .collect();
     let alone: Vec<bool> = built
         .iter()
         .map(|ty| {
@@ -227,8 +250,8 @@ fn the_answers_do_not_depend_on_the_order_of_queries() {
     Type::forget_emptiness();
     let mut backward: Vec<bool> = built.iter().rev().map(Type::is_empty).collect();
     backward.reverse();
-    assert_eq!(forward, alone);
-    assert_eq!(backward, alone);
+    assert_eq!(forward, alone, "ZED_SEED={seed}");
+    assert_eq!(backward, alone, "ZED_SEED={seed}");
 }
 
 mod bench;
