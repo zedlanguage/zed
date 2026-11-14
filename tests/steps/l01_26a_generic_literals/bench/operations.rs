@@ -9,13 +9,17 @@ use zed_tests::step_helpers::l01_16_elaboration::checked;
 
 use super::super::operations::{chain, mixed_chain};
 
+/// Sizes 10,000 and 80,000 (TEST-generic-fold-bench-size): checking the input, done before the
+/// timing, takes about 0.1 ms per literal and most of the run, so at 100,000 and 800,000 the
+/// test took 161 s. Checking is linear too: 8.0 times the instructions and bytes for 8 times the
+/// literals, here and for the sum below.
 #[test]
 fn an_operation_on_many_literals_elaborates_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
-        let units = scaling::inputs(100_000, |m| checked(&chain(m)));
+        let units = scaling::inputs(10_000, |m| checked(&chain(m)));
         scaling::check(
             "elaborating an operation on n generic literals",
-            100_000,
+            10_000,
             |m| {
                 units[&m].elab();
             },
