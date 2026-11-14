@@ -2293,16 +2293,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
-| STAGE-generic-fold | impl attempt 2 | 2026-11-09 09:24 | resumed from handoff; committing WIP tests, rebasing onto origin/main (386 behind); load 45.39 |
-| TEST-bench-timeout-recheck | running |  |  |
-| TEST-calibration-split-margin | running |  |  |
+| TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
+| TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
 | TEST-cov-scaling-noise | running |  |  |
 | TEST-flaky-constant-spin | running |  |  |
 | TEST-l01_29-widen-flake | running |  |  |
 | TEST-malloc-state-under-cov | running |  |  |
-| TEST-runtime-build-in-piece | running |  |  |
+| TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
 | TEST-scaling-module-tests-once | running |  |  |
-| TEST-time-pass-condition | running |  |  |
+| TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
 | XR-l139-family | impl attempt resume | 2026-11-13 18:59 | resumed after P169: rebased Opus R3 commit onto 751c46435 as bf4bf90a3 (clean), build + fmt pass, running l01_39/l01_25/zedc_preimage (336 pieces); load 48.27 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
