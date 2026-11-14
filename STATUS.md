@@ -2365,7 +2365,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAIL-abs-hull-rows-tie | running |  |  |
+| FAIL-abs-hull-rows-tie | merged and pushed (the commit "FAIL-abs-hull-rows-tie: ..." that marks the row Done); no spec change | 2026-11-14 16:30 | The `abs` hull rows of 9ade05ff8 made `x0`, `y0` a tie. `Omega::untie` decides a tie that a swap of the tied variables maps onto itself; `broken_swap` checks the swaps in the splinter search. Tests red before (names, ladder max chain), 200 random symmetric systems against enumeration; control with the rule off. The two l01_38 benchmarks stay over: products_along_a_chain_with_a_disjunction_on_each_link_scale (Growth at k >= 9, row FAIL-abs-chain-growth-bench), products_whose_factors_keep_open_sides_scale (10.68, not the hull rows, row FAIL-open-sides-bench-ratio); also FAIL-batch-single-hull-seed |
 | FAIL-check-finished-names-clash | impl attempt 1 | 2026-11-14 13:54 | started in wt/fix-names-sub (also FAIL-types-sub-level-variables next) |
 | FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
