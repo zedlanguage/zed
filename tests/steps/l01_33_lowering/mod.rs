@@ -8,6 +8,7 @@ mod bench;
 mod corpus;
 mod cse;
 mod errors;
+mod fail_port_in_family;
 mod forms;
 mod ports;
 mod reach;

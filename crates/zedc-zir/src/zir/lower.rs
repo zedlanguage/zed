@@ -118,6 +118,9 @@ struct Frame {
     numbers: Vec<Vec<usize>>,
     /// The site of each node, in node order, when lowering with sites; else empty.
     sites: Vec<NodeSite>,
+    /// Whether the region is the body of a `fam` node: its kind is function, as a lambda's is,
+    /// and a refusal of a port in it names a family, not a function.
+    family: bool,
 }
 
 impl Frame {
@@ -137,6 +140,7 @@ impl Frame {
             keys: Vec::new(),
             numbers: Vec::new(),
             sites: Vec::new(),
+            family: false,
         }
     }
 }
@@ -453,8 +457,12 @@ impl<'t> Lower<'t> {
         while from > 0 && !self.frames[from].states.contains_key(p) {
             let kind = self.frames[from].region.kind;
             if !matches!(kind, RegionKind::Match | RegionKind::Port) {
+                let family = self.frames[from].family;
                 let (inside, out) = match kind {
                     RegionKind::Loop => ("inside a loop or a family", "the loop or family"),
+                    RegionKind::Function if family => {
+                        ("inside a loop or a family", "the loop or family")
+                    }
                     RegionKind::Rec => ("inside a recursive function", "the recursive function"),
                     _ => (
                         "inside a function that is not bound by `let` and called by its name",
@@ -853,11 +861,7 @@ impl<'t> Lower<'t> {
                     fixed: 1,
                     regions: 1,
                 });
-                s.jobs.push(region(
-                    RegionKind::Function,
-                    std::slice::from_ref(var),
-                    body,
-                ));
+                s.jobs.push(Job::FamilyBody { var, body });
                 s.srcs(&[domain]);
             }
             Term::Reindex {
@@ -1205,6 +1209,17 @@ impl<'t> Lower<'t> {
                 ports,
                 body,
             } => self.begin(kind, params, ports, body, s),
+            Job::FamilyBody { var, body } => {
+                let params = Params::Names(Cow::Borrowed(std::slice::from_ref(var)));
+                self.begin(
+                    RegionKind::Function,
+                    params,
+                    Vec::new(),
+                    Body::Term(body),
+                    s,
+                );
+                self.frame().family = true;
+            }
             Job::EndRegion { ports, mark } => {
                 self.unbind(mark);
                 let out = s.srcs.pop().expect("the region's value");
@@ -1329,6 +1344,12 @@ enum Job<'t> {
         params: Params<'t>,
         ports: Vec<Arc<str>>,
         body: Body<'t>,
+    },
+    /// Begins the function region of a `fam` node, `var` its one parameter, marked as a
+    /// family's body for the refusal of a port in it.
+    FamilyBody {
+        var: &'t Arc<str>,
+        body: At<'t>,
     },
     /// Ends the region begun last, its value the top edge.
     EndRegion {
