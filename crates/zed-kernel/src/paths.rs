@@ -15,9 +15,9 @@
 // builds the tree of nodes on the way to the kept binders once (`Kept`): O(nodes + kept).
 // Tradeoff: a binder's path as a list of indices costs O(depth) to read back (`path`), which
 // only messages do. Nothing is refused. Tests
-// `l01_36_cranelift::scaling::a_binder_at_every_level_of_a_deep_pattern_scales`,
+// `l01_36_cranelift::bench::scaling::a_binder_at_every_level_of_a_deep_pattern_scales`,
 // `releasing_a_binder_at_every_level_scales` and
-// `l01_34_memory::binders::a_binder_at_every_level_of_a_deep_match_scales`.
+// `l01_34_memory::bench::a_binder_at_every_level_of_a_deep_match_held_once_scales`.
 #[derive(Debug)]
 pub struct Paths {
     /// Each node's parent node and part index, in the order entered, which is preorder;
