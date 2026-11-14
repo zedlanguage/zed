@@ -1190,3 +1190,12 @@ fn easy_clause_systems_of_four_moduli_pairs_held_nowhere_in_a_box_are_refused() 
     let seen = easy_clause_systems_keep_their_answers(vec![(pairs, Some((0, 100_000)), false)]);
     assert_eq!(seen, [1, 0]);
 }
+
+/// The units of `one_scope::SHORTENED_DEFINITION_UNITS` as written, 0.3 to 1 s each (2026-11-14,
+/// load 35); `one_scope` checks each one link shorter (TEST-corr-slow-l0138).
+#[test]
+fn summaries_of_the_slowest_definition_units_as_written_give_their_answers() {
+    for (k, ..) in SHORTENED_DEFINITION_UNITS {
+        summaries_of_definitions_of_unit(k);
+    }
+}

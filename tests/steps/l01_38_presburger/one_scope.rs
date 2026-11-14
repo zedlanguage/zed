@@ -1176,10 +1176,13 @@ fn a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer() {
 }
 
 /// The units of [`definition_units`] are checked in eight parts, every eighth unit each, less the
-/// three slowest, each checked by a test of its own (TEST-bench-move-l0138, TEST-corr-slow-l0138);
-/// together they check every unit. The unit of `x mod 5 + x div 7 - 9` is checked here at 4
-/// links, and at 5, as first written, in `bench::one_scope` (1.9 s at load 20); so are the two
-/// units of I21, at 3 links here and at 5 there.
+/// twelve slowest (0.2 to 1 s each at load 35), each checked by a test of its own
+/// (TEST-bench-move-l0138, TEST-corr-slow-l0138); together they check every unit. The five
+/// chains of [`SHORTENED_DEFINITION_UNITS`], the slowest, are checked here one link shorter, which
+/// asks a prefix of their questions in about a third of the time, and as written in
+/// `bench::one_scope`. The unit of `x mod 5 + x div 7 - 9` is also checked at 5 links in
+/// `bench::one_scope` (1.9 s at load 20); so are the two units of I21, at 3 links here and at 5
+/// there.
 #[test]
 fn summaries_of_definitions_give_the_answers_of_the_definitions_part_0() {
     summaries_of_definitions_part(0);
@@ -1221,35 +1224,113 @@ fn summaries_of_definitions_give_the_answers_of_the_definitions_part_7() {
 }
 
 #[test]
+fn summaries_of_a_chain_of_three_halves_plus_one_give_its_answers() {
+    summaries_of_a_shortened_unit(4);
+}
+
+#[test]
 fn summaries_of_a_sum_of_two_quotients_of_a_chain_give_its_answers() {
-    summaries_of_definitions_of_unit(5);
+    summaries_of_a_shortened_unit(5);
 }
 
 #[test]
 fn summaries_of_a_max_against_x_less_9_beside_a_quotient_of_x_give_its_answers() {
-    summaries_of_definitions_of_unit(33);
+    summaries_of_a_shortened_unit(33);
 }
 
 #[test]
 fn summaries_of_a_max_against_remainders_beside_a_quotient_of_x_give_its_answers() {
-    summaries_of_definitions_of_unit(34);
+    summaries_of_a_shortened_unit(34);
 }
 
-const SLOW_DEFINITION_UNITS: [usize; 3] = [5, 33, 34];
+#[test]
+fn summaries_of_a_branch_on_a_remainder_by_6_give_its_answers() {
+    summaries_of_a_shortened_unit(77);
+}
+
+#[test]
+fn summaries_of_a_max_against_a_quotient_of_x_less_9_give_its_answers() {
+    summaries_of_definitions_of_unit(28);
+}
+
+#[test]
+fn summaries_of_a_max_against_x_plus_y_less_9_give_the_answers_of_each_test_0() {
+    summaries_of_definitions_of_unit(36);
+}
+
+#[test]
+fn summaries_of_a_max_against_x_plus_y_less_9_give_the_answers_of_each_test_1() {
+    summaries_of_definitions_of_unit(37);
+}
+
+#[test]
+fn summaries_of_a_max_against_x_plus_y_less_9_give_the_answers_of_each_test_2() {
+    summaries_of_definitions_of_unit(38);
+}
+
+#[test]
+fn summaries_of_a_count_of_guards_over_two_inputs_give_its_answers() {
+    summaries_of_definitions_of_unit(71);
+}
+
+#[test]
+fn summaries_of_two_chains_over_different_inputs_give_their_answers() {
+    summaries_of_definitions_of_unit(74);
+}
+
+#[test]
+fn summaries_of_two_chains_sharing_x_and_x_div_7_give_their_answers() {
+    summaries_of_definitions_of_unit(75);
+}
+
+/// The slowest units of [`definition_units`], all chains of [`definition_chain`]: index, step,
+/// test and links, as written there.
+pub(super) const SHORTENED_DEFINITION_UNITS: [(usize, &str, &str, usize); 5] = [
+    (4, "(3 * H + 1) div 2", "H < 0 - 4", 6),
+    (5, "H div 2 + H div 3", "H > 5", 5),
+    (33, "max(H div 2, x - 9)", "H < x div 64 - 1", 6),
+    (
+        34,
+        "max(H div 2, x mod 5 + x div 7 - 9)",
+        "H < x div 64 - 1",
+        4,
+    ),
+    (77, "if H mod 6 == 0 { H + 1 } else { H + 2 }", "H > 10", 8),
+];
+
+/// The next slowest units of [`definition_units`], each checked by a test of its own.
+const SLOW_DEFINITION_UNITS: [usize; 7] = [28, 36, 37, 38, 71, 74, 75];
 
 /// The units of [`definition_units`] whose index is `part` mod 8, less the slowest.
 fn summaries_of_definitions_part(part: usize) {
     let units = definition_units();
+    let slow = |k: &usize| {
+        SLOW_DEFINITION_UNITS.contains(k) || SHORTENED_DEFINITION_UNITS.iter().any(|u| u.0 == *k)
+    };
     summaries_of_definitions_give_their_answers(
         (units.iter().enumerate())
-            .filter(|(k, _)| k % 8 == part && !SLOW_DEFINITION_UNITS.contains(k))
+            .filter(|(k, _)| k % 8 == part && !slow(k))
             .map(|(_, src)| src.as_str()),
     );
 }
 
 /// Unit `k` of [`definition_units`].
-fn summaries_of_definitions_of_unit(k: usize) {
+pub(super) fn summaries_of_definitions_of_unit(k: usize) {
     summaries_of_definitions_give_their_answers([definition_units()[k].as_str()]);
+}
+
+/// Unit `k` of [`SHORTENED_DEFINITION_UNITS`] with one link fewer, after a check that the table
+/// holds unit `k` as [`definition_units`] writes it.
+fn summaries_of_a_shortened_unit(k: usize) {
+    let &(_, step, test, n) = (SHORTENED_DEFINITION_UNITS.iter())
+        .find(|u| u.0 == k)
+        .expect("a shortened unit");
+    assert_eq!(
+        definition_units()[k],
+        definition_chain(step, test, n),
+        "unit {k}"
+    );
+    summaries_of_definitions_give_their_answers([definition_chain(step, test, n - 1).as_str()]);
 }
 
 /// The chain `h{i}(x) = step`, `i` from 1 to `n`, each `H` of `step` written as `h{i-1}(x: x)`
