@@ -2313,7 +2313,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
 | FAIL-exact-oracle-mod-zero-seed | running | 2026-11-14 09:25 |  |
 | FAIL-fences-chain-count | impl attempt 2 | 2026-11-14 09:03 | Done, pushed: count 1044 confirmed by diffing chains over the fixtures before/after 7f5a483dc (+Current(), +makeCurrent(glfw:, window:), -terminate()); no code  |
-| FAIL-generic-fold-l0125 | impl attempt 1 | 2026-11-14 09:25 | reproduced (2 l01_25 tests red); cause traced: preimage follow_own took only literal arms, per-carrier match has operation arms; fix constant_arm; l01_25 134 pi |
+| FAIL-generic-fold-l0125 | impl attempt 1 | 2026-11-14 09:25 | own error: chained 'git rebase ...; git push' with ; once; rebase stopped on a conflict, push sent HEAD = origin/main 47f5e9383 (no-op, remote unchanged, checke |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | started in wt/fix-types-overload at 9d4c6b7f1; load 37.18 49.72 50.76 |
 | FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
@@ -2322,15 +2322,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
+| TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
+| TEST-presburger-unreached-paths | running |  |  |
+| TEST-runtime-build-in-piece | running | 2026-11-14 08:37 |  |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
-| TEST-cov-run-settings | running |  |  |
-| TEST-fixture-write-race | running |  |  |
-| TEST-seed-test-once | running |  |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
-| TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | pushed b5317f47c, d69e081ed (STATUS rows restored); kernel_type.rs part done, row open / load 26.89 31.97 37.90 |
-| TEST-types-unreached-paths | impl attempt 1 | 2026-11-14 08:15 | kernel_type.rs 7 to 2 regions unreached; committing, rebasing / load 21.19 34.16 43.34 |
+| TEST-time-pass-condition | running | 2026-11-14 08:37 |  |
+| TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
