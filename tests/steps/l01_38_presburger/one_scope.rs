@@ -1704,7 +1704,7 @@ const MAX_MIN_DIV_STEPS: [MaxMinDivStep; 19] = [
 /// either side of where `x - 9` and `x div 2^i` cross. Then, with `x` free, the values each
 /// `h{i}` takes, found by trying every `x` in a range. The 19 steps took 9.0 s in one test
 /// (load 25 to 32), most of it a set of every value each link takes; the tests below split
-/// them by kind, each a few steps (TEST-corr-slow-l0138).
+/// them by kind, one to three steps each (TEST-corr-slow-l0138).
 fn max_min_div_chains_give_their_values(steps: &[usize]) {
     use zedc::store::presburger::extend::Extending;
     let xs: [i64; 10] = [-1_000_000, -19, -1, 0, 1, 9, 10, 18, 19, 1_000_000];
@@ -1799,22 +1799,42 @@ fn summaries_of_max_min_div_chains_offset_by_one_give_their_values() {
 
 #[test]
 fn summaries_of_max_min_div_chains_against_quotients_of_x_give_their_values() {
-    max_min_div_chains_give_their_values(&[5, 6, 14]);
+    max_min_div_chains_give_their_values(&[5, 6]);
+}
+
+#[test]
+fn summaries_of_a_max_chain_against_x_div_5_plus_x_div_7_less_9_give_its_values() {
+    max_min_div_chains_give_their_values(&[14]);
 }
 
 #[test]
 fn summaries_of_max_min_div_chains_against_remainders_of_x_give_their_values() {
-    max_min_div_chains_give_their_values(&[11, 12, 13]);
+    max_min_div_chains_give_their_values(&[11, 12]);
 }
 
 #[test]
-fn summaries_of_chains_of_h_less_a_constant_against_x_give_their_values() {
-    max_min_div_chains_give_their_values(&[15, 16]);
+fn summaries_of_a_max_chain_against_x_mod_5_plus_x_div_7_less_9_give_its_values() {
+    max_min_div_chains_give_their_values(&[13]);
 }
 
 #[test]
-fn summaries_of_chains_of_remainders_of_h_give_their_values() {
-    max_min_div_chains_give_their_values(&[17, 18]);
+fn summaries_of_a_chain_of_h_less_1_against_x_give_its_values() {
+    max_min_div_chains_give_their_values(&[15]);
+}
+
+#[test]
+fn summaries_of_a_chain_of_h_less_4_against_x_give_its_values() {
+    max_min_div_chains_give_their_values(&[16]);
+}
+
+#[test]
+fn summaries_of_a_chain_of_h_plus_its_remainder_by_7_give_its_values() {
+    max_min_div_chains_give_their_values(&[17]);
+}
+
+#[test]
+fn summaries_of_a_chain_of_a_branch_on_a_remainder_by_6_give_its_values() {
+    max_min_div_chains_give_their_values(&[18]);
 }
 
 #[test]
