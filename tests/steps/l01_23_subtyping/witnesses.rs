@@ -139,9 +139,12 @@ fn random(r: &mut Rng, depth: usize, n: usize) -> E {
 
 #[test]
 fn tuples_of_small_sets_are_decided_and_shown() {
-    let mut r = Rng::new(7);
+    // Ran 1500 types from seed 7, over 300 empty and 300 inhabited; now 300 from a new seed
+    // each run, printed, over 50 of each (TEST-bench-move-l0123, author P169: random tests run
+    // fewer cases).
+    let (mut r, seed) = Rng::fresh("random tuples of small sets");
     let mut seen = BTreeMap::new();
-    for i in 0..1500 {
+    for i in 0..300 {
         let n = 2 + i % 3;
         let e = random(&mut r, 7, n);
         let tuples = (0..3usize.pow(n as u32)).map(|k| {
@@ -157,10 +160,14 @@ fn tuples_of_small_sets_are_decided_and_shown() {
             true => Verdict::Empty,
             false => Verdict::Inhabited,
         };
-        assert_eq!(v, want, "{t}");
+        assert_eq!(v, want, "{t} (ZED_SEED={seed})");
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
-    assert!(seen["Empty"] > 300 && seen["Inhabited"] > 300, "{seen:?}");
+    assert!(
+        seen.get("Empty").copied().unwrap_or(0) > 50
+            && seen.get("Inhabited").copied().unwrap_or(0) > 50,
+        "{seen:?} (ZED_SEED={seed})"
+    );
 }
 
 const PRIMES: [usize; 25] = [
@@ -226,9 +233,13 @@ fn the_residue_rule_agrees_with_listing_the_lengths() {
         a
     };
     let ps = [1, 2, 3, 4, 5, 6, 8, 9, 10, 12];
-    let mut r = Rng::new(17);
+    // Ran 2000 cases from seed 17 (463 empty, 1536 inhabited, 1 refused); now 400 from a new
+    // seed each run, printed, over 40 of each verdict (TEST-bench-move-l0123, author P169:
+    // random tests run fewer cases). The residue refusal is checked on its own in refusals.rs
+    // (the Erdős covering system).
+    let (mut r, seed) = Rng::fresh("residue classes");
     let mut seen = BTreeMap::new();
-    for _ in 0..2000 {
+    for _ in 0..400 {
         let (p, k) = (ps[r.below(ps.len())], r.below(12));
         let mut t = period(p, k % p);
         let mut classes = vec![];
@@ -243,22 +254,26 @@ fn the_residue_rule_agrees_with_listing_the_lengths() {
         Type::forget_emptiness();
         let v = t.verdict();
         match v {
-            Verdict::Empty => assert!(empty, "{p} {k} {classes:?}"),
-            Verdict::Inhabited => assert!(!empty, "{p} {k} {classes:?}"),
+            Verdict::Empty => assert!(empty, "{p} {k} {classes:?} (ZED_SEED={seed})"),
+            Verdict::Inhabited => assert!(!empty, "{p} {k} {classes:?} (ZED_SEED={seed})"),
             Verdict::Refused(why) => assert!(
                 empty,
-                "{p} {k} {classes:?} is inhabited, and refused: {why:?}"
+                "{p} {k} {classes:?} is inhabited, and refused: {why:?} (ZED_SEED={seed})"
             ),
         }
         if t.is_empty() {
-            assert!(empty, "{p} {k} {classes:?}");
+            assert!(empty, "{p} {k} {classes:?} (ZED_SEED={seed})");
         } else if v != Verdict::Refused(Refusal::Residues) {
-            assert!(!empty, "{p} {k} {classes:?}");
+            assert!(!empty, "{p} {k} {classes:?} (ZED_SEED={seed})");
         }
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
     println!("residues: {seen:?}");
-    assert!(seen["Empty"] > 200 && seen["Inhabited"] > 200, "{seen:?}");
+    assert!(
+        seen.get("Empty").copied().unwrap_or(0) > 40
+            && seen.get("Inhabited").copied().unwrap_or(0) > 40,
+        "{seen:?} (ZED_SEED={seed})"
+    );
 }
 
 /// Answers do not depend on the ids the diagram nodes are given (SYNTHESIS fact 2): the same
@@ -266,8 +281,10 @@ fn the_residue_rule_agrees_with_listing_the_lengths() {
 /// that shift every id, get the same verdicts and the same printed form.
 #[test]
 fn answers_do_not_depend_on_the_order_types_are_built() {
-    let mut r = Rng::new(11);
-    let es: Vec<E> = (0..300).map(|i| random(&mut r, 6, 2 + i % 3)).collect();
+    // Ran 300 types from seed 11; now 100 from a new seed each run, printed
+    // (TEST-bench-move-l0123, author P169: random tests run fewer cases).
+    let (mut r, seed) = Rng::fresh("types built in two orders");
+    let es: Vec<E> = (0..100).map(|i| random(&mut r, 6, 2 + i % 3)).collect();
     let answers = |order: Vec<usize>, shift: usize| {
         let es: Vec<E> = order.iter().map(|&i| es[i].clone()).collect();
         let mut out = std::thread::spawn(move || {
@@ -291,7 +308,7 @@ fn answers_do_not_depend_on_the_order_types_are_built() {
     };
     let forward = answers((0..es.len()).collect(), 0);
     let backward = answers((0..es.len()).rev().collect(), 500);
-    assert_eq!(forward, backward);
+    assert_eq!(forward, backward, "ZED_SEED={seed}");
 }
 
 /// Recursive types have a canonical form (item REC-canon): a copy of a group with its definitions
@@ -432,6 +449,39 @@ fn halves(k: usize) -> (Type, usize) {
         }
     }
     (&union - &out, defs)
+}
+
+/// Small instance of `bench::the_meet_of_prime_cycles_scales` (TEST-bench-move-l0123, author
+/// P170): the meets of the first 16 and 17 primes' cycles, whose shortest lists have more links
+/// than 2^64 (the product of the first 16 primes is about 3.26 * 10^19), are shown alone and in
+/// a pair, and a class they all miss is decided as at ten primes. Before, only the benchmark's
+/// 25 primes reached lengths past 64 bits.
+#[test]
+fn a_meet_of_cycles_longer_than_64_bits_is_shown() {
+    for k in [16, 17] {
+        let t = prime_cycles(k);
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited, "{k}");
+        let pair = Type::tuple(vec![t, Type::int()]);
+        assert_eq!(pair.verdict(), Verdict::Inhabited, "{k}");
+        // Every length is 2 modulo 3, so none is outside the lists of length 2 modulo 3.
+        let thirds = Type::tuple(vec![period(3, 2), Type::int()]);
+        assert_eq!((&pair - &thirds).verdict(), Verdict::Empty, "{k}");
+    }
+}
+
+/// Small instance of `bench::a_union_of_cycles_less_one_scales` (TEST-bench-move-l0123, author
+/// P170): a union of classes less a union of classes, each class of the first inside a
+/// different one of the second, is empty. `a_union_of_cycles_less_one_is_decided` takes out
+/// one class only.
+#[test]
+fn a_union_of_cycles_less_a_union_holding_each_is_empty() {
+    for k in 2..=5 {
+        let (t, _) = halves(k);
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Empty, "{k}");
+        assert!(t.is_empty(), "{k}");
+    }
 }
 
 mod bench;

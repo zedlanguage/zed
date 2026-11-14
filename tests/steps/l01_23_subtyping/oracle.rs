@@ -611,24 +611,34 @@ const DECIDED_BY_THE_SIMULATION: [(u64, usize); 3] = [(1, 578), (1, 1837), (1, 3
 fn the_two_routes_agree_on_recursive_systems() {
     // Every system of seeds 1 and 2 the cross-review measured: no route says `Empty` where
     // the other says `Inhabited`, and none is wrong against the closure oracle. The
-    // simulation decides a pair only where the search refuses it.
+    // simulation decides a pair only where the search refuses it. Ran all 8000 (3980 the same,
+    // 17 refused by both, 2 decided by the simulation alone); now 1500 drawn from them with a new
+    // seed each run, printed (TEST-bench-move-l0123, author P169: random tests run fewer cases);
+    // the cases the simulation alone decides are checked each run in
+    // `the_recorded_cases_are_decided_by_the_simulation`.
+    let (mut rng, first) = Rng::fresh("recursive systems drawn");
     let mut routes = Routes::default();
     let mut decided = Vec::new();
-    for seed in [1, 2] {
-        for idx in 0..4000 {
-            let Some((a, b, witness)) = recursive_pair(seed, idx) else {
-                continue;
-            };
-            if let Some(w) = &witness {
-                assert!((&a - &b).contains(w), "{w} in {a} \\ {b}");
-            }
-            if routes.record(&a, &b, witness.is_none()) {
-                decided.push((seed, idx));
-            }
+    for _ in 0..1500 {
+        let (seed, idx) = (1 + rng.below(2) as u64, rng.below(4000));
+        let Some((a, b, witness)) = recursive_pair(seed, idx) else {
+            continue;
+        };
+        if let Some(w) = &witness {
+            assert!(
+                (&a - &b).contains(w),
+                "{w} in {a} \\ {b} (system {seed}, {idx}; ZED_SEED={first})"
+            );
+        }
+        if routes.record(&a, &b, witness.is_none()) {
+            decided.push((seed, idx));
         }
     }
     println!("recursive systems: {routes:?}, decided by the simulation alone: {decided:?}");
-    assert!(routes.same > 3900 && routes.refused < 100, "{routes:?}");
+    assert!(
+        routes.same > 690 && routes.refused < 20,
+        "{routes:?} (ZED_SEED={first})"
+    );
 }
 
 #[test]

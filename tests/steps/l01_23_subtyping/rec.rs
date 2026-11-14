@@ -544,4 +544,118 @@ fn membership_tells_two_types_of_one_tail_apart() {
     assert!(p.contains(&v) && !q.contains(&v));
 }
 
+/// A chain of `d` definitions, `T{i} = T{i+1} | #a{i}`, the last `#end`: each names the next
+/// bare, so the group is admitted and its first member holds `#end` and every `#a{i}`.
+fn chain(d: usize) -> Vec<Def> {
+    (0..d)
+        .map(|i| {
+            let body = if i + 1 < d {
+                or(vec![r(i + 1, vec![]), bare(&format!("a{i}"))])
+            } else {
+                bare("end")
+            };
+            def(&format!("T{i}"), &[], body)
+        })
+        .collect()
+}
+
+/// Small instance of `bench::writing_an_irregular_occurrence_scales_with_its_depth`
+/// (TEST-bench-move-l0123, author P170; the text at depth 3 was checked only inside the
+/// benchmark): an argument nested `d` levels, a function's result, a tuple component and a
+/// member of a union in turn, is written with the parentheses each level needs, and the text
+/// parses as a type.
+#[test]
+fn an_irregular_occurrence_nested_in_turn_is_written_with_the_parentheses_it_needs() {
+    let a = || Expr::Param(0);
+    let arg = |d: usize| {
+        (0..d).fold(a(), |x, k| match k % 3 {
+            0 => Expr::exact(a(), x),
+            1 => Expr::Tuple(vec![x, a()]),
+            _ => or(vec![x, bare("x")]),
+        })
+    };
+    for d in 1..=12 {
+        let nest = def(
+            "Nest",
+            &["A"],
+            or(vec![
+                atom("leaf", vec![a()]),
+                atom("node", vec![r(0, vec![arg(d)])]),
+            ]),
+        );
+        let message = rejected(vec![nest]);
+        let start = "its recursive occurrence `";
+        let at = message
+            .find(start)
+            .unwrap_or_else(|| panic!("{d}: {message}"))
+            + start.len();
+        let end = message[at..]
+            .find("` changes")
+            .unwrap_or_else(|| panic!("{d}: {message}"));
+        let shown = &message[at..at + end];
+        if d == 3 {
+            assert_eq!(shown, "Nest(((A) -> A, A) | #x)");
+        }
+        let tokens = zedc::lex::lex_fence(shown).expect("tokens");
+        zedc::parse::parse(shown, &tokens, "Type", zedc::parse::TOP)
+            .unwrap_or_else(|e| panic!("{d}: {shown}: {e:?}"));
+    }
+}
+
+/// Small instance of `bench::recursive_definitions_scale` (TEST-bench-move-l0123, author P170):
+/// a chain of definitions each naming the next bare is admitted and holds the last one's value
+/// and each one's own, not the last one's `#a`; a body nested `d` deep holds the value nested as
+/// deep and not one level deeper.
+#[test]
+fn chains_of_definitions_and_nested_bodies_are_admitted_and_hold_their_values() {
+    for d in 1..=12 {
+        assert!(Group::new(chain(d)).is_ok(), "{d}");
+        let t = one(chain(d));
+        assert!(t.contains(&Value::atom("end")), "{d}");
+        for i in 0..d - 1 {
+            assert!(t.contains(&Value::atom(&format!("a{i}"))), "{d}: #a{i}");
+        }
+        assert!(!t.contains(&Value::atom(&format!("a{}", d - 1))), "{d}");
+    }
+    for d in 0..=12 {
+        let mut body = Expr::Tuple(vec![r(0, vec![]), ty(Type::int())]);
+        for _ in 0..d {
+            body = atom("n", vec![body]);
+        }
+        let t = one(vec![def("T", &[], or(vec![body, bare("z")]))]);
+        let mut v = Value::tuple(vec![Value::atom("z"), Value::Int(1)]);
+        for _ in 0..d {
+            v = Value::atom_with("n", vec![v]);
+        }
+        assert!(t.contains(&v), "{d}");
+        assert!(!t.contains(&Value::atom_with("n", vec![v])), "{d}");
+    }
+}
+
+/// Small instance of `bench::membership_in_two_mutual_definitions_scales`
+/// (TEST-bench-move-l0123, author P170; its asserts at length 5 ran only inside the benchmark):
+/// in two definitions whose `#cons` alternatives overlap, a list of ints that ends in `#nil` is
+/// a member and one that ends in a string is not, at every length; length 0 is `#nil` and the
+/// string alone.
+#[test]
+fn membership_in_two_mutual_definitions() {
+    let body = || {
+        or(vec![
+            bare("nil"),
+            atom("cons", vec![ty(Type::int()), r(0, vec![])]),
+            atom("cons", vec![ty(Type::int()), r(1, vec![])]),
+        ])
+    };
+    let t = one(vec![def("X", &[], body()), def("Y", &[], body())]);
+    let ending = |l: usize, end: Value| {
+        (0..l).fold(end, |v, i| {
+            Value::atom_with("cons", vec![Value::Int(i as i64), v])
+        })
+    };
+    for l in 0..=12 {
+        assert!(t.contains(&ending(l, Value::atom("nil"))), "{l}");
+        assert!(!t.contains(&ending(l, Value::str("end"))), "{l}");
+    }
+}
+
 mod bench;

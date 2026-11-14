@@ -191,4 +191,22 @@ fn the_choice_forms_keep_their_meaning() {
     }
 }
 
+/// Small instance of `bench::the_choice_chain_with_a_choice_swapped_scales`
+/// (TEST-bench-move-l0123, author P170): on rows that fix their column to each of eight values,
+/// giving the shared nodes eight shapes, the choice chain equals its other form and differs from
+/// the form with a choice swapped. `the_families_are_decided_exactly_at_small_sizes` reads the
+/// value 1 only.
+#[test]
+fn the_choice_chain_keeps_its_answers_on_every_shape() {
+    big(|| {
+        for d in 1..=4 {
+            for v in 1..=8 {
+                Type::forget_emptiness();
+                assert!(mux_at(d, v).equiv(&mux2_at(d, v)), "d = {d}, v = {v}");
+                assert!(!mux_at(d, v).equiv(&swapped_at(d, v)), "d = {d}, v = {v}");
+            }
+        }
+    });
+}
+
 mod bench;

@@ -249,4 +249,21 @@ fn checking_a_program_alone_or_after_another_agrees() {
     );
 }
 
+/// Small instance of `bench::the_members_of_a_group_are_ordered_in_n_log_n`
+/// (TEST-bench-move-l0123, author P170): the members of a group of `n` definitions, each a
+/// different language (the lists of length `-i` modulo `n`), are `n` different types in the
+/// order, and the union of their one-tuples has a value. Each group has a cell name of its own,
+/// as each run of the benchmark does, so no group is one another test made.
+#[test]
+fn the_members_of_a_group_are_ordered_apart() {
+    for n in 1..=12 {
+        let ts = periods(&format!("order{n}_"), n, 0);
+        assert_eq!(ts.len(), n);
+        let sorted: BTreeSet<&Type> = ts.iter().collect();
+        assert_eq!(sorted.len(), n, "{n}");
+        let u = Type::union_all(ts.iter().map(|t| Type::tuple(vec![t.clone()])));
+        assert!(!u.is_empty(), "{n}");
+    }
+}
+
 mod bench;

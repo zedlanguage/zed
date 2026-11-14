@@ -323,4 +323,23 @@ fn scales(name: &str) {
     );
 }
 
+/// Small instance of the four benchmarks of [`scales`] (TEST-bench-move-l0123, author P170):
+/// the chain, the open chain and the parity cycle at every small number of variables, odd and
+/// even, decided as enumeration decides them. At an even count the parity cycle is on all but
+/// the last variable, which no clause reads; `chains_and_parity_cycles_are_decided` runs it
+/// only at an odd count.
+#[test]
+fn chains_and_parity_cycles_of_every_small_size_are_decided() {
+    deep(|| {
+        for name in ["chain", "chainsat", "xorcycle"] {
+            for n in 1..=12 {
+                let sat = by_enumeration(n, &shape(name, n, 0));
+                let made = instance(name, n);
+                assert_eq!(made.1 == Verdict::Inhabited, sat, "{name} {n}");
+                decide(name, n, &made);
+            }
+        }
+    });
+}
+
 mod bench;

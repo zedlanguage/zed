@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 use zed_kernel::Value;
 use zed_kernel::types::Type;
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
 fn lit(i: usize) -> Type {
@@ -107,6 +108,10 @@ fn random(seed: &mut u64, depth: u32) -> Type {
 
 #[test]
 fn lists_agree_with_membership() {
+    // Ran 600 types from seed 1 (6.3 s alone), over 300 of them listed; now types from a new
+    // seed each run, printed, until 40 are listed, at most 200 drawn
+    // (TEST-bench-move-l0123, author P169: random tests run fewer cases). Each type is a random
+    // tree of all six constructs, so every construct is met in each run.
     // Every value a random type can hold: the literals 0..3 and pairs of them, nested down to
     // the depth `random` builds.
     let lits: Vec<Value> = (0..3).map(Value::Int).collect();
@@ -127,18 +132,24 @@ fn lists_agree_with_membership() {
             .into_iter()
             .collect();
     }
-    let mut seed = 1;
+    let (_, mut seed) = Rng::fresh("random listed types");
+    let first = seed;
     let mut checked = 0;
-    for _ in 0..600 {
+    let mut drawn = 0;
+    while checked < 40 && drawn < 200 {
+        drawn += 1;
         let t = random(&mut seed, 3);
         let Some(got) = listed(&t) else {
             continue;
         };
         checked += 1;
         let want: BTreeSet<Value> = all.iter().filter(|v| t.contains(v)).cloned().collect();
-        assert_eq!(got, want, "{t}");
+        assert_eq!(got, want, "{t} (ZED_SEED={first})");
     }
-    assert!(checked > 300, "{checked} types listed");
+    assert_eq!(
+        checked, 40,
+        "{checked} of {drawn} types listed (ZED_SEED={first})"
+    );
 }
 
 /// `t(0) = 0 | 1`, `t(i + 1) = (t(i), t(i))`: `d + 1` types, `2^(2^d)` values.
@@ -783,6 +794,86 @@ fn wide(n: usize) -> Type {
         Type::lit(&Value::rat(r)).unwrap()
     });
     Type::tuple(items.collect())
+}
+
+/// Small instance of `bench::listing_one_wide_tuple_scales` (TEST-bench-move-l0123, author
+/// P170: these asserts ran only inside the benchmark): each component of a tuple is made on
+/// demand, and the maker of the tuple waits for each in turn (PERF-tuple-print). Nested
+/// components give one value in order; components of two values each give every combination
+/// once, the last component fastest; an empty component anywhere gives none.
+#[test]
+fn the_values_of_a_tuple_are_made_component_by_component() {
+    let lits = |n: usize| (0..n).map(lit).collect::<Vec<_>>();
+    // Nested components, each a pair made by its own maker: one value, in order.
+    let nested = Type::tuple((0..5).map(|i| Type::tuple(vec![lit(i), lit(i)])).collect());
+    let pairs = (0..5).map(|i| pair(int(i), int(i))).collect();
+    assert_eq!(nested.values_listed(), Some(vec![Value::tuple(pairs)]));
+    // Components of two values each, a product, which `values_listed` leaves out: every
+    // combination once, the last component fastest.
+    let two = |i: usize| &lit(i) | &lit(i + 10);
+    let three = Type::tuple((0..3).map(two).collect());
+    assert_eq!(three.values_listed(), None);
+    let values: Vec<Value> = three.each_value().unwrap().collect();
+    assert_eq!(values.len(), 8);
+    assert_eq!(values[0], Value::tuple(vec![int(0), int(1), int(2)]));
+    assert_eq!(values[1], Value::tuple(vec![int(0), int(1), int(12)]));
+    assert_eq!(values[7], Value::tuple(vec![int(10), int(11), int(12)]));
+    // A component with no value, after nested components made on demand, at the end and
+    // first: no value.
+    for at in [0, 3, 6] {
+        let mut items: Vec<Type> = (0..6).map(|i| Type::tuple(vec![lit(i)])).collect();
+        items.insert(at, Type::tuple(vec![Type::empty()]));
+        assert_eq!(Type::tuple(items).values_listed(), Some(vec![]), "{at}");
+    }
+    // A component of two values between nested ones: two values.
+    let mut items: Vec<Type> = (0..6).map(|i| Type::tuple(vec![lit(i)])).collect();
+    items[3] = Type::tuple(vec![two(3)]);
+    assert_eq!(
+        Type::tuple(items).each_value().map(Iterator::count),
+        Some(2)
+    );
+    assert_eq!(
+        Type::tuple(lits(4)).values_listed().map(|v| v.len()),
+        Some(1)
+    );
+    // A tuple of `rat` literals, as the benchmark lists at its sizes.
+    for n in [1, 3, 12] {
+        let one = wide(n).values_listed().unwrap();
+        assert_eq!(one.len(), 1, "{n}");
+        assert!(wide(n).contains(&one[0]), "{n}");
+    }
+}
+
+/// Small instance of `bench::finiteness_scales_with_the_types_not_the_values`
+/// (TEST-bench-move-l0123, author P170): a doubling type is known finite at every depth, though
+/// at depth 48 it has 2^(2^48) values, since the finite test visits each of its `d + 1` types
+/// once.
+#[test]
+fn a_doubling_type_is_finite_at_every_depth() {
+    for d in [0, 1, 2, 6, 48] {
+        assert!(doubling(d).finite(), "t({d})");
+    }
+}
+
+/// Small instance of `bench::a_tuple_is_found_tried_in_the_time_of_its_length`
+/// (TEST-bench-move-l0123, author P170): a type of two boxes at each depth gives its values
+/// each once, each held by the type, and is finite.
+#[test]
+fn a_type_of_two_boxes_at_each_depth_lists_each_value_once() {
+    for d in [2, 6, 12, 48] {
+        let t = doubling_two_boxes(d);
+        assert!(t.finite(), "depth {d}");
+        let values: Vec<Value> = t.each_value().expect("finite").take(20).collect();
+        assert_eq!(values.len(), 20, "depth {d}");
+        let distinct: BTreeSet<&Value> = values.iter().collect();
+        assert_eq!(distinct.len(), 20, "depth {d}: each value once");
+        assert!(values.iter().all(|v| t.contains(v)), "depth {d}");
+    }
+    // t(1) = (t(0), t(0)) | (0 | 1, t(0)): both boxes are the four pairs of 0 and 1, so 4
+    // values. t(2) = (t(1), t(1)) | (0 | 1, t(1)): 16 pairs of pairs and 8 pairs of an integer
+    // and a pair, disjoint since a pair is not an integer: 24 values.
+    assert_eq!(listed(&doubling_two_boxes(1)).map(|v| v.len()), Some(4));
+    assert_eq!(listed(&doubling_two_boxes(2)).map(|v| v.len()), Some(24));
 }
 
 mod bench;

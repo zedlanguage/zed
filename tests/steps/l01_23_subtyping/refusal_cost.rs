@@ -158,6 +158,46 @@ fn refusal_scales(
     });
 }
 
+/// Small instance of `bench::the_verdict_of_the_x_tail_family_is_refused_in_its_size` and
+/// `bench::the_subtype_verdict_of_the_x_tail_family_is_refused_in_its_size`
+/// (TEST-bench-move-l0123, author P170): the x_tail family is refused at a fork by `verdict` and
+/// by `subtype_verdict` at small sizes, the benchmark's small size 16 among them.
+#[test]
+fn the_x_tail_family_is_refused_at_a_fork() {
+    for n in [1, 2, 4, 16] {
+        let (a, b) = x_tail(n, &format!("_small{n}"));
+        Type::forget_emptiness();
+        assert_eq!((&a - &b).verdict(), Verdict::Refused(Refusal::Fork), "{n}");
+        Type::forget_emptiness();
+        assert_eq!(
+            a.subtype_verdict(&b),
+            Verdict::Refused(Refusal::Fork),
+            "{n}"
+        );
+    }
+}
+
+/// Small instance of `bench::the_verdict_of_random_3_cnf_is_refused_in_its_size` and
+/// `bench::the_subtype_verdict_of_random_3_cnf_is_refused_in_its_size`
+/// (TEST-bench-move-l0123, author P170): random 3-CNF over 8 bits, seed 2, the benchmark's
+/// small instance, is refused at shared cells of component 0 by `verdict` and by
+/// `subtype_verdict`. Only this instance is known to be refused (see below), so no other size
+/// is checked.
+#[test]
+fn random_3_cnf_is_refused_at_shared_cells() {
+    let (a, b) = r3(8, 2);
+    Type::forget_emptiness();
+    assert_eq!(
+        (&a - &b).verdict(),
+        Verdict::Refused(Refusal::SharedCells(0))
+    );
+    Type::forget_emptiness();
+    assert_eq!(
+        a.subtype_verdict(&b),
+        Verdict::Refused(Refusal::SharedCells(0))
+    );
+}
+
 // Measured at 8d0bfe954 with the classes of values (COMPLEXITY.md K111; instructions of
 // `subtype_verdict`, `verdict` about 7% less): 131M at n = 16 and 4.01G at n = 128, 30.6 times,
 // under a limit of 123. Before, a value read in from each group that built it was tested

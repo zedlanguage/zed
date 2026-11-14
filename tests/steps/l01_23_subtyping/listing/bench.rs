@@ -79,42 +79,6 @@ fn a_tuple_is_found_tried_in_the_time_of_its_length() {
 /// the boxes are entered and left with each component checked a bounded number of times.
 #[test]
 fn listing_one_wide_tuple_scales() {
-    let lits = |n: usize| (0..n).map(lit).collect::<Vec<_>>();
-    // Nested components, each a pair made by its own maker: one value, in order.
-    let nested = Type::tuple((0..5).map(|i| Type::tuple(vec![lit(i), lit(i)])).collect());
-    let pairs = (0..5).map(|i| pair(int(i), int(i))).collect();
-    assert_eq!(nested.values_listed(), Some(vec![Value::tuple(pairs)]));
-    // Components of two values each, a product, which `values_listed` leaves out: every
-    // combination once, the last component fastest.
-    let two = |i: usize| &lit(i) | &lit(i + 10);
-    let three = Type::tuple((0..3).map(two).collect());
-    assert_eq!(three.values_listed(), None);
-    let values: Vec<Value> = three.each_value().unwrap().collect();
-    assert_eq!(values.len(), 8);
-    assert_eq!(values[0], Value::tuple(vec![int(0), int(1), int(2)]));
-    assert_eq!(values[1], Value::tuple(vec![int(0), int(1), int(12)]));
-    assert_eq!(values[7], Value::tuple(vec![int(10), int(11), int(12)]));
-    // A component with no value, after nested components made on demand, at the end and
-    // first: no value.
-    for at in [0, 3, 6] {
-        let mut items: Vec<Type> = (0..6).map(|i| Type::tuple(vec![lit(i)])).collect();
-        items.insert(at, Type::tuple(vec![Type::empty()]));
-        assert_eq!(Type::tuple(items).values_listed(), Some(vec![]), "{at}");
-    }
-    // A component of two values between nested ones: two values.
-    let mut items: Vec<Type> = (0..6).map(|i| Type::tuple(vec![lit(i)])).collect();
-    items[3] = Type::tuple(vec![two(3)]);
-    assert_eq!(
-        Type::tuple(items).each_value().map(Iterator::count),
-        Some(2)
-    );
-    assert_eq!(
-        Type::tuple(lits(4)).values_listed().map(|v| v.len()),
-        Some(1)
-    );
-    let one = wide(3).values_listed().unwrap();
-    assert_eq!(one.len(), 1);
-    assert!(wide(3).contains(&one[0]));
     let n = 400;
     let built = scaling::inputs(n, wide);
     scaling::check("listing the one value of a tuple of n literals", n, |m| {

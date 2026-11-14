@@ -92,8 +92,9 @@ fn a_chain_less_a_longer_one_is_decided_in_n_log_n() {
     });
 }
 
-/// The meets of [`wide`] are decided in time `O(c log c)`, 30 against 240 tuple types, and
-/// agree with the enumeration at 30.
+/// The meets of [`wide`] are decided in time `O(c log c)`, 30 against 240 tuple types, none
+/// refused; `chains_sharing_two_of_four_components_are_met_as_enumeration_meets_them` checks
+/// them against the enumeration up to 30 (TEST-bench-move-l0123, author P170).
 #[test]
 fn chains_sharing_two_of_four_components_are_met_in_n_log_n() {
     let types = scaling::inputs(30, wide);
@@ -109,26 +110,6 @@ fn chains_sharing_two_of_four_components_are_met_in_n_log_n() {
         }
         verdicts
     };
-    // At 30 the enumeration reads each component's 10 literals and one value outside them.
-    let boxed: Vec<Vec<usize>> = vec![(1000..1010).chain([OUTSIDE]).collect(); 4];
-    let f = |first: usize| {
-        let rows = (0..30).map(|i| (first + i % 3, 1000 + i / 3, i % 2 == 0));
-        F::Chain(rows.collect())
-    };
-    let (x, y) = (Box::new(f(0)), Box::new(f(1)));
-    let expected: Vec<Verdict> = [
-        F::And(x.clone(), y.clone()),
-        F::And(x.clone(), Box::new(F::Not(y.clone()))),
-        F::And(y.clone(), Box::new(F::Not(x.clone()))),
-        F::Not(Box::new(F::Or(x, y))),
-    ]
-    .iter()
-    .map(|f| match by_enumeration(f, &boxed) {
-        true => Verdict::Inhabited,
-        false => Verdict::Empty,
-    })
-    .collect();
-    assert_eq!(run(30), expected);
     scaling::check(
         "chains on three components sharing two, by tuple types",
         30,

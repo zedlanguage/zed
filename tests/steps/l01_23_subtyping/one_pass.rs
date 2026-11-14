@@ -489,4 +489,112 @@ fn an_orthogonal_vectors_meet_is_refused_naming_its_component() {
     );
 }
 
+/// Small instance of
+/// `bench::exclusive_ors_and_chains_of_overlapping_tuple_types_are_decided_in_one_pass`
+/// (TEST-bench-move-l0123, author P170): each family of [`families`] at a few tuple types, by
+/// `is_empty` and `verdict`. From `c = 2`: at `c = 1` the odd side of `tight(1)` is the empty
+/// union, so `tight(1) - x` is empty, not inhabited as [`families`] expects.
+#[test]
+fn the_families_of_exclusive_ors_and_chains_are_decided() {
+    for c in [2, 3, 4, 5, 8] {
+        for (t, expected) in families(c) {
+            Type::forget_emptiness();
+            assert_eq!(t.is_empty(), expected == Verdict::Empty, "{c}: {t}");
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), expected, "{c}: {t}");
+        }
+    }
+}
+
+/// Small instance of `bench::an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time`
+/// (TEST-bench-move-l0123, author P170): an exclusive or built in turn and in reverse is the
+/// same type, and one with a tuple type more is not.
+#[test]
+fn an_exclusive_or_built_in_two_orders_is_equal_to_itself() {
+    for c in [1, 2, 3, 4, 7] {
+        let (x, y) = (parity(c, false).ty(2), parity(c, true).ty(2));
+        Type::forget_emptiness();
+        assert!(x.equiv(&y), "{c}");
+        Type::forget_emptiness();
+        assert!(!x.equiv(&parity(c + 1, true).ty(2)), "{c}");
+    }
+}
+
+/// Small instance of `bench::overlapping_exclusive_ors_and_chains_are_compared_in_n_log_n`
+/// (TEST-bench-move-l0123, author P170): the comparisons of [`comparisons`] at a few tuple
+/// types; each pair differs, and the meet is inhabited. From `c = 3`: a tuple of `tight(c)` is
+/// in no exclusive or, and in the chain only when its even tuple type comes after its odd one,
+/// which needs tuple types 1 and 2.
+#[test]
+fn overlapping_exclusive_ors_and_chains_are_compared() {
+    for c in [3, 4, 5, 8] {
+        let (pairs, meet) = comparisons(c);
+        for (x, y) in &pairs {
+            Type::forget_emptiness();
+            assert!(!x.equiv(y), "{c}: {x} and {y}");
+        }
+        Type::forget_emptiness();
+        assert_eq!(meet.verdict(), Verdict::Inhabited, "{c}");
+    }
+}
+
+/// Small instance of `bench::a_chain_less_a_longer_one_is_decided_in_n_log_n`
+/// (TEST-bench-move-l0123, author P170): the chain of `c` tuple types less the chain of `c + 1`
+/// is empty at even `c`, where the longer chain's last tuple type is joined by `|`, and
+/// inhabited at odd `c`, where it is taken away by `-`.
+#[test]
+fn a_chain_less_a_longer_one_is_decided() {
+    let all = Type::tuple(vec![Type::top(), Type::top()]);
+    for c in 1..=8 {
+        let (l, l1) = (chain(c).ty(2), chain(c + 1).ty(2));
+        let want = match c % 2 {
+            1 => Verdict::Inhabited,
+            _ => Verdict::Empty,
+        };
+        Type::forget_emptiness();
+        assert_eq!((&l & &(&all - &l1)).verdict(), want, "{c}");
+    }
+}
+
+/// Small instance of `bench::chains_sharing_two_of_four_components_are_met_in_n_log_n`, the
+/// check against the enumeration it made at 30 before its measurement (moved here,
+/// TEST-bench-move-l0123, author P170): the meets and differences of [`wide`] agree with the
+/// enumeration and none is refused.
+#[test]
+fn chains_sharing_two_of_four_components_are_met_as_enumeration_meets_them() {
+    let all = Type::tuple(vec![Type::top(); 4]);
+    for c in [3, 6, 12, 30] {
+        let (x, y) = wide(c);
+        let mut verdicts = Vec::new();
+        for t in [&x & &y, &x - &y, &y - &x, &all - &(&x | &y)] {
+            Type::forget_emptiness();
+            let v = t.verdict();
+            assert!(!matches!(v, Verdict::Refused(_)), "{c}: {t} is {v:?}");
+            verdicts.push(v);
+        }
+        // The enumeration reads each component's literals, `1000 + i / 3` for `i < c`, and one
+        // value outside them.
+        let boxed: Vec<Vec<usize>> =
+            vec![(1000..1000 + c.div_ceil(3)).chain([OUTSIDE]).collect(); 4];
+        let f = |first: usize| {
+            let rows = (0..c).map(|i| (first + i % 3, 1000 + i / 3, i % 2 == 0));
+            F::Chain(rows.collect())
+        };
+        let (fx, fy) = (Box::new(f(0)), Box::new(f(1)));
+        let expected: Vec<Verdict> = [
+            F::And(fx.clone(), fy.clone()),
+            F::And(fx.clone(), Box::new(F::Not(fy.clone()))),
+            F::And(fy.clone(), Box::new(F::Not(fx.clone()))),
+            F::Not(Box::new(F::Or(fx, fy))),
+        ]
+        .iter()
+        .map(|f| match by_enumeration(f, &boxed) {
+            true => Verdict::Inhabited,
+            false => Verdict::Empty,
+        })
+        .collect();
+        assert_eq!(verdicts, expected, "{c}");
+    }
+}
+
 mod bench;
