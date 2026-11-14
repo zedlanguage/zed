@@ -41,7 +41,7 @@ fn nested_int_operation_exponents_are_read_in_linear_time() {
     std::thread::Builder::new()
         .stack_size(1 << 29)
         .spawn(|| {
-            let n = 300;
+            let n = 2000;
             let srcs = [
                 nested_int_exponents(n),
                 nested_int_exponents(scaling::FACTOR * n),
