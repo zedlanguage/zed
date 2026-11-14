@@ -645,3 +645,162 @@ fn a_cast_in_place_of_many_parentheses_scales() {
         },
     );
 }
+
+/// `f`, of one parameter `x: t`, called with the literal `lit`.
+fn call_with(t: &str, lit: &str) -> String {
+    format!(
+        "f(x: {t}) = x;\nmain(m: MainArgs) {{\n  y = f(x: {lit});\n  m.stdout <- \"${{y}}\";\n}}\n"
+    )
+}
+
+#[test]
+fn a_literal_with_a_suffix_is_named_by_the_carrier_its_suffix_names() {
+    // The headline names the literal's own carrier, `f32`, not the one expected: it said
+    // "makes the literal `1.0f32` an `f64`, never `f64`" (MSG-never-f64-wording). The same
+    // literal without its suffix is exactly the f64 1.0, so it is offered (DESIGN.md
+    // sec:diagnostics, row "Two numeric values with no common carrier").
+    let src = call_with("f64", "1.0f32");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with(
+            "3:12: The suffix makes the literal `1.0f32` an `f32`, never `f64`. Try \
+             `y = f(x: 1.0)` instead.\n"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("the literal is then the f64 1.0"), "{out}");
+    assert_eq!(fixed(&src), ["y = f(x: 1.0);"]);
+    checks(&edited(&src, "1.0f32", "1.0"));
+    // `1.0` for `1.0f64` beside an `f32`, as the row's own example has it; the value is
+    // written as an `f32` is printed.
+    let src = call_with("f32", "0.5f64");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with("3:12: The suffix makes the literal `0.5f64` an `f64`, never `f32`."),
+        "{out}"
+    );
+    assert!(out.contains("the literal is then the f32 0.5"), "{out}");
+    assert_eq!(fixed(&src), ["y = f(x: 0.5);"]);
+    checks(&edited(&src, "0.5f64", "0.5"));
+    // A negative literal keeps its sign.
+    let src = call_with("f64", "-1.5f32");
+    assert!(
+        rejected(&src).starts_with(
+            "3:12: The suffix makes the literal `-1.5f32` an `f32`, never `f64`. Try \
+             `y = f(x: -1.5)` instead.\n"
+        ),
+        "{}",
+        rejected(&src)
+    );
+    assert!(rejected(&src).contains("the literal is then the f64 -1.5"));
+}
+
+#[test]
+fn a_literal_with_a_suffix_that_no_value_of_the_carrier_equals_is_offered_nothing() {
+    // `0.1` has no exact `f64`, and `0.1f32` is another number again, so writing `0.1` would
+    // change the number: nothing is offered, as for `0.1r` beside an `f64`.
+    let src = call_with("f64", "0.1f32");
+    let out = rejected(&src);
+    assert_eq!(
+        out.lines().next(),
+        Some("3:12: The suffix makes the literal `0.1f32` an `f32`, never `f64`."),
+        "{out}"
+    );
+    assert!(fixed(&src).is_empty(), "{out}");
+    // 2^24 + 1 is an `f64` but no `f32`.
+    let src = call_with("f32", "16777217.0f64");
+    let out = rejected(&src);
+    assert_eq!(
+        out.lines().next(),
+        Some("3:12: The suffix makes the literal `16777217.0f64` an `f64`, never `f32`."),
+        "{out}"
+    );
+    assert!(fixed(&src).is_empty(), "{out}");
+    // 2^24 is both.
+    assert_eq!(
+        fixed(&call_with("f32", "16777216.0f64")),
+        ["y = f(x: 16777216.0);"]
+    );
+    // A decimal is never an `int`, whatever its value (the row's `2.0f64` beside an `int`).
+    let src = call_with("int", "2.0f32");
+    let out = rejected(&src);
+    assert_eq!(
+        out.lines().next(),
+        Some("3:12: The suffix makes the literal `2.0f32` an `f32`, never `int`."),
+        "{out}"
+    );
+    assert!(fixed(&src).is_empty(), "{out}");
+}
+
+#[test]
+fn an_f32_literal_beside_a_rat_is_offered_its_rat_forms() {
+    let src = call_with("rat", "0.5f32");
+    assert!(
+        rejected(&src).starts_with(
+            "3:12: The suffix makes the literal `0.5f32` an `f32`, never `rat`. Try \
+             `y = f(x: 0.5)` instead.\n"
+        ),
+        "{}",
+        rejected(&src)
+    );
+    assert_eq!(fixed(&src), ["y = f(x: 0.5);", "y = f(x: 0.5r);"]);
+    // Beside `f64 | rat` the bare literal would take neither alone, so only `0.25r` checks.
+    let src = call_with("f64 | rat", "0.25f32");
+    assert!(
+        rejected(&src).starts_with(
+            "3:12: The suffix makes the literal `0.25f32` an `f32`, never `f64 | rat`."
+        ),
+        "{}",
+        rejected(&src)
+    );
+    assert_eq!(fixed(&src), ["y = f(x: 0.25r);"]);
+}
+
+#[test]
+fn a_literal_with_a_suffix_compared_with_a_value_of_another_format_names_its_own() {
+    let src = program("same(x: f32) = x == 2.0f64;");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with(
+            "1:21: The suffix makes the literal `2.0f64` an `f64`, never `f32`. Try \
+             `same(x: f32) = x == 2.0` instead.\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(
+        fixed(&src),
+        [
+            "same(x: f32) = x == 2.0;",
+            "same(x: f32) = f64(x) == 2.0f64;"
+        ]
+    );
+    checks(&edited(&src, "x == 2.0f64", "x == 2.0"));
+}
+
+/// The literal `0.5000…0` with `n` zeros and the suffix `suffix`, and the literal
+/// `0.1000…01` with `n` zeros, each passed to a parameter of the other format.
+fn long_suffixed_literals(n: usize) -> String {
+    let zeros = "0".repeat(n);
+    format!(
+        "f(x: f32) = x;\ng(x: f64) = x;\nmain(m: MainArgs) {{\n  y = f(x: 0.5{zeros}f64);\n  \
+         z = g(x: 0.1{zeros}1f32);\n  m.stdout <- \"${{y}}${{z}}\";\n}}\n"
+    )
+}
+
+#[test]
+fn the_message_of_a_long_literal_with_a_suffix_scales() {
+    // Each literal is read once at `rat` and cast to the format expected, which decides
+    // whether its form without a suffix is offered: O(n log^2 n) in its digits (COMPLEXITY.md
+    // K41).
+    let srcs = scaling::inputs(1000, long_suffixed_literals);
+    scaling::check(
+        "the messages of two literals of n digits with a suffix",
+        1000,
+        |n| {
+            let out = rejected(&srcs[&n]);
+            assert_eq!(out.matches("an `f64`, never `f32`").count(), 1, "{out}");
+            assert_eq!(out.matches("an `f32`, never `f64`").count(), 1, "{out}");
+            assert_eq!(out.matches("the literal is then the f32 0.5").count(), 1);
+        },
+    );
+}

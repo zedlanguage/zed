@@ -7081,8 +7081,8 @@ fn with_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
 
 /// The message for the literal `l` where a number of one of the carriers `held` is expected,
 /// one or more, none of which it can take: a decimal literal at `int`, which a decimal never
-/// is; a literal written with the suffix `f64` at other carriers, since the suffix fixes its
-/// carrier; or an integer literal at a format that holds no value equal to it, as
+/// is; a literal written with the suffix `f64` or `f32` at other carriers, since the suffix
+/// fixes its carrier; or an integer literal at a format that holds no value equal to it, as
 /// `9007199254740993` at `f64` (DESIGN.md sec:domains). Zed converts no value, so the literal
 /// is rejected, with the fixes that write a literal of the same number instead: the integer
 /// literal where `int` is expected and a decimal without a suffix has only zeros after its point, the `r`
@@ -7142,13 +7142,56 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
         let holds = lit_holds(l, Carrier::Rat);
         fixes.push(Rewrite::lit(l, &spelled_digits(l), &holds));
         fixes.push(Rewrite::lit(l, &with_carrier(l, Carrier::Rat), &holds));
+    } else if let Some((c, v)) = unsuffixed_exact(l, held) {
+        // The same literal without its suffix where it is exactly a value of a carrier
+        // expected, `1.0` for `1.0f64` beside an `f32` or `1.0f32` beside an `f64`, and none
+        // where it is not, `0.1f32` beside an `f64` (the same row).
+        let v = fmt::from_fn(move |f| match &v {
+            Value::Float32(x) => write!(f, "{}", show_f32(x.get())),
+            v => write!(f, "{v}"),
+        });
+        fixes.push(Rewrite::lit(
+            l,
+            &spelled_digits(l),
+            &format_args!("the literal is then the {} {v}", c.name()),
+        ));
     }
+    // The carrier the suffix names, `f64` or `f32`, never the one expected: `1.0f32` beside
+    // an `f64` is "an `f32`, never `f64`".
+    let own = lit_carrier(&l.value);
+    let (what, carrier) = (article(own), own.name());
     let m = literal_message(
         l,
-        |f, w| write!(f, "The suffix makes {w} an `f64`, never `{names}`"),
+        |f, w| {
+            write!(
+                f,
+                "The suffix makes {w} {what} `{carrier}`, never `{names}`"
+            )
+        },
         "",
     );
     Msg::new(m, fixes)
+}
+
+/// The first of the formats `f64` and `f32` among the carriers `held` of which the decimal
+/// literal `l`, written without its suffix, is exactly a value, with that value under its `-`.
+/// Its digits are read at `rat` and cast to each format, which gives `#inexact` where the
+/// format holds no equal number, so a literal the format would round, `0.1` at `f64`, is not
+/// returned. A decimal is never an `int`, and the lexer takes a suffix on a decimal only.
+// Complexity tradeoff: the digits are read once at `rat`, O(n log^2 n) in their number
+// (COMPLEXITY.md K41), then each of at most two casts rounds that `rat` once; the naive test,
+// reading the digits once per format, costs the same up to that factor of two. It runs only
+// on a literal already rejected.
+fn unsuffixed_exact(l: &Lit, held: &[Carrier]) -> Option<(Carrier, Value)> {
+    let exact = Value::rat(Rat::decimal(lit_digits(l)).ok()??);
+    held.iter().find_map(|&c| {
+        let v = match c {
+            Carrier::F64 => run(Prim::CastF64, &exact)?,
+            Carrier::F32 => run(Prim::CastF32, &exact)?,
+            _ => return None,
+        };
+        (!matches!(v, Value::Atom(_))).then(|| (c, neg_value(&v, l.neg())))
+    })
 }
 
 /// The message for the decimal literal `l` beside an operand of carrier `int` of the operator
@@ -8121,7 +8164,7 @@ fn quoting(m: &impl fmt::Display, instead: impl FnOnce() -> String) -> String {
 
 fn article(c: Carrier) -> &'static str {
     match c {
-        Carrier::Int | Carrier::F64 => "an",
+        Carrier::Int | Carrier::F64 | Carrier::F32 => "an",
         _ => "a",
     }
 }
