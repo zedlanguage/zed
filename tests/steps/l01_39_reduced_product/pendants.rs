@@ -2713,3 +2713,35 @@ fn each_change_of_writing_of_case_39_keeps_its_answer() {
         assert_eq!(decided(&s, &formula(&items), &syms), want, "{text}");
     }
 }
+
+/// Seed 11479163432696490265 of `rewritten_parts_are_decided_alike`, found by the agent of
+/// FAIL-pendants-route-parity on e8310066c: case 48 was decided Ok(true) as written and
+/// Err(Growth) by both `decide` and `satisfiable` on one rewrite, which holds the equation
+/// `2 * a + c == b + z0 - 4` twice and writes `a + c == z1 - 11` as two inequalities. The cause
+/// and the fix are those of FAIL-rewrite-growth-both (checked red with the fix taken out).
+#[test]
+fn rewritten_parts_of_seed_11479163432696490265_are_decided_alike() {
+    let seed = 11479163432696490265u64;
+    let mut wrong = Vec::new();
+    for Rewrites {
+        case,
+        items,
+        bs,
+        rewrites,
+    } in random_rewrites(seed, 60)
+    {
+        let s = scope(&bs);
+        let syms = item_names(&items);
+        let f = formula(&items);
+        let want = decided(&s, &f, &syms);
+        for g in rewrites {
+            let got = decided(&s, &g, &syms);
+            if got != want {
+                wrong.push(format!(
+                    "seed {seed} case {case}\n  {f}\n  {g}\n  want {want}\n  got  {got}"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
