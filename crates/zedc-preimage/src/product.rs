@@ -3875,33 +3875,47 @@ fn extreme_bucket_key(c: &Con) -> Option<(Atom, Atom, Int, Int)> {
     }
 }
 
-/// Counts a constraint on the factors `fs` into `adj` (`add`) or out of it: each pair of them,
-/// both ways, the number of constraints that hold both, and each factor with itself, the number
-/// that mention it. A count that reaches 0 is removed. Returns whether a pair of distinct
-/// factors no longer shares a constraint. O(v^2 log n) for v factors of the constraint.
+/// Counts a constraint on the factors `fs`, sorted and distinct, into `adj` (`add`) or out of
+/// it: each factor with itself, the number of constraints that mention it, and each factor and
+/// the next in `fs`, both ways, the number of constraints that link them so. A count that
+/// reaches 0 is removed. Returns whether a link between two distinct factors is gone, the only
+/// change that can split a group. O(v log n) for v factors of the constraint.
+// Complexity tradeoff (FAIL-l139-wide-asum-scaling): naive version, each pair of the factors
+// counted, O(v^2 log n) per constraint: 2.4G instructions for one sum over k = 1024 names and
+// 166G at 8192 (72 times). Used: the factors of each constraint linked as a path, each to the
+// next, O(v log n). The groups read the links only for which factors are connected
+// (`Split::remove_one`), and the path of a constraint connects its factors as all its pairs
+// do, so every group is the same; a count of the path's links reaches 0 only when the links of
+// the factors change, so a removal that leaves the components as they were may still search
+// them, and one that splits a group always does. The search walks the paths, O(v + e) for e
+// links, at most v - 1 for each constraint where the pairs were v(v - 1) / 2.
 fn count_links(
     adj: &mut imbl::OrdMap<Factor, BTreeMap<Factor, usize>>,
     fs: &[Factor],
     add: bool,
 ) -> bool {
     let mut dropped = false;
-    for x in fs {
-        let links = if add {
-            Some(adj.entry(x.clone()).or_default())
-        } else {
-            adj.get_mut(x)
-        };
-        let Some(links) = links else { continue };
-        for y in fs {
-            if add {
-                *links.entry(y.clone()).or_insert(0) += 1;
-            } else if let Some(k) = links.get_mut(y) {
-                *k -= 1;
-                if *k == 0 {
-                    links.remove(y);
-                    dropped |= x != y;
-                }
+    let mut count = |x: &Factor, y: &Factor| {
+        if add {
+            *adj.entry(x.clone())
+                .or_default()
+                .entry(y.clone())
+                .or_insert(0) += 1;
+        } else if let Some(links) = adj.get_mut(x)
+            && let Some(k) = links.get_mut(y)
+        {
+            *k -= 1;
+            if *k == 0 {
+                links.remove(y);
+                dropped |= x != y;
             }
+        }
+    };
+    for (i, x) in fs.iter().enumerate() {
+        count(x, x);
+        if let Some(y) = fs.get(i + 1) {
+            count(x, y);
+            count(y, x);
         }
     }
     dropped
@@ -4126,7 +4140,7 @@ impl Split {
         }
         // Check connectivity of the remaining variables in `gid` with an explicit `visited` set.
         // Complexity tradeoff: a search over the group, O(v + e) for its v variables and e
-        // linked pairs, only when a pair of variables stops sharing a constraint; the families
+        // links ([`count_links`]), only when a link is gone; the families
         // add constraints to a group of fixed variables, so this does not run in their tests.
         // A fully dynamic connectivity structure (J. Holm, K. de Lichtenberg and M. Thorup,
         // "Poly-logarithmic deterministic fully-dynamic algorithms for connectivity", JACM
@@ -16549,6 +16563,62 @@ mod tests {
     use super::*;
 
     mod bench;
+
+    /// The groups `Split::update` keeps as constraints come and go, linking the factors of
+    /// each constraint as a path ([`count_links`]), are those `Split::new` finds anew from the
+    /// constraints left by a union of all their factors ([`linked`]): constraints of one to
+    /// six names among eight, so that a removal often splits a group and a wide constraint
+    /// holds names its path does not link directly. The order of the groups is not compared.
+    #[test]
+    fn the_groups_kept_by_path_links_are_the_groups_found_anew() {
+        let names: Vec<Atom> = (0..8).map(|i| Atom::Sym(format!("n{i}").into())).collect();
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        let partition = |s: &Split| -> BTreeSet<BTreeSet<Factor>> {
+            s.groups.values().map(|(fs, _)| fs.clone()).collect()
+        };
+        let (mut splits, mut wide) = (0, 0);
+        for _ in 0..200 {
+            let mut cons: imbl::OrdSet<Arc<Formula>> = imbl::OrdSet::new();
+            let mut split = Split::new(&[], None);
+            for _ in 0..12 {
+                let remove = !cons.is_empty() && next(3) == 0;
+                let (removed, added) = if remove {
+                    let i = next(cons.len() as u64) as usize;
+                    let g = cons.iter().nth(i).cloned().expect("a constraint");
+                    cons.remove(&g);
+                    (vec![g], vec![])
+                } else {
+                    let v = 1 + next(6) as usize;
+                    let mut lin = Lin::constant(next(5) as i64);
+                    for _ in 0..v {
+                        let x = Lin::atom(names[next(8) as usize].clone());
+                        lin = lin.plus(&x.times(1 + next(3) as i64));
+                    }
+                    wide += usize::from(lin.terms.len() >= 3);
+                    let g = Arc::new(Formula::Con(Con::ge(&lin, &Lin::constant(0))));
+                    if cons.insert(g.clone()).is_some() {
+                        continue;
+                    }
+                    (vec![], vec![g])
+                };
+                let before = partition(&split).len();
+                split = split.update(&cons, &removed, &added);
+                let fresh = Split::new(&cons.iter().collect::<Vec<_>>(), None);
+                assert_eq!(partition(&split), partition(&fresh), "{cons:?}");
+                splits += usize::from(remove && partition(&split).len() > before);
+            }
+        }
+        assert!(
+            splits >= 20 && wide >= 200,
+            "{splits} splits, {wide} wide constraints"
+        );
+    }
 
     /// The due users of a name are the parts of every set but those of the aggregates that
     /// hold, each once, in the order of the parts: the order the worklist takes them in.
