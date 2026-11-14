@@ -4,6 +4,7 @@
 mod bench;
 mod deep_blank_line;
 mod edges;
+mod escape_invisible;
 mod holes;
 mod scaling;
 mod strings;

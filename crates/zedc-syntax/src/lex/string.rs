@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::comment;
-use super::token::{Error, ErrorKind, Part, Span, Tok, Token};
+use super::token::{Error, ErrorKind, Part, Span, Tok, Token, may_not_show};
 
 /// A part before decoding: a range of literal source text, or a hole.
 enum Raw {
@@ -248,6 +248,15 @@ fn escape(text: &str, i: usize) -> Result<usize, Error> {
             i,
             i + 1 + other.map_or(0, char::len_utf8),
             &match other {
+                // A character that may not show on screen, such as a line break or a tab, is
+                // named by its code point and never printed (DESIGN.md sec:lexical), as the
+                // lexer's other messages do ([`may_not_show`]).
+                Some(c) if may_not_show(c) => format!(
+                    "`\\` followed by the character U+{:04X}, which may not show on screen, is \
+                     no escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, `\\\"`, `\\$` \
+                     and `\\u{{…}}`. Write `\\\\` for a backslash itself.",
+                    c as u32
+                ),
                 Some(c) => format!(
                     "`\\{c}` is no escape. The escapes are `\\n`, `\\t`, `\\r`, `\\0`, `\\\\`, \
                      `\\\"`, `\\$` and `\\u{{…}}`. Write `\\\\` for a backslash itself."
