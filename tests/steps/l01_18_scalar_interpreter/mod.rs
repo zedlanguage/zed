@@ -4,6 +4,7 @@
 
 mod bench;
 mod casts;
+mod completeness;
 mod f32;
 mod failures;
 mod floats;

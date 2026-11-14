@@ -273,6 +273,32 @@ fn rounding_near_a_boundary_is_refused_when_memory_is_short() {
     );
 }
 
+/// The width of the number of `rounding_near_an_f32_boundary_is_refused_when_memory_is_short`,
+/// 2 MiB, small so the test is fast, under its [`margin`].
+const ROUNDED: u64 = WIDE / 64;
+
+/// `f32` of a number just below an `f32` rounding boundary, `1 + 2^-24 - 2^-s`, must read all of
+/// its bits to tell which way it rounds, as `f64` must.
+#[test]
+fn rounding_near_an_f32_boundary_is_refused_when_memory_is_short() {
+    if !in_child("rounding_near_an_f32_boundary_is_refused_when_memory_is_short") {
+        return;
+    }
+    let s = ROUNDED;
+    let n = (BigInt::from(1u32) << s) + (BigInt::from(1u32) << (s - 24)) - 1u32;
+    let q = Rat::int(n)
+        .div(&two_to(s))
+        .unwrap()
+        .expect("a power of two is not zero");
+    let q = lit(Value::rat(q));
+    lower_limit_by(margin(s));
+    let err = eval(&prim(Prim::CastF32, vec![q])).unwrap_err();
+    let KernelError::RoundTooLarge { to, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(*to, "f32");
+}
+
 /// A literal just below the point halfway between 1 and the next `f64`, `1 + 2^-53` less
 /// `10^-(54 + n)`: its digits to `...203124`, `n = 2^22` nines and `suffix`, parsed, resolved and
 /// checked, then elaborated under a limit `margin` bytes above what the child holds. Returns

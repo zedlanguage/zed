@@ -7,6 +7,7 @@
 mod asks;
 mod atoms;
 mod bench;
+mod completeness;
 mod edges;
 mod equality;
 mod fields;
