@@ -2223,7 +2223,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 | TEST-slow-correctness-l0136 | running | 2026-11-14 04:03 |  |
-| TEST-unusual-sizes-l0136 | running | 2026-11-14 04:03 |  |
+| TEST-unusual-sizes-l0136 | impl attempt 1 | 2026-11-14 04:03 | committed bd161b9f6 on wt/test-split-l0136 (moves to bench + small regular tests; llvm-cov parity) / 19.13 16.89 16.71 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
