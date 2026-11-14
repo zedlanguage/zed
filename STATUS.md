@@ -2254,7 +2254,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| AUDIT-p184 | impl attempt 1 | 2026-11-14 07:09 | started; worktrees wt/audit-p184 and wt/audit-p184-spec; DAG 2313 nodes, 1 component, no cycle |
 | FAIL-ambiguous-qualifier-repair | running | 2026-11-14 07:10 |  |
 | FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
 | FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
@@ -2262,27 +2261,25 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-generic-need-ignores-arm | running |  |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
-| FAIL-check-memory-limit-2-63 | running |  |  |
+| FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
 | FAIL-diagnostics-follow-on | running | 2026-11-14 07:10 |  |
 | FAIL-diagnostics-member-headline | running | 2026-11-14 07:10 |  |
-| FAIL-initial-reads-shadowed | running |  |  |
+| FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
-| FAIL-layer-mcu-target-value | running |  |  |
+| FAIL-layer-mcu-target-value | running | 2026-11-14 07:52 |  |
 | FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
 | FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
 | FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
-| FAIL-memory-callee-no-plan | running |  |  |
+| FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-ports-key-past-i64 | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
-| FAIL-preimage-arity-stop-unreported | running | 2026-11-14 07:09 |  |
-| FAIL-preimage-div0-false-exact | running | 2026-11-14 07:09 |  |
-| FAIL-preimage-foreign-constant-unreported | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-queries-reorder | running |  |  |
+| FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
+| FAIL-ref-text-reading | running |  |  |
 | FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
 | FAIL-trivial-stop-after-model | running |  |  |
-| FAIL-types-sig-reflexive | running |  |  |
+| FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | FAIL-values-function-in-tuple | impl attempt 1 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 44.86 |
 | FAIL-zir-canon-misplaced-level-binder | running |  |  |
 | FAIL-zir-lower-port-in-family-message | running |  |  |
