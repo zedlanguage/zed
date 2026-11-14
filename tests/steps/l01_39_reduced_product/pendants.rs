@@ -2586,3 +2586,47 @@ fn projections_by_pendants_and_of_the_whole_part_are_exact_on_the_parity_seeds()
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Seeds of the rewritten parts whose writings were decided differently (FAIL-rewrite-growth-both,
+/// found in a run of 960 seeds of `rewritten_parts_are_decided_alike`): `decide` and
+/// `satisfiable` both refused for growth on some writings of a part and answered on others, as
+///   seed 12542484037655067360 case 20: Ok(true) as written, Err(Growth) on a rewrite;
+///   seed 2180316115169132109 case 27: Ok(false) as written, Err(Growth) on three rewrites;
+///   seed 9035190647815979720 case 19: Err(Growth) as written, Ok(true) on a rewrite;
+/// and the rows a `Tie` or `Unordered` refusal names followed the order the rows were written in
+/// (seed 14004696678485946570 case 56, seed 17840270323861607379 case 12). The solver's
+/// elimination order reads the scale and sign of each row; both questions now write the formula
+/// one way first (`signed` in crates/zedc-presburger/src/presburger.rs).
+#[test]
+fn rewritten_parts_of_five_seeds_are_decided_alike() {
+    let mut wrong = Vec::new();
+    for seed in [
+        12542484037655067360u64,
+        2180316115169132109,
+        9035190647815979720,
+        14004696678485946570,
+        17840270323861607379,
+    ] {
+        for Rewrites {
+            case,
+            items,
+            bs,
+            rewrites,
+        } in random_rewrites(seed, 60)
+        {
+            let s = scope(&bs);
+            let syms = item_names(&items);
+            let f = formula(&items);
+            let want = decided(&s, &f, &syms);
+            for g in rewrites {
+                let got = decided(&s, &g, &syms);
+                if got != want {
+                    wrong.push(format!(
+                        "seed {seed} case {case}\n  {f}\n  {g}\n  want {want}\n  got  {got}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

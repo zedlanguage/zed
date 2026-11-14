@@ -737,26 +737,98 @@ fn the_window_systems_of_seed_628126726154_are_answered() {
     random_window_systems_answer(&[628126726154], "seed 628126726154");
 }
 
-/// The seed of FAIL-window-two-shadows-seed and the first windows of two that `decide` refuses
-/// among seeds 0..4000 (the one at n = 12 among them) are refused for a splinter that would have
+/// The seed of FAIL-window-two-shadows-seed and the first windows of two that `decide` refused
+/// among seeds 0..4000 (the one at n = 12 among them). Since `decide` writes each row divided by
+/// the common factor of its coefficients (FAIL-rewrite-growth-both), three of them are answered,
+/// as the window program answers them; the other two are refused for a splinter that would have
 /// to be split again with as many live variables left, the cause DESIGN.md sec:diagnostics
 /// names, and by `satisfiable` and `answers` for no other cause. The refusal can stand where
 /// there is a point: seed 398 has points with `x0` in 0..=2, by the window program.
 #[test]
-fn the_refused_windows_of_two_are_refused_for_a_splinter() {
-    let cases: [(usize, u64, &[i64]); 5] = [
-        (6, 628126726154, &[]),
-        (6, 398, &[0, 1, 2]),
-        (6, 409, &[]),
-        (6, 650, &[]),
-        (12, 2591, &[]),
+fn the_refused_windows_of_two_are_answered_or_refused_for_a_splinter() {
+    /// `n`, the seed, the window program's `x0`, and the answer of `decide`.
+    type Case = (usize, u64, &'static [i64], Result<bool, Refusal>);
+    let cases: [Case; 5] = [
+        (6, 628126726154, &[], Ok(false)),
+        (6, 398, &[0, 1, 2], Ok(true)),
+        (6, 409, &[], Err(Refusal::Shadows)),
+        (6, 650, &[], Ok(false)),
+        (12, 2591, &[], Err(Refusal::Shadows)),
     ];
-    for (n, seed, x0) in cases {
+    for (n, seed, x0, answer) in cases {
         let what = format!("windows of 2, 3 rows each, n = {n}, seed {seed}");
         let f = windows(n, seed, 2, 3);
-        assert_eq!(decide(&f), Err(Refusal::Shadows), "{what}: decide");
+        assert_eq!(decide(&f), answer, "{what}: decide");
         let program: Vec<i64> = windows_x0(n, seed, 2, 3).into_iter().collect();
         assert_eq!(program, x0, "{what}: the window program");
+        if let Ok(holds) = answer {
+            assert_eq!(
+                holds,
+                !x0.is_empty(),
+                "{what}: the answer of the window program"
+            );
+            let found = satisfiable(&f).map(|m| m.is_some());
+            assert_eq!(found, Ok(holds), "{what}: satisfiable");
+        }
         splinter_refusals_only(&what, &f);
     }
+}
+
+/// The window system of `seed` at `n` with an equation `x0 + 2·x1 == x2 + 1` added, written
+/// in one of five ways: 0 as is, 1 with each row times 1, 2 or 3 (by its place) and the
+/// equation as one row, 2 with the equation as the two rows `>=` and `<=`, 3 with the equation
+/// times 3 and its sides swapped, and 4 with the rows in reverse order.
+fn windows_written(n: usize, seed: u64, how: usize) -> Formula {
+    let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    let mut fs = Vec::new();
+    for x in &names {
+        fs.push(ge(&[(x, 1)], BOX));
+        fs.push(ge(&[(x, -1)], BOX));
+    }
+    for (j, row) in window_rows(n, seed, 2, 3).into_iter().enumerate() {
+        let times = if how == 1 { 1 + j as i64 % 3 } else { 1 };
+        let t: Vec<(&str, i64)> = (row.c.iter().enumerate())
+            .map(|(i, &c)| (names[row.start + i].as_str(), c * times))
+            .collect();
+        fs.push(ge(&t, row.k * times));
+    }
+    let e = [("x0", 1), ("x1", 2), ("x2", -1)];
+    let minus = e.map(|(a, c)| (a, -c));
+    match how {
+        2 => fs.extend([ge(&e, -1), ge(&minus, 1)]),
+        3 => fs.push(eq(&minus.map(|(a, c)| (a, 3 * c)), 3)),
+        _ => fs.push(eq(&e, -1)),
+    }
+    if how == 4 {
+        fs.reverse();
+    }
+    Formula::and(fs)
+}
+
+/// `decide` and `satisfiable` give each window system of two, seeds 0..200 at n = 6, the same
+/// verdict however it is written ([`windows_written`]): a row times a factor, an equation as
+/// one row or two, or with its sides swapped, or the rows in another order. Before both wrote
+/// each formula one way first (FAIL-rewrite-growth-both), the solver's elimination order read
+/// the factors and the signs of the rows, and 17 of these seeds had a writing refused where
+/// another was answered.
+#[test]
+fn the_verdict_of_a_window_system_does_not_depend_on_its_writing() {
+    let mut wrong = Vec::new();
+    for seed in 0..200 {
+        let verdict = |how: usize| {
+            let f = windows_written(6, seed, how);
+            (decide(&f), satisfiable(&f).map(|m| m.is_some()))
+        };
+        let want = verdict(0);
+        assert_eq!(want.0, want.1, "seed {seed}: decide and satisfiable");
+        for how in 1..5 {
+            let got = verdict(how);
+            if got != want {
+                wrong.push(format!(
+                    "seed {seed} writing {how}: {got:?}, as is {want:?}"
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

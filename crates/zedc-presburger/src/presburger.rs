@@ -396,8 +396,16 @@ pub struct Joining {
     and: bool,
     /// The parts so far.
     out: Vec<Formula>,
-    /// Of a conjunction, the place in `out` of the constraint on each term and comparison.
-    at: BTreeMap<(BTreeMap<Atom, Int>, Rel), usize>,
+    /// Of a conjunction, the places in `out` of the constraints whose terms and comparison have
+    /// each hash ([`Joining::key`]); one place per term and comparison, and more than one in a
+    /// list only where two share a 64-bit hash by chance.
+    // Complexity tradeoff: this was a `BTreeMap` keyed by a copy of each constraint's terms, so
+    // each part cost a copy of its terms and O(log n) comparisons of terms, each comparing atom
+    // names: 228 ms of 38,001 equations in `signed` (FAIL-rewrite-growth-both), more than the
+    // whole decision after it. The hash costs one pass over the terms and no copy, O(k) for k
+    // terms, and the terms are compared only within one list. Nothing iterates the map, so its
+    // order plays no part. Test `bench::names::decide_scales_over_one_class_of_equalities`.
+    at: FxHashMap<u64, Vec<usize>>,
     /// Whether an operand decided the whole: `false` met in a conjunction, two constraints on
     /// one term that cannot both hold, or `true` met in a disjunction.
     decided: bool,
@@ -420,7 +428,7 @@ impl Joining {
         Joining {
             and,
             out: Vec::new(),
-            at: BTreeMap::new(),
+            at: FxHashMap::default(),
             decided: false,
             added: 0,
         }
@@ -465,9 +473,13 @@ impl Joining {
             self.out.push(g);
             return;
         }
-        let key = (c.lin.terms.clone(), c.rel);
-        match self.at.get(&key) {
-            Some(&i) => {
+        let places = self.at.entry(Joining::key(c)).or_default();
+        let same = places.iter().copied().find(|&i| match &self.out[i] {
+            Formula::Con(old) => old.rel == c.rel && old.lin.terms == c.lin.terms,
+            _ => unreachable!("a constraint"),
+        });
+        match same {
+            Some(i) => {
                 let Formula::Con(old) = &self.out[i] else {
                     unreachable!("a constraint")
                 };
@@ -478,10 +490,19 @@ impl Joining {
                 }
             }
             None => {
-                self.at.insert(key, self.out.len());
+                places.push(self.out.len());
                 self.out.push(g);
             }
         }
+    }
+
+    /// The hash of the terms and the comparison of `c`, its constant left out.
+    fn key(c: &Con) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        c.rel.hash(&mut h);
+        c.lin.terms.hash(&mut h);
+        h.finish()
     }
 
     /// Where the joining is now, to pass to [`Joining::close`].
@@ -658,7 +679,10 @@ fn reduced(facts: &Facts) -> Option<Formula> {
 /// reject it (PRES-model-products).
 /// The solver is given `f` with each atom propagation fixed replaced by its value; a formula it
 /// refuses so is asked again as written (PRES-small-point).
+/// Like [`decide`], it first writes `f` one way (`signed` with the chosen signs), so that how
+/// a row or an equation is written cannot change the answer (FAIL-rewrite-growth-both).
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
+    let f = &signed(f, Signs::Chosen);
     if let Some(g) = factored(f)
         && let Ok(m) = satisfiable_written(&g)
     {
@@ -787,7 +811,29 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// (module `one_row`), and one equation over finite unions of ranges that its residue or its
 /// ends settle (module `row_domains`); any other goes to the solver with each atom propagation
 /// fixed replaced by its value, and as written if the solver refuses that.
+///
+/// Before any of that, `f` is written one way (`signed` with the chosen signs): each row
+/// divided by the common factor of its coefficients, each equation with one sign, and `t >= 0`
+/// beside `-t >= 0` as `t == 0`. The solver's elimination order reads the coefficients and signs
+/// of the rows (`stable_colors`, `canonical`), so without this step the same formula with a
+/// row times 3, or an equation written as two rows, could be answered one way and refused for
+/// [`Refusal::Growth`] or [`Refusal::Shadows`] the other (FAIL-rewrite-growth-both,
+/// FAIL-pendants-growth-scaled-seed). Cost: O(n log n) in the size of `f` per question, against
+/// O(n) for passing it as written; a node written so already is kept with its id, so the memos
+/// keyed by id still find it. Measured on 38,000 equations, half with their sides swapped
+/// (bench `decide_scales_over_one_class_of_equalities`): 3.8e8 instructions against 1.7e8 as
+/// written, and 8.1 times the work at 8 times the size against 8.2; the rest is the copy of
+/// the conjunction that a changed row needs, since a constraint is held by value. Other ways
+/// weighed: asking again with the other sign of each
+/// equation (`Signs::Both`, `Signs::Opposite`) where the chosen one is refused, as
+/// [`project_each`] does, answered one more part in a sweep of 960 seeds of 60 parts each and
+/// none more in the refusal census, and made `programs_9` of that census run 4 times longer;
+/// asking as written where the one writing is refused would make the answer depend on the
+/// writing again.
+/// One writing does not answer every question another does: the census has one condition the
+/// chosen sign refuses for Shadows that its writing as given answered (PRES-solve-equation-sign).
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
+    let f = &signed(f, Signs::Chosen);
     // The formula with each shared part taken out of the disjunctions that hold it in every
     // disjunct ([`factored`]) holds at the same points, so its answer is the answer; the
     // formula as written is asked where it is refused, so a refusal names the formula as
@@ -1646,7 +1692,7 @@ fn signed(f: &Formula, how: Signs) -> Formula {
 /// by a hash that `t` and `-t` share, so that no row is copied.
 fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
     use std::hash::{Hash, Hasher};
-    let mut by: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut by: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
     for (i, g) in gs.iter().enumerate() {
         let Formula::Con(c) = g else { continue };
         let Some((_, first)) = c.lin.terms.first_key_value() else {
@@ -1656,7 +1702,7 @@ fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
             continue;
         }
         let flip = first.is_negative();
-        let mut h = std::hash::DefaultHasher::new();
+        let mut h = rustc_hash::FxHasher::default();
         for (a, k) in &c.lin.terms {
             a.hash(&mut h);
             if flip { -k } else { k.clone() }.hash(&mut h);
@@ -1739,23 +1785,21 @@ fn equation(c: &Con, negated: bool, both: bool, opposite: bool) -> Option<Formul
 // the random parts of l01_39 `pendants` (seeds 11 to 18, 4,000 parts) no answer depends on the
 // naming under this rule.
 fn flips(t: &Lin) -> bool {
-    match sorted_cmp(
-        t.terms.values().cloned().collect(),
-        t.terms.values().map(|k| -k).collect(),
-    )
-    .then_with(|| t.constant.cmp(&Int::ZERO))
-    {
+    // The coefficients of `-t`, sorted, are those of `t`, sorted, negated and reversed, so one
+    // sorted list of references serves both and no coefficient is copied, where two copied and
+    // sorted lists cost two vectors per equation (bench `decide_scales_over_one_class_of_equalities`).
+    let mut up: Vec<&Int> = t.terms.values().collect();
+    up.sort_unstable();
+    let n = up.len();
+    let lists = (0..n)
+        .map(|i| up[i].cmp(&-up[n - 1 - i]))
+        .find(|o| o.is_ne())
+        .unwrap_or(Ordering::Equal);
+    match lists.then_with(|| t.constant.cmp(&Int::ZERO)) {
         Ordering::Less => true,
         Ordering::Greater => false,
         Ordering::Equal => t.terms.values().next().is_some_and(Int::is_negative),
     }
-}
-
-/// `up` against `down`, each sorted.
-fn sorted_cmp<T: Ord>(mut up: Vec<T>, mut down: Vec<T>) -> Ordering {
-    up.sort_unstable();
-    down.sort_unstable();
-    up.cmp(&down)
 }
 
 /// `run`, and when the solver refuses it, `run` again on the path before DISJ-diff-fast and

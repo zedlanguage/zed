@@ -165,17 +165,19 @@ fn each_cause_of_a_refusal_has_its_own_message() {
          checker stopped there, with no values found and none ruled out",
     );
     // Four tasks, three slots, each pair in different slots: no slot assignment, which the
-    // search through the disjunctions does not show by propagation. Each task has a row of
-    // its own, with a coefficient of its own, that `t >= 0` implies, so that the structure
-    // tells the tasks apart.
+    // search through the disjunctions does not show by propagation. The tasks are joined in a
+    // chain by rows `t[i] - t[i-1] >= -2`, which the bounds imply, so that the structure tells
+    // the tasks apart: the first and last by the sign of their one row, the middle two by their
+    // neighbors. (A row of one task, such as `3·t >= -1`, would not: the solver divides it by
+    // its coefficient and it becomes `t >= 0`, like every other task's.)
     let tasks = ["a", "b", "c", "d"];
     let pigeons = |apart: bool| {
         let mut rows = Vec::new();
         for (i, t) in tasks.iter().enumerate() {
             rows.push(ge(&[(t, 1)], 0));
             rows.push(ge(&[(t, -1)], 2));
-            if apart {
-                rows.push(ge(&[(t, 2 + i as i128)], 1));
+            if apart && i > 0 {
+                rows.push(ge(&[(t, 1), (tasks[i - 1], -1)], 2));
             }
             rows.extend(tasks[..i].iter().map(|s| differ(s, t)));
         }

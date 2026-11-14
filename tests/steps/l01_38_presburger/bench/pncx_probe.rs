@@ -131,7 +131,12 @@ fn pncx_wide_divisor_translation_scale() {
 // Each family of `t8_enum_suite` whole: 1,200 formulas, many cases, so benchmarks (author P178);
 // their first formulas run in `pncx_probe::pncx_t8_enum_suite_*_first_formulas`. Each bound is
 // the count refused on 2026-11-14 (24 in family 3, down from 34 on 2026-11-12; none in families
-// 1 and 2, down from 33 allowed), so a new refusal fails.
+// 1 and 2, down from 33 allowed), so a new refusal fails. Since `decide` and `satisfiable` write
+// each formula one way (FAIL-rewrite-growth-both), family 3 has 16: 13 of the 24 are answered and
+// 5 others (191, 234, 260, 342 and 363) are refused for Shadows. Their rows have no common
+// factor and no pair `t >= 0`, `-t >= 0`, so the one change the writing makes is the sign of
+// equations such as `x == m * q + r` (PRES-solve-equation-sign). Pieces 1 and 2 allow one more,
+// the other pieces fewer.
 #[test]
 fn pncx_t8_enum_suite_sign12() {
     t8_enum_suite(1, 0..1200, 0);
@@ -144,37 +149,37 @@ fn pncx_t8_enum_suite_padic() {
 
 #[test]
 fn pncx_t8_enum_suite_pairs_0() {
-    t8_enum_suite(3, 0..150, 3);
+    t8_enum_suite(3, 0..150, 2);
 }
 
 #[test]
 fn pncx_t8_enum_suite_pairs_1() {
-    t8_enum_suite(3, 150..300, 2);
+    t8_enum_suite(3, 150..300, 3);
 }
 
 #[test]
 fn pncx_t8_enum_suite_pairs_2() {
-    t8_enum_suite(3, 300..450, 2);
+    t8_enum_suite(3, 300..450, 3);
 }
 
 #[test]
 fn pncx_t8_enum_suite_pairs_3() {
-    t8_enum_suite(3, 450..600, 1);
+    t8_enum_suite(3, 450..600, 0);
 }
 
 #[test]
 fn pncx_t8_enum_suite_pairs_4() {
-    t8_enum_suite(3, 600..750, 6);
+    t8_enum_suite(3, 600..750, 3);
 }
 
 #[test]
 fn pncx_t8_enum_suite_pairs_5() {
-    t8_enum_suite(3, 750..900, 6);
+    t8_enum_suite(3, 750..900, 3);
 }
 
 #[test]
 fn pncx_t8_enum_suite_pairs_6() {
-    t8_enum_suite(3, 900..1050, 3);
+    t8_enum_suite(3, 900..1050, 1);
 }
 
 #[test]
