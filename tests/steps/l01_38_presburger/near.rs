@@ -57,13 +57,13 @@ fn small(g: &mut Rng) -> Graph {
     out
 }
 
-/// 50,000 small graphs from `seed`: Duong's search finds a negative cycle exactly when the
-/// reference does, and otherwise a potential that holds on every edge. Both answers occur.
-fn against_the_reference(seed: u64) {
-    let mut g = Rng::new(seed);
+/// `count` small graphs from `g`: Duong's search finds a negative cycle exactly when the
+/// reference does, and otherwise a potential that holds on every edge. The counts of graphs
+/// with a negative cycle and with a potential.
+pub(super) fn against_the_reference(g: &mut Rng, count: usize) -> (usize, usize) {
     let (mut negative, mut feasible) = (0, 0);
-    for _ in 0..50_000 {
-        let out = small(&mut g);
+    for _ in 0..count {
+        let out = small(g);
         let found = potential_alone(&out);
         assert_eq!(
             found.is_some(),
@@ -78,38 +78,51 @@ fn against_the_reference(seed: u64) {
             None => negative += 1,
         }
     }
-    assert!(negative > 1000 && feasible > 1000, "{negative} {feasible}");
+    (negative, feasible)
 }
 
-// 300,000 graphs in six tests, so that each runs well within the time limit.
+/// 10,000 small graphs of a new seed each run against the reference; both answers occur more
+/// than 3000 times (about 4400 and 5600 on 2026-11-14). The 300,000 graphs of seeds 1 to 6
+/// (about 1.5 s per seed at load 25) are in `bench::near`.
 #[test]
-fn small_graphs_1() {
-    against_the_reference(1);
+fn small_graphs_match_the_reference() {
+    let (mut g, seed) = Rng::fresh("near small graphs");
+    let (negative, feasible) = against_the_reference(&mut g, 10_000);
+    assert!(
+        negative > 3000 && feasible > 3000,
+        "seed {seed}: {negative} with a negative cycle, {feasible} with a potential"
+    );
 }
 
+/// The graphs at the edges of what `small` draws, and below it: no nodes; one node with no
+/// edge, and with a self loop of weight -1, 0 and 1 (a negative loop is a negative cycle); two
+/// nodes whose cycle weighs -1, 0 and 1.
 #[test]
-fn small_graphs_2() {
-    against_the_reference(2);
-}
-
-#[test]
-fn small_graphs_3() {
-    against_the_reference(3);
-}
-
-#[test]
-fn small_graphs_4() {
-    against_the_reference(4);
-}
-
-#[test]
-fn small_graphs_5() {
-    against_the_reference(5);
-}
-
-#[test]
-fn small_graphs_6() {
-    against_the_reference(6);
+fn the_empty_graph_and_single_loops_are_answered() {
+    let w = Int::from;
+    let cases: Vec<(Graph, bool)> = vec![
+        (vec![], true),
+        (vec![vec![]], true),
+        (vec![vec![(0, w(-1))]], false),
+        (vec![vec![(0, w(0))]], true),
+        (vec![vec![(0, w(1))]], true),
+        (vec![vec![(1, w(3))], vec![(0, w(-4))]], false),
+        (vec![vec![(1, w(3))], vec![(0, w(-3))]], true),
+        (vec![vec![(1, w(3))], vec![(0, w(-2))]], true),
+    ];
+    for (out, has) in cases {
+        let found = potential_alone(&out);
+        assert_eq!(
+            bellman_ford_moore(&out).is_some(),
+            has,
+            "reference on {out:?}"
+        );
+        assert_eq!(found.is_some(), has, "graph {out:?}");
+        if let Some(p) = found {
+            assert_eq!(p.len(), out.len(), "graph {out:?}");
+            assert!(holds(&out, &p), "potential {p:?} of graph {out:?}");
+        }
+    }
 }
 
 /// A graph of `n` nodes and `4n` random edges, weights -5 to 20, with no negative cycle: each
