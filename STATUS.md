@@ -2183,11 +2183,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-fold-machine | impl attempt 1 | 2026-11-13 16:26 | baseline 182 pieces, 5 fail on origin/main: l01_17 {edges::the_two_float_zeros_tie, subquadratic::a_gcd_of_wide_numbers_scales}, l01_26a design_menus::fixes_dec |
+| CONST-fold-machine | impl attempt 1 | 2026-11-13 16:26 | red-before-green: without fixed_room, fold_machine 3 of 6 fail (child at RLIMIT_DATA+2GiB and parent fold 2^20, +64MiB child refuses; boundary 258112 folds); ne |
+| CONST-too-large-rat-names | running | 2026-11-13 16:26 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | round 5 Claude seat merged 7c8f994b4 (core classes, repair memo; point_rows R 65.8 -> 7.92), plan/STATUS f23d3185a; load 46.10 45.93 45.05 |
-| MAIN-limits | running | 2026-11-13 15:20 |  |
+| MAIN-limits | impl attempt 1 | 2026-11-13 15:20 | started; load 36.82 |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
-| POW-scope-exponent | impl attempt 1 | 2026-11-13 14:51 | reproduced on 4a1a69d22 with zedc run: 2^(2^k - 2) under k > 0, 2^(3^k - 3) under k >= 1, 2^(5^(2^k + 1) - 10) under k >= 0 all rejected 'exponent that may be n |
 | PRES-overlap-coeffs | impl attempt 1 | 2026-11-13 14:10 | started; worktree from origin/main 64dfe1c61 |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
 | ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
