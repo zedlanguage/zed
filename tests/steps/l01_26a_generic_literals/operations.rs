@@ -63,12 +63,13 @@ fn operations_on_literals_give_each_carrier_s_value() {
         "x * (1 / 1180591620717411303424 + 1)",
         "x == 1 / 2 + 1",
         "x * (1 ^ 1180591620717411303424 + 1)",
+        "x * ((1 + 1.5) + 0)",
+        "x * (1 / 2 + 2 ^ 2 + 1)",
+        "x * (1 / 2 + 0)",
         // Still a `let` and a `match` per literal ([`NOT_FOLDED`]).
         "x * (1 / (2 + 1) + 1)",
         "x * (2 ^ -1 + 1)",
         "x * (1.5 ^ -1 + 1)",
-        "x * ((1 + 1.5) + 0)",
-        "x * (1 / 2 + 2 ^ 2 + 1)",
     ];
     let args = [
         ("1", "int"),
@@ -90,10 +91,12 @@ fn operations_on_literals_give_each_carrier_s_value() {
 
 /// Operations on literals alone with `/`, a decimal or `^` whose carrier is known in every
 /// arm, so the literal that follows takes it there and the whole is one `match` (plan row
-/// STAGE-generic-fold-div): `/` keeps the carrier of each arm `is c` and gives a `rat` from two
-/// `int`s, `^` with a whole-number exponent keeps the base's, and a literal following a decimal
-/// takes the decimal's arms, its own value where it lists no value at their carrier.
-const FOLDED: [&str; 12] = [
+/// STAGE-generic-fold-div): `/` keeps the carrier of each arm `is c`, `^` with a whole-number
+/// exponent keeps the base's, and a literal following a decimal takes the decimal's arms, its
+/// own value where it lists no value at their carrier. An operation whose last arm would be at
+/// `int` and mix carriers, or divide two `int`s, has that arm at `f64` or at the carrier of the
+/// other operand's last arm, since no `int` reaches it (plan row STAGE-generic-fold-int-arm).
+const FOLDED: [&str; 15] = [
     "x + (1 / 2 + 3)",
     "x + 3 * (1 / 2)",
     "x * (1.5 + 1)",
@@ -106,22 +109,21 @@ const FOLDED: [&str; 12] = [
     "x == 1 / 2 + 1",
     "x * (1 / 1180591620717411303424 + 1)",
     "x * (1 ^ 1180591620717411303424 + 1)",
+    "x * ((1 + 1.5) + 0)",
+    "x * (1 / 2 + 2 ^ 2 + 1)",
+    "x * (1 / 2 + 0)",
 ];
 
 /// Operations whose carrier is not known in every arm, so the literal that follows takes the
 /// old path, a `let` and a `match` on its value, and keeps the value: a divisor that is an
 /// operation, which elaboration does not evaluate; a zero divisor, which gives `#divByZero` at
-/// `rat`; a negative exponent, refused at `int`; an exponent not a whole number; a sum of a
-/// decimal and an integer, or of a quotient and an integer power, whose last arm, at `int`,
-/// gives no value of a carrier (plan row STAGE-generic-fold-int-arm).
-const NOT_FOLDED: [&str; 7] = [
+/// `rat`; a negative exponent, refused at `int`; an exponent not a whole number.
+const NOT_FOLDED: [&str; 5] = [
     "x * (1 / (2 + 1) + 1)",
     "x * (1 / 0 + 1)",
     "x * (2 ^ -1 + 1)",
     "x * (1.5 ^ -1 + 1)",
     "x * ((2 + 1) ^ 0.5 + 1)",
-    "x * ((1 + 1.5) + 0)",
-    "x * (1 / 2 + 2 ^ 2 + 1)",
 ];
 
 #[test]
@@ -134,11 +136,13 @@ fn a_quotient_a_decimal_or_a_power_among_literals_is_one_match() {
         let t = term(&format!("f(positional x) = {body};\n"), "f");
         assert_eq!(t.matches("match").count(), 2, "{body}: {t}");
     }
-    // At `int`, `1 / 2` is a `rat`, and `3` follows it there as `3r`.
+    // `/` has no arrow at `int`, so no `int` reaches `1 / 2`, and its last arm is the one at
+    // `f64`, where `3` follows it as `3.0` (plan row STAGE-generic-fold-int-arm; before it, the
+    // last arm was `(1 / 2) + 3r`, which no run could reach).
     assert_eq!(
         term("f(positional x) = x + (1 / 2 + 3);\n", "f"),
-        "x -> (x + match x { is f64 -> ((1.0 / 2.0) + 3.0), is rat -> ((1r / 2r) + 3r), \
-         is f32 -> ((1.0f32 / 2.0f32) + 3.0f32), _ -> ((1 / 2) + 3r) })"
+        "x -> (x + match x { is rat -> ((1r / 2r) + 3r), is f32 -> ((1.0f32 / 2.0f32) + 3.0f32), \
+         _ -> ((1.0 / 2.0) + 3.0) })"
     );
     // `1` lists `f64`, `rat` and `f32`; the decimal's arms are `rat`, `f32` and its own `f64`.
     assert_eq!(
@@ -211,9 +215,10 @@ fn an_operation_on_several_literals_is_one_match() {
 
 /// A function of one parameter times a sum of `n` terms, each a quotient, a decimal, a power or
 /// an integer in turn: `x * (1 / 2 + 1.5 + (1 / 2) ^ 2 + 1 + 1 / 2 + …)`, the text
-/// `bench/operations.rs` measures for STAGE-generic-fold-div. The power is of a quotient: `2 ^ 2`
-/// is an `int` in the last arm, where `1 / 2` is a `rat`, and a literal following their sum
-/// takes the old path (plan row STAGE-generic-fold-int-arm).
+/// `bench/operations.rs` measures for STAGE-generic-fold-div. The power is of a quotient, so
+/// every arm has a carrier without the last arm at `int` being dropped (STAGE-generic-fold-int-arm
+/// drops it where a decimal or `/` leaves no `int` value to reach it, as in
+/// `x * (1 / 2 + 2 ^ 2 + 1)`, in `FOLDED`).
 pub(super) fn mixed_chain(n: usize) -> String {
     let terms = ["1 / 2", "1.5", "(1 / 2) ^ 2", "1"];
     let sum: Vec<&str> = (0..n).map(|i| terms[i % terms.len()]).collect();

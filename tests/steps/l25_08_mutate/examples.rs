@@ -338,16 +338,29 @@ fn a_mutant_of_a_folded_decimal_or_power_is_skipped() {
             "7 mutants: 6 detected, 0 undetected, 1 skipped, 0 not run",
         ]
     );
-    // `1 / 2 + 0` is one `match` too, but its last arm, at `int`, is `(1 / 2) + 0r`: no call
-    // at `int` is accepted, and `/` has no arrow on two `int`s, so the build stage does not
-    // build that arm, and the mutant is run (plan row STAGE-generic-fold-int-arm).
+    // `1 / 2 + 0` is one `match` too. `/` has no arrow on two `int`s, so no `int` reaches it,
+    // and its last arm is at `f64`, `(1.0 / 2.0) + 0.0`, which the build stage builds as it
+    // does the others (plan row STAGE-generic-fold-int-arm; before it, the last arm was at
+    // `int`, `(1 / 2) + 0r`, which the build stage could not build, and the mutant was run and
+    // reported undetected).
     let unit = "f(positional x) = x * (1 / 2 + 0) test { 2r -> 1r }\n";
     assert_eq!(
         report(unit),
         [
-            "1:30: undetected: `+` replaced by `-` in `f` at .0.1.1: every row that reaches it \
-             passes",
-            "8 mutants: 7 detected, 1 undetected, 0 skipped, 0 not run",
+            "1:30: skipped: `+` replaced by `-` in `f` at .0.1.1: the build stage gives the \
+             definition the original's term",
+            "8 mutants: 7 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+    // A decimal and an integer: the last arm of `1 + 1.5` was at `int`, `1 + 1.5`, and is at
+    // `f64`, `1.0 + 1.5`.
+    let unit = "f(positional x) = x * ((1 + 1.5) + 0) test { 2r -> 5r }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:34: skipped: `+` replaced by `-` in `f` at .0.1.1: the build stage gives the \
+             definition the original's term",
+            "6 mutants: 5 detected, 0 undetected, 1 skipped, 0 not run",
         ]
     );
 }
