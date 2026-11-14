@@ -59,6 +59,13 @@ fn following_tests_scale() {
     }
 }
 
+/// The readings of `nested_sums_keep_their_arms` at depths 6 to 12, which that test leaves out
+/// for its time.
+#[test]
+fn nested_sums_keep_their_arms_at_depths_6_to_12() {
+    nested_sums_read(6..=12);
+}
+
 /// The arms of `d` nested tests of sums cost `O(d)`: each `if` is summarized once, as a
 /// function of `n` affine on each of a few intervals, where the sum `n + n` had no summary
 /// and each test fell to the linear stage, `O(d^3)` (16 to 128 levels: 12 ms to 1.53 s). A

@@ -219,10 +219,18 @@ const SUMS: [(&str, &str, &[&str]); 6] = [
 /// tightens a hull end found by cases, depth 3 reads `n` exactly. The odd depths from 5 still
 /// read every `n`: sound, but wider than `n = 1`, since the ends there are bounded only by a
 /// combination of cases that the end search does not try (a follow-up of PRES-pendants-wider).
+/// Depths 1 to 5 reach each of these readings; the benchmark
+/// `nested_sums_keep_their_arms_at_depths_6_to_12` reads the rest (TEST-slow-l0139-refused-sums:
+/// the time grows as the depth, and depths 1 to 12 took 0.43 s).
 #[test]
 fn nested_sums_keep_their_arms() {
+    nested_sums_read(1..=5);
+}
+
+/// The readings of [`nested_sums_keep_their_arms`] at each of `depths`.
+fn nested_sums_read(depths: std::ops::RangeInclusive<usize>) {
     for (e, ps, names) in SUMS {
-        for d in 1..=12 {
+        for d in depths.clone() {
             let want = match (e, d) {
                 ("n + m", 1 | 3) => ["true: n [1..=1], m [..]", "false: n [..=0, 2..], m [..]"],
                 ("n + m", _) => ["true: n [..], m [..]", "false: n [..=0, 2..], m [..]"],
