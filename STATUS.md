@@ -2240,8 +2240,39 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | started; worktree test-complete-crates seeded / 65.87 56.46 48.35 |
+| AUDIT-p184 | impl attempt 1 | 2026-11-14 07:09 | started; worktrees wt/audit-p184 and wt/audit-p184-spec; DAG 2313 nodes, 1 component, no cycle |
+| FAIL-ambiguous-qualifier-repair | running |  |  |
+| FAIL-bitword-arity-message | running | 2026-11-14 07:09 |  |
+| FAIL-bitword-curry-domain | running | 2026-11-14 07:09 |  |
+| FAIL-check-arm-test-through-call | running |  |  |
+| FAIL-check-decimal-past-f64-at-rat | running |  |  |
+| FAIL-check-generic-need-ignores-arm | running |  |  |
+| FAIL-check-if-carrier-branch-literal-at-rat | running |  |  |
+| FAIL-diagnostics-follow-on | running |  |  |
+| FAIL-diagnostics-member-headline | running |  |  |
+| FAIL-lattice-f32-literal | running |  |  |
+| FAIL-lex-deep-blank-line | running | 2026-11-14 07:09 |  |
+| FAIL-lex-doc-in-hole | running | 2026-11-14 07:09 |  |
+| FAIL-lex-escape-invisible | running | 2026-11-14 07:09 |  |
+| FAIL-limits-steps-memory | running |  |  |
+| FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
+| FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
+| FAIL-preimage-arity-stop-unreported | running | 2026-11-14 07:09 |  |
+| FAIL-preimage-div0-false-exact | running | 2026-11-14 07:09 |  |
+| FAIL-preimage-foreign-constant-unreported | running | 2026-11-14 07:09 |  |
+| FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
+| FAIL-ref-text-reading | running |  |  |
+| FAIL-source-lvt-jamo | running | 2026-11-14 07:09 |  |
+| FAIL-steps-name-layers | running | 2026-11-14 07:09 |  |
+| FAIL-steps-name-plus-sign | running |  |  |
+| FAIL-trivial-stop-after-model | running |  |  |
+| FAIL-zir-canon-misplaced-level-binder | running |  |  |
+| FAIL-zir-lower-port-in-family-message | running |  |  |
+| FAIL-zir-text-reader-messages | running |  |  |
+| fix-zir | impl attempt 1 | 2026-11-14 07:09 | started: FAIL-zir-text-reader-messages, FAIL-zir-canon-misplaced-level-binder, FAIL-zir-lower-port-in-family-message, POLY-trivial-base-folded; load 5.98 12.57  |
+| TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | zedc-int a05833ed6, zed-rt 9acbf09ae, zedc-solvers 10a4e923a, zed-native 241d4a7a8 pushed (hooks.rs 51.27% -> 94.79%, 26 tests, no FAIL row); next zedc-check, z |
 | TEST-complete-presburger | impl attempt 1 | 2026-11-14 06:40 | started; worktree seeded |
+| TEST-complete-types | impl attempt 1 | 2026-11-14 07:09 | started; worktree /home/luke/Work/wt/test-complete-types; load 6.96 13.08 18.93 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
