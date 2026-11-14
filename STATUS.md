@@ -2369,7 +2369,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | PRESBURGER-or-if-disjuncts-refusal | impl attempt 1 | 2026-11-14 14:24 | started; worktree pres-orif-disj at 49c35d07a |
 | STUDY-memo-arenas | impl attempt 1 | 2026-11-14 15:08 | started: design of @memoized + unified arenas (P198/P199) |
 | TEST-kernel-hash-keys | impl attempt 1 | 2026-11-14 15:13 | started in wt/kernel-parens-hash |
-| TEST-presburger-unreached-paths | part 3 merged and pushed (row stays Part done; rest in PRES-unreached-3-left and FAIL-ladder-tie-after-hull-rows); no spec change | 2026-11-14 15:45 | sweep_row_unbounded 45 to 0 lines unreached, try_pick_disjoint_wide 92 to 17, resolve_disj 54 to 15, fill_row_model 58 to 7; one completeness fix in slack.rs; dead checks removed |
+| TEST-presburger-unreached-paths | part 3 merged and pushed (row stays Part done; rest in PRES-unreached-3-left; the ladder failure is FAIL-abs-hull-rows-tie); no spec change | 2026-11-14 15:45 | sweep_row_unbounded 45 to 0 lines unreached, try_pick_disjoint_wide 92 to 17, resolve_disj 54 to 15, fill_row_model 58 to 7; one completeness fix in slack.rs; dead checks removed |
 | TEST-renamed-relation-same-set | running | 2026-11-14 14:17 |  |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | l01_39 split into l01_39_reduced_product + l01_39_scope_relations, 645 tests, 224 pieces 472 passed before and after; pushed 7b104f6b8 |
 
