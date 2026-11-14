@@ -3,126 +3,8 @@
 use std::sync::Arc;
 
 use zed_tests::scaling::{self, Meter};
-use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, satisfiable};
-
-fn sym(x: &str) -> Lin {
-    Lin::atom(Atom::Sym(Arc::from(x)))
-}
-
-fn q(i: u32) -> Lin {
-    Lin::atom(Atom::Aux(i))
-}
-
-fn k(v: i64) -> Lin {
-    Lin::constant(v)
-}
-
-fn ge(a: &Lin, b: &Lin) -> Formula {
-    Formula::Con(Con::ge(a, b))
-}
-
-fn eq(a: &Lin, b: &Lin) -> Formula {
-    Formula::Con(Con::eq(a, b))
-}
-
-/// `if g >= c { v } else { c }` defining `q`: `(g >= c && v == q) || (!(g >= c) && q == c)`.
-fn max_def(g: &Lin, c: i64, v: &Lin, q: &Lin) -> Formula {
-    Formula::or(vec![
-        Formula::and(vec![ge(g, &k(c)), eq(v, q)]),
-        Formula::and(vec![Formula::negate(ge(g, &k(c))), eq(q, &k(c))]),
-    ])
-}
-
-/// How [`defs`] gives its inputs `x` and `y`.
-#[derive(Clone, Copy, Debug)]
-enum Inputs {
-    /// By equations, `x == 6 && y == 4`.
-    Fixed,
-    /// By two rows each whose bounds meet, `x >= 6 && 6 >= x`.
-    Bounded,
-    /// By two rows each that leave two values, `x >= 6 && 7 >= x`: not a point, but the
-    /// inputs at their lower bounds, `x == 6 && y == 4`, are one, which propagation from the
-    /// bounds shows (PRES-small-point).
-    Ranged,
-}
-
-/// `n` definitions, each a `max` of the one before (or of `x`, or of `y`) and a constant,
-/// as the preimages of chains of `if` give, with the inputs given as `inputs` says.
-fn defs(n: u32, inputs: Inputs) -> Formula {
-    let mut fs = Vec::new();
-    for i in 0..n {
-        let v = match i % 3 {
-            0 => sym("x"),
-            1 => sym("y"),
-            _ => q(i - 1),
-        };
-        fs.push(max_def(&v, i64::from(i % 5) - 2, &v, &q(i)));
-    }
-    for (x, v) in [("x", 6), ("y", 4)] {
-        match inputs {
-            Inputs::Fixed => fs.push(eq(&sym(x), &k(v))),
-            Inputs::Bounded | Inputs::Ranged => {
-                let top = if let Inputs::Ranged = inputs {
-                    v + 1
-                } else {
-                    v
-                };
-                fs.push(ge(&sym(x), &k(v)));
-                fs.push(ge(&k(top), &sym(x)));
-            }
-        }
-    }
-    Formula::and(fs)
-}
-
-/// The least instructions of five runs of `run`.
-fn least(meter: &mut Meter, run: &dyn Fn()) -> u64 {
-    (0..5).map(|_| meter.work(run).units).min().expect("runs")
-}
-
-#[test]
-// A hand-run probe, not a test (PRES-small-cost and PRES-small-front: prints the instructions per
-// call): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
-#[cfg(zed_probes)]
-fn bench_small_formulas() {
-    let mut meter = Meter::new();
-    let one = Formula::and(vec![
-        max_def(&sym("x"), 1, &sym("x"), &q(0)),
-        eq(&sym("x"), &k(6)),
-        eq(&sym("y"), &k(4)),
-    ]);
-    let three = Formula::and(vec![
-        eq(&q(0), &k(1)),
-        eq(&sym("x"), &k(6)),
-        eq(&sym("y"), &k(4)),
-    ]);
-    for (what, f) in [("one disjunction", &one), ("three equations", &three)] {
-        let s = least(&mut meter, &|| drop(std::hint::black_box(satisfiable(f))));
-        let d = least(&mut meter, &|| drop(std::hint::black_box(decide(f))));
-        eprintln!("{what}: satisfiable {s}, decide {d}  {f}");
-    }
-    for inputs in [Inputs::Fixed, Inputs::Bounded, Inputs::Ranged] {
-        for n in [1, 2, 4, 7, 8, 16, 32, 64, 512] {
-            let f = defs(n, inputs);
-            let s = least(&mut meter, &|| drop(std::hint::black_box(satisfiable(&f))));
-            let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
-            eprintln!(
-                "{inputs:?} n {n}: satisfiable {s} ({}/def), decide {d}; {:?}",
-                s / u64::from(n),
-                satisfiable(&f).map(|m| m.map(|m| m.len()))
-            );
-        }
-    }
-    for n in [64, 512] {
-        let f = ladder(n);
-        let s = least(&mut meter, &|| drop(std::hint::black_box(satisfiable(&f))));
-        let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
-        eprintln!(
-            "ladder n {n}: satisfiable {s} ({}/rung), decide {d}",
-            s / u64::from(n)
-        );
-    }
-}
+use zed_tests::step_helpers::l01_38_presburger::small_cost::{Inputs, defs, ladder, least};
+use zedc::store::presburger::{Atom, decide, satisfiable};
 
 #[test]
 fn a_chain_of_definitions_at_a_point_costs_its_size() {
@@ -182,18 +64,6 @@ fn a_chain_of_definitions_at_a_point_is_not_settled_by_the_whole_solver() {
         bounded < 2 * fixed && ranged < 2 * fixed,
         "fixed {fixed} {unit}, bounded {bounded} {unit}, ranged {ranged} {unit}"
     );
-}
-
-/// A ladder of `n` bounds, `x0 <= 5 && x1 <= x0 + 1 && ... && x(n-1) <= x(n-2) + 1`: no
-/// variable but `x0` is bounded until the one before it is set, so the rounds at the bounds
-/// set one rung each, `n` rounds of one continued propagation (PRES-small-point).
-fn ladder(n: u32) -> Formula {
-    let x = |i: u32| sym(&format!("x{i}"));
-    let mut fs = vec![ge(&k(5), &x(0))];
-    for i in 1..n {
-        fs.push(ge(&x(i - 1).plus(&k(1)), &x(i)));
-    }
-    Formula::and(fs)
 }
 
 #[test]

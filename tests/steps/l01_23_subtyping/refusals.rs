@@ -1203,54 +1203,6 @@ fn each_refusal_message_reads_as_written() {
     }
 }
 
-#[test]
-// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: prints
-// the verdict and work of case RFX at the sizes RFX_N): built only with `--cfg zed_probes`; see
-// [workspace.lints.rust] in the top Cargo.toml.
-#[cfg(zed_probes)]
-fn rfx_probe() {
-    let which = std::env::var("RFX").unwrap_or_default();
-    let sizes: Vec<usize> = std::env::var("RFX_N")
-        .unwrap_or("8,16,32,64".into())
-        .split(',')
-        .map(|s| s.parse().unwrap())
-        .collect();
-    big(move || {
-        for n in sizes {
-            Type::forget_emptiness();
-            let tag = format!("_rfx{n}");
-            let t = rfx_case(&which, n, &tag);
-            if std::env::var("RFX_SWEEP").is_ok() {
-                Type::forget_emptiness();
-                eprintln!(
-                    "rfx sweep {which} n {n} {:?} chains {:?}",
-                    t.sweep_verdict(),
-                    {
-                        Type::forget_emptiness();
-                        t.chain_verdict()
-                    }
-                );
-                Type::forget_emptiness();
-            }
-            let mut m = scaling::Meter::new();
-            let mut v = None;
-            let w = m.work(|| v = Some(t.verdict()));
-            eprintln!(
-                "rfx {which} n {n} {:?} units {} bytes {}",
-                v, w.units, w.bytes
-            );
-            if which == "r6parity"
-                || ["r7", "r8", "r9", "r10"]
-                    .iter()
-                    .any(|p| which.starts_with(p))
-            {
-                eprintln!("escape cells {which} n {n} {:?}", t.escape_cell_counts());
-                Type::forget_emptiness();
-            }
-        }
-    });
-}
-
 /// The probe's families: the lists of `all`, and the lists with a `one` at place `i` from the
 /// front for each `i` up to `n` but `skip`, or with no `one` among the first `m` places;
 /// `split` puts the `M{k}` in a group of their own, with its own `L`.
@@ -7436,66 +7388,6 @@ fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
     });
 }
 
-#[test]
-// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: prints
-// the escape cells of case RFX at the sizes RFX_N): built only with `--cfg zed_probes`; see
-// [workspace.lints.rust] in the top Cargo.toml.
-#[cfg(zed_probes)]
-fn r9_escape_probe() {
-    let which = std::env::var("RFX").unwrap();
-    let sizes: Vec<usize> = std::env::var("RFX_N")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse().unwrap())
-        .collect();
-    big(move || {
-        for n in sizes {
-            let t = rfx_case(&which, n, "_r9finder");
-            let mut meter = scaling::Meter::new();
-            let mut counts = (0, 0);
-            let work = meter.work(|| counts = t.escape_cell_counts());
-            eprintln!(
-                "rfx {which} n {n} finder units {} bytes {}",
-                work.units, work.bytes
-            );
-            eprintln!("escape cells {which} n {n} {counts:?}");
-        }
-    });
-}
-
-#[test]
-// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: prints
-// how wide literals read): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the
-// top Cargo.toml.
-#[cfg(zed_probes)]
-fn r9_wide_literal_probe() {
-    for text in [
-        "9223372036854775807",
-        "9223372036854775808",
-        "-9223372036854775809",
-        "18446744073709551616",
-    ] {
-        let v = Value::int(text.parse().unwrap());
-        let ty = zedc::check::read::parse_type(text);
-        match ty {
-            Ok(t) => eprintln!(
-                "r9 literal {text}: empty {} contains_literal {} contains_zero {}",
-                t.is_empty(),
-                t.contains(&v),
-                t.contains(&Value::Int(0))
-            ),
-            Err(e) => eprintln!("r9 literal {text}: error {e}"),
-        }
-        for arg in [text, "0"] {
-            let src = format!("f(x: {text}) = 0;\nmain() = f(x: {arg});\n");
-            eprintln!(
-                "r9 literal program {text} arg {arg}: {:?}",
-                zedc::run::load(src.as_bytes()).err()
-            );
-        }
-    }
-}
-
 /// X38 adversary with two positive and two negative residues mod 7. The tall
 /// off-coset root keeps the height suffix gcd at 1; adjacent positive residues
 /// keep the per-value gcd at 1. No aligned cell is nonempty, including the outlier's.
@@ -8733,16 +8625,6 @@ fn r11_payload_name_prefix_probe() {
 #[test]
 fn r11_ternary_alignment_is_inhabited() {
     r11_ternary_alignment(&[16, 64, 256, 1024]);
-}
-
-/// [`r11_ternary_alignment_is_inhabited`] at 4096, with the work printed.
-#[test]
-// A hand-run probe, not a test (REFUSAL-front-rest, docs/handoff/REFUSAL-front-unsolved.md: size
-// 4096 alone takes past 60 s; the sizes up to 1024 are tested): built only with `--cfg zed_probes`;
-// see [workspace.lints.rust] in the top Cargo.toml.
-#[cfg(zed_probes)]
-fn r11_ternary_alignment_probe() {
-    r11_ternary_alignment(&[4096]);
 }
 
 fn r11_ternary_alignment(sizes: &[usize]) {

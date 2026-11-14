@@ -92,8 +92,8 @@ reviewers' disagreements. "Limit" is the scaling test's bound for 8x input.
 
 ### U1. Shared-factor preparation (coprime base) is above the limit
 
-- Input: test `presburger::modular::r4_tests::pncx_common_factor_scale` (modular.rs, ignored
-  with "open: R7-CLAUDE-3"): moduli sharing factors, 512 to 4,096 moduli.
+- Input: test `presburger::modular::r4_tests::pncx_common_factor_scale` (modular.rs; it fails on main and is kept,
+  until this row is done, in /home/luke/Work/wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs): moduli sharing factors, 512 to 4,096 moduli.
 - Measured: 21.7x instructions for 8x moduli, limit 11.7 (round 7, Claude, seat only, load
   11.5); 21.5x (round 6, Codex, confirmed failing in verify/r6/codex/groups), 21.81x
   ("preparation" axis, round 7, Codex, seat only). The whole-formula axes pass after the
@@ -129,8 +129,8 @@ reviewers' disagreements. "Limit" is the scaling test's bound for 8x input.
 
 ### U2. Fibonacci CRT bits: allocation and work above the limit
 
-- Input: test `presburger::modular::r6_tests::pncx_fibonacci_scale` (ignored, "open:
-  R7-CLAUDE-4"), and the axis `crt_bit_axis` of the hand-run binary `pncx_probe` (zed-benches,
+- Input: test `presburger::modular::r6_tests::pncx_fibonacci_scale` (R7-CLAUDE-4; deferred to
+  /home/luke/Work/wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs), and the axis `crt_bit_axis` of the hand-run binary `pncx_probe` (zed-benches,
   `PNCX_SIZES=... pncx_probe crt_bit_axis`; moduli of 2,844 to 22,750 bits, 5,000 to 40,000
   steps).
 - Measured: 18.5x instructions and 18.3x bytes for 8x steps (round 7, Claude and Codex, seat
@@ -285,12 +285,15 @@ Zimmermann 2010; van der Hoeven 2022. Each round's `METAn.md` §2 says which wer
 1. Port from `pncx-r7-codex`: cycle squares, the unit-image check, the nine-way test split,
    and the wide-alias test (ignored, open), keeping the candidate's I6.3 and I6.11 fixes.
 2. U1 and U2 share one fix in zed-kernel (the product); measure it with
-   `r7_tests::pncx_common_factor_parts_axis` (a probe built with `--cfg zed_probes`) and the `crt_bit_axis` command of
+   `r7_tests::pncx_common_factor_parts_axis` (a test that fails on main, deferred to
+   /home/luke/Work/wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs) and the `crt_bit_axis` command of
    `benches/src/bin/pncx_probe.rs`.
 3. U3: offsets relative to the parent, never composed into a node.
 3a. U4: find the step that answers one orientation of `x = m q + r` and refuses the other on
    the 59 cases (section U4), make it orientation-free, then drop the `Atom`-order run and
-   un-ignore `remainder_alias_answers_do_not_depend_on_names`.
+   put `remainder_alias_answers_do_not_depend_on_names` back from
+   /home/luke/Work/wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs, with the other tests
+   deferred there.
 4. Run the five groups (l01_38_presburger, zedc_presburger, l01_39_reduced_product,
    l01_25_preimage_catalog, zedc_preimage) and the answer log against the last one
    (`pncx-log-patch-r6.diff`, compare with `cmplog.awk`).

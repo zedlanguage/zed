@@ -81,13 +81,6 @@ object = { version = "0.40.0", default-features = false, features = ["read_core"
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"
-# `zed_probes`: the hand-run probes of PERF-negated-chain-unsolved and REFUSAL-front-unsolved
-# (docs/handoff), which print work or verdicts at the sizes their environment variables name and
-# assert nothing, or run past 60 s. They are not tests, and only a build with the cfg has them:
-# `RUSTFLAGS='--cfg zed_probes' CARGO_TARGET_DIR=build/probes cargo test -p <package> -- --exact
-# <path::to::probe> --nocapture`, its own target directory so that the usual build is kept.
-# Probes that need no private item are in benches/src/bin instead (TESTS-unignore-all).
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(zed_probes)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

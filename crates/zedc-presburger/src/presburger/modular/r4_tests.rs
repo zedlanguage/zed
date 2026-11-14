@@ -185,58 +185,11 @@ fn pncx_domain_membership_matches_scan() {
 }
 
 #[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_shared_formula_axis() {
-    let mut meter = scaling::Meter::new();
-    for n in std::env::var("PNCX_SIZES")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse::<usize>().unwrap())
-    {
-        let x = Lin::atom(Atom::Sym("x".into()));
-        let mut parts = Vec::new();
-        for (i, m) in shared_moduli(n).into_iter().enumerate() {
-            let q = Lin::atom(Atom::Aux(i as u32));
-            parts.push(Formula::Con(Con::eq(
-                &x.minus(&q.times(m)),
-                &Lin::constant(2 * i as i64),
-            )));
-        }
-        let f = Formula::and(parts);
-        let mut answer = None;
-        let work = meter.work(|| answer = solve_modular(&f, false));
-        assert!(matches!(answer, Some(Some(_))));
-        println!("SHAREDFORM n={n} instr={} bytes={}", work.units, work.bytes);
-    }
-}
-
-#[test]
 fn pncx_kept_prefix_scale() {
     let inputs = scaling::inputs(64, prefix_formula);
     scaling::check_order("kept conjunction prefixes", 64, 1, |n| {
         assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
     });
-}
-
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_kept_prefix_axis() {
-    let mut meter = scaling::Meter::new();
-    for n in std::env::var("PNCX_SIZES")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse::<usize>().unwrap())
-    {
-        let f = prefix_formula(n);
-        let work = meter.work(|| assert!(matches!(solve_modular(&f, false), Some(Some(_)))));
-        println!("PREFIX n={n} instr={} bytes={}", work.units, work.bytes);
-    }
 }
 
 #[test]
@@ -387,102 +340,6 @@ fn pncx_affine_images_match_enumeration() {
                 }
             }
         }
-    }
-}
-
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_pair_components() {
-    let sizes = std::env::var("PNCX_SIZES").unwrap();
-    let mut meter = scaling::Meter::new();
-    for n in sizes.split(',').map(|n| n.parse::<usize>().unwrap()) {
-        let choices: Vec<_> = shared_moduli(n)
-            .into_iter()
-            .enumerate()
-            .map(|(i, m)| (Int::from(i % 2), m.div_floor_wide(&Int::from(2))))
-            .collect();
-        let units: BTreeMap<_, _> = choices
-            .iter()
-            .map(|(r, m)| (m.clone(), vec![(r.clone(), r.clone())]))
-            .collect();
-        let mut point = None;
-        let crt = meter.work(|| point = combine_crt_tree(choices.clone()));
-        let (x, _) = point.expect("coprime");
-        let verify = meter.work(|| assert!(holds_modular_point(&x, &units, &[])));
-        println!(
-            "PAIRCOMP n={n} crt={} crt_bytes={} verify={} verify_bytes={}",
-            crt.units, crt.bytes, verify.units, verify.bytes
-        );
-    }
-}
-
-// Disjoint triangles have an explicit three-coloring. Their domain
-// restrictions defeat the separate-pair sufficient witness and expose
-// replaying every unrelated component during Stage C (I3.3).
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_color_components() {
-    let sizes = std::env::var("PNCX_SIZES").unwrap();
-    let mut meter = scaling::Meter::new();
-    for n in sizes.split(',').map(|n| n.parse::<usize>().unwrap()) {
-        let (info, allowed, mut clauses) = color_system(n);
-        if std::env::var_os("PNCX_CONNECTED").is_some() {
-            for start in (3..3 * n).step_by(3) {
-                for c in 0..3 {
-                    let color = Int::from(c);
-                    clauses.push(BTreeMap::from([
-                        (
-                            start - 1,
-                            res_diff(
-                                &allowed[start - 1],
-                                &[(color.clone(), color.clone())],
-                                &info[start - 1].max_q,
-                            ),
-                        ),
-                        (
-                            start,
-                            res_diff(
-                                &allowed[start],
-                                &[(color.clone(), color)],
-                                &info[start].max_q,
-                            ),
-                        ),
-                    ]));
-                }
-            }
-        }
-        let choices = info
-            .iter()
-            .enumerate()
-            .map(|(i, b)| (Int::from(i % 3), b.max_q.clone()))
-            .collect();
-        let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
-        assert!(clauses.iter().all(|cl| {
-            cl.iter()
-                .any(|(i, s)| res_contains(s, &witness.mod_floor_wide(&info[*i].max_q)))
-        }));
-        let mut answer = RegimeOut::Empty;
-        let work = meter.work(|| {
-            answer =
-                solve_coprime_system(&None, &None, &info, allowed.clone(), clauses.clone(), true)
-        });
-        assert!(!matches!(answer, RegimeOut::Empty));
-        println!(
-            "COLORCOMP n={n} instr={} bytes={} answer={}",
-            work.units,
-            work.bytes,
-            match answer {
-                RegimeOut::Found(_) => "found",
-                RegimeOut::Undecided => "undecided",
-                RegimeOut::Empty => "empty",
-            }
-        );
     }
 }
 
@@ -690,95 +547,6 @@ fn pncx_coloring_relabelings() {
         ),
     ]));
     assert!(graph_coloring_witness(&info, &allowed, &other).is_none());
-}
-
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_color_formula_axis() {
-    let connected = std::env::var_os("PNCX_CONNECTED").is_some();
-    let square = std::env::var_os("PNCX_SQUARE").is_some();
-    let mut meter = scaling::Meter::new();
-    for n in std::env::var("PNCX_SIZES")
-        .unwrap()
-        .split(',')
-        .map(|v| v.parse::<usize>().unwrap())
-    {
-        let (info, _, _) = color_system(n);
-        let xa = Atom::Sym("x".into());
-        let x = Lin::atom(xa.clone());
-        let mut parts = Vec::new();
-        let mut remainders = Vec::new();
-        let choices = info
-            .iter()
-            .enumerate()
-            .map(|(i, b)| (Int::from(i % 3), b.max_q.clone()))
-            .collect();
-        let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
-        let mut model = Model::from([(xa, witness.clone())]);
-        for (i, base) in info.iter().enumerate() {
-            let qa = Atom::Aux(2 * i as u32);
-            let ra = Atom::Aux(2 * i as u32 + 1);
-            let q = Lin::atom(qa.clone());
-            let r = Lin::atom(ra.clone());
-            parts.push(Formula::Con(Con::eq(
-                &x,
-                &q.times(base.max_q.clone()).plus(&r),
-            )));
-            parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
-            parts.push(Formula::Con(Con::ge(&Lin::constant(2), &r)));
-            model.insert(qa, witness.div_floor_wide(&base.max_q));
-            model.insert(ra, witness.mod_floor_wide(&base.max_q));
-            remainders.push(r);
-        }
-        let mut edges = Vec::new();
-        if square {
-            let mut unique = BTreeSet::new();
-            for a in 0..info.len() {
-                for step in [1, 2] {
-                    let b = (a + step) % info.len();
-                    unique.insert((a.min(b), a.max(b)));
-                }
-            }
-            edges.extend(unique);
-        } else {
-            for start in (0..3 * n).step_by(3) {
-                edges.extend([
-                    (start, start + 1),
-                    (start + 1, start + 2),
-                    (start, start + 2),
-                ]);
-                if connected && start > 0 {
-                    edges.push((start - 1, start));
-                }
-            }
-        }
-        for (a, b) in edges {
-            for color in 0..3 {
-                parts.push(Formula::or(vec![
-                    Formula::negate(Formula::Con(Con::eq(&remainders[a], &Lin::constant(color)))),
-                    Formula::negate(Formula::Con(Con::eq(&remainders[b], &Lin::constant(color)))),
-                ]));
-            }
-        }
-        let f = Formula::and(parts);
-        assert!(f.holds(&model));
-        let mut answer = None;
-        let work = meter.work(|| answer = solve_modular(&f, false));
-        assert!(!matches!(answer, Some(None)), "known coloring");
-        println!(
-            "FULLCOLOR n={n} connected={connected} instr={} bytes={} answer={}",
-            work.units,
-            work.bytes,
-            if answer.is_some() {
-                "found"
-            } else {
-                "undecided"
-            }
-        );
-    }
 }
 
 #[test]

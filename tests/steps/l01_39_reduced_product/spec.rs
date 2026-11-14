@@ -1,7 +1,7 @@
 //! The design's examples (DESIGN.md Part G, step L1.39).
 
 use zedc::query::Db;
-use zedc::store::product::forward;
+use zedc::store::product::{Scope, forward};
 
 use super::*;
 

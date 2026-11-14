@@ -11,36 +11,16 @@
 //! (COMPLEXITY.md S31b).
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
 use zed_kernel::{Prim, Term};
 use zed_tests::scaling;
+use zed_tests::step_helpers::l01_39_reduced_product::{
+    all, approval_any_tier, either, ge, le, limits, names,
+};
 use zedc::store::product::{Arm, arms};
 
 use super::ints;
-
-fn cmp(p: Prim, n: &str, v: i64) -> Term {
-    prim(p, vec![var(n), lit(v)])
-}
-
-fn ge(n: &str, v: i64) -> Term {
-    cmp(Prim::Ge, n, v)
-}
-
-fn le(n: &str, v: i64) -> Term {
-    cmp(Prim::Le, n, v)
-}
-
-fn all(ts: Vec<Term>) -> Term {
-    ts.into_iter()
-        .reduce(|a, b| prim(Prim::And, vec![a, b]))
-        .expect("a part")
-}
-
-fn either(a: Term, b: Term) -> Term {
-    prim(Prim::Or, vec![a, b])
-}
 
 /// The credit rule: `x >= 0 || (y >= 0 && (x >= 1 || … (x >= d)))`.
 fn rule(d: usize) -> Term {
@@ -74,10 +54,6 @@ fn named(d: usize) -> Term {
 /// The approval with the rule written out at each tier.
 fn written_out(d: usize) -> Term {
     approval(d, &|| rule(d))
-}
-
-fn names() -> Vec<Arc<str>> {
-    ["x", "y", "u", "q", "z", "w"].map(Into::into).into()
 }
 
 fn arms_of(test: Term) -> Vec<Arm> {
@@ -136,20 +112,6 @@ fn arms_of_a_named_rule_at_each_tier_take_time_near_linear_in_the_depth() {
         .expect("a thread")
         .join()
         .expect("the test passes");
-}
-
-/// The credit limits, `k` of them: `x + j y >= j` for each `j` below `k`, one for each kind of
-/// account, on the balance `x` and the credit `y`.
-fn limits(k: usize) -> Vec<Term> {
-    (0..k as i64)
-        .map(|j| {
-            let line = prim(
-                Prim::Add,
-                vec![var("x"), prim(Prim::Mul, vec![lit(j), var("y")])],
-            );
-            prim(Prim::Ge, vec![line, lit(j)])
-        })
-        .collect()
 }
 
 /// The approval `d` tiers deep, with every one of `k` credit limits required at each tier.
@@ -353,23 +315,6 @@ fn arms_of_a_chain_of_named_disjunctions_take_time_near_linear_in_its_length() {
     );
 }
 
-/// The approval where any of `d` tiers approves, tier `i` a request of size `z` at most `i`
-/// that waited at least `i`, each tier needing every one of `k` credit limits, named once.
-/// The tiers are side by side, so the limits are a conjunct of each disjunct.
-fn approval_any_tier(d: usize, k: usize, named: bool) -> Term {
-    let tiers = |t: &dyn Fn() -> Term| {
-        (0..d as i64)
-            .map(|i| all(vec![t(), ge("w", i), le("z", i)]))
-            .reduce(either)
-            .expect("a tier")
-    };
-    if named {
-        let_("t", all(limits(k)), tiers(&|| var("t")))
-    } else {
-        tiers(&|| all(limits(k)))
-    }
-}
-
 /// Runs the scaling check of `arms` on `family(1, k, true)` at k = n and 8n: one tier, so that
 /// the work is that of the chain of k limits alone.
 fn limit_scaling(what: &str, n: usize, family: fn(usize, usize, bool) -> Term) {
@@ -463,32 +408,4 @@ fn arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth
         "arms of k = d credit limits named once, needed by each of d tiers side by side",
         approval_any_tier,
     );
-}
-
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved,
-// docs/handoff/PERF-negated-chain-unsolved.md: prints the work at the sizes PNCX_SIZES): built only
-// with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_tiers_axis() {
-    scaling::on_a_thread(1 << 29, || {
-        let mut meter = scaling::Meter::new();
-        for d in std::env::var("PNCX_SIZES")
-            .unwrap()
-            .split(',')
-            .map(|s| s.parse().unwrap())
-        {
-            let term = if_(approval_any_tier(d, d, true), lit(1), lit(2));
-            let scope = ints(&names());
-            let work = meter.work(|| {
-                std::hint::black_box(arms(&term, &scope));
-            });
-            println!(
-                "TIERS n={d} work={} bytes={} unit={}",
-                work.units,
-                work.bytes,
-                meter.unit()
-            );
-        }
-    });
 }

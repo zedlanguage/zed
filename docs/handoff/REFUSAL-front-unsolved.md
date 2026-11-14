@@ -27,9 +27,12 @@ All paths are on this machine. Nothing below has been deleted.
 | round 11 seat reports | review-record/r11/claude/R11_CLAUDE.md and .diff; review-record/r11/codex/R11_CODEX.md and .diff, with meas/ and sources/fetched/ |
 
 Test builders named below are in tests/steps/l01_23_subtyping/refusals.rs on the branch; the
-probe families are built by `rfx_case(name, n, tag)` in the same file. A probe is run with
-`RFX_N=16,64,256,1024` in a build with `--cfg zed_probes` (TESTS-unignore-all; see the top Cargo.toml),
-with `--exact <probe> --nocapture` (see the probe tests' bodies).
+probe families are built by `rfx_case(name, n, tag)` in the same file. The probes `rfx_probe` and `r9_escape_probe`, run with `RFX=<name> RFX_N=16,64,256,1024`, are
+kept out of the tree until this step is done, in
+/home/luke/Work/wt/scratch/deferred-tests/REFUSAL-front-rest.rs (TESTS-defer-failing; no cfg switch
+may keep code from running): they call private helpers of refusals.rs, so they go back as a
+binary of zed-benches once `rfx_case` and its helpers move to `zed_tests::step_helpers`.
+`r9_wide_literal_probe` is the binary `r9_wide_literal` of zed-benches.
 
 ## U1. X38: the escape's cell discovery reads super-linearly many empty cells
 

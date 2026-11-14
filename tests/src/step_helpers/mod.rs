@@ -24,6 +24,7 @@ pub mod l01_36_cranelift;
 #[cfg(target_os = "linux")]
 pub mod l01_36a_executables;
 pub mod l01_38_presburger;
+pub mod l01_39_reduced_product;
 pub mod m0_03_grammar_tools;
 
 /// The scratch directory of the running test target: what cargo gives a test target's source

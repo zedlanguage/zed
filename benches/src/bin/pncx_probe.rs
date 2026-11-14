@@ -1,16 +1,22 @@
 //! Hand-run probes of PERF-negated-chain-unsolved (docs/handoff/PERF-negated-chain-unsolved.md),
-//! moved out of `tests/steps/l01_38_presburger/pncx_probe.rs`, where they were ignored tests:
+//! moved out of the tests (most from `tests/steps/l01_38_presburger/pncx_probe.rs`), where they
+//! were ignored or built only under a cfg switch:
 //! each prints times or work for the sizes or cases its environment variables name and asserts
 //! nothing, or takes past what a run of the tests may spend. `pncx_probe <name>` runs one; the
 //! names are those of the functions below, `chain8`, `scaling`, `six_axis`, `pairs_enumeration`,
-//! `sat_reduction`, `crt_bit_axis`, `fibonacci_parts` and `profile`. Example:
+//! `sat_reduction`, `crt_bit_axis`, `fibonacci_parts`, `profile`, `multiply_bytes`,
+//! `refused_cases` and `tiers_axis`. Example:
 //! `PNCX_AXIS=moduli PNCX_SIZES=64,512 pncx_probe scaling`.
 
 use std::process::ExitCode;
 use std::time::Instant;
 
+use zed_kernel::term::build::{if_, lit};
+use zed_tests::scaling;
 use zed_tests::step_helpers::l01_16_elaboration::elab;
 use zed_tests::step_helpers::l01_38_presburger::pncx::*;
+use zed_tests::step_helpers::l01_39_reduced_product::{approval_any_tier, ints, names};
+use zedc::store::product::arms;
 
 /// Chain 8 of
 /// `one_scope::no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided`.
@@ -398,6 +404,98 @@ fn pncx_profile() {
     }
 }
 
+/// Bytes and work of one product of two numbers of `w` words, at the widths of the Fibonacci
+/// scale test (44 to 355 words) and of the common-factor tree (up to 970 words). Was
+/// `r7_tests::pncx_multiply_bytes_axis` of zedc-presburger, a probe built only with a cfg switch.
+fn pncx_multiply_bytes() {
+    use zedc::store::int::Int;
+    let mut meter = zed_tests::scaling::Meter::new();
+    for w in [44usize, 88, 177, 355, 710, 1420] {
+        let mut a = Int::ONE;
+        for _ in 0..w * 64 {
+            a = &a + &a;
+        }
+        let a = &a - &Int::from(12345);
+        let b = &a - &Int::from(999);
+        let work = meter.work(|| {
+            std::hint::black_box(&a * &b);
+        });
+        println!("MUL words={w} work={} bytes={}", work.units, work.bytes);
+    }
+}
+
+/// Prints each case of `one_variable_modular_formulas_match_enumeration` in `PNCX_CASES`
+/// (`from..to`, by default `0..5000`) that `decide` or `satisfiable` refuses, with the points of
+/// its interval. Was `one_scope::pncx_refused_cases` of step L1.38, a probe built only with a cfg
+/// switch.
+fn pncx_refused_cases() {
+    use zedc::store::int::Int;
+    use zedc::store::presburger::{Model, decide, satisfiable};
+    let mut rng = zed_tests::instances::Rng::new(0x70de_c1de);
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 5000), |s| {
+        let (a, b) = s.split_once("..").unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    });
+    for i in 0..to {
+        let (f, x, copies, divs, lo, hi, bounded) = modular_case(&mut rng, i);
+        if i < from {
+            continue;
+        }
+        eprintln!("CASE_BEGIN {i} decide");
+        let d = decide(&f);
+        eprintln!("CASE_BEGIN {i} satisfiable");
+        let s = satisfiable(&f);
+        if d.is_ok() && s.is_ok() {
+            continue;
+        }
+        let mut points = Vec::new();
+        for v in lo..=hi {
+            let mut m = Model::new();
+            m.insert(x.clone(), Int::from(v));
+            for (a, s, off) in &copies[1..] {
+                m.insert(a.clone(), Int::from(s * v + off));
+            }
+            for (q, r, modulus, s, off) in &divs {
+                let u = s * v + off;
+                m.insert(q.clone(), Int::from(u.div_euclid(*modulus)));
+                m.insert(r.clone(), Int::from(u.rem_euclid(*modulus)));
+            }
+            if f.holds(&m) {
+                points.push(v);
+            }
+        }
+        println!(
+            "REFUSED case={i} bounded={bounded} decide={d:?} satisfiable={:?} points={points:?}\n{f}",
+            s.as_ref().map(|m| m.is_some())
+        );
+    }
+}
+
+/// The work of the arms of `approval_any_tier(d, d, true)` (named_test.rs of step L1.39) at each
+/// `d` of `PNCX_SIZES`. Was `named_test::pncx_tiers_axis`, a probe built only with a cfg switch.
+fn pncx_tiers_axis() {
+    scaling::on_a_thread(1 << 29, || {
+        let mut meter = scaling::Meter::new();
+        for d in std::env::var("PNCX_SIZES")
+            .unwrap()
+            .split(',')
+            .map(|s| s.parse().unwrap())
+        {
+            let term = if_(approval_any_tier(d, d, true), lit(1), lit(2));
+            let scope = ints(&names());
+            let work = meter.work(|| {
+                std::hint::black_box(arms(&term, &scope));
+            });
+            println!(
+                "TIERS n={d} work={} bytes={} unit={}",
+                work.units,
+                work.bytes,
+                meter.unit()
+            );
+        }
+    });
+}
+
 fn main() -> ExitCode {
     let name = std::env::args().nth(1).unwrap_or_default();
     match name.as_str() {
@@ -409,10 +507,14 @@ fn main() -> ExitCode {
         "crt_bit_axis" => pncx_crt_bit_axis(),
         "fibonacci_parts" => pncx_fibonacci_parts(),
         "profile" => pncx_profile(),
+        "multiply_bytes" => pncx_multiply_bytes(),
+        "refused_cases" => pncx_refused_cases(),
+        "tiers_axis" => pncx_tiers_axis(),
         _ => {
             eprintln!(
                 "pncx_probe: the probe is one of chain8, scaling, six_axis, pairs_enumeration, \
-                 sat_reduction, crt_bit_axis, fibonacci_parts, profile; not `{name}`"
+                 sat_reduction, crt_bit_axis, fibonacci_parts, profile, multiply_bytes, refused_cases, \
+                 tiers_axis; not `{name}`"
             );
             return ExitCode::FAILURE;
         }

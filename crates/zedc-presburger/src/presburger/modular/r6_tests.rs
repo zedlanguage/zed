@@ -55,32 +55,6 @@ fn pncx_wide_floor_division_matches_integer_division() {
     }
 }
 
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_gcd_axis() {
-    let mut meter = scaling::Meter::new();
-    for n in std::env::var("PNCX_SIZES")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse().unwrap())
-    {
-        let (a, b) = fibonacci_pair(n);
-        let mut result = None;
-        let work = meter.work(|| result = a.extended_gcd(&b));
-        let (g, s, t) = result.expect("coprime");
-        assert_eq!(&(&s * &a) + &(&t * &b), g);
-        println!(
-            "GCD n={n} work={} bytes={} unit={}",
-            work.units,
-            work.bytes,
-            meter.unit()
-        );
-    }
-}
-
 fn bipartite_core(
     n: usize,
 ) -> (
@@ -496,67 +470,6 @@ fn pncx_prism_models() {
     }
 }
 
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at the sizes
-// PNCX_SIZES): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top
-// Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_prism_formula_axis() {
-    let mut meter = scaling::Meter::new();
-    for n in std::env::var("PNCX_SIZES")
-        .unwrap()
-        .split(',')
-        .map(|s| s.parse().unwrap())
-    {
-        let (info, allowed, clauses) = prism_core(n);
-        let point = graph_coloring_witness(&info, &allowed, &clauses).expect("prism");
-        let xa = Atom::Sym("x".into());
-        let x = Lin::atom(xa.clone());
-        let mut model = Model::from([(xa, point.clone())]);
-        let mut parts = Vec::new();
-        let mut rs = Vec::new();
-        for (i, base) in info.iter().enumerate() {
-            let qa = Atom::Aux((2 * i) as u32);
-            let ra = Atom::Aux((2 * i + 1) as u32);
-            let q = Lin::atom(qa.clone());
-            let r = Lin::atom(ra.clone());
-            parts.push(Formula::Con(Con::eq(
-                &x,
-                &q.times(base.max_q.clone()).plus(&r),
-            )));
-            parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
-            parts.push(Formula::Con(Con::ge(&Lin::constant(2), &r)));
-            model.insert(qa, point.div_floor(&base.max_q));
-            model.insert(ra, point.mod_floor(&base.max_q));
-            rs.push(r);
-        }
-        for clause in clauses {
-            let literals = clause
-                .into_iter()
-                .map(|(i, s)| {
-                    let c = (0..3)
-                        .map(Int::from)
-                        .find(|c| !res_contains(&s, c))
-                        .unwrap();
-                    Formula::negate(Formula::Con(Con::eq(&rs[i], &Lin::constant(c))))
-                })
-                .collect();
-            parts.push(Formula::or(literals));
-        }
-        let f = Formula::and(parts);
-        assert!(f.holds(&model));
-        let mut answer = None;
-        let work = meter.work(|| answer = Some(crate::presburger::decide(&f)));
-        assert_eq!(answer, Some(Ok(true)));
-        println!(
-            "PRISM n={n} work={} bytes={} unit={}",
-            work.units,
-            work.bytes,
-            meter.unit()
-        );
-    }
-}
-
 fn wheel_core(
     n: usize,
 ) -> (
@@ -658,33 +571,6 @@ fn pncx_empty_pair_bound_scale() {
     scaling::check_order("empty shared bounds tested by matching", 128, 1, |n| {
         assert_eq!(forced_pair_bounds(&inputs[&n]), Domain::all());
     });
-}
-
-#[test]
-// A hand-run probe, not a test (PERF-negated-chain-unsolved: prints the work at four sizes, against
-// no limit): built only with `--cfg zed_probes`; see [workspace.lints.rust] in the top Cargo.toml.
-#[cfg(zed_probes)]
-fn pncx_preparation_axis() {
-    let mut meter = scaling::Meter::new();
-    for n in [512, 1024, 2048, 4096] {
-        let (info, _, _) = bipartite_core(n);
-        let ms: BTreeSet<_> = info
-            .iter()
-            .take(n)
-            .map(|b| &b.max_q * &Int::from(2))
-            .collect();
-        let bits: u32 = ms
-            .iter()
-            .map(|m| 128 - m.to_i128().unwrap().unsigned_abs().leading_zeros())
-            .sum();
-        let work = meter.work(|| {
-            std::hint::black_box(coprime_factorization(&ms));
-        });
-        println!(
-            "PREP n={n} input_bits={bits} work={} bytes={}",
-            work.units, work.bytes
-        );
-    }
 }
 
 fn alias_chain(n: usize) -> (UnitUf, Vec<Atom>, Formula) {

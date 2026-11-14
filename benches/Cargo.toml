@@ -27,6 +27,16 @@ name = "pncx_probe"
 path = "src/bin/pncx_probe.rs"
 test = false
 
+[[bin]]
+name = "r9_wide_literal"
+path = "src/bin/r9_wide_literal.rs"
+test = false
+
+[[bin]]
+name = "small_cost"
+path = "src/bin/small_cost.rs"
+test = false
+
 [dependencies]
 # The meter of the scaling tests: instructions where the hardware counts them, and bytes.
 zed-tests = { path = "../tests" }

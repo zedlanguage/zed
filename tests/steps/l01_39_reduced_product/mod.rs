@@ -42,19 +42,11 @@ mod xst;
 use std::sync::Arc;
 
 use zed_kernel::Term;
-use zed_kernel::types::Type;
-use zedc::store::product::{Arm, Product, Scope, arms};
+use zedc::store::product::{Arm, arms};
 
 use zed_tests::step_helpers::l01_16_elaboration::elab;
 use zed_tests::step_helpers::l01_25_preimage_catalog::{function, int_defs};
-
-/// The scope of integer parameters `ps`, known only when the program runs.
-fn ints(ps: &[Arc<str>]) -> Scope {
-    Scope::new(
-        ps.iter()
-            .map(|p| (p.clone(), Product::of_type(Type::int()))),
-    )
-}
+use zed_tests::step_helpers::l01_39_reduced_product::ints;
 
 /// The arms of the function `ok` that `src` defines, its parameters integers: each written
 /// without a type is declared `int` ([`int_defs`]), as a bare literal no longer fixes it
