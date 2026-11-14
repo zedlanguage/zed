@@ -494,11 +494,44 @@ pub fn canonical(t: &Term) -> Term {
     Levels::default().term(t)
 }
 
+/// What [`keyed`] renames a free name to, `None` to keep it.
+pub type FreeNames<'a> = dyn Fn(&str) -> Option<Arc<str>> + 'a;
+
+/// `t` with every binder renamed as [`canonical`] renames it, keeping the name it was written
+/// with, and every free name `free` maps renamed: the form a query key reads (step L1.30,
+/// `zedc::query::Db::cone`). A binder at level `l` written `x` is named `\0l:x`, where `x` is
+/// the binder's written name with elaboration's number dropped: `n` for `n@2`, and `$` for a
+/// temporary `$7`. Those numbers count the binders of the whole unit (`Elab::new` and
+/// `Elab::temp` in zedc-elab), so they change when a definition moves among the others; the
+/// levels keep apart the binders the numbers kept apart. The written name stays because a
+/// result can print it (`m.stdin` in a row of `main`'s table, after `main(m: MainArgs)`), so
+/// two terms that differ only in a binder's written name keep two keys
+/// (FAIL-queries-reorder). `O(t log t)` for a term of size `t`, as [`canonical`].
+pub fn keyed(t: &Term, free: &FreeNames<'_>) -> Term {
+    Levels {
+        scope: Default::default(),
+        keyed: Some(free),
+    }
+    .term(t)
+}
+
+/// The binder name `x` with the number elaboration gave it dropped: the part before `@` of
+/// `x@k`, and `$` for a temporary `$k`. A written name holds neither `@` nor `$`.
+fn unnumbered(x: &str) -> &str {
+    match x.split_once('@') {
+        Some((written, _)) => written,
+        None if x.starts_with('$') => "$",
+        None => x,
+    }
+}
+
 /// The names in scope during the walk: each written name to the new names of the binders of
-/// that name around the current subterm, innermost last.
+/// that name around the current subterm, innermost last. With `keyed`, the walk is
+/// [`keyed`]'s: a binder's new name keeps its written name, and `keyed` renames a free name.
 #[derive(Default)]
-struct Levels {
+struct Levels<'f> {
     scope: std::collections::BTreeMap<Arc<str>, Vec<Arc<str>>>,
+    keyed: Option<&'f FreeNames<'f>>,
 }
 
 /// A step of [`Levels::term`]'s walk, on its heap stack.
@@ -523,7 +556,7 @@ enum Walk<'t> {
     Map(&'t Term, usize),
 }
 
-impl Levels {
+impl Levels<'_> {
     /// Brings `names`, bound together at levels `depth`, `depth + 1`, …, into scope in order,
     /// so that a later name of the group shadows an earlier one. A canonical name keeps its
     /// name; a written one gets its level.
@@ -531,6 +564,7 @@ impl Levels {
         for (i, x) in names.iter().enumerate() {
             let new = match level_of(x) {
                 Some(_) => x.clone(),
+                None if self.keyed.is_some() => format!("\0{}:{}", depth + i, unnumbered(x)).into(),
                 None => level_name(depth + i),
             };
             self.scope.entry(x.clone()).or_default().push(new);
@@ -565,7 +599,10 @@ impl Levels {
                 Walk::Term(t, depth) => match t {
                     Term::Var(x) => done.push(match self.scope.get(x).and_then(|s| s.last()) {
                         Some(n) => Term::Var(n.clone()),
-                        None => t.clone(),
+                        None => match self.keyed.and_then(|free| free(x)) {
+                            Some(n) => Term::Var(n),
+                            None => t.clone(),
+                        },
                     }),
                     Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => done.push(t.clone()),
                     Term::Lam(params, body) => {

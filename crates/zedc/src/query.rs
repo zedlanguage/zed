@@ -18,7 +18,9 @@
 //! an edit that leaves those definitions alone (a comment, another function, another row)
 //! reuses the row's result. This cutoff is the point of the structure.
 //!
-//! The keys are syntactic, as step L1.30 allows: a key holds the terms' printed form, so two
+//! The keys are syntactic, as step L1.30 allows: a key holds the terms' printed form, with
+//! binders named by level and written name and definitions by written name (`Db::cone`), so
+//! moving a definition changes no key (FAIL-queries-reorder) while two
 //! spellings of one value are two keys, which costs a recomputation and never a wrong answer.
 //! Canonical (alpha-invariant) keys are the canonicalizer's addresses, which the queries take
 //! over when they move onto the engine (step L7.13). A key is the bytes `zed-query\0`, the
@@ -43,6 +45,7 @@ use zed_kernel::Term;
 
 use crate::ast::Error;
 use crate::build::Build;
+use crate::canon::binders::keyed;
 use crate::elab::Cones;
 use crate::front::{self, Front, Parsed};
 use crate::pin::{self, Address};
@@ -288,30 +291,50 @@ impl Db {
         self.computed.get(&q).copied().unwrap_or(0)
     }
 
-    /// The numbers of the definitions of the unit of `cones` that `roots` reach, in the
-    /// unit's order, followed by the roots' syntactic bytes: what a term evaluated under the
-    /// unit can read. A definition's number is that of its text, given once per unit, so the
-    /// key of a row costs the size of its roots and the number of definitions they reach.
+    /// The numbers of the definitions of the unit of `cones` that `roots` reach, in increasing
+    /// order, followed by the roots' syntactic bytes: what a term evaluated under the unit can
+    /// read. A definition's number is that of its text, given once per unit, so the key of a
+    /// row costs the size of its roots and the number of definitions they reach.
+    ///
+    /// Nothing in the key depends on where a definition or a case stands in the unit
+    /// (FAIL-queries-reorder): each term is printed in [`keyed`] form, its binders by level
+    /// and written name rather than by the unit-wide numbers elaboration gives them, and each
+    /// definition it names by [`Cones::key_name`]; and the numbers are sorted, not in the
+    /// unit's order. A definition's text holds the names of those it reads, so the set of
+    /// texts gives the definitions and how they read each other whatever their order, and
+    /// closing a term over them in any order each after those it uses gives one value.
+    // Complexity tradeoff: printing each term with `Debug` as elaboration names it costs O(t)
+    // for a term of size t, but its names count binders over the whole unit, so moving a
+    // definition recomputed every row after it. The keyed form costs O(t log t), the
+    // canonicalizer's walk (`canon::binders`), once per definition, whose number is kept, and
+    // once per root of each row; sorting the numbers costs O(d log d) for d definitions
+    // reached, which `Cones::reach` already pays to collect them in a `BTreeSet`.
     pub fn cone(&mut self, cones: &Cones<'_>, roots: &[&Term]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut put = |s: &[u8]| {
             out.extend_from_slice(&(s.len() as u64).to_le_bytes());
             out.extend_from_slice(s);
         };
+        let free = |x: &str| cones.key_name(x);
         let texts = &mut self.texts;
-        for i in cones.reach(roots) {
-            let id = cones.number(i, self.stamp, |text| {
-                if let Some(&n) = texts.get(text) {
-                    return n;
-                }
-                let n = texts.len() as u64;
-                texts.insert(text.into(), n);
-                n
-            });
+        let mut ids: Vec<u64> = (cones.reach(roots).into_iter())
+            .map(|i| {
+                cones.number(i, self.stamp, |d| {
+                    let name = cones
+                        .key_name(&d.kernel)
+                        .unwrap_or_else(|| d.kernel.clone());
+                    let text = format!("{name}={:?}", keyed(&d.term, &free));
+                    let n = texts.len() as u64;
+                    *texts.entry(text.into()).or_insert(n)
+                })
+            })
+            .collect();
+        ids.sort_unstable();
+        for id in ids {
             put(&id.to_le_bytes());
         }
         for t in roots {
-            put(format!("{t:?}").as_bytes());
+            put(format!("{:?}", keyed(t, &free)).as_bytes());
         }
         out
     }

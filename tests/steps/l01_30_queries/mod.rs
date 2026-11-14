@@ -5,6 +5,7 @@
 mod bench;
 mod completeness;
 mod keys;
+mod reorder;
 mod report;
 mod reuse;
 mod scaling;

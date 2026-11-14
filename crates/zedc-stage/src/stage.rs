@@ -143,6 +143,10 @@ pub struct Cones<'u> {
     numbers: Vec<OnceCell<u64>>,
     /// The stamp of that database.
     db: OnceCell<u64>,
+    /// The name a query key gives each definition whose written name no other definition of
+    /// the unit has, by kernel name ([`Cones::key_name`]), made when first asked.
+    /// Keyed by `Arc` and not by `&'u str`, which would make `Cones` invariant in `'u`.
+    key_names: OnceCell<HashMap<Arc<str>, Arc<str>>>,
 }
 
 impl<'u> Cones<'u> {
@@ -159,7 +163,30 @@ impl<'u> Cones<'u> {
             reads: unit.defs.iter().map(|_| OnceCell::new()).collect(),
             numbers: unit.defs.iter().map(|_| OnceCell::new()).collect(),
             db: OnceCell::new(),
+            key_names: OnceCell::new(),
         }
+    }
+
+    /// The name a query key gives the definition of kernel name `x` (step L1.30,
+    /// FAIL-queries-reorder): `@` and its written name, where no other definition of the unit
+    /// has that written name; `None` for any other name, which the key keeps as it is. A
+    /// kernel name `x@k` counts the binders named `x` before it in the whole unit (`Elab::new`
+    /// in zedc-elab), so it changes when a definition moves; the written name does not, and
+    /// within the unit it still names one definition. No kernel name and no prelude word
+    /// starts with `@`, so the key's name is no other name of the unit. O(definitions) once,
+    /// then O(1) per name.
+    pub fn key_name(&self, x: &str) -> Option<Arc<str>> {
+        let names = self.key_names.get_or_init(|| {
+            let mut count: HashMap<&str, usize> = HashMap::new();
+            for d in &self.unit.defs {
+                *count.entry(&d.name).or_default() += 1;
+            }
+            (self.unit.defs.iter())
+                .filter(|d| count[d.name.as_str()] == 1)
+                .map(|d| (d.kernel.clone(), format!("@{}", d.name).into()))
+                .collect()
+        });
+        names.get(x).cloned()
     }
 
     /// The positions of the definitions of the names `t` reads.
@@ -195,18 +222,15 @@ impl<'u> Cones<'u> {
     }
 
     /// The number of the definition at position `i` in the query database of stamp `db`:
-    /// what `number` gives its text, its kernel name and its term as `Debug` prints them,
-    /// asked once. The numbers are those of one database, so a [`Cones`] is read with one.
-    pub fn number(&self, i: usize, db: u64, number: impl FnOnce(&str) -> u64) -> u64 {
+    /// what `number` gives the definition, asked once. The numbers are those of one database,
+    /// so a [`Cones`] is read with one.
+    pub fn number(&self, i: usize, db: u64, number: impl FnOnce(&Def) -> u64) -> u64 {
         let first = *self.db.get_or_init(|| db);
         assert_eq!(
             first, db,
             "the definitions of a unit are numbered by the one query database that met them"
         );
-        *self.numbers[i].get_or_init(|| {
-            let d = &self.unit.defs[i];
-            number(&format!("{}={:?}", d.kernel, d.term))
-        })
+        *self.numbers[i].get_or_init(|| number(&self.unit.defs[i]))
     }
 
     /// `body` under the definitions it reaches, each a let, in the unit's order: each after

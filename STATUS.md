@@ -2293,7 +2293,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-memory-callee-no-plan | running | 2026-11-14 07:40 |  |
 | FAIL-pext-transfer-popcount | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
-| FAIL-queries-reorder | running | 2026-11-14 07:40 |  |
+| FAIL-queries-reorder | merged and pushed (the commit "FAIL-queries-reorder: ..." that marks the row Done); no spec change | Found by TEST-complete-diagnostics. Moving whole definitions with their tables recomputed their rows: a row's key held the unit-wide binder numbers of elaboration (`n@2`, not the temporaries alone as the row guessed) and the reached definitions in unit order. Keys now name binders by level and written name, definitions by written name where unique, and sort the definition numbers. Still position-dependent but sound: top-level temporary definitions and definitions whose written name is shared, which keep their numbered kernel names. |
 | FAIL-trivial-stop-after-model | running |  |  |
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | FAIL-xst-s4-box-only-seed | running |  |  |

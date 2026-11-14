@@ -254,6 +254,8 @@ pub fn unit_address(exports: &[(&str, ContentAddress)]) -> ContentAddress {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use zed_kernel::term::build::{lam, lit, var};
 
     use super::*;
@@ -277,5 +279,60 @@ mod tests {
             address_of_body("tax", &uses, &known),
             address_of_body("tax", &uses, &other)
         );
+    }
+
+    /// The keyed form drops the numbers elaboration gives binders, keeps their written names
+    /// and which binder each variable means, and renames the free names it is given
+    /// (FAIL-queries-reorder).
+    #[test]
+    fn the_keyed_form_drops_binder_numbers_and_keeps_written_names() {
+        use zed_kernel::term::build::let_;
+        let none = |_: &str| None;
+        let keyed = |t: &Term| binders::keyed(t, &none);
+        // The same parameter numbered by its place in two units.
+        assert_eq!(
+            keyed(&lam(&["n@1"], var("n@1"))),
+            keyed(&lam(&["n@7"], var("n@7")))
+        );
+        // A temporary numbered two ways.
+        assert_eq!(
+            keyed(&let_("$3", lit(1), var("$3"))),
+            keyed(&let_("$12", lit(1), var("$12")))
+        );
+        // Another written name is another key.
+        assert_ne!(
+            keyed(&lam(&["n@1"], var("n@1"))),
+            keyed(&lam(&["m@1"], var("m@1")))
+        );
+        // Two binders written `n`: which one the variable means stays apart.
+        let outer = lam(&["n@1"], lam(&["n@2"], var("n@1")));
+        let inner = lam(&["n@1"], lam(&["n@2"], var("n@2")));
+        assert_ne!(keyed(&outer), keyed(&inner));
+        assert_eq!(
+            keyed(&outer),
+            keyed(&lam(&["n@5"], lam(&["n@3"], var("n@5"))))
+        );
+        // A free name is renamed as `free` says, and kept where it says nothing.
+        let free = |x: &str| (x == "f@2").then(|| Arc::<str>::from("@f"));
+        assert_eq!(
+            binders::keyed(&app_of("f@2", "max"), &free),
+            binders::keyed(&app_of("f@9", "max"), &|x: &str| {
+                (x == "f@9").then(|| Arc::<str>::from("@f"))
+            })
+        );
+        assert_ne!(
+            binders::keyed(&app_of("f@2", "max"), &free),
+            binders::keyed(&app_of("f@2", "min"), &free)
+        );
+        // The canonical form names a binder by its level alone.
+        assert_eq!(
+            binders::canonical(&lam(&["n@1"], var("n@1"))),
+            lam(&["\u{0}0"], var("\u{0}0"))
+        );
+    }
+
+    /// `f(g)` with both names free.
+    fn app_of(f: &str, g: &str) -> Term {
+        zed_kernel::term::build::app(var(f), vec![var(g)])
     }
 }
