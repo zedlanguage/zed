@@ -181,3 +181,16 @@ fn pncx_t8_enum_suite_pairs_6() {
 fn pncx_t8_enum_suite_pairs_7() {
     t8_enum_suite(3, 1050..1200, 1);
 }
+
+/// `pncx_probe::pncx_random` as first written, 3.1 s (2026-11-14, load 25): seeds 0 to 19.
+#[test]
+fn pncx_random_of_seeds_0_to_19() {
+    crate::pncx_probe::pncx_random_over(0..20);
+}
+
+/// `pncx_probe::pncx_renamed_parameters_and_case56_match` as first written, 1.9 s (2026-11-14,
+/// load 25): all eight names, 64 functions.
+#[test]
+fn pncx_renamed_parameters_and_case56_match_under_eight_names() {
+    crate::pncx_probe::renamed_parameters_match(&["A", "a", "b", "w", "x", "y", "z", "zz"]);
+}

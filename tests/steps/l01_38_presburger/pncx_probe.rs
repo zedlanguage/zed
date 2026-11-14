@@ -12,12 +12,23 @@ use zedc::store::preimage::Scoped;
 use zedc::store::presburger::extend::Extending;
 
 /// PNCX_SEEDS=a..b: random chains; each answer, faced and plain, in both orders, against
-/// points. Prints one line per question and MISMATCH lines.
+/// points. Prints one line per question and MISMATCH lines. Without PNCX_SEEDS, seeds 0 to 3
+/// (about 0.3 s at load 35); seeds 0 to 19 (1.7 s at load 35, 3.1 s at load 25 with the
+/// other tests) are in `bench::pncx_probe`.
 #[test]
 fn pncx_random() {
-    let seeds = std::env::var("PNCX_SEEDS").unwrap_or_else(|_| "0..20".into());
-    let (a, b) = seeds.split_once("..").unwrap();
-    let (a, b): (u64, u64) = (a.parse().unwrap(), b.parse().unwrap());
+    pncx_random_over(0..4);
+}
+
+/// [`pncx_random`] over the seeds of PNCX_SEEDS, or `default` without it.
+pub(super) fn pncx_random_over(default: std::ops::Range<u64>) {
+    let (a, b) = match std::env::var("PNCX_SEEDS") {
+        Ok(seeds) => {
+            let (a, b) = seeds.split_once("..").unwrap();
+            (a.parse().unwrap(), b.parse().unwrap())
+        }
+        Err(_) => (default.start, default.end),
+    };
     let (mut refused, mut answered, mut bad) = (0, 0, 0);
     let check = std::env::var_os("PNCX_CHECK").is_some();
     let ((), c) = zedc::store::presburger::with_modular_empty_checked(|| {
@@ -167,15 +178,24 @@ fn pncx_t8_enum_suite_pairs_first_formulas() {
     t8_enum_suite(3, 0..6, 0);
 }
 
+/// A condition of one variable, written under four names (capital, small, other letter, two
+/// letters), alone and beside an alias 8 below it under each other name: asked in one batch in
+/// both orders and one by one, each gives the same answers, and the aliased forms are all
+/// answered and both sides hold. All eight names (64 functions, 1.9 s at load 25) are in
+/// `bench::pncx_probe`.
 #[test]
 fn pncx_renamed_parameters_and_case56_match() {
-    let names = ["A", "a", "b", "w", "x", "y", "z", "zz"];
+    renamed_parameters_match(&["A", "a", "x", "zz"]);
+}
+
+/// [`pncx_renamed_parameters_and_case56_match`] over the names `names`.
+pub(super) fn renamed_parameters_match(names: &[&str]) {
     let condition = "x >= (0 - 8) && x <= 26 && (x + 1) mod 10 <= 1 && (x - 5) mod 4 <= 1 && ((x - 5) mod 4 == 2 || (x - 5) mod 4 == 1 || x <= 12) && ((x + 1) mod 10 != 5 || x mod 8 != 7)";
     let mut sources = Vec::new();
-    for x in names {
+    for &x in names {
         let condition = condition.replace('x', x);
         sources.push(format!("p{}({x}: int) = {condition};", sources.len()));
-        for alias in names {
+        for &alias in names {
             if alias == x {
                 continue;
             }
