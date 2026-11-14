@@ -1504,6 +1504,9 @@ impl<'a> Rounds<'a> {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use std::convert::Infallible;
 
