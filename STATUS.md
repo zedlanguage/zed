@@ -2237,7 +2237,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | started; worktree test-complete-crates seeded / 65.87 56.46 48.35 |
 | TEST-complete-kernel | impl attempt 1 | 2026-11-14 06:21 | started; worktree created and seeded |
 | TEST-complete-lattices | impl attempt 1 | 2026-11-14 06:09 | started; worktree test-complete-lattices on 28be33f10 |
-| TEST-complete-m0 | impl attempt 1 | 2026-11-14 05:28 | m0_10 pushed e87adb39d: COMPLETENESS.md + 8 tests (instances vs DESIGN, schedules, shortlex, partial maps, Rng, harness reports, law 14 to gen 16); instances.rs |
 | TEST-complete-misc | impl attempt 1 | 2026-11-14 05:46 | started; worktree seeded at a047ea74c |
 | TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
 | TEST-complete-reduced | impl attempt 1 | 2026-11-14 05:52 | started; worktree made and seeded; load 52.75 |
