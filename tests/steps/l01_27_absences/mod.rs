@@ -8,6 +8,7 @@
 mod bench;
 mod discard;
 mod discard_paths;
+mod edges;
 mod families;
 mod loose;
 mod merge;
