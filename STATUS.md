@@ -2344,16 +2344,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-linked-held-wider-seed | running | 2026-11-14 12:52 |  |
 | FAIL-or-ifs-no-longer-exact-seed | impl attempt 1 | 2026-11-14 12:17 | started, worktree fail-or-ifs |
 | FAIL-pendants-growth-scaled-seed | impl attempt 1 | 2026-11-14 11:58 | fix-growth started on d5d733341 |
-| FAIL-pendants-route-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
+| FAIL-pendants-route-parity | impl attempt 2 | 2026-11-14 11:49 | groups before 829 pieces 0 failed, after 833 pieces 1 failed (l01_38 oracle tight_at_a_corner seed 12228408859946558652, fails on base too: new row FAIL-tight-c |
 | FAIL-print-function-in-union | impl attempt 1 | 2026-11-14 12:05 | started in wt/fix-need-print, load 35.50 |
-| FAIL-print-height-cycle-seed | running | 2026-11-14 13:06 |  |
+| FAIL-print-height-cycle-seed | impl attempt 1 | 2026-11-14 13:06 | started; worktree fix-print-cycle at fe86c2fa5, load 25.27 37.88 44.16 |
 | FAIL-returned-generic-need-fit | impl attempt 1 | 2026-11-14 11:42 | started in wt/fix-need-print, load 35.50 |
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-row-sums-solver-alone-tie-seed | running | 2026-11-14 12:52 |  |
 | FAIL-s22-unlisted-class-members-seed | running | 2026-11-14 12:52 |  |
+| FAIL-tight-corner-shadows-seed | impl attempt 1 | 2026-11-14 13:13 | started in wt/fix-tight-corner |
 | FAIL-types-sub-shared-payloads | impl attempt 1 | 2026-11-14 12:37 | fix-types-4 started on 83c5eb9e9; load 29 |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | fix applied, tests pass, sweep 1248 seeds 0 wrong; base worktree fix-parity-2-base at e8310066c for before counts / load 45.35 44.57 43.46 |
-| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | M5 one spare args Vec for Term::Prim nodes: law_04 -0.15%, law_06 -0.2%, law_10 -0.4%, law_20 0.0%, law_28 +0.6%, law_25 bench -0.3%; does not pay, reverted / 4 |
+| KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | negative control B (each evaluated node spins steps/16, quadratic in steps): 18 of 66 m0_09/m0_10 bench pieces fail (ratios 11.5-60.4 or 20 s timeouts: lets 23. |
+| MSG-range-error-class-spans | impl attempt 1 | 2026-11-14 12:33 | pushed eae04988f + 1e05c2165 (Done); 548 pieces 0 failed (l01_04, l01_16, l01_26, zedc_check, zedc_elab); changed lines all covered / 49.49 41.62 39.72 |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
