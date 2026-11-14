@@ -2326,6 +2326,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
+| TEST-l0123-leftovers | running |  |  |
+| TEST-l0123-slow-pieces | running |  |  |
 | TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | started in wt/presburger-unreached on cac7c04ca, load 31.97 35.46 37.89 |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
