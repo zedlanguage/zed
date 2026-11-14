@@ -355,3 +355,35 @@ fn finding_a_clause_after_a_few_test_cases() {
         clause_found(&clause_after(n));
     }
 }
+
+/// Code before `with` that is a literal, `true` or `false` among them, is never a struct, so the
+/// menu offers only the case with the clause deleted; and when a later error stays after the
+/// clause is deleted, the deletion is still offered, since it gets past the `with`.
+#[test]
+fn a_literal_before_with_gives_no_update_of_fields() {
+    for lit in ["true", "false", "2", "-2", "\"s\"", "#a"] {
+        let src = format!("f(positional x) = x test {{ {lit} with x = 0 -> 1 }}");
+        let e = refusal(&src);
+        assert_eq!(e.row, Some(Row::BareBoundary), "{src}: {e:?}");
+        let repairs: Vec<String> = notes(&src, &e)
+            .into_iter()
+            .filter(|n| n.starts_with("repair: "))
+            .collect();
+        assert_eq!(
+            repairs,
+            [format!(
+                "repair: `{lit} -> 1`, the case with the `with` clause deleted [{lit} with x = 0 -> 1]"
+            )],
+            "{src}"
+        );
+    }
+    let src = "f(positional x) = x test { y with x = 0 -> 1, 2 3 }";
+    let e = refusal(src);
+    assert_eq!(e.row, Some(Row::BareBoundary), "{e:?}");
+    assert!(
+        notes(src, &e)
+            .iter()
+            .any(|n| n.starts_with("repair: `y -> 1`")),
+        "{e:?}"
+    );
+}

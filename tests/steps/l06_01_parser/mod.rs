@@ -5,10 +5,12 @@
 
 mod bench;
 mod carry_forward;
+mod clause_edges;
 mod corners;
 mod formatting;
 mod forms;
 mod initial;
+mod initial_reads;
 mod later;
 mod scaling;
 mod test_case;
