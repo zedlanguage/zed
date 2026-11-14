@@ -586,8 +586,8 @@ fn a_cast_takes_the_place_of_the_parentheses_around_its_operand() {
 
 #[test]
 fn a_numeric_cast_takes_the_place_of_the_parentheses_around_its_operand() {
-    // The cast of an operation's operand, and of a name compared with a literal of another
-    // carrier, which another part of the checker offers.
+    // The cast of an operation's operand, of a name beside a decimal literal, and of a name
+    // compared with a literal of another carrier, which other parts of the checker offer.
     for (src, from, to) in [
         (
             "area(n: int, r: rat) = (n * n) + r;",
@@ -602,6 +602,8 @@ fn a_numeric_cast_takes_the_place_of_the_parentheses_around_its_operand() {
         ),
         ("one(n: int) = (n) == 1.0;", "(n)", "rat(n)"),
         ("one(n: int) = ((n)) == 1.0;", "((n))", "rat(n)"),
+        ("half(q: int) = (q) + 1.5;", "(q)", "rat(q)"),
+        ("half(q: int) = 1.5 * ((q));", "((q))", "rat(q)"),
     ] {
         let src = program(src);
         let out = rejected(&src);

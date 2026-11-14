@@ -12724,11 +12724,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             .iter()
             .flatten()
             .find(|a| a.lit.is_none() && int(self, &a.ty));
+        // The operand's name and the edits that cast it where it stands, in place of the
+        // parentheses around it ([`Self::cast_edits`]): `rat(q) + 1.5` for `(q) + 1.5`.
         let t = self.t;
         let name = other
             .and_then(|o| o.at)
             .and_then(|at| match self.seen.get(&at) {
-                Some((_, Src::Name(id))) => Some((t.res.binders[*id].name.as_str(), at)),
+                Some((_, Src::Name(id))) => {
+                    Some((t.res.binders[*id].name.as_str(), self.cast_edits(at).0))
+                }
                 _ => None,
             });
         // The operator's symbol, where it is a binary arithmetic operator or an ordering, each

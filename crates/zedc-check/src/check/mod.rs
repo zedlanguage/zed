@@ -7153,7 +7153,8 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 
 /// The message for the decimal literal `l` beside an operand of carrier `int` of the operator
 /// `what`, as in `x * 2.0` with `x: int` (DESIGN.md sec:diagnostics, the worked example at an
-/// operator). `name` is the operand's name and span where it is a name, and `op` the
+/// operator). `name` is the operand's name, where it is a name, with the two edits that cast it
+/// where it stands, in place of the parentheses around it ([`Ck::cast_edits`]), and `op` the
 /// operator's symbol and whether the literal is its left operand. Where both are known, the
 /// fixes rewrite the operation: `x * 2` where the literal's value is an integer and the
 /// operator has an arrow at `int`, then `rat(x) * 2.0`; otherwise the fix is the integer literal
@@ -7163,7 +7164,7 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
 fn decimal_at_int(
     l: &Lit,
     what: &str,
-    name: Option<(&str, Span)>,
+    name: Option<(&str, [Span; 2])>,
     op: Option<(BinaryOp, bool)>,
     exact: bool,
 ) -> Msg {
@@ -7171,7 +7172,7 @@ fn decimal_at_int(
     let lit = l.written();
     let mut fixes = Vec::new();
     match (name, op) {
-        (Some((n, at)), Some((op, left))) => {
+        (Some((n, [before, after])), Some((op, left))) => {
             if op != BinaryOp::Div
                 && let Some(w) = whole_part(l)
             {
@@ -7194,12 +7195,12 @@ fn decimal_at_int(
                 false => write!(f, "rat({n}) {op} {lit}"),
             });
             fixes.push(Rewrite::new(
-                &[(point(at.start), &"rat("), (point(at.end), &")")],
+                &[(before, &"rat("), (after, &")")],
                 &format_args!("{n} is cast to rat, and {what} takes two rat"),
                 &alone,
             ));
             if exact {
-                fixes.push(f64_cast_fix(l, n, at, op, left));
+                fixes.push(f64_cast_fix(l, n, [before, after], op, left));
             }
         }
         _ => fixes.extend(whole_part(l).map(|w| {
@@ -7232,19 +7233,25 @@ fn decimal_at_int(
     Msg::new(m, fixes)
 }
 
-/// The fix that casts the operand `n`, at `at`, to `f64` beside the decimal literal `l` of the
-/// operator `op`, `f64(n) * 2.0` or `f64(n) + 1.5f64`, where `l` is the left operand when
+/// The fix that casts the operand `n` to `f64` by the edits `[before, after]`, in place of the
+/// parentheses around it ([`Ck::cast_edits`]), beside the decimal literal `l` of the operator `op`, `f64(n) * 2.0` or `f64(n) + 1.5f64`, where `l` is the left operand when
 /// `left` holds. Offered only where the checker proves `n` lies within ±2^53, where the cast is
 /// exact (DESIGN.md "Casts are domain proofs"); `op` is an arithmetic operator or an ordering,
 /// each of which has an arrow at two `f64`.
-fn f64_cast_fix(l: &Lit, n: &str, at: Span, op: BinaryOp, left: bool) -> Option<Rewrite> {
+fn f64_cast_fix(
+    l: &Lit,
+    n: &str,
+    [before, after]: [Span; 2],
+    op: BinaryOp,
+    left: bool,
+) -> Option<Rewrite> {
     let lit = l.written();
     let alone = fmt::from_fn(|f| match left {
         true => write!(f, "{lit} {op} f64({n})"),
         false => write!(f, "f64({n}) {op} {lit}"),
     });
     Rewrite::new(
-        &[(point(at.start), &"f64("), (point(at.end), &")")],
+        &[(before, &"f64("), (after, &")")],
         &format_args!("{n} is cast to f64, exactly, since it lies within ±2^53"),
         &alone,
     )
