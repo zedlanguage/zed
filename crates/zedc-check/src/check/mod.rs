@@ -3927,9 +3927,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return s.clone();
         }
         let mut b = self.solving(&sig_vars(s));
-        for t in b.values_mut() {
-            *t = self.shown(t);
-        }
+        b.update_each(|t| *t = self.shown(t));
         let s = &s.renamed(&self.names(sig_vars(s)));
         let vars = sig_vars(s);
         let own: HashSet<Arc<str>> = vars
@@ -3943,9 +3941,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let mut renamed: BTreeMap<Arc<str>, Arc<str>> = BTreeMap::new();
         let mut n = 0;
-        for t in b.values_mut() {
+        b.update_each(|t| {
             let Some(v) = t.vars.iter().find(|v| own.contains(*v)).cloned() else {
-                continue;
+                return;
             };
             let to = renamed
                 .entry(v.clone())
@@ -3957,7 +3955,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
                 .clone();
             *t = t.subst(&[(v, Ty::var(to))].into());
-        }
+        });
         s.replace(&b)
     }
 

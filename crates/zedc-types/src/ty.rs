@@ -2459,17 +2459,17 @@ struct BindKeys {
     /// The bits of the names and of the classes on which some are.
     bits: VarBits,
     /// The `k` of each class variable `$k` among them.
-    ks: BTreeSet<usize>,
+    ks: imbl::OrdSet<usize>,
 }
 
 impl BindKeys {
     /// The variables of `binds`.
-    fn of(binds: &BTreeMap<Arc<str>, Ty>) -> BindKeys {
+    fn of(binds: &BindMap) -> BindKeys {
         let mut keys = BindKeys {
             names: [0; 64],
             classes: [0; 64],
             bits: VarBits::default(),
-            ks: BTreeSet::new(),
+            ks: imbl::OrdSet::new(),
         };
         binds.keys().for_each(|v| keys.add(v));
         keys
@@ -3309,7 +3309,7 @@ impl Piece {
 /// variables would pay `n` times.
 #[derive(Clone, Default)]
 pub struct Binds {
-    map: BTreeMap<Arc<str>, Ty>,
+    map: BindMap,
     keys: std::sync::OnceLock<BindKeys>,
     /// The bound of each bounded variable of the signature whose arrow binds these variables,
     /// by name, when there is one: a variable is bound to a piece only where its bound holds
@@ -3322,6 +3322,21 @@ pub struct Binds {
     /// type there may hold it ([`accepts`]). Shared, as `bounds` is.
     ceilings: Option<Ceilings>,
 }
+
+/// The map of a [`Binds`]: each variable bound, by name, with its type.
+///
+/// Complexity tradeoff: persistent (`imbl::OrdMap`, a B-tree whose nodes copies share, as
+/// [`Env`]), not a `BTreeMap`. [`Comparing::search`] gives each shape it tries a copy of the
+/// binding and keeps the copy of the shape that holds the piece; a `BTreeMap` copy costs the
+/// size of the binding, which holds a variable for each parameter compared so far, so n
+/// parameters, each a union of two shapes, cost O(n^2) (FAIL-types-binds-copied-per-shape).
+/// The copy is now O(1) and an insert into a copy O(log n), copying the nodes on its path
+/// only, so they cost O(n log n). Given up: a constant factor on each lookup and insert
+/// (nodes of 64 entries, reference counted), which a binding of a few variables, the usual
+/// case, pays too. Not taken: undoing the bindings a failed shape made, which needs every
+/// writer of the binding (`accepts`, the rows and payloads, the functions held) to log what it
+/// changed, where one copy covers them all.
+type BindMap = imbl::OrdMap<Arc<str>, Ty>;
 
 /// The bounds of a signature's bounded variables, each name with its mask, in the order of the
 /// names ([`Binds::bound`]).
@@ -3427,29 +3442,39 @@ impl Binds {
         self.map.get_mut(&v).expect("bound just now")
     }
 
-    /// The types bound, to change.
-    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Ty> {
-        self.map.values_mut()
+    /// Changes each type bound by `f`, in the order of the names. The map is persistent and
+    /// lends no mutable iterator, so it is rebuilt from its sorted entries: O(n) for n
+    /// bindings, as the walk of a `BTreeMap` was, the names unchanged.
+    pub fn update_each(&mut self, mut f: impl FnMut(&mut Ty)) {
+        self.map = std::mem::take(&mut self.map)
+            .into_iter()
+            .map(|(v, mut t)| {
+                f(&mut t);
+                (v, t)
+            })
+            .collect();
     }
 
-    /// Keeps the bindings `f` keeps.
-    pub fn retain(&mut self, mut f: impl FnMut(&Arc<str>, &mut Ty) -> bool) {
-        let keys = self.keys.get_mut();
-        match keys {
-            None => self.map.retain(f),
-            Some(keys) => self.map.retain(|v, t| {
-                let keep = f(v, t);
-                if !keep {
-                    keys.remove(v);
-                }
-                keep
-            }),
+    /// Keeps the bindings `f` keeps: the names to drop are found in one walk and removed
+    /// after, O(n + d log n) for d dropped (the map lends no mutable walk).
+    pub fn retain(&mut self, mut f: impl FnMut(&Arc<str>, &Ty) -> bool) {
+        let drop: Vec<Arc<str>> = (self.map.iter())
+            .filter(|(v, t)| !f(v, t))
+            .map(|(v, _)| v.clone())
+            .collect();
+        for v in &drop {
+            self.map.remove(v);
+        }
+        if let Some(keys) = self.keys.get_mut() {
+            for v in &drop {
+                keys.remove(v);
+            }
         }
     }
 }
 
 impl std::ops::Deref for Binds {
-    type Target = BTreeMap<Arc<str>, Ty>;
+    type Target = BindMap;
 
     fn deref(&self) -> &Self::Target {
         &self.map
@@ -3496,7 +3521,7 @@ impl<const N: usize> From<[(Arc<str>, Ty); N]> for Binds {
 impl From<BTreeMap<Arc<str>, Ty>> for Binds {
     fn from(map: BTreeMap<Arc<str>, Ty>) -> Binds {
         Binds {
-            map,
+            map: map.into_iter().collect(),
             keys: std::sync::OnceLock::new(),
             bounds: None,
             ceilings: None,
@@ -10696,7 +10721,11 @@ mod tests {
         );
         let int = Ty::carrier(Carrier::Int);
         let check = |b: &Binds| {
-            let fresh = Binds::from((**b).clone());
+            let fresh = Binds::from(
+                b.iter()
+                    .map(|(v, t)| (v.clone(), t.clone()))
+                    .collect::<BTreeMap<_, _>>(),
+            );
             assert_eq!(t.replace(b), t.replace(&fresh), "{b:?}");
             assert_eq!(t.subst(b), t.subst(&fresh), "{b:?}");
         };
@@ -10718,6 +10747,19 @@ mod tests {
         assert_eq!(t.replace(&b), t);
         b.insert("$1".into(), int.clone());
         check(&b);
+        // `update_each` changes the types and keeps the names; a copy made before keeps its
+        // own types (the map is persistent: the copy shares nodes, not changes).
+        b.insert("a".into(), int.clone());
+        let before = b.clone();
+        b.update_each(|t| *t = Ty::empty());
+        check(&b);
+        assert!(b.values().all(|t| *t == Ty::empty()));
+        assert_eq!(
+            b.keys().collect::<Vec<_>>(),
+            before.keys().collect::<Vec<_>>()
+        );
+        assert!(before.values().all(|t| *t == int));
+        check(&before);
     }
 
     /// The number of cases of [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`],

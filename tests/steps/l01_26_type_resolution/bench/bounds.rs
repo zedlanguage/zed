@@ -6,9 +6,9 @@ use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 
 use super::super::bounds::{
-    bounded_chain, bounded_in_a_payload, bounded_or_free, distinct_bounds_chain, free_in_one_tuple,
-    many_bounds, nested, nested_lambdas, passed, passed_deep, shared_bounded_chain, wide,
-    wide_lambda,
+    bounded_chain, bounded_in_a_payload, bounded_or_free, distinct_bounds_chain,
+    free_beside_a_carrier, free_in_one_tuple, many_bounds, nested, nested_lambdas, passed,
+    passed_deep, shared_bounded_chain, wide, wide_lambda,
 };
 use super::super::info;
 
@@ -243,9 +243,7 @@ fn signatures_of_many_free_or_bounded_variables_fit_themselves_renamed_in_time_n
     // `(U0, ..., U(n-1)) | (1, ..., 1)`, returning the n variables: one shape searched. The
     // ceilings of the result (`ceilings`, each place of `q`'s result joined once) and the free
     // variables (`Cx::free`, sorted, found by binary search) cost O(n log n); a linear scan of
-    // the free variables per variable would be O(n^2). (With n parameters, each its own union
-    // searched, the binding is copied for each shape tried: O(n^2) before this change too,
-    // FAIL-types-binds-copied-per-shape.)
+    // the free variables per variable would be O(n^2).
     // `bounded_in_a_payload`: a payload of n bounded variables, each read under a new name in
     // the payload (`Cx::read`, each shape read once), O(n log n). Read before timing.
     let n = 2000;
@@ -273,6 +271,31 @@ fn signatures_of_many_free_or_bounded_variables_fit_themselves_renamed_in_time_n
         1,
         |m| {
             let (s, q) = &bounded[&m];
+            assert!(zedc::check::ty::fits_sig(&s.fns[0], &q.fns[0]));
+        },
+    );
+}
+
+#[test]
+fn a_signature_of_many_parameters_each_a_union_of_two_shapes_fits_itself_renamed_in_time_near_its_size()
+ {
+    // `free_beside_a_carrier`: n parameters, each `(Ti,) | (int,)`, given the same renamed.
+    // `Comparing::search` gives each shape it tries a copy of the binding, which holds a
+    // variable for each parameter compared so far: a persistent map (`BindMap`) copies in
+    // O(1), so the comparison is O(n log n); a `BTreeMap` copied in O(n) each, O(n^2)
+    // (FAIL-types-binds-copied-per-shape). Read before timing.
+    let n = 400;
+    let read = |t: &str| parse_type(t).unwrap_or_else(|e| panic!("{e}"));
+    let inputs = zed_tests::scaling::inputs(n, |m| {
+        let (s, q) = free_beside_a_carrier(m, "int", "1");
+        (read(&s), read(&q))
+    });
+    zed_tests::scaling::check_order(
+        "a signature of n parameters, each (Ti,) | (int,), fitting itself renamed",
+        n,
+        1,
+        |m| {
+            let (s, q) = &inputs[&m];
             assert!(zedc::check::ty::fits_sig(&s.fns[0], &q.fns[0]));
         },
     );
