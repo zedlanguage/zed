@@ -2302,6 +2302,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
+| FAIL-types-overload-bounded-tuple | running | 2026-11-14 09:32 |  |
 | FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-values-function-in-tuple | impl attempt 2 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
