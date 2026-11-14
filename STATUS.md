@@ -2350,6 +2350,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-three-variable-shapes | running | 2026-11-14 12:16 |  |
 | FAIL-whole-projection-parity | impl attempt 1 | 2026-11-14 11:49 | waiting on QUESTIONS A105 (zed 6fb105c, zed-impl 9cbef6ac3); no code merged; route patch saved in failing-tests |
 | KERNEL-eval-step-cost | impl attempt 1 | 2026-11-14 12:21 | baseline: 56 pieces 0 failed (m0_*, zed_kernel, op_table); instructions law_04 2.135G law_06 2.028G law_10 1.955G law_20(order) 2.143G law_28(sequence) 2.169G b |
+| MSG-range-error-class-spans | running |  |  |
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | support test moved to k=640 (square now beats support at k=256: 6.4 vs 10.1 ms); crossover build for refit / load 40.93 38.65 42.23 |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
