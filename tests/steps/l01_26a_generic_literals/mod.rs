@@ -16,6 +16,7 @@ mod cast_rat_int;
 mod design_menus;
 mod features;
 mod fixes;
+mod if_carrier_branch;
 mod lazy_carrier;
 mod lit_branch_ops;
 mod lit_branches;

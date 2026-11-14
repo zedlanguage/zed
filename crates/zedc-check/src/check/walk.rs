@@ -5580,6 +5580,14 @@ fn lists_a_number(t: &Ty) -> bool {
         })
 }
 
+/// Whether `t` lists an `int`, as `1 | f64` and `1 | 2` do and `int` and `1r` do not: the
+/// values [`read_at`] converts.
+fn lists_an_int(t: &Ty) -> bool {
+    (&t.set & &Carrier::Int.ty())
+        .values_listed()
+        .is_some_and(|vs| !vs.is_empty())
+}
+
 /// The numeric carriers of which `t` holds a part whole, not as a list of values: `f64` for
 /// `1 | f64` and for `f64`, none for `1 | 2`, `int` and `f64` for `int | f64`.
 fn whole_carriers(t: &Ty) -> impl Iterator<Item = Carrier> + '_ {
@@ -17645,11 +17653,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Whether the argument `a` is one whose listed values are read at a carrier where it is
     /// used ([`read_ty`]): a call, as `g(c)`, or an `if` that is no `if` of literals alone
     /// ([`Arg::branches`]) and each branch of which, at any depth, is a call, a literal, an
-    /// operation on literals alone, or a value whose type lists no number, as `x: f64` in
+    /// operation on literals alone, or a value whose type lists no `int`, as `x: f64` in
     /// `if c { x } else { 1 }`, which is `1 | f64` (sec:type_resolution, rule 3: "the literal
-    /// `1` taking its carrier where the result is used"). A name, `y` after `y = g(c)` or `y
-    /// = 1`, is not read, alone or as a branch: its value is fixed where it is bound ("bound
-    /// to a name alone"), and reading it would convert it.
+    /// `1` taking its carrier where the result is used"), or `y` after `y = 1r` and the
+    /// literal `1r` in `if c { y } else { 0.1 }` and `if c { 1r } else { 1 }` at `rat`. A
+    /// name is not read alone, and a branch that lists an `int`, `y` after `y = g(c)` or
+    /// `y = 1`, is not read: its value is fixed where it is bound ("bound to a name alone"),
+    /// and reading it would convert it, since [`read_at`] converts the `int`s a type lists
+    /// and no other listed value. A listed `rat` or float is never converted: at its own
+    /// carrier it is kept as it is, and at another the read is refused.
     // Complexity tradeoff: one visit of each branch, at any depth, of the `if`, with one
     // listing of the type of a branch that is no call, literal or `if`, O(the size of the
     // `if`'s tree of branches and of those types), and a call costs O(1). A nested `if` is
@@ -17675,7 +17687,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ if self.kept_ops.contains_key(&x.span) => {}
                 _ if literal(x, self.t.text).is_some() => {}
                 _ => match self.seen.get(&x.span) {
-                    Some((Some(t), _)) if !lists_a_number(t) => {}
+                    Some((Some(t), _)) if !lists_an_int(t) => {}
                     _ => return false,
                 },
             }
