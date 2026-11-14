@@ -10,6 +10,7 @@ mod cells;
 mod chains;
 mod checks;
 mod corpus;
+mod decisions;
 mod fusion;
 mod places;
 mod scaling;
