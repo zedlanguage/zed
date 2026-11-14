@@ -2190,10 +2190,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-cast-repair-parens | impl attempt 1 | 2026-11-13 18:06 | started; worktree from origin/main |
 | PERF-l139-family | impl attempt 3 | 2026-11-12 18:45 | step 1 pushed 40bb19caa: hull sides asked first at the real bound (real_end); hop 8.9, hopon 9.8 run again; 8 families still over 10.5 (ignored), work continues |
 | ST-churn-at-once | impl attempt 1 | 2026-11-13 16:18 | started; worktree from origin/main a42ee21d8 |
-| ST-class-case-reverse | impl attempt 1 | 2026-11-13 16:24 | started; load 44.00 |
 | TERM-report | impl attempt 1 | 2026-11-13 17:02 | started; reading DESIGN sec:staging, sec:memory, --total, report-switch sentence |
-| TESTS-defer-failing | merged and pushed (the commits "TESTS-defer-failing batches 1 and 2" and "TESTS-defer-failing (batch 3)", and the commits that add this row) | 2026-11-13 | 79 failing tests moved to wt/scratch/deferred-tests/<STEP-ID>.rs (36 files), each owning plan row names its file; 2 left in pendants.rs (live PERF-l139-family); 19 zed_probes probes: 14 deferred, 5 moved to zed-benches; no cfg switch remains; touched groups 851 pieces, 2 failed (those two) |
-| XR-ffi-stateful | running |  |  |
+| TESTS-defer-failing | impl attempt 1 | 2026-11-13 16:54 | merged 6b87a1c3a + 71ea7447a + e66cf748c + 22b715865 to main: 79 failing tests moved to wt/scratch/deferred-tests/<STEP-ID>.rs (36 files, owning rows name them) |
+| XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
