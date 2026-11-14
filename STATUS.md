@@ -2208,9 +2208,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
 | REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
 | REPAIR-text-cast-spelling | impl attempt 1 | 2026-11-13 23:35 | started |
-| SPEC-ffi-state-libc-substate | running | 2026-11-13 23:47 |  |
 | SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
-| STAGE-generic-fold | running | 2026-11-09 09:24 | 2026-11-11: sink given a consumer (author: every DAG node must have a descendant) |
+| STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
