@@ -2207,12 +2207,21 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
-| LIT-generic-class-follows | impl attempt 1 | 2026-11-13 23:24 | docs prepared (plan row Done with hash placeholder, new row LIT-generic-class-follows-needs, COMPLEXITY row); waiting for RESUME |
+| LIT-generic-class-follows | impl attempt 2 | 2026-11-13 23:24 | resumed from handoff; rebasing (6 behind); load 0.80 0.55 1.32 |
 | LIT-rat-int-op-exponent | impl attempt 1 | 2026-11-13 23:21 | started |
-| REPAIR-pow-use-f64-drops-rat | impl attempt 1 | 2026-11-13 23:20 | started; worktree from origin/main |
-| REPAIR-text-cast-spelling | impl attempt 1 | 2026-11-13 23:35 | started |
+| REPAIR-pow-use-f64-drops-rat | impl attempt 2 | 2026-11-13 23:20 | resumed from handoff; load 0.67 0.52 1.32 |
+| REPAIR-text-cast-spelling | impl attempt 2 | 2026-11-13 23:35 | resumed from handoff; rebasing both trees |
+| SPEC-sigint-override | impl attempt 2 | 2026-11-13 22:56 | merged: zed cd6a72c, zed-impl 42ba1df96; affected groups 30 pieces 0 failed, --bench l01_19 2 pieces 0 failed; new row SIGNALS-rt needs STOP-releases-rt, L7.2,  |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
+| TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
+| TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
+| TEST-bench-move-l0125 | impl attempt 1 | 2026-11-14 01:43 | started; worktree from 271806cab; 281 measuring tests in l01_25 (138), l01_28 (36), l01_29 (107) |
+| TEST-bench-move-l0126 | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab; 162 measuring tests listed in my groups; load 0.62 0.50 1.32 |
+| TEST-bench-move-l0136 | impl attempt 1 | 2026-11-14 01:43 | baseline timing run started; forks for l01_17+l01_18 and l01_36_cranelift+deep_heap launched; I take l01_19*, l01_34, l01_36a/b, l01_37*; load 37.94 |
+| TEST-bench-move-l0138 | impl attempt 1 | 2026-11-14 01:43 | started; worktree at 271806cab; load 0.73 0.53 1.32 |
+| TEST-bench-move-l0139 | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main |
+| TEST-bench-move-rest | impl attempt 1 | 2026-11-14 01:43 | started; load 0.33 0.44 1.30 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
