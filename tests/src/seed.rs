@@ -39,20 +39,9 @@ pub fn seed(test: &str) -> u64 {
 }
 
 /// The SplitMix64 finalizer: spreads the clock's low bits, which change fastest, over all 64.
-fn mix(x: u64) -> u64 {
+pub(crate) fn mix(x: u64) -> u64 {
     let x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     let x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     x ^ (x >> 31)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_mix_is_splitmix64() {
-        // The first output of SplitMix64 from the state 0 (Steele, Lea and Flood 2014).
-        assert_eq!(mix(0), 0xe220_a839_7b1d_cdaf);
-    }
 }
