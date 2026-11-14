@@ -22965,6 +22965,145 @@ pub(super) mod tests {
         );
     }
 
+    /// Checks that `side` is the side of `a` going `dir` over `f`: a value `f` reaches and
+    /// nothing beyond it, or no bound when `f` reaches arbitrarily far ([`unbounded`]).
+    fn is_side(f: &Formula, a: &Atom, dir: i64, side: &Option<Int>) {
+        let x = Lin::atom(a.clone());
+        let beyond = |v: &Int| {
+            let c = if dir > 0 {
+                Con::ge(&x, &Lin::constant(v.clone()))
+            } else {
+                Con::ge(&Lin::constant(v.clone()), &x)
+            };
+            decide_inner(&Formula::and(vec![f.clone(), Formula::Con(c)])).unwrap()
+        };
+        match side {
+            Some(v) => {
+                assert!(beyond(v), "{f} reaches {a} = {v}");
+                assert!(!beyond(&(v + &Int::from(dir))), "{f}: {a} past {v} going {dir}");
+            }
+            None => assert!(unbounded(f, a, dir).unwrap(), "{f}: {a} bounded going {dir}"),
+        }
+    }
+
+    /// The sides [`hull_side`] finds by elimination alone ([`shadow_end`]) are the sides: the
+    /// shapes of base churn given at once (ST-churn-at-once), a side inside a row of two atoms
+    /// with the point far from it, and the corner cases: an atom no row names (no bound either
+    /// way), an equality whose coefficient is not 1 (`2·x == y`), a disjunction (the rows of the
+    /// conjunction give an end, which the questions confirm), and a product atom (never read
+    /// as settled by elimination).
+    #[test]
+    fn sides_found_by_elimination_are_the_sides() {
+        let con = |t: &[(&str, i128)], k: i128| Formula::Con(Con::ge(&lin(t, k), &Lin::constant(0)));
+        let eq = |t: &[(&str, i128)], k: i128| {
+            Formula::Con(Con {
+                lin: lin(t, k),
+                rel: Rel::Eq,
+            })
+        };
+        let sym = |n: &str| Atom::Sym(n.into());
+        // `p <= q - 95`, `p + q >= 9`, `q >= 20`: the least `q` is 52, inside the first two.
+        let churn = Formula::and(vec![
+            con(&[("q", 1), ("p", -1)], -95),
+            con(&[("p", 1), ("q", 1)], -9),
+            con(&[("q", 1)], -20),
+        ]);
+        // `s == p + q`, `p >= q + 31`, `p + q >= 0`: the least `s` is 0, the greatest none.
+        let sum = Formula::and(vec![
+            eq(&[("s", 1), ("p", -1), ("q", -1)], 0),
+            con(&[("p", 1), ("q", -1)], -31),
+            con(&[("p", 1), ("q", 1)], 0),
+        ]);
+        let twice = Formula::and(vec![
+            eq(&[("x", 2), ("y", -1)], 0),
+            con(&[("y", 1)], -3),
+            con(&[("y", -1)], 9),
+        ]);
+        let either = Formula::and(vec![
+            con(&[("x", 1), ("y", -1)], -40),
+            con(&[("y", 1)], 0),
+            con(&[("x", -1)], 100),
+            Formula::or(vec![con(&[("y", 1)], -5), con(&[("x", -1)], 50)]),
+        ]);
+        let product = Formula::and(vec![
+            Formula::Con(Con::ge(
+                &Lin::atom(Atom::Product(Factor::Sym("x".into()), Factor::Sym("y".into()))),
+                &Lin::constant(4),
+            )),
+            con(&[("x", -1)], 7),
+        ]);
+        let cases: [(&Formula, &str, i64, Option<i128>, bool); 12] = [
+            (&churn, "q", -1, Some(52), true),
+            (&churn, "q", 1, None, true),
+            (&churn, "p", 1, None, true),
+            (&sum, "s", -1, Some(0), true),
+            (&sum, "s", 1, None, true),
+            (&sum, "z", 1, None, true),
+            (&twice, "x", -1, Some(2), true),
+            (&twice, "x", 1, Some(4), true),
+            (&either, "x", -1, Some(40), false),
+            (&either, "y", 1, Some(60), false),
+            (&product, "x", 1, Some(7), false),
+            (&product, "y", 1, None, false),
+        ];
+        for (f, n, dir, want, exact) in cases {
+            let a = sym(n);
+            let model = satisfiable_inner(f).unwrap().expect("the case has a point");
+            let side = hull_side(f, &a, &model, dir).unwrap();
+            assert_eq!(side, want.map(Int::from), "{f}: {n} going {dir}");
+            is_side(f, &a, dir, &side);
+            assert_eq!(exact_side(f, &a, dir).is_some(), exact, "{f}: {n} going {dir}");
+        }
+    }
+
+    /// The sides [`hull_side`] finds are the sides, on random conjunctions of up to 6 rows over
+    /// 4 names with coefficients from -3 to 3, some with a disjunction of two conjunctions of
+    /// such rows; and many are found by elimination alone ([`shadow_end`]), so that path is
+    /// compared, not passed by.
+    #[test]
+    fn hull_sides_on_random_conjunctions_are_the_sides() {
+        let names = ["a", "b", "c", "d"];
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let row = |rng: &mut Rng| {
+            let terms: Vec<(&str, i128)> = (0..1 + rng.below(3))
+                .map(|_| {
+                    let k = 1 + rng.below(3) as i128;
+                    let k = if rng.below(2) == 0 { k } else { -k };
+                    (names[rng.below(4) as usize], k)
+                })
+                .collect();
+            let rel = if rng.below(5) == 0 { Rel::Eq } else { Rel::Ge };
+            Formula::Con(Con {
+                lin: lin(&terms, rng.below(41) as i128 - 20),
+                rel,
+            })
+        };
+        let (mut sides, mut exact) = (0, 0);
+        for _ in 0..600 {
+            let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
+            if rng.below(3) == 0 {
+                let side = |rng: &mut Rng| Formula::and((0..1 + rng.below(2)).map(|_| row(rng)).collect());
+                let (l, r) = (side(&mut rng), side(&mut rng));
+                parts.push(Formula::or(vec![l, r]));
+            }
+            let whole = Formula::and(parts);
+            let Ok(Some(model)) = satisfiable_inner(&whole) else {
+                continue;
+            };
+            for a in whole.atoms() {
+                for dir in [-1, 1] {
+                    let Ok(side) = hull_side(&whole, &a, &model, dir) else {
+                        continue;
+                    };
+                    is_side(&whole, &a, dir, &side);
+                    sides += 1;
+                    exact += usize::from(exact_side(&whole, &a, dir).is_some());
+                }
+            }
+        }
+        assert!(sides > 1000 && exact > sides / 4, "{exact} of {sides}");
+    }
+
     /// Calls `f` with each order of `0..n`, by Heap's method.
     fn each_order(n: usize, f: &mut impl FnMut(&[usize])) {
         let mut p: Vec<usize> = (0..n).collect();
