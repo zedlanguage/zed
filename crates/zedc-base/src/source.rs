@@ -11,8 +11,8 @@
 
 use std::fmt;
 
-use unicode_normalization::char::canonical_combining_class;
-use unicode_normalization::{UnicodeNormalization, is_nfc};
+use unicode_normalization::char::{canonical_combining_class, compose};
+use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc, is_nfc_quick};
 
 /// A byte range of the file as read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,32 +164,53 @@ pub fn load(bytes: &[u8]) -> Result<String, Reject> {
 }
 
 /// The first sequence of `text` that NFC changes, for a `text` that is not NFC. The text is cut
-/// before each character of combining class 0. NFC changes text only within one piece or
-/// across the boundary of two adjacent pieces (two such characters that compose, as Hangul
-/// jamo do), so the span is the first piece that is not NFC, or the first pair of pieces that is
-/// not, whichever ends first.
+/// before each character that NFC never joins to the text before it: one whose canonical
+/// decomposition starts with a character of combining class 0 whose NFC quick check is Yes
+/// (UAX #15, "Stable Code Points" and "Detecting Normalization Forms"; ICU calls this a
+/// composition boundary). NFC of the text is then NFC of each piece, joined, so the span is the
+/// first piece that is not NFC, and its NFC spelling, put in its place, leaves no change there.
+/// A character of combining class 0 whose quick check is Maybe, such as a Hangul vowel or final
+/// jamo, joins the text before it exactly when the last character of NFC of that text is of
+/// combining class 0 and composes with it (any character between blocks a starter), so a
+/// syllable written as its three jamo L V T is one piece and a final jamo after a space is cut
+/// from it. A character NFC replaces, quick check No, is tested by the first character of its
+/// decomposition: the ANGSTROM SIGN U+212B, which decomposes to `A` and a ring, is cut before.
+// Complexity tradeoff: the earlier form cut before every character of combining class 0 and
+// tried each piece and each pair of adjacent pieces; it was O(N) too, but wrong for three
+// pieces that compose into one (L V T jamo). Here a character whose quick check is Yes is its
+// own decomposition's first character for this test (checked for every code point by
+// `nfc_never_joins_a_cut_character_to_the_text_before_it`), so only a character of quick
+// check No, rare in text, is decomposed: a few table lookups per character. A Maybe starter
+// costs NFC of the piece so far; when it does not join, the piece ends there, and it joins
+// only by composing with the piece's last character, which a chain of compositions allows at
+// most twice in a row (L V T), so each piece is normalized a bounded number of times: O(N) in
+// all, as are the NFC checks of the pieces, with no memory beyond the scan. The naive exact
+// form, NFC of the text before each candidate cut, is O(N²).
 fn first_not_nfc(text: &str) -> Span {
-    let mut cuts: Vec<usize> = text
-        .char_indices()
-        .filter(|&(i, c)| i == 0 || canonical_combining_class(c) == 0)
-        .map(|(i, _)| i)
-        .collect();
-    cuts.push(text.len());
-    for i in 0..cuts.len() - 1 {
-        if !is_nfc(&text[cuts[i]..cuts[i + 1]]) {
-            return Span {
-                start: cuts[i],
-                end: cuts[i + 1],
-            };
-        }
-        if i > 0 && !is_nfc(&text[cuts[i - 1]..cuts[i + 1]]) {
-            return Span {
-                start: cuts[i - 1],
-                end: cuts[i + 1],
-            };
+    let quick = |c: char| is_nfc_quick(std::iter::once(c));
+    let mut start = 0;
+    for (i, c) in text.char_indices().skip(1) {
+        let first = match quick(c) {
+            IsNormalized::No => std::iter::once(c).nfd().next().unwrap_or(c),
+            _ => c,
+        };
+        let boundary = canonical_combining_class(first) == 0
+            && (quick(first) == IsNormalized::Yes
+                || !text[start..i].nfc().last().is_some_and(|last| {
+                    canonical_combining_class(last) == 0 && compose(last, first).is_some()
+                }));
+        if boundary {
+            if !is_nfc(&text[start..i]) {
+                return Span { start, end: i };
+            }
+            start = i;
         }
     }
-    unreachable!("text that is not NFC has a piece or a pair of pieces that is not")
+    debug_assert!(!is_nfc(&text[start..]), "the text is not NFC");
+    Span {
+        start,
+        end: text.len(),
+    }
 }
 
 /// The 1-based line and column of byte `offset` of `bytes`, the column counted in Unicode
@@ -245,5 +266,53 @@ impl Lines {
         let before =
             std::str::from_utf8(&bytes[start..offset]).expect("the bytes before a span are UTF-8");
         (line, before.chars().count() + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `first_not_nfc` cuts before a character of combining class 0 whose NFC quick check is
+    /// Yes. That cut is exact only if NFC never joins such a character to the text before it:
+    /// its canonical decomposition must start with a character of combining class 0 (else
+    /// reordering could move it) whose quick check is not Maybe (else it could compose with
+    /// the starter before it). Checked here for every code point of the pinned tables.
+    #[test]
+    fn nfc_never_joins_a_cut_character_to_the_text_before_it() {
+        let quick = |c: char| is_nfc_quick(std::iter::once(c));
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            if canonical_combining_class(c) != 0 || quick(c) != IsNormalized::Yes {
+                continue;
+            }
+            let first = std::iter::once(c)
+                .nfd()
+                .next()
+                .expect("a decomposition is not empty");
+            assert_eq!(canonical_combining_class(first), 0, "U+{:04X}", c as u32);
+            assert_ne!(quick(first), IsNormalized::Maybe, "U+{:04X}", c as u32);
+        }
+    }
+
+    /// The cost of `first_not_nfc` rests on this: a character composes with the starters of
+    /// quick check Maybe at most twice in a row (L V T), so a piece is normalized a bounded
+    /// number of times. Checked for every code point of the pinned tables.
+    #[test]
+    fn starters_compose_at_most_twice_in_a_row() {
+        let all = || (0..=0x10FFFF).filter_map(char::from_u32);
+        let maybe: Vec<char> = all()
+            .filter(|&c| {
+                canonical_combining_class(c) == 0
+                    && is_nfc_quick(std::iter::once(c)) == IsNormalized::Maybe
+            })
+            .collect();
+        let next = |a: char| maybe.iter().filter_map(move |&m| compose(a, m));
+        for a in all() {
+            for b in next(a) {
+                for c in next(b) {
+                    assert_eq!(next(c).next(), None, "U+{:04X}", a as u32);
+                }
+            }
+        }
     }
 }

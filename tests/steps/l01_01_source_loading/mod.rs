@@ -4,6 +4,7 @@
 mod accepted;
 mod bench;
 mod edges;
+mod lvt_jamo;
 mod places;
 mod rejected;
 mod scaling;

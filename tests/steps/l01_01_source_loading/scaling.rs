@@ -41,6 +41,28 @@ pub(super) fn rejects_base_with_marks(bytes: &[u8]) {
     );
 }
 
+/// Starters of NFC quick check Maybe that join nothing, each of which `first_not_nfc` tests by
+/// normalizing the text before it (FAIL-source-lvt-jamo): a base with `n` marks then a final
+/// jamo, `n` final jamo, and last a syllable LV with a final jamo T, which compose.
+pub(super) fn maybe_starters(n: usize) -> Vec<u8> {
+    let mut s = String::from("x");
+    s.extend(std::iter::repeat_n('\u{323}', n));
+    s.extend(std::iter::repeat_n('\u{11a8}', n + 1));
+    s.push_str("\u{ac00}\u{11a8}");
+    s.into_bytes()
+}
+
+/// The rejection of `maybe_starters(n)` is the syllable and its final jamo at the end.
+pub(super) fn rejects_maybe_starters(bytes: &[u8]) {
+    let Err(Reject::NotNfc { span, nfc }) = load(bytes) else {
+        panic!("a syllable LV with a final jamo after it is not NFC")
+    };
+    assert_eq!(
+        (span.start, span.end, nfc.as_str()),
+        (bytes.len() - 6, bytes.len(), "\u{ac01}")
+    );
+}
+
 /// `n` lines, then a byte that is not UTF-8.
 pub(super) fn late_bad_byte(n: usize) -> Vec<u8> {
     let mut bytes = "a\u{303} = 1;\n".repeat(n).into_bytes();
@@ -95,5 +117,12 @@ fn a_byte_that_is_not_utf8_after_many_lines_is_placed() {
 fn every_offset_of_crlf_lines_is_placed() {
     for n in [0, 1, 50] {
         places_every_offset(&crlf_lines(n), n);
+    }
+}
+
+#[test]
+fn starters_that_join_nothing_are_cut_and_the_syllable_at_the_end_is_named() {
+    for n in [0, 1, 50] {
+        rejects_maybe_starters(&maybe_starters(n));
     }
 }

@@ -8,8 +8,8 @@ mod random;
 use zed_tests::scaling::{check, check_instructions_only, inputs};
 
 use super::scaling::{
-    base_with_marks, crlf_lines, late_bad_byte, loads_nfc_lines, nfc_lines, places_every_offset,
-    rejects_base_with_marks, rejects_late_bad_byte,
+    base_with_marks, crlf_lines, late_bad_byte, loads_nfc_lines, maybe_starters, nfc_lines,
+    places_every_offset, rejects_base_with_marks, rejects_late_bad_byte, rejects_maybe_starters,
 };
 
 #[test]
@@ -47,4 +47,15 @@ fn placing_every_offset_scales() {
     check("placing every offset of n lines", N, |n| {
         places_every_offset(&files[&n], n)
     });
+}
+
+#[test]
+fn starters_that_join_nothing_scale() {
+    const N: usize = 4_000;
+    let files = inputs(N, maybe_starters);
+    check(
+        "loading a base with n marks, n final jamo and a syllable",
+        N,
+        |n| rejects_maybe_starters(&files[&n]),
+    );
 }
