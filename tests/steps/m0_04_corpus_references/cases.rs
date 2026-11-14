@@ -54,7 +54,12 @@ fn a_float_text_reads_as_design_says_where_the_reference_agrees() {
     let read = |s: &str| parse_float(s).map(f64::to_bits);
     assert_eq!(parse_float("1.5"), Ok(1.5));
     assert_eq!(parse_float("2.5e-3"), Ok(0.0025));
-    assert_eq!(parse_float("1E3"), Ok(1000.0));
+    assert_eq!(parse_float("1e3"), Ok(1000.0));
+    // The exponent is written as `String` writes it, `e` and a sign only as `-`; the compiler
+    // reads it so (l01_18 `completeness.rs`, `1E5` and `1e+5` are `#invalid`).
+    for s in ["1E3", "1e+3"] {
+        assert_eq!(parse_float(s), Err(format!("invalid float: {s}")), "{s:?}");
+    }
     assert_eq!(read("-0"), Ok((-0.0f64).to_bits()));
     assert_eq!(read("1e-400"), Ok(0));
     assert_eq!(read("-1e-400"), Ok((-0.0f64).to_bits()));

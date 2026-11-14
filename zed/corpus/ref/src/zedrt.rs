@@ -12,12 +12,17 @@
 //!
 //! Strings compare by code point (sec:order), which is the order of `str`.
 //!
-//! Where the Zed rule is the same or unstated, the outputs follow these readings of text, kept
-//! here so that every program makes them the same way:
-//! - `parse_int(s)` / `try_parse_int(s)`: surrounding whitespace, a sign, decimal digits of any
-//!   script, '_' between digits; any size, read by halves (`read_digits`).
-//! - `parse_float(s)` / `try_parse_float(s)`: the same reading of digits and a decimal float,
-//!   and also inf, infinity and nan in any case.
+//! - `parse_int(s)` / `try_parse_int(s)`: what `int(s)` reads (DESIGN L1.18), an optional `-`
+//!   and the ASCII digits `0` to `9`, leading zeros included; any size, read by halves
+//!   (`read_digits`).
+//! - `parse_float(s)` / `try_parse_float(s)`: what `f64(s)` reads (L1.18), an optional `-` and
+//!   then `inf`, `nan`, or ASCII digits with an optional fraction and exponent.
+//!
+//! L1.18 makes any other text `#invalid`, read here as nothing: a `+`, white space, `_` between
+//! digits, `.5`, `infinity`, and a decimal digit of another script, such as `"٤٢"`.
+//!
+//! Where the Zed rule is unstated, the outputs follow these readings of text, kept here so that
+//! every program makes them the same way:
 //! - `lower(s)`: the full lowercase mapping (U+0130 becomes "i̇") and the final-sigma rule for
 //!   U+03A3.
 //! - `is_digit(c)`: a Numeric_Type of Decimal or Digit.
@@ -196,31 +201,17 @@ pub fn parse_int(s: &str) -> Result<BigInt, String> {
     try_parse_int(s).ok_or_else(|| format!("invalid int: {s}"))
 }
 
-fn is_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
-}
-
-/// `s` read as an integer.
+/// `s` read as `int(s)` reads it (DESIGN L1.18): an optional `-` and one or more of the ASCII
+/// digits `0` to `9`, leading zeros included; any other text is `None`.
 pub fn try_parse_int(s: &str) -> Option<BigInt> {
-    let t = ascii_digits_and_spaces(s)?;
-    let t = t.trim_matches(is_space);
-    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
-    let bytes = body.as_bytes();
-    let well_formed = bytes.first()?.is_ascii_digit()
-        && bytes.last()?.is_ascii_digit()
-        && bytes.iter().all(|b| b.is_ascii_digit() || *b == b'_')
-        && !body.contains("__");
-    if !well_formed {
+    let (sign, digits) = match s.strip_prefix('-') {
+        Some(digits) => (Sign::Minus, digits),
+        None => (Sign::Plus, s),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let sign = match t.starts_with('-') {
-        true => Sign::Minus,
-        false => Sign::Plus,
-    };
-    Some(BigInt::from_biguint(
-        sign,
-        read_digits(&body.replace('_', "")),
-    ))
+    Some(BigInt::from_biguint(sign, read_digits(digits)))
 }
 
 /// The digits `read_digits` hands to num-bigint whole. The value read does not depend on it.
@@ -326,80 +317,32 @@ pub fn parse_float(s: &str) -> Result<f64, String> {
     try_parse_float(s).ok_or_else(|| format!("invalid float: {s}"))
 }
 
-/// Whether `t` is a numeral: `(\d+\.?\d*|\.\d+)(e[+-]?\d+)?`, in either case.
+/// Whether `t` is ASCII digits with an optional fraction and exponent, as `String` writes a
+/// finite float without its sign: `\d+(\.\d+)?(e-?\d+)?`. It is the reading of the compiler's
+/// `zed_kernel::words::float_text`, written out here since the references do not use the kernel.
 fn is_numeral(t: &str) -> bool {
-    let digits = |s: &str| s.bytes().take_while(u8::is_ascii_digit).count();
-    let whole = digits(t);
-    let mut rest = &t[whole..];
-    let mut fraction = 0;
-    if let Some(after) = rest.strip_prefix('.') {
-        fraction = digits(after);
-        rest = &after[fraction..];
-    }
-    if whole + fraction == 0 {
-        return false;
-    }
-    match rest.strip_prefix(['e', 'E']) {
-        None => rest.is_empty(),
-        Some(exp) => {
-            let exp = exp.strip_prefix(['+', '-']).unwrap_or(exp);
-            !exp.is_empty() && digits(exp) == exp.len()
-        }
-    }
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let (mantissa, exp) = match t.split_once('e') {
+        Some((m, e)) => (m, Some(e)),
+        None => (t, None),
+    };
+    let mantissa_ok = match mantissa.split_once('.') {
+        Some((whole, fraction)) => digits(whole) && digits(fraction),
+        None => digits(mantissa),
+    };
+    mantissa_ok && exp.is_none_or(|e| digits(e.strip_prefix('-').unwrap_or(e)))
 }
 
-/// `s` read as a float.
+/// `s` read as `f64(s)` reads it (DESIGN L1.18): an optional `-` and then `inf`, `nan`, or a
+/// numeral (`is_numeral`), correctly rounded by the standard library's reading. Any other text
+/// is `#invalid`, and a numeral beyond the largest finite `f64` is `#overflow`; both are `None`.
 pub fn try_parse_float(s: &str) -> Option<f64> {
-    let t = ascii_digits_and_spaces(s)?;
-    let t = t.trim_matches(is_space);
-    let bytes = t.as_bytes();
-    let digit_at = |i: Option<usize>| i.and_then(|i| bytes.get(i)).is_some_and(u8::is_ascii_digit);
-    let bad_mark = (0..bytes.len())
-        .filter(|&i| bytes[i] == b'_')
-        .any(|i| !digit_at(i.checked_sub(1)) || !digit_at(Some(i + 1)));
-    if bad_mark {
-        return None;
-    }
-    let t = t.replace('_', "");
-    let (negative, body) = match t.strip_prefix('-') {
-        Some(body) => (true, body),
-        None => (false, t.strip_prefix('+').unwrap_or(&t)),
-    };
-    let word = body.to_ascii_lowercase();
-    match word.as_str() {
-        "inf" | "infinity" => Some(if negative {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        }),
-        "nan" => Some(f64::NAN),
-        _ if is_numeral(body) => t.parse().ok(),
+    let body = s.strip_prefix('-').unwrap_or(s);
+    match body {
+        "inf" | "nan" => s.parse().ok(),
+        _ if is_numeral(body) => s.parse().ok().filter(|x: &f64| x.is_finite()),
         _ => None,
     }
-}
-
-/// The first step of `parse_int` and `parse_float`: a non-ASCII space becomes ' ', a decimal
-/// digit of any script becomes its ASCII digit; any other non-ASCII character (or DEL) makes the
-/// text unreadable.
-fn ascii_digits_and_spaces(s: &str) -> Option<String> {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        let cp = c as u32;
-        if cp < 127 {
-            out.push(c);
-        } else if in_ranges(&TABLES.spaces, cp) {
-            out.push(' ');
-        } else {
-            out.push(char::from(b'0' + decimal_value(cp)?));
-        }
-    }
-    Some(out)
-}
-
-fn decimal_value(c: u32) -> Option<u8> {
-    let zeros = &TABLES.decimal_zeros;
-    let i = zeros.partition_point(|z| *z <= c).checked_sub(1)?;
-    u8::try_from(c - zeros[i]).ok().filter(|d| *d <= 9)
 }
 
 /// Whether `c` has a Numeric_Type of Decimal or Digit.
@@ -497,8 +440,6 @@ struct Tables {
     cased: Vec<(u32, u32)>,
     case_ignorable: Vec<(u32, u32)>,
     digits: Vec<(u32, u32)>,
-    decimal_zeros: Vec<u32>,
-    spaces: Vec<(u32, u32)>,
 }
 
 static TABLES: LazyLock<Tables> = LazyLock::new(|| Tables {
@@ -506,16 +447,12 @@ static TABLES: LazyLock<Tables> = LazyLock::new(|| Tables {
     cased: parse_ranges(CASED_DATA),
     case_ignorable: parse_ranges(CASE_IGNORABLE_DATA),
     digits: parse_ranges(DIGIT_DATA),
-    decimal_zeros: DECIMAL_DATA.split_whitespace().map(hex).collect(),
-    spaces: parse_ranges(SPACE_DATA),
 });
 
 // Unicode 16.0 tables; whitespace-separated hexadecimal code points. LOWER_DATA:
 // start-end/stride:delta (or start:delta): the lowercase mapping without U+0130 and U+03A3,
 // handled above. CASED_DATA: cased characters that are not case-ignorable. CASE_IGNORABLE_DATA:
-// case-ignorable characters. DIGIT_DATA: a Numeric_Type of Decimal or Digit. DECIMAL_DATA: the
-// zero of each run of ten decimal digits (Numeric_Type Decimal). SPACE_DATA: white space at or
-// above U+007F (Bidi_Class WS, B or S, or category Zs).
+// case-ignorable characters. DIGIT_DATA: a Numeric_Type of Decimal or Digit.
 
 const LOWER_DATA: &str = "
 41-5a/1:32 c0-d6/1:32 d8-de/1:32 100-12e/2:1 132-136/2:1 139-147/2:1 14a-176/2:1 178:-121
@@ -614,13 +551,3 @@ ce6-cef d66-d6f de6-def e50-e59 ed0-ed9 f20-f29 1040-1049 1090-1099 1369-1371 17
 11730-11739 118e0-118e9 11950-11959 11bf0-11bf9 11c50-11c59 11d50-11d59 11da0-11da9 11f50-11f59
 16130-16139 16a60-16a69 16ac0-16ac9 16b50-16b59 16d70-16d79 1ccf0-1ccf9 1d7ce-1d7ff 1e140-1e149
 1e2f0-1e2f9 1e4f0-1e4f9 1e5f1-1e5fa 1e950-1e959 1f100-1f10a 1fbf0-1fbf9";
-
-const DECIMAL_DATA: &str = "
-30 660 6f0 7c0 966 9e6 a66 ae6 b66 be6 c66 ce6 d66 de6 e50 ed0 f20 1040 1090 17e0 1810 1946 19d0
-1a80 1a90 1b50 1bb0 1c40 1c50 a620 a8d0 a900 a9d0 a9f0 aa50 abf0 ff10 104a0 10d30 10d40 11066
-110f0 11136 111d0 112f0 11450 114d0 11650 116c0 116d0 116da 11730 118e0 11950 11bf0 11c50 11d50
-11da0 11f50 16130 16a60 16ac0 16b50 16d70 1ccf0 1d7ce 1d7d8 1d7e2 1d7ec 1d7f6 1e140 1e2f0 1e4f0
-1e5f1 1e950 1fbf0";
-
-const SPACE_DATA: &str = "
-85 a0 1680 2000-200a 2028-2029 202f 205f 3000";

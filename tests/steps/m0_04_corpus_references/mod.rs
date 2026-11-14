@@ -4,6 +4,7 @@
 
 mod bench;
 mod cases;
+mod fail_reading;
 mod int_reading;
 mod lattice_circles;
 mod p14_oracle;

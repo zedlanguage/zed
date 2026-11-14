@@ -34,15 +34,16 @@ fn scales(input: &Input) {
     }
 }
 
-/// Checks reference 14 at n and 8n, after its output at n is checked to be that of the O(n²)
-/// form.
+/// Checks reference 14 at n and 8n, after its output at n, or at 1000 points where n is larger,
+/// is checked to be that of the O(n²) form: at 4000 random points of 72 digits that form took
+/// most of the 18.6 s the benchmark ran, the two timed runs 4.3 s.
 fn clustering_scales(input: &Input) {
-    let differs = crate::clustering_differs_from_oracle(&(input.input)(input.n));
+    let m = input.n.min(1000);
+    let differs = crate::clustering_differs_from_oracle(&(input.input)(m));
     assert!(
         differs.is_none(),
-        "{}: the O(n²) form differs at {}",
+        "{}: the O(n²) form differs at {m}",
         input.what,
-        input.n
     );
     scales(input);
 }

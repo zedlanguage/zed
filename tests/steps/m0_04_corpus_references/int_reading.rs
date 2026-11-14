@@ -3,7 +3,9 @@
 //! reads the digits by halves, the method of `zed_kernel::num::read_digits`, joining the halves
 //! with powers of five and a number-theoretic transform product (`zedrt::product`; the references
 //! do not use the kernel). Each value is checked against num-bigint's own reading and against the
-//! kernel's reader, and the product against num-bigint's.
+//! kernel's reader, and the product against num-bigint's. The text read is what DESIGN L1.18 says
+//! `int(s)` reads, an optional `-` and ASCII digits; the texts it makes `#invalid` (a `+`, white
+//! space, `_`, other scripts) are checked at the same lengths (FAIL-ref-text-reading).
 
 use num_bigint::{BigInt, BigUint, Sign};
 use zed_corpus_ref::zedrt::product::{
@@ -41,28 +43,38 @@ fn arabic_indic(text: &str) -> String {
         .collect()
 }
 
-/// A number of `len` random digits reads as num-bigint and the kernel's reader read its digits:
-/// plain, signed, with `_` between digits, with spaces around it, and in another script.
+/// A number of `len` random digits reads as num-bigint and the kernel's reader read its digits,
+/// plain, after `-` and with leading zeros; the texts DESIGN L1.18 makes `#invalid` at the same
+/// length are read as nothing: a `+`, white space around it, `_` between digits, and the digits
+/// in another script, alone or mixed with ASCII digits.
 pub(super) fn reads_a_number_of_length(rng: &mut Rng, len: usize) {
     let plain = digits(rng, len);
     let expected: BigInt = plain.parse().expect("digits");
     let kernel = BigInt::from_biguint(Sign::Plus, read_digits(&plain));
     assert_eq!(kernel, expected, "{len} digits: the kernel's reader");
     let negative = -expected.clone();
-    let padded = format!("000{plain}");
     let texts = [
         (plain.clone(), &expected),
-        (format!("+{plain}"), &expected),
         (format!("-{plain}"), &negative),
-        (format!("-{}", marked(rng, &padded)), &negative),
-        (format!(" \t{plain}\n"), &expected),
-        (
-            arabic_indic(&format!("-{}", marked(rng, &plain))),
-            &negative,
-        ),
+        (format!("000{plain}"), &expected),
+        (format!("-000{plain}"), &negative),
     ];
     for (text, value) in texts {
         assert_eq!(try_parse_int(&text).as_ref(), Some(value), "{len} digits");
+    }
+    let mut mixed = arabic_indic(&plain);
+    mixed.insert(0, '7');
+    let invalid = [
+        format!("+{plain}"),
+        format!(" \t{plain}\n"),
+        format!("-{plain} "),
+        format!("1_{}", marked(rng, &plain)),
+        arabic_indic(&plain),
+        format!("-{}", arabic_indic(&plain)),
+        mixed,
+    ];
+    for text in invalid {
+        assert_eq!(try_parse_int(&text), None, "{len} digits: {text:?}");
     }
 }
 
@@ -76,13 +88,14 @@ fn a_number_of_any_length_reads_as_num_bigint_and_the_kernel_read_it() {
     }
 }
 
-/// Zeros of length `len` and any sign read as 0, and the power of ten and the nines of that
-/// length read exactly.
+/// Zeros of length `len`, alone or after `-`, read as 0 (after `+` as nothing, DESIGN L1.18),
+/// and the power of ten and the nines of that length read exactly.
 pub(super) fn zeros_nines_and_a_power_of_ten(len: usize) {
     let zeros = "0".repeat(len);
-    for text in [zeros.clone(), format!("-{zeros}"), format!("+{zeros}")] {
+    for text in [zeros.clone(), format!("-{zeros}")] {
         assert_eq!(try_parse_int(&text), Some(BigInt::from(0)), "{len} zeros");
     }
+    assert_eq!(try_parse_int(&format!("+{zeros}")), None, "+{len} zeros");
     let nines = "9".repeat(len);
     let ten = format!("1{zeros}");
     for text in [nines, ten] {

@@ -257,13 +257,23 @@ fn hash(i: usize) -> u64 {
     (z ^ (z >> 31)) >> 34
 }
 
+/// The size of the random clustering inputs (their O(n²) check stays at 1000 points). Their cost is mostly the sorts and the
+/// triangulation, n log n with little linear work beside it, and a sort's comparisons,
+/// n log₂ n - 1.44 n, grow 10.8 times from 1000 to 8000 points but 10.3 times from 4000 to 32000:
+/// at 1000 the ratio sat at 10.49 of the 10.5 allowed, and a cheaper reading of the numbers
+/// (FAIL-ref-text-reading) pushed it over, though every size got faster.
+const RANDOM_N: usize = 4000;
+
 /// Points in random places: each coordinate a hash of its position in the input.
-pub(super) const CLUSTERING_RANDOM: Input = clustering("clustering random", |n| {
-    format!(
-        "1\n{}",
-        lines(n, |i| format!("{} {}", hash(2 * i + 1), hash(2 * i + 2)))
-    )
-});
+pub(super) const CLUSTERING_RANDOM: Input = Input {
+    n: RANDOM_N,
+    ..clustering("clustering random", |n| {
+        format!(
+            "1\n{}",
+            lines(n, |i| format!("{} {}", hash(2 * i + 1), hash(2 * i + 2)))
+        )
+    })
+};
 
 /// Point i is (i mod 3, i mod 2), which fixes i mod 6: six distinct points, each about n/6 times
 /// in turn, so all but six points equal an earlier one. Three clusters: the merges join every
@@ -360,8 +370,11 @@ pub(super) fn wide_random_points(n: usize, chunks: usize) -> String {
 /// Random points with coordinates of 72 digits (240 bits): every product and sum in the
 /// predicates is several 64-bit words long, and the in-circle determinant up to 4b + 8 = 968 bits
 /// (COMPLEXITY F39). At a fixed coordinate size the bound O(L + n log n · M(b)) is O(n log n).
-pub(super) const CLUSTERING_RANDOM_WIDE: Input =
-    clustering("clustering random wide", |n| wide_random_points(n, 8));
+/// At [`RANDOM_N`] points.
+pub(super) const CLUSTERING_RANDOM_WIDE: Input = Input {
+    n: RANDOM_N,
+    ..clustering("clustering random wide", |n| wide_random_points(n, 8))
+};
 
 /// Every edit prints every cell, so the output is quadratic.
 pub(super) const SPREADSHEET: Input = Input {
