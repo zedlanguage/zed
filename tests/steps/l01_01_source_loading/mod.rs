@@ -3,6 +3,7 @@
 
 mod accepted;
 mod bench;
+mod edges;
 mod places;
 mod rejected;
 mod scaling;
