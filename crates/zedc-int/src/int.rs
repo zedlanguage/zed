@@ -3094,6 +3094,9 @@ fn write_decimal(f: &mut fmt::Formatter<'_>, v: &BigInt) -> fmt::Result {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
