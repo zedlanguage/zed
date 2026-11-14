@@ -7,6 +7,7 @@
 
 mod bench;
 mod cases_runs;
+mod check_reports;
 mod cite;
 mod conflicts;
 mod layer_roles;
