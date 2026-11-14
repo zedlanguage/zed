@@ -2362,10 +2362,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-rewrite-growth-both | impl attempt 1 | 2026-11-14 12:03 | fix-growth started on d5d733341 |
 | FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
 | FAIL-types-three-variable-shapes | impl attempt 1 | 2026-11-14 12:16 | started in wt/fix-3var |
-| KERNEL-near-limit-benches | merged and pushed | COMPLEXITY.md K5, K14, K25, K73. Neg-zero chain bench 9.71 and 10.15 to 8.03 and 7.96 (three runs each, load 45 to 48): a hash index from key to position in the definedness fix, states by position, the finished family built by from_map; ReadSet::clear keeps its 16-slot table. Provenance benches 10.21 and 10.45 unchanged (n log n by design); new row PROV-origins-linear |
 | PERF-part-name-nested | impl attempt 1 | 2026-11-14 14:01 | started; worktree /home/luke/Work/wt/perf-part-name-nested |
 | PRESBURGER-or-if-disjuncts-refusal | impl attempt 1 | 2026-11-14 14:24 | started; worktree pres-orif-disj at 49c35d07a |
 | PRES-switchover-not-race | impl attempt 1 | 2026-11-14 13:48 | started; worktree /home/luke/Work/wt/pres-switchover on d7c2f809c; load 42.36 |
+| STUDY-memo-arenas | impl attempt 1 | 2026-11-14 15:08 | started: design of @memoized + unified arenas (P198/P199) |
 | TEST-presburger-unreached-paths | impl attempt 3 | 2026-11-14 10:07 | started part 3 in wt/pres-unreached-3; load 60.04 |
 | TEST-renamed-relation-same-set | running | 2026-11-14 14:17 |  |
 | TESTS-split | impl attempt 1 | 2026-11-06 23:46 | l01_39 split into l01_39_reduced_product + l01_39_scope_relations, 645 tests, 224 pieces 472 passed before and after; pushed 7b104f6b8 |
