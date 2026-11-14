@@ -1138,6 +1138,20 @@ struct Pending {
     rest: Option<Arc<Pending>>,
 }
 
+// Dropped as a loop: the default drop of an `Arc<Pending>` drops the next in turn, one stack
+// frame each, and a list of about 65,000 overflowed a 2 MiB stack (TEST-bench-move-l0139).
+// Each node held only here is taken apart with `Arc::into_inner`, which gives it back only to
+// the last holder, so a list shared with another relation stops at the first shared node.
+// O(k) for k nodes, as the recursion was, with O(1) stack.
+impl Drop for Pending {
+    fn drop(&mut self) {
+        let mut next = self.rest.take();
+        while let Some(p) = next {
+            next = Arc::into_inner(p).and_then(|mut p| p.rest.take());
+        }
+    }
+}
+
 /// A relation's conjunction and pending list, by identity: the relation is the same while
 /// nothing was added or written in place since.
 type RelationMark = (imbl::OrdSet<Arc<Formula>>, Option<Arc<Pending>>);
@@ -15779,6 +15793,30 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A relation with a long list of pending conjuncts is dropped with no overflow, on a
+    /// thread with the default stack of a test thread, 2 MiB. Each `Arc<Pending>` dropped the
+    /// next in turn, one frame each, before `Drop for Pending` (TEST-bench-move-l0139, found
+    /// by `chain_put_against_order` at 8192 in l01_39 `linked`); the depth is about a fifth
+    /// above the smallest list that overflowed that stack, 65,312 (65,194 passed), measured
+    /// 2026-11-14.
+    #[test]
+    fn a_long_pending_list_is_dropped_without_overflow() {
+        let k: i64 = 78_000;
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || {
+                let x = Lin::atom(Atom::Sym("x".into()));
+                let mut r = Relation::default();
+                for i in 0..k {
+                    r.defer(Formula::Con(Con::ge(&x, &Lin::constant(i))));
+                }
+                drop(r);
+            })
+            .expect("a thread")
+            .join()
+            .expect("no overflow");
+    }
 
     /// The due users of a name are the parts of every set but those of the aggregates that
     /// hold, each once, in the order of the parts: the order the worklist takes them in.

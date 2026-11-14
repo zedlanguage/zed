@@ -441,8 +441,9 @@ fn a_chain_put_in_against_the_order_reads_only_what_it_moves() {
     // PERF-pk-one-sided); on the code before, which ran both searches to their ends, 36 times
     // the work and 22.7 times the bytes (1,767 and 99,933 components read). 8.7 times the work and
     // 8.3 times the bytes from k = 2048 to 16384 (2026-11-14). At 8192 and 65536, and at 16384
-    // and 131072, the run overflows the stack of its thread as the scope is dropped: each
-    // `Arc<Pending>` drops the next in turn (`zedc_preimage::product::Pending`), one frame each.
+    // and 131072, the run overflowed the stack of its thread as the scope was dropped: each
+    // `Arc<Pending>` dropped the next in turn, one frame each, until `Drop for Pending`
+    // (`zedc_preimage::product`) took the list apart in a loop.
     let p = Premises::new();
     let built: BTreeMap<usize, (Scope, Vec<Term>)> = [2048, 16384]
         .into_iter()
