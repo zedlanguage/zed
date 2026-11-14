@@ -2292,7 +2292,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-memory-limit-2-63 | running | 2026-11-14 07:40 |  |
+| FAIL-curried-positional-lambda-order | running | 2026-11-14 08:57 |  |
+| FAIL-exact-oracle-mod-zero-seed | running | 2026-11-14 09:25 |  |
 | FAIL-fences-chain-count | impl attempt 2 | 2026-11-14 09:03 | start in /home/luke/Work/wt/fix-values, load 38.11 |
+| FAIL-generic-fold-l0125 | running | 2026-11-14 09:25 |  |
 | FAIL-initial-reads-shadowed | running | 2026-11-14 07:40 |  |
 | FAIL-kernel-xor-firsts-seed | running | 2026-11-14 08:46 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
@@ -2303,6 +2306,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-types-sig-reflexive | running | 2026-11-14 07:40 |  |
 | FAIL-values-function-in-payload-run | impl attempt 2 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values, load 38.11 |
 | FAIL-values-function-in-tuple | impl attempt 2 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values, load 38.11 |
+| FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
 | FAIL-xst-s4-box-only-seed | running | 2026-11-14 08:46 |  |
 | FAIL-xst-unbounded-holes-seed | running | 2026-11-14 08:46 |  |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
