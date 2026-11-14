@@ -9,7 +9,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Shared, Term, Value};
 
 use zedc_base::rejection::Row;
-use zedc_check::check::{Info, Misfit};
+use zedc_check::check::{Info, Misfit, Witness};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Kind, Ref, prelude_layer};
 use zedc_stage::defs::Test;
@@ -39,6 +39,11 @@ pub(super) struct Elab<'a> {
     /// The term of each component read a generic literal takes its carrier from
     /// ([`zedc_check::check::Witness`]), by the read's span: built once and shared.
     pub(super) reads: HashMap<Span, Shared>,
+    /// Each operation on generic literals alone built once per carrier, by its span, with the
+    /// witness its `match` is on (`walk::per_carrier`, L1.26a) and whether each arm `is c`
+    /// gives a value of carrier `c` and the last arm one of the literals' own carrier (`+`,
+    /// `-`, `*`, not `/` or `==`), so the operation it is an operand of finds it in O(1).
+    pub(super) split: HashMap<Span, (&'a Witness, bool)>,
     fresh: usize,
     pub(super) tests: Vec<Test>,
     pub(super) errors: Vec<Error>,
@@ -92,6 +97,7 @@ impl<'a> Elab<'a> {
             guarding: HashSet::new(),
             reading: HashSet::new(),
             reads: HashMap::new(),
+            split: HashMap::new(),
             fresh: 0,
             tests: Vec::new(),
             errors: Vec::new(),

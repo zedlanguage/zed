@@ -139,7 +139,8 @@ struct SeqF<'a> {
 
 enum Frame<'a> {
     Seq(Box<SeqF<'a>>),
-    Unary(Prim),
+    /// A unary operator, by its expression, once its operand is elaborated.
+    Unary(Prim, &'a Expr),
     /// A call read at a carrier ([`Fit::Read`]), by its span, once elaborated: the cast to it.
     Read(Span, Prim),
     /// A generic literal of [`check::Info::witness`], by its span, once elaborated: it takes
@@ -788,7 +789,7 @@ impl<'a> Elab<'a> {
                     UnaryOp::Neg => Prim::Neg,
                     UnaryOp::Not => Prim::Not,
                 };
-                m.k(Frame::Unary(p));
+                m.k(Frame::Unary(p, e));
                 m.stack.push(Job::Expr(a));
                 return;
             }
@@ -1564,8 +1565,8 @@ impl<'a> Elab<'a> {
                     _ => m.ret = Ret::Got(sf.got),
                 }
             }
-            Frame::Unary(p) => {
-                let t = m.t().map(|a| Term::Prim(p, vec![a]));
+            Frame::Unary(p, e) => {
+                let t = m.t().map(|a| self.unary(p, e, a));
                 m.give(t);
             }
             Frame::Read(s, p) => {
@@ -1965,7 +1966,88 @@ impl<'a> Elab<'a> {
                 quotient: self.info.quotients.get(&e.span) == Some(&true),
             });
         }
-        Some(self.follow(l, r, p, args))
+        let w = match (self.split_of(l), self.split_of(r)) {
+            (Some(a), Some(b)) if same_witness(a.0, b.0) => Some((a.0, a.1 && b.1)),
+            (Some((w, true)), None) => self.follow_split(r, w, &mut args, 1).then_some((w, true)),
+            (None, Some((w, true))) => self.follow_split(l, w, &mut args, 0).then_some((w, true)),
+            _ => None,
+        };
+        let Some((w, keeps)) = w else {
+            return Some(self.follow(l, r, p, args));
+        };
+        Some(match per_carrier(p, args, 2) {
+            Ok(t) => {
+                self.split.insert(e.span, (w, keeps && keeps_carrier(p)));
+                t
+            }
+            Err(args) => Term::Prim(p, args),
+        })
+    }
+
+    /// Whether the operand `o` at `args[at]` is a literal that takes the carrier of the other
+    /// operand's value (`Info::follows`), the other operand being split on `w` with each arm
+    /// `is c` of carrier `c` ([`Elab::split`]) and the literal's carriers the patterns of those
+    /// arms; if so, `args[at]` becomes the literal taking the carrier of `w`'s value instead,
+    /// which picks in every case the value [`Elab::follow`] would pick, and both operands are then
+    /// split on `w`. `2 + 0` in a generic definition is such a case: the checker gives `2` the
+    /// parameter as its witness and has `0` follow `2`.
+    ///
+    /// The same value: where `w`'s value is of a carrier `c` of the patterns, the other operand's
+    /// value is of carrier `c` and the literal takes its value at `c` either way; elsewhere the
+    /// other operand's value is of its literals' own carrier, which its patterns never include
+    /// (`Info::follows` lists a literal's other carriers), and so neither do the literal's
+    /// carriers, the same patterns: the literal keeps its own value either way.
+    // Complexity tradeoff: O(C) pattern comparisons for C ≤ 6 carriers, against the O(C) arms
+    // `follow` builds anyway; the `let` of `follow` is not built.
+    fn follow_split(&mut self, o: &Expr, w: &check::Witness, args: &mut [Term], at: usize) -> bool {
+        let Some(s) = lit_span(o).filter(|s| !self.info.witness.contains_key(s)) else {
+            return false;
+        };
+        let (Some(values), Some(arms)) = (self.info.follows.get(&s), arms_of(&args[1 - at])) else {
+            return false;
+        };
+        let same = arms.len() == values.len() + 1
+            && (values.iter().zip(arms)).all(|((c, _), (q, _))| *q == KPattern::Is(c.ty()));
+        if same {
+            let own = mem::replace(&mut args[at], Term::Lit(Value::Bool(false)));
+            args[at] = self.witnessed(s, w, own);
+        }
+        same
+    }
+
+    /// The unary operator `p` of `e` on its operand's term `a`: built once per carrier when
+    /// the operand is an operation on generic literals alone ([`per_carrier`]).
+    fn unary(&mut self, p: Prim, e: &'a Expr, a: Term) -> Term {
+        let ExprKind::Unary(_, operand) = &e.kind else {
+            unreachable!("a unary operator")
+        };
+        // A negated literal is one literal (`lit_span`), its carrier taken as a whole.
+        let w = lit_span(e)
+            .is_none()
+            .then(|| self.split_of(operand))
+            .flatten();
+        let Some((w, keeps)) = w else {
+            return Term::Prim(p, vec![a]);
+        };
+        match per_carrier(p, vec![a], 1) {
+            Ok(t) => {
+                self.split.insert(e.span, (w, keeps && keeps_carrier(p)));
+                t
+            }
+            Err(args) => Term::Prim(p, args),
+        }
+    }
+
+    /// What gives `e` its carrier when `e` is a generic literal with no other operand
+    /// ([`check::Info::witness`]) or an operation on such literals alone built once per
+    /// carrier ([`Elab::split`]): its term is then `match w { is c -> …, _ -> … }` on the value
+    /// of that witness `w`. With it, whether each arm gives a value of the arm's carrier, as a
+    /// literal's arms do.
+    fn split_of(&self, e: &Expr) -> Option<(&'a check::Witness, bool)> {
+        match lit_span(e) {
+            Some(s) => self.info.witness.get(&s).map(|w| (w, true)),
+            None => self.split.get(&e.span).copied(),
+        }
     }
 
     /// The primitive `p` on `args`, of the operands `l` and `r`, when one operand is a literal
@@ -2155,6 +2237,102 @@ fn lit_span(e: &Expr) -> Option<Span> {
         _ => e,
     };
     matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float { .. }).then_some(inner.span)
+}
+
+/// Whether the witnesses `a` and `b` give the same value at run time: the same parameter, or
+/// the same read `v[i]` of the body. A read's span names one read of the source, and so its
+/// receiver too, so comparing `i` and the span is enough, O(1) however deep the read is nested.
+fn same_witness(a: &check::Witness, b: &check::Witness) -> bool {
+    use check::Witness::{Component, Param};
+    match (a, b) {
+        (Param(x), Param(y)) => x == y,
+        (Component { i, read, .. }, Component { i: j, read: r, .. }) => i == j && read == r,
+        _ => false,
+    }
+}
+
+/// The primitive `p` on `args`, whose first `n` (one or two) are each an operation on generic
+/// literals alone, or one such literal, on one witness `w` (L1.26a): each is
+/// `match w { is c -> v_c, …, _ -> own }` with the same patterns in the same order. Built once
+/// per carrier: `match w { is c -> p(v_c, …), …, _ -> p(own, …, rest) }`, where `rest` is what
+/// follows the `n` operands (a mutation mark, `elab::mark`), kept with the literals' own terms
+/// in the last arm, as marks are. `Err(args)` when the operands are not of that form.
+///
+/// Each value of `w` takes, in each operand, the arm of the same pattern, since the patterns
+/// are the same in the same order and `w` reads a parameter or a component of one, which
+/// cannot fail where the body's own read does not; so `p` on the operands' arms gives what `p`
+/// on the operands gives. The operands of `p` are then constants in each arm, and the build
+/// stage (`stage::mix`) folds the arm as it folds the operation in a body at `int`: `2 + 0` and
+/// `2 - 0` become the one term `match w { is f64 -> 2.0, …, _ -> 2 }`, so a mutant that swaps
+/// them is skipped (L25.8), and the operation is run once at run time, not one `match` per
+/// literal.
+// Complexity tradeoff: the method of F85 builds one `match` per literal and leaves the
+// operation on top, O(L·C) nodes for L literals and C carriers (C ≤ 6); the build stage cannot
+// fold an operation whose operands are `match`es on a value not known at build. Used: the
+// operands' arms moved into one `match` per operation, no term copied, O(n·C) per operation of
+// n operands, so O(L·C) nodes over an operation on L literals, as before, and one witness read
+// at run time where there were L. Not taken: a `match` per carrier around the whole body (the
+// body specialized per carrier), which copies the body C times and is no smaller than this
+// where only operations on literals alone fold.
+fn per_carrier(p: Prim, mut args: Vec<Term>, n: usize) -> Result<Term, Vec<Term>> {
+    let Some(first) = arms_of(&args[0]) else {
+        return Err(args);
+    };
+    let same = args[1..n].iter().all(|t| {
+        arms_of(t).is_some_and(|arms| {
+            arms.len() == first.len() && arms.iter().zip(first).all(|(a, b)| a.0 == b.0)
+        })
+    });
+    if !same {
+        return Err(args);
+    }
+    let rest = args.split_off(n);
+    let mut scrutinee = None;
+    let mut columns = Vec::with_capacity(n);
+    for mut t in args {
+        let Term::Match(s, arms) = &mut t else {
+            unreachable!("each operand is a `match`, checked above")
+        };
+        scrutinee.get_or_insert_with(|| s.clone());
+        columns.push(mem::take(arms).into_iter());
+    }
+    let count = columns[0].len();
+    let mut rest = Some(rest);
+    let arms = (0..count)
+        .map(|j| {
+            let mut pattern = None;
+            let mut ops: Vec<Term> = (columns.iter_mut())
+                .map(|c| {
+                    let (q, t) = c.next().expect("operands with as many arms, checked above");
+                    pattern.get_or_insert(q);
+                    t
+                })
+                .collect();
+            if j + 1 == count {
+                ops.extend(rest.take().into_iter().flatten());
+            }
+            let pattern = pattern.expect("at least one operand");
+            (pattern, Term::Prim(p, ops))
+        })
+        .collect();
+    let scrutinee = scrutinee.expect("at least one operand");
+    Ok(Term::Match(scrutinee, arms))
+}
+
+/// The arms of `t` when it is a `match` whose last arm matches every value, as the term of a
+/// generic literal taking a carrier is ([`Elab::witnessed`], [`per_carrier`]).
+fn arms_of(t: &Term) -> Option<&[(KPattern, Term)]> {
+    match t {
+        Term::Match(_, arms) if matches!(arms.last(), Some((KPattern::Wild, _))) => Some(arms),
+        _ => None,
+    }
+}
+
+/// Whether `p` on values of one numeric carrier gives a value of that carrier: `+`, `-`, `*`
+/// and negation do; `/` on two `int`s gives a `rat`, a comparison a `bool`, and the others are
+/// left out, an operation on a split operand then only missing a merge, never a wrong value.
+fn keeps_carrier(p: Prim) -> bool {
+    matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Neg)
 }
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
