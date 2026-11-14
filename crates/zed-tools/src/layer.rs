@@ -579,6 +579,9 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
 }
 
 #[cfg(test)]
+mod completeness;
+
+#[cfg(test)]
 mod tests {
     use super::WordTable;
 
