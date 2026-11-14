@@ -8,6 +8,7 @@ use crate::initial::{
     INITIALS, OVERLAPPING, bare_item, bare_item_refused, builds, many_entries, overlapping_verdict,
     parsed, second_site, second_site_refused,
 };
+use crate::initial_reads_shadowed::{last_read_found, many_binders};
 
 /// Each site is one query and one insertion into a Fenwick tree over the first keys of its
 /// class (`crate::ast::sentinel` in zedc-syntax), so `2n` sites of one variable whose entries
@@ -44,5 +45,16 @@ fn finding_a_bare_item_scales() {
     let units = scaling::inputs(500, bare_item);
     scaling::check("a bare item after n statements", 500, |n| {
         bare_item_refused(&units[&n])
+    });
+}
+
+/// The reads of an `initial` value are one walk with a count of the open binders of each name
+/// (`walk` in `crate::ast::initial` of zedc-syntax), so a read of the loop after `n` lambdas
+/// that bind its name is found in time of order `n`.
+#[test]
+fn a_read_after_many_binders_of_its_name_scales() {
+    let units = scaling::inputs(500, |n| parsed(many_binders(n)));
+    scaling::check("a read of the loop after n binders of its name", 500, |n| {
+        last_read_found(&units[&n])
     });
 }

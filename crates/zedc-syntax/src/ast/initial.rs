@@ -17,7 +17,7 @@ use num_bigint::BigInt;
 use super::builder::{Builder, Level};
 use super::sentinel::{End, Entry, Keys, Sentinels, keys_in, keys_of};
 use super::{
-    BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Pattern,
+    BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Param, Pattern,
     RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
 };
 use crate::lex::{Span, Tok, Token};
@@ -116,12 +116,12 @@ fn entries_of<'s>(stmts: &'s [Stmt]) -> Vec<Entry<'s>> {
 }
 
 /// The names a pattern binds, added to `out`.
-fn pattern_names<'e>(p: &'e Pattern, out: &mut HashSet<&'e str>) {
+fn pattern_names<'e>(p: &'e Pattern, out: &mut impl Extend<&'e str>) {
     let mut stack = vec![p];
     while let Some(p) = stack.pop() {
         match p {
             Pattern::Name(n, _) => {
-                out.insert(n);
+                out.extend([n.as_str()]);
             }
             Pattern::Is { name, .. } => out.extend(name.as_deref()),
             Pattern::Struct { fields, .. } => {
@@ -129,7 +129,7 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut HashSet<&'e str>) {
                     match p {
                         Some(p) => stack.push(p),
                         None => {
-                            out.insert(f);
+                            out.extend([f.as_str()]);
                         }
                     }
                 }
@@ -140,7 +140,7 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut HashSet<&'e str>) {
                     match p {
                         Some(p) => stack.push(p),
                         None => {
-                            out.insert(f);
+                            out.extend([f.as_str()]);
                         }
                     }
                 }
@@ -160,221 +160,325 @@ struct Site<'s> {
     parts: Option<&'s [Expr]>,
 }
 
-/// What a walk of expressions finds: the names read, each with its span, in the order met; and
-/// the names bound inside the walked code.
+/// What a walk of expressions finds: the names read outside the scope of every binder of the
+/// same name inside the walked code, each with its span, in source order.
 #[derive(Default)]
 struct Found<'e> {
     reads: Vec<(&'e str, Span)>,
-    bound: HashSet<&'e str>,
 }
 
-/// Walks `roots` and the statements `stmts`, without entering the body of a nested `loop`,
-/// whose names are its own. One visit of each node, by a work list, so the depth of the code
-/// costs no stack.
-fn walk<'e>(roots: &[&'e Expr], stmts: &'e [Stmt]) -> Found<'e> {
-    let mut found = Found::default();
-    let mut exprs: Vec<&'e Expr> = roots.to_vec();
-    let mut todo: Vec<&'e Stmt> = stmts.iter().collect();
-    loop {
-        if let Some(s) = todo.pop() {
-            stmt_kids(s, &mut exprs, &mut todo, &mut found.bound);
-            continue;
+/// One item of the work list of [`walk`]: an expression or statement to visit; a name, or the
+/// names of a pattern, that come into scope; or the start or end of a scope.
+enum Work<'e> {
+    Expr(&'e Expr),
+    Stmt(&'e Stmt),
+    Bind(&'e str),
+    BindPattern(&'e Pattern),
+    Enter,
+    Leave,
+}
+
+/// The names in scope during a [`walk`]: how many binders of each name are open, the names in
+/// the order bound, and where each open scope starts in that order.
+#[derive(Default)]
+struct Scopes<'e> {
+    open: HashMap<&'e str, u32>,
+    bound: Vec<&'e str>,
+    starts: Vec<usize>,
+}
+
+impl<'e> Scopes<'e> {
+    fn bind(&mut self, n: &'e str) {
+        *self.open.entry(n).or_default() += 1;
+        self.bound.push(n);
+    }
+
+    /// Ends the innermost scope: each name bound since it started is closed once.
+    fn leave(&mut self) {
+        let start = self.starts.pop().expect("a scope was entered");
+        for n in self.bound.drain(start..) {
+            if let Some(c) = self.open.get_mut(n) {
+                *c -= 1;
+            }
         }
-        let Some(e) = exprs.pop() else {
-            return found;
-        };
-        match &e.kind {
-            ExprKind::Int { .. }
-            | ExprKind::Float { .. }
-            | ExprKind::Rat(_)
-            | ExprKind::Bool(_)
-            | ExprKind::Atom(_)
-            | ExprKind::This
-            | ExprKind::Section(_)
-            | ExprKind::Loop { .. } => {}
-            ExprKind::Name(n) => found.reads.push((n, e.span)),
-            ExprKind::Str(parts) => exprs.extend(parts.iter().filter_map(|p| match p {
-                StrPart::Hole(e) => Some(e),
-                StrPart::Text(_) => None,
-            })),
-            ExprKind::Spread { of, .. } => exprs.push(of),
-            ExprKind::Unary(_, a)
-            | ExprKind::Is { of: a, .. }
-            | ExprKind::Member { of: a, .. }
-            | ExprKind::Read { of: a, .. }
-            | ExprKind::Break(a) => exprs.push(a),
-            ExprKind::SortKey { key, .. } => exprs.extend(key.as_deref()),
-            ExprKind::Binary(_, a, b)
-            | ExprKind::Index(a, b)
-            | ExprKind::In { of: a, set: b, .. }
-            | ExprKind::Reduce { of: a, op: b } => exprs.extend([&**a, &**b]),
-            ExprKind::Else {
-                of,
-                pattern,
-                default,
-            } => {
-                if let Some(p) = pattern {
-                    pattern_names(p, &mut found.bound);
-                }
-                exprs.extend([&**of, &**default]);
-            }
-            ExprKind::Call {
-                callee,
-                positional,
-                named,
-                ..
-            } => {
-                exprs.push(callee);
-                exprs.extend(positional);
-                exprs.extend(named.iter().map(|(_, e)| e));
-            }
-            ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => exprs.extend(es),
-            ExprKind::Map(entries) => {
-                for (k, v) in entries {
-                    exprs.extend([k, v]);
-                }
-            }
-            ExprKind::Range(from, to) => {
-                exprs.push(from);
-                match to {
-                    RangeEnd::Below(b) | RangeEnd::Through(b) => exprs.push(b),
-                    RangeEnd::Open => {}
-                }
-            }
-            ExprKind::For {
-                binders,
-                source,
-                guard,
-                body,
-            } => {
-                for t in binders {
-                    if let Target::Name(n, _) = t {
-                        found.bound.insert(n);
-                    }
-                }
-                exprs.push(source);
-                exprs.extend(guard.as_deref());
-                exprs.push(body);
-            }
-            ExprKind::Lambda { params, body } => {
-                for p in params {
-                    found.bound.insert(&p.name);
-                    for t in p.tuple.iter().flatten() {
-                        if let Target::Name(n, _) = t {
-                            found.bound.insert(n);
-                        }
-                    }
-                    exprs.extend(p.default.as_ref());
-                }
-                exprs.push(body);
-            }
-            ExprKind::Block(stmts) => todo.extend(stmts),
-            ExprKind::Match { of, arms } => {
-                exprs.push(of);
-                for a in arms {
-                    pattern_names(&a.pattern, &mut found.bound);
-                    exprs.extend(a.guard.as_ref());
-                    exprs.push(&a.body);
-                }
-            }
-            ExprKind::Record(fields) => exprs.extend(fields.iter().map(|(_, e)| e)),
-            ExprKind::With { of, updates } => {
-                exprs.push(of);
-                exprs.extend(updates.iter().map(|u| &u.value));
-            }
-            ExprKind::If {
-                cond,
-                then,
-                otherwise,
-            } => exprs.extend([&**cond, &**then, &**otherwise]),
-        }
+    }
+
+    fn is_bound(&self, n: &str) -> bool {
+        self.open.get(n).is_some_and(|&c| c > 0)
     }
 }
 
-/// Moves the expressions and statements directly in `s` to the work lists, and adds the names
-/// it binds to `bound`.
-fn stmt_kids<'e>(
-    s: &'e Stmt,
-    exprs: &mut Vec<&'e Expr>,
-    todo: &mut Vec<&'e Stmt>,
-    bound: &mut HashSet<&'e str>,
-) {
-    let keys = |keys: &'e [IndexKey], exprs: &mut Vec<&'e Expr>, bound: &mut HashSet<&'e str>| {
-        for k in keys {
-            match k {
-                IndexKey::In { name, set } => {
-                    bound.insert(name);
-                    exprs.push(set);
+/// Walks `roots` and the statements `stmts`, without entering the body of a nested `loop`,
+/// whose names are its own, and keeps the reads of names no binder in scope binds (DESIGN.md
+/// sec:lexical, step L1.14): a lambda's parameters scope over its body, and a default sees the
+/// parameters before it; a `for` binder over the guard and body, not the source; a `match`
+/// pattern over its arm's guard and body; an `else` pattern over the default; a block's
+/// binding over the statements after it, not its own value; a local function's name over its
+/// body and the statements after it, and its parameters as a lambda's; an indexed definition's
+/// name over its values and the statements after it, and its keys over its value, not the key
+/// sets; an `initial` statement's names over the statements after it.
+///
+/// Naive: a set of the names bound anywhere in the walked code, which hides a read outside
+/// the binder's scope (FAIL-initial-reads-shadowed: in `t + (t -> t)(1)` the first `t` was
+/// skipped). Used: one work list in source order with scope marks, a count of open binders
+/// per name and the names in the order bound, so each node is visited once and each binder
+/// opened and closed once: O(n) for n nodes and binders, with expected O(1) hash lookups, and
+/// the depth of the code costs no stack.
+fn walk<'e>(roots: &[&'e Expr], stmts: &'e [Stmt]) -> Found<'e> {
+    let mut found = Found::default();
+    let mut scopes = Scopes::default();
+    let mut work: Vec<Work<'e>> = Vec::new();
+    // The work list pops last first, so each list of children is pushed in reverse.
+    work.extend(stmts.iter().rev().map(Work::Stmt));
+    work.extend(roots.iter().rev().map(|&e| Work::Expr(e)));
+    while let Some(w) = work.pop() {
+        match w {
+            Work::Bind(n) => scopes.bind(n),
+            Work::BindPattern(p) => {
+                let mut names = Vec::new();
+                pattern_names(p, &mut names);
+                for n in names {
+                    scopes.bind(n);
                 }
-                IndexKey::At(e) => exprs.push(e),
+            }
+            Work::Enter => scopes.starts.push(scopes.bound.len()),
+            Work::Leave => scopes.leave(),
+            Work::Stmt(s) => stmt_kids(s, &mut work),
+            Work::Expr(e) => {
+                if let ExprKind::Name(n) = &e.kind {
+                    if !scopes.is_bound(n) {
+                        found.reads.push((n, e.span));
+                    }
+                    continue;
+                }
+                let start = work.len();
+                expr_kids(e, &mut work);
+                work[start..].reverse();
             }
         }
+    }
+    found
+}
+
+/// Adds to `work`, in source order, the parts of `e` with the scopes of its binders; the
+/// caller reverses them.
+fn expr_kids<'e>(e: &'e Expr, work: &mut Vec<Work<'e>>) {
+    fn exprs<'e>(es: impl IntoIterator<Item = &'e Expr>, work: &mut Vec<Work<'e>>) {
+        work.extend(es.into_iter().map(Work::Expr));
+    }
+    match &e.kind {
+        ExprKind::Int { .. }
+        | ExprKind::Float { .. }
+        | ExprKind::Rat(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Atom(_)
+        | ExprKind::This
+        | ExprKind::Section(_)
+        | ExprKind::Loop { .. }
+        | ExprKind::Name(_) => {}
+        ExprKind::Str(parts) => exprs(
+            parts.iter().filter_map(|p| match p {
+                StrPart::Hole(e) => Some(e),
+                StrPart::Text(_) => None,
+            }),
+            work,
+        ),
+        ExprKind::Spread { of, .. } => work.push(Work::Expr(of)),
+        ExprKind::Unary(_, a)
+        | ExprKind::Is { of: a, .. }
+        | ExprKind::Member { of: a, .. }
+        | ExprKind::Read { of: a, .. }
+        | ExprKind::Break(a) => work.push(Work::Expr(a)),
+        ExprKind::SortKey { key, .. } => exprs(key.as_deref(), work),
+        ExprKind::Binary(_, a, b)
+        | ExprKind::Index(a, b)
+        | ExprKind::In { of: a, set: b, .. }
+        | ExprKind::Reduce { of: a, op: b } => exprs([&**a, &**b], work),
+        ExprKind::Else {
+            of,
+            pattern,
+            default,
+        } => {
+            work.push(Work::Expr(of));
+            work.push(Work::Enter);
+            work.extend(pattern.as_ref().map(Work::BindPattern));
+            work.push(Work::Expr(default));
+            work.push(Work::Leave);
+        }
+        ExprKind::Call {
+            callee,
+            positional,
+            named,
+            ..
+        } => {
+            work.push(Work::Expr(callee));
+            exprs(positional.iter(), work);
+            exprs(named.iter().map(|(_, e)| e), work);
+        }
+        ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => exprs(es.iter(), work),
+        ExprKind::Map(entries) => exprs(entries.iter().flat_map(|(k, v)| [k, v]), work),
+        ExprKind::Range(from, to) => {
+            work.push(Work::Expr(from));
+            match to {
+                RangeEnd::Below(b) | RangeEnd::Through(b) => work.push(Work::Expr(b)),
+                RangeEnd::Open => {}
+            }
+        }
+        ExprKind::For {
+            binders,
+            source,
+            guard,
+            body,
+        } => {
+            work.push(Work::Expr(source));
+            work.push(Work::Enter);
+            work.extend(binders.iter().filter_map(|t| match t {
+                Target::Name(n, _) => Some(Work::Bind(n)),
+                Target::Wild => None,
+            }));
+            exprs(guard.as_deref(), work);
+            work.push(Work::Expr(body));
+            work.push(Work::Leave);
+        }
+        ExprKind::Lambda { params, body } => {
+            work.push(Work::Enter);
+            params_kids(params, work);
+            work.push(Work::Expr(body));
+            work.push(Work::Leave);
+        }
+        ExprKind::Block(stmts) => {
+            work.push(Work::Enter);
+            work.extend(stmts.iter().map(Work::Stmt));
+            work.push(Work::Leave);
+        }
+        ExprKind::Match { of, arms } => {
+            work.push(Work::Expr(of));
+            for a in arms {
+                work.push(Work::Enter);
+                work.push(Work::BindPattern(&a.pattern));
+                exprs(a.guard.iter(), work);
+                work.push(Work::Expr(&a.body));
+                work.push(Work::Leave);
+            }
+        }
+        ExprKind::Record(fields) => exprs(fields.iter().map(|(_, e)| e), work),
+        ExprKind::With { of, updates } => {
+            work.push(Work::Expr(of));
+            exprs(updates.iter().map(|u| &u.value), work);
+        }
+        ExprKind::If {
+            cond,
+            then,
+            otherwise,
+        } => exprs([&**cond, &**then, &**otherwise], work),
+    }
+}
+
+/// Adds to `work`, in source order, each parameter's default and then the parameter, so that a
+/// default sees the parameters before it; the caller opens the scope and closes it after the
+/// body.
+fn params_kids<'e>(params: &'e [Param], work: &mut Vec<Work<'e>>) {
+    for p in params {
+        work.extend(p.default.as_ref().map(Work::Expr));
+        work.push(Work::Bind(&p.name));
+        work.extend(p.tuple.iter().flatten().filter_map(|t| match t {
+            Target::Name(n, _) => Some(Work::Bind(n)),
+            Target::Wild => None,
+        }));
+    }
+}
+
+/// Adds to `work`, in source order, the key sets and positions of `keys`, then the names the
+/// keys bind; the caller opens the scope before and closes it after the value.
+fn keys_kids<'e>(keys: &'e [IndexKey], work: &mut Vec<Work<'e>>) {
+    for k in keys {
+        match k {
+            IndexKey::In { set, .. } => work.push(Work::Expr(set)),
+            IndexKey::At(e) => work.push(Work::Expr(e)),
+        }
+    }
+    work.extend(keys.iter().filter_map(|k| match k {
+        IndexKey::In { name, .. } => Some(Work::Bind(name)),
+        IndexKey::At(_) => None,
+    }));
+}
+
+/// Pushes to `work` the parts of the statement `s` with the scopes of its binders, last first,
+/// so that they pop in source order. A name `s` binds for the statements after it is bound in
+/// the scope of the enclosing block, which that block's `Leave` closes.
+fn stmt_kids<'e>(s: &'e Stmt, work: &mut Vec<Work<'e>>) {
+    let start = work.len();
+    let keyed = |keys: &'e [IndexKey], value: &'e Expr, work: &mut Vec<Work<'e>>| {
+        work.push(Work::Enter);
+        keys_kids(keys, work);
+        work.push(Work::Expr(value));
+        work.push(Work::Leave);
     };
     match &s.kind {
         StmtKind::Bind { targets, value } => {
-            for t in targets {
-                if let Target::Name(n, _) = t {
-                    bound.insert(n);
-                }
-            }
-            exprs.push(value);
+            work.push(Work::Expr(value));
+            work.extend(targets.iter().filter_map(|t| match t {
+                Target::Name(n, _) => Some(Work::Bind(n)),
+                Target::Wild => None,
+            }));
         }
         StmtKind::Initial(i) => {
-            bound.extend(i.names.iter().map(|(n, _)| n.as_str()));
-            keys(&i.keys, exprs, bound);
-            exprs.push(&i.value);
+            keyed(&i.keys, &i.value, work);
+            work.extend(i.names.iter().map(|(n, _)| Work::Bind(n)));
         }
         StmtKind::IndexedDef(d) => {
-            bound.insert(&d.name);
-            keys(&d.keys, exprs, bound);
-            exprs.push(&d.value);
+            work.push(Work::Bind(&d.name));
+            keyed(&d.keys, &d.value, work);
             for b in &d.boundary {
-                keys(&b.keys, exprs, bound);
-                exprs.push(&b.value);
+                keyed(&b.keys, &b.value, work);
             }
         }
         StmtKind::Push { value, .. }
         | StmtKind::While(value)
         | StmtKind::Until(value)
-        | StmtKind::Expr(value) => exprs.push(value),
-        StmtKind::Local(d) => todo.push(d),
+        | StmtKind::Expr(value) => work.push(Work::Expr(value)),
+        StmtKind::Local(d) => work.push(Work::Stmt(d)),
         StmtKind::Annotated { annots, decl } => {
             for a in annots {
-                exprs.extend(&a.positional);
-                exprs.extend(a.named.iter().map(|(_, e)| e));
+                work.extend(a.positional.iter().map(Work::Expr));
+                work.extend(a.named.iter().map(|(_, e)| Work::Expr(e)));
             }
-            todo.push(decl);
+            work.push(Work::Stmt(decl));
         }
         StmtKind::UnitAnnot(a) => {
-            exprs.extend(&a.positional);
-            exprs.extend(a.named.iter().map(|(_, e)| e));
+            work.extend(a.positional.iter().map(Work::Expr));
+            work.extend(a.named.iter().map(|(_, e)| Work::Expr(e)));
         }
-        StmtKind::Return(es) => exprs.extend(es),
+        StmtKind::Return(es) => work.extend(es.iter().map(Work::Expr)),
         StmtKind::Function(f) => {
-            bound.insert(&f.name);
-            for p in &f.params {
-                bound.insert(&p.name);
-                exprs.extend(p.default.as_ref());
-            }
-            exprs.push(&f.body);
+            work.push(Work::Bind(&f.name));
+            work.push(Work::Enter);
+            params_kids(&f.params, work);
+            work.push(Work::Expr(&f.body));
+            work.push(Work::Leave);
             for (a, b) in &f.tests {
-                exprs.extend([a, b]);
+                work.extend([Work::Expr(a), Work::Expr(b)]);
             }
-            exprs.extend(f.given.iter().flat_map(|t| &t.ports).map(|p| &p.value));
+            work.extend(
+                f.given
+                    .iter()
+                    .flat_map(|t| &t.ports)
+                    .map(|p| Work::Expr(&p.value)),
+            );
         }
         StmtKind::Method(m) => {
-            for p in &m.function.params {
-                bound.insert(&p.name);
-                exprs.extend(p.default.as_ref());
-            }
-            exprs.push(&m.function.body);
+            work.push(Work::Enter);
+            params_kids(&m.function.params, work);
+            work.push(Work::Expr(&m.function.body));
+            work.push(Work::Leave);
         }
-        StmtKind::Struct(st) => exprs.extend(st.fields.iter().filter_map(|f| match f {
-            Field::Typed { default, .. } => default.as_ref(),
+        StmtKind::Struct(st) => work.extend(st.fields.iter().filter_map(|f| match f {
+            Field::Typed { default, .. } => default.as_ref().map(Work::Expr),
             Field::Import { .. } => None,
         })),
         StmtKind::Type(_) | StmtKind::Import(_) => {}
     }
+    work[start..].reverse();
 }
 
 /// A construct of a step whose parts run on some paths only (DESIGN.md sec:generations,
@@ -2337,9 +2441,6 @@ impl Builder<'_, '_> {
                 }
                 let found = walk(&[&i.value], &[]);
                 for &(n, span) in &found.reads {
-                    if found.bound.contains(n) {
-                        continue;
-                    }
                     let base = unprimed(n);
                     let what = if Some(n) == label {
                         LoopName::Index

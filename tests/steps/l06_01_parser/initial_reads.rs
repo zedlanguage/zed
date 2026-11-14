@@ -4,7 +4,7 @@
 //! can hold; and a name the value binds itself, read inside the binder's scope, is no read of the
 //! loop (sec:lexical, step L1.14: shadowing, the scope of a block, a lambda, a `for` binder, a
 //! `match` arm and an `else` pattern). A read of the loop's name outside such a scope, in a value
-//! that binds the same name elsewhere, is not found yet: FAIL-initial-reads-shadowed.
+//! that binds the same name elsewhere, is a read of the loop: initial_reads_shadowed.rs.
 
 use zedc::ast::unit;
 use zedc::lex::lex;
