@@ -2312,9 +2312,11 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-check-decimal-past-f64-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-check-if-carrier-branch-literal-at-rat | running | 2026-11-14 07:10 |  |
 | FAIL-lattice-f32-literal | running | 2026-11-14 07:10 |  |
+| FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
+| FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
 | FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | started in wt/fix-types-overload at 9d4c6b7f1; load 37.18 49.72 50.76 |
 | FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
