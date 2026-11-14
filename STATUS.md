@@ -2195,7 +2195,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | REPAIR-grouped-literal-compare | repair attempt 1 | 2026-11-13 19:19 | started; worktree from origin/main b7770874f |
 | REPAIR-string-compare-offer | impl attempt 1 | 2026-11-13 19:03 | started; worktree from origin/main 23d47ea9e |
 | ST-class-case-holes | impl attempt 1 | 2026-11-13 19:02 | started; worktree from origin/main f55860149 |
-| STUDY-release-token | running | 2026-11-13 19:46 |  |
+| STUDY-release-token | impl attempt 1 | 2026-11-13 19:46 | started: reading A101, sec:ffi, sec:memory |
 | TESTS-defer-leftovers | impl attempt 1 | 2026-11-13 18:38 | started |
 | TESTS-l01_26a-calls-slow | impl attempt 1 | 2026-11-13 16:36 | started; worktree from origin/main db415023a |
 | XR-ffi-stateful | impl attempt 1 | 2026-11-13 18:25 | started: cross-review of STUDY-ffi-stateful design (zed 02a2ff3), seats Sol, Opus, Gemini (CD no seat: spec text, not scored code); load 32.07 38.66 44.54 |
