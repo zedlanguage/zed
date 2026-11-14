@@ -2231,10 +2231,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
-| DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | FAIL-scaling-cold-8n-bytes | impl attempt 1 | 2026-11-14 06:09 | started; worktree /home/luke/Work/wt/fail-scaling-cold-8n |
-| STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-complete-crates | impl attempt 1 | 2026-11-14 06:21 | started; worktree test-complete-crates seeded / 65.87 56.46 48.35 |
 | TEST-complete-kernel | impl attempt 1 | 2026-11-14 06:21 | started; worktree created and seeded |
@@ -2243,10 +2240,8 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-complete-misc | impl attempt 1 | 2026-11-14 05:46 | started; worktree seeded at a047ea74c |
 | TEST-complete-preimage | impl attempt 1 | 2026-11-14 06:10 | started; worktree made and seeded at 28be33f10 |
 | TEST-complete-reduced | impl attempt 1 | 2026-11-14 05:52 | started; worktree made and seeded; load 52.75 |
-| TEST-complete-zir | impl attempt 1 | 2026-11-14 06:15 | started; worktree /home/luke/Work/wt/test-complete-zir |
+| TEST-complete-zir | impl attempt 1 | 2026-11-14 06:15 | baseline: l01_31 39, l01_32 28, l01_33 39, l03_09 27, zedc_zir unit 5 passed, 0 failed / 53.91 55.76 49.18 |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
-| XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
-| XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
