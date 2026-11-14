@@ -1978,10 +1978,11 @@ impl<'t> Machine<'_, 't> {
         }
         // Complexity tradeoff (KERNEL-eval-step-cost): the data arguments were moved into a new
         // `Vec` on each step, an allocation and a free (250,000 steps in law_04; removing them
-        // saved about 100 instructions a step, 1.4% of the test). Used: a primitive that keeps none of them reads them from the machine's spare
-        // `vals`, emptied after the step, so its room is allocated once a run; `Tuple` and `Path`
-        // keep theirs and take a new `Vec`, as before. An early return on an error drops the
-        // spare room, which the next step allocates again.
+        // saved about 100 instructions a step, 1.4% of the test). Used: a primitive that keeps
+        // none of them reads them from the machine's spare `vals`, emptied after the step, so
+        // its room is allocated once a run; `Tuple` and `Path` keep theirs and take a new `Vec`,
+        // as before. An early return on an error drops the spare room, which the next step
+        // allocates again. Both are O(arguments) a step.
         let keeps = matches!(p, Prim::Tuple | Prim::Path);
         let mut vals = if keeps {
             Vec::with_capacity(args.len())
