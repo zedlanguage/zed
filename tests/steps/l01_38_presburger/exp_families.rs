@@ -597,11 +597,23 @@ pub(super) fn window_program_finds_the_points_of_the_box(
     );
 }
 
+/// [`random_window_systems_answer`] at four seeds drawn from a new seed each run, below 2^40 so
+/// that [`windows`]' `seed * 7919 + n` fits. Seeds 0 to 19 (0.65 s at load 14, 1.06 s at load
+/// 38) are in `bench::exp_families`.
 #[test]
 fn random_window_systems_are_answered_as_the_window_program_answers() {
+    let (mut rng, seed) = Rng::fresh("exp_families random windows");
+    let seeds: Vec<u64> = (0..4).map(|_| rng.next_u64() >> 24).collect();
+    random_window_systems_answer(&seeds, &format!("fresh seed {seed}"));
+}
+
+/// [`windows`] of 3 variables and 2 rows and of 2 variables and 3 rows, over 6, 12 and 24
+/// variables, at each of `seeds`, answered as the window program answers; `at` is named on
+/// failure.
+pub(super) fn random_window_systems_answer(seeds: &[u64], at: &str) {
     for (width, per) in [(3, 2), (2, 3)] {
         for n in [6, 12, 24] {
-            for seed in 0..20 {
+            for &seed in seeds {
                 let x0 = windows_x0(n, seed, width, per);
                 let member = |x: i64| x0.contains(&x);
                 let truth = Truth {
@@ -610,7 +622,8 @@ fn random_window_systems_are_answered_as_the_window_program_answers() {
                     member: &member,
                     near: (-BOX - 2, BOX + 2),
                 };
-                let what = format!("windows of {width}, {per} rows each, n = {n}, seed {seed}");
+                let what =
+                    format!("{at}: windows of {width}, {per} rows each, n = {n}, seed {seed}");
                 // Main refuses (`Growth`) on most systems of windows of three from n = 12 on,
                 // and answers every system of windows of two: COMPLEXITY.md PRES-exp-families.
                 let answered = if width == 2 { "dsa" } else { "" };

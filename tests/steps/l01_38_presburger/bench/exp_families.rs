@@ -96,3 +96,10 @@ fn the_window_program_finds_the_points_of_the_box_over_4_variables() {
         }
     }
 }
+
+/// `exp_families::random_window_systems_are_answered_as_the_window_program_answers` as first
+/// written, 0.65 s (2026-11-14, load 14): seeds 0 to 19.
+#[test]
+fn random_window_systems_of_seeds_0_to_19_are_answered_as_the_window_program_answers() {
+    random_window_systems_answer(&(0..20).collect::<Vec<u64>>(), "seeds 0 to 19");
+}
