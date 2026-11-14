@@ -608,6 +608,7 @@ impl Evaluator {
             made: HashMap::new(),
             short_paths: Vec::new(),
             failed: None,
+            vals: Vec::new(),
         };
         let out = machine.run(term, env);
         let failed = machine.failed;
@@ -971,6 +972,8 @@ struct Machine<'e, 't> {
     /// has: the node whose own work failed, or the innermost call or primitive around the
     /// error that has a site. Set at the first error, which ends the run.
     failed: Option<usize>,
+    /// Spare room for the data arguments of a primitive ([`Self::prim`]), empty between steps.
+    vals: Vec<Value>,
 }
 
 impl<'t> Machine<'_, 't> {
@@ -1973,7 +1976,18 @@ impl<'t> Machine<'_, 't> {
             }
             return self.ask_port(&port, as_key(&k));
         }
-        let mut vals = Vec::with_capacity(args.len());
+        // Complexity tradeoff (KERNEL-eval-step-cost): the data arguments were moved into a new
+        // `Vec` on each step, an allocation and a free (250,000 steps in law_04; removing them
+        // saved about 100 instructions a step, 1.4% of the test). Used: a primitive that keeps none of them reads them from the machine's spare
+        // `vals`, emptied after the step, so its room is allocated once a run; `Tuple` and `Path`
+        // keep theirs and take a new `Vec`, as before. An early return on an error drops the
+        // spare room, which the next step allocates again.
+        let keeps = matches!(p, Prim::Tuple | Prim::Path);
+        let mut vals = if keeps {
+            Vec::with_capacity(args.len())
+        } else {
+            std::mem::take(&mut self.vals)
+        };
         for a in args {
             match a {
                 V::Data(v) => vals.push(v),
@@ -2002,12 +2016,20 @@ impl<'t> Machine<'_, 't> {
         ) && vals.iter().any(|v| matches!(v, Value::Atom(_)))
         {
             let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
-            return give(Value::merge_failures(atoms));
+            let out = Value::merge_failures(atoms);
+            self.spare(vals);
+            return give(out);
         }
         // A refused test answered by the order of the normal forms, which may have made the
         // primitive fail (a collision of two leaves it took as different): the refusal is the
         // cause.
-        let out = prim_data(p, vals);
+        let out = if keeps {
+            prim_data(p, vals)
+        } else {
+            let out = prim_on(p, &vals);
+            self.spare(vals);
+            out
+        };
         if let Some((t, e)) = refused() {
             return Err(order_too_large(p, t, e).into());
         }
@@ -2015,6 +2037,12 @@ impl<'t> Machine<'_, 't> {
             Err(KernelError::Type(m)) => type_err(self.at_step(p, m)),
             out => give(out?),
         }
+    }
+
+    /// Empties `vals` and keeps its room for the next primitive.
+    fn spare(&mut self, mut vals: Vec<Value>) {
+        vals.clear();
+        self.vals = vals;
     }
 
     /// The refusal `m` of the primitive `p`, and for a step on key paths, which the compiler
@@ -2903,14 +2931,18 @@ fn test_too_large(op: Option<&'static str>, t: Test, e: TooLarge) -> KernelError
 
 /// A primitive on data none of which is an atom.
 fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
-    use Value::{Bool, Float, Float32, Int, Str};
     // These two keep the values they are given: copying a tuple that holds a list would make
     // building the list quadratic in its length.
     match p {
-        Prim::Tuple => return Ok(Value::tuple(vals)),
-        Prim::Path => return Ok(Value::path(vals)),
-        _ => {}
+        Prim::Tuple => Ok(Value::tuple(vals)),
+        Prim::Path => Ok(Value::path(vals)),
+        _ => prim_on(p, &vals),
     }
+}
+
+/// [`prim_data`] for a primitive other than `Tuple` and `Path`, which keeps none of `vals`.
+fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
+    use Value::{Bool, Float, Float32, Int, Str};
     let ty = |vals: &[Value]| {
         let shown: Vec<String> = vals
             .iter()
@@ -2922,13 +2954,13 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             shown.join(", ")
         )))
     };
-    let out = match (p, vals.as_slice()) {
+    let out = match (p, vals) {
         (Prim::Add | Prim::Sub | Prim::Mul | Prim::IntDiv | Prim::Mod | Prim::Pow, [a, b])
             if a.number_kind() == Some(0) && b.number_kind() == Some(0) =>
         {
             match int_binary(p, a, b)? {
                 Some(v) => v,
-                None => return ty(&vals),
+                None => return ty(vals),
             }
         }
         (Prim::Neg, [Int(a)]) => match a.checked_neg() {
@@ -3065,7 +3097,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             match a.selects(b, p == Prim::Min) {
                 Some(true) => a.clone(),
                 Some(false) => b.clone(),
-                None => return ty(&vals),
+                None => return ty(vals),
             }
         }
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max, [a, b]) => {
@@ -3074,7 +3106,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                 (x, y) => x == y,
             };
             if !same {
-                return ty(&vals);
+                return ty(vals);
             }
             let o = a.surface_cmp(b);
             match p {
@@ -3101,12 +3133,12 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.len() == args.len() => {
             let mut fields = Vec::with_capacity(names.len());
             for (n, v) in names.iter().zip(args) {
-                let Str(n) = n else { return ty(&vals) };
+                let Str(n) = n else { return ty(vals) };
                 fields.push((atom_name(n)?, v.clone()));
             }
             match Value::atom_named(atom_name(name)?, fields) {
                 Some(v) => v,
-                None => return ty(&vals),
+                None => return ty(vals),
             }
         }
         (Prim::PathKey, [Value::Path(keys), Int(i)]) => usize::try_from(*i)
@@ -3147,7 +3179,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             | Prim::FromUtf8,
             [x],
         ) => crate::words::word(p, x)?,
-        _ if crate::bits::is_bit_word(p) => crate::bits::word(p, &vals)?,
+        _ if crate::bits::is_bit_word(p) => crate::bits::word(p, vals)?,
         (Prim::Sum, [Value::Tuple(items)]) => {
             if items.iter().any(|v| matches!(v, Value::Atom(_))) {
                 return Ok(Value::merge_failures(
@@ -3158,7 +3190,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
                 return Ok(Int(0));
             };
             if first.number_kind().is_none() {
-                return ty(&vals);
+                return ty(vals);
             }
             let mut total = first.clone();
             for x in rest {
@@ -3166,7 +3198,7 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
             }
             total
         }
-        _ => return ty(&vals),
+        _ => return ty(vals),
     };
     Ok(out)
 }
