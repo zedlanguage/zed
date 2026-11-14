@@ -970,7 +970,7 @@ main(m: MainArgs) {
   @foreign struct Env {}
   @foreign struct Txn {}
   @foreign("lmdb", "mdb_txn_abort") @nonblocking abort: (txn: Ptr(Txn)) -> #ok;
-  @foreign("lmdb", "mdb_txn_begin") begin: (env: Ptr(Env), parent: Ptr(Txn) | #none, flags: u32) -> (i32, Ptr(Txn) | #none with release(abort));
+  @foreign("lmdb", "mdb_txn_begin") begin: (env: Ptr(Env), parent: Ptr(Txn) | #none, flags: u32) -> (i32, Ptr(Txn) | #none with release(abort) with keeps(env) with keeps(parent));
   @foreign("lmdb", "mdb_txn_commit") commit: (txn: Ptr(Txn) with consumes()) -> i32;
 ```
 
@@ -1015,7 +1015,7 @@ main(m: MainArgs) {
   @foreign struct Db {}
   @foreign struct Stmt {}
   @foreign("sqlite3", "sqlite3_close_v2") close: (db: Ptr(Db) with consumes()) -> i32;
-  @foreign("sqlite3", "sqlite3_finalize") @nonblocking finalize: (stmt: Ptr(Stmt) with consumes()) -> i32;
+  @foreign("sqlite3", "sqlite3_finalize") finalize: (stmt: Ptr(Stmt) with consumes()) -> i32;
   // the releases Zed makes drop the codes: close_v2 frees the handle whatever it returns,
   // and finalize repeats the error of the statement's last step, which the program has seen
   @foreign("sqlite3", "sqlite3_open") open: (path: [u8] with terminated(0)) -> (i32, Ptr(Db) | #none with release(db -> { _ = close(db) else #ok; #ok }));
@@ -1031,6 +1031,7 @@ main(m: MainArgs) {
         rc2, prepared = prepare(db:, sql:, bytes: -1, tail: #none);
         match prepared {
           #none -> rc2,         // prepare was the last use of db on this path: Zed closes it
+          #lost -> #lost,       // returned as itself, not inside the tuple
           stmt -> (db, stmt),   // both returned; the caller's releases finalize stmt, then close db
         }
       },
@@ -1038,7 +1039,7 @@ main(m: MainArgs) {
   }
 ```
 
-<!-- DESIGN.md:3314 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 10 -->
+<!-- DESIGN.md:3315 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 10 -->
 ```zed
   @foreign struct Termios {
     iflag: u32, oflag: u32, cflag: u32, lflag: u32,
@@ -1050,12 +1051,12 @@ main(m: MainArgs) {
   // getchar is MT-Safe (fgetc(3)), so it may run on a thread of its own: waiting for a key leaves the C library's thread free
   @thread(#keys) @foreign("c", "getchar") getKey: (raw: Termios with notPassed(duringStop: #release)) -> i32 with anyThread();
 
-  // glibc's cfmakeraw except ISIG, which stays set so that Ctrl-C still makes the stop: no echo, no line editing, 8-bit bytes, a read waits for one byte
+  // glibc's cfmakeraw with ISIG set, so that Ctrl-C still makes the stop: no echo, no line editing, 8-bit bytes, a read waits for one byte
   makeRaw(t: Termios) -> Termios {
     t with {
       iflag = t.iflag.bitAnd(bitNot(1515, width: 32)),            // IGNBRK BRKINT PARMRK ISTRIP INLCR IGNCR ICRNL IXON
       oflag = t.oflag.bitAnd(bitNot(1, width: 32)),               // OPOST
-      lflag = t.lflag.bitAnd(bitNot(32842, width: 32)),           // ECHO ECHONL ICANON IEXTEN
+      lflag = t.lflag.bitAnd(bitNot(32842, width: 32)).bitOr(1),  // ECHO ECHONL ICANON IEXTEN off, ISIG on
       cflag = t.cflag.bitAnd(bitNot(304, width: 32)).bitOr(48),   // CSIZE and PARENB off, CS8 on
       cc[6] = 1, cc[5] = 0,                                       // VMIN 1, VTIME 0
     }
@@ -1088,7 +1089,7 @@ main(m: MainArgs) {
   }
 ```
 
-<!-- DESIGN.md:3367 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 11 -->
+<!-- DESIGN.md:3368 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 11 -->
 ```zed
   struct Dir { fd: i32 }
   @foreign("c", "open") openPath: (path: [u8] with terminated(0), flags: i32) -> i32;
@@ -1118,7 +1119,7 @@ main(m: MainArgs) {
   }
 ```
 
-<!-- DESIGN.md:3399 layer L7: ring L7, word L7 (release), label none; section [sec:ffi] 12 -->
+<!-- DESIGN.md:3400 layer L7: ring L7, word L7 (release), label none; section [sec:ffi] 12 -->
 ```zed
   @foreign struct Curl {}
   struct CurlState {}
@@ -1133,7 +1134,7 @@ main(m: MainArgs) {
   }
 ```
 
-<!-- DESIGN.md:3422 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 13 -->
+<!-- DESIGN.md:3423 layer L7: ring L7, word L7 (u8), label none; section [sec:ffi] 13 -->
 ```zed
   @foreign struct File {}
   @foreign("c", "fclose") fclose: (file: Ptr(File) with consumes()) -> i32;
@@ -1153,34 +1154,38 @@ main(m: MainArgs) {
   @foreign("uringshim", "unregister_pages") unregisterPages: (ring: Ptr(Ring) with dropsHeld()) -> i32;
 ```
 
-<!-- DESIGN.md:3445 layer L7: ring L7, word L7 (u32), label none; section [sec:ffi] 14 -->
+<!-- DESIGN.md:3446 layer L7: ring L7, word L7 (u32), label none; section [sec:ffi] 14 -->
 ```zed
   struct Glfw {}
   @thread(#main) @foreign("glfw", "glfwInit") glfwInit: () -> i32;
   @thread(#main) @foreign("glfw", "glfwTerminate") terminate: () -> #ok;
   @thread(#main) @foreign("glfw", "glfwPollEvents") pollEvents: (glfw: Glfw with notPassed()) -> #ok;
   @foreign struct Window {}
-  @thread(#render) @foreign("glfw", "glfwMakeContextCurrent") makeCurrent: (glfw: Glfw with notPassed(), window: Ptr(Window) | #none) -> #ok with anyThread();
-  @thread(#render) @foreign("GL", "glClear") @nonblocking clear: (glfw: Glfw with notPassed(), mask: u32) -> #ok;
-  @thread(#render) drawFrame(glfw: Glfw, current: #ok) -> #ok {
-    @after(current) r = clear(glfw:, mask: 16384) else #ok;
+  struct Current {}
+  @thread(#render) @foreign("current", "glfwMakeContextCurrent") makeCurrent: (glfw: Glfw with notPassed(), window: Ptr(Window) | #none) -> #ok with anyThread();
+  @thread(#render) @foreign("GL", "glClear") clear: (current: Current with notPassed(), mask: u32) -> #ok;
+  @thread(#render) drawFrame(current: Current) -> #ok {
+    r = clear(current:, mask: 16384) else #ok;
     r
   }
 
-  // detaches the context from #render, then ends GLFW on #main
-  endGlfw(glfw: Glfw) -> #ok {
+  // detaches the context on #render; the token keeps glfw, so this runs before terminate
+  leaveContext(current: Current, glfw: Glfw) -> #ok {
     d = makeCurrent(glfw:, window: #none) else #ok;
-    @after(d) t = terminate() else #ok;
-    t
+    d
+  }
+
+  enterContext(glfw: Glfw, window: Ptr(Window)) -> Current | #none with release(leaveContext, glfw) {
+    return match makeCurrent(glfw:, window:) { #lost -> #none, #ok -> Current(), };
   }
 
   // 1 is GLFW_TRUE
-  startGlfw() -> Glfw | #none with release(endGlfw) {
+  startGlfw() -> Glfw | #none with release(terminate) {
     return if glfwInit() != 1 { #none } else { Glfw() };
   }
 ```
 
-<!-- DESIGN.md:5238 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
+<!-- DESIGN.md:5243 layer L10: ring L10, word L1 (Utf8String), label none; section [sec:tour_basics] 1 -->
 ```zed
 // bindings — immutable, inferred; domains where they carry intent
 x = 42;
@@ -1219,7 +1224,7 @@ onAxis = Point(x: 0, ...);             // a struct is its constructor, curried b
 struct Round { import Rect, r: f64 }     // composition-import, not inheritance
 ```
 
-<!-- DESIGN.md:5278 layer L6: ring L6, word none, label none; section [sec:tour_methods] 1 -->
+<!-- DESIGN.md:5283 layer L6: ring L6, word none, label none; section [sec:tour_methods] 1 -->
 ```zed
 struct Counter { n: int, hi: int }
 
@@ -1255,7 +1260,7 @@ run = loop {
 };
 ```
 
-<!-- DESIGN.md:5322 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
+<!-- DESIGN.md:5327 layer L5: ring L5, word L5 (sort), label none; section [sec:tour_collections] 1 -->
 ```zed
 xs   = [3, 1, 4, 1, 5];                 // [int]  ≡  int[0..<5] -> int
 m    = { "a" -> 1, "b" -> 2 };          // display: commas inside, `;` ends the statement;
@@ -1273,13 +1278,13 @@ counts = text.split(" ").group(w -> w.lower).count;
 // counts : Utf8String ->? int     (f() ≡ f — a unit morphism reads as its value)
 ```
 
-<!-- DESIGN.md:5339 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
+<!-- DESIGN.md:5344 layer L8: ring L8, word L3 (split), label none; section [sec:tour_collections] 2 -->
 ```zed
 // the same program, symbolic register (what the optimizer reasons over):
 counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);
 ```
 
-<!-- DESIGN.md:5344 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
+<!-- DESIGN.md:5349 layer L4: ring L1, word L4 (rekey), label none; section [sec:tour_collections] 3 -->
 ```zed
 // group vs rekey — the grouping decision is always a visible word:
 byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnessed:
@@ -1288,7 +1293,7 @@ byId = users.rekey(u -> u.id);  // ✗ Collision: unless id-uniqueness is witnes
                                 //    and fold each id to its one user or #collision"
 ```
 
-<!-- DESIGN.md:5352 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
+<!-- DESIGN.md:5357 layer L5: ring L1, word L5 (maxBy), label none; section [sec:tour_collections] 4 -->
 ```zed
 byId = users.group(u -> u.id);  // ✓ type: Id ->? (UserKey -> User)  (the extra level, declared by the word)
 
@@ -1298,7 +1303,7 @@ one  = best?.first;             // #none carried; lexicographic: the max-score g
                                 // (first/last descend by each level's order — sec:corner_cases)
 ```
 
-<!-- DESIGN.md:5363 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
+<!-- DESIGN.md:5368 layer L5: ring L1, word L5 (join), label none; section [sec:tour_joins] 1 -->
 ```zed
 // query projection      (payments : OrderId -> Payment — uniquely keyed,
 //                        which is what keeps the join flat, sec:joins;
@@ -1307,7 +1312,7 @@ paid = orders.join(payments, on: #orderId, kind: #left);
      // OrderId -> (Order, Payment | #none) — the pair of sec:joins; absence is a value, not a null row
 ```
 
-<!-- DESIGN.md:5371 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
+<!-- DESIGN.md:5376 layer L3: ring L3, word none, label none; section [sec:tour_joins] 2 -->
 ```zed
 // iteration projection — the SAME kernel term; the compiler picks the plan
 paid = for o in orders {
@@ -1316,13 +1321,13 @@ paid = for o in orders {
 };
 ```
 
-<!-- DESIGN.md:5379 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
+<!-- DESIGN.md:5384 layer L5: ring L1, word L5 (diff), label none; section [sec:tour_joins] 3 -->
 ```zed
 // anti-join, both ways (same term again)
 unpaid = orders.diff(payments, on: #orderId);
 ```
 
-<!-- DESIGN.md:5384 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
+<!-- DESIGN.md:5389 layer L8: ring L8, word L3 (where), label none; section [sec:tour_joins] 4 -->
 ```zed
 unpaid = orders.where(o -> payments[o.orderId] is #notFound);
 
@@ -1343,7 +1348,7 @@ matmul(positional a: (r -> c -> f64), positional b: (c -> k -> f64)) =
 prod = a.matmul(b);
 ```
 
-<!-- DESIGN.md:5406 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
+<!-- DESIGN.md:5411 layer L6: ring L6, word L6 (::frames), label none; section [sec:tour_loops] 1 -->
 ```zed
 // comprehension — parallel by default
 sq = for i in 0..<n { i * i };
@@ -1377,7 +1382,7 @@ sessions = events.chunkBy(e -> e.userId);     // key-change splits; last chunk i
 report   = sessions.map(s -> summarize(s));
 ```
 
-<!-- DESIGN.md:5441 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
+<!-- DESIGN.md:5446 layer L3: ring L3, word L3 (where), label none, documentation notation; section [sec:tour_failure] 1 -->
 ```zed
 parse : (Utf8String) -> Config | #syntaxError(..)         // an assumed input, shown as a type — no ';' (sec:lexical)
 
@@ -1401,7 +1406,7 @@ badAmounts = amounts.where(a -> a is not int);     // 3: keep them — an ordina
                                                    //    collection, sized and reported
 ```
 
-<!-- DESIGN.md:5466 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
+<!-- DESIGN.md:5471 layer L21: ring L20, word L21 (store), label none, documentation notation; section [sec:tour_grammar] 1 -->
 ```zed
 // one declaration: type + parser + serializer (round-trip canonical)
 struct KeyVal  grammar { key: Ident  ":"  value: Json }
@@ -1455,18 +1460,18 @@ exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's sig
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
 ```
 
-<!-- DESIGN.md:5573 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
+<!-- DESIGN.md:5578 layer L3: ring L1, word none, label L3; section [sec:type_notation] 1 -->
 ```zed
 // layer L3
 priceOf(positional items, positional id) = items[id]?.price * (1 + taxRate);
 ```
 
-<!-- DESIGN.md:5580 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
+<!-- DESIGN.md:5585 layer L2: ring L2, word none, label none, documentation notation; section [sec:type_notation] 2 -->
 ```zed
 priceOf : (K ->? {price: f64}, K) -> f64 | #notFound
 ```
 
-<!-- DESIGN.md:5592 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
+<!-- DESIGN.md:5597 layer L20: ring L20, word L20 (serialize), label none; section [sec:power] 1 -->
 ```zed
 // 1 — Deterministic parallel float sum: bit-identical at any core count.
 total = readings >< (+);

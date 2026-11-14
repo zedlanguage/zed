@@ -643,7 +643,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | @foreign «struct» Env { }
   2 | @foreign «struct» Txn { }
   3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok ;
-  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
+  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) «with» keeps ( env ) «with» keeps ( parent ) ) ;
   5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
 == DESIGN.md [sec:ffi] 5 L7
   1 | @foreign «struct» Zip { }
@@ -673,7 +673,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
   3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
-  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) @nonblocking finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 ;
+  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 ;
   7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #ok ; #ok } ) ) ;
   8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) ;
  12 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 | #lost {
@@ -684,11 +684,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  17 | rc2 , prepared = prepare ( db : , sql : , bytes : - 1₍10₎ , tail : #none ) ;
  18 | «match» prepared {
  19 | #none -> rc2 ,
- 20 | stmt -> ( db , stmt ) ,
- 21 | }
- 22 | } ,
- 23 | }
+ 20 | #lost -> #lost ,
+ 21 | stmt -> ( db , stmt ) ,
+ 22 | }
+ 23 | } ,
  24 | }
+ 25 | }
 == DESIGN.md [sec:ffi] 10 L7
   1 | @foreign «struct» Termios {
   2 | iflag : u32 , oflag : u32 , cflag : u32 , lflag : u32 ,
@@ -702,7 +703,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  13 | t «with» {
  14 | iflag = t . iflag . bitAnd ( bitNot ( 1515₍10₎ , width : 32₍10₎ ) ) ,
  15 | oflag = t . oflag . bitAnd ( bitNot ( 1₍10₎ , width : 32₍10₎ ) ) ,
- 16 | lflag = t . lflag . bitAnd ( bitNot ( 32842₍10₎ , width : 32₍10₎ ) ) ,
+ 16 | lflag = t . lflag . bitAnd ( bitNot ( 32842₍10₎ , width : 32₍10₎ ) ) . bitOr ( 1₍10₎ ) ,
  17 | cflag = t . cflag . bitAnd ( bitNot ( 304₍10₎ , width : 32₍10₎ ) ) . bitOr ( 48₍10₎ ) ,
  18 | cc [ 6₍10₎ ] = 1₍10₎ , cc [ 5₍10₎ ] = 0₍10₎ ,
  19 | }
@@ -779,20 +780,23 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) terminate : ( ) -> #ok ;
   4 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) pollEvents : ( glfw : Glfw «with» notPassed ( ) ) -> #ok ;
   5 | @foreign «struct» Window { }
-  6 | @thread ( #render ) @foreign ( str["glfw"] , str["glfwMakeContextCurrent"] ) makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) | #none ) -> #ok «with» anyThread ( ) ;
-  7 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) @nonblocking clear : ( glfw : Glfw «with» notPassed ( ) , mask : u32 ) -> #ok ;
-  8 | @thread ( #render ) drawFrame ( glfw : Glfw , current : #ok ) -> #ok {
-  9 | @after ( current ) r = clear ( glfw : , mask : 16384₍10₎ ) «else» #ok ;
- 10 | r
- 11 | }
- 14 | endGlfw ( glfw : Glfw ) -> #ok {
- 15 | d = makeCurrent ( glfw : , window : #none ) «else» #ok ;
- 16 | @after ( d ) t = terminate ( ) «else» #ok ;
- 17 | t
+  6 | «struct» Current { }
+  7 | @thread ( #render ) @foreign ( str["current"] , str["glfwMakeContextCurrent"] ) makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) | #none ) -> #ok «with» anyThread ( ) ;
+  8 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) clear : ( current : Current «with» notPassed ( ) , mask : u32 ) -> #ok ;
+  9 | @thread ( #render ) drawFrame ( current : Current ) -> #ok {
+ 10 | r = clear ( current : , mask : 16384₍10₎ ) «else» #ok ;
+ 11 | r
+ 12 | }
+ 15 | leaveContext ( current : Current , glfw : Glfw ) -> #ok {
+ 16 | d = makeCurrent ( glfw : , window : #none ) «else» #ok ;
+ 17 | d
  18 | }
- 21 | startGlfw ( ) -> Glfw | #none «with» release ( endGlfw ) {
- 22 | «return» «if» glfwInit ( ) != 1₍10₎ { #none } «else» { Glfw ( ) } ;
- 23 | }
+ 20 | enterContext ( glfw : Glfw , window : Ptr ( Window ) ) -> Current | #none «with» release ( leaveContext , glfw ) {
+ 21 | «return» «match» makeCurrent ( glfw : , window : ) { #lost -> #none , #ok -> Current ( ) , } ;
+ 22 | }
+ 25 | startGlfw ( ) -> Glfw | #none «with» release ( terminate ) {
+ 26 | «return» «if» glfwInit ( ) != 1₍10₎ { #none } «else» { Glfw ( ) } ;
+ 27 | }
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
