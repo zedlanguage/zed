@@ -4,7 +4,10 @@
 //! a name a test narrows shows its narrowed type, `int[0..]`, not `int`; and each repair a
 //! rejection offers, in a note or as the headline's Try, is written into the program, which
 //! then checks. A test's narrowing of an exponent reaches the power, and a power is read at
-//! least at its least power: under `k > 0`, `2^(2^k - 2)` checks (POW-scope-exponent).
+//! least at its least power: under `k > 0`, `2^(2^k - 2)` checks (POW-scope-exponent). That least
+//! power is exact at every level of a tower: under `k > 0`, `5^(2^k + 1) - 10` is at least
+//! 5^3 - 10 = 115, and the headline of one past it shows the derived `int[-1..]`
+//! (POW-tower-exact-test).
 
 use zed_tests::scaling;
 use zedc::run::load;
@@ -361,4 +364,99 @@ fn a_tower_of_powers_under_a_test_scales() {
         let src = &made[&n];
         load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
     });
+}
+
+/// Asserts that `src` is rejected with an int power whose headline shows `power`, its code
+/// annotated with the types the checker derived, as `2 : int ^ (2^k - 3) : int[-1..]`.
+fn rejected_with(src: &str, power: &str) {
+    let out = rejected(src);
+    let want = format!("Int power with an exponent that may be negative: `{power}`.");
+    assert!(out.lines().any(|l| l.contains(&want)), "{src}\n{out}");
+}
+
+#[test]
+fn the_least_power_of_a_tower_under_a_test_is_exact() {
+    // Under `k > 0`, `2^k + 1` is at least 3, so `5^(2^k + 1)` is at least 5^3 = 125, read at
+    // the corners exactly, and `5^(2^k + 1) - 10` is at least 115 (POW-tower-exact-test). The
+    // bound by Bernoulli's inequality, 1 + 3(5 - 1) = 13, would make it at least 3, and the
+    // bound under `k >= 0`, 5^2 = 25, at least 15: each is below 115 - 116.
+    let arm = |body: &str| format!("q(k: int) = if k > 0 {{ {body} }} else {{ 0 }};\n");
+    for body in [
+        "2^(5^(2^k + 1) - 10)",
+        "2^(5^(2^k + 1) - 10 - 115)",
+        "2^(5^(2^k + 1) - 125)",
+    ] {
+        checks(&arm(body));
+    }
+    // One past the least power, the exponent shows its derived least value, -1.
+    for (body, power) in [
+        (
+            "2^(5^(2^k + 1) - 10 - 116)",
+            "2 : int ^ (5^(2^k + 1) - 10 - 116) : int[-1..]",
+        ),
+        (
+            "2^(5^(2^k + 1) - 126)",
+            "2 : int ^ (5^(2^k + 1) - 126) : int[-1..]",
+        ),
+        (
+            "2^(5^(2^k + 1) - 135)",
+            "2 : int ^ (5^(2^k + 1) - 135) : int[-10..]",
+        ),
+    ] {
+        rejected_with(&arm(body), power);
+    }
+}
+
+#[test]
+fn the_least_power_of_a_neighboring_tower_is_exact() {
+    let arm = |body: &str| format!("q(k: int) = if k > 0 {{ {body} }} else {{ 0 }};\n");
+    // One level deeper: `2^(2^k)` is at least 4, so `5^(2^(2^k) + 1)` is at least 5^5 = 3125.
+    checks(&arm("2^(5^(2^(2^k) + 1) - 3125)"));
+    rejected_with(
+        &arm("2^(5^(2^(2^k) + 1) - 3126)"),
+        "2 : int ^ (5^(2^(2^k) + 1) - 3126) : int[-1..]",
+    );
+    // An inner exponent of at least 0 gives an inner power of at least 5^0 = 1.
+    checks(&arm("2^(5^(2^k - 2) - 1)"));
+    // An inner exponent that may be negative, `2^k - 3` at k = 1, is rejected, and so is the
+    // outer power, whose exponent `5^(2^k - 3) - 10` is not shown to be at least 0.
+    let src = arm("2^(5^(2^k - 3) - 10)");
+    rejected_with(&src, "5 : int ^ (2^k - 3) : int[-1..]");
+    rejected_with(&src, "2 : int ^ (5^(2^k - 3) - 10) : int");
+}
+
+/// A tower of `n` powers under `k > 0`, each level `5^(e + 1) - 123` of the level `e` below it,
+/// from `2^k`, and `2^(e - 2)` of the top level `e`: each level is at least 2, since
+/// `5^(2 + 1) - 123 = 2`, read exactly at every level, where a bound below the least power
+/// rejects it (Bernoulli's 1 + 3(5 - 1) = 13 gives -110).
+fn least_power_tower(n: usize, minus: usize) -> String {
+    let mut e = String::from("2^k");
+    for _ in 0..n {
+        e = format!("5^({e} + 1) - 123");
+    }
+    format!("q(k: int) = if k > 0 {{ 2^({e} - {minus}) }} else {{ 0 }};\n")
+}
+
+#[test]
+fn a_tower_at_its_least_power_checks_and_scales() {
+    // The top level is at least 2 and no more: `- 2` checks and `- 3` is rejected.
+    for n in [1, 2, 3] {
+        checks(&least_power_tower(n, 2));
+        let out = rejected(&least_power_tower(n, 3));
+        assert!(
+            out.lines()
+                .next()
+                .is_some_and(|l| l.contains("- 123 - 3) : int[-1..]`.")),
+            "{out}"
+        );
+    }
+    let made = scaling::inputs(64, |n| program(&least_power_tower(n, 2)));
+    scaling::check(
+        "checking a tower of n powers, each at its least power",
+        64,
+        |n| {
+            let src = &made[&n];
+            load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}\n{e}"));
+        },
+    );
 }
