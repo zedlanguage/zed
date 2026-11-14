@@ -2320,12 +2320,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAIL-check-arm-call-bench-hang | running | 2026-11-14 11:16 |  |
+| FAIL-check-arm-call-bench-hang | impl attempt 1 | 2026-11-14 11:16 | started in wt/fix-arm-call-hang at 07af08b86, load 51.40 |
 | FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | FAIL-l139-wide-asum-scaling | running | 2026-11-14 11:32 |  |
+| FAIL-linked-holes-scratch-seed | running | 2026-11-14 07:58 |  |
+| FAIL-linked-sums-between-seed | running |  |  |
 | FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
+| FAIL-preimage-stop-entry-seed | running |  |  |
 | FAIL-pres-overlap-every-level-refused | impl attempt 1 | 2026-11-14 10:33 | started in wt/fix-pres-overlap at e329bf5f6, load 49.30 |
 | FAIL-types-first-shape-unbounded | running | 2026-11-14 11:00 |  |
 | FAIL-types-own-same-name | running | 2026-11-14 11:00 |  |
@@ -2337,14 +2340,13 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MUTATE-follows-operation | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
 | PERF-l139-persist-due | impl attempt 1 | 2026-11-14 11:00 | start, worktree wt/perf-l139 from origin/main 10fb070e9; load 34.30 42.93 45.18 |
-| POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | started in wt/poly-sparse-half on a811ad62b; load 54.67 |
+| POLY-square-sparse-half | impl attempt 1 | 2026-11-14 11:26 | square path written; baseline worktree poly-sparse-half-base seeded for before counts / load 32.61 41.59 44.26 |
 | STAGE-generic-fold-int-arm | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-generic-fold-bench-size | running | 2026-11-14 11:29 | 2026-11-14: found by STAGE-generic-fold-div; sink given a consumer |
 | TEST-largest-group-scc | impl attempt 1 | 2026-11-14 11:27 | started in wt/largest-scc on f9338e5f9, load 62.98 |
 | TEST-law25-time | running | 2026-11-14 10:54 |  |
 | TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
 | TEST-op-table-div-mod | running | 2026-11-14 10:54 |  |
-| TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 11:30 | part 2 pushed (this commit): bes.rs, print/order.rs done; types.rs, ty.rs reduced; empty.rs open; rows DOC-port-in-bound-errors, DOC-user-errs-payload, FAIL-returned-generic-need-fit, FAIL-codex-r3-order-seed filed; row open / load 30.33 39.97 40.53 |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
