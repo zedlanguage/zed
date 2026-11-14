@@ -426,17 +426,10 @@ fn runs_tests(x: &str, runs: &Runs) -> Vec<zed_kernel::Term> {
 /// answer is unbounded that way.
 const PROBES: [i64; 2] = [-1_000_000, 1_000_000];
 
-/// Codex round 3 (`unbounded.mjs`): 1,600 systems (here 400, seed 7331) of 1 to 4 names,
-/// each one of eight unions of intervals, some unbounded and one empty, with up to `2n`
-/// difference tests in `-3..=3`. The scope keeps each name's exact values on `-12..=12` and
-/// keeps a far value exactly when the answer is unbounded that way. CONTROL (Codex's
-/// "missing rays"): the same tests within `-10..=10` give an answer that is not the
-/// unbounded one, so the check can tell bounded from unbounded.
-#[test]
-fn unbounded_names_keep_their_exact_values_and_rays() {
-    use crate::nests::and;
-    use zedc::store::cell::Premises;
-    let choices: Vec<Runs> = vec![
+/// The eight unions of intervals a name of [`unbounded_cases`] takes, some unbounded and one
+/// empty.
+fn choices() -> Vec<Runs> {
+    vec![
         vec![(None, Some(-1)), (Some(1), None)],
         vec![(None, Some(0))],
         vec![(Some(0), None)],
@@ -445,40 +438,82 @@ fn unbounded_names_keep_their_exact_values_and_rays() {
         vec![(None, Some(-3)), (Some(0), Some(0)), (Some(2), Some(3))],
         vec![(None, None)],
         vec![],
-    ];
+    ]
+}
+
+/// Asserts that the names `dom` holds, with the difference tests `edges`, the tests assumed
+/// one at a time in order and as one conjunction, keep every exact value, and on `-12..=12`
+/// and at the [`PROBES`] no value outside the exact least and greatest ones; returns the
+/// exact answer. A name keeps exactly its exact values unless it is on a cycle of tests with
+/// a name with holes: there the ends are exact and the values between them may have no point
+/// (DESIGN L1.39, "Holes are exact inside the projection: the bounds of an SCC ...", and
+/// `holes` in zedc-preimage), as on seed 3589477123415231569, case 113, where `x2` keeps -1.
+fn exact_case(dom: &[Runs], edges: &[(usize, usize, i64)], what: &str) -> Vec<Runs> {
+    use crate::nests::and;
+    use zedc::store::cell::Premises;
     let p = Premises::new();
-    let check = |dom: &[Runs], edges: &[(usize, usize, i64)], what: &str| {
-        let want = unbounded_exact(dom, edges);
-        let inst = Inst {
-            range: vec![(0, 0); dom.len()],
-            out: vec![vec![]; dom.len()],
-            edges: edges.to_vec(),
-        };
-        let mut ts: Vec<zed_kernel::Term> = (0..dom.len())
-            .flat_map(|i| runs_tests(&nm(i), &dom[i]))
-            .collect();
-        ts.extend(inst.tests().1);
-        let s = ts.iter().fold(inst.scope(), |s, t| s.assume(t, true, &p));
-        let at_once = match ts.iter().cloned().reduce(and) {
-            Some(all) => inst.scope().assume(&all, true, &p),
-            None => inst.scope(),
-        };
-        for (how, s) in [("in order", &s), ("at once", &at_once)] {
-            for (i, w) in want.iter().enumerate() {
-                let g = s.get(&nm(i));
-                for v in (-12..=12).chain(PROBES) {
-                    assert_eq!(
-                        g.contains(&Value::Int(v)),
-                        in_runs(w, v),
-                        "{what} {how}: {} at {v}, exact {w:?}, dom {dom:?}, edges {edges:?}",
-                        nm(i)
-                    );
-                }
+    let want = unbounded_exact(dom, edges);
+    let inst = Inst {
+        range: vec![(0, 0); dom.len()],
+        out: vec![vec![]; dom.len()],
+        edges: edges.to_vec(),
+    };
+    let mut ts: Vec<zed_kernel::Term> = (0..dom.len())
+        .flat_map(|i| runs_tests(&nm(i), &dom[i]))
+        .collect();
+    ts.extend(inst.tests().1);
+    let s = ts.iter().fold(inst.scope(), |s, t| s.assume(t, true, &p));
+    let at_once = match ts.iter().cloned().reduce(and) {
+        Some(all) => inst.scope().assume(&all, true, &p),
+        None => inst.scope(),
+    };
+    // Which names reach which along the tests, by Warshall's closure, O(n³) for n <= 4.
+    let n = dom.len();
+    let mut reach = vec![vec![false; n]; n];
+    for &(u, v, _) in edges {
+        reach[u][v] = true;
+    }
+    for k in 0..n {
+        for i in 0..n {
+            for j in 0..n {
+                reach[i][j] |= reach[i][k] && reach[k][j];
             }
         }
-        want
+    }
+    let tied = |i: usize, j: usize| i == j || (reach[i][j] && reach[j][i]);
+    let exact = |i: usize| {
+        let cyclic = (0..n).any(|j| j != i && tied(i, j));
+        !cyclic || (0..n).all(|k| !tied(i, k) || dom[k].len() <= 1)
     };
-    let (_, seed) = Rng::fresh("unbounded names with holes");
+    for (how, s) in [("in order", &s), ("at once", &at_once)] {
+        for (i, w) in want.iter().enumerate() {
+            let g = s.get(&nm(i));
+            let hull: Runs = match (w.first(), w.last()) {
+                (Some(&(lo, _)), Some(&(_, hi))) => vec![(lo, hi)],
+                _ => vec![],
+            };
+            for v in (-12..=12).chain(PROBES) {
+                let kept = g.contains(&Value::Int(v));
+                let ok = if in_runs(w, v) {
+                    kept
+                } else {
+                    !kept || (in_runs(&hull, v) && !exact(i))
+                };
+                assert!(
+                    ok,
+                    "{what} {how}: {} at {v} kept {kept}, exact {w:?}, dom {dom:?}, edges {edges:?}",
+                    nm(i)
+                );
+            }
+        }
+    }
+    want
+}
+
+/// The random cases of [`unbounded_names_keep_their_exact_values_and_rays`] drawn from `seed`,
+/// each checked by [`exact_case`].
+fn unbounded_cases(seed: u64) {
+    let choices = choices();
     let mut rnd = Lcg(seed);
     let mut nonempty = 0;
     // 400 cases before random tests took a new seed each run (0.8 s at load 27).
@@ -497,7 +532,7 @@ fn unbounded_names_keep_their_exact_values_and_rays() {
                 )
             })
             .collect();
-        let want = check(&dom, &edges, &format!("seed {seed}, case {t}"));
+        let want = exact_case(&dom, &edges, &format!("seed {seed}, case {t}"));
         nonempty += usize::from(want.iter().any(|r| !r.is_empty()));
     }
     // Seeds 1 to 24 gave 56 to 80 of 150.
@@ -505,9 +540,24 @@ fn unbounded_names_keep_their_exact_values_and_rays() {
         nonempty > 30,
         "seed {seed}: {nonempty} of {CASES} have a solution"
     );
+}
+
+/// Codex round 3 (`unbounded.mjs`): 1,600 systems (here 150 from a new seed each run, by
+/// [`unbounded_cases`]) of 1 to 4 names, each one of eight unions of intervals, some unbounded
+/// and one empty, with up to `2n` difference tests in `-3..=3`. The scope keeps each name's
+/// exact ends, its exact values on `-12..=12` off a cycle with a name with holes and every
+/// exact value on one ([`exact_case`]), and keeps a far value exactly when the answer is
+/// unbounded that way. 1,412 seeds (212,000 cases) met this; 6 of 120 seeds failed when every
+/// value on such a cycle was asked to be exact. CONTROL (Codex's "missing rays"): the same
+/// tests within `-10..=10` give an answer that is not the unbounded one, so the check can
+/// tell bounded from unbounded.
+#[test]
+fn unbounded_names_keep_their_exact_values_and_rays() {
+    let (_, seed) = Rng::fresh("unbounded names with holes");
+    unbounded_cases(seed);
     // Two unbounded names with `x0 - x1 <= -3`: both stay unbounded both ways.
     let all = vec![(None, None)];
-    let want = check(&[all.clone(), all.clone()], &[(1, 0, -3)], "two rays");
+    let want = exact_case(&[all.clone(), all.clone()], &[(1, 0, -3)], "two rays");
     assert_eq!(want, [all.clone(), all.clone()]);
     let boxed = vec![(Some(-10), Some(10))];
     assert_ne!(
@@ -777,3 +827,49 @@ fn the_staircase_of_four_has_exact_sets() {
 }
 
 mod bench;
+
+/// Seed 16460940032166542379, case 46 (row FAIL-xst-unbounded-holes-seed): `x0` in
+/// `..=-3 | 0 | 2..=3` and `x1` in `-2..=2` with `x0 == x1`, so `x1` is exactly {0, 2}.
+/// Assumed at once, the `!=` tests that make the holes of `x0` stay in the relation, its tree
+/// is projected block by block, and `x1` keeps 1 between its exact ends 0 and 2; assumed in
+/// order, the holes of `x0` reach `x1` through the equality (`holes` in zedc-preimage).
+#[test]
+fn equal_names_with_holes_keep_their_exact_ends() {
+    let dom: Vec<Runs> = vec![
+        vec![(None, Some(-3)), (Some(0), Some(0)), (Some(2), Some(3))],
+        vec![(Some(-2), Some(2))],
+    ];
+    let edges = [(0, 1, 0), (1, 1, 3), (1, 0, 0)];
+    let want = exact_case(&dom, &edges, "x0 == x1");
+    assert_eq!(want[1], [(Some(0), Some(0)), (Some(2), Some(2))]);
+    use zedc::store::cell::Premises;
+    let p = Premises::new();
+    let inst = Inst {
+        range: vec![(0, 0); 2],
+        out: vec![vec![]; 2],
+        edges: edges.to_vec(),
+    };
+    let mut ts: Vec<zed_kernel::Term> = (0..2).flat_map(|i| runs_tests(&nm(i), &dom[i])).collect();
+    ts.extend(inst.tests().1);
+    let s = ts.iter().fold(inst.scope(), |s, t| s.assume(t, true, &p));
+    let x1 = s.get("x1");
+    let kept: Vec<i64> = (-3..=3).filter(|&v| x1.contains(&Value::Int(v))).collect();
+    assert_eq!(kept, [0, 2], "in order");
+}
+
+/// The seeds of `unbounded_names_keep_their_exact_values_and_rays` that failed when the test
+/// asked every value between a name's ends to be exact (row FAIL-xst-unbounded-holes-seed):
+/// each failure was such a value, of a name on a cycle with a name with holes.
+#[test]
+fn unbounded_names_keep_their_ends_on_the_seeds_that_failed() {
+    for seed in [
+        13883005768035416034,
+        3589477123415231569,
+        16460940032166542379,
+        8369629384006033154,
+        1516745365871784284,
+        15971249357424917340,
+    ] {
+        unbounded_cases(seed);
+    }
+}
