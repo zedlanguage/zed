@@ -5,7 +5,7 @@ use zed_tests::scaling;
 use super::super::held_functions::{
     in_a_wide_payload, in_atoms, in_atoms_and_tuples, in_atoms_by_bindings, in_atoms_by_calls,
     in_atoms_twice, in_atoms_twice_in_a_function, in_calls, in_named_steps, in_one_expression,
-    nested, notes_in_calls, notes_in_named_steps, notes_in_one_expression,
+    nested, notes_in_calls, notes_in_named_steps, notes_in_one_expression, returned_by_lambdas,
 };
 use super::super::{Resolved, type_errors};
 
@@ -158,4 +158,28 @@ fn a_type_31250_tuples_deep_prints_and_drops_on_a_256_kib_stack() {
         let text = nested(n).to_string();
         assert!(text == format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
     });
+}
+
+/// A power returned through n arrows and passed where a function n arrows deep is expected is
+/// checked by one call per arrow (`needs_hold` in crates/zedc-check/src/check/walk.rs),
+/// accepted at `f64` and rejected once at `int`, in linear time; `k * k`, which has no need,
+/// is the control. Small instance:
+/// `held_functions::a_power_returned_through_a_few_lambdas_is_checked_at_the_expected_type`.
+#[test]
+fn a_power_returned_n_deep_is_checked_in_linear_time() {
+    for (body, c, errors) in [
+        ("k * k", "f64", 0),
+        ("2 ^ k", "f64", 0),
+        ("2 ^ k", "int", 1),
+    ] {
+        let what = format!("`{body}` returned through n arrows, expected at {c}");
+        let units: BTreeMap<usize, Resolved> = [200, scaling::FACTOR * 200]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&returned_by_lambdas(n, c, body))))
+            .collect();
+        scaling::check_order(&what, 200, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), errors, "{what} at {n}");
+        });
+    }
 }

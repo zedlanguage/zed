@@ -8273,7 +8273,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ok
             }
             None => match piece {
-                Piece::Fn(s) if !s.needs.is_empty() => {
+                Piece::Fn(s) if holds_needs(s) => {
                     self.fit_needs(s, ty, &mut Binds::new(), what, span)
                 }
                 Piece::Tuple(r) if r.open() => match &ty.pieces()[..] {
@@ -8288,9 +8288,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Whether a function of `s`, whose body has needs, may be passed, by `what` at `span`,
-    /// at a parameter of type `p`: `s` applied to the parameters of `p`'s one function type
-    /// gives its result. The application reports its own errors.
+    /// Whether a function of `s`, whose body has needs or which returns a function whose body
+    /// has needs ([`holds_needs`]), may be passed, by `what` at `span`, at a parameter of type
+    /// `p`: `s` without its needs fits `p`, and `s` applied to the parameters of `p`'s one
+    /// function type gives its result ([`Self::needs_hold`]). The application reports its own
+    /// errors.
     fn fit_needs(
         &mut self,
         s: &Arc<Sig>,
@@ -8299,8 +8301,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         span: Span,
     ) -> bool {
-        let mut bare = (**s).clone();
-        bare.needs = Vec::new();
+        let bare = without_needs(s);
         let [q] = p.fns.iter().collect::<Vec<_>>()[..] else {
             return false;
         };
@@ -8309,13 +8310,61 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let q = q.replace(binds);
         let from = self.errors.len();
+        self.needs_hold(s, &q, what, span) || self.errors.len() > from
+    }
+
+    /// Whether the needs of `s`, and of the functions it returns, hold where `s` is passed as a
+    /// function of type `q`, which `s` without its needs fits: each arrow of `q` calls `s` with
+    /// its parameters, which checks the needs of `s` on the types the call binds its variables
+    /// to (DESIGN.md sec:type_resolution: "each call checks the need again on the type the call
+    /// binds the variable to"), and its result must fit the arrow's. A function the call
+    /// returns is checked so in turn against the arrow's one function result, as when it is
+    /// passed itself (FAIL-returned-generic-need-fit): compared as a type, a returned
+    /// signature with needs fits only one equal to it ([`ty::fits_sig_with`]), so
+    /// `w(positional k) = 2 ^ k`, returned, did not fit `(positional k: f64) -> f64`, which it
+    /// fits when passed.
+    ///
+    /// Cost: one call per arrow at each depth of `q`'s returned functions, which the
+    /// comparison of `s` without its needs with `q` already walked. A returned function is
+    /// checked here only by its calls, never compared again as a type: comparing it at each
+    /// depth would cost the square of the depth. The functions still to check are kept on an
+    /// explicit stack, since returned functions nest as deep as the text, and popped in the
+    /// order of the text, so the messages are.
+    ///
+    /// A function the call returns is named in a message by `what` and the number of calls
+    /// that return it: "the function `f` returns takes `k` in int[0..]".
+    fn needs_hold(&mut self, s: &Arc<Sig>, q: &Sig, what: &str, span: Span) -> bool {
         let mut ok = true;
-        for a in &q.arrows {
-            let args = a.params.iter().map(|t| Some(Arg::of(t.clone()))).collect();
-            let (r, _) = self.apply(Label::Text(what), s, args, false, span);
-            ok &= self.subtype(&r, &a.result);
+        let mut stack = vec![(s.clone(), Arc::new(q.clone()), 0usize)];
+        while let Some((s, q, depth)) = stack.pop() {
+            let named = match depth {
+                0 => what.to_string(),
+                1 => format!("the function {what} returns"),
+                n => format!("the function {what} returns after {n} calls"),
+            };
+            let from = stack.len();
+            for a in &q.arrows {
+                let args = a.params.iter().map(|t| Some(Arg::of(t.clone()))).collect();
+                let (r, _) = self.apply(Label::Text(&named), &s, args, false, span);
+                match &a.result.fns[..] {
+                    [rq] if !r.fns.is_empty() => {
+                        // The functions the call returns are checked by their own calls; the
+                        // rest of its result, where `s` has needs, as a type. Without needs,
+                        // `s` and the functions it returns fit as types already.
+                        let mut rest = r.clone();
+                        rest.fns = Vec::new();
+                        if !s.needs.is_empty() {
+                            ok &= self.subtype(&rest, &a.result);
+                        }
+                        stack.extend(r.fns.iter().map(|g| (g.clone(), rq.clone(), depth + 1)));
+                    }
+                    _ if !s.needs.is_empty() => ok &= self.subtype(&r, &a.result),
+                    _ => {}
+                }
+            }
+            stack[from..].reverse();
         }
-        ok || self.errors.len() > from
+        ok
     }
 
     /// The values of `t` flow into class `k`: a class merges with it, a carrier restricts it
@@ -12525,7 +12574,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let permuted = Arc::new(permuted);
         if !self.fits_slot(&permuted, e, &what, span) {
             // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
-            let why = match permuted.needs.is_empty() {
+            let why = match !holds_needs(&permuted) {
                 true => ty::why_unfit_with(&permuted, e, &|v| self.stale(v))
                     .map_or_else(String::new, |w| format!(": {w}")),
                 false => String::new(),
@@ -12558,10 +12607,10 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Whether the function `s`, named `what` in messages, with its parameters in the order of
     /// the function type `e`'s, fits a slot of `e`: as a type, or, when its body makes uses of
-    /// its type variables, by those uses checked on the types `e` passes. False only when no
-    /// error says why.
+    /// its type variables, or returns a function whose body does, by those uses checked on the
+    /// types `e` passes ([`holds_needs`]). False only when no error says why.
     fn fits_slot(&mut self, s: &Arc<Sig>, e: &Arc<Sig>, what: &str, span: Span) -> bool {
-        match s.needs.is_empty() {
+        match !holds_needs(s) {
             true => ty::fits_sig_with(s, e, &|v| self.stale(v)),
             false => {
                 let p = Ty::func(e.clone());
@@ -15487,7 +15536,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.restrict(k, mask_of(p), what, span)
                     }
                     None => match &piece {
-                        Piece::Fn(s) if !s.needs.is_empty() && !p.fns.is_empty() => {
+                        Piece::Fn(s) if holds_needs(s) && !p.fns.is_empty() => {
                             self.fit_needs(s, p, &mut binds, what, span)
                         }
                         _ => self.sub(&ty.of_piece(&piece), p, &mut binds),
@@ -18524,6 +18573,72 @@ fn in_text_order(edits: &[(Span, String)]) -> Vec<&(Span, String)> {
     let mut sorted: Vec<&(Span, String)> = edits.iter().collect();
     sorted.sort_by_key(|(s, _)| (s.start, s.end));
     sorted
+}
+
+/// Whether `s` has needs, or a function its arrows return at any depth has: a function so
+/// passed is checked by its calls ([`Ck::fit_needs`]), not as a type alone. Cost: each
+/// function its results hold, at any depth, visited once (a signature shared by two arrows is
+/// one node, kept by its address in `seen`), which comparing it as a type walks too; an
+/// explicit stack, since returned functions nest as deep as the text.
+fn holds_needs(s: &Sig) -> bool {
+    let mut stack = vec![s];
+    let mut seen: HashSet<*const Sig> = HashSet::new();
+    while let Some(s) = stack.pop() {
+        if !s.needs.is_empty() {
+            return true;
+        }
+        let fns = s.arrows.iter().flat_map(|a| a.result.fns.iter());
+        stack.extend(fns.map(|g| &**g).filter(|g| seen.insert(*g)));
+    }
+    false
+}
+
+/// `s` with no needs, nor any function its arrows return at any depth: what `s` is as a type,
+/// whose needs [`Ck::needs_hold`] checks by calls.
+///
+/// Cost: one visit of each function its results hold, at any depth, in post-order on an
+/// explicit stack (returned functions nest as deep as the text), each kept by its address
+/// with its copy without needs, or `None` where it holds none and is shared as it is; a copy is
+/// made only of those that hold needs. A result keeps its functions in their order, each
+/// replaced by its copy: rebuilding it by `Ty::union` would hash each signature whole, the
+/// depth below it again at each depth, the square of the depth in all. Two functions that
+/// differ only in their needs stay two, which the comparison reads as the same type twice.
+fn without_needs(s: &Sig) -> Sig {
+    let mut done: HashMap<*const Sig, Option<Arc<Sig>>> = HashMap::new();
+    let mut stack: Vec<(&Sig, bool)> = vec![(s, false)];
+    while let Some((g, ready)) = stack.pop() {
+        let fns = || g.arrows.iter().flat_map(|a| a.result.fns.iter());
+        if !ready {
+            stack.push((g, true));
+            for f in fns() {
+                if !done.contains_key(&Arc::as_ptr(f)) {
+                    stack.push((&**f, false));
+                }
+            }
+            continue;
+        }
+        if done.contains_key(&(g as *const Sig)) {
+            continue;
+        }
+        let changed = !g.needs.is_empty() || fns().any(|f| done[&Arc::as_ptr(f)].is_some());
+        let bare = changed.then(|| {
+            let mut b = g.clone();
+            b.needs = Vec::new();
+            for a in &mut b.arrows {
+                for f in &mut a.result.fns {
+                    if let Some(new) = &done[&Arc::as_ptr(f)] {
+                        *f = new.clone();
+                    }
+                }
+            }
+            Arc::new(b)
+        });
+        done.insert(g as *const Sig, bare);
+    }
+    match done.remove(&(s as *const Sig)).flatten() {
+        Some(b) => Arc::unwrap_or_clone(b),
+        None => s.clone(),
+    }
 }
 
 /// The edits of `sorted` ([`in_text_order`]) that lie in `at`, each with its place in

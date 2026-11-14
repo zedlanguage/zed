@@ -418,3 +418,137 @@ fn failures_holding_functions_that_merge_are_refused() {
                 n: int) = box(n) + bag(n);\n";
     assert_eq!(type_errors(data), Vec::<String>::new());
 }
+
+/// `w(positional k) = 2 ^ k` fits `(positional k: f64) -> f64` when it is passed itself: at
+/// `f64` the power has no domain need. Returned by `f`, the same function is compared with the
+/// same signature under `fits_in`'s solved path (crates/zedc-types/src/ty.rs, the
+/// `Some(f) => solved = ...` arm), and is rejected: "`f` is `(x: int) -> ((T) -> T for T in
+/// int | f32 | f64)`, not `(x: int) -> (f64) -> f64`". `k * k`, which has no need, is accepted
+/// both ways. DESIGN.md sec:type_resolution (the paragraph "a function's undeclared parameter
+/// is a *class*"): "each call checks the need again on the type the call binds the variable
+/// to"; here that type is `f64`, where the need holds, whether `w` is passed itself or
+/// returned by `f`, so both are accepted.
+#[test]
+fn a_returned_power_fits_an_f64_result_as_it_does_when_passed_itself() {
+    let direct = "w(positional k) = 2 ^ k;\nh(g: (positional k: f64) -> f64) = 1;\ny = h(g: w);\n";
+    assert_eq!(type_errors(direct), Vec::<String>::new(), "{direct}");
+    let returned = "w(positional k) = 2 ^ k;\nf(x: int) = w;\nh(g: (x: int) -> ((positional k: f64) -> f64)) = 1;\ny = h(g: f);\n";
+    assert_eq!(type_errors(returned), Vec::<String>::new(), "{returned}");
+}
+
+/// The neighbors of the case above. At `f32` the need holds as at `f64`, and at `int` it does
+/// not, whether `w` is passed itself or returned, and returned one level deeper the same holds:
+/// the need is checked at each arrow of the expected type on the types that arrow binds, and a
+/// rejection names the returned function by the function that returns it. A returned function
+/// with no need fits at every depth as written.
+#[test]
+fn a_returned_power_is_checked_at_the_type_each_expected_arrow_binds() {
+    let accepted = [
+        "w(positional k) = 2 ^ k;\nf(x: int) = w;\nh(g: (x: int) -> ((positional k: f32) -> f32)) = 1;\ny = h(g: f);\n",
+        "w(positional k) = 2 ^ k;\nf(x: int) = w;\ne(z: int) = f;\nh(g: (z: int) -> ((x: int) -> ((positional k: f64) -> f64))) = 1;\ny = h(g: e);\n",
+        "w(positional k) = k * k;\nf(x: int) = w;\ne(z: int) = f;\nh(g: (z: int) -> ((x: int) -> ((positional k: int) -> int))) = 1;\ny = h(g: e);\n",
+    ];
+    for src in accepted {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    }
+    let rejected = [
+        "w(positional k) = 2 ^ k;\nh(g: (positional k: int) -> int) = 1;\ny = h(g: w);\n",
+        "w(positional k) = 2 ^ k;\nf(x: int) = w;\nh(g: (x: int) -> ((positional k: int) -> int)) = 1;\ny = h(g: f);\n",
+        "w(positional k) = 2 ^ k;\nf(x: int) = w;\ne(z: int) = f;\nh(g: (z: int) -> ((x: int) -> ((positional k: int) -> int))) = 1;\ny = h(g: e);\n",
+    ];
+    let named = [
+        "`w`",
+        "the function `f` returns",
+        "the function `e` returns after 2 calls",
+    ];
+    for (src, who) in rejected.into_iter().zip(named) {
+        let at = src
+            .rsplit("h(g: ")
+            .next()
+            .expect("a call of h")
+            .trim_end_matches(");\n");
+        assert_eq!(
+            type_errors(src),
+            [format!("{who} takes `k` in int[0..]: `k : int`. [{at}]")],
+            "{src}"
+        );
+    }
+}
+
+/// `w(positional k) = 2 ^ k` returned through `n` functions `r1` … `rn`, each returning the one
+/// before, and `rn` passed where a function `n` arrows deep with the result
+/// `(positional k: c) -> c` is expected.
+pub(super) fn returned_n_deep(n: usize, c: &str) -> String {
+    let mut text = "w(positional k) = 2 ^ k;\nr1(x: int) = w;\n".to_string();
+    text.extend((2..=n).map(|i| format!("r{i}(x: int) = r{};\n", i - 1)));
+    let expected = (0..n).fold(format!("(positional k: {c}) -> {c}"), |t, _| {
+        format!("(x: int) -> ({t})")
+    });
+    text + &format!("h(g: {expected}) = 1;\ny = h(g: r{n});\n")
+}
+
+/// `w(positional k) = body` returned through `n` arrows of one function
+/// `r(x1: int) = (x2: int) -> … -> w` and passed where a function `n` arrows deep with the
+/// result `(positional k: c) -> c` is expected. A lambda's parameters are unnamed in its type,
+/// so the expected arrows after the first are `(int) -> …`.
+pub(super) fn returned_by_lambdas(n: usize, c: &str, body: &str) -> String {
+    let lambdas: String = (2..=n).map(|i| format!("(x{i}: int) -> ")).collect();
+    let expected = (2..=n).fold(format!("(positional k: {c}) -> {c}"), |t, _| {
+        format!("(int) -> ({t})")
+    });
+    format!(
+        "w(positional k) = {body};\nr(x1: int) = {lambdas}w;\n\
+         h(g: (x1: int) -> ({expected})) = 1;\ny = h(g: r);\n"
+    )
+}
+
+/// A power returned through `n` named functions: accepted at `f64`, and at `int` rejected once,
+/// naming the function returned `n` calls deep. Not timed: checking the chain of definitions
+/// alone costs the square of `n` (row FAIL-returned-chain-quadratic); the timed form is
+/// [`returned_by_lambdas`].
+#[test]
+fn a_power_returned_a_few_functions_deep_is_checked_at_the_expected_type() {
+    for n in 1..=4 {
+        assert_eq!(
+            type_errors(&returned_n_deep(n, "f64")),
+            Vec::<String>::new(),
+            "{n}"
+        );
+        let who = match n {
+            1 => "the function `r1` returns".to_string(),
+            _ => format!("the function `r{n}` returns after {n} calls"),
+        };
+        assert_eq!(
+            type_errors(&returned_n_deep(n, "int")),
+            [format!("{who} takes `k` in int[0..]: `k : int`. [r{n}]")],
+            "{n}"
+        );
+    }
+}
+
+/// Small instance of `bench::held_functions::a_power_returned_n_deep_is_checked_in_linear_time`
+/// in its lambda form: accepted at `f64`, and at `int` rejected once, naming the function `r`
+/// returns after `n` calls.
+#[test]
+fn a_power_returned_through_a_few_lambdas_is_checked_at_the_expected_type() {
+    for n in 1..=4 {
+        for body in ["2 ^ k", "k * k"] {
+            let src = returned_by_lambdas(n, "f64", body);
+            assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        }
+        assert_eq!(
+            type_errors(&returned_by_lambdas(n, "int", "k * k")),
+            Vec::<String>::new()
+        );
+        let who = match n {
+            1 => "the function `r` returns".to_string(),
+            _ => format!("the function `r` returns after {n} calls"),
+        };
+        let src = returned_by_lambdas(n, "int", "2 ^ k");
+        assert_eq!(
+            type_errors(&src),
+            [format!("{who} takes `k` in int[0..]: `k : int`. [r]")],
+            "{src}"
+        );
+    }
+}
