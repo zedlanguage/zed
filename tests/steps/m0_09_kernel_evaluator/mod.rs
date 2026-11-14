@@ -16,6 +16,7 @@ use zed_tests::kernel::*;
 // binary.rs is not a module of this target: crates/zed-native/Cargo.toml builds it as the test
 // `zedc_binary`, since only a test of that package can name the zedc executable.
 mod bench;
+mod complete;
 mod deep;
 mod empty_levels;
 mod provenance;

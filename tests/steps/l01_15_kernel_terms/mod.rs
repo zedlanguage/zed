@@ -3,6 +3,7 @@
 //! notation, on one line or broken to a width.
 
 mod bench;
+mod complete;
 mod deep;
 mod evidence;
 mod forms;

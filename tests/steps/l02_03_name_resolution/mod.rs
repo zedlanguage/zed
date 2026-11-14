@@ -8,6 +8,7 @@
 mod bench;
 mod binders;
 mod command;
+mod complete;
 mod corpus_words;
 mod cycles;
 mod imports;

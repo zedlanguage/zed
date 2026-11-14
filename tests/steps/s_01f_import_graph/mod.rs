@@ -9,6 +9,7 @@ use zed_tools::imports::{self, Graph};
 use zed_tests::step_helpers::m0_03_grammar_tools::{Dir, tool};
 
 mod bench;
+mod complete;
 
 /// The graph of `files`, each a path and its text.
 fn graph(files: &[(&str, &str)]) -> Graph {

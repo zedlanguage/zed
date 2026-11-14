@@ -4,6 +4,7 @@
 
 mod above;
 mod bench;
+mod complete;
 mod fences;
 mod order;
 pub(crate) mod scaling;

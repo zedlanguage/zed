@@ -18,7 +18,7 @@ fn sh(t: Term) -> Shared {
 }
 
 /// One term with every variant of `Term` and `Pattern`.
-fn every_variant() -> Term {
+pub(super) fn every_variant() -> Term {
     let ev: BTreeMap<_, _> = [("associative".into(), Grade::Axiom)].into();
     let pats = vec![
         (Pattern::Wild, var("a")),

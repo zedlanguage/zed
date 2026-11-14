@@ -4,6 +4,7 @@
 
 mod bench;
 mod calls;
+mod complete;
 mod errors;
 mod handled;
 mod order;
