@@ -2204,11 +2204,10 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-kept-powers | impl attempt 1 | 2026-11-13 21:17 | reproduced on origin/main d353a0b07: 3^(2^70), 3r^(2^70), 2r^(2^70) compile (rc 0, widening warning only); control b^(2^64) rejected; load 23.03 |
 | HAS-point-probe | impl attempt 2 | 2026-11-10 22:35 | CD round 6 launched (SHORT): experiment 6664553392322379777 from main 8a3e0859b, 56 cases, 3 regions (new PICK_RS); local main-vs-main 2,357.953, test run 8,535 |
 | LIT-rat-decimal-exponent | impl attempt 1 | 2026-11-13 22:07 | started; worktree from origin/main e92e7e508 |
-| PERF-s22-sliced-regress | running | 2026-11-13 23:11 |  |
+| PERF-s22-sliced-regress | impl attempt 1 | 2026-11-13 23:11 | started; worktree from origin/main 879451b9f; load 59.68 55.35 49.96 |
 | PRES-exact-side | impl attempt 1 | 2026-11-13 20:00 | started; worktree from 223aaf2e2 |
-| SPEC-blocking-default | merged and pushed (zed-impl commit "SPEC-blocking-default"); spec zed dfb7f03 | 2026-11-14 | `@blocking` rejected by the resolver, row "`@blocking` written"; tests l01_19 blocking_word |
+| REPAIR-pow-use-f64-drops-rat | running | 2026-11-13 23:20 |  |
 | SPEC-ffi-state-param | impl attempt 1 | 2026-11-13 23:04 | started; reading DESIGN sec:ffi token sections |
-| SPEC-raw-keep-isig | merged and pushed (zed-impl commit "SPEC-raw-keep-isig"); spec zed 0677785, c4db03d | 2026-11-14 | ISIG kept, mask 32842; SIGINT default stop stated; SIGINT-in-foreign-call test deferred to STOP-releases-rt |
 | SPEC-sigint-override | impl attempt 1 | 2026-11-13 22:56 | started; reading spec sec:ports/sec:ffi on Ctrl+C |
 | ST-relation-case-written | impl attempt 1 | 2026-11-13 20:49 | started; load 29.88 26.92 32.21 |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
