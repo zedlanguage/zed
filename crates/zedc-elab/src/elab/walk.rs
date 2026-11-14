@@ -743,14 +743,18 @@ impl<'a> Elab<'a> {
             ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
                 Ok(v) => lit(v),
                 // Without a suffix the literal could have taken `rat`, where it is exact
-                // (DESIGN.md L1.26b), and it is reported here only where it stayed at `f64`
-                // with the unit accepted, as in `t() = 1e400;`. In a rejected unit the
-                // checker has reported it where it decided its carrier, in `x: f64 = 1e400` or
-                // `y = 1e400 + 1e400` (with the fix `1e400r + 1e400`), or the rejection lies
-                // elsewhere and the next compilation reports it; the term stands in and is
-                // never run.
+                // (DESIGN.md L1.26b), and it is reported here where it stayed at `f64`, as in
+                // `t() = 1e400;`, also when the checker rejected the unit elsewhere, so both
+                // errors come in one compilation (MSG-range-error-not-hidden). It is not
+                // reported again inside the span of a checker's error, where the checker has
+                // reported it where it decided its carrier, as in `h(1e400)` at an `f64`
+                // parameter, or rejected an expression around it, where its carrier may not be
+                // decided; nor in a statement where the checker reported a literal's carrier,
+                // which it reports for its whole class at one literal, as `y = 1e400 + 1e400`
+                // at the first (with the fix `1e400r + 1e400`). The term stands in and is never
+                // run.
                 Err(LiteralRounding::Infinite | LiteralRounding::Zero)
-                    if forced.is_none() && self.rejected =>
+                    if forced.is_none() && self.in_checker_error(e.span) =>
                 {
                     lit(Value::float(f64::INFINITY))
                 }

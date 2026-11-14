@@ -111,3 +111,56 @@ fn an_unfixed_decimal_past_f64_is_offered_no_f64_fix() {
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(e[0].starts_with(INFINITE), "{e:?}");
 }
+
+/// MSG-range-error-not-hidden: an error the checker reports elsewhere in the unit does not
+/// hide the range error of a literal it did not report, so one compilation gives both.
+/// Before, elaboration dropped the range error of an unsuffixed literal whenever the checker
+/// rejected anything in the unit.
+#[test]
+fn an_unrelated_error_does_not_hide_the_range_error() {
+    let unrelated = "u() = 1 + true;\n";
+    let both = |src: &str| {
+        let e = errors(&format!("{unrelated}{src}"));
+        assert_eq!(e.len(), 2, "{src}: {e:?}");
+        assert_eq!(
+            e.iter().filter(|m| m.starts_with(INFINITE)).count(),
+            1,
+            "{src}: {e:?}"
+        );
+    };
+    // With no use, the literal stays an `f64`, past its range, as in `t() = 1e400;` alone.
+    both("t() = 1e400;\n");
+    // The suffix fixes `f64` (control: reported before the fix too).
+    both("t() = 1e400f64;\n");
+    // Reported by the checker where its carrier is decided, and not again by elaboration.
+    both("h(positional z: f64) = z;\na = h(1e400);\n");
+    // The literal at `rat` is exact, with no error of its own.
+    let e = errors(&format!("{unrelated}t() = 1e400 + 1r;\n"));
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert!(!e[0].starts_with(INFINITE), "{e:?}");
+    // An unfixed decimal is reported once, by the checker, with no range error beside it.
+    for src in ["y = 1e400;\n", "y = 1e400 + 1e400;\n"] {
+        let e = errors(&format!("{unrelated}{src}"));
+        assert_eq!(e.len(), 2, "{src}: {e:?}");
+        assert_eq!(
+            e.iter().filter(|m| m.contains("1e400r")).count(),
+            1,
+            "{src}: {e:?}"
+        );
+    }
+    // A literal of its own in the statement of the unrelated error is reported too.
+    let e = errors("t(positional x) = (x + true, 1e400);\n");
+    assert_eq!(e.len(), 2, "{e:?}");
+    assert!(e[1].starts_with(INFINITE), "{e:?}");
+    // A literal whose class the error leaves with no carrier is reported by the checker alone,
+    // as is each literal of a class the checker reports at one of them.
+    for (src, n) in [
+        ("t() = (1 + true) * 1e400;\n", 2),
+        ("t(positional x) = (x + true, x * 1e400);\n", 1),
+        ("y = (1e400 + 1e400, 1e400);\n", 1),
+    ] {
+        let e = errors(src);
+        assert_eq!(e.len(), n, "{src}: {e:?}");
+        assert!(!e.iter().any(|m| m.starts_with(INFINITE)), "{src}: {e:?}");
+    }
+}
