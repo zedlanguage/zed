@@ -18113,17 +18113,18 @@ fn alone_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
 /// then the projection of `c`'s integer points on `sym`, and their bound is the side. `None`
 /// otherwise.
 // Complexity tradeoff: naive (as before ST-churn-at-once), the questions of [`hull_side`], each
-// a decision of the whole of `c`: one at the real bound ([`real_end`]) or one to find a side
-// unbounded where that settles it, and O(log d) for a side at distance d from the point where
-// the real bound is not reached. In base churn given at once (`x - y >= 2k + j`, l01_39
-// `xst::s4`) such sides lie about k from the point, 11 to 14 questions at k = 32 (about 234,000
-// instructions each, at any k), so the hulls grew as k log k: 11.1 times at 8n by bytes. Used:
+// a decision of the whole of `c`, about 234,000 instructions in base churn at any k: one at
+// the real bound ([`real_end`], since PERF-l139-family) or one to find a side unbounded, and
+// before that O(log d) for a side at distance d from the point, 11 to 14 at k = 32 in base
+// churn given at once (`x - y >= 2k + j`, l01_39 `xst::s4`), 11.1 times at 8n by bytes. Used:
 // Fourier-Motzkin elimination with the dark shadow (Pugh, "The Omega test: a fast and
 // practical integer programming algorithm for dependence analysis", Supercomputing 1991),
-// which is exact over the integers where [`shadow`] does it, so a conjunction it fully
-// eliminates gives its side with no question; [`shadow`] makes no more rows than it takes
-// out, O(m log m) for m terms, below the cost of one question on the same constraints. In
-// base churn about 80% of the sides are settled so; base churn at once is then 8.1 at 8n.
+// exact over the integers where [`shadow`] does it, so a conjunction it fully eliminates
+// gives its side with no question; [`shadow`] makes no more rows than it takes out, O(m log m)
+// for m terms, below the cost of one question on the same constraints. Measured on base
+// churn at once at n = 16 and 128: 1.68e9 and 13.6e9 instructions, 321 and 2,607 MB with the
+// one question at the real bound, 1.05e9 and 8.50e9, 204 and 1,655 MB with this first (8.1
+// times at 8n either way, 37% less of each).
 fn exact_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
     let rows: Vec<Con> = match c {
         Formula::Con(k) => vec![k.clone()],
@@ -22980,21 +22981,27 @@ pub(super) mod tests {
         match side {
             Some(v) => {
                 assert!(beyond(v), "{f} reaches {a} = {v}");
-                assert!(!beyond(&(v + &Int::from(dir))), "{f}: {a} past {v} going {dir}");
+                assert!(
+                    !beyond(&(v + &Int::from(dir))),
+                    "{f}: {a} past {v} going {dir}"
+                );
             }
-            None => assert!(unbounded(f, a, dir).unwrap(), "{f}: {a} bounded going {dir}"),
+            None => assert!(
+                unbounded(f, a, dir).unwrap(),
+                "{f}: {a} bounded going {dir}"
+            ),
         }
     }
 
-    /// The sides [`hull_side`] finds by elimination alone ([`shadow_end`]) are the sides: the
+    /// The sides [`hull_side`] finds by elimination alone ([`exact_side`]) are the sides: the
     /// shapes of base churn given at once (ST-churn-at-once), a side inside a row of two atoms
     /// with the point far from it, and the corner cases: an atom no row names (no bound either
-    /// way), an equality whose coefficient is not 1 (`2·x == y`), a disjunction (the rows of the
-    /// conjunction give an end, which the questions confirm), and a product atom (never read
-    /// as settled by elimination).
+    /// way), an equality whose coefficient is not 1 (`2·x == y`), a disjunction and a product
+    /// atom (neither settled by elimination: the questions find the side).
     #[test]
     fn sides_found_by_elimination_are_the_sides() {
-        let con = |t: &[(&str, i128)], k: i128| Formula::Con(Con::ge(&lin(t, k), &Lin::constant(0)));
+        let con =
+            |t: &[(&str, i128)], k: i128| Formula::Con(Con::ge(&lin(t, k), &Lin::constant(0)));
         let eq = |t: &[(&str, i128)], k: i128| {
             Formula::Con(Con {
                 lin: lin(t, k),
@@ -23027,7 +23034,10 @@ pub(super) mod tests {
         ]);
         let product = Formula::and(vec![
             Formula::Con(Con::ge(
-                &Lin::atom(Atom::Product(Factor::Sym("x".into()), Factor::Sym("y".into()))),
+                &Lin::atom(Atom::Product(
+                    Factor::Sym("x".into()),
+                    Factor::Sym("y".into()),
+                )),
                 &Lin::constant(4),
             )),
             con(&[("x", -1)], 7),
@@ -23052,13 +23062,17 @@ pub(super) mod tests {
             let side = hull_side(f, &a, &model, dir).unwrap();
             assert_eq!(side, want.map(Int::from), "{f}: {n} going {dir}");
             is_side(f, &a, dir, &side);
-            assert_eq!(exact_side(f, &a, dir).is_some(), exact, "{f}: {n} going {dir}");
+            assert_eq!(
+                exact_side(f, &a, dir).is_some(),
+                exact,
+                "{f}: {n} going {dir}"
+            );
         }
     }
 
     /// The sides [`hull_side`] finds are the sides, on random conjunctions of up to 6 rows over
     /// 4 names with coefficients from -3 to 3, some with a disjunction of two conjunctions of
-    /// such rows; and many are found by elimination alone ([`shadow_end`]), so that path is
+    /// such rows; and many are found by elimination alone ([`exact_side`]), so that path is
     /// compared, not passed by.
     #[test]
     fn hull_sides_on_random_conjunctions_are_the_sides() {
@@ -23082,7 +23096,8 @@ pub(super) mod tests {
         for _ in 0..600 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
-                let side = |rng: &mut Rng| Formula::and((0..1 + rng.below(2)).map(|_| row(rng)).collect());
+                let side =
+                    |rng: &mut Rng| Formula::and((0..1 + rng.below(2)).map(|_| row(rng)).collect());
                 let (l, r) = (side(&mut rng), side(&mut rng));
                 parts.push(Formula::or(vec![l, r]));
             }
