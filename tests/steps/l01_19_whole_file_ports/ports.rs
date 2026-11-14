@@ -135,7 +135,7 @@ fn a_parameter_pushed_to_takes_an_output_port_at_each_call() {
     );
     let src = "say(positional s, out) { out <- s; }\n\
                main(m: MainArgs) {\n  _ = say(\"x\", out: m.stdout);\n}\n";
-    let out = run("untyped", src, "", &[]);
+    let out = run("untyped_out_parameter", src, "", &[]);
     assert!(
         out.stderr.contains(
             "1:26: A push goes to an output port, and `out` is a parameter of `say` not declared \
@@ -149,7 +149,7 @@ fn a_parameter_pushed_to_takes_an_output_port_at_each_call() {
     let src = "say(positional s, out: Lines = 1) { out <- s; }\n\
                main(m: MainArgs) {\n  _ = say(\"x\", out: m.stdout);\n}\n";
     assert_eq!(
-        rejected("default", src),
+        rejected("default_out_parameter", src),
         "1:32: An output port has no default: `out` of `say`, which it pushes to."
     );
     let src = "say(positional s, positional out: Lines) { out <- s; 0 } test { (\"a\", 1) -> 0 }\n\
@@ -189,7 +189,7 @@ fn a_push_to_a_name_that_is_no_port_is_rejected() {
 #[test]
 fn a_port_given_to_a_helper_is_still_pushed_once() {
     let out = run(
-        "twice",
+        "twice_through_a_helper",
         &with_say("_ = say(\"a\", out: m.stdout);\n  m.stdout <- \"b\";"),
         "",
         &[],

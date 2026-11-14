@@ -165,7 +165,7 @@ fn a_declaration_that_holds_is_not_compiled_yet() {
 fn handles_with_another_facet_or_another_result_is_a_result_main_may_not_have() {
     for (name, result) in [
         ("other_facet", "int with handles(#sigint) with bound(3)"),
-        ("string", "String with handles(#sigint)"),
+        ("string_with_handles", "String with handles(#sigint)"),
     ] {
         let src = format!("main(m: MainArgs) -> {result} {{\n  _ = m.signals[0];\n}}\n");
         let out = run(name, &src, "", &[]);

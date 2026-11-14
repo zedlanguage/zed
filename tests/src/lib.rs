@@ -17,6 +17,9 @@ pub mod readme;
 pub mod scaling;
 #[cfg(test)]
 mod scaling_tests;
+pub mod scratch;
+#[cfg(test)]
+mod scratch_tests;
 pub mod seed;
 pub mod step_helpers;
 pub mod tokens;

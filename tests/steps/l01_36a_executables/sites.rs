@@ -26,7 +26,7 @@ fn doubled() -> String {
 /// The program `src` written to a file of test `name`, built, and run with no words and no
 /// input by both engines: the executable's run, then `zedc run`'s.
 fn both(name: &str, src: &str) -> (PathBuf, Ran, Ran) {
-    let d = dir("sites");
+    let d = dir(&format!("sites/{name}"));
     let file = d.join(format!("{name}.zed"));
     std::fs::write(&file, src).unwrap();
     let exe = d.join(name);

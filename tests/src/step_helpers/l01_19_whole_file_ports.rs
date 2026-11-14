@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-/// A directory of its own for test `name`, under the test target's scratch directory; files
-/// in it are overwritten by each run, never deleted.
+/// A directory of its own for test `name`, under this process's scratch directory
+/// ([`super::scratch`]), which no other process and no other test uses.
 pub fn dir(name: &str) -> PathBuf {
-    let d = super::target_tmpdir().join("l01_19").join(name);
+    let d = super::scratch(format!("l01_19/{name}"));
     std::fs::create_dir_all(&d).unwrap();
     d
 }

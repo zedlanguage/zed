@@ -4,8 +4,6 @@
 //! folder re-exports it. A path `crate::<folder>::x` written in another folder is
 //! `zed_tests::step_helpers::<folder>::x`.
 
-use std::path::PathBuf;
-
 pub mod l01_10_lambdas_types_else_tuples;
 pub mod l01_13_formatter;
 pub mod l01_14_name_resolution;
@@ -27,15 +25,4 @@ pub mod l01_38_presburger;
 pub mod l01_39_reduced_product;
 pub mod m0_03_grammar_tools;
 
-/// The scratch directory of the running test target: what cargo gives a test target's source
-/// as `CARGO_TARGET_TMPDIR`, `<target dir>/tmp`. Cargo sets that variable for test targets
-/// only, not for this library, so it is found from the test binary's own path,
-/// `<target dir>/<profile>/deps/<binary>`.
-pub fn target_tmpdir() -> PathBuf {
-    let exe = std::env::current_exe().expect("the test binary has a path");
-    let target = exe
-        .ancestors()
-        .nth(3)
-        .expect("a test binary lies in <target dir>/<profile>/deps");
-    target.join("tmp")
-}
+pub use crate::scratch::{process_tmpdir, scratch, target_tmpdir};

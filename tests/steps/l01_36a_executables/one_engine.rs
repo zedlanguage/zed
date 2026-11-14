@@ -14,7 +14,7 @@ use super::{Ran, dir, executable, interpreter};
 /// The program `src` written to a file of test `name`, built, and run with no words and no
 /// input by both engines: the build's error or the executable's run, and `zedc run`'s.
 fn both(name: &str, src: &str) -> (PathBuf, Result<Ran, (u8, String)>, Ran) {
-    let d = dir("one_engine");
+    let d = dir(&format!("one_engine/{name}"));
     let file = d.join(format!("{name}.zed"));
     std::fs::write(&file, src).unwrap();
     (
@@ -69,7 +69,7 @@ fn agree(name: &str, src: &str) -> Ran {
 
 /// The first line of the stop `s` wrote, with `FILE` for the program's path.
 fn stop_line(s: &Ran, name: &str) -> String {
-    let file = dir("one_engine").join(format!("{name}.zed"));
+    let file = dir(&format!("one_engine/{name}")).join(format!("{name}.zed"));
     s.stderr
         .lines()
         .next()

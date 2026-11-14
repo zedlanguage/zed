@@ -8,10 +8,10 @@ use std::process::{Command, Stdio};
 
 use zed_native::link::{Toolchain, build, driver_env, runtime_of};
 
-/// A directory of its own for test `name`, under the test target's scratch directory; files
-/// in it are overwritten by each run, never deleted.
+/// A directory of its own for test `name`, under this process's scratch directory
+/// ([`super::scratch`]), which no other process and no other test uses.
 pub fn dir(name: &str) -> PathBuf {
-    let d = super::target_tmpdir().join("l01_36a").join(name);
+    let d = super::scratch(format!("l01_36a/{name}"));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
