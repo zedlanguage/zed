@@ -707,14 +707,27 @@ fn a_walk_of_disjunctions_narrows_in_near_linear_time() {
     );
 }
 
+/// A walk with its start has a row for each name `v`; without it, one row fewer. The scaling
+/// tests of the walk without its start build it from one name more than the rows they measure.
+#[test]
+fn a_walk_has_a_row_per_name_with_its_start_and_one_fewer_without() {
+    for n in [1, 2, 5, 40] {
+        assert_eq!(walk(n, true).rel.len(), n, "walk({n}, true)");
+        assert_eq!(walk(n + 1, false).rel.len(), n, "walk({}, false)", n + 1);
+    }
+}
+
+/// The walk without its start, of `n` rows: `walk(n + 1, false)`, since without its start a
+/// walk of `m` names has `m - 1` rows, and sizes 5 and 40 of `walk(n, false)` were 4 and 39
+/// rows, 9.75 times apart where the check reads 8 (ST-walk-orders-nine).
 #[test]
 fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
     family(
         "walk without its start",
         5,
-        |n| walk(n, false),
+        |n| walk(n + 1, false),
         |n| {
-            let mut w: Vec<_> = (0..n).map(|i| (format!("v{i}"), 0, 3, upto(3))).collect();
+            let mut w: Vec<_> = (0..=n).map(|i| (format!("v{i}"), 0, 3, upto(3))).collect();
             w.push(("w".into(), 0, 1, upto(1)));
             w
         },
@@ -727,10 +740,11 @@ fn control_a_walk_without_its_start_narrows_nothing_in_near_linear_time() {
 /// joined against all the rows before it, and 43 to 81 in reverse). The walk is measured from
 /// 40 rows, where a meet of a threshold row that changed nothing but copied its product made a
 /// kept block compare every product so copied since (`Scope::meet_own`): 11.0 in reverse.
+/// Each is of `n` rows: the walk without its start has one name more than its rows.
 #[test]
 fn a_walk_narrows_in_near_linear_time_at_once_and_in_reverse() {
     for (what, n, start) in [("walk", 40, true), ("walk without its start", 10, false)] {
-        let inputs = scaling::inputs(n, |m| walk(m, start));
+        let inputs = scaling::inputs(n, |m| walk(m + usize::from(!start), start));
         for how in [How::AtOnce, How::Backward] {
             scaling::check_order(&format!("{what}, {how:?}, n rows"), n, 1, |m| {
                 drop(inputs[&m].narrowed(how));
