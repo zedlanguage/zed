@@ -11,8 +11,11 @@
 # all benchmarks and gives a piece that holds some of them `--skip bench::` (with --exact, a
 # `--skip` of each by name). --bench runs each benchmark as a piece of its own, named
 # <group>::<test>, with the same slots, slice, limit and summary lines; --only selects among them
-# as among the correctness pieces. --each-test runs each selected correctness test as a piece of
-# its own, `--exact <test>` in one process (tools/time_tests.sh times the tests this way).
+# as among the correctness pieces. A benchmark runs with --nocapture, since libtest keeps the
+# output of a passing test, and its lines that begin `bench ` (zed_tests::scaling) are written to
+# <log dir>/bench.log and printed after the summary (TEST-time-pass-condition). --each-test runs
+# each selected correctness test as a piece of its own, `--exact <test>` in one process
+# (tools/time_tests.sh times the tests this way).
 # Without --full this is the local suite, which needs only the Rust toolchain and runs in CI.
 # --full adds tests/full/, the battery that needs emulators, containers, databases and other
 # outside tools. It stops before any test if a tool is missing; nothing is skipped.
@@ -313,6 +316,7 @@ select_pieces() {
   fi
   while read -r k group step name dir bin args; do
     [ "$k" = "$run_kind" ] || continue
+    [ "$k" = test ] || args="${args:+$args }--nocapture"
     { selected "$group" "$name" || selected "$step" "$name"; } || continue
     if [ -z "$each_test" ]; then
       echo "$name $dir $bin${args:+ $args}"
@@ -806,7 +810,7 @@ never=0xffffffffffffffff
 malloc=glibc.malloc.tcache_count=0
 export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=$never:glibc.cpu.x86_rep_stosb_threshold=$never:$malloc
 cores=$(nproc)
-export root out slots slot_dir cores
+export root out slots slot_dir cores run_kind
 take_slot() {
   exec 5>"$slot_dir/queue"
   flock 5
@@ -840,6 +844,9 @@ piece() {
   rc=$?
   ms=$((($(date +%s%N) - start) / 1000000))
   echo "$name rc=$rc ${ms}ms load=$load limit=${limit}s $(grep -E '^test result' "$scratch" | tail -1)"
+  # A benchmark prints a few `bench ` lines, far less than the buffer grep writes at once, to a
+  # file opened for appending, so the lines of pieces that end together are not mixed.
+  [ "$run_kind" = test ] || grep "^bench " "$scratch" >>"$out/bench.log"
   if [ "$rc" = 0 ]; then
     [ ! -s "$log" ] || : >"$log"
   else
@@ -909,6 +916,7 @@ if [ "$runtimes" != "$(cat "$out/runtimes" 2>/dev/null)" ]; then
     printf '%s\n' "$runtimes" >"$out/runtimes"
   fi
 fi
+: >"$out/bench.log"
 xargs -P "$jobs" -L 1 bash -c 'piece "$@"' _ <"$out/pieces" | tee "$out/summary"
 bad=$(grep -vc 'rc=0 ' "$out/summary")
 load=$(awk 'match($0, / load=[0-9.]+/) {
@@ -916,5 +924,9 @@ load=$(awk 'match($0, / load=[0-9.]+/) {
   if (NR == 1 || l < low) low = l
   if (l > high) high = l
 } END { print low " to " high }' "$out/summary")
+if [ -s "$out/bench.log" ]; then
+  echo "bench lines ($out/bench.log):"
+  cat "$out/bench.log"
+fi
 echo "pieces: $(wc -l <"$out/summary"), failed: $bad, load: $load, cores: $cores"
 [ "$bad" = 0 ]

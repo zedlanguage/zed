@@ -177,42 +177,38 @@ fn the_bound_of_a_large_power_is_built_and_compared_without_its_digits() {
     // `x ^ 100000000` with x in 2..=3: 2^(10^8) ..= 3^(10^8), numbers of 10^8 and about
     // 1.6 * 10^8 bits, kept as powers so the check takes no time to write them out.
     let k = 100_000_000;
-    let start = std::time::Instant::now();
-    let image = forward(
-        &Op::Pow(k.into()),
-        &IntervalSet::of(2, 3),
-        &IntervalSet::of(2, 3),
-    );
-    assert_eq!(
-        image,
-        IntervalSet::range(End::Fin(pow(2, k)), End::Fin(pow(3, k)))
-    );
-    // The demand on x back from the image is 2..=3 again, and -3..=-2 for an even power.
-    let back = backward(
-        &Op::Pow(k.into()),
-        0,
-        &IntervalSet::top(),
-        &IntervalSet::top(),
-        &image,
-    );
-    assert_eq!(back, IntervalSet::of(-3, -2).join(&IntervalSet::of(2, 3)));
-    // Exact order between powers of other bases: 3^(10^8) lies between 2^158496250 and
-    // 2^158496251, since 10^8 * log2(3) = 158496250.07...
-    let three = pow(3, k);
-    assert!(pow(2, 158_496_250) < three && three < pow(2, 158_496_251));
-    // The same value from other bases is equal, and hashes alike: 4^(5 * 10^7) = 2^(10^8).
-    assert_eq!(pow(4, k / 2), pow(2, k));
-    assert_eq!(hash_of(&pow(4, k / 2)), hash_of(&pow(2, k)));
-    assert_eq!(pow(2, k).pow(3), pow(8, k));
-    // A power of an odd exponent keeps the sign, and negation reverses the order.
-    assert_eq!(Num::from(-2).pow(k + 1), -&pow(2, k + 1));
-    assert!(-&three < -&pow(2, 158_496_250));
-    assert!(-&three < Num::from(i64::MIN) && Num::from(i64::MAX) < three);
-    let took = start.elapsed();
-    assert!(
-        took < std::time::Duration::from_secs(1),
-        "the bound of x^10^8 took {took:?}"
-    );
+    zed_tests::without_digits("the bound of x^10^8", u64::from(k), || {
+        let image = forward(
+            &Op::Pow(k.into()),
+            &IntervalSet::of(2, 3),
+            &IntervalSet::of(2, 3),
+        );
+        assert_eq!(
+            image,
+            IntervalSet::range(End::Fin(pow(2, k)), End::Fin(pow(3, k)))
+        );
+        // The demand on x back from the image is 2..=3 again, and -3..=-2 for an even power.
+        let back = backward(
+            &Op::Pow(k.into()),
+            0,
+            &IntervalSet::top(),
+            &IntervalSet::top(),
+            &image,
+        );
+        assert_eq!(back, IntervalSet::of(-3, -2).join(&IntervalSet::of(2, 3)));
+        // Exact order between powers of other bases: 3^(10^8) lies between 2^158496250 and
+        // 2^158496251, since 10^8 * log2(3) = 158496250.07...
+        let three = pow(3, k);
+        assert!(pow(2, 158_496_250) < three && three < pow(2, 158_496_251));
+        // The same value from other bases is equal, and hashes alike: 4^(5 * 10^7) = 2^(10^8).
+        assert_eq!(pow(4, k / 2), pow(2, k));
+        assert_eq!(hash_of(&pow(4, k / 2)), hash_of(&pow(2, k)));
+        assert_eq!(pow(2, k).pow(3), pow(8, k));
+        // A power of an odd exponent keeps the sign, and negation reverses the order.
+        assert_eq!(Num::from(-2).pow(k + 1), -&pow(2, k + 1));
+        assert!(-&three < -&pow(2, 158_496_250));
+        assert!(-&three < Num::from(i64::MIN) && Num::from(i64::MAX) < three);
+    });
 }
 
 #[test]
@@ -418,51 +414,48 @@ fn arithmetic_and_roots_on_a_large_power_keep_its_form() {
     // `x ^ k + 1`, `k * x ^ k` and `x ^ k - 1` for x in 2..=3 and k = 10^8, and the cube
     // root of 2^k: kept forms, so each takes no time to write out its 10^8 bits.
     let k = 100_000_000;
-    let start = std::time::Instant::now();
-    let x = IntervalSet::of(2, 3);
-    let image = forward(&Op::Pow(k.into()), &x, &x);
-    let one = IntervalSet::single(1);
-    let (lo, hi) = (pow(2, k), pow(3, k));
-    let plus = forward(&Op::Add, &image, &one);
-    let range = |a: Num, b: Num| IntervalSet::range(End::Fin(a), End::Fin(b));
-    assert_eq!(plus, range(&lo + &Num::ONE, &hi + &Num::ONE));
-    assert_eq!(
-        forward(&Op::Sub, &image, &one),
-        range(&lo - &Num::ONE, &hi - &Num::ONE)
-    );
-    let times = forward(&Op::Mul, &IntervalSet::single(i64::from(k)), &image);
-    assert_eq!(
-        times,
-        range(
-            &lo * &Num::from(i64::from(k)),
-            &hi * &Num::from(i64::from(k))
-        )
-    );
-    // Exact order and residues: 2^k < 2^k + 1 < 2^k + 2; 2^k + 1 = 2 mod 3 for k even, and
-    // 2^k - 1 is a multiple of 3 and 5 for k a multiple of 4.
-    let next = &lo + &Num::ONE;
-    assert!(lo < next && next < &lo + &Num::from(2) && next < hi);
-    assert!(next.at_most_succ(&lo) && !(&next + &Num::ONE).at_most_succ(&lo));
-    assert_eq!(next.mod_floor(&Num::from(3)), Num::from(2));
-    assert_eq!((&lo - &Num::ONE).gcd(&Num::from(15)), Num::from(15));
-    assert_eq!((&lo * &Num::from(3)).div_floor(&Num::from(3)), lo);
-    assert_eq!(Num::from(5).div_floor(&next), Num::ZERO);
-    assert_eq!(Num::from(-5).div_floor(&next), Num::from(-1));
-    // The cube root of 2^k: k = 10^8 is not a multiple of 3, so the root is irrational and
-    // its ceiling is one past its floor; its cube is below 2^k and lies past 2^(k - 1).
-    let root = lo.floor_root(3);
-    assert!(pow(2, k / 3) < root && root < pow(2, k / 3 + 1));
-    assert_eq!(lo.ceil_root(3), &root + &Num::ONE);
-    let cube = root.pow(3);
-    assert!(cube < lo && pow(2, k - 1) < cube);
-    // A root of an exact power is exact: the fourth root of 2^k is 2^(k / 4).
-    assert_eq!(lo.floor_root(4), pow(2, k / 4));
-    assert_eq!(lo.ceil_root(4), pow(2, k / 4));
-    let took = start.elapsed();
-    assert!(
-        took < std::time::Duration::from_secs(1),
-        "arithmetic on 2^(10^8) took {took:?}"
-    );
+    // The smallest value the test keeps is the fourth root of 2^k, of k / 4 + 1 bits.
+    zed_tests::without_digits("arithmetic on 2^(10^8)", u64::from(k / 4), || {
+        let x = IntervalSet::of(2, 3);
+        let image = forward(&Op::Pow(k.into()), &x, &x);
+        let one = IntervalSet::single(1);
+        let (lo, hi) = (pow(2, k), pow(3, k));
+        let plus = forward(&Op::Add, &image, &one);
+        let range = |a: Num, b: Num| IntervalSet::range(End::Fin(a), End::Fin(b));
+        assert_eq!(plus, range(&lo + &Num::ONE, &hi + &Num::ONE));
+        assert_eq!(
+            forward(&Op::Sub, &image, &one),
+            range(&lo - &Num::ONE, &hi - &Num::ONE)
+        );
+        let times = forward(&Op::Mul, &IntervalSet::single(i64::from(k)), &image);
+        assert_eq!(
+            times,
+            range(
+                &lo * &Num::from(i64::from(k)),
+                &hi * &Num::from(i64::from(k))
+            )
+        );
+        // Exact order and residues: 2^k < 2^k + 1 < 2^k + 2; 2^k + 1 = 2 mod 3 for k even, and
+        // 2^k - 1 is a multiple of 3 and 5 for k a multiple of 4.
+        let next = &lo + &Num::ONE;
+        assert!(lo < next && next < &lo + &Num::from(2) && next < hi);
+        assert!(next.at_most_succ(&lo) && !(&next + &Num::ONE).at_most_succ(&lo));
+        assert_eq!(next.mod_floor(&Num::from(3)), Num::from(2));
+        assert_eq!((&lo - &Num::ONE).gcd(&Num::from(15)), Num::from(15));
+        assert_eq!((&lo * &Num::from(3)).div_floor(&Num::from(3)), lo);
+        assert_eq!(Num::from(5).div_floor(&next), Num::ZERO);
+        assert_eq!(Num::from(-5).div_floor(&next), Num::from(-1));
+        // The cube root of 2^k: k = 10^8 is not a multiple of 3, so the root is irrational and
+        // its ceiling is one past its floor; its cube is below 2^k and lies past 2^(k - 1).
+        let root = lo.floor_root(3);
+        assert!(pow(2, k / 3) < root && root < pow(2, k / 3 + 1));
+        assert_eq!(lo.ceil_root(3), &root + &Num::ONE);
+        let cube = root.pow(3);
+        assert!(cube < lo && pow(2, k - 1) < cube);
+        // A root of an exact power is exact: the fourth root of 2^k is 2^(k / 4).
+        assert_eq!(lo.floor_root(4), pow(2, k / 4));
+        assert_eq!(lo.ceil_root(4), pow(2, k / 4));
+    });
 }
 
 #[test]
@@ -471,51 +464,47 @@ fn sums_of_unrelated_large_powers_keep_their_form() {
     // linear combination of kept cores, so none writes out a value of 10^8 bits.
     use num_bigint::BigUint;
     let k = 100_000_000u32;
-    let start = std::time::Instant::now();
-    let (three, five) = (pow(3, k), pow(5, k));
-    let s = &three + &five;
-    assert!(five < s && s < &five * &Num::from(2));
-    assert_eq!(&s - &five, three);
-    assert_eq!(&s - &three, five);
-    assert!(&five - &three > Num::ZERO && &three - &five < Num::ZERO);
-    assert!(&pow(2, k) + &five < s && s < &pow(4, k) + &five);
-    // 3^(k + 1) - 3^k = 2 * 3^k: the powers of 3 fold, so the difference is exact.
-    let d = &pow(3, k + 1) - &three;
-    assert_eq!(d, &three * &Num::from(2));
-    assert!((&d - &(&three * &Num::from(2))).is_zero());
-    assert!((&(&pow(3, k + 1) - &three) - &(&three + &three)).is_zero());
-    // Residues and division by small values come from the residues of each power.
-    let m = BigUint::from(1_000_003u32);
-    let r = (BigUint::from(3u32).modpow(&BigUint::from(k), &m)
-        + BigUint::from(5u32).modpow(&BigUint::from(k), &m))
-        % &m;
-    assert_eq!(
-        s.mod_floor(&Num::from(1_000_003)),
-        Num::from(BigInt::from(r))
-    );
-    assert_eq!(s.gcd(&Num::from(2)), Num::from(2));
-    let seven = Num::from(7);
-    assert_eq!(&(&s.div_floor(&seven) * &seven) + &s.mod_floor(&seven), s);
-    // A product of powers of different integers, and a power of a sum.
-    let p = &pow(3, k) * &pow(5, k - 1);
-    assert!(pow(15, k - 1) < p && p < pow(15, k));
-    let two = pow(2, k);
-    let cube = (&two + &Num::ONE).pow(3);
-    let expanded = &(&(&pow(2, 3 * k) + &(&pow(2, 2 * k) * &Num::from(3)))
-        + &(&two * &Num::from(3)))
-        + &Num::ONE;
-    assert_eq!(cube, expanded);
-    assert!((&cube - &expanded).is_zero());
-    // The square root of the sum is kept; its square lies at most at the sum, and the sum is
-    // not a perfect square (it is 2 mod 4), so the ceiling is one past the floor.
-    let root = s.floor_root(2);
-    assert!(root.pow(2) <= s && pow(2, k) < root && root < pow(6, k / 2));
-    assert_eq!(s.ceil_root(2), &root + &Num::ONE);
-    let took = start.elapsed();
-    assert!(
-        took < std::time::Duration::from_secs(1),
-        "sums of powers of 3 and 5 to 10^8 took {took:?}"
-    );
+    zed_tests::without_digits("sums of powers of 3 and 5 to 10^8", u64::from(k), || {
+        let (three, five) = (pow(3, k), pow(5, k));
+        let s = &three + &five;
+        assert!(five < s && s < &five * &Num::from(2));
+        assert_eq!(&s - &five, three);
+        assert_eq!(&s - &three, five);
+        assert!(&five - &three > Num::ZERO && &three - &five < Num::ZERO);
+        assert!(&pow(2, k) + &five < s && s < &pow(4, k) + &five);
+        // 3^(k + 1) - 3^k = 2 * 3^k: the powers of 3 fold, so the difference is exact.
+        let d = &pow(3, k + 1) - &three;
+        assert_eq!(d, &three * &Num::from(2));
+        assert!((&d - &(&three * &Num::from(2))).is_zero());
+        assert!((&(&pow(3, k + 1) - &three) - &(&three + &three)).is_zero());
+        // Residues and division by small values come from the residues of each power.
+        let m = BigUint::from(1_000_003u32);
+        let r = (BigUint::from(3u32).modpow(&BigUint::from(k), &m)
+            + BigUint::from(5u32).modpow(&BigUint::from(k), &m))
+            % &m;
+        assert_eq!(
+            s.mod_floor(&Num::from(1_000_003)),
+            Num::from(BigInt::from(r))
+        );
+        assert_eq!(s.gcd(&Num::from(2)), Num::from(2));
+        let seven = Num::from(7);
+        assert_eq!(&(&s.div_floor(&seven) * &seven) + &s.mod_floor(&seven), s);
+        // A product of powers of different integers, and a power of a sum.
+        let p = &pow(3, k) * &pow(5, k - 1);
+        assert!(pow(15, k - 1) < p && p < pow(15, k));
+        let two = pow(2, k);
+        let cube = (&two + &Num::ONE).pow(3);
+        let expanded = &(&(&pow(2, 3 * k) + &(&pow(2, 2 * k) * &Num::from(3)))
+            + &(&two * &Num::from(3)))
+            + &Num::ONE;
+        assert_eq!(cube, expanded);
+        assert!((&cube - &expanded).is_zero());
+        // The square root of the sum is kept; its square lies at most at the sum, and the sum is
+        // not a perfect square (it is 2 mod 4), so the ceiling is one past the floor.
+        let root = s.floor_root(2);
+        assert!(root.pow(2) <= s && pow(2, k) < root && root < pow(6, k / 2));
+        assert_eq!(s.ceil_root(2), &root + &Num::ONE);
+    });
 }
 
 #[test]
@@ -605,16 +594,27 @@ fn equal_cores(e: u32) {
 #[test]
 fn equal_cores_over_bases_that_share_factors_cancel_without_their_digits() {
     for e in [1_000_000, 8_000_000] {
-        let start = std::time::Instant::now();
-        equal_cores(e);
-        let took = start.elapsed();
-        assert!(
-            took < std::time::Duration::from_secs(1),
-            "equal cores at e = {e} took {took:?}"
-        );
+        zed_tests::without_digits(&format!("equal cores at e = {e}"), u64::from(e), || {
+            equal_cores(e)
+        });
     }
     // The same at an exponent small enough to check against the values written out.
     equal_cores(300);
+}
+
+/// The negative control of [`zed_tests::without_digits`]: the product of
+/// `equal_cores_over_bases_that_share_factors_cancel_without_their_digits` with its powers
+/// written out, `3^e * 9^(e + 1)` at e = 10^6 (about 4.8 * 10^6 bits), fails the bound the kept
+/// forms meet.
+#[test]
+fn a_power_written_out_fails_the_bound_on_bytes() {
+    let e = 1_000_000u32;
+    let written = std::panic::catch_unwind(|| {
+        zed_tests::without_digits("3^e * 9^(e + 1) written out", u64::from(e), || {
+            Num::from(BigInt::from(3).pow(e) * BigInt::from(9).pow(e + 1))
+        })
+    });
+    assert!(written.is_err(), "the digits of 3^(3e + 2) met the bound");
 }
 
 #[test]

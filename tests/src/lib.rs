@@ -98,6 +98,28 @@ pub fn main_param_message(name: &str, written: &str) -> String {
     )
 }
 
+/// Runs `f` and checks that it allocated, on this thread and the threads it starts, fewer bytes
+/// than one integer of `bits` bits written out takes, `bits / 8`: a run that keeps such integers
+/// as powers and roots allocates a few words for each, whatever their size, while one that
+/// writes a single one out allocates at least that many bytes. Bytes decide, not time (author
+/// P169); the time is printed. Before TEST-time-pass-condition these tests held the time under
+/// 1 s, which a loaded machine could fail and which said nothing on a quiet one.
+pub fn without_digits<R>(what: &str, bits: u64, f: impl FnOnce() -> R) -> R {
+    let (before, start) = (zed_alloc_count::allocated(), std::time::Instant::now());
+    let r = f();
+    let bytes = zed_alloc_count::allocated() - before;
+    eprintln!(
+        "{what}: {bytes} bytes allocated in {:?}, against {} for {bits} bits written out",
+        start.elapsed(),
+        bits / 8
+    );
+    assert!(
+        bytes < bits / 8,
+        "{what} allocated {bytes} bytes, at least those of {bits} bits written out"
+    );
+    r
+}
+
 /// The folder that holds every step folder.
 pub fn steps_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps")

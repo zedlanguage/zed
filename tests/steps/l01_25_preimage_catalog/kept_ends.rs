@@ -3,19 +3,9 @@
 
 use super::pre;
 use zed_kernel::Shared;
+use zed_tests::without_digits;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage::Demand;
-
-fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
-    let start = std::time::Instant::now();
-    let r = f();
-    let took = start.elapsed();
-    assert!(
-        took < std::time::Duration::from_secs(1),
-        "{what} took {took:?}"
-    );
-    r
-}
 
 #[test]
 fn a_sum_with_a_large_power_has_its_preimage_without_the_digits() {
@@ -25,7 +15,7 @@ fn a_sum_with_a_large_power_has_its_preimage_without_the_digits() {
         "ok(x) = x^100000000 >= 50;\n",
         "ok(x) = 3 * x^100000000 - 1 >= 50;\n",
     ] {
-        let p = timed(src, || {
+        let p = without_digits(src, 100_000_000, || {
             pre(src, &[("x", Some(2), Some(3))], &Demand::Bool(true))
         });
         assert_eq!(p.domains["x"], IntervalSet::of(2, 3), "{src}");
@@ -42,7 +32,10 @@ fn a_power_under_a_large_power_has_a_root_bound() {
         ("ok(x) = x^3 <= 2^100000000;\n", 3),
         ("ok(x) = x^4 <= 2^100000000;\n", 4),
     ] {
-        let p = timed(src, || pre(src, &[("x", None, None)], &Demand::Bool(true)));
+        // The smaller root, 2^(2.5 * 10^7), bounds the bytes.
+        let p = without_digits(src, 25_000_000, || {
+            pre(src, &[("x", None, None)], &Demand::Bool(true))
+        });
         let root = two.floor_root(r);
         let x = &p.domains["x"];
         let (lo, hi) = x.bounds().expect("a range");
