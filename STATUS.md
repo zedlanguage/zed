@@ -1440,6 +1440,7 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
 | FAIL-exact-oracle-mod-zero-seed | merged and pushed (the commit that marks the row Done); no spec change | Under `@exact` with no classes, `class_test` (crates/zedc-preimage/src/preimage.rs, and preimage_ref.rs) decided `a && false` and `a || true` from the decided operand alone, so a box where `a` fails (`0 mod 0` at `x == 0`) was marked exact; the kernel reads both operands. It now decides only when both are decided. Seed 17731988998593301615 pinned and 16 neighbor cases added in exact_oracle.rs; l01_25, l01_38, l01_39, l01_39a, l01_39b, m0_10 and the standing groups: 801 pieces, 5 failed before, 3 after (only the two tracked rows FAIL-generic-fold-l0125 and the window seed of FAIL-window-two-shadows-seed). |
 | TEST-calibration-split-margin | merged and pushed (the commit "TEST-calibration-split-margin: ..."); no spec change | A dense product of a sum by itself was charged three transforms per prime where the transforms square with two, so `(x + y) ^ 4096 - x`, all squares, took 0.48 to 0.75 of its prediction and a quiet machine failed the floor 0.5. `Poly::plan` charges such a square 2/3 of its transforms when `num::squares_by_transform` holds; the split at 4096 now 0.70 to 1.08, the product law 0.68 to 1.15 (load 23 to 30). Test `poly::tests::a_square_is_charged_two_of_its_three_transforms`; COMPLEXITY.md POLY-nf-work row updated |
 | FAIL-curried-positional-lambda-order | merged and pushed (the commit that marks the row Done); no spec change | The lambda repair of a call ending in `...` that leaves out a positional parameter wrote the parameter first, as `(mask) -> pdep(mask, …)` for `pdep(1, ...)`. `Misfit::CurriedPositional` now carries the code of the arguments before the parameter and whether others follow, and the menu writes `(mask) -> pdep(1, mask)`. 2 tests (7 cases) in l01_39f arity_message.rs, red before; checker groups l01_07, l01_09, l01_13, l01_16, l01_17, l01_21, l01_23, l01_24, l01_26, l01_26a, l01_29, l01_37a, l01_39, l01_39a, l01_39f, l02_02, m0_01, m0_04, m0_12: 1324 pieces, 1 failed before (these tests), 0 after. |
+| TEST-bench-timeout-recheck | merged and pushed (the commit "TEST-bench-timeout-recheck: ..."); no spec change | The four benchmarks stopped at load 42 to 110 pass alone at load 41 to 48 in 6 to 9 s, with a 1x of 0.43 to 1.01 s, so they are unchanged. The l01_24 benchmark `equality_over_a_wide_odd_base_scales_with_its_bits` spent 15 s of 20 s writing out 3^(2^23) with num-bigint; it now uses the kernel's `pow_uint` (88 ms) and takes 13.4 s, same counts and ratio. |
 
 ## Decisions made
 
@@ -2321,8 +2322,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | FAIL-window-two-shadows-seed | running | 2026-11-14 08:57 |  |
 | MUTATE-generic-constants | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
-| TEST-bench-timeout-recheck | running | 2026-11-14 08:37 |  |
-| TEST-calibration-split-margin | running | 2026-11-14 08:37 |  |
 | TEST-cov-run-settings | running | 2026-11-14 09:42 |  |
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
 | TEST-presburger-unreached-paths | running |  |  |

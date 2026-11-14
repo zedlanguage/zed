@@ -300,9 +300,12 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
 #[test]
 fn equality_over_a_wide_odd_base_scales_with_its_bits() {
     use zedc::store::interval::Num;
+    // The set-up writes `3^n` out by the kernel's `pow_uint`, which squares by transforms:
+    // num-bigint's `pow`, by Karatsuba and Toom-3, took 15 s of the test's 20 s at 8n = 2^23
+    // (TEST-bench-timeout-recheck, load 36), against the 30 s limit. Same value, untimed.
     let pair = |n: usize| {
-        let n32 = u32::try_from(n).unwrap();
-        let wide = Num::from(num_bigint::BigInt::from(3).pow(n32) * num_bigint::BigInt::from(2));
+        let three_n = zed_kernel::num::pow_uint(&num_bigint::BigUint::from(3u32), n as u64);
+        let wide = Num::from(num_bigint::BigInt::from(three_n) * num_bigint::BigInt::from(2));
         (
             wide.pow(1000),
             &Num::from(3).pow_by(&Num::from(1000 * n as u64)).unwrap() * &Num::from(2).pow(1000),
