@@ -11,13 +11,11 @@ use zedc::store::int::Int;
 use zedc::store::live3::{self, Row3, point};
 use zedc::store::presburger::{Con, Formula, Lin, satisfiable};
 
-use super::scaling::decides;
-
-fn int(n: i64) -> Int {
+pub(super) fn int(n: i64) -> Int {
     Int::from(n)
 }
 
-fn row(a: [i64; 3], k: i64) -> Row3 {
+pub(super) fn row(a: [i64; 3], k: i64) -> Row3 {
     (a.map(int), int(k))
 }
 
@@ -34,7 +32,7 @@ fn enumerate(rows: &[Row3], h: i64) -> bool {
 }
 
 /// The rows `±x_i + h >= 0`.
-fn cube(h: i64) -> Vec<Row3> {
+pub(super) fn cube(h: i64) -> Vec<Row3> {
     (0..3)
         .flat_map(|i| {
             [1, -1].map(|s| {
@@ -305,7 +303,7 @@ fn the_omega_test_decides_three_variables() {
 /// No elimination, box point or rounding center decides it, so every stage runs: the linear
 /// programs, the rounding, LLL, and `twovar` on each of the planes of the flat direction, all
 /// over every row.
-fn thin(m: usize, seed: u64, coefficient: impl Fn(&mut Rng) -> Int) -> Vec<Row3> {
+pub(super) fn thin(m: usize, seed: u64, coefficient: impl Fn(&mut Rng) -> Int) -> Vec<Row3> {
     let mut rng = Rng::new(seed);
     let r = 7;
     let mut rows: Vec<Row3> = reeve(r, 1).iter().map(|(a, k)| row(*a, *k)).collect();
@@ -324,7 +322,7 @@ fn thin(m: usize, seed: u64, coefficient: impl Fn(&mut Rng) -> Int) -> Vec<Row3>
 
 /// Checks that the work of `point` on `small` and `large`, sizes `n` and `8n`, is of order
 /// `n^power`, measuring each once.
-fn scales(what: &str, n: usize, power: u32, small: &[Row3], large: &[Row3]) {
+pub(super) fn scales(what: &str, n: usize, power: u32, small: &[Row3], large: &[Row3]) {
     assert_eq!(solve(small), None);
     assert_eq!(solve(large), None);
     scaling::check_order(what, n, power, |m| {
@@ -333,20 +331,12 @@ fn scales(what: &str, n: usize, power: u32, small: &[Row3], large: &[Row3]) {
     });
 }
 
-#[test]
-fn many_rows_scale_linearly() {
-    // Coefficients up to 50; the work is O(m log m), from `twovar::point` on each plane.
-    let fifty = |rng: &mut Rng| int(rng.int(-50, 50));
-    let (small, large) = (thin(256, 7, fifty), thin(256 * scaling::FACTOR, 7, fifty));
-    scales("rows over three variables", 256, 1, &small, &large);
-}
-
 // Plan item LIVE3-TESTS (from the XR3 round 3 synthesis): the systems the cross-review named,
 // each with its answer found here by hand and by enumeration, and the slab family at `n` and
 // `8n` rows.
 
 /// The rows `a <= c·x <= a + w`.
-fn slab(c: [i64; 3], a: i64, w: i64) -> Vec<Row3> {
+pub(super) fn slab(c: [i64; 3], a: i64, w: i64) -> Vec<Row3> {
     vec![row(c, -a), row(c.map(|c| -c), a + w)]
 }
 
@@ -361,7 +351,7 @@ fn bounds(which: &[usize], h: i64) -> Vec<Row3> {
 }
 
 /// The rows as a formula over `x`, `y` and `z`, for the path through `satisfiable`.
-fn formula(rows: &[Row3]) -> Formula {
+pub(super) fn formula(rows: &[Row3]) -> Formula {
     let v = |n: &str| Lin::atom(zedc::store::presburger::Atom::Sym(n.into()));
     Formula::and(
         rows.iter()
@@ -586,52 +576,6 @@ fn parity_slabs_are_decided() {
     }
 }
 
-#[test]
-fn slabs_of_million_coefficients_scale() {
-    // The empty slab c·x = 1 of `parity_slabs_are_decided`, c = (10^6 + 1, 10^6 + 3, 10^6 + 5),
-    // over the cube |x_i| <= 5, and m rows more with coefficients up to 50, each holding the
-    // whole cube with slack 0 to 5, so no row bound settles it. Every stage runs over all the
-    // rows: the linear programs, the rounding, LLL (the flat direction is c) and `twovar` on the
-    // one plane c·x = 1, which has no point in the cube. The work is O(m log m). The linear
-    // programs make O(m) calls of `Lin2::minus` (each round of `solve2` pairs its pieces and drops
-    // a sixteenth or more), so their count is held to linear growth: measured 4,645 → 38,315 calls
-    // from 192 to 1,536 rows, 8.25 times. The count does not depend on the load, so besides the
-    // limit of 10.5 every scaling test meets it is held to 9 (`scaling::hold_linear`), the ratio
-    // the author strongly prefers: at 9 an extra factor of log m (8 · log 1,536 / log 192 = 11.2)
-    // fails, and so does an all-pairs pass of `Lin2::minus` in each round of `solve2`, which at
-    // this size stays under the limit of the instruction count (COMPLEXITY.md S18).
-    let c = [1_000_001, 1_000_003, 1_000_005];
-    let family = |m: usize| -> Vec<Row3> {
-        let mut rng = Rng::new(11);
-        let mut rows: Vec<Row3> = [slab(c, 1, 0), cube(5)].concat();
-        for _ in 0..m {
-            let a = [0; 3].map(|_| rng.int(-50, 50));
-            // The least of a·x over the cube is -5 Σ|a_i|.
-            let least = -5 * a.iter().map(|c| c.abs()).sum::<i64>();
-            rows.push(row(a, rng.int(0, 5) - least));
-        }
-        rows
-    };
-    let n = 192;
-    let (small, large) = (family(n), family(n * scaling::FACTOR));
-    scaling::hold_linear(
-        &format!(
-            "`Lin2::minus` over a slab of million coefficients: {n} and {} rows",
-            n * scaling::FACTOR
-        ),
-        "calls",
-        minus_calls(&small),
-        minus_calls(&large),
-    );
-    scales(
-        "rows over a slab of million coefficients",
-        n,
-        1,
-        &small,
-        &large,
-    );
-}
-
 // The systems of the removed `hull3` tests (plan item HULL3-subsumed): rows `z·Z + x·X + y·Y +
 // k >= 0` with `z != 0` in every row, the unit-side class the `hull3` stage once projected on
 // `(X, Y)` before the box. `live3` decides them now, checked against enumeration.
@@ -780,7 +724,7 @@ fn normals_in_one_plane_unbounded_and_empty_systems() {
 /// `n` planes tangent to `Z = (X - p)² + (Y - p)²` from below and `n` to `Z = C - (X - p)² -
 /// (Y - p)²` from above, at random points: the body between them is near a lens over `(p, p)`,
 /// with many planes on its boundary.
-fn tangents(n: usize, p: i64) -> Vec<Row3> {
+pub(super) fn tangents(n: usize, p: i64) -> Vec<Row3> {
     let mut rng = Rng::new(0x4_3335);
     let c = 2_000_000i64;
     (0..2 * n)
@@ -799,23 +743,6 @@ fn tangents(n: usize, p: i64) -> Vec<Row3> {
 }
 
 #[test]
-fn a_lens_of_tangent_planes_away_from_the_origin_scales() {
-    // Over (5000, 5000) no point of the box stage holds the lens, so `satisfiable` reaches
-    // `live3`. From 128 to 1,024 pairs of planes: 1,489M to 7,163M instructions (4.8 times),
-    // 57.9M to 399M bytes (6.9 times). With the removed `hull3` stage first it was 894M to
-    // 11,712M (13.1 times) and 324M to 4,205M bytes (HULL3-subsumed, load 47 to 53).
-    let f = formula(&tangents(64, 5_000));
-    let m = satisfiable(&f).expect("answered").expect("a point");
-    assert!(f.holds(&m), "{m:?}");
-    decides(
-        "a lens of tangent planes away from the origin",
-        128,
-        Ok(true),
-        |n| formula(&tangents(n, 5_000)),
-    );
-}
-
-#[test]
 fn a_lens_of_tangent_planes_has_a_point() {
     assert!(solve(&tangents(128, 0)).is_some());
     assert!(solve(&tangents(128, 5_000)).is_some());
@@ -823,7 +750,7 @@ fn a_lens_of_tangent_planes_has_a_point() {
 
 /// The lens of [`tangents`] over the origin cut by the slab `10^6 + 1/4 <= Z <= 10^6 + 1/2`,
 /// which holds real points of the lens and no integer `Z`.
-fn lens_in_a_thin_slab(n: usize) -> Vec<Row3> {
+pub(super) fn lens_in_a_thin_slab(n: usize) -> Vec<Row3> {
     let mut rows = tangents(n, 0);
     rows.push(row([0, 0, 4], -4_000_001));
     rows.push(row([0, 0, -4], 4_000_002));
@@ -835,32 +762,8 @@ fn a_lens_in_a_thin_slab_has_no_point() {
     assert_eq!(solve(&lens_in_a_thin_slab(64)), None);
 }
 
-#[test]
-fn a_lens_of_tangent_planes_scales_in_point() {
-    // With no integer point, every size takes the whole path of `point`: six linear programs,
-    // the reduction and the slices. The lens alone over the origin is no scaling test of
-    // `point`: there the rounded first vertex holds the rows at 128 pairs, which ends `point`
-    // after one linear program on numbers that fit in 128 bits, and at 512 and 1,024 pairs it
-    // does not, so `point` runs five and three linear programs, the later ones along
-    // directions with 12 to 23 digits on numbers that do not fit (LIVE3-lp-tangents: 0.35 s,
-    // 13.0 s and 7.3 s; 41.6 times the bytes from 128 to 1,024). The work of each linear
-    // program was linear there: 35k to 345k pieces visited by `solve1` from 128 to 1,024.
-    let (small, large) = (
-        lens_in_a_thin_slab(64),
-        lens_in_a_thin_slab(64 * scaling::FACTOR),
-    );
-    scaling::check(
-        "a lens of tangent planes in a thin slab, in `point`",
-        64,
-        |m| {
-            let rows = if m == 64 { &small } else { &large };
-            std::hint::black_box(point(rows));
-        },
-    );
-}
-
 /// The calls of `Lin2::minus` that `point` makes on `rows`.
-fn minus_calls(rows: &[Row3]) -> u64 {
+pub(super) fn minus_calls(rows: &[Row3]) -> u64 {
     let before = live3::counts::minus();
     std::hint::black_box(point(rows));
     live3::counts::minus() - before

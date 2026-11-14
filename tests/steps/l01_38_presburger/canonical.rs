@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::presburger::{self, Atom, Con, Lin, Rel};
 
 fn var(name: &str) -> Atom {
@@ -27,7 +26,7 @@ fn row(terms: &[(&str, i128)], c: i128, eq: bool) -> Con {
 }
 
 /// The colors of the variables of `cons`.
-fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
+pub(super) fn colors(cons: &[Con]) -> BTreeMap<Atom, u64> {
     presburger::colors(cons).1
 }
 
@@ -42,7 +41,7 @@ fn names(n: usize, prefix: &str) -> Vec<String> {
 
 /// A pipeline of `n` stages, `stage[i] + 2·stage[i+1] >= 1`: each stage is told apart from the
 /// others by its distance from the two ends, which takes about n/2 rounds of comparison to see.
-fn pipeline(n: usize) -> Vec<Con> {
+pub(super) fn pipeline(n: usize) -> Vec<Con> {
     let s = names(n, "stage");
     (0..n - 1)
         .map(|i| row(&[(&s[i], 1), (&s[i + 1], 2)], -1, false))
@@ -60,7 +59,7 @@ fn ring(n: usize) -> Vec<Con> {
 
 /// `rows` rows over `n` variables, each of two or three terms with coefficients in -3..=3,
 /// constants in -4..=4, an equality one time in four.
-fn random(rng: &mut Rng, n: usize, rows: usize, prefix: &str) -> Vec<Con> {
+pub(super) fn random(rng: &mut Rng, n: usize, rows: usize, prefix: &str) -> Vec<Con> {
     let v = names(n, prefix);
     (0..rows)
         .map(|_| {
@@ -357,21 +356,4 @@ fn corner_cases() {
     assert_eq!(distinct(&c), 2);
     let c = colors(&[row(&[("a", 1)], 0, true), row(&[("b", 1)], 0, false)]);
     assert_eq!(distinct(&c), 2);
-}
-
-#[test]
-fn refinement_scales() {
-    let n = 2_000;
-    let chains = (pipeline(n), pipeline(scaling::FACTOR * n));
-    scaling::check("colors of a pipeline", n, |m| {
-        drop(colors(if m == n { &chains.0 } else { &chains.1 }));
-    });
-    let mut rng = Rng::new(0xCA_0002);
-    let sparse = (
-        random(&mut rng, n, 2 * n, "v"),
-        random(&mut rng, scaling::FACTOR * n, 2 * scaling::FACTOR * n, "v"),
-    );
-    scaling::check("colors of a random sparse system", n, |m| {
-        drop(colors(if m == n { &sparse.0 } else { &sparse.1 }));
-    });
 }

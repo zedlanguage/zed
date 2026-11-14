@@ -3,11 +3,10 @@
 //! 100,000 deep is built, mapped, printed, decided and dropped on a 2 MiB thread stack. The
 //! recursive forms these replace overflowed that stack at 4,000.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
 
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, Shared, satisfiable};
 
@@ -16,10 +15,10 @@ const STACK: usize = 2 << 20;
 
 /// How many guards the deep chain has: 100,000 levels of `&&`, `||` and `!`, about 133,000
 /// deep.
-const DEEP: usize = 100_000;
+pub(super) const DEEP: usize = 100_000;
 
 /// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
-fn on_small_stack(f: impl FnOnce() + Send + 'static) {
+pub(super) fn on_small_stack(f: impl FnOnce() + Send + 'static) {
     thread::Builder::new()
         .stack_size(STACK)
         .spawn(f)
@@ -40,7 +39,7 @@ fn guard(i: usize) -> Formula {
 /// `x0 >= 0 && (x1 >= 1 || !(x2 >= 2 || (x3 >= 3 && ...)))` over `n` guards, as a generator
 /// writes a guard for each step of a chain. The three forms take turns, so that neither
 /// [`Formula::and`] nor [`Formula::or`] flattens a level into the one above.
-fn chain(n: usize) -> Formula {
+pub(super) fn chain(n: usize) -> Formula {
     (0..n).rev().fold(guard(n), |inner, i| match i % 3 {
         0 => Formula::and(vec![guard(i), inner]),
         1 => Formula::or(vec![guard(i), Formula::negate(inner)]),
@@ -49,7 +48,7 @@ fn chain(n: usize) -> Formula {
 }
 
 /// Each constraint `t >= 0` made `t + 1 >= 0`, and back.
-fn loosen(c: &Con) -> Formula {
+pub(super) fn loosen(c: &Con) -> Formula {
     Formula::Con(Con::ge(&c.lin, &Lin::constant(-1)))
 }
 fn tighten(c: &Con) -> Formula {
@@ -152,41 +151,4 @@ fn small_formulas_print_compare_and_hash_as_before() {
     }
     let set: HashSet<Formula> = order.iter().cloned().chain(order.iter().cloned()).collect();
     assert_eq!(set.len(), order.len());
-}
-
-#[test]
-fn mapping_copying_comparing_printing_and_dropping_a_chain_cost_its_size() {
-    // Each operation keeps one stack entry per level of the part it is in, so it costs O(n).
-    let built: BTreeMap<usize, Formula> = [DEEP / 8, DEEP]
-        .into_iter()
-        .map(|n| (n, chain(n)))
-        .collect();
-    on_small_stack(move || {
-        scaling::check_order(
-            "a chain of guards mapped, copied, compared, hashed, printed and dropped",
-            DEEP / 8,
-            1,
-            |n| {
-                let f = &built[&n];
-                let loose = f.map_cons(&loosen);
-                let copy = f.clone();
-                assert!(copy == *f && loose != *f);
-                let set: HashSet<&Formula> = [f, &copy].into_iter().collect();
-                std::hint::black_box((set.len(), f.to_string().len()));
-            },
-        );
-    });
-}
-
-#[test]
-fn deciding_a_chain_costs_its_size() {
-    let built: BTreeMap<usize, Formula> = [DEEP / 8, DEEP]
-        .into_iter()
-        .map(|n| (n, chain(n)))
-        .collect();
-    on_small_stack(move || {
-        scaling::check_order("a chain of guards decided", DEEP / 8, 1, |n| {
-            std::hint::black_box(satisfiable(&built[&n]).is_ok());
-        });
-    });
 }

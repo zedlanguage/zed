@@ -3,14 +3,14 @@
 //! (the box of their bounds and its five points), at n and 8n.
 
 use zed_tests::instances::Rng;
-use zedc::store::presburger::{Con, Formula, Lin, Refusal};
+use zedc::store::presburger::{Con, Formula, Lin};
 
-use super::scaling::{decides, x};
+use super::scaling::x;
 
 /// `2n` rows of up to three terms over `n` variables, coefficients in `-5..=5`, each holding at
 /// a random point with slack at most 3: no elimination keeps the rows, so the last step is the
 /// box of the bounds, and the point is tight on many rows.
-fn tight(n: usize, seed: u64) -> Formula {
+pub(super) fn tight(n: usize, seed: u64) -> Formula {
     let mut g = Rng::new(seed);
     let p: Vec<i64> = (0..n).map(|_| g.int(-50, 50)).collect();
     let mut r = Vec::new();
@@ -30,14 +30,4 @@ fn tight(n: usize, seed: u64) -> Formula {
         r.push(Formula::Con(Con::ge(&l, &Lin::constant(0))));
     }
     Formula::and(r)
-}
-
-#[test]
-fn the_tight_three_term_family_scales() {
-    decides(
-        "the tight three-term family",
-        64,
-        Err(Refusal::Growth),
-        |n| tight(n, 0xfeed_beef_1380),
-    );
 }

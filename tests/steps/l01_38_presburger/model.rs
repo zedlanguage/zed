@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, satisfiable};
 use zedc::store::utvpi::{Search, integer_empty, integer_point_by};
@@ -253,7 +252,7 @@ fn a_disjunction_of_unit_rows_is_decided_and_placed() {
 
 /// A path of `n` steps `x[i+1] - x[i]`, each in `[1, 2]` or in `[-9, -8]`, with `x[n] == x[0]`:
 /// a point takes between `n/10` and `n/5` steps down.
-fn round_trip(n: usize) -> Formula {
+pub(super) fn round_trip(n: usize) -> Formula {
     let mut parts: Vec<Formula> = (0..n)
         .map(|i| Formula::or(vec![between(i + 1, i, 1, 2), between(i + 1, i, -9, -8)]))
         .collect();
@@ -262,7 +261,7 @@ fn round_trip(n: usize) -> Formula {
 }
 
 /// The steps down of a point of [`round_trip`], checked to be one.
-fn steps_down(n: usize, f: &Formula) -> usize {
+pub(super) fn steps_down(n: usize, f: &Formula) -> usize {
     let m = satisfiable(f).expect("answered").expect("a point");
     assert!(f.holds(&m), "{m:?} fails a round trip of {n}");
     (0..n).filter(|&i| value(&m, i + 1) < value(&m, i)).count()
@@ -353,15 +352,4 @@ fn a_round_trip_of_steps_up_or_down_is_placed() {
             assert_eq!(satisfiable(&f), Ok(None), "a round trip of {n}");
         }
     }
-}
-
-/// The point of a round trip of 64 and of 512 steps, each up or down, built first.
-#[test]
-fn the_point_of_a_round_trip_scales() {
-    let (small, large) = (round_trip(64), round_trip(scaling::FACTOR * 64));
-    steps_down(64, &small);
-    steps_down(scaling::FACTOR * 64, &large);
-    scaling::check("the point of a round trip of steps up or down", 64, |m| {
-        drop(satisfiable(if m == 64 { &small } else { &large }));
-    });
 }

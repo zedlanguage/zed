@@ -39,13 +39,13 @@ fn nest(k: usize) -> Formula {
 }
 
 /// The nest with `z <= 0` beside it: every path holds `z >= 1 && z <= 0`.
-fn empty(k: usize) -> Formula {
+pub(super) fn empty(k: usize) -> Formula {
     Formula::and(vec![nest(k), ge(&[("z", -1)], 0)])
 }
 
 /// The nest with `z <= 0 || (z == 1 && x[i] == i + 1 for each i)` beside it: one path, that of
 /// the first disjunct at every level, has a point, `z == 1 && x[i] == i + 1`.
-fn near(k: usize) -> Formula {
+pub(super) fn near(k: usize) -> Formula {
     let point = (0..k as i64).map(|i| is(&format!("x{i}"), i + 1));
     let point = Formula::and(std::iter::once(is("z", 1)).chain(point).collect());
     Formula::and(vec![nest(k), Formula::or(vec![ge(&[("z", -1)], 0), point])])
@@ -126,13 +126,13 @@ fn a_nest_with_one_path_that_has_a_point_is_answered_with_it() {
 /// `g[i] = (y[i] >= 2i && g[i-1]) || (y[i] <= -2i && f[i-1])`, from `f[-1] = z >= 1` and
 /// `g[-1] = z >= 2`, with `z <= 0` beside: two shared tests at each level, each held by both
 /// at the level above, every path empty.
-fn chain(k: usize) -> Formula {
+pub(super) fn chain(k: usize) -> Formula {
     chain_of(k, [(1, 1), (-1, 1), (1, 2), (-1, 2)])
 }
 
 /// [`chain`] with every disjunct bounding `y[i]` from below, at `i`, `2i`, `3i` and `4i`: the
 /// hulls of `f` and `g` keep a bound on each `y[i]`, and differ in it.
-fn chain_one_side(k: usize) -> Formula {
+pub(super) fn chain_one_side(k: usize) -> Formula {
     chain_of(k, [(1, 1), (1, 2), (1, 3), (1, 4)])
 }
 
@@ -156,7 +156,7 @@ fn chain_of(k: usize, bounds: [(i64, i64); 4]) -> Formula {
 
 /// [`chain`] with `g`'s disjuncts bounding `w[i]` where `f`'s bound `y[i]`: the two tests at
 /// each level have atoms of their own that the other lacks.
-fn chain_two_atoms(k: usize) -> Formula {
+pub(super) fn chain_two_atoms(k: usize) -> Formula {
     let (mut f, mut g) = (ge(&[("z", 1)], -1), ge(&[("z", 1)], -2));
     for i in 0..k as i64 {
         let (y, w) = (format!("y{i}"), format!("w{i}"));
@@ -174,7 +174,7 @@ fn chain_two_atoms(k: usize) -> Formula {
 /// likewise with `v[i]`, from `a[-1] = z >= 1` and `b[-1] = z >= 2`, with `z <= 0` beside:
 /// two shared tests at each level, both held by each disjunct of both at the level above,
 /// each with an atom of its own; every path empty.
-fn pair(k: usize) -> Formula {
+pub(super) fn pair(k: usize) -> Formula {
     let (mut a, mut b) = (ge(&[("z", 1)], -1), ge(&[("z", 1)], -2));
     for i in 0..k as i64 {
         let (u, w) = (format!("u{i}"), format!("v{i}"));
@@ -246,7 +246,7 @@ fn the_answers_are_those_of_the_formulas_written_out() {
 
 /// The least instructions of three runs of `decide` on each family member at depths 32 to 512,
 /// printed with the exponent of each step; then [`scaling::check_order`] at 64 and 512.
-fn costs(what: &str, family: fn(usize) -> Formula) {
+pub(super) fn costs(what: &str, family: fn(usize) -> Formula) {
     let mut meter = Meter::new();
     let sizes = [32, 64, 128, 256, 512];
     let built: Vec<Formula> = sizes.iter().map(|&k| family(k)).collect();
@@ -274,46 +274,4 @@ fn costs(what: &str, family: fn(usize) -> Formula) {
     scaling::check_order(&format!("{what}, its point sought"), 64, 1, |n| {
         std::hint::black_box(satisfiable(&built[&n]).is_ok());
     });
-}
-
-#[test]
-fn a_nest_whose_every_path_is_empty_costs_its_depth() {
-    // Each part is read once, and each hull is the one it is made from with a few forms
-    // changed, O(log n) each (COMPLEXITY.md PRES-nest-empty).
-    costs("a nest every path of which is empty", empty);
-    let built = scaling::inputs(64, near);
-    scaling::check_order(
-        "a nest with one path that has a point, its point found",
-        64,
-        1,
-        |n| {
-            std::hint::black_box(satisfiable(&built[&n]).is_ok());
-        },
-    );
-}
-
-#[test]
-fn a_chain_of_two_tests_held_by_both_costs_its_depth() {
-    costs("a chain of two tests held by both", chain);
-}
-
-#[test]
-fn a_chain_of_two_tests_held_by_both_bounding_one_side_costs_its_depth() {
-    costs(
-        "a chain of two tests held by both, bounding one side",
-        chain_one_side,
-    );
-}
-
-#[test]
-fn a_chain_of_two_tests_with_atoms_of_their_own_costs_its_depth() {
-    costs(
-        "a chain of two tests with atoms of their own",
-        chain_two_atoms,
-    );
-}
-
-#[test]
-fn two_tests_each_held_by_both_at_the_level_above_cost_their_depth() {
-    costs("two tests held by both disjuncts of both", pair);
 }

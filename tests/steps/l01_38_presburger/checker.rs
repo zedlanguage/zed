@@ -10,7 +10,7 @@ use zed_tests::step_helpers::l01_25_preimage_catalog::int_defs;
 /// parameter `def` writes without a type is declared `int` ([`int_defs`]): the checker asks a
 /// linear question only of a function whose parameters are all `int`, and a bare literal takes
 /// the carrier of its use (L1.26a), so it no longer makes a parameter `int`.
-fn program(def: &str, args: &str) -> String {
+pub(super) fn program(def: &str, args: &str) -> String {
     let def = int_defs(def);
     format!(
         "{def}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
@@ -722,35 +722,6 @@ fn a_decided_question_over_four_names_is_accepted() {
         (o.status, o.stdout.as_str(), o.stderr.as_str()),
         (0, "in\n", "")
     );
-}
-
-#[test]
-fn the_linear_questions_of_a_unit_scale() {
-    // `n` functions of two linear tests each, every one asked whether it can hold and fail.
-    let unit = |n: usize| {
-        let mut src: String = (0..n)
-            .map(|i| {
-                format!("ok{i}(x: int, y: int) = 0 <= 3 * x + 5 * y && 2 * x - 7 * y <= {i};\n")
-            })
-            .collect();
-        src.push_str(&program("", "x: a, y: a").replace("ok(", "ok0("));
-        src
-    };
-    // The questions are timed alone, on a unit loaded before the timing (COMPLEXITY.md F85).
-    let units: std::collections::BTreeMap<usize, _> = [64, 64 * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let src = unit(m);
-            let program = zedc::run::load(src.as_bytes()).unwrap();
-            let tokens = zedc::lex::lex_fence(&src).unwrap();
-            (m, (zed_tests::deep::statements(&src), tokens, program, src))
-        })
-        .collect();
-    zed_tests::scaling::check("the linear questions of a unit", 64, |m| {
-        let (stmts, tokens, program, src) = &units[&m];
-        let refused = zedc::front::linear_questions(src, tokens, stmts, program.unit());
-        assert!(refused.is_empty(), "{refused:?}");
-    });
 }
 
 #[test]

@@ -8,15 +8,14 @@
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, Refusal, decide, satisfiable};
 use zedc::store::utvpi::{Search, integer_empty, integer_empty_by};
 
-use super::scaling::{decides, x};
+use super::scaling::x;
 
 /// `Σ c·x[i] + k >= 0`.
-fn ge(t: &[(usize, i64)], k: i64) -> Formula {
+pub(super) fn ge(t: &[(usize, i64)], k: i64) -> Formula {
     let l = t
         .iter()
         .fold(Lin::constant(k), |l, (i, c)| l.plus(&x(*i).times(*c)));
@@ -53,7 +52,7 @@ fn value(m: &Model, i: usize) -> i64 {
 }
 
 /// `decide(f)` is `answer`, and `satisfiable(f)` agrees, with a model that holds.
-fn answers(f: &Formula, answer: Result<bool, Refusal>) {
+pub(super) fn answers(f: &Formula, answer: Result<bool, Refusal>) {
     assert_eq!(decide(f), answer, "{f}");
     let found = satisfiable(f);
     assert_eq!(
@@ -209,14 +208,14 @@ fn differences(rows: &[(usize, usize, i64)]) -> Vec<(Vec<(usize, Int)>, Int)> {
 }
 
 /// Whether the rows have no integer point, by the race of the searches for a potential.
-fn raced(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
+pub(super) fn raced(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
     let rows: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
     integer_empty(n, &rows)
 }
 
 /// [`raced`], after checking that each search for a potential, run to its end alone, gives the
 /// same answer.
-fn empty(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
+pub(super) fn empty(n: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
     let terms: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
     let answer = raced(n, rows);
     for search in [Search::GoldbergRadzik, Search::BfDijkstra, Search::Duong] {
@@ -267,7 +266,7 @@ fn acyclic_and_cyclic_unit_rows_are_decided() {
 /// The hub: `x[i] >= x[i-1] + 1` along half the variables, each of them at least `x[0]`, and
 /// `x[0]` at least each of the other half. With `cyclic`, each variable is also within `2n` of
 /// its three next neighbors around a cycle, which gives the graph cycles.
-fn hub(n: usize, cyclic: bool) -> Vec<(Vec<(usize, Int)>, Int)> {
+pub(super) fn hub(n: usize, cyclic: bool) -> Vec<(Vec<(usize, Int)>, Int)> {
     let mut r = Vec::new();
     for i in 2..n / 2 {
         r.push((i, i - 1, -1));
@@ -288,17 +287,6 @@ fn hub(n: usize, cyclic: bool) -> Vec<(Vec<(usize, Int)>, Int)> {
         }
     }
     differences(&r)
-}
-
-#[test]
-fn the_acyclic_hub_scales() {
-    // Through the parity test itself: through `decide` the work around it hides the search's.
-    let (small, large) = (hub(512, false), hub(scaling::FACTOR * 512, false));
-    assert!(!raced(512, &small) && !raced(scaling::FACTOR * 512, &large));
-    scaling::check("the acyclic hub", 512, |n| {
-        let rows = if n == 512 { &small } else { &large };
-        std::hint::black_box(raced(n, rows));
-    });
 }
 
 #[test]
@@ -365,7 +353,7 @@ fn a_dense_octagon_with_a_parity_obstruction_has_no_point() {
 /// paths hold about `n` negative edges, ordered against the order of the variables. It has the
 /// point `x[j] = j`. From the xt round 2 synthesis (wt/xt2/synth/gemini-work/verify_gemini.rs),
 /// measured there at 12.8 times from 64 to 512 on the race of that time.
-fn negchain(n: usize) -> Formula {
+pub(super) fn negchain(n: usize) -> Formula {
     let c = n as i64 + 3;
     let mut rows = Vec::new();
     for j in 0..n {
@@ -376,24 +364,6 @@ fn negchain(n: usize) -> Formula {
         }
     }
     Formula::and(rows)
-}
-
-#[test]
-fn a_cycle_of_negative_edges_scales() {
-    for n in [4, 5, 64] {
-        let f = negchain(n);
-        let m = satisfiable(&f).expect("decided").expect("a point");
-        assert!(f.holds(&m), "{m:?}");
-        // With `x0 >= x[n-1] + n + 3` as well, the rows of `d = 1` give
-        // `x[n-1] >= x0 + n - 1`, so `x0 >= x0 + 2n + 2`: no point.
-        let c = n as i64 + 3;
-        let tight = Formula::and(vec![f, ge(&[(0, 1), (n - 1, -1)], -c)]);
-        answers(&tight, Ok(false));
-    }
-    // From 2048 variables (6144 rows), so that a quadratic step is caught however cheap the
-    // work per pair of rows: a scan of all rows per row comparing only their lengths gave
-    // 18.8 times from 512 and passed, and gives 43.5 times from 2048 (2026-11-05, load 78).
-    decides("a cycle of negative edges", 2048, Ok(true), negchain);
 }
 
 /// `x[i] + 1 <= x[i+1] <= x[i] + 2` for each `i < n - 1`.
@@ -413,7 +383,7 @@ type Rows = Vec<(Vec<(usize, Int)>, Int)>;
 /// path's, and the variables renamed by a random permutation, from `seed`. On it the
 /// topological order of the edges of negative reduced cost moves one step per pass of
 /// Goldberg and Radzik's search (COMPLEXITY.md C24).
-fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
+pub(super) fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
     augmented(2 * k + 1, bad_gor_edges(k), seed)
 }
 
@@ -472,37 +442,11 @@ fn fan_edges(a: usize, k: usize, back: Option<i64>) -> Vec<(usize, usize, i64)> 
 /// without its edges back to `a`: a graph with no cycle, over `4k + 3` variables. Without the
 /// pass in topological order, Goldberg and Radzik's search takes passes in proportion to `k` on
 /// the first part, and BF-Dijkstra `k` rounds of `k` work on the second.
-fn acyclic_bad_gor_and_fan(k: usize) -> (usize, Rows) {
+pub(super) fn acyclic_bad_gor_and_fan(k: usize) -> (usize, Rows) {
     let a = 2 * k + 1;
     let mut edges = bad_gor_edges(k);
     edges.extend(fan_edges(a, k, None));
     (a + 2 * k + 2, differences(&edges))
-}
-
-#[test]
-fn the_cyclic_hub_scales() {
-    // Goldberg and Radzik's search takes three passes at both sizes; Bellman–Ford–Moore took
-    // 41.9 times the work (measured on this branch; XT3 measured 42.5).
-    let (small, large) = (hub(512, true), hub(scaling::FACTOR * 512, true));
-    assert!(!raced(512, &small) && !raced(scaling::FACTOR * 512, &large));
-    scaling::check("the cyclic hub", 512, |n| {
-        let rows = if n == 512 { &small } else { &large };
-        std::hint::black_box(raced(n, rows));
-    });
-}
-
-#[test]
-fn bad_gor_scales() {
-    // Goldberg and Radzik's search alone takes 129 passes at k = 256 and 1,026 at k = 2,048:
-    // 59.8 times the work (78.2M to 4.68G instructions, measured on this branch as the negative
-    // control and not kept; XT3 measured 62). The race with BF-Dijkstra and Duong's search
-    // takes 26.8M to 209M instructions, 7.8 times (COMPLEXITY.md C24).
-    let (small, large) = (bad_gor(256, 1), bad_gor(scaling::FACTOR * 256, 1));
-    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("BAD-GOR augmented, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
-        std::hint::black_box(raced(*n, rows));
-    });
 }
 
 /// BAD-GOR augmented as in [`bad_gor`], with each weight 1 edge `i → i + 1` of its path split
@@ -511,7 +455,7 @@ fn bad_gor_scales() {
 /// step per pass (the weight 2 edge has reduced cost 1 at the start of the pass), and each step
 /// now holds a negative edge, so BF-Dijkstra takes a round per step, each lowering the hub `k`
 /// and its `k` leaves again: slow for both along the same shortest paths.
-fn split_bad_gor(k: usize, seed: u64) -> (usize, Rows) {
+pub(super) fn split_bad_gor(k: usize, seed: u64) -> (usize, Rows) {
     augmented(3 * k - 1, split_bad_gor_edges(k), seed)
 }
 
@@ -531,7 +475,7 @@ fn split_bad_gor_edges(k: usize) -> Vec<(usize, usize, i64)> {
 /// variables, augmented together as in [`bad_gor`], so that the random rows join them in one
 /// strongly connected component: slow for Goldberg and Radzik's search and BF-Dijkstra on the
 /// graph and on its reverse.
-fn split_bad_gor_both_ways(k: usize) -> (usize, Rows) {
+pub(super) fn split_bad_gor_both_ways(k: usize) -> (usize, Rows) {
     let half = 3 * k - 1;
     let mut edges = split_bad_gor_edges(k);
     let back: Vec<(usize, usize, i64)> = edges
@@ -561,54 +505,13 @@ fn the_race_agrees_where_the_pairs_stop_against_duong() {
     }
 }
 
-#[test]
-fn the_race_costs_little_more_than_duong_where_duong_wins() {
-    // At k = 1,024 Duong's search finishes first. With the quick pairs stopped once their
-    // units exceed those it expects still to need, the race took 2.9 times its instructions
-    // (6.6G against 2.3G, load 7); with a step of each pair after every unit of Duong's, 4.2
-    // times (9.6G), which this test fails (RACE-constant).
-    let (n, rows) = split_bad_gor_both_ways(1024);
-    let terms: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
-    scaling::compare_costs(
-        "the race against Duong's search alone, BAD-GOR split both ways at k = 1,024",
-        "the race should cost about twice the search that finishes first (RACE-constant)",
-        3.5,
-        || {
-            std::hint::black_box(integer_empty_by(n, &terms, Search::Duong));
-        },
-        || {
-            std::hint::black_box(integer_empty(n, &terms));
-        },
-    );
-}
-
-#[test]
-fn split_bad_gor_scales() {
-    // Measured in instructions from k = 128 to k = 1,024 (UTVPI-both-slow, load 58 to 68):
-    // Goldberg and Radzik's search alone 32.7M to 1,694M (51.8 times), BF-Dijkstra alone 46.6M
-    // to 2,826M (60.7 times), the two sharing labels 98.2M to 5,943M (60.5 times; sharing one
-    // way only, 56 to 58 times), Duong's search alone 535M to 6,218M (11.6 times), and the race
-    // of the pair and Duong's search 175M to 9,778M (55.9 times; 33.5 times the bytes). On
-    // the reverse of the graph the pair is quick, and the race with a second pair searching
-    // it takes 24.2M to 198M (8.2 times; COMPLEXITY.md C24).
-    let (small, large) = (
-        split_bad_gor(128, 1),
-        split_bad_gor(scaling::FACTOR * 128, 1),
-    );
-    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("BAD-GOR with its path split, by k", 128, |k| {
-        let (n, rows) = if k == 128 { &small } else { &large };
-        std::hint::black_box(raced(*n, rows));
-    });
-}
-
 /// BAD-GOR augmented over `2k + 1` variables, and beside it on `2k + 2` further variables a fan:
 /// a path of `k` edges of weight -1 from `a = 2k + 1`, an edge of weight 0 from each of its
 /// first `k` nodes into a hub, edges of weight 0 from the hub to `k` leaves, and an edge of
 /// weight `k + 1 + back` from each leaf to `a`. The fan alone makes BF-Dijkstra take `k`
 /// rounds of `k` work; BAD-GOR alone makes Goldberg and Radzik's search take `k / 2` passes.
 /// With `back = -3` the fan has a cycle of weight -1.
-fn bad_gor_and_fan(k: usize, back: i64) -> (usize, Rows) {
+pub(super) fn bad_gor_and_fan(k: usize, back: i64) -> (usize, Rows) {
     let (a, mut rows) = bad_gor(k, 1);
     // The row `x[v] <= x[u] + w` is `x[u] - x[v] + w >= 0`.
     rows.extend(differences(&fan_edges(a, k, Some(back))));
@@ -623,50 +526,8 @@ fn bad_gor_and_a_fan_are_decided() {
     assert!(empty(n, &rows));
 }
 
-#[test]
-fn bad_gor_and_a_fan_scale() {
-    // BAD-GOR and the fan share no variable, so the split by strongly connected components
-    // searches each alone, and each is slow for only one of the searches. Measured in
-    // instructions from k = 256 to k = 2,048 (UTVPI-union): 36.1M to 301.2M, 8.3 times. The race
-    // over the whole graph, before the split, took 202M to 12,236M (60.6 times; 48.8 times the
-    // bytes in the negative control, run once and not committed), since both quadratic searches
-    // are cheaper than Duong's below k = 2,048 (COMPLEXITY.md C24).
-    let (small, large) = (
-        bad_gor_and_fan(256, 0),
-        bad_gor_and_fan(scaling::FACTOR * 256, 0),
-    );
-    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("BAD-GOR augmented and a fan, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
-        std::hint::black_box(raced(*n, rows));
-    });
-}
-
-#[test]
-fn bad_gor_and_a_fan_with_no_cycle_scale() {
-    // The split by strongly connected components decides this graph in one pass in topological
-    // order, since every component is one node; each of the three searches alone is slow on it.
-    // Measured in instructions from k = 256 to k = 2,048: the split 5.29M to 42.3M (8.0 times);
-    // Goldberg and Radzik's search 20.7M to 1,093M (52.8 times); BF-Dijkstra 44.6M to 2,891M
-    // (64.8 times); Duong's search 573M to 6,203M (10.8 times, but the most work at both sizes).
-    // Before UTVPI-union, the race without the pass took 141.3M to 9,142.5M (64.7 times). Since
-    // UTVPI-union the race shares labels between its two quadratic searches, and without the
-    // split it passes here, 20.1M to 166.4M (8.3 times), as does `the_acyclic_hub_scales` (the
-    // control, run once and not committed); the split costs 8.4 times less than BF-Dijkstra
-    // alone at k = 256, and 3.8 times less than the race without it.
-    let (small, large) = (
-        acyclic_bad_gor_and_fan(256),
-        acyclic_bad_gor_and_fan(scaling::FACTOR * 256),
-    );
-    assert!(!empty(small.0, &small.1));
-    scaling::check("BAD-GOR and a fan with no cycle, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
-        std::hint::black_box(raced(*n, rows));
-    });
-}
-
 /// The rows `Σ c·x[i] + k >= 0` as a conjunction, for `decide`.
-fn formula(rows: &[(Vec<(usize, Int)>, Int)]) -> Formula {
+pub(super) fn formula(rows: &[(Vec<(usize, Int)>, Int)]) -> Formula {
     Formula::and(
         rows.iter()
             .map(|(t, k)| {
@@ -688,7 +549,7 @@ fn formula(rows: &[(Vec<(usize, Int)>, Int)]) -> Formula {
 /// the fan is reversed, which puts the half slow for BF-Dijkstra in the same sign of the literal
 /// graph as the half slow for Goldberg and Radzik's search; unflipped, they fall in opposite
 /// signs, so different components, even when joined.
-fn union_family(k: usize, joined: bool, flipped: bool) -> (usize, Rows) {
+pub(super) fn union_family(k: usize, joined: bool, flipped: bool) -> (usize, Rows) {
     let (a, len) = (2 * k + 1, 2 * k + 2);
     let (n, mut rows) = (a + len, bad_gor(k, 1).1);
     let fan = fan_edges(a, k, Some(0));
@@ -713,7 +574,7 @@ fn union_family(k: usize, joined: bool, flipped: bool) -> (usize, Rows) {
 /// variable `y` of coefficient 1: `y + x[0] - x[a] >= 0`. Since `y` is bounded on one side only,
 /// `decide` drops it and its row, and the halves reach the search apart: before UTVPI-union,
 /// `decide` took 421M to 3,852M instructions here, as on the family unjoined.
-fn wide_row_family(k: usize) -> Formula {
+pub(super) fn wide_row_family(k: usize) -> Formula {
     let (n, rows) = union_family(k, false, false);
     let wide = ge(&[(n, 1), (0, 1), (2 * k + 1, -1)], 0);
     Formula::and(vec![formula(&rows), wide])
@@ -728,59 +589,10 @@ fn the_union_family_is_decided() {
     assert_eq!(decide(&wide_row_family(64)), Ok(true));
 }
 
-#[test]
-fn the_joined_union_family_scales() {
-    // Joined and flipped, both slow halves lie in one strongly connected component: the split
-    // by components leaves 459k to 25.9M units (56 times) to the old race. The race whose two
-    // quadratic searches share labels takes 38.1M to 332.8M instructions (8.7 times). The old
-    // code took 253M to 15,604M (47.6 times the bytes; negative control, not committed).
-    let (small, large) = (
-        union_family(256, true, true),
-        union_family(scaling::FACTOR * 256, true, true),
-    );
-    assert!(!raced(small.0, &small.1) && !raced(large.0, &large.1));
-    scaling::check("the joined union family, by k", 256, |k| {
-        let (n, rows) = if k == 256 { &small } else { &large };
-        std::hint::black_box(raced(*n, rows));
-    });
-}
-
-#[test]
-fn the_union_family_scales_through_decide() {
-    decides(
-        "the union family through decide, by k",
-        256,
-        Ok(true),
-        |k| formula(&union_family(k, false, false).1),
-    );
-}
-
-#[test]
-fn the_joined_union_family_scales_through_decide() {
-    // The old code took 618M to 18,351M instructions here (29.7 times). Unjoined, and joined by
-    // a wide row, `decide` splits the halves into parts before the search and passed before too.
-    decides(
-        "the joined union family through decide, by k",
-        256,
-        Ok(true),
-        |k| formula(&union_family(k, true, true).1),
-    );
-}
-
-#[test]
-fn the_wide_row_family_scales_through_decide() {
-    decides(
-        "the union family joined by a wide row, through decide, by k",
-        256,
-        Ok(true),
-        wide_row_family,
-    );
-}
-
 /// `2n` rows of up to three terms over `n` variables, as the tight family, each coefficient
 /// times `2^bits` plus a small odd number, each row holding at a fixed point with slack at most
 /// 3.
-fn tight_bits(n: usize, bits: u32) -> Formula {
+pub(super) fn tight_bits(n: usize, bits: u32) -> Formula {
     let mut g = Rng::new(0xfeed_beef_1380);
     let p: Vec<i64> = (0..n).map(|_| g.int(-50, 50)).collect();
     let mut r = Vec::new();
@@ -813,25 +625,11 @@ fn tight_bits(n: usize, bits: u32) -> Formula {
     Formula::and(r)
 }
 
-#[test]
-fn coefficients_of_many_bits_scale() {
-    // 64 variables, coefficients of 64 and of 512 bits: the work is linear in the bits, and
-    // the answer is the same.
-    let (small, large) = (tight_bits(64, 64), tight_bits(64, 512));
-    for f in [&small, &large] {
-        assert_eq!(decide(f), Err(Refusal::Growth));
-    }
-    scaling::check("the tight family by coefficient bits", 64, |b| {
-        let f = if b == 64 { &small } else { &large };
-        let _ = std::hint::black_box(decide(f));
-    });
-}
-
 /// `n` variables seen only through two aggregates, `a` over the first half and `b` over the
 /// second, each variable's coefficient `1 + j % 3`: `7 <= 3·a + 5·b <= 8` and
 /// `3 <= 7·a - 4·b <= 4`, whose only point is a = b = 1. Merging the proportional columns
 /// leaves two variables, which the count under the envelopes decides.
-fn aggregates(n: usize) -> Formula {
+pub(super) fn aggregates(n: usize) -> Formula {
     let h = n / 2;
     let agg = |lo: usize, s: i64| {
         (lo..lo + h).fold(Lin::constant(0), |l, j| {
@@ -848,18 +646,10 @@ fn aggregates(n: usize) -> Formula {
     ])
 }
 
-#[test]
-fn columns_seen_through_two_aggregates_scale() {
-    decides("two aggregates", 64, Ok(true), aggregates);
-    let f = aggregates(64);
-    let m = satisfiable(&f).expect("answered").expect("a point");
-    assert!(f.holds(&m), "{m:?}");
-}
-
 /// `m` rows over three variables, half lower and half upper bounds of `x2` with unit
 /// coefficient over `x0` and `x1` with coefficients up to a million, each holding at
 /// (3, -2, 5) with slack at most 3.
-fn three_rows(m: usize) -> Formula {
+pub(super) fn three_rows(m: usize) -> Formula {
     let mut g = Rng::new(0x3_3333);
     let p = [3i64, -2, 5];
     let mut r = Vec::new();
@@ -873,28 +663,10 @@ fn three_rows(m: usize) -> Formula {
     Formula::and(r)
 }
 
-#[test]
-fn three_variables_in_many_rows_scale() {
-    // The rows hold at (3, -2, 5). No elimination keeps them from growing and none of the
-    // five points of the box meets every row, so `live3` decides them, in O(m log m). `x2` has
-    // a unit coefficient in every row. With the `hull3` stage, which projected it out first,
-    // the work grew 14.2 times from 64 to 512 rows, so the stage was removed (HULL3-subsumed).
-    // At 64 rows `live3` finds the point in 6.7M instructions and 0.85 MB, a path the larger
-    // sizes do not take, so the sizes are 128 and 1,024: 210M to 399M instructions, 8.3 MB to
-    // 26.7 MB (512 to 4,096 rows: 392M to 454M, 22.2 MB to 56.4 MB). The cost depends on the
-    // instance, not on its size: this seed takes 215M at 32 rows, 6.7M at 64 and 9.9M at 96, and
-    // summed over 12 seeds 64 to 512 rows is 2.8 times the instructions and 4.7 the bytes
-    // (HULL3-subsumed merge), so the ratio at 64 is that one cheap instance's.
-    decides("three variables in many rows", 128, Ok(true), three_rows);
-    let f = three_rows(64);
-    let m = satisfiable(&f).expect("answered").expect("a point");
-    assert!(f.holds(&m), "{m:?}");
-}
-
 /// Three variables in `[-10, 10]` and `m` rows `c·x + k >= 0` with coefficients up to a
 /// million, each holding at the upper corner (10, 10, 10) with slack up to `10·Σ|c|`, so that
 /// the rows are spread over the box and one of the five points holds them all.
-fn rows_held_in_a_box(m: usize) -> Formula {
+pub(super) fn rows_held_in_a_box(m: usize) -> Formula {
     let mut g = Rng::new(0x3_5555);
     let mut r: Vec<Formula> = (0..3).flat_map(|i| within(i, -10, 10)).collect();
     for _ in 0..m {
@@ -905,18 +677,6 @@ fn rows_held_in_a_box(m: usize) -> Formula {
         r.push(ge(&t, g.int(0, reach) - at));
     }
     Formula::and(r)
-}
-
-#[test]
-fn a_box_point_held_by_many_rows_scales() {
-    // No elimination keeps these rows, so the box stage answers, and a point holds every row:
-    // the stage reads each row once for each point it tries, which is linear in the rows.
-    decides(
-        "a box point held by many rows",
-        256,
-        Ok(true),
-        rows_held_in_a_box,
-    );
 }
 
 #[test]

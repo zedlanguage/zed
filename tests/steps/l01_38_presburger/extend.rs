@@ -5,24 +5,24 @@
 use zedc::store::presburger::extend::{Answers, Extending};
 use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
 
-fn sym(name: &str) -> Lin {
+pub(super) fn sym(name: &str) -> Lin {
     Lin::atom(Atom::Sym(name.into()))
 }
 
 /// `a >= b`.
-fn ge(a: Lin, b: Lin) -> Formula {
+pub(super) fn ge(a: Lin, b: Lin) -> Formula {
     Formula::Con(Con::ge(&a, &b))
 }
 
 /// `part && rest`, with `part` kept whole, as the translator joins a call's relation.
-fn extend(part: &Formula, rest: Vec<Formula>) -> Formula {
+pub(super) fn extend(part: &Formula, rest: Vec<Formula>) -> Formula {
     let mut fs = vec![part.clone()];
     fs.extend(rest);
     Formula::and_keeping(fs, |i| i == 0)
 }
 
 /// The answers `decide` gives `f` and its negation.
-fn decided(f: &Formula) -> Answers {
+pub(super) fn decided(f: &Formula) -> Answers {
     Answers {
         holds: decide(f),
         fails: decide(&Formula::negate(f.clone())),
@@ -30,7 +30,7 @@ fn decided(f: &Formula) -> Answers {
 }
 
 /// `x + k * y <= c`.
-fn sum(k: i64, c: i64) -> Formula {
+pub(super) fn sum(k: i64, c: i64) -> Formula {
     ge(Lin::constant(c), sym("x").plus(&sym("y").times(k)))
 }
 
@@ -93,36 +93,6 @@ fn each_answer_is_the_one_the_whole_has() {
 }
 
 #[test]
-fn a_chain_of_extensions_is_decided_in_time_of_its_links() {
-    // f{i} = f{i-1} && x + i * y <= 1000 i, over x >= y + 1: the conjunction of f{n} holds n
-    // constraints, and deciding each f{i} whole costs O(n²) in all; each is decided from the
-    // one it extends.
-    let chain = |n: usize| {
-        let mut f = Formula::and(vec![
-            ge(sym("x"), sym("y").plus(&Lin::constant(1))),
-            ge(sym("y"), Lin::constant(0)),
-        ]);
-        let mut out = Vec::with_capacity(n);
-        for i in 1..=n as i64 {
-            f = extend(&f, vec![sum(i, 1000 * i)]);
-            out.push(f.clone());
-        }
-        out
-    };
-    let chains = zed_tests::scaling::inputs(200, chain);
-    for f in chains[&200].iter().step_by(37) {
-        assert_eq!(Extending::new().answers(f), decided(f), "{f}");
-    }
-    zed_tests::scaling::check("the answers of a chain of extensions", 200, |n| {
-        let mut e = Extending::new();
-        for f in &chains[&n] {
-            let a = e.answers(f);
-            assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
-        }
-    });
-}
-
-#[test]
 fn a_chain_whose_points_move_is_decided_whole() {
     // f{i} = f{i-1} && x + i * y >= 1000 i: the point found for f{i-1} is below the new
     // constraint, so each f{i} is decided whole, and each answer is still the one the whole has
@@ -149,7 +119,7 @@ fn a_chain_whose_points_move_is_decided_whole() {
 /// bindings resolve through long paths; `b{i} == i`, a binding's own variable; and at each link
 /// the callee's `x{i} mod 3`, a division over the callee's atom, with a disjunction over its
 /// remainder. With `k` 0 every division divides the same term.
-fn bound_chain(n: usize, k: i64) -> Formula {
+pub(super) fn bound_chain(n: usize, k: i64) -> Formula {
     let x = |i: usize| sym(&format!("x{i}"));
     let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
     let mut fs = Vec::new();
@@ -199,15 +169,4 @@ fn bindings_put_in_place_leave_one_atom_and_one_division() {
         assert_eq!(rs, if k == 0 { 1 } else { 7 }, "{g}");
         assert_eq!(decide(&g), decide(&f), "{f}");
     }
-}
-
-#[test]
-fn bindings_put_in_place_scale() {
-    // The substitution reads each top-level constraint once and resolves each atom through a
-    // union of classes with its path compressed: time of the formula times a logarithm.
-    use zedc::store::presburger::extend::with_bindings_in_place;
-    let chains = zed_tests::scaling::inputs(400, |n| bound_chain(n, 0));
-    zed_tests::scaling::check("the bindings of a chain put in place", 400, |n| {
-        assert!(with_bindings_in_place(&chains[&n]).is_some());
-    });
 }

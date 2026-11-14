@@ -20,7 +20,7 @@ pub(super) fn x(i: usize) -> Lin {
 
 /// `3·x[i+1] >= 2·x[i] + 1` and `2·x[i] + k >= 3·x[i+1]` for `i < v`: no elimination is
 /// exact, the chain has a point when `k >= 1`, and none when `k == 0`.
-fn chain(v: usize, k: i128) -> Formula {
+pub(super) fn chain(v: usize, k: i128) -> Formula {
     let mut cons = Vec::new();
     for i in 0..v {
         let a = x(i).times(2);
@@ -33,7 +33,7 @@ fn chain(v: usize, k: i128) -> Formula {
 
 /// `3·x[i] + 1 <= 2·x[i+1] <= 3·x[i] + 5` for `i < v`, `x[0] >= 0` and `x[v] <= 0`: empty,
 /// since each `x[i+1]` is above `x[i]`, but no single step shows it.
-fn rising(v: usize) -> Formula {
+pub(super) fn rising(v: usize) -> Formula {
     let zero = Lin::constant(0);
     let mut cons = vec![
         Formula::Con(Con::ge(&x(0), &zero)),
@@ -69,7 +69,7 @@ fn chains_of_inexact_eliminations_are_answered() {
 
 /// Times `satisfiable` on the formulas of `make` at `n` and 8n variables, built first, each
 /// first checked to have a point or none as `point` says: a refusal would be quick and wrong.
-fn scales(what: &str, n: usize, point: bool, make: impl Fn(usize) -> Formula) {
+pub(super) fn scales(what: &str, n: usize, point: bool, make: impl Fn(usize) -> Formula) {
     let (small, large) = (make(n), make(scaling::FACTOR * n));
     for f in [&small, &large] {
         let found = satisfiable(f).expect("answered");
@@ -79,21 +79,6 @@ fn scales(what: &str, n: usize, point: bool, make: impl Fn(usize) -> Formula) {
         let f = if m == n { &small } else { &large };
         drop(satisfiable(f));
     });
-}
-
-#[test]
-fn a_chain_of_inexact_eliminations_with_a_point_scales() {
-    scales("the chain with a point", 32, true, |v| chain(v, 3));
-}
-
-#[test]
-fn an_empty_chain_scales() {
-    scales("the empty chain", 256, false, |v| chain(v, 0));
-}
-
-#[test]
-fn a_rising_chain_scales() {
-    scales("the rising chain", 128, false, rising);
 }
 
 // A cost quadratic with a small constant stays below the limit at the sizes above and shows at
@@ -124,7 +109,7 @@ fn a_rising_chain_scales() {
 /// The cycle `x[0] >= x[1] >= ... >= x[k-1] >= x[0]`, each in `[-1, 1]`, with the sum in
 /// `[1, k - 1]`: the cycle makes the variables equal, so the sum is `-k`, 0 or `k` and there
 /// is no integer point; every elimination would add terms to the rows of the sum.
-fn cycle(k: usize) -> Formula {
+pub(super) fn cycle(k: usize) -> Formula {
     let one = Lin::constant(1);
     let mut cons = Vec::new();
     let mut sum = Lin::constant(0);
@@ -137,28 +122,6 @@ fn cycle(k: usize) -> Formula {
     cons.push(Formula::Con(Con::ge(&sum, &one)));
     cons.push(Formula::Con(Con::ge(&Lin::constant(k as i128 - 1), &sum)));
     Formula::and(cons)
-}
-
-/// OMEGA-cycle-growth: the cycle's equalities are found as strongly connected components, in
-/// O(m log m), before any elimination.
-#[test]
-fn a_cycle_of_rows_scales() {
-    scales("a cycle of rows", 512, false, cycle);
-}
-
-#[test]
-fn a_long_chain_with_a_point_scales() {
-    scales("the long chain with a point", 4096, true, |v| chain(v, 3));
-}
-
-#[test]
-fn a_long_empty_chain_scales() {
-    scales("the long empty chain", 2048, false, |v| chain(v, 0));
-}
-
-#[test]
-fn a_long_rising_chain_scales() {
-    scales("the long rising chain", 2048, false, rising);
 }
 
 /// How far [`row`] moves `x[i]`, in `-1000..=1000`.
@@ -184,7 +147,7 @@ fn row(t: &[(usize, i64)], k: i64, shifted: bool) -> Formula {
 /// rule alone took 453 to 3,132 pivots, not an exponential number. No elimination keeps the rows, so the answer is the
 /// refusal [`Refusal::Growth`], given once the box of the bounds shows no row empty and its
 /// five points (nearest zero, the corners, the midpoints) each miss a row.
-fn sparse(n: usize) -> Formula {
+pub(super) fn sparse(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {
         let (a, b, c) = (i, (i + 1) % n, (i + 2) % n);
@@ -196,7 +159,7 @@ fn sparse(n: usize) -> Formula {
 }
 
 /// `2n` rows `±x[a] ± x[b] + k >= 0`, shifted, with a point: decided by the parity test.
-fn utvpi(n: usize) -> Formula {
+pub(super) fn utvpi(n: usize) -> Formula {
     utvpi_rows(n).0
 }
 
@@ -228,7 +191,7 @@ pub(super) fn utvpi_rows(n: usize) -> (Formula, UnitRows) {
 
 /// `x[0] + x[1] == 1` and `x[i] == x[i+1]` around a cycle of `n`: the rational point `1/2`
 /// and no integer point, shown by the parity of a zero-weight cycle.
-fn odd_cycle(n: usize) -> Formula {
+pub(super) fn odd_cycle(n: usize) -> Formula {
     let mut r = vec![
         row(&[(0, 1), (1, 1)], -1, false),
         row(&[(0, -1), (1, -1)], 1, false),
@@ -242,7 +205,7 @@ fn odd_cycle(n: usize) -> Formula {
 
 /// `n` disjoint copies of Pugh's example, shifted: each part has two variables and is decided
 /// exactly, and each is empty.
-fn pugh_pairs(n: usize) -> Formula {
+pub(super) fn pugh_pairs(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {
         let (a, b) = (2 * i, 2 * i + 1);
@@ -272,43 +235,13 @@ pub(super) fn decides(
     });
 }
 
-#[test]
-fn the_shifted_sparse_family_scales() {
-    decides(
-        "the shifted sparse family",
-        128,
-        Err(Refusal::Growth),
-        sparse,
-    );
-}
-
-#[test]
-fn rows_of_two_unit_coefficients_scale() {
-    decides("rows of two unit coefficients", 256, Ok(true), utvpi);
-}
-
-#[test]
-fn an_odd_cycle_scales() {
-    decides("an odd cycle", 256, Ok(false), odd_cycle);
-}
-
-#[test]
-fn disjoint_two_variable_parts_scale() {
-    decides(
-        "disjoint copies of Pugh's example",
-        256,
-        Ok(false),
-        pugh_pairs,
-    );
-}
-
 /// `chain(n, 3)` joined at `x[n]` to a block of three rows of three variables at each of `m`
 /// places around a cycle, shifted: the chain's dark eliminations come first, and the block
 /// then has no elimination that keeps it, so the question is refused with
 /// [`Refusal::Growth`]. The splinters of the chain's eliminations are not searched, since a
 /// refused dark shadow leaves the answer refused whatever they hold; searching them ran the
 /// test again once per elimination.
-fn chain_into_block(n: usize) -> Formula {
+pub(super) fn chain_into_block(n: usize) -> Formula {
     let m = 8;
     let mut r = vec![chain(n, 3)];
     for i in 0..m {
@@ -320,21 +253,11 @@ fn chain_into_block(n: usize) -> Formula {
     Formula::and(r)
 }
 
-#[test]
-fn a_chain_into_a_refused_block_scales() {
-    decides(
-        "a chain into a refused block",
-        64,
-        Err(Refusal::Growth),
-        chain_into_block,
-    );
-}
-
 /// `rows` random rows `±x[i] ± x[j] + k >= 0` over `n` variables, each holding at a random
 /// point with slack 0 or 1, so that many are tight there and the system has a point: decided
 /// by the parity test, whose shortest-path search must give integer potentials on graphs with
 /// long paths of tight edges.
-fn random_unit_rows(n: usize, rows: usize, seed: u64) -> Formula {
+pub(super) fn random_unit_rows(n: usize, rows: usize, seed: u64) -> Formula {
     let mut g = Rng::new(seed);
     let p: Vec<i64> = (0..n).map(|_| g.int(-50, 50)).collect();
     let mut r = Vec::new();
@@ -363,18 +286,11 @@ fn random_rows_of_two_unit_coefficients_with_a_point_are_decided() {
     }
 }
 
-#[test]
-fn random_rows_of_two_unit_coefficients_scale() {
-    decides("random rows of two unit coefficients", 256, Ok(true), |n| {
-        random_unit_rows(n, 4 * n, 0xabc)
-    });
-}
-
 /// A chain `2·x[i] - 5 <= 3·x[i+1] <= 2·x[i] + 5` with Pugh's example on the link at the
 /// middle: empty, since that link is, and no shadow shows it. The first splinter of the chain's
 /// dark eliminations that is refused is the answer, [`Refusal::Shadows`]; searching on ran the
 /// test again once per bound.
-fn pugh_in_a_chain(n: usize) -> Formula {
+pub(super) fn pugh_in_a_chain(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {
         let (a, b) = (i, i + 1);
@@ -389,16 +305,6 @@ fn pugh_in_a_chain(n: usize) -> Formula {
         }
     }
     Formula::and(r)
-}
-
-#[test]
-fn pughs_example_in_a_chain_scales() {
-    decides(
-        "Pugh's example in a chain",
-        512,
-        Err(Refusal::Shadows),
-        pugh_in_a_chain,
-    );
 }
 
 /// Rows `Σ c·x[i] + k >= 0`.
@@ -453,26 +359,11 @@ pub(super) fn blocks_with_a_hub(n: usize) -> Vec<Row> {
     r
 }
 
-#[test]
-fn the_box_stage_with_a_hub_in_one_row_per_block_scales() {
-    // HUB-SCALE: the row test of the box stage (Q1-ROWBOX) is one pass over the terms, so a
-    // hub in a row of every block costs nothing per row beyond its own term. Measured
-    // 2026-11-03: 9.1 times the instructions from 16 to 128 and 9.3 from 64 to 512; with
-    // `row_box_empty` run again over every row of each variable of a row it was 44.6 and
-    // 175.2, and with the bounds rebuilt for each row from the rows before it, 32.8 and 49.6.
-    decides(
-        "the box stage with a hub in one row per block",
-        64,
-        Err(Refusal::Growth),
-        |n| rows_of(&blocks_with_a_hub(n)),
-    );
-}
-
 /// [`blocks_with_a_hub`] with the rows of `stages::CROSSING` over four more variables, joined
 /// to the hub by a row that holds over the box: the row test finds two rows that bound a
 /// variable past each other, after it has kept the bounds of about a third of the wide rows
 /// (518 of 1538 at n = 512, measured 2026-11-03), so it runs over more rows at 8n.
-fn blocks_with_a_hub_and_a_crossing(n: usize) -> Vec<Row> {
+pub(super) fn blocks_with_a_hub_and_a_crossing(n: usize) -> Vec<Row> {
     let mut r = blocks_with_a_hub(n);
     let base = 4 * n + 1;
     for (c, k) in super::stages::CROSSING {
@@ -486,23 +377,9 @@ fn blocks_with_a_hub_and_a_crossing(n: usize) -> Vec<Row> {
     r
 }
 
-#[test]
-fn the_row_test_of_the_box_scales() {
-    // Measured 2026-11-03: 8.7 times the instructions from 16 to 128 and 9.2 from 64 to 512;
-    // 46.5 and 209.5 with `row_box_empty` run again over every row of each variable of a row.
-    // With the bounds rebuilt for each row it was 12.4 and 21.3, under the limit, since the
-    // crossing is found early; the hub family above shows that cost.
-    decides(
-        "the row test of the box with a crossing after the hub's blocks",
-        64,
-        Ok(false),
-        |n| rows_of(&blocks_with_a_hub_and_a_crossing(n)),
-    );
-}
-
 /// `x[i] - x[j] <= (i + j) % 3 + 1` for every ordered pair `i != j` of `v` names: indices
 /// that lie pairwise within small distances, `v (v - 1)` rows.
-fn all_pairs(v: usize) -> Formula {
+pub(super) fn all_pairs(v: usize) -> Formula {
     let mut cons = Vec::new();
     for i in 0..v {
         for j in 0..v {
@@ -517,7 +394,7 @@ fn all_pairs(v: usize) -> Formula {
 
 /// `x[a] - x[b] <= 1` both ways between neighbors in a `v` by `v` grid of names, as the
 /// heights of neighboring cells: `4 v (v - 1)` rows.
-fn grid(v: usize) -> Formula {
+pub(super) fn grid(v: usize) -> Formula {
     let mut cons = Vec::new();
     let one = Lin::constant(1);
     let mut pair = |a: usize, b: usize| {
@@ -539,7 +416,7 @@ fn grid(v: usize) -> Formula {
 
 /// `0 <= x[0] <= x[1] <= … <= x[v-1] < n` for a symbolic `n`: `v` sorted indices into an
 /// array of length `n`, `3 v - 1` rows; with `strict`, `x[i] < x[i+1]` instead.
-fn sorted(v: usize, strict: bool) -> Formula {
+pub(super) fn sorted(v: usize, strict: bool) -> Formula {
     let n = Lin::atom(Atom::Sym(Arc::from("n")));
     let gap = Lin::constant(i64::from(strict));
     let mut cons = Vec::new();
@@ -555,7 +432,7 @@ fn sorted(v: usize, strict: bool) -> Formula {
 
 /// `0 <= x[i] + x[i+1] + x[i+2] <= 10` and `x[i] >= 0` for `i < v`: overlapping sums of three
 /// lengths, `3 v` rows.
-fn sums(v: usize) -> Formula {
+pub(super) fn sums(v: usize) -> Formula {
     let mut cons = Vec::new();
     for i in 0..v {
         let s = x(i).plus(&x(i + 1)).plus(&x(i + 2));
@@ -581,7 +458,7 @@ fn with_length_at_most(f: Formula, k: i64) -> Formula {
 }
 
 /// The point `satisfiable` finds, checked against `f`; a refusal or an empty answer fails.
-fn point_of(what: &str, f: &Formula) {
+pub(super) fn point_of(what: &str, f: &Formula) {
     match satisfiable(f) {
         Ok(Some(m)) => assert!(f.holds(&m), "{what}: {m:?}"),
         other => panic!("{what}: a point exists, but {other:?}"),
@@ -630,7 +507,7 @@ fn shapes_of_programs_are_answered() {
 
 /// [`scales`] for a family whose rows grow as the square of its names: `v` names at the
 /// sizes `small` and `large`, whose rows are `rows(v)`, eight times as many at `large`.
-fn scales_by_rows(
+pub(super) fn scales_by_rows(
     what: &str,
     (small, large): (usize, usize),
     rows: impl Fn(usize) -> usize,
@@ -646,64 +523,10 @@ fn scales_by_rows(
     });
 }
 
-#[test]
-fn all_ordered_pairs_of_differences_scale() {
-    scales_by_rows(
-        "all ordered pairs of differences",
-        (12, 33),
-        |v| v * (v - 1),
-        all_pairs,
-    );
-}
-
-#[test]
-fn a_grid_of_differences_scales() {
-    scales_by_rows("a grid of differences", (12, 33), |v| 4 * v * (v - 1), grid);
-}
-
-#[test]
-fn sorted_indices_under_a_symbolic_length_scale() {
-    scales("sorted indices", 512, true, |v| sorted(v, false));
-}
-
-#[test]
-fn overlapping_sums_of_three_scale() {
-    scales("overlapping sums of three", 512, true, sums);
-}
-
-#[test]
-fn a_grid_of_differences_is_decided_in_scale() {
-    let (small, large) = (grid(12), grid(33));
-    for f in [&small, &large] {
-        assert_eq!(decide(f), Ok(true), "a grid of differences");
-    }
-    scaling::check("deciding a grid of differences (rows)", 528, |m| {
-        let _ = std::hint::black_box(decide(if m == 528 { &small } else { &large }));
-    });
-}
-
-/// The point of a grid of 33 and of 93 names, 4224 and 34224 rows (8.1 times). Until
-/// UTVPI-model, once `utvpi::integer_empty` had shown a point, `Omega::run` placed it by
-/// eliminating every variable with fill allowed, and this took 31.1 times the instructions
-/// (2026-11-05); the point is now rounded from a potential (`utvpi::integer_point`).
-/// COMPLEXITY.md S38.
-#[test]
-fn the_point_of_a_larger_grid_of_differences_scales() {
-    let (small, large) = (grid(33), grid(93));
-    point_of("a grid of 33", &small);
-    point_of("a grid of 93", &large);
-    scaling::compare(
-        "the point of a grid of differences: 4224 and 34224 rows, 8.1 times",
-        1,
-        || drop(satisfiable(&small)),
-        || drop(satisfiable(&large)),
-    );
-}
-
 /// `x[a] - x[b] + k >= 0` for each ordered pair of neighbors in a sparse expander, three
 /// neighbors `2v + 1`, `3v + 2` and `v + 1` of each `v`, with `k` a hidden potential's difference
 /// plus 1 to 3, so a point exists (cross-review xt2, its `expander` family).
-fn expander(n: usize) -> Formula {
+pub(super) fn expander(n: usize) -> Formula {
     let mut g = Rng::new(0x38_9e);
     let p: Vec<i64> = (0..n).map(|_| g.int(0, 1000)).collect();
     let mut r = Vec::new();
@@ -718,19 +541,6 @@ fn expander(n: usize) -> Formula {
         }
     }
     Formula::and(r)
-}
-
-/// The point of `expander`'s rows at 256 and 2048 variables, checked against each row
-/// (UTVPI-model). Before, placing it eliminated with fill allowed: 277M to 1,500M instructions
-/// from 128 to 256 variables (cross-review xt2, note3b.tsv).
-#[test]
-fn the_point_of_an_expander_of_differences_scales() {
-    let (small, large) = (expander(256), expander(scaling::FACTOR * 256));
-    point_of("an expander of differences", &small);
-    point_of("an expander of differences", &large);
-    scaling::check("the point of an expander of differences", 256, |m| {
-        drop(satisfiable(if m == 256 { &small } else { &large }));
-    });
 }
 
 /// Rows `Σ c·x[i] + k >= 0` over six variables whose only points lie in a splinter of a
@@ -773,7 +583,7 @@ fn block_at(rows: &[(&[(usize, i64)], i64)], at: usize, r: &mut Vec<Formula>) {
 }
 
 /// `n` copies of [`SPLIT_TWICE_POINT`], each over variables of its own.
-fn split_twice_copies(n: usize) -> Formula {
+pub(super) fn split_twice_copies(n: usize) -> Formula {
     let mut r = Vec::new();
     for c in 0..n {
         block_at(&SPLIT_TWICE_POINT, 6 * c, &mut r);
@@ -783,7 +593,7 @@ fn split_twice_copies(n: usize) -> Formula {
 
 /// A chain `x[i] <= x[i+1] <= x[i] + 3` for `i <= n` into [`SPLIT_TWICE_POINT`] at `x[n+1]`:
 /// one part, whose point lies in a splinter of a splinter.
-fn split_twice_in_a_chain(n: usize) -> Formula {
+pub(super) fn split_twice_in_a_chain(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..=n {
         r.push(row(&[(i + 1, 1), (i, -1)], 0, false));
@@ -807,19 +617,8 @@ fn a_point_in_a_splinter_of_a_splinter_is_found() {
     assert_eq!(satisfiable(&f), Ok(None), "{f}");
 }
 
-#[test]
-fn splinters_of_splinters_scale() {
-    decides("copies split twice", 64, Ok(true), split_twice_copies);
-    decides(
-        "a chain into a block split twice",
-        512,
-        Ok(true),
-        split_twice_in_a_chain,
-    );
-}
-
 /// `name >= 0`.
-fn at_least_zero(name: &str) -> Formula {
+pub(super) fn at_least_zero(name: &str) -> Formula {
     let l = Lin::atom(Atom::Sym(Arc::from(name)));
     Formula::Con(Con::ge(&l, &Lin::constant(0)))
 }
@@ -827,7 +626,7 @@ fn at_least_zero(name: &str) -> Formula {
 /// The conjunction of `wide` and then each of `small`, each added to a copy of the conjunction
 /// before, which is kept, as a scope keeps the conjunction it narrows: each addition then copies
 /// the path of the persistent maps it changes, as it does in a scope.
-fn each_on_a_copy(wide: &Formula, small: &[Formula]) -> Vec<Conjuncts> {
+pub(super) fn each_on_a_copy(wide: &Formula, small: &[Formula]) -> Vec<Conjuncts> {
     let mut c = Conjuncts::default();
     c.and(wide.clone());
     let mut kept = Vec::with_capacity(small.len() + 1);
@@ -838,49 +637,4 @@ fn each_on_a_copy(wide: &Formula, small: &[Formula]) -> Vec<Conjuncts> {
     }
     kept.push(c);
     kept
-}
-
-/// k bounds `ai >= 0` added one at a time, each to a copy of the conjunction before, beside one
-/// constraint on a term of k names, `z0 + ... + z(k-1) >= 0`. Its term is the greatest key of
-/// the map of the constraints kept on each term (`Conjuncts::tight`), and the names are numbered
-/// so that each new key is greater than the last, so each lands in the leaf that holds the wide
-/// term, and the copy copies that leaf. A key held by value cost its k names at each copy, O(k)
-/// a bound and O(k^2) in all; shared, O(1) a bound (item PERF-conjuncts-term-keys, COMPLEXITY.md
-/// C46). Likewise k disjunctions `ai >= 0 || bi >= 0` beside `z0 + ... + z(k-1) >= 0 || y >= 0`,
-/// for the map of the disjunctions of two constraints by their two terms (`Conjuncts::pair`).
-#[test]
-fn a_conjunct_beside_a_wide_one_costs_its_own_key() {
-    let wide = |k: usize| {
-        let sum = (0..k).fold(Lin::constant(0), |l, i| {
-            l.plus(&Lin::atom(Atom::Sym(Arc::from(format!("z{i:06}")))))
-        });
-        Formula::Con(Con::ge(&sum, &Lin::constant(0)))
-    };
-    let bounds = scaling::inputs(512, |k| {
-        let small: Vec<Formula> = (0..k).map(|i| at_least_zero(&format!("a{i:06}"))).collect();
-        (wide(k), small)
-    });
-    scaling::check("bounds beside a constraint on k names", 512, |k| {
-        let (wide, small) = &bounds[&k];
-        std::hint::black_box(each_on_a_copy(wide, small));
-    });
-    let pairs = scaling::inputs(512, |k| {
-        let small: Vec<Formula> = (0..k)
-            .map(|i| {
-                Formula::or(vec![
-                    at_least_zero(&format!("a{i:06}")),
-                    at_least_zero(&format!("b{i:06}")),
-                ])
-            })
-            .collect();
-        (Formula::or(vec![wide(k), at_least_zero("y")]), small)
-    });
-    scaling::check(
-        "disjunctions of two bounds beside one of a constraint on k names",
-        512,
-        |k| {
-            let (wide, small) = &pairs[&k];
-            std::hint::black_box(each_on_a_copy(wide, small));
-        },
-    );
 }

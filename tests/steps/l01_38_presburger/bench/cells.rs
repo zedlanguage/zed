@@ -1,1 +1,43 @@
-//! The benchmarks of `cells.rs` (TEST-bench-move-l0138).
+//! The benchmarks of `cells.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
+
+use crate::cells::*;
+use zed_tests::scaling;
+use zedc::store::presburger::decide;
+
+/// The chain with no point at 80 levels (`c = 2`) and 10, in work linear in the levels. Control
+/// (once, not kept): with the probe over the disjunctions in place of the cells, this test fails,
+/// 82.6 times the bytes from 10 to 80 levels (122,171,546 to 10,094,059,976), against 16.75.
+#[test]
+fn guarded_chains_with_no_point_scale() {
+    assert!(!reaches_zero(80, false), "80 levels have no point");
+    let fs = scaling::inputs(10, |n| chain(n, false));
+    scaling::check_order("decision of a guarded chain with no point", 10, 1, |n| {
+        assert_eq!(
+            decide(&fs[&n]).expect("decided"),
+            reaches_zero(n, false),
+            "{n}"
+        );
+    });
+}
+
+/// Each family with no point, at 12 levels and 96, in work linear in the levels: the wide ones
+/// over about 6 and 48 cells, the cells decided together. Control (once, not kept): before M5
+/// (C55), with each cell's conjunction solved alone, the wide family took 34.4 M and 694 M
+/// instructions, 20.2 times the work, and the test failed. On M5 it still passes with
+/// `has_point`'s three cell methods turned off (3.0 s against 1.4 s): the later methods
+/// decide these chains in linear work too, so the test now holds the whole decision to it.
+#[test]
+fn wide_nested_and_joined_guards_with_no_point_scale() {
+    for name in ["wide", "nest", "or", "and"] {
+        let guard = family(name);
+        let fs = scaling::inputs(12, |n| {
+            let r = family_range(name, n);
+            let target = missed(&guarded_run(n, r, guard));
+            guarded(n, r, guard, target)
+        });
+        let what = format!("decision of a {name} chain with no point");
+        scaling::check_order(&what, 12, 1, |n| {
+            assert!(!decide(&fs[&n]).expect("decided"), "{name} {n}");
+        });
+    }
+}

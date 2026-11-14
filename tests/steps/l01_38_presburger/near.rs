@@ -4,7 +4,6 @@
 use std::collections::VecDeque;
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::negsssp::potential_alone;
 
@@ -40,7 +39,7 @@ fn bellman_ford_moore(out: &Graph) -> Option<Vec<Int>> {
 }
 
 /// Whether `p` holds on every edge of `out`.
-fn holds(out: &Graph, p: &[Int]) -> bool {
+pub(super) fn holds(out: &Graph, p: &[Int]) -> bool {
     out.iter()
         .enumerate()
         .all(|(u, edges)| edges.iter().all(|(v, w)| p[*v] <= &p[u] + w))
@@ -116,7 +115,7 @@ fn small_graphs_6() {
 /// A graph of `n` nodes and `4n` random edges, weights -5 to 20, with no negative cycle: each
 /// weight is raised to keep it at least the difference of a hidden potential of values 0 to
 /// `n`, so that the scaling steps and the merges all have work to do.
-fn feasible(n: usize, seed: u64) -> Graph {
+pub(super) fn feasible(n: usize, seed: u64) -> Graph {
     let mut g = Rng::new(seed);
     let hidden: Vec<i64> = (0..n).map(|_| g.below(n + 1) as i64).collect();
     let mut out: Graph = vec![Vec::new(); n];
@@ -126,17 +125,4 @@ fn feasible(n: usize, seed: u64) -> Graph {
         out[u].push((v, Int::from(w)));
     }
     out
-}
-
-#[test]
-fn duong_scales_alone() {
-    let (small, large) = (feasible(512, 1), feasible(scaling::FACTOR * 512, 1));
-    for out in [&small, &large] {
-        let p = potential_alone(out).expect("no negative cycle");
-        assert!(holds(out, &p));
-    }
-    scaling::check("Duong's search, random graphs by n", 512, |n| {
-        let out = if n == 512 { &small } else { &large };
-        std::hint::black_box(potential_alone(out));
-    });
 }

@@ -71,7 +71,6 @@ impl Rng {
     }
 }
 
-
 /// The variable that fixes the seed of [`Rng::fresh`], to repeat a run whose seed it printed.
 pub const SEED_VARIABLE: &str = "ZED_SEED";
 

@@ -3,14 +3,12 @@
 //! fact 2). The answers do not depend on where the parts are in memory, a key costs no room in
 //! the formula, and a pass reads each shared part once, so its cost follows the distinct parts.
 
-use std::collections::BTreeMap;
 use std::mem::size_of;
 
-use zed_tests::scaling;
 use zedc::store::conjuncts::Conjuncts;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared, project_each};
 
-fn atom(n: &str) -> Atom {
+pub(super) fn atom(n: &str) -> Atom {
     Atom::Sym(n.into())
 }
 
@@ -27,7 +25,7 @@ fn ge(a: i64, b: i64, c: i64) -> Formula {
 /// [`Formula::or_keeping`]), so each rule is one part held by the two after it, and the chain
 /// written out holds `a0` a number of times exponential in `d`. `pad` runs before each rule is
 /// made, to move where it lands in memory. Returns `ad` and the rules.
-fn chain(d: usize, and: bool, pad: &mut dyn FnMut()) -> (Formula, Vec<Formula>) {
+pub(super) fn chain(d: usize, and: bool, pad: &mut dyn FnMut()) -> (Formula, Vec<Formula>) {
     pad();
     let mut rules = vec![Formula::and(vec![ge(1, 0, 0), ge(0, 1, 0)])];
     for i in 1..=d as i64 {
@@ -124,33 +122,4 @@ fn three_allocation_orders_read_alike() {
          Ok(IntervalSet { pieces: [(Fin(Num(Small(0))), PosInf)] })], []))"
     );
     drop(held);
-}
-
-#[test]
-fn passes_over_shared_parts_take_time_linear_in_the_distinct_parts() {
-    // A chain of d rules holds `a0` about 1.6^d times written out; each pass reads each rule
-    // once. Two chains built apart share no part, so their comparison reads each pair once.
-    let n = 40;
-    let built: BTreeMap<usize, [Formula; 3]> = [n, scaling::FACTOR * n]
-        .map(|d| {
-            let and = chain(d, true, &mut || {}).0;
-            let apart = chain(d, true, &mut || {}).0;
-            let or = chain(d, false, &mut || {}).0;
-            (d, [and, apart, or])
-        })
-        .into();
-    scaling::check(
-        "conjuncts, folds, comparison and projection of a chain of d shared rules",
-        n,
-        |d| {
-            let [and, apart, or] = &built[&d];
-            let mut c = Conjuncts::default();
-            c.and(and.clone());
-            assert!(!c.set().is_empty());
-            assert_eq!(and.atoms().len(), 2);
-            assert_eq!(or.cons().len(), 2 * d + 2);
-            assert!(and == apart);
-            assert!(project_each(or, &[atom("x")]).is_ok());
-        },
-    );
 }

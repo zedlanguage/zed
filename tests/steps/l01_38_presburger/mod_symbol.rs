@@ -5,11 +5,7 @@
 //! for `n == 0`, where the operation fails. The index `i mod len` of a ring buffer is in
 //! bounds when a premise gives `len >= 1`, and not from `len >= 0`.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
-
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::preimage::relations;
 use zedc::store::presburger::{Atom, Con, Entailment, Formula, Lin, Model, satisfiable};
@@ -189,7 +185,7 @@ fn the_translation_agrees_with_the_interpreter() {
 
 /// `x div (n + i) * (n + i) + x mod (n + i) == x` for `i < k`, joined by `&&`: `2k`
 /// auxiliary variables, `x div (n + i)` and `x mod (n + i)` sharing a pair, and `k` product atoms `n * q`.
-fn splits(k: usize) -> Term {
+pub(super) fn splits(k: usize) -> Term {
     let var = |s: &str| Term::Var(s.into());
     let prim = |p: Prim, args: Vec<Term>| Term::Prim(p, args);
     (0..k)
@@ -203,24 +199,6 @@ fn splits(k: usize) -> Term {
         })
         .reduce(|a, b| prim(Prim::And, vec![a, b]))
         .expect("one split or more")
-}
-
-#[test]
-fn translating_symbolic_divisors_scales() {
-    let n = 256;
-    let built: BTreeMap<usize, Term> = [n, n * scaling::FACTOR]
-        .into_iter()
-        .map(|k| (k, splits(k)))
-        .collect();
-    let inputs: [Arc<str>; 2] = ["x".into(), "n".into()];
-    let measure = move || {
-        scaling::check("splits by symbolic divisors translated", n, |k| {
-            let rs = relations(&[&built[&k]], &inputs, true).expect("in the domain");
-            assert_eq!(rs[0].defs.len(), 2 * k);
-        });
-    };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
 }
 
 #[test]

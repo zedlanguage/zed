@@ -92,12 +92,12 @@ fn general_rows(n: usize) -> Vec<Formula> {
 }
 
 /// The symbol asked for: the middle of the chain.
-fn middle(n: usize) -> [Atom; 1] {
+pub(super) fn middle(n: usize) -> [Atom; 1] {
     [Atom::Sym(format!("x{:05}", n / 2).into())]
 }
 
 /// Projects the middle of the chain `fam(m, holds)` at each size `m` of a scaling check.
-fn projects(what: &str, n: usize, fam: fn(usize, Holds) -> Formula, holds: Holds) {
+pub(super) fn projects(what: &str, n: usize, fam: fn(usize, Holds) -> Formula, holds: Holds) {
     let inputs = scaling::inputs(n, |m| fam(m, holds));
     scaling::check_order(what, n, 1, |m| {
         let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
@@ -106,51 +106,11 @@ fn projects(what: &str, n: usize, fam: fn(usize, Holds) -> Formula, holds: Holds
 }
 
 /// Decides the chain `fam(m, Holds::None)` at each size `m` of a scaling check.
-fn decides(what: &str, n: usize, fam: fn(usize, Holds) -> Formula) {
+pub(super) fn decides(what: &str, n: usize, fam: fn(usize, Holds) -> Formula) {
     let inputs = scaling::inputs(n, |m| fam(m, Holds::None));
     scaling::check_order(what, n, 1, |m| {
         assert_eq!(decide(&inputs[&m]), Ok(true));
     });
-}
-
-#[test]
-fn the_middle_of_a_difference_chain_whose_disjuncts_hold_is_projected_in_n_log_n() {
-    projects(
-        "a difference chain projected, a disjunct holding",
-        64,
-        difference_chain,
-        Holds::First,
-    );
-}
-
-#[test]
-fn a_difference_chain_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
-    decides(
-        "a difference chain decided, no disjunct holding",
-        64,
-        difference_chain,
-    );
-}
-
-#[test]
-fn the_middle_of_a_difference_chain_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
-    projects(
-        "a difference chain projected, no disjunct holding",
-        64,
-        difference_chain,
-        Holds::None,
-    );
-}
-
-/// At 512 stages, where the limit, 11.7 times, is below the 12.13 times of work of order n^1.2;
-/// at 64 it was 13.2 (plan item THREE-atom-exponent).
-#[test]
-fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n() {
-    decides(
-        "a chain of three-atom rows decided, no disjunct holding",
-        512,
-        general_chain,
-    );
 }
 
 /// The exact hull of the middle of the difference chain, found by the rows its disjunctions imply
@@ -165,22 +125,6 @@ fn the_middle_of_a_chain_whose_disjuncts_do_not_hold_has_its_exact_hull() {
     let (lo, hi) = (32 + 8, 4 * 64 - (31 + 8));
     assert!(s.contains(lo) && !s.contains(lo - 1), "{s:?}");
     assert!(s.contains(hi) && !s.contains(hi + 1), "{s:?}");
-}
-
-/// At 256 stages, not fewer: the limit for work of order n log n is 12.1 times from 256 to
-/// 2048, and work of order n^1.2 gives 8^1.2 = 12.13 times there, but at 32 stages the limit is
-/// 14.1 and n log n itself gives 12.8 times, so n^1.2 passed unseen (plan item
-/// THREE-atom-exponent; COMPLEXITY.md row THREE-atom-exponent). The same test of the chain whose
-/// disjuncts hold is deferred to plan row PRES-scaling-10_5 in
-/// wt/scratch/deferred-tests/PRES-scaling-10_5.rs.
-#[test]
-fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
-    projects(
-        "a chain of three-atom rows projected, no disjunct holding",
-        256,
-        general_chain,
-        Holds::None,
-    );
 }
 
 /// The exact hull of the middle of the chain of three-atom rows (plan item
@@ -279,7 +223,7 @@ fn joint_chain(n: usize, written: Written) -> Formula {
 /// the reverse order, or with each equation of a disjunction negated (`v - l == 0`), which
 /// orders each disjunction's disjuncts the other way (item PROJECT-each-canon).
 #[derive(Clone, Copy, Debug)]
-enum Written {
+pub(super) enum Written {
     AsIs,
     Reversed,
     Negated,
@@ -290,21 +234,7 @@ enum Written {
 /// disjunctions, end at most at `8n`.
 const JOINT_MIDDLE_64: (i64, i64) = (32 + 6 * 8, 8 * 64 - (31 + 6 * 8));
 
-#[test]
-fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n() {
-    joint_chain_scales(Written::AsIs);
-}
-
-/// [`joint_chain`] with its equations negated: before item PROJECT-each-canon the greedy
-/// search took `x[i + 1] - x[i] == 3` first, failed, and a question per disjunct followed,
-/// 122 times the bytes at 8n.
-#[test]
-fn the_middle_of_a_chain_whose_negated_disjunctions_jointly_leave_one_step_is_projected_in_n_log_n()
-{
-    joint_chain_scales(Written::Negated);
-}
-
-fn joint_chain_scales(written: Written) {
+pub(super) fn joint_chain_scales(written: Written) {
     let inputs = scaling::inputs(128, |m| joint_chain(m, written));
     scaling::check_order(
         &format!(
@@ -430,7 +360,7 @@ fn hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points() {
 /// in {0, 15}. Step 10 leaves `x[1]` at 10, so `x[1]` is 0 and the step 0, and so on to the
 /// end: every `x[i]` is 0. `flipped` lists the parts in the reverse order, so that the
 /// removals run against the order of the disjunctions.
-fn cascade(n: usize, flipped: bool) -> Formula {
+pub(super) fn cascade(n: usize, flipped: bool) -> Formula {
     let any_of = |l: &Lin, vs: &[i128]| {
         Formula::or(vs.iter().map(|v| eq(l.minus(&Lin::constant(*v)))).collect())
     };
@@ -443,23 +373,6 @@ fn cascade(n: usize, flipped: bool) -> Formula {
         fs.reverse();
     }
     Formula::and(fs)
-}
-
-#[test]
-fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in_n_log_n() {
-    for flipped in [false, true] {
-        let inputs = scaling::inputs(128, |m| cascade(m, flipped));
-        scaling::check_order(
-            &format!("a chain of removals each needing the one before, flipped {flipped}"),
-            128,
-            1,
-            |m| {
-                let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
-                let s = r.0[0].clone().expect("a hull");
-                assert!(s.contains(0) && !s.contains(-1) && !s.contains(1), "{s:?}");
-            },
-        );
-    }
 }
 
 /// An atom by name.
@@ -565,7 +478,7 @@ fn an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open() {
 /// (`x[i] >= 1 || y[i + 1] >= y[i]` and `x[i] <= 0 || y[i + 1] >= y[i]`) give the same bound
 /// by cases, but the search through the disjunctions ([`pick`]) refuses its questions, so
 /// that hull stays sound and wider (the tradeoff of plan item DISJ-dpll).
-fn case_chain(n: usize) -> Formula {
+pub(super) fn case_chain(n: usize) -> Formula {
     let m = n / 2;
     let mut fs = vec![eq(y(0))];
     for i in 0..n - 1 {
@@ -575,21 +488,6 @@ fn case_chain(n: usize) -> Formula {
     fs.push(Formula::or(vec![ge(x.minus(&Lin::constant(1))), ge(y(m))]));
     fs.push(Formula::or(vec![ge(x.times(-1)), ge(y(m))]));
     Formula::and(fs)
-}
-
-#[test]
-fn the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n() {
-    let inputs = scaling::inputs(16, case_chain);
-    scaling::check("a chain whose lower end only cases give", 16, |m| {
-        let mid = m / 2;
-        let r = project_each(&inputs[&m], &[Atom::Sym(format!("y{mid:05}").into())])
-            .expect("a projection");
-        let s = r.0[0].clone().expect("a hull");
-        assert!(
-            s.contains(0) && !s.contains(-1) && s.contains(1_000_000),
-            "{s:?}"
-        );
-    });
 }
 
 /// `z <= 5` with `x >= 1 || z <= 0`, `x <= 0 || z <= 0` and the same two with `w`: `x` and
@@ -705,16 +603,16 @@ fn a_hull_whose_two_sides_are_shown_empty_is_empty() {
 /// Rows of sums over atoms each confined to a finite union of ranges (PRES-overlap-fast,
 /// QUESTIONS A87): the module `row_sums` joins one table of sums per group of atoms that appear
 /// in the same rows, in alternation with the solver.
-mod row_sums {
+pub(super) mod row_sums {
     use std::collections::BTreeSet;
     use std::sync::Arc;
 
-    use zed_tests::scaling::{self, Meter};
+    use zed_tests::scaling::Meter;
     use zedc::store::presburger::{Atom, Con, Formula, Lin, ROW_SUMS_OFF, decide, project_each};
 
     use super::super::repair::answers;
 
-    fn v(i: usize) -> Atom {
+    pub(crate) fn v(i: usize) -> Atom {
         Atom::Sym(Arc::from(format!("y{i}")))
     }
 
@@ -754,13 +652,13 @@ mod row_sums {
     }
 
     /// Atoms with their ranges, and rows `(coefficients, target, equation)`.
-    struct Case {
-        ranges: Vec<Vec<(i64, i64)>>,
-        rows: Vec<(Vec<i64>, i64, bool)>,
+    pub(crate) struct Case {
+        pub(crate) ranges: Vec<Vec<(i64, i64)>>,
+        pub(crate) rows: Vec<(Vec<i64>, i64, bool)>,
     }
 
     impl Case {
-        fn formula(&self) -> Formula {
+        pub(crate) fn formula(&self) -> Formula {
             let mut fs: Vec<Formula> = (self.ranges.iter().enumerate())
                 .map(|(i, r)| one_of(i, r))
                 .collect();
@@ -841,7 +739,7 @@ mod row_sums {
 
     /// `y_0 + .. + y_(a-1) == t1` and `y_b + .. + y_(k-1) == t2`, a = 2k/3, b = k/3: two sums
     /// that share the atoms `y_b .. y_(a-1)` (the family of QUESTIONS A87).
-    fn overlap_rows(k: usize) -> Case {
+    pub(crate) fn overlap_rows(k: usize) -> Case {
         let w = weights(k);
         let (a, b) = (2 * k / 3, k / 3);
         Case {
@@ -855,7 +753,7 @@ mod row_sums {
 
     /// `overlap_rows` with the second sum's coefficients 1 and 2 in turn: the shared atoms'
     /// two coefficients are not proportional, so the sums over them take two numbers each.
-    fn coefficients_one_and_two(k: usize) -> Case {
+    pub(crate) fn coefficients_one_and_two(k: usize) -> Case {
         coefficients(k, |i| 1 + (i % 2) as i64)
     }
 
@@ -871,7 +769,7 @@ mod row_sums {
     }
 
     /// m rows, row i over `y_(3i) .. y_(3i+5)`, each sharing three atoms with the next.
-    fn chain(m: usize) -> Case {
+    pub(crate) fn chain(m: usize) -> Case {
         let k = 3 * m + 3;
         let w = weights(k);
         let rows = (0..m).map(|i| (ones(k, 3 * i, 3 * i + 6), even(&w, 3 * i, 3 * i + 6), true));
@@ -1103,97 +1001,13 @@ mod row_sums {
         out
     }
 
-    fn work(f: impl FnOnce()) -> u64 {
+    pub(crate) fn work(f: impl FnOnce()) -> u64 {
         Meter::new().work(f).units
-    }
-
-    /// `overlap_rows` at k and 2k: the solver alone refused both after 5,443M and 33,783M
-    /// instructions (2026-11-13); the join answers, below the 2^k assignments a plain
-    /// enumeration tries, in its run first at both sizes: 0.37M at k = 16 and 0.88M at k = 32,
-    /// 2.4 times from k to 2k, against 65,536 times for enumeration (before PRES-overlap-fast,
-    /// at the rate of 256, the method ran beside the solver at k = 32: 0.45M and 24.1M).
-    #[test]
-    fn two_overlapping_sums_of_16_and_32_atoms_are_decided_below_enumeration() {
-        let (f16, f32) = (overlap_rows(16).formula(), overlap_rows(32).formula());
-        let w16 = work(|| assert_eq!(decide(&f16), Ok(true)));
-        let w32 = work(|| assert_eq!(decide(&f32), Ok(true)));
-        eprintln!(
-            "overlap_rows decided: k = 16 {w16}, k = 32 {w32}, growth {:.1}",
-            w32 as f64 / w16 as f64
-        );
-        assert!(w32 < 1 << 32, "{w32}");
-        let p = project_each(&f32, &[v(0), v(31)]).expect("a projection");
-        assert!(
-            p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
-            "{p:?}"
-        );
-    }
-
-    /// `overlap_rows` at k = 64 and 512, decided and projected onto its first, middle and last
-    /// atoms: the work of order k, not 2^k (2026-11-13: decided 2.02M and 13.93M, 6.9 times;
-    /// projected 1.87M and 10.53M, 5.6 times).
-    #[test]
-    fn two_overlapping_sums_of_64_and_512_atoms_are_decided_and_projected_in_n_log_n() {
-        let inputs = scaling::inputs(64, |k| overlap_rows(k).formula());
-        scaling::check_order("two overlapping sums decided", 64, 1, |k| {
-            assert_eq!(decide(&inputs[&k]), Ok(true));
-        });
-        scaling::check_order("two overlapping sums projected", 64, 1, |k| {
-            let p = project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
-            assert!(
-                p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
-                "{p:?}"
-            );
-        });
-    }
-
-    /// `coefficients_one_and_two` at k = 64 and 512, decided and projected onto its first,
-    /// middle and last atoms: the two groups the sums share are joined at once (PRES-overlap-
-    /// coeffs). 2026-11-13: decided 167.7M and 76.7M, projected 413.1M and 136.1M; before,
-    /// decided 3,873M and projected 7,386M at k = 64, the pairs of the two groups' tables.
-    #[test]
-    fn two_overlapping_sums_with_coefficients_one_and_two_of_64_and_512_atoms_scale() {
-        let inputs = scaling::inputs(64, |k| coefficients_one_and_two(k).formula());
-        scaling::check_order(
-            "two sums with coefficients one and two decided",
-            64,
-            1,
-            |k| {
-                assert_eq!(decide(&inputs[&k]), Ok(true));
-            },
-        );
-        scaling::check_order(
-            "two sums with coefficients one and two projected",
-            64,
-            1,
-            |k| {
-                let p =
-                    project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
-                assert!(
-                    p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
-                    "{p:?}"
-                );
-            },
-        );
-    }
-
-    /// A chain of m sums, each sharing three atoms with the next: the groups are joined one
-    /// after another, in time linear in m.
-    #[test]
-    fn a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n() {
-        let inputs = scaling::inputs(8, |m| chain(m).formula());
-        scaling::check_order("a chain of overlapping sums decided", 8, 1, |m| {
-            assert_eq!(decide(&inputs[&m]), Ok(true));
-        });
-        scaling::check_order("a chain of overlapping sums projected", 8, 1, |m| {
-            let r = project_each(&inputs[&m], &[v(3 * m / 2)]).expect("a projection");
-            assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
-        });
     }
 
     /// One sum over k atoms in `{0, w_i}` whose target, the least unreachable sum from half
     /// the total up, no subset meets.
-    fn unreachable(k: usize) -> Case {
+    pub(crate) fn unreachable(k: usize) -> Case {
         let w = weights(k);
         let mut sums = vec![false; w.iter().sum::<i64>() as usize + 1];
         sums[0] = true;
@@ -1212,7 +1026,10 @@ mod row_sums {
     }
 
     /// The work of `ask` on `f` with the method and with the solver alone, and the two answers.
-    fn both_and_alone<T>(f: &Formula, ask: impl Fn(&Formula) -> T) -> ((u64, T), (u64, T)) {
+    pub(crate) fn both_and_alone<T>(
+        f: &Formula,
+        ask: impl Fn(&Formula) -> T,
+    ) -> ((u64, T), (u64, T)) {
         let mut answer = None;
         let both = work(|| answer = Some(ask(f)));
         let with = answer.take().expect("an answer");
@@ -1220,55 +1037,5 @@ mod row_sums {
         let alone = work(|| answer = Some(ask(f)));
         ROW_SUMS_OFF.with(|o| o.set(false));
         ((both, with), (alone, answer.expect("an answer")))
-    }
-
-    /// Each way the race goes, measured in instructions against the solver alone
-    /// (2026-11-13, figures at the rate of 2048):
-    /// - the method answers in its run first, before the solver starts: an unreachable sum of 10
-    ///   atoms, 0.22M against the solver's refusal at 57.0M, and of 16 atoms, 0.36M against
-    ///   91.2M (of 32 atoms, 0.63M against 178.6M);
-    /// - the solver answers: a sum of 8 atoms, each in 0..=1e5 or 2e5..=3e5, at most 200,003,
-    ///   projected, 13.57M against 13.55M;
-    /// - ranges of 1e9 values, where the method does not answer: 128.0M against 128.2M.
-    ///
-    /// The branches of the race itself are tested with a stand-in method and solver in
-    /// `row_sums::tests::each_branch_of_the_race`.
-    #[test]
-    fn each_way_the_race_goes_costs_at_most_a_little_more_than_the_solver_alone() {
-        let decided = |f: &Formula| decide(f).ok();
-        let projected = |f: &Formula| {
-            project_each(f, &[v(0)]).map(|e| e.0[0].as_ref().map(|s| s.is_empty()).ok())
-        };
-        let ((both, with), (alone, without)) = both_and_alone(&unreachable(10).formula(), decided);
-        assert_eq!((with, without), (Some(false), None));
-        assert!(both * 20 < alone, "first run: {both} against {alone}");
-        let ((both, with), (alone, without)) = both_and_alone(&unreachable(16).formula(), decided);
-        assert_eq!((with, without), (Some(false), None));
-        assert!(both * 20 < alone, "first run: {both} against {alone}");
-        for (what, f) in [
-            (
-                "the solver first",
-                Case {
-                    ranges: vec![vec![(0, 100_000), (200_000, 300_000)]; 8],
-                    rows: vec![(vec![1; 8], 200_003, true)],
-                }
-                .formula(),
-            ),
-            (
-                "a bound past u64",
-                Case {
-                    ranges: vec![vec![(0, 1_000_000_000), (2_000_000_000, 3_000_000_000)]; 8],
-                    rows: vec![(vec![1; 8], 1_000_000_007, true)],
-                }
-                .formula(),
-            ),
-        ] {
-            let ((both, with), (alone, without)) = both_and_alone(&f, projected);
-            assert_eq!(with, without, "{what}");
-            assert!(
-                both as f64 <= 1.02 * alone as f64,
-                "{what}: {both} against {alone}"
-            );
-        }
     }
 }

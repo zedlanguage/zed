@@ -5,13 +5,11 @@
 //! out, with a separate copy of the part at each place (COMPLEXITY.md S31).
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::int::Int;
 use zedc::store::presburger::{
     Atom, Con, Formula, Lin, Model, Shared, decide, project, satisfiable,
@@ -34,11 +32,11 @@ fn con(a: i64, b: i64, c: i64, eq: bool) -> Formula {
     })
 }
 
-fn and(fs: Vec<Formula>) -> Formula {
+pub(super) fn and(fs: Vec<Formula>) -> Formula {
     Formula::And(Shared::new(fs))
 }
 
-fn or(fs: Vec<Formula>) -> Formula {
+pub(super) fn or(fs: Vec<Formula>) -> Formula {
     Formula::Or(Shared::new(fs))
 }
 
@@ -57,7 +55,7 @@ fn written_out(f: &Formula) -> Formula {
     }
 }
 
-fn hash(f: &Formula) -> u64 {
+pub(super) fn hash(f: &Formula) -> u64 {
     let mut h = DefaultHasher::new();
     f.hash(&mut h);
     h.finish()
@@ -238,7 +236,7 @@ fn a_part_shared_many_times_over_is_read_once_per_pass() {
 /// translator keeps the formula of a name used as an operand of `&&` or `||`
 /// ([`Formula::and_keeping`]), and `ad` returned. Each rule is one part, held by the two after
 /// it, so the chain written out holds `a0` a number of times exponential in `d`.
-fn named_chain(d: usize, and: bool) -> Formula {
+pub(super) fn named_chain(d: usize, and: bool) -> Formula {
     let mut rules = vec![Formula::and(vec![con(1, 0, 0, false), con(0, 1, 0, false)])];
     for i in 1..=d as i64 {
         let mut fs = vec![con(1, 0, -i, false)];
@@ -254,41 +252,13 @@ fn named_chain(d: usize, and: bool) -> Formula {
 }
 
 /// `named_chain(d, and)` with `x >= -1` joined after it.
-fn extended_chain(d: usize, and: bool) -> Formula {
+pub(super) fn extended_chain(d: usize, and: bool) -> Formula {
     let fs = vec![named_chain(d, and), con(1, 0, 1, false)];
     if and {
         Formula::and_keeping(fs, |j| j == 0)
     } else {
         Formula::or_keeping(fs, |j| j == 0)
     }
-}
-
-#[test]
-fn comparing_a_named_chain_with_one_built_apart_takes_time_near_linear_in_its_length() {
-    // Two chains built apart share no part, so each pair of their parts is compared.
-    let built: BTreeMap<usize, Vec<[Formula; 3]>> = [30, 240]
-        .map(|d| {
-            let three = |and| {
-                [
-                    named_chain(d, and),
-                    named_chain(d, and),
-                    extended_chain(d, and),
-                ]
-            };
-            (d, vec![three(true), three(false)])
-        })
-        .into();
-    scaling::check(
-        "a chain of d names compared with an equal and an extended one built apart",
-        30,
-        |d| {
-            for [a, b, c] in &built[&d] {
-                assert!(a == b);
-                assert_eq!(a.cmp(c), Ordering::Less);
-                std::hint::black_box((a.cmp(b), c.cmp(a)));
-            }
-        },
-    );
 }
 
 /// The chain of [`named_chain`] built of nodes made here, with `y >= y0` in `a0`; when
@@ -311,7 +281,7 @@ fn chain(d: usize, join: fn(Vec<Formula>) -> Formula, regroup: bool, y0: i64) ->
 
 /// The constraints of `f`, a conjunction or disjunction of constraints and of parts of its
 /// own variant, read as flattened, written out.
-fn flat(f: &Formula) -> Vec<Con> {
+pub(super) fn flat(f: &Formula) -> Vec<Con> {
     let mut out = Vec::new();
     let mut stack = vec![f];
     while let Some(g) = stack.pop() {
@@ -378,7 +348,7 @@ fn parts_entered_together_that_end_apart_are_not_taken_as_equal() {
 /// so is its inner pair, which ends at another place on each side; the outer pair still ends
 /// at one place on both. With `x` the conjunction or disjunction of a constraint, each side
 /// written out holds `2^d` copies of `c0`.
-fn split_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Formula) {
+pub(super) fn split_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Formula) {
     let c0 = con(0, 1, 0, false);
     let (mut a, mut b) = (join(vec![c0.clone()]), join(vec![c0]));
     for i in 1..=d as i64 {
@@ -389,38 +359,18 @@ fn split_chains(d: usize, join: fn(Vec<Formula>) -> Formula) -> (Formula, Formul
     (a, b)
 }
 
-#[test]
-fn chains_whose_inner_parts_end_apart_compare_in_time_near_linear_in_their_length() {
-    let built: BTreeMap<usize, Vec<(Formula, Formula)>> = [30, 240]
-        .map(|d| (d, vec![split_chains(d, and), split_chains(d, or)]))
-        .into();
-    scaling::check(
-        "two chains of d levels whose inner parts end at other places on each side",
-        30,
-        |d| {
-            for (a, b) in &built[&d] {
-                assert!(a == b);
-                std::hint::black_box(b.cmp(a));
-            }
-        },
-    );
-    let (a, b) = split_chains(6, and);
-    assert_eq!(flat(&a), flat(&b));
-    assert_eq!(hash(&a), hash(&b));
-}
-
 /// A formula written out with each conjunction directly in a conjunction, and each
 /// disjunction directly in a disjunction, flattened into it: the order the derived one gives
 /// on it is the order [`Formula::cmp`] must give.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Written {
+pub(super) enum Written {
     Con(Con),
     Not(Box<Written>),
     And(Vec<Written>),
     Or(Vec<Written>),
 }
 
-fn written(f: &Formula) -> Written {
+pub(super) fn written(f: &Formula) -> Written {
     fn parts(gs: &[Formula], and: bool, out: &mut Vec<Written>) {
         for g in gs {
             match g {
@@ -581,7 +531,7 @@ fn one_sequence_grouped_at_other_places_on_each_side_compares_as_written_out() {
 
 /// [`shifted_chains`] and the same two with one more constraint at the end of each, unequal,
 /// so that they differ at the last of their constraints written out.
-fn shifted_pairs(d: usize) -> Vec<(Formula, Formula, Ordering)> {
+pub(super) fn shifted_pairs(d: usize) -> Vec<(Formula, Formula, Ordering)> {
     let mut out = Vec::new();
     for join in [and as fn(Vec<Formula>) -> Formula, or] {
         let (t, r) = shifted_chains(d, join);
@@ -591,37 +541,6 @@ fn shifted_pairs(d: usize) -> Vec<(Formula, Formula, Ordering)> {
         out.push((t, r, Ordering::Equal));
     }
     out
-}
-
-#[test]
-fn one_sequence_grouped_at_other_places_on_each_side_compares_in_time_near_quadratic_in_the_depth()
-{
-    // Each side has n = 2d + 2 distinct parts and 2^(d+1) - 1 constraints written out. The
-    // parse of a sequence of N parts has O(log N) = O(d) levels and each part joins its parts'
-    // parses at O(d) levels, so compare costs O(n log N) = O(d^2), of power 2: no exact method
-    // known compares two such sequences in time near n alone (the tradeoff at
-    // [`Formula::cmp`], COMPLEXITY.md S31b). Read through, it costs 2^d.
-    let built: BTreeMap<usize, Vec<(Formula, Formula, Ordering)>> =
-        [30, 240].map(|d| (d, shifted_pairs(d))).into();
-    scaling::check_order(
-        "one sequence of 2^(d+1) - 1 constraints in d levels, grouped at other places on each side",
-        30,
-        2,
-        |d| {
-            for (a, b, o) in &built[&d] {
-                assert_eq!(a.cmp(b), *o);
-                assert_eq!(b.cmp(a), o.reverse());
-            }
-        },
-    );
-    for d in [0, 1, 2, 7, 12] {
-        for (a, b, o) in shifted_pairs(d) {
-            assert_eq!(written(&a).cmp(&written(&b)), o, "d = {d}");
-            if o == Ordering::Equal {
-                assert_eq!(hash(&a), hash(&b), "d = {d}");
-            }
-        }
-    }
 }
 
 /// Specs of `depth` levels over three constraints, each level of two or three nodes over the
@@ -728,7 +647,7 @@ fn random_dag(d: usize, seed: u64, last: i64) -> Formula {
 /// `k` sets of `k` constraints each, picked at random from `seed` among `k^2`, each a chain of
 /// conjunctions, and a top `[si && sj] || x >= -3y - (ik + j)` for each pair `i < j`: about
 /// `k^2` tops, each holding two of the sets. The last top's constant has `last` added.
-fn pairs(k: usize, seed: u64, last: i64) -> Formula {
+pub(super) fn pairs(k: usize, seed: u64, last: i64) -> Formula {
     let mut rng = Rng::new(seed);
     let sets: Vec<Formula> = (0..k)
         .map(|_| {
@@ -752,7 +671,7 @@ fn pairs(k: usize, seed: u64, last: i64) -> Formula {
 
 /// Pairs equal written out, and pairs that differ only at the last top, each built apart: a
 /// staircase against itself and against its regrouping, and a random DAG against itself.
-fn tops_pairs(d: usize) -> Vec<(Formula, Formula, bool)> {
+pub(super) fn tops_pairs(d: usize) -> Vec<(Formula, Formula, bool)> {
     let mut out = Vec::new();
     for last in [0, 1] {
         let equal = last == 0;
@@ -794,54 +713,6 @@ fn tops_sharing_parts_compare_as_written_out() {
             }
         }
     }
-}
-
-#[test]
-fn tops_sharing_parts_compare_in_time_near_quadratic_in_the_depth() {
-    // Each side has n = O(d) distinct parts and up to 2^d constraints written out, so compare
-    // costs O(n log N) = O(d^2), as for [`shifted_chains`] (COMPLEXITY.md S31b). Equal pairs
-    // and pairs that differ at the last top are both read to the end.
-    let built: BTreeMap<usize, Vec<(Formula, Formula, bool)>> =
-        [30, 240].map(|d| (d, tops_pairs(d))).into();
-    scaling::check_order(
-        "staircases and random DAGs of d tops, equal or differing at the last top",
-        30,
-        2,
-        |d| {
-            for (a, b, equal) in &built[&d] {
-                assert_eq!(a == b, *equal);
-                assert_eq!(b.cmp(a), a.cmp(b).reverse());
-            }
-        },
-    );
-}
-
-#[test]
-fn pairs_of_shared_sets_compare_in_time_near_linear_in_the_parts() {
-    // k sets of k constraints and k^2 / 2 tops: n = O(k^2) distinct parts, so k to 8k is n to
-    // 64n, and power 2 in k is time near linear in n.
-    let built: BTreeMap<usize, [(Formula, Formula, bool); 2]> = [32, 256]
-        .map(|k| {
-            (
-                k,
-                [
-                    (pairs(k, 9, 0), pairs(k, 9, 0), true),
-                    (pairs(k, 9, 0), pairs(k, 9, 1), false),
-                ],
-            )
-        })
-        .into();
-    scaling::check_order(
-        "k^2 / 2 tops, each two of k sets of k constraints, equal or differing at the last top",
-        32,
-        2,
-        |k| {
-            for (a, b, equal) in &built[&k] {
-                assert_eq!(a == b, *equal);
-                assert_eq!(b.cmp(a), a.cmp(b).reverse());
-            }
-        },
-    );
 }
 
 #[test]
@@ -953,32 +824,6 @@ fn equal_formulas_hash_alike_however_their_runs_are_grouped() {
     assert!(!single[16][17], "a run in another order");
     assert!(!single[7][8] && !single[0][7] && !single[11][13] && !single[1][2]);
     assert!(!single[7][14], "a repeat is not dropped");
-}
-
-#[test]
-fn unequal_formulas_grouped_at_other_places_compare_in_time_near_linear_in_the_depth() {
-    // The unequal pairs of [`shifted_pairs`]: `==` finds each side's hash once, O(n) for its
-    // n = 2d + 2 distinct parts, and then answers in O(1); `cmp` alone parses both sides,
-    // O(n log N) = O(d^2) (the tradeoff at `Formula`'s `eq`, COMPLEXITY.md S31b).
-    let unequal = |d: usize| -> Vec<(Formula, Formula)> {
-        shifted_pairs(d)
-            .into_iter()
-            .filter(|(_, _, o)| *o != Ordering::Equal)
-            .map(|(a, b, _)| (a, b))
-            .collect()
-    };
-    let built: BTreeMap<usize, Vec<(Formula, Formula)>> = [30, 240].map(|d| (d, unequal(d))).into();
-    scaling::check(
-        "== on one sequence of 2^(d+1) - 1 constraints in d levels, grouped at other places on \
-         each side and differing at the last",
-        30,
-        |d| {
-            for (a, b) in &built[&d] {
-                assert!(a != b);
-                assert!(b != a);
-            }
-        },
-    );
 }
 
 /// `sum of k a >= c`, or `== c` when `eq`, over the named atoms.

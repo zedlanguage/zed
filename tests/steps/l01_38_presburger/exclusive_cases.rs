@@ -70,7 +70,7 @@ fn match_on_op(m: usize, x_of: impl Fn(usize) -> Lin) -> Formula {
 }
 
 /// The `match` with `0 <= x <= 100`; `z` is in `[0, 109 + m]`.
-fn cases(m: usize) -> Formula {
+pub(super) fn cases(m: usize) -> Formula {
     let mut fs = vec![ge(a("x")), ge(Lin::constant(100).minus(&a("x")))];
     fs.extend(w_not_two());
     fs.push(match_on_op(m, |_| a("x")));
@@ -88,12 +88,12 @@ fn chained(m: usize, at: fn(usize, usize) -> usize) -> Formula {
 }
 
 /// Every case reads the middle stage `h = m / 2`: `z` is in `[h, 4m + h + 10]`.
-fn middle(m: usize) -> Formula {
+pub(super) fn middle(m: usize) -> Formula {
     chained(m, |_, m| m / 2)
 }
 
 /// Case `k` reads stage `k`: `z` is in `[0, 5m + 9]`.
-fn own_stage(m: usize) -> Formula {
+pub(super) fn own_stage(m: usize) -> Formula {
     chained(m, |k, _| k)
 }
 
@@ -126,31 +126,9 @@ fn every_case_of_the_match_is_projected_exactly() {
 }
 
 /// Projects `z` of `fam(m)` at each size `m` of a scaling check, with its answer checked.
-fn projects(what: &str, fam: fn(usize) -> Formula, want: fn(usize) -> IntervalSet) {
+pub(super) fn projects(what: &str, fam: fn(usize) -> Formula, want: fn(usize) -> IntervalSet) {
     let inputs = scaling::inputs(32, fam);
     scaling::check_order(what, 32, 1, |m| {
         assert_eq!(z_of(&inputs[&m]), want(m), "{what}, m = {m}");
-    });
-}
-
-#[test]
-fn a_match_of_m_cases_is_projected_in_n_log_n() {
-    projects("a match of m cases", cases, |m| {
-        IntervalSet::of(0, 109 + m as i64)
-    });
-}
-
-#[test]
-fn a_match_of_m_cases_on_one_stage_of_a_chain_is_projected_in_n_log_n() {
-    projects("a match of m cases on the middle stage", middle, |m| {
-        let h = (m / 2) as i64;
-        IntervalSet::of(h, 4 * m as i64 + h + 10)
-    });
-}
-
-#[test]
-fn a_match_of_m_cases_each_on_its_own_stage_is_projected_in_n_log_n() {
-    projects("a match of m cases on their own stages", own_stage, |m| {
-        IntervalSet::of(0, 5 * m as i64 + 9)
     });
 }

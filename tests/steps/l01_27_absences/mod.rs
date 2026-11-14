@@ -5,6 +5,7 @@
 //! keeps them, a join keeps them protected when either side protects them, a written type
 //! makes them loose, and an operator they select no arrow of rejects them.
 
+mod bench;
 mod discard;
 mod discard_paths;
 mod families;

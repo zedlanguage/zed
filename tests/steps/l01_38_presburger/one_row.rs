@@ -8,11 +8,10 @@
 
 use std::sync::Arc;
 
-use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{Atom, Con, Factor, Formula, Lin, decide, project_each, satisfiable};
 
-fn sym(s: &str) -> Atom {
+pub(super) fn sym(s: &str) -> Atom {
     Atom::Sym(Arc::from(s))
 }
 
@@ -40,12 +39,12 @@ fn range(lo: i64, hi: i64) -> IntervalSet {
     IntervalSet::range(End::Fin(Num::from(lo)), End::Fin(Num::from(hi)))
 }
 
-fn names(k: usize) -> Vec<Atom> {
+pub(super) fn names(k: usize) -> Vec<Atom> {
     (0..k).map(|i| sym(&format!("y{i}"))).collect()
 }
 
 /// `0 <= y[i] <= 1000 + i` for each i, with `Σ y[i] == s` for `s` half the box's greatest sum.
-fn dense(k: usize) -> Formula {
+pub(super) fn dense(k: usize) -> Formula {
     let ys = names(k);
     let mut fs: Vec<Formula> = ys
         .iter()
@@ -59,12 +58,12 @@ fn dense(k: usize) -> Formula {
 }
 
 /// The weights of the subset sums below, each of them 1000 or more.
-fn weights(k: usize) -> Vec<i128> {
+pub(super) fn weights(k: usize) -> Vec<i128> {
     (0..k as i128).map(|i| 1000 + 37 * i * i % 991).collect()
 }
 
 /// `(y[i] == 0 || y[i] == w[i])` for each i, with `Σ y[i] == t`: a subset sum.
-fn choice_sum(w: &[i128], t: i128) -> Formula {
+pub(super) fn choice_sum(w: &[i128], t: i128) -> Formula {
     let ys = names(w.len());
     let mut fs: Vec<Formula> = ys
         .iter()
@@ -77,7 +76,7 @@ fn choice_sum(w: &[i128], t: i128) -> Formula {
 }
 
 /// Even weights and an odd target near half their sum: no point, by parity.
-fn parity(k: usize) -> Formula {
+pub(super) fn parity(k: usize) -> Formula {
     let w: Vec<i128> = weights(k).iter().map(|w| 2 * w).collect();
     let half = w.iter().sum::<i128>() / 2;
     choice_sum(&w, half + 1 - half % 2)
@@ -259,55 +258,6 @@ fn a_formula_with_a_product_atom_is_left_to_the_solver() {
 }
 
 #[test]
-fn a_box_and_one_row_scale() {
-    let k = 32;
-    let (small, large) = (dense(k), dense(scaling::FACTOR * k));
-    let (ys, yl) = (names(k), names(scaling::FACTOR * k));
-    for f in [&small, &large] {
-        assert_eq!(decide(f), Ok(true));
-    }
-    scaling::check_order("decide: a box and one row", k, 1, |m| {
-        drop(decide(if m == k { &small } else { &large }));
-    });
-    scaling::check_order("project_each: a box and one row", k, 1, |m| {
-        drop(if m == k {
-            project_each(&small, &ys)
-        } else {
-            project_each(&large, &yl)
-        });
-    });
-}
-
-#[test]
-fn residue_and_ends_of_a_row_scale() {
-    let k = 32;
-    for (name, build, answer) in [
-        (
-            "target zero",
-            (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula,
-            true,
-        ),
-        ("even weights, odd target", parity, false),
-    ] {
-        let (small, large) = (build(k), build(scaling::FACTOR * k));
-        let (ys, yl) = (names(k), names(scaling::FACTOR * k));
-        for f in [&small, &large] {
-            assert_eq!(decide(f), Ok(answer), "{name}");
-        }
-        scaling::check_order(&format!("decide: {name}"), k, 1, |m| {
-            drop(decide(if m == k { &small } else { &large }));
-        });
-        scaling::check_order(&format!("project_each: {name}"), k, 1, |m| {
-            drop(if m == k {
-                project_each(&small, &ys)
-            } else {
-                project_each(&large, &yl)
-            });
-        });
-    }
-}
-
-#[test]
 fn satisfiable_answers_wherever_decide_does() {
     // The point `satisfiable` gives holds; an atom it leaves out is zero there.
     let agrees = |f: &Formula, what: &str| {
@@ -339,7 +289,7 @@ fn satisfiable_answers_wherever_decide_does() {
     agrees(&dense(8), "a box and one row");
 }
 
-fn paired_chain(k: usize, reversed: bool) -> Formula {
+pub(super) fn paired_chain(k: usize, reversed: bool) -> Formula {
     let ys: Vec<_> = (0..=k)
         .map(|i| sym(&format!("y{}", if reversed { k - i } else { i })))
         .collect();
@@ -351,21 +301,6 @@ fn paired_chain(k: usize, reversed: bool) -> Formula {
         ]));
     }
     Formula::and(fs)
-}
-
-#[test]
-fn a_forced_contradiction_projects_to_empty_in_linear_work() {
-    scaling::check_order(
-        "paired chain projection via forced contradiction",
-        64,
-        1,
-        |k| {
-            let f = paired_chain(k, false);
-            let (each, skipped) = project_each(&f, &[sym("y0")]).unwrap();
-            assert_eq!(each, vec![Ok(IntervalSet::empty())]);
-            assert!(skipped.is_empty());
-        },
-    );
 }
 
 #[test]
@@ -404,50 +339,5 @@ fn a_formula_with_no_first_step_is_projected_without_the_propagation() {
         let (each, skipped) = project_each(&f, &[ys[0].clone(), ys[k].clone()]).unwrap();
         assert_eq!(each, vec![Ok(IntervalSet::empty()); 2], "k = {k}");
         assert!(skipped.is_empty(), "k = {k}");
-    }
-}
-
-/// `satisfiable` on a box and one row, and on subset sums with target 0, at `n = 64` and
-/// `8n = 512`; the point each gives is checked by `holds` outside the measured runs.
-#[test]
-fn satisfiable_on_a_box_and_one_row_scales() {
-    let k = 64;
-    let large = scaling::FACTOR * k;
-    for (name, small, large) in [
-        ("a box and one row", dense(k), dense(large)),
-        (
-            "subset sums to 0",
-            choice_sum(&weights(k), 0),
-            choice_sum(&weights(large), 0),
-        ),
-    ] {
-        for f in [&small, &large] {
-            let m = satisfiable(f).expect("an answer").expect("a point");
-            assert!(f.holds(&m), "{name}: {m:?}");
-        }
-        scaling::check_order(&format!("satisfiable: {name}"), k, 1, |m| {
-            drop(satisfiable(if m == k { &small } else { &large }));
-        });
-    }
-}
-
-/// I19: public model construction uses the same exact class as public decision. Checking
-/// the certificate is outside the measured closure, so a cheap holds cannot hide slow search.
-#[test]
-fn a_box_and_an_extreme_row_build_their_models_in_near_linear_work() {
-    for (what, build) in [
-        ("dense model", dense as fn(usize) -> Formula),
-        (
-            "zero model",
-            (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula,
-        ),
-    ] {
-        let (small, large) = (build(64), build(512));
-        for f in [&small, &large] {
-            assert!(f.holds(&satisfiable(f).unwrap().unwrap()));
-        }
-        scaling::check_order(what, 64, 1, |k| {
-            drop(satisfiable(if k == 64 { &small } else { &large }));
-        });
     }
 }
