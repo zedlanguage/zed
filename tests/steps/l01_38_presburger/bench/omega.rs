@@ -1,6 +1,7 @@
 //! The benchmarks of `omega.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::omega::*;
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{Atom, Formula, project_each, row_box, satisfiable};
@@ -225,4 +226,42 @@ fn twin_definitions_merge_in_time_near_linear() {
             ));
         },
     );
+}
+
+// The 2000 formulas of seed 0x1380 reordered, in four quarters of one sequence, each under the
+// 20-second limit of a piece: many cases, so benchmarks (author P178). 40 of a new seed run in
+// `omega::the_answer_does_not_depend_on_the_order_of_the_disjuncts`.
+
+/// Quarter `q` of the 2000 formulas: more than half of its 500 are changed by the reordering.
+fn reordered_quarter(q: usize) {
+    let mut rng = Rng::new(0x1380);
+    let disjunctive = reordered_formulas_agree(&mut rng, 500 * q, 500 * (q + 1));
+    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_first_quarter() {
+    reordered_quarter(0);
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_second_quarter() {
+    reordered_quarter(1);
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_third_quarter() {
+    reordered_quarter(2);
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_fourth_quarter() {
+    reordered_quarter(3);
+}
+
+/// The 60 writings of seed 0x236 of `omega::case_236_in_writings`; six of a new seed run in
+/// `omega::a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing`.
+#[test]
+fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_60_writings() {
+    case_236_in_writings(&mut Rng::new(0x236), 60);
 }

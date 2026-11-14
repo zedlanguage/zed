@@ -41,3 +41,17 @@ fn wide_nested_and_joined_guards_with_no_point_scale() {
         });
     }
 }
+
+/// Every guarded chain from 1 to 96 levels, with either constant, decided as running it decides:
+/// a long run (author P178); `cells::guarded_chains_are_decided_as_run` takes those up to 35.
+#[test]
+fn guarded_chains_up_to_96_levels_are_decided_as_run() {
+    guarded_chains_up_to(96);
+}
+
+/// The chains of each guarded family from 1 to 40 levels: a long run (author P178);
+/// `cells::wide_nested_and_joined_guards_are_decided_as_run` takes those up to 12.
+#[test]
+fn wide_nested_and_joined_guards_up_to_40_levels_are_decided_as_run() {
+    guarded_families_up_to(40);
+}

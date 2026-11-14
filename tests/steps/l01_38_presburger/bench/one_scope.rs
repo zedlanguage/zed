@@ -1014,3 +1014,29 @@ fn the_questions_of_negated_residues_over_distinct_bounds_scale() {
         negated_residues_over_distinct_bounds,
     );
 }
+
+/// The unit of `max(H div 2, x mod 5 + x div 7 - 9)` at 5 links, as first written: 1.9 s alone
+/// (2026-11-14, load 20), so a benchmark (author P178);
+/// `one_scope::summaries_of_a_max_against_remainders_beside_a_quotient_of_x_give_its_answers`
+/// checks it at 4.
+#[test]
+fn summaries_of_a_max_against_remainders_beside_a_quotient_of_x_at_5_links_give_its_answers() {
+    summaries_of_definitions_give_their_answers([definition_chain(
+        "max(H div 2, x mod 5 + x div 7 - 9)",
+        "H < x div 64 - 1",
+        5,
+    )
+    .as_str()]);
+}
+
+/// The two units of I21 at 5 links, as first written: 1.1 and 1.4 s alone (2026-11-14, load
+/// 23), so benchmarks (author P178); `one_scope` checks them at 3.
+#[test]
+fn summaries_of_two_chains_over_different_inputs_at_5_links_give_its_answers() {
+    summaries_of_definitions_give_their_answers([two_chains_over_different_inputs(5).as_str()]);
+}
+
+#[test]
+fn summaries_of_two_chains_sharing_an_input_at_5_links_give_their_answers() {
+    summaries_of_definitions_give_their_answers([two_chains_sharing_x_and_x_div_7(5).as_str()]);
+}

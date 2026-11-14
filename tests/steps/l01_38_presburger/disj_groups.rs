@@ -307,49 +307,76 @@ fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_has_its_exact
     }
 }
 
-/// The least and greatest value of each `x[i]` over the points of `f`, a chain of `n` stages
-/// ending at most at `end`, by trying every `x[0]` and every step and `y[i]` the rows of a
-/// stage allow (`x` rising by at least `y[i]`, up to `end`), each point read on `f` itself.
-fn brute_hulls(f: &Formula, n: usize, end: i128) -> Option<Vec<(i128, i128)>> {
-    fn walk(
-        f: &Formula,
-        n: usize,
-        end: i128,
-        at: &mut Vec<(i128, i128)>,
-        hulls: &mut Option<Vec<(i128, i128)>>,
-    ) {
-        let i = at.len() - 1;
-        if i == n - 1 {
-            let mut m = zedc::store::presburger::Model::new();
-            for (k, (xv, yv)) in at.iter().enumerate() {
-                m.insert(Atom::Sym(format!("x{k:05}").into()), (*xv).into());
-                if k < n - 1 {
-                    m.insert(Atom::Sym(format!("y{k:05}").into()), (*yv).into());
+/// The least and greatest value of each `x[i]` over the points of `f` = [`small_chain`] of
+/// `case` (not negated), by trying every `x[0]` and every step and `y[i]` the rows of a stage
+/// allow (`x` rising by at least `y[i]`, up to `end`), each point read on `f` itself. A branch
+/// is cut where a disjunction of the stage it has just fixed has no disjunct holding (sum
+/// `step + y[i]` not among `sums`, or step not among `steps`): every point under it breaks a
+/// conjunct of `f`. A cut this test got wrong could only lose points the projection keeps,
+/// which the comparison reports. One model is kept and each atom's value set as the walk
+/// reaches it, so a point costs one reading of `f`. Without the cut and with a model built
+/// per point, the 8 cases of the test cost 7.9 s (2026-11-14, load 21).
+fn brute_hulls(f: &Formula, case: Small) -> Option<Vec<(i128, i128)>> {
+    struct Walk<'a> {
+        f: &'a Formula,
+        case: Small<'a>,
+        xs: Vec<Atom>,
+        ys: Vec<Atom>,
+        model: zedc::store::presburger::Model,
+        at: Vec<i128>,
+        hulls: Option<Vec<(i128, i128)>>,
+    }
+    impl Walk<'_> {
+        fn visit(&mut self, value: i128) {
+            let (n, every, end, sums, steps) = self.case;
+            let i = self.at.len();
+            self.at.push(value);
+            self.model.insert(self.xs[i].clone(), value.into());
+            if i == n - 1 {
+                if self.f.holds(&self.model) {
+                    let at = &self.at;
+                    let h = self
+                        .hulls
+                        .get_or_insert_with(|| at.iter().map(|&p| (p, p)).collect());
+                    for (h, &p) in h.iter_mut().zip(at) {
+                        *h = (h.0.min(p), h.1.max(p));
+                    }
+                }
+            } else {
+                for yv in 1..=2 {
+                    self.model.insert(self.ys[i].clone(), yv.into());
+                    for next in value + yv..=end {
+                        let step = next - value;
+                        let holds = i % every != 0
+                            || (sums.contains(&(step + yv))
+                                && (steps.is_empty() || steps.contains(&step)));
+                        if holds {
+                            self.visit(next);
+                        }
+                    }
                 }
             }
-            if f.holds(&m) {
-                let h = hulls.get_or_insert_with(|| at.iter().map(|p| (p.0, p.0)).collect());
-                for (h, p) in h.iter_mut().zip(at.iter()) {
-                    *h = (h.0.min(p.0), h.1.max(p.0));
-                }
-            }
-            return;
-        }
-        let xi = at[i].0;
-        for yv in 1..=2 {
-            at[i].1 = yv;
-            for next in xi + yv..=end {
-                at.push((next, 0));
-                walk(f, n, end, at, hulls);
-                at.pop();
-            }
+            self.at.pop();
         }
     }
-    let mut hulls = None;
-    for x0 in 0..=end {
-        walk(f, n, end, &mut vec![(x0, 0)], &mut hulls);
+    let n = case.0;
+    let mut walk = Walk {
+        f,
+        case,
+        xs: (0..n)
+            .map(|k| Atom::Sym(format!("x{k:05}").into()))
+            .collect(),
+        ys: (0..n - 1)
+            .map(|k| Atom::Sym(format!("y{k:05}").into()))
+            .collect(),
+        model: zedc::store::presburger::Model::new(),
+        at: Vec::new(),
+        hulls: None,
+    };
+    for x0 in 0..=case.2 {
+        walk.visit(x0);
     }
-    hulls
+    walk.hulls
 }
 
 /// A case of [`small_chain`]: its stages, its stride of disjunctions, its end, sums and steps.
@@ -379,7 +406,7 @@ fn hulls_of_small_chains_of_three_atom_rows_are_those_of_their_points() {
             .map(|i| Atom::Sym(format!("x{i:05}").into()))
             .collect();
         let got = project_each(&f, &syms).expect("a projection");
-        let want = brute_hulls(&f, n, end);
+        let want = brute_hulls(&f, (n, every, end, sums, steps));
         let case = format!("n {n}, every {every}, end {end}, sums {sums:?}, steps {steps:?}");
         for (i, r) in got.0.iter().enumerate() {
             let s = r.as_ref().expect("a hull");
@@ -943,11 +970,20 @@ pub(super) mod row_sums {
         );
     }
 
-    /// The 3,000 shared-sum formulas of seed 777 (`decide_sat.rs`): every answer is right, and
-    /// no answer is coarser than the solver's alone; the first 100 are compared with it.
+    /// 300 shared-sum formulas of a new seed each run, the first 30 compared with the solver
+    /// alone; the 3,000 of seed 777 are many cases, so they run in `bench::disj_groups`
+    /// (author P178).
     #[test]
     fn random_shared_sums_are_answered_and_never_coarser_than_the_solver_alone() {
-        let cases = random_cases(3000);
+        let (_, seed) = zed_tests::instances::Rng::fresh("row_sums: random shared sums");
+        shared_sums_are_answered(seed, 300, 30);
+    }
+
+    /// Cases `0..count` of the generator of `decide_sat.rs` at `seed` (777 there): every answer
+    /// is right and exact, and no answer is coarser than the solver's alone, with which the
+    /// first `compared` are compared.
+    pub(crate) fn shared_sums_are_answered(seed: u64, count: usize, compared: usize) {
+        let cases = random_cases(seed, count);
         let (mut exact, mut finer) = (0, 0);
         for (c, (case, sets)) in cases.iter().enumerate() {
             let f = case.formula();
@@ -972,7 +1008,7 @@ pub(super) mod row_sums {
                 all_exact &= got.len() == sets[i].len() && !s.contains(1000) && !s.contains(-1000);
             }
             exact += usize::from(all_exact);
-            if c < 100 {
+            if c < compared {
                 ROW_SUMS_OFF.with(|o| o.set(true));
                 let (d_old, p_old) = ask();
                 ROW_SUMS_OFF.with(|o| o.set(false));
@@ -993,15 +1029,15 @@ pub(super) mod row_sums {
             }
         }
         eprintln!(
-            "random shared sums: {exact} of 3000 exact; {finer} projections finer than the \
-             solver's in the first 100"
+            "random shared sums: {exact} of {count} exact; {finer} projections finer than the \
+             solver's in the first {compared}"
         );
-        assert_eq!(exact, 3000);
+        assert_eq!(exact, count, "seed {seed}");
     }
 
-    /// Cases `0..n` of the seed-777 generator of `decide_sat.rs`, with each atom's values over
+    /// Cases `0..n` of the generator of `decide_sat.rs` at `seed`, with each atom's values over
     /// the points.
-    fn random_cases(n: u64) -> Vec<(Case, Vec<BTreeSet<i64>>)> {
+    fn random_cases(seed: u64, n: usize) -> Vec<(Case, Vec<BTreeSet<i64>>)> {
         struct Rng(u64);
         impl Rng {
             fn next(&mut self, n: u64) -> i64 {
@@ -1010,7 +1046,7 @@ pub(super) mod row_sums {
                 ((self.0 >> 33) % n) as i64
             }
         }
-        let mut rng = Rng(777);
+        let mut rng = Rng(seed);
         let mut out = Vec::new();
         for _ in 0..n {
             let k = 3 + rng.next(5) as usize;

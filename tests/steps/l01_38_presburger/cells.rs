@@ -83,14 +83,20 @@ fn decides(n: usize, varied: bool) {
     assert_eq!(got, reaches_zero(n, varied), "{n} levels, varied {varied}");
 }
 
-/// Every chain from 1 to 96 levels, with either constant, is decided as running it decides.
-#[test]
-fn guarded_chains_are_decided_as_run() {
+/// Every chain from 1 to `top` levels, with either constant, is decided as running it decides.
+pub(super) fn guarded_chains_up_to(top: usize) {
     for varied in [false, true] {
-        for n in 1..=96 {
+        for n in 1..=top {
             decides(n, varied);
         }
     }
+}
+
+/// The chains from 1 to 35 levels, a whole period of the guards (7) and of the varied constants
+/// (5); those up to 96 levels are a long run, so they run in `bench::cells` (author P178).
+#[test]
+fn guarded_chains_are_decided_as_run() {
+    guarded_chains_up_to(35);
 }
 
 /// The guard of one level of [`guarded`]: the then-branch keeps `t`, the else-branch gives
@@ -230,13 +236,12 @@ pub(super) fn missed(reached: &BTreeSet<i128>) -> i128 {
     (lo..=hi).find(|v| !reached.contains(v)).unwrap_or(hi + 1)
 }
 
-/// Every chain of each family from 1 to 40 levels is decided as running it decides, for the
+/// Every chain of each family from 1 to `top` levels is decided as running it decides, for the
 /// least value reached, the greatest, and one inside that is not reached.
-#[test]
-fn wide_nested_and_joined_guards_are_decided_as_run() {
+pub(super) fn guarded_families_up_to(top: usize) {
     for name in ["wide", "nest", "or", "and"] {
         let guard = family(name);
-        for n in 1..=40 {
+        for n in 1..=top {
             let r = family_range(name, n);
             let reached = guarded_run(n, r, guard);
             let first = *reached.first().expect("some value");
@@ -251,4 +256,11 @@ fn wide_nested_and_joined_guards_are_decided_as_run() {
             }
         }
     }
+}
+
+/// The chains of each family from 1 to 12 levels; those up to 40 levels are a long run, so they
+/// run in `bench::cells` (author P178).
+#[test]
+fn wide_nested_and_joined_guards_are_decided_as_run() {
+    guarded_families_up_to(12);
 }

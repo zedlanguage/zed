@@ -146,7 +146,7 @@ fn oracle(rng: &mut Rng) -> Vec<Row> {
 
 /// What the census found: by the solver's answer, the system's truth.
 #[derive(Default, Debug, PartialEq, Eq)]
-struct Census {
+pub(super) struct Census {
     /// Decided with a point; decided empty.
     sat: usize,
     unsat: usize,
@@ -209,10 +209,10 @@ fn census(systems: impl Iterator<Item = Vec<Row>>) -> Census {
 }
 
 /// The refusals of a census: the cause, the truth of the system, and the count.
-type Refused = Vec<(String, &'static str, usize)>;
+pub(super) type Refused = Vec<(String, &'static str, usize)>;
 
 /// The counts of a census, written for the assertions below.
-fn counts(c: &Census) -> (usize, usize, Refused, Vec<(usize, usize)>) {
+pub(super) fn counts(c: &Census) -> (usize, usize, Refused, Vec<(usize, usize)>) {
     (
         c.sat,
         c.unsat,
@@ -226,7 +226,7 @@ fn counts(c: &Census) -> (usize, usize, Refused, Vec<(usize, usize)>) {
 
 /// Refusals all for `Growth`: with an integer point, with no rational point, with a rational
 /// point and no integer one.
-fn g(point: usize, no_rational: usize, rational: usize) -> Refused {
+pub(super) fn g(point: usize, no_rational: usize, rational: usize) -> Refused {
     vec![
         ("Growth".to_string(), "integer point", point),
         ("Growth".to_string(), "no rational point", no_rational),
@@ -264,62 +264,32 @@ fn the_census_of_the_oracle_family() {
     );
 }
 
-/// The census of the 2,000 systems of one fresh seed.
-fn fresh_census(seed: u64) -> Census {
+/// The census of the first `count` systems of the fresh-seed family drawn from `seed`.
+pub(super) fn fresh_census(seed: u64, count: usize) -> Census {
     let mut rng = XorShift(seed);
-    let c = census((0..2000).map(|_| fresh(&mut rng)));
-    println!("Q1-LOCAL census, fresh seed {seed:#x}, 2,000 systems: {c:?}");
+    let c = census((0..count).map(|_| fresh(&mut rng)));
+    println!("Q1-LOCAL census, fresh seed {seed:#x}, {count} systems: {c:?}");
     c
 }
 
+// The censuses of the 2,000 systems of fresh seeds 1 to 5 are many cases, so they run in
+// `bench::q1_local` (author P178). The first 300 of seed 1 keep a census here, its counts fixed,
+// beside 300 of a new seed each run, checked as `census` checks each system.
+
 #[test]
-fn the_census_of_fresh_seed_1() {
-    let c = fresh_census(0x5eed_0001);
+fn the_census_of_the_first_300_systems_of_fresh_seed_1() {
+    let c = fresh_census(0x5eed_0001, 300);
     assert_eq!(
         counts(&c),
-        (1365, 52, g(432, 121, 30), vec![(3, 1), (4, 16), (5, 104)]),
+        (204, 8, g(66, 18, 4), vec![(4, 2), (5, 16)]),
         "{c:?}"
     );
 }
 
 #[test]
-fn the_census_of_fresh_seed_2() {
-    let c = fresh_census(0x5eed_0002);
-    assert_eq!(
-        counts(&c),
-        (1376, 55, g(438, 116, 15), vec![(3, 1), (4, 16), (5, 99)]),
-        "{c:?}"
-    );
-}
-
-#[test]
-fn the_census_of_fresh_seed_3() {
-    let c = fresh_census(0x5eed_0003);
-    assert_eq!(
-        counts(&c),
-        (1353, 77, g(397, 152, 21), vec![(3, 2), (4, 29), (5, 121)]),
-        "{c:?}"
-    );
-}
-
-#[test]
-fn the_census_of_fresh_seed_4() {
-    let c = fresh_census(0x5eed_0004);
-    assert_eq!(
-        counts(&c),
-        (1378, 60, g(416, 125, 21), vec![(3, 1), (4, 17), (5, 107)]),
-        "{c:?}"
-    );
-}
-
-#[test]
-fn the_census_of_fresh_seed_5() {
-    let c = fresh_census(0x5eed_0005);
-    assert_eq!(
-        counts(&c),
-        (1358, 77, g(412, 133, 20), vec![(3, 2), (4, 12), (5, 119)]),
-        "{c:?}"
-    );
+fn the_census_of_300_systems_of_a_new_seed() {
+    let (_, seed) = Rng::fresh("q1_local: the census of a new seed");
+    let _ = fresh_census(seed | 1, 300);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -780,31 +750,58 @@ fn order_free(what: &str, rows: &[Row]) -> String {
     answer
 }
 
-#[test]
-fn the_answer_of_each_family_is_free_of_the_order_of_its_rows() {
-    let families: Vec<(&str, Vec<Row>, &str)> = vec![
-        ("windows", windows(64).0, "point"),
-        ("weighted windows", weighted_windows(64).0, "Growth"),
-        ("offsets", offsets(64), "point"),
-        ("convex", convex(64), "point"),
-        ("band", band(64).0, "Growth"),
-        ("sparse random", sparse_random(64).0, "Growth"),
-        ("chained blocks", chained_blocks(32).0, "Growth"),
-        ("tree blocks", tree_blocks(32).0, "Growth"),
+/// A family of systems: its name, its rows and the answer [`order_free`] gives.
+pub(super) type Family = (&'static str, Vec<Row>, &'static str);
+
+/// The families of rows over `n` variables, each with its answer at `n` = 12 to 64.
+pub(super) fn row_families(n: usize) -> Vec<Family> {
+    vec![
+        ("windows", windows(n).0, "point"),
+        ("weighted windows", weighted_windows(n).0, "Growth"),
+        ("offsets", offsets(n), "point"),
+        ("convex", convex(n), "point"),
+        ("band", band(n).0, "Growth"),
+        ("sparse random", sparse_random(n).0, "Growth"),
+    ]
+}
+
+/// The families of blocks, `n / 2` blocks each and `n` for the hub's, each with its answer at
+/// `n` = 12 to 64.
+pub(super) fn block_families(n: usize) -> Vec<Family> {
+    vec![
+        ("chained blocks", chained_blocks(n / 2).0, "Growth"),
+        ("tree blocks", tree_blocks(n / 2).0, "Growth"),
         (
             "chained blocks, far contradiction",
-            chained_blocks_empty(32),
+            chained_blocks_empty(n / 2),
             "empty",
         ),
         (
             "the hub family",
-            super::scaling::blocks_with_a_hub(64),
+            super::scaling::blocks_with_a_hub(n),
             "Growth",
         ),
-    ];
+    ]
+}
+
+/// Each family's answer is free of the order of its rows ([`order_free`]).
+pub(super) fn each_answer_is_free_of_the_order(families: Vec<Family>) {
     for (what, rows, expected) in families {
         assert_eq!(order_free(what, &rows), expected, "{what}");
     }
+}
+
+/// At 12 variables, where each family gives the answer it gives at 64 (2026-11-14); at 64 they
+/// take 4.5 s, so they run in `bench::q1_local` (author P178).
+#[test]
+fn the_answer_of_each_family_of_rows_is_free_of_the_order_of_its_rows() {
+    each_answer_is_free_of_the_order(row_families(12));
+}
+
+/// At 6 blocks, as [`the_answer_of_each_family_of_rows_is_free_of_the_order_of_its_rows`].
+#[test]
+fn the_answer_of_each_family_of_blocks_is_free_of_the_order_of_its_rows() {
+    each_answer_is_free_of_the_order(block_families(12));
 }
 
 #[test]
@@ -813,15 +810,20 @@ fn the_answer_over_grid_squares_is_free_of_the_order_of_its_rows() {
     assert_eq!(order_free("grid squares", &rows), "Growth");
 }
 
+/// The answers of the first `count` systems of the oracle's family drawn by `rng`, each as
+/// written and in other orders ([`order_free`]).
+pub(super) fn oracle_answers_in_any_order(rng: &mut Rng, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|_| order_free("oracle", &oracle(rng)))
+        .collect()
+}
+
+/// 40 systems of the oracle's family at a new seed each run; the 400 of seed 0x38_0a are many
+/// cases, so they run in `bench::q1_local` (author P178).
 #[test]
 fn the_answers_of_the_oracle_family_are_free_of_the_order_of_their_rows() {
-    let mut rng = Rng::new(0x38_0a);
-    let answers: Vec<_> = (0..400)
-        .map(|_| order_free("oracle", &oracle(&mut rng)))
-        .collect();
-    // The census's counts: the orders change no answer.
-    let decided = |b: &str| answers.iter().filter(|a| *a == b).count();
-    assert_eq!((decided("point"), decided("empty")), (281, 7));
+    let (mut rng, _) = Rng::fresh("q1_local: the oracle family, rows in any order");
+    let _ = oracle_answers_in_any_order(&mut rng, 40);
 }
 
 #[test]

@@ -481,15 +481,14 @@ fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
     }
 }
 
-/// Formulas `from..to` of one random sequence of 2000, each solved and solved reordered, and how
-/// many of them the reordering changed. The formulas before `from` are drawn and not solved,
-/// so that the two halves together are the one sequence.
-fn reordered_formulas_agree(from: usize, to: usize) -> usize {
-    let mut rng = Rng::new(0x1380);
+/// Formulas `from..to` of the random sequence `rng` draws, each solved and solved reordered, and
+/// how many of them the reordering changed. The formulas before `from` are drawn and not solved,
+/// so that parts of one sequence together check the whole.
+pub(super) fn reordered_formulas_agree(rng: &mut Rng, from: usize, to: usize) -> usize {
     let mut disjunctive = 0;
     for i in 0..to {
-        let f = random_formula(&mut rng, 3);
-        let g = shuffled(&f, &mut rng);
+        let f = random_formula(rng, 3);
+        let g = shuffled(&f, rng);
         if i < from {
             continue;
         }
@@ -503,31 +502,16 @@ fn reordered_formulas_agree(from: usize, to: usize) -> usize {
 }
 
 // A proof rule that held on one spelling of `a < 0 || b < 0` and not on `b < 0 || a < 0` would
-// change with a reformatting of the source. The 2000 formulas are checked in four quarters, each
-// well under the 60-second limit of one test.
-
+// change with a reformatting of the source. 40 formulas of a new seed each run here; the 2000 of
+// seed 0x1380 are many cases, so they run in `bench::omega` (author P178).
 #[test]
 fn the_answer_does_not_depend_on_the_order_of_the_disjuncts() {
-    let disjunctive = reordered_formulas_agree(0, 500);
-    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
-}
-
-#[test]
-fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_second_quarter() {
-    let disjunctive = reordered_formulas_agree(500, 1000);
-    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
-}
-
-#[test]
-fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_third_quarter() {
-    let disjunctive = reordered_formulas_agree(1000, 1500);
-    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
-}
-
-#[test]
-fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_fourth_quarter() {
-    let disjunctive = reordered_formulas_agree(1500, 2000);
-    assert!(disjunctive > 250, "{disjunctive} of 500 reordered");
+    let (mut rng, seed) = Rng::fresh("omega: the order of the disjuncts");
+    let disjunctive = reordered_formulas_agree(&mut rng, 0, 40);
+    assert!(
+        disjunctive > 10,
+        "seed {seed}: {disjunctive} of 40 reordered"
+    );
 }
 
 /// `Σ x[i] >= 0` with `x[i] == x[i+1] + 1`: one long row, each equality substituted into it.
@@ -733,15 +717,14 @@ fn arms_of_case_236(name: &dyn Fn(&str) -> String, flip: &dyn Fn(usize) -> bool)
     )
 }
 
-/// [`arms_of_case_236`] written 60 ways, its names permuted and its equations negated at
-/// random: `project_each` gives `i` the same set in every writing, its points `{-4, 0, 4}`
-/// exactly (found by asking each `i` in `[-6, 6]`). Before item PROJECT-canon-precision the
+/// [`arms_of_case_236`] written `count` ways, its names permuted and its equations negated at
+/// random by `rng`: `project_each` gives `i` the same set in every writing, its points `{-4, 0,
+/// 4}` exactly (found by asking each `i` in `[-6, 6]`). Before item PROJECT-canon-precision the
 /// set was `[-4, -3]`, `0`, `4`: the greedy search found a point, so the search over
 /// disjuncts (`probe`) did not run and a disjunct with no point was kept; it now runs always,
-/// its searches batched (COMPLEXITY.md row PROJECT-canon-precision).
-#[test]
-fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
-    let mut rng = Rng::new(0x236);
+/// its searches batched (COMPLEXITY.md row PROJECT-canon-precision). Half the writings name
+/// `i` `m`.
+pub(super) fn case_236_in_writings(rng: &mut Rng, count: usize) {
     let plain = arms_of_case_236(&|n| n.to_string(), &|_| false);
     let mut points = IntervalSet::empty();
     for v in -6..=6i64 {
@@ -751,7 +734,7 @@ fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
         }
     }
     assert_eq!(points.to_string(), "[-4..=-4, 0..=0, 4..=4]");
-    for w in 0..60 {
+    for w in 0..count {
         let mut perm: Vec<usize> = (0..7).collect();
         for k in (1..7).rev() {
             perm.swap(k, rng.below(k + 1));
@@ -768,6 +751,14 @@ fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
         let got = each[0].as_ref().expect("a set");
         assert_eq!(*got, points, "writing {w}: {f}");
     }
+}
+
+/// [`case_236_in_writings`] in six writings of a new seed; the 60 of seed 0x236 are many cases,
+/// so they run in `bench::omega` (author P178).
+#[test]
+fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_every_writing() {
+    let (mut rng, _) = Rng::fresh("omega: case 236 in six writings");
+    case_236_in_writings(&mut rng, 6);
 }
 
 /// A pipeline of `n` stages, each with a state `y[k]` that is 0 (idle) or 2 (drained), a

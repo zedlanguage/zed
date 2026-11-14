@@ -1,6 +1,7 @@
 //! The benchmarks of `q1_local.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::q1_local::*;
+use zed_tests::instances::Rng;
 use zedc::store::presburger::Refusal;
 
 #[test]
@@ -99,4 +100,76 @@ fn growth_of_chained_blocks_with_a_far_contradiction() {
         Ok(false),
         chained_blocks_empty,
     );
+}
+
+// The censuses of the 2,000 systems of each of fresh seeds 1 to 5: many cases, so benchmarks
+// (author P178). `q1_local::the_census_of_the_first_300_systems_of_fresh_seed_1` keeps a census
+// of 300 at a fixed seed, and `q1_local::the_census_of_300_systems_of_a_new_seed` draws a new
+// seed each run.
+
+#[test]
+fn the_census_of_fresh_seed_1() {
+    let c = fresh_census(0x5eed_0001, 2000);
+    assert_eq!(
+        counts(&c),
+        (1365, 52, g(432, 121, 30), vec![(3, 1), (4, 16), (5, 104)]),
+        "{c:?}"
+    );
+}
+
+#[test]
+fn the_census_of_fresh_seed_2() {
+    let c = fresh_census(0x5eed_0002, 2000);
+    assert_eq!(
+        counts(&c),
+        (1376, 55, g(438, 116, 15), vec![(3, 1), (4, 16), (5, 99)]),
+        "{c:?}"
+    );
+}
+
+#[test]
+fn the_census_of_fresh_seed_3() {
+    let c = fresh_census(0x5eed_0003, 2000);
+    assert_eq!(
+        counts(&c),
+        (1353, 77, g(397, 152, 21), vec![(3, 2), (4, 29), (5, 121)]),
+        "{c:?}"
+    );
+}
+
+#[test]
+fn the_census_of_fresh_seed_4() {
+    let c = fresh_census(0x5eed_0004, 2000);
+    assert_eq!(
+        counts(&c),
+        (1378, 60, g(416, 125, 21), vec![(3, 1), (4, 17), (5, 107)]),
+        "{c:?}"
+    );
+}
+
+#[test]
+fn the_census_of_fresh_seed_5() {
+    let c = fresh_census(0x5eed_0005, 2000);
+    assert_eq!(
+        counts(&c),
+        (1358, 77, g(412, 133, 20), vec![(3, 2), (4, 12), (5, 119)]),
+        "{c:?}"
+    );
+}
+
+/// The 400 systems of the oracle's family (seed 0x38_0a), each as written and in other orders:
+/// many cases (author P178). The counts are the census's: the orders change no answer.
+#[test]
+fn the_answers_of_the_oracle_family_are_free_of_the_order_of_their_rows() {
+    let answers = oracle_answers_in_any_order(&mut Rng::new(0x38_0a), 400);
+    let decided = |b: &str| answers.iter().filter(|a| *a == b).count();
+    assert_eq!((decided("point"), decided("empty")), (281, 7));
+}
+
+/// The families at 64 variables and 32 blocks, as first written: 4.5 s together (2026-11-14,
+/// load 21), so a benchmark (author P178); `q1_local` runs them at 12.
+#[test]
+fn the_answer_of_each_family_is_free_of_the_order_of_its_rows() {
+    each_answer_is_free_of_the_order(row_families(64));
+    each_answer_is_free_of_the_order(block_families(64));
 }

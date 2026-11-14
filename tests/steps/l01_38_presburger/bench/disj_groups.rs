@@ -199,4 +199,14 @@ mod row_sums {
             );
         }
     }
+
+    /// The 3,000 shared-sum formulas of seed 777 (`decide_sat.rs`): every answer is right and
+    /// exact, and no answer is coarser than the solver's alone, with which the first 100 are
+    /// compared. Many cases, so a benchmark (author P178);
+    /// `disj_groups::row_sums::random_shared_sums_are_answered_and_never_coarser_than_the_solver_alone`
+    /// draws 300 of a new seed each run.
+    #[test]
+    fn the_3000_shared_sums_of_seed_777_are_answered_and_never_coarser_than_the_solver_alone() {
+        shared_sums_are_answered(777, 3000, 100);
+    }
 }

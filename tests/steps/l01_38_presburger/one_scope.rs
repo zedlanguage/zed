@@ -1117,78 +1117,145 @@ fn a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer() {
     }
 }
 
-/// The units of [`summaries_of_definitions`] are checked in four parts, every fourth unit each,
-/// so that each part runs alone in a few seconds (TEST-bench-move-l0138); together they check
-/// every unit.
+/// The units of [`definition_units`] are checked in eight parts, every eighth unit each, less the
+/// three slowest, each checked by a test of its own (TEST-bench-move-l0138, TEST-corr-slow-l0138);
+/// together they check every unit. The unit of `x mod 5 + x div 7 - 9` is checked here at 4
+/// links, and at 5, as first written, in `bench::one_scope` (1.9 s at load 20); so are the two
+/// units of I21, at 3 links here and at 5 there.
 #[test]
 fn summaries_of_definitions_give_the_answers_of_the_definitions_part_0() {
-    summaries_of_definitions(0);
+    summaries_of_definitions_part(0);
 }
 
 #[test]
 fn summaries_of_definitions_give_the_answers_of_the_definitions_part_1() {
-    summaries_of_definitions(1);
+    summaries_of_definitions_part(1);
 }
 
 #[test]
 fn summaries_of_definitions_give_the_answers_of_the_definitions_part_2() {
-    summaries_of_definitions(2);
+    summaries_of_definitions_part(2);
 }
 
 #[test]
 fn summaries_of_definitions_give_the_answers_of_the_definitions_part_3() {
-    summaries_of_definitions(3);
+    summaries_of_definitions_part(3);
 }
 
-/// The units whose index is `part` mod 4.
-fn summaries_of_definitions(part: usize) {
-    // LOAD-chain-sep: a question with no kept part reads each definition's chain through its
-    // summary, projected exactly. Each answer is the one the relation with all its definitions
-    // has, asked in the unit's order, in the reverse, and alone, so that the answers do not
-    // depend on what was asked before (batch and single-file checking agree). Where the solver
-    // refuses the whole (its shadows disagree), the smaller question of the summaries may be
-    // answered: the answer is then checked against the values of `x` from -300 to 300.
-    use zedc::store::presburger::extend::{Answers, Extending};
-    use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
-    // The answer `got` of whether `f` holds somewhere: [`decide`]'s, or, where it refuses,
-    // one the values of `x` from -300 to 300 do not contradict.
-    let agrees = |f: Formula, got: &Result<bool, zedc::store::presburger::Refusal>, what: &str| {
-        let whole = decide(&f);
-        if whole.is_ok() {
-            assert_eq!(*got, whole, "{what}");
-            return;
-        }
-        let Ok(got) = got else { return };
-        let x = (f.atoms().into_iter())
-            .find(|a| matches!(a, Atom::Sym(_)))
-            .expect("an input");
-        let at = |v: i64| {
-            let fixed = Formula::Con(Con::eq(&Lin::atom(x.clone()), &Lin::constant(v)));
-            decide(&Formula::and(vec![f.clone(), fixed])) == Ok(true)
-        };
-        assert!(*got || !(-300..=300).any(at), "{what}: holds nowhere");
-        assert!(!*got || (-300..=300).any(at), "{what}: holds somewhere");
-    };
-    let chain = |step: &str, test: &str, n: usize| {
-        let mut src = "h0(x: int) = x;\n".to_string();
-        for i in 1..=n {
-            src += &format!(
-                "h{i}(x: int) = {};\n",
-                step.replace("H", &format!("h{}(x: x)", i - 1))
-            );
-            src += &format!(
-                "t{i}(x: int) = {};\n",
-                test.replace("H", &format!("h{i}(x: x)"))
-            );
-        }
-        src
-    };
-    // A chain over the inputs `x` and `y`.
-    let two = |src: String| {
-        src.replace("(x: int)", "(x: int, y: int)")
-            .replace("(x: x)", "(x: x, y: y)")
-    };
-    let units = [
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_4() {
+    summaries_of_definitions_part(4);
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_5() {
+    summaries_of_definitions_part(5);
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_6() {
+    summaries_of_definitions_part(6);
+}
+
+#[test]
+fn summaries_of_definitions_give_the_answers_of_the_definitions_part_7() {
+    summaries_of_definitions_part(7);
+}
+
+#[test]
+fn summaries_of_a_sum_of_two_quotients_of_a_chain_give_its_answers() {
+    summaries_of_definitions_of_unit(5);
+}
+
+#[test]
+fn summaries_of_a_max_against_x_less_9_beside_a_quotient_of_x_give_its_answers() {
+    summaries_of_definitions_of_unit(33);
+}
+
+#[test]
+fn summaries_of_a_max_against_remainders_beside_a_quotient_of_x_give_its_answers() {
+    summaries_of_definitions_of_unit(34);
+}
+
+const SLOW_DEFINITION_UNITS: [usize; 3] = [5, 33, 34];
+
+/// The units of [`definition_units`] whose index is `part` mod 8, less the slowest.
+fn summaries_of_definitions_part(part: usize) {
+    let units = definition_units();
+    summaries_of_definitions_give_their_answers(
+        (units.iter().enumerate())
+            .filter(|(k, _)| k % 8 == part && !SLOW_DEFINITION_UNITS.contains(k))
+            .map(|(_, src)| src.as_str()),
+    );
+}
+
+/// Unit `k` of [`definition_units`].
+fn summaries_of_definitions_of_unit(k: usize) {
+    summaries_of_definitions_give_their_answers([definition_units()[k].as_str()]);
+}
+
+/// The chain `h{i}(x) = step`, `i` from 1 to `n`, each `H` of `step` written as `h{i-1}(x: x)`
+/// and `h0(x) = x`, with the test `t{i}(x) = test` at each link, each `H` of `test` written as
+/// `h{i}(x: x)`.
+pub(super) fn definition_chain(step: &str, test: &str, n: usize) -> String {
+    let mut src = "h0(x: int) = x;\n".to_string();
+    for i in 1..=n {
+        src += &format!(
+            "h{i}(x: int) = {};\n",
+            step.replace("H", &format!("h{}(x: x)", i - 1))
+        );
+        src += &format!(
+            "t{i}(x: int) = {};\n",
+            test.replace("H", &format!("h{i}(x: x)"))
+        );
+    }
+    src
+}
+
+/// A chain of [`definition_chain`] over the inputs `x` and `y`.
+fn over_two_inputs(src: String) -> String {
+    src.replace("(x: int)", "(x: int, y: int)")
+        .replace("(x: x)", "(x: x, y: y)")
+}
+
+/// The chain `g{i}(x) = max(g{i-1}(x: x) div 2, x mod 5 + x div 7 - 9)` of `links` links, the
+/// chain `p2` over `y` beside it, and the tests `u` of `g{links}` and `t` of both (I21).
+pub(super) fn two_chains_over_different_inputs(links: usize) -> String {
+    let mut src = "g0(x: int) = x;\n".to_string();
+    for i in 1..=links {
+        src += &format!(
+            "g{i}(x: int) = max(g{}(x: x) div 2, x mod 5 + x div 7 - 9);\n",
+            i - 1
+        );
+    }
+    src += "p0(y: int) = y;\n";
+    src += "p1(y: int) = if p0(y: y) > 0 { p0(y: y) + 1 } else { p0(y: y) };\n";
+    src += "p2(y: int) = if p1(y: y) > 0 { p1(y: y) + 1 } else { p1(y: y) };\n";
+    src += &format!("u(x: int) = g{links}(x: x) < 0;\n");
+    src += &format!("t(x: int, y: int) = p2(y: y) + g{links}(x: x) < 0 && y == 0;\n");
+    src
+}
+
+/// The chain `g{i}(x) = max(g{i-1}(x: x) div 2, x div 7 - 9)` of `links` links and the chain
+/// `p2` over `x` and `y` sharing `x div 7`, with the tests `u` of `g{links}` and `t` of both.
+pub(super) fn two_chains_sharing_x_and_x_div_7(links: usize) -> String {
+    let mut src = "g0(x: int) = x;\n".to_string();
+    for i in 1..=links {
+        src += &format!("g{i}(x: int) = max(g{}(x: x) div 2, x div 7 - 9);\n", i - 1);
+    }
+    src += "p0(x: int, y: int) = x + y;\n";
+    src += "p1(x: int, y: int) = if p0(x: x, y: y) > x div 7 { p0(x: x, y: y) + 1 } else { p0(x: x, y: y) };\n";
+    src += "p2(x: int, y: int) = if p1(x: x, y: y) > x div 7 { p1(x: x, y: y) + 1 } else { p1(x: x, y: y) };\n";
+    src += &format!("u(x: int) = g{links}(x: x) < 0;\n");
+    src += &format!("t(x: int, y: int) = p2(x: x, y: y) + g{links}(x: x) < 0 && y == 0;\n");
+    src
+}
+
+/// The units whose summaries [`summaries_of_definitions_give_their_answers`] checks.
+fn definition_units() -> Vec<String> {
+    let chain = definition_chain;
+    let two = over_two_inputs;
+    vec![
         // The chain of the scaling test, and other steps: by 3, a remainder, a step that
         // reverses the sign, one that grows its input, and one that reads it twice.
         chain("H div 2 + 1", "H > 0", 7),
@@ -1238,7 +1305,7 @@ fn summaries_of_definitions(part: usize) {
         // its summary in every order, where before the later tests read every link beside and
         // were refused in the unit's order alone.
         chain("max(H div 2, x - 9)", "H < x div 64 - 1", 6),
-        chain("max(H div 2, x mod 5 + x div 7 - 9)", "H < x div 64 - 1", 5),
+        chain("max(H div 2, x mod 5 + x div 7 - 9)", "H < x div 64 - 1", 4),
         // Two inputs (cross-review round 2, I8): pieces whose rests differ, merged where
         // each rest holds on the other piece; a value of `x + y - 9` at the last link, one
         // between, and values at a bound of the merged pieces.
@@ -1348,48 +1415,61 @@ fn summaries_of_definitions(part: usize) {
         )
         .to_string(),
         // Cross-review round 3 (Gemini, I21): a test `t` reading two chains over different inputs,
-        // after a test `u` has numbered the links of `g5` before those of `p2`.
-        concat!(
-            "g0(x: int) = x;\n",
-            "g1(x: int) = max(g0(x: x) div 2, x mod 5 + x div 7 - 9);\n",
-            "g2(x: int) = max(g1(x: x) div 2, x mod 5 + x div 7 - 9);\n",
-            "g3(x: int) = max(g2(x: x) div 2, x mod 5 + x div 7 - 9);\n",
-            "g4(x: int) = max(g3(x: x) div 2, x mod 5 + x div 7 - 9);\n",
-            "g5(x: int) = max(g4(x: x) div 2, x mod 5 + x div 7 - 9);\n",
-            "p0(y: int) = y;\n",
-            "p1(y: int) = if p0(y: y) > 0 { p0(y: y) + 1 } else { p0(y: y) };\n",
-            "p2(y: int) = if p1(y: y) > 0 { p1(y: y) + 1 } else { p1(y: y) };\n",
-            "u(x: int) = g5(x: x) < 0;\n",
-            "t(x: int, y: int) = p2(y: y) + g5(x: x) < 0 && y == 0;\n",
-        )
-        .to_string(),
+        // after a test `u` has numbered the links of `g{n}` before those of `p2`; 5 links as
+        // first written in `bench::one_scope`.
+        two_chains_over_different_inputs(3),
         // Two independent chains sharing input `x` and functional leaf `x div 7`: both cones
-        // summarize with `x` kept in both keys regardless of query order.
-        concat!(
-            "g0(x: int) = x;\n",
-            "g1(x: int) = max(g0(x: x) div 2, x div 7 - 9);\n",
-            "g2(x: int) = max(g1(x: x) div 2, x div 7 - 9);\n",
-            "g3(x: int) = max(g2(x: x) div 2, x div 7 - 9);\n",
-            "g4(x: int) = max(g3(x: x) div 2, x div 7 - 9);\n",
-            "g5(x: int) = max(g4(x: x) div 2, x div 7 - 9);\n",
-            "p0(x: int, y: int) = x + y;\n",
-            "p1(x: int, y: int) = if p0(x: x, y: y) > x div 7 { p0(x: x, y: y) + 1 } else { p0(x: x, y: y) };\n",
-            "p2(x: int, y: int) = if p1(x: x, y: y) > x div 7 { p1(x: x, y: y) + 1 } else { p1(x: x, y: y) };\n",
-            "u(x: int) = g5(x: x) < 0;\n",
-            "t(x: int, y: int) = p2(x: x, y: y) + g5(x: x) < 0 && y == 0;\n",
-        )
-        .to_string(),
+        // summarize with `x` kept in both keys regardless of query order; 5 links as first
+        // written in `bench::one_scope`.
+        two_chains_sharing_x_and_x_div_7(3),
         // Periodic remainder chains (I12, I26): answered at depth 8 without refusal in every order.
         chain("H mod 7 + H", "H < 0", 8),
         chain("if H mod 6 == 0 { H + 1 } else { H + 2 }", "H > 10", 8),
-    ];
-    for src in units.iter().skip(part).step_by(4) {
+    ]
+}
+
+/// Each answer of each unit of `units` with its summaries: LOAD-chain-sep.
+pub(super) fn summaries_of_definitions_give_their_answers<'a>(
+    units: impl IntoIterator<Item = &'a str>,
+) {
+    // LOAD-chain-sep: a question with no kept part reads each definition's chain through its
+    // summary, projected exactly. Each answer is the one the relation with all its definitions
+    // has, asked in the unit's order, in the reverse, and alone, so that the answers do not
+    // depend on what was asked before (batch and single-file checking agree). Where the solver
+    // refuses the whole (its shadows disagree), the smaller question of the summaries may be
+    // answered: the answer is then checked against the values of `x` from -300 to 300.
+    use zedc::store::presburger::extend::{Answers, Extending};
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
+    // The answer `got` of whether `f` holds somewhere: [`decide`]'s, or, where it refuses,
+    // one the values of `x` from -300 to 300 do not contradict.
+    let agrees = |f: Formula, got: &Result<bool, zedc::store::presburger::Refusal>, what: &str| {
+        let whole = decide(&f);
+        if whole.is_ok() {
+            assert_eq!(*got, whole, "{what}");
+            return;
+        }
+        let Ok(got) = got else { return };
+        let x = (f.atoms().into_iter())
+            .find(|a| matches!(a, Atom::Sym(_)))
+            .expect("an input");
+        let at = |v: i64| {
+            let fixed = Formula::Con(Con::eq(&Lin::atom(x.clone()), &Lin::constant(v)));
+            decide(&Formula::and(vec![f.clone(), fixed])) == Ok(true)
+        };
+        assert!(*got || !(-300..=300).any(at), "{what}: holds nowhere");
+        assert!(!*got || (-300..=300).any(at), "{what}: holds somewhere");
+    };
+    for src in units {
         let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
         let lets = lets(&unit);
         let fs = functions(&unit);
         let n = fs.len();
-        // The answers of each function, asked in an order of one `Extending`.
-        let ask = |order: Vec<usize>| -> Vec<Option<Answers>> {
+        // The answers of each function, asked in an order of one `Extending`, each checked
+        // against the relation with all its definitions where `check`. The answers in the
+        // unit's order are checked so; those in the other orders must equal them, so they are
+        // not checked again (a check decides the whole and, where that is refused, at 601
+        // values of `x`: checking in every order took most of the time of these tests).
+        let ask = |order: Vec<usize>, check: bool| -> Vec<Option<Answers>> {
             let mut scoped = Scoped::new(&lets);
             let mut extending = Extending::new();
             let mut out = vec![None; n];
@@ -1399,87 +1479,95 @@ fn summaries_of_definitions(part: usize) {
                     continue;
                 };
                 let a = extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
-                let w = scoped.written(&r);
-                let with = |f: Formula| Formula::and(vec![w.defined(), f]);
-                agrees(
-                    with(w.body.clone()),
-                    &a.holds,
-                    &format!("`{name}` can hold in\n{src}\n{w}"),
-                );
-                agrees(
-                    with(Formula::negate(w.body.clone())),
-                    &a.fails,
-                    &format!("`{name}` can fail in\n{src}\n{w}"),
-                );
+                if check {
+                    let w = scoped.written(&r);
+                    let with = |f: Formula| Formula::and(vec![w.defined(), f]);
+                    agrees(
+                        with(w.body.clone()),
+                        &a.holds,
+                        &format!("`{name}` can hold in\n{src}\n{w}"),
+                    );
+                    agrees(
+                        with(Formula::negate(w.body.clone())),
+                        &a.fails,
+                        &format!("`{name}` can fail in\n{src}\n{w}"),
+                    );
+                }
                 out[i] = Some(a);
             }
             out
         };
-        let forward = ask((0..n).collect());
+        let forward = ask((0..n).collect(), true);
         assert!(forward.iter().any(Option::is_some), "{src}");
-        assert_eq!(forward, ask((0..n).rev().collect()), "{src}");
+        assert_eq!(forward, ask((0..n).rev().collect(), false), "{src}");
         for i in 0..n {
-            assert_eq!(forward[i], ask(vec![i])[i], "{src}: `{}` alone", fs[i].0);
+            let alone = ask(vec![i], false);
+            assert_eq!(forward[i], alone[i], "{src}: `{}` alone", fs[i].0);
         }
     }
 }
 
-#[test]
-fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
-    // LOAD-max-div-xr: chains of `max`, `min` and `div` whose summaries keep the input, and the
-    // quotients the next link needs, beside the key. Each test fixes `x` and asks whether
-    // `h{i}` has the value computed here by integer arithmetic (`div` by a positive constant
-    // rounds down), or another: the first must hold and the second not. Negative, zero and
-    // large `x`, and `x` on either side of where `x - 9` and `x div 2^i` cross. Then, with `x`
-    // free, the values each `h{i}` takes, found by trying every `x` in a range.
+/// A link of a chain of `max`, `min` and `div`: `H` its input, and its value from `H` and `x`.
+type MaxMinDivStep = (&'static str, fn(i64, i64) -> i64);
+
+/// The links of [`max_min_div_chains_give_their_values`].
+const MAX_MIN_DIV_STEPS: [MaxMinDivStep; 19] = [
+    ("max(H div 2, x - 9)", |h, x| h.div_euclid(2).max(x - 9)),
+    ("min(H div 2, x + 9)", |h, x| h.div_euclid(2).min(x + 9)),
+    ("max(H div 3, x - 9)", |h, x| h.div_euclid(3).max(x - 9)),
+    ("max(H div 2, 2 * x - 9)", |h, x| {
+        h.div_euclid(2).max(2 * x - 9)
+    }),
+    ("min(H div 2 + 1, x - 5)", |h, x| {
+        (h.div_euclid(2) + 1).min(x - 5)
+    }),
+    ("max(H div 2, x div 3 - 9)", |h, x| {
+        h.div_euclid(2).max(x.div_euclid(3) - 9)
+    }),
+    ("max(H div 2, x div 3 - 1000)", |h, x| {
+        h.div_euclid(2).max(x.div_euclid(3) - 1000)
+    }),
+    ("max(H div 2, 9 - x)", |h, x| h.div_euclid(2).max(9 - x)),
+    ("min(H div 4, 3 * x + 7)", |h, x| {
+        h.div_euclid(4).min(3 * x + 7)
+    }),
+    ("max(H div 2, x) - 1", |h, x| h.div_euclid(2).max(x) - 1),
+    ("max(H div 2 - 1, x)", |h, x| (h.div_euclid(2) - 1).max(x)),
+    ("max(H div 2, x mod 3 - 9)", |h, x| {
+        h.div_euclid(2).max(x.rem_euclid(3) - 9)
+    }),
+    ("min(H div 2, x mod 4 + 3)", |h, x| {
+        h.div_euclid(2).min(x.rem_euclid(4) + 3)
+    }),
+    ("max(H div 2, x mod 5 + x div 7 - 9)", |h, x| {
+        h.div_euclid(2).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+    }),
+    ("max(H div 2, x div 5 + x div 7 - 9)", |h, x| {
+        h.div_euclid(2).max(x.div_euclid(5) + x.div_euclid(7) - 9)
+    }),
+    ("max(H - 1, x mod 5 + x div 7 - 9)", |h, x| {
+        (h - 1).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+    }),
+    ("max(H - 4, x mod 5 + x div 7 - 9)", |h, x| {
+        (h - 4).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
+    }),
+    ("H mod 7 + H", |h, _| h.rem_euclid(7) + h),
+    ("if H mod 6 == 0 { H + 1 } else { H + 2 }", |h, _| {
+        if h.rem_euclid(6) == 0 { h + 1 } else { h + 2 }
+    }),
+];
+
+/// LOAD-max-div-xr: chains of `max`, `min` and `div` whose summaries keep the input, and the
+/// quotients the next link needs, beside the key, one chain of 5 links per step of
+/// [`MAX_MIN_DIV_STEPS`] named in `steps`. Each test fixes `x` and asks whether `h{i}` has the
+/// value computed here by integer arithmetic (`div` by a positive constant rounds down), or
+/// another: the first must hold and the second not. Negative, zero and large `x`, and `x` on
+/// either side of where `x - 9` and `x div 2^i` cross. Then, with `x` free, the values each
+/// `h{i}` takes, found by trying every `x` in a range. The 19 steps took 9.0 s in one test
+/// (load 25 to 32), most of it a set of every value each link takes; the tests below split
+/// them by kind, each a few steps (TEST-corr-slow-l0138).
+fn max_min_div_chains_give_their_values(steps: &[usize]) {
     use zedc::store::presburger::extend::Extending;
-    // A link, `H` its input, and its value from `H` and `x`.
-    type Step = (&'static str, fn(i64, i64) -> i64);
-    let steps: [Step; 19] = [
-        ("max(H div 2, x - 9)", |h, x| h.div_euclid(2).max(x - 9)),
-        ("min(H div 2, x + 9)", |h, x| h.div_euclid(2).min(x + 9)),
-        ("max(H div 3, x - 9)", |h, x| h.div_euclid(3).max(x - 9)),
-        ("max(H div 2, 2 * x - 9)", |h, x| {
-            h.div_euclid(2).max(2 * x - 9)
-        }),
-        ("min(H div 2 + 1, x - 5)", |h, x| {
-            (h.div_euclid(2) + 1).min(x - 5)
-        }),
-        ("max(H div 2, x div 3 - 9)", |h, x| {
-            h.div_euclid(2).max(x.div_euclid(3) - 9)
-        }),
-        ("max(H div 2, x div 3 - 1000)", |h, x| {
-            h.div_euclid(2).max(x.div_euclid(3) - 1000)
-        }),
-        ("max(H div 2, 9 - x)", |h, x| h.div_euclid(2).max(9 - x)),
-        ("min(H div 4, 3 * x + 7)", |h, x| {
-            h.div_euclid(4).min(3 * x + 7)
-        }),
-        ("max(H div 2, x) - 1", |h, x| h.div_euclid(2).max(x) - 1),
-        ("max(H div 2 - 1, x)", |h, x| (h.div_euclid(2) - 1).max(x)),
-        ("max(H div 2, x mod 3 - 9)", |h, x| {
-            h.div_euclid(2).max(x.rem_euclid(3) - 9)
-        }),
-        ("min(H div 2, x mod 4 + 3)", |h, x| {
-            h.div_euclid(2).min(x.rem_euclid(4) + 3)
-        }),
-        ("max(H div 2, x mod 5 + x div 7 - 9)", |h, x| {
-            h.div_euclid(2).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
-        }),
-        ("max(H div 2, x div 5 + x div 7 - 9)", |h, x| {
-            h.div_euclid(2).max(x.div_euclid(5) + x.div_euclid(7) - 9)
-        }),
-        ("max(H - 1, x mod 5 + x div 7 - 9)", |h, x| {
-            (h - 1).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
-        }),
-        ("max(H - 4, x mod 5 + x div 7 - 9)", |h, x| {
-            (h - 4).max(x.rem_euclid(5) + x.div_euclid(7) - 9)
-        }),
-        ("H mod 7 + H", |h, _| h.rem_euclid(7) + h),
-        ("if H mod 6 == 0 { H + 1 } else { H + 2 }", |h, _| {
-            if h.rem_euclid(6) == 0 { h + 1 } else { h + 2 }
-        }),
-    ];
     let xs: [i64; 10] = [-1_000_000, -19, -1, 0, 1, 9, 10, 18, 19, 1_000_000];
     let lit = |v: i64| {
         if v < 0 {
@@ -1488,7 +1576,7 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
             v.to_string()
         }
     };
-    for (step, value) in steps {
+    for &(step, value) in steps.iter().map(|&s| &MAX_MIN_DIV_STEPS[s]) {
         let mut src = "h0(x: int) = x;\n".to_string();
         for i in 1..=5 {
             src += &format!(
@@ -1513,21 +1601,28 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
         // |x| <= 200000: past that, each link here is beyond -40..=40 or repeats a value it
         // takes inside (a remainder repeats with `x`).
         let cs: [i64; 12] = [-40, -12, -10, -9, -8, -7, -1, 0, 1, 5, 10, 40];
-        let mut takes = vec![std::collections::BTreeSet::new(); 6];
+        // Per link, which of `cs` (sorted) it takes and the least value it takes: a binary
+        // search and a minimum per value (15 ms a step, load 25), where inserting each value into
+        // a set of the values taken made most of the 9.0 s the 19 steps took.
+        let mut taken = [[false; 12]; 6];
+        let mut least = [i64::MAX; 6];
         for x in -200_000..=200_000 {
             let mut h = x;
-            for set in &mut takes[1..] {
+            for i in 1..=5 {
                 h = value(h, x);
-                set.insert(h);
+                least[i] = least[i].min(h);
+                if let Ok(j) = cs.binary_search(&h) {
+                    taken[i][j] = true;
+                }
             }
         }
-        for (i, set) in takes.iter().enumerate().skip(1) {
+        for i in 1..=5 {
             for (j, &c) in cs.iter().enumerate() {
                 let h = format!("h{i}(x: x)");
                 src += &format!("v{i}c{j}(x: int) = {h} == {};\n", lit(c));
                 src += &format!("l{i}c{j}(x: int) = {h} < {};\n", lit(c));
-                want.insert(format!("v{i}c{j}"), set.contains(&c));
-                want.insert(format!("l{i}c{j}"), set.range(..c).next().is_some());
+                want.insert(format!("v{i}c{j}"), taken[i][j]);
+                want.insert(format!("l{i}c{j}"), least[i] < c);
             }
         }
         let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
@@ -1546,6 +1641,41 @@ fn summaries_of_max_min_div_chains_give_the_values_of_the_chains() {
         }
         assert_eq!(asked, want.len(), "{step}");
     }
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_of_halves_against_x_plus_or_minus_9_give_their_values() {
+    max_min_div_chains_give_their_values(&[0, 1, 2]);
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_against_multiples_of_x_give_their_values() {
+    max_min_div_chains_give_their_values(&[3, 7, 8]);
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_offset_by_one_give_their_values() {
+    max_min_div_chains_give_their_values(&[4, 9, 10]);
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_against_quotients_of_x_give_their_values() {
+    max_min_div_chains_give_their_values(&[5, 6, 14]);
+}
+
+#[test]
+fn summaries_of_max_min_div_chains_against_remainders_of_x_give_their_values() {
+    max_min_div_chains_give_their_values(&[11, 12, 13]);
+}
+
+#[test]
+fn summaries_of_chains_of_h_less_a_constant_against_x_give_their_values() {
+    max_min_div_chains_give_their_values(&[15, 16]);
+}
+
+#[test]
+fn summaries_of_chains_of_remainders_of_h_give_their_values() {
+    max_min_div_chains_give_their_values(&[17, 18]);
 }
 
 #[test]
