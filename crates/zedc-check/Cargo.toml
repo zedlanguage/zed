@@ -14,6 +14,7 @@ crate-type = ["rlib", "dylib"]
 
 [dependencies]
 imbl.workspace = true
+num-bigint.workspace = true
 zed-kernel.workspace = true
 zedc-base.workspace = true
 zedc-int.workspace = true

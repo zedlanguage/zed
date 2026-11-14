@@ -87,6 +87,42 @@ fn a_power_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     assert_eq!(built(&src.replace("2^20", "2^16")), None);
 }
 
+#[test]
+fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
+    // Plan row CONST-too-large-products-unproved (d): `x` has `2^22 + 1` bits, 512 KiB, within
+    // the limit, and `x * x` at least `2^23 + 1`, past it. Before, only powers were judged
+    // against the limit, and this compiled.
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               x = b ^ (2^16);\n    m.stdout <- String(x * x);\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "5:24: Number too large for the memory limit of `main`: `x * x` needs at least 1 \
+             MiB; `@limits(memory: 1048576)`. Try `@limits(memory: 2^21)` instead."
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("4:5: `x` has at least 4194305 bits\n")
+            && out.contains(
+                "5:24: so `x * x` has at least 8388609 bits: the bit lengths of the least |x| \
+                 and |y| added, less one\n"
+            )
+            && out.contains("1:1: the memory limit of `main` lets the run hold 1 MiB\n")
+            && out.contains(
+                "5:24: or read a factor from the input: the run then stops at the memory limit \
+                 of `main` if the result passes it\n"
+            )
+            && out.ends_with(
+                "  fixes, each checked here:\n    @limits(memory: 2^21)    lets the run hold 2 MiB"
+            ),
+        "{out}"
+    );
+    // Without the limit, 1 MiB fits the address space; under it, `x * b` fits the limit.
+    assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
+    assert_eq!(built(&src.replace("x * x", "x * b")), None);
+}
+
 /// `n` powers of about 8 MiB each under a 1 MiB limit.
 fn powers(n: usize) -> String {
     let mut s = String::from("@limits(memory: 1048576)\nmain(m: MainArgs) {\n");

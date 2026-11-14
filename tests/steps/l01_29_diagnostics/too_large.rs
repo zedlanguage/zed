@@ -451,9 +451,139 @@ fn a_product_or_quotient_that_may_cancel_or_build_nothing_proves_nothing() {
         ("rat(b) ^ (2^60)", "x * (rat(b) ^ k)"),
         ("rat(b) ^ (2^60)", "x * rat(k) * x"),
         ("rat(b) ^ (2^60)", "x * (x - x)"),
+        // The roots `b` and `c` of the two numerators are each the other's denominator: the
+        // product is `(b / c) ^ (2^60 - 1)` and fits.
+        (
+            "rat(b) ^ (2^60) / rat(2^64 + 15)",
+            "x * (rat(2^64 + 15) ^ (2^60) / rat(b))",
+        ),
+        // `x` keeps 3 as a power, and `3^41`, of 65 bits, is a power of 3: the kernel moves
+        // the factors of 3 out of the result's coefficient, which then has `2^66 + 1` bits.
+        (
+            "rat(3) ^ (2^70) * (rat(b) ^ (2^60))",
+            "x * (rat(3^41) ^ (2^60))",
+        ),
     ] {
         let program = src(x, out);
         assert_eq!(built(&program), None, "{x}; {out}");
+    }
+}
+
+// Plan row CONST-too-large-products-unproved: products and quotients the bound left to the run
+// before, each a test that failed then (the program compiled). `b = 2^64 + 13` and
+// `c = 2^64 + 15` share no factor, so `b ^ (2^60)` has `2^66 + 1` bits and nothing cancels
+// between it and a power of `c`.
+
+/// `main` with `b`, `c`, the bindings `lets` and `String(<out>)` pushed to standard output.
+fn bc_pushed(lets: &str, out: &str) -> String {
+    format!(
+        "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    c = 2^64 + 15;\n{lets}    \
+         m.stdout <- String({out}) else \"\";\n}}\n"
+    )
+}
+
+#[test]
+fn a_product_of_rats_whose_wide_parts_share_no_factor_is_rejected() {
+    // (a) The numerator of `x` is `b ^ (2^60)` and its denominator `c`: `x * x` and `x / z`
+    // multiply a power of `b` by a power of `c` across the fraction, and the gcd of the fixed
+    // bases, 1, proves nothing cancels.
+    let lets = "    x = rat(b) ^ (2^60) / rat(c);\n    z = rat(c) / (rat(b) ^ (2^60));\n";
+    for out in ["x * x", "x / z", "x * (rat(b) ^ (2^60) / rat(c))"] {
+        let src = bc_pushed(lets, out);
+        let got = rejected(&src);
+        assert!(
+            got.starts_with(&format!(
+                "6:24: Number too large for any memory of the target: `{out}` needs more than \
+                 16 EiB; Linux x86_64 addresses 16 EiB."
+            )),
+            "{out}:\n{got}"
+        );
+    }
+    assert_eq!(
+        rejected(&bc_pushed(lets, "x * x")),
+        r#"6:24: Number too large for any memory of the target: `x * x` needs more than 16 EiB; Linux x86_64 addresses 16 EiB.
+  [1] 4:5: `x` has a numerator of at least 2^66 + 1 bits and a denominator of at least 65 bits
+      4 |     x = rat(b) ^ (2^60) / rat(c);
+        |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [2] 4:5: `x` has a numerator of at least 2^66 + 1 bits and a denominator of at least 65 bits
+  [3] 6:24: so `x * x` has a numerator of at least 2^67 + 1 bits and a denominator of at least 129 bits: for each part, the bit lengths of the least parts it multiplies added, less one: numerator by numerator and denominator by denominator, where neither numerator shares a factor with the other operand's denominator
+      6 |     m.stdout <- String(x * x) else "";
+        |                        ^^^^^
+  [4] 6:24: or read a factor from the input: the run then stops if no memory holds the result
+  [5] 6:24: or delete `x * x` if its result is not used"#
+    );
+}
+
+#[test]
+fn a_product_whose_operand_keeps_prime_powers_is_rejected_where_none_divides_the_other() {
+    // (b) `2^(2^70)` is kept as a power of 2 and builds nothing, so `x` holds `b ^ (2^60)` as
+    // its coefficient and 2 as a kept prime; `b` is odd, so the kernel moves nothing out of
+    // the product's coefficient, `2^67 + 1` bits.
+    for (lets, out) in [
+        ("    x = 2^(2^70) * (b ^ (2^60));\n", "x * (b ^ (2^60))"),
+        ("", "(2^(2^70) * (b ^ (2^60))) * (b ^ (2^60))"),
+        (
+            "    x = rat(2) ^ (2^70) * (rat(b) ^ (2^60));\n",
+            "x * (rat(b) ^ (2^60) / rat(2) ^ (2^70))",
+        ),
+        (
+            "    x = rat(3) ^ (2^70) / (rat(c) ^ (2^60));\n",
+            "x / (rat(c) ^ (2^60))",
+        ),
+    ] {
+        let got = rejected(&bc_pushed(lets, out));
+        let line = if lets.is_empty() { 4 } else { 5 };
+        assert!(
+            got.starts_with(&format!(
+                "{line}:24: Number too large for any memory of the target: `{out}` needs more \
+                 than 16 EiB; Linux x86_64 addresses 16 EiB."
+            )),
+            "{out}:\n{got}"
+        );
+    }
+}
+
+#[test]
+fn a_power_of_a_base_the_types_bound_is_rejected() {
+    // (c) `x * x` has `2^66 + 1` bits, so its square has at least `2 * 2^66 + 1`, past the
+    // address space; the base is not a number the text fixes, but its least size is proved.
+    let lets = "    x = b ^ (2^59);\n";
+    for out in [
+        "(x * x) ^ 2",
+        "(b ^ (2^60)) ^ 2",
+        "(rat(b) ^ (2^60) / rat(c)) ^ -2",
+    ] {
+        let got = rejected(&bc_pushed(lets, out));
+        assert!(
+            got.starts_with(&format!(
+                "5:24: Number too large for any memory of the target: `{out}` needs more than \
+                 16 EiB; Linux x86_64 addresses 16 EiB."
+            )),
+            "{out}:\n{got}"
+        );
+    }
+    assert_eq!(
+        rejected(&bc_pushed(lets, "(x * x) ^ 2")),
+        r#"5:24: Number too large for any memory of the target: `(x * x) ^ 2` needs more than 16 EiB; Linux x86_64 addresses 16 EiB.
+  [1] 5:24: the base x, `(x * x)`, is at least 2^(2^66) in magnitude, so ⌊log₂ |x|⌋ is at least 2^66
+      5 |     m.stdout <- String((x * x) ^ 2) else "";
+        |                        ^^^^^^^ [1]
+        |                        ^^^^^^^^^^^ [3, 4, 5]
+        |                                  ^ [2]
+  [2] 5:34: the exponent k, `2`, is at least 2
+  [3] 5:24: so `(x * x) ^ 2` has at least 2 * 2^66 + 1 bits: |k| * ⌊log₂ |x|⌋ + 1 at the least |x| and |k|
+  [4] 5:24: or read the exponent from the input: the run then stops if no memory holds the result
+  [5] 5:24: or delete `(x * x) ^ 2` if its result is not used"#
+    );
+    // Within the address space, or with a base whose size the text does not prove.
+    for out in [
+        "(x * x) ^ 1",
+        "x ^ 3",
+        "(rat(x) / rat(x)) ^ 2",
+        "(x * (int(m.args[0] else \"\") else 0)) ^ 2",
+        "rat(x * x) ^ (int(m.args[0] else \"\") else 0)",
+    ] {
+        assert_eq!(built(&bc_pushed(lets, out)), None, "{out}");
     }
 }
 
@@ -501,6 +631,49 @@ fn bounding_a_chain_of_products_scales() {
                 out.matches("Number too large for any memory of the target")
                     .count(),
                 n
+            );
+        },
+    );
+}
+
+/// `n` names, each the one before times `rat(b)`, from `x = rat(b) ^ (2^59) / rat(c)`, and
+/// for each a product with `x` three times and the square of a product with `x`, both past
+/// the address space.
+fn rat_product_chain(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|i| {
+            let prev = if i == 0 {
+                "x".to_string()
+            } else {
+                format!("y{}", i - 1)
+            };
+            format!(
+                "    y{i} = {prev} * rat(b);\n    p{i} = y{i} * x * x * x;\n    \
+                 q{i} = (y{i} * x) ^ 2;\n"
+            )
+        })
+        .collect();
+    format!(
+        "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    c = 2^64 + 15;\n    \
+         x = rat(b) ^ (2^59) / rat(c);\n{body}}}\n"
+    )
+}
+
+#[test]
+fn bounding_a_chain_of_rat_products_scales() {
+    // Plan row CONST-too-large-products-unproved, cases (a) and (c): each name keeps `b` as
+    // the root of its numerator and `c` as that of its denominator, so each `*` costs at most
+    // six gcds of 65-bit numbers, not a gcd of the whole chain's product: O(n) in all, and
+    // `2n` rejections.
+    scaling::check(
+        "a chain of n rat names, a product and a power of each rejected",
+        200,
+        |n| {
+            let out = rejected(&rat_product_chain(n));
+            assert_eq!(
+                out.matches("Number too large for any memory of the target")
+                    .count(),
+                2 * n
             );
         },
     );

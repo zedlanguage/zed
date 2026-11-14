@@ -54,7 +54,10 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::num::{FloatFormat, TooLarge, fixed_room, literal_f32, literal_f64, show_f32};
+use num_bigint::BigUint;
+use zed_kernel::num::{
+    FloatFormat, TooLarge, fixed_room, gcd_uint, literal_f32, literal_f64, show_f32,
+};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{Prim, Rat, Term, Universe, Value, eval};
 
@@ -364,22 +367,38 @@ pub enum Witness {
     },
 }
 
-/// A power `a ^ e` at `span` whose base the text fixes and builds (DESIGN.md
-/// sec:checking_in_zed): whether the base is a `rat`, the bit lengths of its built parts
-/// ([`Rat::built_widths`]), `F`, the sum of their lengths less one, and their count, the least
-/// magnitude `k` of the exponent where the walk met it and whether every exponent is below 0,
-/// and `k * F + built`, the least bit length of the result. Found by `Ck::too_large_power`.
+/// A power `a ^ e` at `span` whose base builds a part past 64 bits (DESIGN.md
+/// sec:checking_in_zed): whether the base is a `rat`, the least bit lengths of its built parts
+/// (exactly [`Rat::built_widths`] for a base the text fixes, else what `Ck::least_built`
+/// proves), whether they are exact, `F`, the sum of their lengths less one, and their count,
+/// the least magnitude `k` of the exponent where the walk met it and whether every exponent
+/// is below 0, and `k * F + built`, the least bit length of the result. Found by
+/// `Ck::too_large_power`.
 struct WidePower<'a> {
     a: &'a Expr,
     e: &'a Expr,
     span: Span,
     rat: bool,
-    widths: [Option<u64>; 2],
-    floor_log: u64,
+    widths: [Option<u128>; 2],
+    exact: bool,
+    floor_log: u128,
     built: u64,
     k: Num,
     negative: bool,
     bits: Num,
+}
+
+/// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves
+/// ([`Built`]): what it proves of each operand, `x` and `y`, and of the result, `r`. Found by
+/// `Ck::too_large_product`.
+struct WideProduct<'a> {
+    op: BinaryOp,
+    a: &'a Expr,
+    b: &'a Expr,
+    span: Span,
+    x: Built,
+    y: Built,
+    r: Built,
 }
 
 /// What the checker finds.
@@ -1264,6 +1283,10 @@ struct Ck<'t, 'a> {
     /// found of each at its site, for [`Self::powers_over_main_limit`] to judge against the
     /// memory limit of `main` once it is read.
     wide_powers: BTreeMap<Span, WidePower<'a>>,
+    /// The products and quotients whose least size the text proves within the address space,
+    /// by span, with what the walk found of each at its site, judged as [`Self::wide_powers`]
+    /// are.
+    wide_products: BTreeMap<Span, WideProduct<'a>>,
     /// The classes; class `k` is the type variable `$k`.
     classes: Vec<Class>,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
@@ -1546,6 +1569,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             port_params: HashSet::new(),
             main_memory: None,
             wide_powers: BTreeMap::new(),
+            wide_products: BTreeMap::new(),
             classes: Vec::new(),
             data_checked: HashSet::new(),
             clean: HashMap::new(),
@@ -8966,16 +8990,23 @@ impl IntRange {
 }
 
 /// What the text proves of the coefficients the kernel holds for an exact value, its numerator
-/// and denominator ([`Rat::kept`]): for each, a lower bound on its bit length, and whether it is
-/// 1 in magnitude; and whether the value keeps no prime as a power beside them
+/// and denominator ([`Rat::kept`]): for each, a lower bound on its bit length, whether it is 1
+/// in magnitude and a number every prime of it divides; a number every prime the value keeps
+/// as a power divides; and whether the bit lengths are the coefficients' own
 /// ([`Ck::least_built`]).
 #[derive(Clone)]
 struct Built {
     /// The numerator, then the denominator.
     parts: [Coef; 2],
-    /// Whether no prime is kept as a power, so that a product of two such values keeps none and
-    /// the kernel moves no factor out of its coefficients.
-    plain: bool,
+    /// A number every prime the value keeps as a power beside its coefficients divides, 1 where
+    /// it keeps none; `None` where the text proves none. The kernel moves a product's factors of
+    /// each such prime out of its coefficients (`Rat::extract`), so a product's coefficients
+    /// are the factors' products only where no factor shares a prime with it.
+    kept: Option<Rc<BigUint>>,
+    /// Whether the bit lengths and the numbers of `parts` are the coefficients themselves, as
+    /// for a value the text fixes, so a part within 64 bits is known to be one, which a power
+    /// factors into kept primes (`Rat::pow`).
+    exact: bool,
 }
 
 /// What [`Built`] proves of one coefficient.
@@ -8985,6 +9016,10 @@ struct Coef {
     bits: Num,
     /// Whether it is 1 in magnitude.
     one: bool,
+    /// A number every prime of the coefficient divides, as the base `b` for `b ^ (2^60)`: the
+    /// coefficient itself for a value the text fixes; `None` where the text proves none. Two
+    /// coefficients share no factor where their numbers share none.
+    root: Option<Rc<BigUint>>,
 }
 
 /// What the text of an expression shows of its `int` value: an interval holding it and, for an

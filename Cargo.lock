@@ -1147,6 +1147,7 @@ name = "zedc-check"
 version = "0.0.0"
 dependencies = [
  "imbl",
+ "num-bigint",
  "zed-kernel",
  "zedc-base",
  "zedc-check",

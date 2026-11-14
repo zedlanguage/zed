@@ -7870,16 +7870,41 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the size of the numbers a rejection's message writes. The bound is DESIGN's, not the
     /// tightest: `k * log₂ |x|` would be larger by up to `k` bits per part, and a power
     /// between the two is left to the run.
+    ///
+    /// A base the text does not fix is bounded by [`Self::least_built`] (plan row
+    /// CONST-too-large-products-unproved, case (c)): in `(x * x) ^ 2` with `x = b ^ (2^59)`,
+    /// `x * x` has at least `2^66 + 1` bits, so the power has at least `2 * 2^66 + 1`. Only a
+    /// part proved past 64 bits counts, since `Rat::pow` factors a part within 64 bits into
+    /// kept primes; a base proved past the address space is reported at its own operation.
+    /// Complexity tradeoff: the naive method builds the base, as the run would, at the cost of
+    /// its size; used: the base's bounds, read once by span ([`Self::least_built`]), and the
+    /// same O(1) comparison as for a fixed base.
     fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) {
-        let Some(base) = self.fixed_value(a) else {
-            return;
+        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
+        let (rat, widths, exact) = match self.fixed_value(a) {
+            Some(base) => {
+                let (Value::Big(r) | Value::Rat(r)) = &base else {
+                    return;
+                };
+                let widths = r.built_widths().map(|l| l.map(u128::from));
+                (matches!(base, Value::Rat(_)), widths, true)
+            }
+            None => {
+                let w = self.least_built(a);
+                let room = Num::from(space_bits as i128);
+                if w.parts[0].bits == Num::ZERO || w.size() > room {
+                    return;
+                }
+                // Each part within the room, so below 2^67 bits.
+                let widths = w.parts.clone().map(|c| match c.bits.to_i128() {
+                    Some(l) if !c.one && l > 64 => Some(l as u128),
+                    _ => None,
+                });
+                (!w.parts[1].one, widths, false)
+            }
         };
-        let (Value::Big(r) | Value::Rat(r)) = &base else {
-            return;
-        };
-        let widths = r.built_widths();
         // `F`, the sum of `L - 1` over the built parts, at least 64 for each, and their count.
-        let floor_log: u64 = widths.iter().flatten().map(|l| l - 1).sum();
+        let floor_log: u128 = widths.iter().flatten().map(|l| l - 1).sum();
         let built = widths.iter().flatten().count() as u64;
         if built == 0 {
             return;
@@ -7891,18 +7916,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The result has more than 2^67 bits, 2^64 bytes, exactly when `k * F + built` does,
         // that is when `k` reaches `(2^67 + 1 - built) / F` rounded up: below 2^61, as
         // `F >= 64`, so the comparison is of words.
-        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let limit = (space_bits + 1 - u128::from(built)).div_ceil(u128::from(floor_log));
+        let limit = (space_bits + 1 - u128::from(built)).div_ceil(floor_log);
         let over_space = k >= Num::from(u64::try_from(limit).expect("a quotient below 2^61"));
         let p = WidePower {
             a,
             e,
             span,
-            rat: matches!(base, Value::Rat(_)),
+            rat,
             widths,
+            exact,
             floor_log,
             built,
-            bits: &(&k * &Num::from(floor_log)) + &Num::from(built),
+            bits: &(&k * &Num::from(floor_log as i128)) + &Num::from(built),
             // Every exponent below 0, as `x ^ -(2^64)` on a `rat`: the repair keeps the sign.
             negative: matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0),
             k,
@@ -7932,6 +7957,66 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.power_too_large(&p, self.main_memory);
             }
         }
+        // A product is judged as at the address space ([`Self::too_large_product`]): an
+        // operand past the limit is reported at its own operation, not again here.
+        for p in std::mem::take(&mut self.wide_products).into_values() {
+            if p.r.size() > room && p.x.size() <= room && p.y.size() <= room {
+                self.product_too_large(&p, self.main_memory);
+            }
+        }
+    }
+
+    /// The headline of a number `code` proved to need at least `bits` bits, more than the
+    /// memory limit of `main` written at `at`: "Number too large for the memory limit of
+    /// `main`: `b ^ (2^20)` needs at least 8 MiB; `@limits(memory: 1048576)`". The bytes are
+    /// rounded up, so that a size a few bits over the limit is not written as the limit.
+    fn main_limit_headline(&self, code: &str, bits: &Num, at: Span) -> String {
+        let bytes = (bits + &Num::from(7i64)).div_floor(&Num::from(8i64));
+        let limits = self.code(Some(at)).unwrap_or("@limits");
+        format!(
+            "Number too large for the memory limit of `main`: `{code}` needs at least {}; \
+             `{limits}`",
+            bytes_text_of(&bytes)
+        )
+    }
+
+    /// The repair of a number of at least `bits` bits past the memory limit of `main`, its
+    /// `@limits` at `at` and the argument of `memory:` at `arg`: the limit raised to the least
+    /// power of two that holds the size, `2^j` bytes before step L12 gives
+    /// `with units("MiB")` (DESIGN.md sec:diagnostics, row "Number too large for any memory of
+    /// the target").
+    fn main_limit_fix(&self, bits: &Num, at: Span, arg: Span) -> Option<Rewrite> {
+        let need = bits
+            .to_i128()
+            .map(|b| (b + 7) / 8)
+            .expect("below 2^64 bytes");
+        let j = 128 - (need - 1).leading_zeros();
+        let with = format!("2^{j}");
+        let alone = match self.code(Some(at)) {
+            Some(code) => format!(
+                "{}{with}{}",
+                &code[..arg.start - at.start],
+                &code[arg.end - at.start..],
+            ),
+            None => format!("@limits(memory: {with})"),
+        };
+        let holds = bytes_text_of(&Num::pow2(&Num::from(i64::from(j))));
+        Rewrite::new(
+            &[(arg, &with)],
+            &format_args!("lets the run hold {holds}"),
+            &alone,
+        )
+    }
+
+    /// The note of the memory limit of `main`, `b` bytes, written at `at`.
+    fn main_limit_note(b: u64, at: Span) -> Note {
+        Note {
+            span: at,
+            text: format!(
+                "the memory limit of `main` lets the run hold {}",
+                bytes_text_of(&Num::from(b))
+            ),
+        }
     }
 
     /// Rejects the power `p`, larger than the target's address space, or, with `main_limit`,
@@ -7945,6 +8030,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             rat,
             widths,
+            exact,
             floor_log,
             built,
             ref bits,
@@ -7957,16 +8043,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let base_code = self.code(Some(a.span)).unwrap_or("the base");
         let exponent_code = self.code(Some(e.span)).unwrap_or("the exponent");
         let message = match main_limit {
-            // Rounded up, so that a size a few bits over the limit is not written as the limit.
-            Some((_, at, _)) => {
-                let bytes = (bits + &Num::from(7i64)).div_floor(&Num::from(8i64));
-                let limits = self.code(Some(at)).unwrap_or("@limits");
-                format!(
-                    "Number too large for the memory limit of `main`: `{power}` needs at least \
-                     {}; `{limits}`",
-                    bytes_text_of(&bytes)
-                )
-            }
+            Some((_, at, _)) => self.main_limit_headline(power, bits, at),
             None => self.too_large_headline(power, bits),
         };
         // Where each operand comes from, the literal or the declaration, and its least size.
@@ -7975,19 +8052,27 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => [Some("numerator"), Some("denominator")],
             false => [None, None],
         };
-        // `x` names the base, or `p` each part of a `rat` base, as the formula does.
+        // `x` names the base, or `p` each part of a `rat` base, as the formula does. For a
+        // base the text does not fix, `⌊log₂ |x|⌋` is a lower bound, as `2^66`, written
+        // exactly ([`exact_text`]).
         let var = if part_names[0].is_some() { "p" } else { "x" };
+        let low_text = |l: u128| exact_text(&Num::from((l - 1) as i128));
         let base_is = (widths.iter().zip(part_names))
             .filter_map(|(l, name)| {
-                let low = (*l)? - 1;
+                let low = low_text((*l)?);
+                let (magnitude, floor) = match (exact, low.contains(['^', ' '])) {
+                    (true, _) => (format!("2^{low}"), format!("is {low}")),
+                    (false, false) => (format!("2^{low}"), format!("is at least {low}")),
+                    (false, true) => (format!("2^({low})"), format!("is at least {low}")),
+                };
                 Some(match name {
                     Some(name) => format!(
-                        "the {name} p of the base `{base_code}` is at least 2^{low} in \
-                         magnitude, so ⌊log₂ |p|⌋ is {low}"
+                        "the {name} p of the base `{base_code}` is at least {magnitude} in \
+                         magnitude, so ⌊log₂ |p|⌋ {floor}"
                     ),
                     None => format!(
-                        "the base x, `{base_code}`, is at least 2^{low} in magnitude, so \
-                         ⌊log₂ |x|⌋ is {low}"
+                        "the base x, `{base_code}`, is at least {magnitude} in magnitude, so \
+                         ⌊log₂ |x|⌋ {floor}"
                     ),
                 })
             })
@@ -8008,7 +8093,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         let each = (widths.iter().zip(part_names))
             .filter_map(|(l, name)| {
-                let bits = format!("{k_text} * {} + 1 bits", (*l)? - 1);
+                let bits = format!("{k_text} * {} + 1 bits", low_text((*l)?));
                 Some(match name {
                     Some(name) => format!("{bits} from the base's {name}"),
                     None => bits,
@@ -8024,13 +8109,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ),
         });
         if let Some((b, at, _)) = main_limit {
-            notes.push(Note {
-                span: at,
-                text: format!(
-                    "the memory limit of `main` lets the run hold {}",
-                    bytes_text_of(&Num::from(b))
-                ),
-            });
+            notes.push(Self::main_limit_note(b, at));
         }
         notes.push(Note {
             span,
@@ -8052,16 +8131,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
         // most the bound, 2^67 or `8 * b`, as `b ^ (2^60)` for a base of 65 bits; none where
-        // even the base does not.
+        // only an exponent of 1 does, as for a base past half the bound, since `x ^ 1` is the
+        // base itself.
         let mut fixes = Vec::new();
-        let most = room_bits.saturating_sub(u128::from(built)) / u128::from(floor_log);
-        if most > 0 {
+        let most = room_bits.saturating_sub(u128::from(built)) / floor_log;
+        if most > 1 {
             let j = 127 - most.leading_zeros();
             let with = match negative {
                 true => format!("-(2^{j})"),
                 false => format!("(2^{j})"),
             };
-            let fits_bits = (1u128 << j) * u128::from(floor_log) + u128::from(built);
+            let fits_bits = (1u128 << j) * floor_log + u128::from(built);
             let fits = bytes_text_of(&Num::from(
                 i128::try_from(fits_bits / 8).expect("below 2^65"),
             ));
@@ -8080,30 +8160,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 &alone,
             ));
         }
-        // Under the memory limit of `main`, the limit raised to the least power of two that
-        // holds the size, `2^j` bytes before step L12 gives `with units("MiB")` (DESIGN.md
-        // sec:diagnostics, row "Number too large for any memory of the target").
         if let Some((_, at, arg)) = main_limit {
-            let need = bits
-                .to_i128()
-                .map(|b| (b + 7) / 8)
-                .expect("below 2^64 bytes");
-            let j = 128 - (need - 1).leading_zeros();
-            let with = format!("2^{j}");
-            let alone = match self.code(Some(at)) {
-                Some(code) => format!(
-                    "{}{with}{}",
-                    &code[..arg.start - at.start],
-                    &code[arg.end - at.start..],
-                ),
-                None => format!("@limits(memory: {with})"),
-            };
-            let holds = bytes_text_of(&Num::pow2(&Num::from(i64::from(j))));
-            fixes.push(Rewrite::new(
-                &[(arg, &with)],
-                &format_args!("lets the run hold {holds}"),
-                &alone,
-            ));
+            fixes.push(self.main_limit_fix(bits, at, arg));
         }
         self.reject(
             Some(Row::NumberOverAddressSpace),
@@ -8148,39 +8206,78 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// space is not reported again here: its own operation is.
     ///
     /// The bound is of the reduced result, the number the program holds, as DESIGN states it,
-    /// so it holds only where the kernel cancels nothing ([`product_built`]): both operands
-    /// keep no prime as a power, and the parts a reduction could divide share no factor, which
-    /// the text proves where one of each pair is 1, as every pair of an `int` product is. GMP's
-    /// `mpq_mul` and `mpq_div` (after Knuth, TAOCP vol. 2, §4.5.1) cancel the cross gcds
-    /// before multiplying, so `x / x` builds nothing there, and a bound on the factors alone
-    /// would reject it. The kernel's `Rat::mul` and `Rat::div` build the unreduced products
-    /// first, so a quotient of two wide `rat`s whose parts may share a factor can still need
-    /// more memory than the target has; that is left to the run, as a power of a kept base is.
+    /// so it holds only where the kernel cancels nothing ([`product_built`]): the parts a
+    /// reduction could divide share no factor, and no prime an operand keeps as a power
+    /// divides a part of the other. The text proves it where one of each pair is 1, as every
+    /// pair of an `int` product is, or where the numbers the parts are powers of share no
+    /// factor, as `b ^ (2^60) / c` and `b ^ (2^60)` for `b = 2^64 + 13` and `c = 2^64 + 15`
+    /// (plan row CONST-too-large-products-unproved, cases (a) and (b)). GMP's `mpq_mul` and
+    /// `mpq_div` (after Knuth, TAOCP vol. 2, §4.5.1) cancel the cross gcds before multiplying,
+    /// so `x / x` builds nothing there, and a bound on the factors alone would reject it. The
+    /// kernel's `Rat::mul` and `Rat::div` build the unreduced products first, so a quotient of
+    /// two wide `rat`s whose parts may share a factor can still need more memory than the
+    /// target has; that is left to the run.
+    ///
+    /// A result within the address space is kept, outside a repair tried, and judged against
+    /// the memory limit of `main` once it is read ([`Self::powers_over_main_limit`], case (d)).
     ///
     /// Complexity tradeoff: the naive method builds the product, as the run would, at the cost
     /// of its size (24 EiB for the product of three such powers) and depending on the memory
     /// of the machine that builds. Used: the operands' bounds, each expression read once
-    /// ([`Self::least_built`]), and a few additions and comparisons of bit lengths: O(1)
-    /// operations on numbers of O(log) words per `*` or `/`, plus the size of the numbers a
-    /// rejection's message writes.
+    /// ([`Self::least_built`]), and a few additions and comparisons of bit lengths and at most
+    /// six gcds of numbers the text fixes ([`product_built`]) per `*` or `/`, plus the size of
+    /// the numbers a rejection's message writes.
     fn too_large_product(&mut self, op: BinaryOp, a: &'a Expr, b: &'a Expr, span: Span) {
         let (x, y) = (self.least_built(a), self.least_built(b));
         let Some(r) = product_built(op, &x, &y) else {
             return;
         };
         let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
-        if r.size() <= room || x.size() > room || y.size() > room {
+        if x.size() > room || y.size() > room {
             return;
         }
+        let p = WideProduct {
+            op,
+            a,
+            b,
+            span,
+            x,
+            y,
+            r,
+        };
+        if p.r.size() > room {
+            self.product_too_large(&p, None);
+        } else if !self.trying {
+            self.wide_products.entry(span).or_insert(p);
+        }
+    }
+
+    /// Rejects the product or quotient `p`, larger than the target's address space, or, with
+    /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
+    /// `memory:`, than that limit: the message, the derivation of the least size, and, for the
+    /// limit, a larger limit.
+    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<(u64, Span, Span)>) {
+        let WideProduct {
+            op,
+            a,
+            b,
+            span,
+            ref x,
+            ref y,
+            ref r,
+        } = *p;
         let code = self.code(Some(span)).unwrap_or(match op {
             BinaryOp::Mul => "this product",
             _ => "this quotient",
         });
-        let message = self.too_large_headline(code, &r.size());
+        let message = match main_limit {
+            Some((_, at, _)) => self.main_limit_headline(code, &r.size(), at),
+            None => self.too_large_headline(code, &r.size()),
+        };
         // Where each operand comes from, the literal, the power or the declaration, and its
         // least size.
         let mut notes = self.derive(&[span]);
-        for (o, w, name) in [(a, &x, "the left operand"), (b, &y, "the right operand")] {
+        for (o, w, name) in [(a, x, "the left operand"), (b, y, "the right operand")] {
             let o_code = self.code(Some(o.span)).unwrap_or(name);
             notes.push(Note {
                 span: self.fixed_at(o),
@@ -8208,22 +8305,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         notes.push(Note {
             span,
-            text: format!("so `{code}` has {}: {factors}", built_text(&r)),
+            text: format!("so `{code}` has {}: {factors}", built_text(r)),
         });
+        if let Some((b, at, _)) = main_limit {
+            notes.push(Self::main_limit_note(b, at));
+        }
         notes.push(Note {
             span,
-            text: "or read a factor from the input: the run then stops if no memory holds the \
-                   result"
-                .to_string(),
+            text: match main_limit {
+                Some(_) => {
+                    "or read a factor from the input: the run then stops at the memory limit \
+                     of `main` if the result passes it"
+                }
+                None => {
+                    "or read a factor from the input: the run then stops if no memory holds \
+                     the result"
+                }
+            }
+            .to_string(),
         });
         notes.push(Note {
             span,
             text: format!("or delete `{code}` if its result is not used"),
         });
+        let fixes = match main_limit {
+            Some((_, at, arg)) => vec![self.main_limit_fix(&r.size(), at, arg)],
+            None => Vec::new(),
+        };
         self.reject(
             Some(Row::NumberOverAddressSpace),
             span,
-            Msg::new(message, Vec::new()),
+            Msg::new(message, fixes),
             notes,
         );
     }
@@ -8347,7 +8459,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// What the text proves of the coefficients the kernel holds for `e`'s value ([`Built`]):
     /// exactly, for a value the text fixes ([`Self::fixed_value`]); for a power `a ^ k` of a
-    /// fixed `a`, where every `k` is at least 1 in magnitude, as [`Self::too_large_power`]
+    /// base `a` it bounds, where every `k` is at least 1 in magnitude, as [`Self::too_large_power`]
     /// bounds it ([`Self::power_built`]); the same through a name bound by `name = e`, a `-`
     /// and a `rat(x)` cast; and for a `*` or `/` of two such values by [`product_built`].
     /// Anything else proves nothing ([`Built::unknown`]). An exponent is read by
@@ -8381,12 +8493,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The expressions [`Self::built_uncached`] reads to read `e`: the value a name is bound
-    /// to, the operand of a `-` or a `rat(x)` cast, or the operands of a `*` or `/`.
+    /// to, the operand of a `-` or a `rat(x)` cast, the operands of a `*` or `/`, or the base
+    /// of a `^`.
     fn built_reads(&self, e: &'a Expr) -> Vec<&'a Expr> {
         match &e.kind {
             ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
             ExprKind::Unary(UnaryOp::Neg, a) => vec![&**a],
             ExprKind::Binary(BinaryOp::Mul | BinaryOp::Div, a, b) => vec![&**a, &**b],
+            ExprKind::Binary(BinaryOp::Pow, a, _) => vec![&**a],
             _ => self.rat_cast_operand(e).into_iter().collect(),
         }
     }
@@ -8435,16 +8549,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The coefficients of `a ^ k` for a base `a` the text fixes and an exponent every value
-    /// of which is at least 1 in magnitude, as the kernel's `Rat::pow` makes them: a part of
-    /// `L` bits beyond 64 is built, of at least `|k| * (L - 1) + 1` bits, the bound of
-    /// [`Self::too_large_power`]; a part within 64 bits, other than 1, is factored into kept
-    /// prime powers, leaving 1, so the value is not plain. A negative exponent swaps the
-    /// parts, and one that may take either sign gives each part the lesser of the two.
+    /// The coefficients of `a ^ k` for an exponent every value of which is at least 1 in
+    /// magnitude, as the kernel's `Rat::pow` makes them, from what the text proves of the base
+    /// ([`Self::least_built`]): a part proved beyond 64 bits, at least `L` bits, is built, of
+    /// at least `|k| * (L - 1) + 1` bits, the bound of [`Self::too_large_power`], with the
+    /// base's root; a part the text fixes within 64 bits, other than 1, is factored into kept
+    /// prime powers, leaving 1, and the primes are its own, so its value joins the number the
+    /// kept primes divide; a part proved neither is at least 1 bit, and the kept primes are
+    /// then not proved. A negative exponent swaps the parts, and one that may take either sign
+    /// gives each part the lesser of the two.
+    ///
+    /// Complexity tradeoff: the naive method builds the power, at the cost of its size; used:
+    /// a product and a subtraction of bit lengths per part, and at most two products of the
+    /// kept number by a word, as the text fixes it.
     fn power_built(&mut self, a: &'a Expr, k: &'a Expr) -> Built {
-        let Some(base) = self.fixed_value(a).map(|v| Built::of(&v)) else {
-            return Built::unknown();
-        };
+        let base = self
+            .built
+            .get(&a.span)
+            .cloned()
+            .unwrap_or_else(Built::unknown);
         let ints = self.known(k).ints;
         let Some(least) = least_magnitude(&ints) else {
             return Built::unknown();
@@ -8453,18 +8576,33 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Built::unknown();
         }
         let word = Num::from(64i64);
-        let mut plain = base.plain;
+        let mut kept = base.kept.as_deref().cloned();
         let [n, d] = base.parts.map(|c| {
-            if c.one || c.bits <= word {
-                plain &= c.one;
+            if c.one {
+                return c;
+            }
+            if c.bits > word {
                 return Coef {
-                    bits: Num::ONE,
-                    one: true,
+                    bits: &(&least * &(&c.bits - &Num::ONE)) + &Num::ONE,
+                    one: false,
+                    root: c.root,
                 };
             }
-            Coef {
-                bits: &(&least * &(&c.bits - &Num::ONE)) + &Num::ONE,
-                one: false,
+            match (base.exact, &c.root, &mut kept) {
+                (true, Some(r), Some(kept)) => *kept *= &**r,
+                _ => kept = None,
+            }
+            match base.exact {
+                true => Coef {
+                    bits: Num::ONE,
+                    one: true,
+                    root: Some(Rc::new(BigUint::from(1u8))),
+                },
+                false => Coef {
+                    bits: Num::ONE,
+                    one: false,
+                    root: c.root,
+                },
             }
         });
         let positive = matches!(ints.bounds(), Some((Fin(lo), _)) if lo.signum() > 0);
@@ -8476,11 +8614,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let lesser = |x: &Coef, y: &Coef| Coef {
                     bits: x.bits.clone().min(y.bits.clone()),
                     one: x.one && y.one,
+                    root: either_root(x, y),
                 };
                 [lesser(&n, &d), lesser(&d, &n)]
             }
         };
-        Built { parts, plain }
+        Built {
+            parts,
+            kept: kept.map(Rc::new),
+            exact: false,
+        }
     }
 
     /// `x ^ n` on an `int` `x` needs `n : int[0..]`, decided from the interval of `n`'s
@@ -14641,37 +14784,49 @@ impl Built {
                 Coef {
                     bits: Num::ZERO,
                     one: false,
+                    root: None,
                 },
                 Coef {
                     bits: Num::ONE,
                     one: false,
+                    root: None,
                 },
             ],
-            plain: false,
+            kept: None,
+            exact: false,
         }
     }
 
     /// The coefficients of the exact value `v`, as the kernel holds them ([`Rat::kept`]): an
-    /// `int` within 64 bits is its own numerator over 1. O(1): the bit lengths are read, not
-    /// counted.
+    /// `int` within 64 bits is its own numerator over 1. Each coefficient is its own root, and
+    /// the kept primes' product is the number they divide.
+    ///
+    /// Complexity tradeoff: a copy of each coefficient, O(n) in its bits, as
+    /// [`Ck::fixed_value`] copies the value, and the product of the `m` kept primes by halves,
+    /// O(M(m) log m), where a product one prime at a time is O(m^2) words. Kept as roots, the
+    /// copies are shared by every product and power that reads them.
     fn of(v: &Value) -> Built {
-        let coef = |bits: u64| Coef {
-            bits: Num::from(i128::from(bits)),
-            one: bits == 1,
+        let coef = |m: BigUint| Coef {
+            bits: Num::from(i128::from(m.bits())),
+            one: m.bits() == 1,
+            root: Some(Rc::new(m)),
         };
         match v {
             Value::Int(i) => Built {
                 parts: [
-                    coef(u64::from(64 - i.unsigned_abs().leading_zeros())),
-                    coef(1),
+                    coef(BigUint::from(i.unsigned_abs())),
+                    coef(BigUint::from(1u8)),
                 ],
-                plain: true,
+                kept: Some(Rc::new(BigUint::from(1u8))),
+                exact: true,
             },
             Value::Big(r) | Value::Rat(r) => {
                 let (num, den, pows) = r.kept();
+                let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
                 Built {
-                    parts: [coef(num.bits()), coef(den.bits())],
-                    plain: pows.is_empty(),
+                    parts: [coef(num.magnitude().clone()), coef(den.magnitude().clone())],
+                    kept: Some(Rc::new(product_of(&primes))),
+                    exact: true,
                 }
             }
             _ => Built::unknown(),
@@ -14688,16 +14843,78 @@ impl Built {
     }
 }
 
+/// The product of `ps`, by halves: 1 for none.
+fn product_of(ps: &[u64]) -> BigUint {
+    match ps {
+        [] => BigUint::from(1u8),
+        [p] => BigUint::from(*p),
+        _ => {
+            let (a, b) = ps.split_at(ps.len() / 2);
+            product_of(a) * product_of(b)
+        }
+    }
+}
+
+/// Whether `n` is 1, as a gcd is when its operands share no factor.
+fn is_one(n: &BigUint) -> bool {
+    n.bits() == 1
+}
+
+/// Whether the text proves that the coefficients `a` and `b` share no factor: one of them is 1
+/// in magnitude, or their roots share none.
+fn share_none(a: &Coef, b: &Coef) -> bool {
+    a.one || b.one || matches!((&a.root, &b.root), (Some(x), Some(y)) if is_one(&gcd_uint(x, y)))
+}
+
+/// Whether the text proves that no prime the number `kept` lists divides the coefficient `c`.
+fn clear_of(c: &Coef, kept: &BigUint) -> bool {
+    c.one || is_one(kept) || c.root.as_ref().is_some_and(|r| is_one(&gcd_uint(r, kept)))
+}
+
+/// A number every prime of `a` and of `b` divides, where one is 1 or both are the same number;
+/// `None` otherwise, so that a number never grows by a product.
+fn union_of(a: Option<&Rc<BigUint>>, b: Option<&Rc<BigUint>>) -> Option<Rc<BigUint>> {
+    match (a, b) {
+        (Some(x), Some(y)) if is_one(x) => Some(y.clone()),
+        (Some(x), Some(y)) if is_one(y) || Rc::ptr_eq(x, y) || x == y => Some(x.clone()),
+        _ => None,
+    }
+}
+
+/// The root of a coefficient that is `a` or `b`, or their product ([`union_of`]); a part of
+/// magnitude 1 adds no prime.
+fn either_root(a: &Coef, b: &Coef) -> Option<Rc<BigUint>> {
+    match (a.one, b.one) {
+        (true, _) => b.root.clone(),
+        (_, true) => a.root.clone(),
+        _ => union_of(a.root.as_ref(), b.root.as_ref()),
+    }
+}
+
 /// The coefficients of `x * y`, or `x / y` for `op` `/`, where the operands' bound them:
 /// `p/q * r/s` is `pr / qs` (and `p/q / (r/s)` is `ps / qr`), each part at least
 /// `2^(L1 - 1) * 2^(L2 - 1)` in magnitude for factors of `L1` and `L2` bits, so of at least
 /// `L1 + L2 - 1` bits. That is the result the kernel holds only where it cancels nothing:
-/// every factor is nonzero, neither operand keeps a prime as a power (the kernel would move
-/// the product's factors of that prime out of the coefficients, `Rat::extract`), and the parts
-/// a reduction divides by their gcd share no factor. With `p/q` and `r/s` each reduced, the
-/// gcd of `pr` and `qs` is `gcd(p, s) * gcd(r, q)`, so it is 1 where one of `p` and `s` and
-/// one of `r` and `q` is 1 in magnitude, as for every product of two `int`s. `None` where
-/// any of these is not proved. O(1) additions of bit lengths.
+/// every factor is nonzero; the parts a reduction divides by their gcd share no factor (with
+/// `p/q` and `r/s` each reduced, the gcd of `pr` and `qs` is `gcd(p, s) * gcd(r, q)`, so it is
+/// 1 where `p` and `s` share none and `r` and `q` share none, as where one of each pair is 1,
+/// as for every product of two `int`s); and no prime either operand keeps as a power divides a
+/// coefficient of the other, since the kernel moves the product's factors of each such prime
+/// out of its coefficients (`Rat::extract`; a prime of `x`'s list divides neither `p` nor `q`
+/// by the kernel's form). `None` where any of these is not proved.
+///
+/// Complexity tradeoff: the naive method builds the product, as the run would, at the cost of
+/// its size; one that proves coprimality by keeping, for each part, the product of every number
+/// it was multiplied from costs a gcd of the whole chain's numbers at each `*`, O(n^2) for a
+/// chain of `n` products. Used: each part's root is one number the text fixes, kept through a
+/// product only where the other factor is 1 or has the same root ([`union_of`]), so no root
+/// grows: at most six gcds a product (`gcd_uint`, the half gcd, O(M(b) log b) in the bits `b`
+/// of the numbers the text fixes), and a chain of `n` products costs `n` such operations, as
+/// [`Ck::fixed_value`] costs on the same numbers. What it gives up: a product of two parts
+/// with different roots has none, so a later product with it proves nothing where the parts
+/// could share a factor. A complete solution would keep a coprime base of the roots
+/// (Bernstein, "Factoring into coprimes in essentially linear time", J. Algorithms 54, 2005),
+/// each part a product of its powers.
 fn product_built(op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
     let [p, q] = &x.parts;
     let [r, s] = match op {
@@ -14705,17 +14922,28 @@ fn product_built(op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
         _ => [&y.parts[0], &y.parts[1]],
     };
     let nonzero = [p, q, r, s].iter().all(|c| c.bits >= Num::ONE);
-    let coprime = (p.one || s.one) && (r.one || q.one);
-    if !(x.plain && y.plain && nonzero && coprime) {
+    let (Some(kx), Some(ky)) = (&x.kept, &y.kept) else {
+        return None;
+    };
+    let proved = nonzero
+        && share_none(p, s)
+        && share_none(r, q)
+        && clear_of(p, ky)
+        && clear_of(q, ky)
+        && clear_of(r, kx)
+        && clear_of(s, kx);
+    if !proved {
         return None;
     }
     let times = |a: &Coef, b: &Coef| Coef {
         bits: &(&a.bits + &b.bits) - &Num::ONE,
         one: a.one && b.one,
+        root: either_root(a, b),
     };
     Some(Built {
         parts: [times(p, r), times(q, s)],
-        plain: true,
+        kept: union_of(Some(kx), Some(ky)),
+        exact: false,
     })
 }
 
