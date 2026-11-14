@@ -171,6 +171,10 @@ rows! {
     // No diagnostic uses the next two rows yet: plan row MAIN-limits emits them.
     OutOfMemory => "Out of memory in a run",
     MainLimitPassed => "Limit of `main` passed in a run",
+    // No diagnostic uses the next three rows yet: plan row STOP-releases-rt emits them.
+    StopReleaseFailed => "Release that fails during a stop",
+    StopReleasesCut => "Releases of a stop cut short",
+    ForeignFault => "Fault of foreign code in a run",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",
