@@ -9,6 +9,7 @@
 //! checks each claimed tonicity by running the primitive, and `scaling` checks that the
 //! transfer's time grows no faster than the rule of low complexity allows.
 
+mod arity_stop;
 mod bench;
 mod completeness;
 mod constant_minus;

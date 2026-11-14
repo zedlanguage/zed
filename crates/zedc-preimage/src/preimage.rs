@@ -6869,7 +6869,9 @@ impl<'m, 't> Walk<'m, 't> {
             ) => {
                 self.stop(StopKind::String(p), t);
             }
-            Node::Prim(p, args) if scalar(p) => {
+            // A primitive given the wrong number of operands is outside the catalog, as in
+            // [`Walk::back_in`].
+            Node::Prim(p, args) if scalar(p) && p.arity().is_none_or(|n| n == args.len()) => {
                 for i in 0..args.len() {
                     self.scan(self.arg(args, i), env).await;
                 }
