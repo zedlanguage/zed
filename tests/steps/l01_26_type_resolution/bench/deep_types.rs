@@ -8,10 +8,10 @@ use zed_tests::deep::on_small_stack;
 use zed_tests::scaling;
 use zedc::check::ty::Ty;
 
-use super::deep_ops::{DEEP, on_shallow_stack};
 use super::super::deep_types::{
     chain, expected, hashes, levels, replaced_each_way, same, shared, tuples, z,
 };
+use super::deep_ops::{DEEP, on_shallow_stack};
 
 #[test]
 fn replacements_in_a_shared_type_take_linear_time() {
@@ -31,7 +31,7 @@ fn replacements_in_a_shared_type_take_linear_time() {
 fn shared_types_built_apart_compare_in_linear_time() {
     // Each side holds `2^n` paths through `n` nodes, and no node is shared between the sides:
     // a comparison that followed the paths took `2^n` time.
-    let n = 2000;
+    let n = 32_000;
     let pairs: std::collections::BTreeMap<usize, (Ty, Ty)> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|k| (k, (shared(k), shared(k))))

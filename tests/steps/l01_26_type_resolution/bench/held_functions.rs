@@ -66,11 +66,11 @@ fn a_function_in_payloads_is_found_in_linear_time() {
             0,
         ),
     ] {
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+        let units: BTreeMap<usize, Resolved> = [2000, scaling::FACTOR * 2000]
             .into_iter()
             .map(|n| (n, Resolved::new(&text(n, leaf))))
             .collect();
-        scaling::check_order(what, 500, 1, |n| {
+        scaling::check_order(what, 2000, 1, |n| {
             let info = units[&n].check();
             assert_eq!(info.errors.len(), errors, "{what} at {n}");
         });
@@ -145,4 +145,3 @@ fn a_type_31250_tuples_deep_prints_and_drops_on_a_256_kib_stack() {
         assert!(text == format!("{}_{}", "(".repeat(n), ", _)".repeat(n)));
     });
 }
-

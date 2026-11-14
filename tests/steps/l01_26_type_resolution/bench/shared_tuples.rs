@@ -13,11 +13,11 @@ fn values_held_twice_at_each_level_are_checked_in_linear_time() {
         ("an integer doubled by n bindings", by_bindings),
     ] {
         // On the 2 MiB stack of a test thread: nothing recurses on the 4,000 levels.
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+        let units: BTreeMap<usize, Resolved> = [5000, scaling::FACTOR * 5000]
             .into_iter()
             .map(|n| (n, Resolved::new(&text(n, "1"))))
             .collect();
-        scaling::check_order(what, 500, 1, |n| {
+        scaling::check_order(what, 5000, 1, |n| {
             let info = units[&n].check();
             assert!(info.errors.is_empty(), "{what} at {n}");
         });

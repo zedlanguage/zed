@@ -299,7 +299,6 @@ pub(super) fn nest(n: usize) -> String {
     )
 }
 
-
 #[test]
 fn two_calls_of_many_listed_values_and_an_if_of_many_decimals_check() {
     // A small instance of the benchmark `bench::two_union_operands::scaling`.

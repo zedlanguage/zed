@@ -210,7 +210,6 @@ pub(super) fn nest(n: usize) -> String {
     format!("{H}f(positional c: int) = h({body});\n")
 }
 
-
 #[test]
 fn an_if_of_many_literal_branches_takes_f64_at_a_parameter() {
     // A small instance of the benchmark `bench::lit_branches::scaling`.

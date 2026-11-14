@@ -7,7 +7,6 @@
 //! `(L) -> V` and `(U) -> V | #notFound`: a key in `L` finds its value, a key in `U` alone may
 //! not, and a key not inside `U` is a static error (the lookup rows of sec:type_language).
 
-
 use super::{sig, type_errors};
 
 #[test]
@@ -284,4 +283,3 @@ fn many_and_deep_bounded_maps_are_looked_up_and_printed() {
         "type T1 = int | String;\n(m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
     );
 }
-

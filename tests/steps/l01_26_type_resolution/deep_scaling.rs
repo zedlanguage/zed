@@ -8,9 +8,9 @@ use zed_tests::deep::{program, statements};
 
 use super::sig;
 
-/// The depth of the programs checked here: each shape nests at least twice inside its
-/// outermost level.
-const SMALL: usize = 3;
+/// The depth of the programs checked here, the least `zed_tests::deep::program` writes: each
+/// shape nests at least twice inside its outermost level.
+const SMALL: usize = 4;
 
 /// Checks each program of `shapes` `n` deep, and finds no type error.
 fn checks(shapes: &[&str], n: usize) {

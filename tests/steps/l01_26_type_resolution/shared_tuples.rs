@@ -43,4 +43,3 @@ fn a_function_held_twice_at_each_level_is_one_error() {
     assert_eq!(type_errors(&by_calls(3, "scale")), [at("pair(scale)")]);
     assert_eq!(type_errors(&by_bindings(3, "scale")), [at("scale")]);
 }
-

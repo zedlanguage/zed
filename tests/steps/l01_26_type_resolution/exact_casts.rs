@@ -443,7 +443,10 @@ fn many_bounded_comparisons_are_one_rejection_each() {
     // A small instance of the benchmark `bench::exact_casts::many_bounded_comparisons_scale`.
     let errors = type_errors(&bounded_comparisons(3));
     assert_eq!(errors.len(), 3, "{errors:?}");
-    assert!(errors.iter().all(|e| e.contains("y == f64(n)")), "{errors:?}");
+    assert!(
+        errors.iter().all(|e| e.contains("y == f64(n)")),
+        "{errors:?}"
+    );
 }
 
 #[test]

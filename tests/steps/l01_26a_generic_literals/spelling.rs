@@ -84,7 +84,6 @@ pub(super) fn tuple(n: usize) -> String {
     format!("f(x: String) = x + ({});\n", items.join(", "))
 }
 
-
 #[test]
 fn each_message_of_many_misused_literals_prints_its_own_spelling() {
     // A small instance of the benchmark

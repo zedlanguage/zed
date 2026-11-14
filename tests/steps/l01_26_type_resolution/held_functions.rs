@@ -213,7 +213,12 @@ fn a_function_in_nested_tuples_is_one_error_with_its_notes_and_repairs() {
         let (i, _) = info(&text);
         // One error with its two notes and its two repairs.
         assert_eq!(i.errors.len(), 1, "{text}: {:?}", i.errors);
-        assert_eq!(i.errors[0].notes.len(), 4, "{text}: {:?}", i.errors[0].notes);
+        assert_eq!(
+            i.errors[0].notes.len(),
+            4,
+            "{text}: {:?}",
+            i.errors[0].notes
+        );
     }
 }
 

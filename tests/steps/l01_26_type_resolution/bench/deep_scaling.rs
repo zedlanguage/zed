@@ -189,7 +189,6 @@ fn a_refusal_of_function_types_nested_8000_deep_is_linear() {
     });
 }
 
-
 #[test]
 fn function_types_written_4000_deep_check_on_a_512_kib_stack() {
     // The denotation of a written type (`Denote::ty`, zedc-check) recursed once per level of

@@ -607,7 +607,6 @@ pub(super) fn shared(n: usize) -> String {
     )
 }
 
-
 #[test]
 fn many_decimal_components_and_nested_calls_check() {
     // Small instances of the benchmarks `bench::tuple_arg_pair`.

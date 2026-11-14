@@ -253,7 +253,6 @@ fn the_examples_of_the_guide() {
     }
 }
 
-
 /// A chain of `n` additions beside one operand of type `Never`, each other operand a union of
 /// `int` and `f64`, ending in `true`.
 pub(super) fn chain_beside_never(n: usize) -> String {

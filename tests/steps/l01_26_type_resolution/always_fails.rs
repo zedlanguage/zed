@@ -249,7 +249,6 @@ pub(super) fn nested(n: usize) -> String {
     format!("f(x: int) = {open}x{};\n", ")".repeat(n))
 }
 
-
 #[test]
 fn a_long_divisor_that_cancels_is_one_rejection() {
     // A small instance of the benchmark `bench::always_fails::a_long_divisor_that_cancels_scales`.

@@ -127,7 +127,11 @@ fn a_literal_with_a_suffix_at_a_parameter_that_lt_bounds_keeps_its_carrier() {
     // A decimal with no suffix is still rejected there: `f64`, `f32` and `rat` all take it.
     let errors = type_errors(&format!("{min}r = f(0.5, 0.25);\n"));
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].contains("Nothing gives the literal `0.5` a carrier"), "{}", errors[0]);
+    assert!(
+        errors[0].contains("Nothing gives the literal `0.5` a carrier"),
+        "{}",
+        errors[0]
+    );
 }
 
 #[test]
@@ -851,7 +855,11 @@ fn a_wide_tuple_compared_with_a_literal_has_one_repair_per_component() {
     assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
     for i in 0..3 {
         let fix = format!("`x[{i}] == 1`");
-        assert!(info.errors[0].message.contains(&fix), "{}", info.errors[0].message);
+        assert!(
+            info.errors[0].message.contains(&fix),
+            "{}",
+            info.errors[0].message
+        );
     }
 }
 

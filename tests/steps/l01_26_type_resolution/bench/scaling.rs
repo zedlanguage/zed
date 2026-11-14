@@ -11,11 +11,11 @@ use super::super::info;
 use super::super::scaling::{
     a_chain_of_tests, bounded_at_many_parameters, call_chain, chain, constants_and_functions,
     covering_overload, curried, curried_sums, curried_tested, disjoint_rows, else_patterns, fan,
-    functions_holding_one, generic_applied_to_many, many_destructurings, met_and_within,
-    meeting_on_different_sets, nested_overload, never_arguments, overlapping_rows, overloads,
-    payloads, resolved, results_holding_a_variable, results_met_alone, shared_overloads,
-    shared_rows, sum, sums_of_a_line_or_a_count, tuple, variables, wide_arrows,
-    wide_destructuring, wider_overloads, with_a_function_arrow,
+    functions_holding_one, generic_applied_to_many, many_destructurings, meeting_on_different_sets,
+    met_and_within, nested_overload, never_arguments, overlapping_rows, overloads, payloads,
+    resolved, results_holding_a_variable, results_met_alone, shared_overloads, shared_rows, sum,
+    sums_of_a_line_or_a_count, tuple, variables, wide_arrows, wide_destructuring, wider_overloads,
+    with_a_function_arrow,
 };
 
 /// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
@@ -54,10 +54,10 @@ fn built(
 fn searching_the_signatures_of_many_functions_scales() {
     // Twenty constants for each function, each adopting its literal with no search, so that
     // what the unit has found is large beside the searches.
-    let units = resolved(25, constants_and_functions);
+    let units = resolved(125, constants_and_functions);
     scaling::check(
         "the signatures of n functions beside 20n constants",
-        25,
+        125,
         |n| {
             let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
@@ -73,7 +73,7 @@ fn a_function_of_many_untyped_parameters_scales() {
     // of 256 combinations gave `_`. The parameters now merge into one class, once each.
     // The body is a chain of `n` additions, nested `n` deep, on a 2 MiB stack.
     zed_tests::deep::on_small_stack(|| {
-        scaling::check("a function of n untyped parameters", 400, |n| {
+        scaling::check("a function of n untyped parameters", 6400, |n| {
             let (info, _) = info(&sum(n));
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         });
@@ -83,8 +83,8 @@ fn a_function_of_many_untyped_parameters_scales() {
 #[test]
 fn a_chain_of_functions_with_untyped_parameters_scales() {
     // Each takes the bound of the one it calls, by its signature, with no search.
-    let units = resolved(400, chain);
-    scaling::check("a chain of n functions", 400, |n| {
+    let units = resolved(2000, chain);
+    scaling::check("a chain of n functions", 2000, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
         assert_eq!(info.sigs.len(), n);
@@ -94,8 +94,8 @@ fn a_chain_of_functions_with_untyped_parameters_scales() {
 #[test]
 fn many_else_patterns_scale() {
     // Each `else` with a pattern read every binder of the unit to find its own.
-    let units = resolved(1000, else_patterns);
-    scaling::check("n bindings each with an else pattern", 1000, |n| {
+    let units = resolved(5000, else_patterns);
+    scaling::check("n bindings each with an else pattern", 5000, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
@@ -104,8 +104,8 @@ fn many_else_patterns_scale() {
 #[test]
 fn a_signature_of_many_type_variables_scales() {
     // Naming the variables looked for each among those named before (COMPLEXITY.md F28).
-    let units = resolved(1000, tuple);
-    scaling::check("a signature of n type variables", 1000, |n| {
+    let units = resolved(10_000, tuple);
+    scaling::check("a signature of n type variables", 10_000, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
@@ -115,10 +115,10 @@ fn a_signature_of_many_type_variables_scales() {
 fn needs_replayed_through_a_fan_of_calls_scale() {
     // Each of the two calls met the needs of the one before anew, so they doubled at each
     // function; a use met twice now gives what it gave the first time.
-    let units = resolved(250, fan);
+    let units = resolved(1250, fan);
     scaling::check(
         "needs replayed through n functions, each calling the one before twice",
-        250,
+        1250,
         |n| {
             let info = units[&n].check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
@@ -128,11 +128,11 @@ fn needs_replayed_through_a_fan_of_calls_scale() {
 
 #[test]
 fn the_union_of_many_atoms_with_payloads_scales() {
-    let sides: BTreeMap<usize, (Vec<_>, Vec<_>)> = [256, scaling::FACTOR * 256]
+    let sides: BTreeMap<usize, (Vec<_>, Vec<_>)> = [8192, scaling::FACTOR * 8192]
         .into_iter()
         .map(|n| (n, (payloads(n, false), payloads(n, true))))
         .collect();
-    scaling::check("the union of n atoms with payloads", 256, |n| {
+    scaling::check("the union of n atoms with payloads", 8192, |n| {
         let (names, shapes) = &sides[&n];
         let u = Ty::union_all(names);
         assert_eq!(u.payloads.len(), n);
@@ -150,7 +150,7 @@ fn curried_lambdas_using_every_parameter_check_in_linear_time() {
     // name replaced the class in every lambda inside, n - k signatures at the k-th, so the
     // time was quadratic. The facts of a signature are persistent sets shared with the
     // signatures inside (`VarFacts::held`), so merging them costs O(log n) per variable.
-    let n = 100;
+    let n = 3200;
     let built = built(n, curried);
     scaling::check_order("n curried lambdas using every parameter", n, 1, |m| {
         let (stmts, res) = &built[&m];
@@ -169,7 +169,7 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
     // (CHK-carrier, COMPLEXITY.md F77). Per node at n = 100 and 800: 274103 and 274564
     // instructions, 49621 and 49236 bytes; replaced at every depth, 798369 and 4944027
     // instructions, 101619 and 481807 bytes.
-    let n = 100;
+    let n = 1600;
     let built = built(n, curried_sums);
     scaling::check_order(
         "n curried lambdas whose parameters take a carrier",
@@ -191,7 +191,7 @@ fn an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales() {
     // rejected, once. The comparison of function types recursed once per lambda, about 8
     // frames a level, and overflowed a 2 MiB stack at 800; it now keeps its frames on the
     // heap (`Comparing`, TY-sub-stack).
-    let n = 100;
+    let n = 1000;
     zed_tests::deep::on_small_stack(|| {
         let built = built(n, curried_tested);
         scaling::check_order("an is test of n curried lambdas", n, 1, |m| {
@@ -210,7 +210,7 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
     // holds (`Sig::digest`), and `hold` reads their facts (CHK-carrier, COMPLEXITY.md F77).
     // Per node at n = 100 and 800: 413888 and 413130 instructions, 70057 and 69516 bytes;
     // before, 1076078 and 5444818 instructions, 82672 and 166976 bytes.
-    let n = 100;
+    let n = 1600;
     let built = built(n, call_chain);
     scaling::check_order("a chain of n calls on one value", n, 1, |m| {
         let (stmts, res) = &built[&m];
@@ -223,7 +223,7 @@ fn a_chain_of_calls_on_one_value_checks_in_linear_time() {
 fn passing_an_overload_of_many_arrows_scales() {
     scales(
         "an overload of n arrows passed to a slot of n arrows",
-        200,
+        6400,
         overloads,
         |unit| {
             let info = unit.check();
@@ -241,7 +241,7 @@ fn passing_an_overload_of_many_arrows_scales() {
 fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
     scales(
         "an overload of n arrows passed to a slot of n other arrows",
-        100,
+        3200,
         wider_overloads,
         |unit| {
             let info = unit.check();
@@ -257,7 +257,7 @@ fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
 fn passing_an_overload_whose_arrows_share_a_parameter_piece_scales() {
     scales(
         "an overload of n arrows sharing a parameter piece passed to a slot of n arrows",
-        100,
+        3200,
         shared_overloads,
         |unit| {
             let info = unit.check();
@@ -269,7 +269,7 @@ fn passing_an_overload_whose_arrows_share_a_parameter_piece_scales() {
 #[test]
 fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
     // Resolution and the checker are timed, on statements parsed before the timing.
-    let n = 100;
+    let n = 3200;
     let units: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| (m, zed_tests::deep::statements(&nested_overload(m))))
@@ -287,7 +287,7 @@ fn a_slot_written_as_an_overload_nested_in_parentheses_scales() {
 fn an_overload_of_many_arrows_that_cover_a_slot_together_scales() {
     scales(
         "an overload of n arrows covering a slot together",
-        100,
+        3200,
         covering_overload,
         |unit| assert_eq!(unit.type_errors(), Vec::<String>::new()),
     );
@@ -297,7 +297,7 @@ fn an_overload_of_many_arrows_that_cover_a_slot_together_scales() {
 fn a_function_of_many_parameters_that_misses_one_scales() {
     scales(
         "an arrow of w parameters that misses the slot's last",
-        100,
+        3200,
         wide_arrows,
         |unit| {
             let errors = unit.type_errors();
@@ -308,7 +308,7 @@ fn a_function_of_many_parameters_that_misses_one_scales() {
 
 #[test]
 fn many_arrows_whose_results_intersect_within_the_slots_scale() {
-    scales("n arrows met and n within", 100, met_and_within, |unit| {
+    scales("n arrows met and n within", 3200, met_and_within, |unit| {
         assert_eq!(unit.type_errors(), Vec::<String>::new());
     });
 }
@@ -317,7 +317,7 @@ fn many_arrows_whose_results_intersect_within_the_slots_scale() {
 fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time() {
     scales(
         "n arrows whose results meet on different sets",
-        400,
+        1600,
         meeting_on_different_sets,
         |unit| {
             let errors = unit.type_errors();
@@ -334,7 +334,7 @@ fn many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_t
 fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
     scales(
         "n arrows and a function arrow covering",
-        100,
+        3200,
         with_a_function_arrow,
         |unit| {
             assert_eq!(unit.type_errors(), Vec::<String>::new());
@@ -346,7 +346,7 @@ fn an_overload_with_a_function_arrow_covering_a_slot_scales() {
 fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
     scales(
         "a bounded variable at w parameters",
-        100,
+        3200,
         bounded_at_many_parameters,
         |unit| {
             let errors = unit.type_errors();
@@ -363,7 +363,7 @@ fn a_bounded_variable_at_many_parameters_is_refused_in_linear_time() {
 fn many_results_that_hold_a_variable_or_a_function_meet_in_linear_time() {
     scales(
         "n results holding a variable met",
-        100,
+        3200,
         results_holding_a_variable,
         |unit| {
             assert_eq!(unit.type_errors(), Vec::<String>::new());
@@ -376,10 +376,11 @@ fn many_results_that_hold_a_variable_or_a_function_meet_in_linear_time() {
 /// bounded by `int | f64`, met within `U | String`. There the check around the intersection
 /// costs about 160,000 instructions a result, so a quadratic in the results that allocates
 /// nothing, such as reading the carriers of every other result for each result, passes it
-/// even at 3,200 results; here it fails at 1,000 (COMPLEXITY.md F82).
+/// even at 3,200 results; here it fails at 1,000, and the more at the larger size used now,
+/// since the quadratic part's share grows with n (COMPLEXITY.md F82).
 #[test]
 fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
-    let n = 1000;
+    let n = 32_000;
     let meets: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| (m, results_met_alone(m)))
@@ -395,7 +396,7 @@ fn needs_that_name_a_variable_the_call_leaves_unbound_check_in_linear_time() {
     // 19.2 times the instructions, inside the limit; at n = 400 it gave 26.5 times.
     scales(
         "a generic function applied to n parameters",
-        400,
+        3000,
         generic_applied_to_many,
         |unit| {
             assert_eq!(unit.type_errors(), Vec::<String>::new());
@@ -407,7 +408,7 @@ fn needs_that_name_a_variable_the_call_leaves_unbound_check_in_linear_time() {
 fn a_parameter_destructured_into_many_names_checks_in_linear_time() {
     scales(
         "a parameter destructured into n names",
-        200,
+        6400,
         wide_destructuring,
         |unit| {
             assert_eq!(unit.type_errors(), Vec::<String>::new());
@@ -419,7 +420,7 @@ fn a_parameter_destructured_into_many_names_checks_in_linear_time() {
 fn many_parameters_each_destructured_check_in_linear_time() {
     scales(
         "n parameters each destructured into two names",
-        100,
+        1000,
         many_destructurings,
         |unit| {
             assert_eq!(unit.type_errors(), Vec::<String>::new());
@@ -436,7 +437,7 @@ fn many_parameters_each_destructured_check_in_linear_time() {
 /// enters each row once (CK-data-memo, COMPLEXITY.md F93).
 #[test]
 fn rows_made_from_overlapping_variable_sets_scale() {
-    let n = 250;
+    let n = 8000;
     let vars = variables_at("V", n);
     scaling::check_order("n rows of overlapping variable sets", n, 1, |m| {
         let t = overlapping_rows(&vars[&m]);
@@ -453,7 +454,7 @@ fn rows_made_from_overlapping_variable_sets_scale() {
 /// walk (author's answer A8 as amended by A20; CK-data-memo, COMPLEXITY.md F93).
 #[test]
 fn rows_made_from_disjoint_variable_sets_scale() {
-    let n = 250;
+    let n = 8000;
     let (xs, ys) = (variables_at("A", n), variables_at("B", n));
     scaling::check_order("n rows of disjoint variable sets", n, 1, |m| {
         let zs = disjoint_rows(&xs[&m], &ys[&m]);
@@ -464,8 +465,11 @@ fn rows_made_from_disjoint_variable_sets_scale() {
 /// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`, `2^n` paths, with each `Vk` replaced by `Wk`:
 /// `Ty::replace`, `Ty::subst` and `Ty::settle` each make a row once, however many paths reach
 /// it (REPLACE-shared-rows, COMPLEXITY.md F97). Each walked every path before: 2^n.
-fn replacing_in_rows_shared_on_many_paths(what: &str, replace: fn(&Ty, &zedc::check::ty::Binds) -> Ty) {
-    let n = 100;
+fn replacing_in_rows_shared_on_many_paths(
+    what: &str,
+    replace: fn(&Ty, &zedc::check::ty::Binds) -> Ty,
+) {
+    let n = 3200;
     let (vs, ws) = (variables_at("V", n), variables_at("W", n));
     let binds = |m: usize| -> zedc::check::ty::Binds {
         let pairs = vs[&m].iter().zip(&ws[&m]);
@@ -510,7 +514,7 @@ fn replacing_in_rows_shared_on_many_paths_scales_by_settle() {
 /// REPLACE-shared-rows, COMPLEXITY.md F97).
 #[test]
 fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
-    let n = 250;
+    let n = 8000;
     let (os, hs, ws) = (
         variables_at("O", n),
         variables_at("H", n),
@@ -541,8 +545,8 @@ fn replacing_in_many_functions_that_each_hold_one_bound_variable_scales() {
 /// (`Binds`) rather than building one from all the binds (CK-data-memo, COMPLEXITY.md F97; it
 /// was of order `n^2`).
 fn rows_shared_on_many_paths(what: &str, call: bool) {
-    let units = resolved(400, |n| shared_rows(n, call));
-    scaling::check_order(what, 400, 1, |m| {
+    let units = resolved(3200, |n| shared_rows(n, call));
+    scaling::check_order(what, 3200, 1, |m| {
         assert_eq!(units[&m].type_errors(), Vec::<String>::new());
     });
 }
@@ -559,16 +563,16 @@ fn rows_shared_on_many_paths_scale_in_its_call() {
 
 #[test]
 fn sums_of_a_line_or_a_count_check_in_linear_time() {
-    let units = resolved(250, sums_of_a_line_or_a_count);
-    scaling::check_order("n sums of a line or a count", 250, 1, |m| {
+    let units = resolved(5000, sums_of_a_line_or_a_count);
+    scaling::check_order("n sums of a line or a count", 5000, 1, |m| {
         assert_eq!(units[&m].type_errors(), Vec::<String>::new());
     });
 }
 
 #[test]
 fn a_chain_of_tests_is_linear_in_its_length() {
-    let units = resolved(64, a_chain_of_tests);
-    scaling::check("a chain of n tests on one int", 64, |m| {
+    let units = resolved(1024, a_chain_of_tests);
+    scaling::check("a chain of n tests on one int", 1024, |m| {
         let info = units[&m].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
@@ -576,10 +580,10 @@ fn a_chain_of_tests_is_linear_in_its_length() {
 
 #[test]
 fn never_arguments_check_in_linear_time() {
-    let units = resolved(250, never_arguments);
+    let units = resolved(8000, never_arguments);
     scaling::check_order(
         "n arguments of type Never to a generic function",
-        250,
+        8000,
         1,
         |m| {
             assert_eq!(units[&m].type_errors(), Vec::<String>::new());

@@ -880,7 +880,10 @@ fn a_signature_of_many_bounds_prints_and_reads_back() {
         printed,
         "(x0: T0, x1: T1, x2: T2) -> T0 for T0 in int | f64, T1 in String, T2 in rat | bool"
     );
-    assert_eq!(parse_type(&printed).unwrap_or_else(|e| panic!("{e}")), first);
+    assert_eq!(
+        parse_type(&printed).unwrap_or_else(|e| panic!("{e}")),
+        first
+    );
 }
 
 #[test]
@@ -938,8 +941,14 @@ fn chains_of_bounded_definitions_read_as_one_tuple() {
     for text in [shared_bounded_chain(3), bounded_chain(3)] {
         let t = parse_type(&text).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(t.tuples.len(), 1, "{text}");
-        assert_eq!(parse_type(&t.to_string()).unwrap_or_else(|e| panic!("{e}")), t);
+        assert_eq!(
+            parse_type(&t.to_string()).unwrap_or_else(|e| panic!("{e}")),
+            t
+        );
     }
     let t = parse_type(&distinct_bounds_chain(3)).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(parse_type(&t.to_string()).unwrap_or_else(|e| panic!("{e}")), t);
+    assert_eq!(
+        parse_type(&t.to_string()).unwrap_or_else(|e| panic!("{e}")),
+        t
+    );
 }

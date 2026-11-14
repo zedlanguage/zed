@@ -156,4 +156,3 @@ fn a_wide_tuple_is_indexed_by_a_computed_key() {
     // A small instance of the benchmark `bench::tuple_keys::indexing_a_wide_tuple_scales`.
     assert_eq!(type_errors(&wide(4)), Vec::<String>::new(), "{}", wide(4));
 }
-

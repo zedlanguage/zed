@@ -145,7 +145,6 @@ fn replacements_in_a_shallow_type_are_as_built() {
     }
 }
 
-
 /// A type `n` levels deep in which each level holds the one below twice, so it has `2^n` paths
 /// and `n` rows, shapes and functions, in a tuple: each replacement makes each once.
 pub(super) fn shared(n: usize) -> Ty {

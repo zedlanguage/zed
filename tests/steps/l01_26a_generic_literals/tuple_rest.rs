@@ -392,7 +392,6 @@ pub(super) fn chain(n: usize) -> String {
     src
 }
 
-
 #[test]
 fn many_decimals_on_one_line_print_the_line_once_in_one_message() {
     // A small instance of the benchmark

@@ -216,7 +216,6 @@ pub(super) fn many(values: usize, casts: usize, last: &str, word: &str) -> Strin
     src
 }
 
-
 #[test]
 fn casts_of_a_call_of_many_values_take_each_value_at_its_arrow() {
     // Small instances of the benchmarks `bench::cast_of_union`.

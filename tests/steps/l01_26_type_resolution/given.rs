@@ -5,7 +5,6 @@
 //! rejected with "this function, which `r` applies, does not take #notFound" (repair
 //! CHK-index-else, found writing the L1.36a test programs).
 
-
 use super::{info, type_errors};
 use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
 

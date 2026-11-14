@@ -305,7 +305,6 @@ pub(super) fn wide(n: usize, call: bool) -> String {
     }
 }
 
-
 #[test]
 fn a_decimal_nested_deep_in_tuples_is_one_rejection_naming_its_path() {
     // A small instance of the benchmark

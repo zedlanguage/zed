@@ -9,8 +9,8 @@ use super::super::scaling::resolved;
 #[test]
 fn many_bounded_casts_scale() {
     // n functions, each casting its parameter under a test that bounds it.
-    let units = resolved(200, bounded_casts);
-    scaling::check("n functions, each a cast under a test", 200, |n| {
+    let units = resolved(800, bounded_casts);
+    scaling::check("n functions, each a cast under a test", 800, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
@@ -19,8 +19,8 @@ fn many_bounded_casts_scale() {
 #[test]
 fn a_chain_of_arms_each_a_bounded_cast_scales() {
     // One function of n arms, each arm a cast under the tests of the arms before it.
-    let units = resolved(200, arms_of_casts);
-    scaling::check("a chain of n arms, each a cast", 200, |n| {
+    let units = resolved(1000, arms_of_casts);
+    scaling::check("a chain of n arms, each a cast", 1000, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
@@ -51,8 +51,8 @@ fn many_casts_of_ints_in_range_scale() {
 #[test]
 fn many_casts_of_literals_scale() {
     // n functions, each casting a `rat` literal that converts, so each result drops both atoms.
-    let units = resolved(200, casts_of_literals);
-    scaling::check("n functions, each a cast of a rat literal", 200, |n| {
+    let units = resolved(2000, casts_of_literals);
+    scaling::check("n functions, each a cast of a rat literal", 2000, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });

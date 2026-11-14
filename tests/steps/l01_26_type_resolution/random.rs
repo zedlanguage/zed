@@ -139,12 +139,17 @@ fn computed_values(seed: u64, enough: impl Fn(&Computed) -> bool, cap: usize) ->
             .iter()
             .map(|d| (d.name.as_str(), &d.kernel))
             .collect();
-        let calls = by_arrow.iter().flat_map(|(cs, r)| cs.iter().map(move |c| (c, *r)));
+        let calls = by_arrow
+            .iter()
+            .flat_map(|(cs, r)| cs.iter().map(move |c| (c, *r)));
         for (k, (call, result)) in calls.enumerate() {
             let t = cones.close(Term::Var(kernels[format!("r{k}").as_str()].clone()));
             match Evaluator::new(World::new()).run(&with_prelude(t)) {
                 Ok(v) => {
-                    assert!(result.contains(&v), "seed {seed}: {f}{call}: {v} is not in {result}");
+                    assert!(
+                        result.contains(&v),
+                        "seed {seed}: {f}{call}: {v} is not in {result}"
+                    );
                     c.checked += 1;
                 }
                 // An accepted program never meets a type error (DESIGN.md rule 4).
@@ -174,8 +179,18 @@ fn each_computed_value_is_in_its_arrows_result() {
         "{} functions, {} values, {} failed, {} arrows not called",
         c.fns, c.checked, c.failed, c.unfixed
     );
-    assert!(enough(&c), "seed {seed}: {} functions, {} values", c.fns, c.checked);
-    assert!(c.failed < c.checked / 4, "seed {seed}: {} failed of {}", c.failed, c.checked);
+    assert!(
+        enough(&c),
+        "seed {seed}: {} functions, {} values",
+        c.fns,
+        c.checked
+    );
+    assert!(
+        c.failed < c.checked / 4,
+        "seed {seed}: {} failed of {}",
+        c.failed,
+        c.checked
+    );
 }
 
 #[test]
@@ -533,7 +548,9 @@ fn run_programs(seed: u64, enough: impl Fn(&Runs) -> bool, cap: usize) -> Runs {
                 continue;
             }
             let u = elab(&p).unwrap_or_else(|e| panic!("seed {seed}: {p}: {e:?}"));
-            let t = u.get("r").unwrap_or_else(|| panic!("seed {seed}: {p}: no `r`"));
+            let t = u
+                .get("r")
+                .unwrap_or_else(|| panic!("seed {seed}: {p}: no `r`"));
             // Every run here takes far fewer steps; the fuel only stops a lambda that a
             // checker fault let apply itself.
             let mut ev = Evaluator::new(World::new()).with_fuel(1_000_000);
@@ -578,9 +595,8 @@ const SETS_CAP: usize = 2_000;
 #[test]
 fn accepted_random_programs_raise_no_type_error() {
     let seed = zed_tests::seed::seed("accepted_random_programs_raise_no_type_error");
-    let enough = |r: &Runs| {
-        r.ran >= ENOUGH_RAN && r.forms.iter().all(|&f| f >= ENOUGH_OF_EACH_FORM)
-    };
+    let enough =
+        |r: &Runs| r.ran >= ENOUGH_RAN && r.forms.iter().all(|&f| f >= ENOUGH_OF_EACH_FORM);
     let r = run_programs(seed, enough, SETS_CAP);
     println!(
         "{} ran, {} rejected, {} may give a function, {} stopped, forms {:?}",

@@ -110,7 +110,7 @@ fn meet_takes_linear_time_in_the_depth() {
 fn meets_takes_linear_time_in_the_depth() {
     linear(
         "meets of two tuples n deep",
-        10_000,
+        40_000,
         |k| (tuples(k, z()), tuples(k, y())),
         |(a, b)| assert!(!a.meets(b)),
     );
@@ -120,7 +120,7 @@ fn meets_takes_linear_time_in_the_depth() {
 fn contains_takes_linear_time_in_the_depth() {
     linear(
         "contains of a tuple n deep",
-        10_000,
+        50_000,
         |k| (tuples(k, z()), value(k, "z")),
         |(a, v)| assert!(a.contains(v)),
     );
@@ -133,7 +133,7 @@ fn contains_takes_linear_time_in_the_depth() {
 fn meet_of_shared_tuples_takes_linear_time() {
     linear(
         "meet of two shared tuples n deep",
-        2000,
+        10_000,
         |k| (shared(k, z()), shared(k, ty::Ty::union(&z(), &y()))),
         |(a, b)| assert!(!a.meet(b).is_empty()),
     );
@@ -143,7 +143,7 @@ fn meet_of_shared_tuples_takes_linear_time() {
 fn meets_of_shared_tuples_takes_linear_time() {
     linear(
         "meets of two shared tuples n deep",
-        2000,
+        64_000,
         |k| (shared(k, z()), shared(k, y())),
         |(a, b)| assert!(!a.meets(b)),
     );
@@ -153,7 +153,7 @@ fn meets_of_shared_tuples_takes_linear_time() {
 fn contains_of_a_shared_value_takes_linear_time() {
     linear(
         "contains of a shared value in a shared tuple n deep",
-        2000,
+        64_000,
         |k| (shared(k, z()), shared_value(k)),
         |(a, v)| assert!(a.contains(v)),
     );
@@ -164,7 +164,7 @@ fn printing_a_type_with_a_function_at_every_place_takes_linear_time_in_the_depth
     // The printer decides each part's parentheses from where it stands, once per part.
     linear(
         "printing a type n deep with a function at every place",
-        2000,
+        64_000,
         functions,
         |t| assert!(!t.to_string().is_empty()),
     );
@@ -194,7 +194,7 @@ fn subtype_of_tuples_takes_linear_time_in_the_depth() {
 fn subtype_of_types_takes_linear_time_in_the_depth() {
     linear(
         "subtype of two types n deep",
-        2000,
+        32_000,
         |k| (levels(k, z()), levels(k, z())),
         |(a, b)| assert!(a.subtype(b)),
     );
@@ -214,7 +214,7 @@ fn diff_takes_linear_time_in_the_depth() {
 fn fits_sig_takes_linear_time_in_the_depth() {
     linear(
         "fits_sig of two signatures n deep",
-        2000,
+        20_000,
         |k| {
             (
                 sig(levels(k, z()), levels(k, z())),

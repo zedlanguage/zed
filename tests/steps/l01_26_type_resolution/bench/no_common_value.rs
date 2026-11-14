@@ -2,16 +2,16 @@ use zed_tests::deep::statements;
 use zed_tests::scaling;
 use zedc::rejection::Row;
 
-use super::deep_ops::{DEEP, on_shallow_stack};
 use super::super::no_common_value::{
     carriers_of_nested_tuples, shared, wide_tuples, wide_union, wide_written,
 };
+use super::deep_ops::{DEEP, on_shallow_stack};
 
 #[test]
 fn carriers_of_shared_tuples_scale() {
     // `t(k+1) = (t(k), t(k))` has `2^n` paths through `n` nodes; each is widened once.
-    let ts = scaling::inputs(512, shared);
-    scaling::check_order("carriers of n shared tuples", 512, 1, |n| {
+    let ts = scaling::inputs(16_384, shared);
+    scaling::check_order("carriers of n shared tuples", 16_384, 1, |n| {
         assert!(!ts[&n].carriers().is_empty());
     });
 }
@@ -36,7 +36,7 @@ fn rejects_linearly(what: &str, n: usize, text: fn(usize) -> String, row: Row) {
 fn rejecting_two_wide_types_that_share_no_value_scales_for_a_union() {
     rejects_linearly(
         "== of a union of n tuples",
-        256,
+        1024,
         wide_union,
         Row::EqNoCommonCarrier,
     );
@@ -46,7 +46,7 @@ fn rejecting_two_wide_types_that_share_no_value_scales_for_a_union() {
 fn rejecting_two_wide_types_that_share_no_value_scales_for_tuples() {
     rejects_linearly(
         "== of two tuples of n components",
-        256,
+        8192,
         wide_tuples,
         Row::EqNoCommonCarrier,
     );
@@ -56,7 +56,7 @@ fn rejecting_two_wide_types_that_share_no_value_scales_for_tuples() {
 fn rejecting_two_wide_types_that_share_no_value_scales_for_a_written_tuple() {
     rejects_linearly(
         "== of a tuple of n components and a written one",
-        256,
+        8192,
         wide_written,
         Row::EqNoCommonCarrier,
     );

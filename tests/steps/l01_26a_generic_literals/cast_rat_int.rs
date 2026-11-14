@@ -179,7 +179,6 @@ pub(super) fn many(n: usize) -> String {
     src + ";\n}\n"
 }
 
-
 #[test]
 fn casts_of_a_name_of_literals_keep_no_atom() {
     // A small instance of the benchmark `bench::cast_rat_int`.

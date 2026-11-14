@@ -164,7 +164,6 @@ pub(super) fn decimals(n: usize) -> String {
     )
 }
 
-
 #[test]
 fn a_chain_of_bindings_of_literals_is_an_int() {
     // A small instance of the benchmark

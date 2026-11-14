@@ -140,8 +140,8 @@ fn a_chain_of_functions_passing_a_handled_parameter_on_gives_no_atom_on_the_firs
 }
 
 #[test]
-fn a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_gives_no_atom_on_the_first_arrow(
-) {
+fn a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_gives_no_atom_on_the_first_arrow()
+ {
     // A small instance of the benchmark
     // `bench::atom_scaling::a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_scales`.
     // `x.h0()` is `h0(x)`: the receiver fills the first parameter, so each function's first
@@ -272,10 +272,7 @@ fn calls_passing_some_atoms_of_their_argument_by_record_one_pass_each() {
 
 /// A function of `n` parameters declared `String`, and one call of it whose arguments are
 /// `args(i)`; `v` may be a string, `#a` or `#b`.
-pub(super) fn one_call_of_many_arguments(
-    n: usize,
-    args: impl Fn(usize) -> &'static str,
-) -> String {
+pub(super) fn one_call_of_many_arguments(n: usize, args: impl Fn(usize) -> &'static str) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("positional x{i}: String")).collect();
     let args: Vec<&str> = (0..n).map(args).collect();
     format!(

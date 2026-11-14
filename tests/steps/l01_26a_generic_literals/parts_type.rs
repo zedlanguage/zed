@@ -219,7 +219,6 @@ pub(super) fn calls(n: usize) -> String {
     format!("f(x, p) = x + p[0];\n{}", ys.concat())
 }
 
-
 #[test]
 fn a_call_that_reads_many_parts_widens_each_to_rat() {
     // A small instance of the benchmark

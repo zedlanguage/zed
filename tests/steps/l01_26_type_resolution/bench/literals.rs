@@ -6,7 +6,7 @@ use super::super::literals::{deep, deep_operands, menus, shapes, wide, wide_tupl
 fn adopting_at_a_union_of_many_tuple_shapes_scales() {
     checks_linearly(
         "adopting the literals of tuples at n tuple shapes",
-        64,
+        2048,
         shapes,
         |_| 8,
     );
@@ -36,7 +36,7 @@ fn checks_linearly(what: &str, n: usize, text: fn(usize) -> String, adopts: fn(u
 fn adopting_the_literals_of_a_wide_tuple_scales() {
     checks_linearly(
         "adopting the literals of tuples of width n",
-        64,
+        2048,
         wide,
         |m| 3 * m,
     );
@@ -84,7 +84,7 @@ fn pairing_the_sides_of_a_deep_comparison_scales() {
 #[test]
 fn the_component_repairs_of_a_wide_tuple_scale() {
     // One repair per component, each read once in each shape.
-    let n = 256;
+    let n = 8192;
     let units: Vec<_> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| {
@@ -116,7 +116,7 @@ fn rejecting_literals_with_their_menus_scales() {
     // here, and fails; a scan of every earlier error's text at each menu does not, since the
     // checker's own work at each rejected literal is far larger than the scan up to n = 8,192.
     use zed_tests::deep::statements;
-    let n = 256;
+    let n = 1024;
     let units: Vec<_> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|m| {

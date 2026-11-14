@@ -46,4 +46,3 @@ fn a_function_deep_in_a_payload_in_a_tuple_is_refused_by_equality() {
         assert_eq!(type_errors(&text(3, "2")), Vec::<String>::new());
     }
 }
-

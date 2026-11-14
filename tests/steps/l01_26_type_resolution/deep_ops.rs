@@ -17,7 +17,6 @@ use zed_kernel::Value;
 use zed_kernel::types::Type;
 use zedc::check::ty::{self, Binds, SParam, Shape, Sig, Ty, Vars};
 
-
 pub(super) fn z() -> Ty {
     Ty::set(Type::atom("z"))
 }
@@ -124,15 +123,26 @@ pub(super) fn display_and_debug(n: usize) {
     assert!(format!("{t:#?}").len() > n, "{n} deep");
     let s = sig(levels(n, z()), data(n, z()));
     assert!(format!("{s:?}").len() > n, "{n} deep");
-    assert!(format!("{:?}", tuples(n, z()).tuples[0]).len() > n, "{n} deep");
+    assert!(
+        format!("{:?}", tuples(n, z()).tuples[0]).len() > n,
+        "{n} deep"
+    );
 }
 
 /// The union of equal and of different [`levels`] `n` deep, `n` at least 1 and leaving 4 by 6,
 /// so the outermost level is a tuple.
 pub(super) fn union(n: usize) {
     let (a, b, c) = (levels(n, z()), levels(n, z()), levels(n, y()));
-    assert_eq!(a.union(&b).fns.len() + a.union(&b).tuples.len(), 1, "{n} deep");
-    assert_eq!(a.union(&c).fns.len() + a.union(&c).tuples.len(), 2, "{n} deep");
+    assert_eq!(
+        a.union(&b).fns.len() + a.union(&b).tuples.len(),
+        1,
+        "{n} deep"
+    );
+    assert_eq!(
+        a.union(&c).fns.len() + a.union(&c).tuples.len(),
+        2,
+        "{n} deep"
+    );
     assert_eq!(Ty::union_all([&a, &b, &c]).tuples.len(), 2, "{n} deep");
 }
 
@@ -271,7 +281,6 @@ fn debug_writes_what_a_derived_debug_writes() {
     );
 }
 
-
 #[test]
 fn meet_meets_and_contains_of_shallow_tuples_are_as_built() {
     for n in 0..7 {
@@ -299,7 +308,6 @@ fn meet_meets_and_contains_of_shallow_tuples_are_as_built() {
     assert!(v.contains(&value(3, "q")));
     assert!(!v.contains(&value(2, "q")));
 }
-
 
 /// A type `n` levels deep in which the level below stands, in turn, as a function's parameter,
 /// in a union in a function's result, as a tuple component and as a member of a union: the

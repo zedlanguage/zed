@@ -268,7 +268,6 @@ pub(super) fn long(n: usize) -> String {
     format!("f(x: String) = x == ({}1);\n", "1_".repeat(n))
 }
 
-
 #[test]
 fn a_literal_of_digits_with_underscores_is_quoted_as_written() {
     // A small instance of the benchmark

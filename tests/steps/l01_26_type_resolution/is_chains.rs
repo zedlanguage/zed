@@ -152,7 +152,6 @@ pub(super) fn balanced(k: usize) -> String {
     )
 }
 
-
 /// The side `j` of a chain of `is` tests and comparisons.
 pub(super) fn test_or_comparison(j: usize) -> String {
     match j % 2 {

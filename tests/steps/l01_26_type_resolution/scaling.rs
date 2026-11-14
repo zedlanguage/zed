@@ -538,7 +538,6 @@ pub(super) fn never_arguments(n: usize) -> String {
     )
 }
 
-
 // Small instances of the benchmarks in `bench::scaling`, each keeping every check the
 // benchmark makes besides its ratio.
 

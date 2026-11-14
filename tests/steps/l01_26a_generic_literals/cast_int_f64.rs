@@ -147,7 +147,6 @@ pub(super) fn many(n: usize) -> String {
     src + ");\n}\n"
 }
 
-
 #[test]
 fn casts_of_names_and_operations_on_literals_keep_no_atom() {
     // A small instance of the benchmark `bench::cast_int_f64`.

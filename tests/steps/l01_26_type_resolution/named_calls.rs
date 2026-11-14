@@ -206,9 +206,11 @@ fn a_misplaced_argument_is_the_one_error_of_the_expressions_around_it() {
 /// `n` misplaced arguments, each in an operation and in a name read once more.
 pub(super) fn misplaced_arguments(n: usize) -> String {
     let mut text = DECLS.to_string();
-    text.extend((0..n).map(|i| {
-        format!("y{i} = (dbl(3) + 1) * \"a\";\nz{i} = dbl(3);\nw{i} = z{i} + \"a\";\n")
-    }));
+    text.extend(
+        (0..n).map(|i| {
+            format!("y{i} = (dbl(3) + 1) * \"a\";\nz{i} = dbl(3);\nw{i} = z{i} + \"a\";\n")
+        }),
+    );
     text
 }
 

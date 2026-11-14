@@ -6,7 +6,7 @@ use super::super::is_chains::{balanced, chain, names_chain, right_chain, test_or
 /// of order n log n at most: each fact of the chain is narrowed once and moved at most log2 n
 /// times.
 fn scales(what: &str, text: impl Fn(usize) -> String + Sync) {
-    let n = 500;
+    let n = 4000;
     let built = scaling::inputs(n, |m| zed_tests::deep::resolved(&text(m)));
     scaling::check_order(what, n, 1, |m| {
         let (stmts, res) = &built[&m];

@@ -939,7 +939,6 @@ pub(super) fn products(n: usize) -> String {
     format!("{G}f(positional c: bool, x: f64) = {{ {body}x }};\n")
 }
 
-
 #[test]
 fn many_operation_branches_take_f64_at_a_parameter_or_through_a_call() {
     // Small instances of the benchmarks `bench::lit_branch_ops`.
