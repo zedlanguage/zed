@@ -2314,8 +2314,12 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-coprime-check-many-sets | impl attempt 1 | 2026-11-14 09:23 | started in /home/luke/Work/wt/coprime-2; load 43.52 |
 | FAIL-judgments-query-order-seed | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | FAIL-linked-piled-holes-count | running | 2026-11-14 07:09 |  |
+| FAIL-pendants-rewrite-empty-seed | running | 2026-11-14 10:10 |  |
+| FAIL-pendants-rewrite-growth-seed | running | 2026-11-14 10:10 |  |
+| FAIL-pendants-route-quarter-seed | running | 2026-11-14 10:10 |  |
 | FAIL-pres-overlap-every-level-refused | running | 2026-11-14 10:33 |  |
 | FAIL-product-refused-box-renamed | running | 2026-11-14 07:09 |  |
+| FAIL-types-overload-bounded-tuple | impl attempt 1 | 2026-11-14 09:32 | negative control (not committed): Binds::bound as a linear scan; bench::bounds::a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_si |
 | FAIL-values-function-in-payload-run | impl attempt 3 | 2026-11-14 09:22 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FAIL-values-function-in-tuple | impl attempt 3 | 2026-11-14 07:33 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
 | FIX-functions-in-tuples | impl attempt 3 | 2026-11-11 16:34 | start in /home/luke/Work/wt/fix-values (machine + native forms), load 54.65 66.85 52.33 |
@@ -2327,7 +2331,6 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | TEST-fixture-write-race | running | 2026-11-14 09:42 |  |
 | TEST-l0123-leftovers | running | 2026-11-14 10:33 |  |
 | TEST-l0123-slow-pieces | running | 2026-11-14 10:33 |  |
-| TEST-presburger-unreached-paths | impl attempt 1 | 2026-11-14 10:07 | part done, pushed 295c121f6 41b3ac5e5 15f696960 (405 test pieces pass; build, fmt, clippy clean); row FAIL-pres-overlap-every-level-refused / 42.58 49.06 47.59 |
 | TEST-seed-test-once | running | 2026-11-14 09:42 |  |
 | TEST-shared-tmpdir-race | running | 2026-11-14 08:57 |  |
 | TEST-types-unreached-paths | impl attempt 2 | 2026-11-14 08:15 | started in /home/luke/Work/wt/types-unreached-2; load 26.18 30.39 36.84 |
