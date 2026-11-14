@@ -2335,10 +2335,9 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | MSG-range-error-not-hidden | impl attempt 1 | 2026-11-14 10:45 | started in worktree fix-judg-range on origin/main b56f4fb5d |
 | PERF-l139-hopb-wakes | running | 2026-11-14 11:00 |  |
 | PERF-l139-persist-due | impl attempt 1 | 2026-11-14 11:00 | start, worktree wt/perf-l139 from origin/main 10fb070e9; load 34.30 42.93 45.18 |
+| POLY-square-sparse-half | running | 2026-11-14 11:26 |  |
 | STAGE-generic-fold-div | impl attempt 1 | 2026-11-14 09:08 | started in wt/generic-fold-2, load 64.11 |
-| TEST-l0123-leftovers | impl attempt 1 | 2026-11-14 10:33 | done, pushed 7a3970a94; fresh seeds, index 521/1042 (mutant red), exact sweeps 14,200 + 14,263 in bench; new row TEST-l0124-fixed-seeds; 83 pieces 0 failed; loa |
-| TEST-l0123-slow-pieces | impl attempt 1 | 2026-11-14 10:33 | done, pushed 7a3970a94; no code change, already fixed by TEST-bench-move-l0123 (refusals 2.3 s, group_oracle 1.4 s at load 43); load 38.31 35.56 39.82 |
-| TEST-largest-group-scc | running |  |  |
+| TEST-largest-group-scc | impl attempt 1 | 2026-11-14 11:27 | started in wt/largest-scc on f9338e5f9, load 62.98 |
 | TEST-law25-time | running | 2026-11-14 10:54 |  |
 | TEST-m0_10-slow-laws | running | 2026-11-14 10:54 |  |
 | TEST-op-table-div-mod | running | 2026-11-14 10:54 |  |
