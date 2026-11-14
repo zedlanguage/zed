@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use zed_native::link::{recorded, sweep};
-use zed_tests::scaling::{self, FACTOR};
 
 use super::{Link, dir, executable, link, sign, toolchain};
 
@@ -24,7 +23,7 @@ fn says(exe: &Path) -> String {
 
 /// The names in `d` that begin with `out`'s name followed by `.zed-build.`: the working
 /// directories of builds of `out`.
-fn working(d: &Path, out: &Path) -> Vec<String> {
+pub(super) fn working(d: &Path, out: &Path) -> Vec<String> {
     let prefix = format!("{}.zed-build.", out.file_name().unwrap().to_str().unwrap());
     let mut names: Vec<String> = std::fs::read_dir(d)
         .unwrap()
@@ -37,7 +36,7 @@ fn working(d: &Path, out: &Path) -> Vec<String> {
 
 /// The working directory a build of `out` in process `pid` would take at attempt `k`, made
 /// here with a file in it, as a build stopped by a signal leaves it.
-fn left(out: &Path, pid: u32, k: u32) -> PathBuf {
+pub(super) fn left(out: &Path, pid: u32, k: u32) -> PathBuf {
     let mut name = out.as_os_str().to_owned();
     name.push(format!(".zed-build.{pid}.{k}"));
     let at = PathBuf::from(name);
@@ -47,7 +46,7 @@ fn left(out: &Path, pid: u32, k: u32) -> PathBuf {
 }
 
 /// The directory `at` held locked, as a running build holds its working directory.
-fn held(at: &Path) -> File {
+pub(super) fn held(at: &Path) -> File {
     let f = File::open(at).unwrap();
     f.lock().unwrap();
     f
@@ -202,32 +201,4 @@ fn builds_to_one_output_at_once_all_succeed() {
     assert_eq!(says(&out), "two at once\n");
     assert_eq!(recorded(&out).map(|k| k.len()), Some(32));
     assert_eq!(working(&d, &out), Vec::<String>::new());
-}
-
-/// The sweep reads the output's directory once, and opens and tries to lock each working
-/// directory of the output: linear in the directory's entries.
-#[test]
-fn the_sweep_scales() {
-    let n = 400;
-    let made = |m: usize| -> (PathBuf, Vec<File>) {
-        let d = dir(&format!("sweep{m}"));
-        let out = d.join("sign");
-        // m other files, and m working directories of running builds, which stay.
-        let locks = (0..m)
-            .map(|i| {
-                std::fs::write(d.join(format!("note{i}")), b"").unwrap();
-                held(&left(&out, 1, u32::try_from(i).unwrap()))
-            })
-            .collect();
-        (out, locks)
-    };
-    let (small, large) = (made(n), made(FACTOR * n));
-    scaling::check("the sweep of a directory of n entries", n, |m| {
-        let out = if m == n { &small.0 } else { &large.0 };
-        sweep(out);
-    });
-    assert_eq!(
-        working(large.0.parent().unwrap(), &large.0).len(),
-        FACTOR * n
-    );
 }

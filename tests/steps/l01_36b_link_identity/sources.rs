@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 
 use zed_native::link::build_id;
 use zed_native::sources;
-use zed_tests::scaling::{self, FACTOR};
 
 use super::dir;
 
@@ -22,7 +21,7 @@ fn put(path: &Path, text: &str) {
 
 /// The till's workspace, written in `d` over what an earlier run left, with `n` modules in `prices`; returns the
 /// directory of the crate `till`.
-fn till(d: &Path, n: usize) -> PathBuf {
+pub(super) fn till(d: &Path, n: usize) -> PathBuf {
     put(
         &d.join("Cargo.toml"),
         "[workspace]\nmembers = [\"till\", \"prices\", \"receipt\", \"stock\"]\n\n\
@@ -80,7 +79,7 @@ fn till(d: &Path, n: usize) -> PathBuf {
 }
 
 /// The hash of the sources of the crate in `krate`.
-fn hash(krate: &Path) -> [u8; 32] {
+pub(super) fn hash(krate: &Path) -> [u8; 32] {
     sources::of(krate).unwrap().hash
 }
 
@@ -210,14 +209,4 @@ fn a_missing_source_directory_is_named() {
         why.starts_with(&format!("{}: ", d.join("register/src").display())),
         "{why}"
     );
-}
-
-#[test]
-fn the_hash_of_the_sources_scales() {
-    let n = 40;
-    let trees = scaling::inputs(n, |m| till(&dir(&format!("sources-scaling-{m}")), m));
-    assert_eq!(trees.len(), 2, "sizes {n} and {}", FACTOR * n);
-    scaling::check(&format!("the sources of a crate of {n} modules"), n, |m| {
-        std::hint::black_box(hash(&trees[&m]));
-    });
 }

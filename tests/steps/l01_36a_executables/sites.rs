@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 
 use zed_tests::kernel::beyond_machine;
-use zed_tests::scaling;
 use zedc::zir::lower::{lower, lower_sited};
 use zedc::zir::text::print;
 
@@ -251,7 +250,7 @@ fn a_node_two_expressions_share_takes_the_first_site() {
 }
 
 /// A program whose `main` joins `n` strings in turn, laid out with `pad` before each line.
-fn chain(n: usize, pad: &str) -> String {
+pub(super) fn chain(n: usize, pad: &str) -> String {
     let mut src = format!("main(m: MainArgs) {{\n{pad}s0 = String(m.args);\n");
     for k in 1..=n {
         src += &format!("{pad}s{k} = s{} ++ \"x\";\n", k - 1);
@@ -268,7 +267,8 @@ fn the_sites_change_neither_the_address_nor_the_zir_text() {
         zedc::run::load(one.as_bytes()).unwrap(),
         zedc::run::load(two.as_bytes()).unwrap(),
     );
-    assert!(!p.sites().is_empty());
+    // At least one site a join, as `bench::loading_with_sites_scales` checks at its sizes.
+    assert!(p.sites().len() >= 3);
     assert_eq!(p.address().unwrap(), q.address().unwrap());
     let plain = print(&lower(&p.term()).unwrap());
     let (g, sites) = lower_sited(&p.term(), Some(p.sites())).unwrap();
@@ -277,34 +277,14 @@ fn the_sites_change_neither_the_address_nor_the_zir_text() {
     assert_eq!(print(&h), plain);
     assert_eq!(sites.len(), other.len());
     assert!(sites.iter().any(Option::is_some));
+    // As `bench::lowering_with_sites_scales` checks at its sizes: at least a site a join, and
+    // fewer than four a join and 50 more.
+    assert!(
+        sites.len() >= 3 && sites.len() < 4 * 3 + 50,
+        "{}",
+        sites.len()
+    );
     assert_ne!(sites, other);
     // Lowered with no sites, a graph has no table.
     assert_eq!(lower_sited(&p.term(), None).unwrap().1, []);
-}
-
-#[test]
-fn lowering_with_sites_scales() {
-    let n = 200;
-    let programs = scaling::inputs(n, |m| zedc::run::load(chain(m, "    ").as_bytes()).unwrap());
-    let terms = scaling::inputs(n, |m| programs[&m].term());
-    scaling::check("lowering n joins with their sites", n, |m| {
-        let (g, sites) = lower_sited(&terms[&m], Some(programs[&m].sites())).unwrap();
-        assert!(
-            sites.len() >= m && sites.len() < 4 * m + 50,
-            "{}",
-            sites.len()
-        );
-        drop(g);
-    });
-}
-
-#[test]
-fn loading_with_sites_scales() {
-    // Elaboration marks each node with its site once and the table is frozen in one walk.
-    let n = 200;
-    let sources = scaling::inputs(n, |m| chain(m, "    "));
-    scaling::check("loading n joins, with their sites", n, |m| {
-        let p = zedc::run::load(sources[&m].as_bytes()).unwrap();
-        assert!(p.sites().len() >= m);
-    });
 }

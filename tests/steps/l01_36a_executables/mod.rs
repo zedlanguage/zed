@@ -9,11 +9,11 @@
 // `build_binary`, since only a test of that package can name the zedc executable.
 mod agreement;
 mod atoms;
+mod bench;
 mod minmax;
 mod mul_edges;
 mod one_engine;
 mod runtime;
-mod scaling;
 mod sites;
 
 pub(crate) use zed_tests::step_helpers::l01_36a_executables::{

@@ -12,7 +12,6 @@ use object::{
     Architecture, BinaryFormat, Endianness, SectionKind, SymbolFlags, SymbolKind, SymbolScope,
 };
 use zed_native::link::{BUILD, SECTION, Toolchain, build, build_id, runtime_of};
-use zed_tests::scaling::{self, FACTOR};
 
 use super::dir;
 
@@ -49,7 +48,7 @@ fn archive(symbols: &[Vec<u8>], member: &[u8]) -> Vec<u8> {
 
 /// An ELF object file defining `symbols` in its text section and, given a build, holding it in
 /// `.zed_native.build` under `BUILD`'s symbol.
-fn object_file(symbols: &[Vec<u8>], build: Option<&[u8]>) -> Vec<u8> {
+pub(super) fn object_file(symbols: &[Vec<u8>], build: Option<&[u8]>) -> Vec<u8> {
     let mut o = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
     let text = o.section_id(StandardSection::Text);
     o.append_section_data(text, &[0xc3], 1);
@@ -75,7 +74,7 @@ fn object_file(symbols: &[Vec<u8>], build: Option<&[u8]>) -> Vec<u8> {
 }
 
 /// A runtime library holding the build `id`, its index naming `others` before `BUILD`.
-fn library(others: &[Vec<u8>], id: &[u8]) -> Vec<u8> {
+pub(super) fn library(others: &[Vec<u8>], id: &[u8]) -> Vec<u8> {
     let mut symbols = others.to_vec();
     symbols.push(BUILD_SYMBOL.to_vec());
     archive(&symbols, &object_file(&[], Some(id)))
@@ -90,7 +89,7 @@ fn changed(id: &[u8], at: usize) -> Vec<u8> {
 }
 
 /// Another build than `id`: the same features and dependencies, other compiler flags.
-fn of_other_flags(id: &[u8]) -> Vec<u8> {
+pub(super) fn of_other_flags(id: &[u8]) -> Vec<u8> {
     changed(id, id.len() - 1)
 }
 
@@ -232,36 +231,4 @@ fn a_file_without_the_section_is_an_error_naming_it() {
             exe.display()
         ))
     );
-}
-
-/// Finding the library reads the executable's section headers and each library's symbol
-/// index once, and only the member that defines `BUILD`: linear in the symbols of the
-/// executable and of the libraries' indexes.
-#[test]
-fn finding_the_library_scales() {
-    let n = 20_000;
-    let id = build_id(&std::env::current_exe().unwrap()).unwrap();
-    // Each file of a size, made before the runs are measured: an object file of m symbols
-    // holding the build, a library of another build and one of this build, each indexing
-    // m - 1 other symbols before `BUILD`.
-    let made = |m: usize| -> (PathBuf, PathBuf) {
-        let d = dir(&format!("scaling{m}"));
-        let symbols: Vec<Vec<u8>> = (1..m)
-            .map(|i| format!("_RNvNtCs1b1S38cFQTP_10zed_native4link1f{i}").into_bytes())
-            .collect();
-        let exe = d.join("exe.o");
-        std::fs::write(&exe, object_file(&symbols, Some(&id))).unwrap();
-        std::fs::write(
-            d.join("libzed_native-0.a"),
-            library(&symbols, &of_other_flags(&id)),
-        )
-        .unwrap();
-        std::fs::write(d.join("libzed_native-1.a"), library(&symbols, &id)).unwrap();
-        (exe, d)
-    };
-    let (small, large) = (made(n), made(FACTOR * n));
-    scaling::check("finding the runtime library among n symbols", n, |m| {
-        let (exe, d) = if m == n { &small } else { &large };
-        assert_eq!(runtime_of(exe, d), Ok(d.join("libzed_native-1.a")));
-    });
 }

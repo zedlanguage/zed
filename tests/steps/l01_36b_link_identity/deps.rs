@@ -9,7 +9,6 @@ use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use zed_native::link::{Inputs, Record, Toolchain, dependencies, recorded};
-use zed_tests::scaling::{self, FACTOR};
 
 use super::{Link, dir, executable, link, script, sign, toolchain};
 
@@ -380,43 +379,6 @@ fn a_linker_that_writes_no_build_id_is_refused() {
             driver.display()
         )
     );
-}
-
-#[test]
-fn the_files_a_link_read_are_hashed_in_linear_time() {
-    // n files of 64 bytes, each listed twice and once by a second path, as a linker lists a
-    // library it reads more than once.
-    let n = 1024;
-    let d = dir("scaling_inputs");
-    let paths: Vec<PathBuf> = (0..FACTOR * n)
-        .map(|k| {
-            let p = d.join(format!("lib{k}.a"));
-            std::fs::write(&p, [k as u8; 64]).unwrap();
-            p
-        })
-        .collect();
-    let lists = scaling::inputs(n, |m| {
-        let mut list = b"out: \\\n".to_vec();
-        for p in &paths[..m] {
-            for path in [
-                p.clone(),
-                p.clone(),
-                d.join(".").join(p.file_name().unwrap()),
-            ] {
-                list.extend_from_slice(b"  ");
-                list.extend_from_slice(path.as_os_str().as_encoded_bytes());
-                list.extend_from_slice(b" \\\n");
-            }
-        }
-        list.extend_from_slice(b"  ");
-        list.extend_from_slice(paths[0].as_os_str().as_encoded_bytes());
-        list.push(b'\n');
-        list
-    });
-    scaling::check("the inputs of a link that read n files", n, |m| {
-        let inputs = Inputs::of(dependencies(&lists[&m]), &[]).unwrap();
-        assert_eq!(inputs.paths.len(), m);
-    });
 }
 
 /// An output may have any name, those the build once gave its object file and its other files

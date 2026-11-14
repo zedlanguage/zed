@@ -8,6 +8,7 @@
 
 #![cfg(target_os = "linux")]
 
+mod bench;
 mod cache;
 mod deps;
 mod identity;

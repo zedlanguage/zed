@@ -1,11 +1,10 @@
 //! The identity of a toolchain costs the same for every build: two runs of the driver, which
 //! do no work, and one hash of the runtime library. Only the object file's hash grows with
-//! the program, linearly.
+//! the program, linearly (`bench.rs`).
 
 use std::path::Path;
 
 use zed_native::link::Toolchain;
-use zed_tests::scaling::{self, FACTOR};
 
 use super::{Link, dir, link, script, toolchain};
 
@@ -26,9 +25,11 @@ fn runs(log: &Path) -> Vec<String> {
     words.lines().map(str::to_string).collect()
 }
 
-#[test]
-fn a_build_runs_the_driver_the_same_times_at_every_size() {
-    let d = dir("scaling");
+/// Builds a price list of each size in `sizes` twice, in the directory of test `name`, with a
+/// driver that logs its runs: each build runs the driver for its two reports and no more, and
+/// a build that links runs it once more, to link.
+pub(super) fn builds_run_the_driver_the_same_times(name: &str, sizes: &[usize]) {
+    let d = dir(name);
     let log = d.join("driver.log");
     let logging = d.join("cc-logging");
     script(
@@ -43,8 +44,7 @@ fn a_build_runs_the_driver_the_same_times_at_every_size() {
         ..toolchain()
     };
     runs(&log);
-    let n = 40;
-    for m in [n, FACTOR * n] {
+    for &m in sizes {
         let src = d.join(format!("prices{m}.zed"));
         std::fs::write(&src, price_list(m)).unwrap();
         let out = d.join(format!("prices{m}"));
@@ -68,13 +68,6 @@ fn a_build_runs_the_driver_the_same_times_at_every_size() {
 }
 
 #[test]
-fn the_key_of_an_object_file_scales() {
-    // Only the hash of the object file grows with the program; it allocates nothing.
-    let n = 1 << 20;
-    let tools = zed_native::link::Identity::of(&toolchain()).unwrap();
-    let (small, large) = (vec![7u8; n], vec![7u8; FACTOR * n]);
-    scaling::check_instructions_only("the key of an object file of n bytes", n, 1, |m| {
-        let object = if m == n { &small } else { &large };
-        std::hint::black_box(tools.key(object, &[]));
-    });
+fn a_build_runs_the_driver_for_its_reports_and_its_link() {
+    builds_run_the_driver_the_same_times("driver_runs", &[3]);
 }
