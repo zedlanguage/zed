@@ -2754,22 +2754,21 @@ fn r3_all_probe_and_family_orders() {
     ];
     let mut count = 0;
     for case in cases {
-        for n in [3 + pick.below(4)] {
-            let tag = format!("_order3_{case}_{n}");
-            R3_REVERSE.with(|x| x.set(false));
-            let a = rfx_case(case, n, &tag);
-            R3_REVERSE.with(|x| x.set(true));
-            let b = rfx_case(case, n, &tag);
-            R3_REVERSE.with(|x| x.set(false));
-            Type::forget_emptiness();
-            let av = a.verdict();
-            let bv = b.verdict();
-            assert_eq!(av, bv, "probe definition/operand order {case} {n}");
-            Type::forget_emptiness();
-            assert_eq!(b.verdict(), bv);
-            assert_eq!(a.verdict(), av);
-            count += 1;
-        }
+        let n = 3 + pick.below(4);
+        let tag = format!("_order3_{case}_{n}");
+        R3_REVERSE.with(|x| x.set(false));
+        let a = rfx_case(case, n, &tag);
+        R3_REVERSE.with(|x| x.set(true));
+        let b = rfx_case(case, n, &tag);
+        R3_REVERSE.with(|x| x.set(false));
+        Type::forget_emptiness();
+        let av = a.verdict();
+        let bv = b.verdict();
+        assert_eq!(av, bv, "probe definition/operand order {case} {n}");
+        Type::forget_emptiness();
+        assert_eq!(b.verdict(), bv);
+        assert_eq!(a.verdict(), av);
+        count += 1;
     }
     for (all, one) in [
         (Type::int(), lit(1)),
@@ -2863,7 +2862,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
     // Every case to n = 4, one in two at n = 5 and one in four at n = 6, drawn afresh, and 40
     // random trials from the printed seed (author P169): every case and 120 trials from one
     // fixed seed, in 2 s to 3.4 s, until TEST-bench-move-l0123.
-    const KEEP: [usize; 7] = [1, 1, 1, 1, 1, 2, 4];
+    let keep = |n: usize| [1, 1, 1, 1, 1, 2, 4][n];
     let (mut pick, seed) = Rng::fresh("codex R3 variants");
     let int_ty = Type::int();
     let one_ty = lit(1);
@@ -2898,7 +2897,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
                 for m in 1..=n + 2 {
                     for split in [false, true] {
                         seq += 1;
-                        if pick.below(KEEP[n]) != 0 {
+                        if pick.below(keep(n)) != 0 {
                             continue;
                         }
                         Type::forget_emptiness();
@@ -2933,7 +2932,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
     for n in 2..=6 {
         for m in 1..=n + 1 {
             seq += 1;
-            if pick.below(KEEP[n]) != 0 {
+            if pick.below(keep(n)) != 0 {
                 continue;
             }
             Type::forget_emptiness();
@@ -2952,7 +2951,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
         for far in [false, true] {
             for which in ["chain", "groups", "one"] {
                 seq += 1;
-                if pick.below(KEEP[n]) != 0 {
+                if pick.below(keep(n)) != 0 {
                     continue;
                 }
                 Type::forget_emptiness();
@@ -2985,7 +2984,7 @@ fn codex_r3_variants_agree_with_the_oracle() {
         for s1 in [None, Some(1), Some(n / 2), Some(n)] {
             for s2 in [None, Some(1), Some(n - 1), Some(n)] {
                 seq += 1;
-                if pick.below(KEEP[n]) != 0 {
+                if pick.below(keep(n)) != 0 {
                     continue;
                 }
                 Type::forget_emptiness();
@@ -4136,6 +4135,9 @@ fn r5_sat(k: usize, cls: &[Vec<(usize, bool)>]) -> bool {
     })
 }
 
+/// One clause: its literals, each a variable and whether it is negated.
+type Clause = Vec<(usize, bool)>;
+
 /// The clauses of `wmin..=3` literals on distinct variables of `1..=k`, and every set of
 /// `mlo..=mhi` distinct clauses, as indices into the clauses.
 fn r5_sat_formulas(
@@ -4143,8 +4145,8 @@ fn r5_sat_formulas(
     mlo: usize,
     mhi: usize,
     wmin: usize,
-) -> (Vec<Vec<(usize, bool)>>, Vec<Vec<usize>>) {
-    let mut all: Vec<Vec<(usize, bool)>> = vec![];
+) -> (Vec<Clause>, Vec<Vec<usize>>) {
+    let mut all: Vec<Clause> = vec![];
     for vs in 1u32..1 << k {
         let vars: Vec<usize> = (1..=k).filter(|i| vs >> (i - 1) & 1 == 1).collect();
         if vars.len() < wmin || vars.len() > 3 {
