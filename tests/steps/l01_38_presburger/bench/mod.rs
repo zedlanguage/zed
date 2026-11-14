@@ -1,10 +1,9 @@
 //! The benchmarks of step L1.38, run by `tools/run_tests.sh --bench` and left out of its default
 //! run (TEST-bench-split, author P169). Each file holds the tests that measured work at two sizes
-//! in the file of the same name one level up, which keeps the families they build. A small
-//! instance of the check each makes besides the ratio is not yet in a correctness test for every
-//! family: those of `one_scope::questions_scale_unit` are
-//! (`one_scope::the_chains_of_the_benchmarks_have_no_question_refused_at_small_sizes`), and the
-//! rest are listed in plan row TEST-bench-cover-l0138 (author P170).
+//! in the file of the same name one level up, which keeps the families they build. The check each
+//! makes besides the ratio also runs at small sizes in a correctness test of that file, named
+//! `the_families_of_the_benchmarks_are_answered_at_small_sizes` or after the families it checks
+//! (TEST-bench-cover-l0138, author P170).
 
 mod canonical;
 mod carrier;

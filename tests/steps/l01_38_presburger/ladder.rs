@@ -1124,14 +1124,83 @@ pub(super) fn open_side_chain_scales(
     let measure = move || {
         scaling::check(what, n, |k| {
             let (p, g) = &built[&k];
-            presburger::hull_sides_asked();
-            let e = entails(p, g);
-            let asked = presburger::hull_sides_asked();
-            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            let asked = proved_with_sides_asked(p, g);
             assert!(!no_side || asked == 0, "{k}: {asked} sides asked");
         });
     };
     scaling::on_a_thread(8 << 20, measure);
+}
+
+/// `p` entails `g`, proved; the number of sides of a hull asked of the solver on the way.
+pub(super) fn proved_with_sides_asked(p: &Relation, g: &Relation) -> u64 {
+    presburger::hull_sides_asked();
+    let e = entails(p, g);
+    let asked = presburger::hull_sides_asked();
+    assert!(matches!(e, Entailment::Proved(_)), "{e}");
+    asked
+}
+
+/// The link of [`open_side_chain`] whose factor bounds pass from row to row: no side is asked.
+pub(super) fn link_with_bounds_passed_on(i: usize) -> String {
+    format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000")
+}
+
+/// [`link_with_bounds_passed_on`] with `b{i} + c{i} >= z{i} - 100`: the two factor bounds
+/// wait on each other, and no side is asked.
+pub(super) fn link_with_bounds_waiting(i: usize) -> String {
+    format!(
+        "b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000 \
+         && b{i} + c{i} >= z{i} - 100"
+    )
+}
+
+/// The link of [`open_side_chain`] whose factors keep open sides, each asked of the solver.
+pub(super) fn link_with_open_sides(i: usize) -> String {
+    format!("x{i} - b{i} - c{i} >= 4 && c{i} >= 0 && b{i} * c{i} >= -1000000")
+}
+
+/// [`product_chain_with`] with `abs(x{i} - y{i}) <= z{i} + 1` on each of the `k` links: k
+/// disjunctions in the one part.
+pub(super) fn product_chain_with_abs(k: usize) -> (Relation, Relation) {
+    let extra: Vec<String> = (0..k)
+        .map(|i| format!("abs(x{i} - y{i}) <= z{i} + 1"))
+        .collect();
+    product_chain_with(k, &extra)
+}
+
+/// The checks of the benchmarks of `bench/ladder.rs` at small sizes, on a thread of the
+/// benchmarks' 8 MiB stack: each verdict, the sides asked where the benchmark counts them, and
+/// the relations of the shared divisors built.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    scaling::on_a_thread(8 << 20, || {
+        let proved = |(p, g): &(Relation, Relation)| proved_with_sides_asked(p, g);
+        for k in [1, 2, 4] {
+            proved(&divisors(k));
+            proved(&guarded_divisors(k));
+            let (p, g) = remainder_chain("n >= 1", k);
+            assert_eq!(kind(&entails(&p, &g)), "proved", "{k}");
+            let (p, g) = remainder_chain("true", k);
+            assert_eq!(kind(&entails(&p, &g)), "refuted", "{k}");
+            proved(&product_sum(k));
+            proved(&product_chain_with_abs(k));
+            proved(&one_sum_on_factors(k));
+            proved(&one_sum_of_atoms_in_no_product(k));
+            assert!(proved(&one_sum_joins(k)) > 0, "{k}: no side asked");
+            for link in [link_with_bounds_passed_on, link_with_bounds_waiting] {
+                assert_eq!(proved(&open_side_chain(k, link)), 0, "{k}");
+            }
+            proved(&open_side_chain(k, link_with_open_sides));
+            ok_relation(&met_divisors(k));
+            ok_relation(&guarded_arms(k));
+        }
+        // Each fails where `n = 0`; a verdict is checked against the interpreter.
+        for src in [met_divisors(2), guarded_arms(2)] {
+            assert!(!true_on_window("ok(x, y, n) = true;", &src), "{src}");
+            let e = checked("ok(x, y, n) = true;", &src);
+            assert!(!matches!(e, Entailment::Proved(_)), "{src}: {e}");
+        }
+    });
 }
 
 /// The premise and the goal of [`open_side_chain`] with the links `x{i} - b{i} - c{i} >= 4`,

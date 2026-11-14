@@ -2,7 +2,6 @@
 
 use crate::disj_groups::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, project_each};
 
 #[test]
 fn the_middle_of_a_difference_chain_whose_disjuncts_hold_is_projected_in_n_log_n() {
@@ -82,11 +81,7 @@ fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in
             &format!("a chain of removals each needing the one before, flipped {flipped}"),
             110,
             1,
-            |m| {
-                let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
-                let s = r.0[0].clone().expect("a hull");
-                assert!(s.contains(0) && !s.contains(-1) && !s.contains(1), "{s:?}");
-            },
+            |m| assert_cascade_middle(&inputs[&m], m),
         );
     }
 }
@@ -95,21 +90,14 @@ fn the_middle_of_a_chain_of_removals_each_needing_the_one_before_is_projected_in
 fn the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n() {
     let inputs = scaling::inputs(820, case_chain);
     scaling::check("a chain whose lower end only cases give", 820, |m| {
-        let mid = m / 2;
-        let r = project_each(&inputs[&m], &[Atom::Sym(format!("y{mid:05}").into())])
-            .expect("a projection");
-        let s = r.0[0].clone().expect("a hull");
-        assert!(
-            s.contains(0) && !s.contains(-1) && s.contains(1_000_000),
-            "{s:?}"
-        );
+        assert_case_chain_middle(&inputs[&m], m);
     });
 }
 
 mod row_sums {
 
     use zed_tests::scaling::{self};
-    use zedc::store::presburger::{Formula, decide, project_each};
+    use zedc::store::presburger::decide;
 
     use crate::disj_groups::row_sums::*;
 
@@ -128,11 +116,7 @@ mod row_sums {
             w32 as f64 / w16 as f64
         );
         assert!(w32 < 1 << 32, "{w32}");
-        let p = project_each(&f32, &[v(0), v(31)]).expect("a projection");
-        assert!(
-            p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
-            "{p:?}"
-        );
+        assert_every_hull_non_empty(&f32, &[v(0), v(31)]);
     }
 
     /// `overlap_rows` at k = 64 and 512, decided and projected onto its first, middle and last
@@ -145,11 +129,7 @@ mod row_sums {
             assert_eq!(decide(&inputs[&k]), Ok(true));
         });
         scaling::check_order("two overlapping sums projected", 1000, 1, |k| {
-            let p = project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
-            assert!(
-                p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
-                "{p:?}"
-            );
+            assert_every_hull_non_empty(&inputs[&k], &ends_and_middle(k));
         });
     }
 
@@ -173,12 +153,7 @@ mod row_sums {
             1800,
             1,
             |k| {
-                let p =
-                    project_each(&inputs[&k], &[v(0), v(k / 2), v(k - 1)]).expect("a projection");
-                assert!(
-                    p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
-                    "{p:?}"
-                );
+                assert_every_hull_non_empty(&inputs[&k], &ends_and_middle(k));
             },
         );
     }
@@ -192,8 +167,7 @@ mod row_sums {
             assert_eq!(decide(&inputs[&m]), Ok(true));
         });
         scaling::check_order("a chain of overlapping sums projected", 1200, 1, |m| {
-            let r = project_each(&inputs[&m], &[v(3 * m / 2)]).expect("a projection");
-            assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
+            assert_every_hull_non_empty(&inputs[&m], &[v(3 * m / 2)]);
         });
     }
 
@@ -210,34 +184,13 @@ mod row_sums {
     /// `row_sums::tests::each_branch_of_the_race`.
     #[test]
     fn each_way_the_race_goes_costs_at_most_a_little_more_than_the_solver_alone() {
-        let decided = |f: &Formula| decide(f).ok();
-        let projected = |f: &Formula| {
-            project_each(f, &[v(0)]).map(|e| e.0[0].as_ref().map(|s| s.is_empty()).ok())
-        };
         let ((both, with), (alone, without)) = both_and_alone(&unreachable(10).formula(), decided);
         assert_eq!((with, without), (Some(false), None));
         assert!(both * 20 < alone, "first run: {both} against {alone}");
         let ((both, with), (alone, without)) = both_and_alone(&unreachable(16).formula(), decided);
         assert_eq!((with, without), (Some(false), None));
         assert!(both * 20 < alone, "first run: {both} against {alone}");
-        for (what, f) in [
-            (
-                "the solver first",
-                Case {
-                    ranges: vec![vec![(0, 100_000), (200_000, 300_000)]; 8],
-                    rows: vec![(vec![1; 8], 200_003, true)],
-                }
-                .formula(),
-            ),
-            (
-                "a bound past u64",
-                Case {
-                    ranges: vec![vec![(0, 1_000_000_000), (2_000_000_000, 3_000_000_000)]; 8],
-                    rows: vec![(vec![1; 8], 1_000_000_007, true)],
-                }
-                .formula(),
-            ),
-        ] {
+        for (what, f) in solver_cases() {
             let ((both, with), (alone, without)) = both_and_alone(&f, projected);
             assert_eq!(with, without, "{what}");
             assert!(

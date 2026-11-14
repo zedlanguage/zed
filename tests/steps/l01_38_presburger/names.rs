@@ -693,34 +693,102 @@ fn a_merged_column_of_either_sign_is_left_unmerged() {
 /// copy first checked to give the answer of one, so that neither size is answered by a quick
 /// refusal. Each row is written over all `n k` variables, so building the copies costs O(k²).
 pub(super) fn scales_over_copies(what: &str, base: &[Row], n: usize, k: usize) {
-    let copies = |m: usize| {
-        let rows: Vec<Row> = (0..m)
-            .flat_map(|p| {
-                base.iter().map(move |r| {
-                    let mut c = vec![0; n * m];
-                    c[n * p..n * p + n].copy_from_slice(&r.c);
-                    Row {
-                        c,
-                        k: r.k,
-                        eq: r.eq,
-                    }
-                })
-            })
-            .collect();
-        formula(&rows, &(0..n * m).collect::<Vec<_>>())
-    };
-    let one = answer(&copies(1));
-    let (small, large) = (copies(k), copies(k * scaling::FACTOR));
-    eprintln!("{what}, one copy: {one}");
-    assert_eq!(
-        (answer(&small), answer(&large)),
-        (one.clone(), one),
-        "{what}"
-    );
+    let (small, large) = (copies(base, n, k), copies(base, n, k * scaling::FACTOR));
+    assert_answered_as_one_copy(what, base, n, [&small, &large]);
     scaling::check_order(what, k, 1, |m| {
         let f = if m == k { &small } else { &large };
         let _ = std::hint::black_box(decide(f));
     });
+}
+
+/// `m` disjoint copies of `base`, a system over `n` variables, each row written over all `n m`
+/// variables.
+pub(super) fn copies(base: &[Row], n: usize, m: usize) -> Formula {
+    let rows: Vec<Row> = (0..m)
+        .flat_map(|p| {
+            base.iter().map(move |r| {
+                let mut c = vec![0; n * m];
+                c[n * p..n * p + n].copy_from_slice(&r.c);
+                Row {
+                    c,
+                    k: r.k,
+                    eq: r.eq,
+                }
+            })
+        })
+        .collect();
+    formula(&rows, &(0..n * m).collect::<Vec<_>>())
+}
+
+/// The check of [`scales_over_copies`]: each of `fs`, copies of `base`, has the answer of one
+/// copy.
+pub(super) fn assert_answered_as_one_copy<const K: usize>(
+    what: &str,
+    base: &[Row],
+    n: usize,
+    fs: [&Formula; K],
+) {
+    let one = answer(&copies(base, n, 1));
+    eprintln!("{what}, one copy: {one}");
+    for f in fs {
+        assert_eq!(answer(f), one, "{what}");
+    }
+}
+
+/// `x + y == 5`, `x, y >= 0`: an equality kept as rows, with a point.
+pub(super) fn tied_equalities() -> Vec<Row> {
+    vec![eq(&[1, 1], -5), ge(&[1, 0], 0), ge(&[0, 1], 0)]
+}
+
+/// The check of the benchmark of projections of [`star_with_choices`]: no disjunct is shown to
+/// have no point, and the hulls of a leaf and a hub are those of the star alone, a leaf in
+/// `[0, 23]` and `h1` in `[0, 5]`.
+pub(super) fn assert_star_hulls(f: &Formula, syms: &[Atom]) {
+    let (each, skipped) = project_each(f, syms).unwrap();
+    let hulls: Vec<String> = (each.iter())
+        .map(|s| s.as_ref().unwrap().to_string())
+        .collect();
+    assert_eq!(hulls, ["[0..=23]", "[0..=5]"]);
+    assert_eq!(skipped, Vec::new());
+}
+
+/// A leaf and a hub of [`star_with_choices`], the names [`assert_star_hulls`] projects.
+pub(super) fn leaf_and_hub() -> [Atom; 2] {
+    let v = |i: usize| Atom::Sym(format!("v{i}").into());
+    [v(2), v(0)]
+}
+
+/// The checks of the benchmarks of `bench/names.rs` at small sizes: copies answered as one copy,
+/// each family decided true, and its point found where the benchmark asks for one.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    for (what, base, n) in [
+        ("copies of a tie", claude5(), 5),
+        ("copies of Codex's system", codex6(), 6),
+        ("copies of tied equalities", tied_equalities(), 2),
+    ] {
+        let fs = [1, 2, 3, 8].map(|m| copies(&base, n, m));
+        assert_answered_as_one_copy(what, &base, n, [&fs[0], &fs[1], &fs[2], &fs[3]]);
+    }
+    let point = |f: &Formula| {
+        let m = satisfiable(f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    };
+    for n in [2, 5, 16, 40] {
+        assert_eq!(decide(&one_class_of_equalities(n)), Ok(true), "{n}");
+        assert_eq!(decide(&star(n)), Ok(true), "{n}");
+        assert_eq!(decide(&chain_with_disjunctions(n, n)), Ok(true), "{n}");
+        let f = chain_with_disjunctions(n, 4);
+        assert_eq!(decide(&f), Ok(true), "{n}");
+        point(&f);
+        let f = star_with_choices(n);
+        assert_eq!(decide(&f), Ok(true), "{n}");
+        point(&f);
+        assert_star_hulls(&f, &leaf_and_hub());
+        let f = separate_pairs(n);
+        assert_eq!(decide(&f), Ok(true), "{n}");
+        point(&f);
+    }
 }
 
 /// `n` variables, each with a value in `[-2, 2]`, joined into one class by the equalities

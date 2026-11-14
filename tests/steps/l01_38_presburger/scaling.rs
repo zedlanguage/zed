@@ -699,13 +699,29 @@ const DECIDED: [Decided; 11] = [
     ("rows of two unit coefficients", utvpi, Ok(true)),
     ("an odd cycle", odd_cycle, Ok(false)),
     ("disjoint copies of Pugh's example", pugh_pairs, Ok(false)),
-    ("a chain into a refused block", chain_into_block, Err(Refusal::Growth)),
+    (
+        "a chain into a refused block",
+        chain_into_block,
+        Err(Refusal::Growth),
+    ),
     ("random rows", random_unit_rows_four_each, Ok(true)),
-    ("Pugh's example in a chain", pugh_in_a_chain, Err(Refusal::Shadows)),
+    (
+        "Pugh's example in a chain",
+        pugh_in_a_chain,
+        Err(Refusal::Shadows),
+    ),
     ("a hub in one row per block", hub_rows, Err(Refusal::Growth)),
-    ("a crossing after the hub's blocks", hub_rows_with_a_crossing, Ok(false)),
+    (
+        "a crossing after the hub's blocks",
+        hub_rows_with_a_crossing,
+        Ok(false),
+    ),
     ("copies split twice", split_twice_copies, Ok(true)),
-    ("a chain into a block split twice", split_twice_in_a_chain, Ok(true)),
+    (
+        "a chain into a block split twice",
+        split_twice_in_a_chain,
+        Ok(true),
+    ),
 ];
 
 /// The checks of the benchmarks of `bench/scaling.rs` at small sizes: each family decided as

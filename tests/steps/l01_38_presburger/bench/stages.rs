@@ -168,7 +168,7 @@ fn the_union_family_scales_through_decide() {
         "the union family through decide, by k",
         1200,
         Ok(true),
-        |k| formula(&union_family(k, false, false).1),
+        union_formula,
     );
 }
 
@@ -180,7 +180,7 @@ fn the_joined_union_family_scales_through_decide() {
         "the joined union family through decide, by k",
         810,
         Ok(true),
-        |k| formula(&union_family(k, true, true).1),
+        joined_union_formula,
     );
 }
 

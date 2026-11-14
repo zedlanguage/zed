@@ -1,41 +1,17 @@
 //! The benchmarks of `one_scope.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::one_scope::*;
-use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 #[test]
 fn the_questions_of_a_chain_of_calls_scale() {
     // `step{i}(x) = step{i-1}(x: x) + i`, the chain LOAD-chain found (5.4 s at 100 functions
     // and 17.7 s at 200 when each body was closed over its cone). The questions are timed
     // alone, on units elaborated before the timing.
-    let unit = |n: usize| {
-        let mut src = String::from("step0(x: int) = x;\n");
-        for i in 1..n {
-            src.push_str(&format!("step{i}(x: int) = step{}(x: x) + {i};\n", i - 1));
-        }
-        src
-    };
-    let n = 1800;
-    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let src = unit(m);
-            (
-                m,
-                (
-                    zed_tests::deep::statements(&src),
-                    zedc::lex::lex_fence(&src).unwrap(),
-                    elab(&src).unwrap(),
-                    src,
-                ),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check("the linear questions of a chain of n calls", n, |m| {
-        let (stmts, tokens, unit, src) = &units[&m];
-        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-        assert!(refused.is_empty(), "{refused:?}");
-    });
+    questions_scale_unit(
+        "the linear questions of a chain of n calls",
+        1800,
+        chain_of_calls,
+    );
 }
 
 #[test]
@@ -43,9 +19,7 @@ fn the_questions_of_a_chain_of_tests_scale() {
     // `p{i}(x) = p{i-1}(x: x) && x > i`, the chain of LOAD-chain-share: 62.6 times the bytes
     // for 8 times the functions (100 to 800) when each body translated the chain again, 8.1
     // times when each takes its callee's translation as made for the body before.
-    questions_scale("a chain of tests", 1600, "p0(x: int) = x > 0;\n", |i| {
-        format!("p{i}(x: int) = p{}(x: x) && x > {i};\n", i - 1)
-    });
+    questions_scale("a chain of tests", 1600, a_chain_of_tests());
 }
 
 #[test]
@@ -57,14 +31,7 @@ fn the_questions_of_a_chain_over_two_variables_scale() {
     questions_scale(
         "a chain of tests over two variables",
         1000,
-        "p0(x: int, y: int) = x > y && y >= 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int, y: int) = p{}(x: x, y: y) && x + {i} * y < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_over_two_variables(),
     );
 }
 
@@ -78,8 +45,7 @@ fn the_questions_of_a_chain_defining_auxiliary_variables_scale() {
     questions_scale(
         "a chain of tests defining auxiliary variables",
         1900,
-        "p0(x: int) = x div 3 > 0;\n",
-        |i| format!("p{i}(x: int) = p{}(x: x) && x mod 7 + {i} > 0;\n", i - 1),
+        a_chain_defining_auxiliary_variables(),
     );
 }
 
@@ -93,9 +59,7 @@ fn the_questions_of_a_drifting_chain_scale() {
     questions_scale(
         "a chain whose links extend a callee's point beside the chain",
         390,
-        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
-         p0(x: int) = x > 0;\n",
-        drifting_link,
+        a_drifting_chain(),
     );
 }
 
@@ -108,9 +72,7 @@ fn the_questions_of_a_drifting_disjunctive_chain_scale() {
     questions_scale(
         "a chain whose links extend a callee's point beside a chain of disjunctions",
         340,
-        "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n\
-         p0(x: int) = x > 0;\n",
-        drifting_link,
+        a_drifting_disjunctive_chain(),
     );
 }
 
@@ -122,14 +84,7 @@ fn the_questions_of_a_chain_moving_its_argument_scale() {
     questions_scale(
         "a chain of tests moving the argument",
         1700,
-        "p0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int) = p{}(x: x + 1) && x + {} > 0;\n",
-                i - 1,
-                2 * i
-            )
-        },
+        a_chain_moving_its_argument(),
     );
 }
 
@@ -141,14 +96,7 @@ fn the_questions_of_a_chain_renaming_its_argument_scale() {
     questions_scale(
         "a chain of tests renaming the argument",
         1200,
-        "p0(x: int) = x > 0;\n",
-        |i| {
-            let (own, callee) = if i % 2 == 0 { ("x", "y") } else { ("y", "x") };
-            format!(
-                "p{i}({own}: int) = p{}({callee}: {own}) && {own} > 0 - {i};\n",
-                i - 1
-            )
-        },
+        a_chain_renaming_its_argument(),
     );
 }
 
@@ -161,14 +109,7 @@ fn the_questions_of_a_chain_of_tests_over_a_chain_of_definitions_scale() {
     questions_scale(
         "a chain of tests over a chain of halvings",
         720,
-        "h0(x: int) = x;\np0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && h{i}(x: x) > 0;\n",
-                i - 1,
-                i - 1
-            )
-        },
+        a_chain_over_halvings(),
     );
 }
 
@@ -180,17 +121,7 @@ fn the_questions_of_a_chain_of_tests_over_mixed_definitions_scale() {
     questions_scale(
         "a chain of tests over mixed definitions",
         520,
-        "h0(x: int) = x;\np0(x: int) = x > 0;\n",
-        |i| {
-            let h = i - 1;
-            let op = match i % 4 {
-                0 => format!("h{h}(x: x) div 2"),
-                1 => format!("h{h}(x: x) mod 7 + x"),
-                2 => format!("min(h{h}(x: x), {i}) + 1"),
-                _ => format!("abs(h{h}(x: x)) - x div 3"),
-            };
-            format!("h{i}(x: int) = {op};\np{i}(x: int) = p{h}(x: x) && h{i}(x: x) > 0 - {i};\n")
-        },
+        a_chain_over_mixed_definitions(),
     );
 }
 
@@ -204,14 +135,7 @@ fn the_questions_of_a_chain_of_tests_holding_everywhere_scale() {
     questions_scale(
         "a chain of tests holding everywhere over a chain of halvings",
         420,
-        "h0(x: int) = x;\np0(x: int) = x > 0 || x <= 0;\n",
-        |i| {
-            format!(
-                "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && abs(h{i}(x: x)) >= 0;\n",
-                i - 1,
-                i - 1
-            )
-        },
+        a_chain_holding_everywhere(),
     );
 }
 
@@ -225,13 +149,7 @@ fn separate_tests_over_the_links_of_one_chain_of_definitions_scale() {
     questions_scale(
         "separate tests over one chain of halvings",
         680,
-        "h0(x: int) = x;\nt0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "h{i}(x: int) = h{}(x: x) div 2 + 1;\nt{i}(x: int) = h{i}(x: x) > 0;\n",
-                i - 1
-            )
-        },
+        separate_tests_over_halvings(),
     );
 }
 
@@ -385,38 +303,13 @@ fn separate_tests_over_a_chain_reading_a_new_symbol_at_each_link_scale() {
     // at each link. The symbols of link i's cone are i + 1; a set copied at each link stores
     // O(n^2) atoms in all (Codex measured 26.7 times the bytes from 320 to 2560 links); a
     // persistent set shares its input's tree, O(log n) at each link.
-    use zedc::store::presburger::extend::Extending;
-    use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
-    let defs = |m: usize| -> Vec<Formula> {
-        let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
-        let aux = |i: usize| Lin::atom(Atom::Aux(i as u32));
-        (0..m)
-            .map(|i| {
-                let rhs = if i == 0 {
-                    sym(0)
-                } else {
-                    aux(i - 1).plus(&sym(i))
-                };
-                Formula::And(Shared::new(vec![Formula::Con(Con::eq(&aux(i), &rhs))]))
-            })
-            .collect()
-    };
-    let inputs = zed_tests::scaling::inputs(18000, |m| {
-        let asks: Vec<Formula> = (0..m)
-            .map(|i| Formula::Con(Con::ge(&Lin::atom(Atom::Aux(i as u32)), &Lin::constant(0))))
-            .collect();
-        (defs(m), asks)
-    });
+    let inputs = zed_tests::scaling::inputs(18000, a_chain_reading_a_new_symbol_at_each_link);
     zed_tests::scaling::check(
         "separate tests over a chain reading a new symbol at each link",
         18000,
         |m| {
             let (defs, asks) = &inputs[&m];
-            let mut extending = Extending::new();
-            for f in asks {
-                let a = extending.defined(f, &|n| defs[n as usize].clone());
-                assert_eq!(a.holds, Ok(true));
-            }
+            assert_each_ask_holds(defs, asks);
         },
     );
 }
@@ -428,45 +321,13 @@ fn separate_tests_over_a_chain_reading_a_new_division_pair_at_each_link_scale() 
     // deduplication in `Summaries::syms`, each frame pushed the child `Formula` twice and merged
     // its `i`-element `OrdSet` into itself (14.41 times from 200 to 1600 links, failing the 14.08
     // limit). With `seen_in` per frame, each distinct input is visited once.
-    use zedc::store::presburger::extend::Extending;
-    use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
-    let inputs = zed_tests::scaling::inputs(8800, |m| {
-        let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
-        let q = |i: usize| Lin::atom(Atom::Aux((2 * i) as u32));
-        let r = |i: usize| Lin::atom(Atom::Aux((2 * i + 1) as u32));
-        let defs: Vec<Formula> = (0..m)
-            .flat_map(|i| {
-                let dividend = if i == 0 {
-                    sym(0)
-                } else {
-                    q(i - 1).plus(&r(i - 1)).plus(&sym(i))
-                };
-                let eq = Con::eq(&dividend, &q(i).times(7).plus(&r(i)));
-                let lo = Con::ge(&r(i), &Lin::constant(0));
-                let hi = Con::ge(&Lin::constant(6), &r(i));
-                let d = Formula::And(Shared::new(vec![
-                    Formula::Con(eq),
-                    Formula::Con(lo),
-                    Formula::Con(hi),
-                ]));
-                [d.clone(), d]
-            })
-            .collect();
-        let asks: Vec<Formula> = (0..m)
-            .map(|i| Formula::Con(Con::ge(&q(i), &Lin::constant(0))))
-            .collect();
-        (defs, asks)
-    });
+    let inputs = zed_tests::scaling::inputs(8800, a_chain_reading_a_new_division_pair_at_each_link);
     zed_tests::scaling::check(
         "separate tests over a chain reading a new division pair at each link",
         8800,
         |m| {
             let (defs, asks) = &inputs[&m];
-            let mut extending = Extending::new();
-            for f in asks {
-                let a = extending.defined(f, &|n| defs[n as usize].clone());
-                assert_eq!(a.holds, Ok(true));
-            }
+            assert_each_ask_holds(defs, asks);
         },
     );
 }
@@ -494,32 +355,11 @@ fn separate_tests_over_two_chains_sharing_an_input_scale() {
     // `p{i}(x, y)` that share both input `x` and a functional leaf `x div 7`, after an earlier
     // test numbered `g{m}` first. Before, `Summaries::local` kept at most one summary and unrolled
     // the entire lower-numbered chain into `beside`, O(n^2) with refusals.
-    let inputs = zed_tests::scaling::inputs(30, |m| {
-        let mut src = "g0(x: int) = x;\np0(x: int, y: int) = x + y;\n".to_string();
-        for i in 1..=m {
-            src += &format!("g{i}(x: int) = max(g{}(x: x) div 2, x div 7 - 9);\n", i - 1);
-            src += &format!(
-                "p{i}(x: int, y: int) = if p{}(x: x, y: y) > x div 7 {{ p{}(x: x, y: y) + 1 }} else {{ p{}(x: x, y: y) }};\n",
-                i - 1,
-                i - 1,
-                i - 1
-            );
-        }
-        src += &format!("u(x: int) = g{m}(x: x) < 0;\n");
-        for i in 1..=m {
-            src +=
-                &format!("t{i}(x: int, y: int) = g{i}(x: x) + p{i}(x: x, y: y) < 0 && y == 0;\n");
-        }
-        let stmts = zed_tests::deep::statements(&src);
-        let tokens = zedc::lex::lex_fence(&src).expect("lex");
-        let unit = elab(&src).expect("elab");
-        (src, tokens, stmts, unit)
-    });
-    zed_tests::scaling::check("separate tests over two chains sharing an input", 30, |m| {
-        let (src, tokens, stmts, unit) = &inputs[&m];
-        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-        assert!(refused.is_empty(), "m = {m}: {} refused", refused.len());
-    });
+    questions_scale_unit(
+        "separate tests over two chains sharing an input",
+        30,
+        two_chains_sharing_an_input,
+    );
 }
 
 #[test]
@@ -633,44 +473,10 @@ fn tests_that_forget_deep_and_wide_translations_scale() {
     // all of them is undone (`Tx::forget`, `Tr::truncate`), since the right side `q(x: x)` is
     // the product `x * x * x`, which has no linear term. The next test translates the chains
     // again, so each test makes and undoes about `32n` entries, linear in `n`.
-    let tests = 4;
-    let units: std::collections::BTreeMap<usize, _> = [250, 250 * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let mut src = String::from("q(x: int) = x * x * x;\n");
-            for a in 0..4 {
-                src += &format!("g{a}_0(x: int) = x + {a};\n");
-                for i in 1..m {
-                    src += &format!("g{a}_{i}(x: int) = g{a}_{}(x: x) + {i};\n", i - 1);
-                }
-            }
-            let sum = (0..4)
-                .map(|a| format!("g{a}_{}(x: x)", m - 1))
-                .collect::<Vec<_>>()
-                .join(" + ");
-            for j in 0..tests {
-                src += &format!("t{j}(x: int) = {sum} < q(x: x) + {j};\n");
-            }
-            (
-                m,
-                (
-                    zed_tests::deep::statements(&src),
-                    zedc::lex::lex_fence(&src).unwrap(),
-                    elab(&src).unwrap(),
-                    src,
-                ),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check_order(
+    questions_scale_unit(
         "tests that undo the translation of four chains",
         250,
-        1,
-        |m| {
-            let (stmts, tokens, unit, src) = &units[&m];
-            let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-            assert!(refused.is_empty(), "{refused:?}");
-        },
+        tests_over_four_chains,
     );
 }
 
@@ -696,8 +502,7 @@ fn the_questions_of_a_chain_doubling_its_argument_scale() {
     questions_scale(
         "a chain of tests doubling the argument",
         760,
-        "p0(x: int) = x > 0;\n",
-        |i| format!("p{i}(x: int) = p{}(x: 2 * x) && x < {};\n", i - 1, 1000 * i),
+        a_chain_doubling_its_argument(),
     );
 }
 
@@ -708,8 +513,7 @@ fn the_questions_of_a_chain_negating_its_argument_scale() {
     questions_scale(
         "a chain of tests negating the argument",
         720,
-        "p0(x: int) = x > 0;\n",
-        |i| format!("p{i}(x: int) = p{}(x: 0 - x) && x < {};\n", i - 1, 1000 * i),
+        a_chain_negating_its_argument(),
     );
 }
 
@@ -721,14 +525,7 @@ fn the_questions_of_a_chain_passing_a_constant_scale() {
     questions_scale(
         "a chain of tests passing a constant",
         580,
-        "p0(x: int, y: int) = x > y;\n",
-        |i| {
-            format!(
-                "p{i}(x: int, y: int) = p{}(x: x, y: 5) && x + y < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_passing_a_constant(),
     );
 }
 
@@ -741,14 +538,7 @@ fn the_questions_of_a_chain_passing_a_parameter_twice_scale() {
     questions_scale(
         "a chain of tests passing a parameter twice",
         650,
-        "p0(x: int, y: int) = x >= y;\n",
-        |i| {
-            format!(
-                "p{i}(x: int, y: int) = p{}(x: x, y: x) && x + y < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_passing_a_parameter_twice(),
     );
 }
 
@@ -761,14 +551,7 @@ fn the_questions_of_a_chain_with_a_second_call_scale() {
     questions_scale(
         "a chain of tests with a second call",
         760,
-        "q(x: int) = x < 1000000;\np0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_with_a_second_call(),
     );
 }
 
@@ -781,14 +564,7 @@ fn the_questions_of_a_chain_calling_its_helpers_in_a_diamond_scale() {
     questions_scale(
         "a chain of tests calling its helpers in a diamond",
         450,
-        "h0(x: int) = x;\np0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && h{i}(x: x) > 0;\n",
-                i - 1,
-                i - 1
-            )
-        },
+        a_chain_over_halvings(),
     );
 }
 
@@ -798,14 +574,7 @@ fn the_relations_of_a_chain_with_a_second_call_whose_points_move_scale() {
     relations_scale(
         "the relations of a chain with a second call whose points move",
         950,
-        "q(x: int) = x > 0;\np0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_with_a_second_call_whose_points_move(),
     );
 }
 
@@ -818,15 +587,7 @@ fn the_relations_of_a_chain_dividing_by_its_argument_scale() {
     relations_scale(
         "the relations of a chain dividing by its argument",
         520,
-        "q(x: int, n: int) = x mod n + x mod (n + 1) + x div (n + 2) + x div (n + 3) >= 0;\n\
-         p0(x: int, n: int) = x mod n >= 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int, n: int) = q(x: x, n: n + {i}) && p{}(x: x + 1, n: n) && x < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_dividing_by_its_argument(),
     );
 }
 
@@ -837,14 +598,7 @@ fn the_relations_of_a_chain_passing_a_moved_parameter_twice_scale() {
     relations_scale(
         "the relations of a chain passing a moved parameter twice",
         740,
-        "p0(x: int, y: int) = x >= y;\n",
-        |i| {
-            format!(
-                "p{i}(x: int, y: int) = p{}(x: x + 1, y: x + 1) && x + y < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_passing_a_moved_parameter_twice(),
     );
 }
 
@@ -855,14 +609,7 @@ fn the_relations_of_a_chain_passing_a_moved_parameter_and_a_constant_scale() {
     relations_scale(
         "the relations of a chain passing a moved parameter and a constant",
         650,
-        "p0(x: int, y: int) = x > y;\n",
-        |i| {
-            format!(
-                "p{i}(x: int, y: int) = p{}(x: x + 1, y: 5) && x + y < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_passing_a_moved_parameter_and_a_constant(),
     );
 }
 
@@ -873,14 +620,7 @@ fn the_relations_of_a_chain_with_a_second_call_of_two_constraints_scale() {
     relations_scale(
         "the relations of a chain with a second call of two constraints",
         1200,
-        "q(x: int) = x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_with_a_second_call_of_two_constraints(),
     );
 }
 
@@ -892,15 +632,7 @@ fn the_relations_of_a_chain_with_a_second_call_of_a_call_scale() {
     relations_scale(
         "the relations of a chain with a second call of a call",
         950,
-        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
-         p0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_with_a_second_call_of_a_bounded_call(),
     );
 }
 
@@ -914,14 +646,7 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_call_scale() {
     questions_scale(
         "a chain of tests with a second call of a call",
         670,
-        "r(x: int) = x < 2000000;\nq(x: int) = r(x: x) && x < 1000000;\np0(x: int) = x > 0;\n",
-        |i| {
-            format!(
-                "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
-                i - 1,
-                1000 * i
-            )
-        },
+        a_chain_with_a_second_call_of_a_call(),
     );
 }
 
@@ -934,49 +659,10 @@ fn the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale() {
     // calls eliminated, made once and written at the call's argument in O(its rows). 50 → 400:
     // 51.6 times the bytes when each such call read the callee's cone again (304 MB → 15.7 GB,
     // measured once), 8.0 now (45.2 MB → 361 MB).
-    let unit = |n: usize| {
-        let mut src = String::from("h0(x: int) = x < 2000000;\n");
-        for j in 1..n {
-            src.push_str(&format!(
-                "h{j}(x: int) = h{}(x: x) && x mod 3 + {j} < 2000000;\n",
-                j - 1
-            ));
-        }
-        src.push_str("p0(x: int) = x > 0;\n");
-        for i in 1..n {
-            src.push_str(&format!(
-                "p{i}(x: int) = h{}(x: x) && p{}(x: x + 1) && x < {};\n",
-                n - 1,
-                i - 1,
-                1000 * i
-            ));
-        }
-        src
-    };
-    let n = 330;
-    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let src = unit(m);
-            (
-                m,
-                (
-                    zed_tests::deep::statements(&src),
-                    zedc::lex::lex_fence(&src).unwrap(),
-                    elab(&src).unwrap(),
-                    src,
-                ),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check(
+    questions_scale_unit(
         "the linear questions of a chain with a second call of a large callee",
-        n,
-        |m| {
-            let (stmts, tokens, unit, src) = &units[&m];
-            let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-            assert!(refused.is_empty(), "{refused:?}");
-        },
+        330,
+        chain_with_a_large_callee,
     );
 }
 
@@ -993,23 +679,7 @@ fn the_relations_of_a_chain_calling_an_integer_function_scale() {
     unit_relations_scale(
         "the relations of a chain calling an integer function",
         510,
-        |n| {
-            let mut src = String::from("h0(x: int) = x mod 3;\n");
-            for j in 1..n {
-                src.push_str(&format!("h{j}(x: int) = h{}(x: x) + x mod 3;\n", j - 1));
-            }
-            src.push_str("p0(x: int) = x > 0;\n");
-            for i in 1..n {
-                src.push_str(&format!(
-                    "p{i}(x: int) = h{}(x: x) < {} && p{}(x: x + 1) && x < {};\n",
-                    n - 1,
-                    3 * n,
-                    i - 1,
-                    1000 * i
-                ));
-            }
-            src
-        },
+        a_chain_calling_an_integer_function,
     );
 }
 
@@ -1024,15 +694,13 @@ fn the_questions_of_a_chain_moving_a_hole_scale() {
     questions_scale(
         "a chain whose links move a hole of their callee",
         470,
-        "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
-        drifting_link,
+        a_chain_moving_a_hole(),
     );
     // The same moved down by 30, so that the holes do not overlap: 0.011, 0.021, 0.038 s.
     questions_scale(
         "a chain whose links move a hole of their callee apart",
         470,
-        "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
-        falling_link,
+        a_chain_moving_a_hole_apart(),
     );
 }
 
@@ -1053,9 +721,7 @@ fn the_questions_of_a_chain_moving_bounds_beside_a_shared_remainder_scale() {
     questions_scale(
         "a chain whose links move bounds beside a shared remainder",
         340,
-        "q(x: int) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50) && x > 0 \
-         && x < 1000000;\np0(x: int) = x > 0;\n",
-        rising_link,
+        a_chain_moving_bounds_beside_a_shared_remainder(),
     );
 }
 
@@ -1205,26 +871,30 @@ fn the_questions_of_a_chain_of_residue_intervals_with_no_period_scale() {
 
 #[test]
 fn independent_question_frontiers_scale() {
-    questions_scale_unit("independent question frontiers", 370, |n| {
-        r6_local_source("leaves", n)
-    });
+    questions_scale_unit("independent question frontiers", 370, independent_frontiers);
 }
 
 #[test]
 fn questions_over_two_branches_of_one_prefix_scale() {
-    questions_scale_unit("two branches of one common prefix", 560, |n| {
-        r6_local_source("prefix", n)
-    });
+    questions_scale_unit(
+        "two branches of one common prefix",
+        560,
+        two_branches_of_one_prefix,
+    );
 }
 
 #[test]
 fn scalar_images_of_periodic_chains_scale() {
-    questions_scale_unit("scalar image of guarded increments", 400, |n| {
-        r6_periodic_value_questions(n, "if H mod 1000 == 0 { H + 1 } else { H + 2 }", "H == 9")
-    });
-    questions_scale_unit("scalar lattice image of a remainder sum", 400, |n| {
-        r6_periodic_value_questions(n, "H mod 1000 + H", "H == 0")
-    });
+    questions_scale_unit(
+        "scalar image of guarded increments",
+        400,
+        guarded_increments,
+    );
+    questions_scale_unit(
+        "scalar lattice image of a remainder sum",
+        400,
+        remainder_sums,
+    );
 }
 
 #[test]
@@ -1232,31 +902,23 @@ fn period_orbits_with_a_kept_input_remainder_scale() {
     questions_scale_unit(
         "guarded increment orbit with kept input residue",
         160,
-        |n| {
-            r6_periodic_value_questions(
-                n,
-                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
-                "x mod 1000 == 3 && H == 9",
-            )
-        },
+        guarded_increments_keeping_the_input_residue,
     );
-    questions_scale_unit("remainder-sum orbit with kept input residue", 160, |n| {
-        r6_periodic_value_questions(n, "H mod 1000 + H", "x mod 1000 == 3 && H == 9")
-    });
+    questions_scale_unit(
+        "remainder-sum orbit with kept input residue",
+        160,
+        remainder_sums_keeping_the_input_residue,
+    );
     questions_scale_unit(
         "guarded increment orbit with previous link residue",
         160,
-        |n| {
-            r6_periodic_value_questions(
-                n,
-                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
-                "P mod 1000 == 3 && H == 5",
-            )
-        },
+        guarded_increments_keeping_the_previous_residue,
     );
-    questions_scale_unit("remainder-sum orbit with previous link residue", 160, |n| {
-        r6_periodic_value_questions(n, "H mod 1000 + H", "P mod 1000 == 3 && H == 6")
-    });
+    questions_scale_unit(
+        "remainder-sum orbit with previous link residue",
+        160,
+        remainder_sums_keeping_the_previous_residue,
+    );
 }
 
 #[test]

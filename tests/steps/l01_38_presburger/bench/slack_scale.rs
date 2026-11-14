@@ -1,10 +1,9 @@
 //! The benchmarks of `slack_scale.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::slack_scale::*;
-use std::collections::BTreeSet;
 use zed_tests::scaling;
 use zedc::store::interval::IntervalSet;
-use zedc::store::presburger::{Formula, ROW_SUMS_OFF, Refusal, decide, project_each, satisfiable};
+use zedc::store::presburger::{ROW_SUMS_OFF, Refusal, decide, project_each, satisfiable};
 
 #[test]
 fn ss_decide_scales() {
@@ -30,26 +29,20 @@ fn ss_decide_scales() {
     // solver alone, and the method is held to the solver's cost at each size.
     assert_eq!(decide(&imm_s), Ok(false));
     assert_eq!(decide(&imm_l), Ok(false));
-    let alone = |f: &Formula| {
-        ROW_SUMS_OFF.with(|o| o.set(true));
-        let d = decide(f);
-        ROW_SUMS_OFF.with(|o| o.set(false));
-        d
-    };
-    assert_eq!(alone(&imm_s), Err(Refusal::Disjuncts));
-    assert_eq!(alone(&imm_l), Err(Refusal::Disjuncts));
+    assert_eq!(decided_alone(&imm_s), Err(Refusal::Disjuncts));
+    assert_eq!(decided_alone(&imm_l), Err(Refusal::Disjuncts));
     scaling::check_order(
         "decide: ss_untied immune, the solver alone",
         k_imm,
         1,
         |m| {
-            drop(alone(if m == k_imm { &imm_s } else { &imm_l }));
+            drop(decided_alone(if m == k_imm { &imm_s } else { &imm_l }));
         },
     );
     let mut meter = scaling::Meter::new();
     for f in [&imm_s, &imm_l] {
         let with = meter.work(|| drop(decide(f))).units;
-        let without = meter.work(|| drop(alone(f))).units;
+        let without = meter.work(|| drop(decided_alone(f))).units;
         assert!(
             with as f64 <= 1.02 * without as f64,
             "{with} with the method against {without} alone"
@@ -60,13 +53,6 @@ fn ss_decide_scales() {
     // outside w, refuting ~27% of y_i == 0 arms in round 1 while leaving ~73% unforced,
     // exercising learn + settle + WidePointRepairer + unit-equation search).
     let k = 64;
-    let cascade = |n: usize| {
-        let w = weights_untied(n);
-        let w_set: BTreeSet<i64> = w.iter().copied().collect();
-        let gap = (4500..5052).find(|x| !w_set.contains(x)).expect("a gap");
-        let total: i64 = w.iter().sum();
-        choice_sum(&w, total - gap)
-    };
     let (cas_s, cas_l) = (cascade(k), cascade(scaling::FACTOR * k));
     assert_eq!(decide(&cas_s), Ok(false));
     assert_eq!(decide(&cas_l), Ok(false));
@@ -113,11 +99,7 @@ fn ss_project_scales() {
 #[test]
 fn sat_half_decide_scales() {
     let k = 720;
-    let build_tied = |n: usize| {
-        let w = weights(n);
-        let t: i64 = w.iter().step_by(2).sum();
-        choice_sum(&w, t)
-    };
+    let build_tied = |n: usize| half_sum(&weights(n));
     let (t_s, t_l) = (build_tied(k), build_tied(scaling::FACTOR * k));
     for f in [&t_s, &t_l] {
         assert_eq!(decide(f), Ok(true));
@@ -128,11 +110,7 @@ fn sat_half_decide_scales() {
         drop(decide(if m == k { &t_s } else { &t_l }));
     });
 
-    let build_u = |n: usize| {
-        let w = weights_untied(n);
-        let t: i64 = w.iter().step_by(2).sum();
-        choice_sum(&w, t)
-    };
+    let build_u = |n: usize| half_sum(&weights_untied(n));
     let (small, large) = (build_u(k), build_u(scaling::FACTOR * k));
     // The target is a sum of weights by construction; the solver alone refuses both sizes, and
     // the join of row sums (module `row_sums`) answers them.
@@ -147,11 +125,7 @@ fn sat_half_decide_scales() {
 fn sat_half_tied_512_is_deterministic_and_scales() {
     let k = 670;
     let y0 = [sym("y0")];
-    let build = |n: usize| {
-        let w = weights(n);
-        let t: i64 = w.iter().step_by(2).sum();
-        choice_sum(&w, t)
-    };
+    let build = |n: usize| half_sum(&weights(n));
     let (small, large) = (build(k), build(scaling::FACTOR * k));
     assert_eq!(decide(&small), Ok(true));
     assert_eq!(decide(&large), Ok(true));
@@ -169,11 +143,7 @@ fn sat_half_tied_512_is_deterministic_and_scales() {
         drop(project_each(if m == k { &small } else { &large }, &y0));
     });
 
-    let build_u = |n: usize| {
-        let w = weights_untied(n);
-        let t: i64 = w.iter().step_by(2).sum();
-        choice_sum(&w, t)
-    };
+    let build_u = |n: usize| half_sum(&weights_untied(n));
     let (u_s, u_l) = (build_u(k), build_u(scaling::FACTOR * k));
     let (pu_l, _) = project_each(&u_l, &y0).expect("sat_half_untied project, large");
     assert_eq!(pu_l[0], Ok(pt_set(&[0, 3000])));
@@ -395,11 +365,7 @@ fn ss_project_each_costs_at_most_four_decides() {
 fn sat_half_project_each_scales_past_512() {
     let k = 2260;
     let y0 = [sym("y0")];
-    let build = |n: usize| {
-        let w = weights(n);
-        let t: i64 = w.iter().step_by(2).sum();
-        choice_sum(&w, t)
-    };
+    let build = |n: usize| half_sum(&weights(n));
     let (s, l) = (build(k), build(scaling::FACTOR * k));
     scaling::check_order("project_each: sat_half past 512", k, 1, |m| {
         drop(project_each(if m == k { &s } else { &l }, &y0));

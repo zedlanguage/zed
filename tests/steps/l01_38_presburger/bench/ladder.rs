@@ -3,7 +3,7 @@
 use crate::ladder::*;
 use std::collections::BTreeMap;
 use zed_tests::scaling;
-use zedc::store::presburger::{self, Entailment, Relation, entails};
+use zedc::store::presburger::{Entailment, Relation, entails};
 
 #[test]
 fn the_condition_that_no_operation_fails_scales() {
@@ -115,12 +115,7 @@ fn products_along_a_chain_with_a_disjunction_on_each_link_scale() {
     // `abs(x{i} - y{i}) <= z{i} + 1` on each link: the definition of each `abs` is a disjunction
     // over the link's atoms, so k disjunctions lie in the one part (C2-chain-general).
     let n = 16;
-    let built = scaling::inputs(n, |k| {
-        let extra: Vec<String> = (0..k)
-            .map(|i| format!("abs(x{i} - y{i}) <= z{i} + 1"))
-            .collect();
-        product_chain_with(k, &extra)
-    });
+    let built = scaling::inputs(n, product_chain_with_abs);
     let measure = move || {
         scaling::check(
             "a sum of products along a chain with k disjunctions",
@@ -180,7 +175,7 @@ fn products_whose_factor_bounds_pass_from_row_to_row_scale() {
     open_side_chain_scales(
         "a sum of products whose factor bounds pass from row to row",
         160,
-        |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000"),
+        link_with_bounds_passed_on,
         true,
     );
 }
@@ -193,12 +188,7 @@ fn products_whose_factor_bounds_wait_on_each_other_scale() {
     open_side_chain_scales(
         "a sum of products whose factor bounds wait on each other",
         160,
-        |i| {
-            format!(
-                "b{i} + 2 * c{i} <= 3 && c{i} >= z{i} && b{i} * c{i} >= -1000000 \
-                 && b{i} + c{i} >= z{i} - 100"
-            )
-        },
+        link_with_bounds_waiting,
         true,
     );
 }
@@ -215,7 +205,7 @@ fn products_whose_factors_keep_open_sides_scale() {
     open_side_chain_scales(
         "a sum of products whose factors keep open sides",
         16,
-        |i| format!("x{i} - b{i} - c{i} >= 4 && c{i} >= 0 && b{i} * c{i} >= -1000000"),
+        link_with_open_sides,
         false,
     );
 }
@@ -274,10 +264,7 @@ fn products_whose_factors_one_sum_joins_scale() {
     let measure = move || {
         scaling::check("a sum of products whose factors one sum joins", n, |k| {
             let (p, g) = &built[&k];
-            presburger::hull_sides_asked();
-            let e = entails(p, g);
-            let asked = presburger::hull_sides_asked();
-            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            let asked = proved_with_sides_asked(p, g);
             assert!(
                 asked > 0,
                 "{k}: no side asked, so the cluster was not searched"

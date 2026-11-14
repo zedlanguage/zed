@@ -100,8 +100,7 @@ pub(super) fn middle(n: usize) -> [Atom; 1] {
 pub(super) fn projects(what: &str, n: usize, fam: fn(usize, Holds) -> Formula, holds: Holds) {
     let inputs = scaling::inputs(n, |m| fam(m, holds));
     scaling::check_order(what, n, 1, |m| {
-        let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
-        assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
+        assert_middle_projected(&inputs[&m], m);
     });
 }
 
@@ -111,6 +110,53 @@ pub(super) fn decides(what: &str, n: usize, fam: fn(usize, Holds) -> Formula) {
     scaling::check_order(what, n, 1, |m| {
         assert_eq!(decide(&inputs[&m]), Ok(true));
     });
+}
+
+/// The check of the benchmarks that project the middle of a chain of `m` stages: a hull that is
+/// not empty.
+pub(super) fn assert_middle_projected(f: &Formula, m: usize) {
+    let r = project_each(f, &middle(m)).expect("a projection");
+    assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()), "{r:?}");
+}
+
+/// The check of the benchmark of [`cascade`] of `m` stages: the hull of the middle holds 0 and
+/// neither -1 nor 1.
+pub(super) fn assert_cascade_middle(f: &Formula, m: usize) {
+    let r = project_each(f, &middle(m)).expect("a projection");
+    let s = r.0[0].clone().expect("a hull");
+    assert!(s.contains(0) && !s.contains(-1) && !s.contains(1), "{s:?}");
+}
+
+/// The check of the benchmark of [`case_chain`] of `m` stages: the hull of `y[m / 2]` holds 0
+/// and 1,000,000, not -1.
+pub(super) fn assert_case_chain_middle(f: &Formula, m: usize) {
+    let mid = m / 2;
+    let r = project_each(f, &[Atom::Sym(format!("y{mid:05}").into())]).expect("a projection");
+    let s = r.0[0].clone().expect("a hull");
+    assert!(
+        s.contains(0) && !s.contains(-1) && s.contains(1_000_000),
+        "{s:?}"
+    );
+}
+
+/// The checks of the benchmarks of `bench/disj_groups.rs` at small sizes, but those of
+/// [`row_sums`], which has its own.
+#[test]
+fn the_chains_of_the_benchmarks_are_answered_at_small_sizes() {
+    for m in [2, 3, 8, 24] {
+        for fam in [difference_chain, general_chain] {
+            assert_eq!(decide(&fam(m, Holds::None)), Ok(true), "{m}");
+            assert_middle_projected(&fam(m, Holds::None), m);
+        }
+        assert_middle_projected(&difference_chain(m, Holds::First), m);
+        for written in [Written::AsIs, Written::Negated] {
+            assert_middle_projected(&joint_chain(m, written), m);
+        }
+        for flipped in [false, true] {
+            assert_cascade_middle(&cascade(m, flipped), m);
+        }
+        assert_case_chain_middle(&case_chain(m), m);
+    }
 }
 
 /// The exact hull of the middle of the difference chain, found by the rows its disjunctions imply
@@ -243,8 +289,7 @@ pub(super) fn joint_chain_scales(written: Written, n: usize) {
         n,
         1,
         |m| {
-            let r = project_each(&inputs[&m], &middle(m)).expect("a projection");
-            assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()));
+            assert_middle_projected(&inputs[&m], m);
         },
     );
 }
@@ -608,7 +653,9 @@ pub(super) mod row_sums {
     use std::sync::Arc;
 
     use zed_tests::scaling::Meter;
-    use zedc::store::presburger::{Atom, Con, Formula, Lin, ROW_SUMS_OFF, decide, project_each};
+    use zedc::store::presburger::{
+        Atom, Con, Formula, Lin, ROW_SUMS_OFF, Refusal, decide, project_each,
+    };
 
     use super::super::repair::answers;
 
@@ -1037,5 +1084,85 @@ pub(super) mod row_sums {
         let alone = work(|| answer = Some(ask(f)));
         ROW_SUMS_OFF.with(|o| o.set(false));
         ((both, with), (alone, answer.expect("an answer")))
+    }
+
+    /// The check of the benchmarks that project sums: each of `syms` has a hull that is not
+    /// empty.
+    pub(crate) fn assert_every_hull_non_empty(f: &Formula, syms: &[Atom]) {
+        let p = project_each(f, syms).expect("a projection");
+        assert!(
+            p.0.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())),
+            "{p:?}"
+        );
+    }
+
+    /// The first, middle and last of `k` atoms.
+    pub(crate) fn ends_and_middle(k: usize) -> [Atom; 3] {
+        [v(0), v(k / 2), v(k - 1)]
+    }
+
+    /// The answer of `decide`, `None` when refused.
+    pub(crate) fn decided(f: &Formula) -> Option<bool> {
+        decide(f).ok()
+    }
+
+    /// Whether the projection of `y0` is empty, `None` when it alone is refused.
+    pub(crate) fn projected(f: &Formula) -> Result<Option<bool>, Refusal> {
+        project_each(f, &[v(0)]).map(|e| e.0[0].as_ref().map(|s| s.is_empty()).ok())
+    }
+
+    /// The race's cases where the solver answers and where the method does not: a sum of 8
+    /// atoms, each in 0..=1e5 or 2e5..=3e5, at most 200,003; and the same with ranges of 1e9.
+    pub(crate) fn solver_cases() -> [(&'static str, Formula); 2] {
+        [
+            (
+                "the solver first",
+                Case {
+                    ranges: vec![vec![(0, 100_000), (200_000, 300_000)]; 8],
+                    rows: vec![(vec![1; 8], 200_003, true)],
+                }
+                .formula(),
+            ),
+            (
+                "a bound past u64",
+                Case {
+                    ranges: vec![vec![(0, 1_000_000_000), (2_000_000_000, 3_000_000_000)]; 8],
+                    rows: vec![(vec![1; 8], 1_000_000_007, true)],
+                }
+                .formula(),
+            ),
+        ]
+    }
+
+    /// The checks of the benchmarks of sums in `bench/disj_groups.rs` at small sizes, but their
+    /// ratios of work: each family decided true and its hulls not empty, an unreachable sum
+    /// answered by the method and refused by the solver alone, and the solver's cases answered
+    /// alike both ways.
+    #[test]
+    fn the_sums_of_the_benchmarks_are_answered_at_small_sizes() {
+        for k in [9, 12, 16] {
+            for f in [
+                overlap_rows(k).formula(),
+                coefficients_one_and_two(k).formula(),
+            ] {
+                assert_eq!(decide(&f), Ok(true), "{k}");
+                assert_every_hull_non_empty(&f, &ends_and_middle(k));
+            }
+        }
+        for m in [1, 2, 8] {
+            let f = chain(m).formula();
+            assert_eq!(decide(&f), Ok(true), "{m}");
+            assert_every_hull_non_empty(&f, &[v(3 * m / 2)]);
+        }
+        let (_, with) = both_and_alone(&unreachable(4).formula(), decided).0;
+        assert_eq!(with, Some(false));
+        for k in [10, 16] {
+            let ((_, with), (_, without)) = both_and_alone(&unreachable(k).formula(), decided);
+            assert_eq!((with, without), (Some(false), None), "{k}");
+        }
+        for (what, f) in solver_cases() {
+            let ((_, with), (_, without)) = both_and_alone(&f, projected);
+            assert_eq!(with, without, "{what}");
+        }
     }
 }

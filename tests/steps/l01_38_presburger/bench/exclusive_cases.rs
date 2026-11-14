@@ -9,7 +9,12 @@ fn a_match_of_m_cases_is_projected_in_n_log_n() {
 
 #[test]
 fn a_match_of_m_cases_on_one_stage_of_a_chain_is_projected_in_n_log_n() {
-    projects("a match of m cases on the middle stage", 460, middle, middle_z);
+    projects(
+        "a match of m cases on the middle stage",
+        460,
+        middle,
+        middle_z,
+    );
 }
 
 #[test]

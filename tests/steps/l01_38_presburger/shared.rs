@@ -1075,7 +1075,8 @@ pub(super) fn assert_shifted_pairs_compare_as_written(d: usize) {
         if o == Ordering::Equal {
             assert_eq!(hash(&a), hash(&b), "d = {d}");
         } else {
-            assert!(a != b && b != a, "d = {d}");
+            assert!(a != b, "d = {d}");
+            assert!(b != a, "d = {d}");
         }
     }
 }
@@ -1086,7 +1087,11 @@ pub(super) fn assert_shifted_pairs_compare_as_written(d: usize) {
 fn chains_and_shifted_pairs_of_the_benchmarks_compare_at_small_depths() {
     for d in [0, 1, 2, 7, 12] {
         for and in [true, false] {
-            let three = [named_chain(d, and), named_chain(d, and), extended_chain(d, and)];
+            let three = [
+                named_chain(d, and),
+                named_chain(d, and),
+                extended_chain(d, and),
+            ];
             assert_chain_equal_and_before_extended(&three);
         }
         assert_shifted_pairs_compare_as_written(d);

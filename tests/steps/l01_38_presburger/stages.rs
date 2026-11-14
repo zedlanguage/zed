@@ -852,3 +852,46 @@ fn a_row_with_no_variables_decides_by_its_constant() {
     answers(&Formula::and(vec![f.clone(), ge(&[], -1)]), Ok(false));
     answers(&Formula::and(vec![f, ge(&[], 0)]), Err(Refusal::Growth));
 }
+
+/// [`union_family`] neither joined nor flipped, as one formula: the family of the benchmark of
+/// `decide` on it.
+pub(super) fn union_formula(k: usize) -> Formula {
+    formula(&union_family(k, false, false).1)
+}
+
+/// [`union_family`] joined and flipped, as one formula.
+pub(super) fn joined_union_formula(k: usize) -> Formula {
+    formula(&union_family(k, true, true).1)
+}
+
+/// The checks of the benchmarks of `bench/stages.rs` at small sizes: each family's answer, a
+/// point where the benchmark finds one, and the refusal of the family of wide coefficients.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    let point = |f: &Formula| {
+        let m = satisfiable(f).expect("answered").expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    };
+    for n in [4, 5, 16] {
+        answers(&negchain(n), Ok(true));
+        point(&negchain(n));
+        answers(&union_formula(n), Ok(true));
+        answers(&joined_union_formula(n), Ok(true));
+        answers(&wide_row_family(n), Ok(true));
+        answers(&aggregates(n), Ok(true));
+        point(&aggregates(n));
+        answers(&three_rows(n), Ok(true));
+        point(&three_rows(n));
+        answers(&rows_held_in_a_box(n), Ok(true));
+        let (m, rows) = acyclic_bad_gor_and_fan(n);
+        assert!(!empty(m, &rows) && !raced(m, &rows), "{n}");
+    }
+    // The benchmark's 64 variables: at 8 the family has a point.
+    for bits in [64, 512] {
+        assert_eq!(
+            decide(&tight_bits(64, bits)),
+            Err(Refusal::Growth),
+            "{bits}"
+        );
+    }
+}

@@ -283,15 +283,23 @@ fn the_scope_holds_what_the_bodies_found_of_it_alone() {
     );
 }
 
-/// Times the linear questions of a unit of `first` and the links `link(1)` to `link(m - 1)`, at
-/// m = `n` and 8n, on units elaborated before the timing; no question is refused.
-pub(super) fn questions_scale(what: &str, n: usize, first: &str, link: fn(usize) -> String) {
+/// A chain of functions: its first functions, and its link `i` for `i >= 1`.
+pub(super) type Links = (&'static str, fn(usize) -> String);
+
+/// The unit of the first functions of `links` and its links `1` to `m - 1`.
+fn chain_source((first, link): Links, m: usize) -> String {
+    std::iter::once(first.to_string())
+        .chain((1..m).map(link))
+        .collect()
+}
+
+/// Times the linear questions of the unit of `links` at m = `n` and 8n ([`chain_source`]), on
+/// units elaborated before the timing; no question is refused.
+pub(super) fn questions_scale(what: &str, n: usize, links: Links) {
     let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|m| {
-            let src: String = std::iter::once(first.to_string())
-                .chain((1..m).map(link))
-                .collect();
+            let src = chain_source(links, m);
             (
                 m,
                 (
@@ -1619,28 +1627,31 @@ fn summaries_of_max_min_div_chains_of_two_inputs_give_the_values_of_the_chains()
     }
 }
 
-/// Times the relations, translated alone, of a unit of `first` and the links `link(1)` to
-/// `link(m - 1)`, at m = `n` and 8n, on units elaborated before the timing: for chains whose
+/// Times the relations, translated alone, of the unit of `links` at m = `n` and 8n
+/// ([`chain_source`]), on units elaborated before the timing: for chains whose
 /// questions are decided whole because each link's constraints exclude the point found for
 /// the link it calls (`presburger::extend`, COMPLEXITY.md row LOAD-chain-share).
-pub(super) fn relations_scale(what: &str, n: usize, first: &str, link: fn(usize) -> String) {
+pub(super) fn relations_scale(what: &str, n: usize, links: Links) {
     let units: std::collections::BTreeMap<usize, Unit> = [n, n * zed_tests::scaling::FACTOR]
         .into_iter()
-        .map(|m| {
-            let src: String = std::iter::once(first.to_string())
-                .chain((1..m).map(link))
-                .collect();
-            (m, elab(&src).unwrap())
-        })
+        .map(|m| (m, elab(&chain_source(links, m)).unwrap()))
         .collect();
     zed_tests::scaling::check(what, n, |m| {
-        let unit = &units[&m];
-        let lets = lets(unit);
-        let mut scoped = Scoped::new(&lets);
-        for (name, ps, body) in functions(unit) {
+        assert_every_relation_read(&units[&m], |_| true)
+    });
+}
+
+/// The relation of each function of `unit` whose name `wanted` takes, translated alone under
+/// one scope, is read, not refused: the check of [`relations_scale`] and
+/// [`unit_relations_scale`] besides the ratio.
+fn assert_every_relation_read(unit: &Unit, wanted: fn(&str) -> bool) {
+    let lets = lets(unit);
+    let mut scoped = Scoped::new(&lets);
+    for (name, ps, body) in functions(unit) {
+        if wanted(name) {
             assert!(scoped.relation(body, ps, ps, true).is_some(), "{name}");
         }
-    });
+    }
 }
 
 // Chains whose questions are decided whole, because each link's constraints exclude the point
@@ -1763,15 +1774,7 @@ pub(super) fn unit_relations_scale(what: &str, n: usize, unit: fn(usize) -> Stri
         .map(|m| (m, elab(&unit(m)).unwrap()))
         .collect();
     zed_tests::scaling::check(what, n, |m| {
-        let unit = &units[&m];
-        let lets = lets(unit);
-        let mut scoped = Scoped::new(&lets);
-        for (name, ps, body) in functions(unit) {
-            if !name.starts_with('p') {
-                continue;
-            }
-            assert!(scoped.relation(body, ps, ps, true).is_some(), "{name}");
-        }
+        assert_every_relation_read(&units[&m], |name| name.starts_with('p'))
     });
 }
 
@@ -1817,7 +1820,7 @@ fn no_question_refused(what: &str, src: &str) {
 #[test]
 fn the_chains_of_the_benchmarks_have_no_question_refused_at_small_sizes() {
     type Unit = fn(usize) -> String;
-    let units: [(&str, Unit); 36] = [
+    let units: [(&str, Unit); 40] = [
         ("holes beside one modulus", mod4_chain),
         ("a gap beside one modulus", gapped_chain),
         ("bounds beside a shared remainder", shared_remainder_chain),
@@ -1851,38 +1854,29 @@ fn the_chains_of_the_benchmarks_have_no_question_refused_at_small_sizes() {
         ("random cuts and moves of 0 to 6", random_small_moves_chain),
         ("a step switching every five links", switching_chain),
         ("a first step apart from the rest", first_step_apart_chain),
-        ("independent question frontiers", |n| {
-            r6_local_source("leaves", n)
-        }),
-        ("two branches of one common prefix", |n| {
-            r6_local_source("prefix", n)
-        }),
-        ("scalar image of guarded increments", |n| {
-            r6_periodic_value_questions(n, "if H mod 1000 == 0 { H + 1 } else { H + 2 }", "H == 9")
-        }),
-        ("scalar lattice image of a remainder sum", |n| {
-            r6_periodic_value_questions(n, "H mod 1000 + H", "H == 0")
-        }),
-        ("guarded increment orbit with kept input residue", |n| {
-            r6_periodic_value_questions(
-                n,
-                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
-                "x mod 1000 == 3 && H == 9",
-            )
-        }),
-        ("remainder-sum orbit with kept input residue", |n| {
-            r6_periodic_value_questions(n, "H mod 1000 + H", "x mod 1000 == 3 && H == 9")
-        }),
-        ("guarded increment orbit with previous link residue", |n| {
-            r6_periodic_value_questions(
-                n,
-                "if H mod 1000 == 0 { H + 1 } else { H + 2 }",
-                "P mod 1000 == 3 && H == 5",
-            )
-        }),
-        ("remainder-sum orbit with previous link residue", |n| {
-            r6_periodic_value_questions(n, "H mod 1000 + H", "P mod 1000 == 3 && H == 6")
-        }),
+        ("independent question frontiers", independent_frontiers),
+        (
+            "two branches of one common prefix",
+            two_branches_of_one_prefix,
+        ),
+        ("scalar image of guarded increments", guarded_increments),
+        ("scalar lattice image of a remainder sum", remainder_sums),
+        (
+            "guarded increment orbit with kept input residue",
+            guarded_increments_keeping_the_input_residue,
+        ),
+        (
+            "remainder-sum orbit with kept input residue",
+            remainder_sums_keeping_the_input_residue,
+        ),
+        (
+            "guarded increment orbit with previous link residue",
+            guarded_increments_keeping_the_previous_residue,
+        ),
+        (
+            "remainder-sum orbit with previous link residue",
+            remainder_sums_keeping_the_previous_residue,
+        ),
         ("negated and disjunctive residues", negated_modular_chain),
         (
             "residues over distinct primes",
@@ -1893,6 +1887,13 @@ fn the_chains_of_the_benchmarks_have_no_question_refused_at_small_sizes() {
             "negated residues over distinct bounds",
             negated_residues_over_distinct_bounds,
         ),
+        ("a chain of calls", chain_of_calls),
+        (
+            "a chain with a second call of a large callee",
+            chain_with_a_large_callee,
+        ),
+        ("two chains sharing an input", two_chains_sharing_an_input),
+        ("tests that forget four chains", tests_over_four_chains),
     ];
     for (what, unit) in units {
         for n in [1, 2, 6] {
@@ -1904,6 +1905,589 @@ fn the_chains_of_the_benchmarks_have_no_question_refused_at_small_sizes() {
         "bounds beside a shared remainder, 80",
         &shared_remainder_chain(80),
     );
+}
+
+// The chains of the benchmarks in `bench/one_scope.rs`, named so that the benchmarks and
+// `the_chains_of_the_benchmarks_are_answered_at_small_sizes` build the same units
+// (TEST-bench-cover-l0138).
+
+/// `p{i}(x) = p{i-1}(x: x) && x > i` (LOAD-chain-share).
+pub(super) fn a_chain_of_tests() -> Links {
+    ("p0(x: int) = x > 0;\n", |i| {
+        format!("p{i}(x: int) = p{}(x: x) && x > {i};\n", i - 1)
+    })
+}
+
+/// `p{i}(x, y) = p{i-1}(x: x, y: y) && x + i * y < 1000 i`.
+pub(super) fn a_chain_over_two_variables() -> Links {
+    ("p0(x: int, y: int) = x > y && y >= 0;\n", |i| {
+        format!(
+            "p{i}(x: int, y: int) = p{}(x: x, y: y) && x + {i} * y < {};\n",
+            i - 1,
+            1000 * i
+        )
+    })
+}
+
+/// `p{i}(x) = p{i-1}(x: x) && x mod 7 + i > 0` (LOAD-chain-aux).
+pub(super) fn a_chain_defining_auxiliary_variables() -> Links {
+    ("p0(x: int) = x div 3 > 0;\n", |i| {
+        format!("p{i}(x: int) = p{}(x: x) && x mod 7 + {i} > 0;\n", i - 1)
+    })
+}
+
+/// The drifting chain beside `q(x) = r(x: x) && x mod 3 == 1` (LOAD-call-summary).
+pub(super) fn a_drifting_chain() -> Links {
+    (
+        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
+         p0(x: int) = x > 0;\n",
+        drifting_link,
+    )
+}
+
+/// The drifting chain beside a disjunction of residues (LOAD-disj-residue).
+pub(super) fn a_drifting_disjunctive_chain() -> Links {
+    (
+        "q(x: int) = (x mod 3 == 1 || x mod 5 == 2) && x > 0 && x < 1000000;\n\
+         p0(x: int) = x > 0;\n",
+        drifting_link,
+    )
+}
+
+/// `p{i}(x) = p{i-1}(x: x + 1) && x + 2 i > 0` (LOAD-chain-args).
+pub(super) fn a_chain_moving_its_argument() -> Links {
+    ("p0(x: int) = x > 0;\n", |i| {
+        format!(
+            "p{i}(x: int) = p{}(x: x + 1) && x + {} > 0;\n",
+            i - 1,
+            2 * i
+        )
+    })
+}
+
+/// `p{i}(x) = p{i-1}(y: x) && x > -i`, the parameter named `x` and `y` by turns.
+pub(super) fn a_chain_renaming_its_argument() -> Links {
+    ("p0(x: int) = x > 0;\n", |i| {
+        let (own, callee) = if i % 2 == 0 { ("x", "y") } else { ("y", "x") };
+        format!(
+            "p{i}({own}: int) = p{}({callee}: {own}) && {own} > 0 - {i};\n",
+            i - 1
+        )
+    })
+}
+
+/// `p{i}(x) = p{i-1}(x: x) && h{i}(x: x) > 0` with `h{i}(x) = h{i-1}(x: x) div 2 + 1`.
+pub(super) fn a_chain_over_halvings() -> Links {
+    ("h0(x: int) = x;\np0(x: int) = x > 0;\n", |i| {
+        format!(
+            "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && h{i}(x: x) > 0;\n",
+            i - 1,
+            i - 1
+        )
+    })
+}
+
+/// As [`a_chain_over_halvings`], the definitions by turns a quotient, a remainder plus the
+/// input, a minimum and an absolute value less a quotient.
+pub(super) fn a_chain_over_mixed_definitions() -> Links {
+    ("h0(x: int) = x;\np0(x: int) = x > 0;\n", |i| {
+        let h = i - 1;
+        let op = match i % 4 {
+            0 => format!("h{h}(x: x) div 2"),
+            1 => format!("h{h}(x: x) mod 7 + x"),
+            2 => format!("min(h{h}(x: x), {i}) + 1"),
+            _ => format!("abs(h{h}(x: x)) - x div 3"),
+        };
+        format!("h{i}(x: int) = {op};\np{i}(x: int) = p{h}(x: x) && h{i}(x: x) > 0 - {i};\n")
+    })
+}
+
+/// A root and links that hold everywhere, `p{i}(x) = p{i-1}(x: x) && abs(h{i}(x: x)) >= 0`.
+pub(super) fn a_chain_holding_everywhere() -> Links {
+    ("h0(x: int) = x;\np0(x: int) = x > 0 || x <= 0;\n", |i| {
+        format!(
+            "h{i}(x: int) = h{}(x: x) div 2 + 1;\np{i}(x: int) = p{}(x: x) && abs(h{i}(x: x)) >= 0;\n",
+            i - 1,
+            i - 1
+        )
+    })
+}
+
+/// `t{i}(x) = h{i}(x: x) > 0` with `h{i}(x) = h{i-1}(x: x) div 2 + 1` (LOAD-chain-sep).
+pub(super) fn separate_tests_over_halvings() -> Links {
+    ("h0(x: int) = x;\nt0(x: int) = x > 0;\n", |i| {
+        format!(
+            "h{i}(x: int) = h{}(x: x) div 2 + 1;\nt{i}(x: int) = h{i}(x: x) > 0;\n",
+            i - 1
+        )
+    })
+}
+
+/// `p{i}(x) = p{i-1}(x: 2 * x) && x < 1000 i` (LOAD-chain-affine).
+pub(super) fn a_chain_doubling_its_argument() -> Links {
+    ("p0(x: int) = x > 0;\n", |i| {
+        format!("p{i}(x: int) = p{}(x: 2 * x) && x < {};\n", i - 1, 1000 * i)
+    })
+}
+
+/// `p{i}(x) = p{i-1}(x: 0 - x) && x < 1000 i`.
+pub(super) fn a_chain_negating_its_argument() -> Links {
+    ("p0(x: int) = x > 0;\n", |i| {
+        format!("p{i}(x: int) = p{}(x: 0 - x) && x < {};\n", i - 1, 1000 * i)
+    })
+}
+
+/// `p{i}(x, y) = p{i-1}(x: x, y: 5) && x + y < 1000 i`.
+pub(super) fn a_chain_passing_a_constant() -> Links {
+    ("p0(x: int, y: int) = x > y;\n", |i| {
+        format!(
+            "p{i}(x: int, y: int) = p{}(x: x, y: 5) && x + y < {};\n",
+            i - 1,
+            1000 * i
+        )
+    })
+}
+
+/// `p{i}(x, y) = p{i-1}(x: x, y: x) && x + y < 1000 i`.
+pub(super) fn a_chain_passing_a_parameter_twice() -> Links {
+    ("p0(x: int, y: int) = x >= y;\n", |i| {
+        format!(
+            "p{i}(x: int, y: int) = p{}(x: x, y: x) && x + y < {};\n",
+            i - 1,
+            1000 * i
+        )
+    })
+}
+
+/// `p{i}(x) = q(x: x) && p{i-1}(x: x + 1) && x < 1000 i`: a link calling `q` and the link
+/// before at a moved argument.
+pub(super) fn second_call_link(i: usize) -> String {
+    format!(
+        "p{i}(x: int) = q(x: x) && p{}(x: x + 1) && x < {};\n",
+        i - 1,
+        1000 * i
+    )
+}
+
+/// [`second_call_link`]s beside `q(x) = x < 1000000`.
+pub(super) fn a_chain_with_a_second_call() -> Links {
+    (
+        "q(x: int) = x < 1000000;\np0(x: int) = x > 0;\n",
+        second_call_link,
+    )
+}
+
+/// [`second_call_link`]s beside `q(x) = x > 0`, whose points move.
+pub(super) fn a_chain_with_a_second_call_whose_points_move() -> Links {
+    (
+        "q(x: int) = x > 0;\np0(x: int) = x > 0;\n",
+        second_call_link,
+    )
+}
+
+/// [`second_call_link`]s beside `q` of two constraints.
+pub(super) fn a_chain_with_a_second_call_of_two_constraints() -> Links {
+    (
+        "q(x: int) = x > 0 && x < 1000000;\np0(x: int) = x > 0;\n",
+        second_call_link,
+    )
+}
+
+/// [`second_call_link`]s beside `q` calling `r`, each with a lower and an upper bound.
+pub(super) fn a_chain_with_a_second_call_of_a_bounded_call() -> Links {
+    (
+        "r(x: int) = x > 0 && x < 1000000;\nq(x: int) = r(x: x) && x mod 3 == 1;\n\
+         p0(x: int) = x > 0;\n",
+        second_call_link,
+    )
+}
+
+/// [`second_call_link`]s beside `q` calling `r`, with upper bounds alone.
+pub(super) fn a_chain_with_a_second_call_of_a_call() -> Links {
+    (
+        "r(x: int) = x < 2000000;\nq(x: int) = r(x: x) && x < 1000000;\np0(x: int) = x > 0;\n",
+        second_call_link,
+    )
+}
+
+/// `p{i}(x, n) = q(x: x, n: n + i) && p{i-1}(x: x + 1, n: n) && x < 1000 i`, `q` dividing by
+/// four terms of `n`.
+pub(super) fn a_chain_dividing_by_its_argument() -> Links {
+    (
+        "q(x: int, n: int) = x mod n + x mod (n + 1) + x div (n + 2) + x div (n + 3) >= 0;\n\
+         p0(x: int, n: int) = x mod n >= 0;\n",
+        |i| {
+            format!(
+                "p{i}(x: int, n: int) = q(x: x, n: n + {i}) && p{}(x: x + 1, n: n) && x < {};\n",
+                i - 1,
+                1000 * i
+            )
+        },
+    )
+}
+
+/// `p{i}(x, y) = p{i-1}(x: x + 1, y: x + 1) && x + y < 1000 i`.
+pub(super) fn a_chain_passing_a_moved_parameter_twice() -> Links {
+    ("p0(x: int, y: int) = x >= y;\n", |i| {
+        format!(
+            "p{i}(x: int, y: int) = p{}(x: x + 1, y: x + 1) && x + y < {};\n",
+            i - 1,
+            1000 * i
+        )
+    })
+}
+
+/// `p{i}(x, y) = p{i-1}(x: x + 1, y: 5) && x + y < 1000 i`.
+pub(super) fn a_chain_passing_a_moved_parameter_and_a_constant() -> Links {
+    ("p0(x: int, y: int) = x > y;\n", |i| {
+        format!(
+            "p{i}(x: int, y: int) = p{}(x: x + 1, y: 5) && x + y < {};\n",
+            i - 1,
+            1000 * i
+        )
+    })
+}
+
+/// The hole `10..=20` of `q`, beside which the drifting chain moves by 3 (LOAD-bound-holes).
+const HOLE: &str = "q(x: int) = (x < 10 || x > 20) && x > 0 && x < 1000000;\np0(x: int) = x > 0;\n";
+
+/// The drifting chain beside [`HOLE`].
+pub(super) fn a_chain_moving_a_hole() -> Links {
+    (HOLE, drifting_link)
+}
+
+/// The chain beside [`HOLE`] moving down by 30, so that the holes do not overlap.
+pub(super) fn a_chain_moving_a_hole_apart() -> Links {
+    (HOLE, falling_link)
+}
+
+/// The chain moving by 12 beside two disjunctions that share the remainder by 6.
+pub(super) fn a_chain_moving_bounds_beside_a_shared_remainder() -> Links {
+    (
+        "q(x: int) = (x mod 6 == 1 || x > 100) && (x mod 6 == 5 || x < 50) && x > 0 \
+         && x < 1000000;\np0(x: int) = x > 0;\n",
+        rising_link,
+    )
+}
+
+/// `step{i}(x) = step{i-1}(x: x) + i`, the chain LOAD-chain found.
+pub(super) fn chain_of_calls(n: usize) -> String {
+    let mut src = String::from("step0(x: int) = x;\n");
+    for i in 1..n {
+        src.push_str(&format!("step{i}(x: int) = step{}(x: x) + {i};\n", i - 1));
+    }
+    src
+}
+
+/// `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + 1) && x < 1000 i` beside the chain `h{j}(x) =
+/// h{j-1}(x: x) && x mod 3 + j < 2000000` of `n` links (LOAD-affine-cone).
+pub(super) fn chain_with_a_large_callee(n: usize) -> String {
+    let mut src = String::from("h0(x: int) = x < 2000000;\n");
+    for j in 1..n {
+        src.push_str(&format!(
+            "h{j}(x: int) = h{}(x: x) && x mod 3 + {j} < 2000000;\n",
+            j - 1
+        ));
+    }
+    src.push_str("p0(x: int) = x > 0;\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "p{i}(x: int) = h{}(x: x) && p{}(x: x + 1) && x < {};\n",
+            n - 1,
+            i - 1,
+            1000 * i
+        ));
+    }
+    src
+}
+
+/// `p{i}(x) = h{n-1}(x: x) < 3n && p{i-1}(x: x + 1) && x < 1000 i` beside the integer
+/// function `h{j}(x) = h{j-1}(x: x) + x mod 3` (LOAD-call-relation).
+pub(super) fn a_chain_calling_an_integer_function(n: usize) -> String {
+    let mut src = String::from("h0(x: int) = x mod 3;\n");
+    for j in 1..n {
+        src.push_str(&format!("h{j}(x: int) = h{}(x: x) + x mod 3;\n", j - 1));
+    }
+    src.push_str("p0(x: int) = x > 0;\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "p{i}(x: int) = h{}(x: x) < {} && p{}(x: x + 1) && x < {};\n",
+            n - 1,
+            3 * n,
+            i - 1,
+            1000 * i
+        ));
+    }
+    src
+}
+
+/// The chains `g{i}` of largest values and `p{i}` of guarded increments of `m` links, both
+/// over `x`, and tests `t{i}` reading link `i` of each.
+pub(super) fn two_chains_sharing_an_input(m: usize) -> String {
+    let mut src = "g0(x: int) = x;\np0(x: int, y: int) = x + y;\n".to_string();
+    for i in 1..=m {
+        src += &format!("g{i}(x: int) = max(g{}(x: x) div 2, x div 7 - 9);\n", i - 1);
+        src += &format!(
+            "p{i}(x: int, y: int) = if p{}(x: x, y: y) > x div 7 {{ p{}(x: x, y: y) + 1 }} else {{ p{}(x: x, y: y) }};\n",
+            i - 1,
+            i - 1,
+            i - 1
+        );
+    }
+    src += &format!("u(x: int) = g{m}(x: x) < 0;\n");
+    for i in 1..=m {
+        src += &format!("t{i}(x: int, y: int) = g{i}(x: x) + p{i}(x: x, y: y) < 0 && y == 0;\n");
+    }
+    src
+}
+
+/// Four chains `g{a}_{i}(x) = g{a}_{i-1}(x: x) + i` of `m` links and four tests comparing the
+/// sum of their last links with `q(x) = x * x * x`.
+pub(super) fn tests_over_four_chains(m: usize) -> String {
+    let mut src = String::from("q(x: int) = x * x * x;\n");
+    for a in 0..4 {
+        src += &format!("g{a}_0(x: int) = x + {a};\n");
+        for i in 1..m {
+            src += &format!("g{a}_{i}(x: int) = g{a}_{}(x: x) + {i};\n", i - 1);
+        }
+    }
+    let sum = (0..4)
+        .map(|a| format!("g{a}_{}(x: x)", m - 1))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    for j in 0..4 {
+        src += &format!("t{j}(x: int) = {sum} < q(x: x) + {j};\n");
+    }
+    src
+}
+
+pub(super) fn independent_frontiers(n: usize) -> String {
+    r6_local_source("leaves", n)
+}
+
+pub(super) fn two_branches_of_one_prefix(n: usize) -> String {
+    r6_local_source("prefix", n)
+}
+
+const GUARDED_INCREMENT: &str = "if H mod 1000 == 0 { H + 1 } else { H + 2 }";
+const REMAINDER_SUM: &str = "H mod 1000 + H";
+
+pub(super) fn guarded_increments(n: usize) -> String {
+    r6_periodic_value_questions(n, GUARDED_INCREMENT, "H == 9")
+}
+
+pub(super) fn remainder_sums(n: usize) -> String {
+    r6_periodic_value_questions(n, REMAINDER_SUM, "H == 0")
+}
+
+pub(super) fn guarded_increments_keeping_the_input_residue(n: usize) -> String {
+    r6_periodic_value_questions(n, GUARDED_INCREMENT, "x mod 1000 == 3 && H == 9")
+}
+
+pub(super) fn remainder_sums_keeping_the_input_residue(n: usize) -> String {
+    r6_periodic_value_questions(n, REMAINDER_SUM, "x mod 1000 == 3 && H == 9")
+}
+
+pub(super) fn guarded_increments_keeping_the_previous_residue(n: usize) -> String {
+    r6_periodic_value_questions(n, GUARDED_INCREMENT, "P mod 1000 == 3 && H == 5")
+}
+
+pub(super) fn remainder_sums_keeping_the_previous_residue(n: usize) -> String {
+    r6_periodic_value_questions(n, REMAINDER_SUM, "P mod 1000 == 3 && H == 6")
+}
+
+/// The definitions `a{i} == a{i-1} + s{i}` (`a0 == s0`) of `m` links, each reading a new
+/// symbol, and the questions `a{i} >= 0`.
+pub(super) fn a_chain_reading_a_new_symbol_at_each_link(
+    m: usize,
+) -> (
+    Vec<zedc::store::presburger::Formula>,
+    Vec<zedc::store::presburger::Formula>,
+) {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
+    let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
+    let aux = |i: usize| Lin::atom(Atom::Aux(i as u32));
+    let defs = (0..m)
+        .map(|i| {
+            let rhs = if i == 0 {
+                sym(0)
+            } else {
+                aux(i - 1).plus(&sym(i))
+            };
+            Formula::And(Shared::new(vec![Formula::Con(Con::eq(&aux(i), &rhs))]))
+        })
+        .collect();
+    let asks = (0..m)
+        .map(|i| Formula::Con(Con::ge(&aux(i), &Lin::constant(0))))
+        .collect();
+    (defs, asks)
+}
+
+/// The division pairs `q{i-1} + r{i-1} + s{i} == 7 q{i} + r{i}` (`s0 == 7 q0 + r0`) of `m`
+/// links, each pair defined twice, and the questions `q{i} >= 0`.
+pub(super) fn a_chain_reading_a_new_division_pair_at_each_link(
+    m: usize,
+) -> (
+    Vec<zedc::store::presburger::Formula>,
+    Vec<zedc::store::presburger::Formula>,
+) {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared};
+    let sym = |i: usize| Lin::atom(Atom::Sym(format!("s{i}").into()));
+    let q = |i: usize| Lin::atom(Atom::Aux((2 * i) as u32));
+    let r = |i: usize| Lin::atom(Atom::Aux((2 * i + 1) as u32));
+    let defs = (0..m)
+        .flat_map(|i| {
+            let dividend = if i == 0 {
+                sym(0)
+            } else {
+                q(i - 1).plus(&r(i - 1)).plus(&sym(i))
+            };
+            let eq = Con::eq(&dividend, &q(i).times(7).plus(&r(i)));
+            let lo = Con::ge(&r(i), &Lin::constant(0));
+            let hi = Con::ge(&Lin::constant(6), &r(i));
+            let d = Formula::And(Shared::new(vec![
+                Formula::Con(eq),
+                Formula::Con(lo),
+                Formula::Con(hi),
+            ]));
+            [d.clone(), d]
+        })
+        .collect();
+    let asks = (0..m)
+        .map(|i| Formula::Con(Con::ge(&q(i), &Lin::constant(0))))
+        .collect();
+    (defs, asks)
+}
+
+/// Each of `asks`, asked in turn of one `Extending` over the definitions `defs` (definition
+/// `n` for `Aux(n)`), holds.
+pub(super) fn assert_each_ask_holds(
+    defs: &[zedc::store::presburger::Formula],
+    asks: &[zedc::store::presburger::Formula],
+) {
+    use zedc::store::presburger::extend::Extending;
+    let mut extending = Extending::new();
+    for f in asks {
+        let a = extending.defined(f, &|n| defs[n as usize].clone());
+        assert_eq!(a.holds, Ok(true), "{f:?}");
+    }
+}
+
+/// The checks of the benchmarks of [`questions_scale`], [`relations_scale`],
+/// [`unit_relations_scale`] and the other chains in `bench/one_scope.rs` besides their
+/// ratios, at a few small sizes: no question refused, every relation read, each ask holding,
+/// and each formula decided to hold.
+#[test]
+fn the_chains_of_the_benchmarks_are_answered_at_small_sizes() {
+    use zedc::store::presburger::{Formula, decide};
+    let questions: [(&str, Links); 20] = [
+        ("a chain of tests", a_chain_of_tests()),
+        ("a chain over two variables", a_chain_over_two_variables()),
+        (
+            "a chain defining auxiliary variables",
+            a_chain_defining_auxiliary_variables(),
+        ),
+        ("a drifting chain", a_drifting_chain()),
+        (
+            "a drifting disjunctive chain",
+            a_drifting_disjunctive_chain(),
+        ),
+        ("a chain moving its argument", a_chain_moving_its_argument()),
+        (
+            "a chain renaming its argument",
+            a_chain_renaming_its_argument(),
+        ),
+        ("a chain over halvings", a_chain_over_halvings()),
+        (
+            "a chain over mixed definitions",
+            a_chain_over_mixed_definitions(),
+        ),
+        ("a chain holding everywhere", a_chain_holding_everywhere()),
+        (
+            "separate tests over halvings",
+            separate_tests_over_halvings(),
+        ),
+        (
+            "a chain doubling its argument",
+            a_chain_doubling_its_argument(),
+        ),
+        (
+            "a chain negating its argument",
+            a_chain_negating_its_argument(),
+        ),
+        ("a chain passing a constant", a_chain_passing_a_constant()),
+        (
+            "a chain passing a parameter twice",
+            a_chain_passing_a_parameter_twice(),
+        ),
+        ("a chain with a second call", a_chain_with_a_second_call()),
+        (
+            "a chain with a second call of a call",
+            a_chain_with_a_second_call_of_a_call(),
+        ),
+        ("a chain moving a hole", a_chain_moving_a_hole()),
+        ("a chain moving a hole apart", a_chain_moving_a_hole_apart()),
+        (
+            "a chain moving bounds beside a shared remainder",
+            a_chain_moving_bounds_beside_a_shared_remainder(),
+        ),
+    ];
+    let relations: [(&str, Links); 6] = [
+        (
+            "a second call whose points move",
+            a_chain_with_a_second_call_whose_points_move(),
+        ),
+        (
+            "dividing by its argument",
+            a_chain_dividing_by_its_argument(),
+        ),
+        (
+            "passing a moved parameter twice",
+            a_chain_passing_a_moved_parameter_twice(),
+        ),
+        (
+            "passing a moved parameter and a constant",
+            a_chain_passing_a_moved_parameter_and_a_constant(),
+        ),
+        (
+            "a second call of two constraints",
+            a_chain_with_a_second_call_of_two_constraints(),
+        ),
+        (
+            "a second call of a bounded call",
+            a_chain_with_a_second_call_of_a_bounded_call(),
+        ),
+    ];
+    for m in [1, 2, 6] {
+        for (what, links) in questions {
+            no_question_refused(&format!("{what}, {m}"), &chain_source(links, m));
+        }
+        for (_, links) in relations {
+            assert_every_relation_read(&elab(&chain_source(links, m)).unwrap(), |_| true);
+        }
+        assert_every_relation_read(
+            &elab(&a_chain_calling_an_integer_function(m)).unwrap(),
+            |name| name.starts_with('p'),
+        );
+        let (defs, asks) = a_chain_reading_a_new_symbol_at_each_link(m);
+        assert_each_ask_holds(&defs, &asks);
+        let (defs, asks) = a_chain_reading_a_new_division_pair_at_each_link(m);
+        assert_each_ask_holds(&defs, &asks);
+    }
+    type Family = fn(usize) -> Formula;
+    let formulas: [(&str, Family); 3] = [
+        (
+            "clauses sharing one residue condition",
+            clauses_sharing_one_residue_condition,
+        ),
+        ("a disjunction of many moduli", a_disjunction_of_many_moduli),
+        ("the fails question of pairs", the_fails_question_of_pairs),
+    ];
+    for (what, family) in formulas {
+        for n in [1, 2, 8, 40] {
+            assert_eq!(decide(&family(n)), Ok(true), "{what}, {n}");
+        }
+    }
 }
 
 /// Checks that each relation and answer of each function of `src`, read under one scope and

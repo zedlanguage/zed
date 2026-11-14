@@ -347,3 +347,96 @@ pub(super) fn build_many_linked(k: usize) -> Formula {
     fs.push(ge(&all, w.iter().sum::<i64>() - 1));
     Formula::and(fs)
 }
+
+/// [`choice_sum`] over `w` whose target is the sum of every second weight: a point by
+/// construction.
+pub(super) fn half_sum(w: &[i64]) -> Formula {
+    let t: i64 = w.iter().step_by(2).sum();
+    choice_sum(w, t)
+}
+
+/// [`choice_sum`] over `weights_untied(n)` whose target is the total less the least of
+/// `4500..5052` that is not a weight: no subset meets it, and about a quarter of the arms
+/// `y_i == 0` are refuted in the first round, the rest left open.
+pub(super) fn cascade(n: usize) -> Formula {
+    let w = weights_untied(n);
+    let w_set: BTreeSet<i64> = w.iter().copied().collect();
+    let gap = (4500..5052).find(|x| !w_set.contains(x)).expect("a gap");
+    let total: i64 = w.iter().sum();
+    choice_sum(&w, total - gap)
+}
+
+/// The projection of `y0` on `f`, refused neither as a whole nor for `y0`.
+pub(super) fn y0_projected(f: &Formula) -> IntervalSet {
+    let (p, _) = project_each(f, &[sym("y0")]).expect("a projection");
+    p[0].clone().expect("a set")
+}
+
+/// `decide` with the join of row sums (module `row_sums`) turned off: the solver alone.
+pub(super) fn decided_alone(f: &Formula) -> Result<bool, Refusal> {
+    zedc::store::presburger::ROW_SUMS_OFF.with(|o| o.set(true));
+    let d = decide(f);
+    zedc::store::presburger::ROW_SUMS_OFF.with(|o| o.set(false));
+    d
+}
+
+/// The values of `y0` over the subsets of `w` that sum to `t`, counted one by one.
+fn y0_of_subsets(w: &[i64], t: i64) -> IntervalSet {
+    let sums = |s: u32| {
+        (0..w.len())
+            .filter(|i| s >> i & 1 == 1)
+            .map(|i| w[i])
+            .sum::<i64>()
+    };
+    let met: BTreeSet<i64> = (0..1u32 << w.len())
+        .filter(|&s| sums(s) == t)
+        .map(|s| if s & 1 == 1 { w[0] } else { 0 })
+        .collect();
+    pt_set(&met.into_iter().collect::<Vec<_>>())
+}
+
+/// The checks of the benchmarks of `bench/slack_scale.rs` at small sizes, but their ratios of
+/// work: each family's answer, its point where the benchmark finds one, and the projection of
+/// `y0` the benchmark asks for.
+#[test]
+fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
+    let point = |f: &Formula| {
+        let m = satisfiable(f).expect("decided").expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    };
+    for k in [4, 8, 16] {
+        for w in [weights(k), weights_untied(k)] {
+            let f = subset_sum_dp(&w);
+            assert_eq!(decide(&f), Ok(false), "{k}");
+            assert_eq!(y0_projected(&f), IntervalSet::empty(), "{k}");
+            let f = half_sum(&w);
+            assert_eq!(decide(&f), Ok(true), "{k}");
+            point(&f);
+            assert_eq!(
+                y0_projected(&f),
+                y0_of_subsets(&w, w.iter().step_by(2).sum()),
+                "{k}"
+            );
+            let f = build_two_rows(&w);
+            assert_eq!(decide(&f), Ok(true), "{k}");
+            point(&f);
+            assert!(y0_projected(&f).contains(w[0]), "{k}");
+        }
+        assert_eq!(decide(&cascade(k)), Ok(false), "{k}");
+        let f = build_paired_chain(k);
+        assert_eq!(decide(&f), Ok(false), "{k}");
+        assert_eq!(y0_projected(&f), IntervalSet::empty(), "{k}");
+        let f = build_alternating(k);
+        assert_eq!(decide(&f), Ok(true), "{k}");
+        assert!(y0_projected(&f).contains(1), "{k}");
+        let f = build_dense(k);
+        assert_eq!(decide(&f), Ok(true), "{k}");
+        y0_projected(&f);
+        assert_eq!(y0_projected(&build_many_linked(k)), pt_set(&[1000]), "{k}");
+    }
+    // The solver alone refuses the untied sums the method answers.
+    assert_eq!(
+        decided_alone(&subset_sum_dp(&weights_untied(128))),
+        Err(Refusal::Disjuncts)
+    );
+}

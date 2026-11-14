@@ -2,7 +2,7 @@
 
 use crate::names::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{Atom, decide, project_each, satisfiable};
+use zedc::store::presburger::{decide, project_each, satisfiable};
 
 #[test]
 fn decide_scales_over_copies_of_a_tie() {
@@ -19,8 +19,7 @@ fn decide_scales_over_copies_of_a_system_with_tied_variables() {
 #[test]
 fn decide_scales_over_copies_of_tied_equalities() {
     // Each copy of `x + y == 5`, `x, y >= 0` keeps its equality as rows and has a point.
-    let rows = vec![eq(&[1, 1], -5), ge(&[1, 0], 0), ge(&[0, 1], 0)];
-    scales_over_copies("copies of tied equalities", &rows, 2, 180);
+    scales_over_copies("copies of tied equalities", &tied_equalities(), 2, 180);
 }
 
 #[test]
@@ -132,16 +131,9 @@ fn project_each_on_tied_disjunctions_scales() {
         star_with_choices(770),
         star_with_choices(770 * scaling::FACTOR),
     );
-    let v = |i: usize| Atom::Sym(format!("v{i}").into());
-    let syms = [v(2), v(0)];
+    let syms = leaf_and_hub();
     for f in [&small, &large] {
-        let (each, skipped) = project_each(f, &syms).unwrap();
-        let hulls: Vec<String> = each
-            .iter()
-            .map(|s| s.as_ref().unwrap().to_string())
-            .collect();
-        assert_eq!(hulls, ["[0..=23]", "[0..=5]"]);
-        assert_eq!(skipped, Vec::new());
+        assert_star_hulls(f, &syms);
     }
     scaling::check_order(
         "projections of a star of tied leaves with choices",
