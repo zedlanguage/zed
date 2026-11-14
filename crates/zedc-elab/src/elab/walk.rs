@@ -2129,13 +2129,48 @@ impl<'a> Elab<'a> {
         // arm carries the same mark ([`marked_as`]), so a mutant of the constant replaces it at
         // every carrier.
         let own = mem::replace(&mut args[at], Term::Var(other.clone()));
+        // An exponent that is an operation is bound once and each other arm casts its value, so
+        // that a mutant of a literal inside it, which changes that one term, changes the
+        // exponent at every carrier, not only in the last arm (plan row
+        // MUTATE-follows-operation). The cast gives the arm's constant: the exponent is an `int`
+        // and the follows map lists a carrier only where the `int` is exact there, for an
+        // exponent `f64` and `f32` alone (`check::Ck::lit_follows`); at any other carrier the
+        // arm keeps its constant. Built so with or without marks, since the mutants are placed
+        // by the paths of the elaboration without them (`zedc::mutate`).
+        // Complexity tradeoff: O(1) nodes per arm, a `Var` and a cast, against a copy of the
+        // exponent's term per arm, O(size) each; one `let` more. The old arms were constants,
+        // the casts now run where the stage does not fold the call: one cast of an `int` per
+        // evaluation, O(1).
+        let operation = lit_span([l, r][at]).is_none();
+        let (own, bound) = match operation {
+            true => {
+                let e = self.temp();
+                (Term::Var(e.clone()), Some((e, own)))
+            }
+            false => (own, None),
+        };
         let mut arms: Vec<(KPattern, Term)> = values
             .iter()
-            .map(|(c, v)| (KPattern::Is(c.ty()), marked_as(&own, v.clone())))
+            .map(|(c, v)| {
+                let cast = match c {
+                    Carrier::F64 => Some(Prim::CastF64),
+                    Carrier::F32 => Some(Prim::CastF32),
+                    _ => None,
+                };
+                let t = match cast.filter(|_| operation) {
+                    Some(p) => Term::Prim(p, vec![own.clone()]),
+                    None => marked_as(&own, v.clone()),
+                };
+                (KPattern::Is(c.ty()), t)
+            })
             .collect();
         arms.push((KPattern::Wild, own));
         args[at] = Term::Match(Shared::new(Term::Var(other.clone())), arms);
-        Term::Let(other, Shared::new(x), Shared::new(Term::Prim(p, args)))
+        let mut t = Term::Prim(p, args);
+        if let Some((e, own)) = bound {
+            t = Term::Let(e, Shared::new(own), Shared::new(t));
+        }
+        Term::Let(other, Shared::new(x), Shared::new(t))
     }
 
     /// The generic literal at `s`, of term `own`, taking the carrier of the value of `w`, a

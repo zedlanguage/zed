@@ -364,3 +364,32 @@ fn a_mutant_of_a_folded_decimal_or_power_is_skipped() {
         ]
     );
 }
+
+/// The exponent `1 + 0` follows the base `2`, which follows `x`: at `f64` it is read as `1.0`. A
+/// mutant of `1` or `0` inside it changes it at every carrier, since each arm other than the
+/// last casts the one term of the exponent (plan row MUTATE-follows-operation; before it, those
+/// arms were the constant `1.0`, the mutant changed the last arm alone, and the four mutants were
+/// reported undetected at the `f64` row).
+#[test]
+fn a_mutant_inside_a_generic_exponent_changes_it_at_every_carrier() {
+    let unit = "f(positional x) = x * (2 ^ (1 + 0)) test { 1.5f64 -> 3.0f64 }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:31: skipped: `+` replaced by `-` in `f` at .0.1.1.0: the build stage gives the \
+             definition the original's term",
+            "7 mutants: 6 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+    // A row at each carrier: each arm of the exponent runs with each mutant.
+    let unit = "f(positional x) = x * (2 ^ (1 + 0)) \
+                test { 1.5f64 -> 3.0f64, 1.5f32 -> 3.0f32, 1r -> 2r, 1 -> 2 }\n";
+    assert_eq!(
+        report(unit),
+        [
+            "1:31: skipped: `+` replaced by `-` in `f` at .0.1.1.0: the build stage gives the \
+             definition the original's term",
+            "7 mutants: 6 detected, 0 undetected, 1 skipped, 0 not run",
+        ]
+    );
+}
