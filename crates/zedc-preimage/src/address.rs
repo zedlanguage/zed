@@ -1324,4 +1324,104 @@ mod tests {
             Address::of(&fix("g", "j", "g", "j", join()))
         );
     }
+
+    /// One term of each kernel form not met above, two for each field that sets it apart:
+    /// each pair differs in one field only. A family binds its key in its body; a pattern of
+    /// an atom or of fields binds its names in its arm, and the other patterns bind none.
+    fn forms(k: &str) -> Vec<Term> {
+        let s = |t: Term| Shared::new(t);
+        let fam = |d: &str, body: Term| Term::Fam {
+            domain: s(var(d)),
+            var: k.into(),
+            body: s(body),
+        };
+        let reindex = |witness| Term::Reindex {
+            family: s(var("f")),
+            kf: s(var("g")),
+            vf: s(var("h")),
+            witness,
+        };
+        let fold = |identity: Option<Shared>, depth, grade| Term::Fold {
+            family: s(var("f")),
+            op: s(var("g")),
+            identity,
+            depth,
+            ev: Evidence::from([("assoc".into(), grade)]),
+        };
+        let generate = |pos| Term::Gen {
+            init: s(var("i")),
+            step: s(var("g")),
+            guard: s(var("c")),
+            pos,
+        };
+        let arm = |p: Pattern| Term::Match(s(var("v")), vec![(p, var(k))]);
+        let plain = |p: Pattern| Term::Match(s(var("v")), vec![(p, var("u"))]);
+        let bind = || Pattern::Bind(k.into());
+        vec![
+            fam("d", prim(Prim::Add, vec![var(k), var("v")])),
+            fam("d", prim(Prim::Add, vec![var(k), var("w")])),
+            fam("e", prim(Prim::Add, vec![var(k), var("v")])),
+            reindex(Witness::Residue),
+            reindex(Witness::Catalog("a".into())),
+            reindex(Witness::Catalog("b".into())),
+            Term::Discard {
+                family: s(var("f")),
+                sel: s(var("g")),
+            },
+            Term::Discard {
+                family: s(var("g")),
+                sel: s(var("f")),
+            },
+            fold(None, 1, Grade::Axiom),
+            fold(Some(s(lit(0))), 1, Grade::Axiom),
+            fold(None, 2, Grade::Axiom),
+            fold(None, 1, Grade::CheckedExhaustive),
+            fold(None, 1, Grade::Proved),
+            fold(None, 1, Grade::Bounded),
+            fold(None, 1, Grade::Obligated),
+            fold(None, 1, Grade::Assumed),
+            generate(GuardPos::Before),
+            generate(GuardPos::After),
+            Term::Read("a".into()),
+            Term::Read("b".into()),
+            Term::Push("a".into(), s(var("v"))),
+            Term::Push("b".into(), s(var("v"))),
+            Term::PrimFn(Prim::Add),
+            Term::PrimFn(Prim::Mul),
+            plain(Pattern::Wild),
+            plain(Pattern::AnyAtom),
+            plain(Pattern::Lit(Value::Int(1))),
+            plain(Pattern::Lit(Value::Int(2))),
+            arm(Pattern::Atom("a".into(), vec![bind()])),
+            arm(Pattern::Atom("b".into(), vec![bind()])),
+            arm(Pattern::Atom("a".into(), vec![bind(), Pattern::Wild])),
+            arm(Pattern::Fields("S".into(), vec![("f".into(), bind())])),
+            arm(Pattern::Fields("T".into(), vec![("f".into(), bind())])),
+            arm(Pattern::Fields("S".into(), vec![("g".into(), bind())])),
+        ]
+    }
+
+    #[test]
+    fn every_kernel_form_has_one_address_up_to_binder_names() {
+        let (ks, js) = (forms("k"), forms("j"));
+        for (a, b) in ks.iter().zip(&js) {
+            assert_eq!(Address::of(a), Address::of(b), "{a} and {b}");
+        }
+        // With every digest 0, only the terms order the addresses: each pair of forms is told
+        // apart by its one differing field, and a term renamed is still one address.
+        let zero = |t: &Term| {
+            let mut a = Address::of(t);
+            a.digest = 0;
+            a
+        };
+        let mut addrs: Vec<Address> = ks.iter().map(zero).collect();
+        addrs.sort();
+        assert!(addrs.windows(2).all(|w| w[0] < w[1]));
+        for (a, b) in ks.iter().zip(&js) {
+            assert_eq!(zero(a), zero(b), "{a} and {b}");
+        }
+        let digests: std::collections::BTreeSet<u64> =
+            ks.iter().map(|t| Address::of(t).digest).collect();
+        assert_eq!(digests.len(), ks.len());
+    }
 }

@@ -10,6 +10,7 @@
 //! transfer's time grows no faster than the rule of low complexity allows.
 
 mod bench;
+mod completeness;
 mod constant_minus;
 mod deep;
 mod entries;

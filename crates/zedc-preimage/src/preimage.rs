@@ -14568,6 +14568,23 @@ mod tests {
             }
         }
     }
+
+    /// The chains of the two benchmarks held below the length where reading them stops being
+    /// near linear (item PREIMAGE-chain-cliff, see `bench`) are read exactly on both sides of
+    /// it: guards on `x mod 3` (seed `0x5851_f42d_4c95_7f2d`, cliff near k = 340) at k = 320
+    /// and 350, 22 ms and 118 ms; mixed guards on `y` (seed `0xa`, cliff near k = 2150) at
+    /// k = 2000, 69 ms (measured 2026-11-14, load 28 to 45). Past its cliff the second chain
+    /// takes 0.5 s at k = 2150 and grows fourfold each 50 more, a benchmark's size, not a test's.
+    #[test]
+    fn chains_are_read_exactly_on_both_sides_of_the_cliff() {
+        for (seed, k) in [
+            (0x5851_f42d_4c95_7f2d, 320),
+            (0x5851_f42d_4c95_7f2d, 350),
+            (0xa, 2000),
+        ] {
+            chain_preimage(seed, k);
+        }
+    }
     /// `false || (if 2x > max(x, x) {ym + -3 <= -6} else {2x > max(x, x)}) ||
     /// (let n0 = min(x, 3) - min(x, -3) in let n1 = stage(n0) in ... n_k == -7)`, with
     /// `ym = if y mod 2 != 1 {-1} else {-1}` and `stage(n) = if n < 2 {-1} else {(if n != -4
