@@ -9,8 +9,8 @@
 //!   both the scope's facts and the oracle's are pinned, so that a fact the oracle finds and
 //!   the scope does not is written down beside the case that misses it;
 //! - by its growth in `k`, held to the rule of low complexity at `n` and `8n`
-//!   (`scaling::check`); a family on which main grows faster than linearly is ignored with
-//!   the item that would fix it;
+//!   (`scaling::check`); a family on which main grows faster than linearly is moved to the
+//!   deferred tests of the item that would fix it;
 //! - and the 1152 records of the review's random audit, each checked for soundness, with the
 //!   three records that no candidate of the review recovered pinned (all three found since,
 //!   LAZY-hub-unsolved).
@@ -1747,23 +1747,11 @@ fn unary_arms_scale() {
     scales("unary_arms", 8, 1);
 }
 
-#[test]
-#[ignore = "PERF-l139-under9: cuts, 10.7 times the instructions (224.6M and 2,398.6M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn cuts_scale() {
-    scales("cuts", 4, 1);
-}
-
 /// Each of wide's `k + 1` tests holds a sum of `k` names, so its input has `k^2` terms: order
 /// `k^2` is linear in the input.
 #[test]
 fn wide_scales() {
     scales("wide", 8, 2);
-}
-
-#[test]
-#[ignore = "PERF-l139-under9: coordmix_floor, 11.3 times the instructions (132.2M and 1,497.1M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn coordmix_floor_scales() {
-    scales("coordmix_floor", 4, 1);
 }
 
 /// About `k^1.6` to `k^2` on main; about `k^1.1` to `k^1.25` since the threshold aggregate
@@ -1832,36 +1820,10 @@ fn coordkk_scales() {
 // bound of its rows (`hull_side`), and hop and hopon pass again, at 8.9 and 8.5 (hop) and 9.8
 // and 9.4 (hopon) times the instructions and bytes at 8n; the questions for sides such as
 // `(1000 + c) / i` of hopb no longer grow with the tests.
-
-/// About `k^1.75` to `k^1.96`.
-#[test]
-#[ignore = "PERF-l139-family: star_extra, 11.0 times the bytes (28.4M and 310.9M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn star_extra_scales() {
-    scales("star_extra", 4, 1);
-}
-
-/// About `k^1.7` from `k = 8` to 32. At `n = 2` the limit's log factor is 4, and main
-/// passes (31.9 times the work against 35.2); at `n = 4` each run of `k = 32` takes over 30 s,
-/// so the test would not finish in 60 s.
-#[test]
-#[ignore = "PERF-l139-family: chain, 10.9 times the instructions (279.9M and 3,040.5M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn chain_scales() {
-    scales("chain", 2, 1);
-}
-
-/// About `k^2.1`.
-#[test]
-#[ignore = "PERF-l139-under9: boxstar, 11.1 times the instructions (103.4M and 1,143.4M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn boxstar_scales() {
-    scales("boxstar", 2, 1);
-}
-
-/// About `k^2.5` from `k = 8` to 16.
-#[test]
-#[ignore = "PERF-l139-family: persist, 13.7 times the bytes (16.6M and 227.7M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn persist_scales() {
-    scales("persist", 2, 1);
-}
+//
+// The eight families still over 10.5 after it (cuts, coordmix_floor, star_extra, chain, boxstar,
+// persist, hopb, hoponb) are in the deferred tests of PERF-l139-family, with their figures, and
+// come back here when that item is done.
 
 /// About `k^2.7` to `k^2.8` on stair_holes and stair_holes_mix, and `k^2` on
 /// stair_holes_late.
@@ -1900,18 +1862,6 @@ fn hop_scales() {
 #[test]
 fn hopon_scales() {
     scales("hopon", 2, 1);
-}
-
-#[test]
-#[ignore = "PERF-l139-family: hopb, 11.0 times the instructions (158.7M and 1,737.9M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn hopb_scales() {
-    scales("hopb", 2, 1);
-}
-
-#[test]
-#[ignore = "PERF-l139-under9: hoponb, 10.9 times the instructions (159.6M and 1,736.9M) at 8n after the real_end retry of PERF-l139-family (2026-11-13), run alone, over the limit of 10.5; open"]
-fn hoponb_scales() {
-    scales("hoponb", 2, 1);
 }
 
 #[test]

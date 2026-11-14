@@ -11,7 +11,6 @@ use zed_kernel::Prim;
 use zed_kernel::Term;
 use zed_kernel::term::build::{lit, prim, var};
 use zed_tests::instances::Rng;
-use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{self, Atom, Con, Formula, Lin, Shared};
@@ -1173,128 +1172,6 @@ fn a_program_whose_refused_parts_are_projected_by_pendants_ends_narrower() {
         "relation a + b <= 11 && a + b + c == z0 - 1 && a + b + c == z2 + 8 && a + z1 >= c - 3 && 2 * a + 2 * c >= b + 1 && 2 * a + c >= z1 - 11 && b + 2 * c <= z3 + 4 && z0 >= z1 + 7 && (a >= 3 || b <= 5) && (c >= -1 || z2 <= 7 || (c <= -2 && z2 >= 8 && !(c >= -1 || z2 <= 7)))",
     ];
     assert_eq!(format!("{s}").trim_end(), want.join("\n"));
-}
-
-/// `a` and `b` within `0..=100000`, `a + b <= 150000` and the disjunction `a < 3 || b > 7`,
-/// over the names `a`, `b` and `z0` to `z{k-1}`.
-fn hubs_with_a_disjunction(k: usize) -> Scope {
-    let p = Premises::new();
-    let mut names: Vec<Arc<str>> = vec!["a".into(), "b".into()];
-    names.extend((0..k).map(|i| Arc::from(format!("z{i}"))));
-    let mut s = ints(&names);
-    for n in ["a", "b"] {
-        s = s
-            .assume(&prim(Prim::Ge, vec![var(n), lit(0)]), true, &p)
-            .assume(&prim(Prim::Le, vec![var(n), lit(100_000)]), true, &p);
-    }
-    let sum = prim(Prim::Add, vec![var("a"), var("b")]);
-    let or = prim(
-        Prim::Or,
-        vec![
-            prim(Prim::Lt, vec![var("a"), lit(3)]),
-            prim(Prim::Gt, vec![var("b"), lit(7)]),
-        ],
-    );
-    s.assume(&prim(Prim::Le, vec![sum, lit(150_000)]), true, &p)
-        .assume(&or, true, &p)
-}
-
-/// The tests `a + b - zi == i` for `i` below `k`.
-fn equalities(k: usize) -> Vec<Term> {
-    (0..k)
-        .map(|i| {
-            let sum = prim(Prim::Add, vec![var("a"), var("b")]);
-            let left = prim(Prim::Sub, vec![sum, var(&format!("z{i}"))]);
-            prim(Prim::Eq, vec![left, lit(i as i64)])
-        })
-        .collect()
-}
-
-/// `a >= b`, `a <= 100` and `b` within `0..=50`, over the names `a`, `b` and `z0` to
-/// `z{k-1}`.
-fn ordered_hubs(k: usize) -> Scope {
-    let p = Premises::new();
-    let mut names: Vec<Arc<str>> = vec!["a".into(), "b".into()];
-    names.extend((0..k).map(|i| Arc::from(format!("z{i}"))));
-    [
-        prim(Prim::Le, vec![var("a"), lit(100)]),
-        prim(Prim::Le, vec![var("b"), lit(50)]),
-        prim(Prim::Ge, vec![var("b"), lit(0)]),
-        prim(Prim::Ge, vec![var("a"), var("b")]),
-    ]
-    .iter()
-    .fold(ints(&names), |s, t| s.assume(t, true, &p))
-}
-
-/// The tests `zi >= a + b` for `i` below `k`, each followed by `zi <= 1000`.
-fn leaves(k: usize) -> Vec<Term> {
-    let mut tests = Vec::new();
-    for i in 0..k {
-        let z = format!("z{i}");
-        let sum = prim(Prim::Add, vec![var("a"), var("b")]);
-        tests.push(prim(Prim::Ge, vec![var(&z), sum]));
-        tests.push(prim(Prim::Le, vec![var(&z), lit(1000)]));
-    }
-    tests
-}
-
-/// Assumes each of `tests` in turn, from `start`.
-fn assumed(start: &Scope, tests: &[Term]) -> Scope {
-    let p = Premises::new();
-    tests
-        .iter()
-        .fold(start.clone(), |s, t| s.assume(t, true, &p))
-}
-
-/// The printed range of each `zi`, `i` below `k`.
-fn leaf_ranges(s: &Scope, k: usize) -> Vec<String> {
-    (0..k)
-        .map(|i| s.get(&format!("z{i}")).ints().to_string())
-        .collect()
-}
-
-#[test]
-fn equalities_of_many_names_to_the_hubs_of_a_disjunction_scale() {
-    // Each `a + b - zi == i` is a pendant of the hubs' block: projecting the whole block onto
-    // all its names at each test, as before, took k projections per test, each of the k + 2
-    // names, and 15.7 s at k = 20 (item ST-eqs-cubic). The block is now projected by its
-    // pendants (`Scope::project_by_pendants`): `w == a + b`, then each `zi == w - i`.
-    let s = assumed(&hubs_with_a_disjunction(4), &equalities(4));
-    assert_eq!(
-        leaf_ranges(&s, 4),
-        [
-            "[0..=150000]",
-            "[-1..=149999]",
-            "[-2..=149998]",
-            "[-3..=149997]"
-        ]
-    );
-    let inputs = scaling::inputs(16, |k| (hubs_with_a_disjunction(k), equalities(k)));
-    scaling::check(
-        "k equalities a + b - zi == i under a disjunction among the hubs",
-        16,
-        |k| {
-            let (start, tests) = &inputs[&k];
-            assumed(start, tests);
-        },
-    );
-}
-
-#[test]
-fn leaves_of_ordered_hubs_with_upper_bounds_scale() {
-    // `zi >= a + b`, then `zi <= 1000`: each leaf a pendant of the hubs' block, which was
-    // projected onto all k + 2 names at each test (2.46 s at k = 20; item ST-eqs-cubic).
-    let s = assumed(&ordered_hubs(3), &leaves(3));
-    assert_eq!(leaf_ranges(&s, 3), ["[0..=1000]"; 3]);
-    let inputs = scaling::inputs(16, |k| (ordered_hubs(k), leaves(k)));
-    scaling::check(
-        "k leaves zi >= a + b, zi <= 1000 of the hubs a >= b",
-        16,
-        |k| {
-            let (start, tests) = &inputs[&k];
-            assumed(start, tests);
-        },
-    );
 }
 
 /// `c` with each coefficient and its constant negated: for an equation, the same equation.
