@@ -1,7 +1,7 @@
 //! Law 25's invariant form on all 768 relations (512 on three points and 256 on four), through
-//! `N` iterates each: about 9 s, a long run (author P178: a long run is a benchmark;
-//! TEST-law25-time is to make it fast enough to return here to the correctness tests).
-//! `laws_21_28::law_25_a_left_multiplied_step_takes_the_invariant_form` checks every 48th.
+//! `N` iterates each: a run of many cases, so a benchmark (author P178).
+//! `laws_21_28::law_25_a_left_multiplied_step_takes_the_invariant_form` checks the 512 on three
+//! points and the 5 on four whose index among the 768 is a multiple of 48 (TEST-law25-time).
 
 use zed_tests::check::holds;
 

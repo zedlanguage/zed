@@ -848,8 +848,9 @@ pub(super) fn left_multiplied_invariant(pairs: &[(i64, i64)]) -> (Term, Term) {
     (term, lit(true))
 }
 
-/// The invariant form on every 48th relation, three points and four; all 768 relations are in
-/// `bench/laws.rs`, since they take about 9 s (TEST-law25-time).
+/// The invariant form on every relation on three points, 512 of them (TEST-law25-time), and on
+/// the 5 on four points whose index among all 768 is a multiple of 48, which the test checked when
+/// it took every 48th; `bench/laws.rs` checks all 768.
 #[test]
 fn law_25_a_left_multiplied_step_takes_the_invariant_form() {
     // `r[s]` does not commute with `r -> E · r` on every relation.
@@ -864,9 +865,12 @@ fn law_25_a_left_multiplied_step_takes_the_invariant_form() {
             successors(row(r, 0), e),
         )
     });
-    let some: Vec<_> = relations().into_iter().step_by(48).collect();
+    let some: Vec<_> = (relations().into_iter().enumerate())
+        .filter(|&(i, _)| i < 512 || i % 48 == 0)
+        .map(|(_, r)| r)
+        .collect();
     let n = holds(some, |pairs| left_multiplied_invariant(pairs));
-    assert_eq!(n, 16);
+    assert_eq!(n, 512 + 5);
 }
 
 /// `x · e` for a set `x` and a relation `e` into `0..n`: the image of `x`, as a family of
