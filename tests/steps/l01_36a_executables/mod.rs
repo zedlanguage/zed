@@ -10,6 +10,7 @@
 mod agreement;
 mod atoms;
 mod bench;
+mod command;
 mod minmax;
 mod mul_edges;
 mod one_engine;
