@@ -2221,19 +2221,18 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 | CONST-too-large-coprime-base | impl attempt 1 | 2026-11-14 00:07 | started; load 26.51 34.74 41.48 |
 | DOC-deferred-refs | running | 2026-11-14 00:03 |  |
 | STAGE-generic-fold | impl attempt 1 | 2026-11-09 09:24 | started; worktree from 93fde8efa |
-| TEST-bench-move-crates-b | impl attempt 1 | 2026-11-14 04:47 | started: worktree from origin/main, seeded; crates zedc-lattice, zedc-int, zedc-zir; load 21.08 21.27 20.21 |
-| TEST-bench-move-crates-b | merged | 2026-11-14 05:10 | zedc-int and zedc-lattice (commits "TEST-bench-move-crates, part b, <crate>"): 2 benchmarks moved to bench.rs files, 7 tests seeded or shrunk, 8 hole tests added (P188), no FAIL rows; zedc-zir unchanged |
-| TEST-bench-move-crates-c | impl attempt 1 | 2026-11-14 04:47 | started: worktree from origin/main, crates zed-native, zed-rt, zed-tools, benches/ |
-| TEST-bench-move-crates-d | impl attempt 1 | 2026-11-14 04:49 | started: worktree made from origin/main, crate zedc-solvers |
-| TEST-bench-move-crates-d | merged | 2026-11-14 05:18 | merged and pushed (3e4f866b5); zedc-solvers: one 30.9 s piece to 20 correctness tests in 0.9 s plus 6 benchmarks of 50,000 graphs (about 4 s each at load 57); seeded random tests; P188 holes closed in linear Q, twovar point, utvpi integer_empty/integer_point, negsssp empty graph; no failing test, no FAIL row; Duong ball-growth branches still unreached, left to TEST-complete-crates |
+| TEST-bench-move-crates-c | impl attempt 1 | 2026-11-14 04:47 | zed-rt: stack scaling test + deep-thread test moved to stack/bench.rs (instructions + bytes made writable; 1x 0.25 s; negative control 35.3x fails); limits time |
 | TEST-bench-move-crates | impl attempt 1 | 2026-11-14 01:43 | started; worktree from origin/main 271806cab |
 | TEST-bench-move-l0123 | impl attempt 1 | 2026-11-14 01:43 | started; worktree made and seeded |
 | TEST-complete-lex | impl attempt 1 | 2026-11-14 04:55 | started; worktree made, seeded / load 30.78 25.91 23.00 |
 | TEST-complete-names | impl attempt 1 | 2026-11-14 04:55 | started; worktree made and seeded |
+| TEST-complete-native | impl attempt 1 | 2026-11-14 05:08 | started; worktree /home/luke/Work/wt/test-complete-native |
 | TEST-complete-parse | impl attempt 1 | 2026-11-14 04:55 | started; worktree made and seeded |
+| TEST-complete-values | impl attempt 1 | 2026-11-14 05:13 | started; worktree seeded |
 | TEST-corr-slow-l0138 | running | 2026-11-14 04:03 |  |
 | TEST-op-table-speed | running | 2026-11-14 04:37 |  |
 | TEST-slow-l0139-refused-sums | running | 2026-11-14 04:37 |  |
+| TEST-split-l0136a | running | 2026-11-14 05:08 |  |
 | XR-ffi-stateful-r45 | impl attempt 1 | 2026-11-13 22:45 | round 4 seats launched (Sol, Opus, Gemini; Gemini quota OK); load 43.71 44.82 43.20 |
 | XR-l139-family | orchestrator attempt  | 2026-11-13 18:59 | round 1 merge: f9936c4fe hull sides over two atoms from twovar::ends; cuts_scale 7.1, boxstar_scales 8.8 back; 262 pieces pass; load 51.10 48.05 49.56 |
 
