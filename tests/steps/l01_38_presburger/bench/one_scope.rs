@@ -1085,12 +1085,12 @@ fn the_questions_of_a_chain_of_remainders_scale() {
     // decided whole and refused (Shadows), and asked again whole: 5.5 s at 100 links, 21.9 s
     // at 200 (debug, measured once). Now the face of link 3 is read empty, and each later
     // link holds nowhere from the link below: 0.063 s at 100 links, 0.23 s at 400.
-    questions_scale_unit("a chain of remainders by 3", 290, mod3_chain);
-    questions_scale_unit("a chain of remainders by 5", 290, mod5_chain);
-    questions_scale_unit("a chain of remainders by 7 moved by 2", 290, mod7_chain);
+    questions_scale_unit("a chain of remainders by 3", 200, mod3_chain);
+    questions_scale_unit("a chain of remainders by 5", 200, mod5_chain);
+    questions_scale_unit("a chain of remainders by 7 moved by 2", 200, mod7_chain);
     questions_scale_unit(
         "a chain of remainders moved by the modulus",
-        290,
+        200,
         kept_residue_chain,
     );
 }
