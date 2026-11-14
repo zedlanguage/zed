@@ -18,12 +18,14 @@
 //! bound under, once for the binder.
 //!
 //! Complexity tradeoff: a test or operand is translated only through literals, names, integer
-//! and boolean operators; any other subexpression (a call, a field, an `is` test) is an
-//! opaque int of its own span, so `if f(n) >= 0 { popCount(f(n)) }` is rejected, the two
-//! calls being different atoms, and an `is` test narrows only through `Facts`. Why: the
-//! translation is one pass per root, memoized by span, with no structural equality of
-//! subterms, which is what would make two equal calls one atom. Trigger: a test on a call or
-//! field that the operand repeats. Test:
+//! and boolean operators, `if`, and calls of definitions whose bodies are of that kind
+//! ([`Ck::callable`](super::Ck::callable)), kept as applications that the preimage reads
+//! through; any other subexpression (another call, a field, an `is` test) is an opaque int of
+//! its own span, and a call read as an operand is any value of its type, so
+//! `if f(n) >= 0 { popCount(f(n)) }` is rejected, the two calls being different atoms, and
+//! an `is` test narrows only through `Facts`. Why: the translation is one pass per root,
+//! memoized by span, with no structural equality of subterms, which is what would make two
+//! equal calls one atom. Trigger: a test on a call or field that the operand repeats. Test:
 //! `l01_39a_bit_words::narrowing::a_test_on_a_call_the_operand_repeats_is_rejected_and_its_named_value_accepted`.
 //! COMPLEXITY.md row C26. A complete solution names the repeated value
 //! (`m = f(n); if m >= 0 { popCount(m) }` works today), or hash-conses the translated terms
@@ -39,7 +41,7 @@ use std::sync::Arc;
 
 use imbl::ordmap::DiffItem;
 use zed_kernel::types::Type as KType;
-use zed_kernel::{Prim, Term};
+use zed_kernel::{Prim, Shared, Term};
 
 use zedc_lattice::cell::Premises;
 use zedc_lattice::interval::IntervalSet;
@@ -71,6 +73,29 @@ pub(super) struct Translated {
     pub(super) binders: Vec<usize>,
     /// The names of binders in it, in the scope, with the binders.
     pub(super) vars: Vec<(Arc<str>, usize)>,
+    /// The definitions it calls whose calls it keeps as calls ([`Called`]), by binder.
+    pub(super) calls: Vec<usize>,
+    /// Whether some part of it is a name of its own, by its span: a part the term does not
+    /// follow.
+    pub(super) opaque: bool,
+}
+
+/// A definition of the unit, `f(positional x) = e` or `f = x -> e`, whose calls a term keeps
+/// as calls, `App(Var(f), args)`, with `f` bound in the scope that reads the term to its
+/// lambda, so that a test on a call is narrowed through it (DESIGN.md step L1.39, "an arm
+/// whose test calls a definition of the unit is narrowed through the call (step L1.25)";
+/// [`Scope::close`](zedc_preimage::product::Scope)). Its body reads its parameters and the
+/// definitions of this kind it calls, and nothing else, so each call is its body at its own
+/// arguments.
+pub(super) struct Called {
+    /// Its name in the scope.
+    pub(super) name: Arc<str>,
+    /// The number of its parameters.
+    pub(super) arity: usize,
+    /// Its value, `Lam(params, body)`.
+    pub(super) lambda: Shared,
+    /// The definitions of this kind its body calls, by binder.
+    pub(super) calls: Vec<usize>,
 }
 
 /// The piecewise-affine summary of a binder's value over the inputs it reads
@@ -161,6 +186,10 @@ pub(super) struct Arms<'a> {
     /// What [`Ck::ints_here`](super::Ck::ints_here) read of each expression from its parts, by
     /// span and node.
     pub(super) part_ints: HashMap<(Span, usize), IntervalSet>,
+    /// For each binder a term has called, the definition its calls are kept as ([`Called`]),
+    /// or none when they are not; none also while its body is being translated, so a call
+    /// of it within its own body stays a name of its own.
+    pub(super) called: HashMap<usize, Option<Rc<Called>>>,
 }
 
 impl<'a> Arms<'a> {
@@ -183,6 +212,7 @@ impl<'a> Arms<'a> {
             summaries: HashMap::new(),
             here_ints: HashMap::new(),
             part_ints: HashMap::new(),
+            called: HashMap::new(),
         }
     }
 

@@ -10,7 +10,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::arms::{Item, Node, Summarized, Translated, prim_of, var};
+use super::arms::{Called, Item, Node, Summarized, Translated, prim_of, var};
 use super::limits::{ADDRESS_BYTES_LOG2, target_text};
 use super::*;
 use zed_kernel::Shared;
@@ -6020,7 +6020,7 @@ impl<'a> Ck<'_, 'a> {
                 wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
                 self.settle(wanted);
                 let s = self.arms.scopes[here].clone().expect("settled");
-                self.with_bound(s, &t.binders)
+                self.with_bound(s, &t.binders, &t.calls)
             }
         };
         for outcome in [true, false] {
@@ -6251,7 +6251,7 @@ impl<'a> Ck<'_, 'a> {
         self.settle(wanted);
         let s = self.arms.scopes[here].clone().expect("settled");
         let before = s.refusals.clone();
-        let mut s = self.with_bound(s, &t.binders);
+        let mut s = self.with_bound(s, &t.binders, &t.calls);
         s.eager_on(&t.term);
         let p = product::forward(&t.term, &mut s);
         if let Some(at) = at {
@@ -6270,7 +6270,7 @@ impl<'a> Ck<'_, 'a> {
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
         self.settle(wanted);
         let s = self.arms.scopes[here].clone().expect("settled");
-        let mut s = self.with_bound(s, &t.binders);
+        let mut s = self.with_bound(s, &t.binders, &t.calls);
         s.eager_on(&t.term);
         s.zero_reached(&t.term, &Premises::new())
     }
@@ -6358,8 +6358,9 @@ impl<'a> Ck<'_, 'a> {
     /// narrowed its inputs is narrowed by its summary over them ([`Scope::bind_summarized`]).
     /// With `y = n + 1; x = y + n`, a test of `x` narrows `n`, and `y` read under it lies where
     /// `n + 1` does over the narrowed `n`: one evaluation of `y`'s formed summary, `O(k)` for
-    /// `k` inputs.
-    fn with_bound(&mut self, mut s: Scope, binders: &[usize]) -> Scope {
+    /// `k` inputs. Each definition in `calls` and those it calls are bound to their lambdas
+    /// ([`Ck::bind_called`]).
+    fn with_bound(&mut self, mut s: Scope, binders: &[usize], calls: &[usize]) -> Scope {
         if s.bottom {
             return s;
         }
@@ -6391,6 +6392,7 @@ impl<'a> Ck<'_, 'a> {
             }
             s.bind_summarized(&name, p, &e, &sum.summary, &doms);
         }
+        self.bind_called(&mut s, calls);
         s
     }
 
@@ -6399,7 +6401,7 @@ impl<'a> Ck<'_, 'a> {
     /// over the inputs `s` has, at their integers there, and the others at those the summary
     /// was formed over ([`Ck::read_image`]); the inputs are not bound and the binding keeps no
     /// summary.
-    fn with_bound_read(&mut self, mut s: Scope, binders: &[usize]) -> Scope {
+    fn with_bound_read(&mut self, mut s: Scope, binders: &[usize], calls: &[usize]) -> Scope {
         if s.bottom {
             return s;
         }
@@ -6422,7 +6424,39 @@ impl<'a> Ck<'_, 'a> {
                 None => s.bind(&name, p, &e),
             };
         }
+        self.bind_called(&mut s, calls);
         s
+    }
+
+    /// Binds in `s` each definition of `calls` it has no binding of, and those they call, to
+    /// its lambda ([`Called`]), each after those it calls, so that `Scope::close` reads a test
+    /// through the calls: it follows a function only to those bound before it. A visited set
+    /// keeps each definition to one visit, so the cost is the definitions reached, each bound
+    /// once in O(log s) for `s` names, however many paths of calls reach it.
+    fn bind_called(&mut self, s: &mut Scope, calls: &[usize]) {
+        if s.bottom {
+            return;
+        }
+        let mut seen: HashSet<usize> = HashSet::new();
+        // Each definition with whether those it calls are bound: a post-order walk.
+        let mut todo: Vec<(usize, bool)> = calls.iter().rev().map(|&c| (c, false)).collect();
+        while let Some((c, after)) = todo.pop() {
+            let Some(Some(f)) = self.arms.called.get(&c).cloned() else {
+                continue;
+            };
+            if after {
+                if !s.names.contains_key(&f.name) {
+                    let p = product::forward(&f.lambda, s);
+                    s.bind(&f.name, p, &f.lambda);
+                }
+                continue;
+            }
+            if !seen.insert(c) || s.names.contains_key(&f.name) {
+                continue;
+            }
+            todo.push((c, true));
+            todo.extend(f.calls.iter().rev().map(|&g| (g, false)));
+        }
     }
 
     /// The integers the summary `sum` of binder `b` takes over the inputs the scope of names
@@ -6807,7 +6841,7 @@ impl<'a> Ck<'_, 'a> {
                 let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
                 let s = self.scope_or_root(at);
                 let before = s.refusals.clone();
-                let mut s = self.with_bound_read(s, &t.binders);
+                let mut s = self.with_bound_read(s, &t.binders, &t.calls);
                 // A parameter the value reads that the scope has no product of is any value of
                 // its type where `b` is bound ([`Ck::param_type`]), as [`Ck::summarize_value`]
                 // takes it: so `q = n mod 4` with `n: int` is `int[0..=3]`, and a summary that
@@ -6851,7 +6885,7 @@ impl<'a> Ck<'_, 'a> {
         // A bound name the scope has no product of is its value, and any other name any value
         // of its type where the test is checked. A scope no state reaches is told of none: it
         // stays unreachable.
-        let mut p = self.with_bound(p, &t.binders);
+        let mut p = self.with_bound(p, &t.binders, &t.calls);
         if let Node::Assume { fresh, .. } = &self.arms.nodes[n]
             && !p.bottom
         {
@@ -6883,13 +6917,31 @@ impl<'a> Ck<'_, 'a> {
         if let Some(t) = self.arms.terms.get(&e.span) {
             return t.clone();
         }
-        let (mut binders, mut vars) = (Vec::new(), Vec::new());
+        let (mut binders, mut vars, mut calls) = (Vec::new(), Vec::new(), Vec::new());
+        let mut opaque_seen = false;
         let mut done: Vec<Term> = Vec::new();
         let mut stack = vec![(e, false)];
         while let Some((x, ready)) = stack.pop() {
-            let opaque = || Term::Var(format!("?{}:{}", x.span.start, x.span.end).into());
+            let mut opaque = || {
+                opaque_seen = true;
+                Term::Var(format!("?{}:{}", x.span.start, x.span.end).into())
+            };
             if ready {
                 let t = match &x.kind {
+                    ExprKind::If { .. } => {
+                        let b = done.pop().expect("an `else` arm");
+                        let a = done.pop().expect("a `then` arm");
+                        let c = done.pop().expect("a condition");
+                        Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
+                    }
+                    ExprKind::Call {
+                        callee, positional, ..
+                    } => {
+                        let f = self.callable(callee, positional.len());
+                        let (_, f) = f.expect("a definition whose calls are kept");
+                        let args = done.split_off(done.len() - positional.len());
+                        Term::App(Shared::new(Term::Var(f.name.clone())), args)
+                    }
                     ExprKind::Unary(o, _) => {
                         let a = done.pop().expect("an operand");
                         let p = match o {
@@ -6953,6 +7005,35 @@ impl<'a> Ck<'_, 'a> {
                     stack.push((b, false));
                     stack.push((a, false));
                 }
+                // A block of its value alone, as an arm `{ x }`, is that value.
+                ExprKind::Block(stmts)
+                    if let [s] = &stmts[..]
+                        && let StmtKind::Return(es) = &s.kind
+                        && let [v] = &es[..] =>
+                {
+                    stack.push((v, false));
+                }
+                ExprKind::If {
+                    cond,
+                    then,
+                    otherwise,
+                } => {
+                    stack.push((x, true));
+                    stack.extend([(&**otherwise, false), (&**then, false), (&**cond, false)]);
+                }
+                ExprKind::Call {
+                    callee,
+                    positional,
+                    named,
+                    curry: false,
+                } if named.is_empty() => match self.callable(callee, positional.len()) {
+                    Some((id, _)) => {
+                        calls.push(id);
+                        stack.push((x, true));
+                        stack.extend(positional.iter().rev().map(|a| (a, false)));
+                    }
+                    None => done.push(opaque()),
+                },
                 _ => done.push(opaque()),
             }
         }
@@ -6960,13 +7041,169 @@ impl<'a> Ck<'_, 'a> {
         binders.dedup();
         vars.sort_unstable();
         vars.dedup();
+        calls.sort_unstable();
+        calls.dedup();
         let t = Rc::new(Translated {
             term: done.pop().expect("a term"),
             binders,
             vars,
+            calls,
+            opaque: opaque_seen,
         });
         self.arms.terms.insert(e.span, t.clone());
         t
+    }
+
+    /// The definition a call of `callee` with `n` positional arguments is kept as, with its
+    /// binder ([`Called`]): a declared function of the unit whose body is an equation, or a
+    /// name bound to a lambda, called by its one binder, each parameter taken by position
+    /// with no default and no tuple, whose body as a term ([`Ck::term`]) reads its parameters
+    /// and the definitions of this kind it calls, and nothing else. A body that reads
+    /// anything more (a name bound outside it, a call of itself, a field, a part the term
+    /// does not follow) would be one value at every call, where each call has its own; such
+    /// a call stays a name of its own, as before. Each definition is translated once, its
+    /// body's term memoized by span, so a term costs O(1) a call beyond its arguments.
+    ///
+    /// Complexity tradeoff: naive version, each call replaced by its body with the arguments
+    /// put in, `let`s around a copy of the body: one value and one narrowing, but a body
+    /// that calls the one before it twice doubles at each level, `2^d` for a chain `d` deep.
+    /// Used: the call kept as `App(Var(f), args)` and `f` bound to its lambda in the scope
+    /// that reads the term ([`Ck::with_bound`]), so the preimage reads each function once
+    /// per test through `Scope::close`, linear in that chain (the store's test
+    /// `l01_39_reduced_product::scaling::tests_read_through_the_functions_they_call_scale`,
+    /// COMPLEXITY.md row S24). Tradeoff: the value of a call read as an operand is any value
+    /// (`forward` does not enter a call), so a test narrows the arguments, not the call:
+    /// `if clamp(x) > 10` narrows `x`, and `popCount(clamp(x) - 1)` under it is not read
+    /// through `clamp`. The bodies a call reaches are translated callees first, on an
+    /// explicit stack ([`Ck::translate_called`]).
+    fn callable(&mut self, callee: &'a Expr, n: usize) -> Option<(usize, Rc<Called>)> {
+        let id = self.callee_id(callee)?;
+        if !self.arms.called.contains_key(&id) {
+            self.translate_called(id);
+        }
+        let found = self.arms.called[&id].clone();
+        found.filter(|f| f.arity == n).map(|f| (id, f))
+    }
+
+    /// The binder `callee` names, when it is a name with one binder.
+    fn callee_id(&self, callee: &Expr) -> Option<usize> {
+        let ExprKind::Name(_) = callee.kind else {
+            return None;
+        };
+        match self.t.res.uses.get(&callee.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => Some(ids[0]),
+            _ => None,
+        }
+    }
+
+    /// The parameters and body of the definition `id` binds, when a call of it may be kept
+    /// ([`Ck::callable`]).
+    fn definition(&self, id: usize) -> Option<(&'a [Param], &'a Expr)> {
+        let (params, body): (&'a [Param], &'a Expr) = match self.t.funcs.get(&id) {
+            Some(f) if f.equation && f.main.is_none() && f.params.iter().all(|p| p.positional) => {
+                (&f.params, &f.body)
+            }
+            Some(_) => return None,
+            None => match self.facts.get(&id).copied().map(|v| &v.kind) {
+                Some(ExprKind::Lambda { params, body }) => (params, body),
+                _ => return None,
+            },
+        };
+        let plain = params
+            .iter()
+            .all(|p| p.default.is_none() && p.tuple.is_none());
+        plain.then_some((params, body))
+    }
+
+    /// The definitions `e`'s term may call: those of the calls [`Ck::term`] enters, found
+    /// through the same operators, `if`s, blocks and arguments, and through operands it reads
+    /// as a value instead, so a few more.
+    fn calls_in(&self, e: &'a Expr) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut stack = vec![e];
+        while let Some(x) = stack.pop() {
+            match &x.kind {
+                ExprKind::Unary(UnaryOp::Neg | UnaryOp::Not, a) => stack.push(a),
+                ExprKind::Binary(o, a, b) if prim_of(*o).is_some() => stack.extend([&**a, &**b]),
+                ExprKind::Block(stmts)
+                    if let [s] = &stmts[..]
+                        && let StmtKind::Return(es) = &s.kind
+                        && let [v] = &es[..] =>
+                {
+                    stack.push(v)
+                }
+                ExprKind::If {
+                    cond,
+                    then,
+                    otherwise,
+                } => stack.extend([&**cond, &**then, &**otherwise]),
+                ExprKind::Call {
+                    callee,
+                    positional,
+                    named,
+                    curry: false,
+                } if named.is_empty() => {
+                    out.extend(self.callee_id(callee));
+                    stack.extend(positional);
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Fills [`Arms::called`](super::arms::Arms::called) for `root` and the definitions it
+    /// calls, those it calls first, in post order on an explicit stack: a chain of
+    /// definitions each calling the one before is as deep as it is long, and translating
+    /// each body from within the one that calls it took one Rust frame per definition and
+    /// overflowed the stack at a chain of 10,240. Each definition is entered while its
+    /// callers wait, held `None` till its body is translated, so a call back into one of
+    /// them (recursion, direct or through others) is opaque; each is translated once, and
+    /// the walk costs O(size of the bodies) over the definitions reached.
+    fn translate_called(&mut self, root: usize) {
+        let mut stack = vec![(root, false)];
+        while let Some((id, ready)) = stack.pop() {
+            if !ready {
+                if self.arms.called.contains_key(&id) {
+                    continue;
+                }
+                self.arms.called.insert(id, None);
+                if let Some((_, body)) = self.definition(id) {
+                    stack.push((id, true));
+                    let calls = self.calls_in(body);
+                    stack.extend(calls.into_iter().map(|c| (c, false)));
+                }
+                continue;
+            }
+            let (params, body) = self.definition(id).expect("a definition");
+            // Each definition `body` calls is translated, or waits as a caller of `id`.
+            let t = self.term(body);
+            let binders = &self.t.res.binders;
+            let param_of = |b: usize| {
+                let at = binders[b].span;
+                params.iter().position(|p| p.span == at || p.name_at == at)
+            };
+            if t.opaque
+                || !t.binders.is_empty()
+                || t.vars.iter().any(|(_, b)| param_of(*b).is_none())
+            {
+                continue;
+            }
+            // A parameter the body never reads takes a name no other term holds: its span's.
+            let mut names: Vec<Arc<str>> = (params.iter())
+                .map(|p| format!("?{}:{}", p.span.start, p.span.end).into())
+                .collect();
+            for (x, b) in &t.vars {
+                names[param_of(*b).expect("a parameter")] = x.clone();
+            }
+            let f = Rc::new(Called {
+                name: var(&binders[id].name, id),
+                arity: params.len(),
+                lambda: Shared::new(Term::Lam(names, Shared::new(t.term.clone()))),
+                calls: t.calls.clone(),
+            });
+            self.arms.called.insert(id, Some(f));
+        }
     }
 }
 

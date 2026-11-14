@@ -8,6 +8,7 @@
 //! arm's scope holds every value that reaches it and that no value reaches an unreachable
 //! arm, and `controls` checks each reduction.
 
+mod arm_test_through_call;
 mod completeness;
 mod controls;
 mod deep_condition;

@@ -585,3 +585,30 @@ fn an_eager_join_projects_again_the_stars_it_settles_and_scales() {
         },
     );
 }
+
+/// `g_0` and `g_1` … `g_k`, each calling the one before twice, and a test through `g_k`
+/// whose arm the checker finds unreachable.
+fn call_chain_program(k: usize) -> String {
+    let mut src = String::from("g0(positional y: int) = if y < 0 { 0 } else { y };\n");
+    for i in 1..=k {
+        src += &format!("g{i}(positional y: int) = g{0}(y) + g{0}(y);\n", i - 1);
+    }
+    src +=
+        &format!("f(positional x: int) = if g{k}(x) < 0 {{ popCount(x - x - 1) }} else {{ 0 }};\n");
+    src + "main(m: MainArgs) {\n  m.stdout <- \"\";\n}\n"
+}
+
+#[test]
+fn the_checker_reads_a_test_through_a_chain_of_calls_in_time_linear_in_it() {
+    // The checker translates each definition once, callees first on a stack of its own, and
+    // binds each once in the test's scope: a chain 10,240 deep overflowed the stack when each
+    // body was translated from within its caller's (FAIL-check-arm-test-through-call).
+    let built = scaling::inputs(512, call_chain_program);
+    scaling::check(
+        "a test through a chain of k definitions, each calling the one before",
+        512,
+        |k| {
+            assert!(zedc::run::load(built[&k].as_bytes()).is_ok());
+        },
+    );
+}
