@@ -14,6 +14,7 @@
 //! file, shows here only when the census is run again that way (item REFUSAL-census).
 
 mod bench;
+mod cases;
 mod kinds;
 mod programs;
 
