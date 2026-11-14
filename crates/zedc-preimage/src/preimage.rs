@@ -2327,7 +2327,12 @@ fn linear(
             .filter(|a| mentioned.contains(a))
             .collect();
         let (out, why, refused) = boxed_projections(&whole, dom, &syms);
-        if is_empty(&out) {
+        // A formula that mentions no input holds at every point of the box or at none, and its
+        // projection onto no symbol cannot say which, so each input would keep its box: it is
+        // decided instead, one question of a formula over no input. `x >= y || x < y` read as
+        // one join (`Walk::or_if`) is `true`, so its preimage of `false` has the body
+        // `false`, empty and exact (FAIL-or-ifs-no-longer-exact-seed).
+        if is_empty(&out) || (syms.is_empty() && matches!(presburger::decide(&whole), Ok(false))) {
             let none = out
                 .keys()
                 .map(|k| (k.clone(), IntervalSet::empty()))
@@ -2362,6 +2367,12 @@ struct Tr {
     /// The keys of `pairs`, in the order made, so that [`Tr::truncate`] removes the pairs it
     /// undoes from the end.
     made: Vec<(Lin, Lin)>,
+    /// For each `min` (`true`) or `max` and its operands, the number of the variable of its
+    /// value, so that a second `min` or `max` of the same operands, in either order, is the
+    /// same variable; `abs(a)` is `max(a, -a)`.
+    extrema: HashMap<(bool, Lin, Lin), u32>,
+    /// The keys of `extrema`, in the order made, for [`Tr::truncate`].
+    ranked: Vec<(bool, Lin, Lin)>,
     /// Whether an `if` whose guard tests the remainder of an input by a constant is written by
     /// its summaries over the remainder's classes ([`Walk::lin_by_class`]): in the linear
     /// stage, whose inputs have the domains the summaries are read over.
@@ -2409,6 +2420,8 @@ impl Tr {
             products,
             pairs: HashMap::new(),
             made: Vec::new(),
+            extrema: HashMap::new(),
+            ranked: Vec::new(),
             by_class: false,
             cases: HashMap::new(),
             cased: Vec::new(),
@@ -2447,6 +2460,12 @@ impl Tr {
         {
             self.pairs.remove(key);
             self.made.pop();
+        }
+        while let Some(key) = self.ranked.last()
+            && self.extrema[key] as usize >= mark
+        {
+            self.extrema.remove(key);
+            self.ranked.pop();
         }
         while let Some(key) = self.cased.last()
             && self.cases[key] as usize >= mark
@@ -8302,18 +8321,51 @@ impl<'m, 't> Walk<'m, 't> {
                         let a = arg(0).await?;
                         let b = if p == Abs { a.times(-1) } else { arg(1).await? };
                         self.tr(|tr| {
-                            let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                            // One variable for each `min` or `max` of the same operands, in
+                            // either order, as [`Tr::pairs`] has one for each quotient: two
+                            // variables with one definition are interchangeable, which the
+                            // solver refuses as a tie (`max(3, x)` read in two places of
+                            // `if g { true } else { b }`, FAIL-or-ifs-no-longer-exact-seed).
+                            let min = p == Min;
+                            let known = (tr.extrema.get(&(min, a.clone(), b.clone())))
+                                .or_else(|| tr.extrema.get(&(min, b.clone(), a.clone())));
+                            if let Some(n) = known {
+                                return Some(Lin::atom(presburger::Atom::Aux(*n)));
+                            }
+                            let n = tr.defs.len() as u32;
+                            tr.extrema.insert((min, a.clone(), b.clone()), n);
+                            tr.ranked.push((min, a.clone(), b.clone()));
+                            let x = Lin::atom(presburger::Atom::Aux(n));
                             // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
                             let (lo, hi) = if p == Min { (&a, &b) } else { (&b, &a) };
                             let first = Con::ge(hi, lo);
-                            let def = Formula::or(vec![
-                                Formula::and(vec![
-                                    Formula::Con(first.clone()),
-                                    Formula::Con(Con::eq(&x, &a)),
-                                ]),
-                                Formula::and(vec![
-                                    Formula::negate(Formula::Con(first)),
-                                    Formula::Con(Con::eq(&x, &b)),
+                            // The two cases, and with them the rows of their convex hull, which
+                            // they imply: `x <= a`, `x <= b` for `min`, `x >= a`, `x >= b` for
+                            // `max` and `abs`. The rows are part of the base, so a disjunct that
+                            // reads `x` alone is projected with them: `y != 3 || min(y, x) > 4`
+                            // gives `y` its hole at 3, since `min(y, x) > 4` is projected to
+                            // `y >= 5` (FAIL-or-ifs-no-longer-exact-seed). Without them, `x`
+                            // is tied to `a` and `b` only through the case split, which the
+                            // projection meets disjunction by disjunction (presburger `project`),
+                            // so the disjunct gave `y` and `x` their whole ranges. Two rows a
+                            // definition, O(1); the formula has the same points.
+                            let hull = if p == Min {
+                                [Con::ge(&a, &x), Con::ge(&b, &x)]
+                            } else {
+                                [Con::ge(&x, &a), Con::ge(&x, &b)]
+                            };
+                            let def = Formula::and(vec![
+                                Formula::Con(hull[0].clone()),
+                                Formula::Con(hull[1].clone()),
+                                Formula::or(vec![
+                                    Formula::and(vec![
+                                        Formula::Con(first.clone()),
+                                        Formula::Con(Con::eq(&x, &a)),
+                                    ]),
+                                    Formula::and(vec![
+                                        Formula::negate(Formula::Con(first)),
+                                        Formula::Con(Con::eq(&x, &b)),
+                                    ]),
                                 ]),
                             ]);
                             let what = match p {
@@ -13961,7 +14013,11 @@ mod tests {
     /// The two preimages may still differ, since the hull of a relation and whether the solver
     /// decides it depend on its shape ([`presburger::decide`] does not undo the choice of a
     /// disjunct): gives whether the formulas differ as built, whether the solver decided the
-    /// points of each pair compared, and how the preimages differ.
+    /// points of each pair compared, and how the preimages differ. A preimage exact as an `if`
+    /// stays exact as `||` (FAIL-or-ifs-no-longer-exact-seed) except where the `||` box is wider, a
+    /// projection that is not the exact set (FAIL-or-if-projection-not-exact, a wrong answer
+    /// fixed by PRES-switchover-not-race), or where the solver refuses the `||` shape's question
+    /// (PRESBURGER-or-if-disjuncts-refusal); each is named apart from "no longer exact".
     fn holds_where_it_held_as_ifs(
         t: &Term,
         preimages: bool,
@@ -14015,16 +14071,44 @@ mod tests {
                     looser |= inside(&pn, x, y) && !inside(&po, x, y);
                 }
             }
+            // A wrong answer this test names apart until it is fixed: a `||` box wider than the
+            // `if` box. Both formulas hold at the same points, so the wider box is a projection
+            // that is not the exact set (author P197); the question of exactness is right to
+            // fail on it, since the box holds points outside the preimage. `g || b` keeps the
+            // disjunct `b` whole, presburger `project` gives each disjunct its hull and meets
+            // each disjunction's union of them, and where `b`'s hull covers a value that `g`
+            // leaves out and `b` does not take, the box keeps it; the `if` reading's disjunct
+            // `!g && b` has no point there and is removed. `x != 1 || x + 2 * y == 0` (the
+            // points of `b` have even `x`) and `x != 1 || min(-x, x - x) != -1` (the disjunct
+            // `m <= -2` is empty at `x == 1` only through the case split of the `min`) give
+            // `x` its whole range as `||` and `-6..=0, 2..=6` as an `if`. The failing test
+            // FAIL-or-if-projection-not-exact holds them, fixed by the exact projection of
+            // PRES-switchover-not-race; then this class goes. A preimage whose question of
+            // exactness the solver refuses for the `||` shape and decides for the `if` shape is
+            // marked necessary (refusal `Disjuncts`: the search through the disjunctions found
+            // no point and removed none), as the doc above allows; it is counted apart, and the
+            // refusal has its own row (PRESBURGER-or-if-disjuncts-refusal). A preimage with the
+            // same box that is no longer exact is the failure this test looks for.
+            let refused_now = pn.refusal.is_some() && po.refusal.is_none();
+            let wider = !refused_now && looser && !tighter;
             differ.extend(
                 [
                     (tighter && !looser, "tighter"),
                     (looser && !tighter, "looser"),
                     (looser && tighter, "neither"),
                     (pn.exact && !po.exact, "now exact"),
-                    (po.exact && !pn.exact, "no longer exact"),
+                    (
+                        po.exact && !pn.exact && !wider && !refused_now,
+                        "no longer exact",
+                    ),
+                    (po.exact && !pn.exact && wider, "no longer exact, wider box"),
+                    (
+                        po.exact && !pn.exact && refused_now,
+                        "no longer exact, refused",
+                    ),
                     (pn.enumerated != po.enumerated, "enumerated"),
                     (pn.stops != po.stops, "stops"),
-                    (pn.refusal.is_some() && po.refusal.is_none(), "refused now"),
+                    (refused_now, "refused now"),
                     (
                         po.refusal.is_some() && pn.refusal.is_none(),
                         "no longer refused",
@@ -15378,6 +15462,145 @@ mod tests {
                 }
             };
             check(&t, round);
+        }
+    }
+
+    /// The rounds of seed 122125774369642199 of [`or_ifs_hold_where_they_held_as_ifs`] keep every
+    /// exact preimage exact (FAIL-or-ifs-no-longer-exact-seed, found by PERF-l139-persist-due).
+    #[test]
+    fn or_ifs_of_seed_122125774369642199_hold_where_they_held_as_ifs() {
+        let mut g = Gen::new(122125774369642199, false);
+        g.and_ifs = true;
+        g.or_ifs = true;
+        for round in 0..OR_IF_ROUNDS {
+            let t = program(&mut g);
+            let (_, _, how) = holds_where_it_held_as_ifs(&t, round % 4 == 0);
+            assert!(!how.contains(&"no longer exact"), "round {round}: {t:?}");
+        }
+    }
+
+    /// The boxes of `x` and `y` of `p`.
+    fn boxes(p: &Preimage) -> String {
+        format!("x {} y {}", p.domains["x"], p.domains["y"])
+    }
+
+    /// The preimages of `t` for the demand `w` with `if g { true } else { b }` read as any other
+    /// `if` and as `g || b` ([`Walk::or_if`]).
+    fn both_readings(t: &Term, w: bool) -> (Preimage, Preimage) {
+        let d = Demand::Bool(w);
+        OR_IF_AS_IF.set(true);
+        let as_if = preimage(t, &domains(), &d);
+        OR_IF_AS_IF.set(false);
+        (as_if, preimage(t, &domains(), &d))
+    }
+
+    /// The smallest programs of FAIL-or-ifs-no-longer-exact-seed, each exact as an `if` and,
+    /// before the fix, not exact as `||`, and their neighbors: both readings exact, with the same
+    /// box and no refusal.
+    /// - `(x - x) - y != 3 || min(y, x) > 4`: the projection read `min(y, x) > 4` with the base
+    ///   alone, which had no row tying the value to `y` (the hull rows of `min`, `max`, `abs`).
+    /// - `x >= y || x < y` for `false`: a body over no input, empty, given the box of each input
+    ///   rather than decided (`linear`).
+    /// - `y < x && m < x - 3 || (m < x - 3 && 0 * y > x)`, `m = min(max(3, x), x)`, for `false`:
+    ///   the two copies of `max(3, x)` were two variables with one definition, which the solver
+    ///   refused as a tie (`Tr::extrema`).
+    #[test]
+    fn or_ifs_stay_exact_on_extrema_and_bodies_over_no_input() {
+        use Prim::{Add, And, Ge, Gt, Lt, Max, Min, Mul, Ne, Sub};
+        let v = |s: &str| Term::Var(s.into());
+        let i = |k: i64| Term::Lit(Value::Int(k));
+        let b = |k: bool| Term::Lit(Value::Bool(k));
+        let p = |q: Prim, a: Vec<Term>| Term::Prim(q, a);
+        let ite =
+            |g: Term, a: Term, c: Term| Term::If(Shared::new(g), Shared::new(a), Shared::new(c));
+        let or = |g: Term, c: Term| ite(g, b(true), c);
+        let gy = || {
+            p(
+                Ne,
+                vec![p(Sub, vec![p(Sub, vec![v("x"), v("x")]), v("y")]), i(3)],
+            )
+        };
+        let m = || p(Min, vec![p(Max, vec![i(3), v("x")]), v("x")]);
+        let l = || p(Lt, vec![m(), p(Add, vec![v("x"), i(-3)])]);
+        let cases = [
+            // y in -6..=-4 or -2..=6, as `y != -3` or both above 4.
+            (
+                or(gy(), p(Gt, vec![p(Min, vec![v("y"), v("x")]), i(4)])),
+                true,
+                "x [-6..=6] y [-6..=-4, -2..=6]",
+            ),
+            (
+                or(gy(), p(Lt, vec![p(Max, vec![v("y"), v("x")]), i(-4)])),
+                true,
+                "x [-6..=6] y [-6..=-4, -2..=6]",
+            ),
+            // The neighbor with a body that reads `x` and not a `min`.
+            (
+                or(gy(), p(Gt, vec![v("y"), i(4)])),
+                true,
+                "x [-6..=6] y [-6..=-4, -2..=6]",
+            ),
+            (
+                or(p(Ge, vec![v("x"), v("y")]), p(Lt, vec![v("x"), v("y")])),
+                false,
+                "x [] y []",
+            ),
+            (
+                or(p(Ge, vec![v("x"), v("y")]), p(Lt, vec![v("x"), v("y")])),
+                true,
+                "x [-6..=6] y [-6..=6]",
+            ),
+            // The neighbor whose body reads an input: `x` in -3..=-1.
+            (
+                or(p(Ge, vec![v("x"), i(0)]), p(Lt, vec![v("x"), i(-3)])),
+                false,
+                "x [-3..=-1] y [-6..=6]",
+            ),
+            (
+                or(
+                    p(And, vec![p(Lt, vec![v("y"), v("x")]), l()]),
+                    ite(
+                        l(),
+                        p(Gt, vec![p(Mul, vec![i(0), v("y")]), v("x")]),
+                        b(false),
+                    ),
+                ),
+                false,
+                "x [-6..=6] y [-6..=6]",
+            ),
+        ];
+        for (t, w, shown) in cases {
+            let (old, new) = both_readings(&t, w);
+            for p in [&old, &new] {
+                assert!(p.exact && p.refusal.is_none(), "{w}: {p:?}: {t:?}");
+                assert_eq!(boxes(p), shown, "{w}: {t:?}");
+            }
+        }
+    }
+
+    /// `min(max(3, x), x) < y || min(max(3, x), x) < y`: the two copies of `max(3, x)` are one
+    /// variable, so the solver decides the relation rather than refusing a tie, as it does the
+    /// `if` reading's.
+    #[test]
+    fn or_ifs_share_the_variable_of_a_repeated_extremum() {
+        use Prim::{Lt, Max, Min};
+        let v = |s: &str| Term::Var(s.into());
+        let m = || {
+            let three = Term::Lit(Value::Int(3.into()));
+            Term::Prim(Min, vec![Term::Prim(Max, vec![three, v("x")]), v("x")])
+        };
+        let l = || Term::Prim(Lt, vec![m(), v("y")]);
+        let t = Term::If(
+            Shared::new(l()),
+            Shared::new(Term::Lit(Value::Bool(true))),
+            Shared::new(l()),
+        );
+        for w in [true, false] {
+            let (old, new) = both_readings(&t, w);
+            assert!(new.refusal.is_none(), "{w}: {new:?}");
+            assert_eq!(boxes(&old), boxes(&new), "{w}");
+            let defs = new.relation.map(|r| r.defs.len());
+            assert!(defs.is_none_or(|n| n <= 2), "{w}: {defs:?}");
         }
     }
 }
