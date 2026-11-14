@@ -61,6 +61,10 @@ Use of a foreign value after the program releases it
 Release function whose parameters the `release` does not fill
 Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own
 Released foreign value that nothing uses
+Release that Zed makes whose function can report a failure
+Release function written in Zed that does not free the value
+Teardown that Zed cannot call once after its library's last use
+Call of a library's teardown by the program
 One C symbol exported twice
 Misaligned foreign pointer in a run
 Rebinding in the same scope
@@ -100,6 +104,9 @@ Demanded history of a loop whose step count has no proven bound
 Bound on a history keyed by step number, or an overflow policy on a history bound
 Stack depth over `@stack(bytes: b)`
 Stack overflow in a run
+Number too large for any memory of the target
+Out of memory in a run
+Limit of `main` passed in a run
 Size with no proven bound under `@preallocated` or the `preallocated` mode
 Cell read on a path back to its own cell
 Meaning function with a case `@decides` cannot reify

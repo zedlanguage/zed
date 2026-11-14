@@ -20,7 +20,7 @@ fn every_unit_builds_or_names_its_layer() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     // 23 and 113 at step L1.12; later steps build more.
     assert!(
-        built >= 23 && built + later == 183,
+        built >= 23 && built + later == 188,
         "built {built}, later {later}"
     );
 }

@@ -104,8 +104,9 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these nine rows yet: plan rows L7.4 (the first, the third to the
-    // seventh, and the ninth), TERM-1 and EXPORT-unique emit them.
+    // No diagnostic uses these thirteen rows yet: plan rows L7.4 (the first, the third to the
+    // seventh, and the thirteenth), FFI-release-failure (the eighth), FFI-release-zed (the
+    // ninth), FFI-teardown (the tenth and eleventh), TERM-1 and EXPORT-unique emit them.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
@@ -113,6 +114,10 @@ rows! {
     ReleaseParametersUnfilled => "Release function whose parameters the `release` does not fill",
     ConsumesMisplaced => "Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own",
     ReleasedValueUnused => "Released foreign value that nothing uses",
+    ReleaseCanFail => "Release that Zed makes whose function can report a failure",
+    ZedReleaseKeepsValue => "Release function written in Zed that does not free the value",
+    TeardownMisdeclared => "Teardown that Zed cannot call once after its library's last use",
+    TeardownCalled => "Call of a library's teardown by the program",
     SymbolExportedTwice => "One C symbol exported twice",
     MisalignedForeignPointer => "Misaligned foreign pointer in a run",
     Rebinding => "Rebinding in the same scope",
@@ -162,6 +167,10 @@ rows! {
     // No diagnostic uses the next two rows yet: plan row L18.2c emits them.
     StackOverBound => "Stack depth over `@stack(bytes: b)`",
     StackOverflow => "Stack overflow in a run",
+    NumberOverAddressSpace => "Number too large for any memory of the target",
+    // No diagnostic uses the next two rows yet: plan row MAIN-limits emits them.
+    OutOfMemory => "Out of memory in a run",
+    MainLimitPassed => "Limit of `main` passed in a run",
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",

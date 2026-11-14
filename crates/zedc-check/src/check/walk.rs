@@ -7719,7 +7719,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 &alone,
             ));
         }
-        self.reject(None, span, Msg::new(message, fixes), notes);
+        self.reject(
+            Some(Row::NumberOverAddressSpace),
+            span,
+            Msg::new(message, fixes),
+            notes,
+        );
     }
 
     /// Where the text fixes `x`: the declaration of the one binder a name names, else `x`

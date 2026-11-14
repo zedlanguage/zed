@@ -6,6 +6,49 @@ DESIGN.md [sec:ports] 1
   warnings: []
   checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^"), not_run: None }]
 
+DESIGN.md [sec:checking_in_zed] 1
+  rejected: [
+    Diagnostic {
+        line: 19,
+        col: 1,
+        message: "`main` is already declared in this scope with these parameter types.",
+        steps: [
+            Step {
+                line: 2,
+                col: 1,
+                text: "the first `main` with these parameter types",
+                source: "main(m: MainArgs) {",
+                width: 19,
+            },
+            Step {
+                line: 19,
+                col: 1,
+                text: "repair: give this binding a new name",
+                source: "main(m: MainArgs) {",
+                width: 19,
+            },
+        ],
+        menu: "",
+        row: Some(
+            Rebinding,
+        ),
+    },
+]
+  checks: [Outcome { line: 19, col: 1, failure: Some("`main` is already declared in this scope with these parameter types.\n  [1] 2:1: the first `main` with these parameter types\n       2 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^\n  [2] 19:1: repair: give this binding a new name\n      19 | main(m: MainArgs) {\n         | ^^^^^^^^^^^^^^^^^^^"), not_run: None }]
+
+DESIGN.md [sec:memory] 1
+  rejected: [
+    Diagnostic {
+        line: 2,
+        col: 44,
+        message: "the declared result type `-> (int, Utf8String)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        steps: [],
+        menu: "",
+        row: None,
+    },
+]
+  checks: [Outcome { line: 2, col: 44, failure: Some("the declared result type `-> (int, Utf8String)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+
 EXAMPLES.md [2. Bindings and values] 2
   rejected: [
     Diagnostic {

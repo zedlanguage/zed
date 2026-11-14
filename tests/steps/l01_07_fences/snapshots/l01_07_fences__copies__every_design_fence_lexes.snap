@@ -55,7 +55,19 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | m . stdout <- str["checked"] ;
   9 | «if» ( m . args [ 0₍10₎ ] «else» str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
  10 | }
-== DESIGN.md [sec:ports] 2 L7
+== DESIGN.md [sec:ports] 2 L12
+  3 | @limits ( memory : 1₍10₎ «with» units ( str["GiB"] ) , cpu : 60₍10₎ «with» units ( str["s"] ) )
+  4 | @timeout ( 5₍10₎ «with» units ( str["min"] ) )
+  5 | main ( m : MainArgs ) {
+  6 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+  7 | m . stdout <- String ( «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ) «else» str[] ;
+  8 | }
+ 11 | @limits ( memory : 1₍10₎ «with» units ( str["MiB"] ) )
+ 12 | main ( m : MainArgs ) {
+ 13 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
+ 14 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 20₍10₎ ) ) ;
+ 15 | }
+== DESIGN.md [sec:ports] 3 L7
   2 | main ( m : MainArgs ) -> int {
   3 | r = run ( [ str["git"] , str["status"] , str["--short"] ] ) ;
   4 | «match» r {
@@ -72,12 +84,12 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  18 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
  19 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
  20 | }
-== DESIGN.md [sec:ports] 3 L7
+== DESIGN.md [sec:ports] 4 L7
   2 | main ( m : MainArgs ) {
   3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
   4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
   5 | }
-== DESIGN.md [sec:ports] 4 L21
+== DESIGN.md [sec:ports] 5 L21
   1 | orders : Utf8String ->? { total : rat , note : Utf8String | #none }
   2 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» 0r
@@ -382,7 +394,23 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   8 | | #implies ( assume : Ast , then : Proof )
   9 | | #reflect ( sound : LawId )
  10 | | #assume ( why : Utf8String ) ;
-== DESIGN.md [sec:checking_in_zed] 1 L12
+== DESIGN.md [sec:checking_in_zed] 1 L1
+  2 | main ( m : MainArgs ) {
+  3 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
+  4 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 64₍10₎ ) ) ;
+  5 | }
+  8 | main ( m : MainArgs ) {
+  9 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+ 10 | m . stdout <- «if» k > 5₍10₎ { String ( ( 2₍10₎ ^ 64₍10₎ + 13₍10₎ ) ^ ( 2₍10₎ ^ 64₍10₎ ) ) } «else» { str["few"] } ;
+ 11 | }
+ 16 | grow ( k : int ) {
+ 17 | «return» «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ;
+ 18 | }
+ 19 | main ( m : MainArgs ) {
+ 20 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+ 21 | m . stdout <- String ( grow ( k : k ) ) «else» str[] ;
+ 22 | }
+== DESIGN.md [sec:checking_in_zed] 2 L12
   1 | «struct» Lattice ( «positional» E ) {
   2 | le : ( E , E ) -> bool ,
   3 | join : ( E , E ) -> E ,
@@ -471,7 +499,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  89 | witness : W ,
  90 | menu : [ Ast ] ,
  91 | }
-== DESIGN.md [sec:checking_in_zed] 2 L12
+== DESIGN.md [sec:checking_in_zed] 3 L12
   1 | «type» Parity = #even | #odd | #either ;
   2 | parity : Facet ( Parity , int ) = Facet (
   3 | kind : #evidence ,
@@ -548,6 +576,13 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | t = xs . map ( x -> x * 2₍10₎ ) . sum ;
   4 | «return» s + t ;
   7 | }
+== DESIGN.md [sec:memory] 1 L1
+  2 | page ( name : Utf8String , text : Utf8String ) -> ( int , Utf8String ) {
+  3 | header = str["Report for "] ++ name ;
+  4 | body = text ++ str["\n"] ++ text ;
+  5 | width = header . len ;
+  6 | ( width , body )
+  7 | }
 == DESIGN.md [sec:robustness] 1 L21
   1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) ;
   3 | main ( m : MainArgs ) {
@@ -582,29 +617,43 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) @blocking begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) ) ;
   5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) @blocking commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
 == DESIGN.md [sec:ffi] 4 L7
+  1 | @foreign «struct» File { }
+  2 | @foreign ( str["c"] , str["fclose"] ) @blocking fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["c"] , str["fputs"] ) @blocking fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 ;
+  4 | @foreign ( str["c"] , str["fopen"] ) @blocking fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
+  5 | @foreign ( str["c"] , str["fopen"] ) @blocking openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
+== DESIGN.md [sec:ffi] 5 L7
   1 | @foreign «struct» Lock { }
   2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok ;
   3 | @foreign ( str["locks"] , str["lock_acquire"] ) @blocking acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
-== DESIGN.md [sec:ffi] 5 L7
+== DESIGN.md [sec:ffi] 6 L7
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
-  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) @blocking close : ( db : Ptr ( Db ) ) -> i32 ;
-  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) @nonblocking finalize : ( stmt : Ptr ( Stmt ) ) -> i32 ;
-  5 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) @blocking open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( close ) ) ;
-  6 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) @blocking prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) , release ( finalize ) , keeps ( db ) ) ;
-  9 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 {
- 10 | rc , opened = open ( path : ) ;
- 11 | «match» opened {
- 12 | #none -> rc ,
- 13 | db -> «if» rc != 0₍10₎ { rc } «else» {
- 14 | rc2 , prepared = prepare ( db : , sql : , bytes : - 1₍10₎ , tail : #none ) ;
- 15 | «match» prepared {
- 16 | #none -> rc2 ,
- 17 | stmt -> ( db , stmt ) ,
- 18 | }
- 19 | } ,
+  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) @blocking close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
+  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) @nonblocking finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 ;
+  7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) @blocking open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #ok ; #ok } ) ) ;
+  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) @blocking prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) ;
+ 11 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 {
+ 12 | rc , opened = open ( path : ) ;
+ 13 | «match» opened {
+ 14 | #none -> rc ,
+ 15 | db -> «if» rc != 0₍10₎ { rc } «else» {
+ 16 | rc2 , prepared = prepare ( db : , sql : , bytes : - 1₍10₎ , tail : #none ) ;
+ 17 | «match» prepared {
+ 18 | #none -> rc2 ,
+ 19 | stmt -> ( db , stmt ) ,
  20 | }
- 21 | }
+ 21 | } ,
+ 22 | }
+ 23 | }
+== DESIGN.md [sec:ffi] 7 L7
+  1 | @foreign «struct» Curl { }
+  2 | @teardown @foreign ( str["curl"] , str["curl_global_cleanup"] ) @nonblocking globalCleanup : ( ) -> #ok ;
+  3 | @foreign ( str["curl"] , str["curl_global_init"] ) @blocking globalInit : ( flags : i64 ) -> i32 ;
+  4 | @foreign ( str["curl"] , str["curl_easy_cleanup"] ) @blocking easyCleanup : ( handle : Ptr ( Curl ) ) -> #ok ;
+  5 | @foreign ( str["curl"] , str["curl_easy_init"] ) @blocking easyInit : ( ) -> Ptr ( Curl ) | #none «with» release ( easyCleanup ) ;
+  7 | @foreign ( str["python3"] , str["Py_FinalizeEx"] ) @blocking finalizeEx : ( ) -> i32 ;
+  8 | @teardown ( str["python3"] ) endPython ( ) -> #ok { _ = finalizeEx ( ) «else» #ok ; #ok }
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;

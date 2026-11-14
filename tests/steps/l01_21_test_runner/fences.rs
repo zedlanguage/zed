@@ -21,8 +21,12 @@ fn every_l1_fence_passes_but_for_its_free_names() {
             continue;
         }
         // A fence that shows other forms of `main` side by side is refused as a program, and is
-        // checked otherwise.
-        let shown = |w: &&String| w.starts_with("this file declares 2 functions named `main`");
+        // checked otherwise: as two functions named `main`, or, where two of them have the same
+        // parameters, as a second `main` in one scope.
+        let shown = |w: &&String| {
+            w.starts_with("this file declares 2 functions named `main`")
+                || w.starts_with("`main` is already declared in this scope")
+        };
         if failures.iter().all(shown) {
             alternatives.push(f.key.clone());
             continue;
@@ -44,8 +48,20 @@ fn every_l1_fence_passes_but_for_its_free_names() {
     // A fence with a ✗ mark that compiles fails above, since its outcome is neither of the
     // two kinds allowed. The rebinding fence is the one rejection fence whose marks run.
     println!("{rejection} rejection fences run");
-    assert_eq!(alternatives, ["DESIGN.md [sec:ports] 1"]);
-    assert_eq!(declared, ["EXAMPLES.md [5. Conditionals] 1"]);
+    assert_eq!(
+        alternatives,
+        [
+            "DESIGN.md [sec:ports] 1",
+            "DESIGN.md [sec:checking_in_zed] 1"
+        ]
+    );
+    assert_eq!(
+        declared,
+        [
+            "DESIGN.md [sec:memory] 1",
+            "EXAMPLES.md [5. Conditionals] 1"
+        ]
+    );
     assert_eq!(rejection, 1);
     // The rebinding fence checks its one mark; the lambda fence binds every name it uses, and
     // the environment fence reads only `m.env`, a field of `main`'s argument.

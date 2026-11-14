@@ -199,6 +199,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         None,
     ),
     (
+        Row::NumberOverAddressSpace,
+        "",
+        "x = (2^64 + 13) ^ (2^6);\n",
+        "x = (2^64 + 13) ^ (2^64);\n",
+        "1:5",
+        None,
+    ),
+    (
         Row::AlwaysFails,
         "",
         "f(positional x: int, d: int) = x div d;\n",
