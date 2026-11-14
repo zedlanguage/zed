@@ -18672,7 +18672,9 @@ pub fn hull_sides_asked() -> u64 {
 /// whatever the point's distance. Otherwise a side with no bound is found by one question,
 /// [`unbounded`], and a bound by a search outward from the point's value with steps that
 /// double, then by bisection, so it takes O(log d) questions for a bound at distance d, each
-/// on integers of O(log d) bits. Every bound is exact at any magnitude.
+/// on integers of O(log d) bits. A formula that comes down to rows over the symbol and one
+/// other atom is answered first, with no question, by [`two_atom_side`]. Every bound is exact
+/// at any magnitude.
 fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>, Refusal> {
     SIDES.set(SIDES.get() + 1);
     let x = Lin::atom(sym.clone());
@@ -18686,6 +18688,18 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
         };
         decide_inner(&Formula::and(vec![c.clone(), Formula::Con(beyond)]))
     };
+    // Complexity tradeoff (XR-l139-family): naive version, the searches below, O(log d)
+    // questions of the whole formula for a side at distance d, each a run of the Omega test;
+    // where the rows' real bound is not found ([`real_end`] keeps its rows from growing, so it
+    // stops at `x <= y - 1` with two bounds on each of `x`, `y`), that is 11 to 23 questions
+    // for each side of the families of PERF-l139-family, growing with their bounds. Used: a
+    // formula that comes down to rows over the symbol and one other atom
+    // ([`two_atom_side`]) is answered exactly by the envelopes of its rows, with no question:
+    // O(r log r) for `r` rows. Those are most of the questions of those families: for
+    // example 4834 of the 4864 questions of `cuts` at k = 32.
+    if let Some(side) = two_atom_side(c, sym, dir) {
+        return Ok(side);
+    }
     // The search from both ends answers what the search below answers, the one bound, where
     // its questions are answered; where one is refused, the search below is run as before
     // (item PRES-project-each-cost: a disjunct `1024 * q <= x`, `1024 * q >= x - 1023`,
@@ -18791,6 +18805,103 @@ fn side_within(
         from_end = !from_end;
     }
     Ok(good)
+}
+
+/// The greatest value (`dir` 1) or the least (`dir` -1) of `sym` over `c`, `Some(None)` when
+/// that side has no bound, where `c` is a conjunction of constraints that comes down to rows
+/// over `sym` and at most one other atom; `None` for any other shape, and when `c` has no
+/// point. It comes down so: each equality, in turn, with a coefficient 1 or -1 at an atom other
+/// than `sym`, gives that atom's value in the others, which replaces it in every other
+/// constraint. The change of variables is unimodular, so the integer points of what is left
+/// are those of `c` with the atom dropped (Pugh, "The Omega test", 1991, sec. 2.2), and the
+/// side is then found exactly by [`twovar::ends`].
+///
+/// Complexity tradeoff: an equality replaced costs one pass over the constraints that hold
+/// its atom, as the Omega test's own elimination of it does in each question of
+/// [`hull_side`]'s searches; here it is done once for the side. A formula with more atoms than
+/// two plus its equalities cannot come down to two and is refused before any work, in one pass
+/// over its terms. Then O(r log r) for the `r` rows left, by [`twovar::ends`].
+fn two_atom_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
+    type Row = (BTreeMap<Atom, Int>, Int);
+    let cons: Vec<&Con> = match c {
+        Formula::Con(k) => vec![k],
+        Formula::And(fs) => (fs.iter())
+            .map(|f| match f {
+                Formula::Con(k) => Some(k),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+        _ => return None,
+    };
+    let atoms: BTreeSet<&Atom> = cons.iter().flat_map(|k| k.lin.terms.keys()).collect();
+    let eqs = cons.iter().filter(|k| k.rel == Rel::Eq).count();
+    if atoms.len() > eqs + 2 {
+        return None;
+    }
+    let (mut eq, mut ge): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
+    for k in cons {
+        let row = (k.lin.terms.clone(), k.lin.constant.clone());
+        if k.rel == Rel::Eq {
+            eq.push(row)
+        } else {
+            ge.push(row)
+        }
+    }
+    for i in 0..eq.len() {
+        let Some((x, a)) = (eq[i].0.iter())
+            .find(|(x, a)| *x != sym && a.abs() == Int::ONE)
+            .map(|(x, a)| (x.clone(), a.clone()))
+        else {
+            continue;
+        };
+        // `a·x + t + k == 0` with `a` ±1 gives `x = -a·(t + k)`: a row `m·x + ...` gains
+        // `-m·a·(t + k)` in place of `m·x`.
+        // The equality is taken out, left empty, so it holds no `x` and the pass skips it.
+        let (t, k) = std::mem::take(&mut eq[i]);
+        for row in eq.iter_mut().chain(ge.iter_mut()) {
+            let Some(m) = row.0.remove(&x) else {
+                continue;
+            };
+            let f = -&(&m * &a);
+            for (y, v) in t.iter().filter(|(y, _)| **y != x) {
+                let s = &row.0.remove(y).unwrap_or(Int::ZERO) + &(&f * v);
+                if !s.is_zero() {
+                    row.0.insert(y.clone(), s);
+                }
+            }
+            row.1 = &row.1 + &(&f * &k);
+        }
+    }
+    // The equalities left, each as two rows `>= 0`; the ones replaced are empty and drop out.
+    let mut rows: Vec<Row> = ge;
+    for (t, k) in eq
+        .into_iter()
+        .filter(|(t, k)| !t.is_empty() || !k.is_zero())
+    {
+        let neg = (t.iter()).map(|(a, v)| (a.clone(), -v)).collect();
+        rows.push((neg, -&k));
+        rows.push((t, k));
+    }
+    let mut other: Option<&Atom> = None;
+    for a in rows
+        .iter()
+        .flat_map(|(t, _)| t.keys())
+        .filter(|a| *a != sym)
+    {
+        match other {
+            Some(o) if o != a => return None,
+            _ => other = Some(a),
+        }
+    }
+    let terms: Vec<(Vec<Term>, &Int)> = (rows.iter())
+        .map(|(t, k)| {
+            let at = |a: &Atom| usize::from(a != sym);
+            (t.iter().map(|(a, v)| (at(a), v.clone())).collect(), k)
+        })
+        .collect();
+    let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], *k)).collect();
+    let (lo, hi) = twovar::ends(&refs, 0, 1)?;
+    Some(if dir > 0 { hi } else { lo })
 }
 
 /// An integer past which (going `dir`) no point of `c`, read as a conjunction of rows, has

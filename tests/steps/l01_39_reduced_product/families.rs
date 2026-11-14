@@ -1747,6 +1747,13 @@ fn unary_arms_scale() {
     scales("unary_arms", 8, 1);
 }
 
+/// 10.7 times the instructions at 8n while each side of a hull over two names was searched;
+/// 7.1 since those sides are read off the envelopes of their rows (XR-l139-family).
+#[test]
+fn cuts_scale() {
+    scales("cuts", 4, 1);
+}
+
 /// Each of wide's `k + 1` tests holds a sum of `k` names, so its input has `k^2` terms: order
 /// `k^2` is linear in the input.
 #[test]
@@ -1781,6 +1788,14 @@ fn coordmix_slopes_scales() {
 #[test]
 fn coordkk_scales() {
     scales("coordkk", 16, 1);
+}
+
+/// About `k^2.1` while each side of a hull over two names was searched; 8.8 times the
+/// instructions at 8n since those sides are read off the envelopes of their rows
+/// (XR-l139-family).
+#[test]
+fn boxstar_scales() {
+    scales("boxstar", 2, 1);
 }
 
 // The families below grow faster than linearly on main (TESTS-lhx-families, 2026-11-11, the

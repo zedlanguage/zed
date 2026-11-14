@@ -129,14 +129,13 @@ fn narrow(range: &mut (Option<Int>, Option<Int>), lo2: Option<Int>, hi2: Option<
     }
 }
 
-/// An integer point of the rows, over `x[x]` and, when given, `x[y]`, or `None` when they have
-/// none. Without `want` a point found is answered by zeros.
-pub fn point(
-    rows: &[(&[Term], &Int)],
-    x: usize,
-    y: Option<usize>,
-    want: bool,
-) -> Option<(Int, Int)> {
+/// The bounds of `x` and the lines that bound `y` above and below.
+type Split = ((Option<Int>, Option<Int>), Vec<Line>, Vec<Line>);
+
+/// The bounds that the rows over `x[x]` and, when given, `x[y]`, put on `x`, and the lines that
+/// bound `y` above and below, with `x` read negated where `flip` is set; `None` when a row with
+/// neither variable, or the bounds of `x`, show that the rows have no point.
+fn split(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>, flip: bool) -> Option<Split> {
     let mut xs: (Option<Int>, Option<Int>) = (None, None);
     let (mut upper, mut lower): (Vec<Line>, Vec<Line>) = (Vec::new(), Vec::new());
     for (a, k) in rows {
@@ -145,7 +144,7 @@ pub fn point(
                 .find(|(i, _)| *i == v)
                 .map_or(Int::ZERO, |(_, c)| c.clone())
         };
-        let cx = at(x);
+        let cx = if flip { -&at(x) } else { at(x) };
         let cy = y.map_or(Int::ZERO, at);
         let k = (*k).clone();
         if cy.is_zero() {
@@ -175,6 +174,18 @@ pub fn point(
     {
         return None;
     }
+    Some((xs, upper, lower))
+}
+
+/// An integer point of the rows, over `x[x]` and, when given, `x[y]`, or `None` when they have
+/// none. Without `want` a point found is answered by zeros.
+pub fn point(
+    rows: &[(&[Term], &Int)],
+    x: usize,
+    y: Option<usize>,
+    want: bool,
+) -> Option<(Int, Int)> {
+    let (xs, upper, lower) = split(rows, x, y, false)?;
     if upper.is_empty() || lower.is_empty() {
         // `y` is bounded on one side at most: any `x` in its range has a point.
         let v = match &xs {
@@ -204,6 +215,70 @@ pub fn point(
         };
         if let Some(p) = piece(&upper[u[i].0], &lower[l[j].0], &left, &right, &xs, want) {
             return Some(p);
+        }
+        let r = right?;
+        if ni.as_ref() == Some(&r) {
+            i += 1;
+        }
+        if nj.as_ref() == Some(&r) {
+            j += 1;
+        }
+        left = Some(r);
+    }
+}
+
+/// The least and the greatest integer `x[x]` of the integer points of the rows over `x[x]` and
+/// `x[y]`, each `None` where `x` has no bound that way; `None` when the rows have no point.
+///
+/// Complexity tradeoff: naive version, a search over values of `x`: one feasibility question
+/// of the rows for each value tried, O(log d) questions for an end at distance d from a known
+/// point (`hull_side` of zedc-presburger, each question a run of the Omega test). Used: the
+/// envelopes of [`point`], scanned from the left (for the greatest, with `x` negated): the
+/// first piece of the line where the envelopes leave an integer point holds the least `x`, and
+/// inside it the least `x` with a point is found by bisection on the floor-sum counts of its
+/// prefixes. O(m log m) for `m` rows, plus O(log w) floor sums for the width `w` of that
+/// piece, each logarithmic in the coefficients; no feasibility question is asked. Integer
+/// programs in two variables can be solved in O(log) arithmetic steps (Eisenbrand and Rote,
+/// "Fast 2-variable integer programming", IPCO 2001); the scan is simpler, exact at any
+/// magnitude, and reuses the envelopes and counts of [`point`].
+pub fn ends(rows: &[(&[Term], &Int)], x: usize, y: usize) -> Option<(Option<Int>, Option<Int>)> {
+    let lo = least_x(rows, x, y, false)?;
+    let hi = least_x(rows, x, y, true)?;
+    Some((lo, hi.map(|v| -&v)))
+}
+
+/// The least integer `x` (negated `x` where `flip` is set) of the integer points of the rows:
+/// `Some(None)` when the points reach every value below some `x`, `None` when there is no
+/// point.
+fn least_x(rows: &[(&[Term], &Int)], x: usize, y: usize, flip: bool) -> Option<Option<Int>> {
+    let (xs, upper, lower) = split(rows, x, Some(y), flip)?;
+    if upper.is_empty() || lower.is_empty() {
+        // `y` is bounded on one side at most: every integer `x` in its range has a point.
+        return Some(xs.0);
+    }
+    let u = least(&upper);
+    let negs: Vec<Line> = lower.iter().map(Line::neg).collect();
+    let l = least(&negs);
+    let (mut i, mut j) = (0, 0);
+    let mut left: Option<Q> = None;
+    loop {
+        let ni = u.get(i + 1).and_then(|e| e.1.clone());
+        let nj = l.get(j + 1).and_then(|e| e.1.clone());
+        let right = match (&ni, &nj) {
+            (Some(a), Some(b)) => Some(a.min(b).clone()),
+            (Some(a), None) => Some(a.clone()),
+            (None, b) => b.clone(),
+        };
+        let (ua, lb) = (&upper[u[i].0], &lower[l[j].0]);
+        // The pieces run from the left, so the first with a point holds the least `x`, which
+        // [`piece`] finds when the piece is bounded on the left. It is not only where no
+        // bound of `x` and no earlier piece closes it and `ua - lb` does not rise: falling to
+        // the right, it is 1 or more far enough left; constant, the counts repeat with the
+        // period of the lines. Either way the points reach every value to the left.
+        if let Some((v, _)) = piece(ua, lb, &left, &right, &xs, true) {
+            let rises = ua.slope().sub(&lb.slope()).is_positive();
+            let open = left.is_none() && xs.0.is_none() && !rises;
+            return Some((!open).then_some(v));
         }
         let r = right?;
         if ni.as_ref() == Some(&r) {
@@ -296,6 +371,69 @@ fn piece(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rows `c0·x + c1·y + k >= 0` as `ends` reads them.
+    fn ends_of(rows: &[([i64; 2], i64)]) -> Option<(Option<Int>, Option<Int>)> {
+        let terms: Vec<(Vec<Term>, Int)> = (rows.iter())
+            .map(|(c, k)| {
+                let t = (0..2).filter(|&i| c[i] != 0).map(|i| (i, Int::from(c[i])));
+                (t.collect(), Int::from(*k))
+            })
+            .collect();
+        let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], k)).collect();
+        ends(&refs, 0, 1)
+    }
+
+    #[test]
+    fn the_ends_match_a_search_of_the_box() {
+        // Random rows over `x`, `y` in a box: the least and greatest `x` of the integer points,
+        // against every point of the box. The box rows come first and last, so the envelopes
+        // see them in both orders.
+        let mut seed: u64 = 7;
+        let mut next = |m: i64| -> i64 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
+        };
+        for case in 0..4000 {
+            let b = 1 + case % 9;
+            let mut rows: Vec<([i64; 2], i64)> = vec![([1, 0], b), ([0, -1], b)];
+            for _ in 0..(1 + case % 4) {
+                rows.push(([next(4), next(4)], next(12)));
+            }
+            rows.extend([([-1, 0], b), ([0, 1], b)]);
+            let holds = |x: i64, y: i64| rows.iter().all(|(c, k)| c[0] * x + c[1] * y + k >= 0);
+            let xs: Vec<i64> = (-b..=b)
+                .filter(|&x| (-b..=b).any(|y| holds(x, y)))
+                .collect();
+            let want = xs.first().map(|lo| {
+                let hi = xs.last().expect("a point");
+                (Some(Int::from(*lo)), Some(Int::from(*hi)))
+            });
+            assert_eq!(ends_of(&rows), want, "rows {rows:?}");
+        }
+    }
+
+    #[test]
+    fn an_end_with_no_bound_is_none() {
+        // `0 <= y <= 3`, `x >= 2y - 5`: no greatest `x`; least -5.
+        let rows = [([0, 1], 0), ([0, -1], 3), ([1, -2], 5)];
+        assert_eq!(ends_of(&rows), Some((Some(Int::from(-5)), None)));
+        // `x == 2y + 1` read as two rows, no bound at all: both ends open.
+        let rows = [([1, -2], -1), ([-1, 2], 1)];
+        assert_eq!(ends_of(&rows), Some((None, None)));
+        // `2y <= x <= 2y` and `x` odd by `x == 2y + 1`: no point, though the reals have one.
+        let rows = [([1, -2], 0), ([-1, 2], 0), ([1, -2], -1)];
+        assert_eq!(ends_of(&rows), None);
+        // Parallel lines with points only at every third `x`: `3y <= x <= 3y`, so the points
+        // reach every value both ways.
+        let rows = [([1, -3], 0), ([-1, 3], 0)];
+        assert_eq!(ends_of(&rows), Some((None, None)));
+        // `x - 3y` in [1, 1] and `x <= 10`: the greatest is 10, the least open.
+        let rows = [([1, -3], -1), ([-1, 3], 1), ([-1, 0], 10)];
+        assert_eq!(ends_of(&rows), Some((None, Some(Int::from(10)))));
+    }
 
     #[test]
     fn the_floor_sum_matches_the_sum() {
