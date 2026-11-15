@@ -21,8 +21,8 @@ All paths are on this machine. Nothing below has been deleted.
 | accepted round-8 head (fixed ref) | branch wt/refusal-front-accept (6fc19f7a) |
 | the whole review record: briefs BRIEF1..11, META5..10, HISTORY.md (issue table X1..X47 and per-round notes), ERRORS_{CLAUDE,CODEX,GEMINI}.md, library/ with bib.md, archive/r1..r10 (each round's brief, reports, diffs, measurements), r11/ (round 11 reports, diffs, logs, sources) | /home/luke/Work/wt/rfx-scratch/review-record (copied from the session scratchpad rfx-xr, which lives under /tmp) |
 | orchestrator's measurements and scratch per round | /home/luke/Work/wt/rfx-scratch/orch (r9x, r10x, r11x; r11x/variants.txt is the three-way fields() table below) |
-| seats' large outputs | /home/luke/Work/wt/rfx-scratch/claude, /home/luke/Work/wt/rfx-scratch/codex, /home/luke/Work/wt/rfx-scratch/gemini |
-| seat worktrees (round 11 changes still in their working trees) | /home/luke/Work/wt/rfx-claude, /home/luke/Work/wt/rfx-codex, /home/luke/Work/wt/rfx-gemini |
+| seats' large outputs | /home/luke/Work/wt/rfx-scratch/claude, /home/luke/Work/wt/rfx-scratch/codex, /home/luke/Work/wt/rfx-scratch/gemini; the raw refusal dumps (codex/dump-*, codex/r10/dump-*) were deleted on 2026-11-14 and can be rebuilt from their commits; the comparisons drawn from them stay in codex/r10/accepted-v-*.json and accepted-map.tsv |
+| round 11 seat changes | review-record/r11/claude/R11_CLAUDE.diff and review-record/r11/codex/R11_CODEX.diff, both against base f9ada7ca2 (the seat worktrees rfx-claude, rfx-codex and rfx-gemini were removed on 2026-11-14; their diffs were byte-identical to these files) |
 | test-group logs per run | /home/luke/Work/wt/refusal-front-xr/build/r9c-logs, r9c2-logs, r9d-logs, r9rb-logs, r9x-logs, r9x2-logs, r9x3-logs, r10c-logs, r10m-logs, r10r-logs, r11c-logs, r11m-logs, r11f-logs |
 | round 11 seat reports | review-record/r11/claude/R11_CLAUDE.md and .diff; review-record/r11/codex/R11_CODEX.md and .diff, with meas/ and sources/fetched/ |
 
