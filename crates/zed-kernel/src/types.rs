@@ -2511,6 +2511,37 @@ impl Type {
         })
     }
 
+    /// `self & !other`, part by part as [`Type::zip`] meets them with the parts of `!other`,
+    /// but with the atoms taken by [`Atoms::minus`], which does not complement each name
+    /// `other` lists. The empty type minus anything is itself, as `zip_at_once` gives it.
+    /// Proof that it equals `self & &!other`: `!other` (`Not for &Type`) is the parts of
+    /// `other` each complemented, and `zip` with `Op::And` meets each part of `self` with the
+    /// part of `!other`, which is what each line below does (the atoms by the proof at
+    /// [`Atoms::minus`]); where `zip_at_once` instead gives an operand whole (`self` is `!other`,
+    /// or `!other` is the empty or the full type), that operand equals the parts met, so the
+    /// type built here is equal to it, though a new node. Test
+    /// `types::tests::a_difference_of_types_is_the_meet_with_the_complement`.
+    fn minus(&self, other: &Type) -> Type {
+        if crate::local::with(&EMPTY, |k| Arc::ptr_eq(&self.0, &k.0)) {
+            return self.clone();
+        }
+        let (a, b) = (self.p(), other.p());
+        Type::new(Parts {
+            digest: 0,
+            name_digest: 0,
+            bools: a.bools & !b.bools & 3,
+            ints: a.ints.zip(&b.ints.not(), Op::And),
+            rats: a.rats.zip(&b.rats.not(), Op::And),
+            floats: a.floats.zip(&b.floats.not(), Op::And),
+            f32s: a.f32s.zip(&b.f32s.not(), Op::And),
+            strings: a.strings.zip(&b.strings.not(), Op::And),
+            atoms: a.atoms.minus(&b.atoms),
+            tuples: a.tuples.zip(&b.tuples.not(), Op::And),
+            structs: a.structs && !b.structs,
+            morphisms: a.morphisms.zip(&b.morphisms.not(), Op::And),
+        })
+    }
+
     /// `self op other` without building a node, when one operand is the result: `a op a` is
     /// `a`, the empty type joined to `a` or `_` met with it is `a`, and the empty type met with
     /// `a` or `_` joined to it is that operand. Only nodes of parts are taken, so that a
@@ -3217,6 +3248,64 @@ impl Atoms {
         }
         out
     }
+
+    /// The parts of `self` outside `other`: `self.zip(&other.not(), Op::And)`, each name's part
+    /// the same, without building `other.not()`.
+    ///
+    /// Proof that it is that map. Write `s(n)` and `o(n)` for the parts `get` gives; the result
+    /// at `n` is `s(n) & !o(n)` (`at`), and `set` leaves a name unlisted exactly when its part
+    /// is the default of the result's kind, so it is enough that every name whose part may
+    /// differ from that default is set. An unlisted name has the part none in a finite map and
+    /// all in a cofinite one, and `!all` is none.
+    /// - `self` cofinite, `other` finite: the result is cofinite (default all). At a name
+    ///   `other` does not list, `!o(n)` is all and the part is `s(n)`, which `self.clone()`
+    ///   already holds; so only `other`'s names are set.
+    /// - Both cofinite: the result is finite (default none). At a name `other` does not list,
+    ///   `!o(n)` is none; so only `other`'s names can be other than none.
+    /// - `self` finite, `other` cofinite: finite. A name either map leaves unlisted gives none
+    ///   (`s(n)` none, or `!o(n)` none), so only names both list matter, and setting the
+    ///   names of either map, the smaller, covers them.
+    /// - Both finite: finite. A name `self` leaves unlisted gives none, so setting `self`'s
+    ///   names is enough; or, from `self.clone()`, a name `other` leaves unlisted keeps
+    ///   `s(n) & all = s(n)`, so setting `other`'s names is enough.
+    ///
+    /// Each case reads the names of one map and gets `s(n)` and `o(n)` in O(log) each.
+    // Complexity tradeoff: `O(min(s, o) log max(s, o))` for the `s` and `o` names listed, where
+    // `self & !other` complemented each of `other`'s names first, `O(o log o)` whatever `self`
+    // is. So `#a <: (#r1 | ... | #rk)`, asked of each arm of an `else if` chain of `n` links
+    // returning `n` atoms, cost `O(k)` at depth `k`, the chain `Θ(n²)`: 25.2 times the
+    // instructions for 8 times the links, 8.0 now (row BENCH-if-chain-other-paths; test
+    // `l08_02_remaps::bench::an_else_if_chain_returning_n_different_types_is_checked_in_n_log_n_time`;
+    // COMPLEXITY.md K119).
+    fn minus(&self, other: &Atoms) -> Atoms {
+        let at = |n: &Arc<str>| self.get(n).zip(&other.get(n).not(), Op::And);
+        let fresh = |cofinite: bool, names: &OrdMap<Arc<str>, AtomPart>| {
+            let mut out = Atoms {
+                cofinite,
+                ..Atoms::default()
+            };
+            for n in names.keys() {
+                out.set(n, at(n));
+            }
+            out
+        };
+        let changed = |names: &OrdMap<Arc<str>, AtomPart>| {
+            let mut out = self.clone();
+            for n in names.keys() {
+                out.set(n, at(n));
+            }
+            out
+        };
+        let smaller_self = self.names.len() <= other.names.len();
+        match (self.cofinite, other.cofinite) {
+            (true, false) => changed(&other.names),
+            (true, true) => fresh(false, &other.names),
+            (false, true) if smaller_self => fresh(false, &self.names),
+            (false, true) => fresh(false, &other.names),
+            (false, false) if smaller_self => fresh(false, &self.names),
+            (false, false) => changed(&other.names),
+        }
+    }
 }
 
 impl Tuples {
@@ -3360,7 +3449,7 @@ impl BitAnd for &Type {
 impl Sub<&Type> for &Type {
     type Output = Type;
     fn sub(self, other: &Type) -> Type {
-        self & &!other
+        self.minus(other)
     }
 }
 

@@ -134,6 +134,52 @@ fn atoms_combined_by_a_diff_agree_with_the_walk() {
     }
 }
 
+/// `a - b`, which reads only the names one of the two lists (BENCH-if-chain-other-paths), is
+/// `a & !b`, which complements each name `b` lists: for finite and cofinite sets of every
+/// size order, sets sharing names whose parts differ (bare, payload or both), and types with
+/// parts beside their atoms.
+#[test]
+fn a_difference_of_types_is_the_meet_with_the_complement() {
+    let atom = |i: usize| match i % 3 {
+        0 => Type::atom(&format!("a{i}")),
+        1 => Type::atom_with(&format!("a{i}"), &Type::tuple(vec![Type::int()])),
+        _ => Type::atom(&format!("a{i}")) | Type::atom_with(&format!("a{i}"), &Type::top()),
+    };
+    // The other part a name can have, so that two sets list a name with different parts.
+    let other_part = |i: usize| match i % 3 {
+        0 => Type::atom_with(&format!("a{i}"), &Type::top()),
+        _ => Type::atom(&format!("a{i}")),
+    };
+    let mut sets = vec![Type::empty(), Type::top()];
+    for (lo, hi, step) in [(0, 1, 1), (0, 4, 1), (2, 9, 1), (0, 40, 3), (1, 40, 2)] {
+        sets.push(Type::union_all((lo..hi).step_by(step).map(atom)));
+        sets.push(Type::union_all((lo..hi).step_by(step).map(other_part)));
+    }
+    let complements: Vec<Type> = sets.iter().map(|t| !t).collect();
+    sets.extend(complements);
+    let mixed: Vec<Type> = sets
+        .iter()
+        .step_by(3)
+        .map(|t| t | &Type::int() | Type::tuple(vec![Type::atom("a0")]))
+        .collect();
+    sets.extend(mixed);
+    for a in &sets {
+        for b in &sets {
+            assert_eq!(
+                a - b,
+                a & &!b,
+                "{} \\ {}",
+                a.surface_operand(),
+                b.surface_operand()
+            );
+            assert_eq!(
+                a.p().atoms.minus(&b.p().atoms),
+                a.p().atoms.zip(&b.p().atoms.not(), Op::And)
+            );
+        }
+    }
+}
+
 /// `scalar` gives the one value of a type of one boolean or one literal, and nothing for any
 /// other type: two values, a carrier, a type without a value, an atom or a tuple.
 #[test]

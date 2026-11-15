@@ -420,6 +420,127 @@ fn a_chain_of_n_ifs_over_n_parameters_is_checked_in_n_log_n_time() {
     );
 }
 
+/// `if c0 { v0 } else if c1 { v1 } … else { last }`, the `n` arms `arm(i) = (ci, vi)`: an
+/// `else if` chain of `n` links (row BENCH-if-chain-other-paths).
+fn else_if_chain(n: usize, arm: impl Fn(usize) -> (String, String), last: &str) -> String {
+    let links = (0..n)
+        .map(|i| {
+            let (c, v) = arm(i);
+            format!("if {c} {{ {v} }} else ")
+        })
+        .collect::<String>();
+    format!("{links}{{ {last} }}")
+}
+
+/// Checks that `src(n)`, a program whose `t` is `want(n)`, is checked and run in O(n log n)
+/// at n and 8n `else if` links.
+fn chain_scales(what: &str, src: impl Fn(usize) -> String, want: impl Fn(usize) -> String) {
+    let srcs = scaling::inputs(N_LEVELS, |n| (src(n), want(n)));
+    scaling::check(what, N_LEVELS, |n: usize| {
+        let (src, want) = &srcs[&n];
+        assert_eq!(&value(src, "t"), want);
+    });
+}
+
+#[test]
+fn an_else_if_chain_of_n_less_than_tests_on_one_integer_is_checked_in_n_log_n_time() {
+    // Each `else` narrows `x` to `x >= i + 1`; the call takes the last arm but one.
+    chain_scales(
+        "an `else if` chain of n tests `x < i` on one `int` parameter, one call",
+        |n| {
+            let body = else_if_chain(n, |i| (format!("x < {}", i + 1), i.to_string()), "-1");
+            format!("f(positional x: int) = {body};\nt = f({});\n", n - 1)
+        },
+        |n| (n - 1).to_string(),
+    );
+}
+
+#[test]
+fn an_else_if_chain_of_n_equality_tests_on_one_integer_is_checked_in_n_log_n_time() {
+    // Each `else` puts one more hole in `x`, `x != i`, so the `else` at depth k holds k holes.
+    chain_scales(
+        "an `else if` chain of n tests `x == i` on one `int` parameter, one call",
+        |n| {
+            let body = else_if_chain(n, |i| (format!("x == {i}"), i.to_string()), "-1");
+            format!("f(positional x: int) = {body};\nt = f({});\n", n - 1)
+        },
+        |n| (n - 1).to_string(),
+    );
+}
+
+#[test]
+fn an_else_if_chain_of_n_tests_on_n_integers_is_checked_in_n_log_n_time() {
+    // Each link tests its own parameter, `xi > 0`; only the last is 1.
+    chain_scales(
+        "an `else if` chain of n tests `xi > 0`, one per `int` parameter, one call",
+        |n| {
+            let params = (0..n)
+                .map(|i| format!("positional x{i}: int"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let body = else_if_chain(n, |i| (format!("x{i} > 0"), i.to_string()), "-1");
+            let args = (0..n)
+                .map(|i| if i + 1 == n { "1" } else { "0" })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("g({params}) = {body};\nt = g({args});\n")
+        },
+        |n| (n - 1).to_string(),
+    );
+}
+
+#[test]
+fn an_else_if_chain_of_n_tests_on_the_atoms_of_a_union_is_checked_in_n_log_n_time() {
+    // `v` is one of n + 1 atoms; each link takes one away, so the `else` at depth k is a union
+    // of n + 1 - k atoms.
+    chain_scales(
+        "an `else if` chain of n tests `v is #ai` on a union of n + 1 atoms, one call",
+        |n| {
+            let union = (0..=n)
+                .map(|i| format!("#a{i}"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let body = else_if_chain(n, |i| (format!("v is #a{i}"), i.to_string()), "-1");
+            format!("h(positional v: {union}) = {body};\nt = h(#a{});\n", n - 1)
+        },
+        |n| (n - 1).to_string(),
+    );
+}
+
+#[test]
+fn an_else_if_chain_of_n_tests_with_a_fold_inside_is_checked_in_n_log_n_time() {
+    // Each condition folds the list parameter, `xs >< (+) < i + 1`.
+    chain_scales(
+        "an `else if` chain of n tests `xs >< (+) < i` on one list parameter, one call",
+        |n| {
+            let body = else_if_chain(
+                n,
+                |i| (format!("xs >< (+) < {}", i + 1), i.to_string()),
+                "-1",
+            );
+            format!("k(positional xs) = {body};\nt = k([{}, 0]);\n", n - 1)
+        },
+        |n| (n - 1).to_string(),
+    );
+}
+
+#[test]
+fn an_else_if_chain_returning_n_different_types_is_checked_in_n_log_n_time() {
+    // The arm at link i returns the atom `#ri`, so the chain's type is a union of n + 1 atoms,
+    // and the `else` type at depth k is a union of n + 1 - k of them. Each `if` asks whether
+    // one arm's type is a subtype of the other's; that difference complemented every atom
+    // the result so far lists, Θ(n²) in all, 25.2 times the instructions at 100 and 800
+    // links, until `Atoms::minus` (COMPLEXITY.md K119).
+    chain_scales(
+        "an `else if` chain of n links each returning its own atom, one call",
+        |n| {
+            let body = else_if_chain(n, |i| (format!("c == {i}"), format!("#r{i}")), "#none");
+            format!("r(positional c: int) = {body};\nt = r({});\n", n - 1)
+        },
+        |n| format!("#r{}", n - 1),
+    );
+}
+
 /// `mi` and `m`: one family of an empty `int` level and one entry, and its `f64` twin.
 const EMPTY_LEVELS: &str = "mi = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
                             m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v > 3.0));\n";
