@@ -34,3 +34,72 @@ fn types_that_each_reach_a_ring_of_names_scale() {
 fn types_that_each_reach_a_ring_holding_lower_types_scale() {
     rings_scale(3..6);
 }
+
+/// The atom of a union of n tuple differences, `#a(∪ i<n: (i, int | bool) \ (i, bool))`, and the
+/// atom of the union of the n tuples taken away, `#a(∪ i<n: (i, bool))`. They are disjoint, and
+/// the first is not a subtype of the second. FAIL-kernel-empty-tuple-diff-union.
+pub(super) fn tuple_diff_union_pair(n: usize) -> (Type, Type) {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+    let ib = &Type::int() | &Type::bool();
+    let part = a(Type::union_all((0..n).map(|i| {
+        &Type::tuple(vec![lit(i), ib.clone()]) - &Type::tuple(vec![lit(i), Type::bool()])
+    })));
+    let paid = a(Type::union_all(
+        (0..n).map(|i| Type::tuple(vec![lit(i), Type::bool()])),
+    ));
+    (part, paid)
+}
+
+/// Whether the meet of the two atoms of [`tuple_diff_union_pair`] is empty, and whether the
+/// first is a subtype of the second, cost order n log n in the n tuples
+/// (FAIL-kernel-empty-tuple-diff-union). Small instance:
+/// `a_union_of_tuple_differences_is_disjoint_from_the_tuples_taken_away`.
+#[test]
+fn the_emptiness_of_a_meet_of_tuple_differences_scales() {
+    let inputs = crate::scaling::inputs(256, tuple_diff_union_pair);
+    crate::scaling::check(
+        "whether #a(∪ (i, int | bool) \\ (i, bool)) & #a(∪ (i, bool)) is empty, and the subtype test",
+        256,
+        |n| {
+            let (part, paid) = &inputs[&n];
+            assert!((part & paid).is_empty());
+            assert!(!part.subtype(paid));
+        },
+    );
+}
+
+/// [`tuple_diff_union_pair`] with the second component an atom with a payload, which is not a
+/// plain value: `#a(∪ i<n: (i, #b((int | bool))) \ (i, #b((bool))))` and
+/// `#a(∪ i<n: (i, #b((bool))))`. Disjoint, and the first not a subtype of the second.
+pub(super) fn tuple_diff_union_payload_pair(n: usize) -> (Type, Type) {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let b = |p: Type| Type::atom_with("b", &Type::tuple(vec![p]));
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+    let ib = &Type::int() | &Type::bool();
+    let part = a(Type::union_all((0..n).map(|i| {
+        &Type::tuple(vec![lit(i), b(ib.clone())]) - &Type::tuple(vec![lit(i), b(Type::bool())])
+    })));
+    let paid = a(Type::union_all(
+        (0..n).map(|i| Type::tuple(vec![lit(i), b(Type::bool())])),
+    ));
+    (part, paid)
+}
+
+/// As [`the_emptiness_of_a_meet_of_tuple_differences_scales`], on
+/// [`tuple_diff_union_payload_pair`]: a witness tuple with a scalar component and a component
+/// that is not plain, cost order n log n. Small instance:
+/// `a_union_of_tuple_differences_with_payloads_is_disjoint_from_the_tuples_taken_away`.
+#[test]
+fn the_emptiness_of_a_meet_of_tuple_differences_with_payloads_scales() {
+    let inputs = crate::scaling::inputs(256, tuple_diff_union_payload_pair);
+    crate::scaling::check(
+        "whether #a(∪ (i, #b((int | bool))) \\ (i, #b((bool)))) & #a(∪ (i, #b((bool)))) is empty, and the subtype test",
+        256,
+        |n| {
+            let (part, paid) = &inputs[&n];
+            assert!((part & paid).is_empty());
+            assert!(!part.subtype(paid));
+        },
+    );
+}

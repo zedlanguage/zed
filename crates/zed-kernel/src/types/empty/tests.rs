@@ -786,3 +786,57 @@ fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
     }
     assert!(kept > 0 && dropped > 0, "{kept} kept, {dropped} dropped");
 }
+
+/// `#a(∪ i<n: (i, int | bool) \ (i, bool))` holds `#a((i, k))` for each i and integer k and
+/// nothing of `#a(∪ i<n: (i, bool))`: their meet is empty, the first is no subtype of the second,
+/// and with one tuple left out of the taken-away union the meet holds that tuple's integers only
+/// if they were never taken away. The small instance of
+/// `the_emptiness_of_a_meet_of_tuple_differences_scales` (FAIL-kernel-empty-tuple-diff-union).
+#[test]
+fn a_union_of_tuple_differences_is_disjoint_from_the_tuples_taken_away() {
+    for n in [1, 2, 5] {
+        let (part, paid) = super::bench::tuple_diff_union_pair(n);
+        assert!((&part & &paid).is_empty(), "n = {n}");
+        assert!(!part.subtype(&paid), "n = {n}");
+        assert!(!paid.subtype(&part), "n = {n}");
+        let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+        let one_int = Type::atom_with("a", &Type::tuple(vec![lit(n - 1), Type::int()]));
+        assert!(one_int.subtype(&part), "n = {n}");
+        assert!(!(&part & &one_int).is_empty(), "n = {n}");
+        let one_true = Type::atom_with("a", &Type::tuple(vec![lit(0), Type::bool()]));
+        assert!((&part & &one_true).is_empty(), "n = {n}");
+        assert!(one_true.subtype(&paid), "n = {n}");
+    }
+}
+
+/// Small instances of `the_emptiness_of_a_meet_of_tuple_differences_with_payloads_scales`: a
+/// witness tuple whose first component is a scalar and whose second is an atom with a payload,
+/// tested against the rows that list that scalar and the rows whose column does not list
+/// scalars alone.
+#[test]
+fn a_union_of_tuple_differences_with_payloads_is_disjoint_from_the_tuples_taken_away() {
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+    let a = |p: Type| Type::atom_with("a", &p);
+    let b = |p: Type| Type::atom_with("b", &Type::tuple(vec![p]));
+    for n in [1, 2, 5] {
+        let (part, paid) = super::bench::tuple_diff_union_payload_pair(n);
+        assert!((&part & &paid).is_empty(), "n = {n}");
+        assert!(!part.subtype(&paid), "n = {n}");
+        assert!(!paid.subtype(&part), "n = {n}");
+        let one_int = a(Type::tuple(vec![lit(n - 1), b(Type::int())]));
+        assert!(one_int.subtype(&part), "n = {n}");
+        assert!(!(&part & &one_int).is_empty(), "n = {n}");
+        let one_true = a(Type::tuple(vec![lit(0), b(Type::bool())]));
+        assert!((&part & &one_true).is_empty(), "n = {n}");
+        assert!(one_true.subtype(&paid), "n = {n}");
+        // A first component no row lists.
+        let unlisted = a(Type::tuple(vec![lit(n + 3), b(Type::int())]));
+        assert!((&part & &unlisted).is_empty(), "n = {n}");
+        // A row whose first column is all of `int`, so it holds every first component.
+        let open = &part | &a(Type::tuple(vec![Type::int(), b(Type::string())]));
+        let any_str = a(Type::tuple(vec![lit(n + 3), b(Type::string())]));
+        assert!(!(&open & &any_str).is_empty(), "n = {n}");
+        assert!(any_str.subtype(&open), "n = {n}");
+        assert!((&open & &unlisted).is_empty(), "n = {n}");
+    }
+}

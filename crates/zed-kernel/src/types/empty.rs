@@ -83,7 +83,8 @@ use super::bes::{Answer, Bes, Decision, Kind, decide};
 use super::rec::unfold::eval;
 use super::rec::{self, Env, Judgment, Why};
 use super::{
-    Held, Lits, Morphism, Node, Parts, Refusal, Row, Split, Tuples, Type, Universes, Verdict, blind,
+    Filer, Held, Lits, Morphism, Node, Parts, Refusal, Row, RowIndex, Split, Tuples, Type,
+    Universes, Verdict, blind, makeable,
 };
 use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
@@ -1222,6 +1223,20 @@ struct Search {
     expanded: DigestMap<usize, usize>,
     /// Whether a value is in a type, by the class of the value ([`Search::class`]) and the type.
     members: HashMap<(usize, Type), Option<bool>, Digests>,
+    /// Per tuple part a tuple of plain values was tested against ([`makeable`]), its
+    /// rows filed by the values they may hold ([`RowIndex`]), made at the first such test and
+    /// kept with the part, so that its id names no other part. A list and an expression may
+    /// share an id, so each is keyed with whether it is an expression.
+    row_indexes: HashMap<(bool, u64), (Part<Row>, RowIndex)>,
+    /// Per tuple part a tuple with a scalar component and a component that is not plain was
+    /// tested against, its rows filed by the scalars their columns list ([`Columns`]), keyed and
+    /// kept as `row_indexes` is.
+    columns: HashMap<(bool, u64), (Part<Row>, Columns)>,
+    /// The keys of the column types of `row_indexes`, each type filed once.
+    filer: Filer,
+    /// Per value shown that was read as a plain value ([`Search::plain`]), that value, or `None`
+    /// when it is not one.
+    plain: DigestMap<usize, Option<Value>>,
     /// The class of each value shown that was given one, by its number.
     classes: DigestMap<usize, usize>,
     /// The classes of the values this search built whose keys no value of `STORES` has, by key,
@@ -2809,6 +2824,40 @@ impl Search {
         self.shown.len() - 1
     }
 
+    /// The value numbered `v` as a plain value ([`makeable`]) when it is one: a value of a plain
+    /// kind, or a tuple of such values, read in place of `Searching::member_known` by
+    /// `Searching::holds_known`. Each value is read once for the search, from a list rather
+    /// than the thread's stack, the parts of a tuple first; values shown are never changed, and
+    /// a tuple is shown after its parts.
+    fn plain(&mut self, v: usize) -> Option<Value> {
+        let mut todo = vec![v];
+        while let Some(&w) = todo.last() {
+            if self.plain.contains_key(&w) {
+                todo.pop();
+                continue;
+            }
+            let made = match &self.shown[w] {
+                Rep::Value(x) => makeable(x).then(|| x.clone()),
+                Rep::Tuple(vs) => {
+                    let missing: Vec<usize> = (vs.iter().copied())
+                        .filter(|p| !self.plain.contains_key(p))
+                        .collect();
+                    if !missing.is_empty() {
+                        todo.extend(missing);
+                        continue;
+                    }
+                    (vs.iter().map(|p| self.plain[p].clone()))
+                        .collect::<Option<Vec<Value>>>()
+                        .map(Value::tuple)
+                }
+                _ => None,
+            };
+            self.plain.insert(w, made);
+            todo.pop();
+        }
+        self.plain[&v].clone()
+    }
+
     /// The class of the value numbered `v`: one number for it and every value equal to it,
     /// shown here or kept in `STORES` ([`ValueKey`]). It and each of its parts not yet given a
     /// class are given one, the parts first, on a list rather than the thread's stack. A value
@@ -3117,6 +3166,85 @@ fn boolean_tail(c: &Type, name: &str) -> bool {
         .lens
         .get(&2)
         .is_some_and(|b| b.union_rows().is_none())
+}
+
+/// The rows of a tuple part filed by the scalars their columns list, for a tuple some of whose
+/// components are scalars and some not plain ([`Search::plain`]): a column type that holds
+/// scalars only, each kind a finite set of literals, holds a scalar exactly when it lists it,
+/// so a row is tested only when, at a chosen component that is a scalar, its column lists that
+/// scalar or is not such a type. The part's value is read from the rows that hold, by
+/// evaluating again only the nodes they change ([`Graph`](super::Graph)).
+struct Columns {
+    /// The distinct rows of the part, sorted.
+    rows: Vec<Row>,
+    /// Per column, the rows listing each scalar there, ascending.
+    listed: Vec<BTreeMap<Value, Vec<usize>>>,
+    /// Per column, the rows whose column is not a finite set of scalars, ascending.
+    open: Vec<Vec<usize>>,
+    graph: super::Graph,
+    /// Each node's value with every row false.
+    base: super::Base,
+}
+
+impl Columns {
+    fn new(len: usize, f: &Part<Row>) -> Columns {
+        let mut rows = f.distinct_atoms();
+        rows.sort();
+        let mut listed = vec![BTreeMap::<Value, Vec<usize>>::new(); len];
+        let mut open = vec![Vec::new(); len];
+        for (i, row) in rows.iter().enumerate() {
+            for (j, t) in row.iter().enumerate() {
+                let p = t.p();
+                let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
+                if !p.scalars_only() || lits.iter().any(|l| l.cofinite) {
+                    open[j].push(i);
+                    continue;
+                }
+                let bools = [false, true]
+                    .into_iter()
+                    .filter(|&b| p.bools >> u8::from(b) & 1 == 1);
+                let keys = (bools.map(Value::Bool))
+                    .chain(lits.iter().flat_map(|l| l.values.iter().cloned()));
+                for k in keys {
+                    listed[j].entry(k).or_default().push(i);
+                }
+            }
+        }
+        let graph = super::Graph::new(&rows, f);
+        let base = graph.base(|_| false);
+        Columns {
+            rows,
+            listed,
+            open,
+            graph,
+            base,
+        }
+    }
+
+    /// The positions of the rows that may hold a tuple whose components are `scalars` where
+    /// they are `Some`, ascending: of the component that leaves the fewest, the rows listing
+    /// its scalar and the open rows of its column. Every other row has a column that does not
+    /// hold its component.
+    fn candidates(&self, scalars: &[Option<Value>]) -> Vec<usize> {
+        let at = |j: usize, x: &Value| {
+            let listed = self.listed[j].get(x).map_or(&[][..], Vec::as_slice);
+            (listed, self.open[j].as_slice())
+        };
+        let (listed, open) = (scalars.iter().enumerate())
+            .filter_map(|(j, x)| Some(at(j, x.as_ref()?)))
+            .min_by_key(|(l, o)| l.len() + o.len())
+            .expect("a component is a scalar");
+        let mut out: Vec<usize> = listed.iter().chain(open).copied().collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The part's value when the rows at `holding` hold and every other row does not.
+    fn value(&self, holding: &[(usize, bool)]) -> bool {
+        let none = super::Overlay::default();
+        let over = self.graph.apply(&self.base, &none, holding);
+        self.graph.root(&self.base, &none, &over)
+    }
 }
 
 impl<'m> Searching<'m> {
@@ -8605,7 +8733,7 @@ impl<'m> Searching<'m> {
 
     /// Whether the tuple `vs` is in `f`; false when that is not known.
     async fn holds(&'m self, vs: &[usize], f: &Part<Row>) -> bool {
-        self.holds_known(|_, i| vs[i], f).await == Some(true)
+        self.holds_known(vs.len(), |_, i| vs[i], f).await == Some(true)
     }
 
     /// Whether the tuple whose component `i` is the value numbered `item(search, i)` is in `f`;
@@ -8618,13 +8746,82 @@ impl<'m> Searching<'m> {
     /// is not known, met first, made the reversed tuple unknown where a later component was
     /// surely outside). A component is read by number when it is tested, so a tuple among the
     /// values shown is read in place while the tests add to the search.
+    // Complexity tradeoff: a tuple of `len` plain values ([`Search::plain`]) is checked on the
+    // part's rows filed by the values they may hold ([`RowIndex`], the index
+    // `Type::each_value` lists values with): the rows with a key of the tuple are tested, and
+    // the part is evaluated again only where they change it from its value on a tuple with no
+    // key of any row ([`Graph`](super::Graph)), so a check costs about the rows it may be in
+    // times `log r`, after one filing of the part's `r` rows, `O(r log r)`, kept for the
+    // search. Naive version, kept for every other tuple: test the tuple against every distinct
+    // row and evaluate the whole part, `O(r log r)` per tuple, so `O(r² log r)` when a
+    // tuple is tried for each row, as the seeding does (`Searching::find_rep`): the union
+    // of `n` differences `(i, int | bool) \ (i, bool)` met with the `n` tuples `(i, bool)`
+    // took 1.6 s at `n` = 512, 14.2 s for the subtype test at 1024
+    // (FAIL-kernel-empty-tuple-diff-union). The answer is the same: each plain component is
+    // a value whose membership in a column `Type::contains` decides, as `member_known` reads
+    // it, and a tuple component's as the part of its length decides it, so the part is
+    // two-valued on the tuple. A tuple with a scalar component and a component of another
+    // kind (an atom with a payload, a closure, a list, a value of another search) is tested
+    // only against the rows that list that scalar in its column or whose column is not a
+    // finite set of scalars ([`Columns`]), the component chosen to leave the fewest; every
+    // other row is surely false, so the part is evaluated again only where the rows found to
+    // hold change it, or in three values over the tested rows when a membership is not known,
+    // `O(r)` then. The same pair with the second component `#b((int | bool))` took 1.6 s at
+    // `n` = 512 before, 37 ms after. Given up: a tuple with no scalar component and a
+    // component that is not plain is checked the naive way; and the indexes, their classes
+    // and the plain values are kept for the rest of the search.
     async fn holds_known(
         &'m self,
+        len: usize,
         item: impl Fn(&Search, usize) -> usize,
         f: &Part<Row>,
     ) -> Option<bool> {
+        let key = (f.expr_id().is_some(), f.id());
+        let scalars: Vec<Option<Value>> = {
+            let mut s = self.s();
+            let plain: Option<Vec<Value>> = (0..len)
+                .map(|i| {
+                    let v = item(&s, i);
+                    s.plain(v)
+                })
+                .collect();
+            if let Some(xs) = plain {
+                let Search {
+                    row_indexes, filer, ..
+                } = &mut *s;
+                let (_, index) = row_indexes
+                    .entry(key)
+                    .or_insert_with(|| (f.clone(), RowIndex::new(len, f, filer)));
+                let fits = |row: &Row| row.iter().zip(&xs).all(|(t, x)| t.contains(x));
+                return Some(index.holds(&xs, fits));
+            }
+            (0..len)
+                .map(|i| match &s.shown[item(&s, i)] {
+                    Rep::Value(x) if !matches!(x, Value::Tuple(_)) && super::whole(x) => {
+                        Some(x.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        // The rows to test, with their positions among the rows of `Columns` when a component
+        // is a scalar; every other row is surely false.
+        let rows: Vec<(Option<usize>, Row)> = match scalars.iter().any(Option::is_some) {
+            false => f.distinct_atoms().into_iter().map(|a| (None, a)).collect(),
+            true => {
+                let mut s = self.s();
+                let (_, c) = (s.columns)
+                    .entry(key)
+                    .or_insert_with(|| (f.clone(), Columns::new(len, f)));
+                let at = c.candidates(&scalars);
+                at.into_iter()
+                    .map(|i| (Some(i), c.rows[i].clone()))
+                    .collect()
+            }
+        };
         let mut known: BTreeMap<Row, Option<bool>> = BTreeMap::new();
-        for a in f.distinct_atoms() {
+        let (mut holding, mut unknown) = (Vec::new(), false);
+        for (at, a) in rows {
             let mut fits = Some(true);
             for (i, y) in a.iter().enumerate() {
                 let v = item(&self.s(), i);
@@ -8637,7 +8834,19 @@ impl<'m> Searching<'m> {
                     None => fits = None,
                 }
             }
+            match (at, fits) {
+                (Some(i), Some(true)) => holding.push((i, true)),
+                (_, None) => unknown = true,
+                _ => {}
+            }
             known.insert(a, fits);
+        }
+        if scalars.iter().any(Option::is_some) {
+            if !unknown {
+                return Some(self.s().columns[&key].1.value(&holding));
+            }
+            // A row not tested has a column that does not hold its component.
+            return f.eval3(&|a| known.get(a).copied().unwrap_or(Some(false)));
         }
         f.eval3(&|a| known.get(a).copied().flatten())
     }
@@ -8677,7 +8886,7 @@ impl<'m> Searching<'m> {
                 // What the value is, read before any test that adds to the values shown.
                 enum Shape<'u> {
                     Known(Option<bool>),
-                    Tuple(Part<Row>),
+                    Tuple(usize, Part<Row>),
                     Payload(usize, &'u Type),
                     List(usize),
                     Closure(Morphism, &'u Part<Morphism>),
@@ -8691,7 +8900,7 @@ impl<'m> Searching<'m> {
                         None => Shape::Closure(m.clone(), &up.morphisms),
                     },
                     Rep::Struct => Shape::Known(Some(up.structs)),
-                    Rep::Tuple(vs) => Shape::Tuple(up.tuples.get(vs.len())),
+                    Rep::Tuple(vs) => Shape::Tuple(vs.len(), up.tuples.get(vs.len())),
                     Rep::Atom(name, payload) => match up.atoms.names.get(name) {
                         None => Shape::Known(Some(up.atoms.cofinite)),
                         Some(a) => Shape::Payload(*payload, &a.payload),
@@ -8700,7 +8909,9 @@ impl<'m> Searching<'m> {
                 };
                 match shape {
                     Shape::Known(b) => b,
-                    Shape::Tuple(f) => self.holds_known(|s, i| s.tuple_item(v, i), &f).await,
+                    Shape::Tuple(len, f) => {
+                        self.holds_known(len, |s, i| s.tuple_item(v, i), &f).await
+                    }
                     Shape::Payload(payload, a) => self.member_known(payload, a).await,
                     Shape::List(item) => self.list_member(v, item, u).await,
                     Shape::Closure(m, f) => Self::closure_member(&m, f),

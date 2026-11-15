@@ -4304,6 +4304,17 @@ fn whole(x: &Value) -> bool {
     }
 }
 
+/// Whether `x` is a value of the kinds a [`RowIndex`] reads ([`Keyed`]): a scalar, a bare atom,
+/// or a tuple of such values. An atom with a payload, a path and a function are not.
+fn makeable(x: &Value) -> bool {
+    match x {
+        Value::Tuple(items) => items.as_slice().iter().all(makeable),
+        Value::Atom(a) => a.is_bare(),
+        Value::Path(_) | Value::Family(_) => false,
+        _ => whole(x),
+    }
+}
+
 /// The keys of each column of `row` ([`Filer::file`]), and the column with fewest keys among those
 /// that list every value they hold: a tuple none of whose components there is a key is not in
 /// the row. A column is first filed by its tuple types, and by its boxes only when that does
