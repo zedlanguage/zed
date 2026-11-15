@@ -2125,6 +2125,47 @@ fn a_refused_joined_part_keeps_a_sound_box() {
     check_refused_case(12, 296, true, (1, 6, 2));
 }
 
+/// Case 2 of seed 12220907512220935064, each part two joined: the names the solver refuses
+/// (`z2`, `z4` and `z5`, each `Refusal::Growth`) and their boxes are the same in every order of
+/// the wanted names, which is also the order of their box rows (item
+/// FAIL-refused-boxes-order-seed: the projection of a group's rows onto its names
+/// together, `projected_hulls`, eliminated by the names' order, and in some orders the solver
+/// answered `z4` or `z5`, in others refused it).
+#[test]
+fn refused_boxes_do_not_depend_on_the_order_of_the_symbols() {
+    let seed = 12220907512220935064;
+    let (items, bs) = random_case(seed, 2, true);
+    let s = scope(&bs);
+    let syms = item_names(&items);
+    let f = formula(&items);
+    let want = boxed_names(&s, &f, &syms);
+    let refused: Vec<&str> = (want.iter())
+        .filter(|(_, (_, e))| *e)
+        .map(|(n, _)| n.as_str())
+        .collect();
+    assert_eq!(refused, ["z2", "z4", "z5"]);
+    let mut order = Rng::new(0x0de5 ^ seed ^ (2 << 32));
+    let mut orders: Vec<Vec<Atom>> = (0..syms.len())
+        .map(|k| (syms[k..].iter()).chain(&syms[..k]).cloned().collect())
+        .collect();
+    orders.push(syms.iter().rev().cloned().collect());
+    for _ in 0..8 {
+        let mut ss = syms.clone();
+        shuffle(&mut order, &mut ss);
+        orders.push(ss);
+    }
+    for ss in &orders {
+        assert_eq!(boxed_names(&s, &f, ss), want, "names in the order {ss:?}");
+    }
+}
+
+/// [`check_refused`] on case 2 of seed 12220907512220935064 (item
+/// FAIL-refused-boxes-order-seed): its refused names in every order of the parts and names.
+#[test]
+fn a_refused_part_keeps_its_refusals_in_every_order() {
+    check_refused_case(12220907512220935064, 2, true, (1, 3, 0));
+}
+
 /// Names of random parts of seeds 11 to 18, not refused, whose hulls were wider than brute
 /// force finds (item PRES-pendants-wider), each now that hull: `a` and `z2` by the rows that
 /// the rows of a projection give each other (`2·a + z2 + 15 >= 0` with `a <= 7`), `z0` of

@@ -19238,7 +19238,8 @@ impl Level {
                             // with it, and no code relies on it not doing so
                             // (PROOF-batch-single-hull-agree). The rows `by_halves` keeps for
                             // a disjunct and the order in which `projected_hulls` eliminates
-                            // both follow the asked symbols, and the Omega test can refuse a
+                            // both follow the set of asked symbols (not their order, since
+                            // FAIL-refused-boxes-order-seed), and the Omega test can refuse a
                             // smaller system where it decides a larger one (`Refusal::Growth`:
                             // four or more live variables, each elimination adding terms to the
                             // rows, DESIGN L1.38, and the box test deciding nothing). So batch
@@ -20805,11 +20806,25 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
 /// hull over it is its hull over `rows`; where every other atom is gone, the rows over the
 /// symbol alone give the hull with no question. A symbol whose projection shows no point (none
 /// does, as `rows` has one) is left out, for the caller to ask.
+///
+/// The answer depends on `rows` and `syms` as sets, not on their orders: the rows are sorted
+/// and the symbols put in the order of [`symbols_by_structure`] before they are projected.
+/// [`projected_each`] places rows by the symbols' places, so the order decides which atoms
+/// each [`shadow`] eliminates together, and the Omega test can refuse one such system
+/// (`Refusal::Growth`) where it decides another; with the caller's order, the refusals of
+/// [`project_each_boxed`] changed when the wanted symbols were shuffled
+/// (FAIL-refused-boxes-order-seed: seed 12220907512220935064, case 2 of
+/// `l01_39_reduced_product::pendants::refused_projections_of_joined_random_parts_keep_sound_boxes`
+/// refused `z4` in one order of the symbols and not in another).
 fn projected_hulls(
-    rows: Vec<Con>,
+    mut rows: Vec<Con>,
     syms: &[&Atom],
     m: &Model,
 ) -> HashMap<Atom, Result<IntervalSet, Refusal>> {
+    rows.sort_unstable();
+    rows.dedup();
+    let ordered = symbols_by_structure(&rows, syms);
+    let syms = ordered.as_slice();
     let mut out = HashMap::new();
     let mut put = |i: usize, k: Option<Vec<Con>>| {
         if let Some(k) = k {
@@ -20831,6 +20846,71 @@ fn projected_hulls(
         }
     }
     out
+}
+
+/// The symbols `syms`, each once, in breadth-first order over the atoms of the sorted `rows`
+/// (two atoms neighbors when a row holds both), each group of linked atoms from an atom that a
+/// first breadth-first search from its least symbol reaches last, as [`by_structure`] orders
+/// parts (Cuthill and McKee, "Reducing the bandwidth of sparse symmetric matrices", ACM '69,
+/// 157-172); the groups by their least symbols, and a symbol no row holds where its place
+/// among the least symbols puts it. The order is a function of `rows` and `syms` as sets
+/// (`rows` sorted, rows and atoms visited in their sorted order), so the projections of
+/// [`projected_each`] made in it are too. On a chain the order runs from one end to the other,
+/// whatever the names, so its ranges cut few rows, as the caller's order did on the chains of
+/// `by_halves_against_old`.
+// Complexity tradeoff: the naive version, the symbols sorted by name, is also a function of
+// the sets, in O(k log k) for k symbols, but puts `v10` between `v1` and `v2`, so on a chain
+// the ranges of [`projected_each`] cut many rows and the rows passed between its nodes grow
+// (its cost is that of the cuts). Used: two breadth-first searches over the atoms of the rows,
+// O(t) hash operations for t terms, plus O(k log k) to sort the symbols; the rows were sorted
+// by the caller, O(m log m) comparisons for m rows. Test:
+// `l01_39_reduced_product::pendants::refused_boxes_do_not_depend_on_the_order_of_the_symbols`,
+// COMPLEXITY.md row FAIL-refused-boxes-order-seed.
+fn symbols_by_structure<'a>(rows: &'a [Con], syms: &[&'a Atom]) -> Vec<&'a Atom> {
+    let mut least: Vec<&Atom> = syms.to_vec();
+    least.sort_unstable();
+    least.dedup();
+    let asked: HashSet<&Atom> = least.iter().copied().collect();
+    let mut by_atom: HashMap<&Atom, Vec<usize>> = HashMap::new();
+    for (j, c) in rows.iter().enumerate() {
+        for a in c.lin.terms.keys() {
+            by_atom.entry(a).or_default().push(j);
+        }
+    }
+    // The atoms in breadth-first order from `start`, over the rows not yet `used` and the atoms
+    // not yet `seen`.
+    let breadth_first = |start: &'a Atom, seen: &mut HashSet<&'a Atom>, used: &mut [bool]| {
+        seen.insert(start);
+        let mut out = vec![start];
+        let mut head = 0;
+        while let Some(&a) = out.get(head) {
+            for &j in by_atom.get(a).into_iter().flatten() {
+                if !std::mem::replace(&mut used[j], true) {
+                    for b in rows[j].lin.terms.keys() {
+                        if seen.insert(b) {
+                            out.push(b);
+                        }
+                    }
+                }
+            }
+            head += 1;
+        }
+        out
+    };
+    // Each search covers a group of linked atoms, so each row is read once by each.
+    let (mut seen_first, mut used_first) = (HashSet::new(), vec![false; rows.len()]);
+    let (mut seen, mut used) = (HashSet::new(), vec![false; rows.len()]);
+    let mut order = Vec::with_capacity(least.len());
+    for s in least {
+        if seen.contains(s) {
+            continue;
+        }
+        let first = breadth_first(s, &mut seen_first, &mut used_first);
+        let far = *first.last().expect("the start");
+        let group = breadth_first(far, &mut seen, &mut used);
+        order.extend(group.into_iter().filter(|a| asked.contains(a)));
+    }
+    order
 }
 
 /// For each symbol `syms[i]`, the rows `rows` projected onto it by [`shadow`] and cut to its
