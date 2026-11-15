@@ -2514,3 +2514,15 @@ fn a_hole_left_with_its_first_case_wakes_the_parts_of_its_groups() {
     );
     hole_false_gives_the_projection_from_scratch(4, &steps, &hole);
 }
+
+/// The trees of seed 1217883182935025609 give the projection from scratch.
+#[test]
+fn holes_in_the_trees_of_seed_1217883182935025609_give_the_projection_from_scratch() {
+    holes_in_trees(1217883182935025609, false, met_without_piling);
+}
+
+/// The trees of seed 5815247056960035517 give the projection from scratch.
+#[test]
+fn holes_in_the_trees_of_seed_5815247056960035517_give_the_projection_from_scratch() {
+    holes_in_trees(5815247056960035517, false, met_without_piling);
+}

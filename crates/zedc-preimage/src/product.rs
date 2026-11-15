@@ -10333,7 +10333,13 @@ impl Scope {
                     }
                 }
             } else if ends {
-                continue;
+                // The tree's ends are found already: its other blocks due are still projected
+                // each, since the ends leave out no value between them on a cycle of weight
+                // above 0 with a hole, and a block's own projection may (FAIL-linked-scratch-
+                // misses-hole: from scratch `x4 - x5` in `[-2, -1]`, `x4 != 1, 2` left `x5` at
+                // `[-1, 5]`, the held projection `[-1, 2] ∪ [4, 5]`). Each block due costs its
+                // own projection once, as for a tree off the ends.
+                kept = true;
             }
             if !kept && shortest && (blocks.gaps(t) == Some(0) || paths.contains(&t)) {
                 let mut at = fresh.remove(&t).unwrap_or_default();
