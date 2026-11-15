@@ -4427,14 +4427,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// A failure of the outside world, `#ioError` loose at the top of the value or as a value
     /// of the family, bubbles when the rest is strings (DESIGN.md sec:failure, "atoms bubble
-    /// out of an argument", and the stacks' failures, "a loose atom that bubbles as `#ioError`
-    /// does"): the push fails, and where it is a statement of the body of `main` (`bubbles`),
-    /// the failure ends the run of `main`, which exits with 1 having written nothing
+    /// out of an argument", and sec:codecs on a layer's failures, "a loose atom that bubbles
+    /// as `#ioError` does"): the push fails, and where it is a statement of the body of `main`
+    /// (`bubbles`), the failure ends the run of `main`, which exits with 1 having written nothing
     /// (sec:ports). So `m.stdout <- m.stdin.map(l -> l.upper);` (EXAMPLES.md "[1. Programs
     /// and ports] 2"), whose lines may be `#ioError`, is taken. The atoms the program makes
     /// itself, a missed read's `#notFound` or `#outOfBounds` or a cast's `#invalid`, stay
     /// errors: the program can handle them where it makes them, and every failure the checker
-    /// can catch is caught (the author's standing rule of 2026-11-11, explicit, no surprises).
+    /// can catch is caught (DESIGN.md P13 of sec:pillars, the author's words of 2026-11-11).
     /// A push elsewhere, in a function that takes a port or in a block inside the body, would
     /// make its failure part of that function's or block's value, which is not built, and is
     /// refused by name (plan row PUSH-bubble-nested). A family atom is data, and does not

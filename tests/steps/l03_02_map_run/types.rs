@@ -134,11 +134,11 @@ fn a_range_runs_over_integers() {
 
 #[test]
 fn the_forms_not_built_are_refused_as_not_built() {
-    // The messages name no step: the program's words only. The steps are named at the
-    // refusals: a range with no upper end and metadata reads in zedc-resolve (steps L3.2 and
-    // L3.2a), a fold by a
-    // function that owes a proof of associativity and a directional fold over a keyed level
-    // in the checker (plan rows REDUCE-by-function and FOLD-keyed).
+    // The messages name no step: the program's words only. The plan rows are named at the
+    // refusals: a range with no upper end (RANGE-open), metadata reads (META-read-run), `for`
+    // (FOR-one-generator) and `discard` (DISCARD-standalone) in zedc-resolve; a fold by a
+    // function that owes a proof of associativity (REDUCE-by-function) and a directional fold
+    // over a keyed level (L3.4) in the checker.
     for (name, body, what) in [
         (
             "range_with_no_upper_end",
@@ -155,6 +155,16 @@ fn the_forms_not_built_are_refused_as_not_built() {
             "${[1, 2] >< ((a, b) -> a + b)}",
             "a fold `><` by a function other than `max`, `min` or an operator section is part \
              of the Zed language",
+        ),
+        (
+            "one_generator_for",
+            "${for x in [1, 2] { x }}",
+            "a `for` is part of the Zed language",
+        ),
+        (
+            "standalone_discard",
+            "${discard([1, 2], x -> x > 1)}",
+            "the prelude word `discard` is part of the Zed language",
         ),
         (
             "foldl_keyed",

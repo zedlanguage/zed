@@ -3937,3 +3937,11 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `RefCell<Vec<usize>>` of the shapes a row was tried in, pushed by the fit closure passed to `Comparing::search` and read by `Comparing::split_at` | `Comparing::row_in`, `Comparing::row_in_one` | `search` takes `fit` as `impl Fn(usize, Binds)` and returns only its verdict, so the shapes tried leave it through a cell | `search` returns the shapes it tried beside its verdict, and the cell goes |
+
+## Entries from MAP-run-rest and MAP-stdin-ioerror (`crates/zedc-check/src/check/walk.rs`, `mod.rs`; `crates/zed-kernel/src/eval.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `loop` that rebinds a mutable accumulator type, applying the folded function's arrows to it until it stops growing, with a round count bounded by `Carrier::ALL.len() + 1` | `Ck::fold_dir_end` | Mutation (gap 11) | a bounded `iterate` or a recursive function on the accumulator type, the bound as its fuel |
+| `HashSet<Span>` filled once per `main` body and read by `contains` at each push | `Ck::main_tails`, `Ck::main_pushes`, the push check in `walk.rs` | Mutation (gap 11); a set keyed by a span | a family `Span ->? ()` built from main's body before the checks, passed down |
+| `Family::set(x..y)` from a Rust `Range<i64>` | `range` in `eval.rs` | none: `x ..< y` is the Zed form itself | the range |

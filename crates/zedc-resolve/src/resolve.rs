@@ -1459,6 +1459,7 @@ impl Resolver<'_> {
                     self.out.uses.insert(span, Ref::Prelude(name.into()));
                     return;
                 }
+                // A word of a later layer, among them `discard` (plan row DISCARD-standalone).
                 Some(Found::Word(_)) => not_yet(&format!("the prelude word `{name}`")),
                 // A prelude struct of a later layer is named as a value to build one.
                 None if name == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
@@ -2855,7 +2856,7 @@ impl Resolver<'_> {
             // as `match`'s are, so a name in them is recorded or reported. Step L3.2 compiles
             // the displays, `in`, `><` and the bounded ranges. A range with no upper end is
             // read only by a generator that stops (DESIGN.md sec:grammar, rule Range), and
-            // generators are not built.
+            // generators are not built (plan row RANGE-open).
             ExprKind::Range(from, to) => {
                 if to.bound().is_none() {
                     self.later(e.span, "a range with no upper end, `a ..`,");
@@ -2915,7 +2916,8 @@ impl Resolver<'_> {
                 }
                 todo.push(Task::Expr(of));
             }
-            // A metadata read, `xs::len`, is not built yet (steps L3.2, L3.2a).
+            // A metadata read, `xs::len`, is not built yet (steps L3.2, L3.2a; plan row
+            // META-read-run).
             ExprKind::Read { of, .. } => {
                 self.later(e.span, "a metadata read `::`");
                 // `main::args` reads the entry point, which is no use of `main` as a value.
@@ -2946,6 +2948,7 @@ impl Resolver<'_> {
                 guard,
                 body,
             } => {
+                // Plan row FOR-one-generator: the one-generator `for` elaborates to `fam`.
                 self.later(e.span, "a `for`");
                 todo.push(Task::For {
                     binders,

@@ -3205,7 +3205,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // An entry that is a loose atom passes through `f` as through any call
                     // (rule 6 of sec:type_resolution), so `f` is given the rest. `where` would
                     // ask its test of such an entry, which gives the atom and no verdict; what
-                    // it keeps then is not settled, so that is not built.
+                    // it keeps then is not settled, so that is not built (plan row
+                    // WHERE-loose-atoms).
                     let loose = all.loose_ty();
                     let entries = all.without_loose();
                     if filter && !loose.lists_nothing() {
@@ -3303,10 +3304,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `(A, (A, V) -> A) -> A` and `((V, A) -> A, A) -> A`. `A` is `init`'s type widened to its
     /// carriers ([`Ty::carriers`]), joined with what `f` gives until `f` gives nothing new. The
     /// level must be a rank, keys `0 ..< n` every one present ([`Sig::dense`]); a keyed level
-    /// reads its sorted view, step L3.4's, and is refused by name. A loose atom `x` may be
-    /// passes through, as at `map`. A value whose type is a class (a parameter of a generic
-    /// function, or of a lambda checked before its argument) takes the fold as a need, checked
-    /// on each type that flows into the class, as `><` does.
+    /// reads its sorted view, step L3.4's, and is refused by name (plan row L3.4). A
+    /// loose atom `x` passes through, as at `map`. A value whose type is a class (a parameter
+    /// of a generic function, or of a lambda checked before its argument) takes the fold as a
+    /// need, checked on each type that flows into the class, as `><` does.
     // Complexity tradeoff: each round applies `f` once to the accumulator type, and the rounds
     // stop when the type settles; a naive check would apply `f` once per entry. At most
     // `Carrier::ALL.len() + 1` rounds run (below).
@@ -3599,7 +3600,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => None,
         };
         // `++` folds wait for its operator table (step L5.2, FP-ops-run); an operator on
-        // entries it does not take is not a fold either.
+        // entries it does not take, as `+` on entries that are families, is not built either
+        // (plan row REDUCE-family-entries).
         let Some((c, identity)) = fold else {
             let shown = self.text(&entries);
             let what = format!("a fold `><` by `{written}` of entries of type {shown}");

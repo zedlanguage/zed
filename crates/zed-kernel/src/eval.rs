@@ -2574,10 +2574,10 @@ fn reduced(values: &[Value], op: &V<'_>, identity: &Option<Value>) -> Option<Val
     if values.is_empty() {
         return Some(identity.clone().unwrap_or_else(|| Value::atom("empty")));
     }
-    if matches!(op, V::Prim(Prim::Add)) {
-        if let Some(atom) = values.iter().find(|v| matches!(v, Value::Atom(_))) {
-            return Some(atom.clone());
-        }
+    if matches!(op, V::Prim(Prim::Add))
+        && let Some(atom) = values.iter().find(|v| matches!(v, Value::Atom(_)))
+    {
+        return Some(atom.clone());
     }
     None
 }
