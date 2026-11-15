@@ -37,7 +37,7 @@ pub struct Ty {
     /// The functions.
     pub fns: Vec<Arc<Sig>>,
     /// The type variables.
-    pub vars: BTreeSet<Arc<str>>,
+    pub vars: VarSet,
     /// Whether the type holds the unknown `_`.
     pub dynamic: bool,
     /// The atoms of `set` that are members of a named atom family: data, which `else` keeps
@@ -47,6 +47,150 @@ pub struct Ty {
     /// with, or `None` where that is not known. The payload of an atom whose name is not
     /// listed is not known.
     pub payloads: BTreeMap<Arc<str>, Option<Vec<Shape>>>,
+}
+
+/// The type variables of a type, by name, in the order of the names: a persistent set, which
+/// copies share, with the sum of the hashes of its names kept as it changes.
+///
+/// Complexity tradeoff (FAIL-types-binding-union-copied): naive version, a `BTreeSet`, copied
+/// whole with the type and hashed name by name. A variable bound to one more piece is bound to
+/// the union of what it was bound to and that piece ([`Binds::unite`]), which copied the
+/// type and hashed it for the binding's digest: one variable taking `n` variables as members
+/// cost `1 + 2 + … + n`, O(n^2). Used: `imbl::OrdSet` (a B-tree whose nodes copies share, as
+/// [`Binds`]'s map), copied in O(1), a name added or removed in O(log n), copying only the
+/// nodes on its path; and the wrapping sum of the names' hashes, kept as names are added and
+/// removed, so a type is hashed in O(1) for its variables, and two sets of different sums or
+/// sizes compare unequal in O(1). Given up: a constant factor on each lookup and insert
+/// (reference-counted nodes of 16 names), and one hash of a name per insert.
+#[derive(Clone, Default)]
+pub struct VarSet {
+    set: imbl::OrdSet<Arc<str>>,
+    /// The sum, wrapping, of [`name_digest`] of each name.
+    digest: u64,
+}
+
+/// The hash of the name `v`, a term of [`VarSet`]'s digest.
+fn name_digest(v: &str) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    BuildHasherDefault::<DefaultHasher>::default().hash_one(v)
+}
+
+impl VarSet {
+    /// No variable.
+    pub fn new() -> VarSet {
+        VarSet::default()
+    }
+
+    /// The names, in order.
+    pub fn iter(&self) -> imbl::ordset::Iter<'_, Arc<str>, imbl::shared_ptr::DefaultSharedPtr> {
+        self.set.iter()
+    }
+
+    /// The number of names.
+    pub fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    /// Whether it holds no name.
+    pub fn is_empty(&self) -> bool {
+        self.set.is_empty()
+    }
+
+    /// Whether it holds `v`.
+    pub fn contains(&self, v: &str) -> bool {
+        self.set.contains(v)
+    }
+
+    /// The first name.
+    pub fn first(&self) -> Option<&Arc<str>> {
+        self.set.get_min()
+    }
+
+    /// Adds `v`, giving whether it was not there.
+    pub fn insert(&mut self, v: Arc<str>) -> bool {
+        let d = name_digest(&v);
+        let new = self.set.insert(v).is_none();
+        if new {
+            self.digest = self.digest.wrapping_add(d);
+        }
+        new
+    }
+
+    /// Removes `v`, giving whether it was there.
+    pub fn remove(&mut self, v: &str) -> bool {
+        let there = self.set.remove(v).is_some();
+        if there {
+            self.digest = self.digest.wrapping_sub(name_digest(v));
+        }
+        there
+    }
+
+    /// Keeps the names `f` keeps: found in one walk and removed after, O(n + d log n) for `d`
+    /// removed (the set lends no mutable walk).
+    pub fn retain(&mut self, mut f: impl FnMut(&Arc<str>) -> bool) {
+        let drop: Vec<Arc<str>> = self.iter().filter(|v| !f(v)).cloned().collect();
+        for v in &drop {
+            self.remove(v);
+        }
+    }
+
+    /// Adds the names of `other`: the smaller set's names into a copy of the larger, so
+    /// O(m log n) for `m` names of the smaller.
+    pub fn add_all(&mut self, other: &VarSet) {
+        if other.len() > self.len() {
+            let small = std::mem::replace(self, other.clone());
+            self.extend(small.iter().cloned());
+        } else {
+            self.extend(other.iter().cloned());
+        }
+    }
+}
+
+impl PartialEq for VarSet {
+    fn eq(&self, other: &VarSet) -> bool {
+        self.digest == other.digest && self.len() == other.len() && self.set == other.set
+    }
+}
+
+impl Eq for VarSet {}
+
+impl std::hash::Hash for VarSet {
+    /// Hashes the size and the sum of the names' hashes, in O(1).
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.len().hash(h);
+        self.digest.hash(h);
+    }
+}
+
+impl fmt::Debug for VarSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.iter()).finish()
+    }
+}
+
+impl Extend<Arc<str>> for VarSet {
+    fn extend<I: IntoIterator<Item = Arc<str>>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|v| {
+            self.insert(v);
+        });
+    }
+}
+
+impl FromIterator<Arc<str>> for VarSet {
+    fn from_iter<I: IntoIterator<Item = Arc<str>>>(iter: I) -> VarSet {
+        let mut out = VarSet::new();
+        out.extend(iter);
+        out
+    }
+}
+
+impl<'a> IntoIterator for &'a VarSet {
+    type Item = &'a Arc<str>;
+    type IntoIter = imbl::ordset::Iter<'a, Arc<str>, imbl::shared_ptr::DefaultSharedPtr>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 /// The components of a tuple shape, kept in one shared node with what they hold at any depth,
@@ -1675,7 +1819,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                     set,
                     tuples,
                     fns,
-                    vars: BTreeSet::new(),
+                    vars: VarSet::new(),
                     dynamic: t.dynamic,
                     family,
                     payloads,
@@ -3821,7 +3965,7 @@ impl Cx<'_> {
             set: t.set.clone(),
             tuples,
             fns: Vec::new(),
-            vars: BTreeSet::new(),
+            vars: VarSet::new(),
             dynamic: t.dynamic,
             family: t.family.clone(),
             payloads,
@@ -6333,7 +6477,7 @@ impl Ty {
             set: KType::empty(),
             tuples: Vec::new(),
             fns: Vec::new(),
-            vars: BTreeSet::new(),
+            vars: VarSet::new(),
             dynamic: false,
             family: KType::empty(),
             payloads: BTreeMap::new(),
@@ -6446,9 +6590,15 @@ impl Ty {
     /// The union.
     // Complexity tradeoff (COMPLEXITY.md F17): the naive union searches the list built so far
     // for each tuple and function by deep equality, O(T²) for T shapes; hash sets make it
-    // O(T) expected, at one set entry per shape of `self`. Kept: an `if`/`else if` chain of
-    // n branches of distinct tuple types still builds types of total size Θ(n²), since each
-    // `if` holds the union of the branches below it; the cost is the size of the types.
+    // O(T) expected, at one set entry per shape of `self`, made only where `other` holds
+    // tuples or functions, so a union with a scalar or a variable costs no walk of `self`'s.
+    // The variables are a persistent set ([`VarSet`]): the smaller set's names go into a copy
+    // of the larger, O(m log n) (FAIL-types-binding-union-copied). Kept: an `if`/`else if`
+    // chain of n branches of distinct tuple types still builds types of total size Θ(n²),
+    // since each `if` holds the union of the branches below it; the cost is the size of the
+    // types. A variable bound to n distinct tuple shapes or functions, one at a time, still
+    // copies the list of shapes at each, O(n^2): the lists are not shared between copies (row
+    // FAIL-types-binding-tuple-shapes-copied).
     pub fn union(&self, other: &Ty) -> Ty {
         let mut out = self.clone();
         out.set = &out.set | &other.set;
@@ -6456,17 +6606,21 @@ impl Ty {
         if !self.payloads.is_empty() || !other.payloads.is_empty() {
             out.payloads = join_payloads(&[self, other]);
         }
-        let have: HashSet<&Row> = self.tuples.iter().collect();
-        let new: Vec<&Row> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
-        let mut added = HashSet::new();
-        out.tuples
-            .extend(new.into_iter().filter(|t| added.insert(*t)).cloned());
-        let have: HashSet<&Arc<Sig>> = self.fns.iter().collect();
-        let new: Vec<&Arc<Sig>> = other.fns.iter().filter(|f| !have.contains(f)).collect();
-        let mut added = HashSet::new();
-        out.fns
-            .extend(new.into_iter().filter(|f| added.insert(*f)).cloned());
-        out.vars.extend(other.vars.iter().cloned());
+        if !other.tuples.is_empty() {
+            let have: HashSet<&Row> = self.tuples.iter().collect();
+            let new: Vec<&Row> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
+            let mut added = HashSet::new();
+            out.tuples
+                .extend(new.into_iter().filter(|t| added.insert(*t)).cloned());
+        }
+        if !other.fns.is_empty() {
+            let have: HashSet<&Arc<Sig>> = self.fns.iter().collect();
+            let new: Vec<&Arc<Sig>> = other.fns.iter().filter(|f| !have.contains(f)).collect();
+            let mut added = HashSet::new();
+            out.fns
+                .extend(new.into_iter().filter(|f| added.insert(*f)).cloned());
+        }
+        out.vars.add_all(&other.vars);
         out.dynamic |= other.dynamic;
         out
     }
@@ -6493,7 +6647,7 @@ impl Ty {
                 .extend(t.tuples.iter().filter(|c| tuples.insert(*c)).cloned());
             out.fns
                 .extend(t.fns.iter().filter(|f| fns.insert(*f)).cloned());
-            out.vars.extend(t.vars.iter().cloned());
+            out.vars.add_all(&t.vars);
             out.dynamic |= t.dynamic;
         }
         out
@@ -9237,7 +9391,17 @@ fn ceilings(sr: &Ty, qr: &Ty, free: &impl Fn(&str) -> bool) -> Option<Ceilings> 
 /// result of `q` may be bound. Cost: O(1) for a variable, a check of the sets for scalars.
 fn may_be_within(p: &Piece, ceil: &Ty, cx: &Cx) -> bool {
     let special = |w: &Arc<str>| cx.rigid.contains_key(w) || cx.fns.contains_key(w);
-    if ceil.dynamic || ceil.vars.iter().any(special) {
+    // Complexity tradeoff (FAIL-types-binding-union-copied): naive version, each variable of
+    // the ceiling looked up among the rigid and function variables, O(c log r) per piece, so
+    // a variable taking n members within a ceiling of n variables cost O(n^2 log n). Used: the
+    // smaller of the two sides walked and looked up in the other, O(min(c, r) log max(c, r));
+    // the answer is the same either way.
+    let specials = cx.rigid.len() + cx.fns.len();
+    let holds_special = match ceil.vars.len() <= specials {
+        true => ceil.vars.iter().any(special),
+        false => (cx.rigid.keys().chain(cx.fns.keys())).any(|w| ceil.vars.contains(w)),
+    };
+    if ceil.dynamic || holds_special {
         return true;
     }
     match p {
@@ -11284,6 +11448,70 @@ mod tests {
         );
         assert!(before.values().all(|t| *t == int));
         check(&before);
+    }
+
+    /// A set of variables keeps the sum of its names' hashes as it changes: sets of the same
+    /// names, however made, are equal and hash alike; a copy keeps its names when the
+    /// original changes; and a union takes the names of both sides, the larger side first or
+    /// not (FAIL-types-binding-union-copied).
+    #[test]
+    fn variable_sets_keep_their_digest_as_they_change() {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let hash = |s: &VarSet| BuildHasherDefault::<DefaultHasher>::default().hash_one(s);
+        let names = |ns: &[&str]| -> VarSet { ns.iter().map(|&n| Arc::from(n)).collect() };
+        let fresh = |s: &VarSet| -> VarSet { s.iter().cloned().collect() };
+        let check = |s: &VarSet| {
+            assert_eq!(*s, fresh(s), "{s:?}");
+            assert_eq!(hash(s), hash(&fresh(s)), "{s:?}");
+            assert_eq!(s.digest, fresh(s).digest, "{s:?}");
+        };
+        let mut a = names(&["c", "a", "b"]);
+        assert_eq!(a, names(&["a", "b", "c"]));
+        assert_eq!(a.first().map(|v| &**v), Some("a"));
+        assert!(
+            !a.insert("a".into()),
+            "a name already there is not added again"
+        );
+        check(&a);
+        let copy = a.clone();
+        assert!(a.remove("b"));
+        assert!(!a.remove("b"), "a name not there is not removed");
+        check(&a);
+        assert_eq!(copy, names(&["a", "b", "c"]), "the copy keeps its names");
+        assert_ne!(a, copy);
+        assert_ne!(names(&["a", "b"]), names(&["a", "c"]));
+        a.retain(|v| &**v != "a");
+        assert_eq!(a, names(&["c"]));
+        check(&a);
+        // Union from either side: the smaller into a copy of the larger.
+        let big = names(&["p", "q", "r", "s"]);
+        let mut small = names(&["a", "q"]);
+        small.add_all(&big);
+        let mut large = big.clone();
+        large.add_all(&names(&["a", "q"]));
+        assert_eq!(small, names(&["a", "p", "q", "r", "s"]));
+        assert_eq!(small, large);
+        check(&small);
+        assert_eq!(
+            big,
+            names(&["p", "q", "r", "s"]),
+            "a union leaves its operands"
+        );
+        // As part of a type: a variable bound to one more member at a time.
+        let mut b = Binds::new();
+        for v in ["x", "y", "x", "z"] {
+            b.unite("T".into(), &Ty::var(v.into()));
+        }
+        let t = b.get("T").expect("bound");
+        assert_eq!(t.vars, names(&["x", "y", "z"]));
+        assert_eq!(
+            *t,
+            Ty::union_all(&[
+                Ty::var("z".into()),
+                Ty::var("x".into()),
+                Ty::var("y".into())
+            ])
+        );
     }
 
     /// The number of cases of [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`],

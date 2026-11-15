@@ -310,7 +310,10 @@ pub(super) fn open_signature_is_h0s(n: usize) {
         (a.params[0].vars.len(), &a.params[0].vars),
         (1, &a.result.vars)
     );
-    assert!(h0.own.is_superset(&a.result.vars), "the variable is h0's");
+    assert!(
+        a.result.vars.iter().all(|v| h0.own.contains(v)),
+        "the variable is h0's"
+    );
 }
 
 /// A function `f` of `n` terms, and a function `g` that calls it on one branch, with `n` rows

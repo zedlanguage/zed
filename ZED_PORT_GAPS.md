@@ -3897,3 +3897,9 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `Names::memo: HashMap<usize, (Text, Option<Arc<Sum>>)>` | `zed-kernel/src/text/names.rs` | Mutation (gap 11) | `@memoized` on the naming, one boundary per message |
 | `Canon::memo: HashMap<Id, Option<S>>` | `zedc-presburger/src/presburger/deep/canon.rs` | Mutation (gap 11); key by id | `@memoized` keyed by the formula, one boundary per canonicalization |
 | `CellWalk::memo: HashMap<*const Parts, (CellView, CellView)>`, keyed by address | `zedc-presburger/src/presburger.rs` | Mutation (gap 11); equality by address (gap 1) | `@memoized` keyed by the parts' value; an interned `Parts` (a `@memoized` constructor) makes the key compare by address, as the Rust key does |
+
+## Entries from FAIL-types-binding-union-copied (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `imbl::OrdSet<Arc<str>>`, a persistent set whose copies share their nodes, with the wrapping sum of its names' hashes kept beside it (`VarSet`) | `Ty::vars`, `Ty::union`, `Ty::union_all`, `Binds::unite` | None | A Zed set is a value: the runtime must share its structure, so that one more name costs `O(log n)` and a copy `O(1)`; the kept sum of hashes is a field of a struct updated with the set |

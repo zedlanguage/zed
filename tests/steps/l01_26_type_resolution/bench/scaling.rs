@@ -698,6 +698,49 @@ fn shapes_of_variables_fit_renamed(what: &str, n: usize, scalars: bool) {
     });
 }
 
+/// One variable takes n distinct members: `(x0: (T,)) -> (T,)` where
+/// `(x0: (X0,) | … | (X(n-1),)) -> (X0 | … | X(n-1),)` is expected, with no pins
+/// (control: the cost is in the binding, not in the search).
+// 1x measured 749 ms (ns=748962810) at load 34 on 2026-11-14; 8.84 times the instructions at 8n.
+// Before FAIL-types-binding-union-copied, 59.0 times at n = 1000.
+#[test]
+fn one_variable_takes_n_members_in_linear_time() {
+    let sigs = scaling::inputs(30_000, |m| {
+        let one = shapes_of_variables("T", 1, &[], |vs| Ty::tuple(vec![vs[0].clone()]), false);
+        let mut q = shapes_of_variables("X", m, &[], |vs| Ty::tuple(vec![Ty::union_all(vs)]), true);
+        q.own.clear();
+        q.note_held();
+        (one, q)
+    });
+    scaling::check("one variable taking n members", 30_000, |m| {
+        let (s, q) = &sigs[&m];
+        assert!(zedc::check::ty::fits_sig(s, q));
+    });
+}
+
+/// n shapes of variables with the result `(P0,)`, fitting themselves renamed: `P0` is pinned,
+/// and the first free shape's variable takes the other n - 1 members.
+// 1x measured 1064 ms (ns=1064127643) at load 34 on 2026-11-14; 8.77 times the instructions at 8n.
+// Before FAIL-types-binding-union-copied, 56.5 times at n = 1000.
+#[test]
+fn n_shapes_of_variables_one_pinned_one_variable_takes_the_rest_in_linear_time() {
+    let result = |vs: &[Ty]| Ty::tuple(vec![vs[0].clone()]);
+    let sigs = scaling::inputs(30_000, |m| {
+        (
+            shapes_of_variables("T", m, &[], result, false),
+            shapes_of_variables("X", m, &[], result, true),
+        )
+    });
+    scaling::check(
+        "n shapes of variables, one pinned, one variable takes the rest",
+        30_000,
+        |m| {
+            let (s, q) = &sigs[&m];
+            assert!(zedc::check::ty::fits_sig(s, q));
+        },
+    );
+}
+
 // 1x measured 955 ms (ns=955400456) at load 52 on 2026-11-14; 8.62 times the instructions at 8n.
 #[test]
 fn n_shapes_of_variables_pinned_by_the_result_fit_themselves_renamed_in_linear_time() {

@@ -86,7 +86,7 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
     assert_eq!(s.to_string(), "(bool, T, U) -> T | U");
     let ps = &s.arrows[0].params;
     assert_ne!(ps[1], ps[2]);
-    let both: std::collections::BTreeSet<_> = ps[1].vars.union(&ps[2].vars).cloned().collect();
+    let both: zedc::check::ty::VarSet = ps[1].vars.iter().chain(&ps[2].vars).cloned().collect();
     assert_eq!(s.arrows[0].result.vars, both);
 }
 

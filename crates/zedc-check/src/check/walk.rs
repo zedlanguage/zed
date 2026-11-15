@@ -11195,7 +11195,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // The arrows of `<` alone say only that none takes the two; the
                         // message names the place and the repairs instead.
                         self.undo(&mark);
-                        self.not_compared(what, sides, &met, k, Unordered::Kinds(x, y), span);
+                        self.not_compared(
+                            what,
+                            sides,
+                            &met,
+                            k,
+                            Unordered::Kinds(Box::new((x, y))),
+                            span,
+                        );
                     }
                     continue;
                 }
@@ -11403,7 +11410,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
         };
         let mut repairs = Vec::new();
-        if let Unordered::Kinds(x, y) = &why {
+        if let Unordered::Kinds(xy) = &why {
+            let (x, y) = &**xy;
             let rests = [x, y];
             for (s, rest) in rests.into_iter().enumerate() {
                 for w in ["int", "rat", "f64"] {
@@ -11509,7 +11517,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             step(format!("{what} compares components `[{last}]`: {types}"));
         }
         step(match &why {
-            Unordered::Kinds(x, y) => {
+            Unordered::Kinds(xy) => {
+                let (x, y) = &**xy;
                 let mut text = format!(
                     "{what} compares only two numbers of one kind or two values of one other kind"
                 );
@@ -11604,7 +11613,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty {
                     tuples: Vec::new(),
                     vars: if open {
-                        BTreeSet::new()
+                        Default::default()
                     } else {
                         t.vars.clone()
                     },
@@ -18676,7 +18685,8 @@ fn plain_rat(text: &str) -> Option<String> {
 enum Unordered {
     /// The values of each side that are not tuples, numbers of two kinds or two values of two
     /// other kinds.
-    Kinds(Ty, Ty),
+    /// Boxed: a `Ty` is large and this is the rare case.
+    Kinds(Box<(Ty, Ty)>),
     /// The pieces of either side met by a tuple, then those met by an atom.
     Refused([Vec<String>; 2]),
 }

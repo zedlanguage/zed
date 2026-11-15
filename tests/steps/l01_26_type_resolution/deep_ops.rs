@@ -40,7 +40,7 @@ pub(super) fn sig(param: Ty, result: Ty) -> Sig {
         positional: true,
         default: None,
     };
-    let own: BTreeSet<Arc<str>> = param.vars.clone();
+    let own: BTreeSet<Arc<str>> = param.vars.iter().cloned().collect();
     let mut s = Sig::one(vec![x], vec![param], result);
     s.own = own;
     s

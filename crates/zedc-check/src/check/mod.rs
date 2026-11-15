@@ -5408,7 +5408,7 @@ fn hold(t: &Ty, needs: Vec<Need>, is_class: impl Fn(&str) -> bool) -> (Ty, Vec<N
             let own = v
                 .order
                 .iter()
-                .filter(|x| !is_class(x) && !t.vars.contains(*x));
+                .filter(|x| !is_class(x) && !t.vars.contains(x));
             let s = fns[i].get_or_insert_with(|| (*t.fns[i]).clone());
             s.own.extend(own.cloned());
             s.needs.push(n.clone());
