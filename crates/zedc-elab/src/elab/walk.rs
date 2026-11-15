@@ -29,7 +29,7 @@ use zedc_syntax::ast::{
 };
 use zedc_syntax::lex::{Span, unread_literal};
 
-use super::instances::{Env, Local};
+use super::instances::{Dropped, Env, Local};
 use super::mark::{Mark, mark_of, mutable};
 use super::state::{Bind, Elab};
 use fp_ops::Quantifier;
@@ -504,15 +504,20 @@ impl<'a> Elab<'a> {
         let (binds, last) = s?;
         let mut placed = Vec::with_capacity(binds.len());
         for b in binds {
-            let Some(l) = by_kernel.remove(&b.1) else {
+            let Some(mut l) = by_kernel.remove(&b.1) else {
                 placed.push(b);
                 continue;
             };
             // A written body no term names is dropped: it is never run, and the folds no call
             // decided in it would make `Self::check_instances` refuse every definition that
-            // holds the block.
+            // holds the block. `Self::check_dropped` refuses a kept term that names it all the
+            // same, which an edge `written_named` missed would give.
             if l.used {
                 placed.push(b);
+            } else {
+                let sites = mem::take(&mut l.written);
+                let stmt = l.stmt;
+                self.inst.dropped.insert(b.1, Dropped { stmt, sites });
             }
             let name = &self.t.res.binders[l.id].name;
             placed.extend((l.done.into_iter()).map(|(k, t)| (name.to_string(), k, t)));

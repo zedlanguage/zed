@@ -501,3 +501,27 @@ fn a_chain_of_n_functions_declared_in_a_block_over_a_fold_runs_in_linear_time() 
         run,
     );
 }
+
+#[test]
+fn n_blocks_that_each_drop_a_written_body_run_in_linear_time() {
+    // Each `a{i}` declares `h` and calls it at `int` and `f64` by name only, so each of the n
+    // written bodies is dropped, and the search for a kept term naming one
+    // (`Elab::check_dropped`, row PROOF-block-body-kept-when-named) reads every definition.
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let blocks = (0..n)
+            .map(|i| {
+                format!("a{i} = {{ h(positional q) = top(q); (h(mi[\"a\"]), h(m[\"a\"])) }};\n")
+            })
+            .collect::<String>();
+        format!("top(positional xs) = xs >< max;\n{EMPTY_LEVELS}{blocks}")
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], &format!("a{}", n - 1)), "(#empty, -inf)");
+    };
+    scaling::check(
+        "n blocks, each declaring a `max` fold's function called at `int` and `f64` by name, \
+         whole path",
+        N_LEVELS,
+        run,
+    );
+}

@@ -240,9 +240,10 @@ fn lower<'a>(
     }
     out.tests = std::mem::take(&mut e.tests).into();
     // A unit elaboration rejected may have left calls unelaborated, so only an accepted one
-    // is checked for folds no body took.
+    // is checked for folds no body took, and for a dropped written body a kept term names.
     if errors.is_empty() && e.errors.is_empty() {
         e.check_instances(&out.defs, &out.tests, export);
+        e.check_dropped(&out.defs, &out.tests);
     }
     errors.append(&mut e.errors);
     (out, e.marks.take(), errors)

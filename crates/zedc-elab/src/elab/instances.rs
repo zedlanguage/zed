@@ -17,7 +17,10 @@
 //! identities its calls decide too ([`Local`], REDUCE-generic-identity-rest); its bodies close
 //! over the block's names, so they are made and bound in the block when its statements end
 //! ([`Elab::place_locals`](super::state::Elab::place_locals)), and its written body is kept
-//! only if a term that runs names it.
+//! only if a term that runs names it. A kept term that names a dropped written body, which a
+//! reference [`Instancing::written_named`] missed would give, is refused at compile time
+//! ([`Elab::check_dropped`](super::state::Elab::check_dropped),
+//! PROOF-block-body-kept-when-named), never left to run with the name unbound.
 //!
 //! What stays refused, as "not compiled yet": a fold whose identity no call decides where it
 //! is elaborated (a function passed as a value, a block's function named as a value at two
@@ -97,6 +100,10 @@ pub(super) struct Instancing<'a> {
     pub(super) pending: Vec<usize>,
     /// The indices in `locals` whose written bodies are being elaborated, innermost last.
     pub(super) writing: Vec<usize>,
+    /// The written bodies dropped since no term that runs names them
+    /// ([`Elab::place_locals`](super::state::Elab::place_locals)), by kernel name; a kept term
+    /// that names one is refused ([`Elab::check_dropped`](super::state::Elab::check_dropped)).
+    pub(super) dropped: HashMap<Arc<str>, Dropped<'a>>,
 }
 
 /// A function declared in a block whose calls decide the identities of its folds, as
@@ -125,6 +132,21 @@ pub(super) struct Local<'a> {
     pub(super) prev: Option<usize>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// In this crate's unit tests only: while set, [`Instancing::written_named`] records
+    /// nothing, as a reference it missed would, so that
+    /// [`Elab::check_dropped`](super::state::Elab::check_dropped) can be run on one.
+    pub(super) static MISS_WRITTEN_NAMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The written body of a block's function that no term that runs names, left out of the block:
+/// the function's declaration and the folds its written body left undecided.
+pub(super) struct Dropped<'a> {
+    pub(super) stmt: &'a Stmt,
+    pub(super) sites: Vec<Span>,
+}
+
 impl<'a> Instancing<'a> {
     pub(super) fn new(next: usize) -> Self {
         Instancing {
@@ -145,6 +167,7 @@ impl<'a> Instancing<'a> {
             local_at: HashMap::new(),
             pending: Vec::new(),
             writing: Vec::new(),
+            dropped: HashMap::new(),
         }
     }
 
@@ -187,6 +210,10 @@ impl<'a> Instancing<'a> {
     /// and runs it if it is run; anywhere else, within a function declared inside its own
     /// body among them, it is run if the block is.
     pub(super) fn written_named(&mut self, id: usize) {
+        #[cfg(test)]
+        if MISS_WRITTEN_NAMED.get() {
+            return;
+        }
         let Some(&i) = self.local_at.get(&id) else {
             return;
         };

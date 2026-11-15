@@ -8,10 +8,13 @@
 //! cases of later steps (join patterns, tuple sources, level names: L8.2a–c) assert the
 //! refusal naming their step. `rules` holds the small tests of each rule of step L8.2,
 //! `group` and `rekey` among them, and `bench` its scaling benchmarks (run with `--bench`).
+//! `kept` writes each way to refer to a function declared in a block whose calls run a fold at
+//! two types, and whether its written body is kept (row PROOF-block-body-kept-when-named).
 //! COMPLETENESS.md lists each case and the test that covers it.
 mod bench;
 mod collisions;
 mod empty;
+mod kept;
 mod kernel;
 mod moves;
 mod rules;
