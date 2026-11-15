@@ -7,6 +7,7 @@
 //! sec:type_resolution); this reads those too. The empty type prints as `Never`, a prelude type
 //! name of L1; its L10 form `!_` is read as well.
 
+use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -26,33 +27,87 @@ use zedc_syntax::parse::{self, TOP};
 /// part it uses more than once (`Type::surfaces_by_name`): each definition is read in turn, its
 /// body may name the ones before it, and its name stands for its type where the rest names it.
 /// Time linear in the text: each part is read once, and a name's type is shared where it is
-/// named (`Ty` copies its outer level only).
+/// named (`Ty` copies its outer level only). The text is lexed once; a part's tokens are taken
+/// from it (`part_tokens`), and lexed again only once its leaves are replaced.
 pub fn parse_type(text: &str) -> Result<Ty, String> {
-    let tokens = lex::lex(text).map_err(|e| format!("`{text}`: {e}"))?;
-    let tok = |i: usize| tokens.get(i).map(|t| &t.tok);
+    let mut tokens = lex::lex(text)
+        .map_err(|e| format!("`{text}`: {e}"))?
+        .into_iter();
     let mut named = Binds::new();
     let mut seen = Seen::default();
-    let mut i = 0;
-    while let (Some(Tok::Keyword("type")), Some(Tok::Name(name)), Some(Tok::Op("="))) =
-        (tok(i), tok(i + 1), tok(i + 2))
-    {
-        let end = (i + 3..tokens.len())
-            .find(|&j| tokens[j].tok == Tok::Op(";"))
+    loop {
+        let rest = tokens.as_slice();
+        let tok = |i: usize| rest.get(i).map(|t| &t.tok);
+        let (Some(Tok::Keyword("type")), Some(Tok::Name(name)), Some(Tok::Op("="))) =
+            (tok(0), tok(1), tok(2))
+        else {
+            break;
+        };
+        let end = (3..rest.len())
+            .find(|&j| rest[j].tok == Tok::Op(";"))
             .ok_or_else(|| format!("`{text}`: the definition of `{name}` has no `;`"))?;
-        let body = &text[tokens[i + 3].span.start..tokens[end].span.start];
-        let t = read_part(text, body, &mut named, &mut seen)?;
-        named.insert(name.as_str().into(), t);
-        i = end + 1;
+        let name: Arc<str> = name.as_str().into();
+        let (from, to) = (rest[3].span.start, rest[end].span.start);
+        let part: Vec<lex::Token> = tokens.by_ref().take(end).skip(3).collect();
+        tokens.next(); // the `;`
+        let t = read_part(text, &text[from..to], from, part, &mut named, &mut seen)?;
+        named.insert(name, t);
     }
-    let rest = &text[tokens.get(i).map_or(text.len(), |t| t.span.start)..];
-    read_part(text, rest, &mut named, &mut seen)
+    let from = tokens
+        .as_slice()
+        .first()
+        .map_or(text.len(), |t| t.span.start);
+    read_part(
+        text,
+        &text[from..],
+        from,
+        tokens.collect(),
+        &mut named,
+        &mut seen,
+    )
 }
 
-/// The type `head`, a part of the printed type `text`, which may name the types of `named`:
-/// the definitions before it, and the leaves of layer L10 read so far, to which it adds its own.
-/// `seen` holds what the parts before it walked of their types, and gets what this one walks.
-fn read_part(text: &str, head: &str, named: &mut Binds, seen: &mut Seen) -> Result<Ty, String> {
-    let tokens = lex::lex(head).map_err(|e| format!("`{text}`: {e}"))?;
+/// The tokens of `head`, the text of a printed type from byte `from` to a token's start or the
+/// end, given `tokens`, the tokens the whole text has there: the same tokens with their spans
+/// moved to start at `head`, as lexing `head` gives them. A part with a string is lexed again:
+/// a string holds tokens of its own, and a `"""` string reads its indentation from the text.
+// Not proved: that lexing a text from a token's start to another token's start (or the end)
+// gives the tokens the whole text has between them, string tokens apart. It rests on the lexer
+// reading each token from its first byte without looking back, and ending a name, number,
+// operator or comment at a byte that is in neither text past the cut (a token starts there).
+// Evidence: while this was written, an assertion that the moved tokens equal those of a new lex
+// held on all 914 test pieces of the groups that read printed types (l01_15, l01_19, l01_22,
+// l01_23, l01_26, l01_28, l01_29, l01_31, l01_37a, l02_12, m0_01) and on the 5.6 MB of printed
+// types of the many-bounded-variables bench.
+fn part_tokens(
+    text: &str,
+    head: &str,
+    from: usize,
+    mut tokens: Vec<lex::Token>,
+) -> Result<Vec<lex::Token>, String> {
+    if tokens.iter().any(|t| matches!(t.tok, Tok::Str(_))) {
+        return lex::lex(head).map_err(|e| format!("`{text}`: {e}"));
+    }
+    for t in &mut tokens {
+        t.span.start -= from;
+        t.span.end -= from;
+    }
+    Ok(tokens)
+}
+
+/// The type `head`, a part of the printed type `text` from its byte `from`, whose tokens there
+/// are `tokens`, which may name the types of `named`: the definitions before it, and the leaves
+/// of layer L10 read so far, to which it adds its own. `seen` holds what the parts before it
+/// walked of their types, and gets what this one walks.
+fn read_part(
+    text: &str,
+    head: &str,
+    from: usize,
+    tokens: Vec<lex::Token>,
+    named: &mut Binds,
+    seen: &mut Seen,
+) -> Result<Ty, String> {
+    let tokens = part_tokens(text, head, from, tokens)?;
     // The names the resolver finds: the definitions `head` names, and its own leaves.
     let mut found: HashSet<Arc<str>> = (tokens.iter())
         .filter_map(|t| match &t.tok {
@@ -60,9 +115,16 @@ fn read_part(text: &str, head: &str, named: &mut Binds, seen: &mut Seen) -> Resu
             _ => None,
         })
         .collect();
-    let body = leaves(text, head, &tokens, named, &mut found)?;
+    // A part with no leaf is parsed from the tokens it has; one with a leaf is lexed again,
+    // since each leaf there is now a name.
+    let (body, tokens) = match leaves(text, head, &tokens, named, &mut found)? {
+        Some(body) => {
+            let tokens = lex::lex(&body).map_err(|e| format!("`{text}`: {e}"))?;
+            (Cow::Owned(body), tokens)
+        }
+        None => (Cow::Borrowed(head), tokens),
+    };
     let binds = &*named;
-    let tokens = lex::lex(&body).map_err(|e| format!("`{text}`: {e}"))?;
     let tree = parse::parse(&body, &tokens, "Type", TOP)
         .map_err(|e| format!("`{text}` is not a type: {e}"))?;
     let t = ast::ty(&body, &tokens, &tree).map_err(|e| format!("`{text}`: {e}"))?;
@@ -328,15 +390,17 @@ impl Seen {
 }
 
 /// `head` with each leaf of layer L10 replaced by a type variable, put in `binds` with what it
-/// stands for (`_` the unknown, `!_` the empty type, a literal its value) and in `found`.
+/// stands for (`_` the unknown, `!_` the empty type, a literal its value) and in `found`; `None`
+/// when `head` has no leaf.
 fn leaves(
     text: &str,
     head: &str,
     tokens: &[lex::Token],
     binds: &mut Binds,
     found: &mut HashSet<Arc<str>>,
-) -> Result<String, String> {
-    let mut out = String::with_capacity(head.len());
+) -> Result<Option<String>, String> {
+    let mut out = String::new();
+    let mut any = false;
     let mut from = 0;
     let mut i = 0;
     while i < tokens.len() {
@@ -386,6 +450,10 @@ fn leaves(
             }
         };
         let name: Arc<str> = format!("Leaf{}", binds.len()).into();
+        if !any {
+            any = true;
+            out.reserve(head.len());
+        }
         out.push_str(&head[from..start]);
         out.push_str(&name);
         from = tokens[i + used - 1].span.end;
@@ -393,8 +461,11 @@ fn leaves(
         binds.insert(name, ty);
         i += used;
     }
+    if !any {
+        return Ok(None);
+    }
     out.push_str(&head[from..]);
-    Ok(out)
+    Ok(Some(out))
 }
 
 /// The integer of a literal type's product of powers at the start of `tokens`, `3^200000` or
