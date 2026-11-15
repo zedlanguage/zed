@@ -2380,28 +2380,15 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| EMPTY-level-swap | running | 2026-11-07 21:20 | 2026-11-11: sink given a consumer (author: every DAG node must have a descendant) |
-| FAIL-batch-linked-copies-growth | impl attempt 1 | 2026-11-14 17:42 | started in wt/fix-batch-growth from 47675dfe7 + cherry-pick d43d535ab; then FAIL-batch-single-hull-seed |
-| FAIL-batch-single-hull-seed | impl attempt 1 | 2026-11-14 16:53 | NOT FIXED: single exact, batch coarser (v4 [0,18] vs {0..2,6..18}, also v5-v7); cause Growth refusal depends on row writing, which depends on symbols asked; hal |
 | FAIL-bench-bounded-or-free-time | impl attempt 1 | 2026-11-14 18:47 | start; load 26.35 36.54 41.85 |
-| FAIL-kernel-empty-tuple-diff-union | impl attempt 1 | 2026-11-14 18:54 | started (fix-empty-tuple-diff) |
-| FAIL-open-sides-bench-ratio | impl attempt 1 | 2026-11-14 16:53 | not reproduced as 10.68: main f6bab0ff1 by run_tests --bench 10.10-10.13 (4 runs, 95.5M/966M instr), raw binary without GLIBC_TUNABLES 10.37; 9ade05ff8^ (998893 |
 | FAIL-or-if-projection-not-exact | running |  |  |
 | FAIL-or-if-tie-refusal | impl attempt 1 | 2026-11-14 16:54 | reproduced on f6bab0ff1 (with Omega::untie of 5a5084526): seed 3178640468583431682 round 104 still Unordered Tie [x, y]; untie works on Omega rows, this tie is  |
-| FAIL-project-each-coarser-seed | impl attempt 1 | 2026-11-14 18:54 | merged aa8366a07, plan cc27e29a8: precision fault (old path exact by brute force); a disjunction left with one disjunct by drop_jointly_empty now joins the base |
-| FAIL-scope-chain-scales-bytes | impl attempt 1 | 2026-11-14 18:20 | not fixed: join of row sums builds a pair table per question (k^3 in all); join off is linear with same facts; needs PRES-project-exact-solver/PRES-join-cost-pr |
 | FAIL-types-binding-tuple-shapes-copied | impl attempt 1 | 2026-11-14 18:15 | Members persistent list for Ty::tuples/fns; bench one variable taking n tuple shapes 32.332x -> 9.113x instr (bytes 25.4x -> 8.30x) at load 33.6; negative contr |
 | FAIL-types-loose-over-refusal | running | 2026-11-14 18:15 |  |
 | FAIL-types-singleton-tuple-union-match | running | 2026-11-14 18:15 |  |
-| L8.1 | running | 2026-11-05 04:07 |  |
-| L8.2a | running | 2026-11-05 04:07 |  |
-| L8.2b | running |  |  |
-| L8.2c | running |  |  |
-| L8.2 | running | 2026-11-05 04:07 |  |
 | PRES-project-exact-solver | impl attempt 1 | 2026-11-14 19:45 | start, worktree wt/pres-exact at 07f18406f |
 | PRES-sign-tie-names | impl attempt 1 | 2026-11-14 16:54 | started in wt/fix-ties at f6bab0ff1; load 17.88 9.21 12.04 |
 | PRES-solve-equation-sign | impl attempt 1 | 2026-11-14 18:34 | reproduced: new probe (layered family + a - b == 0 style equations, every writing and naming, shuffled parts) on main: 98 of 1800 systems over 6 seeds change an |
-| REMAP-tests | impl attempt 1 | 2026-11-14 19:24 | paused, row open: kernel group l08_02_remaps (39 tests) on main since b0334072b; 60 source tests on branch wt/remap-tests b5b8f0820, not pushed (1 passes, 59 st |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
