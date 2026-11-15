@@ -4973,6 +4973,38 @@ impl<'m> Searching<'m> {
                 // that holds the box once a piece is out is that whole box, which its branch
                 // cannot split again, so a split first refuses boxes the taking out settles
                 // (`l01_23_groups_and_refusals::nested_cover::a_piece_taken_out_before_the_split_leaves_a_box_the_split_settles`).
+                //
+                // Complexity tradeoff: the pieces are taken out over several passes of this loop,
+                // each narrowing the box again, and a pass may try a cell that missed on an earlier
+                // pass again, where a pass that took out every piece it could would try each cell
+                // once. Why: each piece is narrowed on the box as it stands (DESIGN.md L1.23, the
+                // proof at `nested_cover`). Bound (PERF-take-out-piece-chain): the loop goes back
+                // to its top only here and below at `take_out_piece`, and at most `1 + Σ_j
+                // |cells[j]|` times in all, `|cells[j]|` the distinct cells of component `j`, at
+                // most the tuple types times the components. Proof: (1) each pass that goes back
+                // closes a cell that was open: `take_out_piece` closes the cell of the piece it
+                // takes, open when it was tried, since every try since restored what it changed;
+                // `nested_cover` takes out a piece only if it takes out the first of its order, a
+                // piece whose set `H` of cells holding it is a largest one. The cells are nested
+                // or disjoint (`nested_pieces` gives `None` when two cross), so the cells of `H`,
+                // which all hold that piece, form a chain; let `c` be its innermost cell. Every
+                // piece `c` holds is held by each cell of `H`, so its set of cells holds `H`, and
+                // being no larger it is `H`: `c` is counted once, its count falls to 0 and
+                // `close(j, c, true)` runs. (2) Nothing in this loop
+                // opens a cell again: `narrow_tuples` only closes cells and shrinks components,
+                // and every `restore` here, in `take_out_piece` and in `nested_cover` goes back to
+                // a mark taken in the same pass. So the passes are at most the open cells plus
+                // the last one. Each pass narrows the part order `C` times for `C` open cells (once
+                // at the top, at most `2 m + 1` times in `nested_cover` for its component's `m`
+                // cells, `2 C` in `take_out_piece`) and runs `nested_pieces`' `O(m²)` emptiness
+                // tests of single cells, so the loop costs at most order `C² n + C m²` for a
+                // part of `n` nodes. Measured
+                // (2026-11-15, not kept): no family reached a third pass. `n` rows against a
+                // chain of shapes `((#_, int), i | i + 1)`, two passes per frame; one row
+                // `(#_, 0 | … | m)` against `(#_ \ #c_i, i | i + 1)`, one pass whose `C` tries all
+                // rest on forks (`take_out_piece` then tries every cell before it takes the
+                // forked piece), 73.7 times the instructions at 8 times `m`, order `C n` in one
+                // pass (PERF-take-out-forked-scan). COMPLEXITY.md K118.
                 if self.nested_cover(g, &f, &open).await || self.take_out_piece(g, &f, &open).await
                 {
                     continue;
@@ -5018,6 +5050,9 @@ impl<'m> Searching<'m> {
                 }
                 return true;
             }
+            // The passes this goes back for are bounded with those of the `may_cover` branch
+            // above: each closes an open cell and none opens one, so at most `1 + Σ_j
+            // |cells[j]|` passes in all (PERF-take-out-piece-chain).
             if self.take_out_piece(g, &f, &open).await {
                 continue;
             }
