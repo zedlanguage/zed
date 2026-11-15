@@ -2621,9 +2621,23 @@ pub enum KernelError {
     Port(String, String),
     /// The evaluation used up its fuel: a `fix` whose ascent or a `gen` that did not stop
     /// within the step budget (sec:generations, divergence).
+    ///
+    /// No run of `zedc` gives it (plan row MSG-kinds-e2e-tests). Proof: the evaluator counts
+    /// steps only when [`crate::Evaluator::with_fuel`] set a number (`burn`, with `fuel: None`
+    /// from [`crate::Evaluator::new`]), and no crate calls `with_fuel` outside its tests: the
+    /// compiler evaluates at build time only terms whose form shows they end, with no fuel
+    /// (docs/thresholds.md, replacement 8), and `zedc run` and the executable set none. It is
+    /// kept for tests that bound a run they build by hand; LIMITS-remove-all decides whether
+    /// `with_fuel` stays.
     OutOfFuel,
     /// A definedness `fix` stopped with these entries undefined: each reads an entry of the
     /// cycle, which is divergence (T-Fix), never `#notFound`.
+    ///
+    /// No program reaches it yet (plan row MSG-kinds-e2e-tests). Proof: a definedness `fix`
+    /// is built only from another one (`zedc_zir` canonicalization and lowering rebuild the
+    /// term they are given), and neither the elaborator nor any later pass makes one from
+    /// source, so a compiled program holds none. Step L6.4 elaborates general recursion to a
+    /// definedness `fix`, and owes the end-to-end test of this message then.
     Stalled {
         /// The undefined keys, in order.
         keys: Vec<Value>,
@@ -2702,12 +2716,6 @@ pub enum KernelError {
         /// The length of the string written, in bytes.
         bytes: usize,
     },
-    /// An atom's name or field name is a joined string of `bytes` bytes, which an atom holds
-    /// as one piece, and the system refused the memory to write it so.
-    AtomNameTooLarge {
-        /// The name's length in bytes.
-        bytes: usize,
-    },
 }
 
 /// Where a bug in zedc is reported: a message for a broken invariant names it
@@ -2784,7 +2792,7 @@ pub const MEMORY_LIMIT_PASSED: &str = "Memory limit of `main` passed";
 /// The first words of each message for memory the system refused a run: a fault of the
 /// machine, not an error of the program (DESIGN.md sec:checking_in_zed). A join longer than a
 /// string can be, [`STRING_TOO_LONG`], is not one: no machine holds it.
-const MEMORY_TITLES: [&str; 8] = [
+const MEMORY_TITLES: [&str; 7] = [
     NUMBER_TOO_LARGE,
     TEXT_TOO_LARGE,
     ORDER_TOO_LARGE,
@@ -2792,7 +2800,6 @@ const MEMORY_TITLES: [&str; 8] = [
     ROUND_TOO_LARGE,
     STRING_TOO_LARGE,
     "Keys too close to order in memory",
-    "Atom name too large for memory",
 ];
 
 /// `why`, a run's error, with the first words of a refusal of memory replaced by
@@ -2966,13 +2973,6 @@ impl fmt::Display for KernelError {
                 f,
                 "{}: `{op}` would write a string of {}{}",
                 STRING_TOO_LARGE,
-                bytes_text(&BigUint::from(*bytes)),
-                memory_clause(&BigUint::from(*bytes), &BigUint::from(*bytes))
-            ),
-            KernelError::AtomNameTooLarge { bytes } => write!(
-                f,
-                "Atom name too large for memory: an atom's name or field name is a joined \
-                 string of {}, which an atom holds in one piece{}",
                 bytes_text(&BigUint::from(*bytes)),
                 memory_clause(&BigUint::from(*bytes), &BigUint::from(*bytes))
             ),

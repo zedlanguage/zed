@@ -206,10 +206,17 @@ fn trim_of_a_joined_string_is_refused_when_memory_is_short() {
     }
 }
 
-/// The error of an atom refused, with the bytes it names.
+/// The bytes named by the error of an atom refused. No compiled program gives an atom a joined
+/// name (the proof is at the kernel's `atom_name`), so a refusal is a fault of the term's
+/// builder, `Type`.
 fn name_refused(r: Result<Value, KernelError>) -> usize {
+    let prefix = "an atom's name or field name is a joined string of ";
     match r {
-        Err(KernelError::AtomNameTooLarge { bytes }) => bytes,
+        Err(KernelError::Type(m)) if m.starts_with(prefix) => m[prefix.len()..]
+            .split(' ')
+            .next()
+            .and_then(|b| b.parse().ok())
+            .unwrap_or_else(|| panic!("no byte count in {m:?}")),
         Ok(v) => panic!("answered a value of type {}", v.kind_type()),
         Err(e) => panic!("another error: {e:?}"),
     }

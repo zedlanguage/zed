@@ -103,7 +103,8 @@ fn a_run_within_its_memory_limit_runs_and_one_past_it_stops_with_status_3() {
         assert_eq!((code, out.as_str()), (Some(3), ""), "{engine}: {err}");
         assert!(
             err.contains(
-                ": Memory limit of `main` passed: `String` would write about 3.0 × 10^8 digits"
+                ": Memory limit of `main` passed: `String(if k >= 0 { 2 ^ k } else { 0 })` would \
+                 write about 3.0 × 10^8 digits"
             ) && err.contains("of 16 MiB.")
                 && err.contains("memory.zed"),
             "{engine}: {err}"

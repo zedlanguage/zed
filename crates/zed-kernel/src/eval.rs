@@ -490,7 +490,10 @@ type At = u32;
 pub struct Evaluator {
     /// The ports.
     pub world: World,
-    fuel: u64,
+    /// The steps left, when [`Evaluator::with_fuel`] set a number; `None`, as
+    /// [`Evaluator::new`] makes it, counts no steps, so [`KernelError::OutOfFuel`] cannot
+    /// arise.
+    fuel: Option<u64>,
     /// Above zero while evaluating the closure of a pure region (`fam`, `reindex`,
     /// `discard`, `fold`, `fix`), where a port operation is a type error.
     pure: usize,
@@ -515,7 +518,7 @@ impl Evaluator {
     pub fn new(world: World) -> Self {
         Evaluator {
             world,
-            fuel: u64::MAX,
+            fuel: None,
             pure: 0,
             schedule: Schedule::default(),
             fixes: 0,
@@ -566,7 +569,7 @@ impl Evaluator {
 
     /// Sets the fuel.
     pub fn with_fuel(mut self, fuel: u64) -> Self {
-        self.fuel = fuel;
+        self.fuel = Some(fuel);
         self
     }
 
@@ -652,12 +655,17 @@ impl Evaluator {
         }
     }
 
+    /// One step: with no fuel set, nothing; with fuel, one less, and [`KernelError::OutOfFuel`]
+    /// once none is left.
     fn burn(&mut self) -> R<()> {
-        if self.fuel == 0 {
-            return Err(KernelError::OutOfFuel.into());
+        match &mut self.fuel {
+            None => Ok(()),
+            Some(0) => Err(KernelError::OutOfFuel.into()),
+            Some(n) => {
+                *n -= 1;
+                Ok(())
+            }
         }
-        self.fuel -= 1;
-        Ok(())
     }
 
     /// The fact of the value the last subterm evaluated gave.
@@ -2937,11 +2945,26 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
     }
 }
 
-/// An atom's name or field name as one shared block ([`crate::text::Text::try_shared`]); a
-/// join is written out once the system gives the memory, else [`KernelError::AtomNameTooLarge`].
+/// An atom's name or field name as one shared block ([`crate::text::Text::try_shared`]): a
+/// join is written out once the system gives the memory, else [`KernelError::Type`].
+///
+/// Why no program reaches the error (plan row MSG-kinds-e2e-tests, which removed the kind
+/// `AtomNameTooLarge` this used to give). Proof: every atom primitive of a compiled program is
+/// built by the elaborator (`zedc_elab`, `Frame::AtomArgs`) or by `held_term`
+/// (`zedc_zir::zir::memory`), and both pass the name and each field name as
+/// `Term::Lit(Value::str(s))`, `s` an identifier of the source. `Value::str` makes
+/// `Text::from(Arc<str>)`, which is one block for a non-empty string, and an identifier is never
+/// empty (sec:grammar). `try_shared` of a block returns the block and asks for no memory, so it
+/// cannot fail. Only a term built by hand, as the kernel's own tests build one, gives a joined
+/// name; a refusal there is a fault of the caller, which `Type` names.
 fn atom_name(name: &crate::text::Text) -> Result<Arc<str>, KernelError> {
-    name.try_shared()
-        .map_err(|_| KernelError::AtomNameTooLarge { bytes: name.len() })
+    name.try_shared().map_err(|_| {
+        KernelError::Type(format!(
+            "an atom's name or field name is a joined string of {} bytes, and the memory to \
+             write it in one piece was refused",
+            name.len()
+        ))
+    })
 }
 
 /// The error for a number that `p` must build and the system has no memory for.

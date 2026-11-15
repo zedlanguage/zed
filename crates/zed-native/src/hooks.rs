@@ -391,10 +391,11 @@ fn text(s: &Run, w: Word) -> Result<Option<Text>, String> {
 }
 
 /// An atom's name or field name as one shared block (`Text::try_shared`): a join is written
-/// out once the system gives the memory, else the kernel's message for it.
-fn atom_name(x: &Text) -> Result<Arc<str>, String> {
-    x.try_shared()
-        .map_err(|_| KernelError::AtomNameTooLarge { bytes: x.len() }.to_string())
+/// out once the system gives the memory, else `None`, which hands the atom to the kernel, whose
+/// error it then is. The names here are the program's literals, one block each, so `try_shared`
+/// does not fail for a compiled program (the proof is at the kernel's `atom_name`).
+fn atom_name(x: &Text) -> Option<Arc<str>> {
+    x.try_shared().ok()
 }
 
 /// The shape of atom node `id` on `ins`, `[name, field names, payload…]`, or `None` when the
@@ -427,7 +428,10 @@ fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shap
             let mut named = Vec::with_capacity(n);
             for (i, x) in names.iter().enumerate() {
                 let Value::Str(x) = x else { return Ok(None) };
-                named.push((atom_name(x)?, i));
+                let Some(x) = atom_name(x) else {
+                    return Ok(None);
+                };
+                named.push((x, i));
             }
             // The kernel's order, and its refusal of a repeated name (`Value::atom_named`).
             named.sort_by(|a, b| a.0.cmp(&b.0));
@@ -437,8 +441,11 @@ fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shap
             named.into_iter().unzip()
         }
     };
+    let Some(name) = atom_name(&name) else {
+        return Ok(None);
+    };
     let sh = Shape {
-        name: atom_name(&name)?,
+        name,
         fields: fields.into(),
         order: order.into(),
     };

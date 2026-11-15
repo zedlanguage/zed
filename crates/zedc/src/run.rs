@@ -1442,15 +1442,18 @@ pub fn placed(
     why: String,
     at: Option<zed_kernel::sites::Span>,
 ) -> String {
+    // The headline names the expression as written at the site, not the operator alone. This
+    // comes before the limit's title replaces the machine's: `name_expression` finds the
+    // operator after the machine's title, so done second it found none under a limit, and the
+    // headline named `+` where the program wrote `2 ^ k + 1` (MSG-kinds-e2e-tests).
+    let why = match at.as_ref().and_then(|at| text.get(at.start..at.end)) {
+        Some(written) => zed_kernel::value::name_expression(why, written),
+        None => why,
+    };
     // Under a memory limit of `main`, a refusal of memory names the limit, not the machine.
     let why = zed_kernel::value::under_memory_limit(why);
     let Some(at) = at else {
         return why;
-    };
-    // The headline names the expression as written at the site, not the operator alone.
-    let why = match text.get(at.start..at.end) {
-        Some(written) => zed_kernel::value::name_expression(why, written),
-        None => why,
     };
     let span = Span {
         start: at.start,
