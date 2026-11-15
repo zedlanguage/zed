@@ -535,7 +535,10 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
     // The sentence, read first, uses `1 | 2` four times, so it names the union `T1` and every
     // step after it writes `T1`, `a0`'s steps and `g`'s result too (DESIGN sec:diagnostics,
     // "Types in a message"); `a0`'s tuple `(T1, 0)`, written in its steps and inside `T3`, is
-    // `T2`.
+    // `T2`. `g`, a function of one positional parameter, prints as `bool -> T1`: `(bool) -> T1`
+    // reads the same, `(bool)` a `GroupType` key, and a printed type has parentheses only where
+    // the grammar needs them (DESIGN sec:diagnostics, "a function of one positional parameter
+    // prints as `int -> bool`").
     let f = file("unions.zed", UNIONS);
     assert_eq!(
         rejection("run", &f),
@@ -580,7 +583,7 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
          |                ^ [15]
   [12] 2:6: this expression gives T2
   [13] 2:7: this call of `g` gives T1
-  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `(bool) -> T1`
+  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> T1`
        1 | g(positional c: bool) = if c { 1 } else { 2 };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [15] 2:16: this literal, 0, is 0

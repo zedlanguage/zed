@@ -290,6 +290,9 @@ fn function_types_print_with_exactly_the_parentheses_the_grammar_needs() {
     let cases = [
         ("(int) -> int", "int -> int"),
         ("int -> int", "int -> int"),
+        // DESIGN's `g(positional c: bool) = if c { 1 } else { 2 }`: `|` binds tighter than
+        // `->`, so the union result needs no pair either.
+        ("(bool) -> 1 | 2", "bool -> 1 | 2"),
         ("((int) -> int) -> int", "(int -> int) -> int"),
         ("(int) -> (int) -> int", "int -> int -> int"),
         ("((int, int)) -> int", "((int, int)) -> int"),
