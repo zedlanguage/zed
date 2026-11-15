@@ -187,7 +187,9 @@ fn confluence_a_pure_pipeline_gives_one_result_for_every_arrival_order() {
         (got == first).then_some(()).ok_or(format!("{got}"))
     });
     assert_eq!(n, 120);
-    // And the result is the exact sums, rounded once: 0.1 + 0.3 + 1e16 and 0.2 + -0.0.
+    // And the result is IEEE addition on the canonical tree, in key order: three values are
+    // (e0 + e1) + e2, so "east" is (0.1 + 0.3) + 1e16, where 0.4 is lost beside 1e16, and
+    // "west" is 0.2 + -0.0.
     assert_eq!(
         first.to_string(),
         r#"{"east" -> 10000000000000000.0, "west" -> 0.2}"#

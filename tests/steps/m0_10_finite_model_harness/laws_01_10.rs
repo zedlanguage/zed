@@ -166,7 +166,8 @@ fn law_03_fold_of_map_is_the_fused_fold_on_integers() {
 
 #[test]
 fn law_03_fold_of_map_is_the_fused_fold_on_floats() {
-    // A float `+` fold is the exact sum rounded once on both sides.
+    // A float `+` fold is IEEE addition on the canonical tree on both sides: they add the same
+    // values on the same tree, so they agree bit for bit.
     let floats: Vec<Vec<Value>> = shortlex(&bmc_floats(), 3);
     let shift = |v: Term| add(v, lit(Value::float(0.1)));
     let n = holds(floats, |xs| {
