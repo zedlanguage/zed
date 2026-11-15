@@ -391,6 +391,35 @@ fn a_fold_of_n_joined_parameters_is_checked_in_linear_time() {
     );
 }
 
+#[test]
+fn a_chain_of_n_ifs_over_n_parameters_is_checked_in_n_log_n_time() {
+    // The body is `if b0 { x0 } else { if b1 { x1 } else { … [1, 2] } }`, n deep, each `if`
+    // with its own condition and type parameter, and no fold (row
+    // FAIL-if-chain-params-quadratic: 30.1 times from n = 100 to 800 before the fix).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let params = (0..n)
+            .map(|i| format!("positional x{i}, positional b{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let recv = (0..n).fold("[1, 2]".to_string(), |acc, i| {
+            format!("if b{i} {{ x{i} }} else {{ {acc} }}")
+        });
+        let args = (0..n)
+            .map(|i| format!("[{i}, 1], false"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("s({params}) = ({recv});\nt = s({args});\n")
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), "{0 -> 1, 1 -> 2}");
+    };
+    scaling::check(
+        "a chain of n `if`s over n type parameters, one call",
+        N_LEVELS,
+        run,
+    );
+}
+
 /// `mi` and `m`: one family of an empty `int` level and one entry, and its `f64` twin.
 const EMPTY_LEVELS: &str = "mi = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
                             m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v > 3.0));\n";

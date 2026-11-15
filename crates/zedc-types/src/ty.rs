@@ -9169,8 +9169,45 @@ impl Ty {
 
     /// Whether every value of `self` is in `other`, with no variable bound.
     pub fn subtype(&self, other: &Ty) -> bool {
+        if self.var_outside(other) {
+            return false;
+        }
         let mut b = Binds::new();
         self.sub(other, &mut b) && b.is_empty()
+    }
+
+    /// Whether `self` holds a variable with no quote in its name that `other` neither holds
+    /// nor reads as anything (`other` is not the unknown), found among the first `m + 1`
+    /// variables of `self` for the `m` of `other`, and only when `self` has more than `m`: then
+    /// `self <: other` binds a variable or fails, so [`Ty::subtype`] is false.
+    ///
+    /// Why: [`Comparing::sub_near`] tries each piece of `self` in turn, and the piece `Var(v)`
+    /// reaches [`accepts`], which, `other` not being the unknown, holds it without a binding
+    /// only where `other.vars` holds `v` (it does not), or `v` is a name of `cx.rigid` or
+    /// `cx.fns`. Every name of those two is made by [`Cx::fresh`], `{w}'{count}`, which holds a
+    /// quote, and `v` holds none. Otherwise `accepts` unites a variable of `other` with the
+    /// piece, or refuses it: the binding is then not empty, or the comparison false. A binding
+    /// made is never undone within one comparison: its writers ([`Binds::insert`] and
+    /// [`Binds::unite`]) only add, and the two places that replace it ([`Comparing::search`],
+    /// [`Comparing::row_in`]) put in a copy of it with more added; [`Binds::remove`],
+    /// [`Binds::retain`] and [`Binds::update_each`] are called by no comparison. A piece before
+    /// `Var(v)` that fails makes the answer false as well, and [`Cx::decided`] only turns a
+    /// true into a false.
+    ///
+    /// Complexity tradeoff (FAIL-if-chain-params-quadratic): naive version, the comparison
+    /// made in full, which lists every piece of `self` and unites each variable of `self` into
+    /// the binding of a variable of `other`, O(k log k) for the `k` variables of `self`: an
+    /// `if` at depth `k` of a chain of `if`s, each arm a type parameter of its own, asks
+    /// whether its `else` type, `k` variables, is within its `then` type, one, so the chain of
+    /// `n` cost O(n² log n). Used: the first `m + 1` variables of `self` read, O(m log m),
+    /// which is no more than the comparison would read of `other`, and nothing when `self`
+    /// has no more variables than `other`. Given up: a variable named with a quote is not
+    /// taken, so such a comparison is made in full, as before.
+    fn var_outside(&self, other: &Ty) -> bool {
+        let m = other.vars.len();
+        !other.dynamic
+            && self.vars.len() > m
+            && (self.vars.iter().take(m + 1)).any(|v| !v.contains('\'') && !other.vars.contains(v))
     }
 
     /// The kernel's verdict on `self <: other`, on what of `self` is outside `other`: `Empty`
@@ -16850,5 +16887,58 @@ mod tests {
             s.hash_one(link(0, "w", None)),
             s.hash_one(link(0, "v", None))
         );
+    }
+
+    /// [`Ty::subtype`], which answers false at once where `self` holds a variable with no
+    /// quote that `other` does not ([`Ty::var_outside`]), gives what the comparison made in
+    /// full gives, on every pair of types made of a subset of four variables (one named with
+    /// a quote, which the early answer does not take) and one of five other parts: nothing,
+    /// `int`, a tuple of a variable, the variable alone in a tuple of `int`, and the unknown.
+    #[test]
+    fn subtype_answers_as_the_full_comparison_with_variables_outside() {
+        let names = ["T", "U", "V", "W'"];
+        let extra = [
+            Ty::empty(),
+            Ty::carrier(Carrier::Int),
+            Ty::tuple(vec![Ty::var("T".into())]),
+            Ty::tuple(vec![Ty::carrier(Carrier::Int)]),
+            Ty::dynamic(),
+        ];
+        let types: Vec<Ty> = (0..1u32 << names.len())
+            .flat_map(|mask| {
+                let vars = (names.iter().enumerate())
+                    .filter(|(i, _)| mask >> i & 1 == 1)
+                    .fold(Ty::empty(), |t, (_, v)| t.union(&Ty::var((*v).into())));
+                extra.iter().map(move |e| vars.union(e))
+            })
+            .collect();
+        let mut early = 0;
+        for a in &types {
+            for b in &types {
+                let mut binds = Binds::new();
+                let full = a.sub(b, &mut binds) && binds.is_empty();
+                assert_eq!(a.subtype(b), full, "{a:?} <: {b:?}");
+                early += usize::from(a.var_outside(b));
+            }
+        }
+        // The early answer is taken on some pairs, so the check above covers it.
+        assert!(early > 0);
+    }
+
+    /// The early answer of [`Ty::subtype`] on a union of many variables against one: false
+    /// where the one is not among them or is one of several, true for one variable against
+    /// itself, and true against the unknown.
+    #[test]
+    fn many_variables_are_not_within_one() {
+        let many = (0..64).fold(Ty::empty(), |t, i| {
+            t.union(&Ty::var(format!("X{i}").into()))
+        });
+        let one = Ty::var("X0".into());
+        assert!(!many.subtype(&one));
+        assert!(!many.subtype(&Ty::var("Y".into())));
+        assert!(one.subtype(&many));
+        assert!(one.subtype(&one));
+        assert!(many.subtype(&many));
+        assert!(many.subtype(&Ty::dynamic()));
     }
 }

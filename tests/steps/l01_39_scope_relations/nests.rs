@@ -13,11 +13,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use zed_kernel::Shared;
 
+use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
-use zedc::store::product::Scope;
+use zedc::store::product::{Product, Scope};
 
 use super::ints;
 
@@ -84,6 +85,58 @@ fn xs(s: &Scope, b: i64) -> Vec<i64> {
     (-b..=b)
         .filter(|v| !s.bottom && s.get("x").contains(&Value::Int(*v)))
         .collect()
+}
+
+#[test]
+fn boolean_tests_between_integer_tests_change_no_integer_bound() {
+    // Row FAIL-if-chain-params-quadratic: a reduction after a test that narrows only booleans
+    // moves no bound a projection reads, and now takes the names as they are for the names
+    // last projected. A later integer test must still reach every name through the
+    // relation: `x - y >= 0`, the booleans `b0`..`b3` each found false, then `y >= 5`, gives
+    // `x >= 5` as it does with no boolean test, and a test of `x <= 4` then empties the scope.
+    let p = Premises::new();
+    let bools = ["b0", "b1", "b2", "b3"];
+    let scope = Scope::new(
+        (names(&["x", "y"]).into_iter())
+            .map(|n| (n, Product::of_type(Type::int())))
+            .chain(
+                names(&bools)
+                    .into_iter()
+                    .map(|n| (n, Product::of_type(Type::bool()))),
+            ),
+    );
+    let base = scope.assume(&diff_ge("x", "y", 0), true, &p);
+    let mut with_bools = base.clone();
+    for b in bools {
+        with_bools = with_bools.assume(&var(b), false, &p);
+        assert!(!with_bools.bottom, "{with_bools}");
+    }
+    let ge5 = prim(Prim::Ge, var("y"), int(5));
+    let (plain, narrowed) = (
+        base.assume(&ge5, true, &p),
+        with_bools.assume(&ge5, true, &p),
+    );
+    for n in ["x", "y"] {
+        assert_eq!(
+            narrowed.get(n).ints(),
+            plain.get(n).ints(),
+            "{n}: {narrowed}"
+        );
+    }
+    assert_eq!(
+        xs(&narrowed, 20),
+        (5..=20).collect::<Vec<_>>(),
+        "{narrowed}"
+    );
+    for b in bools {
+        assert!(
+            !narrowed.get(b).contains(&Value::Bool(true)),
+            "{b}: {narrowed}"
+        );
+    }
+    let le4 = prim(Prim::Le, var("x"), int(4));
+    assert!(narrowed.assume(&le4, true, &p).bottom, "{narrowed}");
+    assert!(plain.assume(&le4, true, &p).bottom, "{plain}");
 }
 
 #[test]

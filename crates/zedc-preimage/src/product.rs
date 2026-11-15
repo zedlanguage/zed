@@ -9928,6 +9928,27 @@ impl Scope {
                     .collect(),
                 None => self.names.keys().cloned().collect(),
             };
+            // No name moved: the names as last projected are made the names now. Every
+            // reader of them compares them with the names by `same_framed` (here, and
+            // [`Scope::seen_fresh`] and [`Scope::join_kept`], which only carry them), and
+            // `same_framed` is equality of the integers and the framed class, an equivalence:
+            // a name that differs from them only within it then differs from the names now in
+            // the same way, so every later `moved` is the same. Neither a name added nor one
+            // removed is in this case, since each is in `moved`.
+            //
+            // Complexity tradeoff (FAIL-if-chain-params-quadratic): naive version, the names
+            // as projected kept until the next projection, which no test makes when what it
+            // narrows is not framed (a boolean `b` in `if b`), so they kept the old product of
+            // every such name: a walk of `k` nested `if`s compared them with the names in
+            // Θ(k) at each reduction and each fresh binding, Θ(k²) over the chain (30 times
+            // the instructions from 100 to 800 `if`s). Used: the names now, O(1), so each
+            // comparison costs the names changed since. Test:
+            // `l08_02_remaps::bench::a_chain_of_n_ifs_over_n_parameters_is_checked_in_n_log_n_time`.
+            if moved.is_empty()
+                && let Some((names, _)) = &mut self.seen.projection
+            {
+                *names = before.clone();
+            }
             self.sync_bounds(&moved);
             // The names and conjuncts as projected are those before the projection, so that a
             // projection that moves a bound is followed by another, until none moves one.

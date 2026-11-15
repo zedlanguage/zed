@@ -3996,3 +3996,11 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `Vec<Local<'a>>` of the block functions being elaborated, each holding a `&'a Stmt`, with a `HashMap<usize, usize>` from binder to index whose earlier entry each `Local` keeps (`prev`) and puts back when the block ends; `split_off(mark)` at the block's end | `Instancing::declare_local`, `Elab::place_locals` | Mutation (gap 11); a borrowed reference held in state | a scope value passed down the walk with the block's functions, returned with the block's term; the earlier entry is the outer scope's and needs no restoring |
 | A stack `writing: Vec<usize>` of the written bodies being elaborated and a stack `pending: Vec<usize>` of the functions with bodies to make, both changed in place | `Instancing::end_written`, `written_named`, `Elab::fkernel`, `place_locals` | Mutation (gap 11) | the innermost written body passed down the walk; the bodies to make returned from each call's elaboration and joined |
 | `mem::replace(&mut l.used, true)` as the visited test of a worklist over the edges between written bodies | `Elab::place_locals` | Mutation (gap 11) | a set of the functions reached, built by a fold over the worklist |
+
+## Entries from FAIL-if-chain-params-quadratic (`crates/zedc-types/src/ty.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-check/src/check/mod.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Iterator::take` then `any`, stopping at the first variable absent from the other type | `Ty::var_outside` | Early exit (gap 12) | the quantifiers of step L3.15a over the first m + 1 variables |
+| `if let Some((names, _)) = &mut self.seen.projection { *names = before.clone(); }`, a write through a mutable borrow into an `Option` field | `Scope::reduce_with` | Mutation (gap 11) | the scope returned with the record's names replaced, a persistent map shared, not copied |
+| A lazy iterator advanced by hand with two `next()` calls to tell one piece from more | `Ck::class_of_ty`, `Ck::class_beside_atoms` (`Ty::pieces_lazily`) | Laziness | a lazy stream of the pieces, matched on its first two cells |

@@ -3948,18 +3948,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The class `t` is, if it is one and nothing else.
+    // Complexity tradeoff (FAIL-if-chain-params-quadratic): naive version, every piece of `t`
+    // collected, O(k) for a type of k variables, and a walk of k nested `if`s, whose branches
+    // join one variable more at each, asked this and `class_beside_atoms` at each `if`, Θ(k²)
+    // in all. Used: the pieces read one at a time ([`Ty::pieces_lazily`]), in the same order,
+    // and the answer given at the second, O(1) past the scalar pieces. Test:
+    // `l08_02_remaps::bench::a_chain_of_n_ifs_over_n_parameters_is_checked_in_n_log_n_time`.
     fn class_of_ty(&self, t: &Ty) -> Option<usize> {
-        match t.pieces().as_slice() {
-            [p] => self.class_of(p),
+        let mut pieces = t.pieces_lazily();
+        match (pieces.next(), pieces.next()) {
+            (Some(p), None) => self.class_of(&p),
             _ => None,
         }
     }
 
     /// The class `t` is, beside atoms only: `T` in `T | #divByZero`, the type of `(1 + x) /
-    /// (x * y)`. It costs the number of `t`'s pieces.
+    /// (x * y)`. It costs the number of `t`'s pieces up to its second that is not atoms.
     fn class_beside_atoms(&self, t: &Ty) -> Option<usize> {
         let mut found = None;
-        for p in t.pieces() {
+        for p in t.pieces_lazily() {
             if p.is_atoms() {
                 continue;
             }
