@@ -1,7 +1,16 @@
-//! Helpers of the source-level remap tests: checks that compare a definition's value with a
+//! Helpers of the source-level remap tests: the `sales` map of sec:level_names, and checks
+//! that compare a definition's value with a
 //! display the spec writes, or a rejection's text with the spec's message.
 
 use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
+
+/// `sales` of DESIGN.md sec:level_names, verbatim.
+pub const SALES: &str = "type Sales = Utf8String ->? [Utf8String ->? int] with names(\"region\", \"day\", \"sku\", \"quantitySold\");\nsales: Sales = { \"east\" -> [{ \"B7\" -> 5 }], \"west\" -> [{ \"A12\" -> 3, \"B7\" -> 1 }, { \"A12\" -> 2 }] };\n";
+
+/// `src` with `sales` declared before it.
+pub fn with_sales(src: &str) -> String {
+    format!("{SALES}{src}")
+}
 
 /// The value of `got` in `src` is the value of `want`, a display the spec writes, and is not
 /// an evaluation error.
