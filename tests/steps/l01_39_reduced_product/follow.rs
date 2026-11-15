@@ -216,9 +216,10 @@ const SUMS: [(&str, &str, &[&str]); 6] = [
 /// holds at `n = 1` alone: with `n != 1` the test inside it is `n + m == 1`, and the value
 /// tested is `n` where that holds and `n + m` where it does not, `1` in neither; at an even
 /// depth the value tested is `n + m` again, `1` for some `m`. Since PRES-pendants-wider, which
-/// tightens a hull end found by cases, depth 3 reads `n` exactly. The odd depths from 5 still
-/// read every `n`: sound, but wider than `n = 1`, since the ends there are bounded only by a
-/// combination of cases that the end search does not try (a follow-up of PRES-pendants-wider).
+/// tightens a hull end found by cases, depth 3 reads `n` exactly. Since PREIMAGE-tie-indep-let,
+/// which tells apart levels whose rows are alike by the disjuncts they stand in, so that the
+/// search answers where it refused for a tie, every odd depth reads `n` exactly too; before it
+/// the odd depths from 5 read every `n`.
 /// Depths 1 to 5 reach each of these readings; the benchmark
 /// `nested_sums_keep_their_arms_at_depths_6_to_12` reads the rest (TEST-slow-l0139-refused-sums:
 /// the time grows as the depth, and depths 1 to 12 took 0.43 s).
@@ -232,7 +233,9 @@ fn nested_sums_read(depths: std::ops::RangeInclusive<usize>) {
     for (e, ps, names) in SUMS {
         for d in depths.clone() {
             let want = match (e, d) {
-                ("n + m", 1 | 3) => ["true: n [1..=1], m [..]", "false: n [..=0, 2..], m [..]"],
+                ("n + m", d) if d % 2 == 1 => {
+                    ["true: n [1..=1], m [..]", "false: n [..=0, 2..], m [..]"]
+                }
                 ("n + m", _) => ["true: n [..], m [..]", "false: n [..=0, 2..], m [..]"],
                 _ => ["true: n [1..=1]", "false: n [..=0, 2..]"],
             };

@@ -249,3 +249,18 @@ fn decide_scales_over_copies_of_the_or_if_question() {
         let _ = std::hint::black_box(decide(f));
     });
 }
+
+/// `decide` on a chain of `n` [`guarded_steps`] of 2, `q0` one of -6, -4, -2 and 0, asked for
+/// a miss of `q[n] == 0`: the guards tie as rows and are told apart by the nesting
+/// (PREIMAGE-tie-indep-let), then the renamed chain is searched.
+#[test]
+fn decide_scales_over_guards_told_apart_by_their_nesting() {
+    let n = 100;
+    let f = |n: usize| guarded_steps(&vec![2; n], &[-6, -4, -2, 0], false);
+    let (small, large) = (f(n), f(n * scaling::FACTOR));
+    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
+    scaling::check("decide on guards told apart by their nesting", n, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}

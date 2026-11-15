@@ -1058,11 +1058,11 @@ fn chains_of_slow_families_keep_their_preimages() {
             // of one guard and arms as one variable, as it always wrote an `if` bound once by
             // `let` and read twice. So the relation of `cross`, `cross_live`, `indep_2j` and
             // `indep_1` at `k >= 2` has `k` variables where the transfer before writes
-            // `2k - 1`: the same set under other names, and at `indep_2j k=2` the solver now
-            // refuses on the tie of `b1` and `b2`, with the same box, as it did and does for
-            // the term written with `let`. A result that differs from the one before only so
-            // must be the result of the term written with `let` (renamed and other boxes 0
-            // before).
+            // `2k - 1`: the same set under other names (at `indep_2j k=2` the solver refused on
+            // the tie of `b1` and `b2`, as it did for the term written with `let`, until
+            // PREIMAGE-tie-indep-let told them apart by the nesting). A result that differs
+            // from the one before only so must be the result of the term written with `let`
+            // (renamed and other boxes 0 before).
             if (diffs.renamed, diffs.reflected) != (renamed, reflected) {
                 let mut lets_made = 0;
                 let lets = with_lets(&t, &mut lets_made);
@@ -1081,6 +1081,31 @@ fn chains_of_slow_families_keep_their_preimages() {
     // k = 3 to 8 from being refused by its shadows, and LIVE3 (the Omega test decides three
     // live variables) did the same for `mod7 k=2`, so both are exact and alike there.
     diffs.none_but(26, 0, 0, 0);
+}
+
+/// The `let` form of `indep_2j k=2` is not refused on a tie of `b1` and `b2`, whose rows
+/// differ (PREIMAGE-tie-indep-let).
+#[test]
+fn two_independent_ifs_bound_by_let_are_not_a_tie() {
+    let g = |j: i64| prim(Prim::Ge, var(&format!("b{j}")), int(1));
+    let first = Term::If(
+        Shared::new(g(1)),
+        Shared::new(var("z")),
+        Shared::new(prim(Prim::Add, var("z"), int(2))),
+    );
+    let second = Term::If(
+        Shared::new(g(2)),
+        Shared::new(var("t1")),
+        Shared::new(prim(Prim::Add, var("t1"), int(4))),
+    );
+    let t = Term::Let("t1".into(), Shared::new(first), Shared::new(second));
+    let (_, ds, d) = family("indep_2j", 2);
+    let r = preimage_listed(&t, &ds, &Listed::new(), &d);
+    assert!(
+        !format!("{:?}", r.refusal).contains("Tie"),
+        "refused on a tie: {:?}",
+        r.refusal
+    );
 }
 
 /// Random chains of shared terms, under random domains of one to three pieces and random

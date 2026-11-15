@@ -1700,3 +1700,54 @@ fn a_refused_disjunct_beside_one_with_a_point_gives_one_answer() {
         assert_eq!(seen.len(), 1, "{seen:?}");
     }
 }
+
+/// A chain of `ifs`, as the preimage asks it: for each `j` from 1, `(b[j] >= 1 && q[j - 1] ==
+/// q[j]) || (!(b[j] >= 1) && q[j - 1] == q[j] - c[j])` with `b[j]` in `[0, 1]`, `q[0]` one of
+/// `zs` (a disjunction), and the demand `q[n] == 0` when `last_is_0`, else `!(q[n] == 0)`.
+pub(super) fn guarded_steps(c: &[i64], zs: &[i64], last_is_0: bool) -> Formula {
+    let v = |s: &str, j: usize| Lin::atom(Atom::Sym(format!("{s}{j}").into()));
+    let k = Lin::constant;
+    let con = Formula::Con;
+    let mut fs = Vec::with_capacity(3 * c.len() + 2);
+    for (j, &cj) in (1..).zip(c) {
+        let (b, before, after) = (v("b", j), v("q", j - 1), v("q", j));
+        let then = con(Con::ge(&b, &k(1)));
+        fs.push(Formula::or(vec![
+            Formula::and(vec![then.clone(), con(Con::eq(&before, &after))]),
+            Formula::and(vec![
+                Formula::negate(then),
+                con(Con::eq(&before, &after.plus(&k(-cj)))),
+            ]),
+        ]));
+        fs.push(con(Con::ge(&b, &k(0))));
+        fs.push(con(Con::ge(&k(1), &b)));
+    }
+    let q0_is = |z: &i64| con(Con::eq(&v("q", 0), &k(*z)));
+    fs.push(Formula::or(zs.iter().map(q0_is).collect()));
+    let last = con(Con::eq(&v("q", c.len()), &k(0)));
+    fs.push(if last_is_0 {
+        last
+    } else {
+        Formula::negate(last)
+    });
+    Formula::and(fs)
+}
+
+/// The relation of `t1 = if b1 >= 1 { z } else { z + 2 }; if b2 >= 1 { t1 } else { t1 + 4 }`
+/// with `z` (`q0`) one of -6, -4, -2 and 0, as the preimage asks it ([`guarded_steps`] of
+/// 2 and 4), under `!(q2 == 0)` (has the demand a miss?) and under `q2 == 0`. The rows of
+/// `b1` and of `b2` are alike, so color refinement over the rows ties the two, and with the
+/// four values of `q0` written as a disjunction the tie stayed after settling and merging;
+/// it was refused as `Unordered` (PREIMAGE-tie-indep-let). The rows beside the guards differ
+/// (constants 2 and 4, and their places in the chain), the nesting tells the two apart, and
+/// `decide` and `satisfiable` answer both: a miss (`q0 == -6` with both then arms gives
+/// `q2 == -6`) and a point of the demand (`q0 == 0` with both then arms).
+#[test]
+fn guards_alike_as_rows_are_told_apart_by_their_nesting() {
+    for last_is_0 in [false, true] {
+        let f = guarded_steps(&[2, 4], &[-6, -4, -2, 0], last_is_0);
+        assert_eq!(decide(&f), Ok(true), "{f}");
+        let m = satisfiable(&f).expect("not refused").expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+}

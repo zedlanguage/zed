@@ -106,6 +106,7 @@ mod forced;
 mod formula;
 mod local;
 mod modular;
+mod nesting;
 mod one_row;
 mod pairs;
 #[cfg(test)]
@@ -119,6 +120,7 @@ mod values;
 use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
+use nesting::nesting;
 pub use refusal::{Each, Refusal, Split, Tie, Written, free_names, names_in};
 pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
 pub use slack::ROW_ORDER_SCAN;
@@ -760,20 +762,33 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
                 Settled::Point(m) => Ok(Some(m)),
                 // As in [`decide_named`]; each replaced atom takes the value of the atom that
                 // replaced it.
-                Settled::Left(p) => match twins_merged(f, &[], true) {
-                    Some((g, to)) => match satisfiable_named(&g) {
-                        Ok(found) => Ok(found.map(|mut m| {
-                            for (a, by) in to {
-                                if let Some(v) = m.get(&by).cloned() {
-                                    m.insert(a, v);
+                Settled::Left(p) => {
+                    let merged = twins_merged(f, &[], true).map(|(g, to)| {
+                        satisfiable_named(&g).map(|found| {
+                            found.map(|mut m| {
+                                for (a, by) in to {
+                                    if let Some(v) = m.get(&by).cloned() {
+                                        m.insert(a, v);
+                                    }
                                 }
+                                m
+                            })
+                        })
+                    });
+                    match merged {
+                        Some(Ok(found)) => Ok(found),
+                        // As in [`decide_named`].
+                        _ => match Renamed::untied(f) {
+                            Some(r) => {
+                                let found =
+                                    satisfiable_inner(&r.f).map_err(|e| r.back_refusal(e))?;
+                                Ok(found
+                                    .map(|m| m.into_iter().map(|(a, v)| (r.back(&a), v)).collect()))
                             }
-                            m
-                        })),
-                        Err(_) => Err(unordered(vars.clone(), &p)),
-                    },
-                    None => Err(unordered(vars.clone(), &p)),
-                },
+                            None => Err(unordered(vars.clone(), &p)),
+                        },
+                    }
+                }
             };
             // As in [`decide_named`]: each group that shares no atom with the others alone,
             // the points of all of them joined; the whole asked as before where one is
@@ -961,9 +976,14 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
                 Settled::Point(_) => Ok(true),
                 // With atoms defined alike made one, the tie may be gone. Each merge leaves
                 // fewer atoms, so the call ends.
-                Settled::Left(p) => match twins_merged(f, &[], true) {
-                    Some((g, _)) => decide_named(&g).map_err(|_| unordered(vars.clone(), &p)),
-                    None => Err(unordered(vars.clone(), &p)),
+                Settled::Left(p) => match twins_merged(f, &[], true).map(|(g, _)| decide_named(&g))
+                {
+                    Some(Ok(found)) => Ok(found),
+                    // Told apart by the nesting, the formula is renamed and searched.
+                    _ => match Renamed::untied(f) {
+                        Some(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
+                        None => Err(unordered(vars.clone(), &p)),
+                    },
                 },
             };
             // Each group that shares no atom with the others decided alone: empty when one
@@ -2216,8 +2236,10 @@ fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
 /// formula is not searched: [`decide`] and [`satisfiable`]
 /// settle it by [`settle_as_sets`], whose result no order of its parts changes, answer it
 /// when no two disjunctions left are linked ([`alone`]), test what is otherwise left with the
-/// disjuncts their colors choose ([`settle_tied`], [`by_color`]), and refuse
-/// with [`Refusal::Unordered`] when that finds no point; [`project_each`] projects it by
+/// disjuncts their colors choose ([`settle_tied`], [`by_color`]), rename it, when a second
+/// coloring that also reads its nesting tells its atoms apart ([`Renamed::untied`]: two guards
+/// alike as rows but in disjuncts with different rows beside them, PREIMAGE-tie-indep-let),
+/// and search it, and otherwise refuse with [`Refusal::Unordered`]; [`project_each`] projects it by
 /// [`project_parts`] with `sets`, which asks only such questions and keeps every disjunction.
 /// What is given up: a formula with such atoms whose point or whose emptiness only the search
 /// shows (`true` or `false` becomes the refusal; [`settle_tied`]'s tradeoff), and in a
@@ -2266,6 +2288,79 @@ impl Renamed {
         if !f.chooses() {
             return Naming::Kept;
         }
+        let (atoms, _, color) = Self::colored(f);
+        let plain = Self::plain_by(&atoms, &color);
+        let ties: Vec<Vec<Atom>> = (plain.chunk_by(|&p, &q| color[p] == color[q]))
+            .filter(|c| c.len() > 1)
+            .map(|c| c.iter().map(|&i| atoms[i].clone()).collect())
+            .collect();
+        // Atoms that share a color but that every permutation among them maps the formula
+        // onto ([`Numbered::swaps_onto_itself`]) are ranked by name: any other naming ranks them
+        // by a permutation of that kind, and so renames to the same formula.
+        if let Some(vars) = ties.first()
+            && !Numbered::of(f).ties_are_symmetries(&ties)
+        {
+            return Naming::Tied(vars.clone(), atoms.into_iter().zip(color).collect());
+        }
+        let from: Vec<Atom> = plain.iter().map(|&i| atoms[i].clone()).collect();
+        let tied =
+            (!ties.is_empty()).then(|| atoms.iter().cloned().zip(color.iter().copied()).collect());
+        Naming::Renamed(Self::by_ranks(f, from, tied))
+    }
+
+    /// `f`, whose atoms [`Renamed::of`] ties, renamed by a second coloring whose graph also has
+    /// a vertex for each conjunction, disjunction and negation joined to its parts
+    /// ([`nesting()`]), or `None` when that coloring ties two atoms too. Each atom's color is
+    /// the rank of the pair of its first color and its second, so the order of the atoms the
+    /// first coloring separates is kept; both depend on the structure alone, so the pair does,
+    /// and a renaming of the atoms gives the one renamed formula. Asked only where the answer
+    /// is otherwise [`Refusal::Unordered`] ([`decide_named`], [`satisfiable_named`]).
+    // Complexity tradeoff (PREIMAGE-tie-indep-let): naive version, the second coloring in
+    // [`Renamed::of`] for every tied formula, so that each is renamed and searched. That
+    // turned [`project_each`] of tied formulas, answered before by [`project_parts`] with
+    // `sets` and no search, into searches: the nested tests of `n + m` in
+    // `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale` went from
+    // linear to about 4 times the time per doubling of the depth (55 ms at depth 8, 1.6 s at
+    // 64, 5.5 s at 128), almost all of it [`probe`]'s [`search_by_halves`], and no order of the
+    // pair ranks changed that (measured 2026-11-14). Used: the second coloring only where
+    // the tied path would refuse, after [`settle_tied`] and [`twins_merged`]; a projection of
+    // a tied formula is answered as before. The coloring costs one walk of the formula with
+    // shared parts read once and one color refinement, O(L log L) for L links of the graph
+    // ([`nesting()`], [`stable_colors`]); the search after it costs what [`decide_inner`] or
+    // [`satisfiable_inner`] cost on the renamed formula, and it replaces a refusal. On the nested
+    // tests of `n + m` those searches reached two quadratics of [`pick`], fixed in
+    // [`least_read_repair`] and in the projections of [`by_halves`]; with both the benchmark
+    // grows 8.3 times in instructions at 8 times the depth (64 to 512). What is
+    // given up: the narrower projection of a tied formula that a search would give.
+    // Not proved: that two atoms the pair coloring separates are never exchanged by an
+    // automorphism of the formula. Equal parts are joined in [`nesting()`], which can only
+    // merge vertices of the tree written out, so the coloring is no finer than the color
+    // refinement of that tree, and color refinement never separates two vertices an
+    // automorphism exchanges; the joining of equal parts into one vertex is the step whose
+    // effect on that argument is not proved. Evidence: the name tests of
+    // `l01_38_omega_test::names` rename every system and compare the answers.
+    fn untied(f: &Formula) -> Option<Renamed> {
+        let (atoms, joins, color) = Self::colored(f);
+        let (rows, groups) = nesting(f, &joins);
+        let nested = stable_colors(&atoms, &rows, &groups);
+        let mut by_pair: Vec<usize> = (0..atoms.len()).collect();
+        by_pair.sort_unstable_by_key(|&i| (color[i], nested[i]));
+        let mut paired = vec![0; atoms.len()];
+        for (k, w) in by_pair.iter().enumerate().skip(1) {
+            let (p, q) = (by_pair[k - 1], *w);
+            paired[q] = paired[p] + usize::from((color[p], nested[p]) != (color[q], nested[q]));
+        }
+        let plain = Self::plain_by(&atoms, &paired);
+        if plain.windows(2).any(|w| paired[w[0]] == paired[w[1]]) {
+            return None;
+        }
+        let from = plain.iter().map(|&i| atoms[i].clone()).collect();
+        Some(Self::by_ranks(f, from, None))
+    }
+
+    /// The atoms of `f` with the rows that join each product to its factors, those rows, and
+    /// the color of each atom ([`stable_colors`]) over the constraints of `f` and those rows.
+    fn colored(f: &Formula) -> (Vec<Atom>, Vec<Con>, Vec<usize>) {
         let mut cons = f.cons();
         let mut atoms: BTreeSet<Atom> = BTreeSet::new();
         for c in &cons {
@@ -2288,25 +2383,23 @@ impl Renamed {
         }
         cons.extend(joins.iter());
         let atoms: Vec<Atom> = atoms.into_iter().collect();
-        let color = stable_colors(&atoms, &cons);
+        let mut color = stable_colors(&atoms, &cons, &[]);
+        color.truncate(atoms.len());
+        (atoms, joins, color)
+    }
+
+    /// The places in `atoms` of those that are not products, sorted by `color`.
+    fn plain_by(atoms: &[Atom], color: &[usize]) -> Vec<usize> {
         let mut plain: Vec<usize> = (0..atoms.len())
             .filter(|&i| !matches!(atoms[i], Atom::Product(..)))
             .collect();
         // Stable, so that atoms of one color stay in the order of their names.
         plain.sort_by_key(|&i| color[i]);
-        let ties: Vec<Vec<Atom>> = (plain.chunk_by(|&p, &q| color[p] == color[q]))
-            .filter(|c| c.len() > 1)
-            .map(|c| c.iter().map(|&i| atoms[i].clone()).collect())
-            .collect();
-        // Atoms that share a color but that every permutation among them maps the formula
-        // onto ([`Numbered::swaps_onto_itself`]) are ranked by name: any other naming ranks them
-        // by a permutation of that kind, and so renames to the same formula.
-        if let Some(vars) = ties.first()
-            && !Numbered::of(f).ties_are_symmetries(&ties)
-        {
-            return Naming::Tied(vars.clone(), atoms.into_iter().zip(color).collect());
-        }
-        let from: Vec<Atom> = plain.iter().map(|&i| atoms[i].clone()).collect();
+        plain
+    }
+
+    /// `f` with the atom at `k` in `from` renamed `#k`; `tied` as in [`Renamed`].
+    fn by_ranks(f: &Formula, from: Vec<Atom>, tied: Option<HashMap<Atom, usize>>) -> Renamed {
         // The rank is written with leading zeros to one width, so that names compare as their
         // ranks do: unpadded, `#10` sorts before `#2`, and [`nnf`] would hand the disjuncts of
         // a chain to [`pick`] out of rank order, where its first choices can fail and [`probe`]
@@ -2327,9 +2420,7 @@ impl Renamed {
                 rel: c.rel,
             })
         });
-        let tied =
-            (!ties.is_empty()).then(|| atoms.iter().cloned().zip(color.iter().copied()).collect());
-        Naming::Renamed(Renamed { f, from, to, tied })
+        Renamed { f, from, to, tied }
     }
 
     /// The new name of `a`; an atom not in the formula keeps its own.
@@ -9155,10 +9246,79 @@ fn own_repair_in(
     Some(m)
 }
 
+/// [`local_repair`] with fewer variables freed, for an `extra` that reads no product (whose
+/// value is tied to its factors): for each constraint of `extra` that fails at
+/// `model`, its variable that the fewest constraints taken so far read (in [`Near::by_atom`];
+/// ties by the order of atoms), and each variable of `extra` without a value. Every other
+/// variable is held at `model`. A point found is a point of the constraints taken with
+/// `extra`: a constraint taken that reads no freed variable held at `model` before and still
+/// does, one that reads one is among those solved, specialized, and so are the bounds of the
+/// freed variables and every constraint of `extra` that reads one; a constraint of `extra`
+/// that reads none holds at `model`, since each one that fails has a freed variable. `None`
+/// when that finds no point, or when it would free every variable of `extra` (then
+/// [`local_repair`] is the same question).
+// Complexity tradeoff (PREIMAGE-tie-indep-let): naive version, [`local_repair`] alone, which
+// frees every variable of `extra` and so solves every constraint taken that reads any of
+// them: on `d` disjunctions whose disjuncts each read inputs that every level reads (the
+// nested tests of `n + m` of `l01_39_reduced_product::follow`, each level `v == n` or
+// `v == n + m`), each repair costs the `O(d)` constraints that read `n` and `m`, `O(d²)` for
+// the `d/2` repairs of one [`pick`]: 8.0 ms at depth 64 and 477 ms at 512 (60 times at 8
+// times the depth). Used: first the variables of the failing constraints read least, here the
+// level's own `v`, whose constraints are a few; the constraints solved are a subset of those of
+// [`local_repair`], so a try that fails costs no more than the repair after it, at most twice
+// the cost of [`local_repair`] alone. What is given up: nothing a [`local_repair`] finds, since
+// it still runs when this finds nothing; the point found can differ from the one
+// [`local_repair`] would give (other variables keep their values), so a later choice of
+// [`pick`] can differ. Tests: `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
+fn least_read_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
+    let read = |a: &Atom| near.by_atom.get(a).map_or(0, Vec::len);
+    let mut free: BTreeSet<Atom> = BTreeSet::new();
+    let mut all: BTreeSet<&Atom> = BTreeSet::new();
+    for c in extra {
+        all.extend(c.lin.terms.keys());
+        free.extend(
+            (c.lin.terms.keys())
+                .filter(|a| !model.contains_key(*a))
+                .cloned(),
+        );
+        if !c.holds_linear(model) {
+            free.extend((c.lin.terms.keys()).min_by_key(|a| (read(a), *a)).cloned());
+        }
+    }
+    let product = all.iter().any(|a| matches!(a, Atom::Product(..)));
+    if product || free.is_empty() || free.len() == all.len() {
+        return None;
+    }
+    let mut ids = BTreeSet::new();
+    let mut local: Vec<Con> = Vec::with_capacity(extra.len());
+    for c in extra {
+        if c.lin.terms.keys().any(|a| free.contains(a)) {
+            local.push(specialize_con(c, &free, model));
+        }
+    }
+    for a in &free {
+        if let Some(v) = near.by_atom.get(a) {
+            ids.extend(v.iter().copied());
+        }
+        near.bounds(a, &mut local);
+    }
+    for id in ids {
+        local.push(specialize_con(&acc[id], &free, model));
+    }
+    let mut m = solve_repair(&local, true).ok()??;
+    for a in free {
+        m.entry(a).or_insert(Int::ZERO);
+    }
+    Some(m)
+}
+
 /// The variables of `extra` re-solved with their neighbors fixed at `model`: with `extra`, the
 /// constraints taken so far that link a variable of `extra` to others, specialized at `model`,
-/// and each variable's bounds.
+/// and each variable's bounds. The fewest-read variables are tried first ([`least_read_repair`]).
 fn local_repair(acc: &[Con], near: &Near, model: &Model, extra: &[Con]) -> Option<Model> {
+    if let Some(m) = least_read_repair(acc, near, model, extra) {
+        return Some(m);
+    }
     let seed: BTreeSet<Atom> = extra
         .iter()
         .flat_map(|c| c.lin.terms.keys().cloned())
@@ -10279,6 +10439,18 @@ fn by_halves_general<E>(
         return Ok(());
     }
     let project = |rows: Vec<Con>, l: usize, r: usize| -> Option<Vec<Con>> {
+        // Each row once: a copy adds nothing to the system it is in, but it is projected again.
+        // Complexity tradeoff (PREIMAGE-tie-indep-let): naive version, the rows as given, which on
+        // items that each bring and return one row over atoms all of them share (the inputs `n`, `m`
+        // of the nested tests of `n + m`, `l01_39_reduced_product::follow`, where each level's
+        // projection and each leaf give `n + m == 1` again) gives the i-th leaf about `i/2` copies
+        // to project, O(k²) for k items: 42 ms of leaf projections at 512 items, 1.5 ms at 64. Used:
+        // a hash set of the rows, O(rows) expected per projection, which is already the cost of
+        // [`linked_to`]. Test: `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
+        let mut seen: HashSet<Con> = HashSet::with_capacity(rows.len());
+        let rows: Vec<Con> = (rows.into_iter())
+            .filter(|c| seen.insert(c.clone()))
+            .collect();
         let atoms: HashSet<&Atom> = keep[l..r].iter().flatten().collect();
         let near = linked_to(rows, atoms.iter().copied());
         let s = shadow(&near, &|a| atoms.contains(a), false)?;
@@ -14213,7 +14385,7 @@ impl Ties {
 /// rows. The colors of the rows, in the order taken, come with them.
 fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> Canonical {
     let n = atoms.len();
-    let color = stable_colors(&atoms, cons);
+    let color = stable_colors(&atoms, cons, &[]);
     let by_color = |v: &usize| (color[*v], *v);
     let mut rows_of: Vec<Vec<usize>> = vec![Vec::new(); n];
     let vars_of: Vec<Vec<usize>> = cons
@@ -14346,6 +14518,11 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
 /// the numbers depend on the structure alone, not on the names or the order of the rows.
 /// O((n + m + t) log(n + m + t)) for n variables, m rows and t terms, with the sorts of the
 /// starting colors.
+///
+/// `groups` adds a vertex for each conjunction, disjunction or negation of a formula whose
+/// constraints are `cons` ([`nesting()`]), colored by its variant and joined to each of its parts,
+/// a row or another group; with none, the graph is that of the rows alone. The cost is then
+/// O((n + m + t + g + l) log(n + m + t + g + l)) for g groups and l links to their parts.
 // Complexity tradeoff: naive version, rounds of hashed color refinement until no class
 // splits, O(n²) on a pipeline of n stages, which needs about n/2 rounds (125 → 1000 stages:
 // 78.5 times the instructions); a fixed count of rounds instead stops before the colors are
@@ -14355,7 +14532,7 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
 // O(n + m + t); a coloring is a stable partition, not a canonical labeling, so symmetric
 // variables stay in one class. Tests in `tests/steps/l01_38_presburger/canonical.rs`;
 // COMPLEXITY.md row S32.
-fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
+fn stable_colors(atoms: &[Atom], cons: &[&Con], groups: &[nesting::Group]) -> Vec<usize> {
     let (n, m) = (atoms.len(), cons.len());
     let mut terms: Vec<(usize, usize, &Int)> = Vec::new();
     for (r, c) in cons.iter().enumerate() {
@@ -14364,8 +14541,9 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
             terms.push((r, x, k));
         }
     }
-    let size = n + m + terms.len();
-    // Vertices: the variables, then the rows, then the terms.
+    let first_group = n + m + terms.len();
+    let size = first_group + groups.len();
+    // Vertices: the variables, then the rows, then the terms, then the groups.
     let mut color = vec![0; size];
     let mut next = usize::from(n > 0);
     let mut rows: Vec<usize> = (0..m).collect();
@@ -14387,12 +14565,29 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
         color[n + m + e] = next;
     }
     next += usize::from(!terms.is_empty());
+    let mut kinds: Vec<u8> = groups.iter().map(|g| g.kind).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    for (h, g) in groups.iter().enumerate() {
+        color[first_group + h] = next + kinds.binary_search(&g.kind).expect("a kind listed");
+    }
+    next += kinds.len();
+    let vertex = |p: &nesting::Part| match *p {
+        nesting::Part::Row(r) => n + r,
+        nesting::Part::Group(h) => first_group + h,
+    };
     // The neighbors of vertex v are `adj[start[v]..start[v + 1]]`.
     let mut start = vec![0; size + 1];
     for (e, &(r, x, _)) in terms.iter().enumerate() {
         start[x + 1] += 1;
         start[n + r + 1] += 1;
         start[n + m + e + 1] = 2;
+    }
+    for (h, g) in groups.iter().enumerate() {
+        start[first_group + h + 1] += g.parts.len();
+        for p in &g.parts {
+            start[vertex(p) + 1] += 1;
+        }
     }
     for v in 0..size {
         start[v + 1] += start[v];
@@ -14409,6 +14604,12 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con]) -> Vec<usize> {
         link(e, x);
         link(n + r, e);
         link(e, n + r);
+    }
+    for (h, g) in groups.iter().enumerate() {
+        for p in &g.parts {
+            link(first_group + h, vertex(p));
+            link(vertex(p), first_group + h);
+        }
     }
     let degree = (0..size)
         .map(|v| start[v + 1] - start[v])
