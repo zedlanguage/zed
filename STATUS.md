@@ -2421,12 +2421,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAIL-bench-bounded-or-free-time | impl attempt 1 | 2026-11-14 18:47 | start; load 26.35 36.54 41.85 |
 | FAIL-or-if-projection-not-exact | running |  |  |
-| FAIL-or-if-tie-refusal | impl attempt 1 | 2026-11-14 16:54 | reproduced on f6bab0ff1 (with Omega::untie of 5a5084526): seed 3178640468583431682 round 104 still Unordered Tie [x, y]; untie works on Omega rows, this tie is  |
-| FAIL-types-binding-tuple-shapes-copied | impl attempt 1 | 2026-11-14 18:15 | Members persistent list for Ty::tuples/fns; bench one variable taking n tuple shapes 32.332x -> 9.113x instr (bytes 25.4x -> 8.30x) at load 33.6; negative contr |
-| FAIL-types-loose-over-refusal | running | 2026-11-14 18:15 |  |
-| FAIL-types-singleton-tuple-union-match | running | 2026-11-14 18:15 |  |
 | PRES-project-exact-solver | impl attempt 1 | 2026-11-14 19:45 | start, worktree wt/pres-exact at 07f18406f |
 | PRES-sign-tie-names | impl attempt 1 | 2026-11-14 16:54 | started in wt/fix-ties at f6bab0ff1; load 17.88 9.21 12.04 |
 | PRES-solve-equation-sign | impl attempt 1 | 2026-11-14 18:34 | reproduced: new probe (layered family + a - b == 0 style equations, every writing and naming, shuffled parts) on main: 98 of 1800 systems over 6 seeds change an |
