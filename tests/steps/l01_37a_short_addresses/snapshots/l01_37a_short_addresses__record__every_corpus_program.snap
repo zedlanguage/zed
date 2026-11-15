@@ -65,13 +65,17 @@ expression: without_addresses(&out)
 10-regex-matcher/regex.zed:17:39: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 10-regex-matcher/regex.zed:28:49: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11-csv-split.zed (L5): does not load: 11-csv-split.zed:9:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11-csv-split.zed:19:30: `char32` is not defined.
 11-csv-split.zed:20:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11-csv-split.zed:20:34: `char32` is not defined.
 11-csv-split.zed:21:19: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11-csv-split.zed:21:71: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11-csv-split.zed:22:3: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11-csv-split.zed:22:16: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 11-csv-split.zed:28:8: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 12-cyk-table.zed (L6): does not load: 12-cyk-table.zed:10:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+12-cyk-table.zed:13:55: `char32` is not defined.
+12-cyk-table.zed:13:76: `char32` is not defined.
 12-cyk-table.zed:20:7: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 12-cyk-table.zed:21:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 12-cyk-table.zed:30:16: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.

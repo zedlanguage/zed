@@ -210,6 +210,15 @@ fn a_matrix_row_range_before_the_first_row_is_empty() {
 }
 
 #[test]
+fn a_slice_leaves_out_the_rank_at_its_upper_end() {
+    // B is `rows.slice(1 + n..<1 + n + inner)` = `rows.slice(2..<3)`: `..<` is half-open
+    // (DESIGN sec:grammar, Range) and `.slice(r)` keeps the entries whose rank lies in `r`
+    // (sec:kernel, the `.slice` row), so B is the line "3" alone, and the line "5" at rank 3 is
+    // left out. Were rank 3 kept, A's cell 7 would meet it: 2 * 3 + 7 * 5 = 41.
+    check("06", "slice_end", "1 1 1\n2 7\n3\n5\n", "6.0\n", Ok(()));
+}
+
+#[test]
 fn a_short_matrix_row_or_too_few_rows_read_as_zeros() {
     // 06-matrix-multiply.zed:19 sums over the lines of B present, reading A's cell as
     // `row[c - 1 - n] else 0.0` and B's as `r[k] else 0.0`, with no `zip` and so no claim that

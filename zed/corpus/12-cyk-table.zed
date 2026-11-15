@@ -10,7 +10,7 @@
 struct Cell { s: bool, t: bool, l: bool, r: bool }
 
 noCell = Cell(s: false, t: false, l: false, r: false);
-leaf(positional c) = Cell(s: false, t: false, l: c == "(", r: c == ")");
+leaf(positional c) = Cell(s: false, t: false, l: c == char32("("), r: c == char32(")"));
 join2(positional x, positional y) =
   Cell(s: x.l && (y.r || y.t) || x.s && y.s, t: x.s && y.r, l: false, r: false);
 orCell(positional x, positional y) =

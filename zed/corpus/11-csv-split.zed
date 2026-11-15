@@ -16,10 +16,10 @@ quote = Next3(a: 1, b: 2, c: 1);
 other = Next3(a: 0, b: 1, c: 0);
 
 fields(positional l) = {
-  after = l.map(c -> if c == "\"" { quote } else { other }).scan(compose).map(t -> t.a);
-  sep   = for i -> c in l { c == "," && (after[i - 1] else 0) != 1 };   // the state before i
+  after = l.map(c -> if c == char32("\"") { quote } else { other }).scan(compose).map(t -> t.a);
+  sep   = for i -> c in l { c == char32(",") && (after[i - 1] else 0) != 1 };   // the state before i
   cuts  = [-1] ++ (for i -> s in sep where s { i }).orderedValues ++ [l::len];
-  for k in 0..<cuts::len - 1 { l.slice((cuts[k] else 0) + 1, cuts[k + 1] else 0) }
+  for k in 0..<cuts::len - 1 { l.slice((cuts[k] else 0) + 1..<(cuts[k + 1] else 0)) }   // ranks between two cuts
 };
 
 main(m: MainArgs) {
