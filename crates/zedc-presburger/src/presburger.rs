@@ -28323,20 +28323,25 @@ mod r5_hull_tests {
     #[test]
     fn overlapping_chains_agree_with_independent_small_domains() {
         // The shifted chains at 2 and 3 steps, the others at 2, 3, 5 and 7 steps, 7 being the
-        // first at which the guards reach both -3 and 3. Longer chains, which cost far more
-        // (0.76 s at 8 steps unshifted, 1.1 s at 5 shifted), are in `bench.rs`.
-        let refused: usize = [
+        // first at which the guards reach both -3 and 3; 6 steps are in
+        // `every_target_of_six_overlapping_steps_is_answered`. Longer chains are in `bench.rs`.
+        // A refusal fails the test: while refusals were only counted, 6 steps refused 16
+        // targets unseen (PRES-overlap-six-steps). Since `chain_witness` (PRES-hull-odd-refusal)
+        // no chain of 1 to 10 steps unshifted or 1 to 6 shifted refuses a target.
+        for (n, shift) in [
             (2, false),
             (3, false),
             (5, false),
             (7, false),
             (2, true),
             (3, true),
-        ]
-        .into_iter()
-        .map(|(n, shift)| overlapping_chain_agrees(n, shift))
-        .sum();
-        eprintln!("small overlapping-chain oracle: refused={refused}");
+        ] {
+            let refused = overlapping_chain_agrees(n, shift);
+            assert_eq!(
+                refused, 0,
+                "{n} steps, shift {shift}: {refused} targets refused"
+            );
+        }
     }
 
     /// The small instances of the benchmarks in `bench.rs`, with the answers they assert. With

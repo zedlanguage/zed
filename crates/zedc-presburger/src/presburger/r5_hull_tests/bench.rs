@@ -45,12 +45,16 @@ fn shifts_with_gaps_are_refuted_in_linear_work() {
 /// The oracle of `overlapping_chains_agree_with_independent_small_domains` on the longer
 /// chains it leaves out, the sizes it had before (TEST-bench-move-crates): unshifted at 8 steps,
 /// shifted at 4, 5 and 8 (author P178: a long run). Measured 2026-11-14 at load 30: 0.76 s at 8
-/// steps unshifted, 0.41 s, 1.1 s and 4.7 s shifted.
+/// steps unshifted, 0.41 s, 1.1 s and 4.7 s shifted; since `chain_witness` (debug build, load
+/// 33) 0.08 s, 0.13 s, 0.32 s and 0.80 s. A refusal fails the test, as in the small oracle
+/// (PRES-overlap-six-steps).
 #[test]
 fn overlapping_chains_agree_with_independent_small_domains_on_longer_chains() {
-    let refused: usize = [(8, false), (4, true), (5, true), (8, true)]
-        .into_iter()
-        .map(|(n, shift)| overlapping_chain_agrees(n, shift))
-        .sum();
-    eprintln!("overlapping-chain oracle on longer chains: refused={refused}");
+    for (n, shift) in [(8, false), (4, true), (5, true), (8, true)] {
+        let refused = overlapping_chain_agrees(n, shift);
+        assert_eq!(
+            refused, 0,
+            "{n} steps, shift {shift}: {refused} targets refused"
+        );
+    }
 }
