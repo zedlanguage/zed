@@ -120,6 +120,8 @@ fn infix_calls() {
         ("p~plus~v", "p ~plus~ v"),
         ("a ~f'~ b ~g_2~ c", "a ~f'~ b ~g_2~ c"),
         ("p ~geometry.plus~ v", "p ~geometry.plus~ v"),
+        ("a ~divide~ b ~modulo~ c", "a ~divide~ b ~modulo~ c"),
+        ("a ~where~ b", "a ~where~ b"),
         ("0..<a ~f~ b", "0₍10₎ ..< a ~f~ b"),
         ("\"${a ~f~ b}\"", "str[${a ~f~ b}]"),
     ];
@@ -151,6 +153,10 @@ fn expected_lexical_errors() {
         "p ~ plus v",
         "p ~café~ v",
         "~x + 1",
+        "a ~div~ b",
+        "a ~mod~ b",
+        "a ~for~ b",
+        "a ~in~ b",
     ];
     let out: Vec<String> = cases
         .iter()

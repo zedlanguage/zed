@@ -7,10 +7,11 @@
 //! `~f~` is one token, a tilde, a name and a tilde with no space inside; `a ~f~ b` is the call
 //! `f(a, b)`. A `~` starts nothing else, so every `~` is read here, and one that starts no
 //! infix call is an error with its own text: a space inside (`~ f~`, `~f ~`), no closing `~`
-//! (`~f`), or a lone `~`.
+//! (`~f`), a lone `~`, or a reserved word between the tildes (`~div~`).
 
 use super::name::{self, Word};
 use super::name_or_error;
+use super::punct::keyword;
 use super::token::{Error, ErrorKind, Span};
 
 /// The end of the infix call token starting with the `~` at byte `pos` of `text`, and the name
@@ -36,6 +37,15 @@ pub(super) fn infix(text: &str, pos: usize) -> Result<(usize, String), Error> {
     }
     let written = &text[at..end];
     if text[end..].starts_with('~') {
+        if let Some(k) = keyword(written) {
+            return Err(reserved(
+                k,
+                Span {
+                    start: pos,
+                    end: end + 1,
+                },
+            ));
+        }
         return Ok((end + 1, written.to_string()));
     }
     let blanks = spaces(text, end);
@@ -60,6 +70,24 @@ pub(super) fn infix(text: &str, pos: usize) -> Result<(usize, String), Error> {
         ),
         span,
     ))
+}
+
+/// The error for `~k~`, whose name `k` is a reserved word: no function can have that name
+/// (orchestrator, P13: a mistake is never read as something else, so it never reaches name
+/// lookup). `div` and `mod` are the two words that are themselves operators between two
+/// arguments, so `a ~div~ b` was meant as `a div b`.
+fn reserved(k: &str, span: Span) -> Error {
+    let why = if matches!(k, "div" | "mod") {
+        format!(
+            "`~{k}~` is no infix call: `{k}` is a reserved word, the operator of `a {k} b`. Write \
+             `a {k} b` instead."
+        )
+    } else {
+        format!(
+            "`~{k}~` is no infix call: `{k}` is a reserved word, so no function can have that name."
+        )
+    };
+    bad(why, span)
 }
 
 /// The end of the run of spaces and tabs from byte `pos` of `text`.

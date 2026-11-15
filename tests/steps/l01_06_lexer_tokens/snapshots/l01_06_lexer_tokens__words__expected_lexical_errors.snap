@@ -19,3 +19,7 @@ x ~~ y       [2..3] `~` stands only around the name of a function written betwee
 p ~ plus v   [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
 p ~café~ v   [3..8] `café` is no name: `é` (U+00E9) is not ASCII. Try `cafe` instead.
 ~x + 1       [0..2] `~x` is no infix call: the name must be closed by a `~` right after it, as in `a ~x~ b`. For the bitwise complement, write `bitNot(x)`.
+a ~div~ b    [2..7] `~div~` is no infix call: `div` is a reserved word, the operator of `a div b`. Write `a div b` instead.
+a ~mod~ b    [2..7] `~mod~` is no infix call: `mod` is a reserved word, the operator of `a mod b`. Write `a mod b` instead.
+a ~for~ b    [2..7] `~for~` is no infix call: `for` is a reserved word, so no function can have that name.
+a ~in~ b     [2..6] `~in~` is no infix call: `in` is a reserved word, so no function can have that name.
