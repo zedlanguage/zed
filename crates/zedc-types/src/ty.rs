@@ -1499,6 +1499,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(recv),
             Dbg::Text(" }"),
         ]),
+        NeedKind::Remap { at, src } => parts.extend([
+            Dbg::Text("Remap { at: "),
+            Dbg::Leaf(at),
+            Dbg::Text(", src: "),
+            Dbg::Ty(src),
+            Dbg::Text(" }"),
+        ]),
         NeedKind::Call {
             what,
             positional,
@@ -1559,7 +1566,6 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::Power(_)
         | NeedKind::Sum
         | NeedKind::Reduce(..)
-        | NeedKind::Remap(_)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
     parts.push(Dbg::Text(", result: "));
@@ -3335,10 +3341,18 @@ pub enum NeedKind {
         /// Where the receiver is written, for the error's words.
         recv: Span,
     },
-    /// The remap written at this span, of the value: the value is a family of as many levels
-    /// as the remap's `as` pattern names, and the use gives the remap's family (DESIGN.md
-    /// sec:remap_law). The key expressions are checked when the value's type is in hand.
-    Remap(Span),
+    /// The remap written at `at`, of a source of type `src` that holds the value: `src` is the
+    /// value's own variable where the value is the source, or a family that holds the value
+    /// below known levels, as `{ 0 -> r }` holds `r`. The source, with the value's type in the
+    /// place of its variable, is a family of as many levels as the remap's `as` pattern names,
+    /// and the use gives the remap's family (DESIGN.md sec:remap_law). The key expressions are
+    /// checked when the value's type is in hand.
+    Remap {
+        /// Where the remap is written.
+        at: Span,
+        /// The type of the remap's source, which holds the value's variable.
+        src: Ty,
+    },
     /// `v >< (op)` at the fold written at the span: the value is a family whose entries `op`
     /// folds, and the use gives the fold (step L3.2; DESIGN.md sec:reduction). The span is the
     /// fold's own, where a need met at a call is met at the call's, so that the checks of one
@@ -3558,7 +3572,10 @@ impl Need {
                     f: f(g),
                     recv: *recv,
                 },
-                NeedKind::Remap(at) => NeedKind::Remap(*at),
+                NeedKind::Remap { at, src } => NeedKind::Remap {
+                    at: *at,
+                    src: f(src),
+                },
                 NeedKind::Reduce(op, site) => NeedKind::Reduce(*op, *site),
                 NeedKind::Fold { tys, right } => NeedKind::Fold {
                     tys: tys.iter().map(&mut f).collect(),
@@ -3634,13 +3651,13 @@ impl Need {
             | NeedKind::Sum
             | NeedKind::Into { .. }
             | NeedKind::Reduce(..)
-            | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(_) => (None, &[], &[]),
             NeedKind::Index(k)
             | NeedKind::Order { other: k, .. }
             | NeedKind::Map { f: k, .. }
-            | NeedKind::Group { f: k, .. } => (Some(k), &[], &[]),
+            | NeedKind::Group { f: k, .. }
+            | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[]),
             NeedKind::Call {
                 positional, named, ..
             } => (None, positional, named),
@@ -3663,13 +3680,13 @@ impl Need {
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Reduce(..)
-            | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
+            | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
@@ -3697,13 +3714,13 @@ impl Need {
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Reduce(..)
-            | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
+            | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],

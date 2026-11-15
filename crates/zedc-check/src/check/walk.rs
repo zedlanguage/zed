@@ -885,7 +885,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::Display(s) => self.display_step(m, s),
             Frame::Remap(s) => {
                 let t = m.take_ty();
-                if let Some(e) = s.unsourced().filter(|_| !t.vars.is_empty()) {
+                // A class at the outer level of the source, as `g` of `g as …`, or below a
+                // key level, as `r` of `({ 0 -> r }) as …`, takes the remap as a need.
+                if let Some(e) = s
+                    .unsourced()
+                    .filter(|e| !t.vars.is_empty() || self.remap_pending(e, &t).is_some())
+                {
                     // The plan from the text, so that a remap whose class takes no type, in a
                     // generic function no call instantiates, still elaborates; and the
                     // pattern's own errors, given where the remap is written.
@@ -3334,10 +3339,26 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of `x`, with each resolved class's type, is remapped as it stands, once
     /// ([`Self::remap_alone`]). A class no type flows into, as a parameter of a generic
     /// function no call instantiates, leaves the remap with the plan of its text alone.
+    ///
+    /// A class below a key level of the rest, as `r` in `m.map(r -> ({ 0 -> r }) as (a -> k
+    /// -> v) into (k -> a -> v))`, takes the remap as a need too, with the rest as the need's
+    /// source type, `$r` in the class's place ([`NeedKind::Remap`]); each type that flows into
+    /// the class is put in that place and the remap checked again from here, so the remap is
+    /// checked as the same remap on the concrete rows is. Classes below the levels the
+    /// pattern names are the value's and are not waited for.
+    // Termination, not proved: each check of a need below a key level replaces the class by a
+    // type that flowed into it; the chain of needs it starts ends when that type holds no
+    // class at a key level, and each need is made once per class and source type
+    // ([`Self::need`] keeps them in `known`). A chain without end needs a class that a type
+    // holding itself flows into, at a key level, again and again: an infinite type, which a
+    // program with no recursion cannot build, and the checker refuses recursion before it
+    // checks (2026-11-15: `f(g, n) = … f(g: [g], n: n - 1)` is refused as recursion).
     // Complexity tradeoff: the classes are visited once each, with a visited set; the key
     // expressions are checked once per check of the need, as each use of a generic function's
     // parameter is, instead of once in the body: a remap of a parameter of a function called
     // at c types is checked c times, the cost of checking it where it is written at each.
+    // Finding a class below a key level is one walk of the source's key levels
+    // ([`Self::remap_pending`]), the walk `remap_source` makes anyway.
     fn remap_of(&mut self, e: &'a Expr, x: &Ty) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let mut src = x.clone();
@@ -3356,9 +3377,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         src = src.union(&t);
                     }
                     None => {
-                        self.remap_exprs.insert(e.span, e);
-                        let given = self.need(r, NeedKind::Remap(e.span), true, e.span);
-                        out = out.union(&given);
+                        let src = Ty::var(format!("${r}").into());
+                        out = out.union(&self.remap_need(e, r, src));
                     }
                 },
             }
@@ -3368,21 +3388,44 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => false,
         });
         if !only_misses {
-            out = out.union(&self.remap_alone(e, &src));
+            let t = match self.remap_pending(e, &src) {
+                // A class below a key level, as `r` of `({ 0 -> r })`: the remap is checked
+                // at each type that flows into it, with that type in its place in `src`.
+                Some((r, _)) => {
+                    let mut binds = Binds::new();
+                    for v in src.var_facts().classes {
+                        if self.class_root(&v) == Some(r) {
+                            binds.insert(v, Ty::var(format!("${r}").into()));
+                        }
+                    }
+                    let src = src.replace(&binds);
+                    self.remap_need(e, r, src)
+                }
+                None => self.remap_alone(e, &src),
+            };
+            out = out.union(&t);
         }
         out
     }
 
-    /// The remap written at `at` checked as a need on `on`, the type that flowed into its
-    /// source's class ([`Self::remap_of`]).
-    fn remap_met(&mut self, at: Span, on: &Ty) -> Ty {
+    /// The remap `e` taken as a need by class `r`, of a source of type `src`, which holds the
+    /// class's root variable `$r` in the place of the class.
+    fn remap_need(&mut self, e: &'a Expr, r: usize, src: Ty) -> Ty {
+        self.remap_exprs.insert(e.span, e);
+        self.need(r, NeedKind::Remap { at: e.span, src }, true, e.span)
+    }
+
+    /// The remap written at `at` checked as a need, with `src` the type of its source: the
+    /// need's source type with the type that flowed into its class in the class's place
+    /// ([`Self::remap_of`]).
+    fn remap_met(&mut self, at: Span, src: &Ty) -> Ty {
         // Every need is recorded and checked by the checker of one program: `check` takes one
         // unit, and name resolution rejects every import before the checker reads it, so no
         // signature or need comes from another unit. A remap need is recorded only by
         // `remap_of`, which first records its remap here.
         let e = *(self.remap_exprs.get(&at))
             .expect("a remap need is made only by `remap_of`, which records its remap");
-        self.remap_of(e, on)
+        self.remap_of(e, src)
     }
 
     /// The remap `e` checked with a source of type `src`, which holds no class at its outer
@@ -9266,7 +9309,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = Arg::of(self.bound(f, binds));
                 self.group_of(&on, *recv, f, span, false)
             }
-            NeedKind::Remap(at) => self.remap_met(*at, &on),
+            NeedKind::Remap { at, src } => {
+                // `src` holds the need's own type, `n.on`, in the place of the value: the
+                // class's variable, or, where a signature took the need, what it was renamed
+                // to, renamed in `src` alike (`Need::map_tys`). A variable is bound to `on`
+                // for the replacement and unbound after it, so `binds` are as they were.
+                let src = match n.on.as_var().cloned() {
+                    Some(v) => {
+                        let was = binds.insert(v.clone(), on.clone());
+                        let src = self.bound(src, binds);
+                        match was {
+                            Some(w) => binds.insert(v, w),
+                            None => binds.remove(&v),
+                        };
+                        src
+                    }
+                    None => self.bound(src, binds),
+                };
+                self.remap_met(*at, &src)
+            }
             NeedKind::Reduce(op, site) => self.reduce_end(*op, &on, span, *site),
             NeedKind::Fold { tys, right } => {
                 let init = self.bound(&tys[0], binds);

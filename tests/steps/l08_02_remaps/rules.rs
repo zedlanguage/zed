@@ -635,3 +635,48 @@ fn a_remap_or_group_of_a_map_lambdas_parameter_over_empty_families() {
         same(&src, "x", "m");
     }
 }
+
+#[test]
+fn a_remap_of_a_map_lambdas_parameter_below_a_known_level() {
+    let src = "m = [[1, 2], [3]];\n\
+               x = m.map(r -> ({ 0 -> r }) as (a -> k -> v) into (k -> a -> v));\n\
+               want = [{ 0 -> { 0 -> 1 }, 1 -> { 0 -> 2 } }, { 0 -> { 0 -> 3 } }];\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn a_remap_of_a_generic_functions_parameter_below_a_known_level() {
+    let src = "f(g) = ({ 0 -> g }) as (a -> k -> v) into (k -> a -> v);\n\
+               x = f(g: [1, 2]);\n\
+               want = { 0 -> { 0 -> 1 }, 1 -> { 0 -> 2 } };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn a_remap_below_a_known_level_rejects_a_value_that_is_not_a_family() {
+    rejected(
+        "x = [1, 2].map(r -> ({ 0 -> r }) as (a -> k -> v) into (k -> a -> v));\n",
+        &[
+            "this remap's `as` pattern names 2 key levels, and its source `({ 0 -> r })`",
+            "after 1 key level, which is not a family",
+        ],
+    );
+}
+
+#[test]
+fn a_remap_below_a_known_level_is_checked_at_each_type_and_through_calls() {
+    let src = "f(g) = ({ 0 -> g }) as (a -> k -> v) into (k -> a -> v);\n\
+               h(g) = f(g: g);\n\
+               x = (f(g: [1, 2]), h(g: { \"a\" -> 3 }));\n\
+               want = ({ 0 -> { 0 -> 1 }, 1 -> { 0 -> 2 } }, { \"a\" -> { 0 -> 3 } });\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn a_remap_two_levels_below_a_known_level() {
+    let src = "m = [[[1, 2]], [[3]]];\n\
+               x = m.map(r -> ({ 0 -> r }) as (a -> b -> k -> v) into (k -> b -> a -> v));\n\
+               want = [{ 0 -> { 0 -> { 0 -> 1 } }, 1 -> { 0 -> { 0 -> 2 } } }, \
+               { 0 -> { 0 -> { 0 -> 3 } } }];\n";
+    same(src, "x", "want");
+}

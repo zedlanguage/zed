@@ -201,6 +201,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = Vec::with_capacity(n + 1);
         let mut cur = t.clone();
         for depth in 0..n {
+            cur = self.remap_level(&cur).0;
             if cur.dynamic && cur.fns.is_empty() {
                 out.extend((depth..=n).map(|_| Ty::dynamic()));
                 return Some(out);
@@ -220,8 +221,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ),
                     _ => format!(
                         "this remap's `as` pattern names {n} key levels, and its source `{}`, \
-                         {shown}, has {depth} at some keys",
-                        self.src_text(of.span)
+                         {shown}, holds {} after {depth} key level{}, which is not a family",
+                        self.src_text(of.span),
+                        self.text(&cur),
+                        if depth == 1 { "" } else { "s" },
                     ),
                 };
                 self.error(of.span, msg);
@@ -247,6 +250,74 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         out.push(cur);
         Some(out)
+    }
+
+    /// `t`, one level of a remap's source, with each variable at its outer level replaced by
+    /// what it stands for: a resolved class by its type, followed through the classes that
+    /// type holds; a variable that is not a class by the unknown, as [`Self::bound`] replaces
+    /// it; a class not yet resolved is kept. Gives also the first class kept, its root and the
+    /// variable that names it. A class of a level below the outer one, as `r` of
+    /// `({ 0 -> r })`, is opened here level by level, as [`Self::remap_of`] opens the outer
+    /// level's classes.
+    // Complexity tradeoff: each class is visited once, with a visited set, and each type it
+    // resolves to is unioned once: O(the classes reached + the size of their types). Walking
+    // a variable through `t.replace` would visit the level's pieces again for each class.
+    pub(in crate::check) fn remap_level(&self, t: &Ty) -> (Ty, Option<(usize, Arc<str>)>) {
+        if t.vars.is_empty() {
+            return (t.clone(), None);
+        }
+        let mut out = t.clone();
+        out.vars = VarSet::new();
+        let mut todo: Vec<Arc<str>> = t.vars.iter().cloned().collect();
+        let mut seen = HashSet::new();
+        let mut kept = None;
+        while let Some(v) = todo.pop() {
+            match self.class_root(&v) {
+                None => out = out.union(&Ty::dynamic()),
+                Some(r) if !seen.insert(r) => {}
+                Some(r) => match &self.classes[r].resolved {
+                    Some(t) => {
+                        let mut t = t.clone();
+                        todo.extend(t.vars.iter().cloned());
+                        t.vars = VarSet::new();
+                        out = out.union(&t);
+                    }
+                    None => {
+                        out = out.union(&Ty::var(v.clone()));
+                        kept.get_or_insert((r, v));
+                    }
+                },
+            }
+        }
+        (out, kept)
+    }
+
+    /// The first class not yet resolved at one of the key levels of `t`, the source of the
+    /// remap `e`, outermost level first, by [`Self::remap_level`]: its root and the variable
+    /// that names it. The remap is checked when a type flows into that class
+    /// ([`Self::remap_of`]); before, the source's key types are not in hand.
+    // Complexity tradeoff: one walk of the source's key levels, the walk `remap_source` makes
+    // after it; O(the size of those levels + the classes reached).
+    pub(in crate::check) fn remap_pending(&self, e: &Expr, t: &Ty) -> Option<(usize, Arc<str>)> {
+        let ExprKind::Remap {
+            binders: Some(binders),
+            ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let mut cur = t.clone();
+        for _ in 1..binders.len() {
+            let (open, kept) = self.remap_level(&cur);
+            if kept.is_some() {
+                return kept;
+            }
+            let next = (open.fns.iter().filter(|g| g.data))
+                .flat_map(|g| g.arrows.iter().map(|a| &a.result));
+            cur = Ty::union_all(next).without(&misses);
+        }
+        None
     }
 
     /// The source text at `span`, or nothing where the checker has no text.

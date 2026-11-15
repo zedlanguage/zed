@@ -188,3 +188,45 @@ fn n_calls_of_a_generic_remap_are_checked_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn a_remap_of_a_map_lambdas_parameter_below_a_known_level_runs_in_linear_time() {
+    // `r` is a class below the key level of `{ 0 -> r }`: the remap is checked once, when the
+    // rows' type flows into `r`, and runs once per row.
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "m = {};\nx = m.map(r -> ({{ 0 -> r }}) as (a -> k -> v) into (k -> a -> v));\n\
+             t = x as (i -> k -> a -> v) into (i >< (+) -> k >< (+) -> a >< (+) -> v);\n",
+            rows(n)
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), (n * (n - 1) / 2).to_string());
+    };
+    scaling::check(
+        "a remap of `{ 0 -> r }`, `r` a `map` lambda's parameter, over n entries in rows of \
+         10, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
+#[test]
+fn n_calls_of_a_generic_remap_below_a_known_level_are_checked_in_linear_time() {
+    // Each call passes a family of another key type, so the remap is checked once per call.
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| format!("x{i} = f(g: {{ {i} -> 1 }});\n"))
+            .collect::<String>();
+        format!("f(g) = ({{ 0 -> g }}) as (a -> k -> v) into (k -> a -> v);\n{calls}")
+    });
+    let run = |n: usize| {
+        let u = elab(&srcs[&n]).unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(u.get(&format!("x{}", n - 1)).is_some());
+    };
+    scaling::check(
+        "n calls of a generic function that remaps `{ 0 -> g }`, `g` its parameter",
+        N_LEVELS,
+        run,
+    );
+}

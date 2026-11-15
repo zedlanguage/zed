@@ -68,7 +68,7 @@ this group when they pass.
 
 ## Source-level tests
 
-All 134 tests of the group pass (2026-11-15, FAIL-remap-source-not-seen-as-family).
+All 139 tests of the group pass (2026-11-15, FAIL-remap-class-below-known-levels).
 
 | Case | Covering tests |
 |---|---|
@@ -92,6 +92,7 @@ All 134 tests of the group pass (2026-11-15, FAIL-remap-source-not-seen-as-famil
 | Miss atoms of reads on remap and group results; a constant read past the keys | `empty::the_identity_remap_of_a_list_misses_as_a_list`, `empty::a_shifted_remap_misses_with_not_found`, `empty::a_constant_read_past_the_keys_is_rejected`, `rules::a_read_of_a_remap_or_group_result_may_miss`, `rules::a_float_key_is_read_only_whole` |
 | Each form's own errors | `rules::the_pattern_s_own_errors`, `rules::the_source_must_be_a_family_of_the_pattern_s_depth`, `rules::group_s_own_errors`, `rules::flat_map_s_own_errors`, `rules::fewer_binders_than_levels_waits_for_a_later_step` |
 | The source is a `map` lambda's parameter or a generic function's: a remap, a fold of every level, `as` alone and `group` give what they give on each inner family written out; over empty families; a function never called compiles, and its pattern's errors are given; two calls whose keys are kept apart for different reasons record both; `group` and a remap of a parameter that is no family, and `rekey`, are rejected as elsewhere | `rules::a_remap_of_a_map_lambdas_parameter`, `rules::a_group_of_a_map_lambdas_parameter`, `rules::a_fold_of_every_level_of_a_map_lambdas_parameter`, `rules::an_identity_remap_of_a_map_lambdas_parameter`, `rules::a_remap_or_group_of_a_map_lambdas_parameter_over_empty_families`, `rules::a_remap_and_a_group_of_a_generic_functions_parameter`, `rules::a_generic_function_never_called_is_accepted`, `rules::a_generic_remap_s_pattern_errors_are_given_without_a_call`, `rules::a_generic_remap_at_two_types_records_both_reasons`, `rules::a_map_lambdas_parameter_that_is_no_family_is_rejected`, `rules::rekey_of_a_map_lambdas_parameter_is_rejected_as_any_rekey` |
+| A `map` lambda's or generic function's parameter below known levels of the source, `({ 0 -> r }) as (a -> k -> v) into (k -> a -> v)`, one level and two below, at two types and through a call; a parameter that is no family is rejected with what it holds | `rules::a_remap_of_a_map_lambdas_parameter_below_a_known_level`, `rules::a_remap_of_a_generic_functions_parameter_below_a_known_level`, `rules::a_remap_below_a_known_level_is_checked_at_each_type_and_through_calls`, `rules::a_remap_two_levels_below_a_known_level`, `rules::a_remap_below_a_known_level_rejects_a_value_that_is_not_a_family` |
 | Scaling | `bench::*` |
 
 ## Tests waiting in /home/luke/Work/wt/failing-tests
@@ -111,7 +112,6 @@ from DESIGN.
 | The warning `#emptyLevelDropped`, and none after `group` | `EMPTY-level-swap.rs` |
 | `><` by `max` (empty `int` level), `min`, a lambda, a named function in a pattern | `REDUCE-by-function.rs` |
 | `max` and `min` of an empty `f64` level: `-inf`, `inf` | `FAIL-f64-max-empty-identity.rs` |
-| A `map` lambda's or generic function's parameter below a known level of the source, `({ 0 -> r }) as (a -> k -> v) into (k -> a -> v)` | `FAIL-remap-class-below-known-levels.rs` |
 | `group` of a family of families | `GROUP-nested.rs` |
 | Word count with a trailing `>< (+)` | `REDUCE-family-entries.rs` |
 | A group level is never empty, so `>< max` of each group has no `#empty` | `L4.8.rs` |
