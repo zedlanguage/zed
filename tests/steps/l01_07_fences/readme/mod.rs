@@ -15,6 +15,8 @@ use zed_kernel::{Evaluator, Term, World};
 use zed_tests::fences::{self, DocFence};
 use zed_tests::oracle::ENABLED;
 use zed_tests::readme::{self, Entry};
+use zed_tools::fence_layers::LaidFence;
+use zed_tools::spec::zed_fences_in;
 use zedc::elab::Cones;
 use zedc::fence;
 use zedc::interp;
@@ -254,7 +256,7 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
         for (n, v) in variants(&f.text) {
             if RAISED_LATER
                 .iter()
-                .any(|&(at, line, _)| (at, line) == (f.at.as_str(), n))
+                .any(|&(key, line, _)| (key, line) == (f.key.as_str(), n))
             {
                 continue;
             }
@@ -274,7 +276,7 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
 }
 
 /// The ✗ variants of enabled fences whose row the checker does not raise yet, by the fence's
-/// place and the variant's line in it, with the item that will raise it: the test of the
+/// key and the variant's line in it, with the item that will raise it: the test of the
 /// enabled fences leaves them out, and `each_readme_variant_gives_its_pinned_outcome_at_l1`
 /// holds what each gives now.
 const RAISED_LATER: &[(&str, usize, &str)] = &[];
@@ -285,12 +287,14 @@ const RAISED_LATER: &[(&str, usize, &str)] = &[];
 /// the fence runs with its checks.
 const WORD_LATER: &[(&str, &str, &str)] = &[("README.md [Functions] 1", "Utf8String", "STR-types")];
 
-/// What each ✗ variant of README.md gives at L1, by the fence's place and the variant's line
-/// in it: `pass`, or its first problem. Most need forms of later layers; the step that
-/// enables one changes its pin.
+/// What each ✗ variant of README.md gives at L1, by the fence's key (its section and place in
+/// it, as `expected.txt` keys it) and the variant's line in the fence: `pass`, or its first
+/// problem. The key, unlike the fence's line in the page, does not move when lines are added
+/// elsewhere in README.md. Most need forms of later layers; the step that enables one changes
+/// its pin.
 const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
-        "README.md:202",
+        "README.md [Step 5: daily totals] 1",
         1,
         concat!(
             "line 1: the mark names the row \"Collision\", and the diagnostic is in no row of the rejection table: ",
@@ -298,22 +302,26 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:559",
+        "README.md [Step 12: the mass of the shipment] 1",
         4,
         concat!(
             "line 1: ",
             zed_tests::not_yet!("the reduction `with units(\"g\")`")
         ),
     ),
-    ("README.md:786", 7, "pass"),
+    ("README.md [Numbers] 1", 7, "pass"),
     (
-        "README.md:1074",
+        "README.md [Everything is a map] 1",
         7,
         concat!("line 1: ", zed_tests::not_yet!("an array display")),
     ),
-    ("README.md:1139", 3, "line 2: `users` is not defined."),
     (
-        "README.md:1175",
+        "README.md [Grouping] 1",
+        3,
+        "line 2: `users` is not defined.",
+    ),
+    (
+        "README.md [Remapping] 1",
         4,
         concat!(
             "line 1: ",
@@ -321,7 +329,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:1270",
+        "README.md [Remapping] 2",
         6,
         concat!(
             "line 2: ",
@@ -329,22 +337,22 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:1705",
+        "README.md [Vectors and matrices] 1",
         6,
         concat!("line 1: ", zed_tests::not_yet!("the array type `[T; n]`")),
     ),
     (
-        "README.md:2131",
+        "README.md [Ranges and refinements] 1",
         4,
         concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
-        "README.md:2131",
+        "README.md [Ranges and refinements] 1",
         9,
         concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
     ),
     (
-        "README.md:2161",
+        "README.md [Units and taint] 1",
         4,
         concat!(
             "line 1: ",
@@ -352,7 +360,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         ),
     ),
     (
-        "README.md:2161",
+        "README.md [Units and taint] 1",
         9,
         concat!(
             "line 1: ",
@@ -361,12 +369,13 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     ),
 ];
 
-#[test]
-fn each_readme_variant_gives_its_pinned_outcome_at_l1() {
-    let table = table();
+/// What each ✗ variant of the fences `fences` gives at L1, in the form of [`VARIANT_PINS`]: the
+/// fence's key, the variant's line in the fence, and `pass` or the variant's first problem. A
+/// fence under the documentation notation has no run. `table` gives each fence's inputs.
+fn variant_outcomes(fences: &[DocFence], table: &[Entry]) -> Vec<(String, usize, String)> {
     let by_key: HashMap<&str, &Entry> = table.iter().map(|e| (e.key.as_str(), e)).collect();
     let mut got = Vec::new();
-    for f in fences::readme().iter().filter(|f| !f.notation) {
+    for f in fences.iter().filter(|f| !f.notation) {
         let entry = by_key[f.key.as_str()];
         for (n, v) in variants(&f.text) {
             let (text, _) = unit(&v, entry, false);
@@ -374,26 +383,98 @@ fn each_readme_variant_gives_its_pinned_outcome_at_l1() {
             let outcome = first.map_or("pass".to_string(), |p| {
                 p.trim_start_matches(", ").to_string()
             });
-            got.push((f.at.clone(), n, outcome));
+            got.push((f.key.clone(), n, outcome));
         }
     }
-    let want: Vec<(String, usize, String)> = VARIANT_PINS
+    got
+}
+
+/// [`VARIANT_PINS`], owned, to compare with [`variant_outcomes`].
+fn pins() -> Vec<(String, usize, String)> {
+    VARIANT_PINS
         .iter()
-        .map(|&(at, n, o)| (at.to_string(), n, o.to_string()))
-        .collect();
+        .map(|&(key, n, o)| (key.to_string(), n, o.to_string()))
+        .collect()
+}
+
+#[test]
+fn each_readme_variant_gives_its_pinned_outcome_at_l1() {
+    let got = variant_outcomes(&fences::readme(), &table());
+    let want = pins();
     assert!(
         got == want,
         "{}",
         got.iter()
-            .map(|(at, n, o)| format!("(\"{at}\", {n}, {o:?}),"))
+            .map(|(key, n, o)| format!("(\"{key}\", {n}, {o:?}),"))
             .collect::<Vec<_>>()
             .join("\n")
     );
-    for &(at, n, _) in RAISED_LATER {
+    for &(key, n, _) in RAISED_LATER {
         assert!(
             want.iter()
-                .any(|(a, m, o)| (a.as_str(), *m) == (at, n) && o != "pass"),
-            "{at} line {n} is left out of the enabled fences, and its pin is not a failure"
+                .any(|(k, m, o)| (k.as_str(), *m) == (key, n) && o != "pass"),
+            "{key} line {n} is left out of the enabled fences, and its pin is not a failure"
         );
     }
+}
+
+/// The fences of `page`, README.md as edited by a test, each with the layer, ring and notation
+/// of the fence at its place in this repository's README.md, and with the key and line `page`
+/// gives it. The edit must keep the number of fences.
+fn edited_readme(page: &str) -> Vec<DocFence> {
+    let laid = fences::readme();
+    let found = zed_fences_in(page, "README.md").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(found.len(), laid.len(), "the edit keeps every fence");
+    found
+        .into_iter()
+        .zip(&laid)
+        .map(|(fence, d)| {
+            DocFence::from(LaidFence {
+                fence,
+                layer: d.layer,
+                ring: d.ring,
+                word: None,
+                label: None,
+                notation: d.notation,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn the_variant_pins_hold_when_lines_are_added_above_and_change_when_a_fence_does() {
+    let page = page();
+    let table = table();
+    let before = fences::readme();
+
+    // Three lines added under the title, above every fence: each fence moves down three lines,
+    // and its key, and so its pins, stay.
+    let (title, rest) = page
+        .split_once('\n')
+        .expect("README.md has more than one line");
+    let moved = edited_readme(&format!(
+        "{title}\nAn added line.\n\nAnother added line.\n{rest}"
+    ));
+    for (m, b) in moved.iter().zip(&before) {
+        assert_eq!(m.key, b.key, "an added line above moves no key");
+        assert_ne!(m.at, b.at, "the fence {} has moved down", m.key);
+    }
+    assert_eq!(variant_outcomes(&moved, &table), pins());
+
+    // The fence of [Grouping] changed: its variant now stops on the new name, so its pin no
+    // longer holds, and every other pin does.
+    let line = "byCity = users.group(u -> u.city);";
+    assert!(
+        page.contains(line),
+        "README.md [Grouping] 1 has the line `{line}`"
+    );
+    let changed = edited_readme(&page.replacen(line, "byCity = members.group(u -> u.city);", 1));
+    let mut want = pins();
+    let grouping = want
+        .iter_mut()
+        .find(|(key, n, _)| key == "README.md [Grouping] 1" && *n == 3)
+        .expect("README.md [Grouping] 1 has a pinned variant at line 3");
+    assert_eq!(grouping.2, "line 2: `users` is not defined.");
+    grouping.2 = "line 2: `members` is not defined.".to_string();
+    assert_eq!(variant_outcomes(&changed, &table), want);
 }
