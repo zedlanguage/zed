@@ -1,17 +1,20 @@
-//! Rows SPEC-m07-string-serial and SPEC-m07-tag-table: the address step M0.7 defines, computed
-//! here by a serializer of its own that writes each node as M0.7's tables say, against the
-//! implementation's address and bytes.
+//! Rows SPEC-m07-string-serial, SPEC-m07-tag-table and SPEC-m07-prim-codes: the address step
+//! M0.7 defines, computed here by a serializer of its own that writes each node as M0.7's
+//! tables say, against the implementation's address and bytes.
 //!
 //! M0.7: "The serialization gives every node a tag byte and its fields in order, lengths and
 //! integers as 64-bit little-endian words and strings as their length then UTF-8, [...] any
 //! other free variable by its name. A kernel term's address is BLAKE3-256 over `zed-canon` and
 //! a NUL byte, the 32-bit little-endian rule-set version, then the serialization." The tables
-//! after that step give every node's tag, its fields in order and the kind each is written as;
-//! `sync` copies them to `zed/fences/canon-serial.md`, which [`m07`] reads. The tag, the order
-//! of the fields and how each is written all come from the tables, so a change to
+//! after that step give every node's tag, its fields in order and the kind each is written as,
+//! and every primitive's code; `sync` copies them to `zed/fences/canon-serial.md`, which
+//! [`m07`] reads. The tag, the order of the fields, how each is written and the code of a
+//! primitive all come from the tables, so a change to
 //! crates/zedc-zir/src/canon/serial.rs that the tables do not make, or the reverse, fails
-//! [`the_serialization_is_m07s_byte_for_byte`]. Only which row a node is (a lambda is the
-//! row Lambda) and the parts of each node are written here.
+//! [`the_serialization_is_m07s_byte_for_byte`], and a changed code fails
+//! [`every_primitive_has_the_code_m07_gives`]. Only which row a node or a primitive is (a
+//! lambda is the row Lambda, `Prim::Add` the row `a + b`) and the parts of each node are
+//! written here.
 //!
 //! The terms compared hold no nonempty string, so the two must agree. Terms holding nonempty
 //! strings (short, long, repeated, all distinct, joined) are compared in the parked test
@@ -38,7 +41,7 @@ pub(super) mod m07 {
     use std::sync::LazyLock;
 
     use num_bigint::{BigInt, Sign};
-    use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
+    use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
     use zed_kernel::value::Value;
     use zedc::address::ContentAddress;
     use zedc::canon::binders::level_of;
@@ -63,13 +66,28 @@ pub(super) mod m07 {
     /// lowercase.
     pub type Tables = BTreeMap<String, BTreeMap<String, Row>>;
 
+    /// The end of the header of each table with tags.
+    const TAGS: &str = " | Tag | Fields in order |";
+
+    /// The header of the table of the primitives' codes.
+    pub const CODES: &str = "| Primitive | Code |";
+
     /// The tables of `text`, laid out as `sync` copies them: a header `| Kind | Tag | Fields
     /// in order |` starts each table, and each row is `| Name | tag or — | `fields` or — |`,
-    /// the fields `name: kind` separated by `, `.
+    /// the fields `name: kind` separated by `, `. The table of codes ([`codes_of`]) is left
+    /// out.
     pub fn parse(text: &str) -> Tables {
         let mut tables = Tables::new();
         let mut current = None;
+        let mut in_codes = false;
         for line in text.lines() {
+            if line == CODES {
+                in_codes = true;
+            }
+            if in_codes && !line.ends_with(TAGS) {
+                continue;
+            }
+            in_codes = false;
             let cells: Vec<&str> = line
                 .strip_prefix("| ")
                 .and_then(|l| l.strip_suffix(" |"))
@@ -113,6 +131,130 @@ pub(super) mod m07 {
     pub fn tables() -> &'static Tables {
         static TABLES: LazyLock<Tables> = LazyLock::new(|| parse(COPY));
         &TABLES
+    }
+
+    /// The table of the primitives' codes in `text`, laid out as `sync` copies it: the header
+    /// [`CODES`], then rows `| primitive | code |` up to the next table's header; each
+    /// primitive by its cell, with `\|` read as `|`.
+    pub fn codes_of(text: &str) -> BTreeMap<String, u64> {
+        let mut codes = BTreeMap::new();
+        let mut inside = false;
+        for line in text.lines() {
+            if line == CODES {
+                assert!(!inside && codes.is_empty(), "two tables of codes");
+                inside = true;
+                continue;
+            }
+            if !inside || line.ends_with(TAGS) {
+                inside = false;
+                continue;
+            }
+            let (primitive, code) = line
+                .strip_prefix("| ")
+                .and_then(|l| l.strip_suffix(" |"))
+                .and_then(|l| l.rsplit_once(" | "))
+                .unwrap_or_else(|| panic!("a row of two cells: {line}"));
+            let code = code.parse().unwrap_or_else(|_| panic!("a code: {line}"));
+            let old = codes.insert(primitive.replace("\\|", "|"), code);
+            assert!(old.is_none(), "two rows {primitive}");
+        }
+        codes
+    }
+
+    /// The codes of the copy.
+    pub fn codes() -> &'static BTreeMap<String, u64> {
+        static CODES: LazyLock<BTreeMap<String, u64>> = LazyLock::new(|| codes_of(COPY));
+        &CODES
+    }
+
+    /// Which row of the table of codes the primitive `p` is.
+    pub fn row_of(p: Prim) -> &'static str {
+        use Prim::*;
+        match p {
+            Add => "`a + b`",
+            Sub => "`a - b`",
+            Mul => "`a * b`",
+            Div => "`a / b`",
+            IntDiv => "`a div b`",
+            Mod => "`a mod b`",
+            Neg => "`-a`",
+            Eq => "`a == b`",
+            Ne => "`a != b`",
+            Lt => "`a < b`",
+            Le => "`a <= b`",
+            Gt => "`a > b`",
+            Ge => "`a >= b`",
+            And => "`a && b`",
+            Or => "`a || b`",
+            Not => "`!a`",
+            Min => "`min`",
+            Max => "`max`",
+            Get => "`f[k]` on a family",
+            Count => "`f.count`",
+            Union => "`f.union(g)`",
+            Path => "a key path built from its keys",
+            PathKey => "the key at a given position of a key path",
+            PathLen => "the number of keys of a key path",
+            Tuple => "a tuple `(a, b, …)`",
+            TupleGet => "`t[i]` on a tuple",
+            Concat => "`a ++ b`",
+            Pow => "`a ^ b`",
+            Atom => "an atom built from its name, its field names and its payload",
+            Show => "`String`",
+            CastInt => "`int`",
+            CastRat => "`rat`",
+            CastF64 => "`f64`",
+            Abs => "`abs`",
+            Len => "`len`",
+            Lower => "`lower`",
+            Upper => "`upper`",
+            Trim => "`trim`",
+            Sum => "`sum`",
+            BitAnd => "`bitAnd`",
+            BitOr => "`bitOr`",
+            BitXor => "`bitXor`",
+            BitNot => "`bitNot`",
+            Shl => "`shl`",
+            Shr => "`shr`",
+            PopCount => "`popCount`",
+            LeadingZeros => "`leadingZeros`",
+            TrailingZeros => "`trailingZeros`",
+            Rotl => "`rotl`",
+            Rotr => "`rotr`",
+            F64Bits => "`f64Bits`",
+            CodePoint => "`codePoint`",
+            Scalar => "`scalar`",
+            Utf8 => "`utf8`",
+            FromUtf8 => "`fromUtf8`",
+            MulHi => "`mulHi`",
+            BitReverse => "`bitReverse`",
+            ByteSwap => "`byteSwap`",
+            Pdep => "`pdep`",
+            Pext => "`pext`",
+            FunnelShl => "`funnelShl`",
+            FunnelShr => "`funnelShr`",
+            At => "`f[k]` on a family whose keys are one integer interval, each present",
+            CastF32 => "`f32`",
+            Sqrt => "`sqrt`",
+            Fma => "`fma`",
+            Entries => "a family display `{k0 -> v0, k1 -> v1, …}`",
+            Has => "`k in f`",
+            Range => "`range`",
+            FirstEntry => "the first entry of a level in key order",
+            LastEntry => "the last entry of a level in key order",
+            EntryAfter => "the entry after a given one of a level in key order",
+            EntryBefore => "the entry before a given one of a level in key order",
+            First => "`f.first`",
+            Last => "`f.last`",
+        }
+    }
+
+    /// The code of `p` in the copy.
+    pub fn code(p: Prim) -> u64 {
+        let row = row_of(p);
+        *codes()
+            .get(row)
+            .unwrap_or_else(|| panic!("M0.7's table of codes has no row {row}"))
     }
 
     /// A node or a field as the serializer has it: which row a node is and its parts by the
@@ -443,9 +585,9 @@ pub(super) mod m07 {
             ),
             Term::Prim(p, args) => Node(
                 "primitive",
-                vec![("code", Word(p.code())), ("arguments", terms(args))],
+                vec![("code", Word(code(*p))), ("arguments", terms(args))],
             ),
-            Term::PrimFn(p) => Node("primitive as a function", vec![("code", Word(p.code()))]),
+            Term::PrimFn(p) => Node("primitive as a function", vec![("code", Word(code(*p)))]),
             Term::Let(_, e, body) => Node("let", vec![("value", term(e)), ("body", term(body))]),
             Term::If(c, a, b) => Node(
                 "if",
@@ -718,6 +860,28 @@ fn the_serialization_is_m07s_byte_for_byte() {
         .collect();
     let unused: Vec<_> = all.difference(&used).collect();
     assert!(unused.is_empty(), "rows no definition writes: {unused:?}");
+}
+
+/// Each primitive's code is the one M0.7's table gives it (row SPEC-m07-prim-codes), so a code
+/// changed in `Prim::code` or in the table fails here; the table has one row for each
+/// primitive, and no code twice.
+#[test]
+fn every_primitive_has_the_code_m07_gives() {
+    let prims = zedc::zir::text::PRIMS;
+    for p in prims {
+        assert_eq!(
+            p.code(),
+            m07::code(p),
+            "{p:?}, the row {} of M0.7's table",
+            m07::row_of(p)
+        );
+    }
+    let rows: BTreeSet<&str> = prims.iter().map(|p| m07::row_of(*p)).collect();
+    let table: BTreeSet<&str> = m07::codes().keys().map(String::as_str).collect();
+    assert_eq!(rows, table, "the table's rows are the primitives'");
+    assert_eq!(table.len(), prims.len(), "one row for each primitive");
+    let codes: BTreeSet<u64> = m07::codes().values().copied().collect();
+    assert_eq!(codes.len(), prims.len(), "no code twice");
 }
 
 /// The serializer reads the tables: with the tag of Lambda changed, or two fields of

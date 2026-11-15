@@ -15,7 +15,9 @@ use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, zed_dir};
 const SERIAL: &str = "| Grade | Tag | Fields in order |\n|---|---|---|\n| Axiom | 0 | — |\n\
                       | Proved | 2 | — |\nA note.\n\n| Kind | Code | Fields in order |\n|---|---|---|\n\
                       | Other | 9 | — |\n\n| Value | Tag | Fields in order |\n|---|---|---|\n\
-                      | Boolean | 0 | `value: byte` |\n";
+                      | Boolean | 0 | `value: byte` |\n\n| Primitive | Code |\n|---|---|\n\
+                      | `a + b` | 0 |\n\n| Primitive | Code | Note |\n|---|---|---|\n\
+                      | `a - b` | 1 | — |\n";
 
 /// `sync` writes every copy, `--check` then passes, and a copy edited by hand is out of date.
 /// A ```` ```text ```` fence inside a list item is copied with its indentation taken off.
@@ -60,9 +62,11 @@ fn sync_writes_the_copies_and_check_finds_a_stale_one() {
     assert_eq!(
         fs::read_to_string(zed.at("fences/canon-serial.md")).unwrap(),
         "| Grade | Tag | Fields in order |\n| Axiom | 0 | — |\n\
-         | Proved | 2 | — |\n| Value | Tag | Fields in order |\n| Boolean | 0 | `value: byte` |\n",
-        "the tables of M0.7's serialization, without the line under each header or the table \
-         of the same shape whose header names no tag"
+         | Proved | 2 | — |\n| Value | Tag | Fields in order |\n| Boolean | 0 | `value: byte` |\n\
+         | Primitive | Code |\n| `a + b` | 0 |\n",
+        "the tables of M0.7's serialization and its codes of primitives, without the line \
+         under each header, the table of the same shape whose header names no tag, or a table \
+         whose header only starts as the codes' does"
     );
     let words = fs::read_to_string(zed.at("grammar/words.md")).unwrap();
     assert!(

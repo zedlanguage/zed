@@ -16,7 +16,8 @@
 //! - `zed/fences/rejections.txt`: the row names of the rejection table (step L1.29);
 //! - `zed/fences/kernel-rules.txt`: the names no message prints (sec:diagnostics);
 //! - `zed/fences/canon-serial.md`: the tables of step M0.7's serialization, each node's tag and
-//!   its fields in order, which `m0_07_canonicalization::serial_text` serializes by.
+//!   its fields in order, and each primitive's code, which
+//!   `m0_07_canonicalization::serial_text` serializes by.
 //!
 //! It then runs the checks that read the spec's prose, which this repository does not hold:
 //! the prelude laws against `docs/mathlib-study.md`, the build modes and the kinds of build
@@ -186,14 +187,17 @@ fn words(design: &str) -> Result<String, String> {
 /// The header of each table of step M0.7's serialization ends with this text.
 pub const SERIAL_HEADER: &str = " | Tag | Fields in order |";
 
+/// The header of step M0.7's table of the primitives' codes.
+pub const PRIM_HEADER: &str = "| Primitive | Code |";
+
 /// The tables of step M0.7's serialization, each a table of DESIGN.md whose header ends with
-/// [`SERIAL_HEADER`]: its header and rows as written, without the line under the header, the
-/// tables one after another. O(size of `design`).
+/// [`SERIAL_HEADER`] or is [`PRIM_HEADER`]: its header and rows as written, without the line
+/// under the header, the tables one after another. O(size of `design`).
 pub fn serial_tables(design: &str) -> String {
     let mut out = String::new();
     let mut lines = design.lines();
     while let Some(line) = lines.next() {
-        if !(line.starts_with("| ") && line.ends_with(SERIAL_HEADER)) {
+        if !((line.starts_with("| ") && line.ends_with(SERIAL_HEADER)) || line == PRIM_HEADER) {
             continue;
         }
         writeln!(out, "{line}").expect("writing to a String");

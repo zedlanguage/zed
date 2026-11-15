@@ -65,6 +65,82 @@
 | gen | 17 | `init: term, step: term, guard: term, position: guard position` |
 | Port read | 18 | `port: string` |
 | Port push | 19 | `port: string, value: term` |
+| Primitive | Code |
+| `a + b` | 0 |
+| `a - b` | 1 |
+| `a * b` | 2 |
+| `a / b` | 3 |
+| `a div b` | 4 |
+| `a mod b` | 5 |
+| `-a` | 6 |
+| `a == b` | 7 |
+| `a != b` | 8 |
+| `a < b` | 9 |
+| `a <= b` | 10 |
+| `a > b` | 11 |
+| `a >= b` | 12 |
+| `a && b` | 13 |
+| `a \|\| b` | 14 |
+| `!a` | 15 |
+| `min` | 16 |
+| `max` | 17 |
+| `f[k]` on a family | 18 |
+| `f.count` | 19 |
+| `f.union(g)` | 20 |
+| a key path built from its keys | 21 |
+| the key at a given position of a key path | 22 |
+| the number of keys of a key path | 23 |
+| a tuple `(a, b, …)` | 24 |
+| `t[i]` on a tuple | 25 |
+| `a ++ b` | 26 |
+| `a ^ b` | 27 |
+| an atom built from its name, its field names and its payload | 28 |
+| `String` | 29 |
+| `int` | 30 |
+| `rat` | 31 |
+| `f64` | 32 |
+| `abs` | 33 |
+| `len` | 34 |
+| `lower` | 35 |
+| `upper` | 36 |
+| `trim` | 37 |
+| `sum` | 38 |
+| `bitAnd` | 39 |
+| `bitOr` | 40 |
+| `bitXor` | 41 |
+| `bitNot` | 42 |
+| `shl` | 43 |
+| `shr` | 44 |
+| `popCount` | 45 |
+| `leadingZeros` | 46 |
+| `trailingZeros` | 47 |
+| `rotl` | 48 |
+| `rotr` | 49 |
+| `f64Bits` | 50 |
+| `codePoint` | 51 |
+| `scalar` | 52 |
+| `utf8` | 53 |
+| `fromUtf8` | 54 |
+| `mulHi` | 55 |
+| `bitReverse` | 56 |
+| `byteSwap` | 57 |
+| `pdep` | 58 |
+| `pext` | 59 |
+| `funnelShl` | 60 |
+| `funnelShr` | 61 |
+| `f[k]` on a family whose keys are one integer interval, each present | 62 |
+| `f32` | 63 |
+| `sqrt` | 64 |
+| `fma` | 65 |
+| a family display `{k0 -> v0, k1 -> v1, …}` | 66 |
+| `k in f` | 67 |
+| `range` | 68 |
+| the first entry of a level in key order | 69 |
+| the last entry of a level in key order | 70 |
+| the entry after a given one of a level in key order | 71 |
+| the entry before a given one of a level in key order | 72 |
+| `f.first` | 73 |
+| `f.last` | 74 |
 | Witness | Tag | Fields in order |
 | Residue | 0 | — |
 | Catalog | 1 | `name: string` |
