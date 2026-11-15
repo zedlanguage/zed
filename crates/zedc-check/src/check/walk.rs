@@ -2603,6 +2603,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 positional,
                 named,
                 curry: false,
+                ..
             } if matches!(callee.kind, ExprKind::Atom(_)) => Tail::Payload(
                 positional
                     .iter()
@@ -2987,6 +2988,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 positional,
                 named,
                 curry,
+                ..
             } => self.call(m, callee, positional, named, *curry, e.span),
             ExprKind::Index(of, k) => self.index(m, of, k, e.span),
             ExprKind::Tuple(items) => {
@@ -8057,6 +8059,7 @@ impl<'a> Ck<'_, 'a> {
                     positional,
                     named,
                     curry: false,
+                    ..
                 } if named.is_empty() => match self.callable(callee, positional.len()) {
                     Some((_, f)) if defined || spine || f.summed => {
                         stack.push((x, true, spine, none));
@@ -8185,6 +8188,7 @@ impl<'a> Ck<'_, 'a> {
                     positional,
                     named,
                     curry: false,
+                    ..
                 } if named.is_empty() => {
                     out.extend(self.callee_id(callee));
                     stack.extend(positional);
@@ -10541,6 +10545,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 positional,
                 named,
                 curry: false,
+                ..
             } if named.is_empty()
                 && matches!(&callee.kind, ExprKind::Name(w) if w == "rat")
                 && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
@@ -10695,6 +10700,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 positional,
                 named,
                 curry: false,
+                ..
             } if named.is_empty()
                 && positional.len() == 1
                 && matches!(&callee.kind, ExprKind::Name(w) if w == "rat")

@@ -193,6 +193,9 @@ path = "steps/l02_08d_build_constant/mod.rs"
 name = "l02_12_diagnostics"
 path = "steps/l02_12_diagnostics/mod.rs"
 [[test]]
+name = "l02_06c_infix_calls"
+path = "steps/l02_06c_infix_calls/mod.rs"
+[[test]]
 name = "l03_01_parser"
 path = "steps/l03_01_parser/mod.rs"
 [[test]]

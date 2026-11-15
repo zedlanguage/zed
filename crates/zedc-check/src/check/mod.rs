@@ -3152,6 +3152,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             positional,
             named,
             curry: false,
+            ..
         } = &e.kind
         else {
             return None;
@@ -6546,6 +6547,7 @@ fn is_cast_of_literal(e: &Expr, uses: &BTreeMap<Span, Ref>) -> bool {
         positional,
         named,
         curry: false,
+        ..
     } = &e.kind
     else {
         return false;
@@ -8859,6 +8861,7 @@ fn value_parts(e: &Expr) -> ValueParts<'_> {
                 positional,
                 named,
                 curry: false,
+                ..
             } if matches!(callee.kind, ExprKind::Atom(_)) => {
                 let ExprKind::Atom(a) = &callee.kind else {
                     unreachable!("an atom")
@@ -9898,6 +9901,7 @@ impl<'a> Ck<'_, 'a> {
                 positional,
                 named,
                 curry: false,
+                ..
             } if named.is_empty() => match &callee.kind {
                 ExprKind::Name(w) => {
                     w == "codePoint"
@@ -9917,6 +9921,7 @@ impl<'a> Ck<'_, 'a> {
             positional,
             named,
             curry: false,
+            ..
         } = &e.kind
         else {
             return None;

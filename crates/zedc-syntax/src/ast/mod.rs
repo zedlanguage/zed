@@ -515,6 +515,7 @@ impl<'a, 's> Builder<'a, 's> {
                     positional,
                     named,
                     curry,
+                    infix: false,
                 }
             }
             "IndexSuffix" => ExprKind::Index(of, Box::new(self.node(node.kids[0])?)),

@@ -107,6 +107,7 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
             positional,
             named,
             curry,
+            infix: _,
         } => {
             out.extend([Text("(call "), at(callee)]);
             each(out, positional, Show::Expr);

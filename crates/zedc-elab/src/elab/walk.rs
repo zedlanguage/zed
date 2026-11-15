@@ -893,6 +893,7 @@ impl<'a> Elab<'a> {
                 positional,
                 named,
                 curry,
+                ..
             } => {
                 let call = Call {
                     positional,

@@ -69,13 +69,17 @@ const EQUALITY: u8 = 4;
 const RELATION: u8 = 5;
 const REDUCE: u8 = 6;
 const RANGE: u8 = 7;
-const ADDITIVE: u8 = 8;
-const PREFIX: u8 = 10;
-const POWER: u8 = 11;
-const POSTFIX: u8 = 12;
-const PRIMARY: u8 = 13;
+const INFIX: u8 = 8;
+const ADDITIVE: u8 = 9;
+const PREFIX: u8 = 11;
+const POWER: u8 = 12;
+const POSTFIX: u8 = 13;
+const PRIMARY: u8 = 14;
 
 fn level(e: &Expr) -> u8 {
+    if infix_call(e).is_some() {
+        return INFIX;
+    }
     match &e.kind {
         // A sort key stands only as an argument, whose level is `LAMBDA`, and its key is any `Expr`.
         ExprKind::Lambda { .. } | ExprKind::Break(_) | ExprKind::SortKey { .. } => LAMBDA,
@@ -112,6 +116,46 @@ fn level(e: &Expr) -> u8 {
         // A `for` is a primary of the grammar, but its body block ends it, so as the operand of
         // an operator it is written in parentheses: `(for x in xs { x }).orderedValues`.
         ExprKind::For { .. } => ELSE,
+    }
+}
+
+/// The function and operands of `e` when it is a call written infix, `a ~f~ b` (DESIGN.md tier 6).
+fn infix_call(e: &Expr) -> Option<(&str, &Expr, &Expr)> {
+    let ExprKind::Call {
+        callee,
+        positional,
+        named,
+        curry: false,
+        infix: true,
+    } = &e.kind
+    else {
+        return None;
+    };
+    match (&callee.kind, &positional[..]) {
+        (ExprKind::Name(f), [a, b]) if named.is_empty() => Some((f, a, b)),
+        _ => None,
+    }
+}
+
+/// The level the left operand `a` of an infix call is written at: an infix call stands bare, since
+/// the calls chain from the left; any other operand looser than a postfix chain is grouped, since
+/// an arithmetic operator or a prefix there gives the text two readings (DESIGN.md tier 6).
+fn infix_left(a: &Expr) -> u8 {
+    if infix_call(a).is_some() {
+        INFIX
+    } else {
+        POSTFIX
+    }
+}
+
+/// The level the right operand `b` of an infix call is written at. A prefix `-` or `!` there has one
+/// reading, `p ~scale~ -1`, unless its operand is written bare with `^`, `p ~f~ -k^2`, which also
+/// reads `(p ~f~ -k)^2`; a prefix on a prefix is written `-(-x)`, grouped. Any other operand looser
+/// than a postfix chain is grouped (DESIGN.md tier 6).
+fn infix_right(b: &Expr) -> u8 {
+    match &b.kind {
+        ExprKind::Unary(_, x) if !matches!(x.kind, ExprKind::Binary(BinaryOp::Pow, ..)) => PREFIX,
+        _ => POSTFIX,
     }
 }
 
@@ -1177,6 +1221,10 @@ impl<'a> Formatter<'a> {
 
     fn raw(&mut self, e: &'a Expr, ind: usize, stack: &mut Vec<Job<'a>>) {
         let at = |e, min| Job::Expr { e, min, ind };
+        if let Some((f, a, b)) = infix_call(e) {
+            then![stack; at(a, infix_left(a)), put(format!(" ~{f}~ ")), at(b, infix_right(b))];
+            return;
+        }
         match &e.kind {
             ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) | ExprKind::Str(_) => {
                 // A grouped literal's span holds its parentheses; a literal never starts with `(`.
@@ -1214,6 +1262,7 @@ impl<'a> Formatter<'a> {
                 positional,
                 named,
                 curry,
+                infix: _,
             } => {
                 let comma = !positional.is_empty();
                 let dots = match (curry, comma || !named.is_empty()) {
@@ -1342,8 +1391,8 @@ impl<'a> Formatter<'a> {
                 ];
             }
             ExprKind::Range(from, to) => {
-                stack.extend(to.bound().map(|b| at(b, ADDITIVE)));
-                then![stack; at(from, ADDITIVE), put(to.op())];
+                stack.extend(to.bound().map(|b| at(b, INFIX)));
+                then![stack; at(from, INFIX), put(to.op())];
             }
             ExprKind::In { of, set, negated } => {
                 let op = if *negated { " not in " } else { " in " };

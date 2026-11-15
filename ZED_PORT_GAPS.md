@@ -3945,3 +3945,11 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | A `loop` that rebinds a mutable accumulator type, applying the folded function's arrows to it until it stops growing, with a round count bounded by `Carrier::ALL.len() + 1` | `Ck::fold_dir_end` | Mutation (gap 11) | a bounded `iterate` or a recursive function on the accumulator type, the bound as its fuel |
 | `HashSet<Span>` filled once per `main` body and read by `contains` at each push | `Ck::main_tails`, `Ck::main_pushes`, the push check in `walk.rs` | Mutation (gap 11); a set keyed by a span | a family `Span ->? ()` built from main's body before the checks, passed down |
 | `Family::set(x..y)` from a Rust `Range<i64>` | `range` in `eval.rs` | none: `x ..< y` is the Zed form itself | the range |
+
+## Entries from INFIX-call (`crates/zedc-syntax/src/ast/infix.rs`, `format.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `let [l, r] = self.kids(n)[..] else { unreachable!(…) }` and `let Tok::Infix(f) = … else { unreachable!(…) }`: a slice or variant pattern whose failure is a broken invariant of the grammar | `Builder::infix_call`, `Builder::two_readings` | Abort on a broken invariant (gap 8) | `#bug(…)` on the branch the grammar rules out, deleted where the parse tree's shape is proved |
+| `let text = \|s, e\| &self.text[s..e]`: a closure returning a borrowed slice of the source | `Builder::clash`, `Builder::qualified` | Function values; borrowed slices (gap 5) | A local function of the span, returning a string view of the source (`Utf8String` views, author decision on strings) |
+| `#[allow(clippy::too_many_arguments)]` on a seven-parameter method | `Builder::clash` | None | Named parameters; no lint to silence |

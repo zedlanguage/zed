@@ -69,6 +69,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`(-1).abs`, the chain started at `-1`, which is 1"),
     ),
     (
+        Row::InfixOperand,
+        "times(positional a: int, positional b: int) = a * b;\n",
+        "y = (2 ~times~ 3) * 2;\n",
+        "y = 2 ~times~ 3 * 2;\n",
+        "2:17",
+        Some("`(2 ~times~ 3) * 2`"),
+    ),
+    (
         Row::BareKey,
         "",
         "f(x: (int | #a) -> int) = 0;\n",

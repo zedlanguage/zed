@@ -226,6 +226,7 @@ impl<'a> Tables<'a> {
                             positional,
                             named,
                             curry: false,
+                            ..
                         } if set(callee.span) => {
                             let receiver = match &callee.kind {
                                 ExprKind::Member { of, .. } => Some(&**of),

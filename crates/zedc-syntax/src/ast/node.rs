@@ -61,6 +61,9 @@ pub enum ExprKind {
         named: Vec<(String, Expr)>,
         /// Whether the arguments end in `...`, currying the named parameters left out.
         curry: bool,
+        /// Whether the call was written infix, `a ~f~ b` (DESIGN.md tier 6), so the printer
+        /// writes it back that way; its meaning is that of `f(a, b)`.
+        infix: bool,
     },
     /// An index `e[k]`.
     Index(Box<Expr>, Box<Expr>),
