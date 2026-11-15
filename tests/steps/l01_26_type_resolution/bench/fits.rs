@@ -4,7 +4,7 @@ use zed_kernel::Value;
 use zed_tests::scaling;
 use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig};
 
-use super::super::fits::own_sig;
+use super::super::fits::{k_joined_rows, own_sig};
 
 /// n tuples `(Y(2i) | Y(2i+1), i)`, each split across the shapes `(X(2i), i) | (X(2i+1), i)`,
 /// the variables bounded to several carriers, so no one shape holds a tuple: each split costs
@@ -77,4 +77,46 @@ fn n_bounded_shapes_fit_themselves_renamed_scales() {
         assert!(fits_sig(s, q), "{what} at {n}: written out");
         assert!(fits_sig(s, j), "{what} at {n}: joined");
     });
+}
+
+/// n tuples, each a row of k joined components (k = 2, 3, 4) against the two shapes that
+/// hold it only split at its last component, and the same rows written out: the joined form
+/// is split at the component the shapes differ on ([`Comparing::split_at`] in ty.rs), so it
+/// makes 2 rows for each tuple, where splitting at the first joined component made 2^k
+/// (PERF-types-joined-split-many-components: 2.4, 4.4, 8.2 and 15.4 times the work of the
+/// rows written out for k = 2 to 5 before; 1.6 after, for each k). Besides its ratio: each
+/// form fits at each size. Small instances:
+/// `fits::k_joined_components_fit_shapes_that_differ_on_some_of_them`.
+#[test]
+fn k_joined_components_split_where_the_shapes_differ_scales() {
+    for k in 2..=4 {
+        let what = format!("n rows of {k} joined components split across two shapes each");
+        let n = 100;
+        let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|n| (n, k_joined_rows(n, k, &[k - 1], false)))
+            .collect();
+        scaling::check_order(&what, n, 1, |n| {
+            let [s, written, joined] = &sigs[&n];
+            assert!(fits_sig(s, written), "{what} at {n}: written out");
+            assert!(fits_sig(s, joined), "{what} at {n}: joined");
+        });
+    }
+}
+
+/// The joined rows of `k_joined_components_split_where_the_shapes_differ_scales` at k = 4
+/// cost at most twice the rows written out: each joined row costs its failed search, the
+/// shapes tried compared once more to find the component to split at, and the 2 rows written
+/// out (measured 1.66). Before the split at the component the shapes differ on, 8.2.
+#[test]
+fn k_joined_components_cost_at_most_twice_the_rows_written_out() {
+    let [s, written, joined] = k_joined_rows(100, 4, &[3], false);
+    scaling::compare_costs(
+        "4 joined components against the same rows written out, 100 tuples",
+        "a joined row costs its failed search, one comparison more and its 2 split rows; \
+         measured 1.66, 8.2 before PERF-types-joined-split-many-components",
+        2.0,
+        || assert!(fits_sig(&s, &written)),
+        || assert!(fits_sig(&s, &joined)),
+    );
 }

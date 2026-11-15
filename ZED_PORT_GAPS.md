@@ -3931,3 +3931,9 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 |---|---|---|---|
 | `Numbered::maps_onto_itself` taking the permutation as `&dyn Fn(&Atom) -> Atom` and the test of a constraint that is its own image as `&dyn Fn(&Con) -> bool`, shared by `swaps_onto_itself` and `permutes_onto_itself` (the old body of `swaps_onto_itself`) | `zedc-presburger/src/presburger.rs` (`Numbered::maps_onto_itself`, `swaps_onto_itself`, `permutes_onto_itself`) | Function values (`dyn Fn`) | Function values; or the permutation passed as a map from atom to atom and the own-image test as a flag of the call |
 | `Renamed::individualized`: closures `colors` and `maps` taking an order as `&dyn Fn(usize) -> usize`, a `HashMap<Atom, Atom>` and a `Vec<bool>` of atoms hit filled in a loop that returns early, and `slice::chunk_by` to find the first tie | `zedc-presburger/src/presburger.rs` (`Renamed::individualized`, `Renamed::untied`) | Function values (`dyn Fn`); mutation (gap 11) | Function values for the orders; the map built by a fold over the plain atoms that stops at the first repeat (a `Result` value), and the first run of equal colors by a fold over the sorted atoms |
+
+## Entries from PERF-types-joined-split-many-components (`crates/zedc-types/src/ty.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `RefCell<Vec<usize>>` of the shapes a row was tried in, pushed by the fit closure passed to `Comparing::search` and read by `Comparing::split_at` | `Comparing::row_in`, `Comparing::row_in_one` | `search` takes `fit` as `impl Fn(usize, Binds)` and returns only its verdict, so the shapes tried leave it through a cell | `search` returns the shapes it tried beside its verdict, and the cell goes |

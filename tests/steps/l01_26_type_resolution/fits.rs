@@ -757,3 +757,73 @@ fn three_shapes_of_bounded_variables_fit_themselves_renamed() {
         }
     }
 }
+
+/// The signatures `(x0: shapes) -> int`, `(x0: written) -> int` and `(x0: joined) -> int` for
+/// n tuples, each of k components and a last component `i`, every own variable bounded to
+/// several carriers. Component j of tuple i is two variables, `X_a | X_b`, except at the places
+/// `alone`, where each shape has one of the two, every choice of them a shape, so the tuple
+/// has 2^|alone| shapes. `written` is the same rows of the variables `Y`, and `joined` the one
+/// row of `Y_a | Y_b` at every component, which the shapes hold only split at `alone`. With
+/// `missing`, the last shape of each tuple is left out of `shapes`, so `joined` does not fit.
+pub(super) fn k_joined_rows(
+    n: usize,
+    k: usize,
+    alone: &[usize],
+    missing: bool,
+) -> [zedc::check::ty::Sig; 3] {
+    use zed_kernel::Value;
+    use zedc::check::ty::{Carrier, EVERY, Ty};
+    let key = |i: usize| Ty::lit(&Value::int((i as i64).into()));
+    let var = |p: &str, i: usize, j: usize, s: usize| {
+        Ty::var(format!("{p}{}", (i * k + j) * 2 + s).into())
+    };
+    let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
+    // The row of tuple `i` of the variables `p`: the shape `pick` (bit b the variable at the
+    // place `alone[b]`), or the joined row.
+    let row = |p: &str, i: usize, pick: Option<usize>| {
+        let mut cs: Vec<Ty> = (0..k)
+            .map(|j| match (pick, alone.iter().position(|&a| a == j)) {
+                (Some(bits), Some(b)) => var(p, i, j, (bits >> b) & 1),
+                _ => var(p, i, j, 0).union(&var(p, i, j, 1)),
+            })
+            .collect();
+        cs.push(key(i));
+        Ty::tuple(cs)
+    };
+    let m = 1usize << alone.len();
+    let rows = |p: &str, m: usize| {
+        let picks = (0..n).flat_map(|i| (0..m).map(move |b| (i, b)));
+        union(picks.map(|(i, b)| row(p, i, Some(b))).collect())
+    };
+    let shapes = rows("X", if missing { m - 1 } else { m });
+    let joined = union((0..n).map(|i| row("Y", i, None)).collect());
+    let int = Ty::carrier(Carrier::Int);
+    let c = 2 * k * n;
+    [
+        own_sig("X", c, Some(EVERY), shapes, int.clone()),
+        own_sig("Y", c, Some(EVERY), rows("Y", m), int.clone()),
+        own_sig("Y", c, Some(EVERY), joined, int),
+    ]
+}
+
+/// A row of k joined components fits shapes that hold it only split at the components they
+/// differ on, at one or several of them, as the same rows written out do, and fits no longer
+/// once a shape is missing (PERF-types-joined-split-many-components). Benchmark:
+/// `bench::fits::k_joined_components_split_where_the_shapes_differ_scales`.
+#[test]
+fn k_joined_components_fit_shapes_that_differ_on_some_of_them() {
+    use zedc::check::ty::fits_sig;
+    for k in 2..=4 {
+        for alone in [vec![k - 1], vec![0], vec![0, k - 1], (0..k).collect()] {
+            let [s, written, joined] = k_joined_rows(3, k, &alone, false);
+            assert!(fits_sig(&s, &written), "{k} {alone:?}: written out");
+            assert!(fits_sig(&s, &joined), "{k} {alone:?}: joined");
+            let [s, written, joined] = k_joined_rows(3, k, &alone, true);
+            assert!(
+                !fits_sig(&s, &written),
+                "{k} {alone:?}: written out, one missing"
+            );
+            assert!(!fits_sig(&s, &joined), "{k} {alone:?}: joined, one missing");
+        }
+    }
+}
