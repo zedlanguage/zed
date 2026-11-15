@@ -21,16 +21,20 @@ use super::{programs, refusals};
 
 /// A program of `programs.txt` that the census listed as refused, by the hash in its origin;
 /// the window `lo..=hi` on every parameter of `ok` in which the interpreter is asked; and
-/// whether `ok` can be true and whether it can be false.
+/// whether `ok` can be true and whether it can be false; and, for a program on the bit words at
+/// negative operands, which the interpreter refuses until INT-twos (DESIGN step L1.39d), `ok`
+/// written in Rust with the two's-complement `&` of `i64` that L1.39d defines, asked in place
+/// of the interpreter.
 struct Left {
     hash: &'static str,
     lo: i64,
     hi: i64,
     can_hold: bool,
     can_fail: bool,
+    twos: Option<fn(&[i64]) -> bool>,
 }
 
-/// The programs gone from pieces 8 and 9. Each window holds every case of its program, so the
+/// The programs gone from pieces 8, 9 and 11. Each window holds every case of its program, so the
 /// interpreter's values in it are a complete search:
 /// - `baf57900`, `0 <= x && x <= 9 && 0 <= y && y <= 9 && 1 <= x + y && x + y <= 10 && (x <= 2
 ///   || x >= 7) && (y <= 2 || y >= 7)`: false wherever `x` or `y` is outside `0..=9`, so the
@@ -46,13 +50,24 @@ struct Left {
 ///   `settle_tied` chooses, and `!= 0` or `!= 4` was refused. Decided for every constant since
 ///   FAIL-tie-sum-ne-constant-refused (`Renamed::individualized`, and
 ///   `ladder::a_symmetric_sum_of_two_conditionals_is_decided_alike_on_every_path`).
-const LEFT: [Left; 6] = [
+/// - `143e2a38`, `bitAnd(a, b) <= -1 && bitAnd(a, b) <= a && bitAnd(a, b) <= b`, and
+///   `e57066cb`, `0 <= bitAnd(i, n) && bitAnd(i, n) <= n && bitAnd(i, n) <= i`: refused as
+///   `Unordered` on "can be false" (both) and "can be true" (`e57066cb`) until
+///   FAIL-tie-sum-ne-constant-refused (`Renamed::individualized`; that the two operands tie
+///   only jointly with other atoms of the bit and is inferred, not traced). Both answers are
+///   true for both, so a point of each answer suffices, and the window `-2..=1` holds every
+///   pair of signs of the operands: `143e2a38` is true at `a = b = -1` and false at
+///   `a = b = 0`; `e57066cb` is true at `i = n = 0` and false at `i = n = -1`, false only at
+///   negative operands. Both are asked of `twos`, since the interpreter refuses a negative
+///   operand of `bitAnd` until INT-twos.
+const LEFT: [Left; 8] = [
     Left {
         hash: "baf57900",
         lo: -1,
         hi: 10,
         can_hold: true,
         can_fail: true,
+        twos: None,
     },
     Left {
         hash: "563b4155",
@@ -60,6 +75,7 @@ const LEFT: [Left; 6] = [
         hi: 1,
         can_hold: true,
         can_fail: false,
+        twos: None,
     },
     Left {
         hash: "91584121",
@@ -67,6 +83,7 @@ const LEFT: [Left; 6] = [
         hi: 1,
         can_hold: true,
         can_fail: false,
+        twos: None,
     },
     Left {
         hash: "25b276c1",
@@ -74,6 +91,7 @@ const LEFT: [Left; 6] = [
         hi: 1,
         can_hold: true,
         can_fail: false,
+        twos: None,
     },
     Left {
         hash: "a273297f",
@@ -81,6 +99,7 @@ const LEFT: [Left; 6] = [
         hi: 1,
         can_hold: true,
         can_fail: false,
+        twos: None,
     },
     Left {
         hash: "d377740e",
@@ -88,6 +107,29 @@ const LEFT: [Left; 6] = [
         hi: 1,
         can_hold: true,
         can_fail: false,
+        twos: None,
+    },
+    Left {
+        hash: "143e2a38",
+        lo: -2,
+        hi: 1,
+        can_hold: true,
+        can_fail: true,
+        twos: Some(|p| {
+            let x = p[0] & p[1];
+            x <= -1 && x <= p[0] && x <= p[1]
+        }),
+    },
+    Left {
+        hash: "e57066cb",
+        lo: -2,
+        hi: 1,
+        can_hold: true,
+        can_fail: true,
+        twos: Some(|p| {
+            let x = p[0] & p[1];
+            0 <= x && x <= p[1] && x <= p[0]
+        }),
     },
 ];
 
@@ -133,9 +175,14 @@ fn each_program_that_left_the_census_is_decided_rightly() {
 
         let closed = prelude(Cones::new(&unit).close(body.clone()));
         let values: Vec<bool> = (window(ps.len(), left.lo, left.hi).iter())
-            .map(|p| match at(&closed, ps, p) {
-                Some(Value::Bool(b)) => b,
-                v => panic!("{origin}: `ok` at {p:?} gives {v:?}, not a truth value"),
+            .map(|p| {
+                match left
+                    .twos
+                    .map_or_else(|| at(&closed, ps, p), |f| Some(Value::Bool(f(p))))
+                {
+                    Some(Value::Bool(b)) => b,
+                    v => panic!("{origin}: `ok` at {p:?} gives {v:?}, not a truth value"),
+                }
             })
             .collect();
         assert_eq!(
