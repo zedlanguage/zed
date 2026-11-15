@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, F64, KernelError, Term, Value, World};
 use zed_tests::instances::Rng;
-use zedc::check::ty::{Carrier, Piece};
+use zedc::check::ty::{Carrier, Piece, Ty};
 use zedc::elab::Cones;
 use zedc::rejection::Row;
 
@@ -520,6 +520,24 @@ struct Runs {
     untyped: usize,
 }
 
+/// Whether a value of `ty` may be or hold a function, which a run cannot give as its result:
+/// the evaluator refuses a result that is a function or holds one at any depth, in a tuple
+/// component or an atom's payload ("the program's result holds a function"). The checker is
+/// right to accept such a program, since a tuple may hold a function (DESIGN.md step L1.17).
+/// A family is data, but the test has always skipped one at the top as a function, and still
+/// does. A kind-wide part, `(..)`, may hold a function too ([`Ty::first_order`]). It reads the
+/// outer level of `ty` only: each row and payload shape keeps what it holds at any depth.
+///
+/// Assumption, not proved: a value the evaluator refuses as holding a function always has a
+/// static type that [`Ty::first_order`] reports as holding one, so a type variable or the
+/// unknown at a component never stands for a function in a value that runs. Evidence: the six
+/// programs of [`RESULTS_HOLDING_FUNCTIONS`] and 64 further seeds (3000 to 3063) raised no such
+/// refusal with this test (2026-11-14). A program it misses fails this test with the refusal,
+/// which then shows the case.
+fn may_give_function(ty: &Ty) -> bool {
+    !ty.first_order() || ty.pieces().iter().any(|pc| matches!(pc, Piece::Fn(_)))
+}
+
 /// The runs of the programs of the seed `seed`, sets of functions with four definitions of `r`
 /// over each, until `enough` holds of what they gave, or at most `cap` sets.
 fn run_programs(seed: u64, enough: impl Fn(&Runs) -> bool, cap: usize) -> Runs {
@@ -539,11 +557,7 @@ fn run_programs(seed: u64, enough: impl Fn(&Runs) -> bool, cap: usize) -> Runs {
                 runs.rejected += 1;
                 continue;
             }
-            if i.tops["r"]
-                .pieces()
-                .iter()
-                .any(|pc| matches!(pc, Piece::Fn(_)))
-            {
+            if may_give_function(&i.tops["r"]) {
                 runs.functions += 1;
                 continue;
             }
@@ -636,5 +650,83 @@ fn accepted_random_programs_raise_no_type_error() {
             "seed {seed}: only {} programs run in {SETS_CAP} sets use {name}",
             r.forms[k]
         );
+    }
+}
+
+/// The programs of seeds 1006, 1067, 1184, 2040, 2237 and 15863670430612687588 whose `r` holds
+/// a function inside a tuple (row FAIL-random-result-holds-function): the checker accepts each,
+/// the evaluator refuses each result as holding a function, and the test of random programs
+/// skips each as one that may give a function, as it skips a function at the top.
+const RESULTS_HOLDING_FUNCTIONS: [&str; 6] = [
+    "h0(positional p, positional q) = popCount(p);\n\
+     r = (v9 -> (v10 -> (if v9 is String { len(v9) } else { v10 }))(((v9, v9), v9, v9)))((v11 -> \"s\"));\n",
+    "h0(positional p, positional q) = bitAnd(p, p);\n\
+     h1(positional p, positional q) = popCount(p);\n\
+     h2(positional p) = p;\n\
+     r = ((-0), h2((v50 -> (v50 - 0))));\n",
+    "h0(positional p, positional q) = (-2, p);\n\
+     h1(positional p) = h0(p, p);\n\
+     r = h1((v15 -> v15));\n",
+    // A function in a union inside a tuple.
+    "h0(positional p, positional q) = (q, q);\n\
+     r = h0(\"s\", if -1 < -3 { false } else { (v69 -> v69) });\n",
+    "h0(positional p) = rotr(p, 3, width: 8);\n\
+     r = (v114 -> (String(-2), v114))((v115 -> -3));\n",
+    "h0(positional p) = (p, p(p));\n\
+     h1(positional p) = p;\n\
+     h2(positional p) = h1(p);\n\
+     r = (h0((v124 -> (v125 -> v125)((v126 -> 3)))), h2((v127 -> f64(v127))));\n",
+];
+
+#[test]
+fn a_result_holding_a_function_in_a_tuple_is_skipped() {
+    for p in RESULTS_HOLDING_FUNCTIONS {
+        let (i, _) = info(p);
+        assert!(i.errors.is_empty(), "{p}rejected: {:?}", i.errors);
+        let ty = &i.tops["r"];
+        assert!(
+            may_give_function(ty),
+            "{p}`r : {ty}` holds a function and is not skipped"
+        );
+        let u = elab(p).unwrap_or_else(|e| panic!("{p}{e:?}"));
+        let t = u.get("r").unwrap_or_else(|| panic!("{p}no `r`"));
+        let mut ev = Evaluator::new(World::new()).with_fuel(1_000_000);
+        match ev.run(&with_prelude(t)) {
+            Err(KernelError::Type(m)) => assert_eq!(m, "the program's result holds a function"),
+            other => panic!("{p}the run gave {other:?}, not the refusal of a held function"),
+        }
+    }
+}
+
+#[test]
+fn a_result_of_data_alone_is_not_skipped() {
+    // A tuple, a payload and a scalar with no function: the test runs these.
+    for p in [
+        "r = (1, (2, \"s\"));\n",
+        "h0(positional p) = #a(p, (p, 1));\nr = h0(3);\n",
+        "r = 2 + 3;\n",
+    ] {
+        let (i, _) = info(p);
+        assert!(i.errors.is_empty(), "{p}rejected: {:?}", i.errors);
+        let ty = &i.tops["r"];
+        assert!(!may_give_function(ty), "{p}`r : {ty}` is skipped");
+    }
+}
+
+/// The seeds that found row FAIL-random-result-holds-function, run as the test of random
+/// programs runs them.
+#[test]
+fn the_seeds_of_results_holding_functions_raise_no_type_error() {
+    let enough =
+        |r: &Runs| r.ran >= ENOUGH_RAN && r.forms.iter().all(|&f| f >= ENOUGH_OF_EACH_FORM);
+    for seed in [1006, 1067, 1184, 2040, 2237, 15_863_670_430_612_687_588] {
+        let r = run_programs(seed, enough, SETS_CAP);
+        assert!(
+            r.type_errors.is_empty() && r.outside.is_empty(),
+            "seed {seed}:\n{}{}",
+            r.type_errors.join("----\n"),
+            r.outside.join("----\n")
+        );
+        assert!(r.functions > 0, "seed {seed}: no program skipped");
     }
 }
