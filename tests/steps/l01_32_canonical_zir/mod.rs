@@ -10,6 +10,7 @@ mod fail_misplaced_level;
 mod fuzz;
 mod scaling;
 mod stability;
+mod version_pins;
 mod wide_constants;
 
 use zedc::zir::{Region, text};

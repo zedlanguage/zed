@@ -44,8 +44,13 @@ use zedc_base::address::ContentAddress;
 /// version 4 writes an exact number past `i64` by its limbs, not its decimal digits; version 5
 /// writes an interval end or a class past `i64` by its sign and limbs too; version 6 writes a
 /// number kept with prime powers by the form it is kept in, with no digits built (item
-/// ENGINE-one).
-pub const VERSION: u32 = 6;
+/// ENGINE-one); version 7 renames a ZIR pattern binder spelled as a level other than its own
+/// position's, such as `$$5` first in `($$5, y)`, where version 6 kept it (commit 0a516f19c,
+/// FAIL-zir-canon-misplaced-level-binder, which left the number at 6; raised by
+/// FAIL-zir-canon-version-not-bumped). The test `l01_32_canonical_zir::version_pins` records the
+/// normal forms of a fixed set of graphs and definitions under each version, and fails when they
+/// change and this number does not.
+pub const VERSION: u32 = 7;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {
