@@ -293,3 +293,18 @@ fn a_fold_reached_through_two_functions_takes_the_identity_of_its_one_carrier() 
         ],
     );
 }
+
+#[test]
+fn reduce_in_a_generic_function_takes_the_identity_of_its_one_carrier() {
+    // `.reduce(op)` is the fold `><` written as a method, and shares its checks.
+    let src = format!(
+        "s(positional xs) = xs.reduce((+));\ntop(positional xs) = xs.reduce(max);\n{F}\
+         lo = m.map(r -> s(r));\nhi = m.map(r -> top(r));\n"
+    );
+    prints(&src, "lo", "{\"a\" -> -0.0, \"b\" -> 5.0}");
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    rejected(
+        "top(positional xs) = xs.reduce(max);\na = top([1, 2]);\nb = top([1.0, 2.0]);\n",
+        &["does not compile it yet"],
+    );
+}
