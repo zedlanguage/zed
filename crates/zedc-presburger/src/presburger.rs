@@ -872,15 +872,21 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// Before any of that, `f` is written one way (`signed` with `Signs::Free`): each row
 /// divided by the common factor of its coefficients, each equation with one sign, and `t >= 0`
 /// beside `-t >= 0` as `t == 0`. An equation whose sign only the names could choose, as
-/// `a - b == 0`, is kept as written, and `t >= 0` beside `-t >= 0` for such a `t` is not
-/// joined: with the sign of the first name the answer changed with the naming (12 of 24
-/// namings refused for `Refusal::Unordered`, l01_38
-/// `names::a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer`), and held
-/// with both signs it made benchmarks of reflections and overlaps (l01_38 `cell_sweep`,
-/// zedc_presburger `r5_hull_tests`, `r5_orbit_tests`) two to four times slower. So the
-/// writing of such an equation can still change the answer (PRES-solve-equation-sign). The solver's elimination order reads the coefficients and signs
-/// of the rows (`stable_colors`, `canonical`), so without this step the same formula with a
-/// row times 3, or an equation written as two rows, could be answered one way and refused for
+/// `a - b == 0`, takes the sign the colors of the formula's rows choose (`EqSides`, item
+/// PRES-solve-equation-sign), the same under every renaming, writing and order of the parts;
+/// where those colors tie, nothing but the names tells the two signs apart, and the equation
+/// is held as the two rows `t >= 0 && -t >= 0`. Kept as written, such an equation made the
+/// answer depend on the writing (one row or two: 38 of 600 layered systems of
+/// l01_38_omega_test `equation_sign`); with the sign of the first name alone, on the naming
+/// (12 of 24 namings refused for `Refusal::Unordered`, l01_38
+/// `names::a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer`); held with
+/// both signs it made benchmarks of reflections and overlaps (l01_38 `cell_sweep`,
+/// zedc_presburger `r5_hull_tests`, `r5_orbit_tests`) two to four times slower. An equation
+/// whose coefficients choose its sign takes that sign, and the solver's answer can still
+/// depend on it (family 3 of `t8_enum_suite`, PRES-solver-equation-sign-free). The solver's
+/// elimination order reads the coefficients and signs of the rows (`stable_colors`,
+/// `canonical`), so without this step the same formula with a row times 3, or an equation
+/// written as two rows, could be answered one way and refused for
 /// [`Refusal::Growth`] or [`Refusal::Shadows`] the other (FAIL-rewrite-growth-both,
 /// FAIL-pendants-growth-scaled-seed). Cost: O(n log n) in the size of `f` per question, against
 /// O(n) for passing it as written; a node written so already is kept with its id, so the memos
@@ -1847,9 +1853,9 @@ enum Signs {
     /// The sign [`flips`] chooses.
     Chosen,
     /// The sign [`flips`] chooses where the coefficients or the constant decide it; where only
-    /// the names would ([`sign_by_terms`], as for `a - b == 0`), the equation as written, and
-    /// `t >= 0` beside `-t >= 0` left as the two rows, so that a renaming does not change the
-    /// formula.
+    /// the names would ([`sign_by_terms`], as for `a - b == 0`), the sign the colors of the
+    /// formula's rows choose ([`EqSides`]), so that neither a renaming nor the writing changes
+    /// the formula, and where those colors tie the two rows `t >= 0 && -t >= 0`.
     Free,
     /// Each equation held with both signs (one, as chosen, under a negation).
     Both,
@@ -1874,6 +1880,12 @@ enum Signs {
 /// sign of an equation and answers them with the other, and [`project_each`] asks with the
 /// second writing only where the first is refused, and with the third only where both are.
 fn signed(f: &Formula, how: Signs) -> Formula {
+    let sides = if how == Signs::Free {
+        EqSides::of(f)
+    } else {
+        None
+    };
+    let sides = sides.as_ref();
     // Each node's writing, or `None` where it is written so already: an unchanged node is kept
     // as it is, with its id, so that what later steps keep by id still finds it.
     let changed = f.fold(
@@ -1882,10 +1894,12 @@ fn signed(f: &Formula, how: Signs) -> Formula {
         |g, negated, parts: Vec<Option<Formula>>| match g {
             Formula::Con(c) => match c.reduced() {
                 Some(r) => Some(match &r {
-                    Formula::Con(e) if e.rel == Rel::Eq => equation(e, negated, how).unwrap_or(r),
+                    Formula::Con(e) if e.rel == Rel::Eq => {
+                        equation(e, negated, how, sides).unwrap_or(r)
+                    }
                     _ => r,
                 }),
-                None if c.rel == Rel::Eq => equation(c, negated, how),
+                None if c.rel == Rel::Eq => equation(c, negated, how, sides),
                 None => None,
             },
             Formula::And(gs) => {
@@ -1901,15 +1915,15 @@ fn signed(f: &Formula, how: Signs) -> Formula {
                 }
                 let kids = (rows.iter().enumerate())
                     .map(|(i, k)| match k {
-                        Formula::Con(c)
-                            if paired.contains(&i)
-                                && !(how == Signs::Free && sign_by_terms(&c.lin).is_eq()) =>
-                        {
+                        // With `Signs::Free`, a pair whose sign only the names would choose has
+                        // colors in `sides` ([`EqSides::of`] finds every such pair), so the
+                        // equation's sign never falls to the writing.
+                        Formula::Con(c) if paired.contains(&i) => {
                             let eq = Con {
                                 lin: c.lin.clone(),
                                 rel: Rel::Eq,
                             };
-                            equation(&eq, negated, how).unwrap_or(Formula::Con(eq))
+                            equation(&eq, negated, how, sides).unwrap_or(Formula::Con(eq))
                         }
                         k => (*k).clone(),
                     })
@@ -1930,32 +1944,35 @@ fn signed(f: &Formula, how: Signs) -> Formula {
     changed.unwrap_or_else(|| f.clone())
 }
 
-/// The places of the rows `t >= 0` among `gs` whose opposite `-t >= 0` is among them too, found
-/// by a hash that `t` and `-t` share, so that no row is copied.
-fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
+/// A hash of `t` that `-t` shares: of `t` with the sign that makes its first coefficient
+/// positive. O(k) for the k terms of `t`, and nothing is copied but the coefficients it negates.
+fn sign_free_hash(t: &Lin) -> u64 {
     use std::hash::{Hash, Hasher};
+    let flip = t.terms.values().next().is_some_and(Int::is_negative);
+    let mut h = rustc_hash::FxHasher::default();
+    for (a, k) in &t.terms {
+        a.hash(&mut h);
+        if flip { -k } else { k.clone() }.hash(&mut h);
+    }
+    if flip {
+        -&t.constant
+    } else {
+        t.constant.clone()
+    }
+    .hash(&mut h);
+    h.finish()
+}
+
+/// The places of the rows `t >= 0` among `gs` whose opposite `-t >= 0` is among them too, found
+/// by a hash that `t` and `-t` share ([`sign_free_hash`]), so that no row is copied.
+fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
     let mut by: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
     for (i, g) in gs.iter().enumerate() {
         let Formula::Con(c) = g else { continue };
-        let Some((_, first)) = c.lin.terms.first_key_value() else {
-            continue;
-        };
-        if c.rel != Rel::Ge {
+        if c.lin.terms.is_empty() || c.rel != Rel::Ge {
             continue;
         }
-        let flip = first.is_negative();
-        let mut h = rustc_hash::FxHasher::default();
-        for (a, k) in &c.lin.terms {
-            a.hash(&mut h);
-            if flip { -k } else { k.clone() }.hash(&mut h);
-        }
-        if flip {
-            -&c.lin.constant
-        } else {
-            c.lin.constant.clone()
-        }
-        .hash(&mut h);
-        by.entry(h.finish()).or_default().push(i);
+        by.entry(sign_free_hash(&c.lin)).or_default().push(i);
     }
     let lin = |i: usize| match &gs[i] {
         Formula::Con(c) => &c.lin,
@@ -1991,11 +2008,21 @@ fn opposite_lins(a: &Lin, b: &Lin) -> bool {
 /// the other sign (`Signs::Opposite`), or `None` when that is `c` as written. With
 /// `Signs::Both`, and not under a negation (`negated`), `t == 0 && -t == 0`; under a negation,
 /// where `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has, the one
-/// sign. With `Signs::Free`, the chosen sign, or `None` where only the names would choose it.
-fn equation(c: &Con, negated: bool, how: Signs) -> Option<Formula> {
+/// sign. With `Signs::Free`, the chosen sign, and where only the names would choose it, the
+/// sign that the colors of `sides` choose ([`EqSides::flipped`]), or where they tie, the two
+/// rows `t >= 0 && -t >= 0` (under a negation, the sign of the first name).
+fn equation(c: &Con, negated: bool, how: Signs, sides: Option<&EqSides>) -> Option<Formula> {
     let eq = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Eq });
     if how == Signs::Free && sign_by_terms(&c.lin).is_eq() {
-        return None;
+        return match sides.and_then(|s| s.flipped(&c.lin)) {
+            Some(flip) => flip.then(|| eq(c.lin.times(-1))),
+            // `!(t == 0)` reads as `t - 1 >= 0 || -t - 1 >= 0` whichever sign `t` has.
+            None if negated => flips(&c.lin).then(|| eq(c.lin.times(-1))),
+            None => {
+                let ge = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Ge });
+                Some(Formula::and(vec![ge(c.lin.clone()), ge(c.lin.times(-1))]))
+            }
+        };
     }
     if how == Signs::Both && !negated {
         return Some(Formula::and(vec![eq(c.lin.clone()), eq(c.lin.times(-1))]));
@@ -2052,6 +2079,104 @@ fn sign_by_terms(t: &Lin) -> Ordering {
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal);
     lists.then_with(|| t.constant.cmp(&Int::ZERO))
+}
+
+/// What chooses, under `Signs::Free`, the sign of each equation `t == 0` whose sign only the
+/// names would choose ([`sign_by_terms`], as `a - b == 0`; item PRES-solve-equation-sign): for
+/// each atom of such an equation, the number of the formula's rows it occurs in, where a row
+/// is counted with its common factor divided out and up to its sign, so that `t == 0`, `t >= 0`
+/// and `-t >= 0` are one row. That count is the same whichever sign an equation is written
+/// with, whether it is written as one equation, twice, or as two rows, whatever its common
+/// factor, and in whatever order the parts come; and it reads the structure alone, not the
+/// names.
+struct EqSides<'f> {
+    /// The number of rows each atom of such an equation occurs in.
+    count: FxHashMap<&'f Atom, usize>,
+}
+
+impl<'f> EqSides<'f> {
+    /// The counts of `f`'s rows, or `None` when `f` has no row whose sign only the names
+    /// would choose, so that nothing is counted.
+    // Complexity tradeoff: naive version, such an equation kept as written, O(1), made the
+    // answer depend on the writing (38 of 650 systems of `l01_38_omega_test::equation_sign`
+    // answered under one writing and refused as Unordered or Tie under another). Used: one
+    // pass over the terms with a hash lookup each, and a hash of each row that holds such an
+    // atom, O(N) expected for N terms. Tried and measured (instructions of `decide` at the
+    // small size, against 3.97e8 as before on `bench::names::decide_scales_over_one_class_of_equalities`
+    // and 0.99e8 on l01_38_presburger `a_chain_of_definitions_at_a_point_costs_its_size`):
+    // the coarsest stable coloring of the formula's rows (`stable_colors`), 1.34e9 and 3.2e8,
+    // since its refinement colors the whole formula; and every such equation as the two rows
+    // `t >= 0 && -t >= 0`, with no count, 5.0e8 and 2.1e8, since the solver works harder on
+    // two rows than on one equation in every `max` definition. All three answer the same 610
+    // of the 650 systems (COMPLEXITY.md, row PRES-equation-sides).
+    fn of(f: &'f Formula) -> Option<EqSides<'f>> {
+        let cons = f.cons();
+        let mut count: FxHashMap<&'f Atom, usize> = FxHashMap::default();
+        for c in &cons {
+            // Such a row has the constant 0, and the order of `sign_by_terms` is the same
+            // with the common factor divided out, so no row is reduced here.
+            if c.lin.constant.is_zero() && sign_by_terms(&c.lin).is_eq() {
+                count.extend(c.lin.terms.keys().map(|a| (a, 0)));
+            }
+        }
+        if count.is_empty() {
+            return None;
+        }
+        // The rows that hold a counted atom, each divided by its common factor (the atoms of
+        // a row and of its reduced form are the same), then each held once up to its sign,
+        // by a hash that `t` and `-t` share.
+        let held: Vec<(&Con, Option<Formula>)> = (cons.iter())
+            .filter(|c| c.lin.terms.keys().any(|a| count.contains_key(a)))
+            .map(|c| (*c, c.reduced()))
+            .collect();
+        let mut seen: FxHashMap<u64, Vec<&Lin>> = FxHashMap::default();
+        for (c, r) in &held {
+            let t = match r {
+                Some(Formula::Con(r)) => &r.lin,
+                Some(_) => continue,
+                None => &c.lin,
+            };
+            let rows = seen.entry(sign_free_hash(t)).or_default();
+            // Complexity tradeoff: the rows of one hash are compared one by one. Why: they
+            // are one row up to its sign, one at most, unless two share a 64-bit hash by
+            // chance. Naive version: a search of every row, O(n) per row; used: O(k)
+            // expected for the k terms of `t`.
+            if rows.iter().any(|r| *r == t || opposite_lins(r, t)) {
+                continue;
+            }
+            rows.push(t);
+            for a in t.terms.keys() {
+                if let Some(n) = count.get_mut(a) {
+                    *n += 1;
+                }
+            }
+        }
+        Some(EqSides { count })
+    }
+
+    /// Whether `t == 0`, whose sign only the names would choose, is written `-t == 0`: where
+    /// the pairs (coefficient, count of its atom) of `-t`, sorted, are the greater list, as
+    /// [`sign_by_terms`] reads the coefficients alone; `None` where the two lists are equal,
+    /// so that no count tells the two signs apart.
+    // Tradeoff on a tie, where [`equation`] writes the two rows `t >= 0 && -t >= 0`, the same
+    // under every naming: of the 650 systems of the `equation_sign` sweeps, 40 are refused
+    // under every naming, writing and order, as many as the old writing refused under some
+    // writings (38 of them answered under others). The first name's sign on a tie refused 2
+    // of those 650, but gave `Ok(true)` under 12 of 24 namings and Unordered under the rest
+    // for l01_38_omega_test `names::a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer`.
+    // A rule that breaks every such tie needs a canonical labeling, exponential in the worst
+    // case. O(k log k) for the k terms of `t`.
+    fn flipped(&self, t: &Lin) -> Option<bool> {
+        let n = |a: &Atom| self.count.get(a).copied().unwrap_or(0);
+        let mut plus: Vec<(&Int, usize)> = t.terms.iter().map(|(a, k)| (k, n(a))).collect();
+        let mut minus: Vec<(Int, usize)> = t.terms.iter().map(|(a, k)| (-k, n(a))).collect();
+        plus.sort_unstable();
+        minus.sort_unstable();
+        let order = (plus.iter().zip(&minus))
+            .map(|(&(k, p), (m, q))| (k, p).cmp(&(m, *q)))
+            .find(|o| o.is_ne())?;
+        Some(order.is_lt())
+    }
 }
 
 /// `run`, and when the solver refuses it, `run` again on the path before DISJ-diff-fast and

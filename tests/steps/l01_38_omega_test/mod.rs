@@ -9,6 +9,7 @@ mod bench;
 mod completeness;
 mod decide_sat;
 mod disj_groups;
+mod equation_sign;
 mod extend;
 mod front_cost;
 mod live3;
