@@ -30,6 +30,8 @@ use zedc_resolve::resolve::Resolution;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_syntax::ast::{Error, Stmt, StmtKind, Target};
 
+mod bodies;
+mod identities;
 mod instances;
 pub mod mark;
 mod state;

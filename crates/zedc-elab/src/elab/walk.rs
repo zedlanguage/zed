@@ -212,8 +212,8 @@ enum Frame<'a> {
     /// (plan row RT-sites).
     Site(Span),
     /// An expression or declaration done that changed the fold identities in force: what
-    /// it changed (`instances::Elab::enter_expr`).
-    Env(super::instances::Saved),
+    /// it changed (`identities::Elab::enter_expr`).
+    Env(super::identities::Saved),
 }
 
 /// Which display a [`Frame::Display`] builds.
@@ -573,7 +573,7 @@ impl<'a> Elab<'a> {
                     undecided: Vec::new(),
                 };
                 // A function declared in a block takes no fold identity from around it
-                // (`instances::Elab::enter_expr`).
+                // (`identities::Elab::enter_expr`).
                 if !top && !self.info.split_folds.is_empty() {
                     let saved = self.clear_env();
                     m.k(Frame::Env(saved));
