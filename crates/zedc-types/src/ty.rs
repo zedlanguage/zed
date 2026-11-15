@@ -6414,10 +6414,17 @@ impl<'m, 's> Comparing<'m, 's> {
                 Piece::Set(s) if plain(s) => None,
                 Piece::Set(_) | Piece::Tuple(_) => match form {
                     Some(d) => d,
-                    None => *form.insert(match near {
-                        Some((near, whole, _)) => self.near_form(t, near, whole).await,
-                        None => self.by_form(t, other).await,
-                    }),
+                    None => {
+                        let d = match near {
+                            Some((near, whole, _)) => self.near_form(t, near, whole).await,
+                            None => self.by_form(t, other).await,
+                        };
+                        let d = match d {
+                            Some(d) => Some(d),
+                            None => self.closed_form(t, other).await,
+                        };
+                        *form.insert(d)
+                    }
                 },
                 _ => None,
             };
@@ -6452,6 +6459,49 @@ impl<'m, 's> Comparing<'m, 's> {
             }
         };
         held(verdict)
+    }
+
+    /// [`Comparing::by_form`] of `t` and `other` with each variable outside their functions
+    /// that stands for a function holding no variable at any depth ([`Cx::read`]) replaced by
+    /// that function; nothing where there is no such variable.
+    ///
+    /// Why (TEST-nested-marks-struct-parts): inside a comparison of function types, each
+    /// function that a parameter or result holds is read as a variable, so the forms were not
+    /// made, and each piece was tried by the rule of one shape ([`accepts`]), which finds a set
+    /// piece only in the other side's set, not in its shapes: `int -> (#_, 1) \ (#a, 1)` did
+    /// not fit `int -> (#_, 1) | (1, int -> int)`, a definite no, though `(#_, 1) \ (#a, 1)` is
+    /// within `(#_, 1)`. A function with no variable reads alike in every environment, so
+    /// compared as written, as [`Comparing::form_verdict`] compares its functions, it gives
+    /// what [`Comparing::fits_read`] gives for the variable read in its place.
+    ///
+    /// Complexity tradeoff: one walk of each side outside its functions, entering only the
+    /// rows and payloads that hold a variable ([`Ty::vars_outside`]), a lookup of each variable
+    /// found, and a rebuild of the part holding them ([`Ty::replace_outside`]): O(size), only
+    /// where the forms were not made, and the forms then cost what they cost at the top level.
+    /// What is given up: a function that holds a variable (its own, or one read around it) is
+    /// left as its variable, so such a comparison is still tried by the rule of one shape.
+    /// The complete solution would key the forms by the variables read as functions and
+    /// compare those by [`Comparing::fits_read`].
+    async fn closed_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
+        let binds: Binds = {
+            let cx = self.cx.borrow();
+            let mut vs = Vars::default();
+            t.vars_outside(&mut vs);
+            other.vars_outside(&mut vs);
+            (vs.order.iter())
+                .filter_map(|v| {
+                    let (s, _) = cx.fns.get(v)?;
+                    s.vars_order()
+                        .is_empty()
+                        .then(|| (v.clone(), Ty::func(s.clone())))
+                })
+                .collect()
+        };
+        if binds.is_empty() {
+            return None;
+        }
+        let (t, other) = (t.replace_outside(&binds), other.replace_outside(&binds));
+        self.by_form(&t, &other).await
     }
 
     /// [`Comparing::by_form`] of the tuple `t` and the type `whole` reads, from `near`: `whole`

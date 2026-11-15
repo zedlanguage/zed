@@ -1281,6 +1281,139 @@ fn the_unknown_checked_is_every_value_not_a_value_of_its_own() {
     ]);
 }
 
+// The three tests below (TEST-nested-marks-struct-parts) cover the parts `Forms::level` keeps
+// whole: a function's parameter and result types, and the struct part (COMPLEXITY.md,
+// PROOF-nested-marks, last case of Lemma N). Each judgment is written in both directions,
+// with its answer derived from DESIGN.md sec:type_language alone:
+// - "Subtyping is semantic": `S <: T` holds exactly when every value of `S` is a value of `T`.
+// - "Relation to semantic subtyping" (1) and "Morphism types carry two domain bounds": `K -> V`
+//   is exact, its values the total functions whose domain is exactly `K`, each value in `V`.
+//   So for an inhabited `K` and an inhabited `V`, `K -> V <: K' -> V'` holds exactly when `K`
+//   and `K'` are one set and `V <: V'`, and two function types that differ so share no value.
+// - L1.40d: `#_` is every atom, with any payload; `#a` is the bare atom `#a` alone; `(..)` is
+//   every tuple and `{..}` every struct. At layer L1 a struct type is `{..}` or none
+//   (`zed_kernel::types`, "Structs join at L2"): a struct type with fields cannot be written
+//   until step L2.5, and its tests are row TEST-nested-marks-struct-fields.
+// Write `D` for `(#_, 1) \ (#a, 1)`, the pairs `(x, 1)` of an atom `x` other than `#a`. It is
+// the set `(#_ \ #a, 1)`, since `#_ \ #a` is every atom but `#a`. `(#_, 1)` is `D` and
+// `(#a, 1)` besides.
+
+/// A function's parameter type holding a set of every atom nested in a tuple, beside a set of
+/// every atom nested in the same tuple as the function, and beside a function inside the
+/// parameter: the parameter is compared as a whole, by its own subtyping.
+///
+/// The false judgments compare parameters neither of which holds the other, so they are false
+/// whichever way a parameter is compared. Parameters of which one holds the other, `D` and
+/// `(#_, 1)`, are row FAIL-types-fn-param-exact-domain: the checker takes `(#_, 1) -> int` to
+/// be a subtype of `D -> int`, against the exact domain of `K -> V`.
+#[test]
+fn a_set_of_every_atom_nested_in_a_parameter_type_is_compared_as_a_set() {
+    let d_param = "(((#_, 1) \\ (#a, 1)) -> int, (#_, 2) \\ (#a, 2))";
+    // The same function type with `D` written `(#_ \ #a, 1)`, and the same second component.
+    let d_param_again = "(((#_ \\ #a, 1)) -> int, (#_ \\ #a, 2))";
+    // A parameter of `(#_ \ #b, 1)`, which holds `(#a, 1)`, not in `D`, and lacks `(#b, 1)`,
+    // which is in `D`: neither set holds the other.
+    let other_param = "(((#_ \\ #b, 1)) -> int, (#_, 2) \\ (#a, 2))";
+    // The same function type as `d_param`, and a second component of every atom, `#a` too.
+    let wider_second = "(((#_ \\ #a, 1)) -> int, (#_, 2))";
+    // Parameters that hold a function too: `D | ((int) -> int, 1)` written two ways, and
+    // `(#_ \ #b, 1) | ((int) -> int, 1)`, which holds `(#a, 1)` and lacks `(#b, 1)`.
+    let fn_param = "((((#_, 1) \\ (#a, 1)) | ((int -> int), 1)) -> int)";
+    let fn_param_again = "(((#_ \\ #a, 1) | ((int -> int), 1)) -> int)";
+    let fn_param_other = "(((#_ \\ #b, 1) | ((int -> int), 1)) -> int)";
+    judge(&[
+        // Equal parameters, `D` both, and equal second components: one set, both ways.
+        (d_param, d_param_again, true),
+        (d_param_again, d_param, true),
+        // Parameters `(#_ \ #b, 1)` and `D` are two sets, so no function is in both types.
+        (other_param, d_param, false),
+        (d_param, other_param, false),
+        // Same functions; `(#_ \ #a, 2) <: (#_, 2)` and not back, `(#a, 2)` the difference.
+        (d_param, wider_second, true),
+        (wider_second, d_param, false),
+        // A parameter holding a function beside `D`: one set written two ways, both ways.
+        // Before, each was a definite no: inside the comparison of the two function types the
+        // function in the parameter is read as a variable, so the forms were not made.
+        (fn_param, fn_param_again, true),
+        (fn_param_again, fn_param, true),
+        // Against `(#_ \ #b, 1) | ((int) -> int, 1)`, another set: no function in both.
+        (fn_param, fn_param_other, false),
+        (fn_param_other, fn_param, false),
+    ]);
+}
+
+/// A function's result type holding a set of every atom nested in a tuple, and a function
+/// beside it: the results are compared by their own subtyping, the domains being one set.
+#[test]
+fn a_set_of_every_atom_nested_in_a_result_type_is_compared_as_a_set() {
+    // Results `D` and `(#_ \ #a, 1)`, one set; each function in a pair with `D` at 2.
+    let d_result = "((int -> ((#_, 1) \\ (#a, 1))), (#_, 2) \\ (#a, 2))";
+    let d_result_again = "((int -> (#_ \\ #a, 1)), (#_ \\ #a, 2))";
+    // Result `(#_, 1) | (1, (int) -> int)`, which holds `D` and more: `(#a, 1)`, for one.
+    let wider_result = "((int -> ((#_, 1) | (1, (int -> int)))), (#_, 2) \\ (#a, 2))";
+    // Result `((int) -> int, 1)`, which shares no value with `D`: a function is no atom.
+    let fn_result = "((int -> ((int -> int), 1)), (#_, 2) \\ (#a, 2))";
+    judge(&[
+        (d_result, d_result_again, true),
+        (d_result_again, d_result, true),
+        // Domains both `int`; result `D <: (#_, 1) | (1, (int) -> int)`, and not back. Before,
+        // the first was a definite no, for the reason in the test above.
+        (d_result, wider_result, true),
+        (wider_result, d_result, false),
+        // Results inhabited and disjoint: a function of either type is not of the other.
+        (fn_result, d_result, false),
+        (d_result, fn_result, false),
+    ]);
+}
+
+/// The struct part `{..}`, which the forms keep whole, beside functions and sets of every atom
+/// nested in tuples and payloads.
+#[test]
+fn every_struct_beside_functions_and_nested_sets_of_every_atom_is_compared_as_a_set() {
+    // The pairs `(s, 1)` of a struct `s`, and `(f, 2)` of a function `f` of `(int) -> int`.
+    let structs = "({..}, 1) | ((int -> int), 2)";
+    judge(&[
+        // Every tuple but `(#a, 1)` holds both kinds of pair; it holds `(#b, 1)` besides.
+        (structs, "(..) \\ (#a, 1)", true),
+        ("(..) \\ (#a, 1)", structs, false),
+        // `(s, 1)` is in `(#_ | {..}, 1) \ (#a, 1)` (`s` is no atom); `(f, 2)` is in the row
+        // after it. The right side holds `(#b, 1)` besides.
+        (
+            structs,
+            "((#_ | {..}, 1) \\ (#a, 1)) | ((int -> int), 2)",
+            true,
+        ),
+        (
+            "((#_ | {..}, 1) \\ (#a, 1)) | ((int -> int), 2)",
+            structs,
+            false,
+        ),
+        // A struct is no atom, and an atom no struct: `(s, 2)` is not in `D`, nor `(#b, 1)`
+        // in `({..}, 1)`.
+        ("({..}, 1)", "(#_, 1) \\ (#a, 1)", false),
+        ("(#_, 1) \\ (#a, 1)", "({..}, 1)", false),
+        // A payload `(s, f)` of a struct and a function: `s` is not `#a`, so it is in
+        // `#q(#_ | {..}, f) \ #q(#a, f)`, which holds `#q(#b, f)` besides.
+        (
+            "#q({..}, (int -> int))",
+            "#q(#_ | {..}, (int -> int)) \\ #q(#a, (int -> int))",
+            true,
+        ),
+        (
+            "#q(#_ | {..}, (int -> int)) \\ #q(#a, (int -> int))",
+            "#q({..}, (int -> int))",
+            false,
+        ),
+        // A function is no atom, an atom no function: both inhabited, they share no value.
+        ("({..}, (int -> int))", "({..}, #_ \\ #a)", false),
+        ("({..}, #_ \\ #a)", "({..}, (int -> int))", false),
+        // A function from every struct, in a pair: parameters both `{..}`, so the result
+        // decides it, `#_ \ #a <: #_` and not back (`#a`).
+        ("(({..} -> (#_ \\ #a)), 1)", "(({..} -> #_), 1)", true),
+        ("(({..} -> #_), 1)", "(({..} -> (#_ \\ #a)), 1)", false),
+    ]);
+}
+
 /// A union of `n` rows `((#_, i) \ (#a, i), (int -> int))`, each a set of every atom nested
 /// beside a function, and the type `((#_, int), (int -> int))` that holds it.
 fn nested_cut_rows(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
@@ -1296,6 +1429,31 @@ fn nested_cut_rows(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
 #[test]
 fn many_nested_sets_of_every_atom_beside_functions_are_decided() {
     let (left, right) = nested_cut_rows(4);
+    assert!(left.subtype(&right));
+    assert!(!right.subtype(&left));
+}
+
+/// `nested_cut_rows(n)` as the results of two functions of `int`: the left result holds `n`
+/// functions, each read as a variable inside the comparison of the two function types, and
+/// each replaced by its function for the forms (TEST-nested-marks-struct-parts). The domains
+/// are one set, so the left is a subtype exactly when its result is within the right's. The
+/// right result is one shape: with `| (1, 2)` beside it, `Ty::subtype` on the rows alone
+/// grows faster than linearly in `n`, with no function anywhere, row
+/// PERF-types-cut-rows-union-scaling.
+fn nested_cut_results(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let rows: Vec<String> = (0..n)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), (int -> int))"))
+        .collect();
+    let left = parse_type(&format!("(int -> ({}))", rows.join(" | "))).unwrap();
+    let right = "(int -> ((#_, int), (int -> int)))";
+    (left, parse_type(right).unwrap())
+}
+
+/// The small instance of `bench::nested_sets_of_every_atom_in_results_are_cut_in_linear_time`.
+#[test]
+fn many_nested_sets_of_every_atom_beside_functions_in_a_result_are_decided() {
+    let (left, right) = nested_cut_results(4);
     assert!(left.subtype(&right));
     assert!(!right.subtype(&left));
 }

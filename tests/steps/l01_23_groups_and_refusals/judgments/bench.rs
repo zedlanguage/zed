@@ -255,3 +255,21 @@ fn nested_sets_of_every_atom_are_cut_in_linear_time() {
         },
     );
 }
+
+/// `nested_sets_of_every_atom_are_cut_in_linear_time` with the rows as the result of a
+/// function: the `n` functions the rows hold are read as variables inside the comparison of the
+/// two function types and replaced by their functions for the forms
+/// (TEST-nested-marks-struct-parts), one walk of each result: linear in `n`.
+#[test]
+fn nested_sets_of_every_atom_in_results_are_cut_in_linear_time() {
+    let n = 256;
+    let pairs = scaling::inputs(n, nested_cut_results);
+    scaling::check(
+        "the forms of a result of n rows with a nested set of every atom",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}
