@@ -2886,10 +2886,7 @@ impl Resolver<'_> {
             } => {
                 let levels = levels.as_deref().unwrap_or_default();
                 match binders {
-                    Some(binders) => {
-                        self.later(e.span, "a remap `as` or `into`");
-                        todo.push(Task::Remap { binders, levels });
-                    }
+                    Some(binders) => todo.push(Task::Remap { binders, levels }),
                     None => self.errors.push(Error {
                         row: None,
                         menu: String::new(),
@@ -2905,12 +2902,14 @@ impl Resolver<'_> {
                         }],
                     }),
                 }
-                todo.extend(
-                    levels
-                        .iter()
-                        .rev()
-                        .filter_map(|l| l.reduce.as_ref().map(Task::Expr)),
-                );
+                // A level's `><` takes an operator section, as `x >< (+)` does; a function in
+                // its place is a later step's form, as there.
+                for op in levels.iter().rev().filter_map(|l| l.reduce.as_ref()) {
+                    if !matches!(op.kind, ExprKind::Section(_)) {
+                        self.later(op.span, "a reduction `><` by a function");
+                        todo.push(Task::Expr(op));
+                    }
+                }
                 todo.push(Task::Expr(of));
             }
             // A metadata read, `xs::len`, is not built yet (steps L3.2, L3.2a).

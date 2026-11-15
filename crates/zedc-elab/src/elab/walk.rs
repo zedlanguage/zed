@@ -189,6 +189,8 @@ enum Frame<'a> {
     MapFn(Term, bool),
     /// `m >< (op)` once `m` is elaborated: the operator and the span of the fold.
     Fold(Prim, Span),
+    /// A remap once its source and its levels' expressions are elaborated, in that order.
+    Remap(&'a Expr),
     /// `k in m` once both are elaborated: whether it is `not in`.
     In(bool),
     /// An expression done, by its span: its term's nodes that have no site take this one
@@ -738,11 +740,26 @@ impl<'a> Elab<'a> {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             ExprKind::Range(..)
-            | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
             | ExprKind::For { .. } => {
-                unreachable!("resolve rejects the forms of layer L3 not built yet, and remaps (L8)")
+                unreachable!("resolve rejects the forms of layer L3 not built yet")
+            }
+            ExprKind::Remap { of, levels, .. } => {
+                // `as` alone only names the levels: the remap is its source.
+                if levels.as_ref().is_none_or(|l| l.is_empty()) {
+                    m.stack.push(Job::Expr(of));
+                    return;
+                }
+                // Without a plan the checker has rejected the remap, at its error.
+                if !self.info.remaps.contains_key(&e.span) {
+                    m.give(None);
+                    return;
+                }
+                let keys = levels.iter().flatten().filter_map(|l| l.key.as_ref());
+                m.k(Frame::Remap(e));
+                m.seq([&**of].into_iter().chain(keys).collect(), false);
+                return;
             }
             ExprKind::Array(items) => {
                 m.k(Frame::Display(Display::Array));
@@ -1590,6 +1607,129 @@ impl<'a> Elab<'a> {
         )
     }
 
+    /// The kernel term of the remap `e` (DESIGN.md sec:remap_law), from the terms of its
+    /// source and of its levels' expressions in level order: a `reindex` whose key map builds
+    /// the kept levels' keys and then the folded levels', and whose value map is the leaf;
+    /// then a `fold` for each folded level, innermost first. A truncation keys each leaf by
+    /// the kept keys and then every key binder, so no two leaves meet, and a `discard` keeps
+    /// the keypaths' kept part as set leaves.
+    fn remap_term(&mut self, e: &'a Expr, got: Vec<Option<Term>>) -> Option<Term> {
+        let ExprKind::Remap {
+            binders, levels, ..
+        } = &e.kind
+        else {
+            unreachable!("a remap")
+        };
+        let plan = self.info.remaps.get(&e.span)?.clone();
+        let binders = binders
+            .as_deref()
+            .expect("a planned remap has an `as` pattern");
+        let levels = levels
+            .as_deref()
+            .expect("a planned remap has an `into` pattern");
+        let mut got = all(got)?.into_iter();
+        let of = got.next().expect("the source's term");
+        let mut at: Vec<Option<Term>> = (levels.iter())
+            .map(|l| {
+                l.key
+                    .as_ref()
+                    .map(|_| got.next().expect("a term per level"))
+            })
+            .collect();
+        let (p, x) = (self.temp(), self.temp());
+        let n = binders.len() - 1;
+        let names: Vec<Arc<str>> = (binders.iter())
+            .map(|b| match b {
+                Target::Name(name, span) => self.names[self.id(*span, name)].clone(),
+                Target::Wild => self.temp(),
+            })
+            .collect();
+        // `(p, x) ↦ let b1 = p[0]; …; let bn = p[n - 1]; let v = x; body`.
+        let lam = |body: Term| {
+            let mut t = body;
+            for (i, name) in names.iter().enumerate().rev() {
+                let v = match i < n {
+                    true => Term::Prim(
+                        Prim::PathKey,
+                        vec![Term::Var(p.clone()), Term::Lit(Value::Int(i as i64))],
+                    ),
+                    false => Term::Var(x.clone()),
+                };
+                t = Term::Let(name.clone(), Shared::new(v), Shared::new(t));
+            }
+            Term::Lam(vec![p.clone(), x.clone()], Shared::new(t))
+        };
+        let mut keys: Vec<Term> = (plan.order.iter())
+            .map(|&j| at[j].take().expect("a key level's term"))
+            .collect();
+        let (vf, witness) = match plan.leaf {
+            Some(l) => (
+                at[l].take().expect("the leaf's term"),
+                zed_kernel::term::Witness::Catalog(plan.witness.clone()),
+            ),
+            None => {
+                let vars = names[..n].iter().map(|b| Term::Var(b.clone()));
+                keys.push(match n {
+                    1 => Term::Var(names[0].clone()),
+                    _ => Term::Prim(Prim::Tuple, vars.collect()),
+                });
+                (
+                    Term::Lit(Value::Bool(true)),
+                    zed_kernel::term::Witness::Residue,
+                )
+            }
+        };
+        let mut t = Term::Reindex {
+            family: Shared::new(of),
+            kf: Shared::new(lam(Term::Prim(Prim::Path, keys))),
+            vf: Shared::new(lam(vf)),
+            witness,
+        };
+        if plan.leaf.is_none() {
+            let (q, en) = (self.temp(), self.temp());
+            let at_kept = Term::Prim(
+                Prim::Eq,
+                vec![
+                    Term::Prim(Prim::PathLen, vec![Term::Var(q.clone())]),
+                    Term::Lit(Value::Int(plan.kept as i64)),
+                ],
+            );
+            let sel = Term::If(
+                Shared::new(at_kept),
+                Shared::new(Term::Lit(Value::atom("boundary"))),
+                Shared::new(Term::Lit(Value::Bool(true))),
+            );
+            t = Term::Discard {
+                family: Shared::new(t),
+                sel: Shared::new(Term::Lam(vec![q, en], Shared::new(sel))),
+            };
+        }
+        let mut depth = plan.order.len();
+        for &j in plan.order[plan.kept..].iter().rev() {
+            let op = match plan.folds[&j] {
+                BinaryOp::Add => Prim::Add,
+                BinaryOp::Mul => Prim::Mul,
+                BinaryOp::And => Prim::And,
+                BinaryOp::Or => Prim::Or,
+                // The checker rejects a fold by any other operator, at its error.
+                _ => return None,
+            };
+            let identity = self.info.reduce.get(&levels[j].span).cloned();
+            t = Term::Fold {
+                family: Shared::new(t),
+                op: Shared::new(Term::PrimFn(op)),
+                identity: identity.map(|v| Shared::new(Term::Lit(v))),
+                depth,
+                ev: zed_kernel::term::Evidence::from([(
+                    "assoc".into(),
+                    zed_kernel::term::Grade::Axiom,
+                )]),
+            };
+            depth -= 1;
+        }
+        Some(t)
+    }
+
     fn member_call(&mut self, m: &mut M<'a>, mb: Member<'a>, x: Term) {
         let Member {
             name,
@@ -1785,6 +1925,11 @@ impl<'a> Elab<'a> {
                         zed_kernel::term::Grade::Axiom,
                     )]),
                 });
+                m.give(t);
+            }
+            Frame::Remap(e) => {
+                let got = m.got();
+                let t = self.remap_term(e, got);
                 m.give(t);
             }
             Frame::In(negated) => {

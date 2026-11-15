@@ -864,7 +864,7 @@ fn annot(a: &Annot) -> impl Iterator<Item = &Expr> {
 
 /// Gives `push` each expression directly in `kind`, except a block's, whose statements the
 /// walk takes.
-fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
+pub(super) fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
     match kind {
         ExprKind::Int { .. }
         | ExprKind::Float { .. }

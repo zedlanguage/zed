@@ -22,6 +22,8 @@ use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
 
+mod remap;
+
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
     check_text(unit, res, None)
@@ -449,6 +451,8 @@ pub(super) enum Frame<'a> {
     },
     /// A display's parts, each key then its value for a map (step L3.2).
     Display(Box<DisplayF<'a>>),
+    /// A remap, its source or a level being checked (DESIGN.md sec:remap_law).
+    Remap(Box<remap::RemapF<'a>>),
     /// `x.map(f)`, or `x.where(f)` when the flag is set, waiting for `f`: the type of `x` and
     /// the call's span (step L3.2).
     MapFn(Ty, Span, bool),
@@ -916,6 +920,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Tuple(s) => self.tuple_step(m, s),
             Frame::Display(s) => self.display_step(m, s),
+            Frame::Remap(s) => self.remap_step(m, s),
             Frame::MapFn(x, span, filter) => {
                 let f = m.take_arg();
                 let t = self.map_end(&x, f, span, filter);
@@ -2811,12 +2816,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 )
             }
             ExprKind::Range(..)
-            | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
             | ExprKind::For { .. } => unreachable!(
-                "name resolution rejects every range, remap, read, section outside `><`, and for before the checker reads the program"
+                "name resolution rejects every range, read, section outside `><`, and for before the checker reads the program"
             ),
+            ExprKind::Remap { .. } => self.remap_start(m, e),
             ExprKind::Array(items) | ExprKind::Set(items) => {
                 let kind = match &e.kind {
                     ExprKind::Array(_) => Display::Array,

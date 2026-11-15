@@ -27,33 +27,25 @@ fn resolved(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The errors of `text` that are not the refusal of the remap as a form of a later step.
-fn named(text: &str) -> Vec<String> {
-    resolved(text)
-        .into_iter()
-        .filter(|e| !e.starts_with("a remap `as` or `into` is part of"))
-        .collect()
-}
-
 #[test]
 fn the_binders_name_the_levels_in_the_keys() {
     assert_eq!(
-        named("m = 1;\nx = m as (k1 -> k2 -> v) into (k2 -> (k1, v) -> v);\n"),
+        resolved("m = 1;\nx = m as (k1 -> k2 -> v) into (k2 -> (k1, v) -> v);\n"),
         Vec::<String>::new()
     );
     assert_eq!(
-        named("m = 1;\nx = m as (k -> v) into (c -> v);\n"),
+        resolved("m = 1;\nx = m as (k -> v) into (c -> v);\n"),
         ["`c` is not defined. [c]"]
     );
 }
 
 #[test]
 fn the_binders_do_not_reach_past_the_remap() {
-    let es = named("m = 1;\nx = m as (k -> v) into (v -> k);\ny = k;\n");
+    let es = resolved("m = 1;\nx = m as (k -> v) into (v -> k);\ny = k;\n");
     assert_eq!(es.len(), 1, "{es:?}");
     assert!(es[0].starts_with("`k` is not defined."), "{es:?}");
     // `as` alone binds its names for no key: they are not in scope after it either.
-    let es = named("m = 1;\nx = m as (r -> v);\ny = v;\n");
+    let es = resolved("m = 1;\nx = m as (r -> v);\ny = v;\n");
     assert_eq!(es.len(), 1, "{es:?}");
     assert!(es[0].starts_with("`v` is not defined."), "{es:?}");
 }
@@ -62,24 +54,34 @@ fn the_binders_do_not_reach_past_the_remap() {
 fn the_source_and_the_reduction_operator_are_read_outside_the_binders() {
     // The source names an outer `m`, not the binder `m`.
     assert_eq!(
-        named("m = 1;\nx = m as (m -> v) into (v -> m);\n"),
+        resolved("m = 1;\nx = m as (m -> v) into (v -> m);\n"),
         Vec::<String>::new()
     );
-    let es = named("m = 1;\nx = q as (k -> v);\n");
+    let es = resolved("m = 1;\nx = q as (k -> v);\n");
     assert!(es[0].starts_with("`q` is not defined."), "{es:?}");
-    // `op` is no binder, and the binder `k` is not in scope at the `><`.
-    let es = named("m = 1;\nx = m as (a -> k -> v) into (a >< k -> v);\n");
+    // `op` is no binder, and the binder `k` is not in scope at the `><`. A fold by a function
+    // waits for a later step, and is refused naming that.
+    let es = resolved("m = 1;\nx = m as (a -> k -> v) into (a >< k -> v);\n");
+    assert_eq!(es.len(), 2, "{es:?}");
+    assert!(
+        es[0].starts_with("a reduction `><` by a function is part of"),
+        "{es:?}"
+    );
+    assert!(es[1].starts_with("`k` is not defined. [k]"), "{es:?}");
+    let es = resolved(
+        "m = 1;\nop(a: int, b: int) = a + b;\nx = m as (a -> k -> v) into (a >< op -> v);\n",
+    );
     assert_eq!(es.len(), 1, "{es:?}");
-    assert!(es[0].starts_with("`k` is not defined. [k]"), "{es:?}");
-    let es =
-        named("m = 1;\nop(a: int, b: int) = a + b;\nx = m as (a -> k -> v) into (a >< op -> v);\n");
-    assert_eq!(es, Vec::<String>::new());
+    assert!(
+        es[0].starts_with("a reduction `><` by a function is part of"),
+        "{es:?}"
+    );
 }
 
 #[test]
 fn a_binder_naming_a_type_is_rejected() {
     // Step L8.2a: the row "Binder naming a type" at the binders of a remap pattern.
-    let es = named("m = 1;\nx = m as (int -> v) into (v -> int);\n");
+    let es = resolved("m = 1;\nx = m as (int -> v) into (v -> int);\n");
     assert!(
         es.iter()
             .any(|e| e.starts_with("the pattern binder `int` names the type `int`")),
@@ -89,7 +91,7 @@ fn a_binder_naming_a_type_is_rejected() {
 
 #[test]
 fn a_binder_bound_twice_in_one_pattern_is_rejected() {
-    let es = named("m = 1;\nx = m as (k -> k -> v) into (k -> v);\n");
+    let es = resolved("m = 1;\nx = m as (k -> k -> v) into (k -> v);\n");
     assert!(
         es.iter()
             .any(|e| e.starts_with("`k` is already bound in this scope")),

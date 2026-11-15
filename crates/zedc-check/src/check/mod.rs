@@ -457,6 +457,28 @@ struct WideProduct<'a> {
     r: Built,
 }
 
+/// How a remap `m as (b1 -> … -> bn -> v) into (e1 -> … -> ek -> leaf)` elaborates
+/// (DESIGN.md sec:remap_law): a `reindex` of `m`'s leaves to the keypath of the key levels in
+/// `order`, then a `fold` of each level folded, innermost first, or for a truncation a
+/// `discard` that keeps the last key as a set leaf. Levels are counted by their place in the
+/// `into` pattern.
+#[derive(Clone, Debug)]
+pub struct RemapPlan {
+    /// The key levels in the order of the keypath built: the levels kept, in written order,
+    /// then the levels a `><` folds, in written order, so each fold is of the innermost level.
+    pub order: Vec<usize>,
+    /// How many levels of `order`, from the first, are kept.
+    pub kept: usize,
+    /// The operator of each folded level, by its level.
+    pub folds: HashMap<usize, BinaryOp>,
+    /// The level whose expression is the leaf; none for a truncation, whose last key is the
+    /// leaf, a set.
+    pub leaf: Option<usize>,
+    /// The catalog entry that witnesses the keypath map one-to-one (sec:grouping), or
+    /// `residue` for a truncation, whose keypaths keep the source's keys beneath.
+    pub witness: Arc<str>,
+}
+
 /// What the checker finds.
 #[derive(Clone, Debug, Default)]
 pub struct Info {
@@ -500,6 +522,9 @@ pub struct Info {
     /// Each fold `m >< (op)`, by its span: the identity of `op` at the carrier of the
     /// entries, the result of folding an empty level (step L3.2, DESIGN.md sec:reduction).
     pub reduce: HashMap<Span, Value>,
+    /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
+    /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
+    pub remaps: HashMap<Span, RemapPlan>,
     /// The type errors.
     pub errors: Vec<Error>,
     /// The sites of the literals that the errors of rows `UnfixedDecimal` and `LiteralCarrier`

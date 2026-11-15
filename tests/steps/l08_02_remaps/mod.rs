@@ -3,6 +3,12 @@
 //!
 //! `kernel` runs the kernel terms a remap elaborates to on the reference evaluator, so the
 //! rules and examples of the spec are checked on values before the source forms compile.
+//! `moves`, `collisions` and `names` write the same rules and examples in source form; they
+//! pass once the source forms compile (steps L3.2, L8.1, L8.2, L8.2a–c).
 //! COMPLETENESS.md lists each case and the test that covers it.
 
+mod collisions;
 mod kernel;
+mod moves;
+mod rules;
+mod source;
