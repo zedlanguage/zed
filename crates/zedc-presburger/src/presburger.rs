@@ -3305,7 +3305,8 @@ fn progression_meets(target: &Int, coef: &Int, offset: &OffsetHull, lo: &Int, hi
 
 /// Progression hulls of a flat chain of guarded unit maps. Exclusion refutes the chain.
 /// Membership decides it too when all guards are disjoint and all constraints were
-/// represented; otherwise a member may be a hole and main's methods continue.
+/// represented; otherwise a member may be a hole, and the chain is true where the walk back
+/// from the target (`chain_witness`) finds a point, else main's methods continue.
 // Complexity tradeoff: settle repeats n disjunct repairs over many rounds (wideik,
 // overlap2c). A topological incidence queue reads each binary definition O(1) times. Guard
 // endpoints update an associative product of bounded arithmetic progressions in a segment
@@ -3419,12 +3420,97 @@ fn by_chain_hulls(p: &Parts) -> Option<bool> {
                     (-&chain.initial_coef, -&chain.initial_offset)
                 };
                 if progression_meets(&(target - &shift), &coef, offset, &a, &b) {
-                    return positive.then_some(true);
+                    return (positive
+                        || chain.complete
+                            && chain_witness(&chain, &stages, &active, target, &a, &b))
+                    .then_some(true);
                 }
             }
         }
     }
     Some(false)
+}
+
+/// Whether one choice of an active map at each stage of `chain` carries an input in `a..=b`
+/// to `target`, found by walking back from `target`: at each stage, from the last, the first
+/// active map whose preimage of the value needed lies in the hull of the stages before it.
+/// A walk that reaches the input is a witness, so `true` is exact (with the chain complete,
+/// every twin of a stage takes the map the walk took, so all its variables get values); a
+/// walk that meets a hole of a hull stops with `false`, which decides nothing.
+// Complexity tradeoff: the walk is greedy, one step per stage with no backtracking, and
+// `by_chain_hulls` tries it once per question, in the first cell whose hull holds the target;
+// where the hull it follows has a hole at the chosen preimage, or only a later cell has a
+// point, it finds none, and the chain goes on to `pick` and the disjunction search as before
+// (which may refuse it, `Disjuncts`). The trigger is a stage whose two guards overlap, so
+// the stage's hull joins two maps. Naive version: the exact sets of values each stage
+// reaches, which with unit maps x -> x + c and x -> c - x hold up to O(n * C) values for
+// constants up to C (and with binary constants a subset sum), so O(n^2 * C) over the chain;
+// a walk in every cell that holds the target is O(cells * n), up to O(n^2). Used: the prefix
+// hulls (O(n) compositions) and one walk with one `progression_meets` per active map, O(n)
+// arithmetic operations. The hulls keep exact extrema and exact gcds of differences
+// (MapHull::compose), so holes lie only inside a progression. A complete method would need
+// the exact reachable sets in O(n log n), or a walk shared across cells. Tests: r5_hull_tests
+// `two_reflection_centers_with_a_point_are_answered_at_odd_lengths`,
+// `every_target_of_six_overlapping_steps_is_answered` (PRES-hull-odd-refusal); COMPLEXITY.md
+// row PRES-hull-witness; the chains left are plan row PRES-hull-random-refusals.
+fn chain_witness(
+    chain: &GuardedChain,
+    stages: &[HullStage],
+    active: &[Vec<bool>],
+    target: &Int,
+    a: &Int,
+    b: &Int,
+) -> bool {
+    // prefix[j] is the hull of the maps of stages 0..j.
+    let mut prefix = Vec::with_capacity(stages.len() + 1);
+    prefix.push(MapHull::identity());
+    for (stage, on) in stages.iter().zip(active) {
+        let mut value = MapHull::empty();
+        for (on, (_, choice)) in on.iter().zip(stage) {
+            if *on {
+                value.join(choice);
+            }
+        }
+        let next = MapHull::compose(&value, prefix.last().expect("identity pushed"));
+        prefix.push(next);
+    }
+    // Whether `y` is the value of some map of `hull` at the initial value of an input in a..=b.
+    let meets = |hull: &MapHull, y: &Int| {
+        hull.0.iter().enumerate().any(|(sign, offset)| {
+            let Some(offset) = offset else { return false };
+            let (coef, shift) = if sign == 0 {
+                (chain.initial_coef.clone(), chain.initial_offset.clone())
+            } else {
+                (-&chain.initial_coef, -&chain.initial_offset)
+            };
+            progression_meets(&(y - &shift), &coef, offset, a, b)
+        })
+    };
+    let mut y = target.clone();
+    for j in (0..stages.len()).rev() {
+        let next = stages[j].iter().zip(&active[j]).find_map(|((_, map), on)| {
+            if !*on {
+                return None;
+            }
+            // Each arm holds one map x -> x + c or x -> c - x; its preimage of y.
+            let (sign, offset) = map
+                .0
+                .iter()
+                .enumerate()
+                .find_map(|(s, o)| Some((s, o.as_ref()?)))?;
+            let before = if sign == 0 {
+                &y - &offset.lo
+            } else {
+                &offset.lo - &y
+            };
+            meets(&prefix[j], &before).then_some(before)
+        });
+        match next {
+            Some(before) => y = before,
+            None => return false,
+        }
+    }
+    meets(&prefix[0], &y)
 }
 
 mod cell_sweep {
@@ -28188,6 +28274,22 @@ mod r5_hull_tests {
     /// reached to one above the greatest. Returns the number of targets refused.
     fn overlapping_chain_agrees(n: usize, shift: bool) -> usize {
         let mut refused = 0;
+        let reach = chain_reach(n, shift);
+        let lo = *reach.first().expect("reachable point");
+        let hi = *reach.last().expect("reachable point");
+        for target in lo - 1..=hi + 1 {
+            let expected = reach.contains(&target);
+            match decide(&formula(n, target, shift)) {
+                Ok(actual) => assert_eq!(actual, expected, "n={n} shift={shift} target={target}"),
+                Err(_) => refused += 1,
+            }
+        }
+        refused
+    }
+
+    /// The values the chain of [`formula`] of `n` steps, shifted or not, reaches from some
+    /// input in its domain, by walking every input through every step.
+    fn chain_reach(n: usize, shift: bool) -> BTreeSet<i128> {
         let r = if shift { n as i128 } else { 20 };
         let mut reach = BTreeSet::new();
         for i in -r..=r {
@@ -28215,16 +28317,7 @@ mod r5_hull_tests {
             }
             reach.extend(values);
         }
-        let lo = *reach.first().expect("reachable point");
-        let hi = *reach.last().expect("reachable point");
-        for target in lo - 1..=hi + 1 {
-            let expected = reach.contains(&target);
-            match decide(&formula(n, target, shift)) {
-                Ok(actual) => assert_eq!(actual, expected, "n={n} shift={shift} target={target}"),
-                Err(_) => refused += 1,
-            }
-        }
-        refused
+        reach
     }
 
     #[test]
@@ -28260,6 +28353,29 @@ mod r5_hull_tests {
         for n in 1..=8 {
             assert_eq!(decide(&formula(n, 1, true)), Ok(false), "{n}");
         }
+    }
+
+    /// PRES-hull-odd-refusal: with the two reflection centers and `i` in -20..=20, the target
+    /// n/2 + 1 is reached at odd n from 19 on (and at every n below 20) and missed at even n
+    /// from 20 on. The hull of the chain holds the target at odd n but the guards of a stage
+    /// overlap, so the hull alone does not show a point; before the walk back from the target
+    /// (`chain_witness`) these were refused (`Disjuncts`, about 3 s each at 19, 21 and 23).
+    #[test]
+    fn two_reflection_centers_with_a_point_are_answered_at_odd_lengths() {
+        for n in [19, 20, 21, 22] {
+            let target = (n / 2 + 1) as i128;
+            let expected = chain_reach(n, false).contains(&target);
+            assert_eq!(expected, n % 2 == 1, "independent oracle at n={n}");
+            assert_eq!(decide(&formula(n, target, false)), Ok(expected), "n={n}");
+        }
+    }
+
+    /// The same walk answers every target of the chain of 6 steps, where 16 of the targets
+    /// were refused, each after about 0.4 s, before it (PRES-overlap-six-steps): the oracle
+    /// above refuses none at 6 steps.
+    #[test]
+    fn every_target_of_six_overlapping_steps_is_answered() {
+        assert_eq!(overlapping_chain_agrees(6, false), 0);
     }
 }
 #[cfg(test)]

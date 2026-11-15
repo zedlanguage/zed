@@ -20,6 +20,21 @@ fn different_reflection_centers_are_refuted_in_linear_work() {
     );
 }
 
+/// The odd lengths of the chain above, where the target is reached and a point is found by the
+/// walk back from the target (PRES-hull-odd-refusal): sizes 2m + 1 for m = 700 and 5600.
+#[test]
+fn different_reflection_centers_with_a_point_are_answered_in_linear_work() {
+    scaling::check_order(
+        "overlapping guards and two reflection centers, odd lengths",
+        700,
+        1,
+        |m| {
+            let n = 2 * m + 1;
+            assert_eq!(decide(&formula(n, (n / 2 + 1) as i128, false)), Ok(true));
+        },
+    );
+}
+
 #[test]
 fn shifts_with_gaps_are_refuted_in_linear_work() {
     scaling::check_order("even shifts and an odd target", 1600, 1, |n| {
