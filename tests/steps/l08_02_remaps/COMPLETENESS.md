@@ -35,7 +35,7 @@ this group when they pass.
 | `><` with `(++)`, in key order | sec:level_names, `labels` | `kernel::reduce_with_concatenation_in_key_order` | value checked |
 | `><` with `max` and `(*)` | sec:level_names, transfer and derived-name tables | `kernel::reduce_with_max_and_with_product` | value checked |
 | `><` with a lambda | sec:level_names, derived names | `kernel::reduce_with_a_lambda` | value checked |
-| `><` over an empty level, with and without an identity | sec:reduction, Boom table; bounds table row `m >< op` | `kernel::reduce_an_empty_level_with_and_without_an_identity` | value checked |
+| `><` over an empty level, with and without an identity | sec:reduction, obligations table; bounds table row `m >< op` | `kernel::reduce_an_empty_level_with_and_without_an_identity` | value checked |
 | Group by a derived key with the residue written | sec:grouping | `kernel::group_by_a_derived_key_with_the_residue_written` | value checked |
 | Word count: group, then fold | sec:tour_collections | `kernel::word_count_groups_then_folds` | value checked |
 | Scatter and gather as one grouping remap | sec:push_pull | `kernel::a_scatter_and_a_gather_are_one_grouping_remap` | value checked |
@@ -59,7 +59,7 @@ this group when they pass.
 | Pull through an injective rekey misses with `#notFound` off its image | sec:push_pull, conversion table | `kernel::an_injective_rekey_reads_back_with_not_found_off_its_image` | value checked |
 | Empty inner level keeps its key where the output can place it; transposed it is dropped | sec:remap_law; author Q4 | `kernel::an_empty_inner_level_keeps_its_key_where_the_output_can_place_it` | value checked; the warning `#emptyLevelDropped` needs EMPTY-level-swap |
 | Two sources: matrix product folds the shared level | sec:joins | `kernel::matrix_product_folds_the_shared_level` | value checked |
-| Collision message and its menu (truncate, residue, fold, witness, check) | sec:remap_law worked example; sec:diagnostics row "Collision (T-Reindex)" | none | source test pending |
+| Collision message and its menu (truncate, residue, fold, witness, check) | sec:remap_law worked example; sec:diagnostics row "Collision" | none | source test pending |
 | Remap output name that names a source level and a value in scope | sec:diagnostics row | none | source test pending |
 | Level names through remaps and derived names | sec:level_names | none | source test pending (L8.2b); names have no kernel form |
 | Named slicing `m[n: k]`, several names, unknown name | sec:level_names | misses only, above | source test pending (L8.2c) |
