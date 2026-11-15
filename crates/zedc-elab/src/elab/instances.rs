@@ -22,15 +22,27 @@
 //! ([`Elab::check_dropped`](super::state::Elab::check_dropped),
 //! PROOF-block-body-kept-when-named), never left to run with the name unbound.
 //!
+//! A function used as a value takes bodies the same way (REDUCE-generic-identity-values): a
+//! name bound to such a function, `f = top`, stands for it ([`Instancing::alias`]); a lambda
+//! bound to a name in a block, `f = x -> top(x)`, is a [`Local`] whose calls decide the folds
+//! its written body leaves undecided; a function passed to a call that decides its folds and
+//! whose result does not hold it, as `top` in `ap(top, m["a"])` or `x -> top(x)` there, is
+//! the body made at that call's identities ([`Instancing::value_at`], `Info::escaping_calls`).
+//! Where calls deciding one fold at two identities are both in force at a use, as in
+//! `mi.map(q -> m.map(r -> (top(r), top(q))))`, the use takes the identity of the call that
+//! checked it (`Info::fold_reads`, `Elab::env_identity`).
+//!
 //! What stays refused, as "not compiled yet": a fold whose identity no call decides where it
-//! is elaborated (a function passed as a value, a block's function named as a value at two
-//! identities, a lambda other than one a built-in runs in place, whose bodies take no
-//! identity from around them, a default that folds), a read where two
-//! identities for one fold are in force (a `.map` at `f64` inside one at `int`, both folding
-//! by one `top`), and a call whose decided folds are not all its callee's. Each such
-//! fold is recorded where it is met ([`Instancing::undecided`]); the definitions it lands in
-//! are refused when the unit reaches them, and a decided call no elaboration took is refused
-//! at once ([`Elab::check_instances`](super::state::Elab::check_instances)).
+//! is elaborated (a function the result of a call holds, run later at another identity, as
+//! `p[1]` of `p = h3(x -> top(x), m["a"])` for `h3(f, y) = (f(y), f)`, which needs the
+//! identity passed when the program runs, row REDUCE-identity-escaping-values; a block's
+//! function named as a value other than as an argument of such a call; a default that
+//! folds), a use where calls of different identities for one fold are in force and none
+//! or several of different identities checked it, and a call whose decided folds are not all
+//! its callee's. Each such fold is recorded where it is met ([`Instancing::undecided`]); the
+//! definitions it lands in are refused when the unit reaches them, and a decided call no
+//! elaboration took is refused at once
+//! ([`Elab::check_instances`](super::state::Elab::check_instances)).
 //!
 //! The work is in three files whose imports form no cycle (step S.1f): this one holds the
 //! state, which [`state`](super::state) keeps in the elaborator and which imports nothing of
@@ -62,9 +74,24 @@ pub(super) struct Instancing<'a> {
     pub(super) made: HashMap<(usize, Vec<Option<Value>>), Arc<str>>,
     /// The bodies to make: binder, kernel name, identities.
     pub(super) queue: Vec<(usize, Arc<str>, Env)>,
-    /// For each fold of `env` that a built-in call put there
-    /// ([`Elab::enter_expr`](super::state::Elab::enter_expr)), that call's span.
-    pub(super) provider: HashMap<Span, Span>,
+    /// The identities the calls around the expression being elaborated put in force for the
+    /// code within them ([`Elab::enter_expr`](super::state::Elab::enter_expr)), by fold.
+    pub(super) pushed: HashMap<Span, InForce>,
+    /// The calls that checked each use of a fold whose calls decide it, by fold and use
+    /// ([`zedc_check::check::Info::fold_reads`]), only those whose span holds the use's: no
+    /// other call is in force at the use.
+    pub(super) checked_by: HashMap<(Span, Span), Vec<Span>>,
+    /// Each name bound by `=` to a function whose calls decide folds, or to another such name,
+    /// as `f` of `f = top`, by its binder: the function's binder. A call of the name is a call
+    /// of the function, and the binding is not made (REDUCE-generic-identity-values).
+    pub(super) alias: HashMap<usize, usize>,
+    /// Each name of such a function passed directly to a call that decides its folds and lets
+    /// no function passed to it run after it returns, by the name's span: the call's span. The
+    /// name stands for the body made at that call's identities.
+    pub(super) value_at: HashMap<Span, Span>,
+    /// Each name of a lambda bound in a block ([`Local`]) that a call calls, by the name's
+    /// span: the call's span, whose identities choose the lambda's body.
+    pub(super) callee_at: HashMap<Span, Span>,
     /// The entries of [`zedc_check::check::Info::fold_calls`] elaboration took, by call and
     /// fold: at a call of the function whose body runs the fold
     /// ([`Elab::fkernel`](super::state::Elab::fkernel)), or by a read of the fold that found
@@ -130,6 +157,13 @@ pub(super) struct Local<'a> {
     pub(super) written: Vec<Span>,
     /// The entry of `local_at` for the binder before this one.
     pub(super) prev: Option<usize>,
+    /// For a lambda bound to a name, as `f = x -> top(x)`: the length of
+    /// [`Instancing::undecided`] when its written body started, and once it ends, the folds
+    /// that body left undecided, sorted, each once, which its calls decide in place of
+    /// [`zedc_check::check::Info::split_needs`], which holds declared functions only. None
+    /// for a declared function.
+    pub(super) from: usize,
+    pub(super) key: Option<Vec<Span>>,
 }
 
 #[cfg(test)]
@@ -140,6 +174,58 @@ thread_local! {
     pub(super) static MISS_WRITTEN_NAMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The calls in force around the expression being elaborated that decide one fold
+/// ([`Instancing::pushed`]). Calls are entered and left in nested order.
+// Complexity tradeoff: O(1) expected to enter or leave a call and to find the identity of a
+// call in force, and each call is taken at most once while in force ([`InForce::take`]), so a
+// use costs O(c) for the c calls that checked it, whatever the depth d of the calls in force.
+// The naive form, a stack of (call, identity) searched at each use, costs O(d) per use, so
+// O(d²) for a nest of d `.map` calls each reading the fold (measured 10.6x at 8n, depth 50 to
+// 400, in instructions).
+#[derive(Default)]
+pub(super) struct InForce {
+    /// Each call's identity, by call.
+    at: HashMap<Span, Option<Value>>,
+    /// The calls not yet taken, by identity, each list in the order entered. Keyed by the
+    /// value's hash (`impl Hash for Value`, an assumption documented there): were two equal
+    /// identities to hash apart, a call would stay untaken and `check_instances` refuse the
+    /// program, not run it at a wrong identity.
+    open: HashMap<Option<Value>, Vec<Span>>,
+}
+
+impl InForce {
+    /// Puts the call `c` in force, at identity `v`.
+    pub(super) fn enter(&mut self, c: Span, v: Option<Value>) {
+        self.open.entry(v.clone()).or_default().push(c);
+        self.at.insert(c, v);
+    }
+
+    /// Ends the call `c`, the last entered of those in force. Whether none is left.
+    pub(super) fn leave(&mut self, c: Span) -> bool {
+        let v = self
+            .at
+            .remove(&c)
+            .expect("a call's entry stays in force until it is left");
+        // Calls nest, so `c` is the last of its list if no use took it.
+        if let Some(open) = self.open.get_mut(&v)
+            && open.last() == Some(&c)
+        {
+            open.pop();
+        }
+        self.at.is_empty()
+    }
+
+    /// The identity of the call `c`, if it is in force.
+    pub(super) fn get(&self, c: &Span) -> Option<&Option<Value>> {
+        self.at.get(c)
+    }
+
+    /// Takes the calls in force at identity `v` not taken before: each is taken once.
+    pub(super) fn take(&mut self, v: &Option<Value>) -> Vec<Span> {
+        self.open.get_mut(v).map(std::mem::take).unwrap_or_default()
+    }
+}
+
 /// The written body of a block's function that no term that runs names, left out of the block:
 /// the function's declaration and the folds its written body left undecided.
 pub(super) struct Dropped<'a> {
@@ -148,12 +234,34 @@ pub(super) struct Dropped<'a> {
 }
 
 impl<'a> Instancing<'a> {
-    pub(super) fn new(next: usize) -> Self {
+    pub(super) fn new(next: usize, fold_reads: &HashSet<(Span, Span, Span)>) -> Self {
+        // Only the entries whose call holds the read in its text are kept. Proof that no
+        // other call is ever in force at the read, so nothing it could decide is lost:
+        // `pushed` gains entries only in `Elab::enter_expr` at a call `e`, which also pushes
+        // `Frame::Env`, and loses them when that frame runs; `Elab::run` drains its stack
+        // with no early exit, failures included, so the frame always runs, after the jobs of
+        // `e`'s subexpressions only, whose spans lie in `e`'s. Every walk of other text in
+        // between starts with `pushed` empty, case by case: a lambda not run in place
+        // (`Elab::clear_env` in `enter_expr`); a block function's declaration (`clear_env`
+        // in `Elab::stmt`); a body made at a call, of a function, an alias of one, a function
+        // value or a bound lambda (`Elab::instance_body` takes `pushed`). A lambda run in
+        // place is an argument of the call around it. With no split fold `enter_expr` never
+        // runs, and `pushed` stays empty.
+        let mut checked_by: HashMap<(Span, Span), Vec<Span>> = HashMap::new();
+        for &(call, site, read) in fold_reads {
+            if call.start <= read.start && read.end <= call.end {
+                checked_by.entry((site, read)).or_default().push(call);
+            }
+        }
         Instancing {
             env: HashMap::new(),
             made: HashMap::new(),
             queue: Vec::new(),
-            provider: HashMap::new(),
+            pushed: HashMap::new(),
+            checked_by,
+            alias: HashMap::new(),
+            value_at: HashMap::new(),
+            callee_at: HashMap::new(),
             consumed: HashSet::new(),
             in_place: HashSet::new(),
             opaque: 0,
@@ -172,8 +280,9 @@ impl<'a> Instancing<'a> {
     }
 
     /// Starts the written body of the function `id` declared in a block by `stmt`, whose
-    /// calls decide folds.
+    /// calls decide folds, or of the lambda `stmt` binds to `id`.
     pub(super) fn declare_local(&mut self, id: usize, stmt: &'a Stmt) {
+        let from = self.undecided.len();
         let i = self.locals.len();
         let prev = self.local_at.insert(id, i);
         self.writing.push(i);
@@ -187,7 +296,48 @@ impl<'a> Instancing<'a> {
             names: Vec::new(),
             written: Vec::new(),
             prev,
+            from,
+            key: None,
         });
+    }
+
+    /// Ends the written body of the lambda `stmt` binds, if it is a block's [`Local`] being
+    /// written. Its calls decide the folds it left undecided, which are refused only if the
+    /// written body is named; with none left undecided it is no [`Local`], and the binding
+    /// stays as written.
+    pub(super) fn end_bound(&mut self, stmt: &Stmt) {
+        let Some(&i) = self.writing.last() else {
+            return;
+        };
+        if !std::ptr::eq(self.locals[i].stmt, stmt) {
+            return;
+        }
+        self.writing.pop();
+        let mut sites = self.undecided.split_off(self.locals[i].from);
+        sites.sort_unstable();
+        sites.dedup();
+        if sites.is_empty() {
+            // The block's own functions declared inside the lambda were placed when their
+            // blocks ended, so it is the last.
+            assert_eq!(
+                i + 1,
+                self.locals.len(),
+                "a lambda's body ends after its blocks"
+            );
+            let l = self.locals.pop().expect("the lambda's entry");
+            match l.prev {
+                Some(p) => self.local_at.insert(l.id, p),
+                None => self.local_at.remove(&l.id),
+            };
+            // The written bodies it names are named where it is written.
+            for j in l.names {
+                let id = self.locals[j].id;
+                self.written_named(id);
+            }
+            return;
+        }
+        self.locals[i].key = Some(sites.clone());
+        self.locals[i].written = sites;
     }
 
     /// Ends the written body of the block's function `id`, if its body is the one being

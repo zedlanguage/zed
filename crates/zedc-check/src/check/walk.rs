@@ -3745,6 +3745,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let call = self.call_frames.last().and_then(|f| f.call);
+        if let Some(call) = call {
+            self.saw_uses(call, site);
+        }
         let seen = self.folds.entry(site).or_default();
         if !seen.carriers.iter().any(|(c, _)| *c == carrier) {
             seen.carriers.push((carrier, identity.clone()));
@@ -3924,8 +3927,24 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         match self.call_frames.last().and_then(|f| f.call) {
-            Some(call) => self.folds.entry(site).or_default().empty.push(call),
+            Some(call) => {
+                self.saw_uses(call, site);
+                self.folds.entry(site).or_default().empty.push(call)
+            }
             None => self.saw_fold(site, None, None),
+        }
+    }
+
+    /// Records the uses a check of the fold at `site` made at `call` passed through: the fold
+    /// itself and each need [`Ck::meet`] is checking ([`Info::fold_reads`]).
+    // Complexity tradeoff: O(d) set inserts for a chain of d needs per check, as the check
+    // itself walks those d needs; recording only the chain's ends would cost O(1) but leave a
+    // lambda's use passed through a function's parameter, as `x -> top(x)` in
+    // `ap(x -> top(x), m["a"])`, unrecorded.
+    fn saw_uses(&mut self, call: Span, site: Span) {
+        self.fold_uses.insert((call, site, site));
+        for &u in &self.need_chain {
+            self.fold_uses.insert((call, site, u));
         }
     }
 
@@ -3936,6 +3955,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         if let Some(call) = self.call_frames.last().and_then(|f| f.call) {
+            self.saw_uses(call, site);
             self.folds.entry(site).or_default().unfolded.push(call);
         }
     }
@@ -9367,7 +9387,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let key = (kind, gives);
-        if let Some(result) = self.classes[r].known.get(&key) {
+        if let Some((result, first)) = self.classes[r].known.get(&key) {
+            if !self.trying && *first != span {
+                self.same_use.push((span, *first));
+            }
             return result.clone();
         }
         let (kind, _) = key;
@@ -9405,7 +9428,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         class.uses.push((seq, need.clone()));
         let given = result.clone().unwrap_or_else(Ty::empty);
-        class.known.insert((need.kind.clone(), gives), given);
+        class
+            .known
+            .insert((need.kind.clone(), gives), (given, span));
         class.data |= data;
         for v in &flowed {
             self.check_on(&need, &v.ty, v.at, Some(v));
@@ -9604,6 +9629,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Gives what the use gives; `binds` are as they were.
     fn meet(&mut self, n: &Need, on: &Ty, binds: &mut Binds, span: Span) -> Ty {
         let on = self.bound(on, binds);
+        self.need_chain.push(n.span);
         self.replaying += 1;
         self.need_args = match &n.kind {
             NeedKind::Call { positional, .. } => {
@@ -9705,6 +9731,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         };
         self.replaying -= 1;
+        self.need_chain.pop();
         self.need_args = None;
         self.need_from = None;
         // Each argument the use's applications passed atoms of by is named by the variables
@@ -17457,11 +17484,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
         }) {
             let result = close(&arrow.result.replace(&binds), sig, |v| self.is_class(v));
+            // A function passed to a call that leaves parameters open, or whose result holds a
+            // function with needs, may run after the call returns (`Info::escaping_calls`).
+            if !self.trying && (partial || type_holds_needs(&result)) {
+                self.escapes.insert(span);
+            }
             out = out.union(&match partial {
                 true => result,
                 false => {
                     let needs = left.iter().map(|n| n.replace(&binds)).collect();
                     let (held, now) = hold(&result, needs, |v| self.is_class(v));
+                    if !self.trying && type_holds_needs(&held) {
+                        self.escapes.insert(span);
+                    }
                     self.call_frames.extend(frame);
                     self.replay(what, &now, &mut binds, BTreeSet::new(), span);
                     self.call_frames.pop();
@@ -20483,6 +20518,25 @@ fn holds_needs(s: &Sig) -> bool {
         }
         let fns = s.arrows.iter().flat_map(|a| a.result.fns.iter());
         stack.extend(fns.map(|g| &**g).filter(|g| seen.insert(*g)));
+    }
+    false
+}
+
+/// Whether a function in `t`, or in a component of a tuple in it at any depth, holds needs
+/// ([`holds_needs`]): a value of type `t` may hold a function whose folds a later call
+/// decides (`Info::escaping_calls`). Cost: each tuple row visited once, kept by its address in
+/// `seen`, and each function as [`holds_needs`] visits it; an explicit stack, since tuples
+/// nest as deep as the text.
+fn type_holds_needs(t: &Ty) -> bool {
+    let mut stack = vec![t];
+    let mut seen: HashSet<*const Ty> = HashSet::new();
+    while let Some(t) = stack.pop() {
+        if t.fns.iter().any(|s| holds_needs(s)) {
+            return true;
+        }
+        for row in t.tuples.iter() {
+            stack.extend(row.iter().filter(|c| seen.insert(*c as *const Ty)));
+        }
     }
     false
 }

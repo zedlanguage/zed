@@ -551,6 +551,18 @@ pub struct Info {
     /// by its binder: those folds' spans, sorted, each once. These are the folds a call of
     /// the function decides the identity of.
     pub split_needs: HashMap<usize, Vec<Span>>,
+    /// For each entry of [`Self::fold_calls`], each use the check of the fold passed through
+    /// on its way from the call: call, fold, use. A use is a call in a body, as `top(r)` in
+    /// `m.map(r -> top(r))` checked at the call of `map`, or the fold itself. Where two calls
+    /// that decide one fold are in force at a use, as in
+    /// `mi.map(q -> m.map(r -> (top(r), top(q))))`, the use takes the identity of the call
+    /// that checked it there (REDUCE-generic-identity-values).
+    pub fold_reads: HashSet<(Span, Span, Span)>,
+    /// Each call of [`Self::fold_calls`] whose result holds a function with needs, or that
+    /// leaves parameters open: a function passed to it may run after it returns, at
+    /// identities other calls decide, so a function passed to it takes none of its identities
+    /// (REDUCE-generic-identity-values).
+    pub escaping_calls: HashSet<Span>,
     /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
     /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
     pub remaps: HashMap<Span, RemapPlan>,
@@ -1319,7 +1331,8 @@ struct Class {
     // new use, O(n) a use and O(n^2) for n uses of one class (a parameter destructured into n
     // names). Used: a hash map by kind, O(1) a use plus hashing the kind; classes merge the
     // smaller map into the larger. Tradeoff: one entry per distinct use beside `uses`.
-    known: HashMap<(NeedKind, bool), Ty>,
+    /// With each result, the span of the use that recorded it ([`Ck::same_use`]).
+    known: HashMap<(NeedKind, bool), (Ty, Span)>,
     /// The index in `uses` of each `NeedKind::Order` use by its word, its side and its site:
     /// the uses of one site are one use, of the union of their other operands joined one
     /// shape per length, as `min` and `max` join them (DESIGN.md sec:reduction, item 5).
@@ -1624,6 +1637,24 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
+    /// The spans of the needs [`Ck::meet`] is checking, outermost first: the uses in the
+    /// bodies a check of a fold passes through on its way from the call that meets it
+    /// (REDUCE-generic-identity-values, [`Info::fold_reads`]).
+    need_chain: Vec<Span>,
+    /// Each fold checked at a call, with each use on the way to it: call, fold, use; the
+    /// fold's own span among the uses. [`Ck::finish`] keeps those of split folds in
+    /// [`Info::fold_reads`].
+    fold_uses: HashSet<(Span, Span, Span)>,
+    /// Each use that met a need its class had already recorded, with the use that recorded
+    /// it (`Ck::need`): the second `top(q)` of `(top(q), m.map(r -> top(q)))` records no need
+    /// of its own, so a check of the fold passes through the first only. Every check of the
+    /// first is one of the second, as both are the one need of one class, so
+    /// [`Ck::finish`] gives the second each entry of the first in [`Info::fold_reads`].
+    same_use: Vec<(Span, Span)>,
+    /// Each call whose result holds a function with needs, or which leaves parameters open:
+    /// a function passed to it may be called after it returns
+    /// ([`Info::escaping_calls`]).
+    escapes: HashSet<Span>,
     /// Each remap whose source held a class when it was walked, by its span: its key
     /// expressions are checked when a [`NeedKind::Remap`] need on the class is checked, at the
     /// type that flows into the class. Every need is made by the checker of one program
@@ -1946,6 +1977,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             bound: Vec::new(),
             needs: 0,
             replaying: 0,
+            need_chain: Vec::new(),
+            fold_uses: HashSet::new(),
+            same_use: Vec::new(),
+            escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
             folds: BTreeMap::new(),
             refused: Vec::new(),
@@ -4393,6 +4428,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         for folds in self.info.fold_calls.values_mut() {
             folds.sort_unstable_by_key(|(s, _)| *s);
         }
+        // The uses and the escaping calls of the split folds' calls, for elaboration
+        // (REDUCE-generic-identity-values). One pass over each set, O(u + e), and one over
+        // the uses that repeat a need, O(s), each repeat taking the entries of the use it
+        // repeats: O(u + e + s + r) for r entries added.
+        let split = &self.info.split_folds;
+        let mut repeats: HashMap<Span, Vec<Span>> = HashMap::new();
+        for (later, first) in std::mem::take(&mut self.same_use) {
+            repeats.entry(first).or_default().push(later);
+        }
+        let mut reads = HashSet::new();
+        for (call, site, u) in std::mem::take(&mut self.fold_uses) {
+            if !split.contains_key(&site) {
+                continue;
+            }
+            for &later in repeats.get(&u).into_iter().flatten() {
+                reads.insert((call, site, later));
+            }
+            reads.insert((call, site, u));
+        }
+        self.info.fold_reads = reads;
+        self.info.escaping_calls = (std::mem::take(&mut self.escapes).into_iter())
+            .filter(|c| self.info.fold_calls.contains_key(c))
+            .collect();
         // The folds each declared function's calls decide, from its signature's needs.
         // Complexity tradeoff: one pass over every need of every signature, O(n log n) for n
         // needs with the sort, against a pass over the signatures for each split fold,
@@ -4406,6 +4464,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             for (&id, sig) in &self.info.sigs {
                 let mut sites: Vec<Span> = Vec::new();
                 let mut seen: HashSet<*const Sig> = HashSet::new();
+                let mut parts: HashSet<*const Ty> = HashSet::new();
                 let mut todo: Vec<&Sig> = vec![sig];
                 while let Some(s) = todo.pop() {
                     for n in &s.needs {
@@ -4415,11 +4474,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                         {
                             sites.push(site);
                         }
-                        for t in n.tys() {
+                        // A function held in a tuple, at any depth, is searched as one held
+                        // alone (REDUCE-generic-identity-values, form 3): `(f(y), f)` holds `f`.
+                        let mut tys: Vec<&Ty> = n.tys().collect();
+                        while let Some(t) = tys.pop() {
                             for f in t.fns.iter() {
                                 if seen.insert(Arc::as_ptr(f)) {
                                     todo.push(f);
                                 }
+                            }
+                            for row in t.tuples.iter() {
+                                tys.extend(row.iter().filter(|c| parts.insert(*c as *const Ty)));
                             }
                         }
                     }

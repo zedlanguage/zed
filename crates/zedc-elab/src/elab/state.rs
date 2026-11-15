@@ -117,7 +117,7 @@ impl<'a> Elab<'a> {
             sited: HashSet::new(),
             outputs,
             dropped: None,
-            inst: Instancing::new(res.binders.len() + 1),
+            inst: Instancing::new(res.binders.len() + 1, &info.fold_reads),
         }
     }
 
@@ -228,10 +228,13 @@ impl<'a> Elab<'a> {
                 Some(Term::Lit(Value::str(&self.t.res.binders[ids[0]].name)))
             }
             Some(Ref::Bound(ids)) => {
-                // A block's function named as a value runs its written body
+                // A name bound to a function stands for it (`Instancing::alias`); one called,
+                // or passed to a call that decides its folds, was taken by `Elab::named`. A
+                // block's function named as a value otherwise runs its written body
                 // (REDUCE-generic-identity-rest, `instances::Local`).
-                self.inst.written_named(ids[0]);
-                Some(Term::Var(self.names[ids[0]].clone()))
+                let id = self.target(ids[0]);
+                self.inst.written_named(id);
+                Some(Term::Var(self.names[id].clone()))
             }
             Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
             // `main::files` outside `main`: a read of the port `main` opens under that name.
@@ -280,11 +283,19 @@ impl<'a> Elab<'a> {
             })
     }
 
-    /// The declared function that `e` names, if it names exactly one.
+    /// The function a name bound by `=` to a function stands for
+    /// ([`Instancing::alias`](super::instances::Instancing::alias)), or `id` itself.
+    pub(super) fn target(&self, id: usize) -> usize {
+        self.inst.alias.get(&id).copied().unwrap_or(id)
+    }
+
+    /// The declared function that `e` names, directly or through names bound to it
+    /// (`Instancing::alias`), if it names exactly one.
     pub(super) fn declared(&self, e: &Expr) -> Option<usize> {
         match (&e.kind, self.t.res.uses.get(&e.span)) {
             (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => {
-                self.t.funcs.contains_key(&ids[0]).then_some(ids[0])
+                let id = self.target(ids[0]);
+                self.t.funcs.contains_key(&id).then_some(id)
             }
             _ => None,
         }

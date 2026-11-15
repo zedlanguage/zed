@@ -431,6 +431,38 @@ impl<'a> Elab<'a> {
         m.t()
     }
 
+    /// The term of the name `n` at `span`. A name of a function (or of a name bound to one,
+    /// `Instancing::alias`) that is called, or passed to a call that decides its folds, is the
+    /// body made at that call's identities (REDUCE-generic-identity-values,
+    /// `Instancing::callee_at`, `Instancing::value_at`); any other name is [`Elab::name`]'s.
+    /// Here rather than in `name`, so that state.rs, which holds `Elab`, calls nothing of
+    /// identities.rs, which imports it (step S.1f).
+    fn named(&mut self, n: &str, span: Span) -> Option<Term> {
+        if let Some(Ref::Bound(ids)) = self.t.res.uses.get(&span)
+            && ids.len() == 1
+        {
+            let id = self.target(ids[0]);
+            if let Some(at) = self.inst.callee_at.remove(&span) {
+                return Some(Term::Var(self.fkernel(id, at)));
+            }
+            if let Some(at) = self.inst.value_at.remove(&span) {
+                return Some(Term::Var(self.value_kernel(id, at)));
+            }
+        }
+        self.name(n, span)
+    }
+
+    /// The term of the expression `e` alone: the lambda of a binding `f = x -> …` made at the
+    /// fold identities `self.inst.env` holds (`Elab::instance_body`).
+    fn expr_term(&mut self, e: &'a Expr) -> Option<Term> {
+        let mut m = M {
+            stack: vec![Job::Expr(e)],
+            ret: Ret::None,
+        };
+        self.run(&mut m);
+        m.t()
+    }
+
     /// Ends a block whose functions from `mark` on in `inst.locals` are its own: makes the
     /// bodies their calls queued (`Self::fkernel`), and those the bodies' calls queue in turn,
     /// and binds each in the block's bindings `s` after the function's written body. The folds
@@ -529,8 +561,8 @@ impl<'a> Elab<'a> {
         Some((placed, last))
     }
 
-    /// The body of the function `id`, declared by `s`, at the identities `env`, as a lambda,
-    /// with the folds it left undecided. Each binder of the function's statement other than
+    /// The body of the function `id`, declared by `s` or bound by `s` to a lambda, at the
+    /// identities `env`, as a lambda, with the folds it left undecided. Each binder of the function's statement other than
     /// the function's own is given a fresh kernel name while its body is elaborated, as
     /// kernel names are unique in the unit (stage `mix` and a default's `let` rely on it),
     /// then given back.
@@ -545,8 +577,11 @@ impl<'a> Elab<'a> {
         s: &'a Stmt,
         env: Env,
     ) -> (Option<Term>, Vec<Span>) {
-        let StmtKind::Function(f) = &s.kind else {
-            unreachable!("an instanced function is a declaration")
+        // A declared function, or a lambda bound to a name (`Instancing::end_bound`).
+        let (f, value) = match &s.kind {
+            StmtKind::Function(f) => (Some(f), None),
+            StmtKind::Bind { value, .. } => (None, Some(value)),
+            _ => unreachable!("an instanced function is a declaration or a binding"),
         };
         if self.inst.by_start.is_empty() {
             let mut by_start: Vec<_> = (self.t.res.binders.iter().enumerate())
@@ -573,7 +608,7 @@ impl<'a> Elab<'a> {
             map.insert(old.clone(), fresh);
             given_back.push((b, old));
         }
-        let defaults: Vec<(usize, Term)> = (0..f.params.len())
+        let defaults: Vec<(usize, Term)> = (0..f.map_or(0, |f| f.params.len()))
             .filter_map(|j| Some((j, self.defaults.get(&(id, j))?.clone())))
             .collect();
         for (j, t) in &defaults {
@@ -583,16 +618,28 @@ impl<'a> Elab<'a> {
         // The body's identities came from its call, which took them ([`Self::fkernel`]):
         // no built-in call around the body provides them.
         let outer = mem::replace(&mut self.inst.env, env);
-        let providers = mem::take(&mut self.inst.provider);
+        let pushed = mem::take(&mut self.inst.pushed);
         let opaque = mem::replace(&mut self.inst.opaque, 0);
         let mark = self.inst.undecided.len();
-        let body = self.body_term(f);
-        let params: Vec<Arc<str>> = (f.params.iter())
-            .map(|p| self.names[self.id(p.span, &p.name)].clone())
-            .collect();
+        let term = match (f, value) {
+            (Some(f), _) => {
+                let body = self.body_term(f);
+                let params: Vec<Arc<str>> = (f.params.iter())
+                    .map(|p| self.names[self.id(p.span, &p.name)].clone())
+                    .collect();
+                body.map(|body| Term::Lam(params, Shared::new(body)))
+            }
+            // The lambda takes the identities of `env`, as a lambda a built-in runs in place
+            // takes those of its call.
+            (None, Some(value)) => {
+                self.inst.in_place.insert(value.span);
+                self.expr_term(value)
+            }
+            (None, None) => unreachable!("a declaration or a binding"),
+        };
         let sites = self.inst.undecided.split_off(mark);
         self.inst.env = outer;
-        self.inst.provider = providers;
+        self.inst.pushed = pushed;
         self.inst.opaque = opaque;
         self.reads = reads;
         for (j, t) in defaults {
@@ -601,7 +648,6 @@ impl<'a> Elab<'a> {
         for (b, old) in given_back {
             self.names[b] = old;
         }
-        let term = body.map(|body| Term::Lam(params, Shared::new(body)));
         (term, sites)
     }
 
@@ -708,7 +754,26 @@ impl<'a> Elab<'a> {
             | StmtKind::While(_)
             | StmtKind::Until(_)
             | StmtKind::Expr(_) => unreachable!("resolve rejects the forms of layer L6"),
-            StmtKind::Bind { value, .. } => {
+            StmtKind::Bind { value, targets } => {
+                if let [Target::Name(n, _)] = &targets[..]
+                    && !self.info.split_folds.is_empty()
+                {
+                    let id = self.id(s.span, n);
+                    // `f = top`: a call of `f` is a call of `top`, which takes a body at the
+                    // call's identities, and the binding is not made
+                    // (REDUCE-generic-identity-values).
+                    if let Some(to) = self.instanced(value) {
+                        self.inst.alias.insert(id, to);
+                        m.ret = Ret::Stmt(Some(Vec::new()));
+                        return;
+                    }
+                    // `f = x -> top(x)` in a block: its calls decide the folds its written
+                    // body leaves undecided, as a block's declared function's do
+                    // (`Instancing::end_bound`).
+                    if !top && matches!(value.kind, ExprKind::Lambda { .. }) {
+                        self.inst.declare_local(id, s);
+                    }
+                }
                 m.k(Frame::Bind(s));
                 m.stack.push(Job::Expr(value));
             }
@@ -1100,7 +1165,7 @@ impl<'a> Elab<'a> {
                 m.seq(holes.collect(), true);
                 return;
             }
-            ExprKind::Name(n) => self.name(n, e.span),
+            ExprKind::Name(n) => self.named(n, e.span),
             ExprKind::Unary(op, a) => {
                 let p = match op {
                     UnaryOp::Neg => Prim::Neg,
@@ -1363,6 +1428,11 @@ impl<'a> Elab<'a> {
             let f = self.t.funcs[&id];
             self.call_with(m, Callee::Declared(id, f), None, call);
             return;
+        }
+        // A lambda bound in a block takes the body made at this call's identities
+        // (`Elab::name`).
+        if self.instanced(callee).is_some() {
+            self.inst.callee_at.insert(callee.span, call.span);
         }
         m.k(Frame::CallOf(call));
         m.stack.push(Job::Expr(callee));
@@ -2046,14 +2116,18 @@ impl<'a> Elab<'a> {
                  definitions that share a name. Give each of them a name of its own.",
                 ids.len()
             ),
-            Some(Ref::Bound(ids)) if self.t.funcs.contains_key(&ids[0]) => {
-                let (id, f) = (ids[0], self.t.funcs[&ids[0]]);
+            Some(Ref::Bound(ids)) if self.t.funcs.contains_key(&self.target(ids[0])) => {
+                let id = self.target(ids[0]);
+                let f = self.t.funcs[&id];
                 m.k(Frame::MemberEnd(wrap));
                 self.call_with(m, Callee::Declared(id, f), Some(receiver), call);
                 return;
             }
             Some(Ref::Bound(ids)) => {
-                let f = Term::Var(self.names[ids[0]].clone());
+                // A name bound to a lambda in a block takes the body made at this call's
+                // identities (`Elab::fkernel`); any other names its written body.
+                let id = self.target(ids[0]);
+                let f = Term::Var(self.fkernel(id, call.span));
                 m.k(Frame::MemberEnd(wrap));
                 self.call_value(m, f, Some(receiver), call);
                 return;
@@ -2230,7 +2304,7 @@ impl<'a> Elab<'a> {
                 let ExprKind::Name(n) = &e.kind else {
                     unreachable!("an adapter is recorded on a name")
                 };
-                let t = self.name(n, e.span).map(|f| {
+                let t = self.named(n, e.span).map(|f| {
                     let temps: Vec<Arc<str>> = from.iter().map(|_| self.temp()).collect();
                     let args = from.iter().map(|&j| Term::Var(temps[j].clone())).collect();
                     Term::Lam(temps, Shared::new(Term::App(Shared::new(f), args)))
@@ -2440,6 +2514,7 @@ impl<'a> Elab<'a> {
             }
             Frame::Bind(s) => {
                 let v = m.t();
+                self.inst.end_bound(s);
                 m.ret = Ret::Stmt(v.map(|v| self.bind(s, v)));
             }
             Frame::Push(s) => {

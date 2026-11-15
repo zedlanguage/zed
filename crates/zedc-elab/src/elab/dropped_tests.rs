@@ -45,11 +45,11 @@ const FOLD: &str = "a fold `><` that the calls of one function run on entries of
 
 #[test]
 fn a_kept_term_that_names_a_dropped_written_body_is_refused() {
-    // `p = h` names `h`'s written body, whose fold no call decides, so it is kept and its
+    // `(h, 0)[0]` names `h`'s written body, whose fold no call decides, so it is kept and its
     // fold refused. Were that reference missed, the body would be dropped while `p` names
     // it, and `check_dropped` refuses the program, naming `h`, rather than leave `p`
     // unbound.
-    let body = "a = { h(positional q) = top(q); p = h; (h(mi[\"a\"]), p(m[\"a\"])) };\n";
+    let body = "a = { h(positional q) = top(q); p = (h, 0)[0]; (h(mi[\"a\"]), p(m[\"a\"])) };\n";
     let seen = errors(body, false);
     assert_eq!(seen.len(), 1, "{seen:?}");
     assert!(seen[0].starts_with(FOLD), "{seen:?}");
@@ -75,7 +75,7 @@ fn a_kept_term_that_names_a_dropped_written_body_is_refused() {
         "{e}"
     );
     // The repair's call passes each parameter with no default, a named one by name.
-    let body = "a = { h(positional q, by: int, d = 0) = (top(q), by, d); p = h; \
+    let body = "a = { h(positional q, by: int, d = 0) = (top(q), by, d); p = (h, 0)[0]; \
                 (h(mi[\"a\"], by: 1), p(m[\"a\"], by: 2)) };\n";
     let e = dropped(&errors(body, true));
     assert!(e.contains("as `h(q, by: by)`"), "{e}");

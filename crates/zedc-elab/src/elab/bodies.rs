@@ -11,7 +11,7 @@ use zed_kernel::Shared;
 use zedc_base::rejection::not_yet;
 use zedc_stage::defs::{Def, Test};
 use zedc_stage::stage::free;
-use zedc_syntax::ast::{Error, Note, StmtKind};
+use zedc_syntax::ast::{Error, ExprKind, Note, StmtKind, Target};
 use zedc_syntax::lex::Span;
 
 use super::instances::Dropped;
@@ -150,11 +150,15 @@ impl<'a> Elab<'a> {
 
     /// The refusal of the block's function `d` named where no call gives its folds one type.
     fn dropped_named(&self, d: &Dropped<'a>) -> Error {
-        let StmtKind::Function(f) = &d.stmt.kind else {
-            unreachable!("a block's dropped body is a function's")
+        let (h, params) = match &d.stmt.kind {
+            StmtKind::Function(f) => (&f.name, &f.params),
+            StmtKind::Bind { targets, value } => match (&targets[..], &value.kind) {
+                ([Target::Name(h, _)], ExprKind::Lambda { params, .. }) => (h, params),
+                _ => unreachable!("a block's dropped binding binds a lambda to a name"),
+            },
+            _ => unreachable!("a block's dropped body is a function's or a lambda's"),
         };
-        let h = &f.name;
-        let args: Vec<String> = (f.params.iter())
+        let args: Vec<String> = (params.iter())
             .filter(|p| p.positional || p.default.is_none())
             .map(|p| match p.positional {
                 true => p.name.clone(),
