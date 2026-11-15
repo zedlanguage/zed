@@ -2373,6 +2373,12 @@ struct Tr {
     extrema: HashMap<(bool, Lin, Lin), u32>,
     /// The keys of `extrema`, in the order made, for [`Tr::truncate`].
     ranked: Vec<(bool, Lin, Lin)>,
+    /// For each `if` written level by level, its guard and the linear terms of its arms, the
+    /// number of the variable of its value, so that a second `if` of the same guard and arms
+    /// (a copy of the term, or another term with the same parts) is the same variable.
+    choices: HashMap<(Formula, Lin, Lin), u32>,
+    /// The keys of `choices`, in the order made, for [`Tr::truncate`].
+    chosen: Vec<(Formula, Lin, Lin)>,
     /// Whether an `if` whose guard tests the remainder of an input by a constant is written by
     /// its summaries over the remainder's classes ([`Walk::lin_by_class`]): in the linear
     /// stage, whose inputs have the domains the summaries are read over.
@@ -2422,6 +2428,8 @@ impl Tr {
             made: Vec::new(),
             extrema: HashMap::new(),
             ranked: Vec::new(),
+            choices: HashMap::new(),
+            chosen: Vec::new(),
             by_class: false,
             cases: HashMap::new(),
             cased: Vec::new(),
@@ -2466,6 +2474,12 @@ impl Tr {
         {
             self.extrema.remove(key);
             self.ranked.pop();
+        }
+        while let Some(key) = self.chosen.last()
+            && self.choices[key] as usize >= mark
+        {
+            self.choices.remove(key);
+            self.chosen.pop();
         }
         while let Some(key) = self.cased.last()
             && self.cases[key] as usize >= mark
@@ -8279,7 +8293,19 @@ impl<'m, 't> Walk<'m, 't> {
                 // variable is its name, so the name costs the size of what it is made of.
                 let what = What::If(g.clone(), la.clone(), lb.clone());
                 self.tr(|tr| {
-                    let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                    // One variable for each `if` of the same guard and arms, as [`Tr::extrema`]
+                    // has one for each `min` or `max`: a copy of an `if` written as a variable
+                    // of its own adds a disjunction the solver splits on, and the copies of
+                    // seed 7776978274844439420 doubled the cases of its relation four times,
+                    // 13.5 s for one projection (PREIMAGE-summaries-slow-seed).
+                    let key = (g.clone(), la.clone(), lb.clone());
+                    if let Some(&n) = tr.choices.get(&key) {
+                        return Some(Lin::atom(presburger::Atom::Aux(n)));
+                    }
+                    let n = tr.defs.len() as u32;
+                    tr.choices.insert(key.clone(), n);
+                    tr.chosen.push(key);
+                    let x = Lin::atom(presburger::Atom::Aux(n));
                     let def = Formula::or(vec![
                         Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
                         Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),
@@ -14500,6 +14526,17 @@ mod tests {
         assert!(summaries_read_again(150777271703164204) > SUMMARY_ROUNDS);
     }
 
+    /// Seed 7776978274844439420 of
+    /// [`summaries_read_again_give_what_reading_the_term_again_gives`]: its round 1 took 36 s,
+    /// where the other rounds take milliseconds (PREIMAGE-summaries-slow-seed).
+    #[test]
+    fn summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420() {
+        let start = std::time::Instant::now();
+        summaries_read_again(7776978274844439420);
+        let took = start.elapsed();
+        assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
+    }
+
     /// The classes of [`unite`] without its remembered refusals and its look-up of the caller
     /// and callee: each join looks through the smaller class's functions.
     fn unite_by_looking(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
@@ -15791,6 +15828,33 @@ mod tests {
             let defs = new.relation.map(|r| r.defs.len());
             assert!(defs.is_none_or(|n| n <= 2), "{w}: {defs:?}");
         }
+    }
+
+    /// `c + c != 1` for two copies of `c = if y > -5 then 2 * y else min(y, 3)`: the linear
+    /// stage writes the copies as one variable, as it writes a repeated `min`
+    /// (PREIMAGE-summaries-slow-seed); two variables of one definition double the cases the
+    /// solver splits.
+    #[test]
+    fn copies_of_an_if_are_one_variable_in_the_linear_stage() {
+        use Prim::{Add, Gt, Min, Mul, Ne};
+        let v = |s: &str| Term::Var(s.into());
+        let i = |k: i64| Term::Lit(Value::Int(k));
+        let p = |q: Prim, a: Vec<Term>| Term::Prim(q, a);
+        let c = || {
+            Term::If(
+                Shared::new(p(Gt, vec![v("y"), i(-5)])),
+                Shared::new(p(Mul, vec![i(2), v("y")])),
+                Shared::new(p(Min, vec![v("y"), i(3)])),
+            )
+        };
+        let t = p(Ne, vec![p(Add, vec![c(), c()]), i(1)]);
+        let mut tx = Tx::new();
+        let root = tx.terms.add(&t);
+        let (rel, _) = linear(&mut tx, root, &domains(), &Demand::Bool(true)).expect("linear");
+        let ifs = (rel.defs.iter())
+            .filter(|(_, w, _)| w.starts_with("if "))
+            .count();
+        assert_eq!(ifs, 1, "{:?}", rel.defs);
     }
 }
 

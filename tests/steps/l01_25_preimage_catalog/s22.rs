@@ -104,6 +104,34 @@ fn independent(k: usize, c: impl Fn(i64) -> i64) -> Term {
     )
 }
 
+/// `t` with each `if g { a } else { op(a', …) }` whose `a'` is a copy of `a` written
+/// `tn = a; if g { tn } else { op(tn, …) }`, `n` counting the `let`s made.
+fn with_lets(t: &Term, n: &mut usize) -> Term {
+    match t {
+        Term::If(g, a, b) => match &**b {
+            Term::Prim(op, args) if format!("{}", args[0]) == format!("{a}") => {
+                let x: Arc<str> = format!("t{n}").into();
+                *n += 1;
+                let mut rest = vec![Term::Var(x.clone())];
+                rest.extend(args[1..].iter().map(|u| with_lets(u, n)));
+                let branch = Term::If(
+                    Shared::new(with_lets(g, n)),
+                    Shared::new(Term::Var(x.clone())),
+                    Shared::new(Term::Prim(*op, rest)),
+                );
+                Term::Let(x, Shared::new(with_lets(a, n)), Shared::new(branch))
+            }
+            _ => Term::If(
+                Shared::new(with_lets(g, n)),
+                Shared::new(with_lets(a, n)),
+                Shared::new(with_lets(b, n)),
+            ),
+        },
+        Term::Prim(op, args) => Term::Prim(*op, args.iter().map(|u| with_lets(u, n)).collect()),
+        _ => t.clone(),
+    }
+}
+
 pub(super) fn bits(k: usize, lo: i64, hi: i64) -> Domains {
     let mut d = over(&[("z", IntervalSet::of(lo, hi))]);
     for j in 1..=k {
@@ -1024,7 +1052,28 @@ fn chains_of_slow_families_keep_their_preimages() {
             ks.into_iter().filter(|&k| k <= 13).partition(|&k| k <= 1);
         for k in few.into_iter().chain([rng.pick(&more)]) {
             let (t, ds, d) = family(name, k);
+            let (renamed, reflected) = (diffs.renamed, diffs.reflected);
             diffs.preimage(&format!("{name} k={k}"), &t, &ds, &d);
+            // Since PREIMAGE-summaries-slow-seed the linear stage writes the copies of an `if`
+            // of one guard and arms as one variable, as it always wrote an `if` bound once by
+            // `let` and read twice. So the relation of `cross`, `cross_live`, `indep_2j` and
+            // `indep_1` at `k >= 2` has `k` variables where the transfer before writes
+            // `2k - 1`: the same set under other names, and at `indep_2j k=2` the solver now
+            // refuses on the tie of `b1` and `b2`, with the same box, as it did and does for
+            // the term written with `let`. A result that differs from the one before only so
+            // must be the result of the term written with `let` (renamed and other boxes 0
+            // before).
+            if (diffs.renamed, diffs.reflected) != (renamed, reflected) {
+                let mut lets_made = 0;
+                let lets = with_lets(&t, &mut lets_made);
+                assert!(lets_made > 0, "{name} k={k}: no copy of an `if`");
+                assert_eq!(
+                    format!("{:?}", preimage_listed(&t, &ds, &Listed::new(), &d)),
+                    format!("{:?}", preimage_listed(&lets, &ds, &Listed::new(), &d)),
+                    "{name} k={k}: the copies of an `if` read otherwise than one `let`"
+                );
+                (diffs.renamed, diffs.reflected) = (renamed, reflected);
+            }
         }
     }
     // 0, was 7: CANON-stable (the solver takes the variables and rows breadth first in the
