@@ -877,7 +877,7 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Option<Value>` per entry to say "a part goes here" while the family is built | `HeldFamily::new`, `held_entries` | None | A union `V \| #part` per entry |
 | A third arm in a `match` over a borrowed held value's shape, `HeldShape::{Tuple, Atom, Family}` | `hooks::term`, `Heap::held` users | None | A union member per shape |
 
-## Entries from FAIL-native-fam-result-holds-function and FAIL-machine-held-family (`zed-kernel/src/eval/made.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`, `zedc-zir/src/zir/memory.rs`)
+## Entries from FAIL-native-fam-result-holds-function and FAIL-machine-held-family (`zed-kernel/src/eval/made.rs`, `Machine::made` in `zed-kernel/src/eval.rs` since S1F-kernel-eval-made-cycle, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`, `zedc-zir/src/zir/memory.rs`)
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|

@@ -567,7 +567,7 @@ impl Evaluator {
         }
     }
 
-    /// Makes every later [`Evaluator::run`] panic, as a broken check of zedc's own code does:
+    /// Makes every later [`Evaluator::run`] and [`Evaluator::run_made`] panic, as a broken check of zedc's own code does:
     /// a debug build's way for the tests to reach the report of a bug in zedc, which no
     /// program reaches on purpose, on both engines (plan row EXE-panic-status). `zedc run`
     /// panics at the run of `main`; an executable at the first node its code passes to the
@@ -624,11 +624,7 @@ impl Evaluator {
 
     /// Evaluates a closed term, expecting data.
     pub fn run(&mut self, term: &Term) -> Result<Value, KernelError> {
-        #[cfg(debug_assertions)]
-        assert!(
-            !self.panic_on_run,
-            "the run of the program does not stop here (a test stopped it, ZEDC_TEST_BUG)"
-        );
+        self.stop_if_test_bug();
         match self.run_in(term, None, None, false)? {
             Ran::Data(v) => Ok(v),
             Ran::Made(_) => unreachable!("a run expecting data gives data"),
@@ -641,15 +637,25 @@ impl Evaluator {
     /// functions included (rows FAIL-native-fam-result-holds-function and
     /// FAIL-machine-held-family).
     pub fn run_made(&mut self, term: &Term) -> Result<Made, KernelError> {
+        self.stop_if_test_bug();
+        match self.run_in(term, None, None, true)? {
+            Ran::Made(m) => Ok(m),
+            Ran::Data(_) => unreachable!("a run apart gives its value apart"),
+        }
+    }
+
+    /// Panics after [`Evaluator::panic_on_run`], in a debug build; does nothing otherwise.
+    /// [`Evaluator::run`] and [`Evaluator::run_made`] both stop here, at one source line, since
+    /// the report of a bug in zedc names the line and `zedc run` (which runs `main` by `run`)
+    /// and an executable (whose runtime hooks run a node by `run_made`) must give the same
+    /// report (row FAIL-stops-bug-site-run-made). [`Evaluator::run_under`] does not stop here:
+    /// it runs the checker's constants, not the program.
+    fn stop_if_test_bug(&self) {
         #[cfg(debug_assertions)]
         assert!(
             !self.panic_on_run,
             "the run of the program does not stop here (a test stopped it, ZEDC_TEST_BUG)"
         );
-        match self.run_in(term, None, None, true)? {
-            Ran::Made(m) => Ok(m),
-            Ran::Data(_) => unreachable!("a run apart gives its value apart"),
-        }
     }
 
     /// Evaluates `term`, whose free names are `reads`, under `globals`, expecting data: what
@@ -3087,6 +3093,114 @@ fn placed(key: Value) -> Option<Keypath> {
 enum Ran {
     Data(Value),
     Made(Made),
+}
+
+/// A step of [`Machine::made`]: a value to visit, or a closure or held value whose parts are
+/// the last results.
+enum Task<'t> {
+    Visit(V<'t>),
+    Fun(Rc<Closure<'t>>, Vec<Arc<str>>),
+    Held(Rc<Held<'t>>),
+}
+
+// `made` reads the machine's values, so it is written here and not in eval/made.rs, which then
+// imports nothing from this file (step S.1f: no import cycle; row S1F-kernel-eval-made-cycle).
+impl<'t> Machine<'_, 't> {
+    /// `v` apart from the run (see [`Made`]).
+    // Complexity tradeoff: the naive way follows each path to a value, so a closure captured
+    // by two closures, each captured by two more, is visited 2^d times for d levels. Used:
+    // each closure and held value is visited once, by its address, and its parts once each,
+    // on a list of tasks, not the thread's stack, since values nest as deep as a program makes
+    // them: O(the values and captures reached), plus the names each distinct body reads,
+    // found once per body. Tradeoff: one map entry per closure and held value.
+    fn made(&mut self, v: V<'t>) -> R<Made> {
+        let mut nodes = Vec::new();
+        let mut done: HashMap<*const (), usize> = HashMap::new();
+        let mut bodies: HashMap<u64, Rc<[Arc<str>]>> = HashMap::new();
+        let mut out: Vec<usize> = Vec::new();
+        let mut tasks = vec![Task::Visit(v)];
+        while let Some(task) = tasks.pop() {
+            match task {
+                Task::Visit(v) => {
+                    let node = match v {
+                        V::Data(d) => MadeNode::Data(d),
+                        V::Prim(p) => MadeNode::Prim(p),
+                        V::Source(p) => MadeNode::Source(p),
+                        V::Partial(_) => {
+                            return type_err(
+                                "a function that reads a family still being defined left it",
+                            );
+                        }
+                        V::Held(h) => {
+                            if let Some(&i) = done.get(&(Rc::as_ptr(&h) as *const ())) {
+                                out.push(i);
+                                continue;
+                            }
+                            let parts: Vec<V<'t>> = h.parts.clone();
+                            tasks.push(Task::Held(h));
+                            tasks.extend(parts.into_iter().rev().map(Task::Visit));
+                            continue;
+                        }
+                        V::Closure(c) => {
+                            if let Some(&i) = done.get(&(Rc::as_ptr(&c) as *const ())) {
+                                out.push(i);
+                                continue;
+                            }
+                            let names = bodies
+                                .entry(c.body.id())
+                                .or_insert_with(|| made::reads(c.body).into())
+                                .clone();
+                            let mut caps = Vec::new();
+                            let mut vals = Vec::new();
+                            for x in names.iter() {
+                                if c.params.contains(x) {
+                                    continue;
+                                }
+                                let v = match lookup(&c.env, x) {
+                                    None => continue,
+                                    Some(Slot::Is(v)) => v,
+                                    // `run_made` runs under no globals, so no environment
+                                    // binds one.
+                                    Some(Slot::Global(_)) => {
+                                        unreachable!("a run made apart is under no globals")
+                                    }
+                                };
+                                caps.push(x.clone());
+                                vals.push(v);
+                            }
+                            tasks.push(Task::Fun(c, caps));
+                            tasks.extend(vals.into_iter().rev().map(Task::Visit));
+                            continue;
+                        }
+                    };
+                    nodes.push(node);
+                    out.push(nodes.len() - 1);
+                }
+                Task::Fun(c, names) => {
+                    let parts = out.split_off(out.len() - names.len());
+                    nodes.push(MadeNode::Fun(MadeFun {
+                        params: c.params.to_vec(),
+                        body: c.body.clone(),
+                        caps: names.into_iter().zip(parts).collect(),
+                    }));
+                    done.insert(Rc::as_ptr(&c) as *const (), nodes.len() - 1);
+                    out.push(nodes.len() - 1);
+                }
+                Task::Held(h) => {
+                    let parts = out.split_off(out.len() - h.parts.len());
+                    let shape = match &h.shape {
+                        Shape::Tuple => MadeShape::Tuple,
+                        Shape::Atom(n, f) => MadeShape::Atom(n.clone(), f.clone()),
+                        Shape::Family(f) => MadeShape::Family(f.clone()),
+                    };
+                    nodes.push(MadeNode::Held(shape, parts));
+                    done.insert(Rc::as_ptr(&h) as *const (), nodes.len() - 1);
+                    out.push(nodes.len() - 1);
+                }
+            }
+        }
+        Ok(Made { nodes })
+    }
 }
 
 /// The level of `family`'s top-level entries, before any is tested.

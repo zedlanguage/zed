@@ -9,12 +9,15 @@
 //! each part before what holds it, a value held twice being one node. A closure is its lambda,
 //! the body shared with the term run, with the value of each name of its environment the body
 //! may read, so the back end builds the closure's term again from the terms of those values.
+//!
+//! This file holds the value apart and what it is made of; the walk that takes a value of the
+//! run apart, `Machine::made`, is in eval.rs beside the machine whose values it reads, so that
+//! this file imports nothing from eval.rs and the two make no import cycle (step S.1f, row
+//! S1F-kernel-eval-made-cycle).
 
-use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::{Closure, Held, Machine, R, Shape, Slot, V, lookup, type_err};
 use crate::term::{Prim, Shared, Term};
 use crate::value::{Fields, HeldFamily, Value};
 
@@ -93,7 +96,7 @@ pub enum MadeShape {
 // with a visited set over shared subterms, since a term the back end built is a graph that a
 // walk of every path would cross exponentially often. Tradeoff: a name bound in the body and
 // in the environment is captured though never read.
-fn reads(body: &Shared) -> Vec<Arc<str>> {
+pub(super) fn reads(body: &Shared) -> Vec<Arc<str>> {
     let mut names: HashSet<Arc<str>> = HashSet::new();
     let mut seen: HashSet<u64> = HashSet::new();
     let mut stack: Vec<&Term> = Vec::new();
@@ -174,110 +177,4 @@ fn reads(body: &Shared) -> Vec<Arc<str>> {
     let mut names: Vec<_> = names.into_iter().collect();
     names.sort();
     names
-}
-
-/// A step of [`Machine::made`]: a value to visit, or a closure or held value whose parts are
-/// the last results.
-enum Task<'t> {
-    Visit(V<'t>),
-    Fun(Rc<Closure<'t>>, Vec<Arc<str>>),
-    Held(Rc<Held<'t>>),
-}
-
-impl<'t> Machine<'_, 't> {
-    /// `v` apart from the run (see [`Made`]).
-    // Complexity tradeoff: the naive way follows each path to a value, so a closure captured
-    // by two closures, each captured by two more, is visited 2^d times for d levels. Used:
-    // each closure and held value is visited once, by its address, and its parts once each,
-    // on a list of tasks, not the thread's stack, since values nest as deep as a program makes
-    // them: O(the values and captures reached), plus the names each distinct body reads,
-    // found once per body. Tradeoff: one map entry per closure and held value.
-    pub(super) fn made(&mut self, v: V<'t>) -> R<Made> {
-        let mut nodes = Vec::new();
-        let mut done: HashMap<*const (), usize> = HashMap::new();
-        let mut bodies: HashMap<u64, Rc<[Arc<str>]>> = HashMap::new();
-        let mut out: Vec<usize> = Vec::new();
-        let mut tasks = vec![Task::Visit(v)];
-        while let Some(task) = tasks.pop() {
-            match task {
-                Task::Visit(v) => {
-                    let node = match v {
-                        V::Data(d) => MadeNode::Data(d),
-                        V::Prim(p) => MadeNode::Prim(p),
-                        V::Source(p) => MadeNode::Source(p),
-                        V::Partial(_) => {
-                            return type_err(
-                                "a function that reads a family still being defined left it",
-                            );
-                        }
-                        V::Held(h) => {
-                            if let Some(&i) = done.get(&(Rc::as_ptr(&h) as *const ())) {
-                                out.push(i);
-                                continue;
-                            }
-                            let parts: Vec<V<'t>> = h.parts.clone();
-                            tasks.push(Task::Held(h));
-                            tasks.extend(parts.into_iter().rev().map(Task::Visit));
-                            continue;
-                        }
-                        V::Closure(c) => {
-                            if let Some(&i) = done.get(&(Rc::as_ptr(&c) as *const ())) {
-                                out.push(i);
-                                continue;
-                            }
-                            let names = bodies
-                                .entry(c.body.id())
-                                .or_insert_with(|| reads(c.body).into())
-                                .clone();
-                            let mut caps = Vec::new();
-                            let mut vals = Vec::new();
-                            for x in names.iter() {
-                                if c.params.contains(x) {
-                                    continue;
-                                }
-                                let v = match lookup(&c.env, x) {
-                                    None => continue,
-                                    Some(Slot::Is(v)) => v,
-                                    // `run_made` runs under no globals, so no environment
-                                    // binds one.
-                                    Some(Slot::Global(_)) => {
-                                        unreachable!("a run made apart is under no globals")
-                                    }
-                                };
-                                caps.push(x.clone());
-                                vals.push(v);
-                            }
-                            tasks.push(Task::Fun(c, caps));
-                            tasks.extend(vals.into_iter().rev().map(Task::Visit));
-                            continue;
-                        }
-                    };
-                    nodes.push(node);
-                    out.push(nodes.len() - 1);
-                }
-                Task::Fun(c, names) => {
-                    let parts = out.split_off(out.len() - names.len());
-                    nodes.push(MadeNode::Fun(MadeFun {
-                        params: c.params.to_vec(),
-                        body: c.body.clone(),
-                        caps: names.into_iter().zip(parts).collect(),
-                    }));
-                    done.insert(Rc::as_ptr(&c) as *const (), nodes.len() - 1);
-                    out.push(nodes.len() - 1);
-                }
-                Task::Held(h) => {
-                    let parts = out.split_off(out.len() - h.parts.len());
-                    let shape = match &h.shape {
-                        Shape::Tuple => MadeShape::Tuple,
-                        Shape::Atom(n, f) => MadeShape::Atom(n.clone(), f.clone()),
-                        Shape::Family(f) => MadeShape::Family(f.clone()),
-                    };
-                    nodes.push(MadeNode::Held(shape, parts));
-                    done.insert(Rc::as_ptr(&h) as *const (), nodes.len() - 1);
-                    out.push(nodes.len() - 1);
-                }
-            }
-        }
-        Ok(Made { nodes })
-    }
 }
