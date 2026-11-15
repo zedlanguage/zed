@@ -36,6 +36,8 @@ use super::graph;
 /// Version 10 adds the names of an export's parameters that a call may write to its address
 /// (ADDR-param-names, `canon::export_address`) and changes no normal form, so its hash is
 /// version 9's.
+/// Version 11 writes a kernel string value by the rules of its canonical parse
+/// (CANON-term-string-nodes), and adds the definition `strings` to the set.
 const HISTORY: &[(u32, &str)] = &[
     (
         6,
@@ -56,6 +58,10 @@ const HISTORY: &[(u32, &str)] = &[
     (
         10,
         "188a450908788f16778a4a114a6ce47e4226048131afe23336fd176abf472408",
+    ),
+    (
+        11,
+        "4363dd06fe402ce1532288c6e232775a85de5e5756988aad0b379eb2cd98ec17",
     ),
 ];
 
@@ -157,6 +163,23 @@ fn defs() -> Vec<Def> {
                 lit(3),
                 lam(&["n"], prim(Prim::Mul, vec![var("t"), var("n")])),
             ),
+        ),
+        // Strings, the second held as a join of two nodes, the third sharing the rules of the
+        // first two (version 11, item CANON-term-string-nodes).
+        def(
+            "strings",
+            lit(Value::Tuple(
+                [
+                    Value::str("abcab"),
+                    Value::Str(
+                        zed_kernel::text::Text::join(&"abcab".into(), &"abcab".into())
+                            .expect("10 bytes"),
+                    ),
+                    Value::str("abcababcababcab"),
+                ]
+                .into_iter()
+                .collect(),
+            )),
         ),
         def("own_level", lam(&["\u{0}0"], var("\u{0}0"))),
         def("other_level", lam(&["\u{0}5"], var("\u{0}5"))),

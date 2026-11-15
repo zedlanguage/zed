@@ -56,10 +56,12 @@ use zedc_base::address::ContentAddress;
 /// value in the ZIR binary form as the nodes of its text's tree, each once in the graph, not
 /// its bytes (BUILD-doubling-60s); version 10 addresses an exported definition by its own
 /// address and the names of the parameters a call may write ([`export_address`],
-/// ADDR-param-names), with every normal form as version 9 left it. The test
+/// ADDR-param-names), with every normal form as version 9 left it; version 11 writes a string
+/// value in a definition's serialization as the rules of its text's canonical parse, each once
+/// in the definition, not its bytes (CANON-term-string-nodes). The test
 /// `l01_32_canonical_zir::version_pins` records the normal forms of a fixed set of graphs and
 /// definitions under each version, and fails when they change and this number does not.
-pub const VERSION: u32 = 10;
+pub const VERSION: u32 = 11;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {

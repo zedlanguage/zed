@@ -196,16 +196,16 @@ fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
 #[test]
 fn the_version_tag_separates_rule_sets() {
     let d = balance("deposits", "withdrawals");
-    assert_eq!(VERSION, 10);
+    assert_eq!(VERSION, 11);
     assert_ne!(
         address_at(VERSION, &d, &none).expect("memory for the bytes"),
         address_at(VERSION + 1, &d, &none).expect("memory for the bytes")
     );
-    // The address of this definition under version 10 (ADDR-param-names). A change to a rule
+    // The address of this definition under version 11 (CANON-term-string-nodes). A change to a rule
     // or to the serialization changes it: increment VERSION, and pin the new address here.
     assert_eq!(
         addr(&d).to_string(),
-        "2073b0ce1c91cc5fc5eab4eebfe930fcb3014874b1b6c181ab4bd43408e14b8c"
+        "fea16b37182f0096184cfeef681b4903832ef7bd43f88b368014d6709ca45a38"
     );
 }
 

@@ -259,14 +259,14 @@ fn texts_joined_in_any_order_have_one_name() {
 
 /// `ids` with no two neighbors equal: each id is drawn wide (any 64 bits) or narrow (below 8),
 /// so the coin-tossing rounds see both small and large first differing bits.
-fn proper_ids(rng: &mut Rng, n: usize) -> Vec<u64> {
-    let mut ids: Vec<u64> = Vec::with_capacity(n);
+fn proper_ids(rng: &mut Rng, n: usize) -> Vec<u128> {
+    let mut ids: Vec<u128> = Vec::with_capacity(n);
     while ids.len() < n {
-        let id = if rng.next().is_multiple_of(2) {
+        let id = u128::from(if rng.next().is_multiple_of(2) {
             rng.next()
         } else {
             rng.next() % 8
-        };
+        });
         if ids.last() != Some(&id) {
             ids.push(id);
         }
@@ -315,7 +315,7 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
         let j = rng.pick(&outside);
         let mut z = ids.clone();
         z[j] = loop {
-            let id = rng.next();
+            let id = u128::from(rng.next());
             if Some(&id) != j.checked_sub(1).map(|k| &ids[k]) && Some(&id) != ids.get(j + 1) {
                 break id;
             }
@@ -350,4 +350,114 @@ fn a_block_at_the_true_end_may_hold_5_symbols() {
             "{ids:?}"
         );
     }
+}
+
+/// A 128-bit hash for the label tests (two FNV-1a passes with different starts); its quality
+/// does not matter, since a collision only makes [`Names::collided`] true.
+fn fnv128(data: &[u8]) -> u128 {
+    let pass = |start: u64| {
+        data.iter().fold(start, |h, &b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+        })
+    };
+    u128::from(pass(0xcbf2_9ce4_8422_2325)) << 64 | u128::from(pass(0x84222325_cbf29ce4))
+}
+
+/// The rules under `n` written out by content, each child by its own form: equal for two
+/// names, in any two dictionaries, exactly when the rules [`Names::part`] gives are the same
+/// tree. Also returns the bytes, to check the rules spell the text.
+fn form(names: &Names, n: Name, memo: &mut HashMap<Name, (String, Vec<u8>)>) -> (String, Vec<u8>) {
+    if let Some(f) = memo.get(&n) {
+        return f.clone();
+    }
+    let f = match names.part(n) {
+        Part::Empty => (String::from("E"), Vec::new()),
+        Part::Byte(b) => (format!("{b}"), vec![b]),
+        Part::Run(x, count) => {
+            let (s, bytes) = form(names, x, memo);
+            (format!("R{count}({s})"), bytes.repeat(count as usize))
+        }
+        Part::Block(xs) => {
+            let parts: Vec<_> = xs.iter().map(|&x| form(names, x, memo)).collect();
+            let s: Vec<&str> = parts.iter().map(|p| p.0.as_str()).collect();
+            let bytes = parts.iter().flat_map(|p| p.1.iter().copied()).collect();
+            (format!("B({})", s.join(",")), bytes)
+        }
+    };
+    memo.insert(n, f.clone());
+    f
+}
+
+#[test]
+fn canonical_parts_are_a_function_of_the_text() {
+    // Each text named in two canonical dictionaries: one that met other texts first and reads
+    // it whole, one that builds it as a random tree of joins. The rules under the two names
+    // must be the same tree and spell the text; names stay exact as in `Names::new`.
+    let mut rng = Rng(crate::seed::seed("canonical_parts_are_a_function_of_the_text") | 1);
+    let mut warm = Names::canonical(fnv128);
+    let mut corpus = Corpus::default();
+    for _ in 0..120 {
+        let n = rng.pick(&[1, 5, 30, 100, 300, 1000, 3000]);
+        let noise = adversarial(&mut rng, n);
+        let _ = warm.leaf(&noise);
+        let data = adversarial(&mut rng, n);
+        let a = warm.leaf(&data);
+        corpus.add(name_of(&a), &data);
+        let mut fresh = Names::canonical(fnv128);
+        let leafmax = rng.pick(&[1, 50, 400]);
+        let b = build(&mut fresh, &data, &mut rng, leafmax);
+        let fa = form(&warm, Name(name_of(&a)), &mut HashMap::new());
+        let fb = form(&fresh, Name(name_of(&b)), &mut HashMap::new());
+        assert_eq!(fa.1, data, "the rules spell the text");
+        assert_eq!(fa, fb, "{data:?}");
+        assert!(!fresh.collided());
+    }
+    assert!(!warm.collided());
+    // A text of 5 · 2^40 bytes doubled from two bases: one tree of rules, in O(levels) rules.
+    let mut x = Names::canonical(fnv128);
+    let mut y = Names::canonical(fnv128);
+    let a = x.name(&doubled("abcab", 40));
+    let b = y.name(&doubled("abcababcab", 39));
+    // The bytes are 5 TB, so only the trees of rules are compared.
+    fn shape(names: &Names, n: Name, memo: &mut HashMap<Name, String>) -> String {
+        if let Some(s) = memo.get(&n) {
+            return s.clone();
+        }
+        let s = match names.part(n) {
+            Part::Empty => String::from("E"),
+            Part::Byte(b) => format!("{b}"),
+            Part::Run(x, count) => format!("R{count}({})", shape(names, x, memo)),
+            Part::Block(xs) => {
+                let s: Vec<String> = xs.iter().map(|&x| shape(names, x, memo)).collect();
+                format!("B({})", s.join(","))
+            }
+        };
+        memo.insert(n, s.clone());
+        s
+    }
+    let (sa, sb) = (
+        shape(&x, a, &mut HashMap::new()),
+        shape(&y, b, &mut HashMap::new()),
+    );
+    assert_eq!(sa, sb);
+    assert!(!x.collided() && !y.collided());
+}
+
+#[test]
+fn a_weak_label_hash_is_flagged_and_names_stay_exact() {
+    // Every rule's label is one value, so neighbors' labels agree wherever two rules meet: the
+    // dictionary says so, and parses by its numbers there, so names stay exact.
+    let mut names = Names::canonical(|_| 0);
+    let mut corpus = Corpus::default();
+    let mut rng = Rng(crate::seed::seed("a_weak_label_hash_is_flagged_and_names_stay_exact") | 1);
+    for _ in 0..60 {
+        let n = rng.pick(&[5, 30, 300, 3000]);
+        let data = adversarial(&mut rng, n);
+        let whole = names.leaf(&data);
+        corpus.add(name_of(&whole), &data);
+        let s = build(&mut names, &data, &mut rng, 50);
+        corpus.add(name_of(&s), &data);
+    }
+    assert!(names.collided());
+    assert!(!Names::new().collided());
 }
