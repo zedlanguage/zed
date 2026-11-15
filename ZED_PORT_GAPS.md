@@ -4037,3 +4037,11 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | Raw pointers to `Span` headers found by rounding a block's address down to `SPAN`, with an intrusive free list written into the freed blocks | `span_of`, `Heap::alloc`, `Heap::take`, `Heap::free`, `owner` | Identity by address (gap 1); no raw memory | The runtime's allocator, in the runtime's own code; a Zed program has no addresses |
 | `AtomicI64` count of the blocks a span is owed, lowered by other threads' frees and raised once when the heap ends; the operation that takes it to 0 unmaps the span | `Span::owed`, `Heap::free`, `Heap::end` | Shared tables across pure calls (gap 2) | A count kept by the runtime per span |
 | `std::sync::Once` for the reservation and for the check that `malloc` is this crate's | `meter::ready` | Lazy once-only cells (gap 3) | Done once by the harness at its start |
+
+## Entries from FAIL-std-allocations-uncounted and PERF-crossover-heap (`zed-alloc-count/Cargo.toml`, `src/lib.rs`, `src/meter.rs`, `tests/zed_alloc_count.rs`; `tests/src/scaling.rs`; `benches/src/lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `[lib] test = false` and the crate's tests moved to an integration test, since the unit-test binary of the crate that defines `#[global_allocator]` does not export `__rust_alloc` and libstd.so's allocations miss the count | `crates/zed-alloc-count/Cargo.toml`, `tests/zed_alloc_count.rs` | Build configuration | None needed: Zed's runtime has one allocator, the same in tests and programs |
+| `#[doc(hidden)] pub` on functions exported only for the integration test | `zed_alloc_count::measuring`, `meter::owner` | Privacy (as the `#[doc(hidden)]` row of the privacy entry) | Ordinary exports |
+| `pub fn work_on_the_c_heap`, called from another crate to count work on the C library's `malloc` rather than the meter's heap | `scaling::Meter::work_on_the_c_heap`, `zed_benches::runs` | Foreign library (the C allocator) | The benchmark harness counts on the runtime's allocator; there is one |
