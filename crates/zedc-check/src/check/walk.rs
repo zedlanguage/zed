@@ -940,7 +940,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Quantify(x, q, span) => {
                 let f = m.take_arg();
-                let t = self.quantifier_end(&x, f, q, span);
+                let t = self.quantifier_end(&x, f, q, span, Self::apply);
                 m.ty(t);
             }
             Frame::ReduceFn(x, span) => {
@@ -3120,33 +3120,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(Ty::func(Arc::new(sig)));
     }
 
-    /// Whether `fsig`, the function given to the built-in `word`, can be called with `n`
-    /// arguments by position: it needs no more than `n` and takes at least `n`. Any other is
-    /// rejected at `at` with `shape`, a function of the right number of parameters, as the
-    /// repair; the kernel calls a function with exactly the arguments given and does not
-    /// curry, so a `map` by a function of two parameters would otherwise reach the evaluator.
-    fn takes_args(&mut self, word: &str, fsig: &Sig, n: usize, shape: &str, at: Span) -> bool {
-        let needs = fsig.params.iter().filter(|p| p.default.is_none()).count();
-        let has = fsig.params.len();
-        if needs <= n && n <= has {
-            return true;
-        }
-        let what = match n {
-            1 => "one argument".to_string(),
-            n => format!("{n} arguments"),
-        };
-        let why = match needs > n {
-            true => format!("needs {needs}"),
-            false => format!("takes {has}"),
-        };
-        self.error_offering(
-            at,
-            format!("{word} calls its function with {what}, and this function {why}"),
-            [format!("repair: pass a function of {what}, as `{shape}`")],
-        );
-        false
-    }
-
     /// `x.map(f)`, with `x` of type `x` and `f` checked: each family `x` may be, with the
     /// same keys, and each entry `f` applied to it (step L3.2, DESIGN.md sec:type_language,
     /// the `map` row: "the guarantee and the permission ride through unchanged"). Each arrow
@@ -3812,6 +3785,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             return out.union(&t);
         }
         self.sum(Arg::of(x.clone()), span)
+    }
+
+    /// `x.sum` on a family or `x.reduce(op)`, `form`: the fold of [`Self::fold_level`] by
+    /// `op`, where a loose atom `x` may be passes through, as at every member call, while
+    /// `x >< op` rejects one.
+    fn family_fold(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
+        let out = self.passing(x, form.word(), span, None);
+        let t = self.fold_level(op, &x.without_loose(), span, span, form);
+        out.union(&t)
     }
 
     /// [`Self::reduce_end`], its messages naming the fold as the program wrote it, `form`:

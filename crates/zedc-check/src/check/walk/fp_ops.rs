@@ -3,6 +3,7 @@
 //! the quantifiers `.any`, `.all` and `.find` (step L3.15a), and `.first` and `.last`
 //! (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic").
 
+use super::remap::Apply;
 use crate::check::*;
 
 /// How a program wrote a fold of one level, for the messages of [`Ck::fold_level`].
@@ -87,14 +88,45 @@ impl Quantifier {
     }
 }
 
+// walk.rs imports this file (`FoldForm`, `Quantifier` and the methods below), so this file
+// calls no method written in walk.rs: a cycle between files is refused (DESIGN.md sec:units;
+// the import graph of step S.1f, which counts a call of a method written apart from its type
+// as an import of the method's file). The fold of a level, `Ck::fold_level`, and its callers
+// are in walk.rs; `takes_args`, which `map` in walk.rs calls too, is here; and `Ck::apply` is
+// passed in, as to remap.rs (its `Apply`).
 impl<'t, 'a> Ck<'t, 'a> {
-    /// `x.sum` on a family or `x.reduce(op)`, `form`: the fold of [`Self::fold_level`] by
-    /// `op`, where a loose atom `x` may be passes through, as at every member call, while
-    /// `x >< op` rejects one.
-    pub(super) fn family_fold(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
-        let out = self.passing(x, form.word(), span, None);
-        let t = self.fold_level(op, &x.without_loose(), span, span, form);
-        out.union(&t)
+    /// Whether `fsig`, the function given to the built-in `word`, can be called with `n`
+    /// arguments by position: it needs no more than `n` and takes at least `n`. Any other is
+    /// rejected at `at` with `shape`, a function of the right number of parameters, as the
+    /// repair; the kernel calls a function with exactly the arguments given and does not
+    /// curry, so a `map` by a function of two parameters would otherwise reach the evaluator.
+    pub(super) fn takes_args(
+        &mut self,
+        word: &str,
+        fsig: &Sig,
+        n: usize,
+        shape: &str,
+        at: Span,
+    ) -> bool {
+        let needs = fsig.params.iter().filter(|p| p.default.is_none()).count();
+        let has = fsig.params.len();
+        if needs <= n && n <= has {
+            return true;
+        }
+        let what = match n {
+            1 => "one argument".to_string(),
+            n => format!("{n} arguments"),
+        };
+        let why = match needs > n {
+            true => format!("needs {needs}"),
+            false => format!("takes {has}"),
+        };
+        self.error_offering(
+            at,
+            format!("{word} calls its function with {what}, and this function {why}"),
+            [format!("repair: pass a function of {what}, as `{shape}`")],
+        );
+        false
     }
 
     /// The families `x` may be, for `word`, a built-in word on one level: each data function
@@ -205,8 +237,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `#none`. The entries are asked in key order and the first that decides ends the walk;
     /// an atom `p` gives at an entry before it is the result (L3.15a: "a failure of `p` at an
     /// entry before the deciding one is the result"), and so is an entry that is a loose atom,
-    /// which passes through `p` as through any call. A loose atom `x` passes through.
-    pub(super) fn quantifier_end(&mut self, x: &Ty, f: Arg<'a>, q: Quantifier, span: Span) -> Ty {
+    /// which passes through `p` as through any call. A loose atom `x` passes through. `apply`
+    /// is `Ck::apply`, passed in by walk.rs.
+    pub(super) fn quantifier_end(
+        &mut self,
+        x: &Ty,
+        f: Arg<'a>,
+        q: Quantifier,
+        span: Span,
+        apply: Apply<'t, 'a>,
+    ) -> Ty {
         let word = q.word();
         let shape = "x -> x > 0";
         let name = &word[1..word.len() - 1];
@@ -239,8 +279,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Quantifier::All => "the function given to `all`",
                     Quantifier::Find => "the function given to `find`",
                 });
-                self.apply(what, &fsig, vec![Some(Arg::of(entries))], false, span)
-                    .0
+                apply(self, what, &fsig, vec![Some(Arg::of(entries))], false, span).0
             }
         };
         let verdict = gives.without_loose();
