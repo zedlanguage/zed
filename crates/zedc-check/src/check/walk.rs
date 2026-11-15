@@ -7402,7 +7402,8 @@ impl<'a> Ck<'_, 'a> {
 impl<'t, 'a> Ck<'t, 'a> {
     /// Component `i` of `v`, destructured into `n` names: of each tuple shape, with `v`'s
     /// atoms, which `TupleGet` passes. A value of a class needs a tuple of `n` of each type
-    /// the class meets.
+    /// the class meets, and so a value that is no carrier: a class of carriers alone, as the
+    /// literal `3` of `(1, 3)` bound by a call, is no tuple and is refused, as an `int` is.
     fn component(&mut self, v: &Ty, i: usize, n: usize, span: Span) -> Ty {
         let mut out = self.passing(v, "a tuple", span, None);
         for p in v.pieces() {
@@ -7413,6 +7414,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.any("destructuring", span);
                     }
                 }
+                Piece::Var(_) if self.carriers_only(&p) => {
+                    if i == 0 {
+                        self.not_a_tuple(&p, n, span);
+                    }
+                }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     let kind = NeedKind::Destructure { i, n };
                     out = out.union(&self.need(k, kind, true, span));
@@ -7421,29 +7427,43 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     if i == 0 {
-                        let menu = [
-                            format!("repair: give this binding a tuple of {n} components"),
-                            "repair: bind the value to one name, as `t = …;`, and take it apart \
-                             only where a test with `is` has shown it to be a tuple"
-                                .to_string(),
-                        ];
-                        let shown = self.show(&p.ty());
-                        let message = match self.code(Some(span)) {
-                            Some(code) => format!(
-                                "Cannot take `{code} : {shown}` apart into {n} names: it is not a \
-                                 tuple of {n}"
-                            ),
-                            None => format!(
-                                "Cannot take a value of {shown} apart into {n} names: it is not a \
-                                 tuple of {n}"
-                            ),
-                        };
-                        self.error_offering(span, message, menu);
+                        self.not_a_tuple(&p, n, span);
                     }
                 }
             }
         }
         out
+    }
+
+    /// The error of destructuring at `span` into `n` names a value of the piece `p`, which
+    /// is no tuple of `n`.
+    fn not_a_tuple(&mut self, p: &Piece, n: usize, span: Span) {
+        let menu = [
+            format!("repair: give this binding a tuple of {n} components"),
+            "repair: bind the value to one name, as `t = …;`, and take it apart only where a \
+             test with `is` has shown it to be a tuple"
+                .to_string(),
+        ];
+        let shown = self.show(&p.ty());
+        let message = match self.code(Some(span)) {
+            Some(code) => format!(
+                "Cannot take `{code} : {shown}` apart into {n} names: it is not a tuple of {n}"
+            ),
+            None => format!(
+                "Cannot take a value of {shown} apart into {n} names: it is not a tuple of {n}"
+            ),
+        };
+        self.error_offering(span, message, menu);
+    }
+
+    /// Whether `p` is a variable of a class of carriers alone, as the literal `3` of `(1, 3)`
+    /// bound by a call: no carrier is a tuple, a family or a function, so a use that takes one
+    /// refuses it here, as it refuses an `int`, and records no need. The class is not
+    /// restricted to other values, since a call would then refuse the bound in the signature
+    /// in place of the use's own message. Complexity: one test of the mask, O(1).
+    fn carriers_only(&self, p: &Piece) -> bool {
+        self.class_of(p)
+            .is_some_and(|k| self.classes[self.find(k)].mask & OTHER == 0)
     }
 
     /// The call of `sig` at `span` applied again to `with`, from [`Self::outside_args`], with
@@ -12507,6 +12527,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
                 }
+                Piece::Var(_) if self.carriers_only(&p) => {
+                    let shown = self.show(&p.ty());
+                    self.not_applicable(&shown, span);
+                }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     let kind = NeedKind::Index(x.ty.clone());
                     self.note_widened(&kind, &[(&x.ty, x.at)]);
@@ -12518,19 +12542,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());
-                    self.error_offering(
-                        span,
-                        format!(
-                            "this value is {shown}, not a function: this call applies it to an \
-                             argument, and a value of type {shown} cannot be applied"
-                        ),
-                        ["repair: call a function here, or drop the argument list after the value"
-                            .to_string()],
-                    );
+                    self.not_applicable(&shown, span);
                 }
             }
         }
         out
+    }
+
+    /// The error of `v[x]` at `span`, `x` no literal, of a value of the type shown as `shown`,
+    /// which is no tuple and no function.
+    fn not_applicable(&mut self, shown: &str, span: Span) {
+        self.error_offering(
+            span,
+            format!(
+                "this value is {shown}, not a function: this call applies it to an argument, \
+                 and a value of type {shown} cannot be applied"
+            ),
+            [
+                "repair: call a function here, or drop the argument list after the value"
+                    .to_string(),
+            ],
+        );
     }
 
     /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
@@ -12573,6 +12605,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.no_component(&tuple, cs.len(), &shown, span);
                     }
                 },
+                Piece::Var(_) if self.carriers_only(&p) => {
+                    let t = self.show(&p.ty());
+                    self.not_indexable(&shown, &t, span);
+                }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     let kind = NeedKind::Component {
                         i,
@@ -12587,20 +12623,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let t = self.text(&p.ty());
-                    self.error_offering(
-                        span,
-                        format!(
-                            "`[{shown}]` takes a tuple, not {t}: an index picks a component of a \
-                             tuple or an entry of a family, and {t} has neither"
-                        ),
-                        [format!(
-                            "repair: index a tuple or a family, or drop `[{shown}]`"
-                        )],
-                    )
+                    self.not_indexable(&shown, &t, span);
                 }
             }
         }
         out
+    }
+
+    /// The error of `v[x]` at `span`, `x` the literal shown as `shown`, of a value of the type
+    /// shown as `t`, which is no tuple and no family.
+    fn not_indexable(&mut self, shown: &str, t: &str, span: Span) {
+        self.error_offering(
+            span,
+            format!(
+                "`[{shown}]` takes a tuple, not {t}: an index picks a component of a tuple or an \
+                 entry of a family, and {t} has neither"
+            ),
+            [format!(
+                "repair: index a tuple or a family, or drop `[{shown}]`"
+            )],
+        )
     }
 
     /// A declared function in a slot of the function type `e`: the same number of positional

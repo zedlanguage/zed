@@ -687,6 +687,120 @@ fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
     assert_eq!(runs(PAIR, r#""${f((1, "x"))}""#, ""), "1\n");
 }
 
+/// The `stdout` expression that is `"int"` or `"other"` as the value of `call` is an `int` or
+/// not. The `is` test takes a value of any type, so only the uses in the functions called can
+/// reject the program.
+fn kind_of(call: &str) -> String {
+    format!(r#"if {call} is int {{ "int" }} else {{ "other" }}"#)
+}
+
+/// The type errors of the definitions `defs` with `r = call;`, as the random programs of
+/// `random.rs` are checked.
+fn r_errors(defs: &str, call: &str) -> Vec<String> {
+    super::type_errors(&format!("{defs}\nr = {call};\n"))
+}
+
+/// `h0` takes its first argument apart into three; `h1` takes a pair apart and passes on one
+/// of its components, `on`, to `h0`.
+fn passed(on: &str) -> String {
+    format!(
+        "h0(positional p, positional q) {{\n  a, b, c = p;\n  return c;\n}}\n\
+         h1(positional p) {{\n  a, b = p;\n  return h0({on}, 1);\n}}"
+    )
+}
+
+/// The error of taking `call`'s value of type `given` apart into `n` names.
+fn not_a_tuple(call: &str, given: &str, n: usize) -> Vec<String> {
+    vec![format!(
+        "Cannot take `{call} : {given}` apart into {n} names: it is not a tuple of {n}. [{call}]"
+    )]
+}
+
+#[test]
+fn a_literal_component_passed_on_is_not_taken_apart() {
+    // The checker accepted each, and the kernel then raised "type error: `[i]` applied to
+    // `int`, `int`": the literal `3` of `(1, 3)` is a value of a class of numbers, which the
+    // need of `h0` met as a variable that may yet hold a tuple.
+    for (on, call) in [("b", "h1((1, 3))"), ("a", "h1((3, 1))")] {
+        assert_eq!(r_errors(&passed(on), call), not_a_tuple(call, "3", 3));
+    }
+    // The program the random test found (seed 15010587807169152550 of
+    // `random::accepted_random_programs_raise_no_type_error`).
+    let found = "h0(positional p, positional q) {\n  a, b, c = p;\n  return c;\n}\n\
+                 h1(positional p) {\n  a, b = p;\n  return h0(b, ((p, a), (-3, b)));\n}";
+    let call = r#"h1(((3, -2, "s"), 3))"#;
+    assert_eq!(r_errors(found, call), not_a_tuple(call, "3", 3));
+    // The program's error names the call that passes the component on.
+    let e = rejected(&passed("b"), &kind_of("h1((1, 3))"));
+    assert!(e.contains("`h1` needs this of its argument here"), "{e}");
+    assert!(e.contains("return h0(b, 1);"), "{e}");
+    // A component that is a tuple of three passes, of any component types.
+    assert_eq!(
+        runs(&passed("b"), &kind_of("h1((1, (1, 2, 3)))"), ""),
+        "int\n"
+    );
+    assert_eq!(
+        runs(&passed("a"), &kind_of(r#"h1((("x", 2, "y"), 1))"#), ""),
+        "other\n"
+    );
+}
+
+/// `h` takes a pair apart, and then its second component.
+const NESTED: &str = "h(positional p) {\n  a, b = p;\n  c, d = b;\n  return c;\n}";
+
+#[test]
+fn a_literal_component_is_not_taken_apart_again() {
+    let wrapped = format!("{NESTED}\nw(positional z) = h((1, z));");
+    for (defs, call, given) in [
+        (NESTED, "h((1, 3))", "3"),
+        (NESTED, "h((1, 2.5))", "2.5"),
+        (NESTED, "h((1, -4))", "-4"),
+        // Through a parameter of a function that passes it on in a pair: the need is `w`'s.
+        (&*wrapped, "w(3)", "3"),
+    ] {
+        assert_eq!(r_errors(defs, call), not_a_tuple(call, given, 2), "{call}");
+    }
+    let e = rejected(NESTED, &kind_of("h((1, 3))"));
+    assert!(e.contains("`h` needs this of its argument here"), "{e}");
+    assert!(e.contains("c, d = b;"), "{e}");
+    assert_eq!(runs(NESTED, &kind_of("h((1, (2, 3)))"), ""), "int\n");
+    assert_eq!(runs(NESTED, &kind_of(r#"h((1, ("s", 3)))"#), ""), "other\n");
+}
+
+#[test]
+fn a_literal_component_is_not_indexed() {
+    // Each was accepted, and failed at run time, as destructuring did: an index, literal or
+    // computed, of a class of carriers alone met the need as a variable that may yet hold a
+    // tuple or a family.
+    let call = "h((1, 3))";
+    let literal = format!(
+        "`[1]` takes a tuple, not 1: an index picks a component of a tuple or an entry of a \
+         family, and 1 has neither. [{call}]"
+    );
+    let computed = format!(
+        "this value is 1, not a function: this call applies it to an argument, and a value of \
+         type 1 cannot be applied. [{call}]"
+    );
+    for (defs, error) in [
+        ("h(positional p) = p[0][1];", &literal),
+        (
+            "h(positional p) {\n  a, b = p;\n  return a[1];\n}",
+            &literal,
+        ),
+        (
+            "h(positional p) {\n  k = 1;\n  return p[0][k];\n}",
+            &computed,
+        ),
+    ] {
+        assert_eq!(r_errors(defs, call), std::slice::from_ref(error), "{defs}");
+        assert_eq!(
+            runs(defs, &kind_of("h(((1, 2), 3))"), ""),
+            "int\n",
+            "{defs}"
+        );
+    }
+}
+
 #[test]
 fn a_tuple_default_used_as_a_number_is_rejected() {
     // The default `(x, 1)` flows a tuple into the class of `y`, which then takes no carrier
