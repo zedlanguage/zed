@@ -6,6 +6,8 @@
 mod bench;
 mod combinations;
 mod command;
+mod digest_pin;
+mod digest_program;
 mod imports;
 mod pin_file;
 mod prelude;
