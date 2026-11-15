@@ -754,7 +754,8 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
 }
 
 /// [`satisfiable`] of a formula whose names no longer matter ([`Renamed`]): searched as
-/// [`decide_inner`] searches it, with the rows the disjunctions imply asked first and the
+/// [`decide_inner`] searches it, with the rows the disjunctions imply (those of one or two
+/// terms, [`narrow_disjunction_hulls`]) asked first and the
 /// atoms that [`absorb`] projected away given values. The implied rows hold at every point of
 /// the formula, so a point with them is a point of the formula; they keep [`pick`] from taking
 /// a disjunct that leaves the disjunctions after it no point within their hulls, which on a
@@ -770,7 +771,7 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
     let implied = if old_path() {
         Vec::new()
     } else {
-        disjunction_hulls(&p.ors, &mut DeepHulls::default())
+        narrow_disjunction_hulls(&p.ors)
     };
     let ask = |mut p: Parts, rows: Vec<Con>| -> Result<Option<Model>, Refusal> {
         p.cons.extend(rows);
@@ -991,6 +992,27 @@ fn disjunction_hulls(ors: &[Vec<Rc<Parts>>], deep: &mut DeepHulls) -> Vec<Con> {
             }
         }
     }
+    rows
+}
+
+/// The rows of [`disjunction_hulls`] of one or two terms, which [`satisfiable_inner`] and
+/// [`decide_inner`] ask first with the base. Eliminating an atom from rows of two terms or fewer
+/// gives rows of two terms or fewer, so these rows never widen a row of the base; a row of
+/// three terms or more can. The rows `m >= a` and `m >= -a` that each disjunct of an `abs`
+/// holds (zedc_preimage) are of three terms when `a` is a difference, and on a chain of such
+/// `abs` with one long row through all of them every elimination grew the system: the ask with
+/// them was refused for [`Refusal::Growth`] after most of its work, and the question asked
+/// again without them (FAIL-abs-chain-growth-bench).
+// Complexity tradeoff: naive, every implied row asked first, with a refusal costing a whole
+// ask more; used: the rows of one or two terms alone, O(r) to filter `r` rows. What is given
+// up: a row of three terms or more that every disjunct implies no longer shows at once that a
+// bound past it leaves no point; the search over the disjuncts still finds that, as it did
+// before the implied rows were asked, and the answer is the same. Tests:
+// `l01_38_presburger::ladder::a_chain_with_abs_on_each_link_is_proved_past_eight_links`,
+// `bench::ladder::products_along_a_chain_with_a_disjunction_on_each_link_scale`.
+fn narrow_disjunction_hulls(ors: &[Vec<Rc<Parts>>]) -> Vec<Con> {
+    let mut rows = disjunction_hulls(ors, &mut DeepHulls::default());
+    rows.retain(|c| c.lin.terms.len() <= 2);
     rows
 }
 
@@ -1848,7 +1870,8 @@ fn or_old<T>(run: impl Fn() -> Result<T, Refusal>) -> Result<T, Refusal> {
 /// [`absorb`] shows to remove no point removed, the rest settled for a search ([`settle`] with
 /// `search`) and searched ([`found`]).
 ///
-/// The rows the disjunctions imply ([`disjunction_hulls`]) are asked first with the base: they
+/// The rows the disjunctions imply ([`disjunction_hulls`]) of one or two terms
+/// ([`narrow_disjunction_hulls`]) are asked first with the base: they
 /// change no answer, and show at once that the formula is empty with a bound past what its
 /// disjuncts allow. When the solver refuses the formula with them (a row of three terms or
 /// more joining a group may make an elimination enlarge it), it is asked as before, without
@@ -1882,7 +1905,7 @@ fn decide_kept_status(
         let implied = if old_path() {
             Vec::new()
         } else {
-            disjunction_hulls(&p.ors, &mut DeepHulls::default())
+            narrow_disjunction_hulls(&p.ors)
         };
         let point_of_f = |mut m: Model| {
             repair(&mut m, &gone);

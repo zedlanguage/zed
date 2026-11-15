@@ -8363,33 +8363,48 @@ impl<'m, 't> Walk<'m, 't> {
                             let first = Con::ge(hi, lo);
                             // The two cases, and with them the rows of their convex hull, which
                             // they imply: `x <= a`, `x <= b` for `min`, `x >= a`, `x >= b` for
-                            // `max` and `abs`. The rows are part of the base, so a disjunct that
-                            // reads `x` alone is projected with them: `y != 3 || min(y, x) > 4`
-                            // gives `y` its hole at 3, since `min(y, x) > 4` is projected to
-                            // `y >= 5` (FAIL-or-ifs-no-longer-exact-seed). Without them, `x`
-                            // is tied to `a` and `b` only through the case split, which the
-                            // projection meets disjunction by disjunction (presburger `project`),
-                            // so the disjunct gave `y` and `x` their whole ranges. Two rows a
-                            // definition, O(1); the formula has the same points.
+                            // `max` and `abs`. A row of one or two terms is part of the base, so
+                            // a disjunct that reads `x` alone is projected with it:
+                            // `y != 3 || min(y, x) > 4` gives `y` its hole at 3, since
+                            // `min(y, x) > 4` is projected to `y >= 5`
+                            // (FAIL-or-ifs-no-longer-exact-seed). Without it, `x` is tied to `a`
+                            // and `b` only through the case split, which the projection meets
+                            // disjunction by disjunction (presburger `project`), so the disjunct
+                            // gave `y` and `x` their whole ranges. A row of three terms or more
+                            // (`m >= x - y` of `abs(x - y)`) is written in the case whose
+                            // equation does not give it, so both cases hold it and the rows the
+                            // disjunction implies (presburger `disjunction_hulls`) do: in the
+                            // base, where the solver must keep it, it can make each elimination
+                            // add rows, and on a chain of `abs` with one long row through all of
+                            // them every elimination did, so the goal was refused for growth
+                            // from nine links (FAIL-abs-chain-growth-bench). Eliminating an atom
+                            // from rows of two terms or fewer gives rows of two terms or fewer.
+                            // Two rows a definition, O(1); the formula has the same points.
                             let hull = if p == Min {
                                 [Con::ge(&a, &x), Con::ge(&b, &x)]
                             } else {
                                 [Con::ge(&x, &a), Con::ge(&x, &b)]
                             };
-                            let def = Formula::and(vec![
-                                Formula::Con(hull[0].clone()),
-                                Formula::Con(hull[1].clone()),
-                                Formula::or(vec![
-                                    Formula::and(vec![
-                                        Formula::Con(first.clone()),
-                                        Formula::Con(Con::eq(&x, &a)),
-                                    ]),
-                                    Formula::and(vec![
-                                        Formula::negate(Formula::Con(first)),
-                                        Formula::Con(Con::eq(&x, &b)),
-                                    ]),
-                                ]),
-                            ]);
+                            let [hull_a, hull_b] = hull;
+                            let mut base = Vec::new();
+                            let mut case_a =
+                                vec![Formula::Con(first.clone()), Formula::Con(Con::eq(&x, &a))];
+                            let mut case_b = vec![
+                                Formula::negate(Formula::Con(first)),
+                                Formula::Con(Con::eq(&x, &b)),
+                            ];
+                            for (row, case) in [(hull_b, &mut case_a), (hull_a, &mut case_b)] {
+                                if row.lin.terms.len() <= 2 {
+                                    base.push(Formula::Con(row));
+                                } else {
+                                    case.push(Formula::Con(row));
+                                }
+                            }
+                            base.push(Formula::or(vec![
+                                Formula::and(case_a),
+                                Formula::and(case_b),
+                            ]));
+                            let def = Formula::and(base);
                             let what = match p {
                                 Abs => What::Abs(a.clone()),
                                 Min => What::Min(a.clone(), b.clone()),

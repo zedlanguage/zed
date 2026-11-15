@@ -1183,6 +1183,25 @@ fn a_chain_with_max_in_place_of_abs_is_proved() {
     });
 }
 
+/// [`product_chain_with_abs`] past eight links, where the rows of each `abs` (`m >= a`,
+/// `m >= -a`) left the solver no elimination that keeps its rows from growing, and the goal
+/// was refused (FAIL-abs-chain-growth-bench). The same chain with each `abs` written as `max`
+/// was refused from nine links as well.
+#[test]
+fn a_chain_with_abs_on_each_link_is_proved_past_eight_links() {
+    scaling::on_a_thread(8 << 20, || {
+        for k in [9, 12, 16] {
+            let (p, g) = product_chain_with_abs(k);
+            proved_with_sides_asked(&p, &g);
+            let extra: Vec<String> = (0..k)
+                .map(|i| format!("max(x{i} - y{i}, y{i} - x{i}) <= z{i} + 1"))
+                .collect();
+            let (p, g) = product_chain_with(k, &extra);
+            proved_with_sides_asked(&p, &g);
+        }
+    });
+}
+
 /// The checks of the benchmarks of `bench/ladder.rs` at small sizes, on a thread of the
 /// benchmarks' 8 MiB stack: each verdict, the sides asked where the benchmark counts them, and
 /// the relations of the shared divisors built.
