@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use zedc::parse::{Grammar, TOP, split_line};
 
-use crate::layer::{WordTable, program_units, report};
+use crate::layer::{WordTable, program_units, report, shown_name};
 use crate::spec::Spec;
 use crate::syntax::{Tokens, Tree, lex, parse};
 use crate::text::{base_name, prefix, read_text, repr, strip};
@@ -112,7 +112,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         Some((parts.next()?.to_string(), layer))
     };
     let needs = Needs {
-        program: base_name(&main).to_string(),
+        program: shown_name(&main),
         alts: needed,
         words: words
             .split('\n')

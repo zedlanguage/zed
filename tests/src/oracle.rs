@@ -573,9 +573,57 @@ pub fn corpus_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../zed/corpus")
 }
 
-/// Each corpus program's path and the layer its first line labels, in name order.
+/// Each corpus program's path and the layer its first line labels, in name order. A program is
+/// a file `NN-name.zed`, or, for a program with units, `NN-name/main.zed` in the package root a
+/// `zed.manifest` marks (DESIGN.md sec:units: a unit with no manifest at or above it imports no
+/// unit), beside the units it imports.
 pub fn corpus() -> Vec<(PathBuf, u32)> {
-    labeled(&corpus_dir())
+    let dir = corpus_dir();
+    let mut out = labeled(&dir);
+    for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+        let root = e.expect("an entry").path();
+        if root.join("zed.manifest").is_file() {
+            let main = root.join("main.zed");
+            assert!(main.is_file(), "{} holds no main.zed", root.display());
+            out.push((main.clone(), label(&main)));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The corpus program `program` (a path [`corpus`] gives) with `extension` in place of its own:
+/// `07-json-parser/main.zed` with `in` is `07-json-parser.in`, beside the package root, as for
+/// a program of one file. Its input is `"in"`, its expected output `"out"`.
+pub fn corpus_file(program: &Path, extension: &str) -> PathBuf {
+    let in_package = program.file_name().is_some_and(|f| f == "main.zed")
+        && program.with_file_name("zed.manifest").is_file();
+    let base = if in_package {
+        program.parent().expect("a package root")
+    } else {
+        program
+    };
+    base.with_extension(extension)
+}
+
+/// The corpus program `program`'s name, its path under the corpus directory:
+/// `03-edit-distance.zed`, or `07-json-parser/main.zed` for a program with units.
+pub fn corpus_name(program: &Path) -> String {
+    program
+        .strip_prefix(corpus_dir())
+        .expect("a corpus program")
+        .display()
+        .to_string()
+}
+
+/// The layer the first line of the program at `p` labels (`// layer L<n>`).
+fn label(p: &Path) -> u32 {
+    let text = std::fs::read_to_string(p).expect("a readable program");
+    text.lines()
+        .next()
+        .and_then(|l| l.strip_prefix("// layer L"))
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("{} has no `// layer L<n>` line", p.display()))
 }
 
 /// Each `.zed` program in `dir`, with the layer its first line labels (`// layer L<n>`), in name
@@ -586,13 +634,7 @@ pub fn labeled(dir: &Path) -> Vec<(PathBuf, u32)> {
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "zed"))
         .map(|p| {
-            let text = std::fs::read_to_string(&p).expect("a readable program");
-            let layer = text
-                .lines()
-                .next()
-                .and_then(|l| l.strip_prefix("// layer L"))
-                .and_then(|n| n.trim().parse().ok())
-                .unwrap_or_else(|| panic!("{} has no `// layer L<n>` line", p.display()));
+            let layer = label(&p);
             (p, layer)
         })
         .collect();

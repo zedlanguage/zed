@@ -35,7 +35,7 @@ fn min_and_max_in_the_corpus_are_prelude_words() {
 
 #[test]
 fn mix_is_the_staging_word_of_l19() {
-    let errors = errors(&corpus("10-regex-matcher.zed"));
+    let errors = errors(&corpus("10-regex-matcher/main.zed"));
     assert!(
         errors.contains(
             &concat!(zed_tests::not_yet!("the prelude word `mix`"), " [mix]").to_string()
@@ -143,21 +143,21 @@ fn no_corpus_file_uses_an_undefined_name() {
             "08-utf8-percent.zed",
             "08-utf8-percent.zed",
             "08-utf8-percent.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
+            "10-regex-matcher/main.zed",
             "10-regex-matcher/regex.zed",
             "10-regex-matcher/regex.zed",
             "10-regex-matcher/regex.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
-            "10-regex-matcher.zed",
             "17-sensor-pipeline.zed",
             "19-bank-ledger.zed",
             "19-bank-ledger.zed",

@@ -9,9 +9,10 @@ use zed_tools::spec::Spec;
 
 use crate::scaling::{
     audit_runs, cases_dir, cases_pass, check_passes, checklist, compares_checklist, fences_pass,
-    first_pass_accepts, functions, layer_runs, lays_out_fences, many_fences, program_dir,
-    progress_plan, reads_each_row, reads_unreadable, rejection_table, renders_progress, ring_runs,
-    sync_body, sync_targets, syncs, syncs_words_once, unreadable, wide_words,
+    first_pass_accepts, functions, layer_runs, layer_runs_on_package, lays_out_fences, many_fences,
+    package_dir, program_dir, progress_plan, reads_each_row, reads_unreadable, rejection_table,
+    renders_progress, ring_runs, sync_body, sync_targets, syncs, syncs_words_once, unreadable,
+    wide_words,
 };
 use crate::{Dir, design, fence, spec_dir};
 
@@ -92,6 +93,21 @@ fn layer_scales_with_the_length_of_a_program() {
     let spec = spec_dir("scale_layer", &design(""), "");
     let sized = programs("scale_layer_p", 2000);
     scales("layer", 2000, &sized, |d| layer_runs(&spec, d));
+}
+
+/// `layer` given every unit of one package as a main file: each program is the whole package,
+/// so the package is walked and its units parsed once, not once per main file.
+#[test]
+fn layer_scales_with_the_main_files_of_one_package() {
+    let spec = spec_dir("scale_layer_package", &design(""), "");
+    let sized = [25, 200].map(|m| (m, package_dir("scale_layer_package_p", m)));
+    check("layer, by main files of one package", 25, |m| {
+        let (_, d) = sized
+            .iter()
+            .find(|s| s.0 == m)
+            .expect("a size that was built");
+        layer_runs_on_package(&spec, d, m);
+    });
 }
 
 #[test]

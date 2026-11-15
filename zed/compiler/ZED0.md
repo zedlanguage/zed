@@ -21,7 +21,7 @@ freezes this list against the compiler's design and inserts a step for each gap 
 
 ## The audit
 
-`cargo run -q -p zed-tools --bin audit -- ../../../zed ../corpus/31-typechecker.zed --checklist ZED0.md`
+`cargo run -q -p zed-tools --bin audit -- ../../../zed ../corpus/31-typechecker/main.zed --checklist ZED0.md`
 (run by hand, since CI does not read the spec repository, which must be beside this one;
 last run at spec commit 50a5567, exit status 0, 117 grammar alternatives and 14 words
 needed, none missing, 131 entries listed, none not needed, and none in the row of another layer). An alternative is needed when program 31's units stop parsing, or parse to a

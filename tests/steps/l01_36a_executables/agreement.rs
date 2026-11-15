@@ -43,7 +43,7 @@ fn step_program_agrees(name: &str) {
         for (c, _) in &corpus {
             let (exe, src) = (&exe, &src);
             s.spawn(move || {
-                let input = std::fs::read(c.with_extension("in")).unwrap();
+                let input = std::fs::read(oracle::corpus_file(c, "in")).unwrap();
                 let native = executable(exe, &[], &input);
                 assert_eq!(
                     native,
@@ -96,12 +96,12 @@ fn every_enabled_corpus_program_agrees() {
     // The corpus begins at L3; each program joins when its layer is enabled.
     assert_eq!(enabled.len(), 0);
     for (src, _) in enabled {
-        let name = src.file_stem().unwrap().to_string_lossy().into_owned();
+        let name = oracle::corpus_name(&src).replace('/', "-");
         let exe = built_twice(&name, &src);
-        let input = std::fs::read(src.with_extension("in")).unwrap();
+        let input = std::fs::read(oracle::corpus_file(&src, "in")).unwrap();
         let native = executable(&exe, &[], &input);
         assert_eq!(native, interpreter(&src, &[], &input), "{}", src.display());
-        let out = std::fs::read_to_string(src.with_extension("out")).unwrap();
+        let out = std::fs::read_to_string(oracle::corpus_file(&src, "out")).unwrap();
         assert_eq!((native.status, native.stdout), (0, out));
     }
 }

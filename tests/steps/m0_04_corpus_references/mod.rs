@@ -10,6 +10,7 @@ mod lattice_circles;
 mod layer_labels;
 mod p14_oracle;
 mod scaling;
+mod unit_roots;
 
 use std::fs;
 

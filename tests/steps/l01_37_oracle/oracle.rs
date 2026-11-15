@@ -53,8 +53,8 @@ fn every_enabled_corpus_program_agrees_and_writes_its_output() {
     let ((), runs) = native(|engines| {
         for (path, _) in enabled {
             let text = std::fs::read_to_string(path).unwrap();
-            let input = std::fs::read(path.with_extension("in")).unwrap();
-            let out = std::fs::read(path.with_extension("out")).unwrap();
+            let input = std::fs::read(oracle::corpus_file(path, "in")).unwrap();
+            let out = std::fs::read(oracle::corpus_file(path, "out")).unwrap();
             let (r, want) = program(&text, &input, engines);
             assert_eq!(r.mismatches, Vec::<String>::new(), "{}", path.display());
             assert_eq!(r.not_compared, Vec::<String>::new(), "{}", path.display());
@@ -82,7 +82,7 @@ fn every_step_program_agrees_on_every_corpus_input() {
                     let mut programs = 0;
                     let ((), runs) = native(|engines| {
                         for (c, _) in corpus {
-                            let input = std::fs::read(c.with_extension("in")).unwrap();
+                            let input = std::fs::read(oracle::corpus_file(c, "in")).unwrap();
                             let (rep, want) = program(&text, &input, engines);
                             programs += usize::from(want.is_some());
                             r.add(&format!("{} on {}", p.display(), c.display()), rep);

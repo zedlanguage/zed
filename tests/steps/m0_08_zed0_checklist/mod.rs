@@ -7,7 +7,7 @@
 mod cases;
 
 const CHECKLIST: &str = include_str!("../../../zed/compiler/ZED0.md");
-const PROGRAM_31: &str = include_str!("../../../zed/corpus/31-typechecker.zed");
+const PROGRAM_31: &str = include_str!("../../../zed/corpus/31-typechecker/main.zed");
 
 /// The layers in the first column of every table row, after the header rows.
 fn table_layers(text: &str) -> Vec<u32> {

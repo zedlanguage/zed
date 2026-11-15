@@ -1,5 +1,6 @@
-//! Every corpus program in `zed/corpus/` parses: its main file, the units in its folder
-//! `NN-name/`, and its other spellings in `variants/`, and what parses formats to a fixed point.
+//! Every corpus program in `zed/corpus/` parses: its file `NN-name.zed`, or for a program with
+//! units every unit of its package root `NN-name/` (its `main.zed` among them), and its other
+//! spellings in `variants/`, and what parses formats to a fixed point.
 //! The one error allowed is the refusal of a form a later layer builds, as one this zedc does
 //! not compile yet; any other error is a defect in the program or in the parser. The
 //! checker controls in `controls/` are left out, since some of them are meant not to parse.
@@ -24,11 +25,14 @@ fn zed_files(dir: &Path) -> Vec<PathBuf> {
 fn every_corpus_program_parses_or_is_refused_by_layer() {
     let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../zed/corpus");
     let mut files = zed_files(&corpus);
-    for program in zed_files(&corpus) {
-        let units = program.with_extension("");
-        if units.is_dir() {
-            files.extend(zed_files(&units));
-        }
+    let mut packages: Vec<PathBuf> = std::fs::read_dir(&corpus)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.join("zed.manifest").is_file())
+        .collect();
+    packages.sort();
+    for root in packages {
+        files.extend(zed_files(&root));
     }
     files.extend(zed_files(&corpus.join("variants")));
     let mut parsed = 0;

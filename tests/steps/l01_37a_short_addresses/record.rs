@@ -96,7 +96,7 @@ fn every_corpus_program() {
             Ok(_) => "loads".to_string(),
             Err(e) => format!("does not load: {e}"),
         };
-        let name = path.file_name().expect("a file name").to_string_lossy();
+        let name = oracle::corpus_name(&path);
         writeln!(out, "{name} (L{layer}): {v}").expect("a String takes any write");
     }
     insta::assert_snapshot!(without_addresses(&out));
@@ -116,9 +116,9 @@ fn every_step_program_on_every_corpus_input() {
             .expect("a step unit under the steps directory");
         writeln!(out, "{}", name.display()).expect("a String takes any write");
         for (c, _) in &corpus {
-            let input = std::fs::read(c.with_extension("in")).expect("a corpus input");
+            let input = std::fs::read(oracle::corpus_file(c, "in")).expect("a corpus input");
             let (_, want) = oracle::program(&text, &input, &[]);
-            let c = c.file_name().expect("a file name").to_string_lossy();
+            let c = oracle::corpus_name(c);
             writeln!(out, "  {c}: {}", want.expect("a program that loads is run"))
                 .expect("a String takes any write");
         }

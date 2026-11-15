@@ -191,38 +191,62 @@ fn each_word_counts_only_in_its_own_position() {
 }
 
 #[test]
-fn a_program_is_its_main_file_and_every_zed_file_under_its_directory() {
+fn a_program_is_its_main_file_and_every_other_unit_of_its_package() {
     let dir = spec_with("units", TABLE);
-    let main = dir.write("p.zed", "// layer L3\nf(x: [int]) -> int = g(x);\n");
+    // The package root is the nearest directory at or above the main file holding a
+    // `zed.manifest` (DESIGN.md sec:units), here `p/`, one level above `p/app/main.zed`.
+    std::fs::create_dir_all(dir.at("p/app")).unwrap();
     std::fs::create_dir_all(dir.at("p/sub")).unwrap();
+    dir.write("p/zed.manifest", "");
+    let main = dir.write(
+        "p/app/main.zed",
+        "// layer L3\nf(x: [int]) -> int = g(x);\n",
+    );
     dir.write("p/b.zed", "g(x: [int]) -> int = h(sorted(x));\n");
     dir.write("p/notes.txt", "sorted(\n");
     dir.write("p/sub/a.zed", "h(x: [int]) -> int = 1;\n");
+    // A directory with a manifest of its own is another package, so its unit is not read.
+    std::fs::create_dir_all(dir.at("p/inner")).unwrap();
+    dir.write("p/inner/zed.manifest", "");
+    dir.write("p/inner/c.zed", "h(");
     // A link to a directory is skipped, so the unit it holds is not read.
     let other = Dir::new("units_linked");
     other.write("bad.zed", "h(");
     std::os::unix::fs::symlink(other.root(), dir.at("p/linked")).unwrap();
+    // The units under the root are named on the path with links followed, as zedc finds the
+    // root.
+    let real = |name: &str| {
+        std::fs::canonicalize(dir.at(name))
+            .unwrap()
+            .display()
+            .to_string()
+    };
     assert_eq!(
         layer::program_units(&main),
-        Ok(vec![main.clone(), dir.at("p/b.zed"), dir.at("p/sub/a.zed")])
+        Ok(vec![main.clone(), real("p/b.zed"), real("p/sub/a.zed")])
     );
     let (outcome, out) = tool(layer::run, &[&dir.root(), &main]);
     assert_eq!(outcome, Ok(true), "{out}");
     let row = out.lines().nth(1).expect("a row");
+    assert!(row.starts_with("p/app/main.zed "), "{out}");
     let cols: Vec<&str> = row.split_whitespace().collect();
     assert_eq!(cols[1], "3", "{out}");
     assert!(row.contains("L3 (sorted)"), "{out}");
 
-    // A file with no directory is one unit.
+    // A file with no manifest at or above it is one unit, though a directory of its name
+    // holds .zed files: such a unit imports no unit.
     let lone = dir.write("q.zed", "f(x: int) -> int = x;\n");
+    std::fs::create_dir_all(dir.at("q")).unwrap();
+    dir.write("q/d.zed", "h(");
     assert_eq!(layer::program_units(&lone), Ok(vec![lone.clone()]));
 }
 
 #[test]
 fn a_unit_that_does_not_parse_fails_its_program_and_names_the_unit() {
     let dir = spec_with("unit_fails", TABLE);
-    let main = dir.write("p.zed", "// layer L1\nf(x: int) -> int = x;\n");
     std::fs::create_dir_all(dir.at("p")).unwrap();
+    dir.write("p/zed.manifest", "");
+    let main = dir.write("p/main.zed", "// layer L1\nf(x: int) -> int = x;\n");
     dir.write("p/a.zed", "g(\n");
     dir.write("p/b.zed", "h() -> string = \"${+}\";\n");
     let good = dir.write("q.zed", "// layer L1\nf(x: int) -> int = x;\n");
@@ -232,9 +256,9 @@ fn a_unit_that_does_not_parse_fails_its_program_and_names_the_unit() {
         .lines()
         .find(|l| l.contains("PARSE FAIL"))
         .unwrap_or_else(|| panic!("{out}"));
-    assert!(fail.starts_with("p.zed "), "{out}");
+    assert!(fail.starts_with("p/main.zed "), "{out}");
     assert!(
-        fail.contains("a.zed: ") && fail.contains("; b.zed: "),
+        fail.contains("p/a.zed: ") && fail.contains("; p/b.zed: "),
         "{out}"
     );
     assert!(
@@ -242,6 +266,63 @@ fn a_unit_that_does_not_parse_fails_its_program_and_names_the_unit() {
             .any(|l| l.starts_with("q.zed ") && l.ends_with(" yes")),
         "{out}"
     );
+}
+
+/// Each main file of one package has the whole package as its program, so the two below share
+/// the package's ring and words (found once for both), and each is judged by its own label;
+/// the report on them does not depend on their order.
+#[test]
+fn main_files_of_one_package_share_its_layers_and_keep_their_labels() {
+    let dir = spec_with("shared_package", TABLE);
+    std::fs::create_dir_all(dir.at("p")).unwrap();
+    dir.write("p/zed.manifest", "");
+    let low = dir.write("p/low.zed", "// layer L1\nf(x: int) -> int = x;\n");
+    let high = dir.write(
+        "p/high.zed",
+        "// layer L3\ng(x: [int]) -> int = h(sorted(x));\n",
+    );
+    let (outcome, out) = tool(layer::run, &[&dir.root(), &low, &high]);
+    assert_eq!(outcome, Ok(false), "{out}");
+    let row = |name: &str| {
+        out.lines()
+            .find(|l| l.starts_with(name))
+            .unwrap_or_else(|| panic!("{out}"))
+            .to_string()
+    };
+    let (l, h) = (row("p/low.zed "), row("p/high.zed "));
+    assert!(
+        l.contains(" 2 ") && l.contains("L3 (sorted)") && l.ends_with(" NO"),
+        "{out}"
+    );
+    assert!(
+        h.contains(" 2 ") && h.contains("L3 (sorted)") && h.ends_with(" yes"),
+        "{out}"
+    );
+    let (outcome, swapped) = tool(layer::run, &[&dir.root(), &high, &low]);
+    assert_eq!(outcome, Ok(false), "{swapped}");
+    let mut a: Vec<&str> = out.lines().collect();
+    let mut b: Vec<&str> = swapped.lines().collect();
+    a.sort_unstable();
+    b.sort_unstable();
+    assert_eq!(a, b);
+}
+
+/// The units that do not parse are named in name order whichever main file of their package
+/// is read first.
+#[test]
+fn the_units_that_do_not_parse_are_named_in_name_order() {
+    let dir = spec_with("fail_order", TABLE);
+    std::fs::create_dir_all(dir.at("p")).unwrap();
+    dir.write("p/zed.manifest", "");
+    let z = dir.write("p/z.zed", "// layer L1\nf(\n");
+    let a = dir.write("p/a.zed", "// layer L1\ng(\n");
+    let (_, out) = tool(layer::run, &[&dir.root(), &z, &a]);
+    let fails: Vec<&str> = out.lines().filter(|l| l.contains("PARSE FAIL")).collect();
+    assert_eq!(fails.len(), 2, "{out}");
+    for f in fails {
+        let (first, second) = (f.find("p/a.zed: "), f.find("; p/z.zed: "));
+        assert!(first.zip(second).is_some_and(|(x, y)| x < y), "{out}");
+    }
 }
 
 #[test]

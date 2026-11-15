@@ -23,13 +23,11 @@ fn report(files: &[String]) -> (Result<bool, String>, String) {
 
 #[test]
 fn every_corpus_program_enables_the_layer_of_its_label() {
-    let mut files: Vec<String> = fs::read_dir(corpus())
-        .expect("the corpus is readable")
-        .map(|e| e.expect("a directory entry").path())
-        .filter(|p| p.extension().is_some_and(|x| x == "zed"))
-        .map(|p| p.to_str().expect("a UTF-8 path").to_string())
+    // Each program's main file: `NN-name.zed`, or `NN-name/main.zed` in its package root.
+    let files: Vec<String> = zed_tests::oracle::corpus()
+        .into_iter()
+        .map(|(p, _)| p.to_str().expect("a UTF-8 path").to_string())
         .collect();
-    files.sort();
     assert_eq!(files.len(), 31, "{files:?}");
     let (outcome, out) = report(&files);
     assert_eq!(outcome, Ok(true), "{out}");

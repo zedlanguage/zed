@@ -11,11 +11,15 @@ use zedc::run::load;
 /// accepted one.
 fn units() -> Vec<(String, Vec<u8>)> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut dirs = vec![root.join("../zed/corpus")];
+    let mut dirs = Vec::new();
     for step in std::fs::read_dir(root.join("steps")).unwrap() {
         dirs.push(step.unwrap().path().join("zed"));
     }
-    let mut out = Vec::new();
+    // The corpus programs, those with units as `NN-name/main.zed` in their package roots.
+    let mut out: Vec<(String, Vec<u8>)> = zed_tests::oracle::corpus()
+        .into_iter()
+        .map(|(path, _)| (path.display().to_string(), std::fs::read(&path).unwrap()))
+        .collect();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

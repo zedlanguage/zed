@@ -91,6 +91,33 @@ pub(super) fn layer_runs(spec: &Dir, d: &Dir) {
     assert!(layer::run(&[spec.root(), d.at("p.zed")], &mut String::new()).is_ok());
 }
 
+/// A directory named `{name}_{m}` that is one package (it holds a `zed.manifest`) of `m` units
+/// `u{i}.zed`, each of layer L1 and one function.
+pub(super) fn package_dir(name: &str, m: usize) -> Dir {
+    let d = Dir::new(&format!("{name}_{m}"));
+    d.write("zed.manifest", "");
+    for i in 0..m {
+        d.write(
+            &format!("u{i}.zed"),
+            &format!("// layer L1\nf{i}(x: int) -> int = x * {i};\n"),
+        );
+    }
+    d
+}
+
+/// `layer` on every unit of the package of `m` units in `d`, each named as a main file: one row
+/// per unit, each counting the `m` units of the package.
+pub(super) fn layer_runs_on_package(spec: &Dir, d: &Dir, m: usize) {
+    let mut args = vec![spec.root()];
+    args.extend((0..m).map(|i| d.at(&format!("u{i}.zed"))));
+    let mut out = String::new();
+    assert!(layer::run(&args, &mut out).is_ok(), "{out}");
+    let rows: Vec<&str> = out.lines().skip(1).collect();
+    assert_eq!(rows.len(), m, "{out}");
+    let units = format!(" {m:>5} ");
+    assert!(rows.iter().all(|r| r.contains(&units)), "{out}");
+}
+
 /// `audit` runs on the program in `d` against the spec in `spec`.
 pub(super) fn audit_runs(spec: &Dir, d: &Dir) {
     assert!(audit::run(&[spec.root(), d.at("p.zed")], &mut String::new()).is_ok());
@@ -277,6 +304,7 @@ fn each_tool_benchmark_passes_at_small_sizes() {
         let p = program_dir("small_scale_p", m);
         ring_runs(&empty, &p);
         layer_runs(&empty, &p);
+        layer_runs_on_package(&empty, &package_dir("small_scale_package", m), m);
         audit_runs(&empty, &p);
         let (needs, list) = checklist(m);
         compares_checklist(&spec, &table, &needs, &list, m);

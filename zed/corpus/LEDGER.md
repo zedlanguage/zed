@@ -1,8 +1,10 @@
 # M0.4 corpus ledger
 
-The 31 programs of DESIGN.md line 1559, one file each (`NN-name.zed`), with
+The 31 programs of DESIGN.md line 1559: one file each (`NN-name.zed`), or, for
+a program with units, the package `NN-name/` (its `zed.manifest`, the main
+file `main.zed` and the units it imports), with
 inputs (`NN-name.in`), expected outputs (`NN-name.out`) computed by
-the reference crate `ref/`, extra units in `NN-name/`, other spellings in `variants/`, and
+the reference crate `ref/`, other spellings in `variants/`, and
 checker controls in `controls/`. Each program's first line is its label,
 `// layer Lk`; its header comment says which mechanism it tests and how a
 wrong mechanism changes its output.
@@ -18,9 +20,11 @@ Checks, all run from this directory, with `<spec>` the spec repository:
   `--write` in place of `NN INPUT` regenerates the `.out` files. The step test `m0_04_corpus_references`
   compares every `.out` with the reference in the local suite.
 
-Import resolution: for a program with units, the package root is the directory
-`NN-name/` next to the main file, and `import u.{...};` names the unit
-`NN-name/u.zed`. Each unit's first comment line restates this.
+Import resolution (DESIGN.md sec:units): the manifest `NN-name/zed.manifest`
+marks the package root, so `main.zed` is the unit `main` and
+`import u.{...};` names the unit `NN-name/u.zed`. A unit with no manifest at or
+above it imports no unit, which is why the main file lies inside the package.
+Each unit's first comment line restates this.
 
 ## Table
 
@@ -38,22 +42,22 @@ DESIGN.md line 1561 assigns. Every label equals the line 1561 layer.
 | 6 | 06-matrix-multiply.zed | matrix multiply | L5 | L3 / L5 (zip) / L5 | L5 |
 | 6v | variants/06-matrix-multiply-remap.zed | the remap | L8 | L8 / L5 (slice) / L8 | L8 |
 | 6m | variants/06-matrix-multiply-method.zed | the stdlib method `matmul` | L14 | L1 / L14 (matmul) / L14 | (none) |
-| 7 | 07-json-parser.zed (+ json.zed) | grammar round trip, error recovery | L20 | L20 / L20 (serialize) / L20 | L20 |
+| 7 | 07-json-parser/main.zed (+ json.zed) | grammar round trip, error recovery | L20 | L20 / L20 (serialize) / L20 | L20 |
 | 8 | 08-utf8-percent.zed | UTF-8 decode fused with percent decoding, zero intermediates | L6 | L6 / L5 (orderedValues) / L6 | L6 |
 | 9 | 09-canonical-equal.zed | equality against an unmaterialized canonical form | L3 | L1 / L3 (split) / L3 | L3 |
-| 10 | 10-regex-matcher.zed (+ regex.zed) | static regex specialized by `mix` | L19 | L2 / L19 (mix) / L19 | L19 |
+| 10 | 10-regex-matcher/main.zed (+ regex.zed) | static regex specialized by `mix` | L19 | L2 / L19 (mix) / L19 | L19 |
 | 11 | 11-csv-split.zed | state machine parallelized by scan | L5 | L3 / L5 (slice) / L5 | L5 |
 | 12 | 12-cyk-table.zed | grammar-table recurrence (CYK) | L6 | L6 / L3 (where) / L6 | L6 |
-| 13 | 13-union-find.zed (+ uf.zed) | union-find, library path | L6 | L6 / L5 (orderedValues) / L6 | L6 |
+| 13 | 13-union-find/main.zed (+ uf.zed) | union-find, library path | L6 | L6 / L5 (orderedValues) / L6 | L6 |
 | 14 | 14-clustering.zed | incremental all-pairs reuse | L7 | L6 / L5 (drop) / L7, label above both | L7 |
 | 15 | 15-spreadsheet.zed | incremental spreadsheet | L7 | L6 / L6 (::frames) / L7, label above both | L7 |
 | 16 | 16-game-tick.zed | generations, event coalescing | L7 | L7 / L7 (reducer) / L7 | L7 |
 | 17 | 17-sensor-pipeline.zed | batch to streaming, waves, windows | L7 | L3 / L7 (window) / L7 | L7 |
-| 18 | 18-socket-wordfreq.zed | frontier completion over a socket | L7 | L3 / L7 (window) / L7 | L7 |
+| 18 | 18-socket-wordfreq.zed | frontier completion over a socket | L7 | L7 / L7 (window) / L7 | L7 |
 | 19 | 19-bank-ledger.zed | insufficient-funds values, failure surfacing | L6 | L6 / L5 (patch) / L6 | L6 |
 | 20 | 20-taint.zed | taint compile error, then the fix | L13 | L7 / L13 (taint) / L13 | L13 |
 | 20e | variants/20-taint-error.zed | the error version (must be rejected) | L13 | L7 / L13 (taint) / L13 | L13 |
-| 21 | 21-stats-module.zed (+ stats.zed) | demand-pruned record outputs sharing one sub-graph | L3 | L3 / L3 (split) / L3 | L3 |
+| 21 | 21-stats-module/main.zed (+ stats.zed) | demand-pruned record outputs sharing one sub-graph | L3 | L3 / L3 (split) / L3 | L3 |
 | 22 | 22-top-k.zed | sort pruning | L5 | L5 / L5 (take) / L5 | L5 |
 | 23 | 23-join-zoo.zed | all region triples, disjoint concatenation, range domains | L5 | L3 / L5 (orderedValues) / L5 | L5 |
 | 23v | variants/23-join-zoo-remap.zed | joins as output-keypath constraints | L8 | L8 / L5 (orderedValues) / L8 | L8 |
@@ -62,9 +66,9 @@ DESIGN.md line 1561 assigns. Every label equals the line 1561 layer.
 | 26 | 26-heat-stencil.zed | stencil, wavefront skewing | L6 | L6 / L3 (split) / L6 | L6 |
 | 27 | 27-parent-chain.zed | three spellings converge | L6 | L6 / L5 (first) / L6 | L6 |
 | 28 | 28-precedence-climbing.zed | modular wraparound, inclusive end test | L6 | L6 / L5 (take) / L6 | L6 |
-| 29 | 29-late-dedup.zed | waves overtaking, window late policy | L7 | L3 / L7 (window) / L7 | L7 |
-| 30 | 30-client-server.zed (+ api.zed, server.zed) | keypath cut, grammar-serialized boundary | L20 | L20 / L20 (serialize) / L20 | L20 (split at L24) |
-| 31 | 31-typechecker.zed (+ ast.zed, check.zed) | group + singleton-or-#collision fold, two passes, one fix, diagnostics by address | L6 | L6 / L5 (take) / L6 | L6 |
+| 29 | 29-late-dedup.zed | waves overtaking, window late policy | L7 | L7 / L7 (window) / L7 | L7 |
+| 30 | 30-client-server/main.zed (+ api.zed, server.zed) | keypath cut, grammar-serialized boundary | L20 | L20 / L20 (serialize) / L20 | L20 (split at L24) |
+| 31 | 31-typechecker/main.zed (+ ast.zed, check.zed) | group + singleton-or-#collision fold, two passes, one fix, diagnostics by address | L6 | L6 / L5 (take) / L6 | L6 |
 
 Counts: the labels give L3: 9, 21; L4: 1, 2; L5: 4, 5, 6, 11, 22, 23, 25;
 L6: 3, 8, 12, 13, 19, 24, 26, 27, 28, 31; L7: 14, 15, 16, 17, 18, 29; L13: 20;
@@ -232,7 +236,7 @@ so a different decision changes the named `.out` files.
 
 ## Output of the checks
 
-`cargo run -q -p zed-tools --bin layer -- <spec> [0-9][0-9]-*.zed variants/*.zed` (exit status 0):
+`cargo run -q -p zed-tools --bin layer -- <spec> [0-9][0-9]-*.zed [0-9][0-9]-*/main.zed variants/*.zed` (exit status 0):
 
 ```
 program                            units  ring table (word)     label enabled agree
@@ -242,21 +246,17 @@ program                            units  ring table (word)     label enabled ag
 04-running-variance.zed                1    L3 L5 (scan)           L5      L5 yes
 05-max-prefix-sum.zed                  1    L3 L5 (scan)           L5      L5 yes
 06-matrix-multiply.zed                 1    L3 L5 (zip)            L5      L5 yes
-07-json-parser.zed                     2   L20 L20 (serialize)    L20     L20 yes
 08-utf8-percent.zed                    1    L6 L5 (orderedValues)    L6      L6 yes
 09-canonical-equal.zed                 1    L1 L3 (split)          L3      L3 yes
-10-regex-matcher.zed                   2    L2 L19 (mix)          L19     L19 yes
 11-csv-split.zed                       1    L3 L5 (slice)          L5      L5 yes
 12-cyk-table.zed                       1    L6 L3 (where)          L6      L6 yes
-13-union-find.zed                      2    L6 L5 (orderedValues)    L6      L6 yes
 14-clustering.zed                      1    L6 L5 (drop)           L7      L7 yes (label above ring and table)
 15-spreadsheet.zed                     1    L6 L6 (::frames)       L7      L7 yes (label above ring and table)
 16-game-tick.zed                       1    L7 L7 (reducer)        L7      L7 yes
 17-sensor-pipeline.zed                 1    L3 L7 (window)         L7      L7 yes
-18-socket-wordfreq.zed                 1    L3 L7 (window)         L7      L7 yes
+18-socket-wordfreq.zed                 1    L7 L7 (window)         L7      L7 yes
 19-bank-ledger.zed                     1    L6 L5 (patch)          L6      L6 yes
 20-taint.zed                           1    L7 L13 (taint)        L13     L13 yes
-21-stats-module.zed                    2    L3 L3 (split)          L3      L3 yes
 22-top-k.zed                           1    L5 L5 (take)           L5      L5 yes
 23-join-zoo.zed                        1    L3 L5 (orderedValues)    L5      L5 yes
 24-weighted-pick.zed                   1    L6 L5 (drop)           L6      L6 yes
@@ -264,9 +264,13 @@ program                            units  ring table (word)     label enabled ag
 26-heat-stencil.zed                    1    L6 L3 (split)          L6      L6 yes
 27-parent-chain.zed                    1    L6 L5 (first)          L6      L6 yes
 28-precedence-climbing.zed             1    L6 L5 (take)           L6      L6 yes
-29-late-dedup.zed                      1    L3 L7 (window)         L7      L7 yes
-30-client-server.zed                   3   L20 L20 (serialize)    L20     L20 yes
-31-typechecker.zed                     3    L6 L5 (take)           L6      L6 yes
+29-late-dedup.zed                      1    L7 L7 (window)         L7      L7 yes
+07-json-parser/main.zed                2   L20 L20 (serialize)    L20     L20 yes
+10-regex-matcher/main.zed              2    L2 L19 (mix)          L19     L19 yes
+13-union-find/main.zed                 2    L6 L5 (orderedValues)    L6      L6 yes
+21-stats-module/main.zed               2    L3 L3 (split)          L3      L3 yes
+30-client-server/main.zed              3   L20 L20 (serialize)    L20     L20 yes
+31-typechecker/main.zed                3    L6 L5 (take)           L6      L6 yes
 02-histogram-push.zed                  1    L7 L7 (reducer)        L7      L7 yes
 06-matrix-multiply-method.zed          1    L1 L14 (matmul)       L14     L14 yes
 06-matrix-multiply-remap.zed           1    L8 L5 (slice)          L8      L8 yes
@@ -279,7 +283,7 @@ program                            units  ring table (word)     label enabled ag
 ```
 program                            units  ring table (word)     label enabled agree
 neg-gpu-target.zed                     1    L7 L27 (#gpu)          L7     L27 NO
-neg-parse-error.zed                PARSE FAIL neg-parse-error.zed: line 5 near 'stdout'; expected '!=' '&&' '(' '*' '^' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' '||'
+neg-parse-error.zed                PARSE FAIL neg-parse-error.zed: line 5 near 'm'; expected '!=' '&&' '(' '*' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' '^' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' 'without' '||' INFIX
 neg-sort-at-L4.zed                     1    L5 L5 (sort)           L4      L5 NO
 neg-take-at-L4.zed                     1    L1 L5 (take)           L4      L5 NO
 pos-gpu-atom.zed                       1    L2 L3 (map)            L3      L3 yes
@@ -295,21 +299,17 @@ pos-shadow-scan.zed                    1    L1 L3 (map)            L3      L3 ye
 04-running-variance.zed L3
 05-max-prefix-sum.zed L3
 06-matrix-multiply.zed L3
-07-json-parser.zed L2
 08-utf8-percent.zed L6
 09-canonical-equal.zed L1
-10-regex-matcher.zed L2
 11-csv-split.zed L3
 12-cyk-table.zed L6
-13-union-find.zed L3
 14-clustering.zed L6
 15-spreadsheet.zed L6
 16-game-tick.zed L7
 17-sensor-pipeline.zed L3
-18-socket-wordfreq.zed L3
+18-socket-wordfreq.zed L7
 19-bank-ledger.zed L6
 20-taint.zed L7
-21-stats-module.zed L3
 22-top-k.zed L5
 23-join-zoo.zed L3
 24-weighted-pick.zed L6
@@ -317,24 +317,28 @@ pos-shadow-scan.zed                    1    L1 L3 (map)            L3      L3 ye
 26-heat-stencil.zed L6
 27-parent-chain.zed L6
 28-precedence-climbing.zed L6
-29-late-dedup.zed L3
-30-client-server.zed L2
-31-typechecker.zed L6
+29-late-dedup.zed L7
 07-json-parser/json.zed L20
+07-json-parser/main.zed L2
+10-regex-matcher/main.zed L2
 10-regex-matcher/regex.zed L2
+13-union-find/main.zed L3
 13-union-find/uf.zed L6
+21-stats-module/main.zed L3
 21-stats-module/stats.zed L3
 30-client-server/api.zed L20
+30-client-server/main.zed L2
 30-client-server/server.zed L3
 31-typechecker/ast.zed L3
 31-typechecker/check.zed L3
+31-typechecker/main.zed L6
 variants/02-histogram-push.zed L7
 variants/06-matrix-multiply-method.zed L1
 variants/06-matrix-multiply-remap.zed L8
 variants/20-taint-error.zed L7
 variants/23-join-zoo-remap.zed L8
 controls/neg-gpu-target.zed L7
-controls/neg-parse-error.zed FAIL line 5 near 'stdout'; expected '!=' '&&' '(' '*' '^' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' '||'
+controls/neg-parse-error.zed FAIL line 5 near 'm'; expected '!=' '&&' '(' '*' '*.' '+' '++' '-' '.' '..' '..<' '..=' '/' '::' ';' '<' '<=' '==' '>' '><' '>=' '?.' '[' '^' 'as' 'div' 'else' 'in' 'into' 'is' 'mod' 'not' 'with' 'without' '||' INFIX
 controls/neg-sort-at-L4.zed L5
 controls/neg-take-at-L4.zed L1
 controls/pos-gpu-atom.zed L2

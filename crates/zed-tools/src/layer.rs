@@ -1,7 +1,8 @@
 //! The M0.4 layer checker. `layer SPEC_DIR [-v] PROGRAM.zed ...` fails if any program disagrees.
 //!
-//! For each program (a main file NN-name.zed plus every .zed file under the directory NN-name/,
-//! its other units) it prints
+//! For each program (a main file, plus every other .zed file of its package, under the nearest
+//! directory at or above it that holds a `zed.manifest`; a main file with no manifest above it
+//! is the whole program) it prints
 //!
 //! ```text
 //! the parse ring   lowest ring at which every unit parses
@@ -40,6 +41,7 @@
 //! prelude functions on families (L3) are not counted. These are reported in LEDGER.md for the
 //! programs they touch.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
@@ -427,19 +429,40 @@ fn list(dir: &str) -> Result<(Vec<String>, Vec<String>), String> {
     Ok((files, dirs))
 }
 
-/// The units of the program whose main file is `main`: it, then every .zed file under the
-/// directory of its name without `.zed`, directory by directory in path order.
+/// The package root of the unit `file`: the nearest directory at or above it that holds a
+/// manifest `zed.manifest` (DESIGN.md sec:units), on its path with links followed, as zedc's
+/// `Place::of` finds it; none when no directory does. O(parts of the path) probes.
+pub fn package_root(file: &str) -> Result<Option<String>, String> {
+    let full = std::fs::canonicalize(file).map_err(|e| format!("{file}: {e}"))?;
+    Ok(full
+        .ancestors()
+        .skip(1)
+        .find(|d| d.join(MANIFEST).is_file())
+        .map(|d| d.to_string_lossy().into_owned()))
+}
+
+/// The manifest that marks a package root.
+const MANIFEST: &str = "zed.manifest";
+
+/// The units of the program whose main file is `main`: it, then every other .zed file of its
+/// package (under its package root, leaving out a directory a manifest of its own makes another
+/// package), directory by directory in path order. With no package root, `main` alone, since
+/// such a unit imports no unit.
 pub fn program_units(main: &str) -> Result<Vec<String>, String> {
     let mut units = vec![main.to_string()];
-    let root = main.strip_suffix(".zed").unwrap_or(main);
-    if !Path::new(root).is_dir() {
+    let Some(root) = package_root(main)? else {
         return Ok(units);
-    }
+    };
+    let me = std::fs::canonicalize(main).map_err(|e| format!("{main}: {e}"))?;
     let mut dirs = Vec::new();
-    let mut pending = vec![root.to_string()];
+    let mut pending = vec![root];
     while let Some(dir) = pending.pop() {
         let (files, subdirs) = list(&dir)?;
-        pending.extend(subdirs);
+        pending.extend(
+            subdirs
+                .into_iter()
+                .filter(|d| !Path::new(d).join(MANIFEST).is_file()),
+        );
         dirs.push((dir, files));
     }
     dirs.sort();
@@ -449,37 +472,47 @@ pub fn program_units(main: &str) -> Result<Vec<String>, String> {
             files
                 .iter()
                 .filter(|f| f.ends_with(".zed"))
-                .map(|f| format!("{dir}/{f}")),
+                .map(|f| format!("{dir}/{f}"))
+                .filter(|f| Path::new(f) != me),
         );
     }
     Ok(units)
 }
 
-/// A program's layers.
+/// The name a report gives the unit `file`: its path from the directory above its package root,
+/// `07-json-parser/main.zed`, since the units of different packages share file names; the file
+/// name alone for a unit with no package root.
+pub fn shown_name(file: &str) -> String {
+    let root = package_root(file).ok().flatten();
+    let shown = root.and_then(|root| {
+        let above = Path::new(&root).parent()?;
+        let full = std::fs::canonicalize(file).ok()?;
+        Some(full.strip_prefix(above).ok()?.display().to_string())
+    });
+    shown.unwrap_or_else(|| base_name(file).to_string())
+}
+
+/// A program's layers, all but its label's: they depend on the set of its units alone, not on
+/// which of them is the main file or on their order (the ring is a maximum, the words a set).
 struct Layered {
     units: usize,
     ring: u32,
     table: u32,
     word: String,
-    enabled: u32,
     /// Every table word the program uses, lowest first.
     hits: BTreeSet<Hit>,
 }
 
-/// The layers of the program `main`, or why it has none; and its label.
+/// The layers of the program whose units are `paths`, or why it has none: each unit that does
+/// not parse, in name order.
 fn check(
     spec: &Spec,
     table: &WordTable,
-    main: &str,
-) -> Result<(Option<u32>, Result<Layered, String>), String> {
-    let paths = program_units(main)?;
-    let mut label = None;
+    paths: &[String],
+) -> Result<Result<Layered, String>, String> {
     let (mut trees, mut rng, mut whys) = (Vec::new(), 0, Vec::new());
-    for (i, path) in paths.iter().enumerate() {
+    for path in paths {
         let text = read_text(path)?;
-        if i == 0 {
-            label = label_at(&text);
-        }
         match ring_of(spec, &text) {
             Ok(r) => {
                 rng = rng.max(r.ring);
@@ -489,25 +522,24 @@ fn check(
                     toks: r.toks,
                 });
             }
-            Err(why) => whys.push(format!("{}: {why}", base_name(path))),
+            Err(why) => whys.push(format!("{}: {why}", shown_name(path))),
         }
     }
     if !whys.is_empty() {
-        return Ok((label, Err(whys.join("; "))));
+        whys.sort();
+        return Ok(Err(whys.join("; ")));
     }
     let hits = analyze(spec, &trees, table);
     let (tl, word) = hits
         .last()
         .map_or((1, "-".to_string()), |(k, w, _)| (*k, w.clone()));
-    let verdict = Layered {
+    Ok(Ok(Layered {
         units: paths.len(),
         ring: rng,
         table: tl,
         word,
-        enabled: rng.max(tl).max(label.unwrap_or(0)),
         hits,
-    };
-    Ok((label, Ok(verdict)))
+    }))
 }
 
 /// Writes the report on `files`, and says whether every program agrees.
@@ -524,9 +556,25 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
         right("label", 5),
         right("enabled", 7)
     );
+    // Every main file of one package has the whole package as its program, so the package's
+    // layers are found once and kept by its root. Naive, once per main file: p main files of a
+    // package of n units walk it and parse its units p times, O(p n). Kept: O(n) parses, plus
+    // the O(depth of the path) probes that find each main file's root.
+    let mut packages: HashMap<String, Result<Layered, String>> = HashMap::new();
     for f in files {
-        let (label, verdict) = check(spec, &table, f)?;
-        let name = left(base_name(f), 34);
+        let label = label_at(&read_text(f)?);
+        let alone;
+        let verdict = match package_root(f)? {
+            Some(root) => match packages.entry(root) {
+                Entry::Occupied(e) => &*e.into_mut(),
+                Entry::Vacant(e) => &*e.insert(check(spec, &table, &program_units(f)?)?),
+            },
+            None => {
+                alone = check(spec, &table, &[f.to_string()])?;
+                &alone
+            }
+        };
+        let name = left(&shown_name(f), 34);
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
@@ -535,7 +583,8 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
                 continue;
             }
         };
-        let agree = label == Some(r.enabled);
+        let enabled = r.ring.max(r.table).max(label.unwrap_or(0));
+        let agree = label == Some(enabled);
         let above = label.is_some_and(|l| l > r.ring.max(r.table));
         let lab = label
             .filter(|l| *l != 0)
@@ -552,7 +601,7 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
             right(&format!("L{}", r.ring), 5),
             left(&format!("L{} ({})", r.table, r.word), 16),
             right(&lab, 5),
-            right(&format!("L{}", r.enabled), 7)
+            right(&format!("L{enabled}"), 7)
         );
         if verbose {
             for (k, w, how) in r.hits.iter().rev() {
