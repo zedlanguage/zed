@@ -10130,7 +10130,7 @@ impl Side1 {
 // (Fourier-Motzkin is doubly exponential in general), so no smaller exact result is known;
 // the callers then solve the kept core with each question, as they did the whole group.
 pub(super) fn shadow(rows: &[Con], keep: &dyn Fn(&Atom) -> bool, dark: bool) -> Option<Vec<Con>> {
-    shadow_logged(rows, keep, dark, false, None)
+    shadow_logged(&mut rows.iter(), keep, dark, false, None)
 }
 
 /// The conjunction `rows` with every atom outside `keep` eliminated, exactly over the integers
@@ -10166,7 +10166,7 @@ type Eliminated = (Atom, Vec<Con>);
 // piece below, a few rows each, and is measured by the `separate_*_scale` tests
 // (l01_38_omega_test::one_scope), COMPLEXITY.md row LOAD-chain-sep-rest.
 pub(super) fn shadow_whole(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
-    shadow_logged(rows, keep, true, true, None)
+    shadow_logged(&mut rows.iter(), keep, true, true, None)
 }
 
 /// A row with its terms divided by their common divisor and its constant rounded down, which
@@ -10200,10 +10200,10 @@ fn tidy(lin: Lin, rel: Rel) -> Result<Option<Con>, ()> {
     Ok(Some(Con { lin, rel }))
 }
 
-/// [`shadow`], each elimination written to `log` in turn when there is one; with `grow`, as
-/// [`shadow_whole`].
-fn shadow_logged(
-    rows: &[Con],
+/// [`shadow`] of the rows `rows` yields, each elimination written to `log` in turn when there
+/// is one; with `grow`, as [`shadow_whole`].
+fn shadow_logged<'a>(
+    rows: &mut (dyn Iterator<Item = &'a Con> + '_),
     keep: &dyn Fn(&Atom) -> bool,
     dark: bool,
     grow: bool,
@@ -10230,7 +10230,7 @@ fn shadow_logged(
         gone: bool,
         queued: bool,
     }
-    let mut live: Vec<Option<Con>> = Vec::with_capacity(rows.len());
+    let mut live: Vec<Option<Con>> = Vec::with_capacity(rows.size_hint().0);
     let mut deg: HashMap<Atom, Deg> = HashMap::new();
     let mut queue: std::collections::VecDeque<Atom> = std::collections::VecDeque::new();
     // Adds (`by` 1) or takes out (`by` -1) the counts of row `i` at each of its atoms, queuing
@@ -19142,16 +19142,17 @@ impl Level {
         // rows read per level, and a level opens at each disjunct, so on a chain of n linked
         // groups each with a disjunction it was Θ(n³) (FAIL-batch-linked-copies-growth: 0.21,
         // 1.49, 16.1 s at 1, 2, 4 linked copies). Here the group's linked rows are projected onto
-        // each symbol together ([`projected_hulls`], one [`by_halves`]), O(n log n) where the
-        // projections stay small, and a symbol is asked only of its projection; where a leaf
-        // keeps a core of many atoms (a dense group) the questions read that core, at worst the
-        // whole group as before. A symbol the projection refuses is asked again of the whole group
-        // (at worst the naive cost plus the projection), so no answer is given up; where the whole
-        // group was refused, the projection may answer, narrower and sound
+        // each symbol together ([`projected_hulls`], the two passes of [`projected_each`]), O(n)
+        // where the projections passed between ranges of symbols stay small (O(n log n) with one
+        // [`by_halves`] until PERF-hull-linked-copies-under9), and a symbol is asked only of its
+        // projection; where a leaf keeps a core of many atoms (a dense group) the questions read
+        // that core, at worst the whole group as before. A symbol the projection refuses is asked
+        // again of the whole group (at worst the naive cost plus the projection), so no answer is
+        // given up; where the whole group was refused, the projection may answer, narrower and sound
         // (FAIL-batch-single-hull-seed: batch hulls depended on which symbols were asked). Tests
         // `by_halves_against_old::batch_and_single_hulls_are_exact_on_a_chain_of_sums` and the
         // benchmark `by_halves_against_old::bench::hulls_of_linked_copies_are_projected_in_linear_work`,
-        // COMPLEXITY.md row FAIL-batch-single-hull-seed.
+        // COMPLEXITY.md rows FAIL-batch-single-hull-seed and PERF-hull-linked-copies-under9.
         let mut projected: HashMap<usize, HashMap<Atom, Result<IntervalSet, Refusal>>> =
             HashMap::new();
         let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(g.syms.len());
@@ -20727,7 +20728,7 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
         return dw.point_of(greatest);
     }
     let mut log = Vec::new();
-    let left = shadow_logged(rows, &|_| false, false, false, Some(&mut log))?;
+    let left = shadow_logged(&mut rows.iter(), &|_| false, false, false, Some(&mut log))?;
     let mut model = solve(&left, true).ok()??;
     for (x, rows) in log.into_iter().rev() {
         let at = rows.iter().map(|c| {
@@ -20749,7 +20750,7 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
 }
 
 /// The hulls of the symbols `syms` over the conjunction `rows`, which holds at the point `m`:
-/// each by [`hull_from`] over the projection of `rows` onto the symbol ([`by_halves`]), all
+/// each by [`hull_from`] over the projection of `rows` onto the symbol ([`projected_each`]), all
 /// projections made together. [`shadow`] eliminates exactly over the integers, so the
 /// projection has the integer points of `rows` read on the atoms it keeps, and the symbol's
 /// hull over it is its hull over `rows`; where every other atom is gone, the rows over the
@@ -20760,18 +20761,272 @@ fn projected_hulls(
     syms: &[&Atom],
     m: &Model,
 ) -> HashMap<Atom, Result<IntervalSet, Refusal>> {
-    let keep: Vec<BTreeSet<Atom>> = (syms.iter())
-        .map(|s| BTreeSet::from([(*s).clone()]))
-        .collect();
     let mut out = HashMap::new();
-    let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+    let mut put = |i: usize, k: Option<Vec<Con>>| {
         if let Some(k) = k {
             let f = Formula::and(k.into_iter().map(Formula::Con).collect());
             out.insert(syms[i].clone(), hull_from(&f, syms[i], m));
         }
-        Ok(Vec::new())
-    });
-    ran.expect("no leaf fails");
+    };
+    // Rows of three or more terms whose wide rows share no atom are projected by their own
+    // structure, as [`by_halves`] does first.
+    if rows.iter().any(|c| c.lin.terms.len() > 2)
+        && let Some(dw) = slack::DisjointWide::of_cons(&rows)
+    {
+        for (i, s) in syms.iter().enumerate() {
+            put(i, dw.project_keep(&BTreeSet::from([(*s).clone()])));
+        }
+    } else {
+        for (i, k) in projected_each(&rows, syms).into_iter().enumerate() {
+            put(i, k);
+        }
+    }
+    out
+}
+
+/// For each symbol `syms[i]`, the rows `rows` projected onto it by [`shadow`] and cut to its
+/// group ([`linked_to`]): the rows a leaf of [`by_halves`] is given when every item keeps one
+/// symbol and no leaf returns rows. `None` where a projection found no point, which a system
+/// with a point never gives, and for a symbol named a second time (its first place has it).
+///
+/// The items are the leaves of the tree of halves of [`by_halves`] (`0..k`, a range split at
+/// its middle). Each row is put at the lowest node whose range holds the places of its atoms: a
+/// symbol's place is its index, and an atom that is not asked takes the range of the places of
+/// the symbols its rows reach through such atoms. Two passes over the tree then make, with
+/// [`shadow`] on few rows at each node, (1) going up, the rows of each node's subtree projected
+/// onto the atoms that also occur outside it, and (2) going down, the rows outside each node's
+/// subtree projected onto the atoms that also occur inside it: from its parent's rows, the
+/// parent's outside rows and its sibling's rows from the first pass. A leaf's projection is
+/// that of its own rows with its outside rows. Each step removes only atoms that the rows it
+/// is not given do not hold, so (as elimination over the integers is exact) each leaf gets the
+/// integer points of `rows` read on its symbol, as with [`by_halves`] (bucket elimination on a
+/// tree decomposition: Dechter, "Bucket elimination", 1999; the two passes of a junction tree,
+/// Lauritzen and Spiegelhalter, 1988). An atom [`shadow`] keeps (where its elimination would
+/// add rows) stays in the rows passed on, as in [`by_halves`], and is read as unknown there. The
+/// rows of a class of atoms not asked each reach the places of the whole class, so they are all
+/// put at one node and such an atom is never passed between nodes.
+// Complexity tradeoff: the naive version, [`by_halves`], projects at each node all the rows of
+// its parent onto the node's atoms, so every row is handled once per level, O(m log k) rows
+// handled for m rows and k symbols even where the projections stay small: 22921 rows at 40
+// linked copies and 235201 at 320 (10.3 times), 75% of the work of
+// `by_halves_against_old::bench::hulls_of_linked_copies_are_projected_in_linear_work`, which
+// scaled 9.85 times (PERF-hull-linked-copies-under9). Here each row is handled at one node,
+// and between nodes only the projected rows pass: O(m) rows handled, plus those passed, which
+// are few where the rows' graph, read in the order of `syms`, has small cuts between ranges
+// (chains, trees). Where the cuts are large (a dense group, or symbols in an order that cuts
+// many rows at each range), the rows passed are the projections onto those cuts, as large as
+// the projections [`by_halves`] made at the same nodes, and the cost is theirs. Also O(m log k)
+// integer comparisons to place the rows, and O(a log a) to look up whether an atom of `a`
+// occurrences occurs inside a subtree. Tests: the benchmark above and
+// `by_halves_against_old::hulls_of_linked_copies_are_those_of_the_whole_group`.
+fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
+    let k = syms.len();
+    let mut out: Vec<Option<Vec<Con>>> = vec![None; k];
+    if k == 0 {
+        return out;
+    }
+    // The nodes of the tree of halves in preorder: range `l..r`, the index past its subtree,
+    // and its two children; a node of range length `len` has `2·len - 1` nodes in its subtree.
+    struct Node {
+        l: usize,
+        r: usize,
+        end: usize,
+        kids: Option<(usize, usize)>,
+    }
+    let mut nodes: Vec<Node> = Vec::with_capacity(2 * k - 1);
+    let mut stack = vec![(0, k)];
+    while let Some((l, r)) = stack.pop() {
+        let p = nodes.len();
+        let kids = (r - l > 1).then(|| {
+            let m = l + (r - l) / 2;
+            stack.push((m, r));
+            stack.push((l, m));
+            (p + 1, p + 2 * (m - l))
+        });
+        nodes.push(Node {
+            l,
+            r,
+            end: p + 2 * (r - l) - 1,
+            kids,
+        });
+    }
+    // The lowest node whose range holds the places `lo..=hi`.
+    let node_of = |lo: usize, hi: usize| -> usize {
+        let (mut p, mut l, mut r) = (0, 0, k);
+        while r - l > 1 {
+            let m = l + (r - l) / 2;
+            if hi < m {
+                p += 1;
+                r = m;
+            } else if lo >= m {
+                p += 2 * (m - l);
+                l = m;
+            } else {
+                break;
+            }
+        }
+        p
+    };
+    // Each atom numbered; a symbol's place, and for a symbol named again, its first index.
+    let mut id: HashMap<&Atom, usize> = HashMap::new();
+    let mut place: Vec<Option<usize>> = Vec::new();
+    let mut first: Vec<bool> = vec![true; k];
+    for (i, s) in syms.iter().enumerate() {
+        let n = id.len();
+        let a = *id.entry(*s).or_insert(n);
+        if a == n {
+            place.push(Some(i));
+        } else {
+            first[i] = false;
+        }
+    }
+    for c in rows {
+        for a in c.lin.terms.keys() {
+            let n = id.len();
+            if *id.entry(a).or_insert(n) == n {
+                place.push(None);
+            }
+        }
+    }
+    // The atoms not asked, joined when a row holds two of them (union by size, with path
+    // halving), and the range of places each such class reaches.
+    type Span = Option<(usize, usize)>;
+    let join = |s: Span, t: Span| match (s, t) {
+        (Some((a, b)), Some((c, d))) => Some((a.min(c), b.max(d))),
+        (s, None) => s,
+        (None, t) => t,
+    };
+    let mut up: Vec<usize> = (0..id.len()).collect();
+    let mut size: Vec<usize> = vec![1; id.len()];
+    let find = |up: &mut Vec<usize>, mut a: usize| {
+        while up[a] != a {
+            up[a] = up[up[a]];
+            a = up[a];
+        }
+        a
+    };
+    let ids: Vec<Vec<usize>> = (rows.iter())
+        .map(|c| c.lin.terms.keys().map(|a| id[a]).collect())
+        .collect();
+    for row in &ids {
+        let mut free = row.iter().filter(|&&a| place[a].is_none());
+        if let Some(&a) = free.next() {
+            for &b in free {
+                let (x, y) = (find(&mut up, a), find(&mut up, b));
+                if x != y {
+                    let (x, y) = if size[x] < size[y] { (y, x) } else { (x, y) };
+                    up[y] = x;
+                    size[x] += size[y];
+                }
+            }
+        }
+    }
+    let own = |row: &[usize]| -> Span {
+        (row.iter().filter_map(|&a| place[a])).fold(None, |s, i| join(s, Some((i, i))))
+    };
+    let mut class: Vec<Span> = vec![None; id.len()];
+    for row in &ids {
+        if let Some(&a) = row.iter().find(|&&a| place[a].is_none()) {
+            let r = find(&mut up, a);
+            class[r] = join(class[r], own(row));
+        }
+    }
+    // Each row at its node (a row reaching no symbol is left out, as [`linked_to`] leaves it);
+    // each atom's range, the places of the rows that hold it and its own; and the nodes at
+    // which it occurs, sorted, its symbol's leaf among them.
+    let mut at: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    let mut hull: Vec<Span> = (place.iter()).map(|p| p.map(|i| (i, i))).collect();
+    let mut occurs: Vec<Vec<usize>> = (place.iter())
+        .map(|p| p.map(|i| vec![node_of(i, i)]).unwrap_or_default())
+        .collect();
+    for (j, row) in ids.iter().enumerate() {
+        let free = row.iter().find(|&&a| place[a].is_none());
+        let span = join(own(row), free.and_then(|&a| class[find(&mut up, a)]));
+        let Some((lo, hi)) = span else { continue };
+        let p = node_of(lo, hi);
+        at[p].push(j);
+        for &a in row {
+            hull[a] = join(hull[a], span);
+            occurs[a].push(p);
+        }
+    }
+    for o in &mut occurs {
+        o.sort_unstable();
+        o.dedup();
+    }
+    // Whether atom `a` occurs at a node of the subtree of `p`, and whether outside it.
+    let inside = |a: usize, p: usize| {
+        let o = &occurs[a];
+        o.get(o.partition_point(|&q| q < p))
+            .is_some_and(|&q| q < nodes[p].end)
+    };
+    let outside =
+        |a: usize, p: usize| hull[a].is_some_and(|(lo, hi)| lo < nodes[p].l || hi >= nodes[p].r);
+    // Going up, children (later in preorder) first: the rows of each subtree but the root's
+    // projected onto the atoms that occur outside it. `None`: no point.
+    let mut ups: Vec<Option<Vec<Con>>> = vec![Some(Vec::new()); nodes.len()];
+    for p in (1..nodes.len()).rev() {
+        let (a, b) = match nodes[p].kids {
+            Some((a, b)) => (mem::take(&mut ups[a]), mem::take(&mut ups[b])),
+            None => (Some(Vec::new()), Some(Vec::new())),
+        };
+        // The children's rows are put back for the pass down, which reads each once.
+        ups[p] = match (&a, &b) {
+            (Some(a), Some(b)) => shadow_logged(
+                &mut at[p].iter().map(|&j| &rows[j]).chain(a).chain(b),
+                &|x| id.get(x).is_none_or(|&x| outside(x, p)),
+                false,
+                false,
+                None,
+            ),
+            _ => None,
+        };
+        if let Some((ka, kb)) = nodes[p].kids {
+            ups[ka] = a;
+            ups[kb] = b;
+        }
+    }
+    // Going down, parents first: the rows outside each subtree projected onto the atoms that
+    // occur in it; at a leaf, its symbol's projection.
+    let mut downs: Vec<Option<Vec<Con>>> = vec![None; nodes.len()];
+    downs[0] = Some(Vec::new());
+    for p in 0..nodes.len() {
+        let d = mem::take(&mut downs[p]);
+        match nodes[p].kids {
+            Some((a, b)) => {
+                for (c, s) in [(a, b), (b, a)] {
+                    let sib = mem::take(&mut ups[s]);
+                    downs[c] = match (&d, &sib) {
+                        (Some(d), Some(sib)) => shadow_logged(
+                            &mut d.iter().chain(at[p].iter().map(|&j| &rows[j])).chain(sib),
+                            &|x| id.get(x).is_none_or(|&x| inside(x, c)),
+                            false,
+                            false,
+                            None,
+                        ),
+                        _ => None,
+                    };
+                }
+            }
+            None => {
+                let i = nodes[p].l;
+                if !first[i] {
+                    continue;
+                }
+                let s = syms[i];
+                out[i] = d.and_then(|d| {
+                    shadow_logged(
+                        &mut d.iter().chain(at[p].iter().map(|&j| &rows[j])),
+                        &|x| x == s,
+                        false,
+                        false,
+                        None,
+                    )
+                    .map(|rows| linked_to(rows, std::iter::once(s)))
+                });
+            }
+        }
+    }
     out
 }
 
@@ -27064,6 +27319,54 @@ mod by_halves_against_old {
             let s = &syms[k];
             assert_eq!(each[k], project(&f, s), "batch and single on {s}");
         }
+    }
+
+    /// [`projected_hulls`] (the two passes of [`projected_each`]) gives each symbol the hull
+    /// [`hull_from`] finds over all the rows, with the symbols in an order that cuts few rows
+    /// between ranges and in orders that cut many, with atoms not asked that join symbols far
+    /// apart (one alone, and two in a chain), a symbol named twice and one no row holds
+    /// (PERF-hull-linked-copies-under9).
+    #[test]
+    fn hulls_projected_in_two_passes_are_those_of_the_whole_group() {
+        let (f, syms) = linked_copies(3);
+        let mut rows: Vec<Con> = (f.conjuncts().into_iter())
+            .filter_map(|c| match c {
+                Formula::Con(c) => Some(c.clone()),
+                _ => None,
+            })
+            .collect();
+        let extra = [
+            ge(v(500).minus(&v(0))),
+            ge(v(26).minus(&v(500))),
+            ge(v(502).minus(&v(4))),
+            ge(v(503).minus(&v(502)).minus(&Lin::constant(1))),
+            ge(v(17).minus(&v(503))),
+        ];
+        rows.extend(extra.iter().map(|c| match c {
+            Formula::Con(c) => c.clone(),
+            _ => unreachable!("a row"),
+        }));
+        let model = solve(&rows, true).expect("solve").expect("a point");
+        let whole = Formula::and(rows.iter().cloned().map(Formula::Con).collect());
+        let n = syms.len();
+        let absent = Atom::Sym("v600".into());
+        let orders: Vec<Vec<&Atom>> = vec![
+            syms.iter().collect(),
+            syms.iter().rev().collect(),
+            (0..n).map(|i| &syms[i * 7 % n]).collect(),
+            (syms.iter()).chain([&syms[3], &absent]).collect(),
+        ];
+        for ks in &orders {
+            let hulls = projected_hulls(rows.clone(), ks, &model);
+            for s in &syms {
+                assert_eq!(hulls.get(s), Some(&hull_from(&whole, s, &model)), "{s}");
+            }
+        }
+        let with_absent = projected_hulls(rows.clone(), &orders[3], &model);
+        assert_eq!(
+            with_absent.get(&absent),
+            Some(&hull_from(&whole, &absent, &model))
+        );
     }
 
     /// The rows of the case of [`batch_and_single_hulls_are_exact_on_a_chain_of_sums`] over
