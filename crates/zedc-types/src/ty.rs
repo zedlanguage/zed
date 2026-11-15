@@ -1558,7 +1558,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
         | NeedKind::Sum
-        | NeedKind::Reduce(_)
+        | NeedKind::Reduce(..)
         | NeedKind::Remap(_)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
@@ -3339,9 +3339,11 @@ pub enum NeedKind {
     /// as the remap's `as` pattern names, and the use gives the remap's family (DESIGN.md
     /// sec:remap_law). The key expressions are checked when the value's type is in hand.
     Remap(Span),
-    /// `v >< (op)`: the value is a family whose entries `op` folds, and the use gives the fold
-    /// (step L3.2; DESIGN.md sec:reduction).
-    Reduce(Reducer),
+    /// `v >< (op)` at the fold written at the span: the value is a family whose entries `op`
+    /// folds, and the use gives the fold (step L3.2; DESIGN.md sec:reduction). The span is the
+    /// fold's own, where a need met at a call is met at the call's, so that the checks of one
+    /// fold at every call are found together, as its identity needs (`Ck::finish`).
+    Reduce(Reducer, Span),
     /// `v.foldl(init, f)`, or `v.foldr(f, init)` when `right` is set: the value is a rank whose
     /// entries `f` folds from `init`, and the use gives the accumulator (step L3.3; DESIGN.md
     /// sec:reduction). `tys` is the types of `init` and of `f`, in that order.
@@ -3557,7 +3559,7 @@ impl Need {
                     recv: *recv,
                 },
                 NeedKind::Remap(at) => NeedKind::Remap(*at),
-                NeedKind::Reduce(op) => NeedKind::Reduce(*op),
+                NeedKind::Reduce(op, site) => NeedKind::Reduce(*op, *site),
                 NeedKind::Fold { tys, right } => NeedKind::Fold {
                     tys: tys.iter().map(&mut f).collect(),
                     right: *right,
@@ -3631,7 +3633,7 @@ impl Need {
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Into { .. }
-            | NeedKind::Reduce(_)
+            | NeedKind::Reduce(..)
             | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(_) => (None, &[], &[]),
@@ -3660,7 +3662,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
-            | NeedKind::Reduce(_)
+            | NeedKind::Reduce(..)
             | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
@@ -3694,7 +3696,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
-            | NeedKind::Reduce(_)
+            | NeedKind::Reduce(..)
             | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),

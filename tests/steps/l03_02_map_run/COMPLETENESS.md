@@ -18,7 +18,7 @@ makes (the native path). The three must print the same text.
 | Composition: `xs.map(f).map(g)` equals `xs.map(x -> g(f(x)))` | `runs::map_then_map_is_map_of_the_composite`, cases `map_then_map`, `map_of_the_composite` |
 | `where` keeps the keys of the entries it keeps; over string keys; with `map` and `><` | cases `where_keeps_the_keys_of_the_entries_it_keeps`, `where_of_a_string_keyed_map`, `map_then_where_then_sum` |
 | Lookups that miss: `#notFound` on a map, `#outOfBounds` on an array, after `where` | `runs::reads_that_miss_give_the_miss_atoms`, case `where_then_a_missed_read` |
-| `><` by `+`, `*` and `&&`; an empty level | cases `sum`, `product`, `all_of_bools`, `sum_of_an_empty_row_is_empty`, `fold_of_an_empty_display_is_empty` |
+| `><` by `+`, `*` and `&&`; an empty level | cases `sum`, `product`, `all_of_bools`, `sum_of_an_empty_row_is_zero`, `fold_of_an_empty_display_is_empty` |
 | Set displays and `in` on a set | cases `a_set_display`, `in_of_a_set_tests_an_element` |
 | `in` and `not in` test keys | cases `in_tests_a_key`, `in_of_a_missing_key`, `not_in` |
 | A loose atom in the entries passes through `map` | case `map_passes_a_loose_atom_through` |

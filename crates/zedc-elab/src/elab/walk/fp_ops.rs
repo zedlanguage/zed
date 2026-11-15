@@ -89,8 +89,9 @@ impl<'a> Elab<'a> {
     }
 
     /// The kernel `fold` by `p` of the one level of `family`, with the identity the checker
-    /// found at the fold's `span` for the entries' carrier; none for a fold in a lambda's body
-    /// over its parameter, which folds an empty level to `#empty`.
+    /// found at the fold's `span` for the entries' one carrier; none for a fold with no
+    /// identity there, which folds an empty level to `#empty` (a fold checked at two carriers
+    /// whose empty folds differ is refused by the checker).
     pub(super) fn fold_one(&self, family: Term, p: Prim, span: Span) -> Term {
         let identity = self.info.reduce.get(&span).cloned();
         Term::Fold {

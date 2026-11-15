@@ -948,7 +948,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Reduce(op, span) => {
                 let x = m.take_ty();
-                let t = self.reduce_end(op, &x, span);
+                let t = self.reduce_end(op, &x, span, span);
                 m.ty(t);
             }
             Frame::ReduceBy(of, span) => {
@@ -3605,18 +3605,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and `min` on floats are `-inf` and `inf`) folds an empty level to it; one without
     /// (`max` and `min` on `int` and `rat`) folds it to `#empty`, so the result gains `#empty`
     /// unless every family `x` may be has a key always present. Records the identity at the
-    /// values' carrier for elaboration ([`Info::reduce`]). A non-associative operator is
-    /// rejected with the left and right folds as the repairs.
+    /// values' carrier for elaboration ([`Info::reduce`]), through [`Ck::finish`]. A
+    /// non-associative operator is rejected with the left and right folds as the repairs.
+    /// Errors are placed at `span`, the call where a need is met; `site` is the fold's own.
     // Complexity tradeoff: the result is the operator's carrier, not the interval a sum of
     // `card` values in `[lo, hi]` lies in; that transfer is step L3.6's. A naive interval sum
     // here would need the level's cardinality, which this step does not track.
-    fn reduce_end(&mut self, op: Reducer, x: &Ty, span: Span) -> Ty {
-        self.fold_level(op, x, span, FoldForm::Infix)
+    fn reduce_end(&mut self, op: Reducer, x: &Ty, span: Span, site: Span) -> Ty {
+        self.fold_level(op, x, span, site, FoldForm::Infix)
     }
 
     /// [`Self::reduce_end`], its messages naming the fold as the program wrote it, `form`:
     /// `x >< op`, `x.reduce(op)` or `x.sum`.
-    fn fold_level(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
+    fn fold_level(&mut self, op: Reducer, x: &Ty, span: Span, site: Span, form: FoldForm) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let entries = Ty::union_all(
             (x.fns.iter())
@@ -3642,8 +3643,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             let r = self.class_root(&v);
             return match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                Some((_, Some(t))) => self.fold_level(op, &t, span, form),
-                Some((r, None)) => self.need(r, NeedKind::Reduce(op), true, span),
+                Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
+                Some((r, None)) => self.need(r, NeedKind::Reduce(op, site), true, span),
                 None => Ty::dynamic(),
             };
         }
@@ -3743,15 +3744,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         };
         let t = Ty::carrier(c);
-        if self.replaying == 0
-            && let Some(v) = identity
-        {
-            self.info.reduce.insert(span, v);
+        // The fold is checked here once outside a generic function, and once at each call of
+        // one, a need met with `replaying` set; the body elaborates to one fold for every
+        // call. `finish` gives the fold the identity where every check found one carrier, and
+        // rejects it where checks at two carriers found two empty folds, as `xs >< max` at
+        // `int` (`#empty`) and at `f64` (`-inf`), so the type given here holds at each call
+        // (DESIGN.md sec:reduction, "Identity as data"). A trial checks a repaired program and
+        // elaborates nothing, so it records nothing.
+        // Not proved: every call of a generic function meets its needs, so no call runs the
+        // fold at a carrier `finish` did not see.
+        if !self.trying {
+            let seen = self.folds.entry(site).or_default();
+            if !seen.iter().any(|(d, _)| *d == c) {
+                seen.push((c, identity.clone()));
+            }
+        }
+        if identity.is_some() {
             return t;
         }
-        // A need met at a call of a generic function: the one fold the body elaborates to
-        // serves every call, whose carriers differ, so it takes no identity and an empty
-        // family folds to `#empty`; so does an operator with no identity at the carrier. A
+        // An operator with no identity at the carrier folds an empty family to `#empty`. A
         // family with a key always present, an arrow whose result holds no miss, is not
         // empty, and its fold never gives `#empty`.
         let nonempty = (x.fns.iter()).filter(|s| s.data).all(|s| {
@@ -9231,7 +9242,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.group_of(&on, *recv, f, span, false)
             }
             NeedKind::Remap(at) => self.remap_met(*at, &on),
-            NeedKind::Reduce(op) => self.reduce_end(*op, &on, span),
+            NeedKind::Reduce(op, site) => self.reduce_end(*op, &on, span, *site),
             NeedKind::Fold { tys, right } => {
                 let init = self.bound(&tys[0], binds);
                 let f = Arg::of(self.bound(&tys[1], binds));

@@ -48,11 +48,12 @@ fn where_takes_a_function_giving_bool() {
 
 #[test]
 fn a_fold_of_a_row_that_may_be_empty_needs_else() {
-    // In a function's body the fold takes no identity, so the empty row `[]` folds to `#empty`
-    // alone, and `+` on a value that can only be an atom is an error.
+    // `max` has no identity at `int` (DESIGN sec:reduction, "Identity as data"), so the empty
+    // row `[]` folds to `#empty` alone, and `+` on a value that can only be an atom is an error.
+    // `(+)` folds it to its identity `0` (case `sum_of_an_empty_row_is_zero`).
     let e = refused(
         "empty_row",
-        "${{0 -> [1], 1 -> []}.map(r -> (r >< (+)) + 1)}",
+        "${{0 -> [1], 1 -> []}.map(r -> (r >< max) + 1)}",
     );
     assert!(
         e.contains("the function given to `map` does not take"),

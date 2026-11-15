@@ -1572,6 +1572,16 @@ struct Ck<'t, 'a> {
     /// ([`Ck::new`] takes one program's tables, and no signature or need comes from
     /// elsewhere), so the span names one remap of that program.
     remap_exprs: HashMap<Span, &'a Expr>,
+    /// Each fold `m >< op` checked outside a trial, by its span: the carriers of the entries
+    /// it was checked at, each once, with the identity of `op` there, if it has one. A fold in
+    /// a generic function is checked at each call of it ([`Ck::meet`]), and the body
+    /// elaborates to one fold for every call, so [`Ck::finish`] gives the fold its identity
+    /// only where every check found the one carrier (DESIGN.md sec:reduction, "Identity as
+    /// data").
+    // Complexity tradeoff: naive version, a list of every check, O(c) memory for c calls of
+    // the function. Used: one entry per distinct carrier, a scan of at most the six carriers
+    // per check, O(1) a check.
+    folds: BTreeMap<Span, Vec<(Carrier, Option<Value>)>>,
     /// The atoms an application inside a check of a need passed by at parameter `i` of the
     /// function value `what` it applied, for the check to give to the call of the function
     /// whose need it is: `(what, i, atoms)`.
@@ -1854,6 +1864,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             needs: 0,
             replaying: 0,
             remap_exprs: HashMap::new(),
+            folds: BTreeMap::new(),
             refused: Vec::new(),
             need_passed: Vec::new(),
             need_args: None,
@@ -4169,6 +4180,40 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// once for each signature that holds them. Each message then writes the definitions its
     /// types share once, below its sentence, named apart from the program's names ([`lay_out`]).
     fn finish(&mut self) {
+        // Each fold takes the identity of its one carrier. A fold of a generic function
+        // checked at two carriers is rejected where any of them has an identity: the one fold
+        // the body elaborates to cannot give `-inf` at `f64` and `#empty` at `int`, and an
+        // empty level holds no entry to tell its carrier at run time.
+        for (span, seen) in std::mem::take(&mut self.folds) {
+            match seen.as_slice() {
+                [(_, Some(v))] => {
+                    self.info.reduce.insert(span, v.clone());
+                }
+                _ if seen.iter().all(|(_, v)| v.is_none()) => {}
+                _ => {
+                    let types = (seen.iter())
+                        .map(|(c, _)| format!("`{}`", c.name()))
+                        .collect::<Vec<_>>()
+                        .join(" and ");
+                    let ends = (seen.iter())
+                        .map(|(c, v)| match v {
+                            Some(v) => format!("`{v}` at `{}`", c.name()),
+                            None => format!("`#empty` at `{}`", c.name()),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" and ");
+                    let what = format!(
+                        "a fold `><` that the calls of one function run on entries of type \
+                         {types}, where an empty level folds to {ends}"
+                    );
+                    self.error_offering(
+                        span,
+                        zedc_base::rejection::not_yet(&what),
+                        ["repair: write the function once for each of these types".to_string()],
+                    );
+                }
+            }
+        }
         // The signatures share the functions they hold, so they are named through one
         // [`Renamings`], which makes a function shared by several once for each set of names.
         let mut made = Renamings::default();

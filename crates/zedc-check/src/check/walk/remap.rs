@@ -101,7 +101,7 @@ pub(in crate::check) enum RemapNext<'a> {
 // walk.rs for a type of mod.rs; so the methods of `Args` are written with `Args` in mod.rs,
 // and the method of `Ck` that checks a value passed into a parameter is `passes_into`, not
 // `into`.
-pub(in crate::check) type ReduceEnd<'t, 'a> = fn(&mut Ck<'t, 'a>, Reducer, &Ty, Span) -> Ty;
+pub(in crate::check) type ReduceEnd<'t, 'a> = fn(&mut Ck<'t, 'a>, Reducer, &Ty, Span, Span) -> Ty;
 
 /// `Ck::apply`, the application of a signature to arguments, passed in by walk.rs as
 /// `ReduceEnd` is.
@@ -383,6 +383,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self,
                 Reducer::Op(op),
                 &family(ty(j), inner),
+                s.levels[j].span,
                 s.levels[j].span,
             );
         }

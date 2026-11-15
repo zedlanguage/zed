@@ -191,13 +191,13 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             }),
         ),
         (
-            "sum_of_an_empty_row_is_empty",
-            "${{0 -> [1], 1 -> []}.map(r -> (r >< (+)) else -1)}",
+            "sum_of_an_empty_row_is_zero",
+            "${{0 -> [1], 1 -> []}.map(r -> r >< (+))}",
             family(vec![
                 (i(0), i(1)),
                 (
                     i(1),
-                    eval(&or(reduce(list(&[]), Prim::Add, None), "empty", -1)).unwrap(),
+                    eval(&reduce(list(&[]), Prim::Add, Some(i(0)))).unwrap(),
                 ),
             ]),
         ),

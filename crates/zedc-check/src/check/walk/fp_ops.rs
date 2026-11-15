@@ -93,7 +93,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `x >< op` rejects one.
     pub(super) fn family_fold(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
         let out = self.passing(x, form.word(), span, None);
-        let t = self.fold_level(op, &x.without_loose(), span, form);
+        let t = self.fold_level(op, &x.without_loose(), span, span, form);
         out.union(&t)
     }
 

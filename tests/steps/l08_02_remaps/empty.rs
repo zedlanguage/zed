@@ -129,9 +129,8 @@ fn and_and_or_of_an_empty_level_are_their_identities() {
 #[test]
 fn max_and_min_of_an_empty_int_level_are_empty() {
     // sec:reduction, "Identity as data": "`max` over a possibly-empty domain at `int`, which
-    // has no identity for it, is `T | #empty`"; `min` likewise. (The `f64` case, which gets
-    // `-inf` from its own identity, waits for row FAIL-f64-max-empty-identity in
-    // /home/luke/Work/wt/failing-tests.)
+    // has no identity for it, is `T | #empty`"; `min` likewise. The `f64` case gets `-inf` from
+    // its own identity (the float tests below).
     let src = "m = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
                hi = m.map(r -> r >< max);\nlo = m.map(r -> r >< min);\n";
     prints(src, "hi", "{\"a\" -> #empty, \"b\" -> 5}");
@@ -168,4 +167,101 @@ fn a_constant_read_past_the_keys_is_rejected() {
     // can only miss.
     let src = "xs = [10, 20];\nx = xs as (k -> v);\ny = x[5];\n";
     rejected(src, &["x[5]"]);
+}
+
+// ---- A fold of an empty float level (DESIGN.md sec:reduction, "Identity as data"; rows
+// SPEC-empty-f64-sum and FAIL-f64-max-empty-identity) ----
+
+/// The level of "a" is emptied at run time by `where`.
+const F: &str = "m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v > 3.0));\n";
+
+#[test]
+fn max_of_an_empty_f64_level_is_minus_infinity() {
+    // "`max` at `f64` gets `-inf` from its own" identity; `min` gets `inf` the same way, the
+    // identities of IEEE 754-2019 `maximum` and `minimum`.
+    let src = format!("{F}hi = m.map(r -> r >< max);\nlo = m.map(r -> r >< min);\n");
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    prints(&src, "lo", "{\"a\" -> inf, \"b\" -> 5.0}");
+}
+
+#[test]
+fn an_f64_max_fold_has_no_empty_in_its_type() {
+    // "none of the four folds has `#empty` in its type"; at `int`, `max` keeps it.
+    use zed_tests::step_helpers::l01_26_type_resolution::info;
+    let top = |src: &str| info(src).0.tops["x"].to_string();
+    for op in ["max", "min", "(+)", "(*)"] {
+        let t = top(&format!("{F}x = m.map(r -> r >< {op});\n"));
+        assert!(t.contains("f64") && !t.contains("#empty"), "{op}: {t}");
+    }
+    let t = top(
+        "m = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
+                 x = m.map(r -> r >< max);\n",
+    );
+    assert!(t.contains("#empty"), "{t}");
+}
+
+#[test]
+fn a_sum_of_an_empty_f64_level_is_minus_zero_and_a_product_one() {
+    // `-0.0` is the identity of float `+`: `-0.0 + x` is `x` for every `x`, while
+    // `0.0 + -0.0` is `0.0` (IEEE 754-2019 sec. 6.3); `1.0` is the identity of `*`.
+    let src = format!("{F}s = m.map(r -> r >< (+));\np = m.map(r -> r >< (*));\n");
+    prints(&src, "s", "{\"a\" -> -0.0, \"b\" -> 5.0}");
+    prints(&src, "p", "{\"a\" -> 1.0, \"b\" -> 5.0}");
+}
+
+#[test]
+fn a_sum_of_sums_over_an_empty_level_is_the_flat_sum() {
+    // With `0.0` as the empty sum the outer fold would give `0.0 + -0.0`, which is `0.0`,
+    // where the flat sum of the one entry `-0.0` is `-0.0`.
+    let src = "m = { \"a\" -> [1.0], \"b\" -> [-0.0] }.map(r -> r.where(v -> v < 1.0));\n\
+               nested = m.map(r -> r >< (+)) >< (+);\n\
+               flat = m as (k -> j -> v) into (k >< (+) -> j >< (+) -> v);\n";
+    prints(src, "nested", "-0.0");
+    prints(src, "flat", "-0.0");
+}
+
+#[test]
+fn the_empty_folds_of_an_f32_level_are_its_identities() {
+    let src = "m = { \"a\" -> [1.0f32], \"b\" -> [5.0f32] }.map(r -> r.where(v -> v > 3.0f32));\n\
+               s = m.map(r -> r >< (+));\np = m.map(r -> r >< (*));\n\
+               hi = m.map(r -> r >< max);\nlo = m.map(r -> r >< min);\n";
+    prints(src, "s", "{\"a\" -> -0.0f32, \"b\" -> 5.0f32}");
+    prints(src, "p", "{\"a\" -> 1.0f32, \"b\" -> 5.0f32}");
+    prints(src, "hi", "{\"a\" -> -inff32, \"b\" -> 5.0f32}");
+    prints(src, "lo", "{\"a\" -> inff32, \"b\" -> 5.0f32}");
+}
+
+#[test]
+fn the_sum_and_product_of_an_empty_int_level_are_zero_and_one() {
+    // "`sum` gets its identity, `0` at `int`", in a function's body as outside one.
+    let src = "m = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
+               s = m.map(r -> r >< (+));\np = m.map(r -> r >< (*));\n";
+    prints(src, "s", "{\"a\" -> 0, \"b\" -> 5}");
+    prints(src, "p", "{\"a\" -> 1, \"b\" -> 5}");
+}
+
+#[test]
+fn a_named_function_folded_at_one_carrier_takes_its_identity() {
+    // The one fold `top`'s body elaborates to runs at `f64` alone, at both calls.
+    let src = format!(
+        "top(positional xs) = xs >< max;\n{F}hi = m.map(r -> top(r));\none = top([2.0, 3.0]);\n"
+    );
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    prints(&src, "one", "3.0");
+}
+
+#[test]
+fn a_fold_run_at_two_carriers_with_different_empty_folds_is_not_compiled_yet() {
+    // The one fold `top`'s body elaborates to cannot give `#empty` at `int` and `-inf` at
+    // `f64`, and an empty level holds no entry that shows its carrier at run time.
+    rejected(
+        "top(positional xs) = xs >< max;\na = top([1, 2]);\nb = top([1.0, 2.0]);\n",
+        &[
+            "an empty level folds to `#empty` at `int` and `-inf` at `f64`",
+            "does not compile it yet",
+        ],
+    );
+    // Two carriers without an identity fold to `#empty` at both, which one fold gives.
+    let src = "top(positional xs) = xs >< max;\na = top([1, 2]);\nb = top([3, 4]);\n";
+    prints(src, "b", "4");
 }
