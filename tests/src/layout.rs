@@ -201,6 +201,12 @@ fn expr_kids<'a>(
         }
         ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => out.extend(es),
         ExprKind::Map(entries) => out.extend(entries.iter().flat_map(|(k, v)| [k, v])),
+        ExprKind::Remap { of, levels, .. } => {
+            out.push(of);
+            for l in levels.iter().flatten() {
+                out.extend(l.key.iter().chain(&l.reduce));
+            }
+        }
         ExprKind::Range(from, to) => {
             out.push(from);
             match to {

@@ -62,12 +62,11 @@ fn every_corpus_program_parses_or_is_refused_by_layer() {
             "07-json-parser/json.zed",
             "30-client-server/api.zed",
             "variants/02-histogram-push.zed",
-            "variants/06-matrix-multiply-remap.zed",
             "variants/20-taint-error.zed",
             "variants/23-join-zoo-remap.zed",
         ],
         "the programs refused by layer"
     );
     // 31 programs, 8 units in folders and 5 variants.
-    assert_eq!((files.len(), parsed), (44, 33));
+    assert_eq!((files.len(), parsed), (44, 34));
 }

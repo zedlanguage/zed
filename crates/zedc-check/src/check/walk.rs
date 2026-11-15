@@ -2751,13 +2751,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Range(..)
             | ExprKind::In { .. }
             | ExprKind::Reduce { .. }
+            | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
             | ExprKind::Array(_)
             | ExprKind::Set(_)
             | ExprKind::Map(_)
             | ExprKind::For { .. } => unreachable!(
-                "name resolution rejects every range, in, reduction, read, section, array, set, map and for before the checker reads the program"
+                "name resolution rejects every range, in, reduction, remap, read, section, array, set, map and for before the checker reads the program"
             ),
             ExprKind::SortKey { .. } => unreachable!(
                 "name resolution rejects every sort key before the checker reads the program"

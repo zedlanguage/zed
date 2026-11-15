@@ -205,6 +205,9 @@ path = "steps/l06_01_parser/mod.rs"
 name = "l07_03_unit_log_off"
 path = "steps/l07_03_unit_log_off/mod.rs"
 [[test]]
+name = "l08_01_remap_run"
+path = "steps/l08_01_remap_run/mod.rs"
+[[test]]
 name = "l08_02_remaps"
 path = "steps/l08_02_remaps/mod.rs"
 [[test]]

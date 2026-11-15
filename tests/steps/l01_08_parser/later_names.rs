@@ -1,5 +1,5 @@
 //! A form the parser reads and this zedc does not compile yet is named for what it is: only `><`
-//! reduces (sec:reduction); `as (p)` and `into (q)` are a remap (sec:remap_law); `with f(…)` and
+//! reduces (sec:reduction); a sort key in a remap's pattern is of step L8.1; `with f(…)` and
 //! `without f(…)` attach and drop a facet (sec:facets); `m[day: 1]` is a named slice
 //! (sec:level_names).
 
@@ -18,31 +18,11 @@ fn later(text: &str) -> (String, &str) {
 #[test]
 fn each_form_is_named_for_what_it_is() {
     for (text, message, at) in [
-        (
-            "xs as (i -> v)",
-            zed_tests::not_yet!("the remap `as (i -> v)`"),
-            "as (i -> v)",
-        ),
-        (
-            "xs into (v -> i)",
-            zed_tests::not_yet!("the remap `into (v -> i)`"),
-            "into (v -> i)",
-        ),
-        // `as` and `into` are two tails; the first is reported.
-        (
-            "xs as (i -> v) into (i + 1 -> v)",
-            zed_tests::not_yet!("the remap `as (i -> v)`"),
-            "as (i -> v)",
-        ),
-        (
-            "m into (d -> k >< (+) -> v)",
-            zed_tests::not_yet!("the remap `into (d -> k >< (+) -> v)`"),
-            "into (d -> k >< (+) -> v)",
-        ),
+        // A remap builds (tests/steps/l08_01_remap_run); a sort key in its pattern is of L8.1.
         (
             "m into (desc s -> n -> s)",
-            zed_tests::not_yet!("the remap `into (desc s -> n -> s)`"),
-            "into (desc s -> n -> s)",
+            zed_tests::not_yet!("the sort key `desc s`"),
+            "desc s",
         ),
         (
             "x with units(\"m\")",

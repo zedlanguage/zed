@@ -469,6 +469,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::Range(..)
             | ExprKind::In { .. }
             | ExprKind::Reduce { .. }
+            | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
             | ExprKind::Array(_)
@@ -602,6 +603,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                 | ExprKind::Range(..)
                 | ExprKind::In { .. }
                 | ExprKind::Reduce { .. }
+                | ExprKind::Remap { .. }
                 | ExprKind::Read { .. }
                 | ExprKind::Section(_)
                 | ExprKind::Array(_)
@@ -915,6 +917,12 @@ fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
             match to {
                 RangeEnd::Below(b) | RangeEnd::Through(b) => push(b),
                 RangeEnd::Open => {}
+            }
+        }
+        ExprKind::Remap { of, levels, .. } => {
+            push(of);
+            for l in levels.iter().flatten() {
+                l.key.iter().chain(&l.reduce).for_each(&mut *push);
             }
         }
         ExprKind::For {

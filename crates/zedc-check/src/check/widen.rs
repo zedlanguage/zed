@@ -415,6 +415,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::Range(..)
             | ExprKind::In { .. }
             | ExprKind::Reduce { .. }
+            | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
             | ExprKind::Array(_)

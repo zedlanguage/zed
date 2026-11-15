@@ -220,6 +220,35 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
         ExprKind::Reduce { of, op } => {
             out.extend([Text("(>< "), at(of), Text(" "), at(op), Text(")")]);
         }
+        ExprKind::Remap {
+            of,
+            binders,
+            levels,
+        } => {
+            out.extend([Text("(remap "), at(of)]);
+            if let Some(bs) = binders {
+                out.push(Text(" (as"));
+                for b in bs {
+                    out.extend([Text(" "), Text(target(b))]);
+                }
+                out.push(Text(")"));
+            }
+            if let Some(ls) = levels {
+                out.push(Text(" (into"));
+                for l in ls {
+                    out.push(Text(" "));
+                    if l.reduce.is_some() {
+                        out.push(Text("(>< "));
+                    }
+                    out.push(l.key.as_ref().map_or(Text("_"), at));
+                    if let Some(op) = &l.reduce {
+                        out.extend([Text(" "), at(op), Text(")")]);
+                    }
+                }
+                out.push(Text(")"));
+            }
+            out.push(Text(")"));
+        }
         ExprKind::Read { of, name } => {
             out.extend([Text("(:: "), at(of), Text(" "), Text(name), Text(")")]);
         }

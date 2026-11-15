@@ -298,7 +298,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         1,
         concat!(
             "line 1: the mark names the row \"Collision\", and the diagnostic is in no row of the rejection table: ",
-            zed_tests::not_yet!("the remap `as (region -> day -> sku -> r)`")
+            "`revenue` is not defined."
         ),
     ),
     (
@@ -323,18 +323,12 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md [Remapping] 1",
         4,
-        concat!(
-            "line 1: ",
-            zed_tests::not_yet!("the remap `as (r -> c -> v)`")
-        ),
+        concat!("line 2: ", zed_tests::not_yet!("the sort key `desc s`")),
     ),
     (
         "README.md [Remapping] 2",
         6,
-        concat!(
-            "line 2: ",
-            zed_tests::not_yet!("the remap `as (region -> year -> sku -> amount)`")
-        ),
+        "line 2: `revenue` is not defined.",
     ),
     (
         "README.md [Vectors and matrices] 1",

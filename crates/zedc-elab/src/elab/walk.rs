@@ -722,12 +722,15 @@ impl<'a> Elab<'a> {
             ExprKind::Range(..)
             | ExprKind::In { .. }
             | ExprKind::Reduce { .. }
+            | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
             | ExprKind::Array(_)
             | ExprKind::Set(_)
             | ExprKind::Map(_)
-            | ExprKind::For { .. } => unreachable!("resolve rejects the forms of layer L3"),
+            | ExprKind::For { .. } => {
+                unreachable!("resolve rejects the forms of layer L3 and remaps (L8)")
+            }
             ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
                 unreachable!("resolve rejects the forms of layer L6")

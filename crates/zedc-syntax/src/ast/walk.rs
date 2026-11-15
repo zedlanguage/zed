@@ -60,6 +60,13 @@ pub fn expr_kids_mut<'a>(kind: &'a mut ExprKind, out: &mut Vec<&'a mut Expr>) {
                 RangeEnd::Open => {}
             }
         }
+        ExprKind::Remap { of, levels, .. } => {
+            out.push(of);
+            for l in levels.iter_mut().flatten() {
+                out.extend(l.key.as_mut());
+                out.extend(l.reduce.as_mut());
+            }
+        }
         ExprKind::For {
             source,
             guard,

@@ -2853,6 +2853,10 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(op));
                 todo.push(Task::Expr(of));
             }
+            ExprKind::Remap { of, .. } => {
+                self.later(e.span, "a remap `as` or `into`");
+                todo.push(Task::Expr(of));
+            }
             ExprKind::Read { of, .. } => {
                 self.later(e.span, "a metadata read `::`");
                 // `main::args` reads the entry point, which is no use of `main` as a value.

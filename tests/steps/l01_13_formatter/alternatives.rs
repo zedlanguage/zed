@@ -61,6 +61,10 @@ const PLACES: &[&str] = &[
 /// the documentation notation of `notation.peg`, which is no unit.
 const PIECES: &[&str] = &["AnnotEnd", "KeyOp", "ReducePolicy", "DocFence", "DocItem"];
 
+/// Cases the grammar reads that every place rejects by a rule, with the rule: a display that
+/// mixes a map entry and a set element is neither a map nor a set. Each must stay unplaced.
+const REJECTED: &[(&str, &str)] = &[("{ 1 -> 2, 3, }", "a display is a set or a map, not both")];
+
 /// What became of a case.
 enum Outcome {
     /// It built as this unit.
@@ -92,6 +96,7 @@ fn place(text: &str) -> Outcome {
 #[test]
 fn every_case_that_builds_formats_to_a_fixed_point() {
     let (mut unplaced, mut wrong, mut built, mut refused) = (Vec::new(), Vec::new(), 0, 0);
+    let mut rejected = Vec::new();
     for &(label, start, _, text, _) in CASES {
         let unit = match place(text) {
             Outcome::Built(unit) => unit,
@@ -100,7 +105,9 @@ fn every_case_that_builds_formats_to_a_fixed_point() {
                 continue;
             }
             Outcome::Unplaced => {
-                if !PIECES.contains(&start) {
+                if REJECTED.iter().any(|&(t, _)| t == text) {
+                    rejected.push(text);
+                } else if !PIECES.contains(&start) {
                     unplaced.push(format!("{label} | {start} | {text}"));
                 }
                 continue;
@@ -127,6 +134,12 @@ fn every_case_that_builds_formats_to_a_fixed_point() {
         wrong.len(),
         wrong.join("\n")
     );
+    for (text, rule) in REJECTED {
+        assert!(
+            rejected.contains(text),
+            "`{text}` is listed as rejected ({rule}), but it builds or is refused as not compiled yet"
+        );
+    }
     assert!(
         unplaced.is_empty(),
         "{} cases build in no place and are not refused as not compiled yet:\n{}",

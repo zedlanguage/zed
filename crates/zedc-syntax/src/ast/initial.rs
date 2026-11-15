@@ -324,6 +324,24 @@ fn expr_kids<'e>(e: &'e Expr, work: &mut Vec<Work<'e>>) {
                 RangeEnd::Open => {}
             }
         }
+        // The binders of `as` bind the keys and value in each level's key; a reducer is read
+        // once, outside them.
+        ExprKind::Remap {
+            of,
+            binders,
+            levels,
+        } => {
+            work.push(Work::Expr(of));
+            let levels = levels.iter().flatten();
+            exprs(levels.clone().filter_map(|l| l.reduce.as_ref()), work);
+            work.push(Work::Enter);
+            work.extend(binders.iter().flatten().filter_map(|t| match t {
+                Target::Name(n, _) => Some(Work::Bind(n)),
+                Target::Wild => None,
+            }));
+            exprs(levels.filter_map(|l| l.key.as_ref()), work);
+            work.push(Work::Leave);
+        }
         ExprKind::For {
             binders,
             source,
@@ -493,6 +511,7 @@ enum Construct {
     For,
     Lambda,
     Indexed,
+    Remap,
 }
 
 impl Construct {
@@ -507,6 +526,7 @@ impl Construct {
             Construct::For => "`for`",
             Construct::Lambda => "lambda",
             Construct::Indexed => "indexed definition",
+            Construct::Remap => "remap",
         }
     }
 
@@ -521,6 +541,7 @@ impl Construct {
             Construct::For => "the body of the `for`",
             Construct::Lambda => "the body of the lambda",
             Construct::Indexed => "the value of the indexed definition",
+            Construct::Remap => "the output pattern of the remap",
         }
     }
 }
@@ -1965,6 +1986,51 @@ fn every_path<'e>(
                             let sc = scopes.len() - 1;
                             let ins = inside_scope(plain, sc, has_many, b.branch);
                             let inner = parts.map(|x| Task::Expr(x, ins, Role::Some));
+                            scoped(&mut kids, sc, inner);
+                        }
+                    }
+                    // A remap's source and reducers are read once; its key and leaf expressions
+                    // once for each keypath of the source, inside the `as` binders.
+                    ExprKind::Remap {
+                        of,
+                        binders,
+                        levels,
+                    } => {
+                        kids.push(Task::Expr(of, plain, Role::Always));
+                        let levels: Vec<_> = levels.iter().flatten().collect();
+                        let reducers = levels.iter().filter_map(|l| l.reduce.as_ref());
+                        kids.extend(reducers.map(|x| Task::Expr(x, plain, Role::Always)));
+                        let b = inside(Construct::Remap);
+                        let keys = levels.iter().filter_map(|l| l.key.as_ref());
+                        let binds: Vec<&'e str> = (binders.iter().flatten())
+                            .filter_map(|t| match t {
+                                Target::Name(n, _) => Some(n.as_str()),
+                                Target::Wild => None,
+                            })
+                            .collect();
+                        if binds.is_empty() {
+                            kids.extend(keys.map(|x| Task::Expr(x, b, Role::Some)));
+                        } else {
+                            scopes.push(Scope {
+                                kind: ScopeKind::Other,
+                                binds,
+                                many: Vec::new(),
+                                head: Span {
+                                    start: e.span.start,
+                                    end: of.span.end,
+                                },
+                                pieces: keys.clone().map(|k| k.span).collect(),
+                                shown: e.span,
+                                inner: b.branch,
+                                outer: ctx.branch,
+                                stmt: ctx.stmt,
+                                up: ctx.per,
+                                parent: ctx.scope,
+                            });
+                            let sc = scopes.len() - 1;
+                            let ins = inside_scope(plain, sc, false, b.branch);
+                            let inner: Vec<_> =
+                                keys.map(|x| Task::Expr(x, ins, Role::Some)).collect();
                             scoped(&mut kids, sc, inner);
                         }
                     }

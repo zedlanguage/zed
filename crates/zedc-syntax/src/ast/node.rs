@@ -151,6 +151,19 @@ pub enum ExprKind {
         /// The operator.
         op: Box<Expr>,
     },
+    /// A remap (DESIGN.md sec:remap_law): `of as (k1 -> k2 -> v)`, `of into (q)`, or both,
+    /// `of as (…) into (…)`. `as` names the source's levels; `into` rebuilds the keypath, a
+    /// key expression per level and the leaf last.
+    Remap {
+        /// The source.
+        of: Box<Expr>,
+        /// The `as` binders, the outermost level's key first and the value last; `None` without
+        /// `as`, when the output pattern binds the source's levels by name.
+        binders: Option<Vec<Target>>,
+        /// The levels of the `into` pattern, outermost first, the leaf last; `None` for `as`
+        /// alone, the identity remap.
+        levels: Option<Vec<RemapLevel>>,
+    },
     /// A metadata read `e::name`, such as `xs::len` or `m::domain`.
     Read {
         /// The value read.
@@ -371,6 +384,19 @@ pub struct Arm {
     pub guard: Option<Expr>,
     /// The value when the pattern matches and the guard holds.
     pub body: Expr,
+    /// Its text.
+    pub span: Span,
+}
+
+/// One level of a remap's `into` pattern: its key, or for the last level the leaf, and the
+/// reducer `>< op` that collapses the level, if written.
+#[derive(Debug)]
+pub struct RemapLevel {
+    /// The key expression, or the leaf's value expression; `None` for `_`, which at the leaf
+    /// drops the values (truncation).
+    pub key: Option<Expr>,
+    /// The operator of `key >< op`.
+    pub reduce: Option<Expr>,
     /// Its text.
     pub span: Span,
 }

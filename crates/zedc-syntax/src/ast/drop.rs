@@ -76,6 +76,13 @@ fn expr_kids(kind: &mut ExprKind, out: &mut Vec<Expr>) {
                 RangeEnd::Open => {}
             }
         }
+        ExprKind::Remap { of, levels, .. } => {
+            out.push(*of);
+            for l in levels.into_iter().flatten() {
+                out.extend(l.key);
+                out.extend(l.reduce);
+            }
+        }
         ExprKind::For {
             source,
             guard,

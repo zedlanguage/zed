@@ -82,7 +82,7 @@ fn level(e: &Expr) -> u8 {
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(*op),
         ExprKind::Is { .. } | ExprKind::In { .. } => RELATION,
-        ExprKind::With { .. } | ExprKind::Reduce { .. } => REDUCE,
+        ExprKind::With { .. } | ExprKind::Reduce { .. } | ExprKind::Remap { .. } => REDUCE,
         ExprKind::Range(..) => RANGE,
         ExprKind::Unary(..) => PREFIX,
         ExprKind::Call { .. }
@@ -145,6 +145,7 @@ fn starts_with_block(mut e: &Expr) -> bool {
             | ExprKind::Member { of, .. }
             | ExprKind::Spread { of, .. }
             | ExprKind::Is { of, .. }
+            | ExprKind::Remap { of, .. }
             | ExprKind::With { of, .. }
             | ExprKind::Else { of, .. } => e = of,
             _ => return false,
@@ -170,6 +171,7 @@ fn head_unsafe(e: &Expr) -> bool {
             }
             ExprKind::Unary(_, a)
             | ExprKind::Is { of: a, .. }
+            | ExprKind::Remap { of: a, .. }
             | ExprKind::With { of: a, .. }
             | ExprKind::Call { callee: a, .. }
             | ExprKind::Index(a, _)
@@ -198,6 +200,7 @@ fn starts_with_in(mut e: &Expr) -> bool {
             | ExprKind::Member { of, .. }
             | ExprKind::Spread { of, .. }
             | ExprKind::Is { of, .. }
+            | ExprKind::Remap { of, .. }
             | ExprKind::With { of, .. }
             | ExprKind::Else { of, .. } => e = of,
             _ => return false,
@@ -531,6 +534,8 @@ impl<'a> Formatter<'a> {
                     stack.push(put(")"));
                     self.raw(of, ind, stack);
                 }
+                // A remap's tail takes suffixes as written: `m into (v -> k).len`.
+                ExprKind::Remap { .. } => self.raw(of, ind, stack),
                 _ => stack.push(Job::Expr {
                     e: of,
                     min: POSTFIX,
@@ -1346,6 +1351,37 @@ impl<'a> Formatter<'a> {
             }
             ExprKind::Reduce { of, op } => {
                 then![stack; at(of, REDUCE), put(" >< "), at(op, POSTFIX)];
+            }
+            ExprKind::Remap {
+                of,
+                binders,
+                levels,
+            } => {
+                let mut jobs = vec![at(of, REDUCE)];
+                if let Some(bs) = binders {
+                    let bs: Vec<&str> = (bs.iter())
+                        .map(|t| match t {
+                            Target::Name(n, _) => n.as_str(),
+                            Target::Wild => "_",
+                        })
+                        .collect();
+                    jobs.push(put(format!(" as ({})", bs.join(" -> "))));
+                }
+                if let Some(ls) = levels {
+                    jobs.push(put(" into ("));
+                    for (i, l) in ls.iter().enumerate() {
+                        if i > 0 {
+                            jobs.push(put(" -> "));
+                        }
+                        // A key is an `Additive` of the grammar.
+                        jobs.push(l.key.as_ref().map_or(put("_"), |k| at(k, ADDITIVE)));
+                        if let Some(op) = &l.reduce {
+                            jobs.extend([put(" >< "), at(op, POSTFIX)]);
+                        }
+                    }
+                    jobs.push(put(")"));
+                }
+                stack.extend(jobs.into_iter().rev());
             }
             ExprKind::Read { of, name } => {
                 then![stack; Job::Postfix { of, ind }, put(format!("::{name}"))];

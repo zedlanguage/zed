@@ -43,8 +43,8 @@ use zedc_base::rejection::Row;
 pub use node::{
     Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Error, Every, Expr, ExprKind, Field,
     Function, Import, ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param,
-    Pattern, Port, PortName, PortValue, RangeEnd, Stmt, StmtKind, StrPart, Struct, Target,
-    TestPorts, Type, TypeBound, TypeDecl, TypeKind, TypeParam, UnaryOp, Update,
+    Pattern, Port, PortName, PortValue, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart, Struct,
+    Target, TestPorts, Type, TypeBound, TypeDecl, TypeKind, TypeParam, UnaryOp, Update,
 };
 
 use crate::lex::{Part, Span, Tok, Token};
@@ -557,15 +557,16 @@ impl<'a, 's> Builder<'a, 's> {
             }
             // `unordered`, of layer L9.
             (3, &[_, unordered]) => return Err(self.later(unordered)),
-            // Only `><` reduces: `as` and `into` are a remap (sec:remap_law), `with f(…)` and
-            // `without f(…)` attach and drop a facet (sec:facets).
+            // `as` and `into`, a remap (sec:remap_law).
+            (8, _) => return self.remap(of, t),
+            // `with f(…)` and `without f(…)` attach and drop a facet (sec:facets).
             _ => {
                 let kind = match self.word(self.tree.nodes[t].start) {
-                    "as" | "into" => "the remap",
+                    "into" => "the remap",
                     "with" => "the facet attachment",
                     "without" => "the facet removal",
                     w => unreachable!(
-                        "ReduceTail begins with `><`, `as`, `into`, `with` or `without`, not `{w}`"
+                        "a ReduceTail of layer 7 or 12 begins with `with` or `without`, not `{w}`"
                     ),
                 };
                 return Err(self.later_as(t, kind));
@@ -626,6 +627,95 @@ impl<'a, 's> Builder<'a, 's> {
             e = self.suffix(e, s)?;
         }
         Ok(e)
+    }
+
+    /// `of` followed by the remap tail `t`, `as (InPattern) Suffix*` or `into (OutPattern)
+    /// Suffix*` (DESIGN.md sec:remap_law). An `into` written right after an `as` makes one
+    /// remap with both halves. So does `(m as (…)) into (…)`, which means the same: `as` alone
+    /// only names the source's levels, and the `into` pattern then binds them by those names.
+    fn remap(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
+        let (&pattern, suffixes) = (self.kids(t).split_first())
+            .expect("a remap tail holds its pattern after the parenthesis");
+        // The pattern's `)` is the token after its last.
+        let span = Span {
+            start: of.span.start,
+            end: self.tokens[self.tree.nodes[pattern].end].span.end,
+        };
+        let mut e = if self.word(self.tree.nodes[t].start) == "as" {
+            let binders = self.kids(pattern).iter().map(|&b| self.target(b)).collect();
+            Expr {
+                kind: ExprKind::Remap {
+                    of: Box::new(of),
+                    binders: Some(binders),
+                    levels: None,
+                },
+                span,
+            }
+        } else {
+            let levels = (self.kids(pattern).iter())
+                .map(|&l| self.remap_level(l))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut of = of;
+            match &mut of.kind {
+                ExprKind::Remap {
+                    levels: written @ None,
+                    ..
+                } => {
+                    *written = Some(levels);
+                    of.span = span;
+                    of
+                }
+                _ => Expr {
+                    kind: ExprKind::Remap {
+                        of: Box::new(of),
+                        binders: None,
+                        levels: Some(levels),
+                    },
+                    span,
+                },
+            }
+        };
+        for &s in suffixes {
+            e = self.suffix(e, s)?;
+        }
+        Ok(e)
+    }
+
+    /// The `Level` node `l` of an output pattern: a key, or a key and the reducer `>< op` that
+    /// collapses its level. A sort key, a join of keys, a named key `name: e` and a reduction
+    /// policy belong to later steps (L8.1, L8.2, L8.2b, L9) and are refused as such.
+    fn remap_level(&mut self, l: usize) -> Result<RemapLevel, Error> {
+        let sort = "the sort key";
+        if matches!(self.word(self.tree.nodes[l].start), "asc" | "desc") {
+            return Err(self.later_as(l, sort));
+        }
+        let (mut k, reduce) = match *self.kids(l) {
+            [k] => (k, None),
+            [k, op] if self.tree.name(op) != "ReducePolicy" => (k, Some(op)),
+            [_, _, policy] | [_, policy] => return Err(self.later(policy)),
+            _ => return Err(self.later_as(l, sort)),
+        };
+        // Down through the one-key forms of `JoinTerm` and `KeyTerm`, parentheses included.
+        let key = loop {
+            match (self.tree.name(k), self.kids(k)) {
+                ("SortKey", _) => return Err(self.later_as(k, sort)),
+                ("JoinTerm" | "KeyTerm", &[one]) => k = one,
+                ("JoinTerm" | "AndJoin", _) => {
+                    return Err(self.later_as(k, "the join"));
+                }
+                ("Key", &[]) => break None,
+                ("Key", &[_, _]) => {
+                    return Err(self.later_as(k, "the named key"));
+                }
+                ("Key", &[e]) => break Some(self.node(e)?),
+                _ => break Some(self.node(k)?),
+            }
+        };
+        Ok(RemapLevel {
+            key,
+            reduce: reduce.map(|op| self.node(op)).transpose()?,
+            span: self.span(l),
+        })
     }
 
     /// The display of node `n`, a `Display`: a record `{x: 1, y:}`, `y:` being `y: y`, or from
