@@ -1078,3 +1078,18 @@ fn listing_a_chain_of_unions_scales() {
 fn negated_types_disjoint_from_the_product_are_passed_over() {
     negated_types_disjoint_from_the_product(13);
 }
+
+/// [`nested_meets`] at `n` and `8n`, built before the runs: found finite, which asks the nested
+/// questions, each once, its walk stopping at the questions answered before. Measured at 4096
+/// and 32768: 0.71G and 5.81G instructions, 8.2 times. Before
+/// FAIL-group-oracle-order-stack-overflow-seed the questions were asked again at each level,
+/// 10 ms at 16 and 17 s at 32, and overflowed the thread's stack at 3000; with the answers
+/// kept but each walk reading every type below it, 7.4 ms at 32 and 2.5 s at 512 (order n²).
+#[test]
+fn finding_the_boxes_of_nested_meets_scales() {
+    let n = 4096;
+    let nested = scaling::inputs(n, nested_meets);
+    scaling::check("finding the boxes of nested meets", n, |n| {
+        assert!(nested[&n].finite())
+    });
+}

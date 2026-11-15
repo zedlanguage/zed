@@ -1358,7 +1358,16 @@ fn seeds_of(
 /// shown inhabited, is asked every run. Returns the seeds and the seed of the generator, for
 /// failure messages.
 fn sweep_seeds(name: &str, listed: &[Listed], both: u64) -> (Vec<u64>, u64) {
-    let (mut rng, seed) = Rng::fresh(&format!("{name} sweep"));
+    sweep_seeds_of(Rng::fresh(&format!("{name} sweep")), name, listed, both)
+}
+
+/// [`sweep_seeds`], with the seeds drawn from `rng`, made with seed `seed`.
+fn sweep_seeds_of(
+    (mut rng, seed): (Rng, u64),
+    name: &str,
+    listed: &[Listed],
+    both: u64,
+) -> (Vec<u64>, u64) {
     let mut named: Vec<u64> = listed.iter().map(|&(seed, ..)| seed).collect();
     named.dedup();
     let picks = pick_seeds(&mut rng, "listed", 0..named.len() as u64, 8);
@@ -1521,6 +1530,45 @@ fn layered_seeds_agree_or_are_listed() {
 fn meets_and_differences_seeds_agree_or_are_listed() {
     let (seeds, seed) = sweep_seeds("cells", LISTED_CELLS, BOTH_CELLS);
     sweep_listed("cells", gen_cells, &seeds, LISTED_CELLS, seed);
+}
+
+/// [`meets_and_differences_seeds_agree_or_are_listed`] at a generator seed that overflowed the
+/// stack (FAIL-group-oracle-order-stack-overflow-seed): each of these draws `cells913`, whose
+/// member R2 asked `Type::finite` of a type while that type's own question was in progress, and
+/// once that ended, met R1, which is recursive, with a join that holds it, one unfolding more at
+/// each step without end ([`cells913_r2_is_decided`]).
+fn meets_and_differences_at(seed: u64) {
+    let (seeds, seed) = sweep_seeds_of((Rng::new(seed), seed), "cells", LISTED_CELLS, BOTH_CELLS);
+    assert!(seeds.contains(&913), "{seeds:?}");
+    sweep_listed("cells", gen_cells, &seeds, LISTED_CELLS, seed);
+}
+
+#[test]
+fn meets_and_differences_at_seed_946400347645548975() {
+    meets_and_differences_at(946400347645548975);
+}
+
+#[test]
+fn meets_and_differences_at_seed_3692828887695988058() {
+    meets_and_differences_at(3692828887695988058);
+}
+
+#[test]
+fn meets_and_differences_at_seed_4291131632983117056() {
+    meets_and_differences_at(4291131632983117056);
+}
+
+/// The member of the meet-and-difference family that overflowed the stack, asked alone: R2 of
+/// `cells913` (FAIL-group-oracle-order-stack-overflow-seed). Its boxes ask whether a type is
+/// finite while that type's own question is in progress, and meet R1 = `((#a | #b), (#a | #b |
+/// R1)) \ ... | #b` with a join that holds it; each asked again unfolded once more, by recursion
+/// on the thread's stack until it overflowed, and, once that was a stack on the heap, without end.
+#[test]
+fn cells913_r2_is_decided() {
+    let sys = gen_cells(&mut Rng::new(913));
+    let mut tally = Tally::default();
+    compare(&sys, "cells913", &mut tally);
+    assert_eq!(tally.members, 5, "{}: {tally:?}", show_system(&sys));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1944,7 +1992,25 @@ fn permutations(n: usize) -> Vec<Vec<usize>> {
 /// system of 24 are recorded cases.
 #[test]
 fn verdicts_do_not_depend_on_the_order_members_are_asked_in() {
-    let (mut rng, rng_seed) = Rng::fresh("members asked in every order");
+    members_asked_in_every_order(Rng::fresh("members asked in every order"));
+}
+
+/// [`verdicts_do_not_depend_on_the_order_members_are_asked_in`] at generator seeds that
+/// overflowed the stack (FAIL-group-oracle-order-stack-overflow-seed; the second added by
+/// REMAP-run).
+#[test]
+fn verdicts_do_not_depend_on_the_order_at_seed_13896688663889977645() {
+    members_asked_in_every_order((Rng::new(13896688663889977645), 13896688663889977645));
+}
+
+#[test]
+fn verdicts_do_not_depend_on_the_order_at_seed_13667818156074195170() {
+    members_asked_in_every_order((Rng::new(13667818156074195170), 13667818156074195170));
+}
+
+/// The body of [`verdicts_do_not_depend_on_the_order_members_are_asked_in`], with the systems
+/// drawn from `rng`, made with seed `rng_seed`.
+fn members_asked_in_every_order((mut rng, rng_seed): (Rng, u64)) {
     let mut systems: Vec<(String, Vec<E>)> = Vec::new();
     for seed in pick_seeds(&mut rng, "x14", 0..u64::MAX, 40) {
         let sys = claude_of(&mut Rng::new(seed), 3);

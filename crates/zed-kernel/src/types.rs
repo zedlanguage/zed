@@ -45,6 +45,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use crate::deep;
+use crate::frames::{Deep, Stack};
 use crate::num::Rat;
 use crate::value::{Id, Items, Value};
 use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
@@ -2045,22 +2046,107 @@ impl Type {
     /// type's boxes are merged ([`merge_boxes`]) before the types in them are visited; the
     /// answer is `None` exactly when it is without, since a merged column is the union of
     /// columns each of which is visited without merging, finite exactly when they all are.
+    /// The finiteness questions the boxes ask in turn ([`part_boxes`]) are answered on the
+    /// same [`Finiteness`], with `self` the question in progress.
     fn finite_order(&self, merge: bool) -> Option<Vec<(Type, Vec<Row>)>> {
+        let cx = Finiteness::default();
+        cx.asking.borrow_mut().insert(self.clone());
+        cx.stack.run(cx.order(self.clone(), merge, false))
+    }
+
+    /// Tuple types, the boxes, whose union holds every tuple of `self`, when the rest of
+    /// `self` is finite and every tuple of it is in a tuple type the part names; `None`
+    /// otherwise. A diagram gives its boxes as [`list_boxes`] finds them, and an expression
+    /// gives them from its operands' ([`part_boxes`]), so a meet with a finite type and an
+    /// exclusive or of finite types give finite boxes (LIST-xor-finite).
+    fn boxes(&self) -> Option<Vec<Row>> {
+        let cx = Finiteness::default();
+        cx.stack.run(cx.boxes(self))
+    }
+}
+
+/// The answers of [`Type::finite`] found while one question is answered: [`part_boxes`] asks
+/// whether the columns of a box are finite, which reads their boxes, which may ask again, as
+/// deep as the types nest. The questions are calls on a stack on the heap ([`Stack`]), run in
+/// the order plain recursion would run them, so the thread's stack holds one call whatever the
+/// depth (FAIL-group-oracle-order-stack-overflow-seed: plain recursion overflowed it).
+///
+/// Each answer is kept, so a type is asked once. A type asked while its own question is in
+/// progress is answered "not known finite": its boxes reach a column equal to itself through
+/// the meets that [`part_boxes`] builds, as a member of a recursive group does once unfolded
+/// (`cells913` of the group oracle's cells family), and asking it again would repeat the same
+/// questions without end. The answer only chooses, in a meet, between a box and the box met
+/// with the join of the other operand's boxes, both of which hold that box's part of the meet,
+/// so it never makes the boxes miss a tuple; and any question that reaches such a type never
+/// ended before. An answer cut so is kept with the others for the rest of the one question, so
+/// a type may be "not known finite" inside one question and finite asked alone; both are sound,
+/// and each question's answer depends on its root alone (the stack runs the calls in the order
+/// plain recursion would).
+///
+/// Answers that change: [`Finiteness::meet_rows`] no longer meets two columns neither known
+/// finite (unless their meet has no tuple types and is finite), so a meet of two infinite types
+/// whose meet is finite and holds tuples, found finite before when its unfolding ended, is now
+/// "not known finite". No test of the affected groups depends on one
+/// (not proved that no caller does).
+#[derive(Default)]
+struct Finiteness<'m> {
+    stack: Stack<'m>,
+    /// The types whose question is in progress.
+    asking: RefCell<HashSet<Type>>,
+    /// The answers found.
+    known: RefCell<HashMap<Type, bool>>,
+}
+
+impl<'m> Finiteness<'m> {
+    /// Whether `t` is known finite ([`Type::finite`]), on a frame of its own.
+    fn finite(&'m self, t: &Type) -> Deep<'m, bool> {
+        if let Some(&known) = self.known.borrow().get(t) {
+            return Stack::ready(known);
+        }
+        if !self.asking.borrow_mut().insert(t.clone()) {
+            return Stack::ready(false);
+        }
+        let t = t.clone();
+        self.stack.call(move || async move {
+            let finite = self.order(t.clone(), false, true).await.is_some();
+            self.asking.borrow_mut().remove(&t);
+            self.known.borrow_mut().insert(t, finite);
+            finite
+        })
+    }
+
+    /// [`Type::finite_order`] of `root`. One visit per type, kept in a visited set, and an
+    /// explicit stack, since the nesting depth follows the input. With `leaves`, for a question
+    /// of [`Finiteness::finite`], which reads only whether the order exists, a type already
+    /// known finite is not walked again: its own walk ended, so the types below it are finite.
+    // Complexity tradeoff: without `leaves`, each nested question walked every type below it
+    // again, so `n` questions nested one in the next cost order `n²` (the `nested_meets` family
+    // of l01_23_subtyping); with it each walk stops at the questions answered before, and
+    // the types are walked order `n` times in all. Before this item the nested questions shared
+    // no answers and were asked again at each level: exponential in the depth (10 ms at depth 16,
+    // 17 s at 32 for a meet of unions) and plain recursion, which overflowed the thread's stack.
+    async fn order(
+        &'m self,
+        root: Type,
+        merge: bool,
+        leaves: bool,
+    ) -> Option<Vec<(Type, Vec<Row>)>> {
         let mut unions = HashMap::new();
         let mut order = Vec::new();
         let mut seen: HashSet<Type> = HashSet::new();
-        let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(self.clone(), None)];
+        let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(root, None)];
         while let Some((t, done)) = stack.pop() {
             if let Some(boxes) = done {
                 order.push((t, boxes));
                 continue;
             }
-            if !seen.insert(t.clone()) {
+            let leaf = leaves && self.known.borrow().get(&t) == Some(&true);
+            if leaf || !seen.insert(t.clone()) {
                 continue;
             }
             let boxes = match merge {
-                true => merge_boxes(t.boxes()?, &mut unions),
-                false => t.boxes()?,
+                true => merge_boxes(self.boxes(&t).await?, &mut unions),
+                false => self.boxes(&t).await?,
             };
             let below: Vec<Type> = boxes
                 .iter()
@@ -2074,13 +2160,78 @@ impl Type {
         Some(order)
     }
 
-    /// Tuple types, the boxes, whose union holds every tuple of `self`, when the rest of
-    /// `self` is finite and every tuple of it is in a tuple type the part names; `None`
-    /// otherwise. A diagram gives its boxes as [`list_boxes`] finds them, and an expression
-    /// gives them from its operands' ([`part_boxes`]), so a meet with a finite type and an
-    /// exclusive or of finite types give finite boxes (LIST-xor-finite).
-    fn boxes(&self) -> Option<Vec<Row>> {
-        let Node::Parts(p, _) = &*self.0 else {
+    /// A box holding the meet of rows `r` and `s`, for [`part_boxes`] to meet a box with the
+    /// join of the other operand's boxes: [`meet_types`] column by column, except that two
+    /// columns neither known finite are met only when their meet has no tuple types and is
+    /// finite, and otherwise give the column of `r`, which holds their meet.
+    ///
+    /// Why: meeting two columns neither known finite makes a new type whose boxes meet again,
+    /// and when one of them is recursive each meet unfolds it once more, a new and larger type
+    /// at each step that the visited set of [`Finiteness::order`] never meets twice, so the walk
+    /// never ended. In `cells913`, R1 = `((#a | #b), (#a | #b | R1)) \ ... | #b` met with a join
+    /// that holds it gave `A & (A | (A | ...))`, one copy of R1's tuple type more per step, and
+    /// 2240 types of 51 KB after 30 s. Such a meet is finite only when the two infinite types
+    /// share finitely many values, which these rows do not decide; "not known finite" is the
+    /// answer [`Type::finite`] allows when it cannot tell, as for a box read as written. A meet
+    /// with no tuple types has boxes with no columns, so asking it makes no type.
+    ///
+    /// Assumption, not proved: every type this makes is a meet with a known finite side or a
+    /// meet without tuple types, and a meet's boxes meet the other side's columns only with
+    /// joins of the finite side's box columns, which come before it in its finite order, so
+    /// each chain of new types follows a chain down that order and ends. Evidence: the five seeds of
+    /// FAIL-group-oracle-order-stack-overflow-seed end, and the listing and group tests pass.
+    async fn meet_rows(&'m self, r: &Row, s: &Row) -> Row {
+        let mut columns = Vec::with_capacity(r.len());
+        for (x, y) in r.iter().zip(s) {
+            columns.push(self.meet_columns(x, y).await);
+        }
+        Row::new(columns)
+    }
+
+    /// One column of [`Finiteness::meet_rows`]: [`meet_types`], with the leaves met only when
+    /// one side is known finite or the meet is finite with no tuple types.
+    async fn meet_columns(&'m self, x: &Type, y: &Type) -> Type {
+        let top = Type::top();
+        enum Step {
+            Meet(Type, Type),
+            /// Make the tuple type of the last `n` results.
+            Tuple(usize),
+        }
+        let (mut todo, mut done) = (vec![Step::Meet(x.clone(), y.clone())], Vec::new());
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Meet(x, y) if x == y || y == top => done.push(x),
+                Step::Meet(x, y) if x == top => done.push(y),
+                Step::Meet(x, y) => match (only_row(&x), only_row(&y)) {
+                    (Some(r), Some(s)) if r.len() == s.len() => {
+                        todo.push(Step::Tuple(r.len()));
+                        let pairs = r.iter().cloned().zip(s.iter().cloned());
+                        todo.extend(pairs.rev().map(|(a, b)| Step::Meet(a, b)));
+                    }
+                    _ => {
+                        let meet = &x & &y;
+                        // A meet with no tuple types has boxes with no columns, so asking
+                        // whether it is finite makes no type and reads nothing below it.
+                        let flat = matches!(&*meet.0, Node::Parts(p, _)
+                            if p.tuples.lens.is_empty() && !p.tuples.rest);
+                        let keep = self.finite(&x).await
+                            || self.finite(&y).await
+                            || (flat && self.finite(&meet).await);
+                        done.push(if keep { meet } else { x });
+                    }
+                },
+                Step::Tuple(n) => {
+                    let items = done.split_off(done.len() - n);
+                    done.push(Type::tuple(items));
+                }
+            }
+        }
+        done.pop().expect("the first step leaves one result")
+    }
+
+    /// [`Type::boxes`] of `t`.
+    async fn boxes(&'m self, t: &Type) -> Option<Vec<Row>> {
+        let Node::Parts(p, _) = &*t.0 else {
             return None;
         };
         if p.structs
@@ -2100,11 +2251,13 @@ impl Type {
             if part.eval(&|_| false) {
                 return None;
             }
-            out.extend(part_boxes(part, *len)?.iter().cloned());
+            out.extend(part_boxes(self, part, *len).await?.iter().cloned());
         }
         Some(out)
     }
+}
 
+impl Type {
     /// Whether `v` is in `self`, for a decidable `self`. Each tuple and payload of `v` is tested
     /// once against each component type it meets, innermost first, so the cost follows the
     /// size of `v` and its depth is limited by memory alone. A test is kept under the type, by
@@ -3779,7 +3932,11 @@ fn list_boxes(b: &Bdd<Row>, len: usize) -> Option<Vec<Row>> {
 // written. A complete answer needs the pairwise meets, which the product bounds. Tests:
 // l01_23_subtyping listing::finiteness_sees_through_meets_and_exclusive_ors and
 // scaling::finding_the_boxes_of_a_meet_with_an_exclusive_or_scales; COMPLEXITY row K69.
-fn part_boxes(part: &Part<Row>, len: usize) -> Option<OrdSet<Row>> {
+async fn part_boxes<'m>(
+    cx: &'m Finiteness<'m>,
+    part: &Part<Row>,
+    len: usize,
+) -> Option<OrdSet<Row>> {
     let key = |p: &Part<Row>, negated: bool| (p.expr_id().is_some(), p.id(), negated);
     // Whether an expression read under `negated` joins its operands, by De Morgan's laws.
     let joins = |form: &Form<Row>, negated: bool| matches!(form, Form::Or(..)) != negated;
@@ -3900,16 +4057,29 @@ fn part_boxes(part: &Part<Row>, len: usize) -> Option<OrdSet<Row>> {
                                 let mut join = None;
                                 let mut boxes = OrdSet::new();
                                 for r in &found[&few].boxes {
-                                    let finite = bounded
-                                        .entry(r.clone())
-                                        .or_insert_with(|| r.iter().all(Type::finite));
-                                    if *finite {
+                                    let finite = match bounded.get(r) {
+                                        Some(&finite) => finite,
+                                        None => {
+                                            // Column by column, up to the first not known
+                                            // finite, as `Iterator::all` reads them.
+                                            let mut finite = true;
+                                            for c in r.iter() {
+                                                if !cx.finite(c).await {
+                                                    finite = false;
+                                                    break;
+                                                }
+                                            }
+                                            bounded.insert(r.clone(), finite);
+                                            finite
+                                        }
+                                    };
+                                    if finite {
                                         boxes.insert(r.clone());
                                     } else {
                                         let j = join.get_or_insert_with(|| {
                                             join_of(many, &found, &mut joined, len)
                                         });
-                                        boxes.insert(meet_rows(r, j));
+                                        boxes.insert(cx.meet_rows(r, j).await);
                                     }
                                 }
                                 (boxes, Made::Meet(few, many))

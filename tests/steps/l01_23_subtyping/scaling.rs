@@ -1157,4 +1157,31 @@ fn a_short_chain_of_unions_of_exclusive_ors_is_listed() {
     }
 }
 
+/// `n` meets nested one inside the next: `T0 = 0 | 1` and
+/// `Tk = ((T(k-1),) | (k + 2,)) & ((T(k-1) | int,) | (int,))`. Both operands of each meet have
+/// boxes, so finding the boxes of `Tk` asks whether the columns of the smaller operand's boxes
+/// are finite, `T(k-1)` among them, whose boxes ask the same of `T(k-2)`, as deep as the meets
+/// nest (FAIL-group-oracle-order-stack-overflow-seed: these questions were plain recursion,
+/// asked again at each level). `Tk` holds `T(k-1)`'s values each in a one-tuple and `(k + 2,)`,
+/// `k + 2` values.
+fn nested_meets(n: usize) -> Type {
+    let one = |t: Type| Type::tuple(vec![t]);
+    (0..n).fold(&lit(0) | &lit(1), |t, k| {
+        let left = &one(t.clone()) | &one(lit(k + 2));
+        let right = &one(&t | &Type::int()) | &one(Type::int());
+        &left & &right
+    })
+}
+
+/// Small instance of `bench::finding_the_boxes_of_nested_meets_scales`: a few nested meets are
+/// finite and list their `n + 2` values.
+#[test]
+fn a_few_nested_meets_are_finite_and_listed() {
+    for n in [0, 1, 2, 5, 40] {
+        let t = nested_meets(n);
+        assert!(t.finite(), "n = {n}");
+        assert_eq!(t.each_value().map(|v| v.count()), Some(n + 2), "n = {n}");
+    }
+}
+
 mod bench;
