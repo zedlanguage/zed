@@ -68,10 +68,11 @@ impl<'a> Elab<'a> {
     /// A call of a built-in of [`IN_PLACE`] puts the identities the checker decided at it
     /// ([`zedc_check::check::Info::fold_calls`]) in `env` for the code within it, as the
     /// lambda of `m.map(r -> top(r))` is checked at the call of `map`; its lambdas take them.
-    /// Any other lambda's body, and any function declared in a block, takes none and lets no
-    /// built-in put any: the checker checks it where it is called, as `f(m["a"])` for
-    /// `f = x -> top(x)`, which is not where it is written. A fold met there with no call of
-    /// its function deciding it is refused when the unit reaches it.
+    /// Any other lambda's body, and the written body of any function declared in a block,
+    /// takes none and lets no built-in put any: the checker checks it where it is called, as
+    /// `f(m["a"])` for `f = x -> top(x)`, which is not where it is written. A fold met there
+    /// with no call of its function deciding it is refused when the unit reaches it; a block's
+    /// function takes bodies made at its calls' identities instead ([`Self::fkernel`]).
     ///
     /// Why a fold's read inside a built-in's lambda takes the identity its check found: the
     /// read's need is met at its own call (whose entry [`Self::fkernel`] takes before `env`),
@@ -160,10 +161,12 @@ impl<'a> Elab<'a> {
     }
 
     /// The term of the declared function `id` called at `at`: its own kernel name, or for a
-    /// top-level function whose calls decide folds ([`zedc_check::check::Info::split_needs`])
-    /// the body made at the identities the call decides, each the checker's for this call or
-    /// else the one the body being made holds. A call where any is decided by neither takes the
-    /// written body and records the folds as undecided.
+    /// function whose calls decide folds ([`zedc_check::check::Info::split_needs`]), declared
+    /// at the top level or in a block being elaborated, the body made at the identities the
+    /// call decides, each the checker's for this call or else the one the body being made
+    /// holds. A call where any is decided by neither takes the written body and records the
+    /// folds as undecided; for a block's function it records that the written body is named
+    /// ([`Instancing::written_named`](super::instances::Instancing::written_named)).
     // Complexity tradeoff: the identities of a call's folds are found by binary search in the
     // checker's sorted list, O(k log k) for a callee of k decided folds, against O(k²) for a
     // search of the list for each fold. A body is made once for each distinct list of
@@ -178,7 +181,8 @@ impl<'a> Elab<'a> {
         let Some(sites) = info.split_needs.get(&id) else {
             return self.names[id].clone();
         };
-        if !self.inst.fns.contains_key(&id) {
+        let local = self.inst.local_at.get(&id).copied();
+        if local.is_none() && !self.inst.fns.contains_key(&id) {
             return self.names[id].clone();
         }
         let given = info.fold_calls.get(&at).map_or(&[][..], Vec::as_slice);
@@ -197,9 +201,27 @@ impl<'a> Elab<'a> {
             }
         }
         if open {
+            self.inst.written_named(id);
             return self.names[id].clone();
         }
         let env: Env = sites.iter().copied().zip(key.iter().cloned()).collect();
+        if let Some(i) = local {
+            let name = &self.t.res.binders[id].name;
+            let l = &mut self.inst.locals[i];
+            return match l.made.entry(key) {
+                Entry::Occupied(e) => e.get().clone(),
+                Entry::Vacant(e) => {
+                    let kernel: Arc<str> = format!("{name}@{}", self.inst.next).into();
+                    self.inst.next += 1;
+                    e.insert(kernel.clone());
+                    if l.queue.is_empty() {
+                        self.inst.pending.push(i);
+                    }
+                    l.queue.push((kernel.clone(), env));
+                    kernel
+                }
+            };
+        }
         match self.inst.made.entry((id, key)) {
             Entry::Occupied(e) => e.get().clone(),
             Entry::Vacant(e) => {

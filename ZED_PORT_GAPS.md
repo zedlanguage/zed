@@ -3988,3 +3988,11 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `HashSet<(Span, Span)>` of the decided pairs (call, fold) an elaboration took, filled while elaborating and read once at the end | `Elab::fkernel`, `env_identity`, `check_instances` | Mutation (gap 11); a set keyed by a pair of spans | a family `(Span, Span) ->? ()` returned with each elaborated body and joined |
 | `HashSet<*const Sig>` of the signatures searched, by address, so a signature shared by several needs is searched once | `Ck::finish`, the `split_needs` search | Identity by address | number each signature where it is made (author decision on node ids), and keep a set of those numbers |
 | `BTreeMap<Option<Span>, Vec<(Option<Carrier>, Option<Value>)>>` of the checks of a fold apart for each call | `FoldChecks::by_call`, `Ck::saw_fold`, `finish` | Mutation (gap 11) | a family keyed by the call, built by one fold over the checks in the order they were made |
+
+## Entries from REDUCE-generic-identity-rest (`crates/zedc-elab/src/elab/instances.rs`, `identities.rs`, `state.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `Vec<Local<'a>>` of the block functions being elaborated, each holding a `&'a Stmt`, with a `HashMap<usize, usize>` from binder to index whose earlier entry each `Local` keeps (`prev`) and puts back when the block ends; `split_off(mark)` at the block's end | `Instancing::declare_local`, `Elab::place_locals` | Mutation (gap 11); a borrowed reference held in state | a scope value passed down the walk with the block's functions, returned with the block's term; the earlier entry is the outer scope's and needs no restoring |
+| A stack `writing: Vec<usize>` of the written bodies being elaborated and a stack `pending: Vec<usize>` of the functions with bodies to make, both changed in place | `Instancing::end_written`, `written_named`, `Elab::fkernel`, `place_locals` | Mutation (gap 11) | the innermost written body passed down the walk; the bodies to make returned from each call's elaboration and joined |
+| `mem::replace(&mut l.used, true)` as the visited test of a worklist over the edges between written bodies | `Elab::place_locals` | Mutation (gap 11) | a set of the functions reached, built by a fold over the worklist |

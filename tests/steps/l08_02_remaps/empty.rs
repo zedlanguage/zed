@@ -772,18 +772,97 @@ fn a_map_inside_a_map_at_one_carrier_takes_its_identity_at_each_depth() {
 }
 
 #[test]
-fn a_generic_fold_at_two_carriers_through_a_function_value_is_not_compiled_yet() {
-    // A call through a value, a lambda or a function declared in a block has no body of its
-    // own for each identity yet: refused, never run at the wrong identity (ZED_PORT_GAPS).
+fn a_fold_in_a_function_declared_in_a_block_takes_the_identity_of_each_call() {
+    // sec:reduction, "Identity as data": `max` at `int`, which has no identity for it, folds an
+    // empty level to `#empty`, and at `f64` to `-inf`. A function declared in a block takes a
+    // body made at the identities of each of its calls, as a top-level one does (row
+    // REDUCE-generic-identity-rest).
+    let at = |body: &str| format!("{TOP}{F}{I}{body}");
+    let h = "h(positional q) = top(q);";
+    prints(
+        &at(&format!("a = {{ {h} (h(mi[\"a\"]), h(m[\"a\"])) }};\n")),
+        "a",
+        "(#empty, -inf)",
+    );
+    prints(
+        &at(&format!("a = {{ {h} (h(mi[\"b\"]), h(m[\"b\"])) }};\n")),
+        "a",
+        "(5, 5.0)",
+    );
+    // In a generic function's block, `h(ys)` is decided by `g`'s call.
+    let g = format!("g(positional ys) = {{ {h} (h(ys), h(m[\"a\"])) }};\n");
+    prints(
+        &at(&format!("{g}a = g(mi[\"a\"]);\n")),
+        "a",
+        "(#empty, -inf)",
+    );
+    prints(
+        &at(&format!(
+            "{g}a = (g(mi[\"a\"]), g(m[\"a\"]), g(mi[\"b\"]));\n"
+        )),
+        "a",
+        "((#empty, -inf), (-inf, -inf), (5, -inf))",
+    );
+    // In a lambda a built-in runs in place, at each entry of `mi`.
+    prints(
+        &at(&format!(
+            "a = mi.map(r -> {{ {h} (top(r), h(m[\"a\"])) }});\n"
+        )),
+        "a",
+        "{\"a\" -> (#empty, -inf), \"b\" -> (5, -inf)}",
+    );
+    // Through a second function of the block, and through one declared in `h`'s own body.
+    prints(
+        &at(&format!(
+            "a = {{ {h} k(positional z) = h(z); (k(mi[\"a\"]), k(m[\"a\"]), h(m[\"b\"])) }};\n"
+        )),
+        "a",
+        "(#empty, -inf, 5.0)",
+    );
+    prints(
+        &at(
+            "a = { h(positional q) = { h2(positional p) = top(p); h2(q) }; \
+             (h(mi[\"a\"]), h(m[\"a\"])) };\n",
+        ),
+        "a",
+        "(#empty, -inf)",
+    );
+    // Named as a value at one carrier, the written body runs, at that carrier's identity.
+    prints(
+        &at(&format!(
+            "a = {{ {h} p = h; (h(m[\"a\"]), p(m[\"b\"])) }};\n"
+        )),
+        "a",
+        "(-inf, 5.0)",
+    );
+}
+
+#[test]
+fn a_function_declared_in_a_block_and_named_as_a_value_at_two_carriers_is_not_compiled_yet() {
+    // `p = h` is one value: its calls at `int` and at `f64` would need two bodies of it.
     for body in [
-        "a = { h(positional q) = top(q); (h(mi[\"a\"]), h(m[\"a\"])) };\n",
+        "a = { h(positional q) = top(q); p = h; (h(mi[\"a\"]), p(m[\"a\"])) };\n",
+        "a = { h(positional q) = top(q); k(positional z) = h(z); p = k; \
+         (k(mi[\"a\"]), p(m[\"a\"])) };\n",
+        "ap(positional f, positional x) = f(x);\n\
+         a = { h(positional q) = top(q); (ap(h, mi[\"a\"]), ap(h, m[\"a\"])) };\n",
+    ] {
+        rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
+    }
+}
+
+#[test]
+fn a_generic_fold_at_two_carriers_through_a_function_value_is_not_compiled_yet() {
+    // A call through a value or a lambda has no body of its own for each identity yet:
+    // refused, never run at the wrong identity (ZED_PORT_GAPS; row
+    // REDUCE-generic-identity-values, whose expected values
+    // /home/luke/Work/wt/failing-tests/REDUCE-generic-identity-values.rs holds).
+    for body in [
         "a = { f = x -> top(x); (f(mi[\"a\"]), f(m[\"a\"])) };\n",
         "a = { f = top; (f(mi[\"a\"]), f(m[\"a\"])) };\n",
         "f = top;\na = (f(mi[\"a\"]), f(m[\"a\"]));\n",
         "ap(positional f, positional x) = f(x);\na = (ap(top, mi[\"a\"]), ap(top, m[\"a\"]));\n",
-        "g(positional ys) = { h(positional q) = top(q); (h(ys), h(m[\"a\"])) };\na = g(mi[\"a\"]);\n",
         "a = mi.map(r -> { f = x -> top(x); (top(r), f(m[\"a\"])) });\n",
-        "a = mi.map(r -> { h(positional q) = top(q); (top(r), h(m[\"a\"])) });\n",
         "h3(positional f, positional y) = (f(y), f);\n\
          a = { p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
         // Two identities in force at one read: the `int` of `q`'s map and the `f64` of `r`'s.

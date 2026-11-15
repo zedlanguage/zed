@@ -447,3 +447,28 @@ fn a_chain_of_n_generic_functions_over_a_map_of_a_fold_runs_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn a_chain_of_n_functions_declared_in_a_block_over_a_fold_runs_in_linear_time() {
+    // Each `h{i}` calls the one before it, so each has two bodies, at `int` and at `f64`,
+    // made and bound in the block when it ends (row REDUCE-generic-identity-rest).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let chain = (1..n)
+            .map(|i| format!("h{i}(positional q) = h{}(q);\n", i - 1))
+            .collect::<String>();
+        format!(
+            "top(positional xs) = xs >< max;\n{EMPTY_LEVELS}\
+             a = {{\nh0(positional q) = top(q);\n{chain}(h{0}(mi[\"a\"]), h{0}(m[\"a\"])) }};\n",
+            n - 1
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "a"), "(#empty, -inf)");
+    };
+    scaling::check(
+        "a chain of n functions declared in one block, the first a `max` fold, called at `int` \
+         and `f64`, whole path",
+        N_LEVELS,
+        run,
+    );
+}

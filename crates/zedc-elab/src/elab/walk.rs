@@ -29,6 +29,7 @@ use zedc_syntax::ast::{
 };
 use zedc_syntax::lex::{Span, unread_literal};
 
+use super::instances::{Env, Local};
 use super::mark::{Mark, mark_of, mutable};
 use super::state::{Bind, Elab};
 use fp_ops::Quantifier;
@@ -157,7 +158,8 @@ enum Frame<'a> {
     Str(&'a [StrPart]),
     Pass(Box<PassF<'a>>),
     PassCall(Box<PassF<'a>>),
-    Block,
+    /// A block, with the number of `inst.locals` when it starts: those after are its own.
+    Block(usize),
     Scope(Box<ScopeF<'a>>),
     Export(Box<ScopeF<'a>>),
     Bind(&'a Stmt),
@@ -429,6 +431,175 @@ impl<'a> Elab<'a> {
         m.t()
     }
 
+    /// Ends a block whose functions from `mark` on in `inst.locals` are its own: makes the
+    /// bodies their calls queued (`Self::fkernel`), and those the bodies' calls queue in turn,
+    /// and binds each in the block's bindings `s` after the function's written body. The folds
+    /// the bodies leave undecided are the enclosing statement's, and so are the written body's
+    /// if a term outside it names it; else the written body is not run, and its folds need no
+    /// identity. It is here, not in [`bodies`](super::bodies), since it runs the walk while
+    /// the walk runs it: the files' imports form no cycle (step S.1f).
+    // Complexity tradeoff: each body costs one elaboration of the function, as for a
+    // top-level function; the bodies to make are found by a stack of the functions whose
+    // queue is not empty (`inst.pending`), each pushed when its queue fills and popped once,
+    // where a scan of the block's functions after each body costs O(bodies × functions). The
+    // entries of functions declared around the block are set aside and put back, O(1) each,
+    // where a search past them for the block's own would cost O(outer) per body. The bodies
+    // are placed in one pass over the bindings with a map from kernel name to function,
+    // O(b + l + bodies) for b bindings and l functions, against O(b · l) for a search of the
+    // bindings and a splice for each function.
+    fn place_locals(
+        &mut self,
+        mark: usize,
+        s: Option<(Vec<Bind>, Option<Term>)>,
+    ) -> Option<(Vec<Bind>, Option<Term>)> {
+        if self.inst.locals.len() == mark {
+            return s;
+        }
+        // Each index below `mark` was in `pending` before the block started or was pushed by
+        // a call in it; those at or above it are the block's own, since `locals` had `mark`
+        // entries when the block started.
+        let mut outer = Vec::new();
+        while let Some(i) = self.inst.pending.pop() {
+            if i < mark {
+                outer.push(i);
+                continue;
+            }
+            while let Some((kernel, env)) = self.inst.locals[i].queue.pop() {
+                let (id, stmt) = (self.inst.locals[i].id, self.inst.locals[i].stmt);
+                let (term, sites) = self.instance_body(id, stmt, env);
+                self.inst.undecided.extend(sites);
+                if let Some(term) = term {
+                    self.inst.locals[i].done.push((kernel, term));
+                }
+            }
+        }
+        self.inst.pending = outer;
+        // A written body named by a run one is run (`Instancing::written_named`); a function
+        // declared around the block that one names is named from here.
+        let mut todo: Vec<usize> = (mark..self.inst.locals.len())
+            .filter(|&i| self.inst.locals[i].used)
+            .collect();
+        while let Some(j) = todo.pop() {
+            for i in mem::take(&mut self.inst.locals[j].names) {
+                if i < mark {
+                    let id = self.inst.locals[i].id;
+                    self.inst.written_named(id);
+                } else if !mem::replace(&mut self.inst.locals[i].used, true) {
+                    todo.push(i);
+                }
+            }
+        }
+        let mine = self.inst.locals.split_off(mark);
+        let mut by_kernel: HashMap<Arc<str>, Local<'a>> = HashMap::with_capacity(mine.len());
+        for mut l in mine.into_iter().rev() {
+            match l.prev {
+                Some(p) => self.inst.local_at.insert(l.id, p),
+                None => self.inst.local_at.remove(&l.id),
+            };
+            if l.used {
+                self.inst.undecided.append(&mut l.written);
+            }
+            by_kernel.insert(self.names[l.id].clone(), l);
+        }
+        let (binds, last) = s?;
+        let mut placed = Vec::with_capacity(binds.len());
+        for b in binds {
+            let Some(l) = by_kernel.remove(&b.1) else {
+                placed.push(b);
+                continue;
+            };
+            // A written body no term names is dropped: it is never run, and the folds no call
+            // decided in it would make `Self::check_instances` refuse every definition that
+            // holds the block.
+            if l.used {
+                placed.push(b);
+            }
+            let name = &self.t.res.binders[l.id].name;
+            placed.extend((l.done.into_iter()).map(|(k, t)| (name.to_string(), k, t)));
+        }
+        assert!(
+            by_kernel.is_empty(),
+            "a block binds each function it declares"
+        );
+        Some((placed, last))
+    }
+
+    /// The body of the function `id`, declared by `s`, at the identities `env`, as a lambda,
+    /// with the folds it left undecided. Each binder of the function's statement other than
+    /// the function's own is given a fresh kernel name while its body is elaborated, as
+    /// kernel names are unique in the unit (stage `mix` and a default's `let` rely on it),
+    /// then given back.
+    // Complexity tradeoff: each body costs one elaboration of the function, O(s) for a
+    // function of size s, and one search of the binders by start, O(log b); the bodies are
+    // as many as the distinct lists of identities the calls decide, at most the calls. The
+    // naive form, one copy of the elaborated body with its names renamed by a walk of the
+    // term, would cost the same O(s) but must know every form of the kernel that binds a name.
+    pub(super) fn instance_body(
+        &mut self,
+        id: usize,
+        s: &'a Stmt,
+        env: Env,
+    ) -> (Option<Term>, Vec<Span>) {
+        let StmtKind::Function(f) = &s.kind else {
+            unreachable!("an instanced function is a declaration")
+        };
+        if self.inst.by_start.is_empty() {
+            let mut by_start: Vec<_> = (self.t.res.binders.iter().enumerate())
+                .map(|(i, b)| (b.span.start, b.span.end, i))
+                .collect();
+            by_start.sort_unstable();
+            self.inst.by_start = by_start;
+        }
+        let lo = (self.inst.by_start).partition_point(|&(start, ..)| start < s.span.start);
+        let mut map: HashMap<Arc<str>, Arc<str>> = HashMap::new();
+        let mut given_back = Vec::new();
+        for k in lo..self.inst.by_start.len() {
+            let (start, end, b) = self.inst.by_start[k];
+            if start >= s.span.end {
+                break;
+            }
+            if end > s.span.end || b == id {
+                continue;
+            }
+            let fresh: Arc<str> =
+                format!("{}@{}", self.t.res.binders[b].name, self.inst.next).into();
+            self.inst.next += 1;
+            let old = mem::replace(&mut self.names[b], fresh.clone());
+            map.insert(old.clone(), fresh);
+            given_back.push((b, old));
+        }
+        let defaults: Vec<(usize, Term)> = (0..f.params.len())
+            .filter_map(|j| Some((j, self.defaults.get(&(id, j))?.clone())))
+            .collect();
+        for (j, t) in &defaults {
+            self.defaults.insert((id, *j), renamed(t, &map));
+        }
+        let reads = mem::take(&mut self.reads);
+        // The body's identities came from its call, which took them ([`Self::fkernel`]):
+        // no built-in call around the body provides them.
+        let outer = mem::replace(&mut self.inst.env, env);
+        let providers = mem::take(&mut self.inst.provider);
+        let opaque = mem::replace(&mut self.inst.opaque, 0);
+        let mark = self.inst.undecided.len();
+        let body = self.body_term(f);
+        let params: Vec<Arc<str>> = (f.params.iter())
+            .map(|p| self.names[self.id(p.span, &p.name)].clone())
+            .collect();
+        let sites = self.inst.undecided.split_off(mark);
+        self.inst.env = outer;
+        self.inst.provider = providers;
+        self.inst.opaque = opaque;
+        self.reads = reads;
+        for (j, t) in defaults {
+            self.defaults.insert((id, j), t);
+        }
+        for (b, old) in given_back {
+            self.names[b] = old;
+        }
+        let term = body.map(|body| Term::Lam(params, Shared::new(body)));
+        (term, sites)
+    }
+
     /// Runs the jobs of `m` to the end, leaving the result in `m.ret`.
     fn run(&mut self, m: &mut M<'a>) {
         while let Some(job) = m.stack.pop() {
@@ -445,7 +616,7 @@ impl<'a> Elab<'a> {
                     self.expr(m, e)
                 }
                 Job::Block(stmts) => {
-                    m.k(Frame::Block);
+                    m.k(Frame::Block(self.inst.locals.len()));
                     self.start_scope(m, stmts, false);
                 }
                 Job::Scope(stmts, top) => self.start_scope(m, stmts, top),
@@ -577,6 +748,9 @@ impl<'a> Elab<'a> {
                 if !top && !self.info.split_folds.is_empty() {
                     let saved = self.clear_env();
                     m.k(Frame::Env(saved));
+                    if self.info.split_needs.contains_key(&id) {
+                        self.inst.declare_local(id, s);
+                    }
                 }
                 self.fn_default(m, Box::new(ff));
             }
@@ -2210,10 +2384,11 @@ impl<'a> Elab<'a> {
                 let t = self.pass_end(*pf, call);
                 m.give(t);
             }
-            Frame::Block => {
+            Frame::Block(mark) => {
                 let Ret::Scope(s) = m.take() else {
                     unreachable!("a scope's result")
                 };
+                let s = self.place_locals(mark, s);
                 let t = s.map(|(binds, export)| {
                     let body = export.unwrap_or(Term::Prim(Prim::Tuple, Vec::new()));
                     binds.into_iter().rev().fold(body, |body, (_, k, t)| {
@@ -2324,9 +2499,16 @@ impl<'a> Elab<'a> {
                 } = *ff;
                 // The body's folds no call decided are the function's own at the top level,
                 // and the enclosing statement's in a block.
+                // A block's function whose calls decide folds keeps its own until the block
+                // ends, when they are refused only if the written body is named
+                // (`Self::place_locals`).
                 match top {
                     true => self.inst.attribute([&self.names[id]], undecided),
-                    false => self.inst.undecided.extend(undecided),
+                    false => {
+                        if let Some(sites) = self.inst.end_written(id, undecided) {
+                            self.inst.undecided.extend(sites);
+                        }
+                    }
                 }
                 let out = body.filter(|_| tests && ok).map(|body| {
                     let mut out = vec![(
@@ -3225,4 +3407,24 @@ fn keeps_carrier(p: Prim) -> bool {
 
 fn if_(c: Term, a: Term, b: Term) -> Term {
     Term::If(Shared::new(c), Shared::new(a), Shared::new(b))
+}
+
+/// `t`, a default's term at a call ([`Elab::defaults`]), with each name of `map` renamed: a
+/// literal, a marked literal, a parameter's name, or a call of the default's own definition on
+/// parameters' names, the shapes `Frame::FnDefault` makes.
+fn renamed(t: &Term, map: &HashMap<Arc<str>, Arc<str>>) -> Term {
+    let name = |x: &Arc<str>| map.get(x).unwrap_or(x).clone();
+    match t {
+        Term::Var(x) => Term::Var(name(x)),
+        Term::App(f, args) => Term::App(
+            f.clone(),
+            (args.iter())
+                .map(|a| match a {
+                    Term::Var(x) => Term::Var(name(x)),
+                    a => a.clone(),
+                })
+                .collect(),
+        ),
+        t => t.clone(),
+    }
 }

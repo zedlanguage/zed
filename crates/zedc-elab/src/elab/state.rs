@@ -227,7 +227,12 @@ impl<'a> Elab<'a> {
             Some(Ref::Bound(ids)) if self.t.res.binders[ids[0]].kind == Kind::Port => {
                 Some(Term::Lit(Value::str(&self.t.res.binders[ids[0]].name)))
             }
-            Some(Ref::Bound(ids)) => Some(Term::Var(self.names[ids[0]].clone())),
+            Some(Ref::Bound(ids)) => {
+                // A block's function named as a value runs its written body
+                // (REDUCE-generic-identity-rest, `instances::Local`).
+                self.inst.written_named(ids[0]);
+                Some(Term::Var(self.names[ids[0]].clone()))
+            }
             Some(Ref::Prelude(w)) => Some(Term::Var(w.as_str().into())),
             // `main::files` outside `main`: a read of the port `main` opens under that name.
             Some(Ref::Main(p)) => Some(Term::Read(p.as_str().into())),

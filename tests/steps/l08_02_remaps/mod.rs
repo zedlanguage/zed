@@ -16,3 +16,5 @@ mod kernel;
 mod moves;
 mod rules;
 mod source;
+#[cfg(target_os = "linux")]
+mod three_way;
