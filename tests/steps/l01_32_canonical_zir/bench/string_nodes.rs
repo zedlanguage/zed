@@ -5,7 +5,7 @@
 use zed_kernel::term::build::lit;
 use zed_kernel::text::Text;
 use zed_kernel::value::Value;
-use zed_tests::scaling::{check_order, inputs};
+use zed_tests::scaling::{check_order, compare_costs, inputs};
 use zedc::canon::{self, Def};
 
 fn holding(t: Text) -> Def {
@@ -39,8 +39,8 @@ fn a_shared_string_is_addressed_by_its_distinct_content() {
 
 #[test]
 fn a_flat_string_is_addressed_in_time_linear_in_its_bytes() {
-    // One block of n bytes with no repeats longer than a few bytes: the parse makes about n/2
-    // rules, each hashed and written once.
+    // One block of n bytes with no repeats longer than a few bytes: the parse makes about n/3
+    // rules (348,644 for 1 MiB), each hashed and written once.
     let n = 1 << 15;
     let bytes = |k: usize| -> String {
         let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -58,4 +58,36 @@ fn a_flat_string_is_addressed_in_time_linear_in_its_bytes() {
     check_order("the kernel address of a flat string", n, 1, |k| {
         canon::address(&defs[&k], &none).expect("memory for the bytes");
     });
+}
+
+/// Row PERF-canon-flat-strings: addressing a definition that holds a flat literal of 1 MiB costs
+/// at most 50 times the instructions, and allocates at most 50 times the bytes, of copying the
+/// literal's bytes and hashing them with BLAKE3. The serialization stays a function of the
+/// string's bytes whatever its tree (`l01_32_canonical_zir::string_nodes`).
+#[test]
+fn a_flat_literal_is_addressed_in_a_few_hashes_of_its_bytes() {
+    let n = 1 << 20;
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let s: String = (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            char::from(b'a' + (x % 26) as u8)
+        })
+        .collect();
+    let def = holding(Text::from(s.clone()));
+    let none = |_: &str| None;
+    compare_costs(
+        "copying and hashing 1 MiB of bytes, then addressing a definition holding them as a string",
+        "row PERF-canon-flat-strings: a flat literal costs at most 50 copies and hashes of its bytes",
+        50.0,
+        || {
+            let copy = s.as_bytes().to_vec();
+            std::hint::black_box(blake3::hash(&copy));
+        },
+        || {
+            canon::address(&def, &none).expect("memory for the bytes");
+        },
+    );
 }

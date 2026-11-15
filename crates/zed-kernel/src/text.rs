@@ -44,7 +44,7 @@ mod bench;
 mod names;
 mod tree;
 
-pub use names::{Name, Names, Part};
+pub use names::{Name, Names, Part, Parts};
 pub use tree::Text;
 use tree::{Digit, Size, Tree};
 

@@ -418,6 +418,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -1041,11 +1043,13 @@ dependencies = [
 name = "zed-kernel"
 version = "0.0.0"
 dependencies = [
+ "hashbrown 0.17.1",
  "imbl",
  "num-bigint",
  "num-integer",
  "num-traits",
  "perf-event2",
+ "rustc-hash",
  "rustix",
  "stacker",
  "zed-alloc-count",

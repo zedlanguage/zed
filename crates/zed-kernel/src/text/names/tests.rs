@@ -27,6 +27,11 @@ impl Rng {
     }
 }
 
+/// [`decide`] on labels given as a list.
+fn decide_of(ids: &[u128], ts: bool, te: bool) -> Vec<bool> {
+    decide(ids.len(), |i| ids[i], ts, te)
+}
+
 fn name_of(s: &Option<Arc<Sum>>) -> u64 {
     s.as_ref().map_or(EMPTY, |s| s.name)
 }
@@ -289,7 +294,10 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
     ];
     let mut y = x;
     y[14] = 2964820002;
-    assert_ne!(decide(&x, false, false)[10], decide(&y, false, false)[10]);
+    assert_ne!(
+        decide_of(&x, false, false)[10],
+        decide_of(&y, false, false)[10]
+    );
     let (i, j) = (10, 14);
     assert!(j - i <= CR, "a start reads 4 to its right");
     let x = [
@@ -298,7 +306,10 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
     ];
     let mut y = x;
     y[5] = 188;
-    assert_ne!(decide(&x, false, false)[12], decide(&y, false, false)[12]);
+    assert_ne!(
+        decide_of(&x, false, false)[12],
+        decide_of(&y, false, false)[12]
+    );
     let (i, j) = (12, 5);
     assert!(i - j <= CL, "a start reads 7 to its left");
 
@@ -320,7 +331,10 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
                 break id;
             }
         };
-        let (a, b) = (decide(&ids, false, false)[i], decide(&z, false, false)[i]);
+        let (a, b) = (
+            decide_of(&ids, false, false)[i],
+            decide_of(&z, false, false)[i],
+        );
         assert_eq!(a, b, "{ids:?} at {i}, {j} changed");
     }
 }
@@ -334,7 +348,7 @@ fn a_block_at_the_true_end_may_hold_5_symbols() {
         47, 115, 227, 95, 163, 55, 37, 178, 23, 170, 184, 118, 63, 8, 95, 125, 194, 112, 183, 75,
         15, 181, 9, 37,
     ];
-    let st = decide(&ids, true, true);
+    let st = decide_of(&ids, true, true);
     let starts: Vec<usize> = (0..ids.len()).filter(|&i| st[i]).collect();
     assert_eq!(starts, [0, 3, 5, 8, 10, 12, 14, 17, 19]);
     assert_eq!(ids.len() - 19, 5);
@@ -342,7 +356,7 @@ fn a_block_at_the_true_end_may_hold_5_symbols() {
     for _ in 0..20_000 {
         let n = rng.int(2, 60);
         let ids = proper_ids(&mut rng, n);
-        let st = decide(&ids, true, true);
+        let st = decide_of(&ids, true, true);
         let mut starts: Vec<usize> = (0..n).filter(|&i| st[i]).collect();
         starts.push(n);
         assert!(

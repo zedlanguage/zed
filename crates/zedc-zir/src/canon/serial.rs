@@ -14,8 +14,6 @@
 //! Binders are canonical by then, so a binder is written by its count alone (a lambda's
 //! parameters, a pattern's `Bind`), and a bound variable by its level.
 
-use std::collections::HashMap;
-
 use num_bigint::{BigUint, Sign};
 use zed_kernel::num::{Rat, TooLarge};
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
@@ -39,12 +37,21 @@ struct Out<'a> {
     /// are not used.
     refused: Option<TooLarge>,
     /// The canonical parse of the definition's strings, and the place in the definition's
-    /// order of each rule written so far.
+    /// order of each rule written so far, indexed by [`Name::rule_index`], [`NOT_WRITTEN`]
+    /// for a rule not written: the dictionary numbers its rules from 0 on, so a list over
+    /// them does what a map did with no hashing (row PERF-canon-flat-strings), and holds a
+    /// word for each rule the dictionary made, which the parse made in as many steps.
     names: Names,
-    written: HashMap<Name, u64>,
+    written: Vec<u64>,
+    /// How many rules have been written.
+    count_written: u64,
     /// Whether strings are written as their bytes: after the parse met a collision of labels.
     bytes_only: bool,
 }
+
+/// The mark in [`Out`]'s `written` of a rule not written yet: no definition writes 2^64 − 1
+/// rules, each costing a byte or more of the output.
+const NOT_WRITTEN: u64 = u64::MAX;
 
 /// A rule's label in the canonical parse: the first 128 bits of the BLAKE3 hash of its kind,
 /// count or length and its parts' labels ([`Names::canonical`]).
@@ -98,13 +105,30 @@ impl Out<'_> {
     /// The reference to `n`, a byte or a rule already written: a byte is its value, the rule
     /// written `i`-th in the definition is 256 + i, as a [`Out::var`].
     fn sym(&mut self, n: Name) -> u64 {
-        match self.written.get(&n) {
-            Some(&i) => 256 + i,
+        match self.written_as(n) {
+            Some(i) => 256 + i,
             None => match self.names.part(n) {
                 Part::Byte(b) => u64::from(b),
                 _ => unreachable!("a rule is written before a rule or a root that names it"),
             },
         }
+    }
+
+    /// The order in which the rule `n` was written in the definition, none when it was not,
+    /// or `n` is a byte or the empty text.
+    fn written_as(&self, n: Name) -> Option<u64> {
+        let i = n.rule_index()?;
+        self.written.get(i).copied().filter(|&w| w != NOT_WRITTEN)
+    }
+
+    /// Records that the rule `n` is written next.
+    fn mark_written(&mut self, n: Name) {
+        let i = n.rule_index().expect("only a rule is written as a rule");
+        if self.written.len() <= i {
+            self.written.resize(i + 1, NOT_WRITTEN);
+        }
+        self.written[i] = self.count_written;
+        self.count_written += 1;
     }
 
     /// The nonempty text `t`: the rules of its canonical parse not yet written in the
@@ -137,16 +161,18 @@ impl Out<'_> {
     // m nodes ([`Names`], COMPLEXITY.md row STAGE-joined-eq-build), plus O(r) for the r rules
     // under its name, each hashed once (one BLAKE3 call of at most 98 bytes) and written
     // once in the definition. For a doubled string r is O(log L); for a string with no
-    // repeats r is about L/2, so a flat literal costs a parse and a hash a rule where it
-    // cost a copy, over a thousand times the work a byte (COMPLEXITY.md Z32; row
-    // PERF-canon-flat-strings cuts it). `canon::VERSION` 10 to 11. Tests
+    // repeats r is about L/3 (348,644 rules for 1 MiB of random letters), so a flat literal
+    // costs a parse and a hash a rule where it cost a copy: 586 times the instructions of
+    // a copy and a BLAKE3 hash of its bytes, down from 1,314, where row
+    // PERF-canon-flat-strings asks for 50; the r BLAKE3 calls alone are 91 times (COMPLEXITY.md
+    // Z32). `canon::VERSION` 10 to 11. Tests
     // `l01_32_canonical_zir::string_nodes` and
     // `l01_32_canonical_zir::bench::string_nodes`.
     fn text(&mut self, t: &Text) {
         let root = self.names.name(t);
         let mut todo = vec![(root, false)];
         while let Some((n, ready)) = todo.pop() {
-            if self.written.contains_key(&n) {
+            if self.written_as(n).is_some() {
                 continue;
             }
             match (self.names.part(n), ready) {
@@ -156,21 +182,21 @@ impl Out<'_> {
                     let x = self.sym(x);
                     self.var(x);
                     self.var(count);
-                    self.written.insert(n, self.written.len() as u64);
+                    self.mark_written(n);
                 }
                 (Part::Block(xs), true) => {
                     self.tag(1);
                     self.tag(xs.len() as u8);
-                    for x in xs {
+                    for &x in xs.iter() {
                         let x = self.sym(x);
                         self.var(x);
                     }
-                    self.written.insert(n, self.written.len() as u64);
+                    self.mark_written(n);
                 }
                 (Part::Run(x, _), false) => todo.extend([(n, true), (x, false)]),
                 (Part::Block(xs), false) => {
                     todo.push((n, true));
-                    todo.extend(xs.into_iter().rev().map(|x| (x, false)));
+                    todo.extend(xs.iter().rev().map(|&x| (x, false)));
                 }
             }
         }
@@ -656,7 +682,8 @@ fn write_def(
         refs,
         refused: None,
         names: Names::canonical(hash),
-        written: HashMap::new(),
+        written: Vec::new(),
+        count_written: 0,
         bytes_only,
     };
     out.str(&d.name);
