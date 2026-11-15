@@ -3255,6 +3255,58 @@ impl Reducer {
     }
 }
 
+/// How a program wrote a fold of one level, for the messages of the checker's `fold_level`.
+/// A need [`NeedKind::Reduce`] carries it, so that a fold checked again at each call of a
+/// generic function names the form the program wrote (row FAIL-need-fold-form-message).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FoldForm {
+    /// `x >< op`.
+    Infix,
+    /// `x.reduce(op)`, which DESIGN.md defines as `x >< op` (the method register's `reduce`
+    /// row, `fold(m, op, ev)`).
+    Reduce,
+    /// `x.sum` on a family, `x >< (+)` (the method register's `sum` row).
+    Sum,
+}
+
+impl FoldForm {
+    /// The fold as code, quoted.
+    pub fn word(self) -> &'static str {
+        match self {
+            FoldForm::Infix => "`><`",
+            FoldForm::Reduce => "`.reduce`",
+            FoldForm::Sum => "`.sum`",
+        }
+    }
+
+    /// The fold named in a sentence, before its operator.
+    pub fn fold_name(self) -> &'static str {
+        match self {
+            FoldForm::Infix => "a fold `><`",
+            FoldForm::Reduce => "a fold `.reduce`",
+            FoldForm::Sum => "a fold `.sum`",
+        }
+    }
+
+    /// The fold by the operator written `written`, named in a sentence.
+    pub fn what(self, written: &str) -> String {
+        match self {
+            FoldForm::Infix => format!("a fold `><` by `{written}`"),
+            FoldForm::Reduce => format!("a fold `.reduce({written})`"),
+            FoldForm::Sum => "a fold `.sum`".to_string(),
+        }
+    }
+
+    /// The fold by `written` of a small family, as a repair writes it.
+    pub fn example(self, written: &str) -> String {
+        match self {
+            FoldForm::Infix => format!("{{0 -> 1, 1 -> 2}} >< {written}"),
+            FoldForm::Reduce => format!("{{0 -> 1, 1 -> 2}}.reduce({written})"),
+            FoldForm::Sum => "{0 -> 1, 1 -> 2}.sum".to_string(),
+        }
+    }
+}
+
 /// The uses a [`Need`] records.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NeedKind {
@@ -3369,8 +3421,10 @@ pub enum NeedKind {
     /// `v >< (op)` at the fold written at the span: the value is a family whose entries `op`
     /// folds, and the use gives the fold (step L3.2; DESIGN.md sec:reduction). The span is the
     /// fold's own, where a need met at a call is met at the call's, so that the checks of one
-    /// fold at every call are found together, as its identity needs (`Ck::finish`).
-    Reduce(Reducer, Span),
+    /// fold at every call are found together, as its identity needs (`Ck::finish`). The form
+    /// is how the program wrote the fold, `><`, `.reduce` or `.sum`, which a message at the
+    /// call names.
+    Reduce(Reducer, Span, FoldForm),
     /// `v.foldl(init, f)`, or `v.foldr(f, init)` when `right` is set: the value is a rank whose
     /// entries `f` folds from `init`, and the use gives the accumulator (step L3.3; DESIGN.md
     /// sec:reduction). `tys` is the types of `init` and of `f`, in that order.
@@ -3639,7 +3693,7 @@ impl Need {
                     src: f(src),
                     rank: *rank,
                 },
-                NeedKind::Reduce(op, site) => NeedKind::Reduce(*op, *site),
+                NeedKind::Reduce(op, site, form) => NeedKind::Reduce(*op, *site, *form),
                 NeedKind::Fold { tys, right } => NeedKind::Fold {
                     tys: tys.iter().map(&mut f).collect(),
                     right: *right,

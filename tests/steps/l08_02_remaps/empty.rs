@@ -845,3 +845,47 @@ fn sum_of_a_family_or_a_tuple_is_taken_region_by_region() {
     prints(src, "t", "3");
     prints(src, "u", "6");
 }
+
+// ---- A fold rejected at a call of a generic function names the form written (row
+// FAIL-need-fold-form-message) ----
+
+#[test]
+fn a_generic_fold_rejected_at_a_call_names_the_form_written() {
+    // DESIGN.md sec:diagnostics, "A short headline, the detail in the notes": the headline
+    // "shows the offending piece of the program as code". The program wrote `.reduce((+))`
+    // or `.sum`; a headline naming `><` shows code the program does not hold. The concrete
+    // fold of a tuple says the form written, and the fold checked at the call of a generic
+    // function says the same.
+    rejected(
+        "f(positional b) = (if b { (3, 4) } else { [1, 2] }).reduce((+));\nt = f(true);\n",
+        &["`.reduce` folds the entries of a family"],
+    );
+    rejected(
+        "s(positional xs, positional b) = (if b { xs } else { [1, 2] }).reduce((+));\n\
+         t = s((3, 4), true);\n",
+        &["`.reduce` folds the entries of a family"],
+    );
+    rejected(
+        "s(positional xs) = xs.reduce(max);\nt = s((3, 4));\n",
+        &["`.reduce` folds the entries of a family"],
+    );
+    // `><` written stays `><`.
+    rejected(
+        "s(positional xs, positional b) = (if b { xs } else { [1, 2] }) >< (+);\n\
+         t = s((3, 4), true);\n",
+        &["`><` folds the entries of a family"],
+    );
+    // `.sum` beside a family with no entries keeps the fold (row
+    // FAIL-sum-empty-family-beside-parameter), so a string passed there is rejected by it:
+    // sec:reduction, a fold takes a family; the message names `.sum`, as the concrete
+    // `(if b { "ab" } else { [] }).sum` does.
+    rejected(
+        "f(positional b) = (if b { \"ab\" } else { [] }).sum;\nt = f(true);\n",
+        &["`.sum` folds the entries of a family"],
+    );
+    rejected(
+        "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n\
+         t = s(\"ab\", true);\n",
+        &["`.sum` folds the entries of a family"],
+    );
+}

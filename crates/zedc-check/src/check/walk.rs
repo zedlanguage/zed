@@ -25,7 +25,7 @@ use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
 mod fp_ops;
 mod remap;
 
-use fp_ops::{FoldForm, Quantifier};
+use fp_ops::Quantifier;
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -3942,7 +3942,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let r = self.class_root(v);
                 let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
                     Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
-                    Some((r, None)) => self.need(r, NeedKind::Reduce(op, site), true, span),
+                    Some((r, None)) => self.need(r, NeedKind::Reduce(op, site, form), true, span),
                     None => {
                         self.saw_fold(site, None, None);
                         Ty::dynamic()
@@ -9581,7 +9581,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let src = self.remap_src(n, src, &on, binds);
                 self.remap_met(*at, &src)
             }
-            NeedKind::Reduce(op, site) => self.reduce_end(*op, &on, span, *site),
+            NeedKind::Reduce(op, site, form) => self.fold_level(*op, &on, span, *site, *form),
             NeedKind::Fold { tys, right } => {
                 let init = self.bound(&tys[0], binds);
                 let f = Arg::of(self.bound(&tys[1], binds));

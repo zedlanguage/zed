@@ -6,56 +6,6 @@
 use super::remap::Apply;
 use crate::check::*;
 
-/// How a program wrote a fold of one level, for the messages of [`Ck::fold_level`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::check) enum FoldForm {
-    /// `x >< op`.
-    Infix,
-    /// `x.reduce(op)`, which DESIGN.md defines as `x >< op` (the method register's `reduce`
-    /// row, `fold(m, op, ev)`).
-    Reduce,
-    /// `x.sum` on a family, `x >< (+)` (the method register's `sum` row).
-    Sum,
-}
-
-impl FoldForm {
-    /// The fold as code, quoted.
-    pub(in crate::check) fn word(self) -> &'static str {
-        match self {
-            FoldForm::Infix => "`><`",
-            FoldForm::Reduce => "`.reduce`",
-            FoldForm::Sum => "`.sum`",
-        }
-    }
-
-    /// The fold named in a sentence, before its operator.
-    pub(in crate::check) fn fold_name(self) -> &'static str {
-        match self {
-            FoldForm::Infix => "a fold `><`",
-            FoldForm::Reduce => "a fold `.reduce`",
-            FoldForm::Sum => "a fold `.sum`",
-        }
-    }
-
-    /// The fold by the operator written `written`, named in a sentence.
-    pub(in crate::check) fn what(self, written: &str) -> String {
-        match self {
-            FoldForm::Infix => format!("a fold `><` by `{written}`"),
-            FoldForm::Reduce => format!("a fold `.reduce({written})`"),
-            FoldForm::Sum => "a fold `.sum`".to_string(),
-        }
-    }
-
-    /// The fold by `written` of a small family, as a repair writes it.
-    pub(in crate::check) fn example(self, written: &str) -> String {
-        match self {
-            FoldForm::Infix => format!("{{0 -> 1, 1 -> 2}} >< {written}"),
-            FoldForm::Reduce => format!("{{0 -> 1, 1 -> 2}}.reduce({written})"),
-            FoldForm::Sum => "{0 -> 1, 1 -> 2}.sum".to_string(),
-        }
-    }
-}
-
 /// A quantifier of step L3.15a.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::check) enum Quantifier {
@@ -88,7 +38,7 @@ impl Quantifier {
     }
 }
 
-// walk.rs imports this file (`FoldForm`, `Quantifier` and the methods below), so this file
+// walk.rs imports this file (`Quantifier` and the methods below), so this file
 // calls no method written in walk.rs: a cycle between files is refused (DESIGN.md sec:units;
 // the import graph of step S.1f, which counts a call of a method written apart from its type
 // as an import of the method's file). The fold of a level, `Ck::fold_level`, and its callers

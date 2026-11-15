@@ -84,9 +84,9 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
-    PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width,
-    WrittenRange, atoms, carriers_text, class_id, errs, fresh_name, mask_text,
+    Arrow, Binds, Carrier, EVERY, FoldForm, IntDomain, Names, Narrow, Need, NeedKind, NodeId,
+    OTHER, Piece, PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet,
+    Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -4372,7 +4372,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut todo: Vec<&Sig> = vec![sig];
                 while let Some(s) = todo.pop() {
                     for n in &s.needs {
-                        if let NeedKind::Reduce(_, site) | NeedKind::SumMethod(site) = n.kind
+                        if let NeedKind::Reduce(_, site, _) | NeedKind::SumMethod(site) = n.kind
                             && self.info.split_folds.contains_key(&site)
                         {
                             sites.push(site);
