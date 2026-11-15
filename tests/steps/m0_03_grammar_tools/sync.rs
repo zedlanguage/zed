@@ -122,6 +122,41 @@ fn the_copied_table_of_words_lays_out_the_fences_as_the_spec_does() {
     assert_eq!(layers(&copy), layers(&spec));
 }
 
+/// A word a cell names again, as DESIGN.md's L3 row names `split` and `concat` again in the note
+/// that explains them, is listed once, where it first appears; a word only the note names, as
+/// L15's tactics are, is kept.
+#[test]
+fn a_word_named_again_in_a_note_is_listed_once() {
+    let table = "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
+                 | L1 | | | `len` |\n\
+                 | L3 | | | `sorted`, `split`, `concat` (`split` keeps every piece; `concat` \
+                 takes strings, `max` too) |\n\
+                 | L7 | | | `log` |\n";
+    let text = design(&format!("{}\n{KERNEL}", fence(DOUBLE))).replacen(
+        "| Layer | Annotations | Facet words | Words |\n|---|---|---|---|\n\
+         | L1 | | | `len` |\n| L3 | | | `sorted` |\n| L7 | | | `log` |\n",
+        table,
+        1,
+    );
+    assert!(text.contains("takes strings"), "the table is replaced");
+    let dir = spec_dir("sync_words_once", &text, "");
+    fs::create_dir_all(format!("{}/zed/fences", dir.root())).unwrap();
+    fs::create_dir_all(format!("{}/zed/grammar", dir.root())).unwrap();
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let mut out = String::new();
+    let zed = format!("{}/zed", dir.root());
+    assert_eq!(
+        sync::sync_into(&spec, &zed, false, &mut out),
+        Ok(true),
+        "{out}"
+    );
+    let words = fs::read_to_string(format!("{zed}/grammar/words.md")).unwrap();
+    assert!(
+        words.contains("\n| L3 | — | — | `sorted`, `split`, `concat`, `max` |\n"),
+        "{words}"
+    );
+}
+
 /// The spec checkout `sync` reads: the one directory it is given, else `ZED_SPEC_DIR`; `--check`
 /// is no directory, and two directories or none is a usage error.
 #[test]

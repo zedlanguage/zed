@@ -11,7 +11,7 @@ use crate::scaling::{
     audit_runs, cases_dir, cases_pass, check_passes, checklist, compares_checklist, fences_pass,
     first_pass_accepts, functions, layer_runs, lays_out_fences, many_fences, program_dir,
     progress_plan, reads_each_row, reads_unreadable, rejection_table, renders_progress, ring_runs,
-    sync_body, sync_targets, syncs, unreadable,
+    sync_body, sync_targets, syncs, syncs_words_once, unreadable, wide_words,
 };
 use crate::{Dir, design, fence, spec_dir};
 
@@ -166,4 +166,22 @@ fn sync_scales_with_the_number_of_fences() {
         sync_targets(d);
     }
     scales("sync", 25, &dirs, syncs);
+}
+
+/// `sync` keeps each word of a cell of the table of words once, by one hash-set lookup per word,
+/// so its work grows with the number of words in the cell.
+#[test]
+fn sync_scales_with_the_words_of_a_table_cell() {
+    let n = 2000;
+    let dirs = [n, 8 * n].map(|m| (m, spec_dir(&format!("scale_words_{m}"), &wide_words(m), "")));
+    for (_, d) in &dirs {
+        sync_targets(d);
+    }
+    check("sync, by words of a cell", n, |m| {
+        let (_, dir) = dirs
+            .iter()
+            .find(|d| d.0 == m)
+            .expect("a size that was built");
+        syncs_words_once(dir, m);
+    });
 }

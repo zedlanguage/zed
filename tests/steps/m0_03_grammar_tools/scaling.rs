@@ -211,6 +211,32 @@ pub(super) fn sync_targets(d: &Dir) {
     }
 }
 
+/// A `DESIGN.md` whose table of words has `m` words `w{i}` in row L3, each named again in a note
+/// of the same cell, as DESIGN.md's row L3 names `split` and `concat` again.
+pub(super) fn wide_words(m: usize) -> String {
+    let named: Vec<String> = (0..m).map(|i| format!("`w{i}`")).collect();
+    let row = format!(
+        "| L3 | | | `sorted`, {} (a note: {}) |\n",
+        named.join(", "),
+        named.join(" and ")
+    );
+    let text = design(&format!("{}\n{KERNEL}", fence("y = sorted(x);")));
+    let wide = text.replacen("| L3 | | | `sorted` |\n", &row, 1);
+    assert_ne!(wide, text, "the row L3 is replaced");
+    wide
+}
+
+/// `sync` copies the table of words of the spec in `d`, the `m` words of [`wide_words`] once each.
+pub(super) fn syncs_words_once(d: &Dir, m: usize) {
+    syncs(d);
+    let words = std::fs::read_to_string(d.at("zed/grammar/words.md")).expect("words.md");
+    let row = words
+        .lines()
+        .find(|l| l.starts_with("| L3 |"))
+        .expect("the row L3");
+    assert_eq!(row.matches('`').count(), 2 * (m + 1), "{row}");
+}
+
 /// `sync` lays out and copies the fences of the spec in `d` into its `zed/`.
 pub(super) fn syncs(d: &Dir) {
     let spec = Spec::open(&d.root()).expect("the spec reads");
@@ -263,5 +289,8 @@ fn each_tool_benchmark_passes_at_small_sizes() {
         let s = spec_dir(&format!("small_scale_sync_{m}"), &design(&sync_body(m)), "");
         sync_targets(&s);
         syncs(&s);
+        let w = spec_dir(&format!("small_scale_words_{m}"), &wide_words(m), "");
+        sync_targets(&w);
+        syncs_words_once(&w, m);
     }
 }

@@ -22,6 +22,7 @@
 //! ([`crate::cite`]). With `--check` it writes nothing and fails if a file is out of date; either
 //! way it fails if a check fails.
 
+use std::collections::HashSet;
 use std::fmt::Write;
 
 use crate::fence_layers::{of_document, rejection_rows};
@@ -136,8 +137,10 @@ fn messages(paths: &[String]) -> Result<String, String> {
 }
 
 /// The table of defined words by layer (sec:grammar) of the document `design`: its head, then
-/// each row with each cell cut to its backquoted words, which is all of a cell that
-/// [`crate::layer::WordTable::read`] reads. O(size of `design`).
+/// each row with each cell cut to its backquoted words, each word once, where it first appears
+/// (a note in a cell may name a word of the cell again, as row L3's note names `split` and
+/// `concat`; a word only a note names, as row L15's tactics, is kept). That is all of a cell
+/// that [`crate::layer::WordTable::read`] reads. O(size of `design`).
 fn words(design: &str) -> Result<String, String> {
     let mut lines = design
         .split('\n')
@@ -155,7 +158,17 @@ fn words(design: &str) -> Result<String, String> {
             .split('|')
             .enumerate()
             .map(|(k, cell)| {
-                let words: Vec<String> = spans(cell).iter().map(|w| format!("`{w}`")).collect();
+                // Complexity tradeoff: a word is checked against the cell's earlier words by a
+                // hash set, O(1) per word, rather than by a search of the words kept so far,
+                // O(w²) in the w words of the cell (measured 2026-11-15: ratio 39.2 at 2000 and
+                // 16000 words by the search, 4.9 by the set). Costs one set per cell, nothing is
+                // given up. Test: m0_03 bench `sync_scales_with_the_words_of_a_table_cell`.
+                let mut seen = HashSet::new();
+                let words: Vec<String> = spans(cell)
+                    .into_iter()
+                    .filter(|w| seen.insert(*w))
+                    .map(|w| format!("`{w}`"))
+                    .collect();
                 match (k, words.is_empty()) {
                     (0, _) => strip(cell).to_string(),
                     (_, true) => "—".to_string(),
