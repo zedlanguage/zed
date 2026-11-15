@@ -217,9 +217,19 @@ fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all
     eprintln!("listed {listed}, infinite {infinite}, finite but not known finite {missed}");
     // 705, 1120 and 175 of 2000 when written, so about 212, 336 and 52 of 600. A box of the
     // smaller side met as written, not with the join, leaves 376 of 2000 (113 of 600) finite
-    // but not known finite.
+    // but not known finite: the upper bound on `missed` stays, an open item of
+    // PROOF-test-count-thresholds (it lies about 2.6 standard deviations above 52).
     assert!(
-        listed >= 150 && infinite >= 250 && missed <= 70,
+        missed <= 70,
         "{listed} listed, {infinite} infinite, {missed} missed (ZED_TEST_SEED={base})"
     );
+    // A listed meet and an infinite one on every run, built (PROOF-test-count-thresholds):
+    // `(0, 1) & (0 | 1, 0 | 1)` holds only (0, 1), and the join of each side is a box of literals,
+    // so it is listed; `(int, int) & (int, int)` holds (7, 7), which stands for the integers no
+    // column names, so it is infinite.
+    use Col::{Int, Set};
+    let finite = [union(vec![(Set(1), Set(2))]), union(vec![(Set(3), Set(3))])];
+    assert_eq!(check(&finite, "built (0, 1)"), Found::Listed);
+    let all = [union(vec![(Int, Int)]), union(vec![(Int, Int)])];
+    assert_eq!(check(&all, "built (int, int)"), Found::Infinite);
 }

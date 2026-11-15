@@ -724,43 +724,51 @@ fn each_value_agrees_with_a_search_of_all_points() {
     };
     let all = up(&up(&ints));
     let mentions_seven = |v: &Value| v.to_string().contains('7');
-    let (mut listed_count, mut infinite, mut missed) = (0, 0, 0);
+    // Checks one type; returns 0 when it is listed, 1 when it is infinite, 2 when it is finite
+    // but not known finite.
+    let check = |t: &Type, run: &str| -> usize {
+        let holds: Vec<&Value> = all.iter().filter(|v| t.contains(v)).collect();
+        let finite = !holds.iter().any(|v| mentions_seven(v));
+        match listed(t) {
+            Some(got) => {
+                assert!(finite, "an infinite type listed: {t} ({run})");
+                // Listing merges boxes (LIST-box-overlap), and is known finite exactly when
+                // `finite` says so.
+                assert!(t.finite(), "{t} ({run})");
+                let want: BTreeSet<Value> = holds.into_iter().cloned().collect();
+                assert_eq!(got, want, "{t} ({run})");
+                0
+            }
+            None if finite => {
+                assert!(!t.finite(), "{t} ({run})");
+                2
+            }
+            None => {
+                assert!(!t.finite(), "{t} ({run})");
+                1
+            }
+        }
+    };
+    let mut counts = [0; 3];
     // The generator starts from a new seed each run, printed; it was 7 (TEST-bench-move-l0123,
     // author P169).
     let (_, first) = Rng::fresh("random mixed types");
     let mut seed = first;
     for _ in 0..1500 {
         let t = random_mixed(&mut seed, 4, 2);
-        let holds: Vec<&Value> = all.iter().filter(|v| t.contains(v)).collect();
-        let finite = !holds.iter().any(|v| mentions_seven(v));
-        match listed(&t) {
-            Some(got) => {
-                assert!(
-                    finite,
-                    "an infinite type listed: {t} (ZED_TEST_SEED={first})"
-                );
-                // Listing merges boxes (LIST-box-overlap), and is known finite exactly when
-                // `finite` says so.
-                assert!(t.finite(), "{t} (ZED_TEST_SEED={first})");
-                let want: BTreeSet<Value> = holds.into_iter().cloned().collect();
-                assert_eq!(got, want, "{t} (ZED_TEST_SEED={first})");
-                listed_count += 1;
-            }
-            None if finite => {
-                assert!(!t.finite(), "{t} (ZED_TEST_SEED={first})");
-                missed += 1
-            }
-            None => {
-                assert!(!t.finite(), "{t} (ZED_TEST_SEED={first})");
-                infinite += 1
-            }
-        }
+        counts[check(&t, &format!("ZED_TEST_SEED={first}"))] += 1;
     }
+    let [listed_count, infinite, missed] = counts;
     eprintln!("listed {listed_count}, infinite {infinite}, finite but not known finite {missed}");
-    assert!(
-        listed_count > 300 && infinite > 300,
-        "{listed_count} listed, {infinite} infinite (ZED_TEST_SEED={first})"
+    // A listed type and an infinite one on every run, built (PROOF-test-count-thresholds):
+    // `0 | 1` holds only 0 and 1, so it is listed as them; `int` holds 7, which stands for the
+    // integers no type here names, so it is infinite and must not be listed.
+    assert_eq!(
+        check(&(&lit(0) | &lit(1)), "built 0 | 1"),
+        0,
+        "0 | 1 is listed"
     );
+    assert_eq!(check(&Type::int(), "built int"), 1, "int is infinite");
 }
 
 #[test]

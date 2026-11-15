@@ -540,18 +540,23 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them_at_a_fork_without_la
     assert!(a.subtype(b), "{a} <: {b}");
     Type::forget_emptiness();
     assert_eq!((a - b).verdict(), Verdict::Empty, "{a} - {b}");
-    order_free(10511391382961984112);
+    // Fixed seed, so an exact count.
+    assert_eq!(order_free(10511391382961984112), 37);
 }
 
 /// Asks `QUERIES` queries `a <: b` on the corpus of `seed` one at a time with the kept results
 /// dropped before each, in one batch keeping them, and in the batch reversed, and asserts the
-/// three agree.
-fn order_free(seed: u64) {
+/// three agree; returns how many hold.
+fn order_free(seed: u64) -> usize {
     let mut rng = Rng::new(seed);
     let ts = corpus(&mut rng, 150);
-    let qs: Vec<(usize, usize)> = (0..QUERIES)
+    let mut qs: Vec<(usize, usize)> = (0..QUERIES)
         .map(|_| (rng.below(ts.len()), rng.below(ts.len())))
         .collect();
+    // Two queries built to give both answers on every run, asked last in the batch and first
+    // reversed (PROOF-test-count-thresholds): `ts[1]` is `0` and `ts[0]` is `int`, so
+    // `0 <: int` holds, and `int <: 0` does not, as `1` is in `int` and not in `0`.
+    qs.extend([(1, 0), (0, 1)]);
     let ask = |&(a, b): &(usize, usize)| ts[a].subtype(&ts[b]);
     let alone: Vec<bool> = qs
         .iter()
@@ -567,10 +572,7 @@ fn order_free(seed: u64) {
     back.reverse();
     let held = batch.iter().filter(|&&b| b).count();
     eprintln!("ZED_TEST_SEED={seed}: {held} of {} hold", qs.len());
-    assert!(
-        0 < held && held < qs.len(),
-        "ZED_TEST_SEED={seed}: {held} hold"
-    );
+    assert_eq!(batch[QUERIES..], [true, false], "the built queries");
     for (i, &(a, b)) in qs.iter().enumerate() {
         assert!(
             alone[i] == batch[i] && alone[i] == back[i],
@@ -582,6 +584,7 @@ fn order_free(seed: u64) {
             back[i]
         );
     }
+    held
 }
 
 /// A morphism cycle is inhabited, `W = (W) -> int` by a closure, except when what the cycle

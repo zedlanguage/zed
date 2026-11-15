@@ -398,41 +398,23 @@ fn bounded_parity_singletons_obey_further_integer_constraints() {
 /// 0.23 to 0.70 s alone under the same load, the time varying with the meets drawn. Every kind of meet is still drawn: each draw picks among
 /// 1 to 4 integers, 1 to 8 lists, bounded or not, swaps by pairs or by any subset, and stop
 /// sets of none, one or both states. At 400 meets 309 were answered `Empty` with no short
-/// list (77 percent), so at 100 about 77 are, with a standard deviation of about 4.2: the one
-/// count checked, at least one such meet, holds by far more than three of them.
+/// list (77 percent), so at 100 about 77 are, with a standard deviation of about 4.2. A meet
+/// built to be answered `Empty` is checked on every run, so no draw need hold one.
 #[test]
 fn random_parity_meets_answered_empty_hold_no_short_list() {
     let (mut g, seed) = Rng::fresh("random parity meets");
     let set = |xs: &[usize]| (xs.iter().map(|&x| lit(x))).fold(Type::empty(), |u, x| &u | &x);
-    let mut tally = std::collections::BTreeMap::new();
-    for _ in 0..100 {
-        let a = 1 + g.below(4);
-        let k = 1 + g.below(8);
-        let bounded = g.below(2) == 0;
-        // In half the meets each integer swaps at most two lists, the class read over GF(2).
-        let mut swaps: Vec<Vec<usize>> = vec![vec![]; k];
-        let pairs = g.below(2) == 0;
-        for x in 0..a {
-            match pairs {
-                true => {
-                    for _ in 0..g.below(3) {
-                        let i = g.below(k);
-                        if swaps[i].last() != Some(&x) {
-                            swaps[i].push(x);
-                        }
-                    }
-                }
-                false => (0..k)
-                    .filter(|_| g.below(2) == 0)
-                    .for_each(|i| swaps[i].push(x)),
-            }
-        }
+    // The meet of `k` two-state lists over the integers `0..a`, list `i` swapping its states on
+    // `swaps[i]` and stopping in the states of the bits of `stops[i]`, and bounded to `0..a` when
+    // `bounded`; returns its verdict and whether a list of length at most 4 is in it, and checks
+    // that a meet answered `Empty` holds none.
+    let check = |a: usize, swaps: &[Vec<usize>], stops: &[usize], bounded: bool, run: &str| {
+        let k = swaps.len();
         let mut defs = Vec::new();
         for (i, swaps) in swaps.iter().enumerate() {
-            let stops = g.below(4);
             for (state, other_state) in [(2 * i, 2 * i + 1), (2 * i + 1, 2 * i)] {
                 let mut arms = Vec::new();
-                if (stops >> (state % 2)) & 1 == 1 {
+                if (stops[i] >> (state % 2)) & 1 == 1 {
                     arms.push(nil());
                 }
                 if !swaps.is_empty() {
@@ -472,20 +454,44 @@ fn random_parity_meets_answered_empty_hold_no_short_list() {
         }
         let v = verdict_and_searched(&t).0;
         if v == Verdict::Empty {
-            assert_eq!(
-                found, None,
-                "a list of a meet answered empty (ZED_TEST_SEED={seed})"
-            );
+            assert_eq!(found, None, "a list of a meet answered empty ({run})");
         }
-        *tally
-            .entry((format!("{v:?}"), found.is_some()))
-            .or_insert(0) += 1;
+        (v, found.is_some())
+    };
+    let mut tally = std::collections::BTreeMap::new();
+    for _ in 0..100 {
+        let a = 1 + g.below(4);
+        let k = 1 + g.below(8);
+        let bounded = g.below(2) == 0;
+        // In half the meets each integer swaps at most two lists, the class read over GF(2).
+        let mut swaps: Vec<Vec<usize>> = vec![vec![]; k];
+        let pairs = g.below(2) == 0;
+        for x in 0..a {
+            match pairs {
+                true => {
+                    for _ in 0..g.below(3) {
+                        let i = g.below(k);
+                        if swaps[i].last() != Some(&x) {
+                            swaps[i].push(x);
+                        }
+                    }
+                }
+                false => (0..k)
+                    .filter(|_| g.below(2) == 0)
+                    .for_each(|i| swaps[i].push(x)),
+            }
+        }
+        let stops: Vec<usize> = (0..k).map(|_| g.below(4)).collect();
+        let (v, found) = check(a, &swaps, &stops, bounded, &format!("ZED_TEST_SEED={seed}"));
+        *tally.entry((format!("{v:?}"), found)).or_insert(0) += 1;
     }
     eprintln!("random parity meets, by verdict and whether a short list was found: {tally:?}");
-    assert!(
-        tally.contains_key(&("Empty".to_owned(), false)),
-        "no meet answered empty (ZED_TEST_SEED={seed}): {tally:?}"
-    );
+    // A meet answered `Empty` on every run, built (PROOF-test-count-thresholds): two lists over
+    // the integer 0, each swapping its states on 0; the first stops in its first state, after
+    // an even count of 0s, and the second in its second state, after an odd count. No list has
+    // a count of 0s both even and odd, so the meet is empty, and by the GF(2) reading.
+    let built = check(1, &[vec![0], vec![0]], &[1, 2], false, "built");
+    assert_eq!(built, (Verdict::Empty, false), "the built meet");
 }
 
 fn bounded_parity(k: usize, hi: usize, exclude: Option<usize>) -> Type {

@@ -6522,6 +6522,8 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
                     assert!(t.contains(&w), "r9bmm witness {at}");
                     let mut a0 = a.clone();
                     a0[0] = vec![false; m];
+                    // Row 0 of `a0` is all 0, so no `q` gives `(0, k)`: not all ones.
+                    assert!(!r9_product_all_ones(&a0, &b), "r9bmm control {at}");
                     Type::forget_emptiness();
                     let t0 = r9_bmm(&a0, &b, &format!("{tag}_z"));
                     assert_eq!(t0.verdict(), Verdict::Empty, "r9bmm control {at}");
@@ -6529,10 +6531,16 @@ fn r9_bmm_encoding_decides_as_the_boolean_product() {
             }
         }
     }
-    assert!(
-        seen.0 >= 4 && seen.1 >= 4,
-        "both verdicts occur: {seen:?} ZED_TEST_SEED={seed}"
+    eprintln!(
+        "inhabited {}, empty {} ZED_TEST_SEED={seed}",
+        seen.0, seen.1
     );
+    // Both verdicts on every run whatever the draw (PROOF-test-count-thresholds): draw 0 of
+    // each of the 4 sides and 3 densities plants column 0 of `a` and row 0 of `b` all 1, so
+    // `q = 0` gives every `(i, k)` and the product is all ones, 12 `Inhabited`; and each
+    // `Inhabited` matrix is followed by its control, `Empty`. The count of 12 holds for every
+    // draw, so it stays.
+    assert!(seen.0 >= 12, "{seen:?} ZED_TEST_SEED={seed}");
 }
 
 /// R9 X38: the sparse adversary has an all-ones product with one witness per entry, and the

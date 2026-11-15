@@ -189,11 +189,21 @@ fn match_tables_agree_with_listing_their_values() {
         );
     }
     eprintln!("ZED_TEST_SEED={seed}: {empty} of {count} exhaustive");
-    // Both answers are common, so the comparison means something either way.
-    assert!(
-        (count / 4..count * 3 / 4).contains(&empty),
-        "ZED_TEST_SEED={seed}: {empty} of {count} exhaustive"
-    );
+    // Both answers on every run, from tables built to give them, so the comparison means
+    // something either way (PROOF-test-count-thresholds). One field of every value: arms on
+    // value 0 and on all the others cover it, so the table is exhaustive and its missed values
+    // are none; an arm on value 0 alone misses value 1, so the missed values are inhabited.
+    let rest = FULL & !1;
+    for (arms, exhaustive) in [(vec![vec![1], vec![rest]], true), (vec![vec![1]], false)] {
+        let t = Table {
+            scrutinee: vec![FULL],
+            guard: None,
+            arms,
+        };
+        assert_eq!(!missed_by_listing(&t), exhaustive, "the built table");
+        let ty = missed(&t, &PLAIN);
+        assert_eq!(ty.is_empty(), exhaustive, "the built table: {ty}");
+    }
 }
 
 /// It ran 1,500 tables of the fixed seed 29 under three renamings (2.84 s alone); now it runs

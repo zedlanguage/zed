@@ -171,10 +171,16 @@ fn random_box(g: &mut Rng, width: usize) -> (Type, Vec<Vec<usize>>) {
 }
 
 /// Decides `f` on a random box against the enumeration, cold, by `verdict` and `is_empty`.
-fn decide(g: &mut Rng, width: usize, f: &F, answers: &mut [usize; 2]) {
+fn decide(g: &mut Rng, width: usize, f: &F) {
     let (b, boxed) = random_box(g, width);
-    let t = &b & &f.ty(width);
-    let inhabited = by_enumeration(f, &boxed);
+    decide_in(&b, &boxed, width, f);
+}
+
+/// Decides `f` on the box `b`, whose components hold the values `boxed`, against the
+/// enumeration, cold, by `verdict` and `is_empty`; returns whether it is inhabited.
+fn decide_in(b: &Type, boxed: &[Vec<usize>], width: usize, f: &F) -> bool {
+    let t = b & &f.ty(width);
+    let inhabited = by_enumeration(f, boxed);
     let expected = if inhabited {
         Verdict::Inhabited
     } else {
@@ -184,7 +190,23 @@ fn decide(g: &mut Rng, width: usize, f: &F, answers: &mut [usize; 2]) {
     assert_eq!(t.verdict(), expected, "{f:?} on {boxed:?}");
     Type::forget_emptiness();
     assert_eq!(t.is_empty(), !inhabited, "{f:?} on {boxed:?}");
-    answers[usize::from(inhabited)] += 1;
+    inhabited
+}
+
+/// Each answer from a part built to give it, on a box of `width` components whose component 0
+/// holds only the literal 0 and whose others are `top` (PROOF-test-count-thresholds): every
+/// tuple of the box has 0 at component 0, so `row(0, 0)` holds them all and is inhabited, and
+/// `!row(0, 0)` holds none and is empty.
+fn built_answers(width: usize) {
+    let mut types = vec![Type::top(); width];
+    types[0] = lit(0);
+    let mut boxed = vec![(0..VALUES).chain([OUTSIDE]).collect::<Vec<usize>>(); width];
+    boxed[0] = vec![0];
+    let b = Type::tuple(types);
+    let row = F::Row(0, 0);
+    assert!(decide_in(&b, &boxed, width, &row), "row(0, 0) is inhabited");
+    let not = F::Not(Box::new(row));
+    assert!(!decide_in(&b, &boxed, width, &not), "!row(0, 0) is empty");
 }
 
 /// Random parts the pass decides, on two to four components, each decided as enumeration
@@ -193,20 +215,15 @@ fn decide(g: &mut Rng, width: usize, f: &F, answers: &mut [usize; 2]) {
 fn random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them() {
     zed_tests::deep::on_small_stack(|| {
         // A new seed each run, printed; it was seed 71 (TEST-bench-move-l0123, author P169).
-        let (mut g, seed) = Rng::fresh("random parts");
-        let mut answers = [0; 2];
+        let (mut g, _) = Rng::fresh("random parts");
         for width in 2..=4 {
             let on: Vec<usize> = (0..width).collect();
             for _ in 0..150 {
                 let f = random(&mut g, &on, 3, false);
-                decide(&mut g, width, &f, &mut answers);
+                decide(&mut g, width, &f);
             }
+            built_answers(width);
         }
-        println!("answers {answers:?}");
-        assert!(
-            answers[0] >= 40 && answers[1] >= 40,
-            "{answers:?} (ZED_TEST_SEED={seed})"
-        );
     });
 }
 
@@ -289,20 +306,15 @@ fn random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_th
     zed_tests::deep::on_small_stack(|| {
         // Ran 200 parts a width from seed 73; now 100 from a new seed each run, printed
         // (TEST-bench-move-l0123, author P169).
-        let (mut g, seed) = Rng::fresh("random meets");
-        let mut answers = [0; 2];
+        let (mut g, _) = Rng::fresh("random meets");
         for width in 1..=5 {
             let on: Vec<usize> = (0..width).collect();
             for _ in 0..100 {
                 let f = random_in_class(&mut g, &on, 2);
-                decide(&mut g, width, &f, &mut answers);
+                decide(&mut g, width, &f);
             }
+            built_answers(width);
         }
-        println!("answers {answers:?}");
-        assert!(
-            answers[0] >= 30 && answers[1] >= 30,
-            "{answers:?} (ZED_TEST_SEED={seed})"
-        );
     });
 }
 
@@ -316,7 +328,40 @@ fn random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_th
 fn random_parts_out_of_the_class_are_decided_or_refused() {
     zed_tests::deep::on_small_stack(|| {
         // A new seed each run, printed; it was seed 72 (TEST-bench-move-l0123, author P169).
-        let (mut g, seed) = Rng::fresh("random parts out of the class");
+        let (mut g, _) = Rng::fresh("random parts out of the class");
+        // Decides `f` on the box `b` of `width` components holding `boxed`, or checks its
+        // refusal; returns 0 for empty, 1 for inhabited, 2 for refused.
+        let check = |b: &Type, boxed: &[Vec<usize>], width: usize, f: &F| -> usize {
+            let t = b & &f.ty(width);
+            let inhabited = by_enumeration(f, boxed);
+            Type::forget_emptiness();
+            let v = t.verdict();
+            Type::forget_emptiness();
+            let empty = t.is_empty();
+            match v {
+                Verdict::Refused(Refusal::SharedCells(j)) => {
+                    assert!(j < width && !empty, "{f:?} on {boxed:?}");
+                    2
+                }
+                _ => {
+                    let expected = if inhabited {
+                        Verdict::Inhabited
+                    } else {
+                        Verdict::Empty
+                    };
+                    assert_eq!(v, expected, "{f:?} on {boxed:?}");
+                    assert_eq!(empty, !inhabited, "{f:?} on {boxed:?}");
+                    usize::from(inhabited)
+                }
+            }
+        };
+        // The shape drawn one time in three: an `&` of three leaves, met with a union of two
+        // tuple types on component 0.
+        let three_and_rows = |x: F, y: F, z: F, v: usize, w: usize| {
+            let rows = F::Or(Box::new(F::Row(0, v)), Box::new(F::Row(0, w)));
+            let three = F::And(Box::new(F::And(Box::new(x), Box::new(y))), Box::new(z));
+            F::And(Box::new(three), Box::new(rows))
+        };
         let mut answers = [0; 3];
         for width in 2..=3 {
             let on: Vec<usize> = (0..width).collect();
@@ -324,49 +369,36 @@ fn random_parts_out_of_the_class_are_decided_or_refused() {
                 let f = if n % 3 == 0 {
                     let mut leaf = || random_leaf(&mut g, &on);
                     let (x, y, z) = (leaf(), leaf(), leaf());
-                    let rows = F::Or(
-                        Box::new(F::Row(0, g.below(VALUES))),
-                        Box::new(F::Row(0, g.below(VALUES))),
-                    );
-                    let three = F::And(Box::new(F::And(Box::new(x), Box::new(y))), Box::new(z));
-                    F::And(Box::new(three), Box::new(rows))
+                    three_and_rows(x, y, z, g.below(VALUES), g.below(VALUES))
                 } else {
                     random(&mut g, &on, 3, true)
                 };
                 let (b, boxed) = random_box(&mut g, width);
-                let t = &b & &f.ty(width);
-                let inhabited = by_enumeration(&f, &boxed);
-                Type::forget_emptiness();
-                let v = t.verdict();
-                Type::forget_emptiness();
-                let empty = t.is_empty();
-                match v {
-                    Verdict::Refused(Refusal::SharedCells(j)) => {
-                        assert!(j < width && !empty, "{f:?} on {boxed:?}");
-                        answers[2] += 1;
-                    }
-                    _ => {
-                        let expected = if inhabited {
-                            Verdict::Inhabited
-                        } else {
-                            Verdict::Empty
-                        };
-                        assert_eq!(v, expected, "{f:?} on {boxed:?}");
-                        assert_eq!(empty, !inhabited, "{f:?} on {boxed:?}");
-                        answers[usize::from(inhabited)] += 1;
-                    }
-                }
+                answers[check(&b, &boxed, width, &f)] += 1;
             }
+            // Each answer from a part of the drawn shape built to give it, on the box of every
+            // tuple (PROOF-test-count-thresholds). The three leaves `row(0, 0)`, `row(1, 0)`
+            // and `!row(1, 1)` hold exactly the tuples with 0 at components 0 and 1. Met with
+            // `row(0, 0) | row(0, 1)` the part holds (0, 0, ...), so it is inhabited; met with
+            // `row(0, 1) | row(0, 2)` it asks component 0 to be 0 and also 1 or 2, so it is empty.
+            let b = Type::tuple(vec![Type::top(); width]);
+            let boxed = vec![(0..VALUES).chain([OUTSIDE]).collect::<Vec<usize>>(); width];
+            let leaves = || {
+                let not = F::Not(Box::new(F::Row(1, 1)));
+                (F::Row(0, 0), F::Row(1, 0), not)
+            };
+            let (x, y, z) = leaves();
+            let yes = three_and_rows(x, y, z, 0, 1);
+            assert_eq!(check(&b, &boxed, width, &yes), 1, "{yes:?} is inhabited");
+            let (x, y, z) = leaves();
+            let no = three_and_rows(x, y, z, 1, 2);
+            assert_eq!(check(&b, &boxed, width, &no), 0, "{no:?} is empty");
         }
         println!("answers {answers:?}");
         // Most parts that reach a meet the pass does not read are inhabited, and a value is
         // found before any refusal, so about half of all seeds draw no refused part (seed 72
         // drew one; the count is printed); the refusal itself is tested on its own by
         // `an_orthogonal_vectors_meet_is_refused_naming_its_component`.
-        assert!(
-            answers[0] >= 5 && answers[1] >= 5,
-            "{answers:?} (ZED_TEST_SEED={seed})"
-        );
     });
 }
 

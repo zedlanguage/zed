@@ -196,23 +196,50 @@ fn edges_that_are_not_union_chords_stay_refused() {
 ///
 /// It ran 20,000 rings drawn from one fixed xorshift seed (0.52 s alone); now it runs 5,000
 /// rings drawn from a new seed each run, printed (TEST-bench-move-l0123, author P169: random
-/// tests run fewer cases). The draws and checks on each ring are as before. The shares the end
-/// asserts, measured at about 0.29 and 0.16, sit some seven standard deviations of a draw of
-/// 5,000 above the quarter and the eighth they are held to.
+/// tests run fewer cases). The draws and checks on each ring are as before. The shares of rings
+/// along the cycle and of those with added edges, measured at about 0.29 and 0.16, are printed
+/// and no longer held to a bound; a ring built with an added edge along the cycle is checked on
+/// every run instead (PROOF-test-count-thresholds).
 #[test]
 fn random_rings_with_union_chords_are_decided_right() {
     let (mut rng, seed) = zed_tests::instances::Rng::fresh("rings with union chords");
     let mut rnd = |m: usize| rng.below(m);
+    // The places from place `i` to the first tuple along the ring of `kinds`, its length if
+    // there is none.
+    let ahead = |kinds: &[K], i: usize| {
+        let n = kinds.len();
+        (0..n).find(|&k| kinds[(i + k) % n] != K::Or).unwrap_or(n)
+    };
+    // Checks the ring and returns whether its added edges all run along the cycle: each edge
+    // `v -> w` leaves a union, and `w` lies within the unions from `v`'s successor `s` to the
+    // first tuple after it, and is not `v`.
+    let check = |kinds: &[K], extra: &[(usize, usize)], mors: &[(usize, usize)], run: &str| {
+        let n = kinds.len();
+        let chords_only = extra.iter().all(|&(v, w)| {
+            let s = (v + 1) % n;
+            let d = (w + n - s) % n;
+            w != v && d <= ahead(kinds, s) && ahead(kinds, s) < n
+        });
+        let g = ring(kinds, extra, mors);
+        let label = format!("{run}: {kinds:?} edges {extra:?} morphisms {mors:?}");
+        let refused = checked(&label, &g);
+        let a = decide(&g.bes()).answers;
+        let mut b = decide(&reversed(&g).bes()).answers;
+        b.reverse();
+        assert_eq!(a, b, "{label}: answers depend on numbering");
+        if chords_only {
+            assert_eq!(refused, 0, "{label}: refused");
+        }
+        chords_only
+    };
     let (mut rings, mut along, mut kept) = (0, 0, 0);
     for _ in 0..5_000 {
         let n = 2 + rnd(10);
         let kinds: Vec<K> = (0..n)
             .map(|_| if rnd(3) == 0 { K::And } else { K::Or })
             .collect();
-        // The places from place `i` to the first tuple along the ring, `n` if there is none.
-        let ahead = |i: usize| (0..n).find(|&k| kinds[(i + k) % n] != K::Or).unwrap_or(n);
         let mors: Vec<(usize, usize)> = (0..rnd(4)).map(|_| (rnd(n), rnd(n))).collect();
-        let (mut extra, mut chords_only) = (Vec::new(), true);
+        let mut extra = Vec::new();
         for (v, &kind) in kinds.iter().enumerate() {
             if kind != K::Or || rnd(2) == 0 {
                 continue;
@@ -221,33 +248,25 @@ fn random_rings_with_union_chords_are_decided_right() {
             let w = if rnd(4) == 0 {
                 rnd(n)
             } else {
-                (s + 1 + rnd(ahead(s).clamp(1, n - 1))) % n
+                (s + 1 + rnd(ahead(&kinds, s).clamp(1, n - 1))) % n
             };
-            let d = (w + n - s) % n;
-            chords_only &= w != v && d <= ahead(s) && ahead(s) < n;
             extra.push((v, w));
         }
-        let g = ring(&kinds, &extra, &mors);
         rings += 1;
-        let label = format!("ZED_TEST_SEED={seed}: {kinds:?} edges {extra:?} morphisms {mors:?}");
-        let refused = checked(&label, &g);
-        let a = decide(&g.bes()).answers;
-        let mut b = decide(&reversed(&g).bes()).answers;
-        b.reverse();
-        assert_eq!(a, b, "{label}: answers depend on numbering");
-        if chords_only {
+        if check(&kinds, &extra, &mors, &format!("ZED_TEST_SEED={seed}")) {
             along += 1;
-            assert_eq!(refused, 0, "{label}: refused");
             kept += usize::from(!extra.is_empty());
         }
     }
     eprintln!(
         "ZED_TEST_SEED={seed}: {along} rings along the cycle, {kept} with added edges, of {rings}"
     );
-    assert!(
-        along > rings / 4 && kept > rings / 8,
-        "ZED_TEST_SEED={seed}: {along} {kept} of {rings}"
-    );
+    // A ring with an added edge along the cycle on every run, built (PROOF-test-count-thresholds):
+    // in `[Or, Or, And]` the edge `0 -> 2` leaves the union 0, whose successor 1 is a union with
+    // the tuple 2 one place ahead, so the edge reaches `w = 2` at distance 1, no more than that
+    // one place, and is along the cycle; the check then asserts the ring is not refused.
+    let built = check(&[K::Or, K::Or, K::And], &[(0, 2)], &[], "built");
+    assert!(built, "the built ring runs along the cycle");
 }
 
 /// A ring of `n` unions and a tuple, with the morphism children of [`FOUR`] (the tuple to the

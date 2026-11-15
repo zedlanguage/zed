@@ -1694,53 +1694,70 @@ fn a_member_split_across_box_cells() {
 fn seeded(what: &str) {
     let (mut rng, rng_seed) = Rng::fresh(what);
     let seeds = pick_seeds(&mut rng, what, 0..u64::MAX, 40);
+    // Checks the system `g` against the reference; returns the answers `decide` gave, those it
+    // refused, and the members of the group its definitions admit, `None` if not admitted.
+    let check = |g: &bes_families::G, at: &str| {
+        let (mut decided, mut refused) = (0, 0);
+        let want = reference::answers(g);
+        for (v, a) in decide(&g.bes()).answers.iter().enumerate() {
+            match a {
+                Answer::Empty => assert!(!want[v], "{at}: node {v} decided empty"),
+                Answer::Inhabited => assert!(want[v], "{at}: node {v} decided inhabited"),
+                Answer::Refused => {
+                    refused += 1;
+                    continue;
+                }
+            }
+            decided += 1;
+        }
+        let Ok(types) = group(bodies(g)) else {
+            return (decided, refused, None);
+        };
+        for (v, t) in types.iter().enumerate() {
+            Type::forget_emptiness();
+            match t.verdict() {
+                Verdict::Empty => assert!(!want[v], "{at}: node {v} has verdict Empty"),
+                Verdict::Inhabited => {
+                    assert!(want[v], "{at}: node {v} has verdict Inhabited")
+                }
+                Verdict::Refused(_) => {}
+            }
+            Type::forget_emptiness();
+            assert!(!t.is_empty() || !want[v], "{at}: node {v} counted empty");
+        }
+        (decided, refused, Some(types.len()))
+    };
     let (mut decided, mut refused, mut groups, mut verdicts) = (0, 0, 0, 0);
     for rate in [0, 2, 5, 9, 14, 18] {
         for n in [2, 3, 5, 8, 13, 21] {
             for &seed in &seeds {
                 let g = bes_families::random(seed, rate, n);
                 let at = format!("random({seed}, {rate}, {n}), ZED_TEST_SEED={rng_seed}");
-                let want = reference::answers(&g);
-                for (v, a) in decide(&g.bes()).answers.iter().enumerate() {
-                    match a {
-                        Answer::Empty => assert!(!want[v], "{at}: node {v} decided empty"),
-                        Answer::Inhabited => assert!(want[v], "{at}: node {v} decided inhabited"),
-                        Answer::Refused => {
-                            refused += 1;
-                            continue;
-                        }
-                    }
-                    decided += 1;
-                }
-                let Ok(types) = group(bodies(&g)) else {
-                    continue;
-                };
-                groups += 1;
-                for (v, t) in types.iter().enumerate() {
-                    Type::forget_emptiness();
-                    match t.verdict() {
-                        Verdict::Empty => assert!(!want[v], "{at}: node {v} has verdict Empty"),
-                        Verdict::Inhabited => {
-                            assert!(want[v], "{at}: node {v} has verdict Inhabited")
-                        }
-                        Verdict::Refused(_) => {}
-                    }
-                    Type::forget_emptiness();
-                    assert!(!t.is_empty() || !want[v], "{at}: node {v} counted empty");
-                    verdicts += 1;
+                let (d, r, members) = check(&g, &at);
+                decided += d;
+                refused += r;
+                if let Some(m) = members {
+                    groups += 1;
+                    verdicts += m;
                 }
             }
         }
     }
     eprintln!("decided {decided}, refused {refused}; groups admitted {groups}, members {verdicts}");
-    // Over 4000 fresh seeds, each summed over the 36 rates and sizes, `decide` decided 311.1
-    // answers a seed (standard deviation 4.0, fewest 274) and the definitions of 21.6 systems a
-    // seed were admitted as a group (standard deviation 6.1, fewest 6); no seed gave zero of
-    // either, so 40 seeds cannot.
-    assert!(
-        decided > 0 && groups > 0,
-        "decided {decided}, groups {groups}, ZED_TEST_SEED={rng_seed}"
-    );
+    // A system decided in full and admitted as a group on every run, built
+    // (PROOF-test-count-thresholds): `N0 = int`, `N1 = (int) -> N0`, `N2 = (N0, N1)`,
+    // `N3 = empty` and `N4 = N3 | N3`. No node reaches itself, so there is no cycle for `decide`
+    // to refuse or for the group to reject, and each answer follows from the nodes below it:
+    // 0, 1 and 2 inhabited, 3 and 4 empty.
+    let mut g = bes_families::G::new();
+    g.add(bes_families::K::Top, vec![]);
+    g.add(bes_families::K::Mor, vec![0]);
+    g.add(bes_families::K::And, vec![0, 1]);
+    g.add(bes_families::K::Bot, vec![]);
+    g.add(bes_families::K::Or, vec![3, 3]);
+    g.seal();
+    assert_eq!(reference::answers(&g), [true, true, true, false, false]);
+    assert_eq!(check(&g, "built"), (5, 0, Some(5)), "the built system");
 }
 
 #[test]
@@ -2467,15 +2484,16 @@ fn prints_as_syntax(t: &Type, what: &str) -> String {
 /// FAIL-print-height-cycle-seed: before it, about 1 in 10,000 other seeds made `kernel` panic in
 /// `heights` (print.rs) while it built the group. Over 166 runs of 600 fresh seeds the count of
 /// members had mean 1342.9, standard deviation 75.1, least 1162 and most 1552
-/// (TEST-l0124-fixed-seeds), so more than 900 is asked, about 5.9 deviations under the mean.
+/// (TEST-l0124-fixed-seeds). The count is printed, not bounded; a system built to have members
+/// is checked on every run instead (PROOF-test-count-thresholds).
 #[test]
 fn every_member_of_systems_of_meets_and_differences_prints_as_syntax() {
     let (mut rng, rng_seed) = Rng::fresh("members of meets and differences print");
-    let mut members = 0;
-    for seed in pick_seeds(&mut rng, "cells", 0..u64::MAX, 600) {
-        let sys = gen_cells(&mut Rng::new(seed));
+    // Checks that every member of `sys` and of its undecided form prints; returns how many.
+    let check = |sys: Vec<E>, name: &str| {
+        let mut members = 0;
         for (form, sys) in [("", sys.clone()), ("-", undecided(sys))] {
-            let tag = format!("printed-cells{form}{seed}");
+            let tag = format!("printed-cells{form}{name}");
             for (i, t) in kernel(&sys, &tag).iter().enumerate() {
                 let Some(t) = t else { continue };
                 let what = format!(
@@ -2486,8 +2504,22 @@ fn every_member_of_systems_of_meets_and_differences_prints_as_syntax() {
                 members += 1;
             }
         }
+        members
+    };
+    let mut members = 0;
+    for seed in pick_seeds(&mut rng, "cells", 0..u64::MAX, 600) {
+        members += check(gen_cells(&mut Rng::new(seed)), &seed.to_string());
     }
-    assert!(members > 900, "{members} members, ZED_TEST_SEED={rng_seed}");
+    eprintln!("{members} members, ZED_TEST_SEED={rng_seed}");
+    // A member that prints on every run, built (PROOF-test-count-thresholds): the system of
+    // the doc above, `R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)`, which holds the pair
+    // `(#a, #a)` and so is admitted with one member in each form.
+    let ab = || E::Union(vec![E::Atom("a"), E::Atom("b")]);
+    let built = vec![diff(
+        tup(vec![ab(), E::Union(vec![ab(), E::Ref(0)])]),
+        tup(vec![E::Atom("b"), E::Atom("a")]),
+    )];
+    assert_eq!(check(built, "built"), 2, "the built system");
 }
 
 #[test]

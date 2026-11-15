@@ -696,6 +696,28 @@ fn false_rejection_limit(drawn: usize) -> usize {
 fn random_groups_admitted_are_monotone() {
     let (mut rng, seed) = Rng::fresh("admission sweep");
     let seeds = pick_seeds(&mut rng, "admission sweep", 0..SWEPT, DRAWN);
+    // Two seeds swept on every run, so that `sweep` meets both answers whatever the draw
+    // (PROOF-test-count-thresholds); neither is a false rejection, so the limit is unchanged.
+    // Seed 6 gives `R0 = (R0, !_)`: `!_` is empty, so the pair is empty whatever `R0` is, a
+    // constant and so monotone, and its one reference stands in a tuple, which the check
+    // accepts. Seed 915 gives `R0 = !(_, R0)`: from no witnesses `R0` holds the pairs, and
+    // with them `(_, R0)` holds a pair `R0` then loses, so it is not monotone (the flip of
+    // `the_evaluator_sees_a_flip`).
+    let pinned = [6, 915];
+    for (seed, accepted) in pinned.into_iter().zip([true, false]) {
+        let group = group(&mut Rng::new(seed));
+        assert_eq!(
+            monotone(&group).is_ok(),
+            accepted,
+            "seed {seed}: {}",
+            show(&group)
+        );
+        let admitted = admission(&group) == Admission::Accepted;
+        assert_eq!(admitted, accepted, "seed {seed}: {}", show(&group));
+    }
+    // In rising order, as `sweep` keeps the first of the smallest false rejections.
+    let mut seeds: Vec<u64> = pinned.into_iter().chain(seeds).collect();
+    seeds.sort_unstable();
     sweep(
         &format!("sweep (ZED_TEST_SEED={seed})"),
         seeds,

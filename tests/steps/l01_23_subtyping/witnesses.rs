@@ -45,6 +45,26 @@ fn periodic_lists_agree_with_their_lengths() {
     let (mut r, seed) = Rng::fresh("periodic lists");
     let ps = [1, 2, 3, 4, 6, 12];
     let mut seen = BTreeMap::new();
+    // Checks the verdict and `is_empty` of `t` against `empty`, the answer of its lengths.
+    let check = |t: &Type, empty: bool, run: &str| -> Verdict {
+        Type::forget_emptiness();
+        let v = t.verdict();
+        match &v {
+            Verdict::Empty => assert!(empty, "{t} is inhabited ({run})"),
+            Verdict::Inhabited => assert!(!empty, "{t} is empty ({run})"),
+            // A union of meets that take out different classes may be refused at a fork whether
+            // it is empty or not (COMPLEXITY.md K113, given up); the check is sound, not
+            // complete. Seed 3 drew only empty ones; new seeds also draw inhabited ones.
+            Verdict::Refused(why) => {
+                assert_eq!(*why, Refusal::Fork, "{t} (empty: {empty}) ({run})")
+            }
+        }
+        // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
+        // (3 of 600 at seed 3, unions whose meets take out different cycles) counts as
+        // inhabited for it too.
+        assert_eq!(t.is_empty(), v == Verdict::Empty, "{t} ({run})");
+        v
+    };
     for _ in 0..300 {
         let p = ps[r.below(ps.len())];
         let k = r.below(p);
@@ -75,38 +95,17 @@ fn periodic_lists_agree_with_their_lengths() {
             0 => Type::tuple(vec![t, Type::int()]),
             _ => t,
         };
-        Type::forget_emptiness();
-        let v = t.verdict();
-        match v {
-            Verdict::Empty => assert!(empty, "{t} is inhabited (ZED_TEST_SEED={seed})"),
-            Verdict::Inhabited => assert!(!empty, "{t} is empty (ZED_TEST_SEED={seed})"),
-            // A union of meets that take out different classes may be refused at a fork whether
-            // it is empty or not (COMPLEXITY.md K113, given up); the check is sound, not
-            // complete. Seed 3 drew only empty ones; new seeds also draw inhabited ones.
-            Verdict::Refused(why) => {
-                assert_eq!(
-                    why,
-                    Refusal::Fork,
-                    "{t} (empty: {empty}) (ZED_TEST_SEED={seed})"
-                )
-            }
-        }
-        // `is_empty` decides what the verdict decides: a type the verdict refuses at a fork
-        // (3 of 600 at seed 3, unions whose meets take out different cycles) counts as
-        // inhabited for it too.
-        assert_eq!(
-            t.is_empty(),
-            v == Verdict::Empty,
-            "{t} (ZED_TEST_SEED={seed})"
-        );
+        let v = check(&t, empty, &format!("ZED_TEST_SEED={seed}"));
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
-    let count = |v: &str| seen.get(v).copied().unwrap_or(0);
     println!("verdicts {seen:?}");
-    assert!(
-        count("Empty") > 50 && count("Inhabited") > 50,
-        "{seen:?} (ZED_TEST_SEED={seed})"
-    );
+    // Each answer from a type built to give it, on every run (PROOF-test-count-thresholds):
+    // no length is both even and odd, so `period(2, 0) & period(2, 1)` is empty; the empty list
+    // has length 0, which is 0 modulo 2 and modulo 3, so `period(2, 0) & period(3, 0)` holds it.
+    let none = &period(2, 0) & &period(2, 1);
+    assert_eq!(check(&none, true, "built"), Verdict::Empty, "{none}");
+    let nil = &period(2, 0) & &period(3, 0);
+    assert_eq!(check(&nil, false, "built"), Verdict::Inhabited, "{nil}");
 }
 
 #[derive(Clone)]
@@ -163,31 +162,40 @@ fn tuples_of_small_sets_are_decided_and_shown() {
     // each run, printed, over 50 of each (TEST-bench-move-l0123, author P169: random tests run
     // fewer cases).
     let (mut r, seed) = Rng::fresh("random tuples of small sets");
-    let mut seen = BTreeMap::new();
-    for i in 0..300 {
-        let n = 2 + i % 3;
-        let e = random(&mut r, 7, n);
+    // Checks the verdict of `e`, a combination of tuples of `n` components, against listing
+    // its tuples; returns the verdict.
+    let check = |e: &E, n: usize, run: &str| -> Verdict {
         let tuples = (0..3usize.pow(n as u32)).map(|k| {
             (0..n)
                 .map(|j| (k / 3usize.pow(j as u32) % 3) as u8)
                 .collect::<Vec<_>>()
         });
-        let empty = !tuples.into_iter().any(|v| holds(&e, &v));
-        let t = build(&e);
+        let empty = !tuples.into_iter().any(|v| holds(e, &v));
+        let t = build(e);
         Type::forget_emptiness();
         let v = t.verdict();
         let want = match empty {
             true => Verdict::Empty,
             false => Verdict::Inhabited,
         };
-        assert_eq!(v, want, "{t} (ZED_TEST_SEED={seed})");
+        assert_eq!(v, want, "{t} ({run})");
+        v
+    };
+    let mut seen = BTreeMap::new();
+    for i in 0..300 {
+        let n = 2 + i % 3;
+        let e = random(&mut r, 7, n);
+        let v = check(&e, n, &format!("ZED_TEST_SEED={seed}"));
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
-    assert!(
-        seen.get("Empty").copied().unwrap_or(0) > 50
-            && seen.get("Inhabited").copied().unwrap_or(0) > 50,
-        "{seen:?} (ZED_TEST_SEED={seed})"
-    );
+    println!("verdicts {seen:?}");
+    // Each answer from a type built to give it, on every run (PROOF-test-count-thresholds):
+    // `(1, 1)` holds the tuple (1, 1), and `(1, 1) & (2, 2)` holds none, since no component is
+    // both 1 and 2 (a mask's bit `i` names the integer `i + 1`).
+    let one = || Box::new(E::Box(vec![1, 1]));
+    assert_eq!(check(&one(), 2, "built (1, 1)"), Verdict::Inhabited);
+    let none = E::And(one(), Box::new(E::Box(vec![2, 2])));
+    assert_eq!(check(&none, 2, "built (1, 1) & (2, 2)"), Verdict::Empty);
 }
 
 const PRIMES: [usize; 25] = [
@@ -258,42 +266,50 @@ fn the_residue_rule_agrees_with_listing_the_lengths() {
     // random tests run fewer cases). The residue refusal is checked on its own in refusals.rs
     // (the Erdős covering system).
     let (mut r, seed) = Rng::fresh("residue classes");
-    let mut seen = BTreeMap::new();
-    for _ in 0..400 {
-        let (p, k) = (ps[r.below(ps.len())], r.below(12));
-        let mut t = period(p, k % p);
-        let mut classes = vec![];
-        for _ in 0..1 + r.below(6) {
-            let q = ps[1 + r.below(ps.len() - 1)];
-            let at = r.below(q);
-            t = &t - &period(q, at);
-            classes.push((q, at));
-        }
+    // Builds the lists of length `k` modulo `p` and in none of `classes`, and checks its
+    // verdict and `is_empty` against the lengths below the lcm; returns the verdict.
+    let check = |p: usize, k: usize, classes: &[(usize, usize)], run: &str| -> Verdict {
+        let t = classes
+            .iter()
+            .fold(period(p, k % p), |t, &(q, at)| &t - &period(q, at));
         let lcm = classes.iter().fold(p, |l, &(q, _)| l / gcd(l, q) * q);
         let empty = !(0..lcm).any(|n| n % p == k % p && classes.iter().all(|&(q, at)| n % q != at));
         Type::forget_emptiness();
         let v = t.verdict();
-        match v {
-            Verdict::Empty => assert!(empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})"),
-            Verdict::Inhabited => assert!(!empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})"),
+        match &v {
+            Verdict::Empty => assert!(empty, "{p} {k} {classes:?} ({run})"),
+            Verdict::Inhabited => assert!(!empty, "{p} {k} {classes:?} ({run})"),
             Verdict::Refused(why) => assert!(
                 empty,
-                "{p} {k} {classes:?} is inhabited, and refused: {why:?} (ZED_TEST_SEED={seed})"
+                "{p} {k} {classes:?} is inhabited, and refused: {why:?} ({run})"
             ),
         }
         if t.is_empty() {
-            assert!(empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})");
+            assert!(empty, "{p} {k} {classes:?} ({run})");
         } else if v != Verdict::Refused(Refusal::Residues) {
-            assert!(!empty, "{p} {k} {classes:?} (ZED_TEST_SEED={seed})");
+            assert!(!empty, "{p} {k} {classes:?} ({run})");
         }
+        v
+    };
+    let mut seen = BTreeMap::new();
+    for _ in 0..400 {
+        let (p, k) = (ps[r.below(ps.len())], r.below(12));
+        let mut classes = vec![];
+        for _ in 0..1 + r.below(6) {
+            let q = ps[1 + r.below(ps.len() - 1)];
+            let at = r.below(q);
+            classes.push((q, at));
+        }
+        let v = check(p, k, &classes, &format!("ZED_TEST_SEED={seed}"));
         *seen.entry(format!("{v:?}")).or_insert(0) += 1;
     }
     println!("residues: {seen:?}");
-    assert!(
-        seen.get("Empty").copied().unwrap_or(0) > 40
-            && seen.get("Inhabited").copied().unwrap_or(0) > 40,
-        "{seen:?} (ZED_TEST_SEED={seed})"
-    );
+    // Each answer from a type built to give it, on every run (PROOF-test-count-thresholds):
+    // an even length is 0 or 2 modulo 4, so the even lengths outside both classes are none,
+    // and outside only the class of 0 they hold 2.
+    let both = [(4, 0), (4, 2)];
+    assert_eq!(check(2, 0, &both, "built"), Verdict::Empty);
+    assert_eq!(check(2, 0, &both[..1], "built"), Verdict::Inhabited);
 }
 
 /// Answers do not depend on the ids the diagram nodes are given (SYNTHESIS fact 2): the same

@@ -136,13 +136,32 @@ fn deep(f: impl FnOnce() + Send) {
 
 /// Random clause sets of one and two literals on up to 10 variables, decided as enumeration
 /// decides them by both `verdict` and `is_empty`, cold; the inhabited ones with a value built
-/// and checked against the type (`Verdict::Inhabited`).
+/// and checked against the type (`Verdict::Inhabited`). Two built clause sets give each answer
+/// on every run, whatever the draws gave (PROOF-test-count-thresholds).
 #[test]
 fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
     deep(|| {
         // A new seed each run, printed; it was seed 23 (TEST-bench-move-l0123, author P169).
         let (mut g, seed) = Rng::fresh("random 2-CNF");
-        let (mut empty, mut inhabited) = (0, 0);
+        let check = |vars: usize, clauses: &[Clause], what: &str| -> bool {
+            let sat = by_enumeration(vars, clauses);
+            assert_eq!(by_propagation(vars, clauses), sat, "{clauses:?}");
+            let t = cnf_type(vars, clauses);
+            Type::forget_emptiness();
+            let expected = if sat {
+                Verdict::Inhabited
+            } else {
+                Verdict::Empty
+            };
+            assert_eq!(
+                t.verdict(),
+                expected,
+                "{vars} variables, {clauses:?} ({what})"
+            );
+            Type::forget_emptiness();
+            assert_eq!(t.is_empty(), !sat, "{vars} variables, {clauses:?} ({what})");
+            sat
+        };
         for vars in 1..=10 {
             for _ in 0..24 {
                 let m = 1 + g.below(3 * vars);
@@ -154,37 +173,17 @@ fn random_two_cnf_parts_are_decided_as_enumeration_decides_them() {
                             .collect()
                     })
                     .collect();
-                let sat = by_enumeration(vars, &clauses);
-                assert_eq!(by_propagation(vars, &clauses), sat, "{clauses:?}");
-                let t = cnf_type(vars, &clauses);
-                Type::forget_emptiness();
-                let expected = if sat {
-                    Verdict::Inhabited
-                } else {
-                    Verdict::Empty
-                };
-                assert_eq!(
-                    t.verdict(),
-                    expected,
-                    "{vars} variables, {clauses:?} (ZED_TEST_SEED={seed})"
-                );
-                Type::forget_emptiness();
-                assert_eq!(
-                    t.is_empty(),
-                    !sat,
-                    "{vars} variables, {clauses:?} (ZED_TEST_SEED={seed})"
-                );
-                if sat {
-                    inhabited += 1;
-                } else {
-                    empty += 1;
-                }
+                check(vars, &clauses, &format!("ZED_TEST_SEED={seed}"));
             }
         }
-        // Both answers are met.
+        // Each answer from a built clause set. `x0 & !x0` is empty: no value of bit 0 is both
+        // 1 and 0. `(x0 | x1) & (!x0 | x1)` is inhabited: x1 = 1 meets both clauses.
+        let unsat: Vec<Clause> = vec![vec![(0, true)], vec![(0, false)]];
+        let sat: Vec<Clause> = vec![vec![(0, true), (1, true)], vec![(0, false), (1, true)]];
+        assert!(!check(1, &unsat, "built x0 & !x0"), "x0 & !x0 is empty");
         assert!(
-            empty >= 20 && inhabited >= 20,
-            "{empty} empty, {inhabited} inhabited (ZED_TEST_SEED={seed})"
+            check(2, &sat, "built (x0 | x1) & (!x0 | x1)"),
+            "(x0 | x1) & (!x0 | x1) is inhabited"
         );
     });
 }
@@ -214,7 +213,8 @@ fn random_two_cnf_parts_at_the_reported_sizes_are_never_refused() {
                 answers[usize::from(sat)] += 1;
             }
         }
-        assert!(answers[0] > 0 && answers[1] > 0, "{answers:?}");
+        // Fixed seeds, so an exact count: 1 empty, 17 inhabited.
+        assert_eq!(answers, [1, 17], "empty and inhabited of the fixed seeds");
     });
 }
 

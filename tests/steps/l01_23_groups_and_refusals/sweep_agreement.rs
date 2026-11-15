@@ -906,7 +906,35 @@ fn the_sweep_agrees_on_random_positive_chains() {
         tally
     };
     eprintln!("random positive chains: {t:?}");
-    assert!(t.swept > 0, "the sweep decides some");
+    // The sweep decides a case on every run, built (PROOF-test-count-thresholds):
+    // `D2 = cons(int, L)` less `D1 = cons(1, L)`, a positive chain of the shape drawn above,
+    // holds `[0]` and is inhabited; the sweep decides it in both orders (measured; the negative
+    // control of PROOF-test-count-thresholds fails here when the sweep declines it).
+    let b = built(&[(ONE, 0), (INT, 0)], &[2], &[1], "pc");
+    assert_eq!((b.swept, b.inhabited), (2, 2), "the built case: {b:?}");
+}
+
+/// A case built for a random test of the sweep (PROOF-test-count-thresholds): the carrier
+/// `L = nil | cons(int, L)` as definition 0, then a link `cons(head, tail)` for each
+/// `(head, tail)` of `links`; checked in both orders ([`both_orders`]) on a tally of its own,
+/// which it returns, so a test can assert that the sweep decides it.
+fn built(links: &[(u16, usize)], pos: &[usize], neg: &[usize], tag: &str) -> Tally {
+    let mut ds = vec![D {
+        nil: true,
+        rows: vec![(INT, 0)],
+    }];
+    ds.extend(links.iter().map(|&row| D {
+        nil: false,
+        rows: vec![row],
+    }));
+    let spec = Spec { groups: vec![ds] };
+    let term = Term {
+        pos: pos.iter().map(|&d| (0, d)).collect(),
+        neg: neg.iter().map(|&d| (0, d)).collect(),
+    };
+    let mut tally = Tally::default();
+    both_orders(&mut tally, &spec, &term, &format!("_built{tag}"), tag);
+    tally
 }
 
 /// Disjoint-hole and overlapping-hole spines (X14 / Q2): a spine `Y1..Ym` (`m <= 3`) where each
@@ -1022,7 +1050,12 @@ fn r6_random_carrier_chains_against_masks() {
         tally
     };
     eprintln!("R6 carrier chains: {tally:?}");
-    assert!(tally.swept > 0);
+    // The sweep decides a case on every run, built (PROOF-test-count-thresholds): links
+    // `D1 = cons(int, L)`, `D2 = cons(1, L)`, `D3 = cons(2, L)` with tails earlier than
+    // themselves, as drawn above; `D1` less `D2` and `D3` holds `[0]` and is inhabited, and the
+    // sweep decides it in both orders (measured, as for the positive chains).
+    let b = built(&[(INT, 0), (ONE, 0), (TWO, 0)], &[1], &[2, 3], "r6");
+    assert_eq!((b.swept, b.inhabited), (2, 2), "the built case: {b:?}");
 }
 
 /// Two escaping predicates per root do not imply 2-SAT when holes overlap.
@@ -1324,7 +1357,18 @@ fn r7_random_optional_spine_choices_against_masks() {
         tally
     };
     eprintln!("R7 optional spine choices: {tally:?}");
-    assert!(tally.swept > 0);
+    // The sweep decides a case on every run, built (PROOF-test-count-thresholds): the positive
+    // straight chain `D3 = cons(int, D2)`, `D2 = cons(int, D1)`, `D1 = cons(int, L)` and the
+    // negative chain `D5 = cons(int, D4)`, `D4 = cons(int, L)`, which holds every list of at
+    // least two integers and so every list of `D3`: the case is empty, and the sweep decides it
+    // in both orders (measured, as for the positive chains).
+    let b = built(
+        &[(INT, 0), (INT, 1), (INT, 2), (INT, 0), (INT, 4)],
+        &[3],
+        &[5],
+        "r7",
+    );
+    assert_eq!((b.swept, b.empty), (2, 2), "the built case: {b:?}");
 }
 
 /// R7: two roots on one spine. `R1` reaches the leaf `S1` at step 2 and `R2` at step 3;
@@ -2003,6 +2047,67 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             }
         };
 
+        // Checks one case against the brute force in both orders; returns what `chain_verdict`
+        // says.
+        fn check_case(case: &ChainCase, id: &str) -> Option<Verdict> {
+            let witness = brute_force_inhabited(case);
+            let inhab = witness.is_some();
+            let a = build_case(case, &format!("_r7rc_{id}f"), false);
+            let b = build_case(case, &format!("_r7rc_{id}r"), true);
+
+            Type::forget_emptiness();
+            let ca = a.chain_verdict();
+            Type::forget_emptiness();
+            let cb = b.chain_verdict();
+            assert_eq!(
+                ca, cb,
+                "case {id}: chain_verdict order mismatch on {case:?}"
+            );
+            if let Some(cv) = ca {
+                match cv {
+                    Verdict::Empty => {
+                        assert!(
+                            !inhab,
+                            "case {id}: chain_verdict Empty but brute force found {witness:?} on {case:?}"
+                        );
+                    }
+                    Verdict::Inhabited => {
+                        assert!(
+                            inhab,
+                            "case {id}: chain_verdict Inhabited but brute force found none on {case:?}"
+                        );
+                    }
+                    Verdict::Refused(_) => {}
+                }
+            }
+
+            // Query order 1 (`a` then `b`) and query order 2 (`b` then `a`).
+            Type::forget_emptiness();
+            let va1 = a.verdict();
+            let vb1 = b.verdict();
+            Type::forget_emptiness();
+            let vb2 = b.verdict();
+            let va2 = a.verdict();
+            assert_eq!(va1, va2, "case {id}: query order changed `a` verdict");
+            assert_eq!(vb1, vb2, "case {id}: query order changed `b` verdict");
+            for (lbl, v) in [("a", va1), ("b", vb2)] {
+                match v {
+                    Verdict::Empty => assert!(
+                        !inhab,
+                        "case {id} ({lbl}): verdict Empty but brute force found {witness:?} on {case:?}"
+                    ),
+                    Verdict::Inhabited => assert!(
+                        inhab,
+                        "case {id} ({lbl}): verdict Inhabited but brute force found none on {case:?}"
+                    ),
+                    Verdict::Refused(_) => {}
+                }
+                if let Some(cv) = ca {
+                    assert_eq!(cv, v, "case {id} ({lbl}): chain_verdict != verdict");
+                }
+            }
+            ca
+        }
         let mut chain_decided = 0usize;
         let mut chain_empty = 0usize;
         let mut chain_inhab = 0usize;
@@ -2148,70 +2253,39 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
                 pos,
                 neg,
             };
-            let witness = brute_force_inhabited(&case);
-            let inhab = witness.is_some();
-            let a = build_case(&case, &format!("_r7rc_{id}f"), false);
-            let b = build_case(&case, &format!("_r7rc_{id}r"), true);
-
-            Type::forget_emptiness();
-            let ca = a.chain_verdict();
-            Type::forget_emptiness();
-            let cb = b.chain_verdict();
-            assert_eq!(
-                ca, cb,
-                "case {id}: chain_verdict order mismatch on {case:?}"
-            );
-            if let Some(cv) = ca {
-                chain_decided += 1;
-                match cv {
-                    Verdict::Empty => {
-                        assert!(
-                            !inhab,
-                            "case {id}: chain_verdict Empty but brute force found {witness:?} on {case:?}"
-                        );
-                        chain_empty += 1;
-                    }
-                    Verdict::Inhabited => {
-                        assert!(
-                            inhab,
-                            "case {id}: chain_verdict Inhabited but brute force found none on {case:?}"
-                        );
-                        chain_inhab += 1;
-                    }
-                    Verdict::Refused(_) => {}
-                }
-            }
-
-            // Query order 1 (`a` then `b`) and query order 2 (`b` then `a`).
-            Type::forget_emptiness();
-            let va1 = a.verdict();
-            let vb1 = b.verdict();
-            Type::forget_emptiness();
-            let vb2 = b.verdict();
-            let va2 = a.verdict();
-            assert_eq!(va1, va2, "case {id}: query order changed `a` verdict");
-            assert_eq!(vb1, vb2, "case {id}: query order changed `b` verdict");
-            for (lbl, v) in [("a", va1), ("b", vb2)] {
-                match v {
-                    Verdict::Empty => assert!(
-                        !inhab,
-                        "case {id} ({lbl}): verdict Empty but brute force found {witness:?} on {case:?}"
-                    ),
-                    Verdict::Inhabited => assert!(
-                        inhab,
-                        "case {id} ({lbl}): verdict Inhabited but brute force found none on {case:?}"
-                    ),
-                    Verdict::Refused(_) => {}
-                }
-                if let Some(cv) = ca {
-                    assert_eq!(cv, v, "case {id} ({lbl}): chain_verdict != verdict");
-                }
-            }
+            let ca = check_case(&case, &id.to_string());
+            chain_decided += usize::from(ca.is_some());
+            chain_empty += usize::from(ca == Some(Verdict::Empty));
+            chain_inhab += usize::from(ca == Some(Verdict::Inhabited));
         }
         eprintln!(
             "R7 random carrier+chains: 300 cases, chain_decided={chain_decided} (empty={chain_empty}, inhab={chain_inhab})"
         );
-        assert!(chain_empty > 50 && chain_inhab > 50);
+        // Both answers of `chain_verdict` on every run, from cases built to give them
+        // (PROOF-test-count-thresholds), in place of counts of the draws. Over the carrier
+        // `L = nil | cons(int, L)`, `cons(1, L)` less `cons(int, L)` is empty, as every list
+        // whose head is 1 and whose tail is in `L` is a list whose head is an integer and whose
+        // tail is in `L`; and `cons(int, L)` less `cons(1, L)` holds `[0]`, so is inhabited.
+        // `chain_verdict` decides both (measured: with no negative row, or with the same row
+        // positive and negative, it leaves the case to the search).
+        let int = Pred { cof: true, mask: 0 };
+        let one = Pred {
+            cof: false,
+            mask: 0b10,
+        };
+        for (p, n, want) in [(one, int, Verdict::Empty), (int, one, Verdict::Inhabited)] {
+            let case = ChainCase {
+                car_head: int,
+                nodes: vec![],
+                pos: vec![(p, TailRef::Car)],
+                neg: vec![(n, TailRef::Car)],
+            };
+            assert_eq!(
+                check_case(&case, "built"),
+                Some(want),
+                "the built case {case:?}"
+            );
+        }
     };
 }
 
@@ -2368,6 +2442,50 @@ fn r9_run_tokens_against_product_automaton() {
         &p - &n
     }
 
+    // Checks one case against the exact decider in both orders; returns the exact answer and
+    // what `chain_verdict` says.
+    fn check_case(case: &Case, id: &str) -> (bool, Option<Verdict>) {
+        let ex = exact_inhabited(case);
+        let a = build(case, &format!("_r9rt_{id}f"), false);
+        let b = build(case, &format!("_r9rt_{id}r"), true);
+        Type::forget_emptiness();
+        let ca = a.chain_verdict();
+        Type::forget_emptiness();
+        let cb = b.chain_verdict();
+        assert_eq!(
+            ca, cb,
+            "case {id}: chain_verdict order mismatch on {case:?}"
+        );
+        match ca {
+            Some(Verdict::Empty) => {
+                assert!(
+                    !ex,
+                    "case {id}: chain_verdict Empty, exact Inhabited on {case:?}"
+                );
+            }
+            Some(Verdict::Inhabited) => {
+                assert!(
+                    ex,
+                    "case {id}: chain_verdict Inhabited, exact Empty on {case:?}"
+                );
+            }
+            _ => {}
+        }
+        for t in [&a, &b] {
+            Type::forget_emptiness();
+            match t.verdict() {
+                Verdict::Empty => {
+                    assert!(!ex, "case {id}: verdict Empty, exact Inhabited on {case:?}")
+                }
+                Verdict::Inhabited => {
+                    assert!(ex, "case {id}: verdict Inhabited, exact Empty on {case:?}")
+                }
+                Verdict::Refused(_) => {}
+            }
+        }
+        (ex, ca)
+    }
+
     let tally = {
         let (mut rng, _) = Rng::fresh("R9 run tokens");
         let hole = |rng: &mut Rng| Pred {
@@ -2453,49 +2571,11 @@ fn r9_run_tokens_against_product_automaton() {
                 pos,
                 neg,
             };
-            let ex = exact_inhabited(&case);
+            let (ex, ca) = check_case(&case, &id.to_string());
             exact_empty += usize::from(!ex);
-            let a = build(&case, &format!("_r9rt_{id}f"), false);
-            let b = build(&case, &format!("_r9rt_{id}r"), true);
-            Type::forget_emptiness();
-            let ca = a.chain_verdict();
-            Type::forget_emptiness();
-            let cb = b.chain_verdict();
-            assert_eq!(
-                ca, cb,
-                "case {id}: chain_verdict order mismatch on {case:?}"
-            );
-            match ca {
-                Some(Verdict::Empty) => {
-                    assert!(
-                        !ex,
-                        "case {id}: chain_verdict Empty, exact Inhabited on {case:?}"
-                    );
-                    decided += 1;
-                    empty += 1;
-                }
-                Some(Verdict::Inhabited) => {
-                    assert!(
-                        ex,
-                        "case {id}: chain_verdict Inhabited, exact Empty on {case:?}"
-                    );
-                    decided += 1;
-                    inhab += 1;
-                }
-                _ => {}
-            }
-            for t in [&a, &b] {
-                Type::forget_emptiness();
-                match t.verdict() {
-                    Verdict::Empty => {
-                        assert!(!ex, "case {id}: verdict Empty, exact Inhabited on {case:?}")
-                    }
-                    Verdict::Inhabited => {
-                        assert!(ex, "case {id}: verdict Inhabited, exact Empty on {case:?}")
-                    }
-                    Verdict::Refused(_) => {}
-                }
-            }
+            decided += usize::from(matches!(ca, Some(Verdict::Empty | Verdict::Inhabited)));
+            empty += usize::from(ca == Some(Verdict::Empty));
+            inhab += usize::from(ca == Some(Verdict::Inhabited));
         }
         (decided, empty, inhab, exact_empty)
     };
@@ -2503,8 +2583,24 @@ fn r9_run_tokens_against_product_automaton() {
         "R9 run tokens: 300 cases, exact empty={}, chain decided={} (empty={}, inhab={})",
         tally.3, tally.0, tally.1, tally.2
     );
-    assert!(
-        tally.1 > 50,
-        "too few Empty cases decided by the chain search: {tally:?}"
+    // An `Empty` decided by the chain search on every run, from a case built to give it
+    // (PROOF-test-count-thresholds), in place of a count of the draws: a run of two equal
+    // steps `V0 = cons(int, L)`, `V1 = cons(int, V0)` over the carrier `L = nil | cons(int, L)`,
+    // the positive row `cons(int, V1)`, the lists of at least three integers, and the negative
+    // row `cons(int, V0)`, which enters the run one step later and holds the lists of at least
+    // two, so every list of the positive row is taken out and the case is empty;
+    // `chain_verdict` decides it (measured; with the same row positive and negative it leaves
+    // the case to the search).
+    let int = Pred { cof: true, mask: 0 };
+    let case = Case {
+        car: int,
+        nodes: vec![(false, int, Tail::Car), (false, int, Tail::Node(0))],
+        pos: vec![(int, Tail::Node(1))],
+        neg: vec![(int, Tail::Node(0))],
+    };
+    assert_eq!(
+        check_case(&case, "built"),
+        (false, Some(Verdict::Empty)),
+        "{case:?}"
     );
 }
