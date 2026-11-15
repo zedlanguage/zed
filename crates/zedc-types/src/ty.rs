@@ -1874,6 +1874,77 @@ fn sig_tys(s: &Sig) -> impl Iterator<Item = &Ty> {
         .chain(s.needs.iter().flat_map(Need::tys))
 }
 
+/// The variables of `tys` added to `out` in order of first appearance, as [`Ty::vars_in`]
+/// gives them, by one walk that enters each shared row, payload shape and held function once.
+// Complexity tradeoff (COMPLEXITY.md FAIL-returned-chain-quadratic): a walk that enters every
+// function it meets walks a function held by several once for each, O(2^n) for a nest where
+// each holds the one below twice, so each is entered once per walk. Across walks, a function
+// whose order of variables is kept ([`Sig::vars_order`]) gives it at the cost of its length
+// in place of being entered: the checker names the variables of each signature it shows
+// through `vars_order`, so n functions each returning the one before cost O(n), not the
+// O(n^2) of walking each to the bottom. Only a signature `vars_order` is asked of keeps its
+// order; keeping one at each function met, as first written, was O(n^2) in time and memory
+// for n nested lambdas that each hold all n variables (60.4 times the work for 8 times n,
+// against 8.5). The order is that of the naive walk: a variable met again is skipped.
+fn vars_of<'a>(tys: impl Iterator<Item = &'a Ty>, out: &mut Vars) {
+    enum Walk<'a> {
+        Ty(&'a Ty),
+        Row(&'a Row),
+        Shape(&'a Shape),
+        Held(&'a Sig),
+    }
+    let add = |out: &mut Vars, v: &Arc<str>| {
+        if out.seen.insert(v.clone()) {
+            out.order.push(v.clone());
+        }
+    };
+    // By address: every row, shape and function is borrowed for the whole walk, so no key
+    // names a freed node, and the sets are only read by insert, never iterated.
+    let mut rows = HashSet::new();
+    let mut shapes = HashSet::new();
+    let mut held = HashSet::new();
+    let mut stack: Vec<Walk<'a>> = tys.map(Walk::Ty).collect();
+    stack.reverse();
+    while let Some(w) = stack.pop() {
+        let from = stack.len();
+        let t = match w {
+            Walk::Row(r) => {
+                if rows.insert(Arc::as_ptr(&r.0)) {
+                    stack.extend(r.iter().map(Walk::Ty));
+                    stack[from..].reverse();
+                }
+                continue;
+            }
+            Walk::Shape(s) => {
+                if shapes.insert(Arc::as_ptr(&s.0)) {
+                    stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
+                    stack[from..].reverse();
+                }
+                continue;
+            }
+            Walk::Held(s) => {
+                if held.insert(s as *const Sig) {
+                    match s.facts.4.get() {
+                        Some(order) => order.iter().for_each(|v| add(out, v)),
+                        None => {
+                            stack.extend(sig_tys(s).map(Walk::Ty));
+                            stack[from..].reverse();
+                        }
+                    }
+                }
+                continue;
+            }
+            Walk::Ty(t) => t,
+        };
+        t.vars.iter().for_each(|v| add(out, v));
+        stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(Walk::Row));
+        let open = t.payload_shapes().filter(|s| !s.bits.is_empty());
+        stack.extend(open.map(Walk::Shape));
+        stack.extend(t.fns.iter().map(|s| Walk::Held(s)));
+        stack[from..].reverse();
+    }
+}
+
 /// The arrows and needs of `s` with the types [`sig_tys`] gives replaced by `tys`, in order.
 fn sig_parts(s: &Sig, mut tys: impl Iterator<Item = Ty>) -> (Vec<Arrow>, Vec<Need>) {
     let mut next = || {
@@ -2122,6 +2193,73 @@ impl Rebuild for Replacer<'_> {
 
     fn binding(&self, v: &str) -> Option<Cow<'_, Ty>> {
         self.bound(v).map(Cow::Borrowed)
+    }
+}
+
+/// Signatures renamed and then replaced in ([`Sig::renamed`], then [`Sig::replace`]) one after
+/// another, as the checker names the variables of each signature it shows: where two are given
+/// the same names and the same replacement, the functions they share are made once, not once
+/// for each. So `n` functions each returning the one before, whose signatures hold each other,
+/// cost each one's outer level, not its depth.
+// Complexity tradeoff (COMPLEXITY.md FAIL-returned-chain-quadratic): the naive version renames
+// and replaces each signature with a walk of its own, which rebuilds every function it holds:
+// O(n^2) for the chain above (57 times the instructions for 8 times the functions). Used: the
+// memo of each walk ([`Memo`], by address) kept for each pair of maps, found by the pair's
+// digests and compared in full, and each signature walked kept alive with what was made of
+// it, so no address in a memo is freed and taken again. A signature held in many is then made
+// once per distinct pair of maps. Tradeoff: the memos and the signatures walked live until
+// it is dropped; signatures given different maps share nothing, so a chain where each level
+// adds variables of its own still costs the sum of the depths, against a memo keyed by the
+// maps restricted to the variables of each function, which would hash those at each function.
+#[derive(Default)]
+pub struct Renamings {
+    pairs: HashMap<(u64, u64), Vec<Renaming>>,
+}
+
+/// The walks of a [`Renamings`] under one pair of maps.
+struct Renaming {
+    to: Binds,
+    binds: Binds,
+    renamed: Memo,
+    replaced: Memo,
+    /// Each signature walked, and each made by renaming, which the replacement walked: the
+    /// addresses the memos are keyed by.
+    walked: Vec<Arc<Sig>>,
+}
+
+impl Renamings {
+    /// `s.renamed(&to).replace(&binds)`, sharing with the signatures given before.
+    pub fn renamed_replaced(&mut self, s: &Arc<Sig>, to: Binds, binds: Binds) -> Arc<Sig> {
+        let at = self.pairs.entry((to.digest, binds.digest)).or_default();
+        let i = match at.iter().position(|r| r.to == to && r.binds == binds) {
+            Some(i) => i,
+            None => {
+                at.push(Renaming {
+                    to,
+                    binds,
+                    renamed: Memo::default(),
+                    replaced: Memo::default(),
+                    walked: Vec::new(),
+                });
+                at.len() - 1
+            }
+        };
+        let r = &mut at[i];
+        let walk = |binds: &Binds, mode: Mode, memo: &mut Memo, s: &Arc<Sig>| -> Arc<Sig> {
+            if binds.is_empty() {
+                return s.clone();
+            }
+            let mut w = Replacer::new(binds, mode);
+            w.memos[0] = std::mem::take(memo);
+            let out = Arc::new(w.sig(s));
+            *memo = w.memos.swap_remove(0);
+            out
+        };
+        let renamed = walk(&r.to, Mode::Rename, &mut r.renamed, s);
+        let out = walk(&r.binds, Mode::Replace, &mut r.replaced, &renamed);
+        r.walked.push(s.clone());
+        r.walked.push(renamed);
+        out
     }
 }
 
@@ -2376,10 +2514,14 @@ pub struct Sig {
 ///
 /// And the bits of its variables (`VarBits`), made from its facts, so a row that holds it
 /// reads them in `O(1)`.
+///
+/// And its variables in order of first appearance ([`Sig::vars_order`]), kept once asked, so
+/// the checker, which names the variables of each signature it shows, reads a signature held
+/// in a later one at the cost of the length of its order.
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: four `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: five `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -2388,6 +2530,7 @@ pub struct Facts(
     std::sync::OnceLock<Arc<Sig>>,
     std::sync::OnceLock<u64>,
     std::sync::OnceLock<VarBits>,
+    std::sync::OnceLock<Arc<[Arc<str>]>>,
 );
 
 impl Clone for Facts {
@@ -7483,54 +7626,11 @@ impl Ty {
     /// shapes are shared, so it enters each once. The address of a row or shape only tells
     /// whether it was entered, and each is marked when it is entered, in the order a recursive
     /// walk would enter it: one entered once more adds no variable, so the order does not
-    /// depend on the sharing.
+    /// depend on the sharing. A function it holds is entered once as well, and one whose order
+    /// of variables is already kept ([`Sig::vars_order`]) gives that order in place of being
+    /// entered.
     pub fn vars_in(&self, out: &mut Vars) {
-        enum Walk<'a> {
-            Ty(&'a Ty),
-            Row(&'a Row),
-            Shape(&'a Shape),
-        }
-        // By address: every row and shape is borrowed from `self` for the whole walk, so no key
-        // names a freed node, and the sets are only read by insert, never iterated.
-        let mut rows = HashSet::new();
-        let mut shapes = HashSet::new();
-        let mut stack = vec![Walk::Ty(self)];
-        while let Some(w) = stack.pop() {
-            let from = stack.len();
-            let t = match w {
-                Walk::Row(r) => {
-                    if rows.insert(Arc::as_ptr(&r.0)) {
-                        stack.extend(r.iter().map(Walk::Ty));
-                        stack[from..].reverse();
-                    }
-                    continue;
-                }
-                Walk::Shape(s) => {
-                    if shapes.insert(Arc::as_ptr(&s.0)) {
-                        stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
-                        stack[from..].reverse();
-                    }
-                    continue;
-                }
-                Walk::Ty(t) => t,
-            };
-            for v in &t.vars {
-                if out.seen.insert(v.clone()) {
-                    out.order.push(v.clone());
-                }
-            }
-            stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(Walk::Row));
-            let open = t.payload_shapes().filter(|s| !s.bits.is_empty());
-            stack.extend(open.map(Walk::Shape));
-            for s in &t.fns {
-                for a in &s.arrows {
-                    stack.extend(a.params.iter().map(Walk::Ty));
-                    stack.push(Walk::Ty(&a.result));
-                }
-                stack.extend(s.needs.iter().flat_map(Need::tys).map(Walk::Ty));
-            }
-            stack[from..].reverse();
-        }
+        vars_of(std::iter::once(self), out);
     }
 
     /// It with each scalar it holds, at every depth outside the functions it holds, widened to
@@ -9761,6 +9861,19 @@ impl Sig {
             s.facts.0.get_or_init(|| VarFacts::of(s));
         }
         self.facts.0.get_or_init(|| VarFacts::of(self))
+    }
+
+    /// Its variables in order of first appearance, as [`Ty::vars_in`] gives those of the
+    /// types of its arrows and then of its needs ([`Need::tys`]): worked out by one walk at
+    /// the first call and kept, so it is asked of a signature held in a type, which no longer
+    /// changes. A later walk that meets this signature reads the order in place of entering it
+    /// (`vars_of`); the functions it holds keep none of their own unless asked.
+    pub fn vars_order(&self) -> &[Arc<str>] {
+        self.facts.4.get_or_init(|| {
+            let mut out = Vars::default();
+            vars_of(sig_tys(self), &mut out);
+            out.order.into()
+        })
     }
 
     /// The bits of its variables, made from its facts at the first call.
@@ -13387,6 +13500,73 @@ mod tests {
         t.vars_in(&mut vars);
         let order: Vec<&str> = vars.order.iter().map(|v| &**v).collect();
         assert_eq!(order, ["$5", "$7"]);
+    }
+
+    /// The variables of `t` in order, as [`Ty::vars_in`] gives them.
+    fn order_of(t: &Ty) -> Vec<String> {
+        let mut vars = Vars::default();
+        t.vars_in(&mut vars);
+        vars.order.iter().map(|v| v.to_string()).collect()
+    }
+
+    /// A function held at two places, and inside another, gives its variables where a walk
+    /// of its arrows would first meet them, after the variables met before it, and each once,
+    /// whether it is entered or gives the order it keeps; only a signature asked for its order
+    /// keeps one, so a walk leaves none on the functions it meets (FAIL-returned-chain-quadratic).
+    #[test]
+    fn vars_in_gives_a_held_function_s_variables_where_it_first_appears() {
+        let v = |n: &str| Ty::var(n.into());
+        let f = Arc::new(Sig::one(vec![], vec![], Ty::tuple(vec![v("B"), v("A")])));
+        let g = Arc::new(Sig::one(
+            vec![],
+            vec![],
+            Ty::tuple(vec![Ty::func(f.clone()), v("C")]),
+        ));
+        let t = Ty::tuple(vec![
+            v("A"),
+            Ty::func(g.clone()),
+            Ty::func(f.clone()),
+            v("D"),
+        ]);
+        assert_eq!(order_of(&t), ["A", "B", "C", "D"]);
+        assert_eq!(g.vars_order(), ["B", "A", "C"].map(Arc::<str>::from));
+        let u = Ty::tuple(vec![v("C"), Ty::func(g), v("A")]);
+        assert_eq!(order_of(&u), ["C", "B", "A"]);
+        assert!(
+            f.facts.4.get().is_none(),
+            "a function only met keeps no order"
+        );
+    }
+
+    /// Signatures renamed and replaced through one [`Renamings`] are those `renamed` and then
+    /// `replace` give, and two given the same maps share the function they both hold.
+    #[test]
+    fn renamings_share_a_function_two_signatures_hold() {
+        let v = |n: &str| Ty::var(n.into());
+        let f = Arc::new(Sig::one(vec![], vec![], Ty::tuple(vec![v("$1"), v("$2")])));
+        let s1 = Arc::new(Sig::one(vec![], vec![], Ty::func(f.clone())));
+        let s2 = Arc::new(Sig::one(
+            vec![],
+            vec![],
+            Ty::tuple(vec![Ty::func(f), v("$2")]),
+        ));
+        let to: Binds = [("$1".into(), v("T"))].into();
+        let b: Binds = [("$2".into(), Ty::set(KType::int()))].into();
+        let mut made = Renamings::default();
+        let o1 = made.renamed_replaced(&s1, to.clone(), b.clone());
+        let o2 = made.renamed_replaced(&s2, to.clone(), b.clone());
+        assert_eq!(*o1, s1.renamed(&to).replace(&b));
+        assert_eq!(*o2, s2.renamed(&to).replace(&b));
+        let held1 = &o1.arrows[0].result.fns[0];
+        let row = &o2.arrows[0].result.tuples[0];
+        let held2 = &row.iter().next().expect("a row of two").fns[0];
+        assert!(
+            Arc::ptr_eq(held1, held2),
+            "the shared function is made once"
+        );
+        let other: Binds = [("$1".into(), v("U"))].into();
+        let o3 = made.renamed_replaced(&s1, other.clone(), b.clone());
+        assert_eq!(*o3, s1.renamed(&other).replace(&b));
     }
 
     /// The atom `#a` with `inner` as its one payload component.

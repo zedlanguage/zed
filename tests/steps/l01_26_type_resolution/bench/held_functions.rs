@@ -183,3 +183,33 @@ fn a_power_returned_n_deep_is_checked_in_linear_time() {
         });
     }
 }
+
+/// `n` functions `r1` … `rn`, each returning the one before (`r{i}(x: int) = r{i-1}`), with
+/// no call. The type of `ri` is `i` arrows deep, but each is the type of `r{i-1}` under one
+/// more arrow, so held as shared parts the whole chain is linear in `n`. Measured on
+/// 2026-11-14: sizes 200 and 1600 took 323202172 and 18840234371 instructions, 58.3 times
+/// the work (limit 10.50). The same `n` arrows written as nested lambdas in one function
+/// (`held_functions::returned_by_lambdas`) check in 7.85 times the work, so the cost is in
+/// the chain of named definitions, not in the depth of the types. Cause (traced): each `ri`
+/// still holds `w`'s class variable at its bottom, so the checker's last pass named the
+/// variables of each by walking it whole and rebuilt it whole twice (`Ck::finished`). Now each
+/// signature named keeps the order of its variables, which a later one holding it reads, and
+/// the rebuilds share what they made of a function held by several (`ty::Renamings`): 7.86
+/// times the work (FAIL-returned-chain-quadratic).
+#[test]
+fn a_chain_of_functions_returning_the_one_before_is_checked_in_linear_time() {
+    let chain = |n: usize| {
+        let mut text = "w(positional k) = k * k;\nr1(x: int) = w;\n".to_string();
+        text.extend((2..=n).map(|i| format!("r{i}(x: int) = r{};\n", i - 1)));
+        text
+    };
+    let what = "a chain of n functions, each returning the one before";
+    let units: BTreeMap<usize, Resolved> = [200, scaling::FACTOR * 200]
+        .into_iter()
+        .map(|n| (n, Resolved::new(&chain(n))))
+        .collect();
+    scaling::check_order(what, 200, 1, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{what} at {n}");
+    });
+}

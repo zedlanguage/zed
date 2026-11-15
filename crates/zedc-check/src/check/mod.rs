@@ -85,8 +85,8 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
-    PowerUse, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms, carriers_text,
-    class_id, errs, fresh_name, mask_text,
+    PowerUse, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms,
+    carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -3950,7 +3950,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: none is given up. One pass over the variables of `s` and of the
     /// types bound, with a hash set and map, so linear in their size, as the renaming that
     /// follows is.
-    fn finished(&self, s: &Sig) -> Sig {
+    fn finished(&self, s: &Arc<Sig>, made: &mut Renamings) -> Arc<Sig> {
         // One that holds no class variable, as most do once settled, is as it is.
         if s.facts().classes.is_empty() {
             return s.clone();
@@ -4019,7 +4019,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|v| b.get(*v).is_none())
             .filter_map(|v| rename(v, false))
             .collect();
-        s.renamed(&to).replace(&b)
+        made.renamed_replaced(s, to, b)
     }
 
     /// Puts each class's type in place of its variable in what the checker found. Each
@@ -4028,15 +4028,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// once for each signature that holds them. Each message then writes the definitions its
     /// types share once, below its sentence, named apart from the program's names ([`lay_out`]).
     fn finish(&mut self) {
+        // The signatures share the functions they hold, so they are named through one
+        // [`Renamings`], which makes a function shared by several once for each set of names.
+        let mut made = Renamings::default();
         let sigs = std::mem::take(&mut self.info.sigs);
         self.info.sigs = sigs
             .into_iter()
-            .map(|(k, s)| (k, self.finished_arc(&s)))
+            .map(|(k, s)| (k, self.finished_arc(&s, &mut made)))
             .collect();
         let calls = std::mem::take(&mut self.info.calls);
         self.info.calls = calls
             .into_iter()
-            .map(|(k, s)| (k, self.finished_arc(&s)))
+            .map(|(k, s)| (k, self.finished_arc(&s, &mut made)))
             .collect();
         let tops = std::mem::take(&mut self.info.tops);
         self.info.tops = tops
@@ -4094,12 +4097,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// [`Self::finished`] on `s` settled, which is `s` itself when it holds no class variable.
-    fn finished_arc(&self, s: &Arc<Sig>) -> Arc<Sig> {
-        let s = s.settle(&|v| self.stale(v));
-        match s.facts().classes.is_empty() {
-            true => s,
-            false => Arc::new(self.finished(&s)),
-        }
+    fn finished_arc(&self, s: &Arc<Sig>, made: &mut Renamings) -> Arc<Sig> {
+        self.finished(&s.settle(&|v| self.stale(v)), made)
     }
 
     /// `text` with each class variable replaced by its type. A `$k` is left in a text by the
@@ -10185,15 +10184,10 @@ enum Printed {
     Class(usize),
 }
 
-/// The variables of `s`, in order of first appearance.
+/// The variables of `s`, in order of first appearance, kept on `s` ([`Sig::vars_order`]): a
+/// later signature that holds `s` reads them there in place of walking `s` again.
 fn sig_vars(s: &Sig) -> Vec<Arc<str>> {
-    let mut out = Vars::default();
-    for a in &s.arrows {
-        a.params.iter().for_each(|p| p.vars_in(&mut out));
-        a.result.vars_in(&mut out);
-    }
-    s.needs.iter().for_each(|n| n.vars_in(&mut out));
-    out.order
+    s.vars_order().to_vec()
 }
 
 /// Whether `t`, the type a class was solved to, holds no variable: a carrier.
