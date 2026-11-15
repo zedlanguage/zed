@@ -624,7 +624,10 @@ fn a_heat_stencil_prints_the_first_three_rows_and_the_last() {
 /// Reference 07 echoes a JSON document of one number in `depth` nested lists.
 fn json_nests(depth: usize) {
     let nested = format!("{}1{}\n", "[".repeat(depth), "]".repeat(depth));
-    assert_eq!(on_text("07", &format!("json_deep_{depth}"), &nested), (nested, Ok(())));
+    assert_eq!(
+        on_text("07", &format!("json_deep_{depth}"), &nested),
+        (nested, Ok(()))
+    );
 }
 
 /// Reference 15 takes a sheet whose cell `c{i}` reads `c{i-1}`, `n` cells, the cell read first
