@@ -152,13 +152,31 @@ fn the_residue_length_agrees_with_a_scan() {
             })
             .collect();
         let none = classes.split_off(a as usize);
-        let all = classes;
+        let (e, g) = residue_agrees(&classes, &none);
+        exists += usize::from(e);
+        given += usize::from(g);
+    }
+    eprintln!("a length given for {given} of the {exists} that have one");
+    // The choice is checked on each case where it must give a length: the shares of the
+    // classes left out sum below one (the assert in `residue_agrees`). Until 2026-11-15 the
+    // test also asserted that 9 in 10 of the drawn cases that had a length were given one
+    // (PROOF-test-count-thresholds); that count rested on the draws, the per-case check does
+    // not. Built so that the choice must give a length: odd lengths not a multiple of 3, which
+    // 1 is, so one exists, and the one share, gcd(2, 3) / 3 = 1/3, is below one.
+    assert_eq!(residue_agrees(&[(2, 1)], &[(3, 0)]), (true, true));
+}
+
+/// Checks `residue_length` on the lengths in every class of `all` and in no class of `none`:
+/// a length given is one, and one is given when one exists and the shares of `none` sum below
+/// one. Gives whether a length exists and whether one was given.
+fn residue_agrees(all: &[(u64, u64)], none: &[(u64, u64)]) -> (bool, bool) {
+    {
         let fits = |n: u64| {
             all.iter().all(|&(p, at)| n % p == at) && none.iter().all(|&(p, at)| n % p != at)
         };
         // Every class repeats within the lcm of the periods, at most 60.
         let scanned = (1..=60).find(|&n| fits(n));
-        let found = residue_length(&all, &none);
+        let found = residue_length(all, none);
         if let Some(n) = &found {
             let n = u64::try_from(n).expect("below the lcm");
             assert!(n >= 1 && fits(n), "{all:?} {none:?}: {n}");
@@ -166,7 +184,7 @@ fn the_residue_length_agrees_with_a_scan() {
         assert!(found.is_none() || scanned.is_some(), "{all:?} {none:?}");
         let sum: f64 = none
             .iter()
-            .filter(|&&(p, at)| (1..=60).any(|n| fits_all(&all, n) && n % p == at))
+            .filter(|&&(p, at)| (1..=60).any(|n| fits_all(all, n) && n % p == at))
             .map(|&(p, _)| {
                 let l = all.iter().fold(1, |l, &(q, _)| l / gcd(l, q) * q);
                 gcd(l, p) as f64 / p as f64
@@ -175,11 +193,8 @@ fn the_residue_length_agrees_with_a_scan() {
         if sum < 1.0 && scanned.is_some() {
             assert!(found.is_some(), "{all:?} {none:?}: shares {sum}");
         }
-        exists += usize::from(scanned.is_some());
-        given += usize::from(found.is_some());
+        (scanned.is_some(), found.is_some())
     }
-    // The choice misses a length only when the shares sum to one or more.
-    assert!(given * 10 >= exists * 9, "{given} of {exists}");
 }
 
 fn fits_all(all: &[(u64, u64)], n: u64) -> bool {
@@ -282,31 +297,42 @@ fn two_sat_solve_agrees_with_enumeration_and_its_solutions_hold() {
     for vars in 1..=12 {
         for _ in 0..40 {
             let cs = clauses(&mut s, vars);
-            let sat = (0u64..1 << vars).any(|m| {
-                let x: Vec<bool> = (0..vars).map(|v| m >> v & 1 == 1).collect();
-                cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b))
-            });
-            let t = TwoSat {
-                vars,
-                clauses: cs.clone(),
-                meets: HashMap::new(),
-            };
-            let x = t.solve();
-            assert_eq!(x.is_some(), sat, "{vars} variables, {cs:?}");
-            if let Some(x) = x {
-                assert!(cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b)));
-            }
-            seen[usize::from(sat)] += 1;
+            seen[usize::from(two_sat_agrees(vars, &cs))] += 1;
         }
     }
-    assert!(seen[0] > 20 && seen[1] > 20, "{seen:?}");
+    eprintln!("unsatisfiable, satisfiable: {seen:?}");
+    // Both answers on clause sets built to give them, whatever the draws met (PROOF-test-
+    // count-thresholds; until 2026-11-15 the test asserted more than 20 of each among the
+    // draws). Literal `2v` is variable v true, `2v + 1` false: `x0` and `!x0` hold of no
+    // value; `x0` alone holds of x0 true.
+    assert!(!two_sat_agrees(1, &[(0, 0), (1, 1)]));
+    assert!(two_sat_agrees(1, &[(0, 0)]));
+}
+
+/// Checks that `TwoSat::solve` finds a solution of `cs` on `vars` variables exactly when
+/// enumeration does, and that the one it gives holds every clause; gives whether one exists.
+fn two_sat_agrees(vars: usize, cs: &[(Literal2, Literal2)]) -> bool {
+    let sat = (0u64..1 << vars).any(|m| {
+        let x: Vec<bool> = (0..vars).map(|v| m >> v & 1 == 1).collect();
+        cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b))
+    });
+    let t = TwoSat {
+        vars,
+        clauses: cs.to_vec(),
+        meets: HashMap::new(),
+    };
+    let x = t.solve();
+    assert_eq!(x.is_some(), sat, "{vars} variables, {cs:?}");
+    if let Some(x) = x {
+        assert!(cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b)));
+    }
+    sat
 }
 
 /// The value the search shows for a satisfiable 2-CNF of 48 bits is a tuple of 48 bits
 /// that holds every clause, read from the values shown, not from the search's own check.
 #[test]
 fn the_value_shown_for_a_two_cnf_holds_every_clause() {
-    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
     let vars = 48;
     let mut s = crate::seed::seed("the_value_shown_for_a_two_cnf_holds_every_clause") | 1;
     let mut shown = 0;
@@ -317,18 +343,35 @@ fn the_value_shown_for_a_two_cnf_holds_every_clause() {
                 (l(), l())
             })
             .collect();
+        shown += usize::from(shown_holds(vars, &cs));
+    }
+    eprintln!("{shown} of 12 shown");
+    // A satisfiable 2-CNF built, so that a value is shown whatever the draws met (PROOF-test-
+    // count-thresholds; until 2026-11-15 the test asserted that one of the 12 drawn was
+    // shown): `x_i | x_(i+1)` for each i, every literal `2v` taken, holds of every bit 1.
+    let ring: Vec<(Literal2, Literal2)> =
+        (0..vars).map(|i| (2 * i, 2 * ((i + 1) % vars))).collect();
+    assert!(shown_holds(vars, &ring));
+}
+
+/// Checks that the value the search shows for the 2-CNF `cs` on `vars` bits, if any, holds
+/// every clause, and that one is shown when `TwoSat::solve` finds the 2-CNF satisfiable;
+/// gives whether one is shown.
+fn shown_holds(vars: usize, cs: &[(Literal2, Literal2)]) -> bool {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    {
         let cylinder = |l: Literal2| {
             let mut c = vec![Type::top(); vars];
             c[l / 2] = lit(i64::from(l.is_multiple_of(2)));
             Type::tuple(c)
         };
         let mut t = Type::tuple(vec![&lit(0) | &lit(1); vars]);
-        for &(a, b) in &cs {
+        for &(a, b) in cs {
             t = &t & &(&cylinder(a) | &cylinder(b));
         }
         let sat = TwoSat {
             vars,
-            clauses: cs.clone(),
+            clauses: cs.to_vec(),
             meets: HashMap::new(),
         }
         .solve()
@@ -340,7 +383,7 @@ fn the_value_shown_for_a_two_cnf_holds_every_clause() {
         };
         let Some(v) = search.rep(&t) else {
             assert!(!sat, "{cs:?}");
-            continue;
+            return false;
         };
         let Rep::Tuple(vs) = &search.shown[v] else {
             panic!("a tuple is shown")
@@ -353,9 +396,8 @@ fn the_value_shown_for_a_two_cnf_holds_every_clause() {
             })
             .collect();
         assert!(cs.iter().all(|&(a, b)| holds2(&x, a) || holds2(&x, b)));
-        shown += 1;
+        true
     }
-    assert!(shown > 0);
 }
 
 /// The classes of types inside a recursive group, placed as the group's trie (the walk at
@@ -623,6 +665,24 @@ fn random_cells(s: &mut u64) -> Vec<Type> {
         .collect()
 }
 
+/// After the draws, which met `met` pairs that meet and `apart` pairs in different classes,
+/// checks both kinds on types built to give them, whatever the draws met (PROOF-test-count-
+/// thresholds; until 2026-11-15 each test asserted that the draws met one of each): `(0,)`
+/// and `(int,)` meet in `(0,)`, one pair met; `(1, 1)`, of two components, meets neither
+/// one-tuple type, so it is a class of its own, two pairs apart.
+fn classes_met_and_apart_built(met: usize, apart: usize) {
+    eprintln!("{met} pairs met, {apart} apart");
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("a literal");
+    let ts = [
+        Type::tuple(vec![lit(0)]),
+        Type::tuple(vec![Type::int()]),
+        Type::tuple(vec![lit(1), lit(1)]),
+    ];
+    let (mut met, mut apart) = (0, 0);
+    check_classes(0, &ts, &mut met, &mut apart);
+    assert_eq!((met, apart), (1, 2));
+}
+
 /// Checks the classes of `overlaps` on `ts`: two types whose meet is shown inhabited are in one
 /// class, and the classes are the same with the types in the other order. Adds the pairs that
 /// meet to `met` and the pairs in different classes to `apart`.
@@ -667,7 +727,7 @@ fn types_that_meet_are_joined_in_random_groups_holding_lower_types() {
         let ts = random_cells(&mut s);
         check_classes(case, &ts, &mut met, &mut apart);
     }
-    assert!(met > 0 && apart > 0, "{met} pairs met, {apart} apart");
+    classes_met_and_apart_built(met, apart);
 }
 
 /// A random component: one of the integers 0 to 2, every integer, or every integer but one.
@@ -714,7 +774,7 @@ fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
         let ts = random_tuples(&mut s);
         check_classes(case, &ts, &mut met, &mut apart);
     }
-    assert!(met > 0 && apart > 0, "{met} pairs met, {apart} apart");
+    classes_met_and_apart_built(met, apart);
 }
 
 /// The readers a rollback leaves (`Search::drop_reads_since`), read off the first read of
@@ -733,23 +793,80 @@ fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
             .wrapping_add(1442695040888963407);
         (seed >> 33) as usize % below
     };
-    let mut s = Search::default();
-    for _ in 0..TYPES {
-        s.readers.push(BTreeSet::new());
-        s.reads.push(Vec::new());
-        s.first_reads.push(DigestMap::default());
-    }
-    // The reads of each reader as the scan keeps them, and the readers it leaves.
-    let mut scan: Vec<Vec<(usize, usize)>> = vec![Vec::new(); READERS];
-    let mut scan_readers: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); TYPES];
+    let mut r = Rollbacks::new(TYPES, READERS);
     let (mut kept, mut dropped) = (0, 0);
     let mut ep = 0;
     for step in 0..20_000 {
         ep += next(2);
         let c = next(READERS);
-        match next(8) {
-            0 => {
-                let from = ep.saturating_sub(next(6));
+        let op = match next(8) {
+            0 => Rollback::Since(ep.saturating_sub(next(6))),
+            1 => Rollback::TakeAll,
+            _ => {
+                let u = next(TYPES);
+                Rollback::Read(pack_read(u, next(2) == 0), ep)
+            }
+        };
+        let (k, d) = r.step(step, c, op);
+        (kept, dropped) = (kept + k, dropped + d);
+    }
+    eprintln!("{kept} kept, {dropped} dropped");
+    // Both kinds on reads built to give them, whatever the draws met (PROOF-test-count-
+    // thresholds; until 2026-11-15 the test asserted that the draws met one of each). Reader
+    // 0 reads type 0 at epochs 0 and 1 and rolls back from 1: the read at 1 goes, and the
+    // read at 0 of the same type keeps reader 0 a reader of it. Reader 1 reads type 1 at
+    // epoch 2 and rolls back from 2: its only read of type 1 goes, so it is dropped.
+    let mut r = Rollbacks::new(TYPES, READERS);
+    r.step(0, 0, Rollback::Read(pack_read(0, true), 0));
+    r.step(1, 0, Rollback::Read(pack_read(0, true), 1));
+    assert_eq!(r.step(2, 0, Rollback::Since(1)), (1, 0));
+    r.step(3, 1, Rollback::Read(pack_read(1, true), 2));
+    assert_eq!(r.step(4, 1, Rollback::Since(2)), (0, 1));
+}
+
+/// One step of [`a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept`] by a reader:
+/// a rollback from an epoch, every read taken out, or a read packed by `pack_read` at an epoch.
+enum Rollback {
+    Since(usize),
+    TakeAll,
+    Read(usize, usize),
+}
+
+/// A search's reads and readers beside a scan of the reads of each reader as kept, and the
+/// readers the scan leaves.
+struct Rollbacks {
+    s: Search,
+    scan: Vec<Vec<(usize, usize)>>,
+    scan_readers: Vec<BTreeSet<usize>>,
+}
+
+impl Rollbacks {
+    fn new(types: usize, readers: usize) -> Rollbacks {
+        let mut s = Search::default();
+        for _ in 0..types {
+            s.readers.push(BTreeSet::new());
+            s.reads.push(Vec::new());
+            s.first_reads.push(DigestMap::default());
+        }
+        Rollbacks {
+            s,
+            scan: vec![Vec::new(); readers],
+            scan_readers: vec![BTreeSet::new(); types],
+        }
+    }
+
+    /// Takes `op` by reader `c` in the search and in the scan, and checks they leave the same
+    /// reads and readers. Gives the reads a rollback took whose type the reader still reads,
+    /// so it stays a reader, and those whose type it no longer reads.
+    fn step(&mut self, step: usize, c: usize, op: Rollback) -> (usize, usize) {
+        let Rollbacks {
+            s,
+            scan,
+            scan_readers,
+        } = self;
+        let (mut kept, mut dropped) = (0, 0);
+        match op {
+            Rollback::Since(from) => {
                 let start = scan[c].partition_point(|&(_, e)| e < from);
                 let gone: Vec<usize> = scan[c].drain(start..).map(|(p, _)| p).collect();
                 let left: BTreeSet<usize> =
@@ -765,7 +882,7 @@ fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
                 }
                 assert_eq!(s.drop_reads_since(c, from), gone, "step {step}");
             }
-            1 => {
+            Rollback::TakeAll => {
                 for (p, _) in std::mem::take(&mut scan[c]) {
                     scan_readers[unpack_read(p).0].remove(&c);
                 }
@@ -773,18 +890,17 @@ fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
                     s.readers[unpack_read(p).0].remove(&c);
                 }
             }
-            _ => {
-                let u = next(TYPES);
-                let p = pack_read(u, next(2) == 0);
+            Rollback::Read(p, ep) => {
+                let u = unpack_read(p).0;
                 scan[c].push((p, ep));
                 scan_readers[u].insert(c);
                 s.add_reader(u, c);
                 s.push_read(c, p, ep);
             }
         }
-        assert_eq!(s.readers, scan_readers, "step {step}");
+        assert_eq!(&s.readers, scan_readers, "step {step}");
+        (kept, dropped)
     }
-    assert!(kept > 0 && dropped > 0, "{kept} kept, {dropped} dropped");
 }
 
 /// `#a(∪ i<n: (i, int | bool) \ (i, bool))` holds `#a((i, k))` for each i and integer k and

@@ -92,8 +92,27 @@ fn random_types_print_alike_in_every_order_of_their_atoms() {
     let n = 600;
     let base = crate::seed::seed("random_types_print_alike_in_every_order_of_their_atoms");
     let (want, kept, order) = texts(0, base, n);
-    // 30 runs of 600 types: 22 to 41 parts kept as expressions.
-    assert!(kept > 10, "the types keep parts as expressions: {kept}");
+    eprintln!("{kept} parts kept as expressions");
+    // A type that keeps a part as an expression, built, prints alike on every salt whatever
+    // the draws met (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that the
+    // 600 drawn types kept more than 10 parts as expressions): its tuples of one component
+    // are the one part, `xor_part`, kept as an expression.
+    let built = |salt: u64| {
+        std::thread::spawn(move || {
+            SALT.set(salt);
+            let t = Type::with(|q| {
+                q.tuples.lens.insert(1, xor_part());
+            });
+            (exprs(&t), t.to_string(), t.surface().to_string())
+        })
+        .join()
+        .expect("the thread prints without panicking")
+    };
+    let first = built(0);
+    assert_eq!(first.0, 1, "{first:?}");
+    for salt in [0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
+        assert_eq!(built(salt), first, "salt {salt:#x}");
+    }
     for salt in [0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
         let (got, _, other) = texts(salt, base, n);
         assert_ne!(order, other, "salt {salt:#x} orders the atoms otherwise");
@@ -447,16 +466,36 @@ fn only_a_part_holding_values_outside_every_atom_prints_the_top_type() {
         crate::seed::seed("only_a_part_holding_values_outside_every_atom_prints_the_top_type");
     for i in 0..4000u64 {
         let mut seed = base.wrapping_add(i * 7919);
-        let p = random_part(&mut seed, 6);
-        let outside = p.eval3(&|_| Some(false)).expect("every atom is known");
-        kept += usize::from(p.view().is_err());
-        let t = Type::with(|q| {
-            q.tuples.lens.insert(1, p.clone());
-        });
-        let s = t.surface().to_string();
-        assert_eq!(s.contains('_'), outside, "{s}");
+        kept += usize::from(prints_top_when_outside(&random_part(&mut seed, 6)).0);
     }
-    // About a quarter of the parts are kept expressions, not lists: 1,070 to 1,178 of 4,000
-    // in 30 runs.
-    assert!(kept > 800, "{kept}");
+    eprintln!("{kept} of 4000 kept as expressions");
+    // Kept expressions built, whatever the draws met (PROOF-test-count-thresholds; until
+    // 2026-11-15 the test asserted more than 800 among the 4,000 drawn): `xor_part`, which
+    // holds no value outside its atoms (with both false it is false), and its complement,
+    // which holds them all.
+    let x = xor_part();
+    assert_eq!(prints_top_when_outside(&x), (true, false), "{x:?}");
+    assert_eq!(prints_top_when_outside(&x.not()), (true, true), "{x:?}");
+}
+
+/// Checks that the type of the one-tuples of `p` prints `_` exactly when `p` holds the values
+/// outside every atom it names; gives whether `p` is kept as an expression, and whether it
+/// holds those values.
+fn prints_top_when_outside(p: &Part<Row>) -> (bool, bool) {
+    let outside = p.eval3(&|_| Some(false)).expect("every atom is known");
+    let t = Type::with(|q| {
+        q.tuples.lens.insert(1, p.clone());
+    });
+    let s = t.surface().to_string();
+    assert_eq!(s.contains('_'), outside, "{s}");
+    (p.view().is_err(), outside)
+}
+
+/// `(0,) ^ (2,)`, written `(0,) & !(2,) | !(0,) & (2,)`: an exclusive or is no decision list,
+/// so `zip` keeps it as an expression
+/// (`two_exclusive_ors_on_disjoint_atoms_meet_in_an_expression` in `bdd/tests.rs`).
+fn xor_part() -> Part<Row> {
+    let a = Part::literal(Row::new(vec![lit(0)]));
+    let c = Part::literal(Row::new(vec![lit(2)]));
+    (a.zip(&c.not(), Op::And)).zip(&a.not().zip(&c, Op::And), Op::Or)
 }

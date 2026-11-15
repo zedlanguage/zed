@@ -3708,10 +3708,14 @@ mod tests {
             let equal = ints.windows(2).filter(|w| w[0] == w[1]).count();
             assert_eq!(neighbors(&xs), (less, equal), "{n}");
             assert_eq!(neighbors(&under_tuples(&xs)), (less, equal), "{n}");
-            if n == 5_000 {
-                assert!(equal > 100 && less > 1000, "{equal} equal, {less} less");
-            }
         }
+        // Both kinds of neighbors, built: -2 and -2 are equal; -2 before 0 and 0 before
+        // i64::MAX are less; i64::MAX before i64::MIN is neither. The draws are not relied on
+        // for either kind (PROOF-test-count-thresholds; until 2026-11-15 5,000 drawn integers
+        // had to give more than 100 equal and 1000 less).
+        let built: Vec<Value> = [-2, -2, 0, i64::MAX, i64::MIN].map(Value::Int).into();
+        assert_eq!(neighbors(&built), (2, 1));
+        assert_eq!(neighbors(&under_tuples(&built)), (2, 1));
     }
 
     /// A value of any kind, from domains small enough that two drawn values often tie, or are
@@ -3798,64 +3802,84 @@ mod tests {
     /// 50,000 random pairs of every kind: at the top level, beneath a tuple, before a component
     /// that differs, as a family's key and as its value; `==` holds exactly when `cmp` gives
     /// `Equal`; and the order sorts a list of 400 values so that every earlier value is at most
-    /// every later one. The counts show that pairs of two integers, of an integer and another
-    /// number, and of equal integers were met.
+    /// every later one. Pairs of two integers, of equal integers and of an integer and another
+    /// number are each checked on a pair built to be of that kind, [`INTEGER_PAIRS`], whatever
+    /// the draws met (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that the
+    /// draws met more than 2000, 100 and 2000 of them).
     #[test]
     fn the_integer_shortcut_agrees_with_the_general_order() {
         let mut d = Draw(crate::seed::seed(
             "the_integer_shortcut_agrees_with_the_general_order",
         ));
-        let (mut ints, mut equal_ints, mut int_number) = (0, 0, 0);
-        let under = |v: &Value| Value::tuple(vec![Value::Int(7), v.clone()]);
-        let before = |v: &Value, k: i64| Value::tuple(vec![v.clone(), Value::Int(k)]);
-        let value_of = |v: &Value| Value::from(Family::of([(Value::Int(0), v.clone())]));
-        let key_of = |v: &Value| Value::from(Family::of([(v.clone(), Value::Int(0))]));
+        let mut met = [0usize; 3];
         for _ in 0..50_000 {
             let (a, b) = (any_value(&mut d, 2), any_value(&mut d, 2));
-            let o = a.cmp(&b);
-            let pair = format!("{a:?} and {b:?}");
-            assert_eq!(b.cmp(&a), o.reverse(), "{pair}");
-            assert_eq!(a == b, o == Ordering::Equal, "{pair}");
-            if holds_no_parts(&a) || holds_no_parts(&b) {
-                assert_eq!(o, a.scalar_cmp(&b), "{pair}");
-            }
-            for wrap in [&under as &dyn Fn(&Value) -> Value, &value_of] {
-                let (x, y) = (wrap(&a), wrap(&b));
-                assert_eq!(x.cmp(&y), o, "{pair}, wrapped");
-                assert_eq!(x == y, o == Ordering::Equal, "{pair}, wrapped");
-            }
-            // Followed by 0 and by 1: the walk goes on past two equal values.
-            let (x, y) = (before(&a, 0), before(&b, 1));
-            assert_eq!(x.cmp(&y), o.then(Ordering::Less), "{pair}, then 0 and 1");
-            assert_ne!(x, y, "{pair}, then 0 and 1");
-            if holds_no_parts(&a) && holds_no_parts(&b) {
-                // A key is written with its zeros made positive (`Value::key`).
-                let (x, y) = (key_of(&a), key_of(&b));
-                let k = a.key().cmp(&b.key());
-                assert_eq!(x.cmp(&y), k, "{pair}, as keys");
-                assert_eq!(x == y, k == Ordering::Equal, "{pair}, as keys");
-            }
-            match (&a, &b) {
-                (Value::Int(x), Value::Int(y)) => {
-                    ints += 1;
-                    equal_ints += usize::from(x == y);
-                }
-                (Value::Int(_), _) | (_, Value::Int(_))
-                    if a.number_kind().is_some() && b.number_kind().is_some() =>
-                {
-                    int_number += 1;
-                }
-                _ => {}
+            for (n, k) in met.iter_mut().zip(shortcut_agrees(&a, &b)) {
+                *n += usize::from(k);
             }
         }
-        eprintln!("{ints} pairs of integers, {equal_ints} equal; {int_number} integer and number");
-        assert!(ints > 2000 && equal_ints > 100 && int_number > 2000);
+        eprintln!("pairs of integers, equal integers, integer and number: {met:?}");
+        for (i, (a, b)) in INTEGER_PAIRS.iter().map(|f| f()).enumerate() {
+            assert!(shortcut_agrees(&a, &b)[i], "{a:?} and {b:?}");
+        }
         let mut sorted: Vec<Value> = (0..400).map(|_| any_value(&mut d, 2)).collect();
         sorted.sort();
         for (i, v) in sorted.iter().enumerate() {
             for w in &sorted[i + 1..] {
                 assert_ne!(v.cmp(w), Ordering::Greater, "{v:?} sorted before {w:?}");
             }
+        }
+    }
+
+    /// A pair of each kind [`shortcut_agrees`] tells, in its order: two integers (5 and -3),
+    /// two equal integers (2 and 2, built apart), and an integer and a float (1 and 1.0; a
+    /// float has a number kind, so the pair is of the third kind).
+    const INTEGER_PAIRS: [fn() -> (Value, Value); 3] = [
+        || (Value::Int(5), Value::Int(-3)),
+        || (Value::Int(2), Value::Int(2)),
+        || (Value::Int(1), Value::float(1.0)),
+    ];
+
+    /// Checks that `cmp` and `==` on `a` and `b` agree with the general order at the top level,
+    /// beneath a tuple, before a component that differs, as a family's key and as its value.
+    /// Gives whether the pair is of two integers, of two equal integers, and of an integer and
+    /// another number.
+    fn shortcut_agrees(a: &Value, b: &Value) -> [bool; 3] {
+        let under = |v: &Value| Value::tuple(vec![Value::Int(7), v.clone()]);
+        let before = |v: &Value, k: i64| Value::tuple(vec![v.clone(), Value::Int(k)]);
+        let value_of = |v: &Value| Value::from(Family::of([(Value::Int(0), v.clone())]));
+        let key_of = |v: &Value| Value::from(Family::of([(v.clone(), Value::Int(0))]));
+        let o = a.cmp(b);
+        let pair = format!("{a:?} and {b:?}");
+        assert_eq!(b.cmp(a), o.reverse(), "{pair}");
+        assert_eq!(a == b, o == Ordering::Equal, "{pair}");
+        if holds_no_parts(a) || holds_no_parts(b) {
+            assert_eq!(o, a.scalar_cmp(b), "{pair}");
+        }
+        for wrap in [&under as &dyn Fn(&Value) -> Value, &value_of] {
+            let (x, y) = (wrap(a), wrap(b));
+            assert_eq!(x.cmp(&y), o, "{pair}, wrapped");
+            assert_eq!(x == y, o == Ordering::Equal, "{pair}, wrapped");
+        }
+        // Followed by 0 and by 1: the walk goes on past two equal values.
+        let (x, y) = (before(a, 0), before(b, 1));
+        assert_eq!(x.cmp(&y), o.then(Ordering::Less), "{pair}, then 0 and 1");
+        assert_ne!(x, y, "{pair}, then 0 and 1");
+        if holds_no_parts(a) && holds_no_parts(b) {
+            // A key is written with its zeros made positive (`Value::key`).
+            let (x, y) = (key_of(a), key_of(b));
+            let k = a.key().cmp(&b.key());
+            assert_eq!(x.cmp(&y), k, "{pair}, as keys");
+            assert_eq!(x == y, k == Ordering::Equal, "{pair}, as keys");
+        }
+        match (a, b) {
+            (Value::Int(x), Value::Int(y)) => [true, x == y, false],
+            (Value::Int(_), _) | (_, Value::Int(_))
+                if a.number_kind().is_some() && b.number_kind().is_some() =>
+            {
+                [false, false, true]
+            }
+            _ => [false; 3],
         }
     }
 
@@ -3972,45 +3996,71 @@ mod tests {
 
     /// Equal values hash alike, under `Hash` with the standard hasher's random keys and under
     /// the digest: each drawn value against its other form, and against the value drawn before
-    /// it, which is often equal in this small domain. 20,000 cases; the counts show that both
-    /// kinds of pair were met, and that unequal values do not all share a hash.
+    /// it, which is often equal in this small domain, 20,000 cases; no two unequal values met
+    /// share a digest. Each kind of pair is also checked on a pair built to be of it, whatever
+    /// the draws met: a `rat` in two forms whose powers of 2 and 5 differ, two equal values
+    /// built apart, and two unequal values (PROOF-test-count-thresholds; until 2026-11-15 the
+    /// test asserted that the draws met more than 100, 1000 and 1000 of them).
     #[test]
     fn equal_values_hash_alike() {
         let mut d = Draw(crate::seed::seed("equal_values_hash_alike"));
-        let (mut same, mut by_chance, mut apart, mut collided) = (0, 0, 0, 0);
-        let mut forms_differ = 0;
+        let mut met = [0usize; 3];
         let mut last: std::collections::VecDeque<Value> = Default::default();
         let keys = std::hash::RandomState::new();
         for _ in 0..20_000 {
             let (a, b) = drawn(&mut d, 3);
-            assert_eq!(a, b, "two forms of one value");
-            assert_eq!(digest(&a), digest(&b), "{a} in two forms");
-            assert_eq!(std_hash(&keys, &a), std_hash(&keys, &b), "{a} in two forms");
-            same += 1;
-            if let (Value::Rat(x), Value::Rat(y)) = (&a, &b) {
-                forms_differ += usize::from(x.integer_factors().1 != y.integer_factors().1);
-            }
+            met[0] += usize::from(hash_alike(&keys, &a, &b));
             for c in &last {
-                if *c == a {
-                    assert_eq!(digest(&a), digest(c), "{a} drawn twice");
-                    by_chance += 1;
-                } else {
-                    apart += 1;
-                    collided += usize::from(digest(&a) == digest(c));
-                }
+                let equal = hash_alike_or_apart(&a, c);
+                met[1] += usize::from(equal);
+                met[2] += usize::from(!equal);
             }
             if last.len() == 8 {
                 last.pop_front();
             }
             last.push_back(a);
         }
-        assert_eq!(same, 20_000);
-        eprintln!(
-            "{forms_differ} rats in two forms, {by_chance} equal and {apart} unequal pairs, {collided} collided"
+        eprintln!("rats in two forms, equal and unequal pairs: {met:?}");
+        // `drawn`'s case 2 at m = 3, k = 2, den = 4: 300/4 built in full and `3e2` read as a
+        // decimal, then divided by 4. The decimal keeps the 10^2 as powers of 2 and 5 beside
+        // its integer part 3 (`Rat::decimal`), so the two forms keep different powers; this
+        // assert fails if they come out alike.
+        let full = Rat::new(BigInt::from(300), BigInt::from(4)).expect("den > 0");
+        let kept = (Rat::decimal("3e2").expect("memory").expect("a decimal"))
+            .div(&Rat::int(BigInt::from(4)))
+            .expect("memory")
+            .expect("den > 0");
+        let (a, b) = (Value::rat(full), Value::rat(kept));
+        assert!(
+            hash_alike(&keys, &a, &b),
+            "{a} in two forms whose factors agree"
         );
-        assert!(forms_differ > 100, "{forms_differ} rats in two forms");
-        assert!(by_chance > 1000, "{by_chance} equal pairs drawn");
-        assert!(apart > 1000 && collided == 0, "{collided} of {apart}");
+        assert!(hash_alike_or_apart(&Value::Int(2), &Value::Int(2)));
+        assert!(!hash_alike_or_apart(&Value::Int(2), &Value::Int(3)));
+    }
+
+    /// Checks that `a` and `b`, two forms of one value, are equal and hash alike under the
+    /// digest and under `keys`; gives whether they are `rat`s whose kept powers of 2 and 5
+    /// differ.
+    fn hash_alike(keys: &std::hash::RandomState, a: &Value, b: &Value) -> bool {
+        assert_eq!(a, b, "two forms of one value");
+        assert_eq!(digest(a), digest(b), "{a} in two forms");
+        assert_eq!(std_hash(keys, a), std_hash(keys, b), "{a} in two forms");
+        match (a, b) {
+            (Value::Rat(x), Value::Rat(y)) => x.integer_factors().1 != y.integer_factors().1,
+            _ => false,
+        }
+    }
+
+    /// Checks that `a` and `c` share a digest exactly when they are equal; gives whether they
+    /// are.
+    fn hash_alike_or_apart(a: &Value, c: &Value) -> bool {
+        if a == c {
+            assert_eq!(digest(a), digest(c), "{a} drawn twice");
+        } else {
+            assert_ne!(digest(a), digest(c), "{a} and {c} share a digest");
+        }
+        a == c
     }
 
     /// A tuple of `n` levels in which each level holds the one below twice: 2^n paths, n

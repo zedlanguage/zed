@@ -182,6 +182,12 @@ fn scalar_read_from_the_parts_is_that_of_comparing_types() {
         }?;
         (Type::lit(&v)? == *t).then_some(v)
     };
+    // `scalar` agrees with comparing types; whether it is one value.
+    let scalar_agrees = |t: &Type| {
+        let scalar = t.scalar();
+        assert_eq!(scalar, by_lit(t), "{t}");
+        scalar.is_some()
+    };
     let lit = |v: Value| Type::lit(&v).expect("a literal");
     let mut seed = crate::seed::seed("scalar_read_from_the_parts_is_that_of_comparing_types") | 1;
     let mut below = |n: u64| {
@@ -214,15 +220,17 @@ fn scalar_read_from_the_parts_is_that_of_comparing_types() {
                 _ => &t - &p,
             };
         }
-        let scalar = t.scalar();
-        assert_eq!(scalar, by_lit(&t), "{t}");
-        match scalar {
-            Some(_) => ones += 1,
-            None => others += 1,
+        match scalar_agrees(&t) {
+            true => ones += 1,
+            false => others += 1,
         }
     }
     println!("{ones} of one value, {others} not");
-    assert!(ones > 2000 && others > 2000);
+    // Both kinds on types built to give them, whatever the draws met (PROOF-test-count-
+    // thresholds; until 2026-11-15 the test asserted more than 2000 of each among the draws):
+    // the literal 1 is one value; `int` is many.
+    assert!(scalar_agrees(&lit(Value::Int(1))));
+    assert!(!scalar_agrees(&Type::int()));
 }
 
 /// A tuple with a component that lists no value has no value, and is built as the empty type

@@ -58,18 +58,44 @@ fn three_valued_operations_keep_the_assignments() {
     // part, and makes it empty only when the part is; an atom forced taken is in every assignment in the part, and one
     // forced refused in none.
     let mut seed = crate::seed::seed("three_valued_operations_keep_the_assignments");
-    let (mut exprs, mut decided, mut forced, mut settled) = (0, 0, 0, 0);
+    let mut met = [0usize; 4];
     for _ in 0..600 {
         let p = if seed.is_multiple_of(2) {
             random(&mut seed, 6)
         } else {
             random_expr(&mut seed, 5, &mut Vec::new())
         };
-        exprs += usize::from(matches!(p, Part::Expr(_)));
+        let (known, fixed) = ((seed >> 7) as u32 % 64, (seed >> 13) as u32 % 64);
+        for (n, k) in met.iter_mut().zip(three_valued_holds(&p, known, fixed)) {
+            *n += usize::from(k);
+        }
+    }
+    eprintln!("expressions, decided, forced, settled to empty: {met:?}");
+    // Each kind on a part built to give it, whatever the draws met (PROOF-test-count-thresholds;
+    // until 2026-11-15 the test asserted that 600 drawn parts gave more than 250 expressions,
+    // 200 decided, 400 forced atoms and 5 settled to empty). The literal of atom 0 with atom 0
+    // known and taken: its value is decided, true, and atom 0 is in its every assignment, so
+    // forced taken. `e & !e` with `e = a0 | a1` one shared expression: no assignment is in it,
+    // and `e` used twice is pinned by settling (with `e` false the meet is false by three-valued
+    // logic, so `e` becomes true, and `true & !true` is false), so it settles to empty.
+    let lit = Part::literal(atom(0));
+    assert_eq!(three_valued_holds(&lit, 1, 1), [false, true, true, false]);
+    let e = Part::expr(Form::Or(Part::literal(atom(0)), Part::literal(atom(1))));
+    let none = Part::expr(Form::And(e.clone(), Part::expr(Form::Not(e))));
+    let [expr, _, _, settled] = three_valued_holds(&none, 0, 0);
+    assert!(expr && settled, "{none:?}");
+}
+
+/// Checks [`three_valued_operations_keep_the_assignments`]'s properties on `p` with the atoms
+/// of `known` fixed to their membership in `fixed`. Gives whether `p` is an expression,
+/// whether its value is decided by what is fixed, whether it forces some atom, and whether it
+/// holds no assignment and settles to the empty leaf.
+fn three_valued_holds(p: &Part<Row>, known: u32, fixed: u32) -> [bool; 4] {
+    let mut met = [matches!(p, Part::Expr(_)), false, false, false];
+    {
         let holds = |set: u32| move |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
         assert!(p.settle() == p.settle_by_scans(), "settling changed");
         let inside: Vec<u32> = (0..64).filter(|&set| p.eval(&holds(set))).collect();
-        let (known, fixed) = ((seed >> 7) as u32 % 64, (seed >> 13) as u32 % 64);
         let fix = |t: &Row| {
             (0..6)
                 .find(|&i| *t == atom(i) && known & (1 << i) != 0)
@@ -77,7 +103,7 @@ fn three_valued_operations_keep_the_assignments() {
         };
         let agree = |set: u32| (set ^ fixed) & known == 0;
         if let Some(v) = p.eval3(&fix) {
-            decided += 1;
+            met[1] = true;
             assert!(
                 (0..64)
                     .filter(|&s| agree(s))
@@ -87,7 +113,7 @@ fn three_valued_operations_keep_the_assignments() {
         }
         let r = p.restrict(&fix);
         let t = p.settle();
-        settled += usize::from(inside.is_empty() && t.is_leaf() == Some(false));
+        met[3] = inside.is_empty() && t.is_leaf() == Some(false);
         for set in 0..64 {
             if agree(set) {
                 assert_eq!(r.eval(&holds(set)), p.eval(&holds(set)), "{p:?} at {set:b}");
@@ -98,7 +124,7 @@ fn three_valued_operations_keep_the_assignments() {
             );
         }
         let (taken, refused) = p.forced();
-        forced += taken.len() + refused.len();
+        met[2] = !taken.is_empty() || !refused.is_empty();
         // The one pass finds what trying each atom alone by three-valued logic finds.
         let (mut on, mut off) = (Vec::new(), Vec::new());
         for a in p.distinct_atoms() {
@@ -137,12 +163,7 @@ fn three_valued_operations_keep_the_assignments() {
             }
         }
     }
-    // 30 runs of 600 parts: 376 to 413 expressions, 287 to 337 decided, 516 to 608 forced
-    // atoms, 14 to 38 settled to empty.
-    assert!(
-        exprs > 250 && decided > 200 && forced > 400 && settled > 5,
-        "{exprs} {decided} {forced} {settled}"
-    );
+    met
 }
 #[test]
 fn two_exclusive_ors_on_disjoint_atoms_meet_in_an_expression() {
@@ -353,7 +374,6 @@ fn lists_agree_with_the_diagrams_apply_built() {
     // on every set of atoms; the list is the one form of its function, found from its
     // values; two lists of one function are one list, however they were built; and the
     // three-valued value, the forced atoms and the first node each agree with the values.
-    let holds = |set: u32| move |t: &Row| (0..6).any(|i| set >> i & 1 == 1 && *t == atom(i));
     let mut pool: Vec<(Bdd<Row>, Old)> = (0..6)
         .map(|i| (Bdd::literal(atom(i as u64)), Old::literal(i)))
         .chain([false, true].map(|b| (Bdd::Leaf(b), Old::Leaf(b))))
@@ -367,7 +387,7 @@ fn lists_agree_with_the_diagrams_apply_built() {
             .wrapping_add(1442695040888963407);
         seed >> 33
     };
-    let (mut joined, mut found_again) = (0, 0);
+    let (mut joined, mut found_again) = (0usize, 0usize);
     for _ in 0..4_000 {
         let r = next() as usize;
         let (a, x) = pool[r % pool.len()].clone();
@@ -403,12 +423,51 @@ fn lists_agree_with_the_diagrams_apply_built() {
             },
         };
         let (z, d) = made;
+        found_again += usize::from(list_agrees(&z, &d, &mut ids, &pool, &mut next));
+        pool.push((z, d));
+    }
+    eprintln!("{joined} joined, {found_again} found again");
+    // Both kinds on lists built to give them, whatever the draws met (PROOF-test-count-
+    // thresholds; until 2026-11-15 the test asserted that 4,000 rounds joined more than 1000
+    // chains and found more than 2500 lists again). A literal is a chain of one literal under
+    // either connective, so `zip_chain` joins `a0` and `a1` under `|` (`Bdd::zip_chain`: `None`
+    // only when neither operand is a chain). Joined in the other order while the first lives,
+    // the same function is the same list, found again by its values in `ids`.
+    let (a0, a1) = (Bdd::literal(atom(0)), Bdd::literal(atom(1)));
+    let (x0, x1) = (Old::literal(0), Old::literal(1));
+    let first = (a0.zip_chain(&a1, Op::Or)).expect("two literals joined");
+    let mut ids: HashMap<u64, u64> = HashMap::new();
+    list_agrees(&first, &x0.apply(&x1, Op::Or), &mut ids, &[], &mut next);
+    let again = (a1.zip_chain(&a0, Op::Or)).expect("two literals joined");
+    let live = [(first, x0.apply(&x1, Op::Or))];
+    assert!(list_agrees(
+        &again,
+        &x1.apply(&x0, Op::Or),
+        &mut ids,
+        &live,
+        &mut next
+    ));
+}
+
+/// Checks [`lists_agree_with_the_diagrams_apply_built`]'s properties on the list `z` beside the
+/// diagram `d` the old construction built, drawing the partial assignments from `next`. `ids`
+/// holds the id of the list of each function met, by its values; gives whether `z` is the list
+/// of a function met before, whose list `pool` still holds.
+fn list_agrees(
+    z: &Bdd<Row>,
+    d: &Old,
+    ids: &mut HashMap<u64, u64>,
+    pool: &[(Bdd<Row>, Old)],
+    next: &mut impl FnMut() -> u64,
+) -> bool {
+    let holds = |set: u32| move |t: &Row| (0..6).any(|i| set >> i & 1 == 1 && *t == atom(i));
+    {
         let values: u64 = (0..64).filter(|&s| d.eval(s)).fold(0, |m, s| m | 1 << s);
         for set in 0..64u32 {
             assert_eq!(z.eval(holds(set)), d.eval(set), "{z:?} at {set:b}");
         }
         let id = *ids.entry(values).or_insert_with(|| z.id());
-        found_again += usize::from(id == z.id() && pool.iter().any(|(p, _)| p.id() == id));
+        let found_again = id == z.id() && pool.iter().any(|(p, _)| p.id() == id);
         assert_eq!(id, z.id(), "two lists of one function: {z:?}");
         assert_eq!(
             Some(sorted(z.list())),
@@ -458,13 +517,8 @@ fn lists_agree_with_the_diagrams_apply_built() {
                 assert_eq!(by_node, z.eval(h), "{z:?} at {set:b}");
             }
         }
-        pool.push((z, d));
+        found_again
     }
-    // 30 runs of 4,000: 1,534 to 1,715 joined, 3,193 to 3,592 found again.
-    assert!(
-        joined > 1000 && found_again > 2500,
-        "{joined} {found_again}"
-    );
 }
 
 #[test]
@@ -475,13 +529,34 @@ fn list_matches_the_one_form_found_from_its_values() {
         let Part::Bdd(b) = random(&mut seed, 6) else {
             continue;
         };
-        let holds = |set: u32| move |t: &Row| (0..6).any(|i| set >> i & 1 == 1 && *t == atom(i));
-        let expected = list_of_values(|s| b.eval(holds(s)));
-        assert_eq!(Some(sorted(b.list())), expected, "the list of {b:?}");
+        list_matches(&b);
         lists += 1;
     }
-    // 30 runs of 800: 524 to 576 lists.
-    assert!(lists > 400, "{lists} lists");
+    eprintln!("{lists} lists");
+    // Lists built as lists, whatever the draws met (PROOF-test-count-thresholds; until
+    // 2026-11-15 the test asserted that 800 draws gave more than 400): each literal, its
+    // complement, and the chain `a0 | a1 | a2` with `!a3` met, all `Bdd`s by their types.
+    let lits: Vec<Bdd<Row>> = (0..6).map(|i| Bdd::literal(atom(i))).collect();
+    for l in &lits {
+        list_matches(l);
+        list_matches(&l.not());
+    }
+    let chain = (lits[1..3].iter()).fold(lits[0].clone(), |c, l| {
+        c.zip_chain(l, Op::Or).expect("a chain joined")
+    });
+    list_matches(&chain);
+    list_matches(
+        &chain
+            .zip_chain(&lits[3].not(), Op::And)
+            .expect("a chain met"),
+    );
+}
+
+/// Checks that the list of `b` is the one form found from its values.
+fn list_matches(b: &Bdd<Row>) {
+    let holds = |set: u32| move |t: &Row| (0..6).any(|i| set >> i & 1 == 1 && *t == atom(i));
+    let expected = list_of_values(|s| b.eval(holds(s)));
+    assert_eq!(Some(sorted(b.list())), expected, "the list of {b:?}");
 }
 
 #[test]
@@ -584,10 +659,10 @@ fn exclusive_ors_agree_with_their_values() {
 const XOR_ROUNDS: usize = 4000;
 
 /// The seeds on which 2000 rounds reached fewer than 100 exclusive ors (77 on seed 81, 85 on
-/// seed 3601000514119134698); 4000 rounds reach the counts asserted.
+/// seed 3601000514119134698); 4000 rounds reach 125 of the 126 on each, measured 2026-11-15.
 #[test]
 fn exclusive_ors_reach_their_count_on_the_seeds_that_failed() {
-    for (seed, count) in [(3601000514119134698, 124), (81, 125)] {
+    for (seed, count) in [(3601000514119134698, 125), (81, 125)] {
         let firsts = exclusive_or_rounds(seed, XOR_ROUNDS);
         assert_eq!(firsts.len(), count, "seed {seed}");
         every_exclusive_or_built_is_the_one_reached(&firsts);
@@ -614,17 +689,18 @@ fn every_exclusive_or_built_is_the_one_reached(firsts: &HashMap<u64, Part<Row>>)
                 true => lits[i].not(),
                 false => lits[i].clone(),
             };
-            let up = (members[1..].iter()).fold(first(members[0]), |f, &i| {
-                xor_by_or(&f, &lits[i])
-            });
+            let up = (members[1..].iter()).fold(first(members[0]), |f, &i| xor_by_or(&f, &lits[i]));
             let last = members.len() - 1;
-            let down = (members[..last].iter().rev()).fold(first(members[last]), |f, &i| {
-                xor_by_and(&f, &lits[i])
-            });
+            let down = (members[..last].iter().rev())
+                .fold(first(members[last]), |f, &i| xor_by_and(&f, &lits[i]));
             let mask = if complement { !mask } else { mask };
             assert!(up.xor_tag().is_some(), "{set:b} {complement}: {up:?}");
             for bits in 0..64 {
-                assert_eq!(up.eval(&holds(bits)), mask >> bits & 1 == 1, "{set:b} {bits:b}");
+                assert_eq!(
+                    up.eval(&holds(bits)),
+                    mask >> bits & 1 == 1,
+                    "{set:b} {bits:b}"
+                );
             }
             assert_eq!(down.id(), up.id(), "{set:b} {complement}");
             if let Some(reached) = firsts.get(&mask) {
@@ -731,14 +807,28 @@ fn the_halves_of_exclusive_ors_meet_as_zip_meets_them() {
         for j in (i + 2..parts.len()).step_by(2) {
             for (a, b) in [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)] {
                 for (p, q) in [(&parts[a], &parts[b]), (&parts[b], &parts[a])] {
-                    let made = xor::meet(p, q);
-                    assert!(made == p.zip(q, Op::And), "{p:?} & {q:?}");
-                    exprs += usize::from(made.expr_id().is_some());
+                    exprs += usize::from(meets_as_zip(p, q));
                 }
             }
         }
     }
-    assert!(exprs > 10_000, "{exprs}");
+    eprintln!("{exprs} meets kept as expressions");
+    // A meet kept as an expression, built, whatever the draws met (PROOF-test-count-
+    // thresholds; until 2026-11-15 the test asserted more than 10,000 among the draws): an
+    // exclusive or is no decision list, so the meet of `a0 ^ a2` and `a1 ^ a3`, on disjoint
+    // atoms, is kept as an expression, as
+    // `two_exclusive_ors_on_disjoint_atoms_meet_in_an_expression` finds.
+    let lit = |i: u64| Part::literal(atom(first + i));
+    let (p, q) = (xor_by_or(&lit(0), &lit(2)), xor_by_or(&lit(1), &lit(3)));
+    assert!(meets_as_zip(&p, &q), "{p:?} & {q:?}");
+}
+
+/// Checks that `xor::meet` makes the part `zip` makes of `p & q`; gives whether it is an
+/// expression.
+fn meets_as_zip(p: &Part<Row>, q: &Part<Row>) -> bool {
+    let made = xor::meet(p, q);
+    assert!(made == p.zip(q, Op::And), "{p:?} & {q:?}");
+    made.expr_id().is_some()
 }
 
 /// `depth` levels of the atom `#a` with a payload of the level below, over `bottom`, every
@@ -1661,6 +1751,16 @@ fn list_operations_agree_with_plain_lists() {
             .collect(),
         tail: b.default(),
     };
+    // The cells are sound, one list has one id, and the values agree on the sets of `bits`.
+    let agrees = |g: &Bdd<Row>, q: &Plain, kept: &mut BTreeMap<Plain, Bdd<Row>>, bits: [u64; 4]| {
+        assert!(g.cells_are_sound(), "{g:?}");
+        let id = kept.entry(q.clone()).or_insert_with(|| g.clone()).id();
+        assert_eq!(id, g.id(), "two cells of one list: {q:?}");
+        for bits in bits {
+            let holds = |x: u64| bits >> x & 1 == 1;
+            assert_eq!(g.eval(|b| holds(index(b))), q.eval(holds), "{q:?}");
+        }
+    };
     let mut pool: Vec<(Bdd<Row>, Plain)> = vec![(Bdd::Leaf(false), plain(&Bdd::Leaf(false)))];
     let mut kept: BTreeMap<Plain, Bdd<Row>> = BTreeMap::new();
     let mut longest = 0;
@@ -1714,22 +1814,33 @@ fn list_operations_agree_with_plain_lists() {
         };
         let (g, q) = made;
         assert_eq!(plain(&g), q, "op {op} on {p:?}, atom {a} {t}: {g:?}");
-        assert!(g.cells_are_sound(), "{g:?}");
-        let id = kept.entry(q.clone()).or_insert_with(|| g.clone()).id();
-        assert_eq!(id, g.id(), "two cells of one list: {q:?}");
-        for _ in 0..4 {
-            let bits = next();
-            let holds = |x: u64| bits >> x & 1 == 1;
-            assert_eq!(g.eval(|b| holds(index(b))), q.eval(holds), "{q:?}");
-        }
+        agrees(&g, &q, &mut kept, [next(), next(), next(), next()]);
         longest = longest.max(q.blocks.len());
         pool.push((g, q));
         if pool.len() > 400 {
             pool.swap_remove((next() % 400) as usize);
         }
     }
-    // 30 runs of 8,000: the longest list had 14 to 20 blocks.
-    assert!(longest >= 12, "the longest list has {longest} blocks");
+    eprintln!("the longest list drawn has {longest} blocks");
+    // A long list built, whatever the draws reached (PROOF-test-count-thresholds; until
+    // 2026-11-15 the test asserted that the longest list drawn had 12 blocks or more). From
+    // the empty list, atoms 0, 1, 2, … joined alternately by `|` and `&`, each taken: by
+    // `Plain::or`, `Plain::not` and `Plain::normal`, `a0 | …` is one block, `(a0) & a1` one
+    // block `!a0 | !a1` of value false, and each later literal, on an atom not in the list, is
+    // put first as a block of its own, its value the opposite of the block after it. So 20
+    // literals give 19 blocks, as `a_list_of_alternating_literals_has_a_block_per_literal`
+    // finds for literals joined at the other end.
+    let (mut g, mut q) = (Bdd::Leaf(false), plain(&Bdd::Leaf(false)));
+    for i in 0..20u64 {
+        let key = (atoms[i as usize].clone(), true);
+        (g, q) = match i % 2 {
+            0 => (g.or_literal(key), q.or(i, true)),
+            _ => (g.and_literal(key), q.and(i, true)),
+        };
+        assert_eq!(plain(&g), q, "{i}: {g:?}");
+        agrees(&g, &q, &mut kept, [i, !i, i << 7 | 5, u64::MAX]);
+    }
+    assert_eq!(q.blocks.len(), 19, "{q:?}");
 }
 
 #[test]
