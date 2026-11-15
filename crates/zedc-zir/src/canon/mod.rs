@@ -212,6 +212,10 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
         .zip(kept())
         .collect();
     keyed.sort_by(|(r, f), (s, g)| r.cmp(s).then_with(|| f.value.cmp(&g.value)));
+    // Assumption, not proved: `Value`'s `==` holds exactly when `Value::cmp` gives Equal, so
+    // equal values are neighbors after the sort and this drops every repeat. The kernel
+    // documents it; the old filter, sort and dedup relied on it too. Evidence: the random facet
+    // lists of `many_facets_of_many_kinds_end_as_the_rules_leave_them` and the rule-order test.
     keyed.dedup_by(|(r, f), (s, g)| r == s && f.value == g.value);
     keyed.into_iter().map(|(_, f)| f.clone()).collect()
 }
