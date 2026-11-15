@@ -171,9 +171,12 @@ fn no_corpus_file_uses_an_undefined_name() {
         ],
         "uses of `Utf8String` and `char32` pending STR-types; when it lands, this list is empty and goes"
     );
+    // `variants/06-matrix-multiply-remap.zed` builds since a remap builds to one node (REMAP-run);
+    // its tuple source `(a, b) into (…)` is refused in resolution, as a later step's form.
+    // `variants/23-join-zoo-remap.zed` still stops at its joins `i && j`.
     assert_eq!(
         (resolved, later_layer, files.len()),
-        (37, 12, 50),
+        (38, 11, 50),
         "files resolved, files holding a later layer's form, files"
     );
 }
