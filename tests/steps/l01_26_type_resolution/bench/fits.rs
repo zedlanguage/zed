@@ -45,3 +45,36 @@ fn a_joined_component_split_across_shapes_scales() {
         assert!(fits_sig(s, q), "{what} at {n}");
     });
 }
+
+/// n shapes `(X_i,)` against themselves renamed `(Y_i,)`, written out and as the one joined
+/// tuple `(Y_0 | … | Y_{n-1},)`, every variable bounded to several carriers, so each `X_i`
+/// holds `Y_i` alone: each member passes the one shape bound before it and is held by the next,
+/// later members skipping the shapes pinned by their bindings, so the whole is n log n. Before
+/// (FAIL-types-bounded-shapes-renamed-refused) the third member was refused. Besides its
+/// ratio: the function fits at each size. Small instance:
+/// `fits::three_shapes_of_bounded_variables_fit_themselves_renamed`.
+#[test]
+fn n_bounded_shapes_fit_themselves_renamed_scales() {
+    let what = "n shapes of bounded variables against themselves renamed, written out and joined";
+    let make = |n: usize| {
+        let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
+        let var = |p: &str, i: usize| Ty::var(format!("{p}{i}").into());
+        let split = |p: &str| union((0..n).map(|i| Ty::tuple(vec![var(p, i)])).collect());
+        let joined = Ty::tuple(vec![union((0..n).map(|i| var("Y", i)).collect())]);
+        let int = Ty::carrier(Carrier::Int);
+        let s = own_sig("X", n, Some(EVERY), split("X"), int.clone());
+        let q = own_sig("Y", n, Some(EVERY), split("Y"), int.clone());
+        let j = own_sig("Y", n, Some(EVERY), joined, int);
+        (s, q, j)
+    };
+    let n = 1000;
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, make(n)))
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let (s, q, j) = &sigs[&n];
+        assert!(fits_sig(s, q), "{what} at {n}: written out");
+        assert!(fits_sig(s, j), "{what} at {n}: joined");
+    });
+}

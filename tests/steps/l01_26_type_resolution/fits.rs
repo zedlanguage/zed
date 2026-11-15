@@ -635,9 +635,8 @@ pub(super) fn own_sig(
 
 /// A tuple with a component of several pieces holds what the tuples with one piece each there
 /// hold, so the checker gives it the verdict it gives them written as a union: true where each
-/// is held, and refused where that union is refused (three or more shapes of variables bounded
-/// to several carriers, with nothing to tell them apart, row
-/// FAIL-types-bounded-shapes-renamed-refused). In one component, in one of two, and in both.
+/// is held, and refused where that union is refused. In one component, in one of two, and in
+/// both.
 #[test]
 fn a_joined_tuple_gets_the_verdict_of_its_split_union() {
     use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig, why_unfit};
@@ -662,8 +661,8 @@ fn a_joined_tuple_gets_the_verdict_of_its_split_union() {
             let joined = tup(vec![union((0..n).map(y).collect())]);
             let written = verdict(split(&x), split(&y), bound);
             assert_eq!(verdict(split(&x), joined, bound), written, "{n} {bound:?}");
-            // Two shapes always fit: each bounded variable takes one.
-            assert!(n > 2 || written == (true, false), "{bound:?}");
+            // Each variable takes one renamed variable, for any count of shapes.
+            assert_eq!(written, (true, false), "{n} {bound:?}");
         }
         // A second component that one shape holds whole.
         let joined = tup(vec![y(0).union(&y(1)), int.clone()]);
@@ -736,4 +735,25 @@ fn a_joined_tuple_split_checks_each_piece_and_keeps_its_bindings() {
         &s,
         &own_sig("Y", 8, Some(EVERY), joined, one(y(0)))
     ));
+}
+
+#[test]
+fn three_shapes_of_bounded_variables_fit_themselves_renamed() {
+    use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig};
+    let int = Ty::carrier(Carrier::Int);
+    let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
+    for n in 2..6 {
+        let split = |p: &str| {
+            union(
+                (0..n)
+                    .map(|i| Ty::tuple(vec![Ty::var(format!("{p}{i}").into())]))
+                    .collect(),
+            )
+        };
+        for bound in [None, Some(1u8), Some(EVERY)] {
+            let s = own_sig("X", 8, bound, split("X"), int.clone());
+            let q = own_sig("Y", 8, bound, split("Y"), int.clone());
+            assert!(fits_sig(&s, &q), "{n} shapes, {bound:?}");
+        }
+    }
 }
