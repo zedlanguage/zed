@@ -752,23 +752,41 @@ impl Program {
     /// [`Program::check_record`] finds it a record of this program.
     pub fn replay(&self, record: &Record) -> Result<Wave, String> {
         self.check_record(record)?;
-        // A run records the input of every `Lines` port of the program, so a record of this
-        // program that lacks one has been changed since it was written.
-        for (name, kind) in &self.ports.inputs {
-            if *kind == PortKind::Lines && !record.lines.contains_key(name) {
-                return Err(format!(
-                    "the record holds no input for the port `{name}`, which the program \
-                     reads, so the replay cannot go on: a replay reads nothing from outside, \
-                     only what the record holds. Every run records the input of each port it \
-                     reads, so the record has been changed since it was written. Replay with \
-                     the record as it was written, or make a new record with `zedc run <file> \
-                     --record <out>`."
-                ));
-            }
+        if let Some(why) = self.lacks_input(record) {
+            return Err(why);
         }
+        self.replay_noting(record, &Arc::new(OnceLock::new()))
+    }
+
+    /// Why `record` cannot give this program's `Lines` inputs: the first port it holds no
+    /// bytes for. A run records the input of every `Lines` port of the program, so a record of
+    /// this program that lacks one has been changed since it was written.
+    fn lacks_input(&self, record: &Record) -> Option<String> {
+        let (name, _) =
+            self.ports.inputs.iter().find(|(name, kind)| {
+                *kind == PortKind::Lines && !record.lines.contains_key(name)
+            })?;
+        Some(format!(
+            "the record holds no input for the port `{name}`, which the program reads, so the \
+             replay cannot go on: a replay reads nothing from outside, only what the record \
+             holds. Every run records the input of each port it reads, so the record has been \
+             changed since it was written. Replay with the record as it was written, or make a \
+             new record with `zedc run <file> --record <out>`."
+        ))
+    }
+
+    /// Runs the wave `record` holds, as [`Program::replay`] does after its checks, and sets
+    /// `missed` to the text of the first read the record holds no answer for, so that the
+    /// caller can tell a stop the record caused from one the program did (DESIGN.md L1.19).
+    fn replay_noting(
+        &self,
+        record: &Record,
+        missed: &Arc<OnceLock<String>>,
+    ) -> Result<Wave, String> {
         self.run_args(&record.lines, &record.args, |name| {
             Arc::new(Recorded(
                 record.files.get(name).cloned().unwrap_or_default(),
+                Arc::clone(missed),
             ))
         })
     }
@@ -974,21 +992,24 @@ fn not_utf8(key: usize) -> String {
     format!("the line at key {key} is not UTF-8")
 }
 
-/// A `Files` port answered from a [`Record`].
+/// A `Files` port, or the environment port, answered from a [`Record`]; the second field
+/// keeps the text of the first read the record holds no answer for.
 #[derive(Debug)]
-struct Recorded(BTreeMap<Value, Value>);
+struct Recorded(BTreeMap<Value, Value>, Arc<OnceLock<String>>);
 
 impl Lookup for Recorded {
     fn get(&self, key: &Value) -> Result<Value, String> {
         self.0.get(key).cloned().ok_or_else(|| {
-            format!(
+            let why = format!(
                 "the program reads {key} here, and the record holds no read of it, so the \
                      replay cannot go on: a replay reads nothing from outside, only what the \
                      record holds. The run that wrote the record did not read {key}, so its \
                      inputs differed from these, or the record has been changed. Replay with \
                      the inputs of the recorded run, or make a new record with `zedc run \
                      <file> --record <out>`."
-            )
+            );
+            let _ = self.1.set(why.clone());
+            why
         })
     }
 }
@@ -1055,12 +1076,24 @@ impl Record {
         out
     }
 
-    /// The record `bytes` holds, or why they are not one: where the first entry that cannot be
-    /// read starts. O(length of `bytes`).
+    /// The record `bytes` holds, or why they are not one, as `line: why`, with `line` the line
+    /// of `bytes` on which the entry that cannot be read starts, counted from 1 as an editor
+    /// counts it (a field may hold line ends, so an entry may take several lines), and `why`
+    /// whether the record is cut short, has been changed, or is not a record at all; the
+    /// caller puts the file's name before it, as `cut.rec:3: …`. O(length of `bytes`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Record, String> {
+        let remake = "make it again with `zedc run <file> --record <out>`.";
         let Some(mut rest) = bytes.strip_prefix(MAGIC.as_bytes()) else {
+            // A file that holds only the start of the first line was cut inside it.
+            if MAGIC.as_bytes().starts_with(bytes) {
+                return Err(format!(
+                    "1: the record is cut short: it ends before the end of its first line, \
+                     `zed record 1`, so the file was cut after it was written. A replay reads \
+                     only a whole record; {remake}"
+                ));
+            }
             return Err(
-                "this file is not a record that `zedc run --record` writes: such a \
+                "1: this file is not a record that `zedc run --record` writes: such a \
                  record starts with the line `zed record 1`, and this file does not. Name the \
                  file `--record` wrote, or make a record with `zedc run <file> --record <out>`."
                     .to_string(),
@@ -1070,13 +1103,20 @@ impl Record {
         let mut first = true;
         while !rest.is_empty() {
             let at = bytes.len() - rest.len();
-            if Record::entry(&mut rest, &mut record, first).is_none() {
-                return Err(format!(
-                    "this record, which `zedc run --record` writes, cannot be read from byte \
-                     {at} on: the entry that starts there is cut short or has been changed. \
-                     A record is read only as it was written; make it again with `zedc run \
-                     <file> --record <out>`."
-                ));
+            if let Err(broken) = Record::entry(&mut rest, &mut record, first) {
+                let line = 1 + bytes[..at].iter().filter(|b| **b == b'\n').count();
+                return Err(match broken {
+                    Broken::Short => format!(
+                        "{line}: the record is cut short: the file ends inside the entry that \
+                         starts on this line, so the file was cut after it was written, or a \
+                         length on this line has been changed. A replay reads only a whole \
+                         record; {remake}"
+                    ),
+                    Broken::Changed(why) => format!(
+                        "{line}: the record has been changed: {why}. A replay reads a record \
+                         only as `zedc run --record` wrote it; {remake}"
+                    ),
+                });
             }
             first = false;
         }
@@ -1084,47 +1124,115 @@ impl Record {
     }
 
     /// Reads the entry at the start of `rest` into `record`, and moves `rest` past it; `first`
-    /// when it is the first entry, the only place a `program` entry may be. `None` when the
-    /// bytes are not an entry.
-    fn entry(rest: &mut &[u8], record: &mut Record, first: bool) -> Option<()> {
-        let end = rest.iter().position(|b| *b == b'\n')?;
-        let head = std::str::from_utf8(&rest[..end]).ok()?;
+    /// when it is the first entry, the only place a `program` entry may be. An entry is a line
+    /// of words, its kind and the length of each field, then the fields and a line end; the
+    /// error says why the bytes are not one.
+    fn entry(rest: &mut &[u8], record: &mut Record, first: bool) -> Result<(), Broken> {
+        let begins = || {
+            Broken::Changed(
+                "this line should begin an entry, with a kind such as `lines` or `text` \
+                 and then the length in bytes of each of the entry's fields, and it does not"
+                    .into(),
+            )
+        };
+        let end = rest.iter().position(|b| *b == b'\n').ok_or(Broken::Short)?;
+        let head = std::str::from_utf8(&rest[..end]).map_err(|_| begins())?;
         *rest = &rest[end + 1..];
         let mut words = head.split(' ');
-        let kind = words.next()?;
+        let kind = words.next().unwrap_or_default();
+        if kind.is_empty() {
+            return Err(begins());
+        }
         let mut fields = Vec::new();
         for w in words {
-            let n: usize = w.parse().ok()?;
-            fields.push(rest.get(..n)?);
+            let n: usize = w.parse().map_err(|_| begins())?;
+            fields.push(rest.get(..n).ok_or(Broken::Short)?);
             *rest = &rest[n..];
         }
-        *rest = rest.strip_prefix(b"\n")?;
-        let text = |f: &[u8]| String::from_utf8(f.to_vec()).ok();
+        *rest = match rest.strip_prefix(b"\n") {
+            Some(after) => after,
+            None if rest.is_empty() => return Err(Broken::Short),
+            None => {
+                return Err(Broken::Changed(
+                    "the entry that starts on this line does not end where the lengths on \
+                     the line say: the byte after its fields is not a line end"
+                        .into(),
+                ));
+            }
+        };
+        let text = |f: &[u8]| {
+            String::from_utf8(f.to_vec()).map_err(|_| {
+                Broken::Changed(format!(
+                    "a field of the `{kind}` entry that starts on this line, which holds a \
+                     name or a text, is not UTF-8"
+                ))
+            })
+        };
+        let fields_of = |n: &str| {
+            Broken::Changed(format!(
+                "an entry of the kind `{kind}` has {n}, and the one that starts on this line \
+                 has {}",
+                fields.len()
+            ))
+        };
         match (kind, &fields[..]) {
             // One `program` entry, before every other.
-            ("program", [a]) if first => {
+            ("program", [a]) => {
+                if !first {
+                    return Err(Broken::Changed(
+                        "a `program` entry comes first, before every other entry, and the one \
+                         on this line comes after another"
+                            .into(),
+                    ));
+                }
                 let a = std::str::from_utf8(a).ok().and_then(ContentAddress::parse);
-                record.program = Some(a?);
+                record.program = Some(a.ok_or_else(|| {
+                    Broken::Changed(
+                        "the program's address on the line after this one is not 64 \
+                         hexadecimal digits"
+                            .into(),
+                    )
+                })?);
             }
+            ("arg", [a]) => record.args.push(text(a)?),
+            ("program" | "arg", _) => return Err(fields_of("1 field")),
             ("lines", [p, b]) => {
                 record.lines.insert(text(p)?, Arc::from(*b));
             }
+            ("lines", _) => return Err(fields_of("2 fields")),
             ("text" | "missing" | "error", [p, k, more @ ..]) => {
                 let v = match (kind, more) {
                     ("text", [b]) => Value::str(&text(b)?),
                     ("missing", []) => Value::atom("notFound"),
                     ("error", []) => Value::atom("ioError"),
                     ("error", [o, w]) => Value::io_error(&text(o)?, &text(k)?, &text(w)?),
-                    _ => return None,
+                    ("text", _) => return Err(fields_of("3 fields")),
+                    ("missing", _) => return Err(fields_of("2 fields")),
+                    _ => return Err(fields_of("2 fields or 4")),
                 };
                 let reads = record.files.entry(text(p)?).or_default();
                 reads.insert(Value::str(&text(k)?), v);
             }
-            ("arg", [a]) => record.args.push(text(a)?),
-            _ => return None,
+            ("text", _) => return Err(fields_of("3 fields")),
+            ("missing", _) => return Err(fields_of("2 fields")),
+            ("error", _) => return Err(fields_of("2 fields or 4")),
+            _ => {
+                return Err(Broken::Changed(format!(
+                    "`{kind}` is not a kind of entry that `zedc run --record` writes, which \
+                     are `program`, `lines`, `text`, `missing`, `error` and `arg`"
+                )));
+            }
         }
-        Some(())
+        Ok(())
     }
+}
+
+/// Why the bytes at an entry of a record are not one ([`Record::from_bytes`]).
+enum Broken {
+    /// The file ends inside the entry.
+    Short,
+    /// The bytes are not an entry `zedc run --record` writes: why.
+    Changed(String),
 }
 
 /// `zedc run <file> [--record <out>] [--option <name> …] [-- arg …]` and
@@ -1285,12 +1393,28 @@ fn command_inner(
     let wave = match replay {
         Some(path) => {
             let bytes = std::fs::read(path).map_err(|e| (2, unreadable(path, &e)))?;
-            let record = Record::from_bytes(&bytes).map_err(|e| (2, format!("{path}: {e}")))?;
-            // A record of another program, or of none, is a usage error, as a damaged one is.
+            // `from_bytes` gives the line, as `3: why`, so the message reads `cut.rec:3: why`.
+            let record = Record::from_bytes(&bytes).map_err(|e| (2, format!("{path}:{e}")))?;
+            // A record of another program, or of none, is a usage error, as a damaged one is,
+            // and so is one that lacks an input the program reads (DESIGN.md L1.19).
             program
                 .check_record(&record)
                 .map_err(|e| (2, format!("{path}: {e}")))?;
-            work::stage(Stage::Run, Some("main"), || program.replay(&record))
+            if let Some(why) = program.lacks_input(&record) {
+                return Err((2, format!("{path}: {why}")));
+            }
+            let missed = Arc::new(OnceLock::new());
+            work::stage(Stage::Run, Some("main"), || {
+                program.replay_noting(&record, &missed)
+            })
+            // A stop at a read the record holds no answer for is the record's fault: its
+            // message holds the text the lookup gave. Matching the text, and not only that
+            // a read missed, keeps a stop that has some other cause from being called the
+            // record's, should a miss ever not stop the run.
+            .map_err(|e| match missed.get() {
+                Some(m) if e.contains(m.as_str()) => (2, e),
+                _ => stopped(env, e),
+            })?
         }
         None => {
             let lines = options.read_lines(program.ports(), stdin)?;
@@ -1298,9 +1422,9 @@ fn command_inner(
             work::stage(Stage::Run, Some("main"), || {
                 program.run_args(&lines, &words.args, files)
             })
+            .map_err(|e| stopped(env, e))?
         }
-    }
-    .map_err(|e| stopped(env, e))?;
+    };
     options.finish(&wave, stdout, stderr)
 }
 
