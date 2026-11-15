@@ -4494,6 +4494,9 @@ struct Cx<'s> {
     /// own and kept here with the reading of its side: a function moved into the other side,
     /// as a binding of a variable there, is read as it was where it came from.
     fns: BTreeMap<Arc<str>, (Arc<Sig>, Env)>,
+    /// How many functions of `fns` hold no variable at any depth ([`Sig::vars_order`] empty):
+    /// the only ones [`Comparing::closed_form`] puts back, so with none it has nothing to do.
+    closed: usize,
     /// The names of `rigid` and `fns` made by the comparisons open now, last made last.
     made: Vec<Arc<str>>,
     /// The number of names made: a quote is in no name a program writes, and the count keeps
@@ -4730,6 +4733,7 @@ impl Cx<'_> {
         };
         for s in &t.fns {
             let w = self.fresh("");
+            self.closed += usize::from(s.vars_order().is_empty());
             self.fns.insert(w.clone(), (s.clone(), env.clone()));
             out.vars.insert(w);
         }
@@ -4760,7 +4764,9 @@ impl Cx<'_> {
         self.compared = mark.compared;
         for w in self.made.drain(mark.made..) {
             self.rigid.remove(&w);
-            self.fns.remove(&w);
+            if let Some((s, _)) = self.fns.remove(&w) {
+                self.closed -= usize::from(s.vars_order().is_empty());
+            }
         }
         for (w, bound) in self.own.drain(mark.own..) {
             if bound.is_some() {
@@ -6589,32 +6595,21 @@ impl<'m, 's> Comparing<'m, 's> {
     /// compared as written, as [`Comparing::form_verdict`] compares its functions, it gives
     /// what [`Comparing::fits_read`] gives for the variable read in its place.
     ///
-    /// Complexity tradeoff: one walk of each side outside its functions, entering only the
-    /// rows and payloads that hold a variable ([`Ty::vars_outside`]), a lookup of each variable
-    /// found, and a rebuild of the part holding them ([`Ty::replace_outside`]): O(size), only
-    /// where the forms were not made, and the forms then cost what they cost at the top level.
-    /// What is given up: a function that holds a variable (its own, or one read around it) is
-    /// left as its variable, so such a comparison is still tried by the rule of one shape.
-    /// The complete solution would key the forms by the variables read as functions and
-    /// compare those by [`Comparing::fits_read`].
+    /// Complexity tradeoff: no walk at all while no function holding no variable is read
+    /// ([`Cx::closed`] is 0), as in every comparison outside function types; else one walk of
+    /// each side outside its functions, entering only the rows and payloads that hold a
+    /// variable, that stops at the first variable which leaves [`Comparing::by_form`] with no
+    /// form ([`closed_binds`]), a lookup of each variable found, and a rebuild of the part
+    /// holding them ([`Ty::replace_outside`]). The naive walk, every variable outside the
+    /// functions of both sides collected first, O(size) at each comparison whose forms were
+    /// not made, cost O(n^2) on a type of n rows compared at each of its n levels
+    /// (FAIL-closed-form-shared-rows-scaling: `rows_shared_on_many_paths_scale_in_a_function`,
+    /// over 300 s at n 25600 where 3.4 s before). What is given up: a function that holds a
+    /// variable (its own, or one read around it) is left as its variable, so such a
+    /// comparison is still tried by the rule of one shape. The complete solution would key the
+    /// forms by the variables read as functions and compare those by [`Comparing::fits_read`].
     async fn closed_form(&'m self, t: &Ty, other: &Ty) -> Option<bool> {
-        let binds: Binds = {
-            let cx = self.cx.borrow();
-            let mut vs = Vars::default();
-            t.vars_outside(&mut vs);
-            other.vars_outside(&mut vs);
-            (vs.order.iter())
-                .filter_map(|v| {
-                    let (s, _) = cx.fns.get(v)?;
-                    s.vars_order()
-                        .is_empty()
-                        .then(|| (v.clone(), Ty::func(s.clone())))
-                })
-                .collect()
-        };
-        if binds.is_empty() {
-            return None;
-        }
+        let binds = closed_binds(&self.cx.borrow(), t, other)?;
         let (t, other) = (t.replace_outside(&binds), other.replace_outside(&binds));
         self.by_form(&t, &other).await
     }
@@ -7977,6 +7972,87 @@ fn held(verdict: Verdict) -> Option<bool> {
         Verdict::Inhabited => Some(false),
         Verdict::Refused(_) => None,
     }
+}
+
+/// The variables outside the functions of `t` and `other` that stand for a function of
+/// `cx.fns` holding no variable at any depth, each bound to that function, for
+/// [`Comparing::closed_form`]: none where there is no such variable, or where
+/// [`Comparing::by_form`] makes no form of the two with them put back.
+///
+/// Why stopping at the first other variable gives what `by_form` of the types put back gives
+/// (unless `other` holds the unknown, where `by_form` answers true whatever it holds, and the
+/// walk goes on): [`Ty::replace_outside`] keeps a variable that `binds` does not bind where it
+/// was, so a variable of `other` at its top is still there and `by_form` stops at its first
+/// test; and one in a component of a row or payload shape, at any depth outside functions,
+/// leaves that row or shape, and every one holding it, with no exact kernel type
+/// (`RowData::exact`), so [`Ty::exact_data`] of its side is none, and [`Forms::fns`] of its
+/// side is none, which leaves `by_form` with none on either side: through [`Right::of`] for
+/// `other`, through [`Comparing::form_verdict`] for `t`. A variable at the top of `t` stops
+/// nothing, as neither reads it. The walk follows [`Ty::vars_outside`]: it enters a row or
+/// payload shape only if it holds a variable or the unknown outside functions (`open`), and
+/// each once (by number).
+///
+/// Complexity tradeoff: O(1) while `cx` holds no function with no variable
+/// ([`Cx::closed`]); else the nodes entered before the first variable that stops it, O(size)
+/// at most. The naive walk, every variable of both sides collected before any is looked up,
+/// cost O(size) at each comparison whose forms were not made: O(n^2) for a type of n rows
+/// compared at each of its n levels (FAIL-closed-form-shared-rows-scaling). What is given
+/// up: nothing; the answer is the naive one. Where `cx` holds such a function, a type whose
+/// first other variable lies at the end of the walk still costs its size at each comparison.
+fn closed_binds(cx: &Cx, t: &Ty, other: &Ty) -> Option<Binds> {
+    if cx.closed == 0 {
+        return None;
+    }
+    enum Walk<'a> {
+        Row(&'a Row),
+        Shape(&'a Shape),
+    }
+    /// The rows and payload shapes of `c` that hold a variable outside functions, in order.
+    fn below<'a>(c: &'a Ty) -> impl Iterator<Item = Walk<'a>> {
+        let rows = c.tuples.iter().filter(|r| r.open()).map(Walk::Row);
+        rows.chain(c.payload_shapes().filter(|s| s.open).map(Walk::Shape))
+    }
+    let mut binds = Binds::new();
+    // Binds each variable of `c` that stands for a function with no variable; false at the
+    // first that does not, when `stops`.
+    let mut look = |c: &Ty, stops: bool| {
+        for v in &c.vars {
+            match cx.fns.get(v) {
+                Some((s, _)) if s.vars_order().is_empty() => {
+                    binds.or_insert_with(v.clone(), || Ty::func(s.clone()));
+                }
+                _ if stops => return false,
+                _ => {}
+            }
+        }
+        true
+    };
+    let stop = !other.dynamic;
+    if !look(other, stop) {
+        return None;
+    }
+    look(t, false);
+    let mut entered: HashSet<NodeId> = HashSet::new();
+    let mut stack: Vec<Walk> = below(t).chain(below(other)).collect();
+    stack.reverse();
+    while let Some(w) = stack.pop() {
+        let from = stack.len();
+        // The components of a row or shape not entered before, in order.
+        let (row, shape): (&[Ty], Option<&Shape>) = match w {
+            Walk::Row(r) if entered.insert(r.node()) => (&r.0.cs, None),
+            Walk::Shape(s) if entered.insert(s.node()) => (&s.items, Some(s)),
+            _ => continue,
+        };
+        let fields = shape.into_iter().flat_map(|s| s.fields.values());
+        for c in row.iter().chain(fields) {
+            if !look(c, stop) {
+                return None;
+            }
+            stack.extend(below(c));
+        }
+        stack[from..].reverse();
+    }
+    (!binds.is_empty()).then_some(binds)
 }
 
 /// What [`Forms`] reads of the type of the expected side: the functions at each place of its
