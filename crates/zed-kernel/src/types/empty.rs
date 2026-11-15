@@ -5387,8 +5387,8 @@ impl<'m> Searching<'m> {
     /// Complexity tradeoff: before the split of the box into its meet with each open tuple type
     /// (K71), the component with fewest open cells is cut into the pieces its cells cut, and the
     /// part is empty when narrowing alone proves it empty on every piece. This is the step "each
-    /// piece on which narrowing alone proves the part empty is taken out of the box" of DESIGN
-    /// (sec. L1.23), with the pieces of all the cells of one component taken at once, so it
+    /// piece on which narrowing alone proves the part empty is taken out of the box" of
+    /// DESIGN.md L1.23, with the pieces of all the cells of one component taken at once, so it
     /// decides no part that a split in more than one component at once is needed for: a piece
     /// narrowing does not prove empty leaves the box to the split below, as before. Why: the
     /// naive method, the split into the open tuple types, makes one piece per open tuple type,
