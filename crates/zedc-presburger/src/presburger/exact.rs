@@ -63,6 +63,10 @@ use zedc_lattice::interval::{End, IntervalSet, Num};
 use super::formula::Id;
 use super::{Atom, Con, Each, Factor, Formula, Lin, Model, Refusal, Rel};
 
+mod projection;
+pub use projection::{METHOD, Method};
+use projection::{Strided, Tail};
+
 /// The work allowed to one call of `exact_each`, in units of one constraint read: a
 /// question of the solver is charged the constraints of the formula asked, and a cell the
 /// constraints read to make it. Past it the symbols left are refused with
@@ -118,10 +122,22 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     let mut points: Vec<Model> = Vec::new();
     let mut out = Vec::with_capacity(each.len());
     for (s, got) in syms.iter().zip(each) {
-        let t0 = std::time::Instant::now(); let q0 = EXACT_QUESTIONS.get(); let h0 = got.clone(); // TMPDBG
-        if std::env::var_os("ZED_EXACT_TRACE").is_some() { eprintln!("ENTER s={s:?} h={got:?} f={f:?}"); } // TMPDBG
+        let t0 = std::time::Instant::now();
+        let q0 = EXACT_QUESTIONS.get();
+        let h0 = got.clone(); // TMPDBG
+        if std::env::var_os("ZED_EXACT_TRACE").is_some() {
+            eprintln!("ENTER s={s:?} h={got:?} f={f:?}");
+        } // TMPDBG
         out.push(got.and_then(|h| cover(f, s, &h, size, &factors, &mut points, &mut work)));
-        if std::env::var_os("ZED_EXACT_TRACE").is_some() { let ms = t0.elapsed().as_micros(); eprintln!("TRACE {ms}us q={} size={size} s={s:?} h={:?} out={:?} f={f:?}", EXACT_QUESTIONS.get() - q0, h0.as_ref().map(|h| h.pieces().count()), out.last().map(|r| r.as_ref().map(|o| o.pieces().count())));  } // TMPDBG
+        if std::env::var_os("ZED_EXACT_TRACE").is_some() {
+            let ms = t0.elapsed().as_micros();
+            eprintln!(
+                "TRACE {ms}us q={} size={size} s={s:?} h={:?} out={:?} f={f:?}",
+                EXACT_QUESTIONS.get() - q0,
+                h0.as_ref().map(|h| h.pieces().count()),
+                out.last().map(|r| r.as_ref().map(|o| o.pieces().count()))
+            );
+        } // TMPDBG
     }
     let skipped = if out.iter().any(Result::is_err) {
         skipped
@@ -147,14 +163,44 @@ fn cover(
     let mut gap = h.clone();
     let within = h.hull();
     let mut strides: Vec<Stride> = Vec::new();
+    // The parts with holes and no end found by the cells, and the pieces with no end of their
+    // union that ranges cannot hold (`projection::ranges`).
+    let mut open: Vec<Strided> = Vec::new();
+    let mut tails: Vec<Tail> = Vec::new();
     let mut read = 0;
     loop {
         while read < points.len() && !gap.is_empty() {
-            let m = &points[read];
+            let m = points[read].clone();
             read += 1;
-            if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), m))) {
+            if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
                 work.charge(size)?;
-                let (c, more) = cell(f, m, s, factors, &within, work)?;
+                let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
+                if !holed.is_empty() {
+                    // The parts with holes and no end of every cell so far, joined: where the
+                    // values found fill a tail up to an end, the values left of it are listed.
+                    open.extend(holed);
+                    let (filled, left) = projection::ranges(&open, work)?;
+                    c = c.join(&filled);
+                    let known = found.join(&c);
+                    tails = Vec::new();
+                    let mut listed = Vec::new();
+                    for t in left {
+                        for (l, u) in t.piece.minus(&known).pieces() {
+                            if let (End::Fin(l), End::Fin(u)) = (l, u) {
+                                let (l, u) = (Int::from(l), Int::from(u));
+                                projection::listed(&l, &u, &t.step, &t.have, work, &mut listed)?;
+                            } else {
+                                let piece = IntervalSet::range(l.clone(), u.clone());
+                                tails.push(Tail {
+                                    piece,
+                                    step: t.step.clone(),
+                                    have: t.have.clone(),
+                                });
+                            }
+                        }
+                    }
+                    c = c.join(&IntervalSet::from_pieces(listed));
+                }
                 gap = gap.minus(&c);
                 found = found.join(&c);
                 strides.extend(more);
@@ -162,6 +208,44 @@ fn cover(
         }
         if gap.is_empty() {
             return Ok(found);
+        }
+        // The residue question of a piece with holes and no end: a point of `f` there in a
+        // residue no part found holds. Where there is none, the values of `s` there are those
+        // residues alone, holes without end, which ranges cannot hold: refused.
+        if let Some(tail) = tails.pop() {
+            if gap.meet(&tail.piece).is_empty() {
+                continue;
+            }
+            let other = IntervalSet::from_pieces(
+                (tail.have.iter().enumerate())
+                    .filter(|(_, b)| !**b)
+                    .map(|(r, _)| (End::from(r as i64), End::from(r as i64)))
+                    .collect(),
+            );
+            work.charge(size + 4)?;
+            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+            let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
+            let lin = Lin {
+                terms: [
+                    (s.clone(), Int::from(1)),
+                    (t, -&tail.step),
+                    (j.clone(), Int::from(-1)),
+                ]
+                .into_iter()
+                .collect(),
+                constant: Int::from(0),
+            };
+            let q = Formula::and(vec![
+                f.clone(),
+                super::member(s, &tail.piece),
+                Formula::Con(Con { lin, rel: Rel::Eq }),
+                super::member(&j, &other),
+            ]);
+            match super::satisfiable(&q)? {
+                None => return Err(Refusal::Work),
+                Some(m) => points.push(m),
+            }
+            continue;
         }
         // The residue question of a progression: a point of `f` with `s` between its first and
         // last values and in a residue class modulo its step that no value found there is in.
@@ -180,9 +264,13 @@ fn cover(
             EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
             let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
             let lin = Lin {
-                terms: [(s.clone(), Int::from(1)), (t, -&st.step), (j.clone(), Int::from(-1))]
-                    .into_iter()
-                    .collect(),
+                terms: [
+                    (s.clone(), Int::from(1)),
+                    (t, -&st.step),
+                    (j.clone(), Int::from(-1)),
+                ]
+                .into_iter()
+                .collect(),
                 constant: Int::from(0),
             };
             let span = IntervalSet::range(fin(&st.lo), fin(&st.hi));
@@ -231,20 +319,29 @@ struct Stride {
 /// read charged one unit of `work`; a piece as long as the step holds every residue.
 fn residues(found: &IntervalSet, st: &Stride, work: &mut Work) -> Result<IntervalSet, Refusal> {
     let mut have = IntervalSet::empty();
-    for (l, u) in found.meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi))).pieces() {
+    for (l, u) in found
+        .meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi)))
+        .pieces()
+    {
         work.charge(1)?;
         let (End::Fin(l), End::Fin(u)) = (l, u) else {
             continue;
         };
         let (l, u) = (Int::from(l), Int::from(u));
         if &u - &l >= &st.step - &Int::from(1) {
-            return Ok(IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1)))));
+            return Ok(IntervalSet::range(
+                fin(&Int::from(0)),
+                fin(&(&st.step - &Int::from(1))),
+            ));
         }
         let (a, b) = (l.mod_floor(&st.step), u.mod_floor(&st.step));
         if a <= b {
             have = have.join(&IntervalSet::range(fin(&a), fin(&b)));
         } else {
-            have = have.join(&IntervalSet::range(fin(&a), fin(&(&st.step - &Int::from(1)))));
+            have = have.join(&IntervalSet::range(
+                fin(&a),
+                fin(&(&st.step - &Int::from(1))),
+            ));
             have = have.join(&IntervalSet::range(fin(&Int::from(0)), fin(&b)));
         }
     }
@@ -260,7 +357,10 @@ fn outside(
     work: &mut Work,
 ) -> Result<IntervalSet, Refusal> {
     let mut out = Vec::new();
-    for (l, u) in gap.meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi))).pieces() {
+    for (l, u) in gap
+        .meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi)))
+        .pieces()
+    {
         work.charge(1)?;
         let (End::Fin(ln), End::Fin(un)) = (l, u) else {
             continue;
@@ -271,11 +371,17 @@ fn outside(
         }
         let (ra, rb) = (a.mod_floor(&st.step), b.mod_floor(&st.step));
         let hit = if ra <= rb {
-            !have.meet(&IntervalSet::range(fin(&ra), fin(&rb))).is_empty()
+            !have
+                .meet(&IntervalSet::range(fin(&ra), fin(&rb)))
+                .is_empty()
         } else {
             let top = &st.step - &Int::from(1);
-            !have.meet(&IntervalSet::range(fin(&ra), fin(&top))).is_empty()
-                || !have.meet(&IntervalSet::range(fin(&Int::from(0)), fin(&rb))).is_empty()
+            !have
+                .meet(&IntervalSet::range(fin(&ra), fin(&top)))
+                .is_empty()
+                || !have
+                    .meet(&IntervalSet::range(fin(&Int::from(0)), fin(&rb)))
+                    .is_empty()
         };
         if !hit {
             out.push((l.clone(), u.clone()));
@@ -314,23 +420,60 @@ fn cell(
     factors: &HashSet<Atom>,
     within: &IntervalSet,
     work: &mut Work,
-) -> Result<(IntervalSet, Vec<Stride>), Refusal> {
+) -> Result<(IntervalSet, Vec<Stride>, Vec<Strided>), Refusal> {
     let v = value(&Lin::atom(s.clone()), m);
     let own = IntervalSet::range(fin(&v), fin(&v));
     let mut strides = Vec::new();
+    let mut holed = Vec::new();
     if matches!(s, Atom::Product(..)) || factors.contains(s) {
-        return Ok((own, strides));
+        return Ok((own, strides, holed));
     }
     let one = [(s.clone(), Int::from(1))];
     let mut c = shifted(&along(f, m, &one, &mut HashMap::new()), &v);
-    debug_assert!(c.contains_end(&fin(&v)), "a point of the solver is not one of {f:?}");
+    debug_assert!(
+        c.contains_end(&fin(&v)),
+        "a point of the solver is not one of {f:?}"
+    );
     c = c.join(&own);
     let mut rows = Vec::new();
     let mut truth = HashMap::new();
     if implicant(f, m, true, &mut rows, &mut HashSet::new(), &mut truth) {
         let rows = joined(&rows, s);
         let product = |k: &Con| (k.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)));
-        if !rows.iter().any(product) {
+        let how = projection::method();
+        if !rows.iter().any(product) && how == Method::Pugh {
+            // The exact projection of the implicant: its parts with no holes or with an end are
+            // the cell's; those with holes and no end go to the cover, which joins them with
+            // the other cells' (`projection::ranges`).
+            let parts = projection::pugh(&rows, s, work)?;
+            let (set, left) = projection::ranges(&parts, work)?;
+            c = c.join(&set);
+            let (closed, open): (Vec<Strided>, Vec<Strided>) = (parts.into_iter())
+                .partition(|p| p.step == Int::from(1) || (p.lo.is_some() && p.hi.is_some()));
+            let open = if left.is_empty() { Vec::new() } else { open };
+            for p in closed.iter().filter(|p| p.step > Int::from(1)) {
+                let (Some(lo), Some(hi)) = (&p.lo, &p.hi) else {
+                    continue;
+                };
+                let first = lo + &(&p.res - lo).mod_floor(&p.step);
+                let last = hi - &(hi - &p.res).mod_floor(&p.step);
+                if first < last {
+                    strides.push(Stride {
+                        step: p.step.clone(),
+                        lo: first,
+                        hi: last,
+                    });
+                }
+            }
+            holed = open;
+        } else if !rows.iter().any(product) {
+            if how == Method::Rays {
+                let parts = projection::rays(&rows, s, constraints(f), work)?;
+                let (plain, open): (Vec<Strided>, Vec<Strided>) =
+                    parts.into_iter().partition(|p| p.step == Int::from(1));
+                c = c.join(&projection::ranges(&plain, work)?.0);
+                holed = open;
+            }
             // The elimination that never grows the rows first, then the one that does every
             // exact step (`eliminated_whole`), its rows charged to the work.
             let left = super::eliminated(&rows, &|a| a == s)
@@ -364,7 +507,7 @@ fn cell(
             }
         }
     }
-    Ok((c, strides))
+    Ok((c, strides, holed))
 }
 
 /// The directions that keep an equation of `rows` that holds `s`: for each other atom `q` of
@@ -425,7 +568,9 @@ fn progression(
     let mut keep = Vec::new();
     if let End::Fin(lo) = lo {
         let lin = Lin {
-            terms: [(Atom::Sym("k".into()), step.clone())].into_iter().collect(),
+            terms: [(Atom::Sym("k".into()), step.clone())]
+                .into_iter()
+                .collect(),
             constant: v - &Int::from(lo),
         };
         keep.push(Con { lin, rel: Rel::Ge });
@@ -519,10 +664,16 @@ fn runs(
             constant: c,
         };
         if let End::Fin(lo) = lo {
-            two.push(Con { lin: one(1, -&Int::from(lo)), rel: Rel::Ge });
+            two.push(Con {
+                lin: one(1, -&Int::from(lo)),
+                rel: Rel::Ge,
+            });
         }
         if let End::Fin(hi) = hi {
-            two.push(Con { lin: one(-1, Int::from(hi)), rel: Rel::Ge });
+            two.push(Con {
+                lin: one(-1, Int::from(hi)),
+                rel: Rel::Ge,
+            });
         }
     }
     let Some(over_q) = super::eliminated(&two, &|a| a == q) else {
@@ -538,7 +689,11 @@ fn runs(
         while v <= u {
             work.charge(two.len() as u64)?;
             let at: Model = [(q.clone(), v.clone())].into_iter().collect();
-            pieces.extend(bounded(&fixed(&two, std::slice::from_ref(q), &at), s).pieces().cloned());
+            pieces.extend(
+                bounded(&fixed(&two, std::slice::from_ref(q), &at), s)
+                    .pieces()
+                    .cloned(),
+            );
             v = &v + &Int::from(1);
         }
     }
@@ -597,7 +752,12 @@ fn bounded(rows: &[Con], s: &Atom) -> IntervalSet {
 /// a bound, a point or nothing, and the connectives meet, join and complement them. A part
 /// that two holders share is read once (`memo`, by [`Id`]). With `d` the symbol alone at step
 /// 1, the steps are the line through `m` along that symbol, shifted by its value.
-fn along(f: &Formula, m: &Model, d: &[(Atom, Int)], memo: &mut HashMap<Id, IntervalSet>) -> IntervalSet {
+fn along(
+    f: &Formula,
+    m: &Model,
+    d: &[(Atom, Int)],
+    memo: &mut HashMap<Id, IntervalSet>,
+) -> IntervalSet {
     let key = Id::of(f);
     if let Some(k) = key
         && let Some(v) = memo.get(&k)
@@ -856,14 +1016,10 @@ fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
     };
     let top = root(&mut parent, at);
     (rows.iter())
-        .filter(|k| {
-            (k.lin.terms.keys().next())
-                .is_some_and(|a| root(&mut parent, index[a]) == top)
-        })
+        .filter(|k| (k.lin.terms.keys().next()).is_some_and(|a| root(&mut parent, index[a]) == top))
         .cloned()
         .collect()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1043,10 +1199,10 @@ mod tests {
             Formula::or(vec![ge(&[("y", 1)], -1), ge(&[("y", -1)], -1)]),
             eq(&[("x", 1), ("y", -3)], -1),
         ]));
-        assert_eq!(project(&f, "x"), IntervalSet::from_pieces(vec![
-            (End::of(-2), End::of(-2)),
-            (End::of(4), End::of(4)),
-        ]));
+        assert_eq!(
+            project(&f, "x"),
+            IntervalSet::from_pieces(vec![(End::of(-2), End::of(-2)), (End::of(4), End::of(4)),])
+        );
     }
 
     fn project(f: &Formula, s: &str) -> IntervalSet {
@@ -1057,7 +1213,10 @@ mod tests {
     /// stride of `x == 2 * y` kept apart from the box by a disjunction.
     fn evens(k: i64) -> Formula {
         Formula::and(vec![
-            Formula::or(vec![eq(&[("x", 1), ("y", -2)], 0), eq(&[("x", 1), ("z", -2)], 0)]),
+            Formula::or(vec![
+                eq(&[("x", 1), ("y", -2)], 0),
+                eq(&[("x", 1), ("z", -2)], 0),
+            ]),
             member(&a("x"), &IntervalSet::of(0, 2 * k)),
             member(&a("z"), &IntervalSet::of(0, 2 * k)),
         ])
@@ -1069,14 +1228,19 @@ mod tests {
     #[test]
     fn the_work_limit_is_met_alike_on_both_sides() {
         let f = evens(20);
-        let want = IntervalSet::from_pieces((0..=20).map(|v| (End::of(2 * v), End::of(2 * v))).collect());
+        let want =
+            IntervalSet::from_pieces((0..=20).map(|v| (End::of(2 * v), End::of(2 * v))).collect());
         EXACT_WORK.set(0);
         assert_eq!(project(&f, "x"), want);
         let used = EXACT_WORK.replace(0);
         assert!(used > 0);
         EXACT_LIMIT_SET.set(Some(used));
         assert_eq!(project(&f, "x"), want);
-        assert_eq!(EXACT_WORK.replace(0), used, "the work is not the same on a second run");
+        assert_eq!(
+            EXACT_WORK.replace(0),
+            used,
+            "the work is not the same on a second run"
+        );
         EXACT_LIMIT_SET.set(Some(used - 1));
         let r = project_each(&f, &[a("x")]).unwrap().0.remove(0);
         EXACT_LIMIT_SET.set(None);
@@ -1088,7 +1252,10 @@ mod tests {
     /// limit, here set low.
     #[test]
     fn an_unbounded_set_with_holes_is_refused_at_the_work_limit() {
-        let f = Formula::or(vec![eq(&[("x", 1), ("y", -2)], 0), eq(&[("x", 1), ("z", -2)], 0)]);
+        let f = Formula::or(vec![
+            eq(&[("x", 1), ("y", -2)], 0),
+            eq(&[("x", 1), ("z", -2)], 0),
+        ]);
         EXACT_LIMIT_SET.set(Some(10_000));
         let r = project_each(&f, &[a("x")]).unwrap().0.remove(0);
         EXACT_LIMIT_SET.set(None);
@@ -1116,9 +1283,17 @@ mod tests {
             ge(&[("w", -1)], -29),
         ]);
         EXACT_QUESTIONS.set(0);
-        let got = project(&f, "w");
-        eprintln!("GOT {got:?}");
-        assert!(EXACT_QUESTIONS.get() <= 2, "{} questions", EXACT_QUESTIONS.get());
+        // Every `w <= -31`, and -29: -30 needs `a == -14`, `b == 2`, so `z2 >= -8`, past `z2 <= -9`.
+        let want = IntervalSet::from_pieces(vec![
+            (End::NegInf, End::of(-31)),
+            (End::of(-29), End::of(-29)),
+        ]);
+        assert_eq!(project(&f, "w"), want);
+        assert!(
+            EXACT_QUESTIONS.get() <= 2,
+            "{} questions",
+            EXACT_QUESTIONS.get()
+        );
     }
     /// The questions of the cover on a stride, as the remainder reading writes one (`y == 2·q
     /// + r` with `r == 0`), and on remainders kept in a range (`x == 1024·q + r` with `r` in
@@ -1134,19 +1309,32 @@ mod tests {
             Formula::or(vec![ge(&[("y", 1)], 0), ge(&[("y", -1)], -5)]),
         ]);
         let evens = (-500..=500).filter(|v| !(-2..=-1).contains(v));
-        let want = IntervalSet::from_pieces(evens.map(|v| (End::of(2 * v), End::of(2 * v))).collect());
+        let want =
+            IntervalSet::from_pieces(evens.map(|v| (End::of(2 * v), End::of(2 * v))).collect());
         EXACT_QUESTIONS.set(0);
         assert_eq!(project(&f, "y"), want);
-        assert!(EXACT_QUESTIONS.get() <= 4, "{} questions", EXACT_QUESTIONS.get());
+        assert!(
+            EXACT_QUESTIONS.get() <= 4,
+            "{} questions",
+            EXACT_QUESTIONS.get()
+        );
         let f = Formula::and(vec![
             eq(&[("x", 1), ("q", -1024), ("r", -1)], 0),
             member(&a("r"), &IntervalSet::of(0, 1023)),
             member(&a("x"), &IntervalSet::of(-10240, 10239)),
             Formula::or(vec![ge(&[("r", -1)], 36), ge(&[("r", 1)], -2000)]),
         ]);
-        let want = IntervalSet::from_pieces((-10..10).map(|q| (End::of(1024 * q), End::of(1024 * q + 36))).collect());
+        let want = IntervalSet::from_pieces(
+            (-10..10)
+                .map(|q| (End::of(1024 * q), End::of(1024 * q + 36)))
+                .collect(),
+        );
         EXACT_QUESTIONS.set(0);
         assert_eq!(project(&f, "x"), want);
-        assert!(EXACT_QUESTIONS.get() <= 2 * 20 + 2, "{} questions", EXACT_QUESTIONS.get());
+        assert!(
+            EXACT_QUESTIONS.get() <= 2 * 20 + 2,
+            "{} questions",
+            EXACT_QUESTIONS.get()
+        );
     }
 }
