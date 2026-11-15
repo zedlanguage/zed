@@ -1176,8 +1176,10 @@ impl Simulation {
                 // `x`, or the rows that may hold `x` by the atom names of one column
                 // ([`ByName`]), whichever are fewer; every row when neither applies.
                 let near = (*len > 0).then(|| first.get(&x[0])).flatten();
+                // One row of `b` leaves nothing to choose: it is taken without filing it.
                 let tried = match near {
                     Some(r) if r.len() < 2 => r.clone(),
+                    _ if ys.len() < 2 => ys.iter().collect(),
                     _ => {
                         let named = by_name.get_or_insert_with(|| ByName::new(&ys, *len));
                         match (near, named.rows(x)) {
