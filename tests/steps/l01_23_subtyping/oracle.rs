@@ -388,13 +388,10 @@ impl Routes {
     }
 }
 
-#[test]
-fn the_two_routes_agree_on_boolean_types() {
-    // The pairs of `subtyping_agrees_with_the_oracle` and `deep_combinations_are_decided_exactly`,
-    // each compared both ways. Ran 3000 pairs from seed 5 (all 6000 comparisons the same); now
-    // 1500 from a new seed each run, printed (TEST-bench-move-l0123, author P169).
+/// The two routes on 1500 pairs of `subtyping_agrees_with_the_oracle` and
+/// `deep_combinations_are_decided_exactly` drawn from `r`, each compared both ways.
+fn boolean_routes(mut r: Rng) -> Routes {
     let reps = reps();
-    let (mut r, seed) = Rng::fresh("boolean pairs");
     let mut routes = Routes::default();
     let sub = |a: &E, b: &E| reps.iter().all(|v| !holds(a, v) || holds(b, v));
     for i in 0..1500 {
@@ -412,19 +409,40 @@ fn the_two_routes_agree_on_boolean_types() {
         routes.record(&tb, &ta, sub(&b, &a));
     }
     println!("boolean pairs: {routes:?}");
-    // An upper bound on refusals, the rare event here: none in 12 new seeds of 3000
-    // comparisons each (PROOF-test-count-thresholds), and none in 6000 from seed 5.
-    assert!(
-        routes.refused + routes.decided_over_refusal < 500,
-        "{routes:?} (ZED_TEST_SEED={seed})"
-    );
+    routes
+}
+
+#[test]
+fn the_two_routes_agree_on_boolean_types() {
+    // Ran 3000 pairs from seed 5 (all 6000 comparisons the same); now 1500 from a new seed
+    // each run, printed (TEST-bench-move-l0123, author P169). The refusals of the draw are not
+    // held to a bound: a bound on a new seed is a threshold that some seed crosses with no
+    // fault (PROOF-test-count-thresholds). A change in the rate of refusals fails
+    // `a_fixed_draw_of_boolean_pairs_gives_its_counts`.
+    let (r, _) = Rng::fresh("boolean pairs");
+    boolean_routes(r);
     // Both routes decide a built pair each way: `0 <: int` holds, so `0 \ int` is empty and
     // both say `Empty`; `int <: 0` fails, 1 lying in `int \ 0`, and both say `Inhabited`.
+    let reps = reps();
+    let sub = |a: &E, b: &E| reps.iter().all(|v| !holds(a, v) || holds(b, v));
     let (zero, int) = (E::Lit(Value::Int(0)), E::Base("int"));
     let mut built = Routes::default();
     built.record(&build(&zero), &build(&int), sub(&zero, &int));
     built.record(&build(&int), &build(&zero), sub(&int, &zero));
     assert_eq!(built.same, 2, "0 <: int and int <: 0: {built:?}");
+}
+
+/// The 1500 pairs of seed 5, the seed the test once ran, with their exact counts, so that a
+/// change in how many pairs the routes decide alike or refuse fails here on every run
+/// (PROOF-test-count-thresholds).
+#[test]
+fn a_fixed_draw_of_boolean_pairs_gives_its_counts() {
+    let routes = boolean_routes(Rng::new(5));
+    assert_eq!(
+        (routes.same, routes.decided_over_refusal, routes.refused),
+        (3000, 0, 0),
+        "{routes:?}"
+    );
 }
 
 /// The generator of the cross-review's random recursive systems (wt/xv/Q1Q7/scripts/x_tail.rs,
@@ -660,25 +678,49 @@ fn the_two_routes_agree_on_recursive_systems() {
     // 17 refused by both, 2 decided by the simulation alone), as `bench::every_recursive_system`
     // still does; now 1500 distinct systems drawn from them with a new seed each run, printed
     // (TEST-bench-move-l0123, author P169: random tests run fewer cases). The 8000 hold 19 pairs
-    // not decided the same way by both routes, so any draw has fewer than 20, and the check below
-    // holds for every draw while the 8000 do. Drawing with replacement, and asking `same > 690`
-    // of about 750 accepted, failed one run in 45. The cases the simulation alone decides are
-    // checked each run in `the_recorded_cases_are_decided_by_the_simulation`.
+    // not decided the same way by both routes, so any draw has fewer than 20, and the check
+    // `same + 20 > accepted && refused < 20` once here held for every draw while the 8000 did.
+    // Drawing with replacement, and asking `same > 690` of about 750 accepted, failed one run
+    // in 45. The cases the simulation alone decides are checked each run in
+    // `the_recorded_cases_are_decided_by_the_simulation`.
+    //
+    // The draw's counts are not held to bounds (PROOF-test-count-thresholds): a bound on a new
+    // seed is a threshold, and one held only while the 8000 hold their 19 pairs is crossed by
+    // some draw as soon as a change adds pairs, with no fault on that draw's systems. A change
+    // in the counts fails `a_fixed_draw_of_recursive_systems_gives_its_counts`; that groups are
+    // accepted and both routes decide them alike is checked on fixed systems each run, in
+    // `the_systems_reaching_rare_branches_agree_with_the_oracle`.
     let (mut rng, first) = Rng::fresh("recursive systems drawn");
-    let drawn = pick_seeds(&mut rng, "recursive systems", 0..2 * SYSTEMS_PER_SEED, 1500);
-    let (routes, accepted) = recursive_routes(
+    drawn_recursive_routes(&mut rng, &format!("ZED_TEST_SEED={first}"));
+}
+
+/// The routes on 1500 distinct systems of seeds 1 and 2 drawn with `rng`, and the number of
+/// systems whose group is accepted.
+fn drawn_recursive_routes(rng: &mut Rng, run: &str) -> (Routes, usize) {
+    let drawn = pick_seeds(rng, "recursive systems", 0..2 * SYSTEMS_PER_SEED, 1500);
+    recursive_routes(
         drawn
             .into_iter()
             .map(|s| (1 + s / SYSTEMS_PER_SEED, (s % SYSTEMS_PER_SEED) as usize)),
-        &format!("ZED_TEST_SEED={first}"),
-    );
-    // These two hold for every draw while the 8000 hold 19 pairs not decided the same way. That
-    // groups are accepted and both routes decide them alike is checked on fixed systems each
-    // run, in `the_systems_reaching_rare_branches_agree_with_the_oracle`; the draw's own count
-    // of accepted systems (about 750) is not asked of it (PROOF-test-count-thresholds).
-    assert!(
-        routes.same + 20 > accepted && routes.refused < 20,
-        "{routes:?} of {accepted} (ZED_TEST_SEED={first})"
+        run,
+    )
+}
+
+/// One draw of 1500 systems from a fixed seed, with its exact counts, so that a change in how
+/// many systems are accepted, decided alike or refused fails here on every run
+/// (PROOF-test-count-thresholds).
+#[test]
+fn a_fixed_draw_of_recursive_systems_gives_its_counts() {
+    let (routes, accepted) = drawn_recursive_routes(&mut Rng::new(1), "fixed draw");
+    assert_eq!(
+        (
+            accepted,
+            routes.same,
+            routes.decided_over_refusal,
+            routes.refused
+        ),
+        (733, 731, 1, 1),
+        "{routes:?}"
     );
 }
 

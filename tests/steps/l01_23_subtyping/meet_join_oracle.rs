@@ -190,13 +190,10 @@ fn random_side(rng: &mut Rng) -> Side {
     }
 }
 
-#[test]
-fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all_points() {
-    // Each type's seed is its index's, so a failure is reproduced by the seed it prints. Ran the
-    // 2000 types from seed 0x7c9_0003; now 600 from a new first seed each run, printed
-    // (TEST-bench-move-l0123, author P169: random tests run fewer cases), with the bounds below
-    // kept two standard deviations from the counts expected at that size.
-    let (_, base) = Rng::fresh("meets of unions with unbounded columns");
+/// Checks the 600 random meets whose seeds follow `base` against a search of all points, and
+/// returns how many are listed, infinite, and finite but not known finite. Each type's seed is
+/// its index's, so a failure is reproduced by the seed it prints.
+fn random_meets(base: u64) -> (usize, usize, usize) {
     let (mut listed, mut infinite, mut missed) = (0, 0, 0);
     for i in 0..600u64 {
         let seed = base.wrapping_add(i);
@@ -215,14 +212,18 @@ fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all
         }
     }
     eprintln!("listed {listed}, infinite {infinite}, finite but not known finite {missed}");
-    // 705, 1120 and 175 of 2000 when written, so about 212, 336 and 52 of 600. A box of the
-    // smaller side met as written, not with the join, leaves 376 of 2000 (113 of 600) finite
-    // but not known finite: the upper bound on `missed` stays, an open item of
-    // PROOF-test-count-thresholds (it lies about 2.6 standard deviations above 52).
-    assert!(
-        missed <= 70,
-        "{listed} listed, {infinite} infinite, {missed} missed (ZED_TEST_SEED={base})"
-    );
+    (listed, infinite, missed)
+}
+
+#[test]
+fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all_points() {
+    // Ran the 2000 types from seed 0x7c9_0003; now 600 from a new first seed each run, printed
+    // (TEST-bench-move-l0123, author P169: random tests run fewer cases). The counts of each
+    // answer are not held to bounds: a bound on a new seed is a threshold that some seed
+    // crosses with no fault (PROOF-test-count-thresholds; `missed <= 70` failed about one run
+    // in 200). A change in the rate fails `a_fixed_draw_of_meets_gives_its_counts`.
+    let (_, base) = Rng::fresh("meets of unions with unbounded columns");
+    random_meets(base);
     // A listed meet and an infinite one on every run, built (PROOF-test-count-thresholds):
     // `(0, 1) & (0 | 1, 0 | 1)` holds only (0, 1), and the join of each side is a box of literals,
     // so it is listed; `(int, int) & (int, int)` holds (7, 7), which stands for the integers no
@@ -232,4 +233,13 @@ fn each_random_meet_of_unions_with_unbounded_columns_agrees_with_a_search_of_all
     assert_eq!(check(&finite, "built (0, 1)"), Found::Listed);
     let all = [union(vec![(Int, Int)]), union(vec![(Int, Int)])];
     assert_eq!(check(&all, "built (int, int)"), Found::Infinite);
+}
+
+/// The 600 meets from the first seed the test once ran, with their exact counts, so that a
+/// change in how many are listed, infinite or missed fails here on every run
+/// (PROOF-test-count-thresholds). A box of the smaller side met as written, not with the join,
+/// raises the missed count.
+#[test]
+fn a_fixed_draw_of_meets_gives_its_counts() {
+    assert_eq!(random_meets(0x7c9_0003), (199, 349, 52));
 }

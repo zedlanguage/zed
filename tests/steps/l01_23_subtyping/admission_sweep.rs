@@ -568,9 +568,10 @@ struct Refused {
     group: Vec<T>,
 }
 
-/// The sweep of the groups of `seeds`: no group fails, and at most `max_false` false rejections.
-/// The false rejections are printed by number for each arm of the check, with the smallest shrunk.
-fn sweep(name: &str, seeds: impl IntoIterator<Item = u64>, max_false: usize) {
+/// The sweep of the groups of `seeds`: no group fails, and at most `max_false` false rejections
+/// when it is given. The false rejections are printed by number for each arm of the check, with
+/// the smallest shrunk. Returns the counts.
+fn sweep(name: &str, seeds: impl IntoIterator<Item = u64>, max_false: Option<usize>) -> Tally {
     let mut tally = Tally::default();
     let mut failures = Vec::new();
     // For each arm of the check, its false rejections and the smallest of them.
@@ -647,19 +648,17 @@ fn sweep(name: &str, seeds: impl IntoIterator<Item = u64>, max_false: usize) {
         tally.accepted > 0 && tally.not_monotone > 0,
         "{name}: the sweep reaches both answers: {tally:?}"
     );
-    assert!(
-        tally.false_rejections <= max_false,
-        "{name}: more false rejections than recorded: {tally:?}"
-    );
+    if let Some(max_false) = max_false {
+        assert!(
+            tally.false_rejections <= max_false,
+            "{name}: more false rejections than recorded: {tally:?}"
+        );
+    }
+    tally
 }
 
 /// The seeds the sweep draws from: the groups of `Rng::new(seed)` for each.
 const SWEPT: u64 = 50_000;
-
-/// The false rejections among the groups of all `SWEPT` seeds: 14,200 among seeds 0..25,000 and
-/// 14,263 among 25,000..50,000, the counts the two sweeps over them gave and held as their
-/// limits.
-const FALSE_IN_SWEPT: usize = FALSE_IN_FIRST_HALF + FALSE_IN_SECOND_HALF;
 
 /// The false rejections among the groups of seeds 0..25,000.
 const FALSE_IN_FIRST_HALF: usize = 14_200;
@@ -670,26 +669,16 @@ const FALSE_IN_SECOND_HALF: usize = 14_263;
 /// The seeds one run draws.
 const DRAWN: usize = 3_000;
 
-/// The most false rejections a draw of `drawn` of the `SWEPT` seeds may have: the number
-/// expected, `FALSE_IN_SWEPT` in proportion, and six standard deviations of the count of a draw
-/// without replacement (a hypergeometric count), which a draw exceeds with chance below 10^-8.
-/// Drawing every seed leaves no deviation, and the limit is `FALSE_IN_SWEPT` itself.
-fn false_rejection_limit(drawn: usize) -> usize {
-    let (n, k, d) = (SWEPT as f64, FALSE_IN_SWEPT as f64, drawn as f64);
-    let p = k / n;
-    let deviation = (d * p * (1.0 - p) * (n - d) / (n - 1.0)).sqrt();
-    (d * p + 6.0 * deviation).ceil() as usize
-}
-
 /// The sweep over seeds drawn from the `SWEPT`.
 ///
 /// It ran every seed of 0..50,000, in two tests of 25,000 (2.2 s each alone), each held to the
 /// false rejections its seeds give; now it runs `DRAWN` seeds drawn from 0..50,000 from a new
-/// seed each run, printed, held to the count those seeds are expected to give
-/// (`false_rejection_limit`) (TEST-bench-move-l0123, author P169: random tests run fewer
-/// cases). The groups and the checks on each are as before. A rise in the rate of false
-/// rejections smaller than some 9% of it does not fail this test; the two exact sweeps, which
-/// fail on one false rejection more, run among the benchmarks
+/// seed each run, printed (TEST-bench-move-l0123, author P169: random tests run fewer cases).
+/// The groups and the checks on each are as before. The draw's count of false rejections is
+/// not held to a limit: a limit on a new draw is a threshold that some draw crosses with no
+/// fault (PROOF-test-count-thresholds). A change in the rate of false rejections fails
+/// `a_fixed_draw_of_seeds_gives_its_counts`, which asserts the exact counts of one fixed draw,
+/// and the two exact sweeps, which fail on one false rejection more, run among the benchmarks
 /// (`bench::every_group_of_the_first_half_of_the_seeds_admitted_is_monotone` and the second
 /// half; TEST-l0123-leftovers).
 #[test]
@@ -697,7 +686,7 @@ fn random_groups_admitted_are_monotone() {
     let (mut rng, seed) = Rng::fresh("admission sweep");
     let seeds = pick_seeds(&mut rng, "admission sweep", 0..SWEPT, DRAWN);
     // Two seeds swept on every run, so that `sweep` meets both answers whatever the draw
-    // (PROOF-test-count-thresholds); neither is a false rejection, so the limit is unchanged.
+    // (PROOF-test-count-thresholds); neither is a false rejection.
     // Seed 6 gives `R0 = (R0, !_)`: `!_` is empty, so the pair is empty whatever `R0` is, a
     // constant and so monotone, and its one reference stands in a tuple, which the check
     // accepts. Seed 915 gives `R0 = !(_, R0)`: from no witnesses `R0` holds the pairs, and
@@ -718,23 +707,26 @@ fn random_groups_admitted_are_monotone() {
     // In rising order, as `sweep` keeps the first of the smallest false rejections.
     let mut seeds: Vec<u64> = pinned.into_iter().chain(seeds).collect();
     seeds.sort_unstable();
-    sweep(
-        &format!("sweep (ZED_TEST_SEED={seed})"),
-        seeds,
-        false_rejection_limit(DRAWN),
-    );
+    sweep(&format!("sweep (ZED_TEST_SEED={seed})"), seeds, None);
 }
 
-/// The limit of a draw of every seed is the count of all of them, and a draw of a part is held
-/// to its share and some deviation.
+/// One draw of `DRAWN` seeds from a fixed seed, with its exact counts, so that a change in the
+/// rate of acceptance or of false rejections fails here on every run, where a bound on a new
+/// draw would be crossed by some draw with no fault (PROOF-test-count-thresholds).
 #[test]
-fn the_limit_of_false_rejections_is_the_count_in_proportion() {
-    assert_eq!(false_rejection_limit(SWEPT as usize), FALSE_IN_SWEPT);
-    let limit = false_rejection_limit(DRAWN);
-    let expected = DRAWN * FALSE_IN_SWEPT / SWEPT as usize;
-    assert!(
-        expected < limit && limit < expected + expected / 10,
-        "{limit}"
+fn a_fixed_draw_of_seeds_gives_its_counts() {
+    let seeds = pick_seeds(&mut Rng::new(1), "fixed admission sweep", 0..SWEPT, DRAWN);
+    let t = sweep("fixed sweep", seeds, None);
+    assert_eq!(
+        (
+            t.groups,
+            t.accepted,
+            t.not_monotone,
+            t.unsound,
+            t.false_rejections
+        ),
+        (3000, 469, 833, 0, 1698),
+        "{t:?}"
     );
 }
 
