@@ -425,9 +425,10 @@ fn span_of(block: *mut u8) -> *mut Span {
     ((block as usize) & !(SPAN - 1)) as *mut Span
 }
 
-/// The id of the heap that owns the span of `block`, a live block of this allocator.
-#[cfg(test)]
-pub(crate) fn owner(block: *mut u8) -> u64 {
+/// The id of the heap that owns the span of `block`, a live block of this allocator, for the
+/// crate's tests (`tests/zed_alloc_count.rs`).
+#[doc(hidden)]
+pub fn owner(block: *mut u8) -> u64 {
     #[expect(unsafe_code, reason = "a span header")]
     // SAFETY: a live block's span is mapped, and its header was written when it was taken.
     unsafe {

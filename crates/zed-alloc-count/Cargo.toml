@@ -6,6 +6,13 @@ license-file.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+# No unit tests: in a test binary built from this crate the global allocator's entry points are
+# hidden symbols, so libstd.so's own allocations would go past the count
+# (FAIL-std-allocations-uncounted). The crate's tests are tests/zed_alloc_count.rs, where they are
+# exported as in every other test binary.
+[lib]
+test = false
+
 [dependencies]
 libc = "0.2.191"
 
