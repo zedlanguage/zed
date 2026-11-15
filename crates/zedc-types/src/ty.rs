@@ -13529,17 +13529,33 @@ mod tests {
             }
         }
 
-        /// Both verdicts occur often, and a fit by arrows together, so the comparison is not of
-        /// one answer: at least `least` fits, no fits and fits only together.
-        fn enough(&self, least: [usize; 3]) {
-            let Counts {
-                fit,
-                unfit,
-                together,
-            } = self;
-            assert!(
-                *fit >= least[0] && *unfit >= least[1] && *together >= least[2],
-                "{fit} fit, {unfit} do not, {together} fit only together"
+        /// The counts, as `fit`, `unfit`, `together`.
+        fn get(&self) -> [usize; 3] {
+            [self.fit, self.unfit, self.together]
+        }
+    }
+
+    /// Each verdict of [`Counts`] on a built overload of one parameter, so that the comparison
+    /// could fail with each on every run: `s` has the arrows `(a) -> a` and `(b) -> b`. The
+    /// arrow `(a) -> a` fits by its own arrow of `s`; `(c) -> c` fits by none, since no arrow
+    /// of `s` takes `c`; `(a | b) -> a | b` fits by no one arrow, since each takes only part
+    /// of `a | b`, but by the two together, each part going to its arrow and each result
+    /// inside `a | b`.
+    fn built_verdicts(a: Ty, b: Ty, c: Ty, what: &str) {
+        let arrow = |p: &Ty, r: &Ty| Arrow {
+            params: vec![p.clone()],
+            result: r.clone(),
+        };
+        let s = sig(vec![arrow(&a, &a), arrow(&b, &b)], 1, false);
+        let ab = a.union(&b);
+        let mut counts = Counts::default();
+        for (q, verdict) in [(&a, [1, 0, 0]), (&c, [0, 1, 0]), (&ab, [0, 0, 1])] {
+            let before = counts.get();
+            counts.compare(&s, &sig(vec![arrow(q, q)], 1, false), what);
+            let got: Vec<usize> = (0..3).map(|i| counts.get()[i] - before[i]).collect();
+            assert_eq!(
+                got, verdict,
+                "{what}: ({q}) -> {q} in {s}: [fit, unfit, together]"
             );
         }
     }
@@ -13691,6 +13707,13 @@ mod tests {
         // arrow of `s` and then with every set of arrows of `s` (every subset of at most
         // SUBSETS arrows), every arrow of `s` that fits an arrow of `q` is a candidate, and
         // every arrow that may take part in covering one together is a candidate for it.
+        let carrier = |c| Ty::carrier(c);
+        built_verdicts(
+            carrier(Carrier::Int),
+            carrier(Carrier::Str),
+            carrier(Carrier::Bool),
+            "built carriers",
+        );
         let mut rng = Rng(crate::seed::seed(
             "the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows",
         ));
@@ -13703,13 +13726,9 @@ mod tests {
                 &mut counts,
             );
         }
-        counts.enough(INDEX_LEAST);
+        let [fit, unfit, together] = counts.get();
+        println!("{fit} fit, {unfit} do not, {together} fit only together");
     }
-
-    /// The least counts of fits, of no fits and of fits only together in
-    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`]: about half the least
-    /// seen over 150 seeds (55, 14 and 5, measured 2026-11-14).
-    const INDEX_LEAST: [usize; 3] = [30, 8, 3];
 
     /// One case of [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows`]: an
     /// overload `s` of `n` arrows, each arrow of `q` alone and `q` whole compared in `s`.
@@ -13896,16 +13915,15 @@ mod tests {
     /// overloads of 90 arrows are `bench::the_index_of_arrows_gives_the_verdict_on_large_overloads`.
     const WIDER_SIZES: [usize; 5] = [1, 3, 6, 10, 30];
 
-    /// The least counts of fits, of no fits and of fits only together in
-    /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes`]: about
-    /// half the least seen over 100 seeds (46, 40 and 12, measured 2026-11-14).
-    const WIDER_LEAST: [usize; 3] = [25, 20, 6];
-
     #[test]
     fn the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes() {
         // As above, on cofinite and empty-payload atoms, tuples, kind-wide parts and literals,
         // with `B` of each side bounded or not: `B` of `q` that a parameter holds is a rigid
         // variable, a bound with OTHER reads `B` of `s` unheld as the unknown.
+        // Each verdict on tuples of the wider family: `(int, a0)`, `(int, a1)` and `(int, a2)`
+        // are tuples of one carrier and three different atoms, so no two share a value.
+        let pair = |a: &str| Ty::tuple(vec![Ty::carrier(Carrier::Int), Ty::set(KType::atom(a))]);
+        built_verdicts(pair("a0"), pair("a1"), pair("a2"), "built tuples");
         let mut rng = Rng(crate::seed::seed(
             "the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes",
         ));
@@ -13918,7 +13936,8 @@ mod tests {
                 &mut counts,
             );
         }
-        counts.enough(WIDER_LEAST);
+        let [fit, unfit, together] = counts.get();
+        println!("{fit} fit, {unfit} do not, {together} fit only together");
     }
 
     /// One case of
@@ -14738,6 +14757,7 @@ mod tests {
             "pinned_shapes_are_those_of_the_rule_of_one_shape",
         ));
         let (ts, xs) = (["T", "U", "V"], ["X", "W", "Y"]);
+        built_shape_verdicts(&ts, &xs, &|s, _| s);
         let (mut cases, mut held, mut failed, mut refused) = (0, 0, 0, 0);
         for i in 0..3000 {
             let sm = sig_members(&mut rng, &ts);
@@ -14759,25 +14779,47 @@ mod tests {
                 qm[m][j] = sig_component(&mut rng, &xs);
             }
             let q = random_shapes_sig(&xs, &qm, &qr);
-            let ok = fits_sig(&s, &q);
-            SCAN_ALL.set(true);
-            let want = fits_sig(&s, &q);
-            SCAN_ALL.set(false);
             cases += 1;
-            if sig_unchosen(&s, &q).is_some() {
-                assert!(!ok, "{q} in {s}: refused, but held");
-                refused += 1;
-                continue;
-            }
-            assert_eq!(ok, want, "{q} in {s}");
-            if ok {
-                held += 1;
-            } else {
-                failed += 1;
+            match one_shape_agrees(&s, &q) {
+                Some(true) => held += 1,
+                Some(false) => failed += 1,
+                None => refused += 1,
             }
         }
         println!("{cases} cases: {held} held, {failed} failed, {refused} refused");
-        assert!(held > 300 && failed > 300, "{held} held, {failed} failed");
+    }
+
+    /// `q` in `s` by the pins and by the rule of one shape (`SCAN_ALL`): the same verdict,
+    /// given as `Some`, wherever the comparison is not refused, and no fit where it is (`None`).
+    fn one_shape_agrees(s: &Sig, q: &Sig) -> Option<bool> {
+        let ok = fits_sig(s, q);
+        SCAN_ALL.set(true);
+        let want = fits_sig(s, q);
+        SCAN_ALL.set(false);
+        if sig_unchosen(s, q).is_some() {
+            assert!(!ok, "{q} in {s}: refused, but held");
+            return None;
+        }
+        assert_eq!(ok, want, "{q} in {s}");
+        Some(ok)
+    }
+
+    /// Both verdicts of [`one_shape_agrees`] on built signatures of the variables `ts` and
+    /// `xs`, each made by `make` (which may bound them), so that the comparison could fail
+    /// either way on every run. `(x0: (T,)) -> (T,)` holds itself renamed `X`. It does not hold
+    /// `(x0: (X,) | (W,)) -> (X,)`, which takes `(W,)` too: `s` would have to take every
+    /// value of `(W,)` for each `W`, but it takes only `(T,)` and returns `(T,)` for it, so a
+    /// value of `(W,)` with `W` apart from `X` gets no result of `(X,)`.
+    fn built_shape_verdicts(ts: &[&str], xs: &[&str], make: &dyn Fn(Sig, &[&str]) -> Sig) {
+        let v = |x: &str| vec![Ty::var(x.into())];
+        let s = make(random_shapes_sig(ts, &[v(ts[0])], &[v(ts[0])]), ts);
+        let same = make(random_shapes_sig(xs, &[v(xs[0])], &[v(xs[0])]), xs);
+        let more = make(
+            random_shapes_sig(xs, &[v(xs[0]), v(xs[1])], &[v(xs[0])]),
+            xs,
+        );
+        assert_eq!(one_shape_agrees(&s, &same), Some(true), "{same} in {s}");
+        assert_eq!(one_shape_agrees(&s, &more), Some(false), "{more} in {s}");
     }
 
     /// The members found or passed by the pins of the bindings ([`Bound`]) are matched as the
@@ -14799,6 +14841,7 @@ mod tests {
             s
         };
         let int = vec![vec![Ty::carrier(Carrier::Int)]];
+        built_shape_verdicts(&ts, &xs, &bounded);
         let (mut held, mut failed, mut refused) = (0, 0, 0);
         for i in 0..3000 {
             let sm = sig_members(&mut rng, &ts);
@@ -14817,23 +14860,13 @@ mod tests {
             };
             let s = bounded(random_shapes_sig(&ts, &sm, &sr), &ts);
             let q = bounded(random_shapes_sig(&xs, &qm, &qr), &xs);
-            let ok = fits_sig(&s, &q);
-            SCAN_ALL.set(true);
-            let want = fits_sig(&s, &q);
-            SCAN_ALL.set(false);
-            if sig_unchosen(&s, &q).is_some() {
-                assert!(!ok, "{q} in {s}: refused, but held");
-                refused += 1;
-                continue;
-            }
-            assert_eq!(ok, want, "{q} in {s}");
-            match ok {
-                true => held += 1,
-                false => failed += 1,
+            match one_shape_agrees(&s, &q) {
+                Some(true) => held += 1,
+                Some(false) => failed += 1,
+                None => refused += 1,
             }
         }
         println!("{held} held, {failed} failed, {refused} refused");
-        assert!(held > 300 && failed > 300, "{held} held, {failed} failed");
         for n in 1..=8 {
             let names: Vec<String> = (0..n).map(|i| format!("T{i}")).collect();
             let renames: Vec<String> = (0..n).map(|i| format!("X{i}")).collect();
@@ -15107,6 +15140,23 @@ mod tests {
         let mut rng = Rng(crate::seed::seed(
             "a_fit_of_small_types_is_a_cover_of_their_values",
         ));
+        // Each kind on a built case, on every run. `int`, `bool` and `String` are the bits 1, 2
+        // and 4. `(int) -> int` holds `(x0: int) -> int` by its one arrow. `(int) -> int`
+        // beside `(bool) -> int` holds `(x0: int | bool) -> int` only together: each value of
+        // `int | bool` is taken by one arrow, which returns `int`, and neither arrow takes
+        // both. `(int) -> int` alone takes no `bool`, so it holds no `(x0: bool) -> int`.
+        let v = Small::Values;
+        let int_to_int = vec![(vec![v(1)], v(1))];
+        let two = vec![(vec![v(1)], v(1)), (vec![v(2)], v(1))];
+        let built = [
+            (&int_to_int, 1, Cover::Fit),
+            (&two, 0b11, Cover::Together),
+            (&int_to_int, 2, Cover::Neither),
+        ];
+        for (case, (arrows, param, kind)) in built.into_iter().enumerate() {
+            let got = small_cover(arrows, &[param], 1, &format!("built case {case}"));
+            assert_eq!(got, kind, "built case {case}");
+        }
         let (mut fit, mut cover, mut refused, mut neither) = (0, 0, 0, 0);
         for case in 0..2000 {
             let width = 1 + case % 2;
@@ -15120,43 +15170,65 @@ mod tests {
                 .map(|_| (mask(&mut rng) & mask(&mut rng)).max(1))
                 .collect();
             let result = mask(&mut rng) | 1 << rng.below(3);
-            let sas = arrows
-                .iter()
-                .map(|(ps, r)| Arrow {
-                    params: ps.iter().map(|p| p.ty()).collect(),
-                    result: r.ty(),
-                })
-                .collect();
-            let mut s = sig(sas, width, false);
-            s.bounds
-                .insert("B".into(), Carrier::Int.bit() | Carrier::F64.bit());
-            s.note_held();
-            let qa = Arrow {
-                params: params.iter().map(|&m| of_values(m)).collect(),
-                result: of_values(result),
-            };
-            let q = sig(vec![qa.clone()], width, false);
-            let truth = covers_by_values(&arrows, &params, result);
-            let pairs = {
-                REFERENCE.set(Reference::Pairs);
-                let v = fits_sig(&s, &q);
-                REFERENCE.set(Reference::None);
-                v
-            };
-            match (fits_sig(&s, &q), truth) {
-                (true, false) => panic!("case {case}: {q} in {s} is no cover of the values"),
-                (true, true) if pairs => fit += 1,
-                (true, true) => cover += 1,
-                (false, true) => refused += 1,
-                (false, false) => neither += 1,
+            match small_cover(&arrows, &params, result, &format!("case {case}")) {
+                Cover::Fit => fit += 1,
+                Cover::Together | Cover::ByFns => cover += 1,
+                Cover::Refused => refused += 1,
+                Cover::Neither => neither += 1,
             }
         }
-        // Lower bounds about half the least seen over 200 seeds (238, 50 and 1539, measured
-        // 2026-11-14), since the seed is new on each run.
-        assert!(
-            fit > 100 && cover > 25 && neither > 100,
-            "{fit} fit by one arrow, {cover} together, {refused} refused, {neither} no cover"
-        );
+        println!("{fit} fit by one arrow, {cover} together, {refused} refused, {neither} no cover");
+    }
+
+    /// How a fit of one arrow in an overload compares with a cover by the values.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Cover {
+        /// A fit by one arrow ([`Reference::Pairs`]).
+        Fit,
+        /// A fit by the arrows together.
+        Together,
+        /// A fit by the arrows together, with functions or `T` in their results.
+        ByFns,
+        /// A cover the checker does not take.
+        Refused,
+        /// No fit and no cover.
+        Neither,
+    }
+
+    /// `(x0: params) -> result` in the overload `arrows` of [`Small`] places, `B` bounded by
+    /// `int | f64`: the kind of verdict, after asserting that a fit is a cover by the values.
+    fn small_cover(arrows: &[(Vec<Small>, Small)], params: &[u8], result: u8, what: &str) -> Cover {
+        let width = params.len();
+        let sas = arrows
+            .iter()
+            .map(|(ps, r)| Arrow {
+                params: ps.iter().map(|p| p.ty()).collect(),
+                result: r.ty(),
+            })
+            .collect();
+        let mut s = sig(sas, width, false);
+        s.bounds
+            .insert("B".into(), Carrier::Int.bit() | Carrier::F64.bit());
+        s.note_held();
+        let qa = Arrow {
+            params: params.iter().map(|&m| of_values(m)).collect(),
+            result: of_values(result),
+        };
+        let q = sig(vec![qa], width, false);
+        let truth = covers_by_values(arrows, params, result);
+        let pairs = {
+            REFERENCE.set(Reference::Pairs);
+            let v = fits_sig(&s, &q);
+            REFERENCE.set(Reference::None);
+            v
+        };
+        match (fits_sig(&s, &q), truth) {
+            (true, false) => panic!("{what}: {q} in {s} is no cover of the values"),
+            (true, true) if pairs => Cover::Fit,
+            (true, true) => Cover::Together,
+            (false, true) => Cover::Refused,
+            (false, false) => Cover::Neither,
+        }
     }
 
     #[test]
@@ -15196,52 +15268,89 @@ mod tests {
                 .collect();
             let m = mask(&mut rng) | 1 << rng.below(3);
             let result = slot(&mut rng, m);
-            let u = |(held, m): (bool, u8)| match held {
-                true => Ty::var("U".into()).union(&of_values(m)),
-                false => of_values(m),
-            };
-            let sas = arrows
-                .iter()
-                .map(|(ps, r)| Arrow {
-                    params: ps.iter().map(|p| p.ty()).collect(),
-                    result: r.ty(),
-                })
-                .collect();
-            let mut s = sig(sas, width, false);
-            s.bounds
-                .insert("B".into(), Carrier::Int.bit() | Carrier::F64.bit());
-            s.note_held();
-            let qa = Arrow {
-                params: params.iter().map(|&p| u(p)).collect(),
-                result: u(result),
-            };
-            let mut q = sig(vec![qa], width, false);
-            q.own.insert("U".into());
-            q.bounds
-                .insert("U".into(), Carrier::Int.bit() | Carrier::F64.bit());
-            q.note_held();
-            let at = |(held, m): (bool, u8), c: u8| if held { m | c } else { m };
-            // `U` that no parameter holds is no carrier a caller fixes: it is read as its bound.
-            let fixed: &[u8] = match params.iter().any(|&(held, _)| held) {
-                true => &[1, 1 << 3],
-                false => &[1 | 1 << 3],
-            };
-            let truth = fixed.iter().all(|&c| {
-                let ps: Vec<u8> = params.iter().map(|&p| at(p, c)).collect();
-                covers_by_values(&arrows, &ps, at(result, c))
-            });
-            match (fits_sig(&s, &q), truth) {
-                (true, false) => panic!("case {case}: {q} in {s} is no cover of the values"),
-                (true, true) => fit += 1,
-                (false, true) => refused += 1,
-                (false, false) => neither += 1,
+            match bounded_cover(
+                &arrows,
+                &params,
+                result,
+                case as u64,
+                &format!("case {case}"),
+            ) {
+                Cover::Neither => neither += 1,
+                Cover::Refused => refused += 1,
+                _ => fit += 1,
             }
-            same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
         }
-        assert!(
-            fit > 60 && neither > 60,
-            "{fit} fit, {refused} refused, {neither} no cover"
-        );
+        println!("{fit} fit, {refused} refused, {neither} no cover");
+    }
+
+    #[test]
+    fn a_fit_at_a_bounded_variable_has_each_verdict_on_built_cases() {
+        // Both verdicts of [`bounded_cover`], whatever the draws of the test above. `(B) -> B`
+        // holds `(x0: U) -> U`: at each carrier the caller fixes `U` to, `int` or `f64`, `B`
+        // bound to it takes the value and returns it. It holds no `(x0: bool) -> int`, since
+        // `B` is bounded by `int | f64` and takes no `bool` (bit 2).
+        let b = vec![(vec![Small::B(0)], Small::B(0))];
+        let got = bounded_cover(&b, &[(true, 0)], (true, 0), 0, "built fit");
+        assert_eq!(got, Cover::Fit, "built fit");
+        let got = bounded_cover(&b, &[(false, 2)], (false, 1), 0, "built no fit");
+        assert_eq!(got, Cover::Neither, "built no fit");
+    }
+
+    /// `(x0: params) -> result` in the overload `arrows`, each place of the arrow `U` bounded
+    /// by `int | f64` with the values of a mask, or the mask alone: the kind of verdict, after
+    /// asserting that a fit holds at each carrier the caller may fix `U` to, at every value,
+    /// and that the verdict is the same in every order of the arrows. Every fit is
+    /// [`Cover::Fit`]: the test does not tell fits by one arrow from fits together.
+    fn bounded_cover(
+        arrows: &[(Vec<Small>, Small)],
+        params: &[(bool, u8)],
+        result: (bool, u8),
+        seed: u64,
+        what: &str,
+    ) -> Cover {
+        let width = params.len();
+        let u = |(held, m): (bool, u8)| match held {
+            true => Ty::var("U".into()).union(&of_values(m)),
+            false => of_values(m),
+        };
+        let sas = arrows
+            .iter()
+            .map(|(ps, r)| Arrow {
+                params: ps.iter().map(|p| p.ty()).collect(),
+                result: r.ty(),
+            })
+            .collect();
+        let mut s = sig(sas, width, false);
+        s.bounds
+            .insert("B".into(), Carrier::Int.bit() | Carrier::F64.bit());
+        s.note_held();
+        let qa = Arrow {
+            params: params.iter().map(|&p| u(p)).collect(),
+            result: u(result),
+        };
+        let mut q = sig(vec![qa], width, false);
+        q.own.insert("U".into());
+        q.bounds
+            .insert("U".into(), Carrier::Int.bit() | Carrier::F64.bit());
+        q.note_held();
+        let at = |(held, m): (bool, u8), c: u8| if held { m | c } else { m };
+        // `U` that no parameter holds is no carrier a caller fixes: it is read as its bound.
+        let fixed: &[u8] = match params.iter().any(|&(held, _)| held) {
+            true => &[1, 1 << 3],
+            false => &[1 | 1 << 3],
+        };
+        let truth = fixed.iter().all(|&c| {
+            let ps: Vec<u8> = params.iter().map(|&p| at(p, c)).collect();
+            covers_by_values(arrows, &ps, at(result, c))
+        });
+        let kind = match (fits_sig(&s, &q), truth) {
+            (true, false) => panic!("{what}: {q} in {s} is no cover of the values"),
+            (true, true) => Cover::Fit,
+            (false, true) => Cover::Refused,
+            (false, false) => Cover::Neither,
+        };
+        same_in_every_order(&s, &q, seed, what);
+        kind
     }
 
     /// The values of the types of [`Place`]: `int`, `bool`, `String`, `f64`, the atoms `#v0` and
@@ -15388,45 +15497,111 @@ mod tests {
                 .collect();
             let mut result = Place::random(&mut rng, false, 3);
             result.m |= 1 << rng.below(3);
-            let sas = arrows
-                .iter()
-                .map(|(ps, r)| Arrow {
-                    params: ps.iter().map(|p| p.ty()).collect(),
-                    result: r.ty(),
-                })
-                .collect();
-            let s = sig(sas, width, false);
-            let qa = Arrow {
-                params: params.iter().map(|p| p.ty()).collect(),
-                result: result.ty(),
-            };
-            let q = sig(vec![qa], width, false);
-            let ps: Vec<u16> = params.iter().map(|p| p.values()).collect();
-            let truth = covers_with_fns(&arrows, &ps, result.values());
-            let pairs = {
-                REFERENCE.set(Reference::Pairs);
-                let v = fits_sig(&s, &q);
-                REFERENCE.set(Reference::None);
-                v
-            };
-            let fns_met = arrows.iter().any(|(_, r)| r.f1 || r.f2 || r.t);
-            match (fits_sig(&s, &q), truth) {
-                (true, false) => panic!("case {case}: {q} in {s} is no cover of the values"),
-                (true, true) if pairs => fit += 1,
-                (true, true) if fns_met => by_fns += 1,
-                (true, true) => cover += 1,
-                (false, true) => refused += 1,
-                (false, false) => neither += 1,
+            match fn_cover(
+                &arrows,
+                &params,
+                result,
+                case as u64,
+                &format!("case {case}"),
+            ) {
+                Cover::Fit => fit += 1,
+                Cover::ByFns => by_fns += 1,
+                Cover::Together => cover += 1,
+                Cover::Refused => refused += 1,
+                Cover::Neither => neither += 1,
             }
-            same_in_every_order(&s, &q, case as u64, &format!("case {case}"));
         }
-        // Lower bounds about half the least seen over 200 seeds (58, 13 and 464, measured
-        // 2026-11-14), since the seed is new on each run.
-        assert!(
-            fit > 30 && by_fns > 6 && neither > 30,
+        println!(
             "{fit} fit by one arrow, {cover} together, {by_fns} together with functions in \
              the results, {refused} refused, {neither} no cover"
         );
+    }
+
+    #[test]
+    fn a_fit_with_functions_in_the_results_has_each_verdict_on_built_cases() {
+        // Each kind of [`fn_cover`], whatever the draws of the test above; `int` is bit 1,
+        // `bool` bit 2 and `String` bit 4, and `f1` the function returning `#v0`.
+        // `(int) -> int` holds `(x0: int) -> int` by one arrow. `(int) -> int | f1` beside
+        // `(int) -> bool | f1` holds `(x0: int) -> f1` only together: both take every `int`,
+        // and the intersection of their results is `f1`; neither result alone is within `f1`.
+        // `(int) -> int` holds no `(x0: bool) -> int`: it takes no `bool`.
+        let p = |m: u8, f1: bool| Place {
+            m,
+            f1,
+            ..Place::default()
+        };
+        let fit = fn_cover(
+            &[(vec![p(1, false)], p(1, false))],
+            &[p(1, false)],
+            p(1, false),
+            0,
+            "built fit",
+        );
+        assert_eq!(fit, Cover::Fit, "built fit");
+        let by_fns = fn_cover(
+            &[
+                (vec![p(1, false)], p(1, true)),
+                (vec![p(1, false)], p(2, true)),
+            ],
+            &[p(1, false)],
+            p(0, true),
+            0,
+            "built fit with functions",
+        );
+        assert_eq!(by_fns, Cover::ByFns, "built fit with functions");
+        let neither = fn_cover(
+            &[(vec![p(1, false)], p(1, false))],
+            &[p(2, false)],
+            p(1, false),
+            0,
+            "built no fit",
+        );
+        assert_eq!(neither, Cover::Neither, "built no fit");
+    }
+
+    /// `(x0: params) -> result` in the overload `arrows` of [`Place`]s: the kind of verdict,
+    /// after asserting that a fit is a cover by the values and that the verdict is the same in
+    /// every order of the arrows.
+    fn fn_cover(
+        arrows: &[(Vec<Place>, Place)],
+        params: &[Place],
+        result: Place,
+        seed: u64,
+        what: &str,
+    ) -> Cover {
+        let width = params.len();
+        let sas = arrows
+            .iter()
+            .map(|(ps, r)| Arrow {
+                params: ps.iter().map(|p| p.ty()).collect(),
+                result: r.ty(),
+            })
+            .collect();
+        let s = sig(sas, width, false);
+        let qa = Arrow {
+            params: params.iter().map(|p| p.ty()).collect(),
+            result: result.ty(),
+        };
+        let q = sig(vec![qa], width, false);
+        let ps: Vec<u16> = params.iter().map(|p| p.values()).collect();
+        let truth = covers_with_fns(arrows, &ps, result.values());
+        let pairs = {
+            REFERENCE.set(Reference::Pairs);
+            let v = fits_sig(&s, &q);
+            REFERENCE.set(Reference::None);
+            v
+        };
+        let fns_met = arrows.iter().any(|(_, r)| r.f1 || r.f2 || r.t);
+        let kind = match (fits_sig(&s, &q), truth) {
+            (true, false) => panic!("{what}: {q} in {s} is no cover of the values"),
+            (true, true) if pairs => Cover::Fit,
+            (true, true) if fns_met => Cover::ByFns,
+            (true, true) => Cover::Together,
+            (false, true) => Cover::Refused,
+            (false, false) => Cover::Neither,
+        };
+        same_in_every_order(&s, &q, seed, what);
+        kind
     }
 
     /// A row shared by two shapes of a union, and nested inside the first, gives its variables
@@ -15638,32 +15813,56 @@ mod tests {
         let mut rng = Rng(crate::seed::seed(
             "shapes_found_by_the_index_are_those_of_the_rule_of_one_shape",
         ));
+        // A built case that holds by binding, whatever the draws: `(int, int)` is in
+        // `(T, int) | (String, String)` by its first shape with `T` bound to `int`; the second
+        // shape takes no `int`.
+        let int = Ty::carrier(Carrier::Int);
+        let s = Ty::tuple(vec![int.clone(), int.clone()]);
+        let t = Ty::tuple(vec![Ty::var("T".into()), int.clone()]).union(&Ty::tuple(vec![
+            Ty::carrier(Carrier::Str),
+            Ty::carrier(Carrier::Str),
+        ]));
+        assert_eq!(
+            index_shape_agrees(&s, &t),
+            Some((true, true)),
+            "built: {s} <: {t}"
+        );
         let (mut cases, mut held, mut refused, mut bound) = (0, 0, 0, 0);
         for i in 0..2000 {
             let payloads = i % 2 == 1;
             let s = shapes(&mut rng, false, payloads);
             let t = shapes(&mut rng, true, payloads);
-            let mut by_index = Binds::new();
-            let ok = s.sub(&t, &mut by_index);
-            SCAN_ALL.set(true);
-            let mut by_scan = Binds::new();
-            let want = s.sub(&t, &mut by_scan);
-            SCAN_ALL.set(false);
             cases += 1;
-            if s.unchosen(&t).is_some() {
-                assert!(!ok, "{s} <: {t}: refused, but held");
-                refused += 1;
-                continue;
-            }
-            assert_eq!(ok, want, "{s} <: {t}");
-            if ok {
-                assert_eq!(by_index, by_scan, "{s} <: {t}");
-                held += 1;
-                bound += usize::from(!by_index.is_empty());
+            match index_shape_agrees(&s, &t) {
+                None => refused += 1,
+                Some((ok, binding)) => {
+                    held += usize::from(ok);
+                    bound += usize::from(binding);
+                }
             }
         }
         println!("{cases} cases: {held} held ({bound} binding), {refused} refused");
-        assert!(held > 100 && bound > 50, "{held} held, {bound} binding");
+    }
+
+    /// `s <: t` through the index and by trying every shape: the same verdict and, where it
+    /// holds, the same bindings, given as `Some((held, bound anything))`, wherever the index
+    /// does not refuse; no hold where it does (`None`).
+    fn index_shape_agrees(s: &Ty, t: &Ty) -> Option<(bool, bool)> {
+        let mut by_index = Binds::new();
+        let ok = s.sub(t, &mut by_index);
+        SCAN_ALL.set(true);
+        let mut by_scan = Binds::new();
+        let want = s.sub(t, &mut by_scan);
+        SCAN_ALL.set(false);
+        if s.unchosen(t).is_some() {
+            assert!(!ok, "{s} <: {t}: refused, but held");
+            return None;
+        }
+        assert_eq!(ok, want, "{s} <: {t}");
+        if ok {
+            assert_eq!(by_index, by_scan, "{s} <: {t}");
+        }
+        Some((ok, ok && !by_index.is_empty()))
     }
 
     /// A random component of a tuple for [`near_pairs`]: literals of three integers, of two
@@ -15725,24 +15924,40 @@ mod tests {
         let mut rng = Rng(crate::seed::seed(
             "tuples_met_and_subtracted_through_the_index_are_those_of_every_pair",
         ));
+        // A built case of both kinds, whatever the draws: `(int,) | (String,)` meets `(int,)` in
+        // the tuple `(int,)`, and less `(int,)` it is `(String,)`, one tuple fewer.
+        let one = |t: Ty| Ty::tuple(vec![t]);
+        let s = one(int.clone()).union(&one(Ty::carrier(Carrier::Str)));
+        let t = one(int.clone());
+        assert_eq!(
+            near_meet_diff_agree(&s, &t),
+            (true, true),
+            "built: {s} and {t}"
+        );
         let (mut cases, mut met, mut dropped) = (0, 0, 0);
         for i in 0..1000 {
             let s = near_union(&mut rng, i % 3 == 0, &fns);
             let t = near_union(&mut rng, i % 2 == 0, &fns);
             for (a, b) in [(&s, &t), (&t, &s)] {
-                let (meet, diff) = (a.meet(b), a.diff(b));
-                NEAR_ALL.set(true);
-                let (want_meet, want_diff) = (a.meet(b), a.diff(b));
-                NEAR_ALL.set(false);
-                assert_eq!(meet, want_meet, "({a}) meet ({b})");
-                assert_eq!(diff, want_diff, "({a}) \\ ({b})");
+                let (m, d) = near_meet_diff_agree(a, b);
                 cases += 1;
-                met += usize::from(!meet.tuples.is_empty());
-                dropped += usize::from(diff.tuples.len() < a.tuples.len());
+                met += usize::from(m);
+                dropped += usize::from(d);
             }
         }
         println!("{cases} cases: {met} meets with a tuple, {dropped} differences dropping one");
-        assert!(met > 250 && dropped > 150, "{met} met, {dropped} dropped");
+    }
+
+    /// `a meet b` and `a \ b` through the index and over every pair are the same; whether the
+    /// meet holds a tuple, and whether the difference drops one of `a`'s.
+    fn near_meet_diff_agree(a: &Ty, b: &Ty) -> (bool, bool) {
+        let (meet, diff) = (a.meet(b), a.diff(b));
+        NEAR_ALL.set(true);
+        let (want_meet, want_diff) = (a.meet(b), a.diff(b));
+        NEAR_ALL.set(false);
+        assert_eq!(meet, want_meet, "({a}) meet ({b})");
+        assert_eq!(diff, want_diff, "({a}) \\ ({b})");
+        (!meet.tuples.is_empty(), diff.tuples.len() < a.tuples.len())
     }
 
     /// Whether two types share a value, decided on the pairs of tuples [`Near`] finds, is what
@@ -15762,6 +15977,24 @@ mod tests {
         let mut rng = Rng(crate::seed::seed(
             "tuples_compared_by_meets_through_the_index_are_those_of_every_pair",
         ));
+        // Built cases decided by tuples, through [`Near`], whatever the draws: each side is
+        // two tuples, so there are four pairs. `(int,) | (String,)` meets `(int,) | (true,)` in
+        // `(int,)`; `(int,) | (String,)` and `(true,) | (1.5,)` share no value, a `bool` and an
+        // `f64` being neither `int` nor `String`.
+        let one = |t: Ty| Ty::tuple(vec![t]);
+        let s = one(int.clone()).union(&one(Ty::carrier(Carrier::Str)));
+        let yes = one(int.clone()).union(&one(Ty::lit(&Value::Bool(true))));
+        let no = one(Ty::lit(&Value::Bool(true))).union(&one(Ty::lit(&Value::float(1.5))));
+        assert_eq!(
+            near_meets_agree(&s, &yes),
+            Some((true, true)),
+            "built: {s} and {yes}"
+        );
+        assert_eq!(
+            near_meets_agree(&s, &no),
+            Some((false, true)),
+            "built: {s} and {no}"
+        );
         let (mut cases, mut meet, mut apart, mut filed) = (0, 0, 0, 0);
         for i in 0..4000 {
             let s = near_union(&mut rng, i % 3 == 0, &fns);
@@ -15769,17 +16002,10 @@ mod tests {
             let nest = |u: &Ty| Ty::tuple(vec![Ty::lit(&Value::Int(0)), u.clone()]);
             let (ns, nt) = (nest(&s), nest(&t));
             for (a, b) in [(&s, &t), (&t, &s), (&ns, &nt)] {
-                let by_index = a.meets(b);
-                NEAR_ALL.set(true);
-                let want = a.meets(b);
-                NEAR_ALL.set(false);
-                assert_eq!(by_index, want, "({a}) meets ({b})");
                 cases += 1;
-                // Those that tuples decide: neither side open, and nothing but tuples meets.
-                if a.meets_here(b).is_none() {
-                    let (l, r) = (a.tuples.len(), b.tuples.len());
-                    filed += usize::from(l * r > 1);
-                    match by_index {
+                if let Some((m, f)) = near_meets_agree(a, b) {
+                    filed += usize::from(f);
+                    match m {
                         true => meet += 1,
                         false => apart += 1,
                     }
@@ -15787,10 +16013,20 @@ mod tests {
             }
         }
         println!("{cases} cases; decided by tuples: {meet} meet, {apart} apart, {filed} filed");
-        assert!(
-            meet > 200 && apart > 200 && filed > 200,
-            "{meet} meet, {apart} apart, {filed} filed"
-        );
+    }
+
+    /// `a meets b` through the index and over every pair agree. Where tuples decide it
+    /// (neither side open, and nothing but tuples meets), `Some((meets, through Near))`, the
+    /// second true where the sides have more than one pair of tuples.
+    fn near_meets_agree(a: &Ty, b: &Ty) -> Option<(bool, bool)> {
+        let by_index = a.meets(b);
+        NEAR_ALL.set(true);
+        let want = a.meets(b);
+        NEAR_ALL.set(false);
+        assert_eq!(by_index, want, "({a}) meets ({b})");
+        a.meets_here(b)
+            .is_none()
+            .then(|| (by_index, a.tuples.len() * b.tuples.len() > 1))
     }
 
     /// A random value for [`near_component`]'s tuples: integers 0 to 2, the floats 0, -0 and
@@ -15840,6 +16076,14 @@ mod tests {
         let mut rng = Rng(crate::seed::seed(
             "tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple",
         ));
+        // Both verdicts on a built case, whatever the draws: `(int,) | (String,)` holds `(1,)`
+        // and not `(true,)`, a `bool` being neither `int` nor `String`.
+        let one = |t: Ty| Ty::tuple(vec![t]);
+        let t = one(int.clone()).union(&one(Ty::carrier(Carrier::Str)));
+        let yes = Value::tuple(vec![Value::Int(1)]);
+        let no = Value::tuple(vec![Value::Bool(true)]);
+        assert!(holders_agree(&t, &yes), "built: ({t}) holds {yes:?}");
+        assert!(!holders_agree(&t, &no), "built: ({t}) holds {no:?}");
         let (mut cases, mut held, mut apart) = (0, 0, 0);
         for i in 0..8000 {
             let t = near_union(&mut rng, i % 3 == 0, &fns);
@@ -15861,23 +16105,28 @@ mod tests {
             let nv = Value::tuple(vec![Value::Int(0), v.clone()]);
             let wide = Ty::tuple(vec![Ty::tuple(vec![t.clone()]); k]);
             for (a, x) in [(&t, &v), (&nest(&t), &nv), (&wide, &vs)] {
-                let by_index = a.contains(x);
-                FILE.set(Some(true));
-                let filed = a.contains(x);
-                FILE.set(Some(false));
-                let want = a.contains(x);
-                FILE.set(None);
-                assert_eq!(by_index, want, "({a}) holds {x:?}");
-                assert_eq!(filed, want, "({a}) holds {x:?}, filed at once");
                 cases += 1;
-                match want {
+                match holders_agree(a, x) {
                     true => held += 1,
                     false => apart += 1,
                 }
             }
         }
         println!("{cases} cases: {held} held, {apart} not");
-        assert!(held > 2000 && apart > 2000, "{held} held, {apart} not");
+    }
+
+    /// Whether `a` holds `x` through the index, through the index filed at once and by every
+    /// tuple: the same verdict, given.
+    fn holders_agree(a: &Ty, x: &Value) -> bool {
+        let by_index = a.contains(x);
+        FILE.set(Some(true));
+        let filed = a.contains(x);
+        FILE.set(Some(false));
+        let want = a.contains(x);
+        FILE.set(None);
+        assert_eq!(by_index, want, "({a}) holds {x:?}");
+        assert_eq!(filed, want, "({a}) holds {x:?}, filed at once");
+        want
     }
 
     /// [`class_of`], read from the parts of a set, is what comparing the set with each carrier
@@ -15914,6 +16163,27 @@ mod tests {
             13 => KType::tuple(vec![KType::empty()]),
             _ => KType::atom_with("a", &KType::tuple(vec![KType::empty()])),
         };
+        // Each class on a built set, whatever the draws: `int` is of the carrier `int`, `#a` of
+        // the one name `a`, and `int | String` of none, being within no one carrier and no atoms.
+        assert!(
+            matches!(
+                class_agrees(&KType::int(), &by_subtype),
+                Some(ShapeKey::Carrier(Carrier::Int))
+            ),
+            "built: int"
+        );
+        assert!(
+            matches!(
+                class_agrees(&KType::atom("a"), &by_subtype),
+                Some(ShapeKey::Atom(_))
+            ),
+            "built: #a"
+        );
+        let mixed = &KType::int() | &KType::string();
+        assert!(
+            class_agrees(&mixed, &by_subtype).is_none(),
+            "built: int | String"
+        );
         let mut rng = Rng(crate::seed::seed(
             "class_of_read_from_the_parts_is_that_of_comparing_types",
         ));
@@ -15931,23 +16201,32 @@ mod tests {
                 assert!(class_of(&s).is_none(), "the class of {s:?}, empty");
                 continue;
             }
-            let split = s.split();
-            let universes = zed_kernel::types::Universes {
-                bases: split.bases.each_ref().map(Option::is_some),
-                atoms: split.atoms.is_some(),
-                rest: split.rest.is_some(),
-            };
-            assert!(s.universes() == universes, "the universes of {s:?}");
-            let class = class_of(&s);
-            assert!(class == by_subtype(&s), "the class of {s:?}");
-            match class {
+            match class_agrees(&s, &by_subtype) {
                 Some(ShapeKey::Carrier(_)) => carriers += 1,
                 Some(_) => names += 1,
                 None => none += 1,
             }
         }
         println!("{carriers} of a carrier, {names} of one name, {none} of none");
-        assert!(carriers > 1000 && names > 500 && none > 1000);
+    }
+
+    /// The class [`class_of`] reads from the parts of the set `s`, not empty, after asserting
+    /// that it is the one `by_subtype` finds and that [`KType::universes`] gives the parts
+    /// [`KType::split`] gives.
+    fn class_agrees(
+        s: &KType,
+        by_subtype: &dyn Fn(&KType) -> Option<ShapeKey>,
+    ) -> Option<ShapeKey> {
+        let split = s.split();
+        let universes = zed_kernel::types::Universes {
+            bases: split.bases.each_ref().map(Option::is_some),
+            atoms: split.atoms.is_some(),
+            rest: split.rest.is_some(),
+        };
+        assert!(s.universes() == universes, "the universes of {s:?}");
+        let class = class_of(s);
+        assert!(class == by_subtype(s), "the class of {s:?}");
+        class
     }
 
     /// What the filings find ([`Near`], [`Holders`]) does not depend on the hash or on the order
@@ -15982,13 +16261,9 @@ mod tests {
             is.sort_unstable();
             is
         };
-        let mut rng = Rng(crate::seed::seed(
-            "filings_find_the_same_tuples_whatever_the_hash_and_the_order",
-        ));
-        let (mut found, mut several) = (0, 0);
-        for i in 0..5_000 {
-            let s = near_union(&mut rng, i % 3 == 0, &fns);
-            let t = near_union(&mut rng, i % 2 == 0, &fns);
+        // The tuples of `t` near each tuple of `s`, after asserting they are the same under
+        // the seeds 0 and `1 + i`, and with `t`'s tuples in reverse under `7 + i`.
+        let near_agrees = |s: &Ty, t: &Ty, i: u64| {
             let want = near(&s.tuples.to_vec(), &t.tuples.to_vec(), 0);
             assert_eq!(
                 near(&s.tuples.to_vec(), &t.tuples.to_vec(), 1 + i),
@@ -16004,6 +16279,50 @@ mod tests {
                 let got = sorted(got.into_iter().map(|j| last - j).collect());
                 assert_eq!(&got, &sorted(want.clone()), "({s}) near ({t}) in reverse");
             }
+            want
+        };
+        // The tuples of `t` of the length of `v` that may hold it, after asserting the same.
+        let holders_agree = |t: &Ty, v: &Value, i: u64| {
+            let Value::Tuple(items) = v else {
+                unreachable!("a tuple value")
+            };
+            let rows: Vec<usize> = (0..t.tuples.len())
+                .filter(|&j| t.tuples[j].len() == items.len())
+                .collect();
+            let want = holders(t, &rows, items, 0);
+            assert_eq!(holders(t, &rows, items, 1 + i), want, "{t} holds {v:?}");
+            let back: Vec<usize> = rows.iter().rev().copied().collect();
+            assert_eq!(
+                sorted(holders(t, &back, items, 7 + i)),
+                sorted(want.clone()),
+                "{t} holds {v:?} in reverse"
+            );
+            want
+        };
+        // Built cases where a lookup finds more than one tuple, whatever the draws: `(int,)`
+        // may meet both `(int,)` and `(1,)` of `(int,) | (1,) | (String,)`, and `(1,)` is a
+        // value of both; neither meets `(String,)`.
+        let one = |t: Ty| Ty::tuple(vec![t]);
+        let s = one(int.clone());
+        let t = one(int.clone())
+            .union(&one(Ty::lit(&Value::Int(1))))
+            .union(&one(Ty::carrier(Carrier::Str)));
+        let found = near_agrees(&s, &t, 0);
+        assert!(
+            found[0].len() > 1,
+            "built: ({s}) near ({t}) finds {found:?}"
+        );
+        let v = Value::tuple(vec![Value::Int(1)]);
+        let found = holders_agree(&t, &v, 0);
+        assert!(found.len() > 1, "built: {t} holds {v:?} by {found:?}");
+        let mut rng = Rng(crate::seed::seed(
+            "filings_find_the_same_tuples_whatever_the_hash_and_the_order",
+        ));
+        let (mut found, mut several) = (0, 0);
+        for i in 0..5_000 {
+            let s = near_union(&mut rng, i % 3 == 0, &fns);
+            let t = near_union(&mut rng, i % 2 == 0, &fns);
+            let want = near_agrees(&s, &t, i);
             found += want.iter().filter(|w| !w.is_empty()).count();
             several += want.iter().filter(|w| w.len() > 1).count();
 
@@ -16012,28 +16331,11 @@ mod tests {
                 false => t.tuples[rng.below(t.tuples.len() as u64) as usize].len(),
             };
             let v = Value::tuple((0..width).map(|_| near_value(&mut rng, 0)).collect());
-            let Value::Tuple(items) = &v else {
-                unreachable!("a tuple value")
-            };
-            let rows: Vec<usize> = (0..t.tuples.len())
-                .filter(|&j| t.tuples[j].len() == width)
-                .collect();
-            let want = holders(&t, &rows, items, 0);
-            assert_eq!(holders(&t, &rows, items, 1 + i), want, "{t} holds {v:?}");
-            let back: Vec<usize> = rows.iter().rev().copied().collect();
-            assert_eq!(
-                sorted(holders(&t, &back, items, 7 + i)),
-                sorted(want.clone()),
-                "{t} holds {v:?} in reverse"
-            );
+            let want = holders_agree(&t, &v, i);
             found += usize::from(!want.is_empty());
             several += usize::from(want.len() > 1);
         }
         println!("{found} lookups found a tuple, {several} more than one");
-        assert!(
-            found > 5000 && several > 1000,
-            "{found} found, {several} several"
-        );
     }
 
     /// Two chains of calls built apart are equal link by link, and differ where a call, its

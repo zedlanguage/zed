@@ -299,10 +299,40 @@ fn a_merge_reports_the_negative_cycle_no_child_holds() {
     assert_eq!(merged(&out, &[vec![0, 1], vec![1, 2], vec![2, 0]]), None);
 }
 
+/// The merge of the children `cover` of `out`, each with a potential, against Bellman–Ford on
+/// the whole: a potential of the whole exactly when it has no negative cycle. Returns whether
+/// the merge found a potential.
+fn merge_agrees(out: &[Vec<(usize, i64)>], cover: &[Vec<usize>]) -> bool {
+    let x: Vec<usize> = (0..out.len()).collect();
+    match (bellman_ford(out, &x), merged(out, cover)) {
+        (Some(_), Some(p)) => {
+            assert!(holds(out, &x, &p), "{out:?} {cover:?} {p:?}");
+            true
+        }
+        (None, None) => false,
+        (expected, got) => {
+            panic!("{out:?} {cover:?}: Bellman–Ford {expected:?}, merge {got:?}")
+        }
+    }
+}
+
 #[test]
 fn merges_of_random_overlapping_covers_agree_with_bellman_ford() {
+    // Both answers on built covers whose children share vertices, so the check could fail
+    // either way on every run. The path 0 → 1 → 2 → 3 of weights -3, 2, -4 has no cycle, so a
+    // potential, and {0, 1, 2}, {1, 2, 3} share 1 and 2. The cycle 0 → 1 → 2 → 0 weighs
+    // -2 + 1 + 0 = -1, and {0, 1}, {1, 2}, {2, 0} each hold one edge of it and no cycle, so
+    // each has a potential, and each vertex is in two of them.
+    let path = vec![vec![(1, -3)], vec![(2, 2)], vec![(3, -4)], vec![]];
+    assert!(
+        merge_agrees(&path, &[vec![0, 1, 2], vec![1, 2, 3]]),
+        "{path:?}: no potential"
+    );
+    let cycle = vec![vec![(1, -2)], vec![(2, 1)], vec![(0, 0)]];
+    let thirds = [vec![0, 1], vec![1, 2], vec![2, 0]];
+    assert!(thirds.iter().all(|y| bellman_ford(&cycle, y).is_some()));
+    assert!(!merge_agrees(&cycle, &thirds), "{cycle:?}: a potential");
     let mut below = random("merges_of_random_overlapping_covers_agree_with_bellman_ford");
-    let (mut found, mut negative, mut shared) = (0, 0, 0);
     for _ in 0..3000 {
         let n = 2 + below(7) as usize;
         let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
@@ -331,25 +361,16 @@ fn merges_of_random_overlapping_covers_agree_with_bellman_ford() {
         if cover.iter().any(|y| bellman_ford(&out, y).is_none()) {
             continue;
         }
-        if cover.iter().map(Vec::len).sum::<usize>() > n {
-            shared += 1;
-        }
-        let x: Vec<usize> = (0..n).collect();
-        match (bellman_ford(&out, &x), merged(&out, &cover)) {
-            (Some(_), Some(p)) => {
-                assert!(holds(&out, &x, &p), "{out:?} {cover:?} {p:?}");
-                found += 1;
-            }
-            (None, None) => negative += 1,
-            (expected, got) => {
-                panic!("{out:?} {cover:?}: Bellman–Ford {expected:?}, merge {got:?}")
-            }
-        }
+        merge_agrees(&out, &cover);
     }
-    assert!(
-        found > 300 && negative > 100 && shared > 300,
-        "{found} {negative} {shared}"
-    );
+}
+
+/// [`potential_alone`] on `out` against Bellman–Ford; returns whether it found a potential.
+fn search_agrees(out: &[Vec<(usize, i64)>]) -> bool {
+    let x: Vec<usize> = (0..out.len()).collect();
+    let expected = bellman_ford(out, &x);
+    assert_eq!(potential_alone(&graph(out)), expected, "{out:?}");
+    expected.is_some()
 }
 
 #[test]
@@ -357,8 +378,15 @@ fn large_weights_give_the_least_walk_weights_of_bellman_ford() {
     // Weights up to 2^40 in magnitude make `W`, and so `δ₀ = d₀ / (32·N₀)` with `d₀ >= n·W`,
     // many units wide, so that balls grow past their first shell, and long negative paths
     // make BF-Dijkstra run out of units so that Duong's recursion runs.
+    // Both answers on built graphs of weights 2^40, so the check could fail either way on
+    // every run. The path 2 → 1 → 0 of weights -2^40 has no cycle; the edge 0 → 2 of weight
+    // 2^40 added closes the cycle 0 → 2 → 1 → 0 of weight 2^40 - 2·2^40 = -2^40.
+    let big = 1i64 << 40;
+    let mut path = vec![vec![], vec![(0, -big)], vec![(1, -big)]];
+    assert!(search_agrees(&path), "{path:?}: no potential");
+    path[0].push((2, big));
+    assert!(!search_agrees(&path), "{path:?}: a potential");
     let mut below = random("large_weights_give_the_least_walk_weights_of_bellman_ford");
-    let (mut found, mut negative) = (0, 0);
     for round in 0..400 {
         let n = 2 + below(24) as usize;
         let scale = 1i64 << (10 + below(31));
@@ -374,16 +402,8 @@ fn large_weights_give_the_least_walk_weights_of_bellman_ford() {
             let w = below(4 * scale as u64) as i64 - if round % 2 == 0 { 0 } else { scale };
             out[u].push((v, w));
         }
-        let x: Vec<usize> = (0..n).collect();
-        let expected = bellman_ford(&out, &x);
-        let got = potential_alone(&graph(&out));
-        assert_eq!(got, expected, "{out:?}");
-        match got {
-            Some(_) => found += 1,
-            None => negative += 1,
-        }
+        search_agrees(&out);
     }
-    assert!(found > 50 && negative > 50, "{found} {negative}");
 }
 
 #[test]
@@ -398,7 +418,19 @@ fn weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_
         random("weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_ford");
     let n = 31;
     let (a, b) = (1i64 << 30, (1i64 << 29) - 1);
-    let (mut found, mut negative) = (0, 0);
+    // Both answers on built graphs, so the check could fail either way on every run: the
+    // path alone has no cycle; the edge 0 → 30 of weight `-B` added closes the cycle
+    // 0 → 30 → ... → 0 of weight -B - 30·A < 0, an edge at the threshold `-W/2` the test is
+    // about. The random rounds give no cycle in each even round, and a cycle only by chance.
+    let mut path: Vec<Vec<(usize, i64)>> = (0..n)
+        .map(|u| match u {
+            0 => Vec::new(),
+            _ => vec![(u - 1, -a)],
+        })
+        .collect();
+    assert!(search_agrees(&path), "the path: no potential");
+    path[0].push((n - 1, -b));
+    assert!(!search_agrees(&path), "{path:?}: a potential");
     for round in 0..40 {
         let mut out: Vec<Vec<(usize, i64)>> = (0..n)
             .map(|u| match u {
@@ -424,13 +456,6 @@ fn weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_
             };
             out[u].push((v, w));
         }
-        let x: Vec<usize> = (0..n).collect();
-        let expected = bellman_ford(&out, &x);
-        assert_eq!(potential_alone(&graph(&out)), expected, "{out:?}");
-        match expected {
-            Some(_) => found += 1,
-            None => negative += 1,
-        }
+        search_agrees(&out);
     }
-    assert!(found > 0 && negative > 0, "{found} {negative}");
 }

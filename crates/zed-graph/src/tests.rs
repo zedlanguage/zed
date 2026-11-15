@@ -38,58 +38,77 @@ fn random_graph(state: &mut u64) -> Vec<Vec<usize>> {
     edges
 }
 
+/// Nodes 0 and 1 reach each other by `0 -> 1 -> 0`, so they are one component and both lie
+/// on a cycle; node 2 has no edge, so it is a component of its own and on no cycle. The
+/// built graph of the tests below that gives each outcome they check.
+const BUILT: [&[usize]; 3] = [&[1], &[0], &[]];
+
+/// Checks the components of `edges` against mutual reach; returns the pairs of distinct
+/// nodes put in one component and those put apart.
+fn components_agree(edges: &[Vec<usize>]) -> (usize, usize) {
+    let (mut merged, mut split) = (0, 0);
+    let n = edges.len();
+    let comp = components(edges, |&w| w);
+    let reach = reaches(edges);
+    for u in 0..n {
+        for v in 0..n {
+            let same = u == v || (reach[u][v] && reach[v][u]);
+            assert_eq!(comp[u] == comp[v], same, "{edges:?}: nodes {u} and {v}");
+            if u != v {
+                if same { merged += 1 } else { split += 1 }
+            }
+        }
+        for &w in &edges[u] {
+            assert!(comp[w] <= comp[u], "{edges:?}: edge {u} -> {w}");
+        }
+    }
+    // The numbers are 0 up to the count of components, each used.
+    let count = comp.iter().max().map_or(0, |&m| m + 1);
+    let mut used = vec![false; count];
+    for &c in &comp {
+        used[c] = true;
+    }
+    assert!(used.iter().all(|&u| u), "{edges:?}: {comp:?}");
+    (merged, split)
+}
+
 #[test]
 fn components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order() {
+    // Both outcomes on the built graph, so the check could fail either way on every run.
+    let built: Vec<Vec<usize>> = BUILT.iter().map(|e| e.to_vec()).collect();
+    let (merged, split) = components_agree(&built);
+    assert!(merged > 0, "{built:?}: no pair merged");
+    assert!(split > 0, "{built:?}: no pair split");
     let mut state = crate::seed::seed(
         "components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order",
     );
-    let (mut merged, mut split) = (0, 0);
     for _ in 0..5000 {
-        let edges = random_graph(&mut state);
-        let n = edges.len();
-        let comp = components(&edges, |&w| w);
-        let reach = reaches(&edges);
-        for u in 0..n {
-            for v in 0..n {
-                let same = u == v || (reach[u][v] && reach[v][u]);
-                assert_eq!(comp[u] == comp[v], same, "{edges:?}: nodes {u} and {v}");
-                if u != v {
-                    if same { merged += 1 } else { split += 1 }
-                }
-            }
-            for &w in &edges[u] {
-                assert!(comp[w] <= comp[u], "{edges:?}: edge {u} -> {w}");
-            }
-        }
-        // The numbers are 0 up to the count of components, each used.
-        let count = comp.iter().max().map_or(0, |&m| m + 1);
-        let mut used = vec![false; count];
-        for &c in &comp {
-            used[c] = true;
-        }
-        assert!(used.iter().all(|&u| u), "{edges:?}: {comp:?}");
+        components_agree(&random_graph(&mut state));
     }
-    // Both outcomes were tested many times, so the check above could fail either way.
-    assert!(
-        merged > 1000 && split > 1000,
-        "{merged} merged, {split} split"
-    );
+}
+
+/// Checks `on_cycle` on `edges` against reach; returns the nodes on a cycle and those not.
+fn cycles_agree(edges: &[Vec<usize>]) -> (usize, usize) {
+    let (mut yes, mut no) = (0, 0);
+    let cyclic = on_cycle(edges);
+    let reach = reaches(edges);
+    for v in 0..edges.len() {
+        assert_eq!(cyclic[v], reach[v][v], "{edges:?}: node {v}");
+        if cyclic[v] { yes += 1 } else { no += 1 }
+    }
+    (yes, no)
 }
 
 #[test]
 fn a_node_is_on_a_cycle_exactly_when_it_reaches_itself() {
+    let built: Vec<Vec<usize>> = BUILT.iter().map(|e| e.to_vec()).collect();
+    let (yes, no) = cycles_agree(&built);
+    assert!(yes > 0, "{built:?}: no node on a cycle");
+    assert!(no > 0, "{built:?}: every node on a cycle");
     let mut state = crate::seed::seed("a_node_is_on_a_cycle_exactly_when_it_reaches_itself");
-    let (mut yes, mut no) = (0, 0);
     for _ in 0..5000 {
-        let edges = random_graph(&mut state);
-        let cyclic = on_cycle(&edges);
-        let reach = reaches(&edges);
-        for v in 0..edges.len() {
-            assert_eq!(cyclic[v], reach[v][v], "{edges:?}: node {v}");
-            if cyclic[v] { yes += 1 } else { no += 1 }
-        }
+        cycles_agree(&random_graph(&mut state));
     }
-    assert!(yes > 1000 && no > 1000, "{yes} on a cycle, {no} not");
 }
 
 #[test]

@@ -474,7 +474,20 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
         };
-        let (mut none, mut some) = (0, 0);
+        // Both answers on built rows, so the check could fail either way on every run: the
+        // box `-1 <= x, y <= 1` alone holds (0, 0); with `x - 2 >= 0` added, `x >= 2` lies
+        // outside it, so there is no point.
+        let square = |extra: Option<([i64; 2], i64)>| {
+            let mut rows = vec![([1, 0], 1), ([0, -1], 1)];
+            rows.extend(extra);
+            rows.extend([([-1, 0], 1), ([0, 1], 1)]);
+            rows
+        };
+        assert!(points_agree(&square(None), 1), "the box alone: no point");
+        assert!(
+            !points_agree(&square(Some(([1, 0], -2))), 1),
+            "x >= 2: a point"
+        );
         for case in 0..2000 {
             let b = 1 + case % 9;
             let mut rows: Vec<([i64; 2], i64)> = vec![([1, 0], b), ([0, -1], b)];
@@ -482,27 +495,29 @@ mod tests {
                 rows.push(([next(4), next(4)], next(12)));
             }
             rows.extend([([-1, 0], b), ([0, 1], b)]);
-            let holds = |x: i64, y: i64| rows.iter().all(|(c, k)| c[0] * x + c[1] * y + k >= 0);
-            let exists = (-b..=b).any(|x| (-b..=b).any(|y| holds(x, y)));
-            match point_of(&rows, true, true) {
-                Some((x, y)) => {
-                    // The box rows keep the point in the box.
-                    let at = (-b..=b)
-                        .flat_map(|i| (-b..=b).map(move |j| (i, j)))
-                        .find(|&(i, j)| Int::from(i) == x && Int::from(j) == y);
-                    let holds = at.is_some_and(|(i, j)| holds(i, j));
-                    assert!(exists && holds, "rows {rows:?} point {x:?} {y:?}");
-                    some += 1;
-                }
-                None => {
-                    assert!(!exists, "rows {rows:?}");
-                    none += 1;
-                }
-            }
-            let zeros = exists.then_some((Int::ZERO, Int::ZERO));
-            assert_eq!(point_of(&rows, true, false), zeros, "rows {rows:?}");
+            points_agree(&rows, b);
         }
-        assert!(none > 100 && some > 100, "{none} {some}");
+    }
+
+    /// [`point_of`] on `rows`, which hold the box `-b <= x, y <= b`, against a search of the
+    /// box; returns whether the box has a point.
+    fn points_agree(rows: &[([i64; 2], i64)], b: i64) -> bool {
+        let holds = |x: i64, y: i64| rows.iter().all(|(c, k)| c[0] * x + c[1] * y + k >= 0);
+        let exists = (-b..=b).any(|x| (-b..=b).any(|y| holds(x, y)));
+        match point_of(rows, true, true) {
+            Some((x, y)) => {
+                // The box rows keep the point in the box.
+                let at = (-b..=b)
+                    .flat_map(|i| (-b..=b).map(move |j| (i, j)))
+                    .find(|&(i, j)| Int::from(i) == x && Int::from(j) == y);
+                let holds = at.is_some_and(|(i, j)| holds(i, j));
+                assert!(exists && holds, "rows {rows:?} point {x:?} {y:?}");
+            }
+            None => assert!(!exists, "rows {rows:?}"),
+        }
+        let zeros = exists.then_some((Int::ZERO, Int::ZERO));
+        assert_eq!(point_of(rows, true, false), zeros, "rows {rows:?}");
+        exists
     }
 
     #[test]

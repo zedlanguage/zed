@@ -882,9 +882,37 @@ mod tests {
         // otherwise give a potential that holds on every edge. The counts
         // show that labels pass both ways and lower the receiving search's label, on graphs with
         // and without a negative cycle.
+        // Labels pass both ways on two built graphs, one with a negative cycle and one with
+        // none, so each kind is checked on every run. Both were found by a search over seeded
+        // random graphs; that labels pass each way is not derived by hand but checked by the
+        // asserts here, on fixed graphs. The first has the cycle 0 → 4 → 0 of weight -4 + 1
+        // = -3. The second has no negative cycle: its cycles are 0 → 0 (1), 3 → 2 → 1 → 3
+        // (3), 0 → 3 → 2 → 1 → 0 (3), 0 → 3 → 5 → 4 → 0 (9), 0 → 3 → 5 → 4 → 2 → 1 → 0
+        // (0) and 3 → 5 → 4 → 2 → 1 → 3 (0).
+        let graph = |edges: &[&[(usize, i64)]]| -> Vec<Vec<(usize, Int)>> {
+            (edges.iter())
+                .map(|e| e.iter().map(|&(v, w)| (v, Int::from(w))).collect())
+                .collect()
+        };
+        let negative = graph(&[&[(3, 3), (4, -4)], &[], &[], &[], &[(0, 1)]]);
+        let feasible = graph(&[
+            &[(3, -2), (0, 1)],
+            &[(0, 3), (3, 1)],
+            &[(1, 0)],
+            &[(5, 9), (2, 2)],
+            &[(0, 7), (2, -5)],
+            &[(4, -5)],
+        ]);
+        for (out, has_potential) in [(negative, false), (feasible, true)] {
+            let (to_gor, to_rounds, ok) = shared_agrees(&out, "a built graph");
+            assert_eq!(ok, has_potential, "{out:?}");
+            assert!(
+                to_gor > 0,
+                "{out:?}: no label passed to Goldberg and Radzik's search"
+            );
+            assert!(to_rounds > 0, "{out:?}: no label passed to BF-Dijkstra");
+        }
         let mut state = crate::seed::seed("shared_labels_keep_the_answers_of_bellman_ford");
-        let (mut to_gor, mut to_rounds) = (0usize, 0usize);
-        let (mut negative_shared, mut feasible_shared, mut negative) = (0, 0, 0);
         for graph in 0..3000 {
             let n = 1 + (next(&mut state) % if graph % 4 == 0 { 40 } else { 12 }) as usize;
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
@@ -901,69 +929,65 @@ mod tests {
                 );
                 out[u].push((v, Int::from((next(&mut state) % 19) as i64 - 6)));
             }
-            let reference = bellman_ford(&out);
-            // `Shared` alone, counting the labels that pass and lower the receiver's label.
-            let mut both = Shared::new(&out);
-            let mut passed = 0;
-            let shared = loop {
-                // Goldberg and Radzik's search changes no label in the step that starts a pass,
-                // and BF-Dijkstra none in the step that ends a round, so a label lower after
-                // such a step came from the other search.
-                let gor_before = matches!(both.gor.at, At::Pass).then(|| both.gor.d.clone());
-                let rounds_before = both
-                    .rounds
-                    .ends_round()
-                    .then(|| both.rounds.labels().to_vec());
-                let found = both.step();
-                if let Some(before) = gor_before {
-                    let lowers = (0..n).filter(|&v| both.gor.d[v] < before[v]).count();
-                    passed += lowers;
-                    to_gor += lowers;
-                }
-                if let (Some(before), None) = (rounds_before, &found) {
-                    let labels = both.rounds.labels();
-                    let lowers = (0..n).filter(|&v| labels[v] < before[v]).count();
-                    passed += lowers;
-                    to_rounds += lowers;
-                }
-                if let Some(found) = found {
-                    break found;
-                }
-            };
-            // `Shared` on the reverse, whose potential negated is one of the graph.
-            let back_edges = reversed(&out);
-            let mut backward = Shared::new(&back_edges);
-            let reverse = loop {
-                if let Some(found) = backward.step() {
-                    break found.as_deref().map(negated);
-                }
-            };
-            for (name, found) in [
-                ("Shared", shared),
-                ("Shared on the reverse", reverse),
-                ("race", race(&out)),
-                ("potential", potential(&out)),
-            ] {
-                assert_eq!(
-                    found.is_some(),
-                    reference.is_some(),
-                    "{name} on graph {graph}: {out:?}"
-                );
-                if let Some(p) = found {
-                    assert!(holds(&out, &p), "{name} on graph {graph}: {out:?}");
-                }
-            }
-            match (reference.is_some(), passed > 0) {
-                (false, true) => negative_shared += 1,
-                (true, true) => feasible_shared += 1,
-                _ => {}
-            }
-            negative += usize::from(reference.is_none());
+            shared_agrees(&out, &format!("graph {graph}"));
         }
-        assert!(
-            to_gor > 0 && to_rounds > 0 && negative_shared > 0 && feasible_shared > 0,
-            "{to_gor} {to_rounds} {negative_shared} {feasible_shared} of {negative} negative"
-        );
+    }
+
+    /// `Shared`, `Shared` on the reverse, `race` and `potential` on `out` against Bellman–Ford,
+    /// as [`shared_labels_keep_the_answers_of_bellman_ford`] checks them. Returns the labels
+    /// `Shared` passed to Goldberg and Radzik's search and to BF-Dijkstra that lowered the
+    /// receiver's label, and whether `out` has a potential.
+    fn shared_agrees(out: &[Vec<(usize, Int)>], what: &str) -> (usize, usize, bool) {
+        let n = out.len();
+        let (mut to_gor, mut to_rounds) = (0, 0);
+        let reference = bellman_ford(out);
+        // `Shared` alone, counting the labels that pass and lower the receiver's label.
+        let mut both = Shared::new(out);
+        let shared = loop {
+            // Goldberg and Radzik's search changes no label in the step that starts a pass,
+            // and BF-Dijkstra none in the step that ends a round, so a label lower after
+            // such a step came from the other search.
+            let gor_before = matches!(both.gor.at, At::Pass).then(|| both.gor.d.clone());
+            let rounds_before = both
+                .rounds
+                .ends_round()
+                .then(|| both.rounds.labels().to_vec());
+            let found = both.step();
+            if let Some(before) = gor_before {
+                to_gor += (0..n).filter(|&v| both.gor.d[v] < before[v]).count();
+            }
+            if let (Some(before), None) = (rounds_before, &found) {
+                let labels = both.rounds.labels();
+                to_rounds += (0..n).filter(|&v| labels[v] < before[v]).count();
+            }
+            if let Some(found) = found {
+                break found;
+            }
+        };
+        // `Shared` on the reverse, whose potential negated is one of the graph.
+        let back_edges = reversed(out);
+        let mut backward = Shared::new(&back_edges);
+        let reverse = loop {
+            if let Some(found) = backward.step() {
+                break found.as_deref().map(negated);
+            }
+        };
+        for (name, found) in [
+            ("Shared", shared),
+            ("Shared on the reverse", reverse),
+            ("race", race(out)),
+            ("potential", potential(out)),
+        ] {
+            assert_eq!(
+                found.is_some(),
+                reference.is_some(),
+                "{name} on {what}: {out:?}"
+            );
+            if let Some(p) = found {
+                assert!(holds(out, &p), "{name} on {what}: {out:?}");
+            }
+        }
+        (to_gor, to_rounds, reference.is_some())
     }
 
     /// 10,000 graphs of [`small_graphs_agree`] from a new seed each run. The 300,000 of the
@@ -981,9 +1005,18 @@ mod tests {
     /// audit 2026-11-08): `graphs` random directed graphs of 1 to 12 nodes, self loops allowed,
     /// 0 to 3n edges of weights -8 to 12, from `state`. Each search alone, the race of them and
     /// `potential` must find a negative cycle exactly when Bellman–Ford–Moore does, and
-    /// otherwise give a potential that holds on every edge. The counts show both answers.
+    /// otherwise give a potential that holds on every edge. Both answers are checked on built
+    /// graphs first, so the check could fail either way on every run.
     pub(super) fn small_graphs_agree(mut state: u64, graphs: usize) {
-        let (mut negative, mut feasible) = (0, 0);
+        // The loop 0 → 0 of weight -1 is a negative cycle; the edge 0 → 1 of weight -8 closes
+        // none, so labels 0 and -8 are a potential.
+        let loop_ = vec![vec![(0, Int::from(-1))]];
+        assert!(
+            !small_graph_agrees(&loop_, "the negative loop"),
+            "a potential"
+        );
+        let edge = vec![vec![(1, Int::from(-8))], vec![]];
+        assert!(small_graph_agrees(&edge, "one edge"), "no potential");
         for graph in 0..graphs {
             let n = 1 + (next(&mut state) % 12) as usize;
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
@@ -994,29 +1027,31 @@ mod tests {
                 );
                 out[u].push((v, Int::from((next(&mut state) % 21) as i64 - 8)));
             }
-            let reference = bellman_ford_moore(&out);
-            for (name, found) in [
-                ("potential", potential(&out)),
-                ("Goldberg and Radzik", goldberg_radzik(&out)),
-                ("BF-Dijkstra", bf_dijkstra(&out)),
-                ("Duong", negsssp::potential_alone(&out)),
-                ("race", race(&out)),
-            ] {
-                assert_eq!(
-                    found.is_some(),
-                    reference.is_some(),
-                    "{name} on graph {graph}: {out:?}"
-                );
-                if let Some(p) = found {
-                    assert!(holds(&out, &p), "{name} on graph {graph}: {out:?}");
-                }
-            }
-            match reference {
-                None => negative += 1,
-                Some(_) => feasible += 1,
+            small_graph_agrees(&out, &format!("graph {graph}"));
+        }
+    }
+
+    /// Each search on `out` against Bellman–Ford–Moore, as [`small_graphs_agree`] checks it;
+    /// returns whether `out` has a potential.
+    fn small_graph_agrees(out: &[Vec<(usize, Int)>], what: &str) -> bool {
+        let reference = bellman_ford_moore(out);
+        for (name, found) in [
+            ("potential", potential(out)),
+            ("Goldberg and Radzik", goldberg_radzik(out)),
+            ("BF-Dijkstra", bf_dijkstra(out)),
+            ("Duong", negsssp::potential_alone(out)),
+            ("race", race(out)),
+        ] {
+            assert_eq!(
+                found.is_some(),
+                reference.is_some(),
+                "{name} on {what}: {out:?}"
+            );
+            if let Some(p) = found {
+                assert!(holds(out, &p), "{name} on {what}: {out:?}");
             }
         }
-        assert!(negative > 0 && feasible > 0, "{negative} {feasible}");
+        reference.is_some()
     }
 
     #[test]
@@ -1134,7 +1169,18 @@ mod tests {
         let mut state = crate::seed::seed("the_rows_get_the_answers_of_a_search_of_the_box");
         let mut below = |m: u64| next(&mut state) % m;
         let sign = |s: u64| Int::from(if s == 0 { 1 } else { -1 });
-        let (mut empty, mut point) = (0, 0);
+        // Both answers on built rows, so the check could fail either way on every run: in the
+        // box -1..=1 of one variable, `x >= 0` holds at 0 and 1, and `x - 2 >= 0` at no point,
+        // since it needs x >= 2.
+        let interval = |k: i64| {
+            vec![
+                (vec![(0, Int::ONE)], Int::ONE),
+                (vec![(0, Int::from(-1))], Int::ONE),
+                (vec![(0, Int::ONE)], Int::from(k)),
+            ]
+        };
+        assert!(rows_agree(1, 1, &interval(0)), "x >= 0: no point");
+        assert!(!rows_agree(1, 1, &interval(-2)), "x >= 2: a point");
         for case in 0..2000 {
             let n = 1 + case % 3;
             let b = 1 + (case / 3) % 3;
@@ -1152,35 +1198,36 @@ mod tests {
                 }
                 rows.push((a, Int::from(below(9) as i64 - 4)));
             }
-            let side: Vec<i64> = (-(b as i64)..=b as i64).collect();
-            let mut exists = false;
-            for code in 0..side.len().pow(n as u32) {
-                let x: Vec<Int> = (0..n)
-                    .map(|j| Int::from(side[code / side.len().pow(j as u32) % side.len()]))
-                    .collect();
-                if satisfies(&rows, &x) {
-                    exists = true;
-                    break;
-                }
-            }
-            if exists {
-                point += 1;
-            } else {
-                empty += 1;
-            }
-            let r = refs(&rows);
-            for search in SEARCHES {
-                assert_eq!(
-                    integer_empty_by(n, &r, search),
-                    !exists,
-                    "{search:?} {rows:?}"
-                );
-                match integer_point_by(n, &r, search) {
-                    Some(x) => assert!(exists && satisfies(&rows, &x), "{search:?} {rows:?}"),
-                    None => assert!(!exists, "{search:?} {rows:?}"),
-                }
+            rows_agree(n, b, &rows);
+        }
+    }
+
+    /// Every search on `rows` over `n` variables, which hold the box `-b..=b`, against a
+    /// search of the box; returns whether the box has a point.
+    fn rows_agree(n: usize, b: usize, rows: &[(Vec<(usize, Int)>, Int)]) -> bool {
+        let side: Vec<i64> = (-(b as i64)..=b as i64).collect();
+        let mut exists = false;
+        for code in 0..side.len().pow(n as u32) {
+            let x: Vec<Int> = (0..n)
+                .map(|j| Int::from(side[code / side.len().pow(j as u32) % side.len()]))
+                .collect();
+            if satisfies(rows, &x) {
+                exists = true;
+                break;
             }
         }
-        assert!(empty > 100 && point > 100, "{empty} {point}");
+        let r = refs(rows);
+        for search in SEARCHES {
+            assert_eq!(
+                integer_empty_by(n, &r, search),
+                !exists,
+                "{search:?} {rows:?}"
+            );
+            match integer_point_by(n, &r, search) {
+                Some(x) => assert!(exists && satisfies(rows, &x), "{search:?} {rows:?}"),
+                None => assert!(!exists, "{search:?} {rows:?}"),
+            }
+        }
+        exists
     }
 }

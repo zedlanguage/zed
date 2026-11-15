@@ -1633,7 +1633,16 @@ mod tests {
             state ^= state << 17;
             (state % k as u64) as usize
         };
-        let (mut negative, mut feasible) = (0, 0);
+        // Both answers on built graphs, so the check could fail either way on every run.
+        // `0 -> 1 -> 0` of weights -1 and -1 is a cycle of weight -2, so negative; the edge
+        // `0 -> 1` of weight -1 alone closes no cycle, so feasible, with labels 0 and -1.
+        let negative = vec![vec![(1, -1)], vec![(0, -1)]];
+        assert_eq!(bellman_ford(&negative), None, "graph {negative:?}");
+        assert_eq!(search(&negative, 2), None, "graph {negative:?}");
+        let feasible = vec![vec![(1, -1)], vec![]];
+        let labels = Some(vec![Int::from(0), Int::from(-1)]);
+        assert_eq!(bellman_ford(&feasible), labels, "graph {feasible:?}");
+        assert_eq!(search(&feasible, 2), labels, "graph {feasible:?}");
         for _ in 0..20_000 {
             let n = 1 + below(10);
             let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
@@ -1641,14 +1650,8 @@ mod tests {
                 let (u, v) = (below(n), below(n));
                 out[u].push((v, below(16) as i64 - 6));
             }
-            let expected = bellman_ford(&out);
-            match &expected {
-                Some(_) => feasible += 1,
-                None => negative += 1,
-            }
-            assert_eq!(search(&out, n as u64), expected, "graph {out:?}");
+            assert_eq!(search(&out, n as u64), bellman_ford(&out), "graph {out:?}");
         }
-        assert!(negative > 1000 && feasible > 1000, "{negative} {feasible}");
     }
 
     /// The graph of no nodes: no labels and no cycle, from [`bf_dijkstra`] and from Duong's

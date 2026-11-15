@@ -14362,6 +14362,20 @@ mod tests {
         );
         g.and_ifs = true;
         g.or_ifs = true;
+        // A built `if` whose formula the new reading changes, whatever the draws:
+        // `if x >= 1 { true } else { y <= 3 }` is now read as `x >= 1 || y <= 3`, and as any
+        // other `if` it was `x >= 1 || (!(x >= 1) && y <= 3)`, a formula with one more part.
+        let c = |p: Prim, s: &str, i: i64| {
+            Term::Prim(p, vec![Term::Var(s.into()), Term::Lit(Value::Int(i))])
+        };
+        let built = Term::If(
+            Shared::new(c(Prim::Ge, "x", 1)),
+            Shared::new(Term::Lit(Value::Bool(true))),
+            Shared::new(c(Prim::Le, "y", 3)),
+        );
+        let (c, _, how) = holds_where_it_held_as_ifs(&built, true);
+        assert!(c, "built: the formula of {built:?} did not change");
+        assert!(!how.contains(&"no longer exact"), "{built:?}");
         let (mut changed, mut decided, mut refused) = (0, 0, 0);
         let mut differ = std::collections::BTreeMap::<&str, usize>::new();
         for round in 0..OR_IF_ROUNDS {
@@ -14376,11 +14390,11 @@ mod tests {
             }
         }
         eprintln!("changed {changed}, decided {decided}, refused {refused}, preimages {differ:?}");
-        // Formulas that changed (one in ten at least, as when 4,000 rounds of one seed ran in
-        // sixteen parts), and the solver decides nearly every comparison. Over those 4,000
-        // rounds, about 1,000 pairs of preimages, the new shape gave 3 tighter domains and 1
-        // looser, 2 fewer refusals and 1 more, and 1 preimage exact that was not.
-        assert!(changed * 10 > OR_IF_ROUNDS, "changed {changed}");
+        // The solver decides nearly every comparison. Over 4,000 rounds of one seed, about
+        // 1,000 pairs of preimages, the new shape gave 3 tighter domains and 1 looser, 2 fewer
+        // refusals and 1 more, and 1 preimage exact that was not. The bound below counts
+        // refusals of the solver over the draws; no check of one case gives its cause, so it
+        // stays a bound (PROOF-test-count-thresholds).
         assert!(
             refused * 50 < decided,
             "decided {decided}, refused {refused}"
@@ -14907,24 +14921,44 @@ mod tests {
                 Term::Prim(op, vec![l, v])
             };
             let demand = Demand::Bool(rng.below(2) == 0);
-            let Some(fast) = order_with_literal(&term, &inputs, &demand) else {
-                assert!(
-                    inputs[&x].is_empty(),
-                    "{term} over {inputs:?} is read at once"
-                );
-                continue;
-            };
-            let mut tx = Tx::new();
-            let root = tx.terms.add(&term);
-            let general = preimage_in(&mut tx, root, &term, &inputs, NONE_LISTED, &demand);
-            assert_eq!(fast, general, "{term} over {inputs:?}, {demand:?}");
-            read += 1;
-            empty += usize::from(fast.domains[&x].is_empty());
+            if let Some(e) = order_literal_agrees(&term, &inputs, &demand) {
+                read += 1;
+                empty += usize::from(e);
+            }
         }
-        assert!(
-            read > 3000 && empty > 300,
-            "{read} read at once, {empty} empty"
-        );
+        println!("{read} read at once, {empty} empty");
+    }
+
+    #[test]
+    fn an_order_with_a_literal_has_each_outcome_on_built_cases() {
+        // Both outcomes of [`order_literal_agrees`], whatever the draws of the test above:
+        // over `x` in `0..=5`, `x < 10` holds at every point, so its preimage at `true` is
+        // `0..=5` and at `false` is empty.
+        let x: Arc<str> = "x".into();
+        let inputs = Domains::from([(x.clone(), IntervalSet::of(0, 5))]);
+        let term = Term::Prim(Prim::Lt, vec![Term::Var(x), Term::Lit(Value::Int(10))]);
+        let got = order_literal_agrees(&term, &inputs, &Demand::Bool(true));
+        assert_eq!(got, Some(false), "built: {term} at true");
+        let got = order_literal_agrees(&term, &inputs, &Demand::Bool(false));
+        assert_eq!(got, Some(true), "built: {term} at false");
+    }
+
+    /// The preimage of `term`, an order of the one input `x` with a literal, read at once is
+    /// that of the general path: whether it is empty, or `None` where it is not read at once,
+    /// which is only over an empty domain.
+    fn order_literal_agrees(term: &Term, inputs: &Domains, demand: &Demand) -> Option<bool> {
+        let Some(fast) = order_with_literal(term, inputs, demand) else {
+            assert!(
+                inputs["x"].is_empty(),
+                "{term} over {inputs:?} is read at once"
+            );
+            return None;
+        };
+        let mut tx = Tx::new();
+        let root = tx.terms.add(term);
+        let general = preimage_in(&mut tx, root, term, inputs, NONE_LISTED, demand);
+        assert_eq!(fast, general, "{term} over {inputs:?}, {demand:?}");
+        Some(fast.domains["x"].is_empty())
     }
 
     /// The summary of an `if` of two integer literals guarded by an order of an input against
@@ -14979,28 +15013,68 @@ mod tests {
             let arm = |rng: &mut Rng| Term::Lit(Value::Int(rng.below(7) as i64 - 3));
             let (a, b) = (arm(&mut rng), arm(&mut rng));
             let term = Term::If(Shared::new(guard), Shared::new(a), Shared::new(b));
-            let fast = order_if(&term, &inputs).expect("the form read at once");
-            let mut tx = Tx::new();
-            let root = tx.terms.add(&term);
-            let marks = tx.landmarks(&inputs, &Demand::Bool(true));
-            tx.start(&inputs, marks);
-            let general = tx.pa(root, ROOT);
-            assert!(
-                fast == general,
-                "{term} over {inputs:?}: {:?} read at once, {:?} by the transfer",
-                fast.as_ref().map(pa_pieces),
-                general.as_ref().map(pa_pieces),
-            );
-            match &fast {
+            match order_if_agrees(&term, &inputs) {
                 Some(Pa::Piecewise { .. }) => both += 1,
                 Some(_) => one += 1,
                 None => none += 1,
             }
         }
-        assert!(
-            both > 1000 && one > 500 && none > 100,
-            "{both} sliced, {one} constant, {none} with no summary"
+        println!("{both} sliced, {one} constant, {none} with no summary");
+    }
+
+    #[test]
+    fn an_if_of_literals_on_an_order_has_each_summary_on_built_cases() {
+        // Each kind of summary of [`order_if_agrees`], whatever the draws of the test above,
+        // for `if x < 5 { 1 } else { 2 }`. Over `x` in `0..=10` both arms are taken, so the
+        // summary is sliced at 5. Over `0..=3` only the first is, so it is the constant 1.
+        // Over `0..=i128::MAX` both are taken, and the end `i128::MAX` is one [`in_range`]
+        // refuses, so there is no summary.
+        let x: Arc<str> = "x".into();
+        let term = Term::If(
+            Shared::new(Term::Prim(
+                Prim::Lt,
+                vec![Term::Var(x.clone()), Term::Lit(Value::Int(5))],
+            )),
+            Shared::new(Term::Lit(Value::Int(1))),
+            Shared::new(Term::Lit(Value::Int(2))),
         );
+        let over = |hi: End| Domains::from([(x.clone(), IntervalSet::range(End::of(0), hi))]);
+        let got = order_if_agrees(&term, &over(End::of(10)));
+        assert!(
+            matches!(got, Some(Pa::Piecewise { .. })),
+            "built: sliced, {:?}",
+            got.as_ref().map(pa_pieces)
+        );
+        let got = order_if_agrees(&term, &over(End::of(3)));
+        assert!(
+            matches!(got, Some(Pa::Const(_))),
+            "built: constant, {:?}",
+            got.as_ref().map(pa_pieces)
+        );
+        let got = order_if_agrees(&term, &over(Fin(Num::from(i128::MAX))));
+        assert!(
+            got.is_none(),
+            "built: no summary, {:?}",
+            got.as_ref().map(pa_pieces)
+        );
+    }
+
+    /// The summary of `term`, an `if` of two integer literals guarded by an order of an
+    /// input with a literal, read at once is the transfer's: given.
+    fn order_if_agrees(term: &Term, inputs: &Domains) -> Option<Pa> {
+        let fast = order_if(term, inputs).expect("the form read at once");
+        let mut tx = Tx::new();
+        let root = tx.terms.add(term);
+        let marks = tx.landmarks(inputs, &Demand::Bool(true));
+        tx.start(inputs, marks);
+        let general = tx.pa(root, ROOT);
+        assert!(
+            fast == general,
+            "{term} over {inputs:?}: {:?} read at once, {:?} by the transfer",
+            fast.as_ref().map(pa_pieces),
+            general.as_ref().map(pa_pieces),
+        );
+        fast
     }
 
     /// [`unite`] gives the classes of the union that looks for a shared function at each join,
@@ -15038,7 +15112,21 @@ mod tests {
             }
             refused += joins.iter().filter(|&&(a, b)| root[a] != root[b]).count();
         }
-        assert!(refused > 1000, "{refused} joins refused");
+        println!("{refused} joins refused");
+    }
+
+    #[test]
+    fn a_join_of_two_parameters_of_one_function_is_refused() {
+        // A refused join on a built case, whatever the draws of the test above: one function
+        // of the parameters 0 and 1, joined to each other, would put two parameters of one
+        // function in a class, so [`unite`] refuses it, as looking for a shared function does.
+        let (first, joins) = (vec![0, 2], vec![(0, 1)]);
+        let (root, joined) = unite(&first, &joins);
+        assert_eq!((root.clone(), joined), unite_by_looking(&first, &joins));
+        assert_ne!(
+            root[0], root[1],
+            "built: the join {joins:?} was not refused"
+        );
     }
 
     /// The input of [`unite`] that [`two_large_classes`] builds, and each pair's `(ra, rb)`.
@@ -15344,52 +15432,68 @@ mod tests {
         let mut rng = Rng(crate::seed::seed(
             "abs_and_two_term_min_and_max_have_the_value_at_every_point",
         ));
-        let x: Arc<str> = "x".into();
+        // Summaries with pieces on built terms, whatever the draws: over `x` in `-5..=5`,
+        // `abs(x)` is `-x` below 0 and `x` from 0, `min(x, 0)` is `x` below 0 and 0 from 0, and
+        // `max(x, 0)` is 0 below 0 and `x` from 0, two pieces each, so the check reads the
+        // choices of each.
+        let (v, zero) = (Term::Var("x".into()), Term::Lit(Value::Int(0)));
+        for (p, args) in [
+            (Prim::Abs, vec![v.clone()]),
+            (Prim::Min, vec![v.clone(), zero.clone()]),
+            (Prim::Max, vec![v.clone(), zero.clone()]),
+        ] {
+            let t = Term::Prim(p, args);
+            let pieces = summary_at_every_point(&t, -5, 5, "built");
+            assert!(pieces >= 2, "built: {t} has {pieces} pieces");
+        }
         let mut pieces = 0;
         for round in 0..1500 {
             let t = term(&mut rng, 4);
             let lo = rng.below(41) as i64 - 30;
             let hi = lo + rng.below(30) as i64;
-            let inputs = Domains::from([(x.clone(), IntervalSet::of(lo, hi))]);
-            let mut tx = Tx::new();
-            let root = tx.terms.add(&t);
-            let marks = tx.landmarks(&inputs, &Demand::Bool(true));
-            tx.start(&inputs, marks);
-            let Some(pa) = tx.pa(root, ROOT) else {
-                panic!("round {round}: {t} over {lo}..={hi} has no summary");
+            pieces += summary_at_every_point(&t, lo, hi, &format!("round {round}"));
+        }
+        println!("{pieces} pieces");
+    }
+
+    /// The summary of `t` over `x` in `lo..=hi` has the value of `t` at every point, and the
+    /// bounds its root keeps hold each value: the number of its pieces, 0 for one line.
+    fn summary_at_every_point(t: &Term, lo: i64, hi: i64, what: &str) -> usize {
+        let x: Arc<str> = "x".into();
+        let inputs = Domains::from([(x.clone(), IntervalSet::of(lo, hi))]);
+        let mut tx = Tx::new();
+        let root = tx.terms.add(t);
+        let marks = tx.landmarks(&inputs, &Demand::Bool(true));
+        tx.start(&inputs, marks);
+        let Some(pa) = tx.pa(root, ROOT) else {
+            panic!("{what}: {t} over {lo}..={hi} has no summary");
+        };
+        for v in lo..=hi {
+            let at = match &pa {
+                Pa::Piecewise { root, .. } => point(root, v),
+                Pa::Linear { a, b, .. } => (&(a * &Int::from(v)) + b).to_i128(),
+                Pa::Const(c) => c.to_i128(),
             };
-            if let Pa::Piecewise { root, .. } = &pa {
-                pieces += treap_pieces(root).len();
-            }
-            for v in lo..=hi {
-                let at = match &pa {
-                    Pa::Piecewise { root, .. } => point(root, v),
-                    Pa::Linear { a, b, .. } => (&(a * &Int::from(v)) + b).to_i128(),
-                    Pa::Const(c) => c.to_i128(),
-                };
-                let run = Term::Let(
-                    x.clone(),
-                    Shared::new(Term::Lit(Value::Int(v))),
-                    Shared::new(t.clone()),
-                );
-                let want = match eval(&run) {
-                    Ok(Value::Int(n)) => Some(i128::from(n)),
-                    other => panic!("round {round}: {t} at x = {v}: {other:?}"),
-                };
-                assert_eq!(at, want, "round {round}: {t} at x = {v}");
-                // The bounds the root keeps hold the value.
-                if let (Pa::Piecewise { root: Some(r), .. }, Some(w)) = (&pa, want) {
-                    let w = Val::Fin(Int::from(w));
-                    assert!(
-                        r.vals.0 <= w && w <= r.vals.1,
-                        "round {round}: {t}: {:?}",
-                        r.vals
-                    );
-                }
+            let run = Term::Let(
+                x.clone(),
+                Shared::new(Term::Lit(Value::Int(v))),
+                Shared::new(t.clone()),
+            );
+            let want = match eval(&run) {
+                Ok(Value::Int(n)) => Some(i128::from(n)),
+                other => panic!("{what}: {t} at x = {v}: {other:?}"),
+            };
+            assert_eq!(at, want, "{what}: {t} at x = {v}");
+            // The bounds the root keeps hold the value.
+            if let (Pa::Piecewise { root: Some(r), .. }, Some(w)) = (&pa, want) {
+                let w = Val::Fin(Int::from(w));
+                assert!(r.vals.0 <= w && w <= r.vals.1, "{what}: {t}: {:?}", r.vals);
             }
         }
-        // Many of the summaries have pieces: the check reads the choices.
-        assert!(pieces > 1000, "{pieces} pieces");
+        match &pa {
+            Pa::Piecewise { root, .. } => treap_pieces(root).len(),
+            _ => 0,
+        }
     }
 
     /// `abs` of a line and `min` and `max` of two lines keep exact bounds at the root
