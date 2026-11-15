@@ -662,11 +662,12 @@ fn value_equation(f: &Formula, output: &Atom) -> Option<Lin> {
 /// points of its cases alone, so it is the same choice. Without this, a chain of `max`
 /// definitions got no image, and every question of it was decided with the summaries
 /// (FAIL-monotone-clamp-bench-slow: 1,704 summaries made, 17 s, against 324 with the images).
-// Complexity tradeoff: each extra row is substituted in each arm and compared with the arm's
-// guard, O(r t) for r rows of t terms, against O(1) for the bare form. A row whose implication
-// needs more than a comparison with the guard (a multiple of it, or one implied by the guard
-// and the equation together in another form) is not recognized, and the definition is read
-// by the summaries as before, exact but slower.
+// Complexity tradeoff (COMPLEXITY.md FAIL-monotone-clamp-bench-slow): each extra row is
+// substituted in each arm and compared with the arm's guard, O(r t) for r rows of t terms,
+// against O(1) for the bare form. A row whose implication needs more than a comparison with
+// the guard (a multiple of it, or one implied by the guard and the equation together in
+// another form) is not recognized, and the definition is read by the summaries as before,
+// exact but slower.
 fn choice(f: &Formula, output: &Atom) -> Option<(Formula, Lin, Lin)> {
     // The disjunction of the cases, and the rows beside it.
     let (cases, beside): (&Formula, Vec<&Con>) = match f {
