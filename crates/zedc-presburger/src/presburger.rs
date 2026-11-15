@@ -17884,6 +17884,23 @@ impl Level {
         // `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`.
         // COMPLEXITY.md row F154.
         let mut differences: HashMap<usize, Option<HashMap<Atom, IntervalSet>>> = HashMap::new();
+        // Complexity tradeoff: the naive way, [`hull_from`] for each symbol over its whole group,
+        // asks O(log d) questions of all n rows of the group for each of its k symbols, O(k n)
+        // rows read per level, and a level opens at each disjunct, so on a chain of n linked
+        // groups each with a disjunction it was Θ(n³) (FAIL-batch-linked-copies-growth: 0.21,
+        // 1.49, 16.1 s at 1, 2, 4 linked copies). Here the group's linked rows are projected onto
+        // each symbol together ([`projected_hulls`], one [`by_halves`]), O(n log n) where the
+        // projections stay small, and a symbol is asked only of its projection; where a leaf
+        // keeps a core of many atoms (a dense group) the questions read that core, at worst the
+        // whole group as before. A symbol the projection refuses is asked again of the whole group
+        // (at worst the naive cost plus the projection), so no answer is given up; where the whole
+        // group was refused, the projection may answer, narrower and sound
+        // (FAIL-batch-single-hull-seed: batch hulls depended on which symbols were asked). Tests
+        // `by_halves_against_old::batch_and_single_hulls_are_exact_on_a_chain_of_sums` and the
+        // benchmark `by_halves_against_old::bench::hulls_of_linked_copies_are_projected_in_linear_work`,
+        // COMPLEXITY.md row FAIL-batch-single-hull-seed.
+        let mut projected: HashMap<usize, HashMap<Atom, Result<IntervalSet, Refusal>>> =
+            HashMap::new();
         let mut out: Vec<Result<IntervalSet, Refusal>> = Vec::with_capacity(g.syms.len());
         for s in &g.syms {
             let r = g.group(s).expect("a symbol's group");
@@ -17914,7 +17931,23 @@ impl Level {
             };
             out.push(match found {
                 Some(h) => Ok(h),
-                None => hull_from(g.base_of(r), s, &model),
+                None => match g.linked.held.get(r) {
+                    Some(held) if !held.is_empty() => {
+                        let hulls = projected.entry(r).or_insert_with(|| {
+                            let rows = held.iter().map(|i| g.linked.cons[*i].clone()).collect();
+                            let ks: Vec<&Atom> =
+                                g.syms_of[&r].iter().map(|&k| &g.syms[k]).collect();
+                            projected_hulls(rows, &ks, &model)
+                        });
+                        match hulls.remove(s) {
+                            Some(Ok(h)) => Ok(h),
+                            // A refusal on the projection, whose rows are written apart
+                            // from the group's, is asked again of the whole group.
+                            _ => hull_from(g.base_of(r), s, &model),
+                        }
+                    }
+                    _ => hull_from(g.base_of(r), s, &model),
+                },
             });
         }
         // Complexity tradeoff: the naive way, still taken below for every disjunction not
@@ -19451,6 +19484,33 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
         model.insert(x, v);
     }
     Some(model)
+}
+
+/// The hulls of the symbols `syms` over the conjunction `rows`, which holds at the point `m`:
+/// each by [`hull_from`] over the projection of `rows` onto the symbol ([`by_halves`]), all
+/// projections made together. [`shadow`] eliminates exactly over the integers, so the
+/// projection has the integer points of `rows` read on the atoms it keeps, and the symbol's
+/// hull over it is its hull over `rows`; where every other atom is gone, the rows over the
+/// symbol alone give the hull with no question. A symbol whose projection shows no point (none
+/// does, as `rows` has one) is left out, for the caller to ask.
+fn projected_hulls(
+    rows: Vec<Con>,
+    syms: &[&Atom],
+    m: &Model,
+) -> HashMap<Atom, Result<IntervalSet, Refusal>> {
+    let keep: Vec<BTreeSet<Atom>> = (syms.iter())
+        .map(|s| BTreeSet::from([(*s).clone()]))
+        .collect();
+    let mut out = HashMap::new();
+    let ran: Result<(), ()> = by_halves(rows, &keep, |i, k| {
+        if let Some(k) = k {
+            let f = Formula::and(k.into_iter().map(Formula::Con).collect());
+            out.insert(syms[i].clone(), hull_from(&f, syms[i], m));
+        }
+        Ok(Vec::new())
+    });
+    ran.expect("no leaf fails");
+    out
 }
 
 /// The least and greatest values of a symbol over a formula, given a point `m` of it: the two
@@ -25491,6 +25551,7 @@ mod difference_rows {
 #[cfg(test)]
 mod by_halves_against_old {
     use super::*;
+    mod bench;
 
     /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
     /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
@@ -25695,6 +25756,51 @@ mod by_halves_against_old {
                     "single {sym} at {c}: {single:?}"
                 );
             }
+        }
+    }
+
+    /// `n` copies of the rows of [`chain_of_sums`], copy `c` over `v(9c)` to `v(9c + 8)`, each
+    /// linked to the one before it by `v(9c - 1) >= v(9c)`, and its `9n` symbols (item
+    /// FAIL-batch-linked-copies-growth).
+    fn linked_copies(n: usize) -> (Formula, Vec<Atom>) {
+        let mut fs = Vec::new();
+        for c in 0..n {
+            fs.extend(chain_of_sums(9 * c));
+            if c > 0 {
+                fs.push(ge(v(9 * c - 1).minus(&v(9 * c))));
+            }
+        }
+        let syms = (0..9 * n)
+            .map(|i| Atom::Sym(format!("v{i}").into()))
+            .collect();
+        (Formula::and(fs), syms)
+    }
+
+    /// [`projected_hulls`] gives each symbol of [`linked_copies`] without its disjunctions the
+    /// hull [`hull_from`] finds over all the rows, and batch projection of the copies with their
+    /// disjunctions gives each symbol the hull single projection gives it (items
+    /// FAIL-batch-linked-copies-growth, FAIL-batch-single-hull-seed).
+    #[test]
+    fn hulls_of_linked_copies_are_those_of_the_whole_group() {
+        let (f, syms) = linked_copies(2);
+        let rows: Vec<Con> = (f.conjuncts().into_iter())
+            .filter_map(|c| match c {
+                Formula::Con(c) => Some(c.clone()),
+                _ => None,
+            })
+            .collect();
+        let model = solve(&rows, true).expect("solve").expect("a point");
+        let ks: Vec<&Atom> = syms.iter().collect();
+        let hulls = projected_hulls(rows.clone(), &ks, &model);
+        let whole = Formula::and(rows.into_iter().map(Formula::Con).collect());
+        for s in &syms {
+            assert_eq!(hulls.get(s), Some(&hull_from(&whole, s, &model)), "{s}");
+        }
+        let (each, _) = project_each(&f, &syms).expect("project_each answers");
+        // The symbols of the link, and the one in each copy where batch was coarser.
+        for k in [4, 8, 9, 13] {
+            let s = &syms[k];
+            assert_eq!(each[k], project(&f, s), "batch and single on {s}");
         }
     }
 

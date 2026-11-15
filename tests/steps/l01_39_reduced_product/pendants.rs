@@ -1650,7 +1650,10 @@ fn an_equation_held_once_twice_or_negated_gives_one_answer() {
 /// `a=2 b=5 c=-3 z1=0 z2=-4`; `c <= 6` from `a + b + 2 * c == z2 + 5`, `z2 <= 6`, `a >= 2`
 /// and `b >= -4`, reached at `a=3 b=-4 c=6 z1=3 z2=6`. The fifth left out a `Tie` on `c` and
 /// `z0` before item PERF-l139-family, with the same boxes: the question that the solver refused
-/// is not asked since each side is first asked at its real bound.
+/// is not asked since each side is first asked at its real bound. The fourth's `b` was refused
+/// with `[-4,16]` before item FAIL-batch-single-hull-seed, which asks it of the projection of
+/// the rows onto it; its exact hull is `[-4,15]` (brute force,
+/// [`refused_projections_keep_the_box_of_their_rows`]).
 const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "a + b >= -2 && b + z2 <= 2 * c + 6 && !(a + 2 * b == z0 - 1) && !(a + z3 == 2 * c) && 2 * a + 2 * c >= b - 2 && 2 * a + 2 * b + c + z0 >= 5 && a + c >= -2 && b + c + z0 >= 3 && a + b + c + z3 == 0",
@@ -1670,7 +1673,7 @@ const WRITTEN: &[(&str, &str, &str)] = &[
     (
         "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 && a + z1 <= b + c + 9 && a + c >= z0 - 12 && a + b + 2 * c == z2 + 5",
         "a=[2,3] b=[-4,inf] c=[-inf,8] z0=[-6,-4] z1=[-7,13] z2=[-10,6]",
-        "a=[2,3] b=[-4,16] refused: Growth c=[-3,6] z0=[-6,-4] z1=[-7,13] refused: Growth z2=[-10,6] refused: Growth left out: [Growth]",
+        "a=[2,3] b=[-4,15] c=[-3,6] z0=[-6,-4] z1=[-7,13] refused: Growth z2=[-10,6] refused: Growth left out: [Growth]",
     ),
     (
         "(2 * a >= b + 2 || z0 <= 4) && !(a + b + z0 == 2 * c - 8) && (2 * a + b + 2 * c >= -9 || z1 <= 6) && 2 * a + b == c + z0 - 1",
@@ -1815,7 +1818,7 @@ fn shown_set(text: &str) -> IntervalSet {
 
 /// The answer of [`boxed_names`] for case 272 of seed 17, each name's set and `!` where it
 /// was refused.
-const ROW_BOXES: &str = "a=[2,3] b=[-4,16]! c=[-3,6] z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!";
+const ROW_BOXES: &str = "a=[2,3] b=[-4,15] c=[-3,6] z0=[-6,-4] z1=[-7,13]! z2=[-10,6]!";
 
 /// [`boxed_names`] of `g`, case 272 of seed 17 written another way, as [`ROW_BOXES`] shows it.
 fn row_boxes(g: &Formula) -> String {
@@ -1833,10 +1836,11 @@ fn shown_boxes(got: &BTreeMap<String, (IntervalSet, bool)>) -> String {
 }
 
 /// Case 272 of seed 17 (`WRITTEN`), which the solver refuses with four live variables or more
-/// (`Refusal::Growth`), within its boxes: `b`, `z1` and `z2` keep the bounds of the box stage
-/// over its rows, `b` narrower than its box, and each holds the exact hull that brute force
-/// finds; `c`, refused until item PRES-project-each-cost with the box stage's `[-3,6]`, is now
-/// answered, with that exact hull. The answer is the same with the names reversed; for other
+/// (`Refusal::Growth`), within its boxes: `z1` and `z2` keep the bounds of the box stage over
+/// its rows, each holding the exact hull that brute force finds; `c`, refused until item
+/// PRES-project-each-cost with the box stage's `[-3,6]`, and `b`, refused until item
+/// FAIL-batch-single-hull-seed with `[-4,16]`, are now answered, each with its exact hull.
+/// The answer is the same with the names reversed; for other
 /// writings see [`refused_projections_keep_the_box_of_their_rows_in_each_writing`],
 /// [`refused_projections_keep_the_box_of_their_rows_in_rewritten_writings`] and
 /// [`refused_projections_keep_the_box_of_their_rows_in_scaled_writings`] (one test took 2 s).
