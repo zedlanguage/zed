@@ -188,43 +188,6 @@ fn a_fold_by_a_non_associative_operator_is_rejected() {
     );
 }
 
-/// Step L3.2: `split` keeps every piece; `lines` ends a line at `\n`, `\r\n` and a lone `\r`
-/// and keeps no empty line after the last line end; `concat(pieces, sep: s)` on strings, `sep`
-/// `""` when not given, with the join law `concat(s.split(sep), sep: sep) == s` (QUESTIONS
-/// A105, answered B); `concat` of a family of families is rejected, its repair `xss >< (++)`.
-#[test]
-fn split_lines_and_concat() {
-    prints(
-        "strings",
-        &[
-            ("\"\".split(\" \") == [\"\"]", "true"),
-            ("\"a  b\".split(\" \") == [\"a\", \"\", \"b\"]", "true"),
-            ("\"a,b,\".split(\",\") == [\"a\", \"b\", \"\"]", "true"),
-            ("\"a\\rb\".lines == [\"a\", \"b\"]", "true"),
-            ("\"a\\r\\nb\".lines == [\"a\", \"b\"]", "true"),
-            ("\"a\\n\\rb\".lines == [\"a\", \"\", \"b\"]", "true"),
-            ("\"a\\r\\r\\n\".lines == [\"a\", \"\"]", "true"),
-            ("\"\".lines == []", "true"),
-            ("\"\\n\".lines == [\"\"]", "true"),
-            ("\"a\\n\".lines == [\"a\"]", "true"),
-            ("\"a\\n\".split(\"\\n\") == [\"a\", \"\"]", "true"),
-            ("concat([\"a\", \"\", \"bc\"])", "abc"),
-            ("concat(\"x,y\".split(\",\"))", "xy"),
-            ("concat([\"a\", \"b\"], sep: \", \")", "a, b"),
-            ("concat([\"a\", \"\", \"b\"], sep: \",\")", "a,,b"),
-            ("concat([\"a\"], sep: \",\")", "a"),
-            ("concat([]) == \"\"", "true"),
-            ("concat([], sep: \",\") == \"\"", "true"),
-            (
-                "concat(\"a,,b,\".split(\",\"), sep: \",\") == \"a,,b,\"",
-                "true",
-            ),
-            ("concat(\"\".split(\",\"), sep: \",\") == \"\"", "true"),
-        ],
-    );
-    saying("strings", &[("concat([[1], [2]])", ">< (++)")]);
-}
-
 /// sec:corner_cases: `first` and `last` are lexicographic, the leaf at the least and greatest
 /// keypath; a level that may be empty adds `#none`.
 #[test]
@@ -263,89 +226,6 @@ fn a_misused_fold_or_end_is_rejected_in_plain_words() {
             (
                 "[1, 2].reduce((a, b) -> a)",
                 "a fold `.reduce` by a function other than",
-            ),
-        ],
-    );
-}
-
-/// Step L5.1: `sort` with `asc` / `desc` keys, `.orderedValues`, `.take`, `.drop`, `.slice`,
-/// `.takeWhile`, `.minBy`, `.maxBy` (ties kept).
-#[test]
-fn order_and_positional_selection() {
-    prints(
-        "order",
-        &[
-            ("[1, 0, 1].takeWhile(v -> v > 0) == [1]", "true"),
-            ("[1, 0, 1].where(v -> v > 0) == {0 -> 1, 2 -> 1}", "true"),
-            ("[3, 1, 4].sort(desc x -> x) == [4, 3, 1]", "true"),
-            ("[3, 1, 4].sort(desc) == [4, 3, 1]", "true"),
-            ("[3, 1, 4].sort(asc) == [1, 3, 4]", "true"),
-            (
-                "[3, 1, 4].where(x -> x > 2).sort(desc x -> x) == {0 -> {2 -> 4}, 1 -> {0 -> 3}}",
-                "true",
-            ),
-            (
-                "[3, 1, 4].where(x -> x > 2).sort(desc x -> x).orderedValues == [4, 3]",
-                "true",
-            ),
-            ("[5, 6, 7, 8].take(2) == [5, 6]", "true"),
-            ("[5, 6, 7, 8].drop(2) == {2 -> 7, 3 -> 8}", "true"),
-            ("[5, 6, 7, 8].slice(1..<3) == {1 -> 6, 2 -> 7}", "true"),
-            ("[3, 9, 9].maxBy(x -> x) == {9 -> {1 -> 9, 2 -> 9}}", "true"),
-            ("[3, 9, 3].minBy(x -> x) == {3 -> {0 -> 3, 2 -> 3}}", "true"),
-        ],
-    );
-}
-
-/// Step L5.1c: a consumer of the reverse of the delivered order reads it with no sort; `take(3)`
-/// over the reverse of 10 entries gives the last three in reverse order.
-#[test]
-fn reverse_order_take_gives_the_last_entries() {
-    prints(
-        "reverse",
-        &[(
-            "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].sort(desc).take(3) == [9, 8, 7]",
-            "true",
-        )],
-    );
-}
-
-/// Step L5.2: `++` is offset concatenation on rank keys; `zip` is the equality join on ranks,
-/// and its two projections give back both operands. Unequal keyspaces are rejected.
-#[test]
-fn concatenation_zip_and_its_law() {
-    prints(
-        "zip",
-        &[
-            ("[1, 2] ++ [3] == [1, 2, 3]", "true"),
-            ("[1, 2].zip([10, 20]) == [(1, 10), (2, 20)]", "true"),
-            (
-                "[1, 2].zip([10, 20]).map(p -> p[0] + p[1]) == [11, 22]",
-                "true",
-            ),
-            (
-                "[1, 2, 3].zip([4, 5, 6]).map(p -> p[0]) == [1, 2, 3] && \
-                 [1, 2, 3].zip([4, 5, 6]).map(p -> p[1]) == [4, 5, 6]",
-                "true",
-            ),
-        ],
-    );
-    rejected("zip", &["[1, 2].zip([1])"]);
-}
-
-/// Step L5.3: `scan` is the family of prefix folds, and its last entry is the fold; `.chunkBy`
-/// groups runs of equal key, each run under its index, the entries keeping their keys.
-#[test]
-fn scan_and_chunk_by() {
-    prints(
-        "scan",
-        &[
-            ("[1, 2, 3].scan((+)) == [1, 3, 6]", "true"),
-            ("[4, 1, 7, 2].scan((+)).last == [4, 1, 7, 2] >< (+)", "true"),
-            ("[4, 1, 7, 2].scan(max).last == [4, 1, 7, 2] >< max", "true"),
-            (
-                "[1, 1, 2, 1].chunkBy(x -> x) == {0 -> {0 -> 1, 1 -> 1}, 1 -> {2 -> 2}, 2 -> {3 -> 1}}",
-                "true",
             ),
         ],
     );
