@@ -179,7 +179,8 @@ enum Frame<'a> {
     MemberOf(Box<Member<'a>>),
     /// A member call made, wrapped for `?.` by the receiver's temporary and value.
     MemberEnd(Option<(Arc<str>, Term)>),
-    IndexDeclared(usize, &'a Expr),
+    /// `f[k]` of the declared function `f`, written at the span.
+    IndexDeclared(usize, &'a Expr, Span),
     Index(&'a Expr, Span),
     FitBody(Box<FitF<'a>>),
     FitExtras(Box<FitF<'a>>, Term),
@@ -210,6 +211,9 @@ enum Frame<'a> {
     /// An expression done, by its span: its term's nodes that have no site take this one
     /// (plan row RT-sites).
     Site(Span),
+    /// An expression or declaration done that changed the fold identities in force: what
+    /// it changed (`instances::Elab::enter_expr`).
+    Env(super::instances::Saved),
 }
 
 /// Which display a [`Frame::Display`] builds.
@@ -237,6 +241,9 @@ struct ScopeF<'a> {
     top: bool,
     /// The statement being elaborated, an index into `items`.
     at: usize,
+    /// The number of folds left undecided before it ([`super::instances::Instancing::
+    /// undecided`]); at the top level, those after are attributed to its bindings.
+    undecided: usize,
     binds: Vec<Bind>,
     ok: bool,
     export: Option<&'a [Expr]>,
@@ -258,6 +265,10 @@ struct FnF<'a> {
     thunks: Vec<Bind>,
     ok: bool,
     body: Option<Term>,
+    /// The number of folds left undecided when the body starts, then the body's own
+    /// ([`super::instances::Instancing::undecided`]).
+    undecided_from: usize,
+    undecided: Vec<Span>,
 }
 
 /// A function's test tables, case by case.
@@ -396,25 +407,50 @@ impl<'a> Elab<'a> {
             stack: vec![Job::Scope(stmts, top)],
             ret: Ret::None,
         };
+        self.run(&mut m);
+        match m.take() {
+            Ret::Scope(s) => s,
+            _ => unreachable!("a scope's result"),
+        }
+    }
+
+    /// The body of the declared function `f` alone, without its defaults and its test
+    /// tables, which the declaration's own elaboration made: for a body of its own at the
+    /// fold identities `self.inst.env` holds (REDUCE-generic-identity, `instances`).
+    pub(super) fn body_term(&mut self, f: &'a Function) -> Option<Term> {
+        let mut m = M {
+            stack: vec![match &f.body.kind {
+                ExprKind::Block(stmts) if !f.equation => Job::Block(stmts),
+                _ => Job::Expr(&f.body),
+            }],
+            ret: Ret::None,
+        };
+        self.run(&mut m);
+        m.t()
+    }
+
+    /// Runs the jobs of `m` to the end, leaving the result in `m.ret`.
+    fn run(&mut self, m: &mut M<'a>) {
         while let Some(job) = m.stack.pop() {
             match job {
                 Job::Expr(e) => {
                     if zed_kernel::sites::recording() {
                         m.k(Frame::Site(e.span));
                     }
-                    self.expr(&mut m, e)
+                    if !self.info.split_folds.is_empty()
+                        && let Some(saved) = self.enter_expr(e)
+                    {
+                        m.k(Frame::Env(saved));
+                    }
+                    self.expr(m, e)
                 }
                 Job::Block(stmts) => {
                     m.k(Frame::Block);
-                    self.start_scope(&mut m, stmts, false);
+                    self.start_scope(m, stmts, false);
                 }
-                Job::Scope(stmts, top) => self.start_scope(&mut m, stmts, top),
-                Job::K(f) => self.resume(&mut m, f),
+                Job::Scope(stmts, top) => self.start_scope(m, stmts, top),
+                Job::K(f) => self.resume(m, f),
             }
-        }
-        match m.take() {
-            Ret::Scope(s) => s,
-            _ => unreachable!("a scope's result"),
         }
     }
 
@@ -451,6 +487,7 @@ impl<'a> Elab<'a> {
             order,
             top,
             at: 0,
+            undecided: 0,
             binds: Vec::new(),
             ok: true,
             export,
@@ -462,6 +499,7 @@ impl<'a> Elab<'a> {
         if let Some(i) = sf.order.pop() {
             let (s, top) = (sf.items[i], sf.top);
             sf.at = i;
+            sf.undecided = self.inst.undecided.len();
             m.k(Frame::Scope(sf));
             self.stmt(m, s, top);
             return;
@@ -531,7 +569,15 @@ impl<'a> Elab<'a> {
                     thunks: Vec::new(),
                     ok: true,
                     body: None,
+                    undecided_from: 0,
+                    undecided: Vec::new(),
                 };
+                // A function declared in a block takes no fold identity from around it
+                // (`instances::Elab::enter_expr`).
+                if !top && !self.info.split_folds.is_empty() {
+                    let saved = self.clear_env();
+                    m.k(Frame::Env(saved));
+                }
                 self.fn_default(m, Box::new(ff));
             }
             StmtKind::Push { value, .. } => {
@@ -558,6 +604,7 @@ impl<'a> Elab<'a> {
             m.stack.push(Job::Expr(d));
             return;
         }
+        ff.undecided_from = self.inst.undecided.len();
         m.k(Frame::FnBody(ff));
         m.stack.push(match &f.body.kind {
             ExprKind::Block(stmts) if !f.equation => Job::Block(stmts),
@@ -908,7 +955,7 @@ impl<'a> Elab<'a> {
             ExprKind::Index(of, k) => {
                 match self.declared(of) {
                     Some(id) => {
-                        m.k(Frame::IndexDeclared(id, of));
+                        m.k(Frame::IndexDeclared(id, of, e.span));
                         m.stack.push(Job::Expr(k));
                     }
                     None => {
@@ -1324,7 +1371,8 @@ impl<'a> Elab<'a> {
                 }
                 Callee::Declared(id, f) => {
                     let params = missing.iter().map(|&j| self.kname(&f.params[j])).collect();
-                    let body = self.supplied(f, slots, Term::App(self.fv(id), self.param_vars(f)));
+                    let callee = self.fref(id, span);
+                    let body = self.supplied(f, slots, Term::App(callee, self.param_vars(f)));
                     Term::Lam(params, Shared::new(body))
                 }
             };
@@ -1388,7 +1436,8 @@ impl<'a> Elab<'a> {
         let fname = &f.name;
         if ff.missing.is_empty() {
             let args = ff.slots.drain(..).map(|s| s.expect("supplied")).collect();
-            m.give(Some(Term::App(self.fv(id), args)));
+            let callee = self.fref(id, ff.call.span);
+            m.give(Some(Term::App(callee, args)));
             return;
         }
         let mut ok = true;
@@ -1465,24 +1514,20 @@ impl<'a> Elab<'a> {
                 }
             }
         }
+        let callee = self.fref(id, ff.call.span);
         let FillF {
             slots, defaults, ..
         } = *ff;
-        let body = (defaults.into_iter().rev()).fold(
-            Term::App(self.fv(id), self.param_vars(f)),
-            |body, (k, d)| Term::Let(k, Shared::new(d), Shared::new(body)),
-        );
+        let body = (defaults.into_iter().rev())
+            .fold(Term::App(callee, self.param_vars(f)), |body, (k, d)| {
+                Term::Let(k, Shared::new(d), Shared::new(body))
+            });
         m.give(Some(self.supplied(f, slots, body)));
     }
 
     /// A parameter's kernel name.
     fn kname(&self, p: &Param) -> Arc<str> {
         self.names[self.id(p.span, &p.name)].clone()
-    }
-
-    /// The declared function `id`, as a term.
-    fn fv(&self, id: usize) -> Shared {
-        Shared::new(Term::Var(self.names[id].clone()))
     }
 
     /// Each parameter of `f`, as a term.
@@ -1739,7 +1784,7 @@ impl<'a> Elab<'a> {
                 // The checker rejects a fold by any other operator, at its error.
                 _ => return None,
             };
-            let identity = self.info.reduce.get(&levels[j].span).cloned();
+            let identity = self.fold_identity(levels[j].span);
             t = Term::Fold {
                 family: Shared::new(t),
                 op: Shared::new(Term::PrimFn(op)),
@@ -2012,6 +2057,7 @@ impl<'a> Elab<'a> {
                     zed_kernel::sites::mark(t, span, &mut self.sited);
                 }
             }
+            Frame::Env(saved) => self.leave_expr(saved),
             Frame::Seq(mut sf) => {
                 let t = m.t();
                 let failed = t.is_none();
@@ -2163,6 +2209,14 @@ impl<'a> Elab<'a> {
                 let Ret::Stmt(binds) = m.take() else {
                     unreachable!("a statement's result")
                 };
+                // A top-level statement's folds no call decided, from its defaults and its
+                // test rows (its body's are its function's, `Frame::FnTests`), are attributed
+                // to each of its bindings, for `Elab::check_instances`.
+                if sf.top {
+                    let sites = self.inst.undecided.split_off(sf.undecided);
+                    let kernels = binds.iter().flatten().map(|(_, k, _)| k);
+                    self.inst.attribute(kernels, sites);
+                }
                 match binds {
                     Some(binds) => sf.binds.extend(binds),
                     None => {
@@ -2231,6 +2285,7 @@ impl<'a> Elab<'a> {
             }
             Frame::FnBody(mut ff) => {
                 ff.body = m.t();
+                ff.undecided = self.inst.undecided.split_off(ff.undecided_from);
                 let (f, id, span, top) = (ff.f, ff.id, ff.s.span, ff.top);
                 m.k(Frame::FnTests(ff));
                 self.tests(m, f, id, span, top);
@@ -2241,13 +2296,21 @@ impl<'a> Elab<'a> {
                 };
                 let FnF {
                     f,
+                    top,
                     id,
                     params,
                     thunks,
                     ok,
                     body,
+                    undecided,
                     ..
                 } = *ff;
+                // The body's folds no call decided are the function's own at the top level,
+                // and the enclosing statement's in a block.
+                match top {
+                    true => self.inst.attribute([&self.names[id]], undecided),
+                    false => self.inst.undecided.extend(undecided),
+                }
                 let out = body.filter(|_| tests && ok).map(|body| {
                     let mut out = vec![(
                         f.name.clone(),
@@ -2274,7 +2337,9 @@ impl<'a> Elab<'a> {
                             start: input.span.start,
                             end: expected.span.end,
                         };
-                        let kernel = self.names[tf.id].clone();
+                        // The row's call is checked at its key ([`Self::row_call`]), where
+                        // the checker decided the identities of the folds it runs.
+                        let kernel = self.fkernel(tf.id, input.span);
                         let callee = Shared::new(Term::Var(kernel.clone()));
                         // The inputs of `main` a clause gives the row, by field; their values
                         // end `args`, and the call takes the key's alone.
@@ -2363,7 +2428,7 @@ impl<'a> Elab<'a> {
                 });
                 m.give(t);
             }
-            Frame::IndexDeclared(id, of) => {
+            Frame::IndexDeclared(id, of, at) => {
                 let t = match m.t() {
                     None => None,
                     Some(k) => {
@@ -2390,12 +2455,13 @@ impl<'a> Elab<'a> {
                                 });
                                 None
                             }
-                            1 => Some(Term::App(self.fv(id), vec![k])),
+                            1 => Some(Term::App(self.fref(id, at), vec![k])),
                             n => {
                                 let rest: Vec<Arc<str>> = (1..n).map(|_| self.temp()).collect();
                                 let mut args = vec![k];
                                 args.extend(rest.iter().map(|r| Term::Var(r.clone())));
-                                Some(Term::Lam(rest, Shared::new(Term::App(self.fv(id), args))))
+                                let callee = self.fref(id, at);
+                                Some(Term::Lam(rest, Shared::new(Term::App(callee, args))))
                             }
                         }
                     }

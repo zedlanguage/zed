@@ -18,6 +18,7 @@
 //! belongs to a function at the unit's top level.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use zed_kernel::Shared;
 
@@ -29,6 +30,7 @@ use zedc_resolve::resolve::Resolution;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_syntax::ast::{Error, Stmt, StmtKind, Target};
 
+mod instances;
 pub mod mark;
 mod state;
 mod walk;
@@ -138,8 +140,23 @@ fn lower<'a>(
         limits: e.info.limits,
         ..Unit::default()
     };
-    match e.scope(unit, true) {
+    // The functions declared at the top level, whose calls may decide the identities of
+    // their folds (REDUCE-generic-identity, `instances`).
+    if !e.info.split_needs.is_empty() {
+        for s in unit.iter().map(Stmt::bare) {
+            if let StmtKind::Function(f) = &s.kind {
+                let id = e.id(s.span, &f.name);
+                e.inst.fns.insert(id, s);
+            }
+        }
+    }
+    let scope = e.scope(unit, true);
+    // Folds no call decided outside every top-level statement are the export's, which the
+    // unit always runs.
+    let export: Vec<_> = std::mem::take(&mut e.inst.undecided);
+    match scope {
         Some((binds, _)) => {
+            e.make_instances();
             // The parameters a call may name, of each definition that is a function: a declared
             // function's from its signature, by its binder's kernel name; a name bound by `=` to a
             // function, as `inc = x -> x + 1`, from its type when that holds one function, since a
@@ -167,15 +184,30 @@ fn lower<'a>(
                 };
                 out.param_names.insert(kernel.clone(), names);
             }
-            out.defs = binds
-                .into_iter()
-                .map(|(name, kernel, term)| Def {
+            // Each body made for a call goes right after the function's written body: after
+            // the definitions it reads, which the written body reads too, or which are bodies
+            // made of earlier functions, each right after its own.
+            let mut bodies: HashMap<Arc<str>, Vec<Def>> = HashMap::new();
+            for (id, d) in std::mem::take(&mut e.inst.bodies) {
+                let base = e.names[id].clone();
+                if let Some(ps) = out.param_names.get(&base).cloned() {
+                    out.param_names.insert(d.kernel.clone(), ps);
+                }
+                if let Some(ps) = out.int_params.get(&base).cloned() {
+                    out.int_params.insert(d.kernel.clone(), ps);
+                }
+                bodies.entry(base).or_default().push(d);
+            }
+            for (name, kernel, term) in binds {
+                let made = bodies.remove(&kernel);
+                out.defs.push(Def {
                     first_order: e.info.tops.get(&name).is_some_and(|t| t.first_order()),
                     name,
                     kernel,
                     term: Shared::new(term),
-                })
-                .collect();
+                });
+                out.defs.extend(made.into_iter().flatten());
+            }
         }
         // A unit that gives no term with no error of the checker's or of elaboration's would
         // be run or tested as if it declared nothing; it is a bug in zedc, reported at the
@@ -205,6 +237,11 @@ fn lower<'a>(
         None => {}
     }
     out.tests = std::mem::take(&mut e.tests).into();
+    // A unit elaboration rejected may have left calls unelaborated, so only an accepted one
+    // is checked for folds no body took.
+    if errors.is_empty() && e.errors.is_empty() {
+        e.check_instances(&out.defs, &out.tests, export);
+    }
     errors.append(&mut e.errors);
     (out, e.marks.take(), errors)
 }

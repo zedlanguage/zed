@@ -3970,3 +3970,13 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | A `loop` that rebinds `level: &Family` to the inner family of the least (greatest) entry until it reaches a leaf | `leaf_at_end` in `eval.rs` | Mutation (gap 11) | a recursive function on the level, which ends because each call is one level deeper |
 | `HashSet<Span>` of the `.sum` calls on a family, filled by the checker and read by `contains` in the elaborator | `Info::family_sums`, `Ck::member_end`, `member_call` | Mutation (gap 11); a set keyed by a span | a family `Span ->? ()` in the checker's findings, as for `main_pushes` |
 | `match` on a `(Prim, &[Value])` pair with slice patterns and a guard (`[Value::Family(f), Value::Tuple(e)] if e.len() == 2`) | `prim_on` in `eval.rs` | None | a `match` on the tuple of the primitive and its arguments, with the length in the pattern |
+
+## Entries from REDUCE-generic-identity (`crates/zedc-check/src/check/mod.rs`, `walk.rs`; `crates/zedc-elab/src/elab/instances.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `HashMap<Span, Option<Value>>` of the identities in force, changed in place on entering an expression and restored from the old values saved in a continuation frame (`Saved`, `Frame::Env`) | `Elab::enter_expr`, `leave_expr`, `clear_env` | Mutation (gap 11) | a family `Span ->? Option(Value)` passed down the walk as a value; a scope's entries are gone when the walk returns, so nothing is restored |
+| A counter `opaque: usize` raised and lowered around bodies that take no identity, with `mem::replace` of it and of the maps around each instance | `Instancing`, `Elab::make_instances` | Mutation (gap 11) | a flag passed down the walk with the family above |
+| `HashSet<(Span, Span)>` of the decided pairs (call, fold) an elaboration took, filled while elaborating and read once at the end | `Elab::fkernel`, `env_identity`, `check_instances` | Mutation (gap 11); a set keyed by a pair of spans | a family `(Span, Span) ->? ()` returned with each elaborated body and joined |
+| `HashSet<*const Sig>` of the signatures searched, by address, so a signature shared by several needs is searched once | `Ck::finish`, the `split_needs` search | Identity by address | number each signature where it is made (author decision on node ids), and keep a set of those numbers |
+| `BTreeMap<Option<Span>, Vec<(Option<Carrier>, Option<Value>)>>` of the checks of a fold apart for each call | `FoldChecks::by_call`, `Ck::saw_fold`, `finish` | Mutation (gap 11) | a family keyed by the call, built by one fold over the checks in the order they were made |

@@ -89,12 +89,11 @@ impl<'a> Elab<'a> {
         }
     }
 
-    /// The kernel `fold` by `p` of the one level of `family`, with the identity the checker
-    /// found at the fold's `span` for the entries' one carrier; none for a fold with no
-    /// identity there, which folds an empty level to `#empty` (a fold checked at two carriers
-    /// whose empty folds differ is refused by the checker).
-    pub(super) fn fold_one(&self, family: Term, p: Prim, span: Span) -> Term {
-        let identity = self.info.reduce.get(&span).cloned();
+    /// The kernel `fold` by `p` of the one level of `family`, with the identity of the fold at
+    /// `span` ([`Self::fold_identity`]); none for a fold with no identity there, which folds
+    /// an empty level to `#empty`.
+    pub(super) fn fold_one(&mut self, family: Term, p: Prim, span: Span) -> Term {
+        let identity = self.fold_identity(span);
         Term::Fold {
             family: Shared::new(family),
             op: Shared::new(Term::PrimFn(p)),
@@ -119,7 +118,8 @@ impl<'a> Elab<'a> {
     /// `x.sum` on a type parameter, which the checker decided at each call ([`zedc_check::
     /// check::Info::generic_sums`]): a loose atom passes through, a tuple is summed by the
     /// prelude word of layer 1, and a family is folded by `(+)` as [`Self::member_fold`] folds
-    /// it, with the identity found at `span`. The checker accepts a tuple at a call only where
+    /// it, with the identity of the fold at `span` in the body being made
+    /// ([`Self::fold_identity`]). The checker accepts a tuple at a call only where
     /// `.sum` on that tuple is the word, and a family only where it is the fold, so the test
     /// picks the branch the call was checked by.
     // The test `is` the tuple universe also holds a keypath (`Value::Path`, `Universe::of`),

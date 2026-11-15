@@ -534,6 +534,23 @@ pub struct Info {
     /// at run time: a tuple takes the prelude word of layer 1, a family the fold `x >< (+)`,
     /// whose identity is in [`Self::reduce`] (row FAIL-generic-sum-method).
     pub generic_sums: HashSet<Span>,
+    /// Each fold of a generic function whose calls fold an empty level to different results,
+    /// as `xs >< max` called at `int` (`#empty`) and at `f64` (`-inf`), by its span, where
+    /// each call that checked it found one result (REDUCE-generic-identity). Elaboration gives
+    /// each call of a top-level function that runs the fold a body of its own, whose fold
+    /// takes that call's identity ([`Self::fold_calls`]). The value is the refusal's words, for
+    /// elaboration to report a run of the fold it cannot give one identity: "a fold `><` that
+    /// the calls of one function run on …".
+    pub split_folds: HashMap<Span, String>,
+    /// For each call that checked a fold of [`Self::split_folds`], by the call's span: each
+    /// such fold's span, with the identity of its operator at the one carrier the call found,
+    /// or none where that folds an empty level to `#empty`.
+    pub fold_calls: HashMap<Span, Vec<(Span, Option<Value>)>>,
+    /// For each declared function whose signature's needs fold at a fold of
+    /// [`Self::split_folds`] (a need `NeedKind::Reduce` or `NeedKind::SumMethod` at its span),
+    /// by its binder: those folds' spans, sorted, each once. These are the folds a call of
+    /// the function decides the identity of.
+    pub split_needs: HashMap<usize, Vec<Span>>,
     /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
     /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
     pub remaps: HashMap<Span, RemapPlan>,
@@ -1374,9 +1391,23 @@ struct Class {
     decimal: bool,
 }
 
-/// The checks of one fold recorded in [`Ck::folds`]: each carrier, or none, with the identity
-/// of the fold's operator there.
-type FoldChecks = Vec<(Option<Carrier>, Option<Value>)>;
+/// A carrier a fold was checked at, or none (`[]`), with the identity of the fold's operator
+/// there, or none (`#empty`).
+type CarrierIdentity = (Option<Carrier>, Option<Value>);
+
+/// The checks of one fold recorded in [`Ck::folds`].
+#[derive(Default)]
+struct FoldChecks {
+    /// Each carrier, or none, with the identity of the fold's operator there, in the order
+    /// first met.
+    carriers: Vec<CarrierIdentity>,
+    /// The same, apart for each call whose needs were being checked when the fold was
+    /// ([`CallFrame::call`]); `None` for a check under no call's frame.
+    by_call: BTreeMap<Option<Span>, Vec<CarrierIdentity>>,
+    /// Each call whose needs were being checked when `.sum` met its receiver as a tuple, which
+    /// it sums without the fold ([`Ck::saw_unfolded`]); a call may appear more than once.
+    unfolded: Vec<Span>,
+}
 
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
@@ -1598,13 +1629,16 @@ struct Ck<'t, 'a> {
     /// Each fold `m >< op` checked outside a trial, by its span: the carriers of the entries
     /// it was checked at, each once, with the identity of `op` there, if it has one; no
     /// carrier for entries of no known type, as those of `[]`, which fold to `#empty`. A fold in
-    /// a generic function is checked at each call of it ([`Ck::meet`]), and the body
-    /// elaborates to one fold for every call, so [`Ck::finish`] gives the fold its identity
-    /// only where every check found the one carrier (DESIGN.md sec:reduction, "Identity as
-    /// data").
+    /// a generic function is checked at each call of it ([`Ck::meet`]), so [`Ck::finish`]
+    /// gives the fold its identity where every check found the one carrier, and otherwise
+    /// one identity for each call, where each call found one (DESIGN.md sec:reduction,
+    /// "Identity as data"; REDUCE-generic-identity).
     // Complexity tradeoff: naive version, a list of every check, O(c) memory for c calls of
-    // the function. Used: one entry per distinct carrier, a scan of at most seven entries (the
-    // six members of `Carrier` and no carrier) per check, O(log f) a check for f folds.
+    // the function, and a scan of it per check, O(c^2). Used: one entry per distinct carrier,
+    // a scan of at most seven entries (the six members of `Carrier` and no carrier) per
+    // check, and the same per distinct call in a tree, O(log f + log c) a check for f folds
+    // and c calls; O(c) memory for the calls, which `Info::fold_calls` keeps where the fold
+    // splits.
     folds: BTreeMap<Span, FoldChecks>,
     /// The atoms an application inside a check of a need passed by at parameter `i` of the
     /// function value `what` it applied, for the check to give to the call of the function
@@ -1754,11 +1788,21 @@ struct CallFrame<'a> {
     /// For each variable of a parameter, the parameter's position, or `None` where two or
     /// more parameters hold it.
     by_var: HashMap<Arc<str>, Option<usize>>,
+    /// The call's span, where a call of a function applies its signature's needs; `None` for
+    /// the check of a value that flowed into a class, which no call's span names. A fold
+    /// checked under the frame is recorded at it ([`Ck::saw_fold`]).
+    call: Option<Span>,
 }
 
 impl<'a> CallFrame<'a> {
-    /// The frame of the arguments `args` at the parameters `params`, named `names`.
-    fn new(params: &[Ty], args: Vec<Option<Forwarded<'a>>>, names: Vec<Arc<str>>) -> Self {
+    /// The frame of the call at `call` with the arguments `args` at the parameters `params`,
+    /// named `names`.
+    fn new(
+        call: Span,
+        params: &[Ty],
+        args: Vec<Option<Forwarded<'a>>>,
+        names: Vec<Arc<str>>,
+    ) -> Self {
         let mut by_var = HashMap::new();
         for (i, p) in params.iter().enumerate().take(args.len()) {
             for v in &p.vars {
@@ -1776,6 +1820,7 @@ impl<'a> CallFrame<'a> {
             args,
             names,
             by_var,
+            call: Some(call),
         }
     }
 
@@ -4224,41 +4269,129 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// types share once, below its sentence, named apart from the program's names ([`lay_out`]).
     fn finish(&mut self) {
         // Each fold takes the identity of its one carrier. A fold of a generic function
-        // checked at two carriers is rejected where any of them has an identity: the one fold
-        // the body elaborates to cannot give `-inf` at `f64` and `#empty` at `int`, and an
-        // empty level holds no entry to tell its carrier at run time.
+        // checked at two carriers where any of them has an identity cannot elaborate to one
+        // fold: that fold cannot give `-inf` at `f64` and `#empty` at `int`, and an empty
+        // level holds no entry to tell its carrier at run time. Where each check was made at
+        // a call, and each call found one result for an empty level, elaboration gives the
+        // fold one body for each identity, chosen at the calls (`split_folds`,
+        // REDUCE-generic-identity; DESIGN.md sec:reduction, "Identity as data": "`[]` with no
+        // carrier gives `#empty`", and generic code is typed "once per instantiation at its
+        // caller", sec:type_resolution). Any other such fold is rejected here.
+        // Why a check under no call's frame refuses the split: the frame names the call whose
+        // body elaboration chooses; a check of a value that flowed into a class
+        // (`check_on`) or of a fold outside any call has none, so no body could be chosen
+        // for it.
         for (span, seen) in std::mem::take(&mut self.folds) {
-            match seen.as_slice() {
+            let FoldChecks {
+                carriers,
+                by_call,
+                mut unfolded,
+            } = seen;
+            match carriers.as_slice() {
                 [(Some(_), Some(v))] => {
                     self.info.reduce.insert(span, v.clone());
+                    continue;
                 }
-                _ if seen.iter().all(|(_, v)| v.is_none()) => {}
-                _ => {
-                    let at = |c: &Option<Carrier>| match c {
-                        Some(c) => format!("`{}`", c.name()),
-                        None => "no known type, as of `[]`".to_string(),
-                    };
-                    let types = (seen.iter())
-                        .map(|(c, _)| at(c))
-                        .collect::<Vec<_>>()
-                        .join(" and ");
-                    let ends = (seen.iter())
-                        .map(|(c, v)| match v {
-                            Some(v) => format!("`{v}` at {}", at(c)),
-                            None => format!("`#empty` at {}", at(c)),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" and ");
-                    let what = format!(
-                        "a fold `><` that the calls of one function run on entries of type \
-                         {types}, where an empty level folds to {ends}"
-                    );
-                    self.error_offering(
-                        span,
-                        zedc_base::rejection::not_yet(&what),
-                        ["repair: write the function once for each of these types".to_string()],
-                    );
+                _ if carriers.iter().all(|(_, v)| v.is_none()) => continue,
+                _ => {}
+            }
+            let at = |c: &Option<Carrier>| match c {
+                Some(c) => format!("`{}`", c.name()),
+                None => "no known type, as of `[]`".to_string(),
+            };
+            let types = (carriers.iter())
+                .map(|(c, _)| at(c))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            let ends = (carriers.iter())
+                .map(|(c, v)| match v {
+                    Some(v) => format!("`{v}` at {}", at(c)),
+                    None => format!("`#empty` at {}", at(c)),
+                })
+                .collect::<Vec<_>>()
+                .join(" and ");
+            let what = format!(
+                "a fold `><` that the calls of one function run on entries of type {types}, \
+                 where an empty level folds to {ends}"
+            );
+            // One result at a call: one carrier, or carriers that all fold an empty level to
+            // `#empty` (as `max` at `int` and at `rat`).
+            let one = |cs: &[CarrierIdentity]| cs.len() == 1 || cs.iter().all(|(_, v)| v.is_none());
+            if by_call.iter().all(|(call, cs)| call.is_some() && one(cs)) {
+                // A call that met the fold's need on a tuple runs `.sum`'s tuple branch and
+                // never the fold (`sum_method`), so the fold takes any identity there; it
+                // takes none, so the call has a body like the others' (`unfolded`).
+                unfolded.sort_unstable();
+                unfolded.dedup();
+                for &call in &unfolded {
+                    if !by_call.contains_key(&Some(call)) {
+                        self.info
+                            .fold_calls
+                            .entry(call)
+                            .or_default()
+                            .push((span, None));
+                    }
                 }
+                for (call, cs) in by_call {
+                    let call = call.expect("each check was made at a call");
+                    let v = cs.into_iter().next().and_then(|(_, v)| v);
+                    self.info
+                        .fold_calls
+                        .entry(call)
+                        .or_default()
+                        .push((span, v));
+                }
+                self.info.split_folds.insert(span, what);
+                continue;
+            }
+            self.error_offering(
+                span,
+                zedc_base::rejection::not_yet(&what),
+                ["repair: write the function once for each of these types".to_string()],
+            );
+        }
+        // Each call's folds by span, which elaboration searches (`fkernel`), O(k log k) for
+        // a call of k folds; each fold is pushed once per call, since `self.folds` holds each
+        // fold once.
+        for folds in self.info.fold_calls.values_mut() {
+            folds.sort_unstable_by_key(|(s, _)| *s);
+        }
+        // The folds each declared function's calls decide, from its signature's needs.
+        // Complexity tradeoff: one pass over every need of every signature, O(n log n) for n
+        // needs with the sort, against a pass over the signatures for each split fold,
+        // O(folds × needs).
+        //
+        // A fold's need can sit inside a need on a function the signature's need holds, as
+        // `mm.map(r -> top(r))` leaves `top`'s fold need in the lambda's signature, held by
+        // the `.map` need on `mm`: such a call of the function meets the fold's need too, so
+        // its needs are searched, each signature once (`seen`, by address), O(needs) in all.
+        if !self.info.split_folds.is_empty() {
+            for (&id, sig) in &self.info.sigs {
+                let mut sites: Vec<Span> = Vec::new();
+                let mut seen: HashSet<*const Sig> = HashSet::new();
+                let mut todo: Vec<&Sig> = vec![sig];
+                while let Some(s) = todo.pop() {
+                    for n in &s.needs {
+                        if let NeedKind::Reduce(_, site) | NeedKind::SumMethod(site) = n.kind
+                            && self.info.split_folds.contains_key(&site)
+                        {
+                            sites.push(site);
+                        }
+                        for t in n.tys() {
+                            for f in t.fns.iter() {
+                                if seen.insert(Arc::as_ptr(f)) {
+                                    todo.push(f);
+                                }
+                            }
+                        }
+                    }
+                }
+                if sites.is_empty() {
+                    continue;
+                }
+                sites.sort_unstable();
+                sites.dedup();
+                self.info.split_needs.insert(id, sites);
             }
         }
         // The signatures share the functions they hold, so they are named through one

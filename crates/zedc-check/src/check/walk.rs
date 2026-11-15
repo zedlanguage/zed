@@ -3717,15 +3717,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Records that the fold written at `site` was checked at `carrier` (none for entries of
-    /// no known type), where `op` has `identity`, for [`Ck::finish`]. A trial checks a repaired
-    /// program and elaborates nothing, so it records nothing.
+    /// no known type), where `op` has `identity`, for [`Ck::finish`]: once for the fold, and
+    /// once for the call whose needs are being checked, if any (REDUCE-generic-identity). A
+    /// trial checks a repaired program and elaborates nothing, so it records nothing.
     fn saw_fold(&mut self, site: Span, carrier: Option<Carrier>, identity: Option<Value>) {
         if self.trying {
             return;
         }
+        let call = self.call_frames.last().and_then(|f| f.call);
         let seen = self.folds.entry(site).or_default();
-        if !seen.iter().any(|(c, _)| *c == carrier) {
-            seen.push((carrier, identity));
+        if !seen.carriers.iter().any(|(c, _)| *c == carrier) {
+            seen.carriers.push((carrier, identity.clone()));
+        }
+        let at = seen.by_call.entry(call).or_default();
+        if !at.iter().any(|(c, _)| *c == carrier) {
+            at.push((carrier, identity));
         }
     }
 
@@ -3806,6 +3812,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = self.fold_level(add, &x.without_loose(), span, site, FoldForm::Sum);
             return out.union(&t);
         }
+        self.saw_unfolded(site);
         self.sum(Arg::of(x.clone()), span)
     }
 
@@ -3816,6 +3823,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         let out = self.passing(x, form.word(), span, None);
         let t = self.fold_level(op, &x.without_loose(), span, span, form);
         out.union(&t)
+    }
+
+    /// Records that the `.sum` at `site` was met under the current call's frame on what it
+    /// sums as a tuple, without its fold (REDUCE-generic-identity, `FoldChecks::unfolded`).
+    fn saw_unfolded(&mut self, site: Span) {
+        if self.trying {
+            return;
+        }
+        if let Some(call) = self.call_frames.last().and_then(|f| f.call) {
+            self.folds.entry(site).or_default().unfolded.push(call);
+        }
     }
 
     /// [`Self::reduce_end`], its messages naming the fold as the program wrote it, `form`:
@@ -17230,7 +17248,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         let names = sig.params.iter().map(|p| p.name.clone()).collect();
         self.call_frames
-            .push(CallFrame::new(&arrow.params, forwarded, names));
+            .push(CallFrame::new(span, &arrow.params, forwarded, names));
         let mut left = self.replay(what, &sig.needs, &mut binds, defer, span);
         let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of

@@ -18,6 +18,7 @@ use zedc_syntax::lex::Span;
 use zedc_types::kernel_type::kernel_type;
 use zedc_types::ty::Carrier;
 
+use super::instances::Instancing;
 use super::mark::Mark;
 
 /// A binding of a scope: source name, kernel name, value.
@@ -63,6 +64,9 @@ pub(super) struct Elab<'a> {
     pub(super) outputs: Vec<Arc<str>>,
     /// The first top-level statement, in the order elaboration takes them, that gave no term.
     pub(super) dropped: Option<&'a Stmt>,
+    /// The bodies of generic functions made for the fold identities their calls decide
+    /// (REDUCE-generic-identity).
+    pub(super) inst: Instancing<'a>,
 }
 
 impl<'a> Elab<'a> {
@@ -113,6 +117,7 @@ impl<'a> Elab<'a> {
             sited: HashSet::new(),
             outputs,
             dropped: None,
+            inst: Instancing::new(res.binders.len() + 1),
         }
     }
 

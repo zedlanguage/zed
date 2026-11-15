@@ -332,3 +332,60 @@ fn a_fold_of_n_joined_parameters_is_checked_in_linear_time() {
         run,
     );
 }
+
+/// `mi` and `m`: one family of an empty `int` level and one entry, and its `f64` twin.
+const EMPTY_LEVELS: &str = "mi = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
+                            m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v > 3.0));\n";
+
+#[test]
+fn n_calls_of_a_generic_fold_at_two_carriers_run_in_linear_time() {
+    // The calls alternate `int` and `f64`, so `top` has two bodies, one per identity, and each
+    // call takes one of them (row REDUCE-generic-identity).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = mi.map(r -> top(r));\n"),
+                _ => format!("x{i} = m.map(r -> top(r));\n"),
+            })
+            .collect::<String>();
+        format!("top(positional xs) = xs >< max;\n{EMPTY_LEVELS}{calls}")
+    });
+    let run = |n: usize| {
+        let last = value(&srcs[&n], &format!("x{}", n - 1));
+        assert_eq!(last, "{\"a\" -> -inf, \"b\" -> 5.0}");
+    };
+    scaling::check(
+        "n `.map` calls of a generic `max` fold, alternately at `int` and `f64`, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
+fn a_chain_of_n_generic_functions_over_a_map_of_a_fold_runs_in_linear_time() {
+    // The fold's need waits in `g0`'s `.map` lambda, and each `g{i}` passes it on, so the
+    // checker searches each signature's needs, nested ones too, and each function has two
+    // bodies, at `int` and at `f64` (row REDUCE-generic-identity).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let chain = (1..n)
+            .map(|i| format!("g{i}(positional mm) = g{}(mm);\n", i - 1))
+            .collect::<String>();
+        format!(
+            "top(positional xs) = xs >< max;\n{EMPTY_LEVELS}\
+             g0(positional mm) = mm.map(r -> top(r));\n{chain}a = (g{0}(mi), g{0}(m));\n",
+            n - 1
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(
+            value(&srcs[&n], "a"),
+            "({\"a\" -> #empty, \"b\" -> 5}, {\"a\" -> -inf, \"b\" -> 5.0})"
+        );
+    };
+    scaling::check(
+        "a chain of n generic functions, the first mapping a `max` fold, called at `int` and \
+         `f64`, whole path",
+        N_LEVELS,
+        run,
+    );
+}

@@ -250,30 +250,39 @@ fn a_named_function_folded_at_one_carrier_takes_its_identity() {
     prints(&src, "one", "3.0");
 }
 
+/// `mi`, the `int` twin of `m` in `F`: key "a" has an empty level, key "b" holds `5`.
+const I: &str = "mi = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n";
+
 #[test]
-fn a_fold_run_at_two_carriers_with_different_empty_folds_is_not_compiled_yet() {
-    // The one fold `top`'s body elaborates to cannot give `#empty` at `int` and `-inf` at
-    // `f64`, and an empty level holds no entry that shows its carrier at run time.
-    rejected(
-        "top(positional xs) = xs >< max;\na = top([1, 2]);\nb = top([1.0, 2.0]);\n",
-        &[
-            "an empty level folds to `#empty` at `int` and `-inf` at `f64`",
-            "does not compile it yet",
-        ],
+fn a_fold_run_at_two_carriers_takes_the_identity_of_each() {
+    // "`max` over a possibly-empty domain at `int`, which has no identity for it, is
+    // `T | #empty`", while "`max` at `f64` gets `-inf` from its own": an empty level holds no
+    // entry that shows its carrier at run time, so each call takes a body made at its own
+    // identity (row REDUCE-generic-identity).
+    let src = format!(
+        "top(positional xs) = xs >< max;\n{F}{I}a = top([1, 2]);\nb = top([1.0, 2.0]);\n\
+         hi = m.map(r -> top(r));\nhii = mi.map(r -> top(r));\n"
     );
+    prints(&src, "a", "2");
+    prints(&src, "b", "2.0");
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    prints(&src, "hii", "{\"a\" -> #empty, \"b\" -> 5}");
     // Calls at `int` alone, where `max` has no identity, fold an empty level to `#empty`.
     let src = "top(positional xs) = xs >< max;\na = top([1, 2]);\nb = top([3, 4]);\n";
     prints(src, "b", "4");
 }
 
 #[test]
-fn a_fold_of_an_empty_display_and_of_a_float_level_in_one_function_is_not_compiled_yet() {
-    // `top([])` has no carrier and folds to `#empty`; `top([1.0])` folds an empty level to
-    // `-inf`; the one fold gives one of the two, so neither type would hold at both.
-    rejected(
-        "top(positional xs) = xs >< max;\na = top([]);\nb = top([1.0, 2.0]);\n",
-        &["does not compile it yet"],
+fn a_fold_of_an_empty_display_and_of_a_float_level_in_one_function_takes_each_identity() {
+    // "`[]` takes the identity of the type the call site fixes, or `#empty` with none": `[]`
+    // fixes no carrier, so `top([])` is `#empty`, and `top([1.0, 2.0])` is `2.0`.
+    let src = format!(
+        "top(positional xs) = xs >< max;\n{F}a = top([]);\nb = top([1.0, 2.0]);\n\
+         hi = m.map(r -> top(r));\n"
     );
+    prints(&src, "a", "#empty");
+    prints(&src, "b", "2.0");
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
 }
 
 #[test]
@@ -284,14 +293,16 @@ fn a_fold_reached_through_two_functions_takes_the_identity_of_its_one_carrier() 
         "top(positional xs) = xs >< max;\ng(positional ys) = top(ys);\n{F}hi = m.map(r -> g(r));\n"
     );
     prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
-    rejected(
-        "top(positional xs) = xs >< max;\ng(positional ys) = top(ys);\na = g([1, 2]);\n\
-         b = g([1.0, 2.0]);\n",
-        &[
-            "`#empty` at `int` and `-inf` at `f64`",
-            "does not compile it yet",
-        ],
+    // At `int` and at `f64` both, each call of `g` takes a body of `g` whose call of `top`
+    // takes the body of `top` at the identity the outer call decided.
+    let src = format!(
+        "top(positional xs) = xs >< max;\ng(positional ys) = top(ys);\n{F}{I}a = g([1, 2]);\n\
+         b = g([1.0, 2.0]);\nhi = m.map(r -> g(r));\nhii = mi.map(r -> g(r));\n"
     );
+    prints(&src, "a", "2");
+    prints(&src, "b", "2.0");
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    prints(&src, "hii", "{\"a\" -> #empty, \"b\" -> 5}");
 }
 
 #[test]
@@ -303,10 +314,14 @@ fn reduce_in_a_generic_function_takes_the_identity_of_its_one_carrier() {
     );
     prints(&src, "lo", "{\"a\" -> -0.0, \"b\" -> 5.0}");
     prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
-    rejected(
-        "top(positional xs) = xs.reduce(max);\na = top([1, 2]);\nb = top([1.0, 2.0]);\n",
-        &["does not compile it yet"],
+    let src = format!(
+        "top(positional xs) = xs.reduce(max);\n{F}{I}a = top([1, 2]);\nb = top([1.0, 2.0]);\n\
+         hi = m.map(r -> top(r));\nhii = mi.map(r -> top(r));\n"
     );
+    prints(&src, "a", "2");
+    prints(&src, "b", "2.0");
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    prints(&src, "hii", "{\"a\" -> #empty, \"b\" -> 5}");
 }
 
 // ---- `.sum` in a generic function (row FAIL-generic-sum-method): DESIGN.md's method
@@ -348,13 +363,19 @@ fn sum_reached_through_two_generic_functions_is_decided_at_the_outer_calls() {
 }
 
 #[test]
-fn sum_in_a_generic_function_at_two_carriers_is_not_compiled_yet() {
-    // `0` at `int` and `-0.0` at `f64` are two empty sums for one fold (row
-    // REDUCE-generic-identity), as for `><` and `.reduce`.
-    rejected(
-        "s(positional xs) = xs.sum;\na = s([1, 2]);\nb = s([1.0, 2.0]);\n",
-        &["does not compile it yet"],
+fn sum_in_a_generic_function_at_two_carriers_takes_the_identity_of_each() {
+    // "`sum` gets its identity, `0` at `int`", and at a float "`-0.0` for `+`": two empty
+    // sums for one fold, so each call takes a body at its own (row REDUCE-generic-identity),
+    // as for `><` and `.reduce`.
+    let src = format!(
+        "s(positional xs) = xs.sum;\n{F}{I}a = s([1, 2]);\nb = s([1.0, 2.0]);\n\
+         lo = m.map(r -> s(r));\nloi = mi.map(r -> s(r));\nt = s((1, 2));\n"
     );
+    prints(&src, "a", "3");
+    prints(&src, "b", "3.0");
+    prints(&src, "lo", "{\"a\" -> -0.0, \"b\" -> 5.0}");
+    prints(&src, "loi", "{\"a\" -> 0, \"b\" -> 5}");
+    prints(&src, "t", "3");
 }
 
 #[test]
@@ -664,5 +685,95 @@ fn a_keypath_written_into_zir_by_hand_stops_the_sum() {
         assert!(k.contains("`sum` applied to"), "{arg}: {k}");
         let n = native(&t).expect_err(arg);
         assert!(n.contains("`sum` applied to"), "{arg}: {n}");
+    }
+}
+
+// ---- Where the identity in force is the one each call decided (row REDUCE-generic-identity):
+// sec:reduction, "Identity as data": "`max` at `f64` gets `-inf`", while "`max` over a
+// possibly-empty domain at `int`, which has no identity for it, is `T | #empty`"; "`sum` gets
+// its identity, `0` at `int`", `-0.0` at a float, and `*` folds an empty level to `1` and
+// `1.0`. `mi["a"]` and `m["a"]` are empty levels ----
+
+/// `top`, a fold by `max` that takes its carrier from its calls.
+const TOP: &str = "top(positional xs) = xs >< max;\n";
+
+#[test]
+fn a_fold_under_a_map_in_a_generic_function_takes_the_identity_of_each_call() {
+    // The fold's need waits in the lambda's signature, held by `.map`'s need on `mm`, so the
+    // calls of `g` decide it: `g(mi)` at `int`, `g(m)` at `f64`.
+    let src = format!("{TOP}{F}{I}g(positional mm) = mm.map(r -> top(r));\na = (g(mi), g(m));\n");
+    prints(
+        &src,
+        "a",
+        "({\"a\" -> #empty, \"b\" -> 5}, {\"a\" -> -inf, \"b\" -> 5.0})",
+    );
+    // One function more between the calls and the fold.
+    let src = format!(
+        "{TOP}{F}{I}g(positional mm) = mm.map(r -> top(r));\nk(positional mm) = g(mm);\n\
+         a = (k(mi), k(m));\n"
+    );
+    prints(
+        &src,
+        "a",
+        "({\"a\" -> #empty, \"b\" -> 5}, {\"a\" -> -inf, \"b\" -> 5.0})",
+    );
+    let src = format!("{F}{I}s(positional mm) = mm.map(r -> r.sum);\na = (s(mi), s(m));\n");
+    prints(
+        &src,
+        "a",
+        "({\"a\" -> 0, \"b\" -> 5}, {\"a\" -> -0.0, \"b\" -> 5.0})",
+    );
+    let src = format!("{F}{I}s(positional mm) = mm.map(r -> r.reduce((*)));\na = (s(mi), s(m));\n");
+    prints(
+        &src,
+        "a",
+        "({\"a\" -> 1, \"b\" -> 5}, {\"a\" -> 1.0, \"b\" -> 5.0})",
+    );
+}
+
+#[test]
+fn a_fold_bound_in_a_block_of_a_generic_function_takes_the_identity_of_each_call() {
+    let src = format!(
+        "{TOP}{F}{I}g(positional ys) = {{ z = top(ys); z }};\na = (g(mi[\"a\"]), g(m[\"a\"]));\n"
+    );
+    prints(&src, "a", "(#empty, -inf)");
+}
+
+#[test]
+fn a_map_inside_a_map_at_one_carrier_takes_its_identity_at_each_depth() {
+    // The inner `.map` decides the fold at `int` where the outer one has already decided it at
+    // `int`: one identity, so both reads take it.
+    let src = format!(
+        "{TOP}{F}{I}a = mi.map(q -> (top(q), mi.map(r -> top(r))));\nb = m.map(r -> top(r));\n"
+    );
+    prints(
+        &src,
+        "a",
+        "{\"a\" -> (#empty, {\"a\" -> #empty, \"b\" -> 5}), \"b\" -> (5, {\"a\" -> #empty, \"b\" -> 5})}",
+    );
+    prints(&src, "b", "{\"a\" -> -inf, \"b\" -> 5.0}");
+}
+
+#[test]
+fn a_generic_fold_at_two_carriers_through_a_function_value_is_not_compiled_yet() {
+    // A call through a value, a lambda or a function declared in a block has no body of its
+    // own for each identity yet: refused, never run at the wrong identity (ZED_PORT_GAPS).
+    for body in [
+        "a = { h(positional q) = top(q); (h(mi[\"a\"]), h(m[\"a\"])) };\n",
+        "a = { f = x -> top(x); (f(mi[\"a\"]), f(m[\"a\"])) };\n",
+        "a = { f = top; (f(mi[\"a\"]), f(m[\"a\"])) };\n",
+        "f = top;\na = (f(mi[\"a\"]), f(m[\"a\"]));\n",
+        "ap(positional f, positional x) = f(x);\na = (ap(top, mi[\"a\"]), ap(top, m[\"a\"]));\n",
+        "g(positional ys) = { h(positional q) = top(q); (h(ys), h(m[\"a\"])) };\na = g(mi[\"a\"]);\n",
+        "a = mi.map(r -> { f = x -> top(x); (top(r), f(m[\"a\"])) });\n",
+        "a = mi.map(r -> { h(positional q) = top(q); (top(r), h(m[\"a\"])) });\n",
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
+        // Two identities in force at one read: the `int` of `q`'s map and the `f64` of `r`'s.
+        "a = mi.map(q -> (top(q), m.map(r -> (top(r), top(q)))));\n",
+        // `g`'s call decides `int`, and the `.map` inside it `f64`, for one fold.
+        "g(positional ys) = (top(ys), m.map(r -> top(r)));\na = g(mi[\"a\"]);\n",
+    ] {
+        rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
     }
 }
