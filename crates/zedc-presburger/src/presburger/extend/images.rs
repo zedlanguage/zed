@@ -653,28 +653,72 @@ fn value_equation(f: &Formula, output: &Atom) -> Option<Lin> {
 
 /// An if whose guards are literal complements and whose arms each give one value.
 /// The positive guard is returned first, independent of the written arm order.
+///
+/// Rows beside the two cases, and rows in a case beside its guard and its equation, are
+/// allowed where the cases imply them ([`implied`]): the preimage writes each `min`, `max` and
+/// `abs` with the rows of the hull of its two cases (`x >= a`, `x >= b` for `max`), in the base
+/// or in the case whose equation does not give them (`preimage::Walk`,
+/// FAIL-or-ifs-no-longer-exact-seed, FAIL-abs-chain-growth-bench). Such a definition has the
+/// points of its cases alone, so it is the same choice. Without this, a chain of `max`
+/// definitions got no image, and every question of it was decided with the summaries
+/// (FAIL-monotone-clamp-bench-slow: 1,704 summaries made, 17 s, against 324 with the images).
+// Complexity tradeoff: each extra row is substituted in each arm and compared with the arm's
+// guard, O(r t) for r rows of t terms, against O(1) for the bare form. A row whose implication
+// needs more than a comparison with the guard (a multiple of it, or one implied by the guard
+// and the equation together in another form) is not recognized, and the definition is read
+// by the summaries as before, exact but slower.
 fn choice(f: &Formula, output: &Atom) -> Option<(Formula, Lin, Lin)> {
-    let Formula::Or(gs) = f else { return None };
+    // The disjunction of the cases, and the rows beside it.
+    let (cases, beside): (&Formula, Vec<&Con>) = match f {
+        Formula::And(gs) => {
+            let mut cases = None;
+            let mut beside = Vec::new();
+            for g in gs.iter() {
+                match g {
+                    Formula::Or(_) if cases.is_none() => cases = Some(g),
+                    Formula::Con(c) => beside.push(c),
+                    _ => return None,
+                }
+            }
+            (cases?, beside)
+        }
+        _ => (f, Vec::new()),
+    };
+    let Formula::Or(gs) = cases else { return None };
     let [left, right] = gs.as_slice() else {
         return None;
     };
-    let branch = |g: &Formula| -> Option<(Formula, Lin)> {
+    // The guard, the value and the rows beside them of one case.
+    let branch = |g: &Formula| -> Option<(Formula, Lin, Vec<Con>)> {
         let Formula::And(parts) = g else { return None };
-        let [a, b] = parts.as_slice() else {
-            return None;
-        };
-        let (guard, value) = if let Some(e) = value_equation(a, output) {
-            (b, e)
-        } else {
-            (a, value_equation(b, output)?)
-        };
-        if reads(guard).contains(output) {
-            return None;
+        let mut guard = None;
+        let mut value = None;
+        let mut rows = Vec::new();
+        for p in parts.iter() {
+            if !reads(p).contains(output) {
+                if guard.replace(p).is_some() {
+                    return None;
+                }
+            } else if value.is_none()
+                && let Some(e) = value_equation(p, output)
+            {
+                value = Some(e);
+            } else if let Formula::Con(c) = p {
+                rows.push(c.clone());
+            } else {
+                return None;
+            }
         }
-        Some((guard.clone(), value))
+        Some((guard?.clone(), value?, rows))
     };
-    let (g, a) = branch(left)?;
-    let (h, b) = branch(right)?;
+    let (g, a, rows_a) = branch(left)?;
+    let (h, b, rows_b) = branch(right)?;
+    let holds = |guard: &Formula, value: &Lin, rows: &[Con]| {
+        (beside.iter().copied().chain(rows)).all(|row| implied(row, guard, value, output))
+    };
+    if !holds(&g, &a, &rows_a) || !holds(&h, &b, &rows_b) {
+        return None;
+    }
     if let Formula::Not(n) = &h
         && **n == g
     {
@@ -686,6 +730,35 @@ fn choice(f: &Formula, output: &Atom) -> Option<(Formula, Lin, Lin)> {
         return Some((h, b, a));
     }
     None
+}
+
+/// Whether `row` holds wherever `guard` holds and `output` is `value`: `row` with `value` put
+/// for `output` is a constant row that holds, or the guard's row (a `>=` row, or the negation
+/// of one, `-t - 1 >= 0` at integer points) with a constant no smaller. Sound: each `true`
+/// answer is that implication; a `false` one only leaves the definition to the summaries.
+fn implied(row: &Con, guard: &Formula, value: &Lin, output: &Atom) -> bool {
+    let mut put = row.lin.clone();
+    if let Some(k) = put.terms.remove(output) {
+        put.plus_assign(&value.times(k));
+    }
+    if put.terms.is_empty() {
+        return match row.rel {
+            Rel::Ge => !put.constant.is_negative(),
+            Rel::Eq => put.constant.is_zero(),
+        };
+    }
+    if row.rel != Rel::Ge {
+        return false;
+    }
+    let given = match guard {
+        Formula::Con(c) if c.rel == Rel::Ge => c.lin.clone(),
+        Formula::Not(n) => match &**n {
+            Formula::Con(c) if c.rel == Rel::Ge => c.lin.times(-1).plus(&Lin::constant(-1)),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    put.terms == given.terms && put.constant >= given.constant
 }
 
 /// Exact Euclidean division, including negative divisors. The remainder is nonnegative.

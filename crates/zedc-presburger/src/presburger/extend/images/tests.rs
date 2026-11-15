@@ -1031,3 +1031,155 @@ fn shift_chain_images_agree_with_the_image_of_every_residue() {
     }
     assert!(inside > 0 && inside < asked);
 }
+
+/// The definition of `x = min(a, b)` (`min`) or `x = max(a, b)` as the preimage writes it
+/// (`preimage::Walk`, FAIL-or-ifs-no-longer-exact-seed, FAIL-abs-chain-growth-bench): the two
+/// cases, and the rows of their hull, `x <= a` and `x <= b` for `min`, `x >= a` and `x >= b`
+/// for `max`, each in the base where it has one or two terms (`hulled`) and in the case whose
+/// equation does not give it otherwise; with `hulled` false, the two cases alone.
+fn extremum(min: bool, x: &Lin, a: &Lin, b: &Lin, hulled: bool) -> Formula {
+    let (lo, hi) = if min { (a, b) } else { (b, a) };
+    let first = Con::ge(hi, lo);
+    let mut case_a = vec![Formula::Con(first.clone()), Formula::Con(Con::eq(x, a))];
+    let mut case_b = vec![
+        Formula::negate(Formula::Con(first)),
+        Formula::Con(Con::eq(x, b)),
+    ];
+    let mut base = Vec::new();
+    if hulled {
+        let [hull_a, hull_b] = if min {
+            [Con::ge(a, x), Con::ge(b, x)]
+        } else {
+            [Con::ge(x, a), Con::ge(x, b)]
+        };
+        for (row, case) in [(hull_b, &mut case_a), (hull_a, &mut case_b)] {
+            if row.lin.terms.len() <= 2 {
+                base.push(Formula::Con(row));
+            } else {
+                case.push(Formula::Con(row));
+            }
+        }
+    }
+    base.push(Formula::or(vec![
+        Formula::and(case_a),
+        Formula::and(case_b),
+    ]));
+    Formula::and(base)
+}
+
+/// A `min` or `max` written with the rows its cases imply is read as the same choice as one
+/// written with its cases alone, so the scalar images read the definitions the preimage
+/// writes (FAIL-monotone-clamp-bench-slow: without this, no question of the chain
+/// `max(h div 2, x div a + x div b + C)` was answered by an image, and each was decided with
+/// the summaries, 5 times the makes). A row its cases do not imply is a condition of its own,
+/// and the definition is then not read as a choice.
+#[test]
+fn a_choice_is_read_through_the_rows_its_cases_imply() {
+    let x = Lin::atom(Atom::Aux(9));
+    let y = Lin::atom(Atom::Sym("y".into()));
+    let z = Lin::atom(Atom::Sym("z".into())).plus(&Lin::constant(-3));
+    let wide = Lin::atom(Atom::Sym("u".into()))
+        .plus(&Lin::atom(Atom::Sym("v".into())))
+        .plus(&Lin::constant(4));
+    for min in [false, true] {
+        for (a, b) in [(&y, &wide), (&wide, &y), (&y, &z)] {
+            let bare = choice(&extremum(min, &x, a, b, false), &Atom::Aux(9));
+            assert!(bare.is_some(), "min={min} a={a:?} b={b:?}");
+            let hulled = extremum(min, &x, a, b, true);
+            assert_eq!(
+                choice(&hulled, &Atom::Aux(9)),
+                bare,
+                "min={min} a={a:?} b={b:?}: {hulled:?}"
+            );
+        }
+    }
+    // Rows the cases do not imply: in the base, `x >= 5`; in the case that takes `a`, the
+    // row `x >= b + 1`, which its guard `a >= b` (for `max`) does not give.
+    let bare = extremum(false, &x, &y, &wide, false);
+    let base_row = Formula::and(vec![
+        Formula::Con(Con::ge(&x, &Lin::constant(5))),
+        bare.clone(),
+    ]);
+    assert_eq!(choice(&base_row, &Atom::Aux(9)), None, "{base_row:?}");
+    let Formula::Or(cases) = &bare else {
+        panic!("{bare:?}")
+    };
+    let Formula::And(case_a) = &cases[0] else {
+        panic!("{bare:?}")
+    };
+    let mut parts = case_a.to_vec();
+    parts.push(Formula::Con(Con::ge(&x, &wide.plus(&Lin::constant(1)))));
+    let case_row = Formula::or(vec![Formula::and(parts), cases[1].clone()]);
+    assert_eq!(choice(&case_row, &Atom::Aux(9)), None, "{case_row:?}");
+}
+
+/// The chain `h{k} = max(h{k-1} div 2, x div a + x div b + C)`, `h0 = x`, with each `max`
+/// written as [`extremum`] writes it, and the variable of each `h{k}`.
+fn clamp_chain(
+    a: i64,
+    b: i64,
+    offset: i64,
+    depth: usize,
+    hulled: bool,
+) -> (Vec<Formula>, Vec<Atom>) {
+    let mut defs: Vec<Formula> = Vec::new();
+    let pair = |input: &Lin, m: i64, defs: &mut Vec<Formula>| {
+        let n = defs.len() as u32;
+        let q = Lin::atom(Atom::Aux(n));
+        let r = Lin::atom(Atom::Aux(n + 1));
+        let f = Formula::And(Shared::new(vec![
+            Formula::Con(Con::eq(input, &q.times(m).plus(&r))),
+            Formula::Con(Con::ge(&r, &Lin::constant(0))),
+            Formula::Con(Con::ge(&Lin::constant(m - 1), &r)),
+        ]));
+        defs.push(f.clone());
+        defs.push(f);
+        q
+    };
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let qa = pair(&x, a, &mut defs);
+    let qb = pair(&x, b, &mut defs);
+    let bound = qa.plus(&qb).plus(&Lin::constant(offset));
+    let mut h = x;
+    let mut outputs = Vec::new();
+    for _ in 0..depth {
+        let half = pair(&h, 2, &mut defs);
+        let n = defs.len() as u32;
+        let out = Lin::atom(Atom::Aux(n));
+        defs.push(extremum(false, &out, &half, &bound, hulled));
+        outputs.push(Atom::Aux(n));
+        h = out;
+    }
+    (defs, outputs)
+}
+
+/// The images of the clamp chain written with the hull rows are those of the chain written
+/// with its cases alone, and both are given (FAIL-monotone-clamp-bench-slow).
+#[test]
+fn clamp_images_are_given_for_maxima_written_with_their_hull_rows() {
+    for (a, b, offset) in [(5, 7, -9), (1, 3, 4), (7, 11, 0)] {
+        let (bare, outputs) = clamp_chain(a, b, offset, 8, false);
+        let (hulled, _) = clamp_chain(a, b, offset, 8, true);
+        let (bare_def, hulled_def) = (
+            |n: u32| bare[n as usize].clone(),
+            |n: u32| hulled[n as usize].clone(),
+        );
+        let (mut bare_images, mut hulled_images) =
+            (ScalarImages::default(), ScalarImages::default());
+        for output in &outputs {
+            for c in -20i64..=20 {
+                let q = Formula::Con(Con::eq(&Lin::atom(output.clone()), &Lin::constant(c)));
+                let expected = bare_images.answer(&q, &bare_def);
+                assert!(
+                    expected.is_some(),
+                    "a={a} b={b} C={offset} {output:?} c={c}"
+                );
+                assert_eq!(
+                    hulled_images.answer(&q, &hulled_def),
+                    expected,
+                    "a={a} b={b} C={offset} {output:?} c={c}"
+                );
+            }
+        }
+    }
+}
