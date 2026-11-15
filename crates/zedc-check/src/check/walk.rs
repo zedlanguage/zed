@@ -18831,7 +18831,7 @@ fn without_needs(s: &Sig) -> Sig {
         done.insert(g as *const Sig, bare);
     }
     match done.remove(&(s as *const Sig)).flatten() {
-        Some(b) => Arc::unwrap_or_clone(b),
+        Some(b) => Sig::unwrap_to_change(b),
         None => s.clone(),
     }
 }

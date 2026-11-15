@@ -877,8 +877,10 @@ struct Same<'a> {
     /// The lowest stack address the recursion descends from ([`Same::room`]), set when it first
     /// descends; 0 before.
     floor: usize,
-    /// The pairs of types left to compare, pushed where the stack had no room.
-    left: Vec<(&'a Ty, &'a Ty)>,
+    /// The pairs of types left to compare, pushed where the stack had no room, each with the
+    /// `above` of its path, so a function below it is counted as shared as it would be had
+    /// the recursion reached it.
+    left: Vec<(&'a Ty, &'a Ty, [Above; 2])>,
     /// The union-find forest, by address: for each node met, the node it was joined to, or
     /// itself, and, for the root of a class, the number of nodes in it. One table, so the
     /// first node recorded costs one allocation. Every key is the address of a row, shape or
@@ -898,9 +900,21 @@ const SAME_STACK: usize = 128 << 10;
 impl<'a> Same<'a> {
     /// Whether the pairs left, and those they push, are each equal.
     fn rest(mut self) -> bool {
-        // A pair pushed is compared away from its path.
-        self.above = Default::default();
-        while let Some((a, b)) = self.left.pop() {
+        // A pair pushed is compared under the `above` of its path, as the recursion would
+        // have compared it. Compared under none, as before, a function below a cut that fell
+        // between two rows or shapes keeping it was counted as shared and recorded, so the
+        // table's size followed where the cuts fell: `levels(n)` of the deep_ops benchmarks
+        // recorded none at n = 20,000 and 3,136 functions at 160,000 (`bench::deep_ops::
+        // fits_sig_takes_linear_time_in_the_depth`, bytes 30.9x). Cost: two `Above` a pair
+        // pushed.
+        // Assumption, not proved: a function whose only owners are its list and the rows and
+        // shapes counted in the restored `above` is reached only along this path, so leaving
+        // it out of the table loses no repeat the table would have caught. It is the same
+        // assumption the recursion makes before any cut; the evidence is the l01_26 and l01_23
+        // tests and the recording counts (0 at n = 20,000 to 160,000 with the fix), not a
+        // proof that a pair popped here has no other way down to the function.
+        while let Some((a, b, above)) = self.left.pop() {
+            self.above = above;
             if !outer(&mut self, a, b) {
                 return false;
             }
@@ -987,7 +1001,7 @@ impl<'a> Same<'a> {
             true => pairs.into_iter().all(|(a, b)| outer(self, a, b)),
             false => pairs.into_iter().all(|(a, b)| match a.holds_nodes() {
                 true => {
-                    self.left.push((a, b));
+                    self.left.push((a, b, self.above));
                     true
                 }
                 false => outer(self, a, b),
@@ -3794,7 +3808,7 @@ pub fn errs_members(t: &Ty) -> Option<Ty> {
     let mut keys = Ty::empty();
     for s in shapes {
         let [f] = &s.items[..] else { return None };
-        let Some(sig) = f.fns.only() else { return None };
+        let sig = f.fns.only()?;
         let only_fn = f.set.is_empty() && f.tuples.is_empty() && f.vars.is_empty() && !f.dynamic;
         let [arrow] = &sig.arrows[..] else {
             return None;
@@ -4879,6 +4893,11 @@ impl Choices {
             .collect()
     }
 
+    /// Whether the choices hold one shape.
+    fn one(&self) -> bool {
+        matches!(&self.groups[..], [g] if g.all.len() == 1)
+    }
+
     /// The shapes of the bucket `id` of the group `g`, in order.
     fn bucket(&self, g: usize, id: &Bucket) -> &[usize] {
         self.groups[g].bucket(id)
@@ -4927,11 +4946,11 @@ fn shape_group(s: &Shape) -> ShapeGroup {
 struct Filed {
     rows: HashMap<usize, Choices>,
     payloads: HashMap<Arc<str>, HashMap<ShapeGroup, Choices>>,
-    /// The number of the first tuple of the type, in written order, equal to each of its
-    /// tuples, made once a tuple piece is looked up ([`Filed::equal`]).
-    equal: std::sync::OnceLock<HashMap<Row, usize>>,
+    /// The number of the first tuple of the type, in written order, with each digest its
+    /// tuples have, made once a tuple piece is looked up ([`Filed::equal`]).
+    equal: std::sync::OnceLock<HashMap<u64, usize>>,
     /// The same for its payload shapes, by atom name ([`Filed::equal_shapes`]).
-    equal_shapes: std::sync::OnceLock<HashMap<Arc<str>, HashMap<Shape, usize>>>,
+    equal_shapes: std::sync::OnceLock<HashMap<Arc<str>, HashMap<u64, usize>>>,
 }
 
 impl Filed {
@@ -4969,21 +4988,28 @@ impl Filed {
         }
     }
 
-    /// The number of the first tuple of `t`, the type filed, equal to each tuple of it, by the
-    /// row: a tuple piece equal to a shape finds it in `O(1)` expected, by the digest the row
-    /// keeps ([`Comparing::row_in`]). Made at the first lookup, in O(k) for `k` tuples.
-    fn equal(&self, t: &Ty) -> &HashMap<Row, usize> {
+    /// The number of the first tuple of `t`, the type filed, with each digest a tuple of it
+    /// keeps: a tuple piece equal to a shape finds it in `O(1)` expected by its own digest
+    /// ([`Comparing::row_in`]). Made at the first lookup, in O(k) for `k` tuples.
+    ///
+    /// Complexity tradeoff: keyed by the digest alone, not by the row, which a hit would
+    /// compare with the piece in full: two equal rows built apart share no node, so that took
+    /// the depth of the row, at each level of a type nested `n` deep, O(n^2) in all
+    /// (`bench::deep_ops::variables_of_a_deep_type_run_on_a_shallow_stack`). A shape of the
+    /// same digest that is not equal to the piece is only tried by [`Comparing::held_as_is`],
+    /// which asks whether it holds the piece binding nothing, a question as sound for it.
+    fn equal(&self, t: &Ty) -> &HashMap<u64, usize> {
         self.equal.get_or_init(|| {
             let mut first = HashMap::with_capacity(t.tuples.len());
             for (i, r) in t.tuples.iter().enumerate() {
-                first.entry(r.clone()).or_insert(i);
+                first.entry(r.0.digest).or_insert(i);
             }
             first
         })
     }
 
     /// [`Filed::equal`] for the payload shapes of each atom `t` lists, by the atom's name.
-    fn equal_shapes(&self, t: &Ty) -> &HashMap<Arc<str>, HashMap<Shape, usize>> {
+    fn equal_shapes(&self, t: &Ty) -> &HashMap<Arc<str>, HashMap<u64, usize>> {
         self.equal_shapes.get_or_init(|| {
             let lists = t
                 .payloads
@@ -4992,7 +5018,7 @@ impl Filed {
             (lists.map(|(n, rs)| {
                 let mut first = HashMap::with_capacity(rs.len());
                 for (i, r) in rs.iter().enumerate() {
-                    first.entry(r.clone()).or_insert(i);
+                    first.entry(r.0.digest).or_insert(i);
                 }
                 (n.clone(), first)
             }))
@@ -6433,7 +6459,9 @@ impl<'m, 's> Comparing<'m, 's> {
     /// `(X0,) | (X1,) <: (X0,) | (X1,)` bound `X0`, and `(x0: (T,)) -> (T,)` did not fit
     /// `(x0: ((X0,),) | ((X1,),)) -> ((X0,) | (X1,),)`, whose result must hold `T`'s binding
     /// with nothing bound ([`result_within`]); payload shapes the same. A refusal inside the
-    /// attempt is dropped, as the search then decides.
+    /// attempt is dropped, as the search then decides. Where `choices` holds one shape, the
+    /// search takes that shape with the same bindings, so the attempt would only repeat the
+    /// search's comparison, and is not made.
     ///
     /// Complexity tradeoff (COMPLEXITY.md F203): naive version, every shape tried for one that
     /// binds nothing before the first that binds, O(k) comparisons a member for `k` shapes.
@@ -6444,11 +6472,14 @@ impl<'m, 's> Comparing<'m, 's> {
     /// passed over for an earlier shape that binds.
     async fn held_as_is(
         &'m self,
+        choices: &Choices,
         r: Option<usize>,
         binds: &Binds,
         fit: impl Fn(usize, Binds) -> Deep<'m, (bool, Binds)>,
     ) -> bool {
-        let Some(r) = r else { return false };
+        let Some(r) = r.filter(|_| !choices.one()) else {
+            return false;
+        };
         let before = self.begin_alone();
         let (ok, b) = fit(r, binds.clone()).await;
         self.end_alone(before);
@@ -6491,8 +6522,9 @@ impl<'m, 's> Comparing<'m, 's> {
                     return false;
                 };
                 let fit = |r: usize, b| self.shape_in(l.clone(), rs[r].clone(), b);
-                let equal = filed.equal_shapes(t).get(n).and_then(|e| e.get(l)).copied();
-                if self.held_as_is(equal, binds, &fit).await {
+                let equal =
+                    (filed.equal_shapes(t).get(n)).and_then(|e| e.get(&l.0.digest).copied());
+                if self.held_as_is(choices, equal, binds, &fit).await {
                     continue;
                 }
                 let xs = comps(l);
@@ -6549,7 +6581,12 @@ impl<'m, 's> Comparing<'m, 's> {
         };
         let fit = |r: usize, b| self.rows(cs.clone(), t.tuples[r].clone(), b);
         if self
-            .held_as_is(filed.equal(t).get(cs).copied(), binds, &fit)
+            .held_as_is(
+                choices,
+                filed.equal(t).get(&cs.0.digest).copied(),
+                binds,
+                &fit,
+            )
             .await
         {
             return true;
@@ -10559,6 +10596,17 @@ impl Sig {
             stack[at..].reverse();
         }
         out
+    }
+
+    /// The signature `s` holds, to be changed: moved out when `s` is its only holder, else
+    /// cloned, and either way with its facts ([`Facts`]) dropped, since they may have been
+    /// read while it was held. A signature put in a type has its hash read at once
+    /// ([`Members::push`]), so `Arc::unwrap_or_clone` alone gives back a signature whose kept
+    /// hash no longer matches it once changed, and two equal types then compare unequal.
+    pub fn unwrap_to_change(s: Arc<Sig>) -> Sig {
+        let mut s = Arc::unwrap_or_clone(s);
+        s.facts = Facts::default();
+        s
     }
 
     /// One arrow over `params` and `result`, with no bounded variable.

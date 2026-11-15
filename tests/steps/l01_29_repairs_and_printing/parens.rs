@@ -849,3 +849,29 @@ fn a_tuple_key_written_by_a_name_has_no_parentheses() {
         assert_eq!(parse_type(text).unwrap().to_string(), want, "{text}");
     }
 }
+
+/// An intersection of functions with one parameter list is read as one function holding
+/// each operand's arrows: the checker moves the first operand's function out of its type and
+/// adds the others' arrows to it (`and` in zedc-check). The function's hash is read as soon
+/// as it is put in a type, so the function moved out must drop the hash it kept
+/// (`Sig::unwrap_to_change`); before, it kept the hash of its first arrow alone, and the
+/// tuple holding it was unequal to, and no subtype of, the same tuple read from its print
+/// (seed 16437813929499442776 of the round-trip test above), though the intersection alone
+/// compared equal, its hash read only after the arrows were joined.
+#[test]
+fn an_intersection_of_functions_in_a_tuple_equals_its_print_read_back() {
+    for text in [
+        "(((bool ->? String) .. (bool ->? String) | (rat,) -> int \\ 0),)",
+        "(((bool ->? String) -> int \\ 0) & ((rat,) | (bool ->? String) -> (int \\ 0) | #notFound),)",
+        "((int -> int) & (bool -> bool), int)",
+        "#a((int -> int) & (bool -> bool) & (rat -> rat))",
+    ] {
+        let t = parse_type(text).unwrap();
+        let back = parse_type(&t.to_string()).unwrap();
+        assert!(t == back, "{text}: {t} and {back}");
+        assert!(
+            t.subtype(&back) && back.subtype(&t),
+            "{text}: {t} and {back}"
+        );
+    }
+}

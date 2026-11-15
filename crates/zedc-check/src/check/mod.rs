@@ -11098,7 +11098,7 @@ fn and(ts: Vec<Ty>, overload: bool) -> Ty {
     if overload {
         let mut sigs = ts.into_iter().map(|mut t| {
             let s = t.fns.pop().expect("a function type denotes one signature");
-            Arc::unwrap_or_clone(s)
+            Sig::unwrap_to_change(s)
         });
         let mut sig = sigs.next().expect("an intersection has operands");
         for mut s in sigs {
