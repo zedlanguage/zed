@@ -86,7 +86,7 @@ impl<'a> Elab<'a> {
         // `escaping_calls` takes each call whose result's type reaches a function with needs
         // through tuples, payloads, families and returned functions, or holds a part that
         // does not say what it holds (`_`, a type variable, `(..)`), and each call that leaves
-        // parameters open (`type_holds_needs` in zedc-check's walk, which names the one
+        // parameters open (`Ty::may_hold_needs` in zedc-types, which names the one
         // unproved gap: an atom whose payload is not listed). Taking too many calls only
         // refuses more: a call taken here gives no body.
         // Cost: one lookup per entry of each decided call, O(e) for e entries, as before.

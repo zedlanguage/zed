@@ -10034,7 +10034,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ok
             }
             None => match piece {
-                Piece::Fn(s) if holds_needs(s) => {
+                Piece::Fn(s) if s.holds_needs() => {
                     self.fit_needs(s, ty, &mut Binds::new(), what, span)
                 }
                 Piece::Tuple(r) if r.open() => match &ty.pieces()[..] {
@@ -10050,7 +10050,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Whether a function of `s`, whose body has needs or which returns a function whose body
-    /// has needs ([`holds_needs`]), may be passed, by `what` at `span`, at a parameter of type
+    /// has needs ([`Sig::holds_needs`]), may be passed, by `what` at `span`, at a parameter of type
     /// `p`: `s` without its needs fits `p`, and `s` applied to the parameters of `p`'s one
     /// function type gives its result ([`Self::needs_hold`]). The application reports its own
     /// errors.
@@ -14525,7 +14525,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let permuted = Arc::new(permuted);
         if !self.fits_slot(&permuted, e, &what, span) {
             // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
-            let why = match !holds_needs(&permuted) {
+            let why = match !permuted.holds_needs() {
                 true => ty::why_unfit_with(&permuted, e, &|v| self.stale(v))
                     .map_or_else(String::new, |w| format!(": {w}")),
                 false => String::new(),
@@ -14559,9 +14559,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Whether the function `s`, named `what` in messages, with its parameters in the order of
     /// the function type `e`'s, fits a slot of `e`: as a type, or, when its body makes uses of
     /// its type variables, or returns a function whose body does, by those uses checked on the
-    /// types `e` passes ([`holds_needs`]). False only when no error says why.
+    /// types `e` passes ([`Sig::holds_needs`]). False only when no error says why.
     fn fits_slot(&mut self, s: &Arc<Sig>, e: &Arc<Sig>, what: &str, span: Span) -> bool {
-        match !holds_needs(s) {
+        match !s.holds_needs() {
             true => ty::fits_sig_with(s, e, &|v| self.stale(v)),
             false => {
                 let p = Ty::func(e.clone());
@@ -17487,7 +17487,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.restrict(k, mask_of(p), what, span)
                     }
                     None => match &piece {
-                        Piece::Fn(s) if holds_needs(s) && !p.fns.is_empty() => {
+                        Piece::Fn(s) if s.holds_needs() && !p.fns.is_empty() => {
                             self.fit_needs(s, p, &mut binds, what, span)
                         }
                         _ => self.sub(&ty.of_piece(&piece), p, &mut binds),
@@ -17635,7 +17635,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let result = close(&arrow.result.replace(&binds), sig, |v| self.is_class(v));
             // A function passed to a call that leaves parameters open, or whose result holds a
             // function with needs, may run after the call returns (`Info::escaping_calls`).
-            if !self.trying && (partial || type_holds_needs(&result)) {
+            if !self.trying && (partial || result.may_hold_needs()) {
                 self.escapes.insert(span);
             }
             out = out.union(&match partial {
@@ -17643,7 +17643,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => {
                     let needs = left.iter().map(|n| n.replace(&binds)).collect();
                     let (held, now) = hold(&result, needs, |v| self.is_class(v));
-                    if !self.trying && type_holds_needs(&held) {
+                    if !self.trying && held.may_hold_needs() {
                         self.escapes.insert(span);
                     }
                     self.call_frames.extend(frame);
@@ -20650,80 +20650,6 @@ fn in_text_order(edits: &[(Span, String)]) -> Vec<&(Span, String)> {
     let mut sorted: Vec<&(Span, String)> = edits.iter().collect();
     sorted.sort_by_key(|(s, _)| (s.start, s.end));
     sorted
-}
-
-/// Whether `s` has needs, or a function its arrows return at any depth has: a function so
-/// passed is checked by its calls ([`Ck::fit_needs`]), not as a type alone. Cost: each
-/// function its results hold, at any depth, visited once (a signature shared by two arrows is
-/// one node, kept by its address in `seen`), which comparing it as a type walks too; an
-/// explicit stack, since returned functions nest as deep as the text.
-fn holds_needs(s: &Sig) -> bool {
-    let mut stack = vec![s];
-    let mut seen: HashSet<*const Sig> = HashSet::new();
-    while let Some(s) = stack.pop() {
-        if !s.needs.is_empty() {
-            return true;
-        }
-        let fns = s.arrows.iter().flat_map(|a| a.result.fns.iter());
-        stack.extend(fns.map(|g| &**g).filter(|g| seen.insert(*g)));
-    }
-    false
-}
-
-/// Whether a value of type `t` may hold a function with needs, one whose folds a later call
-/// decides (`Info::escaping_calls`): a function in `t` with needs, or one reached from `t`
-/// at any depth through a tuple's components, an atom's payload (a struct's fields are one)
-/// or a function's results. A family's type is an arrow from key to value, so its values are
-/// a function's results. The results are walked as types, not by [`holds_needs`], which looks
-/// only at the functions a result holds directly: `hz` in `hz(f, y) = (f(y), z -> (z, f))`
-/// returns a lambda whose result is a tuple holding `f`, and `h5` in
-/// `h5(f, y) = (f(y), [(1, f)])` a family whose values hold it (row
-/// REDUCE-identity-escaping-values). A part that does not say what it holds is taken as
-/// holding such a function: the unknown `_` (`dynamic`), a type variable (`vars`; `close`
-/// leaves the class variables and those of an enclosing function), the kind-wide part of
-/// `set`, every tuple or struct (`k(positional t: (..)) = t` hides `f` in `k((1, f))`), and a
-/// payload listed as not known. Those are every part of a [`Ty`] that may hold a function,
-/// with one gap: an atom of `set` whose name `payloads` does not list has a payload that is
-/// not known, and is taken as holding none. Not proved that it holds none; no function in a
-/// payload can run after the call while this zedc compiles no read of a payload (`match` and
-/// `is #a(x)` are refused as not compiled yet).
-// Complexity tradeoff: each type and each function visited once, kept by its address in
-// `seen` and `seen_fns`, O(v) for v types and functions reachable from `t`; an explicit stack,
-// since tuples and returned functions nest as deep as the text. The naive form,
-// [`holds_needs`] from each function with a walk of each result's tuples, visits a function
-// shared by k results k times, O(k·v).
-fn type_holds_needs(t: &Ty) -> bool {
-    let mut stack = vec![t];
-    let mut seen: HashSet<*const Ty> = HashSet::new();
-    let mut seen_fns: HashSet<*const Sig> = HashSet::new();
-    while let Some(t) = stack.pop() {
-        if t.dynamic || !t.vars.is_empty() || !(&t.set & &zedc_types::ty::wide()).is_empty() {
-            return true;
-        }
-        for s in t.fns.iter() {
-            if !seen_fns.insert(Arc::as_ptr(s)) {
-                continue;
-            }
-            if !s.needs.is_empty() {
-                return true;
-            }
-            let results = s.arrows.iter().map(|a| &a.result);
-            stack.extend(results.filter(|r| seen.insert(*r as *const Ty)));
-        }
-        for row in t.tuples.iter() {
-            stack.extend(row.iter().filter(|c| seen.insert(*c as *const Ty)));
-        }
-        for shapes in t.payloads.values() {
-            let Some(shapes) = shapes else {
-                return true;
-            };
-            for p in shapes {
-                let parts = p.items.iter().chain(p.fields.values());
-                stack.extend(parts.filter(|c| seen.insert(*c as *const Ty)));
-            }
-        }
-    }
-    false
 }
 
 /// `s` with no needs, nor any function its arrows return at any depth: what `s` is as a type,
