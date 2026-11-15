@@ -2870,10 +2870,13 @@ pub struct Sig {
 /// And its variables in order of first appearance ([`Sig::vars_order`]), kept once asked, so
 /// the checker, which names the variables of each signature it shows, reads a signature held
 /// in a later one at the cost of the length of its order.
+///
+/// And, for a family, the functions and kind-wide parts its entries hold ([`Entries`]), so a
+/// type that holds the family reads them at the cost of its outer level.
 // Complexity tradeoff (COMPLEXITY.md row F77): the naive version works out a signature's
 // variables at each depth it is met, O(n^3) for n nested tuples (106M instructions per node at
 // n = 400) and O(n^2) for n nested lambdas. Used: a memo per signature, filled on first use,
-// so each signature is walked once, linear in all. Tradeoffs: five `OnceLock`s per signature;
+// so each signature is walked once, linear in all. Tradeoffs: six `OnceLock`s per signature;
 // a clone starts empty and works them out again, since it may be changed; equality and
 // hashing ignore the memo.
 #[derive(Default)]
@@ -2883,7 +2886,78 @@ pub struct Facts(
     std::sync::OnceLock<u64>,
     std::sync::OnceLock<VarBits>,
     std::sync::OnceLock<Arc<[Arc<str>]>>,
+    std::sync::OnceLock<Entries>,
 );
+
+/// What the entries of a family hold at any depth, outside functions: a family is data only
+/// when its entries are (DESIGN.md L1.17, "a value that holds a function is a type error
+/// there"; row FAIL-check-family-of-functions-as-data). Its keys are left out: the checker
+/// checks each key of a display and each key an `in` tests as data where it is written
+/// (`display_step` and `Frame::InKey` in crates/zedc-check/src/check/walk.rs), and keys
+/// computed by `group` or `rekey` are row KEYABLE-reject's.
+#[derive(Default)]
+pub struct Entries {
+    /// The first function, not a family, that an entry holds at any depth.
+    held: Option<Arc<Sig>>,
+    /// The first function, not a family, that an entry holds at any depth and no tuple
+    /// expression has checked as data ([`Ty::unchecked_function`]).
+    unchecked: Option<Arc<Sig>>,
+    /// The first kind-wide part, `(..)` or `{..}`, that an entry holds at any depth
+    /// ([`Ty::held_wide`]).
+    wide: Option<KType>,
+}
+
+impl Sig {
+    /// What the entries of this family hold ([`Entries`]); nothing for a function, whose
+    /// results are not held until it is called.
+    ///
+    /// The families nested in its entries' types are worked out first, each once, with an
+    /// explicit stack, since families nest as deep as the text does; each entry's type is
+    /// then read at its outer level, as its rows and payload shapes keep what they hold and
+    /// each family nested in it now has its own [`Entries`].
+    // Complexity tradeoff: the naive version walks the entries' types to the bottom at each
+    // read, O(d) for d families nested one in another and O(d^2) for a program that uses each
+    // of them as data. Used: a memo per family signature ([`Facts`]), filled once, so the reads
+    // cost O(1) each and the fill costs the size of the outer levels of the entries' types,
+    // linear in all. A family met again before its memo is filled is skipped when popped,
+    // since the memo is then filled. Test:
+    // `l01_26_type_resolution::bench::held_functions::nested_families_are_checked_as_data_in_linear_time`.
+    fn entries(&self) -> &Entries {
+        if let Some(e) = self.facts.5.get() {
+            return e;
+        }
+        /// The families in the entries' types of `s` whose memo is not filled yet.
+        fn families(s: &Sig) -> impl Iterator<Item = &Sig> {
+            (s.arrows.iter())
+                .flat_map(|a| a.result.fns.iter())
+                .filter(|f| f.data && f.facts.5.get().is_none())
+                .map(|f| &**f)
+        }
+        let mut stack: Vec<(&Sig, bool)> = vec![(self, false)];
+        while let Some((s, ready)) = stack.pop() {
+            if s.facts.5.get().is_some() {
+                continue;
+            }
+            if !ready {
+                stack.push((s, true));
+                stack.extend(families(s).map(|f| (f, false)));
+                continue;
+            }
+            // Each family nested in an entry has its memo now, so these reads do not walk.
+            let results = || s.arrows.iter().map(|a| &a.result);
+            let e = match s.data {
+                true => Entries {
+                    held: results().find_map(|t| t.held_function().cloned()),
+                    unchecked: results().find_map(|t| t.unchecked_function().cloned()),
+                    wide: results().find_map(Ty::held_wide),
+                },
+                false => Entries::default(),
+            };
+            let _ = s.facts.5.set(e);
+        }
+        self.facts.5.get().expect("filled by the walk above")
+    }
+}
 
 impl Clone for Facts {
     fn clone(&self) -> Facts {
@@ -8974,10 +9048,15 @@ impl Ty {
         self.held_function().is_none() && self.held_wide().is_none()
     }
 
-    /// A function it may hold, at any depth, in its tuples and its atoms' payloads; a family
-    /// is data, not a function.
+    /// A function it may hold, at any depth, in its tuples, its atoms' payloads and its
+    /// families' entries; a family is not itself a function, but it holds the functions its
+    /// entries hold.
     pub fn held_function(&self) -> Option<&Arc<Sig>> {
-        self.function_in(|r| r.0.held.as_ref(), |s| s.held.as_ref())
+        self.function_in(
+            |r| r.0.held.as_ref(),
+            |s| s.held.as_ref(),
+            |e| e.held.as_ref(),
+        )
     }
 
     /// Whether it holds exactly one value that its text writes as that value: one scalar
@@ -9036,24 +9115,31 @@ impl Ty {
     /// A function it may hold, at any depth, that no tuple expression has checked as data, so
     /// that no error has reported it yet.
     pub fn unchecked_function(&self) -> Option<&Arc<Sig>> {
-        self.function_in(|r| r.0.unchecked.as_ref(), |s| s.unchecked.as_ref())
+        self.function_in(
+            |r| r.0.unchecked.as_ref(),
+            |s| s.unchecked.as_ref(),
+            |e| e.unchecked.as_ref(),
+        )
     }
 
     /// The first function, not a family, that it holds itself, that `row` gives of one of its
-    /// tuples, or that `shape` gives of the payload of one of its atoms (DESIGN.md, `#atom(t)`:
-    /// a payload may hold a function).
+    /// tuples, that `shape` gives of the payload of one of its atoms (DESIGN.md, `#atom(t)`:
+    /// a payload may hold a function), or that `entry` gives of the entries of one of its
+    /// families ([`Entries`]).
     ///
-    /// A row and a payload shape each keep what they hold at any depth, so the walk reads them
-    /// and does not enter them: it costs the size of the outer level, however deep or shared
-    /// the payloads are.
+    /// A row, a payload shape and a family each keep what they hold at any depth, so the walk
+    /// reads them and does not enter them: it costs the size of the outer level, however deep
+    /// or shared the payloads and entries are.
     fn function_in<'a>(
         &'a self,
         row: impl Fn(&'a Row) -> Option<&'a Arc<Sig>>,
         shape: impl Fn(&'a ShapeData) -> Option<&'a Arc<Sig>>,
+        entry: impl Fn(&'a Entries) -> Option<&'a Arc<Sig>>,
     ) -> Option<&'a Arc<Sig>> {
         let own = self.fns.iter().find(|s| !s.data);
         own.or_else(|| self.tuples.iter().find_map(row))
             .or_else(|| self.payload_shapes().find_map(|s| shape(&s.0)))
+            .or_else(|| (self.fns.iter().filter(|s| s.data)).find_map(|s| entry(s.entries())))
     }
 
     /// Whether every value of `self` is in `other`, binding `other`'s variables as needed.
@@ -9155,6 +9241,7 @@ impl Ty {
         }
         (self.tuples.iter().find_map(|r| r.0.wide.clone()))
             .or_else(|| self.payload_shapes().find_map(|s| s.wide.clone()))
+            .or_else(|| (self.fns.iter().filter(|s| s.data)).find_map(|s| s.entries().wide.clone()))
     }
 
     /// Whether its set, or a row or payload shape at any depth outside functions, holds the

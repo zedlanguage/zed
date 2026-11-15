@@ -2509,8 +2509,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The derivation of the function that the value of the expression at `span` holds, for a
     /// use that needs data (DESIGN.md step L1.17). Each tuple, atom and name on the path from
     /// `span` to the function, that holds the function and is not one, is a step that names
-    /// its site and prints no type: "this tuple holds the function", "`t` holds the function
-    /// here", "`t` is defined here". The function itself is shown as [`Ck::derive`] shows it,
+    /// its site and prints no type: "this tuple holds the function", "this family holds the
+    /// function in an entry", "`t` holds the function here", "`t` is defined here". The function itself is shown as [`Ck::derive`] shows it,
     /// and a part of a tuple or an atom that holds no function is left out. Where the walk
     /// meets no such step, this is [`Ck::derive`].
     ///
@@ -2555,6 +2555,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             Src::Other(e) => match &e.kind {
                 ExprKind::Tuple(items) => (
                     "this tuple holds the function".into(),
+                    items.iter().collect(),
+                ),
+                // A family holds the functions its entries hold (DESIGN.md L1.17; row
+                // FAIL-check-family-of-functions-as-data). Its keys are left out: a function
+                // as a key is the key rule's case (row KEYABLE-reject).
+                ExprKind::Map(entries) => (
+                    "this family holds the function in an entry".into(),
+                    entries.iter().map(|(_, v)| v).collect(),
+                ),
+                ExprKind::Array(items) => (
+                    "this array holds the function in an element".into(),
                     items.iter().collect(),
                 ),
                 ExprKind::Call {

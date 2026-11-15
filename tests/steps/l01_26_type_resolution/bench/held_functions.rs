@@ -4,10 +4,99 @@ use zed_tests::scaling;
 
 use super::super::held_functions::{
     in_a_wide_payload, in_atoms, in_atoms_and_tuples, in_atoms_by_bindings, in_atoms_by_calls,
-    in_atoms_twice, in_atoms_twice_in_a_function, in_calls, in_named_steps, in_one_expression,
-    nested, notes_in_calls, notes_in_named_steps, notes_in_one_expression, returned_by_lambdas,
+    in_atoms_twice, in_atoms_twice_in_a_function, in_calls, in_families_by_bindings,
+    in_families_in_one_expression, in_named_steps, in_one_expression, nested, notes_in_calls,
+    notes_in_named_steps, notes_in_one_expression, returned_by_lambdas,
 };
 use super::super::{Resolved, type_errors};
+
+/// Each key of a display and each `in` test is checked as data, `O(1)` for a key whose
+/// type's outer level is `O(1)` ([`Ck::data`] reads rows and families at their outer level),
+/// so `n` keys cost `O(n)`; with a function in each key, `n` errors of `O(1)` notes each.
+/// Small instances: `held_functions::a_key_that_holds_a_function_is_rejected`.
+#[test]
+fn keys_of_a_display_and_in_tests_are_checked_as_data_in_linear_time() {
+    // `n` keys `(leaf, i)`, then `n` tests `(leaf, i) in t`.
+    let text = |n: usize, leaf: &str| {
+        let keys: Vec<String> = (0..n).map(|i| format!("({leaf}, {i}) -> {i}")).collect();
+        let tests: Vec<String> = (0..n).map(|i| format!("({leaf}, {i}) in t")).collect();
+        format!(
+            "scale(positional x) = x * int(2);\nt = {{ {} }};\nu = ({});\n",
+            keys.join(", "),
+            tests.join(", ")
+        )
+    };
+    for (what, leaf, errors) in [
+        (
+            "n keys and n `in` tests, each holding a function",
+            "scale",
+            2,
+        ),
+        ("n keys and n `in` tests, each holding an integer", "1", 0),
+    ] {
+        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n, leaf))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
+        });
+    }
+}
+
+/// A function at the bottom of `n` families nested one in another is found by each use that
+/// needs data in time linear in `n`: each family keeps what its entries hold ([`Entries`] in
+/// crates/zedc-types/src/ty.rs), worked out once, so the type of each level is read at its
+/// outer level. A walk to the bottom at each level would be `O(n^2)`. The derivation has a
+/// step per family and name, with no type printed (CHK-held-cascade), so the one error is
+/// `O(n)` notes. Small instance:
+/// `held_functions::a_function_in_nested_families_is_one_error_with_the_path_to_it`.
+#[test]
+fn nested_families_are_checked_as_data_in_linear_time() {
+    type Family = fn(usize, &str) -> String;
+    for (what, text, leaf, errors, notes) in [
+        (
+            "a function n families deep in one expression",
+            in_families_in_one_expression as Family,
+            "scale",
+            1,
+            (|n| n + 6) as fn(usize) -> usize,
+        ),
+        (
+            "an integer n families deep in one expression",
+            in_families_in_one_expression,
+            "1",
+            0,
+            |_| 0,
+        ),
+        (
+            "a function put in a family by n bindings",
+            in_families_by_bindings,
+            "scale",
+            1,
+            |n| 3 * n + 4,
+        ),
+        (
+            "an integer put in a family by n bindings",
+            in_families_by_bindings,
+            "1",
+            0,
+            |_| 0,
+        ),
+    ] {
+        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&text(n, leaf))))
+            .collect();
+        scaling::check_order(what, 500, 1, |n| {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), errors, "{what} at {n}");
+            let got = info.errors.first().map_or(0, |e| e.notes.len());
+            assert_eq!(got, notes(n), "{what} at {n}");
+        });
+    }
+}
 
 #[test]
 fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {

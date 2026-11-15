@@ -417,8 +417,8 @@ pub(super) enum Frame<'a> {
     /// `m >< f`, `f` not an operator section, waiting for `f`: `m` and the span of the
     /// reduction (`reduce_by`).
     ReduceBy(&'a Expr, Span),
-    /// `k in m`, waiting for `k`: `m` and the span of the test.
-    InKey(&'a Expr, Span),
+    /// `k in m`, waiting for `k`: `m`, the span of the test and the span of `k`.
+    InKey(&'a Expr, Span, Span),
     /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
     InSet(Ty, Span),
     /// `a ..< b` or `a ..= b`, waiting for `a`: `a`, `b` and the span of the range.
@@ -966,8 +966,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => m.ty(Ty::empty()),
                 }
             }
-            Frame::InKey(set, span) => {
+            Frame::InKey(set, span, at) => {
                 let k = m.take_ty();
+                // `in` compares `k` with the family's keys, so it is data, as a key of a
+                // display is ([`Ck::display_step`]).
+                self.data(&k, "`in`", at, at);
                 m.k(Frame::InSet(k, span));
                 m.job(Job::Expr(set));
             }
@@ -2905,7 +2908,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             },
             ExprKind::In { of, set, .. } => {
-                m.k(Frame::InKey(set, e.span));
+                m.k(Frame::InKey(set, e.span, of.span));
                 m.job(Job::Expr(of));
             }
             ExprKind::SortKey { .. } => unreachable!(
@@ -3097,6 +3100,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.started += 1;
             m.k(Frame::Display(s));
             return m.job(Job::Expr(e));
+        }
+        // A key is found by comparing it with the others, and "Keys require a decidable
+        // equality" (DESIGN.md sec:type_resolution, the corner rules), which a function has
+        // only on an enumerable domain, by EQ-tabulate; until then `==` on one is a type error
+        // (L1.17), and so is a key that holds one, by the same check (`Ck::data`). The keys of
+        // a map display are its even parts, and each element of a set is a key. A function as
+        // a computed key, of `group` or `rekey`, is row KEYABLE-reject's.
+        let keys_at = match s.kind {
+            Display::Array => 0..0,
+            Display::Set => 0..s.es.len(),
+            Display::Map => 0..s.es.len(),
+        };
+        let step = if s.kind == Display::Map { 2 } else { 1 };
+        for i in keys_at.step_by(step) {
+            let at = s.es[i].span;
+            let t = s.out[i].clone();
+            self.data(&t, "a key of a family", at, at);
         }
         let (keys, values) = match s.kind {
             Display::Array => {

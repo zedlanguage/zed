@@ -340,6 +340,165 @@ fn a_part_with_no_function_is_left_out_of_the_path() {
     assert_eq!(notes_of(&text), expected);
 }
 
+/// `leaf` an entry of a family, then `n - 1` bindings each putting the last in a family,
+/// compared with `==`.
+pub(super) fn in_families_by_bindings(n: usize, leaf: &str) -> String {
+    let mut text = format!("{SCALE}t0 = {{ \"k\" -> {leaf} }};\n");
+    text.extend((1..n).map(|i| format!("t{i} = {{ \"k\" -> t{} }};\n", i - 1)));
+    compared(&text, &format!("t{}", n - 1))
+}
+
+/// `leaf` at the bottom of `n` families nested in one expression, compared with `==`.
+pub(super) fn in_families_in_one_expression(n: usize, leaf: &str) -> String {
+    let text = format!(
+        "{SCALE}t = {}{leaf}{};\n",
+        "{ \"k\" -> ".repeat(n),
+        " }".repeat(n)
+    );
+    compared(&text, "t")
+}
+
+/// A family whose entries hold a function is not data (DESIGN.md L1.17: "a value that holds a
+/// function is a type error there"; row FAIL-check-family-of-functions-as-data): `==` on it is
+/// one error, and its derivation shows each family and name the function passes through, as
+/// it does for tuples. Small instance of
+/// `bench::held_functions::nested_families_are_checked_as_data_in_linear_time`.
+#[test]
+fn a_function_in_nested_families_is_one_error_with_the_path_to_it() {
+    let mut expected: Vec<String> = [
+        "[t1] `t1` holds the function here",
+        "[{ \"k\" -> t0 }] `t1` is defined here",
+        "[{ \"k\" -> t0 }] this family holds the function in an entry",
+        "[t0] `t0` holds the function here",
+        "[{ \"k\" -> scale }] `t0` is defined here",
+        "[{ \"k\" -> scale }] this family holds the function in an entry",
+    ]
+    .map(String::from)
+    .into();
+    expected.extend(scale_and_repairs("t1 == #b"));
+    assert_eq!(notes_of(&in_families_by_bindings(2, "scale")), expected);
+    let mut expected: Vec<String> = [
+        "[t] `t` holds the function here",
+        "[{ \"k\" -> { \"k\" -> scale } }] `t` is defined here",
+        "[{ \"k\" -> { \"k\" -> scale } }] this family holds the function in an entry",
+        "[{ \"k\" -> scale }] this family holds the function in an entry",
+    ]
+    .map(String::from)
+    .into();
+    expected.extend(scale_and_repairs("t == #b"));
+    assert_eq!(
+        notes_of(&in_families_in_one_expression(2, "scale")),
+        expected
+    );
+    // An array, a family in a tuple and a tuple in a family, each a step of the path.
+    for (text, step) in [
+        (
+            format!("{SCALE}t = [scale, scale];\nsame = t == #b;\n"),
+            "[[scale, scale]] this array holds the function in an element",
+        ),
+        (
+            format!("{SCALE}t = ({{ \"k\" -> scale }}, 1);\nsame = t == #b;\n"),
+            "[{ \"k\" -> scale }] this family holds the function in an entry",
+        ),
+        (
+            format!("{SCALE}t = {{ \"k\" -> (scale, 1) }};\nsame = t == #b;\n"),
+            "[(scale, 1)] this tuple holds the function",
+        ),
+    ] {
+        let notes = notes_of(&text);
+        assert!(notes.iter().any(|n| n == step), "{text}\n{notes:#?}");
+    }
+    // The same families of data are data, and `==` takes them.
+    for text in [
+        in_families_by_bindings(3, "1"),
+        in_families_in_one_expression(3, "1"),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
+}
+
+/// Each use DESIGN.md L1.17 reserves for data rejects a family whose entries are functions:
+/// showing it, by interpolation or `String`, and `==` and `!=`. The family is the one of
+/// `function_in_family.rs`, whose entries are generic lambdas.
+#[test]
+fn each_use_that_needs_data_rejects_a_family_of_functions() {
+    let b = "b = { \"a\" -> (y -> y + 1), \"b\" -> (y -> y * 2) };\n";
+    let f = "`T -> T for T in int | f32 | f64 | rat`";
+    for (use_, op) in [
+        ("a = \"${b}\";\n", "interpolation"),
+        ("a = String(b);\n", "`String`"),
+        // An operand that is data, so the one error is the family's.
+        ("a = b == #c;\n", "`==`"),
+        ("a = b != #c;\n", "`!=`"),
+        // Through a tuple, an atom, an outer family and a generic parameter.
+        ("t = (b, 1);\na = \"${t}\";\n", "interpolation"),
+        ("t = #box(b);\na = t == #c;\n", "`==`"),
+        ("t = { 1 -> b };\na = \"${t}\";\n", "interpolation"),
+        (
+            "show(positional v) = \"${v}\";\na = show(b);\n",
+            "interpolation",
+        ),
+    ] {
+        let text = format!("{b}{use_}");
+        let got = type_errors(&text);
+        let want = format!(
+            "{op} takes data, and this value may hold a function, {f}: data is a value that holds no function at any depth."
+        );
+        assert_eq!(got.len(), 1, "{text}\n{got:#?}");
+        assert!(got[0].starts_with(&want), "{text}\n{got:#?}");
+    }
+    // Both operands holding a function are an error each, for a family as for a tuple.
+    let t = "f(positional y) = y + int(1);\nt = (f, 1);\na = t == t;\n";
+    assert_eq!(type_errors(t).len(), 2, "{t}");
+    assert_eq!(type_errors(&format!("{b}a = b == b;\n")).len(), 2);
+    // A family made by `map` from a family of data holds the functions `map` puts in it.
+    let text = "b = { \"a\" -> 1 }.map(r -> (y -> y + r));\na = \"${b}\";\n";
+    let got = type_errors(text);
+    assert_eq!(got.len(), 1, "{text}\n{got:#?}");
+    assert!(
+        got[0].starts_with(
+            "interpolation takes data, and this value may hold a function, `int -> int`"
+        ),
+        "{text}\n{got:#?}"
+    );
+}
+
+/// "Keys require a decidable equality" (DESIGN.md, the corner rules of sec:type_resolution),
+/// and `==` on a function is a type error until EQ-tabulate (L1.17), so a key that holds a
+/// function is rejected: a key of a map display, an element of a set, and the key an `in`
+/// tests. These once ran and stopped as "a bug in zedc itself". Small instance of
+/// `bench::held_functions::keys_of_a_display_and_in_tests_are_checked_as_data_in_linear_time`.
+#[test]
+fn a_key_that_holds_a_function_is_rejected() {
+    let b = "b = { \"a\" -> (y -> y + 1) };\n";
+    for (use_, op, f) in [
+        ("c = { scale -> 1 };\n", "a key of a family", "`int -> int`"),
+        (
+            "c = { (scale, 1) -> 1 };\n",
+            "a key of a family",
+            "`int -> int`",
+        ),
+        ("c = { scale };\n", "a key of a family", "`int -> int`"),
+        (
+            "c = { b -> 1 };\n",
+            "a key of a family",
+            "`T -> T for T in int | f32 | f64 | rat`",
+        ),
+        ("c = (scale, 1) in { 1 -> 1 };\n", "`in`", "`int -> int`"),
+    ] {
+        let text = format!("{SCALE}{b}{use_}");
+        let got = type_errors(&text);
+        let want = format!(
+            "{op} takes data, and this value may hold a function, {f}: data is a value that holds no function at any depth."
+        );
+        assert_eq!(got.len(), 1, "{text}\n{got:#?}");
+        assert!(got[0].starts_with(&want), "{text}\n{got:#?}");
+    }
+    // Keys that are data, a tuple and a family of data among them, are accepted.
+    let text = "d = { \"a\" -> 1 };\nc = { (1, 2) -> 1 };\ng = { d -> 2 };\ne = (1, 2) in c;\n";
+    assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
+}
+
 #[test]
 fn an_integer_put_twice_in_atoms_is_data() {
     // A small instance of the benchmark

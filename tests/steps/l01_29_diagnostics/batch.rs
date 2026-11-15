@@ -70,6 +70,16 @@ fn units() -> Vec<(String, Vec<u8>)> {
         "literals in a tuple compared with a union of tuple shapes".into(),
         b"isAt(positional p: (f64, f64) | (String, f64)) = p == (1, 2);\nr = isAt((1.0, 2.0));\nmain() {\n}\n".to_vec(),
     ));
+    // A family of functions, which each use that needs data rejects, and a family of
+    // families of them (row FAIL-check-family-of-functions-as-data).
+    out.push((
+        "a family of functions shown and compared".into(),
+        b"b = { \"a\" -> (y -> y + 1), \"b\" -> (y -> y * 2) };\nc = { 1 -> b };\nmain(m: MainArgs) {\n  m.stdout <- \"${c}\";\n  m.stdout <- if b == #x { \"s\" } else { \"d\" };\n}\n".to_vec(),
+    ));
+    out.push((
+        "a family of functions read and applied".into(),
+        b"b = { \"a\" -> (y -> y + 1) };\nmain(m: MainArgs) {\n  m.stdout <- \"${b[\"a\"](2) else 0}\";\n}\n".to_vec(),
+    ));
     out
 }
 
@@ -148,4 +158,14 @@ fn batch_and_single_file_checking_agree() {
         answer.starts_with("1:35: Nothing chooses one carrier of `f64 | rat` for the literal `1`"),
         "{answer}"
     );
+    // A family of functions is rejected where it is shown, and accepted where it is applied.
+    let at = |want: &str| units.iter().position(|(n, _)| n == want).expect("the unit");
+    let answer = batch[at("a family of functions shown and compared")]
+        .as_deref()
+        .expect("a rejection");
+    assert!(
+        answer.starts_with("4:18: interpolation takes data, and this value may hold a function"),
+        "{answer}"
+    );
+    assert_eq!(batch[at("a family of functions read and applied")], None);
 }

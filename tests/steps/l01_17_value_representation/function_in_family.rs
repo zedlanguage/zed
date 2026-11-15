@@ -7,7 +7,7 @@
 //! of its own. Each expected value is worked by hand from the program. The same programs run
 //! by `zedc run` and by an executable are in `l03_02_map_run::functions`.
 
-use zed_tests::step_helpers::l01_16_elaboration::value;
+use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 
 /// Two functions at the keys "a" and "b": `b["a"](n)` is `n + 1`, `b["b"](n)` is `2 n`.
 const B: &str = "b = { \"a\" -> (y -> y + 1), \"b\" -> (y -> y * 2) };\n";
@@ -145,4 +145,22 @@ fn where_and_a_remap_over_a_family_of_functions() {
         a("c = b as (k -> v) into (k -> v);\na = c[\"a\"](2);\n"),
         "3"
     );
+}
+
+/// A family whose entries are functions is not data (row FAIL-check-family-of-functions-as-data).
+/// DESIGN.md L1.17: "`Utf8String(x)` and interpolation show data, so a value that holds a
+/// function is a type error there", and "`==` on functions is a type error until types give
+/// the enumerable domain to compare them on". The checker rejects each use, so the run never
+/// stops on it; and the repair offered for `len(b)` is not `len(String(b))`, which the same
+/// rule rejects.
+#[test]
+fn a_family_of_functions_is_not_shown_or_compared() {
+    for body in ["a = \"${b}\";\n", "a = b == b;\n"] {
+        let src = format!("{B}{body}");
+        let got = errors(&src);
+        assert!(!got.is_empty(), "{src}");
+    }
+    let src = format!("{B}a = len(b);\n");
+    let got = errors(&src).join("\n");
+    assert!(!got.contains("String(b)"), "{src}\n{got}");
 }
