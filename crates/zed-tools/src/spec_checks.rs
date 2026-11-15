@@ -210,10 +210,21 @@ const NOT_MODES: &[&str] = &[
     "gnu",
 ];
 
-/// Whether `word` names a layer of the plan, as in "L4 builds groups".
-fn is_layer(word: &str) -> bool {
-    word.strip_prefix(['l', 'm'])
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+/// Whether `word` names a layer or a step of the plan, as in "L4 builds groups" or "step L1.24
+/// builds the lattice", in the forms of Part G: a layer `l` or `m` with its digits, alone or
+/// followed by a `.` and the step's number with any suffix (`l1.36b`, `l10.4d`,
+/// `l1.29d-package`), or row `s` followed by a step's number (`s.5`, `s.2-forms`).
+fn is_step(word: &str) -> bool {
+    let (layer, step) = word
+        .split_once('.')
+        .map_or((word, None), |(l, s)| (l, Some(s)));
+    let numbered = step.is_some_and(|s| s.starts_with(|c: char| c.is_ascii_digit()));
+    match layer.strip_prefix(['l', 'm']) {
+        Some(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+            step.is_none() || numbered
+        }
+        _ => layer == "s" && numbered,
+    }
 }
 
 /// The "Build modes" bullet of `design`, from its first line to the next bullet.
@@ -230,7 +241,10 @@ fn bullet(design: &str) -> Result<&str, String> {
 }
 
 /// Each place in `text` where a word stands before "build" or "builds": its 1-based line and
-/// the word, lowercased. One pass over the text.
+/// the word, lowercased. A word is letters, digits and `-`, with a `.` that has such a byte on
+/// each side, so a step id such as `L1.24` is one word and a sentence's last `.` is not part of
+/// one. One pass over the text; each byte is read back at most once more, as part of the word
+/// before the "build" that follows it.
 pub fn before_build(text: &str) -> Vec<(usize, String)> {
     let bytes = text.as_bytes();
     let word_byte = |b: u8| b.is_ascii_alphanumeric() || b == b'-';
@@ -245,10 +259,16 @@ pub fn before_build(text: &str) -> Vec<(usize, String)> {
             continue;
         }
         let end = at - 1;
-        let start = bytes[..end]
-            .iter()
-            .rposition(|&b| !word_byte(b))
-            .map_or(0, |i| i + 1);
+        let mut start = end;
+        while start > 0
+            && (word_byte(bytes[start - 1])
+                || bytes[start - 1] == b'.'
+                    && start < end
+                    && start >= 2
+                    && word_byte(bytes[start - 2]))
+        {
+            start -= 1;
+        }
         if start == end {
             continue;
         }
@@ -298,7 +318,7 @@ pub fn undefined_builds(design: &str) -> Result<Vec<String>, String> {
             !(first..=last).contains(line)
                 && !names.contains(word)
                 && !NOT_MODES.contains(&word.as_str())
-                && !is_layer(word)
+                && !is_step(word)
         })
         .map(|(line, word)| format!("{line}: \"{word} build\""))
         .collect())

@@ -49,6 +49,29 @@ fn build_stage_and_build_dependent_are_not_kinds_of_build() {
     assert_eq!(undefined(&text), Vec::<String>::new());
 }
 
+/// A plan step's id before the verb "builds" names the step, not a kind of build, whatever
+/// the form of its number (plan row FAIL-sync-build-modes-step-number: spec 92ceb14's "step
+/// L1.24 builds the interval lattice" was read as a "24 build"). A number that is not a step id
+/// before "build" is still named.
+#[test]
+fn a_step_id_before_builds_is_not_a_kind_of_build() {
+    let steps = fixture(
+        "Run once step L1.24 builds the interval lattice.\nStep L1.36b builds the note, \
+         L10.4d builds it, M0.3 builds the table and L1.29d-package builds the package.\n\
+         The compilers of step S.5 build it; with row S.2-forms builds an `Ast`; L4 builds.\n",
+    );
+    assert_eq!(undefined(&steps), Vec::<String>::new());
+    let bad = fixture("A 1.24 build, a release build, e.g. build, a L1x.2 build.\n");
+    assert_eq!(
+        undefined(&bad),
+        [
+            "12: \"1.24 build\"",
+            "12: \"release build\"",
+            "12: \"l1x.2 build\""
+        ]
+    );
+}
+
 /// The temperature conversion of step L1.21's programs; `@log(#off);` before it when `off`.
 fn program(off: bool) -> String {
     let src = std::fs::read_to_string(
@@ -89,19 +112,22 @@ fn a_run_gives_the_same_outputs_in_each_build_with_and_without_the_log_off_item(
     }
 }
 
-/// A DESIGN.md of `n` lines after the bullet, each naming three kinds of build it defines.
+/// A DESIGN.md of `n` lines after the bullet, each naming three kinds of build it defines
+/// and a step `L1.i` that builds.
 pub(super) fn lines_of_builds(n: usize) -> String {
     let rest: String = (0..n)
-        .map(|i| format!("Line {i}: a debug build, the build, a counting build.\n"))
+        .map(|i| {
+            format!("Line {i}: a debug build, the build, a counting build; step L1.{i} builds.\n")
+        })
         .collect();
     fixture(&rest)
 }
 
 /// Asserts every kind of build the text `text` of [`lines_of_builds`]`(n)` names defined, and
-/// found before the word `build` `3n + 5` times.
+/// found before the word `build` `4n + 5` times.
 pub(super) fn kinds_found(text: &str, n: usize) {
     assert!(undefined(text).is_empty());
-    assert_eq!(before_build(text).len(), 3 * n + 5);
+    assert_eq!(before_build(text).len(), 4 * n + 5);
 }
 
 /// The kinds of build in a few lines are found; the time is held linear in `bench/modes.rs`.
