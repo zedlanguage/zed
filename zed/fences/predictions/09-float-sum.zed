@@ -1,8 +1,11 @@
 // layer L3
-// Output fixed by DESIGN.md (at 843be85) line 322: a float `+` reduction is the exact sum rounded
-// once, so [0.1, 0.2, 0.3] sums to 0.6 while (0.1 + 0.2) + 0.3 is 0.6000000000000001, and
-// [1e16, 1.0, -1e16] sums to 1.0; line 3107: `xs.sum` is `xs >< (+)`.
+// Output fixed by DESIGN.md (at fb2273c) sec:reduction items 1 and 2: a float reduction is plain
+// IEEE addition on the canonical tree, and three elements are (e0 + e1) + e2, so [0.1, 0.2, 0.3]
+// sums to 0.6000000000000001, as (0.1 + 0.2) + 0.3 does, and [1e16, 1.0, -1e16] to
+// (1e16 + 1.0) + -1e16 = 0.0, the 1.0 lost beside 1e16 (`compensated` would give 1.0, item 2,
+// but it parses only from ring 9). sec:kernel: `.sum` is `>< (+)`.
+// Each decimal literal that nothing else gives a carrier is written with `f64` (L1.26b).
 main(m: MainArgs) {
   xs = m.stdin.map(l -> f64(trim(l)) else 0.0);
-  m.stdout <- "${xs.sum} ${[1e16, 1.0, -1e16].sum} ${(0.1 + 0.2) + 0.3}";
+  m.stdout <- "${xs.sum} ${[1e16f64, 1.0f64, -1e16f64].sum} ${(0.1f64 + 0.2) + 0.3}";
 }
