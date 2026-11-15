@@ -3,9 +3,10 @@
 //! term is built before the timing; `s22.rs` checks the same families at small sizes against
 //! the interpreter and the reference preimage.
 
-use zed_kernel::{Prim, Term};
+use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
-use zedc::store::preimage::{Demand, forward_pieces, preimage};
+use zedc::store::interval::{End, IntervalSet};
+use zedc::store::preimage::{Demand, Domains, forward_pieces, preimage};
 use zedc::store::preimage_ref as before;
 
 use crate::s22::*;
@@ -647,21 +648,104 @@ fn the_box_of_a_chain_over_holes_is_tested_in_linear_work(n: usize) {
 /// comparison of a chain of `k` `if`s whose arms are squares with a constant, splits the
 /// comparison at each of the `k` `if`s (`Walk::compare_untranslated`), work of order `k`.
 /// Measured at 64 and 512: 8.6 times the instructions and 9.8 times the bytes. At 512 and
-/// 4096 the family fails the limit (17.4 times the bytes), and so does the same chain with
-/// each arm's comparison written out by hand, which never splits (18.8 times the bytes on the
-/// base 4a1af90a2): the growth is the linear stage's on `k` guards over `2k` inputs, row
-/// FAIL-relational-if-chain-growth; the split's own share, the difference between the two,
-/// is 8.0 times at both steps.
+/// 4096 the family failed the limit (17.4 times the bytes): the formula of each `if`'s
+/// comparison held a copy of the conjuncts of the rest of the chain, `Θ(k^2)` parts in all,
+/// until FAIL-relational-if-chain-growth kept each arm's formula whole; since then it is
+/// measured at 512 and 4096. The chain with each comparison written out is
+/// `relational_pairs_chain_scales_at_512`.
 #[test]
 fn a_chain_of_ifs_beside_a_square_compares_in_linear_time() {
     on_big_stack(|| {
         let d = Demand::Bool(true);
-        let inputs = scaling::inputs(64, square_pairs_chain);
+        let inputs = scaling::inputs(512, square_pairs_chain);
         for (t, ds) in inputs.values() {
             assert!(preimage(t, ds, &d).relation.is_some(), "a relation");
         }
         scaling::check(
             "the preimage of a chain of `if`s beside a square, compared with a constant",
+            512,
+            |k| {
+                let (t, ds) = &inputs[&k];
+                preimage(t, ds, &d);
+            },
+        );
+    });
+}
+
+/// `k` guards `y == x - j` (or `y < x - j`), the even arms `min(y, -4 - j) < -1`, the odd ones
+/// `false`, over `x` in [-1, 7] and `y` in [-12 - k, 1] (FAIL-relational-if-chain-growth).
+fn relational_chain(k: usize, lt: bool) -> (Term, Domains) {
+    let t = (0..k)
+        .rev()
+        .fold(Term::Lit(Value::Bool(false)), |inner, j| {
+            let at = prim(Prim::Sub, var("x"), int(j as i64));
+            let g = prim(if lt { Prim::Lt } else { Prim::Eq }, var("y"), at);
+            let arm = match j % 2 {
+                0 => prim(
+                    Prim::Lt,
+                    prim(Prim::Min, var("y"), int(-4 - j as i64)),
+                    int(-1),
+                ),
+                _ => Term::Lit(Value::Bool(false)),
+            };
+            Term::If(Shared::new(g), Shared::new(arm), Shared::new(inner))
+        });
+    let y = IntervalSet::range(End::of(-12 - k as i64), End::of(1));
+    let ds = over(&[("x", IntervalSet::range(End::of(-1), End::of(7))), ("y", y)]);
+    (t, ds)
+}
+
+/// [`scaling::check`] on the preimage of `true` under each term `make` builds, after checking
+/// that each has a relation.
+fn relation_scales(name: &str, n: usize, make: impl Fn(usize) -> (Term, Domains) + Send) {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let inputs = scaling::inputs(n, make);
+        for (t, ds) in inputs.values() {
+            assert!(preimage(t, ds, &d).relation.is_some(), "a relation");
+        }
+        scaling::check(name, n, |k| {
+            let (t, ds) = &inputs[&k];
+            preimage(t, ds, &d);
+        });
+    });
+}
+
+/// COMPLEXITY.md FAIL-relational-if-chain-growth: a chain of `k` guards `y == x - j`, two
+/// inputs related at every level.
+#[test]
+fn relational_equal_guards_scale() {
+    relation_scales("a chain of guards y == x - j", 32, |k| {
+        relational_chain(k, false)
+    });
+}
+
+/// COMPLEXITY.md FAIL-relational-if-chain-growth: a chain of `k` guards `y < x - j`.
+#[test]
+fn relational_less_guards_scale() {
+    relation_scales("a chain of guards y < x - j", 128, |k| {
+        relational_chain(k, true)
+    });
+}
+
+/// COMPLEXITY.md FAIL-relational-if-chain-growth: [`min_square_chain`], guards
+/// `y == x - j % 16` over a fixed box.
+#[test]
+fn relational_modular_guards_scale() {
+    relation_scales("a chain of guards y == x - j % 16", 32, |k| {
+        (min_square_chain(k), min_square_box())
+    });
+}
+
+/// TEST-preimage-decided-arm-open-summary: [`summary_arms`], `k` calls of one function whose
+/// body's arm is decided by its range in each call's summary, at 64 and 512 calls.
+#[test]
+fn arms_decided_in_summaries_scale() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let inputs = scaling::inputs(64, summary_arms);
+        scaling::check(
+            "the preimage of k calls whose arm each summary decides",
             64,
             |k| {
                 let (t, ds) = &inputs[&k];
@@ -669,4 +753,30 @@ fn a_chain_of_ifs_beside_a_square_compares_in_linear_time() {
             },
         );
     });
+}
+
+/// [`square_pairs_chain`] with the comparison written into each arm as the value it has on the
+/// box, so that no comparison is split: `if y{j} < x{j} { false } else { rest }`
+/// (`x{j} * x{j} + j < -1` is `false`), the last `rest` `min(y0, -4) < -1`, over the same box.
+fn written_pairs_chain(k: usize) -> (Term, Domains) {
+    let (_, ds) = square_pairs_chain(k);
+    let last = prim(Prim::Lt, prim(Prim::Min, var("y0"), int(-4)), int(-1));
+    let t = (0..k).rev().fold(last, |rest, j| {
+        let g = prim(Prim::Lt, var(&format!("y{j}")), var(&format!("x{j}")));
+        let arm = Term::Lit(Value::Bool(false));
+        Term::If(Shared::new(g), Shared::new(arm), Shared::new(rest))
+    });
+    (t, ds)
+}
+
+/// COMPLEXITY.md FAIL-relational-if-chain-growth: [`written_pairs_chain`] at 512 and 4096,
+/// the chain of the `if`s of [`square_pairs_chain`] with the comparison written into each arm,
+/// 18.8 times the bytes on the base 4a1af90a2.
+#[test]
+fn relational_pairs_chain_scales_at_512() {
+    relation_scales(
+        "a chain of y{j} < x{j} written out",
+        512,
+        written_pairs_chain,
+    );
 }

@@ -3875,3 +3875,180 @@ fn a_chain_of_ifs_beside_a_square_has_a_relation() {
         }
     }
 }
+
+/// `(if y == v { v * v } else { y }) < 10`, the body of the tests of
+/// TEST-preimage-decided-arm-open-summary: the arm `v * v < 10` does not translate (a
+/// product), so `Walk::compare_untranslated` decides it by its range over the box the run
+/// reads it in. It holds where `v` lies in [-3, 3] and fails elsewhere, so a box of `v` in
+/// [-1, 7] does not decide it, and a box within [-1, 3] or within [4, 7] does.
+fn square_arm(v: &str) -> Term {
+    let arm = Term::If(
+        Shared::new(prim(Prim::Eq, var("y"), var(v))),
+        Shared::new(prim(Prim::Mul, var(v), var(v))),
+        Shared::new(var("y")),
+    );
+    prim(Prim::Lt, arm, int(10))
+}
+
+/// What [`exact_preimage`] must give for `d` under `t` over `ds` and `cs`, found by the
+/// interpreter at every point of the box within (-60, 60), each input in its class: the values
+/// each input takes at the points that meet `d`, in the order of `ds`, and whether every point
+/// of the product of those sets meets it.
+fn brute_projection(
+    t: &Term,
+    ds: &Domains,
+    cs: &Classes,
+    d: &Demand,
+) -> (Vec<std::collections::BTreeSet<i64>>, bool) {
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    let member = |n: &Arc<str>, v: i64| {
+        cs.get(n)
+            .is_none_or(|c| !reduce_congruence(&IntervalSet::of(v, v), c).0.is_empty())
+    };
+    let points: Vec<Vec<i64>> = super::points(ds, &names, (-60, 60))
+        .into_iter()
+        .filter(|pt| names.iter().zip(pt).all(|(n, &v)| member(n, v)))
+        .collect();
+    let met: std::collections::BTreeSet<&Vec<i64>> = points
+        .iter()
+        .filter(|pt| super::meets(t, &names, pt, d))
+        .collect();
+    let mut sets = vec![std::collections::BTreeSet::new(); names.len()];
+    for pt in &met {
+        for (s, &v) in sets.iter_mut().zip(pt.iter()) {
+            s.insert(v);
+        }
+    }
+    let exact = points
+        .iter()
+        .all(|pt| met.contains(pt) || !pt.iter().zip(&sets).all(|(v, s)| s.contains(v)));
+    (sets, exact)
+}
+
+/// Asserts that [`exact_preimage`] of `d` under `t` over `ds` and `cs` holds, of each input's
+/// members of its class within (-60, 60), those [`brute_projection`] finds, and is exact
+/// exactly where it finds the product exact.
+fn exact_is_brute(what: &str, t: &Term, ds: &Domains, cs: &Classes, d: &Demand) {
+    let p = exact_preimage(t, ds, cs, d);
+    let (sets, exact) = brute_projection(t, ds, cs, d);
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    for (n, s) in names.iter().zip(&sets) {
+        for v in (-60..=60).filter(|&v| ds[n].contains(v)) {
+            let member = cs
+                .get(n)
+                .is_none_or(|c| !reduce_congruence(&IntervalSet::of(v, v), c).0.is_empty());
+            if member {
+                let found = p.domains[n].contains(v);
+                assert_eq!(
+                    found,
+                    s.contains(&v),
+                    "{what}, {cs:?}, {d:?}: {n} = {v} in {p:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(p.exact, exact, "{what}, {cs:?}, {d:?}: {p:?}");
+}
+
+/// The classes of the tests of TEST-preimage-decided-arm-open-summary: none, and each class of
+/// `x` mod 2 and mod 3.
+fn arm_classes() -> Vec<Classes> {
+    let mut all = vec![Classes::new()];
+    for m in 2..=3i64 {
+        for r in 0..m {
+            let mut cs = Classes::new();
+            cs.insert("x".into(), Congruence::new(m as u64, r));
+            all.push(cs);
+        }
+    }
+    all
+}
+
+/// TEST-preimage-decided-arm-open-summary (a): [`square_arm`] of `x`, `x` in [-1, 7] and `y`
+/// in [-12, 12]. Over the whole box the arm `x * x < 10` is not decided; the exact search
+/// halves the box, and each run over a part (a run of its own, `Tx::start` making a new memo
+/// of forward values) decides it where the part's `x` lies within [-1, 3] or within [4, 7].
+/// The answers come from the interpreter at every point ([`brute_projection`]), for both
+/// demands, with no class and each class of `x` mod 2 and 3. The preimage over each of the two
+/// parts, read alone, is exact as the interpreter finds it: an exact box (`y` in [-12, 9] for
+/// `true` where `x` lies in [-1, 3]) or a relation exact on its part ([`relation_exact`]; `y <
+/// 10 && y != x` where `x` lies in [4, 7]), so the arm is decided there; over the whole box the
+/// preimage of `true` has no relation.
+#[test]
+fn an_arm_decided_on_a_part_of_the_box_keeps_the_points_of_the_interpreter() {
+    let t = square_arm("x");
+    let y = || IntervalSet::range(End::of(-12), End::of(12));
+    let whole = over(&[
+        ("x", IntervalSet::range(End::of(-1), End::of(7))),
+        ("y", y()),
+    ]);
+    for cs in &arm_classes() {
+        for d in [Demand::Bool(true), Demand::Bool(false)] {
+            exact_is_brute("the whole box", &t, &whole, cs, &d);
+        }
+    }
+    for (lo, hi) in [(-1, 3), (4, 7)] {
+        let part = over(&[
+            ("x", IntervalSet::range(End::of(lo), End::of(hi))),
+            ("y", y()),
+        ]);
+        for d in [Demand::Bool(true), Demand::Bool(false)] {
+            let p = preimage(&t, &part, &d);
+            let exact = p.exact && !refuted(&t, &part, &d, &p.domains, true)
+                || relation_exact(&t, &part, &Classes::new(), &d, &p);
+            assert!(exact, "x in [{lo}, {hi}], {d:?}: {p:?}");
+        }
+    }
+    let p = preimage(&t, &whole, &Demand::Bool(true));
+    assert!(
+        p.relation.is_none(),
+        "the arm is not decided on the whole box: {p:?}"
+    );
+}
+
+/// `f = (v) -> (if y == v { v * v } else { y }) < 10; f(x0) && f(x1) && …`, `k` calls (the
+/// kernel's `and`, which reads both operands), each `x{j}` its own input, in [4, 7] at even `j`
+/// and in [-1, 3] at odd `j`, and `y` in [-12, 12]: [`square_arm`] read through a summary of
+/// `f`, in the context `Tx::open` makes, the call's parameter added as an input over the
+/// argument's set. The arm `v * v < 10` is `false` at every point of an even call and `true`
+/// at every point of an odd one.
+pub(super) fn summary_arms(k: usize) -> (Term, Domains) {
+    let call = |j: usize| Term::App(Shared::new(var("f")), vec![var(&format!("x{j}"))]);
+    let calls = (1..k).fold(call(0), |acc, j| prim(Prim::And, acc, call(j)));
+    let f = Term::Lam(vec!["v".into()], Shared::new(square_arm("v")));
+    let t = Term::Let("f".into(), Shared::new(f), Shared::new(calls));
+    let mut ds = Domains::new();
+    for j in 0..k {
+        let (lo, hi) = if j % 2 == 0 { (4, 7) } else { (-1, 3) };
+        ds.insert(
+            format!("x{j}").into(),
+            IntervalSet::range(End::of(lo), End::of(hi)),
+        );
+    }
+    ds.insert("y".into(), IntervalSet::range(End::of(-12), End::of(12)));
+    (t, ds)
+}
+
+/// TEST-preimage-decided-arm-open-summary (b): [`summary_arms`] at one, two and three calls,
+/// the arm decided `false` in the even calls' summary and `true` in the odd ones'. The preimage
+/// of each demand holds every point the interpreter finds meeting it and, when exact, no
+/// other; its relation, when it has one, is exact on its box ([`relation_exact`]); and
+/// [`exact_preimage`] gives the projections the interpreter finds ([`brute_projection`]).
+#[test]
+fn an_arm_decided_in_a_summary_keeps_the_points_of_the_interpreter() {
+    for k in 1..=3 {
+        let (t, ds) = summary_arms(k);
+        for d in [Demand::Bool(true), Demand::Bool(false)] {
+            let p = preimage(&t, &ds, &d);
+            assert!(
+                !refuted(&t, &ds, &d, &p.domains, p.exact),
+                "k = {k}, {d:?}: {p:?}"
+            );
+            if p.relation.is_some() {
+                let exact = relation_exact(&t, &ds, &Classes::new(), &d, &p);
+                assert!(exact, "k = {k}, {d:?}: {p:?}");
+            }
+            exact_is_brute(&format!("k = {k}"), &t, &ds, &Classes::new(), &d);
+        }
+    }
+}
