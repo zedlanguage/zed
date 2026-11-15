@@ -9,8 +9,7 @@
 //! record is the run graph, each fact naming the facts it read.
 
 use crate::btree::DiffItem as Change;
-use crate::idset::IdSet;
-use imbl::OrdMap;
+use crate::idset::{IdMap, IdSet};
 /// The persistent vector of a fact address's node and keypath.
 pub use imbl::Vector;
 use std::cmp::Ordering;
@@ -450,23 +449,24 @@ struct Counted {
 /// another family's by the difference of the two: entries added, removed or changed. A set an
 /// entry holds is counted with its base, and the base's base, down to a set already counted,
 /// and each counted set counts only its delta. So an entry that holds a set some other entry
-/// holds costs `O(log n)`, and an entry whose set is made from a counted one costs the
-/// failures it adds. The first set counted in an empty tally is counted whole, without its
-/// bases and without a count for each failure: it holds each of its failures once, read from
-/// its own set. So a family of one entry costs `O(log n)` however large the entry's set, and
-/// only a later set none of whose bases is counted costs its size.
+/// holds costs `O(1)` (its maps are [`IdMap`]s keyed by the numbers of sets and failures),
+/// and an entry whose set is made from a counted one costs the failures it adds. The first
+/// set counted in an empty tally is counted whole, without its bases and without a count for
+/// each failure: it holds each of its failures once, read from its own set. So a family of
+/// one entry costs `O(1)` however large the entry's set, and only a later set none of whose
+/// bases is counted costs its size.
 #[derive(Clone, Default)]
 struct Tally {
     /// The id of each distinct non-empty set the entries hold, with the number of entries that
     /// hold it.
-    entries: OrdMap<u64, u32>,
+    entries: IdMap<u32>,
     /// The sets counted: those the entries hold and their bases.
-    counted: OrdMap<u64, Counted>,
+    counted: IdMap<Counted>,
     /// The id of the set counted whole, 0 for none. Its delta is all of its failures, and
     /// they are not in `sets`.
     whole: u64,
     /// Each failure, with the number of counted sets other than `whole` whose delta holds it.
-    sets: OrdMap<u32, u32>,
+    sets: IdMap<u32>,
     /// The failures: those of `whole` and the keys of `sets`.
     found: Found,
 }
@@ -477,9 +477,9 @@ impl Tally {
         if s.found.is_empty() {
             return;
         }
-        let n = self.entries.get(&s.id).copied().unwrap_or(0);
+        let n = self.entries.get(s.id).copied().unwrap_or(0);
         self.entries.insert(s.id, n + 1);
-        if n > 0 || self.counted.contains_key(&s.id) {
+        if n > 0 || self.counted.contains_key(s.id) {
             return;
         }
         if self.counted.is_empty() {
@@ -507,8 +507,8 @@ impl Tally {
         loop {
             let node = &nodes[&id];
             for x in node.delta.iter() {
-                let k = self.sets.get(&x).copied().unwrap_or(0);
-                self.sets.insert(x, k + 1);
+                let k = self.sets.get(u64::from(x)).copied().unwrap_or(0);
+                self.sets.insert(u64::from(x), k + 1);
             }
             self.counted.insert(
                 id,
@@ -521,7 +521,7 @@ impl Tally {
             if node.base == 0 {
                 return;
             }
-            if let Some(b) = self.counted.get_mut(&node.base) {
+            if let Some(b) = self.counted.get_mut(node.base) {
                 b.above += 1;
                 return;
             }
@@ -534,13 +534,13 @@ impl Tally {
         if s.found.is_empty() {
             return;
         }
-        let n = self.entries[&s.id];
+        let n = self.entries.get(s.id).copied().expect("an entry holds s");
         if n > 1 {
             self.entries.insert(s.id, n - 1);
             return;
         }
-        self.entries.remove(&s.id);
-        if self.counted[&s.id].above == 0 {
+        self.entries.remove(s.id);
+        if self.counted.get(s.id).expect("counted").above == 0 {
             self.uncount(s.id);
         }
     }
@@ -549,7 +549,7 @@ impl Tally {
     /// base left in the same state.
     fn uncount(&mut self, mut id: u64) {
         loop {
-            let c = self.counted.remove(&id).expect("a counted set");
+            let c = self.counted.remove(id).expect("a counted set");
             if id == self.whole {
                 self.whole = 0;
                 match self.counted.is_empty() {
@@ -562,9 +562,9 @@ impl Tally {
             if c.base == 0 {
                 return;
             }
-            let b = self.counted.get_mut(&c.base).expect("a counted base");
+            let b = self.counted.get_mut(c.base).expect("a counted base");
             b.above -= 1;
-            if b.above > 0 || self.entries.contains_key(&c.base) {
+            if b.above > 0 || self.entries.contains_key(c.base) {
                 return;
             }
             id = c.base;
@@ -581,9 +581,9 @@ impl Tally {
             return;
         }
         let leaves = !old.found.is_empty()
-            && self.entries.get(&old.id) == Some(&1)
-            && self.counted[&old.id].above == 0;
-        let enters = !new.found.is_empty() && !self.counted.contains_key(&new.id);
+            && self.entries.get(old.id) == Some(&1)
+            && self.counted.get(old.id).expect("counted").above == 0;
+        let enters = !new.found.is_empty() && !self.counted.contains_key(new.id);
         if leaves && enters && self.swap_by_difference(old, new, nodes) {
             return;
         }
@@ -596,14 +596,14 @@ impl Tally {
     /// it is not shorter than counting `new` or removes a failure of `old`'s base.
     fn swap_by_difference(&mut self, old: &Set, new: &Set, nodes: &HashMap<u64, Node>) -> bool {
         let node = &nodes[&new.id];
-        let limit = match self.counted.contains_key(&node.base) {
+        let limit = match self.counted.contains_key(node.base) {
             true => node.delta.len(),
             false => new.found.len(),
         };
         let Some(diff) = Found::diff(&old.found, &new.found, limit) else {
             return false;
         };
-        let was = &self.counted[&old.id];
+        let was = self.counted.get(old.id).expect("counted");
         if diff
             .iter()
             .any(|&(x, added)| !added && !was.delta.contains(x))
@@ -612,8 +612,8 @@ impl Tally {
         }
         let Counted {
             base, mut delta, ..
-        } = self.counted.remove(&old.id).expect("counted");
-        self.entries.remove(&old.id);
+        } = self.counted.remove(old.id).expect("counted");
+        self.entries.remove(old.id);
         self.entries.insert(new.id, 1);
         if old.id == self.whole {
             // The set counted whole becomes `new`, read from its own set, before the failures
@@ -662,20 +662,26 @@ impl Tally {
 
     /// Whether the set counted whole holds `x`.
     fn whole_holds(&self, x: u32) -> bool {
-        self.whole != 0 && self.counted[&self.whole].delta.contains(x)
+        self.whole != 0
+            && self
+                .counted
+                .get(self.whole)
+                .expect("counted")
+                .delta
+                .contains(x)
     }
 
     /// `x` leaves `found` unless a counted set's delta holds it.
     fn drop_if_uncounted(&mut self, x: u32) {
-        if !self.sets.contains_key(&x) && !self.whole_holds(x) {
+        if !self.sets.contains_key(u64::from(x)) && !self.whole_holds(x) {
             self.found.remove(x);
         }
     }
 
     /// One more counted set holds `x` in its delta.
     fn more(&mut self, x: u32) {
-        let n = self.sets.get(&x).copied().unwrap_or(0);
-        self.sets.insert(x, n + 1);
+        let n = self.sets.get(u64::from(x)).copied().unwrap_or(0);
+        self.sets.insert(u64::from(x), n + 1);
         if n == 0 {
             self.found.insert(x);
         }
@@ -683,13 +689,13 @@ impl Tally {
 
     /// One counted set fewer holds `x` in its delta.
     fn less(&mut self, x: u32) {
-        match self.sets[&x] {
+        match self.sets.get(u64::from(x)).copied().expect("a count") {
             1 => {
-                self.sets.remove(&x);
+                self.sets.remove(u64::from(x));
                 self.drop_if_uncounted(x);
             }
             n => {
-                self.sets.insert(x, n - 1);
+                self.sets.insert(u64::from(x), n - 1);
             }
         }
     }
@@ -1040,7 +1046,7 @@ impl<'a> Held<'a> {
 
     /// The tally and the set of `f`. Entries that hold one set are counted once, and a set
     /// made from a counted one costs what it adds, so the work is the number of entries read,
-    /// `O(log n)` each, and the deltas of the sets that enter or leave the tally.
+    /// `O(1)` each in the tally, and the deltas of the sets that enter or leave the tally.
     fn family(&mut self, f: &'a Family, base: Option<FromBase<'a>>) -> (Tally, Set) {
         let (tally, was) = match base {
             None => {
@@ -1075,7 +1081,7 @@ impl<'a> Held<'a> {
         let set = match (tally.entries.len(), was) {
             _ if found.is_empty() => Set::default(),
             (1, _) => Set {
-                id: *tally.entries.keys().next().expect("one set"),
+                id: tally.entries.first_key().expect("one set"),
                 found,
             },
             (_, Some(was)) if was.found.ptr_eq(&found) => was,

@@ -596,10 +596,238 @@ impl Iterator for Iter<'_> {
     }
 }
 
+/// The slots of a node of an [`IdMap`].
+const MAP_WIDTH: usize = 32;
+/// The bits of a key that pick a slot of a node of an [`IdMap`].
+const MAP_BITS: u32 = 5;
+
+/// A node of an [`IdMap`]: a leaf holds the values of 32 keys, an inner node 32 children; each
+/// keeps the number of its slots in use.
+// An inner node takes a leaf's size in its `Arc`, so the leaf's values stay inline: boxing
+// them would add a pointer step to every lookup to save space in the inner nodes, which are
+// one in 32 of the nodes.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
+enum MapNode<V> {
+    Leaf {
+        values: [Option<V>; MAP_WIDTH],
+        used: u32,
+    },
+    Inner {
+        children: [Option<Arc<MapNode<V>>>; MAP_WIDTH],
+        used: u32,
+    },
+}
+
+/// The slot of a node of height `height` (a leaf is 0) that holds the key `k`.
+fn map_slot(height: u32, k: u64) -> usize {
+    (k >> (MAP_BITS * height)) as usize % MAP_WIDTH
+}
+
+/// A map from small numbers to values, for the counts of a tally in
+/// [`Provenance::origins`](crate::provenance::Provenance::origins), whose keys are the numbers
+/// of failures and of sets. Cloning it is `O(1)`: the clone shares the tree, and a change copies
+/// the nodes on its path that another map holds. Its order is that of no key: it is only read
+/// and changed at a key, never walked.
+///
+/// Complexity tradeoff (COMPLEXITY.md K25): the persistent ordered map this replaces
+/// (`imbl::OrdMap`) costs `O(log n)` comparisons a lookup or change and copies nodes of up to 64
+/// entries at their fill, so the work per change grew with the map. Here a lookup or a change
+/// costs `O(height)` and copies at most `height + 1` nodes of 32 slots: a constant for keys
+/// below 32,768, one more level for each further factor of 32. Tradeoff: a map of one key
+/// takes a whole leaf of 32 slots, and the keys must be small, which the numbers given out by
+/// one call of `origins` are.
+pub(crate) struct IdMap<V> {
+    root: Option<Arc<MapNode<V>>>,
+    /// The height of the root: 0 for a leaf.
+    height: u32,
+    len: usize,
+}
+
+impl<V> Clone for IdMap<V> {
+    fn clone(&self) -> Self {
+        IdMap {
+            root: self.root.clone(),
+            height: self.height,
+            len: self.len,
+        }
+    }
+}
+
+impl<V> Default for IdMap<V> {
+    fn default() -> Self {
+        IdMap {
+            root: None,
+            height: 0,
+            len: 0,
+        }
+    }
+}
+
+impl<V: Clone> IdMap<V> {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn get(&self, k: u64) -> Option<&V> {
+        if k >> (MAP_BITS * (self.height + 1)) != 0 {
+            return None;
+        }
+        let mut node = self.root.as_deref()?;
+        let mut h = self.height;
+        loop {
+            match node {
+                MapNode::Leaf { values, .. } => return values[map_slot(0, k)].as_ref(),
+                MapNode::Inner { children, .. } => {
+                    node = children[map_slot(h, k)].as_deref()?;
+                    h -= 1;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    /// The smallest key, by the first slot in use at each level: `O(32 · height)`.
+    pub(crate) fn first_key(&self) -> Option<u64> {
+        let mut node = self.root.as_deref()?;
+        let mut k = 0;
+        loop {
+            let i = match node {
+                MapNode::Leaf { values, .. } => values.iter().position(Option::is_some),
+                MapNode::Inner { children, .. } => children.iter().position(Option::is_some),
+            }
+            .expect("a node in use");
+            k = k << MAP_BITS | i as u64;
+            match node {
+                MapNode::Leaf { .. } => return Some(k),
+                MapNode::Inner { children, .. } => {
+                    node = children[i].as_deref().expect("in use");
+                }
+            }
+        }
+    }
+
+    pub(crate) fn contains_key(&self, k: u64) -> bool {
+        self.get(k).is_some()
+    }
+
+    /// The value at `k`, which the map holds, to change in place; the nodes on its path that
+    /// another map holds are copied first.
+    pub(crate) fn get_mut(&mut self, k: u64) -> Option<&mut V> {
+        if !self.contains_key(k) {
+            return None;
+        }
+        let mut node = self.root.as_mut().expect("a key held");
+        let mut h = self.height;
+        loop {
+            match Arc::make_mut(node) {
+                MapNode::Leaf { values, .. } => return values[map_slot(0, k)].as_mut(),
+                MapNode::Inner { children, .. } => {
+                    node = children[map_slot(h, k)].as_mut().expect("a key held");
+                    h -= 1;
+                }
+            }
+        }
+    }
+
+    /// Puts `v` at `k`.
+    pub(crate) fn insert(&mut self, k: u64, v: V) {
+        while k >> (MAP_BITS * (self.height + 1)) != 0 {
+            // Lifts the tree a level: the old root is child 0 of the new.
+            if let Some(root) = self.root.take() {
+                let mut children = [const { None }; MAP_WIDTH];
+                children[0] = Some(root);
+                self.root = Some(Arc::new(MapNode::Inner { children, used: 1 }));
+            }
+            self.height += 1;
+        }
+        let root = self
+            .root
+            .get_or_insert_with(|| Arc::new(empty_map_node(self.height)));
+        if put(root, self.height, k, v) {
+            self.len += 1;
+        }
+    }
+
+    /// Takes the value at `k` out of the map.
+    pub(crate) fn remove(&mut self, k: u64) -> Option<V> {
+        if !self.contains_key(k) {
+            return None;
+        }
+        let root = self.root.as_mut().expect("a key held");
+        let (v, empty) = take(root, self.height, k);
+        self.len -= 1;
+        if empty {
+            self.root = None;
+            self.height = 0;
+        }
+        Some(v)
+    }
+}
+
+/// An empty node of height `height`.
+fn empty_map_node<V>(height: u32) -> MapNode<V> {
+    match height {
+        0 => MapNode::Leaf {
+            values: [const { None }; MAP_WIDTH],
+            used: 0,
+        },
+        _ => MapNode::Inner {
+            children: [const { None }; MAP_WIDTH],
+            used: 0,
+        },
+    }
+}
+
+/// Puts `v` at `k` under `node` of height `height`; whether `k` is new.
+fn put<V: Clone>(node: &mut Arc<MapNode<V>>, height: u32, k: u64, v: V) -> bool {
+    match Arc::make_mut(node) {
+        MapNode::Leaf { values, used } => {
+            let s = &mut values[map_slot(0, k)];
+            let new = s.is_none();
+            *s = Some(v);
+            *used += u32::from(new);
+            new
+        }
+        MapNode::Inner { children, used } => {
+            let c = &mut children[map_slot(height, k)];
+            if c.is_none() {
+                *c = Some(Arc::new(empty_map_node(height - 1)));
+                *used += 1;
+            }
+            put(c.as_mut().expect("just made"), height - 1, k, v)
+        }
+    }
+}
+
+/// Takes the value at `k`, which `node` of height `height` holds; and whether the node is left
+/// empty.
+fn take<V: Clone>(node: &mut Arc<MapNode<V>>, height: u32, k: u64) -> (V, bool) {
+    match Arc::make_mut(node) {
+        MapNode::Leaf { values, used } => {
+            let v = values[map_slot(0, k)].take().expect("a key held");
+            *used -= 1;
+            (v, *used == 0)
+        }
+        MapNode::Inner { children, used } => {
+            let c = &mut children[map_slot(height, k)];
+            let (v, empty) = take(c.as_mut().expect("a key held"), height - 1, k);
+            if empty {
+                *c = None;
+                *used -= 1;
+            }
+            (v, *used == 0)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     /// Numbers spread over one leaf, several leaves, and the levels above them.
     fn numbers(seed: u32, n: usize) -> Vec<u32> {
@@ -650,6 +878,60 @@ mod tests {
         }
         assert!(s.is_empty() && s.ptr_eq(&IdSet::new()));
         assert!(!s.contains(5) && !s.contains(u32::MAX));
+    }
+
+    fn check_map(m: &IdMap<u32>, t: &BTreeMap<u64, u32>, absent: &[u32]) {
+        assert_eq!(m.is_empty(), t.is_empty());
+        assert_eq!(m.len, t.len());
+        for (k, v) in t {
+            assert_eq!(m.get(*k), Some(v));
+        }
+        for &x in absent {
+            assert_eq!(m.get(u64::from(x)), t.get(&u64::from(x)));
+        }
+    }
+
+    #[test]
+    fn a_map_of_numbers_agrees_with_an_ordered_map() {
+        let mut m = IdMap::default();
+        let mut t = BTreeMap::new();
+        let mut kept = Vec::new();
+        let keys = numbers(11, 900);
+        for (k, &x) in keys.iter().enumerate() {
+            let x = u64::from(x);
+            match k % 5 {
+                3 => assert_eq!(m.remove(x), t.remove(&x)),
+                4 => {
+                    if let Some(v) = m.get_mut(x) {
+                        *v += 1000;
+                    }
+                    if let Some(v) = t.get_mut(&x) {
+                        *v += 1000;
+                    }
+                }
+                _ => {
+                    m.insert(x, k as u32);
+                    t.insert(x, k as u32);
+                }
+            }
+            if k % 60 == 0 {
+                kept.push((m.clone(), t.clone()));
+            }
+        }
+        check_map(&m, &t, &keys);
+        // The maps kept along the way are unchanged by the changes made after them.
+        for (m, t) in &kept {
+            check_map(m, t, &keys);
+        }
+        assert_eq!(m.len(), t.len());
+        assert_eq!(m.first_key(), t.keys().next().copied());
+        assert_eq!(m.get(u64::MAX), None);
+        assert_eq!(m.get_mut(u64::MAX), None);
+        assert_eq!(m.remove(u64::MAX), None);
+        for k in t.keys().copied().collect::<Vec<_>>() {
+            assert_eq!(m.remove(k), t.remove(&k));
+        }
+        assert!(m.is_empty() && m.root.is_none());
     }
 
     #[test]
