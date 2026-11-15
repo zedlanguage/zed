@@ -10997,6 +10997,29 @@ impl ByClass {
         // `if` was read by its guard and arms, in time exponential in the depth (item
         // PREIMAGE-chain-cliff). Each step before the clamp was checked against the bound
         // when it was made, so the leaves now are all that a later step reads.
+        //
+        // Assumption, not proved (ASSUME-documented): once the clamp has applied every map of
+        // the tree to its leaf (`cls_clamp` leaves only maps `(1, 0)`, and drops `shift` and
+        // `base`), whether a later step leaves `i64` in some class depends only on the clamped
+        // leaves, so `mul` starts again at 1 and `a`, `b` are those of `Bound::of` on each leaf.
+        // The multipliers applied before are not gone: they are folded into the leaves, and a
+        // piece of a leaf can hold a coefficient and a constant past `i64` that cancel on its
+        // inputs (values within the clamp), which `Bound::of` does not count, since it reads
+        // only the piece values of a `Piecewise` leaf. The code needs this: the bound kept from
+        // before the clamp refused every chain that doubles and clamps past `k = 320`
+        // (PREIMAGE-chain-cliff). Evidence: `a_summary_clamped_after_each_doubling_keeps_its_bound`
+        // (100 rounds of doubling and clamping to [-3, 3]; every class of 3 and every input in
+        // [-6, 6] equal to the steps run one by one); the remainder tests of
+        // `l01_25_preimage_catalog::s22`, checked against the interpreter, which make about
+        // 1,400 clamps whose new bound is lower than the old one (counted once with a
+        // temporary counter, 2026-11-14); `chains_are_read_exactly_on_both_sides_of_the_cliff`
+        // checks only that the answer is exact. The summary's arithmetic is exact (`Int`
+        // leaves, `compose` checked), so a coefficient past `i64` alone gives no wrong value;
+        // what is not proved is that no reader of a summary after a clamp narrows such a
+        // coefficient to `i64`. If one does, a class's summary differs from the one its own run
+        // computes ([`Walk::pa`]), the property [`Bound`] exists to keep, and a preimage read
+        // through it can gain or lose inputs while marked exact: unsound. If none does, a
+        // false assumption costs nothing worse than an answer the own run would have refused.
         let mut bound = Bound {
             a: 0,
             b: 0,
