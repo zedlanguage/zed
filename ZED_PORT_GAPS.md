@@ -3903,3 +3903,12 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | `imbl::OrdSet<Arc<str>>`, a persistent set whose copies share their nodes, with the wrapping sum of its names' hashes kept beside it (`VarSet`) | `Ty::vars`, `Ty::union`, `Ty::union_all`, `Binds::unite` | None | A Zed set is a value: the runtime must share its structure, so that one more name costs `O(log n)` and a copy `O(1)`; the kept sum of hashes is a field of a struct updated with the set |
+
+## Entries from PROV-origins-linear (`crates/zed-kernel/src/idset.rs`, `provenance.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A persistent trie of `Option<Arc<Node>>` children in fixed arrays (`[Option<Arc<Node>>; 64]` built by `[const { None }; 64]`, `[u64; 64]` leaves) changed through `Arc::make_mut`, which copies a node only when another set shares it | `IdSet::insert`, `remove` | Mutation in place of a shared value | the trie as a value whose insert and remove return the new set; the runtime shares the nodes off the path, as for the treap of `Rows` |
+| `Arc::ptr_eq` on two nodes to skip a shared subtree, and to return an operand's node when a union, intersection or difference equals it | `idset::union`, `meet`, `minus`, `same`, `diff` | Identity (gap 1) | a node id or content digest in each node (gap 1) compared in place of the address |
+| `u64::count_ones` and the bit operations of a 64-bit word (and, or, not, shifts, `trailing_zeros`) | `idset::union`, `meet`, `minus`, `Iter::next`, `diff` | Bit operations (gap 4, built) | The bit words of L1.39a |
+| `Held::ids: HashMap<&Value, u32>` and `names: HashSet<&str>`, keys borrowed from the facts for one call | `Provenance::origins`, `Held::member` | Mutation (gap 11); borrowed keys | a family from the member's value to its number, built once per call |

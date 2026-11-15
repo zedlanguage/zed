@@ -56,8 +56,10 @@ fn a_term_shared_by_both_branches_of_each_level_scales() {
 fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
     // The `k`-th product's `#errs` set is made from the one before it by adding one member, so
     // the failures it holds are found from that set's by their difference, and the common
-    // members of two sets likewise: `O(n log n)`. Reading every member of each set took
-    // `O(n² log n)` (COMPLEXITY.md K25). The runs are recorded before timing.
+    // members of two sets from the nodes they do not share: `O(1)` set work per product for up
+    // to 4096 members. Reading every member of each set took `O(n² log n)`, and ordered sets of
+    // the members `O(n log n)`, 10.2 times (COMPLEXITY.md K25). The runs are recorded before
+    // timing.
     let n = 200;
     let runs = recorded(n, missing_chain);
     scaling::check_order(
@@ -133,8 +135,8 @@ fn the_origins_of_a_table_of_growing_entries_scale() {
     // fact of each `let` meets the result's `n` failures with its table's set. Found newest
     // fact first, each set was read entry by entry and shared no nodes with the set it was
     // made from, so each meet and join cost its size, `O(n²)` in all; found oldest fact
-    // first, each set is made from the last and each meet from the last meet, by their
-    // differences (COMPLEXITY.md K25). The runs are recorded before timing.
+    // first, each set is made from the last by their difference, and two sets meet by the
+    // nodes they do not share (COMPLEXITY.md K25). The runs are recorded before timing.
     let n = 400;
     let runs = recorded(n, growing_entries);
     scaling::check_order(

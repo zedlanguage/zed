@@ -15,6 +15,7 @@ pub mod digest;
 pub mod eval;
 pub mod exact;
 pub mod frames;
+pub(crate) mod idset;
 pub mod limits;
 pub mod lines;
 mod local;
