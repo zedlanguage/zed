@@ -3596,6 +3596,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some(r)
     }
 
+    /// Records that the fold written at `site` was checked at `carrier` (none for entries of
+    /// no known type), where `op` has `identity`, for [`Ck::finish`]. A trial checks a repaired
+    /// program and elaborates nothing, so it records nothing.
+    fn saw_fold(&mut self, site: Span, carrier: Option<Carrier>, identity: Option<Value>) {
+        if self.trying {
+            return;
+        }
+        let seen = self.folds.entry(site).or_default();
+        if !seen.iter().any(|(c, _)| *c == carrier) {
+            seen.push((carrier, identity));
+        }
+    }
+
     /// `x >< op`, `x` of type `x` (step L3.2; DESIGN.md sec:reduction): the operator folded
     /// over the one level of each family `x` may be. The operators taken are those whose
     /// associativity is built in: `+` and `*` on numbers, `&&` and `||` on `bool`, and `max`
@@ -3618,6 +3631,28 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Self::reduce_end`], its messages naming the fold as the program wrote it, `form`:
     /// `x >< op`, `x.reduce(op)` or `x.sum`.
     fn fold_level(&mut self, op: Reducer, x: &Ty, span: Span, site: Span, form: FoldForm) -> Ty {
+        // Every fold of one level reaches here: `x >< op` through `reduce_end`, `x.sum` and
+        // `x.reduce(op)` through `family_fold`, with `site` the span elaboration reads the
+        // identity at. The fold is checked here once outside a generic function, and once at each call of
+        // one, a need met with `replaying` set; the body elaborates to one fold for every
+        // call. `finish` gives the fold the identity where every check found one carrier, and
+        // rejects it where two checks found two empty folds, as `xs >< max` at `int`
+        // (`#empty`) and at `f64` (`-inf`), so the type given here holds at each call
+        // (DESIGN.md sec:reduction, "Identity as data"). Each exit below that gives a type an
+        // accepted program can run with records what it saw ([`Ck::saw_fold`]); the others
+        // report an error, and a program with an error is not elaborated.
+        // That the checks recorded are every place the fold runs, by the cases of how a fold
+        // in a generic function's body is reached: (1) outside a generic function the fold
+        // is checked here at its one type. (2) A call applies the signature's needs in
+        // `Ck::replay`, which calls `meet` and so this function; a dynamic
+        // argument is an error there; a need met again inside its own check (recursion) at
+        // the same shape reuses that check's result, whose carrier the outer check records,
+        // and at another shape is an error. (3) A need on a type still open at the call (a
+        // generic function calling another on its own parameter) moves to the enclosing
+        // function's class with `site` kept, and case (2) applies at that function's calls.
+        // (4) A value that flows into a class later is checked by `check_on`, through
+        // `meet`. A type variable with no class (`Ty::dynamic` below) or a family with no
+        // entries records no carrier, which `finish` rejects beside any identity.
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let entries = Ty::union_all(
             (x.fns.iter())
@@ -3645,12 +3680,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             return match r.map(|r| (r, self.classes[r].resolved.clone())) {
                 Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
                 Some((r, None)) => self.need(r, NeedKind::Reduce(op, site), true, span),
-                None => Ty::dynamic(),
+                None => {
+                    self.saw_fold(site, None, None);
+                    Ty::dynamic()
+                }
             };
         }
         // A family with no entries, as `[]`, has no carrier to take an identity from, and
         // folds to `#empty` (DESIGN.md sec:reduction).
         if !others && x.loose().is_empty() && !x.fns.is_empty() && entries.lists_nothing() {
+            self.saw_fold(site, None, None);
             return Ty::set(KType::atom("empty"));
         }
         if others || !x.loose().is_empty() {
@@ -3744,21 +3783,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         };
         let t = Ty::carrier(c);
-        // The fold is checked here once outside a generic function, and once at each call of
-        // one, a need met with `replaying` set; the body elaborates to one fold for every
-        // call. `finish` gives the fold the identity where every check found one carrier, and
-        // rejects it where checks at two carriers found two empty folds, as `xs >< max` at
-        // `int` (`#empty`) and at `f64` (`-inf`), so the type given here holds at each call
-        // (DESIGN.md sec:reduction, "Identity as data"). A trial checks a repaired program and
-        // elaborates nothing, so it records nothing.
-        // Not proved: every call of a generic function meets its needs, so no call runs the
-        // fold at a carrier `finish` did not see.
-        if !self.trying {
-            let seen = self.folds.entry(site).or_default();
-            if !seen.iter().any(|(d, _)| *d == c) {
-                seen.push((c, identity.clone()));
-            }
-        }
+        self.saw_fold(site, Some(c), identity.clone());
         if identity.is_some() {
             return t;
         }

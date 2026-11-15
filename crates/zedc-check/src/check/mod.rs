@@ -1355,6 +1355,10 @@ struct Class {
     decimal: bool,
 }
 
+/// The checks of one fold recorded in [`Ck::folds`]: each carrier, or none, with the identity
+/// of the fold's operator there.
+type FoldChecks = Vec<(Option<Carrier>, Option<Value>)>;
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1573,15 +1577,16 @@ struct Ck<'t, 'a> {
     /// elsewhere), so the span names one remap of that program.
     remap_exprs: HashMap<Span, &'a Expr>,
     /// Each fold `m >< op` checked outside a trial, by its span: the carriers of the entries
-    /// it was checked at, each once, with the identity of `op` there, if it has one. A fold in
+    /// it was checked at, each once, with the identity of `op` there, if it has one; no
+    /// carrier for entries of no known type, as those of `[]`, which fold to `#empty`. A fold in
     /// a generic function is checked at each call of it ([`Ck::meet`]), and the body
     /// elaborates to one fold for every call, so [`Ck::finish`] gives the fold its identity
     /// only where every check found the one carrier (DESIGN.md sec:reduction, "Identity as
     /// data").
     // Complexity tradeoff: naive version, a list of every check, O(c) memory for c calls of
-    // the function. Used: one entry per distinct carrier, a scan of at most the six carriers
-    // per check, O(1) a check.
-    folds: BTreeMap<Span, Vec<(Carrier, Option<Value>)>>,
+    // the function. Used: one entry per distinct carrier, a scan of at most seven entries (the
+    // six members of `Carrier` and no carrier) per check, O(log f) a check for f folds.
+    folds: BTreeMap<Span, FoldChecks>,
     /// The atoms an application inside a check of a need passed by at parameter `i` of the
     /// function value `what` it applied, for the check to give to the call of the function
     /// whose need it is: `(what, i, atoms)`.
@@ -4186,19 +4191,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         // empty level holds no entry to tell its carrier at run time.
         for (span, seen) in std::mem::take(&mut self.folds) {
             match seen.as_slice() {
-                [(_, Some(v))] => {
+                [(Some(_), Some(v))] => {
                     self.info.reduce.insert(span, v.clone());
                 }
                 _ if seen.iter().all(|(_, v)| v.is_none()) => {}
                 _ => {
+                    let at = |c: &Option<Carrier>| match c {
+                        Some(c) => format!("`{}`", c.name()),
+                        None => "no known type, as of `[]`".to_string(),
+                    };
                     let types = (seen.iter())
-                        .map(|(c, _)| format!("`{}`", c.name()))
+                        .map(|(c, _)| at(c))
                         .collect::<Vec<_>>()
                         .join(" and ");
                     let ends = (seen.iter())
                         .map(|(c, v)| match v {
-                            Some(v) => format!("`{v}` at `{}`", c.name()),
-                            None => format!("`#empty` at `{}`", c.name()),
+                            Some(v) => format!("`{v}` at {}", at(c)),
+                            None => format!("`#empty` at {}", at(c)),
                         })
                         .collect::<Vec<_>>()
                         .join(" and ");

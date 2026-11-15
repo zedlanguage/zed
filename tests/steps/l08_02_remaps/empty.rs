@@ -261,7 +261,35 @@ fn a_fold_run_at_two_carriers_with_different_empty_folds_is_not_compiled_yet() {
             "does not compile it yet",
         ],
     );
-    // Two carriers without an identity fold to `#empty` at both, which one fold gives.
+    // Calls at `int` alone, where `max` has no identity, fold an empty level to `#empty`.
     let src = "top(positional xs) = xs >< max;\na = top([1, 2]);\nb = top([3, 4]);\n";
     prints(src, "b", "4");
+}
+
+#[test]
+fn a_fold_of_an_empty_display_and_of_a_float_level_in_one_function_is_not_compiled_yet() {
+    // `top([])` has no carrier and folds to `#empty`; `top([1.0])` folds an empty level to
+    // `-inf`; the one fold gives one of the two, so neither type would hold at both.
+    rejected(
+        "top(positional xs) = xs >< max;\na = top([]);\nb = top([1.0, 2.0]);\n",
+        &["does not compile it yet"],
+    );
+}
+
+#[test]
+fn a_fold_reached_through_two_functions_takes_the_identity_of_its_one_carrier() {
+    // `g` calls `top` on its own parameter, so the fold's carrier is known only at `g`'s
+    // calls; each is checked at the fold's own place.
+    let src = format!(
+        "top(positional xs) = xs >< max;\ng(positional ys) = top(ys);\n{F}hi = m.map(r -> g(r));\n"
+    );
+    prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
+    rejected(
+        "top(positional xs) = xs >< max;\ng(positional ys) = top(ys);\na = g([1, 2]);\n\
+         b = g([1.0, 2.0]);\n",
+        &[
+            "`#empty` at `int` and `-inf` at `f64`",
+            "does not compile it yet",
+        ],
+    );
 }
