@@ -292,3 +292,42 @@ fn nested_sets_of_every_atom_against_a_union_are_cut_in_linear_time() {
         },
     );
 }
+
+/// A first component that is a large union beside a small class
+/// (TEST-split-classes-uncut-bench): two rows with a nested set of every atom against
+/// `((#_, int), 1) | (1, 2)` and `n` rows `((#b, i), _)`. The `n` rows make the first
+/// component of the box a union of `n` cells; the class of the nested sets is small. The kernel
+/// keeps that component whole on the class's piece (PERF-types-cut-rows-union-scaling), so each
+/// test of a cell reads the `n` cells where the cut component would hold only the class: linear
+/// in `n` all the same. Before that change, 24.0 times the instructions from n 128 to 1024.
+#[test]
+fn a_large_first_component_beside_a_small_class_is_decided_in_linear_time() {
+    let n = 128;
+    let pairs = scaling::inputs(n, |m| nested_rows_against_cut_rows(2, m, "(#b, {i})"));
+    scaling::check(
+        "two nested sets against a union whose first component has n cells",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}
+
+/// The mirror of `a_large_first_component_beside_a_small_class_is_decided_in_linear_time`:
+/// `n` rows with a nested set of every atom against the same union with two rows
+/// `((i, i), _)`, a small first component and a class of `n + 1` cells. Before
+/// PERF-types-cut-rows-union-scaling, 61.4 times the instructions from n 128 to 1024.
+#[test]
+fn n_nested_sets_against_a_small_first_component_are_decided_in_linear_time() {
+    let n = 128;
+    let pairs = scaling::inputs(n, |m| nested_rows_against_cut_rows(m, 2, "({i}, {i})"));
+    scaling::check(
+        "n nested sets against a union whose first component has two cells",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}

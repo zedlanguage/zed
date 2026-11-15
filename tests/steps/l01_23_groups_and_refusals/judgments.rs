@@ -1492,3 +1492,50 @@ fn many_nested_sets_of_every_atom_beside_a_pair_are_decided() {
         assert!(left.subtype(&wider), "{x}");
     }
 }
+
+/// The left rows `((#_, i) \ (#a, i), 1)` for `i` in `0..k`, and the right union
+/// `((#_, int), 1) | (1, 2)` with `m` rows `(cell, _)` beside it, `cell` with `{i}` replaced
+/// by `i` in `0..m` (TEST-split-classes-uncut-bench). The `m` rows cut the first component
+/// of the box into a union of `m` cells; the left rows form one class of `k + 1` cells there.
+fn nested_rows_against_cut_rows(
+    k: usize,
+    m: usize,
+    cell: &str,
+) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let left: Vec<String> = (0..k)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), 1)"))
+        .collect();
+    let cut: Vec<String> = (0..m)
+        .map(|i| format!("({}, _)", cell.replace("{i}", &i.to_string())))
+        .collect();
+    let right = format!("((#_, int), 1) | (1, 2) | {}", cut.join(" | "));
+    (
+        parse_type(&left.join(" | ")).unwrap(),
+        parse_type(&right).unwrap(),
+    )
+}
+
+/// The small instances of `bench::a_large_first_component_beside_a_small_class_is_decided_in_linear_time`
+/// and of its mirror. A left row whose first component meets one of the `m` rows is held only
+/// when its second component is within `_` there: `((#b, 3), 2)` is held by `((#b, 3), _)`,
+/// `((#b, 7), 2)` by nothing, since 7 is not among `0..4` and the shape holds only `1`.
+#[test]
+fn nested_sets_against_a_first_component_cut_by_rows_are_decided() {
+    use zedc::check::read::parse_type;
+    for (k, m, cell) in [(2, 4, "(#b, {i})"), (4, 2, "({i}, {i})")] {
+        let (left, right) = nested_rows_against_cut_rows(k, m, cell);
+        assert!(left.subtype(&right), "{k} {m}");
+        assert!(!right.subtype(&left), "{k} {m}");
+    }
+    let (_, right) = nested_rows_against_cut_rows(2, 4, "(#b, {i})");
+    let left = "((#_, 0) \\ (#a, 0), 1) | ((#_, 1) \\ (#a, 1), 1)";
+    for (extra, held) in [
+        ("((#b, 3), 2)", true),
+        ("((#b, 7), 2)", false),
+        ("((#_, \"s\"), 1)", false),
+    ] {
+        let wider = parse_type(&format!("{left} | {extra}")).unwrap();
+        assert_eq!(wider.subtype(&right), held, "{extra}");
+    }
+}
