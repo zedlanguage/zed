@@ -366,8 +366,10 @@ impl Meter {
     }
 
     /// [`Meter::work`] with `f` allocating from the C library's `malloc`, unless this thread is
-    /// in a metered run: for the test that compares the two.
-    pub(crate) fn work_on_the_c_heap(&mut self, f: impl FnOnce()) -> Work {
+    /// in a metered run: for the test that compares the two, and for the crossover benchmarks
+    /// (`zed_benches::runs`), which compare the absolute work of two methods and so count it on
+    /// the heap programs run with (PERF-crossover-heap).
+    pub fn work_on_the_c_heap(&mut self, f: impl FnOnce()) -> Work {
         let bytes = zed_alloc_count::allocated();
         let start = (self.read)();
         f();

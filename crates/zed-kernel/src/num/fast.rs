@@ -234,10 +234,13 @@ const RECIP_LEAF: u64 = 4;
 /// curves cross near 300 words (COMPLEXITY.md, "Crossovers"). Measured in instructions on
 /// 2026-11-12 (CROSSOVER-bench, `crossover gcd-leaf`): Stein's gcd does less work up to 297
 /// words (1.002 times the half gcd's) and the half gcd from 300 (0.987), so 299 words, where
-/// it was 512. The gcd does not depend on it;
+/// it was 512. Measured again on 2026-11-15 on the C library's heap, which `crossover` now
+/// counts on (PERF-crossover-heap): Stein's gcd does less work up to 307 words (1.002) and the
+/// half gcd from 311 (0.985; at 304 it did 1.011 times Stein's, against a spread of 1.0026), so
+/// 310 words. The gcd does not depend on it;
 /// the unit tests use a smaller leaf.
 #[cfg(not(test))]
-const GCD_LEAF: u64 = 64 * 299;
+const GCD_LEAF: u64 = 64 * 310;
 #[cfg(test)]
 const GCD_LEAF: u64 = 64 * 16;
 

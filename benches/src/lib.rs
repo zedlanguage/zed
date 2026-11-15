@@ -768,8 +768,17 @@ impl<I, O: PartialEq + Debug> Setting<'_, I, O> {
 }
 
 /// The least work and bytes, and the most work, of [`RUNS`] runs of `f`.
+///
+/// `f` allocates from the C library's `malloc`, with its per-thread cache, as zedc and the
+/// programs it compiles do, and not from the heap of the scaling tests' metered runs
+/// ([`Meter::work`], TEST-meter-allocator-bias): a threshold sets which of two methods runs, by
+/// their absolute work, and the two heaps cost differently by block size, so a crossover counted
+/// on the metered heap is that heap's and not the program's (PERF-crossover-heap: text `LEAF` at
+/// 64 bytes there, at 256 on the C library's heap). The scaling tests compare one method at two
+/// sizes, where only a cost per call that does not change with the heap's history matters, and
+/// keep the metered heap.
 pub fn runs(meter: &mut Meter, f: impl Fn()) -> Runs {
-    let mut all = (0..RUNS).map(|_| meter.work(&f));
+    let mut all = (0..RUNS).map(|_| meter.work_on_the_c_heap(&f));
     let first = all.next().expect("at least one run");
     all.fold(
         Runs {
@@ -806,4 +815,31 @@ pub fn conditions() -> String {
         std::env::consts::ARCH,
         std::env::consts::OS
     )
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use zed_alloc_count::meter::ours;
+
+    /// Whether a block that `measure` makes `f` allocate is the metered heap's.
+    fn metered_block(measure: impl FnOnce(&dyn Fn())) -> bool {
+        let owned = Cell::new(None);
+        measure(&|| {
+            let block = black_box(vec![0u8; 100]);
+            owned.set(Some(ours(block.as_ptr().cast_mut())));
+        });
+        owned.get().expect("the run ran")
+    }
+
+    /// The crossover benchmarks count on the C library's heap, which programs run with, and the
+    /// scaling tests on the metered heap (PERF-crossover-heap; see [`runs`]).
+    #[test]
+    fn crossovers_count_on_the_c_librarys_heap_and_scaling_tests_on_the_metered_one() {
+        let mut meter = Meter::new();
+        assert!(!metered_block(|f| _ = runs(&mut meter, f)));
+        assert!(!metered_block(|f| _ = least(&mut meter, f)));
+        assert!(metered_block(|f| _ = meter.work(f)));
+    }
 }

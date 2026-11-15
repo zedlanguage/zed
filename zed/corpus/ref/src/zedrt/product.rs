@@ -68,7 +68,13 @@ const P_NEG_INV: u64 = {
 // (2026-11-12): the cost there is a few milliseconds, numbers of that length are rare in
 // programs, and a lower crossover would add instructions to pass a ratio. A faster product
 // from 1,000 to 4,450 words would remove it (COMPLEXITY F38).
-pub const TRANSFORM_WORDS: u64 = 4450;
+//
+// Measured again on 2026-11-15 (`crossover transform-words`, on the C library's heap, which the
+// benchmark now counts on; PERF-crossover-heap): num-bigint does less work up to 4,221 words
+// (1.004 times the transform's) and the transform from 4,267 (0.999; at 4,361 the built
+// threshold took num-bigint at 1.012 times the transform's, against a spread of 1.0011), so
+// 4,267 words, where it was 4,450.
+pub const TRANSFORM_WORDS: u64 = 4267;
 
 /// The fewest 32-bit words of a factor of a reading that keeps its transform ([`Factor::new`]).
 //

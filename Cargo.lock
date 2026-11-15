@@ -1007,6 +1007,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "object 0.40.0",
+ "zed-alloc-count",
  "zed-corpus-ref",
  "zed-kernel",
  "zed-tests",
