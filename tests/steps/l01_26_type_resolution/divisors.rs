@@ -103,6 +103,42 @@ fn underscore_drops_the_quotient_only_where_the_divisor_cannot_be_zero() {
 }
 
 #[test]
+fn a_divisor_declared_without_zero_adds_no_div_by_zero() {
+    // DESIGN.md step L1.26: "A division, `div` or `mod` whose divisor's type holds no zero
+    // adds no `#divByZero`."
+    for (d, want) in [
+        ("int[1..=9]", "int"),
+        ("int[-3..=-1]", "int"),
+        ("int[0..=9]", "int | #divByZero"),
+    ] {
+        let text = format!("f(x: int, d: {d}) = x div d;\n");
+        assert_eq!(
+            sig(&text, "f"),
+            format!("(x: int, d: {d}) -> {want}"),
+            "{d}"
+        );
+    }
+}
+
+/// A square is never below 0 (DESIGN.md L1.25, sec:constraints), so `x * x + 1` at any `x` in a
+/// range is at least 1 and adds no `#divByZero`; the product of `x` with another name in the
+/// same range may be below 0, and `x * y + 1` may be 0.
+#[test]
+fn a_square_plus_one_is_no_zero_divisor() {
+    assert_eq!(
+        sig("f(x: int[-3..=4]) = 100 div (x * x + 1);\n", "f"),
+        "(x: int[-3..=4]) -> int"
+    );
+    assert_eq!(
+        sig(
+            "f(x: int[-3..=4], y: int[-3..=4]) = 100 div (x * y + 1);\n",
+            "f"
+        ),
+        "(x: int[-3..=4], y: int[-3..=4]) -> int | #divByZero"
+    );
+}
+
+#[test]
 fn a_divisor_narrowed_by_a_test_adds_no_div_by_zero() {
     // DESIGN.md sec:type_resolution rule 3: "The checker maintains per-node proposition sets
     // (facts learned by tests)"; in the arm of a test a name has the interval the test leaves

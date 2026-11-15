@@ -144,6 +144,13 @@ fn read_part(
                     "`{text}` holds an array type, which the checker never prints"
                 ));
             }
+            // A signature prints a parameter's range, `(x: int[1..]) -> int`, but a printed
+            // type read back holds none: the kernel has no ranged type to read it as.
+            TypeKind::Range { .. } => {
+                return Err(format!(
+                    "`{text}` holds a range type, which the checker never prints as a type"
+                ));
+            }
             TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => stack.extend(ts),
             TypeKind::And(ts) => {

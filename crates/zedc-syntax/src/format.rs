@@ -21,8 +21,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Every, Expr, ExprKind, Field, Function,
-    ImportKind, IndexKey, Param, Pattern, Stmt, StmtKind, Target, Type, TypeKind, TypeParam,
-    Update,
+    ImportKind, IndexKey, Param, Pattern, RangeEnd, Stmt, StmtKind, Target, Type, TypeKind,
+    TypeParam, Update,
 };
 use crate::lex::{self, Span, Token};
 
@@ -1633,6 +1633,29 @@ impl<'a> Formatter<'a> {
             TypeKind::Array(t) => {
                 self.put("[");
                 then![stack; Job::Ty { t, min: 0 }, put("]")];
+            }
+            TypeKind::Range { of, low, high } => {
+                // `TypePostfix TypeSuffix`: the type ranged over is a postfix or primary type,
+                // each bound an `Additive` or `_`.
+                let bound = |b: &'a Option<Box<Expr>>| match b {
+                    Some(e) => Job::Expr {
+                        e,
+                        min: ADDITIVE,
+                        ind: 0,
+                    },
+                    None => put("_"),
+                };
+                stack.push(put("]"));
+                match high {
+                    RangeEnd::Below(b) | RangeEnd::Through(b) => stack.push(bound(b)),
+                    RangeEnd::Open => {}
+                }
+                then![stack;
+                    Job::Ty { t: of, min: 6 },
+                    put("["),
+                    bound(low),
+                    put(high.op()),
+                ];
             }
             TypeKind::For { ty, bounds } => {
                 // The bounds go on the stack last first, so they print in order.

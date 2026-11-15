@@ -928,7 +928,7 @@ fn kind_of(rule: &str) -> &'static str {
     match rule {
         "ReducePolicy" => "the reduction order",
         "SliceKey" => "the named slice",
-        "TypeSuffix" => "the refinement",
+        "TypeSuffix" => "the refinement of layer L10",
         "Result" => "the declared result type",
         "Law" => "the law",
         "TypeFacet" => "the facet",

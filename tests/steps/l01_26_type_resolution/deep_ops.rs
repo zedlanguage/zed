@@ -39,6 +39,7 @@ pub(super) fn sig(param: Ty, result: Ty) -> Sig {
         name: "x".into(),
         positional: true,
         default: None,
+        range: None,
     };
     let own: BTreeSet<Arc<str>> = param.vars.iter().cloned().collect();
     let mut s = Sig::one(vec![x], vec![param], result);
@@ -571,6 +572,7 @@ fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
             name: n.into(),
             positional: false,
             default: None,
+            range: None,
         });
         let mut s = Sig::one(params.to_vec(), vec![], int.clone());
         s.arrows = arrows;

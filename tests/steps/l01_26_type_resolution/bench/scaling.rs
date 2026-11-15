@@ -649,6 +649,7 @@ fn shapes_of_variables(
             name: "x0".into(),
             positional: false,
             default: None,
+            range: None,
         }],
         arrows: vec![Arrow {
             params: vec![Ty::union_all(&members)],

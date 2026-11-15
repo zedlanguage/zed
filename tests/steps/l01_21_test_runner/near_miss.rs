@@ -473,6 +473,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         "2:17",
         Some("write the field's type in full"),
     ),
+    (
+        Row::UnsatisfiableConstraints,
+        "",
+        "f(x: int[4..=5]) = x;\n",
+        "f(x: int[5..=4]) = x;\n",
+        "1:6",
+        Some("write `x: int[4..=5]`, the range from the lesser bound through the greater"),
+    ),
 ];
 
 /// Rows whose accepted program holds a form zedc does not compile yet (a boundary `with`, step

@@ -24,6 +24,7 @@ mod no_common_value;
 mod ordered_tuples;
 mod partial_maps;
 mod payload_variables;
+mod ranges;
 mod scaling;
 mod shared_tuples;
 mod tuple_keys;

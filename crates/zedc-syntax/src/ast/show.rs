@@ -5,7 +5,7 @@ use std::fmt;
 
 use super::{
     Annot, BoundaryItem, CARRY_FORWARD, Every, Expr, ExprKind, Field, Function, ImportKind,
-    IndexKey, Param, Pattern, Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
+    IndexKey, Param, Pattern, RangeEnd, Stmt, StmtKind, StrPart, Target, Type, TypeKind, TypeParam,
 };
 
 /// What is left to write.
@@ -580,7 +580,8 @@ fn function<'a>(func: &'a Function, out: &mut Vec<Show<'a>>) {
 }
 
 /// `int`, `#none`, `(tuple A B)`, `(| A B)`, `(& A B)`, `(\ A B)`, `(-> (A (x: B)) R)`,
-/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(array T)`, `(for (-> (T) T) (T (| int f64)))`.
+/// `(Tree T)`, `(#node (l: T))`, `(record (x: int))`, `(array T)`, `(..= int 0 9)` for
+/// `int[0..=9]`, `(for (-> (T) T) (T (| int f64)))`.
 fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
     let mut list = |head, ts: &'a [Type]| {
         out.push(Text(head));
@@ -637,6 +638,15 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             out.push(Text(")"));
         }
         TypeKind::Array(t) => out.extend([Text("(array "), Show::Type(t), Text(")")]),
+        TypeKind::Range { of, low, high } => {
+            let bound = |b: &'a Option<Box<Expr>>| b.as_deref().map_or(Text("_"), Show::Expr);
+            out.extend([Text("("), Text(high.op()), Text(" "), Show::Type(of)]);
+            out.extend([Text(" "), bound(low)]);
+            if let RangeEnd::Below(b) | RangeEnd::Through(b) = high {
+                out.extend([Text(" "), bound(b)]);
+            }
+            out.push(Text(")"));
+        }
         TypeKind::For { ty, bounds } => {
             out.extend([Text("(for "), Show::Type(ty)]);
             for b in bounds {

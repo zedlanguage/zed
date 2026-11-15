@@ -57,6 +57,12 @@ fn kernel_form(
         TypeKind::Array(_) => {
             unreachable!("name resolution rejects every array type before a type is read")
         }
+        // The kernel has no type with a range, and reading one as its base would make
+        // `x is int[0..=9]` hold for 100; the checker reads a parameter's apart.
+        TypeKind::Range { .. } => unreachable!(
+            "name resolution rejects every range type but the whole type of a parameter, \
+             which the checker reads apart, before a type is read"
+        ),
         // A bounded variable stands for one carrier that a call of the function chooses; a
         // run-time test has no call to choose it.
         TypeKind::For { bounds, .. } => {
@@ -197,6 +203,7 @@ fn type_parts(t: &Type) -> Vec<&Type> {
         | TypeKind::AtomApply(..)
         | TypeKind::Record(_)
         | TypeKind::Array(_)
+        | TypeKind::Range { .. }
         | TypeKind::For { .. } => Vec::new(),
     }
 }

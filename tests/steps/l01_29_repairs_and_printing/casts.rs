@@ -123,19 +123,19 @@ fn an_int_compared_with_an_f64_is_offered_the_widening_cast_where_it_is_exact() 
         "{out}"
     );
     checks(&edited(&src, "{ tempC < tempK }", "{ f64(tempC) < tempK }"));
-    // The example as DESIGN writes it, `int[-273..=1000]`, waits for refinements; the step
-    // that compiles them changes this pin to the headline above with that type.
-    let out = rejected(&program(
-        "warm(tempC: int[-273..=1000], tempK: f64) = tempC < tempK;",
-    ));
+    // The example as DESIGN writes it, the range `int[-273..=1000]` on the parameter
+    // (RANGE-L1), is offered the same cast, and the cast checks.
+    let src = program("warm(tempC: int[-273..=1000], tempK: f64) = tempC < tempK;");
+    let out = rejected(&src);
     assert_eq!(
         out.lines().next(),
-        Some(concat!(
-            "1:16: ",
-            zed_tests::not_yet!("the refinement `[-273..=1000]`")
-        )),
+        Some(
+            "1:45: Cannot compare unequal types: `tempC : int < tempK : f64`. \
+             Try `f64(tempC) < tempK` instead."
+        ),
         "{out}"
     );
+    checks(&edited(&src, "= tempC < tempK", "= f64(tempC) < tempK"));
     // An unbounded `int` is offered no cast: `f64(n)` carries `#inexact` above 2^53.
     let src = program("warm(tempC: int, tempK: f64) = tempC < tempK;");
     let out = rejected(&src);

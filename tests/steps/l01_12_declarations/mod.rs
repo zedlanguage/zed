@@ -7,6 +7,7 @@ mod functions;
 mod given;
 mod ifs;
 mod pushes;
+mod ranges;
 mod scaling;
 
 use zedc::lex::lex;

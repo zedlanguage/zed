@@ -549,7 +549,8 @@ fn overlap(order: [usize; 2], want: &str) -> String {
 }
 
 /// What the two declarations give at L1, in either order: the same two rejections, one in
-/// each declaration, at the same offset within it.
+/// each declaration, at the same offset within it. The ranges compile since RANGE-L1; the
+/// declared result type `-> String` is what each declaration is refused for.
 #[test]
 fn at_l1_the_two_declarations_are_rejected_alike_in_either_order() {
     let unit = overlap([0, 1], "a");
@@ -565,8 +566,14 @@ fn at_l1_the_two_declarations_are_rejected_alike_in_either_order() {
     assert_eq!(
         messages,
         [
-            ((0, 8), zed_tests::not_yet!("the refinement `[0..]`")),
-            ((1, 8), zed_tests::not_yet!("the refinement `[_..=10]`"))
+            (
+                (0, 15),
+                zed_tests::not_yet!("the declared result type `-> String`")
+            ),
+            (
+                (1, 18),
+                zed_tests::not_yet!("the declared result type `-> String`")
+            )
         ]
     );
 }
@@ -577,19 +584,25 @@ fn at_l1_the_two_declarations_are_rejected_alike_in_either_order() {
 /// grammar as written and its first `matching` type when reversed.
 #[test]
 fn each_item_that_cannot_be_built_is_reported() {
+    // A range whose bound names another parameter is a dependent domain of L10; a range with
+    // fixed bounds compiles since RANGE-L1, so the unit uses the dependent form.
     let unit = "\
-// A reading in the low range, then one in the high range.
-low(r: int[0..=50]) = r;
-high(r: int[50..]) = r;
+// A reading below a limit, then one above it.
+low(n: int, r: int[0..<n]) = r;
+high(n: int, r: int[n..]) = r;
 ";
     let out = super::rejected(unit);
     assert_eq!(
         out,
         concat!(
-            "2:11: ",
-            zed_tests::not_yet!("the refinement `[0..=50]`"),
-            "\n3:12: ",
-            zed_tests::not_yet!("the refinement `[50..]`")
+            "2:24: ",
+            zed_tests::not_yet!(
+                "a range bound that names the parameter `n`, a dependent domain of layer L10,"
+            ),
+            "\n3:21: ",
+            zed_tests::not_yet!(
+                "a range bound that names the parameter `n`, a dependent domain of layer L10,"
+            )
         )
     );
     let items = items(unit);

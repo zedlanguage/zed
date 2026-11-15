@@ -30,6 +30,7 @@ mod named_test;
 mod pendants;
 mod pow_nan;
 mod random;
+mod ranges;
 mod refused;
 mod roots;
 mod scaling;

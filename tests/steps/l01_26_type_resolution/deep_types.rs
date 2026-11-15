@@ -33,6 +33,7 @@ fn func(param: Ty, result: Ty) -> Ty {
         name: "x".into(),
         positional: true,
         default: None,
+        range: None,
     };
     let own: BTreeSet<Arc<str>> = param.vars.iter().cloned().collect();
     let mut s = Sig::one(vec![x], vec![param], result);

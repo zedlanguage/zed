@@ -34,6 +34,7 @@ mod out_of_bounds;
 mod partial_maps;
 mod payload_variables;
 mod random;
+mod ranges;
 mod scaling;
 mod shared_tuples;
 mod signatures;

@@ -909,6 +909,19 @@ pub enum TypeKind {
     /// domain `0..<n` the type leaves open (sec:grammar, `RankArrayType`). It is not `Seq(T)`
     /// (sec:order), whose keys are origins.
     Array(Box<Type>),
+    /// An integer range type, `T[lo..<hi]`, `T[lo..=hi]` or `T[lo..]` (sec:grammar `RangeLit`):
+    /// the values of `T` from `lo` on and below or through `hi`, a bound written `_` left open
+    /// (`int[_..=10]`). The bounds are expressions as written; the resolver takes only
+    /// literals and names bound at the top level (step L1), a bound naming a parameter or a
+    /// field being a dependent domain (step L10).
+    Range {
+        /// The type ranged over.
+        of: Box<Type>,
+        /// The first value, `None` for `_`.
+        low: Option<Box<Expr>>,
+        /// How the range ends; the bound `None` for `_`.
+        high: RangeEnd<Option<Box<Expr>>>,
+    },
     /// A type with its type variables bounded, `(x: T) -> T for T in int | f64`: each variable
     /// ranges over the carriers of its bound, one carrier at every place it stands.
     For {

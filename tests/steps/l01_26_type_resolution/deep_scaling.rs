@@ -87,6 +87,7 @@ pub(super) fn curried_type(n: usize, result: zedc::check::ty::Ty) -> zedc::check
             name: "x".into(),
             positional: true,
             default: None,
+            range: None,
         };
         Ty::func(Arc::new(Sig::one(vec![x], vec![Ty::set(Type::int())], t)))
     })

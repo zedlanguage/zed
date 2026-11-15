@@ -198,8 +198,11 @@ table `lines.orderedValues`
 
 == README.md [Bindings] 1
 comment port: int[1..=65535] = 8080; // an integer from 1 through 65535, both included
+check port == 8080
 text
 > total = 36, port = 8080
+check total == 36
+check port == 8080
 
 == README.md [Functions] 1
 comment h = half(7); // 3
@@ -247,9 +250,14 @@ check ratio == 1.5
 
 == README.md [Strings] 1
 comment line = "total: ${2 + 3}"; // "total: 5"
+check line == "total: 5"
 comment z = name::codepoints[0]; // the first code point, a char32
+check z == char32("Z")
 text
 > line = "total: 5", title = "nevertheless", z = char32("Z")
+check line == "total: 5"
+check title == "nevertheless"
+check z == char32("Z")
 
 == README.md [Structs] 1
 text

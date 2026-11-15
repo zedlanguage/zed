@@ -95,11 +95,17 @@ fn a_chain_of_refinements_is_refused_at_its_first() {
     check(&[
         (
             "x is int[v > 0]",
-            concat!("error: ", zed_tests::not_yet!("the refinement `[v > 0]`")),
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the refinement of layer L10 `[v > 0]`")
+            ),
         ),
         (
             "x is int[v > 0][v < 9]",
-            concat!("error: ", zed_tests::not_yet!("the refinement `[v > 0]`")),
+            concat!(
+                "error: ",
+                zed_tests::not_yet!("the refinement of layer L10 `[v > 0]`")
+            ),
         ),
     ]);
 }

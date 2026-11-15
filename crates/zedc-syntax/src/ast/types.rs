@@ -10,11 +10,14 @@ use std::mem;
 
 use super::builder::{Builder, Built};
 use super::{
-    Error, Every, Expr, ExprKind, Note, Param, Pattern, Target, Type, TypeBound, TypeKind,
-    TypeParam, UnaryOp,
+    Error, Every, Expr, ExprKind, Note, Param, Pattern, RangeEnd, Target, Type, TypeBound,
+    TypeKind, TypeParam, UnaryOp,
 };
 use crate::lex::{Span, Tok};
 use zedc_base::rejection::Row;
+
+/// A bound of a range as written: none where it is `_`.
+type Bound = Option<Box<Expr>>;
 
 impl Builder<'_, '_> {
     /// The type node `n` built to.
@@ -52,10 +55,24 @@ impl Builder<'_, '_> {
                 TypeKind::For { ty, bounds }
             }
             "Type" => return Err(self.later(kids[1])),
-            "TypePostfix" if self.tree.nodes[kids[0]].rule == node.rule => {
-                return self.ty(kids[0]);
+            // `TypeSuffix = '[' nest(RangeLit) ']'` is its first alternative; a list of
+            // refinements and `matching` are later forms.
+            "TypePostfix" if self.tree.nodes[kids[1]].alt == 0 => {
+                let of = Box::new(self.ty(kids[0])?);
+                let (low, high) = self.range_lit(self.kids(kids[1])[0])?;
+                TypeKind::Range { of, low, high }
             }
-            "TypePostfix" => return Err(self.later(kids[1])),
+            "TypePostfix" => {
+                // The type it refines is built first, so that a later form inside it is the
+                // one named. The message names the layer of the form (sec:grammar): the list
+                // of named refinements is step L10.1, `matching` step L20.
+                self.ty(kids[0])?;
+                let kind = match self.tree.nodes[kids[1]].alt {
+                    1 => "the refinement of layer L10",
+                    _ => "the `matching` refinement of layer L20",
+                };
+                return Err(self.later_as(kids[1], kind));
+            }
             "Arrow" if self.tree.name(kids[0]) == "ArrowParams" => {
                 let params = self.arrow_params(kids[0])?;
                 self.arrow(params, kids[0], kids[1])?
@@ -180,6 +197,36 @@ impl Builder<'_, '_> {
 
     fn types(&mut self, kids: &[usize]) -> Result<Vec<Type>, Error> {
         kids.iter().map(|&k| self.ty(k)).collect()
+    }
+
+    /// The bounds of node `n`, a `RangeLit`: `(WILD | Additive) ('..<' (WILD | Additive) |
+    /// '..=' (WILD | Additive) | '..')`. `_` makes no node, so a bound is missing where its
+    /// token is `_`, and the nodes are the written bounds in order.
+    fn range_lit(&mut self, n: usize) -> Result<(Bound, RangeEnd<Bound>), Error> {
+        let node = &self.tree.nodes[n];
+        let mut bounds = node.kids.iter().copied();
+        let (low, op) = if self.word(node.start) == "_" {
+            (None, node.start + 1)
+        } else {
+            let k = bounds
+                .next()
+                .expect("RangeLit: a bound before the operator");
+            (Some(k), self.tree.nodes[k].end)
+        };
+        let high = match self.word(op) {
+            ".." => None,
+            _ if self.word(op + 1) == "_" => None,
+            _ => Some(bounds.next().expect("RangeLit: a bound after the operator")),
+        };
+        let low = low.map(|k| self.node(k).map(Box::new)).transpose()?;
+        let high = high.map(|k| self.node(k).map(Box::new)).transpose()?;
+        let high = match self.word(op) {
+            "..<" => RangeEnd::Below(high),
+            "..=" => RangeEnd::Through(high),
+            ".." => RangeEnd::Open,
+            _ => unreachable!("RangeLit: `..<`, `..=` or `..`"),
+        };
+        Ok((low, high))
     }
 
     /// The arrow from `params`, written at node `p`, to the type of node `r`.

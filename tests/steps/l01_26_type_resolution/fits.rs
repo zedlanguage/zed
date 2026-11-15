@@ -481,6 +481,7 @@ fn sig_of(
             name: "x0".into(),
             positional: false,
             default: None,
+            range: None,
         }],
         arrows: vec![Arrow {
             params: vec![param],
@@ -558,6 +559,7 @@ fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
                 name: "x0".into(),
                 positional: false,
                 default: None,
+                range: None,
             }],
             arrows: vec![Arrow {
                 params: vec![param],
@@ -612,6 +614,7 @@ pub(super) fn own_sig(
             name: "x0".into(),
             positional: false,
             default: None,
+            range: None,
         }],
         arrows: vec![Arrow {
             params: vec![param],

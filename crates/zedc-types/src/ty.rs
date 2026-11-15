@@ -3442,7 +3442,8 @@ pub struct PowerUse {
 }
 
 /// The ints a use takes, as `^`'s exponent and a bit word's operand do: those at least 0, and
-/// below `2 ^ width` for an operand read as `width` binary digits (CHK-need-bound).
+/// below `2 ^ width` for an operand read as `width` binary digits (CHK-need-bound); or, for a
+/// parameter declared with a range, as `x: int[1..]`, the ints of that range (DESIGN.md L1.39).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IntDomain {
     /// The use, in words, as an error states it.
@@ -3452,6 +3453,54 @@ pub struct IntDomain {
     pub name: Arc<str>,
     /// The smallest width of the use, for an operand read as that many digits.
     pub below_two_pow: Option<Width>,
+    /// The range a parameter is declared with, which is then the whole domain: the ints from
+    /// 0 are not asked for, and `below_two_pow` is none.
+    pub written: Option<WrittenRange>,
+}
+
+/// A range written as the type of a parameter of type `int`, as `x: int[1..=9]` (DESIGN.md
+/// L1.12, L1.39): its least and its greatest int, each none where that end is open, and its
+/// text as a signature prints it, each end inclusive: `int[1..=9]`, `int[1..]`,
+/// `int[_..=9]`. `int[0..<10]` and `int[0..=9]` are one type (L1.24) and one text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrittenRange {
+    /// The least int, if the range has one.
+    pub low: Option<Value>,
+    /// The greatest int, if the range has one.
+    pub high: Option<Value>,
+    /// The text, `int[1..=9]`.
+    pub text: Arc<str>,
+}
+
+impl WrittenRange {
+    /// The range from `low` through `high`, either open where it is none.
+    pub fn new(low: Option<Value>, high: Option<Value>) -> Self {
+        let text = match (&low, &high) {
+            (Some(l), Some(h)) => format!("int[{l}..={h}]"),
+            (Some(l), None) => format!("int[{l}..]"),
+            (None, Some(h)) => format!("int[_..={h}]"),
+            (None, None) => "int[_..]".to_string(),
+        };
+        WrittenRange {
+            low,
+            high,
+            text: text.into(),
+        }
+    }
+
+    /// Whether it holds the int `v`.
+    pub fn holds(&self, v: &Value) -> bool {
+        let ge = |b: &Value| v.surface_cmp(b).is_some_and(|o| o.is_ge());
+        let le = |b: &Value| v.surface_cmp(b).is_some_and(|o| o.is_le());
+        self.low.as_ref().is_none_or(ge) && self.high.as_ref().is_none_or(le)
+    }
+}
+
+impl std::hash::Hash for WrittenRange {
+    /// Equal ranges have one text.
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.text.hash(h);
+    }
 }
 
 /// The width of a bit word, an int at least 0, kept as its value: `2 ^ width` is never built.
@@ -3767,6 +3816,10 @@ pub struct SParam {
     /// and whether the default reads no name of the unit, so a call through a value can
     /// fill it.
     pub default: Option<(usize, usize, bool)>,
+    /// The range it is declared with, as `d: int[1..=9]`, which the signature prints in place
+    /// of its type `int` (DESIGN.md L1.39); each call is checked against it by a
+    /// [`NeedKind::InDomain`] need of the signature.
+    pub range: Option<WrittenRange>,
 }
 
 /// One arrow: a type for each parameter, and the result.
@@ -3952,6 +4005,7 @@ pub fn errs_of(e: Ty) -> Ty {
         name: "".into(),
         positional: true,
         default: None,
+        range: None,
     };
     let found = e.union(&Ty::set(KType::atom("notFound")));
     let mut family = Sig::one(vec![param], vec![e], found);
@@ -13245,7 +13299,10 @@ impl Sig {
                     if several {
                         parts.push(Print::Text("("));
                     }
-                    parts.push(Print::Ty(key, PrintAt::Key));
+                    match &self.params[0].range {
+                        Some(r) => parts.push(Print::Text(&r.text)),
+                        None => parts.push(Print::Ty(key, PrintAt::Key)),
+                    }
                     parts.push(Print::Text(" -> "));
                     parts.push(Print::Ty(&a.result, PrintAt::Result));
                     if several {
@@ -13261,7 +13318,10 @@ impl Sig {
                         parts.push(Print::Text(&p.name));
                         parts.push(Print::Text(": "));
                     }
-                    parts.push(Print::Ty(t, PrintAt::Any));
+                    match &p.range {
+                        Some(r) => parts.push(Print::Text(&r.text)),
+                        None => parts.push(Print::Ty(t, PrintAt::Any)),
+                    }
                 }
                 parts.push(Print::Text(") -> "));
                 parts.push(Print::Ty(&a.result, PrintAt::Result));
@@ -13681,6 +13741,7 @@ mod tests {
                     name: format!("x{j}").into(),
                     positional: false,
                     default: None,
+                    range: None,
                 })
                 .collect(),
             arrows,

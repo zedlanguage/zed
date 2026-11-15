@@ -76,8 +76,8 @@ use zedc_preimage::product::{Cause, Kept, Refused};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Handle, Ref, Resolution};
 use zedc_syntax::ast::{
-    BinaryOp, Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, Stmt, StmtKind,
-    StrPart, Target, Type, TypeKind, UnaryOp, shown,
+    BinaryOp, Error, Every, Expr, ExprKind, Function, Note, Param, Pattern, RangeEnd, Stmt,
+    StmtKind, StrPart, Target, Type, TypeKind, UnaryOp, shown,
 };
 use zedc_syntax::format::format_type;
 use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
@@ -86,7 +86,7 @@ use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
     PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width,
-    atoms, carriers_text, class_id, errs, fresh_name, mask_text,
+    WrittenRange, atoms, carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -1619,6 +1619,16 @@ struct Ck<'t, 'a> {
     /// its position not yet filled in: the first use that takes its ints at least 0. The
     /// signature of the function takes it with the position.
     floors: HashMap<usize, Need>,
+    /// The needs of those parameters on the ranges of the parameters they are passed to as
+    /// arguments, as `y` in `g(y) = f(y)` with `f(x: int[1..])` (DESIGN.md L1.39), by binder,
+    /// one per range in the order first met; ranges need not nest, so each is kept.
+    ranged_floors: HashMap<usize, Vec<Need>>,
+    /// The binder and range of each need in [`Self::ranged_floors`], so that a range met again
+    /// is found in O(1), not by a scan of the needs.
+    ranged_seen: HashSet<(usize, WrittenRange)>,
+    /// The ints of each parameter declared with a range, `x: int[1..]`, by binder: its cell
+    /// starts from them (DESIGN.md L1.39). With the span of the range as written.
+    param_ints: HashMap<usize, (IntervalSet, Span)>,
     /// Each bit word curried with `...`, by the span of the call: the word, its primitive and
     /// the operands the call gave, at their parameters, the width left out. The function the
     /// call gives carries a need with that span ([`NeedKind::InDomain`]'s `bits`), and each of
@@ -1882,6 +1892,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             need_from: None,
             open_params: HashSet::new(),
             floors: HashMap::new(),
+            ranged_floors: HashMap::new(),
+            ranged_seen: HashSet::new(),
+            param_ints: HashMap::new(),
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
@@ -2301,7 +2314,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         stack.push(result);
                     }
                     // A bound is a union of carrier names, which holds no morphism type.
-                    TypeKind::For { ty, .. } => stack.push(ty),
+                    TypeKind::For { ty, .. } | TypeKind::Range { of: ty, .. } => stack.push(ty),
                     TypeKind::Name(_)
                     | TypeKind::Atom(_)
                     | TypeKind::Every(_)
@@ -2846,6 +2859,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A name is shown as written; any other type as the checker printed it then.
             Why::Typed(a, t, masks) => match &a.kind {
                 TypeKind::Name(n) => format!("`{b}` is declared `{n}`"),
+                TypeKind::Range { .. } if let Some(code) = self.code(Some(a.span)) => {
+                    format!("`{b}` is declared `{code}`")
+                }
                 _ => {
                     // A class solved since is shown as its type, not by its carriers then.
                     let t = self.settled(t);
@@ -9358,6 +9374,7 @@ fn positional(n: usize) -> Vec<SParam> {
             name: format!("x{i}").into(),
             positional: true,
             default: None,
+            range: None,
         })
         .collect()
 }
@@ -9706,6 +9723,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
                 name: n.into(),
                 positional: n != "width",
                 default: None,
+                range: None,
             })
             .collect(),
         arrows: vec![Arrow {
@@ -9778,8 +9796,31 @@ fn else_operand(c: &str) -> String {
     }
 }
 
-/// The domain `d` as a type, `int[0..]` or `int[0..<2^w]`.
+/// The ints of the range `r`, as an interval: `int[1..=9]` is `[1..=9]` (DESIGN.md L1.24).
+pub fn written_ints(r: &WrittenRange) -> IntervalSet {
+    let end = |v: &Option<Value>, open: End| match v {
+        Some(Value::Int(n)) => End::of(*n),
+        Some(Value::Big(n)) => Fin(Num::from(&**n)),
+        Some(other) => unreachable!("a range's bound is an int, not {other:?}"),
+        None => open,
+    };
+    IntervalSet::range(end(&r.low, NegInf), end(&r.high, PosInf))
+}
+
+/// The ints of the domain `d` that an interval can state: the range a parameter is declared
+/// with, else the ints at least 0, the bound `2 ^ w` left out.
+fn domain_ints(d: &IntDomain) -> IntervalSet {
+    match &d.written {
+        Some(r) => written_ints(r),
+        None => at_least_zero(),
+    }
+}
+
+/// The domain `d` as a type, `int[0..]`, `int[0..<2^w]`, or a declared range as `int[1..=9]`.
 fn domain_text(d: &IntDomain) -> String {
+    if let Some(r) = &d.written {
+        return r.text.to_string();
+    }
     match &d.below_two_pow {
         None => "int[0..]".into(),
         Some(w) => format!("int[0..<2^{}]", w.0),
@@ -9788,6 +9829,9 @@ fn domain_text(d: &IntDomain) -> String {
 
 /// Whether the int `v` is in the domain `d`.
 fn value_in(d: &IntDomain, v: &Value) -> bool {
+    if let Some(r) = &d.written {
+        return r.holds(v);
+    }
     v.surface_cmp(&Value::Int(0))
         .is_some_and(|o| o != std::cmp::Ordering::Less)
         && (d.below_two_pow.as_ref()).is_none_or(|w| zed_kernel::bits::below_two_pow(v, &w.0))
@@ -9795,7 +9839,7 @@ fn value_in(d: &IntDomain, v: &Value) -> bool {
 
 /// Whether the interval `ints` lies in the domain `d`: below `2 ^ w` when its largest value is.
 fn ints_in(d: &IntDomain, ints: &IntervalSet) -> bool {
-    if !ints.is_subset(&at_least_zero()) {
+    if !ints.is_subset(&domain_ints(d)) {
         return false;
     }
     let Some(w) = &d.below_two_pow else {
@@ -9984,6 +10028,101 @@ fn block_value(e: &Expr) -> Option<&Expr> {
 }
 
 impl<'a> Ck<'_, 'a> {
+    /// The range written as the whole type of the parameter `p`, binder `id`, as
+    /// `x: int[1..]` (DESIGN.md L1.12, L1.39), its bounds read as ints; none for a parameter
+    /// of any other type. Name resolution lets a range through only on a declared function's
+    /// parameter, over `int`, with bounds that name no parameter or field. Each bound must be
+    /// an int the text fixes, a literal or a name bound to one (`n = 10;`), read by
+    /// [`Ck::known`]; any other bound is an error. A range that holds no int, `int[5..=4]`, is
+    /// the row "Unsatisfiable declared constraints". The ints of the range go to
+    /// `param_ints`, from which the parameter's cell starts. O(1) beyond reading the bounds.
+    pub(super) fn param_range(&mut self, p: &'a Param, id: usize) -> Option<WrittenRange> {
+        let t = p.ty.as_ref()?;
+        let TypeKind::Range { low, high, .. } = &t.kind else {
+            return None;
+        };
+        let mut fixed = true;
+        let mut bound = |ck: &mut Self, e: &'a Expr| -> Option<Num> {
+            match ck.known(e).value {
+                Some(Value::Int(n)) => Some(Num::from(n)),
+                Some(Value::Big(n)) => Some(Num::from(&*n)),
+                _ => {
+                    let code = ck.code(Some(e.span)).unwrap_or("this bound").to_string();
+                    ck.error(
+                        e.span,
+                        format!(
+                            "the bound `{code}` of the range of `{}` is not an int the program's \
+                             text fixes. A bound must be an int literal, or a name bound to one, \
+                             as `n = 10;`. To repair it, write the bound as an int",
+                            p.name
+                        ),
+                    );
+                    fixed = false;
+                    None
+                }
+            }
+        };
+        let lo = match low.as_deref() {
+            Some(e) => bound(self, e).map(Fin),
+            None => Some(NegInf),
+        };
+        let hi = match high {
+            RangeEnd::Below(Some(e)) => bound(self, e).map(|n| Fin(n).pred()),
+            RangeEnd::Through(Some(e)) => bound(self, e).map(Fin),
+            RangeEnd::Below(None) | RangeEnd::Through(None) | RangeEnd::Open => Some(PosInf),
+        };
+        let (Some(lo), Some(hi)) = (lo, hi) else {
+            debug_assert!(!fixed);
+            return None;
+        };
+        let value = |e: &End| match e {
+            Fin(n) => Some(Value::from(n)),
+            _ => None,
+        };
+        let r = WrittenRange::new(value(&lo), value(&hi));
+        let ints = IntervalSet::range(lo.clone(), hi.clone());
+        if ints.is_empty() {
+            let code = self.code(Some(t.span)).unwrap_or("this range").to_string();
+            // Only a range with both bounds finite can be empty. The repair widens it to the
+            // ints from the lesser written bound through the greater, which holds at least
+            // one: `int[5..=4]` becomes `int[4..=5]`, `int[5..<5]` becomes `int[5..=5]`.
+            let menu = match (&lo, &hi) {
+                (Fin(l), Fin(h)) => {
+                    let written = match high {
+                        RangeEnd::Below(_) => h + &Num::from(1),
+                        _ => h.clone(),
+                    };
+                    let (a, b) = if written <= *l {
+                        (written, l.clone())
+                    } else {
+                        (l.clone(), written)
+                    };
+                    vec![format!(
+                        "repair: write `{}: int[{}..={}]`, the range from the lesser bound \
+                         through the greater",
+                        p.name,
+                        Value::from(&a),
+                        Value::from(&b)
+                    )]
+                }
+                _ => Vec::new(),
+            };
+            self.rejects_offering(
+                Row::UnsatisfiableConstraints,
+                t.span,
+                format!(
+                    "the parameter `{}` is declared `{code}`, a range that holds no int, so no \
+                     call can pass it a value",
+                    p.name
+                ),
+                menu,
+            );
+            return None;
+        }
+        self.param_ints.insert(id, (ints, t.span));
+        Some(r)
+    }
+
     /// What the text of `e` shows of its `int` value (see [`Known`]), from its literals, the
     /// names it uses, its integer operators and its calls of the bit words; any `int` for
     /// anything else. A binder's value is read only when a name of it is read here, so a
@@ -10040,6 +10179,24 @@ impl<'a> Ck<'_, 'a> {
             ExprKind::Block(_) => block_value(e).into_iter().collect(),
             _ => self.bit_call(e).map_or_else(Vec::new, |(_, es)| es),
         }
+    }
+
+    /// The program's code at `at`, if the checker has the program's text. Written here, not in
+    /// `walk.rs`, which imports this file: a call from here into `walk.rs` would close an import
+    /// cycle (step S.1f).
+    fn code(&self, at: Option<Span>) -> Option<&'a str> {
+        let at = at?;
+        self.t.text?.get(at.start..at.end)
+    }
+
+    /// Whether `a` and `b` are reads of one binding, so one value: `x` and `x` in `x * x`.
+    fn one_name(&self, a: &Expr, b: &Expr) -> bool {
+        let uses = &self.t.res.uses;
+        matches!(
+            (&a.kind, &b.kind, uses.get(&a.span), uses.get(&b.span)),
+            (ExprKind::Name(_), ExprKind::Name(_), Some(Ref::Bound(x)), Some(Ref::Bound(y)))
+                if x.len() == 1 && x == y
+        )
     }
 
     /// The value bound to the name `e` by a `name = value` binder.
@@ -10133,9 +10290,21 @@ impl<'a> Ck<'_, 'a> {
                 .ok()
                 .flatten()
                 .map_or_else(Known::top, Known::of),
-            ExprKind::Name(_) => self
-                .bound_value(e)
-                .map_or_else(Known::top, |v| self.memo(v)),
+            // A parameter declared with a range, `x: int[1..]`, holds only its ints, as each
+            // call is checked to pass (DESIGN.md L1.39).
+            ExprKind::Name(_) => match self.t.res.uses.get(&e.span) {
+                Some(Ref::Bound(ids))
+                    if ids.len() == 1 && self.param_ints.contains_key(&ids[0]) =>
+                {
+                    Known {
+                        ints: self.param_ints[&ids[0]].0.clone(),
+                        value: None,
+                    }
+                }
+                _ => self
+                    .bound_value(e)
+                    .map_or_else(Known::top, |v| self.memo(v)),
+            },
             ExprKind::Unary(UnaryOp::Neg, a) => {
                 let a = self.memo(a);
                 match a.value {
@@ -10190,15 +10359,35 @@ impl<'a> Ck<'_, 'a> {
             },
             ExprKind::Block(_) => block_value(e).map_or_else(Known::top, |v| self.memo(v)),
             ExprKind::Binary(o, a, b) => match int_op(*o) {
-                Some((o, p)) => {
+                Some((op, p)) => {
+                    let square = *o == BinaryOp::Mul && self.one_name(a, b);
                     let (a, b) = (self.memo(a), self.memo(b));
                     if let (Some(x), Some(y)) = (&a.value, &b.value) {
                         return fold(p, vec![x.clone(), y.clone()]).unwrap_or_else(Known::top);
                     }
-                    Known {
-                        ints: forward(&o, &a.ints, &b.ints),
-                        value: None,
+                    let mut ints = forward(&op, &a.ints, &b.ints);
+                    // `x * x` is also `x ^ 2`, never below 0 (DESIGN.md sec:constraints: a
+                    // product whose factors are all one value is read as its power), so
+                    // `x: int[-3..=4]` gives `int[0..=16]` (L1.25), where the product of
+                    // independent factors gives `int[-12..=16]`. Each holds every value, so
+                    // their meet does. Proof that both factors are one value: they read one
+                    // binder (one entry, not an overload set), and a binder holds one value in
+                    // each evaluation of the expression, since Zed has no assignment (a frame
+                    // of a loop gives the next value another name, `x'`).
+                    //
+                    // Complexity tradeoff: O(1), the two factors of one product compared by
+                    // their binding. A chain `x * x * x` reads its inner `x * x` as a square
+                    // and the outer product as two independent factors, sound and possibly
+                    // wider than `x ^ 3`; reading the whole chain as one power at each of its
+                    // products is O(n) a product, O(n²) for a chain of n, which the preimage
+                    // avoids by its table of powers built bottom up (`Tx::read_powers`, row
+                    // S30), not built here. A name bound to another (`y = x; x * y`) is not
+                    // followed: two independent factors, also sound.
+                    if square {
+                        let two = Op::Pow(Num::from(2).into());
+                        ints = ints.meet(&forward(&two, &a.ints, &IntervalSet::top()));
                     }
+                    Known { ints, value: None }
                 }
                 None => Known::top(),
             },
@@ -10830,7 +11019,7 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
                         ps.iter().map(|p| &p.ty).collect()
                     }
                     TypeKind::Record(fs) => fs.iter().map(|(_, t)| t).collect(),
-                    TypeKind::Array(t) => vec![t],
+                    TypeKind::Array(t) | TypeKind::Range { of: t, .. } => vec![t],
                     TypeKind::For { ty, .. } => vec![ty],
                 };
                 stack.extend(parts.into_iter().rev().map(Work::Find));
@@ -11056,6 +11245,13 @@ impl<'a> Denote<'a> {
             TypeKind::Array(_) => unreachable!(
                 "name resolution rejects every array type before the checker reads the program"
             ),
+            // Name resolution lets a range through only as the whole type of a parameter, whose
+            // range the checker reads apart ([`Ck::param_range`]) and meets into its cell: the
+            // type is the type ranged over.
+            TypeKind::Range { of, .. } => {
+                steps.push(Step::Ty(of));
+                return;
+            }
             TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
                 self.leaves[n.as_str()].clone()
             }
@@ -11212,6 +11408,7 @@ impl<'a> Denote<'a> {
                         name: p.name.clone().unwrap_or_default().into(),
                         positional: p.positional || p.name.is_none(),
                         default: None,
+                        range: None,
                     })
                     .collect();
                 self.sig(names, tys, result)
@@ -11234,6 +11431,7 @@ impl<'a> Denote<'a> {
                     name: String::new().into(),
                     positional: true,
                     default: None,
+                    range: None,
                 }];
                 let missed = result.union(&Ty::set(KType::atom("notFound")));
                 let arrows = if lower == upper {

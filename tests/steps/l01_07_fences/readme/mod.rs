@@ -285,7 +285,16 @@ const RAISED_LATER: &[(&str, usize, &str)] = &[];
 /// word and the item that adds it: the test of the enabled fences checks that each still stops
 /// on its word, and fails once the word compiles, so the item that adds it removes the line and
 /// the fence runs with its checks.
-const WORD_LATER: &[(&str, &str, &str)] = &[("README.md [Functions] 1", "Utf8String", "STR-types")];
+const WORD_LATER: &[(&str, &str, &str)] = &[
+    ("README.md [Functions] 1", "Utf8String", "STR-types"),
+    // Enabled at L1 by the grammar RANGE-L1 copies; the forms are LAYER-L1-forms (1) and (3).
+    (
+        "README.md [Bindings] 1",
+        "port: int[1..=65535] = 8080;",
+        "LAYER-L1-forms",
+    ),
+    ("README.md [Strings] 1", "::", "LAYER-L1-forms"),
+];
 
 /// What each ✗ variant of README.md gives at L1, by the fence's key (its section and place in
 /// it, as `expected.txt` keys it) and the variant's line in the fence: `pass`, or its first
@@ -340,12 +349,12 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md [Ranges and refinements] 1",
         4,
-        concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
+        concat!("line 1: ", zed_tests::not_yet!("a struct declaration")),
     ),
     (
         "README.md [Ranges and refinements] 1",
         9,
-        concat!("line 1: ", zed_tests::not_yet!("the refinement `[lo..]`")),
+        concat!("line 1: ", zed_tests::not_yet!("a struct declaration")),
     ),
     (
         "README.md [Units and taint] 1",

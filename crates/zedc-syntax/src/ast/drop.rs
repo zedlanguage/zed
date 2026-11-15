@@ -252,6 +252,8 @@ fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
         }
         TypeKind::Record(fields) => out.extend(fields.into_iter().map(|(_, t)| t)),
         TypeKind::Array(t) => out.push(*t),
+        // The bounds are expressions, each dropped on its own work list.
+        TypeKind::Range { of, .. } => out.push(*of),
         TypeKind::For { ty, bounds } => {
             out.push(*ty);
             out.extend(bounds.into_iter().map(|b| b.carriers));

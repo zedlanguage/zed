@@ -1745,6 +1745,17 @@ impl Resolver<'_> {
                 } => self.function(params, ports, body, this, &mut todo),
                 Task::Expr(e) => self.expr(e, &mut todo),
                 Task::Ty(t) => self.ty(t, &mut todo),
+                Task::ParamTy(t) => match &t.kind {
+                    TypeKind::Range { of, low, high } => {
+                        // The checker meets a range into an int interval; a range over any
+                        // other type has no interval to meet.
+                        if !matches!(&of.kind, TypeKind::Name(n) if n == "int") {
+                            self.later(t.span, "a range over a type other than `int`");
+                        }
+                        self.range(of, low, high, &mut todo)
+                    }
+                    _ => self.ty(t, &mut todo),
+                },
                 Task::TypeName(n, span) => self.type_name(n, span),
                 Task::Pattern(p, report) => self.pattern(p, report, &mut todo),
                 Task::BindPattern(name, span) => self.bind(name, span, span, Kind::Pattern, None),
@@ -1830,6 +1841,7 @@ impl Resolver<'_> {
                     }
                 }
                 Task::FreeEnd => self.free_end(),
+                Task::RangeBound(b) => self.range_bound(b),
             }
         }
     }
@@ -2495,6 +2507,43 @@ impl Resolver<'_> {
         self.later(span, &format!("the primed name `{name}`"));
     }
 
+    /// The bound `b` of a range type, its names resolved. A bound of step L1 is a literal or
+    /// a name bound once for the whole program, `int[0..<n]` with `n = 10;`; one that names a
+    /// value of each call or each struct value, a parameter, field, port, receiver or pattern
+    /// binder, is a dependent domain, a form of step L10 (DESIGN.md sec:grammar), and the
+    /// message names that step. The first such name is reported, once per bound.
+    ///
+    /// Complexity tradeoff: the uses inside the bound are read from the ordered map of uses by
+    /// a range query, O(log U + k) for `k` uses in the bound, where walking the bound again
+    /// would be O(k) and need a second walker over every expression form.
+    fn range_bound(&mut self, b: &Expr) {
+        let from = Span {
+            start: b.span.start,
+            end: b.span.start,
+        };
+        let named = (self.out.uses.range(from..))
+            .take_while(|(s, _)| s.start < b.span.end)
+            .find_map(|(s, r)| match r {
+                Ref::Bound(ids) if s.end <= b.span.end => {
+                    let binder = &self.out.binders[ids[0]];
+                    matches!(
+                        binder.kind,
+                        Kind::Param | Kind::Field | Kind::Port | Kind::Receiver | Kind::Pattern
+                    )
+                    .then(|| (binder.kind.binder(), binder.name.clone()))
+                }
+                _ => None,
+            });
+        if let Some((kind, name)) = named {
+            self.later(
+                b.span,
+                &format!(
+                    "a range bound that names {kind} `{name}`, a dependent domain of layer L10,"
+                ),
+            );
+        }
+    }
+
     /// A new region that handles `handles`.
     fn region(&mut self, handles: Vec<Handle>) -> usize {
         self.out.regions.push(Region {
@@ -2769,7 +2818,7 @@ impl Resolver<'_> {
         todo.push(Task::SignatureEnd);
         for p in params.iter().rev() {
             todo.extend(p.default.as_ref().map(Task::Expr));
-            todo.extend(p.ty.as_ref().map(Task::Ty));
+            todo.extend(p.ty.as_ref().map(Task::ParamTy));
         }
     }
 
@@ -2849,12 +2898,24 @@ impl Resolver<'_> {
                 }
             }
             ExprKind::Tuple(items) => todo.extend(items.iter().rev().map(Task::Expr)),
-            ExprKind::Lambda { params, body } => todo.push(Task::Function {
-                params,
-                ports: &[],
-                body,
-                this: None,
-            }),
+            ExprKind::Lambda { params, body } => {
+                // A lambda checked against the function type its place expects takes its
+                // parameters' types from there, and this version carries no range in a
+                // function type, so it checks a range on a declared function's parameter only.
+                for p in params {
+                    if let Some(t) = p.ty.as_ref()
+                        && matches!(t.kind, TypeKind::Range { .. })
+                    {
+                        self.later(t.span, "a range on a lambda's parameter");
+                    }
+                }
+                todo.push(Task::Function {
+                    params,
+                    ports: &[],
+                    body,
+                    this: None,
+                })
+            }
             ExprKind::Is { of, ty, .. } => {
                 // The written type's atoms: a union nests as deep as its text.
                 let mut handles = Vec::new();
@@ -3252,7 +3313,39 @@ impl Resolver<'_> {
                 todo.extend(fields.iter().rev().map(|(_, t)| Task::Ty(t)));
             }
             TypeKind::Array(_) => self.later(t.span, "a family type `[T]`"),
+            // This version checks a range only as the whole type of a parameter
+            // ([`Task::ParamTy`]): there the checker meets it into the parameter's cell and
+            // checks each call against it. Elsewhere, in a tuple, a function type, an `is` test
+            // or a field, it would need a kernel type with a range, which this version lacks;
+            // reading it as its base type would make `x is int[0..=9]` hold for 100.
+            TypeKind::Range { of, low, high } => {
+                self.later(
+                    t.span,
+                    "a range type in any place but the whole type of a parameter",
+                );
+                self.range(of, low, high, todo);
+            }
         }
+    }
+
+    /// Resolves the range type `of[low..high]`: the bounds' names, each bound then checked
+    /// for a dependent domain ([`Task::RangeBound`]), and the type ranged over.
+    fn range<'a>(
+        &mut self,
+        of: &'a Type,
+        low: &'a Option<Box<Expr>>,
+        high: &'a RangeEnd<Option<Box<Expr>>>,
+        todo: &mut Vec<Task<'a>>,
+    ) {
+        for b in [low.as_deref(), high.bound().and_then(|b| b.as_deref())]
+            .into_iter()
+            .flatten()
+            .rev()
+        {
+            todo.push(Task::RangeBound(b));
+            todo.push(Task::Expr(b));
+        }
+        todo.push(Task::Ty(of));
     }
 
     /// The type name `n` used at `span`: a prelude type, a bounded type variable, a leaf of a
@@ -3791,6 +3884,11 @@ enum Task<'a> {
     SignatureEnd,
     /// The end of the innermost table of type variables ([`Resolver::free_end`]).
     FreeEnd,
+    /// A bound of a range type `int[lo..<hi]` whose names are resolved: one that names a
+    /// parameter or a field is a dependent domain, a form of step L10.
+    RangeBound(&'a Expr),
+    /// The written type of a parameter, the one place a range type is checked at this layer.
+    ParamTy(&'a Type),
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.

@@ -19,6 +19,7 @@ mod loops;
 mod num_text;
 mod past_i64;
 mod scaling;
+mod written;
 
 use zed_tests::instances::Rng;
 use zedc::store::affine::{Affine, Bound, Bounds, Sym};

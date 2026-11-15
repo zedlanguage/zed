@@ -31,7 +31,7 @@ Decl          = ~Local                                                          
 Local         = 'local' Decl                                                       L2
 Initial       = 'initial' InitTarget '=' Expr Carry? ';'                           L6
 Carry         = 'with' 'carryForward'                                              L6
-InitTarget    = Name ':' Type                                                      L10
+InitTarget    = Name ':' Type                                                      L6
               | Name ('[' IndexKey ']')+                                           L6
               | Name % ','                                                         L6
 Return        = 'return' Expr % ',' ';'                                            L1
@@ -93,9 +93,9 @@ AckPush       = Name '=' PushTarget ('[' Expr ']')* '<-' Expr ';'               
 KeyedPush     = PushTarget ('[' Expr ']')+ '<-' Expr ';'                           L7
 WholePush     = PushTarget '<-' Expr ';'                                           L1
 PushTarget    = Name ('.' Name)* ('::' Name)?                                      L1
-Binding       = ~TypedBinding                                                      L10
+Binding       = ~TypedBinding                                                      L1
               | ~PlainBinding                                                      L1
-TypedBinding  = Name ':' Type '=' Expr ';'                                         L10
+TypedBinding  = Name ':' Type '=' Expr ';'                                         L1
 PlainBinding  = Target % ',' '=' Expr ';'                                          L1
 Target        = Name | WILD                                                        L1
 Boundary      = 'with' BoundaryItem % ','                                          L6
@@ -163,7 +163,7 @@ Suffix        = ~CallSuffix                                                     
               | ~MemberSuffix                                                      L1
               | ~SafeSuffix                                                        L1
               | ~SpreadSuffix                                                      L6
-              | ~ReadSuffix                                                        L3
+              | ~ReadSuffix                                                        L1
 CallSuffix    = '(' nest(Args?) ')'                                                L1
 IndexSuffix   = '[' nest(SliceKey % ',' ','?) ']'                                  L8
               | '[' nest(Expr) ']'                                                 L1
@@ -171,7 +171,7 @@ SliceKey      = Name ':' Expr                                                   
 MemberSuffix  = '.' Name                                                           L1
 SafeSuffix    = '?.' Name                                                          L1
 SpreadSuffix  = '*.' Name                                                          L6
-ReadSuffix    = '::' Name                                                          L3
+ReadSuffix    = '::' Name                                                          L1
 Update        = Name ('.' Name)* '=' Expr                                                    L2
               | KeyPath '=' Expr                                                   L5
 KeyPath       = KeyPath ('.' Name | '[' nest(Expr) ']')                            L5
@@ -287,15 +287,16 @@ TypeAnd       = TypeAnd '&' TypeNot                                             
               | ~TypeNot                                                           L1
 TypeNot       = '!' TypeNot                                                        L10
               | ~TypePostfix                                                       L1
-TypePostfix   = TypePostfix TypeSuffix                                             L10
+TypePostfix   = TypePostfix TypeSuffix                                             L1
               | ~TypePrimary                                                       L1
-TypeSuffix    = '[' nest(Refinement % ',' ','?) ']'                                L10
+TypeSuffix    = '[' nest(RangeLit) ']'                                              L1
+              | '[' nest(Refinement % ',' ','?) ']'                                L10
               | 'matching' GrammarBlock                                            L20
 Refinement    = Name ('<=' | '<' | '>=' | '>' | '==') Additive                     L10
               | Name RangeLit                                                      L10
               | RangeLit                                                           L10
               | Name                                                               L10
-RangeLit      = (WILD | Additive) ('..<' (WILD | Additive) | '..=' (WILD | Additive) | '..') L10
+RangeLit      = (WILD | Additive) ('..<' (WILD | Additive) | '..=' (WILD | Additive) | '..') L1
 TypePrimary   = ~TypeApply                                                         L2
               | ~TypeName                                                          L1
               | ~AtomApply                                                         L2
@@ -307,13 +308,14 @@ TypePrimary   = ~TypeApply                                                      
               | ~GroupType                                                         L1
               | ~RecordType                                                        L2
               | ~SetType                                                           L10
-              | ~LitType                                                           L10
-              | ~InferType                                                         L10
+              | ~LitType                                                           L1
+              | ~InferType                                                         L1
               | ~HoleType                                                          L15
-LitType       = '-'? LitFactor ('*' LitFactor)+                                    L10
-              | '-'? INT '^' INT                                                   L10
+LitType       = '-'? LitFactor ('*' LitFactor)+                                    L1
+              | '-'? INT '^' INT                                                   L1
+              | '-'? (INT | FLOAT | RAT)                                           L1
               | SignedLit                                                          L10
-LitFactor     = INT ('^' INT)?                                                     L10
+LitFactor     = INT ('^' INT)?                                                     L1
 TypeApply     = Path '(' nest(TypeParam % ',' ','?) ')'                            L2
 TypeName      = Path                                                               L1
 AtomApply     = ATOM '(' nest(TypeParam % ',' ','?) ')'                            L2
@@ -330,7 +332,7 @@ GroupType     = '(' nest(Type) ')'                                              
 RecordType    = '{' nest((Name ':' Type) % ',' ','?) '}'                             L2
               | '{' nest('..') '}'                                                 L2
 SetType       = '{' nest(SignedLit % ',' ','?) '}'                                 L10
-InferType     = WILD                                                               L10
+InferType     = WILD                                                               L1
 HoleType      = '?'                                                                L15
 
 ShapeDim      = (Name ':')? (WILD | Additive)                                     L14

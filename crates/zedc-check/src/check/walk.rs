@@ -2277,20 +2277,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ends, each class of its level takes its type; a class merged with one of a function
     /// around it waits for that function.
     fn infer(&mut self, m: &mut M<'a>, f: &'a Function, span: Span) {
-        let params: Vec<SParam> = f
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, p)| SParam {
+        let ids: Vec<usize> = f.params.iter().map(|p| self.id(p.span, &p.name)).collect();
+        let mut params: Vec<SParam> = Vec::with_capacity(f.params.len());
+        for (i, (p, &id)) in f.params.iter().zip(&ids).enumerate() {
+            let range = self.param_range(p, id);
+            params.push(SParam {
                 name: p.name.as_str().into(),
                 positional: p.positional,
                 default: p.default.as_ref().map(|d| {
                     let closed = self.t.uses_in(d.span, &[]).is_empty();
                     (self.id(span, &f.name), i, closed)
                 }),
-            })
-            .collect();
-        let ids: Vec<usize> = f.params.iter().map(|p| self.id(p.span, &p.name)).collect();
+                range,
+            });
+        }
         let s = InferF {
             f,
             params,
@@ -6441,6 +6441,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 name: p.name.as_str().into(),
                 positional: true,
                 default: None,
+                range: None,
             })
             .collect();
         self.lambda_sig(m, params.iter().map(Some), &[], names, body);
@@ -7355,8 +7356,8 @@ impl<'a> Ck<'_, 'a> {
                     .and_then(|t| self.class_of_ty(t))
                     .is_some_and(|k| self.classes[k].mask == Carrier::Int.bit());
                 let p = match ty.and_then(plain) {
-                    Some(t) => Product::of_type(t),
-                    None if int_class => Product::of_type(KType::int()),
+                    Some(t) => self.param_product(*id, t),
+                    None if int_class => self.param_product(*id, KType::int()),
                     None => Product::top(),
                 };
                 (x.clone(), p)
@@ -7981,7 +7982,7 @@ impl<'a> Ck<'_, 'a> {
                 Some(p) => p.clone(),
                 None if self.facts.contains_key(id) => continue,
                 None => match self.param_type(b, *id).and_then(plain) {
-                    Some(ty) => Product::of_type(ty),
+                    Some(ty) => self.param_product(*id, ty),
                     None => continue,
                 },
             };
@@ -8017,6 +8018,16 @@ impl<'a> Ck<'_, 'a> {
             inputs,
             widest: widest.map(|(_, id)| id),
         })
+    }
+
+    /// Any value of the type `ty` of the binder `id`: of a parameter declared with a range,
+    /// `x: int[1..]`, only the ints in it (DESIGN.md L1.39). O(1) with no range; one meet with
+    /// one.
+    fn param_product(&self, id: usize, ty: KType) -> Product {
+        match self.param_ints.get(&id) {
+            Some((ints, _)) => Product::of_type_within(ty, ints),
+            None => Product::of_type(ty),
+        }
     }
 
     /// The type of the parameter `id` where binder `b` is bound: as recorded there when a
@@ -8179,7 +8190,11 @@ impl<'a> Ck<'_, 'a> {
                         };
                         match s.names.contains_key(x) {
                             false => {
-                                s.bind(x, Product::of_type(ty), &Shared::new(Term::Var(x.clone())));
+                                s.bind(
+                                    x,
+                                    self.param_product(*id, ty),
+                                    &Shared::new(Term::Var(x.clone())),
+                                );
                             }
                             // One a join holds of no type, as from a side that never read it.
                             true => s.meet_type(x, &ty),
@@ -8225,7 +8240,7 @@ impl<'a> Ck<'_, 'a> {
             debug_assert_eq!(fresh.len(), t.vars.len());
             for ((x, q), (_, id)) in fresh.iter().zip(&t.vars) {
                 let q = match int.contains(id) {
-                    true => &Product::of_type(KType::int()),
+                    true => &self.param_product(*id, KType::int()),
                     false => q,
                 };
                 match p.names.contains_key(x) {
@@ -11269,6 +11284,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let domain = IntDomain {
                         what: "`^` on an int takes an exponent in int[0..]".into(),
                         below_two_pow: None,
+                        written: None,
                         name: "exponent".into(),
                     };
                     let need = Need {
@@ -11683,12 +11699,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// The program's code at `at`, if the checker has the program's text.
-    pub(super) fn code(&self, at: Option<Span>) -> Option<&'a str> {
-        let at = at?;
-        self.t.text?.get(at.start..at.end)
-    }
-
     /// The edits that cast the code at `at` to `w` where it stands, `String(` before it and
     /// `)` after it, with the cast's parentheses written in place of those that group the
     /// whole code ([`ungrouped`]): `String(2 + 13)` for `(2 + 13)`, not `String((2 + 13))`.
@@ -11779,6 +11789,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// nested, `int[0..]` holding every `int[0..<2 ^ w]` and a smaller `w` the smaller domain,
     /// so one need per binder decides each call: the smallest domain, from its first use.
     fn floor_on(&mut self, id: usize, n: Need) {
+        // A declared range, passed on from a call (DESIGN.md L1.39), nests neither in the
+        // ints from 0 nor in another range, so each distinct range is kept, the first need
+        // met for it; a hash set finds one met before in O(1).
+        if let NeedKind::InDomain {
+            domain: IntDomain {
+                written: Some(r), ..
+            },
+            ..
+        } = &n.kind
+        {
+            if self.ranged_seen.insert((id, r.clone())) {
+                self.ranged_floors.entry(id).or_default().push(n);
+            }
+            return;
+        }
         let width = |n: &Need| match &n.kind {
             NeedKind::InDomain { domain, .. } => domain.below_two_pow.clone(),
             _ => None,
@@ -11964,11 +11989,38 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (j, id) in ids.iter().enumerate() {
             let Some(id) = id else { continue };
             self.open_params.remove(id);
-            if let Some(mut n) = self.floors.remove(id) {
-                if let NeedKind::InDomain { param, .. } = &mut n.kind {
+            let ranged = self.ranged_floors.remove(id).unwrap_or_default();
+            for mut n in self.floors.remove(id).into_iter().chain(ranged) {
+                if let NeedKind::InDomain { domain, param, .. } = &mut n.kind {
+                    if let Some(r) = &domain.written {
+                        self.ranged_seen.remove(&(*id, r.clone()));
+                    }
                     *param = j;
                 }
                 needs.push(n);
+            }
+            // A parameter declared with a range takes only the ints in it: each call shows
+            // its argument's ints there (DESIGN.md L1.39), as a use's need is checked.
+            if let Some(r) = sig.params.get(j).and_then(|p| p.range.clone())
+                && let Some(&(_, span)) = self.param_ints.get(id)
+            {
+                let name = sig.params[j].name.clone();
+                needs.push(Need {
+                    on: Ty::empty(),
+                    kind: NeedKind::InDomain {
+                        domain: IntDomain {
+                            what: format!("`{name}` is declared {}", r.text).into(),
+                            name,
+                            below_two_pow: None,
+                            written: Some(r),
+                        },
+                        param: j,
+                        via: None,
+                        bits: None,
+                    },
+                    result: None,
+                    span,
+                });
             }
         }
         if needs.is_empty() {
@@ -12015,14 +12067,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 continue;
             }
+            // The parameter's name in `sig`, or the one the need was recorded with where `sig`
+            // names none: `f(positional x: int[1..])` passed at `g: (int) -> int` arrives here
+            // with a parameter of no name (seen in a run; where the name is dropped is not
+            // traced), and the message named the parameter ``.
             let p = sig
                 .params
                 .get(*param)
-                .map_or("?".into(), |p| p.name.clone());
+                .map(|p| p.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| domain.name.clone());
             let takes = format!("{what} takes `{p}` in {}", domain_text(domain));
             let passed = IntDomain {
                 what: takes.as_str().into(),
                 below_two_pow: domain.below_two_pow.clone(),
+                written: domain.written.clone(),
                 name: (*p).into(),
             };
             // The calls that passed the value on, down to the use: O(calls), so made only for an
@@ -12168,7 +12227,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.derive_into(&[at], &mut notes);
             let outside_all = match &r.values {
                 Some(vs) => vs.iter().all(|v| !value_in(domain, v)),
-                None => r.ints.meet(&at_least_zero()).is_empty(),
+                None => r.ints.meet(&domain_ints(domain)).is_empty(),
             };
             let arg = self.code(Some(at)).map(|c| (c, self.tested(e).is_some()));
             let call = self.call_parts(span, at);
@@ -13308,6 +13367,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let d = IntDomain {
                     what: format!("`{w}` takes `{name}` in int[0..]").into(),
                     below_two_pow: None,
+                    written: None,
                     name: (*name).into(),
                 };
                 self.floor(&a.ty, e, d, span);
@@ -13378,6 +13438,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let d = IntDomain {
                     what: format!("`{w}` takes `{name}` in int[0..<2^width]").into(),
                     below_two_pow: Some(Width(s.clone())),
+                    written: None,
                     name: name.into(),
                 };
                 self.floor(&a.ty, e, d, span);
@@ -13510,6 +13571,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     what: format!("`{w}` takes `width` in int[0..]").into(),
                     name: "width".into(),
                     below_two_pow: None,
+                    written: None,
                 },
                 param: j,
                 via: None,
@@ -13768,6 +13830,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 true => SParam {
                     positional: true,
                     default: None,
+                    range: None,
                     ..sig.params[j].clone()
                 },
                 false => sig.params[j].clone(),
@@ -18367,6 +18430,9 @@ enum Within {
     /// only, and Zed has no remainder operator to test it with. In increasing order, never
     /// empty.
     Bytes(Vec<i64>),
+    /// The range a parameter is declared with, as `int[1..=9]`, tested as `n >= 1 && n <= 9`
+    /// (DESIGN.md L1.39).
+    Written(WrittenRange),
 }
 
 /// The end of a [`Within::Range`] that no int it holds reaches, at the width `w`, or at the
@@ -18394,6 +18460,9 @@ impl std::fmt::Display for Bound {
 impl Within {
     /// The ints of the domain `d`, as its test keeps them.
     fn of(d: &IntDomain) -> Within {
+        if let Some(r) = &d.written {
+            return Within::Written(r.clone());
+        }
         Within::Range {
             low: 0,
             below: (d.below_two_pow.as_ref()).map(|w| Bound::TwoPow(Some(w.0.clone()))),
@@ -18425,6 +18494,7 @@ impl Within {
         match self {
             Within::Range { low, .. } => *low,
             Within::Bytes(vs) => vs[0],
+            Within::Written(_) => unreachable!("a declared range is never the domain of a width"),
         }
     }
 
@@ -18444,6 +18514,7 @@ impl Within {
             Within::Bytes(vs) => vs
                 .iter()
                 .any(|&b| v.surface_cmp(&Value::Int(b)).is_some_and(|o| o.is_eq())),
+            Within::Written(r) => r.holds(v),
         }
     }
 
@@ -18466,6 +18537,8 @@ impl Within {
                 }
             }
             Within::Bytes(vs) => !vs.iter().any(|&b| r.ints.contains(b)),
+            // One meet of the two interval sets, O(p) for p pieces.
+            Within::Written(w) => r.ints.meet(&written_ints(w)).is_empty(),
         }
     }
 
@@ -18480,6 +18553,7 @@ impl Within {
                 below: Some(b),
             } => format!("in int[{low}..<{b}]"),
             Within::Bytes(_) => "a multiple of 8 in int[0..]".into(),
+            Within::Written(r) => format!("in {}", r.text),
         }
     }
 
@@ -18487,7 +18561,7 @@ impl Within {
     /// multiple of 8 in int[0..], as 8, 16, 32 or 64".
     fn value(&self) -> String {
         match self {
-            Within::Range { .. } => format!("a value {}", self.takes()),
+            Within::Range { .. } | Within::Written(_) => format!("a value {}", self.takes()),
             Within::Bytes(vs) => {
                 let vs: Vec<String> = vs.iter().map(i64::to_string).collect();
                 format!("{}, as {}", self.takes(), or_list(&vs))
@@ -18506,6 +18580,12 @@ impl Within {
             Within::Bytes(vs) => (vs.iter().map(|v| format!("{a} == {v}")))
                 .collect::<Vec<_>>()
                 .join(" || "),
+            Within::Written(r) => match (&r.low, &r.high) {
+                (Some(l), Some(h)) => format!("{a} >= {l} && {a} <= {h}"),
+                (Some(l), None) => format!("{a} >= {l}"),
+                (None, Some(h)) => format!("{a} <= {h}"),
+                (None, None) => unreachable!("a parameter declared `int[_..]` has no domain"),
+            },
         }
     }
 }
@@ -19134,6 +19214,7 @@ impl<'a> Ck<'_, 'a> {
                 name: "".into(),
                 positional: true,
                 default: None,
+                range: None,
             };
             let found = entries.union(&Ty::set(KType::atom("notFound")));
             let mut family = Sig::one(vec![param], vec![keys.union(&wider)], found);
@@ -20453,6 +20534,7 @@ mod tests {
                 name: "x".into(),
                 positional: true,
                 default: None,
+                range: None,
             }],
             arrows: vec![Arrow {
                 params: vec![row.clone()],

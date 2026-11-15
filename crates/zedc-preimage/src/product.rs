@@ -218,6 +218,16 @@ impl Product {
         p
     }
 
+    /// Any value of `ty` among the integers `ints`, known when the program runs: a parameter
+    /// declared with a range, `x: int[1..]` (DESIGN.md L1.39).
+    pub fn of_type_within(ty: Type, ints: &IntervalSet) -> Product {
+        let mut p = Product::of_type(ty);
+        let met = p.ints().meet(ints);
+        p.cell.ints.element = Bounds::ints(met);
+        p.reduce_domains();
+        p
+    }
+
     /// The value `v`, known when the program is built.
     pub fn literal(v: &Value) -> Product {
         Product(Arc::new(ProductDomains {
@@ -13848,7 +13858,7 @@ impl<'m> Run<'m> {
                 for a in args {
                     xs.push(self.forward(a).await);
                 }
-                forward_prim(*op, xs)
+                forward_term(*op, args, xs)
             }
             _ => self.scope(|s| leaf(e, s)),
         }
@@ -13955,7 +13965,7 @@ impl<'m> Run<'m> {
                 for a in args {
                     xs.push(self.walk_value(a).await);
                 }
-                forward_prim(*op, xs)
+                forward_term(*op, args, xs)
             }
             Term::App(f, args) => {
                 self.walk(f).await;
@@ -14105,6 +14115,38 @@ fn run_static(t: &Term) -> Option<Product> {
         Ok(v) if !matches!(v, Value::Family(_)) => Some(Product::literal(&v)),
         _ => None,
     }
+}
+
+/// [`forward_prim`] of `op` on the terms `args`, whose elements are `xs`: a product of one name
+/// by itself, `x * x`, is also its square, `x ^ 2`, which is never below 0 (DESIGN.md
+/// sec:constraints: a product whose factors are all one value is read as its power), so
+/// `x: int[-3..=4]` gives `x * x` in `int[0..=16]` (L1.25), where the product of independent
+/// factors gives `int[-12..=16]`. The two are met: each holds every value, so the meet does.
+/// Both factors are one value: a kernel term has no assignment, so one variable holds one value
+/// in each evaluation of the term.
+// Complexity tradeoff: only the two factors of one product are compared, by name, O(1). A
+// chain `x * x * x` reads its inner `x * x` as a square and the outer product as two
+// independent factors, which is sound and can be wider than `x ^ 3`; reading a whole chain as
+// one power at each product it contains costs O(n) per product and O(n²) for a chain of n
+// products, which the preimage's reading avoids by a table of powers built bottom up
+// (`Tx::read_powers`, row S30). That table is not built here. Nor is a name bound to another
+// (`y = x; x * y`) followed: the two count as independent factors, also sound.
+fn forward_term(op: Prim, args: &[Term], xs: Vec<Product>) -> Product {
+    let square = match (op, args) {
+        (Prim::Mul, [Term::Var(a), Term::Var(b)]) if a == b => Some(xs[0].ints().clone()),
+        _ => None,
+    };
+    let mut p = forward_prim(op, xs);
+    if let Some(x) = square
+        && p.value().is_none()
+        && p.ty.element.subtype(&Type::int())
+    {
+        let two = Op::Pow(Num::from(2).into());
+        let sq = revision::forward(&two, &x, &IntervalSet::top());
+        p.cell.ints.element = Bounds::ints(p.ints().meet(&sq));
+        p.reduce_domains();
+    }
+    p
 }
 
 /// [`forward`] of a primitive whose arguments have the elements `xs`: its value when every

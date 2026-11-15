@@ -117,3 +117,19 @@ pub fn binding(src: &str, name: &str) -> Term {
         .get(name)
         .unwrap_or_else(|| panic!("{src}: no binding `{name}`"))
 }
+
+/// The scope of the function `ok` that `src` defines and its body: each parameter declared
+/// with a range, as `n: int[0..=10]`, starts from the ints of its range, as the checker's cell
+/// does (DESIGN.md L1.39, RANGE-L1), and each other from every int.
+pub fn ranged_function(src: &str) -> (Scope, Term) {
+    let (ps, body) = function(src);
+    let sig = crate::step_helpers::l01_26_type_resolution::sig_of(src, "ok");
+    let scope = Scope::new(ps.iter().zip(&sig.params).map(|(p, s)| {
+        let cell = match &s.range {
+            Some(r) => Product::of_type_within(Type::int(), &zedc::check::written_ints(r)),
+            None => Product::of_type(Type::int()),
+        };
+        (p.clone(), cell)
+    }));
+    (scope, body)
+}
