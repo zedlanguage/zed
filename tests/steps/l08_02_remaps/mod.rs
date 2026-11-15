@@ -11,6 +11,7 @@
 //! COMPLETENESS.md lists each case and the test that covers it.
 mod bench;
 mod collisions;
+mod empty;
 mod kernel;
 mod moves;
 mod names;

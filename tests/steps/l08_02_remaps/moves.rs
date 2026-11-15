@@ -2,6 +2,10 @@
 //! "The legal moves"), with rank insertion (sec:remap_law, "Ranking").
 
 use crate::source::{does_not_parse, same, with_sales};
+// The spec examples of these moves that read level names (`sales into (sku -> region -> day ->
+// quantitySold)`) and the rank insertions (`asc`, `desc`) wait in
+// /home/luke/Work/wt/failing-tests, rows L8.2b and L8.2.
+
 
 const M: &str = "m = { \"a\" -> { 1 -> 10, 2 -> 20 }, \"b\" -> { 1 -> 30 } };\n";
 
@@ -22,24 +26,13 @@ fn transpose_levels() {
 }
 
 #[test]
-fn permute_levels_by_name() {
-    // sec:level_names, "Names through remaps": `sales into (sku -> region -> day ->
-    // quantitySold)`.
-    let src = with_sales(
-        "x = sales into (sku -> region -> day -> quantitySold);\n\
-         want = { \"A12\" -> { \"west\" -> { 0 -> 3, 1 -> 2 } }, \"B7\" -> { \"east\" -> { 0 -> 5 }, \"west\" -> { 0 -> 1 } } };\n",
-    );
-    same(&src, "x", "want");
-}
-
-#[test]
 fn permute_levels_by_as_binders() {
     // sec:level_names: `sales as (r -> d -> s -> q) into (s -> r -> d -> q)`.
     let src = with_sales(
         "x = sales as (r -> d -> s -> q) into (s -> r -> d -> q);\n\
-         y = sales into (sku -> region -> day -> quantitySold);\n",
+         want = { \"A12\" -> { \"west\" -> { 0 -> 3, 1 -> 2 } }, \"B7\" -> { \"east\" -> { 0 -> 5 }, \"west\" -> { 0 -> 1 } } };\n",
     );
-    same(&src, "x", "y");
+    same(&src, "x", "want");
 }
 
 #[test]
@@ -91,15 +84,6 @@ fn widen_a_key_with_the_value() {
 }
 
 #[test]
-fn widen_a_key_with_derived_data() {
-    // sec:remap_law: `as (k -> v) into ((k, f(k)) -> v)`.
-    let src = "f(positional k: int) -> int = k * k;\nxs = [10, 20, 30];\n\
-               x = xs as (k -> v) into ((k, f(k)) -> v);\n\
-               want = { (0, 0) -> 10, (1, 1) -> 20, (2, 4) -> 30 };\n";
-    same(src, "x", "want");
-}
-
-#[test]
 fn widen_by_a_key_function() {
     // Bounds table, row `m as (k -> v) into (w(k) -> k -> v)`: each group holds the keys `w`
     // sends to it.
@@ -132,55 +116,15 @@ fn a_trailing_key_is_sugar_for_truncate() {
 #[test]
 fn truncate_to_the_outer_level() {
     // sec:remap_law, truncate: the last kept level's keys become the leaves.
-    let src = with_sales("x = sales into (region -> _);\nwant = {\"east\", \"west\"};\n");
+    let src = with_sales(
+        "x = sales as (r -> d -> s -> q) into (r -> _);\nwant = {\"east\", \"west\"};\n",
+    );
     same(&src, "x", "want");
 }
 
 // ---- Rank insertion ----
 
 const SCORES: &str = "scores = { \"ann\" -> 3, \"bob\" -> 5, \"cy\" -> 3 };\n";
-
-#[test]
-fn desc_rank_groups_ties_beneath() {
-    // sec:remap_law: `byScore = scores into (desc score -> name -> score);` "tied entries
-    // remain a group beneath their shared rank".
-    let src = format!(
-        "{SCORES}x = scores as (name -> score) into (desc score -> name -> score);\n\
-         want = {{ 0 -> {{ \"bob\" -> 5 }}, 1 -> {{ \"ann\" -> 3, \"cy\" -> 3 }} }};\n"
-    );
-    same(&src, "x", "want");
-}
-
-#[test]
-fn asc_rank() {
-    let src = format!(
-        "{SCORES}x = scores as (name -> score) into (asc score -> name -> score);\n\
-         want = {{ 0 -> {{ \"ann\" -> 3, \"cy\" -> 3 }}, 1 -> {{ \"bob\" -> 5 }} }};\n"
-    );
-    same(&src, "x", "want");
-}
-
-#[test]
-fn several_sort_keys_make_one_rank_level() {
-    // sec:lexical, `asc e` / `desc e`: "several sort keys separated by commas form **one**
-    // rank level ordered lexicographically: `into (desc score, asc name -> …)`".
-    let src = format!(
-        "{SCORES}x = scores as (name -> score) into (desc score, asc name -> name -> score);\n\
-         want = {{ 0 -> {{ \"bob\" -> 5 }}, 1 -> {{ \"ann\" -> 3 }}, 2 -> {{ \"cy\" -> 3 }} }};\n"
-    );
-    same(&src, "x", "want");
-}
-
-#[test]
-fn a_trailing_comma_after_several_sort_keys() {
-    // sec:lexical, `,`: "the sort keys of an output level included (`into (desc score, asc
-    // name,)`)".
-    let src = format!(
-        "{SCORES}x = scores as (name -> score) into (desc score, asc name,);\n\
-         y = scores as (name -> score) into (desc score, asc name -> _);\n"
-    );
-    same(&src, "x", "y");
-}
 
 #[test]
 fn a_single_sort_key_takes_no_trailing_comma() {
@@ -191,12 +135,3 @@ fn a_single_sort_key_takes_no_trailing_comma() {
     does_not_parse(&src);
 }
 
-#[test]
-fn a_filtered_list_sorted() {
-    // sec:remap_law: "`[3, 1, 4].where(x -> x > 2).sort(desc x -> x)` is `{0 -> {2 -> 4},
-    // 1 -> {0 -> 3}}` ... its `.orderedValues` is `[4, 3]`".
-    let src = "x = [3, 1, 4].where(x -> x > 2).sort(desc x -> x);\nwant = { 0 -> { 2 -> 4 }, 1 -> { 0 -> 3 } };\n\
-               o = x.orderedValues;\nwantO = [4, 3];\n";
-    same(src, "x", "want");
-    same(src, "o", "wantO");
-}

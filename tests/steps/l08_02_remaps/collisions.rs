@@ -2,55 +2,10 @@
 //! pattern outside it is rejected with the menu of the diagnostics row "Collision
 //! (T-Reindex)" (DESIGN.md sec:remap_law, sec:grouping, sec:diagnostics).
 
-use crate::source::{rejected, same, with_sales};
+use crate::source::{rejected, same};
 
-// ---- The worked collision (sec:remap_law, "The illegal move") ----
-
-#[test]
-fn dropping_a_discriminator_is_the_worked_collision() {
-    // sec:remap_law: the compiler rejects `as (region -> day -> sku -> r) into (region -> day
-    // -> r)` with the message written there, line by line.
-    let src = with_sales("x = sales as (region -> day -> sku -> r) into (region -> day -> r);\n");
-    rejected(
-        &src,
-        &[
-            "Cannot map many values to one key: `into (region -> day -> r)`. Try `into (region -> day -> sku -> _)` instead.",
-            "the `(region, day, sku)` keypaths collapse onto `(region, day)`, but their values survive.",
-            "drop the values too:         into (region -> day -> sku -> _)",
-            "keeps each sku and drops its value",
-            "or keep the inner key:       into (region -> day -> sku -> r)",
-            "keeps each value under its sku",
-            "or say how the values merge: into (region -> day -> sku >< op -> r)",
-            "merges each day's values with op, which must be associative",
-        ],
-    );
-}
-
-#[test]
-fn the_dropped_level_menu_has_no_witness_line() {
-    // sec:remap_law: "No witness line and no line writing the check appear, because the
-    // pattern drops the level `sku` outright".
-    let src = with_sales("x = sales as (region -> day -> sku -> r) into (region -> day -> r);\n");
-    let es = zed_tests::step_helpers::l01_16_elaboration::errors(&src).join("\n");
-    assert!(!es.contains("@injective"), "{es}");
-    assert!(!es.contains("#collision"), "{es}");
-}
-
-#[test]
-fn each_repair_of_the_worked_collision_is_accepted() {
-    // sec:remap_law: the three repairs of the menu, and "the only path from many values to
-    // fewer is an explicit reduction": `into (region -> day -> sku >< (+) -> r)`.
-    let src = with_sales(
-        "a = sales as (region -> day -> sku -> r) into (region -> day -> sku -> _);\n\
-         wantA = { \"east\" -> [{\"B7\"}], \"west\" -> [{\"A12\", \"B7\"}, {\"A12\"}] };\n\
-         b = sales as (region -> day -> sku -> r) into (region -> day -> sku -> r);\n\
-         c = sales as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> r);\n\
-         wantC = { \"east\" -> [5], \"west\" -> [4, 2] };\n",
-    );
-    same(&src, "a", "wantA");
-    same(&src, "b", "sales");
-    same(&src, "c", "wantC");
-}
+// ---- The worked collision (sec:remap_law, "The illegal move"; its menu and repairs on `sales`
+// are in `rules`) ----
 
 #[test]
 fn the_check_reads_the_pattern_not_the_data() {
@@ -60,32 +15,7 @@ fn the_check_reads_the_pattern_not_the_data() {
     rejected(src, &["Cannot map many values to one key"]);
 }
 
-// ---- rekey and group (sec:grouping) ----
-
-#[test]
-fn rekey_without_a_witness_is_rejected_with_its_menu() {
-    // sec:grouping: `m.rekey(f)` claims flatness — "compile error if no catalog witness
-    // applies ("this key derivation could collide — use `group`; prove `f` injective (an
-    // `@injective` claim counts only at proof grade); or write the check: `group(f)`, then a
-    // fold that keeps each key's one value and gives `#collision` where there are more")".
-    let src = "words = [\"The\", \"cat\", \"the\"];\nx = words.rekey(w -> w.lower);\n";
-    rejected(
-        src,
-        &["words.group(w -> w.lower)", "@injective", "#collision"],
-    );
-}
-
-#[test]
-fn group_declares_the_deeper_level() {
-    // sec:grouping: `byLower = words into (w.lower -> i -> w);` "the same program: the word
-    // `group` declares the same deeper type, Lower ->? (i -> w)".
-    let src = "words = [\"The\", \"cat\", \"the\"];\n\
-               a = words as (i -> w) into (w.lower -> i -> w);\n\
-               b = words.group(w -> w.lower);\n\
-               want = { \"cat\" -> { 1 -> \"cat\" }, \"the\" -> { 0 -> \"The\", 2 -> \"the\" } };\n";
-    same(src, "a", "want");
-    same(src, "b", "want");
-}
+// ---- Grouping by a written residue (sec:grouping; `group` and `rekey` are in `rules`) ----
 
 #[test]
 fn a_flat_pattern_on_a_derived_key_is_rejected_with_the_residue_repair() {
@@ -115,43 +45,49 @@ fn witness_monotone_arithmetic() {
 }
 
 #[test]
-fn witness_modulo_at_the_width_of_the_modulus() {
-    // "`k mod p` where the domain is at most `p` contiguous integers".
-    let src = "f(positional m: int[5..<10] ->? int) = m as (k -> v) into (k mod 5 -> v);\n\
-               x = f({ 5 -> 50, 6 -> 60, 9 -> 90 });\nwant = { 0 -> 50, 1 -> 60, 4 -> 90 };\n";
+fn witness_strictly_decreasing_arithmetic() {
+    // "strictly monotone arithmetic on refined integer ranges": a decreasing map is strictly
+    // monotone too, and a shift by a constant is.
+    let src = "xs = [10, 20, 30];\n\
+               a = xs as (k -> v) into (5 - k -> v);\nwantA = { 3 -> 30, 4 -> 20, 5 -> 10 };\n\
+               b = xs as (k -> v) into (k - 3 -> v);\nwantB = { -3 -> 10, -2 -> 20, -1 -> 30 };\n";
+    same(src, "a", "wantA");
+    same(src, "b", "wantB");
+}
+
+#[test]
+fn witness_tupling_and_permutation_of_witnessed_components() {
+    // "tupling/permutation of witnessed components": the two keys swapped, and one of them
+    // shifted, each into one tuple key.
+    let src = "m = { \"a\" -> { 1 -> 10, 2 -> 20 }, \"b\" -> { 1 -> 30 } };\n\
+               a = m as (k1 -> k2 -> v) into ((k2, k1) -> v);\n\
+               wantA = { (1, \"a\") -> 10, (1, \"b\") -> 30, (2, \"a\") -> 20 };\n\
+               b = m as (k1 -> k2 -> v) into ((k1, k2 + 1) -> v);\n\
+               wantB = { (\"a\", 2) -> 10, (\"a\", 3) -> 20, (\"b\", 2) -> 30 };\n";
+    same(src, "a", "wantA");
+    same(src, "b", "wantB");
+}
+
+#[test]
+fn witness_affine_packing_at_three_levels() {
+    // "applied lexicographically at any depth": `(t0, t1, t2) ↦ t0·6 + t1·3 + t2` with `t2` in
+    // 0..<3 and `t1·3 + t2` in 0..<6, so (0, 1, 2) goes to 5 and (1, 0, 1) to 7.
+    let src = "m = { (0, 1, 2) -> 50, (1, 0, 1) -> 70 };\n\
+               x = m as (t -> v) into (t[0] * 6 + t[1] * 3 + t[2] -> v);\nwant = { 5 -> 50, 7 -> 70 };\n";
     same(src, "x", "want");
 }
 
 #[test]
-fn witness_modulo_one_wider_is_rejected() {
-    // "the side condition is essential, and one integer wider it fails".
-    let src = "f(positional m: int[5..=10] ->? int) = m as (k -> v) into (k mod 5 -> v);\n";
-    rejected(src, &["k mod 5", "into (k mod 5 -> k -> v)"]);
-}
-
-#[test]
-fn witness_affine_packing() {
-    // "`(k1, k2) ↦ k1·s + k2` on `k2 : int[0..<s]`".
-    let src = "f(positional m: (int[0..<2], int[0..<3]) ->? int) = m as (t -> v) into (t[0] * 3 + t[1] -> v);\n\
-               x = f({ (0, 2) -> 2, (1, 0) -> 10 });\nwant = { 2 -> 2, 3 -> 10 };\n";
-    same(src, "x", "want");
-}
-
-#[test]
-fn witness_affine_packing_one_short_is_rejected() {
-    // "Each stride must dominate the span of the keys beneath it ... one integer short and the
-    // packing collides".
-    let src = "f(positional m: (int[0..<2], int[0..<3]) ->? int) = m as (t -> v) into (t[0] * 2 + t[1] -> v);\n";
-    rejected(src, &["t[0] * 2 + t[1]"]);
-}
-
-#[test]
-fn witness_unpacking_by_euclidean_div_and_mod() {
-    // "the quotient/remainder pair `k ↦ (k div s, k mod s)` as its two-sided inverse — under
-    // the Euclidean `div`/`mod`", on negative keys too.
-    let src = "f(positional m: int[-3..<3] ->? int) = m as (k -> v) into ((k div 3, k mod 3) -> v);\n\
-               x = f({ -3 -> 1, -1 -> 2, 2 -> 3 });\nwant = { (-1, 0) -> 1, (-1, 2) -> 2, (0, 2) -> 3 };\n";
-    same(src, "x", "want");
+fn witness_affine_map_of_full_column_rank_that_is_not_square() {
+    // "integer affine maps of full column rank — `k ↦ A·k + b` ... with no range condition":
+    // `(i, j) ↦ (i + j, i - j, 7)` has independent columns (1, 1, 0) and (1, -1, 0).
+    let src = "m = { (0, 0) -> 1, (0, 1) -> 2, (1, 0) -> 3 };\n\
+               a = m as (t -> v) into ((t[0] + t[1], t[0] - t[1], 7) -> v);\n\
+               wantA = { (0, 0, 7) -> 1, (1, -1, 7) -> 2, (1, 1, 7) -> 3 };\n\
+               b = m as (t -> v) into ((t[0] + t[1], t[0] - t[1]) -> v);\n\
+               wantB = { (0, 0) -> 1, (1, -1) -> 2, (1, 1) -> 3 };\n";
+    same(src, "a", "wantA");
+    same(src, "b", "wantB");
 }
 
 #[test]
@@ -183,31 +119,73 @@ fn witness_componentwise_maps() {
 }
 
 #[test]
-fn witness_injective_at_proof_grade() {
-    // "an `@injective` claim counts only at proof grade": `2 * k + 1` is proved injective.
-    let src = "@injective\nodd(positional k: int) -> int = 2 * k + 1;\nxs = [10, 20];\n\
-               x = xs.rekey(k -> odd(k));\nwant = { 1 -> 10, 3 -> 20 };\n";
-    same(src, "x", "want");
-}
-
-#[test]
 fn a_finitely_invertible_key_is_rejected() {
     // sec:push_pull, conversion table: "finitely invertible (`i div 2`)" is not injective.
     let src = "xs = [10, 20, 30];\nx = xs as (i -> v) into (i div 2 -> v);\n";
     rejected(src, &["into (i div 2 -> i -> v)"]);
 }
 
+// ---- The collision menu for each kind of non-injective key (sec:diagnostics, "Collision
+// (T-Reindex)") ----
+
 #[test]
-fn an_output_name_that_shadows_a_value_in_scope() {
-    // sec:diagnostics row "Remap output name that names a source level and resolves to a value
-    // in scope": the menu is "the `as` form, or rename the outer binding".
-    let src = with_sales("day = 3;\nx = sales into (day -> region -> sku -> quantitySold);\n");
+fn a_constant_key_collides_with_its_menu() {
+    // A constant keeps nothing apart. The menu writes the residue under the constant, the
+    // truncation, the fold at each dropped level, a witness and the check.
+    let src = "m = { \"a\" -> { 1 -> 10, 2 -> 20 }, \"b\" -> { 1 -> 30 } };\n\
+               x = m as (k1 -> k2 -> v) into (0 -> v);\n";
     rejected(
-        &src,
+        src,
         &[
-            "sales as (region -> day -> sku -> quantitySold) into (day -> region -> sku -> quantitySold)",
+            "Cannot show that `0` keeps the keys of `(k1, k2)` apart: `into (0 -> v)`. Try `into (0 -> k1 -> k2 -> v)` instead.",
+            "write the residue:           into (0 -> k1 -> k2 -> v)",
+            "or drop the values too:      into (0 -> k1 -> k2 -> _)",
+            "or say how the values merge: into (0 -> k1 >< op -> k2 >< op -> v)",
+            "or supply a witness:",
+            "or write the check:",
         ],
     );
+}
+
+#[test]
+fn a_projection_of_a_tuple_key_collides() {
+    // `t[0]` forgets `t[1]`: (1, 2) and (1, 3) meet at 1.
+    let src = "m = { (1, 2) -> 10, (1, 3) -> 20 };\nx = m as (t -> v) into (t[0] -> v);\n";
+    rejected(
+        src,
+        &[
+            "Cannot show that `t[0]` keeps the keys of `t` apart",
+            "into (t[0] -> t -> v)",
+        ],
+    );
+}
+
+#[test]
+fn a_key_computed_from_the_value_collides() {
+    // `v mod 2` is 0 for all three values, so the keys meet.
+    let src = "xs = [10, 20, 30];\nx = xs as (k -> v) into (v mod 2 -> v);\n";
+    rejected(src, &["Try `into (v mod 2 -> k -> v)` instead."]);
+}
+
+#[test]
+fn the_value_as_the_only_key_collides() {
+    // The pattern drops the level `k` outright, so the menu is the dropped-level one of
+    // sec:remap_law: "Cannot map many values to one key".
+    let src = "xs = [10, 20, 10];\nx = xs as (k -> v) into (v -> v);\n";
+    rejected(
+        src,
+        &[
+            "Cannot map many values to one key: `into (v -> v)`. Try `into (v -> k -> _)` instead.",
+            "the `k` keypaths collapse onto `v`, but their values survive.",
+        ],
+    );
+}
+
+#[test]
+fn a_square_that_is_not_monotone_collides() {
+    // `k * k` is not in the catalog on keys of either sign: -1 and 1 meet at 1.
+    let src = "m = { -1 -> 1, 1 -> 2 };\nx = m as (k -> v) into (k * k -> v);\n";
+    rejected(src, &["k * k", "into (k * k -> k -> v)"]);
 }
 
 #[test]

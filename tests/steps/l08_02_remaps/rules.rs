@@ -1,24 +1,16 @@
 //! The remap rules of step L8.2 one at a time, in forms this zedc compiles (DESIGN.md
 //! sec:remap_law, sec:grouping): truncation, the trailing key binder, folds, the witness
 //! catalog and the collision menu, the source's shape, and the pattern's own errors. The
-//! spec's examples that need forms of other steps (level names, refinements, declared types)
-//! are in `moves`, `collisions` and `source`; where such an example's rule can be written
-//! without those forms, its variant is here.
+//! spec's examples that need forms of other steps (level names, refinements, declared types,
+//! sort keys) wait in /home/luke/Work/wt/failing-tests under the row that builds the form;
+//! where such an example's rule can be written without those forms, its variant is here.
 
-use crate::source::{rejected, same};
+use crate::source::{prints, rejected, same, with_sales};
 
 const M: &str = "m = { \"a\" -> { 1 -> 10, 2 -> 20 }, \"b\" -> { 1 -> 30 } };\n";
 
-/// `sales` of sec:level_names without its declared type, which needs the level names of
-/// step L7.1b: the values and the levels are the same.
-const SALES: &str = "sales = { \"east\" -> [{ \"B7\" -> 5 }], \"west\" -> [{ \"A12\" -> 3, \"B7\" -> 1 }, { \"A12\" -> 2 }] };\n";
-
 fn with_m(src: &str) -> String {
     format!("{M}{src}")
-}
-
-fn with_sales(src: &str) -> String {
-    format!("{SALES}{src}")
 }
 
 // ---- Truncation ----
@@ -96,6 +88,73 @@ fn a_fold_by_multiplication_and_a_transformed_leaf() {
         "x = m as (k1 -> k2 -> v) into (k1 -> k2 >< (*) -> v + 1);\nwant = { \"a\" -> 231, \"b\" -> 31 };\n",
     );
     same(&src, "x", "want");
+}
+
+// A fold may stand at any level (sec:reduction, the rows "any level" of its table); in a remap
+// it stands at a level of the output pattern, and the folded level goes beneath the kept ones.
+// On `sales`: east has day 0 {B7: 5}; west has day 0 {A12: 3, B7: 1} and day 1 {A12: 2}.
+
+#[test]
+fn a_fold_at_the_middle_level_of_three() {
+    // Folding `day` sums each sku over the days of its region: west A12 is 3 + 2.
+    let src = with_sales(
+        "x = sales as (region -> day -> sku -> r) into (region -> day >< (+) -> sku -> r);\n\
+         want = { \"east\" -> { \"B7\" -> 5 }, \"west\" -> { \"A12\" -> 5, \"B7\" -> 1 } };\n",
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn a_fold_at_the_outer_level_of_three() {
+    // Folding `region` sums each (day, sku) over the regions: day 0 B7 is 5 + 1.
+    let src = with_sales(
+        "x = sales as (region -> day -> sku -> r) into (region >< (+) -> day -> sku -> r);\n\
+         want = { 0 -> { \"A12\" -> 3, \"B7\" -> 6 }, 1 -> { \"A12\" -> 2 } };\n",
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn folds_at_two_levels_of_three() {
+    // The two inner levels: east 5, west 3 + 1 + 2. The two outer ones: A12 3 + 2, B7 5 + 1.
+    let src = with_sales(
+        "x = sales as (region -> day -> sku -> r) into (region -> day >< (+) -> sku >< (+) -> r);\n\
+         wantX = { \"east\" -> 5, \"west\" -> 6 };\n\
+         y = sales as (region -> day -> sku -> r) into (region >< (+) -> day >< (+) -> sku -> r);\n\
+         wantY = { \"A12\" -> 5, \"B7\" -> 6 };\n",
+    );
+    same(&src, "x", "wantX");
+    same(&src, "y", "wantY");
+}
+
+#[test]
+fn every_level_of_three_folded_gives_the_total() {
+    // 5 + 3 + 1 + 2.
+    let src = with_sales(
+        "x = sales as (region -> day -> sku -> r) into (region >< (+) -> day >< (+) -> sku >< (+) -> r);\n",
+    );
+    prints(&src, "x", "11");
+}
+
+#[test]
+fn folds_by_and_and_by_or() {
+    // `(&&)` and `(||)` are associative and commutative (sec:reduction), so they fold a level.
+    let src = "m = { \"a\" -> { 1 -> true, 2 -> false }, \"b\" -> { 1 -> true } };\n\
+               x = m as (k1 -> k2 -> v) into (k1 -> k2 >< (&&) -> v);\n\
+               wantX = { \"a\" -> false, \"b\" -> true };\n\
+               y = m as (k1 -> k2 -> v) into (k1 -> k2 >< (||) -> v);\n\
+               wantY = { \"a\" -> true, \"b\" -> true };\n";
+    same(src, "x", "wantX");
+    same(src, "y", "wantY");
+}
+
+#[test]
+fn a_fold_of_a_level_between_two_kept_ones() {
+    // The folded level `b` goes away and `c` moves up under `a`.
+    let src = "m = { \"a\" -> { \"x\" -> [1, 2], \"y\" -> [10] } };\n\
+               x = m as (a -> b -> c -> v) into (a -> b >< (+) -> c -> v);\n\
+               want = { \"a\" -> { 0 -> 11, 1 -> 2 } };\n";
+    same(src, "x", "want");
 }
 
 // ---- The witness catalog ----
@@ -272,6 +331,65 @@ fn group_on_a_map_by_an_integer_class() {
 #[test]
 fn group_by_a_constant_gives_one_class() {
     let src = "xs = [5, 6];\nx = xs.group(v -> 0);\nwant = { 0 -> { 0 -> 5, 1 -> 6 } };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn group_then_fold_each_group() {
+    // A reduce-by-key is a `group` and a fold of each group (sec:kernel, law 4: "`fold(op) ∘
+    // group(f) =` reduce-by-key"): the pattern with the fold at the residue level and `group`
+    // then `map` give one value.
+    let src = "xs = [1, 2, 3, 4];\n\
+               a = xs as (i -> v) into (v mod 2 -> i >< (+) -> v);\n\
+               b = xs.group(v -> v mod 2).map(g -> g >< (+));\n\
+               want = { 0 -> 6, 1 -> 4 };\n\
+               hi = xs.group(v -> v mod 2).map(g -> g >< max);\nwantHi = { 0 -> 4, 1 -> 3 };\n\
+               lo = xs.group(v -> v mod 2).map(g -> g >< min);\nwantLo = { 0 -> 2, 1 -> 1 };\n";
+    same(src, "a", "want");
+    same(src, "b", "want");
+    same(src, "hi", "wantHi");
+    same(src, "lo", "wantLo");
+}
+
+#[test]
+fn word_count_folds_a_constant_leaf() {
+    // sec:tour_collections, the word count `as (i -> w) into (w.lower -> i -> 1) >< (+)`, with the
+    // fold written at the residue level of the pattern (the trailing `>< (+)` on the nested
+    // result waits for row REDUCE-family-entries; failing-tests/REDUCE-family-entries.rs).
+    let src = "words = [\"a\", \"b\", \"a\"];\n\
+               x = words as (i -> w) into (w -> i >< (+) -> 1);\n\
+               want = { \"a\" -> 2, \"b\" -> 1 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn a_group_level_is_never_empty() {
+    // sec:corner_cases, "`group` never makes an empty group", so `max` of each group needs no
+    // `#empty` (sec:corner_cases, "Reduce over empty: identity if the operator has one, else
+    // `#empty`"): the type of a read holds only the miss of the read itself.
+    use zed_tests::step_helpers::l01_26_type_resolution::sig;
+    let src = "xs = [1, 2, 3, 4];\nx = xs.group(v -> v mod 2).map(g -> g >< max);\n\
+               f(u: int) = x[u];\n";
+    let t = sig(src, "f");
+    assert!(!t.contains("#empty"), "{t}");
+    assert!(t.contains("#notFound"), "{t}");
+}
+
+#[test]
+fn widen_by_a_key_function_of_the_value_as_an_outer_level() {
+    // sec:remap_law, widen: a level computed from the value, put above the keys it groups.
+    let src = with_m(
+        "x = m as (k1 -> k2 -> v) into (v mod 20 -> k1 -> k2 -> v);\n\
+         want = { 0 -> { \"a\" -> { 2 -> 20 } }, 10 -> { \"a\" -> { 1 -> 10 }, \"b\" -> { 1 -> 30 } } };\n",
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn widen_a_list_by_the_parity_of_its_keys() {
+    // The bounds table's row `m as (k -> v) into (w(k) -> k -> v)`, `w` the parity.
+    let src = "xs = [10, 20, 30, 40, 50];\nx = xs as (i -> v) into (i mod 2 -> i -> v);\n\
+               want = { 0 -> { 0 -> 10, 2 -> 30, 4 -> 50 }, 1 -> { 1 -> 20, 3 -> 40 } };\n";
     same(src, "x", "want");
 }
 
