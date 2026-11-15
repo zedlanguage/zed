@@ -11,6 +11,7 @@ use zedc::elab::Cones;
 use zedc::interp;
 use zedc::query::Db;
 use zedc::run;
+use zedc::suppress::Suppress;
 use zedc::testing::test;
 
 /// What the full checker gives for the unit `text`: its front verdict with every diagnostic
@@ -85,21 +86,49 @@ fn every_step_unit() {
     insta::assert_snapshot!(without_addresses(&out));
 }
 
+/// Each corpus program loaded by its path, as `zedc run` loads it, so that a program with
+/// units, `NN-name/main.zed` beside a `zed.manifest`, is read with its package (row
+/// FAIL-record-corpus-text-alone: loaded by its text alone, each said it had no manifest).
+/// `zedc run` names each file in a message by the path it was given; the snapshot names it by
+/// its path under the corpus directory, as `zedc run` run there would, so the snapshot reads
+/// the same on every machine and in every worktree.
 #[test]
 fn every_corpus_program() {
     let corpus = oracle::corpus();
     assert_eq!(corpus.len(), 31);
+    let dir = format!("{}/", oracle::corpus_dir().display());
     let mut out = String::new();
     for (path, layer) in corpus {
-        let text = std::fs::read(&path).expect("a readable program");
-        let v = match run::load(&text) {
+        let file = path.to_str().expect("a corpus path is UTF-8");
+        let (mut suppress, _) = Suppress::take(&[]).expect("no words to take");
+        let mut warnings = Vec::new();
+        let v = match run::load_file(file, &[], &mut suppress, &mut warnings) {
             Ok(_) => "loads".to_string(),
-            Err(e) => format!("does not load: {e}"),
+            Err((_, e)) => format!("does not load: {}", e.replace(&dir, "")),
         };
         let name = oracle::corpus_name(&path);
         writeln!(out, "{name} (L{layer}): {v}").expect("a String takes any write");
     }
     insta::assert_snapshot!(without_addresses(&out));
+}
+
+/// Row FAIL-record-corpus-text-alone: the record of a corpus program with units is the record
+/// of its package, which finds the units it imports.
+#[test]
+fn the_record_of_a_corpus_program_with_units_does_not_say_it_has_no_manifest() {
+    let snap = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "steps/l01_37a_short_addresses/snapshots/\
+             l01_37a_short_addresses__record__every_corpus_program.snap",
+    ))
+    .expect("the snapshot reads");
+    let packages = snap.lines().filter(|l| l.contains("/main.zed (L")).count();
+    assert_eq!(packages, 6, "the six corpus programs with units");
+    for line in snap.lines().filter(|l| l.contains("/main.zed (L")) {
+        assert!(
+            !line.contains("no manifest"),
+            "recorded by text alone: {line}"
+        );
+    }
 }
 
 #[test]
