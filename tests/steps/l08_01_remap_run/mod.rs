@@ -5,6 +5,7 @@
 //!
 //! `parse` covers the syntax: each form builds to its s-expression and formats back, and the
 //! forms of later steps (sort keys, joins, named keys, reduction policies) are refused naming
-//! what they are.
+//! what they are. `resolve` covers names: the `as` binders bind in the `into` keys only.
 
 mod parse;
+mod resolve;

@@ -36,7 +36,7 @@ use zedc_base::address::ContentAddress;
 use zedc_base::rejection::{Row, not_yet};
 use zedc_syntax::ast::{
     Annot, Arm, Error, Expr, ExprKind, Field, Function, Import, ImportKind, Param, Pattern, Port,
-    PortName, RangeEnd, Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
+    PortName, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
 use zedc_syntax::ast::{BinaryOp, Every, Note, Type, TypeBound, TypeKind};
 use zedc_syntax::lex::Span;
@@ -1710,6 +1710,21 @@ impl Resolver<'_> {
                     todo.push(Task::Expr(body));
                     todo.extend(guard.map(Task::Expr));
                 }
+                Task::Remap { binders, levels } => {
+                    self.open();
+                    for t in binders {
+                        if let Target::Name(n, at) = t {
+                            self.bind(n, *at, *at, Kind::Pattern, None);
+                        }
+                    }
+                    todo.push(Task::Close);
+                    todo.extend(
+                        levels
+                            .iter()
+                            .rev()
+                            .filter_map(|l| l.key.as_ref().map(Task::Expr)),
+                    );
+                }
                 Task::PatternEnd(span, start) => {
                     let end = self.out.binders.len();
                     self.out.patterns.insert(span, start..end);
@@ -2853,8 +2868,44 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(op));
                 todo.push(Task::Expr(of));
             }
-            ExprKind::Remap { of, .. } => {
-                self.later(e.span, "a remap `as` or `into`");
+            // The `as` binders name the source's levels and its value in the keys of the `into`
+            // levels; the source and each `><` operator are read outside them (DESIGN.md
+            // sec:remap_law). An `into` without `as` binds each name of a source level by the
+            // level's name, which needs the level names of step L7.1b, so it is refused whole:
+            // without them a name that is both a level and a value in scope, which sec:diagnostics
+            // rejects, could not be told from a value, and the keys would read the value.
+            ExprKind::Remap {
+                of,
+                binders,
+                levels,
+            } => {
+                let levels = levels.as_deref().unwrap_or_default();
+                match binders {
+                    Some(binders) => {
+                        self.later(e.span, "a remap `as` or `into`");
+                        todo.push(Task::Remap { binders, levels });
+                    }
+                    None => self.errors.push(Error {
+                        row: None,
+                        menu: String::new(),
+                        span: e.span,
+                        message: not_yet(
+                            "a remap `into` that names the source's levels by their level names",
+                        ),
+                        notes: vec![Note {
+                            span: e.span,
+                            text: "repair: name the levels and the value with `as` before `into`, \
+                                   as in `m as (k1 -> k2 -> v) into (k2 -> k1 -> v)`"
+                                .into(),
+                        }],
+                    }),
+                }
+                todo.extend(
+                    levels
+                        .iter()
+                        .rev()
+                        .filter_map(|l| l.reduce.as_ref().map(Task::Expr)),
+                );
                 todo.push(Task::Expr(of));
             }
             ExprKind::Read { of, .. } => {
@@ -3400,6 +3451,12 @@ enum Task<'a> {
         binders: &'a [Target],
         guard: Option<&'a Expr>,
         body: &'a Expr,
+    },
+    /// A remap whose source and `><` operators are done: its `as` binders bind in the keys of
+    /// its `into` levels, in a scope of their own.
+    Remap {
+        binders: &'a [Target],
+        levels: &'a [RemapLevel],
     },
     /// The end of the pattern of the `else` or the arm at the span: its binders are those from
     /// the index.
