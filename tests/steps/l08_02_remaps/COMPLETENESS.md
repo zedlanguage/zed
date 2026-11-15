@@ -68,7 +68,7 @@ this group when they pass.
 
 ## Source-level tests
 
-All 139 tests of the group pass (2026-11-15, FAIL-remap-class-below-known-levels).
+All 150 tests of the group pass (2026-11-15, FAIL-remap-class-below-known-levels).
 
 | Case | Covering tests |
 |---|---|
