@@ -1429,6 +1429,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
         tests: unit.tests.clone(),
         warnings: Vec::new(),
         int_params: Default::default(),
+        param_names: unit.param_names.clone(),
         limits: unit.limits,
     };
     for d in &unit.defs {

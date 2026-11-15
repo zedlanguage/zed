@@ -32,6 +32,7 @@ pub mod domain;
 
 mod serial;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
 use zed_kernel::term::Term;
@@ -53,10 +54,12 @@ use zedc_base::address::ContentAddress;
 /// level other than its own, such as `\05` in `\05. \05`, which version 7 kept, and renames a
 /// step's scope without capture (FAIL-kernel-canon-misplaced-level); version 9 writes a string
 /// value in the ZIR binary form as the nodes of its text's tree, each once in the graph, not
-/// its bytes (BUILD-doubling-60s). The test
+/// its bytes (BUILD-doubling-60s); version 10 addresses an exported definition by its own
+/// address and the names of the parameters a call may write ([`export_address`],
+/// ADDR-param-names), with every normal form as version 9 left it. The test
 /// `l01_32_canonical_zir::version_pins` records the normal forms of a fixed set of graphs and
 /// definitions under each version, and fails when they change and this number does not.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {
@@ -281,6 +284,30 @@ pub fn serialize(
     refs: &dyn Fn(&str) -> Option<ContentAddress>,
 ) -> Result<Vec<u8>, TooLarge> {
     serial::def(d, refs)
+}
+
+/// The content address of an exported definition whose own address ([`address_of_body`]) is
+/// `body` and whose parameters a call may pass as `name:` are `params`, each by its index and
+/// name in index order (DESIGN.md sec:units, "Imports pin hashes"): the BLAKE3-256 hash of
+/// `zed-export\0`, [`VERSION`], `body`, and the count of `params` and each one's index and
+/// name. The canonicalizer renames every binder of the body, parameters included, so the
+/// body's address keeps no parameter's name; a call in another unit may write one, so the
+/// export's address does. The names are hashed here rather than as facets of the body's
+/// normal form so that a definition of the same unit that uses this one is addressed with the
+/// body's address (`pin::address`): its call has each argument already in its place, and its
+/// value does not change when a name does. O(p) for p parameters and the bytes of their names.
+pub fn export_address(body: ContentAddress, params: &[(u32, Arc<str>)]) -> ContentAddress {
+    let mut h = blake3::Hasher::new();
+    h.update(b"zed-export\0");
+    h.update(&VERSION.to_le_bytes());
+    h.update(&body.0);
+    h.update(&(params.len() as u64).to_le_bytes());
+    for (index, name) in params {
+        h.update(&index.to_le_bytes());
+        h.update(&(name.len() as u64).to_le_bytes());
+        h.update(name.as_bytes());
+    }
+    ContentAddress::hashed(&h)
 }
 
 /// The content address of a unit (step M0.11): the BLAKE3-256 hash of `zed-unit\0`,

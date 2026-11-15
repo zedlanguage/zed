@@ -71,6 +71,32 @@ pub(super) fn importers_of_one(k: usize) -> Memory {
     memory(&fs)
 }
 
+/// The unit `u` holding one function of `k` named parameters, the last named `last`, and
+/// `main` importing it: the address keeps each parameter's name (ADDR-param-names).
+fn wide_named(k: usize, last: &str) -> Memory {
+    let params: Vec<String> = (0..k)
+        .map(|i| match i + 1 == k {
+            true => format!("{last}: f64"),
+            false => format!("p{i}: f64"),
+        })
+        .collect();
+    memory(&[
+        (
+            "u.zed".into(),
+            format!("f({}) = {last};\n", params.join(", ")),
+        ),
+        (
+            "main.zed".into(),
+            "import u;\nmain(m: MainArgs) {}\n".into(),
+        ),
+    ])
+}
+
+/// [`wide_named`] with its last parameter named `q`.
+pub(super) fn wide_params(k: usize) -> Memory {
+    wide_named(k, "q")
+}
+
 /// The pins the build writes for the package `fs`, loaded from `main` with no mistake.
 fn written(fs: &Memory) -> usize {
     let p = load(&mut Db::new(), fs, &["main"]);
@@ -118,6 +144,22 @@ fn each_package_writes_its_pins_at_small_sizes() {
         let p = load(&mut Db::new(), &importers_of_one(k), &["main"]);
         assert_eq!(mistakes(&p), Vec::<String>::new());
         assert_eq!(p.writes.units.len(), k);
+    }
+}
+
+/// The package of the benchmark of a function of many parameters loads with no mistake and
+/// writes its one pin, which follows the name of its last parameter, at small sizes.
+#[test]
+fn a_function_of_a_few_parameters_is_pinned_by_their_names() {
+    for k in [1, 2, 9] {
+        let pin = |fs: &Memory| {
+            let p = load(&mut Db::new(), fs, &["main"]);
+            assert_eq!(mistakes(&p), Vec::<String>::new());
+            super::pin_in(&p.pinned("main").expect("the import is pinned"), 0)
+        };
+        let q = pin(&wide_params(k));
+        assert_eq!(pin(&wide_named(k, "q")), q, "{k} parameters");
+        assert_ne!(pin(&wide_named(k, "r")), q, "{k} parameters");
     }
 }
 

@@ -60,13 +60,15 @@ fn a_pinned_import_that_matches_is_checked_and_nothing_is_written() {
 #[test]
 fn the_address_follows_the_exports_and_nothing_else() {
     let h = pin_of(PRICING);
-    // A comment, the layout, and the names of parameters are not part of the address.
+    // A comment and the layout are not part of the address.
     assert_eq!(pin_of(&format!("// the shop's rates\n{PRICING}")), h);
     assert_eq!(
         pin_of("net(g: f64) =\n    g / 1.2;\n\ngross(n: f64) = n * 1.2;\n"),
         h
     );
-    assert_eq!(
+    // The name of a parameter a call may write is (DESIGN.md sec:units, "Imports pin hashes"):
+    // `net` has one parameter, so an importer may call `net(g: 2.0)`, which a rename breaks.
+    assert_ne!(
         pin_of("net(x: f64) = x / 1.2;\ngross(n: f64) = n * 1.2;\n"),
         h
     );
@@ -85,6 +87,96 @@ fn the_address_follows_the_exports_and_nothing_else() {
         ("shop/rates.zed", PRICING),
     ]);
     assert_eq!(pin_in(&p.pinned("main").unwrap(), 0), h);
+}
+
+/// DESIGN.md sec:units ("Imports pin hashes") and sec:values_morphisms: the names a call may
+/// write are each parameter not declared `positional`, and the one parameter of a function that
+/// has one, `positional` or not; the others are local binders.
+#[test]
+fn the_address_keeps_each_parameter_name_a_call_may_write() {
+    // Two `positional` parameters: no call names them, so their names are local.
+    let a = pin_of("f(positional a: f64, positional b: f64) = a - b;\n");
+    assert_eq!(
+        pin_of("f(positional x: f64, positional y: f64) = x - y;\n"),
+        a
+    );
+    // Named ones are part of the interface, each in its place.
+    let n = pin_of("f(a: f64, b: f64) = a - b;\n");
+    assert_ne!(pin_of("f(a: f64, c: f64) = a - c;\n"), n);
+    assert_ne!(pin_of("f(c: f64, b: f64) = c - b;\n"), n);
+    // A positional one beside a named one: only the named one's name counts.
+    let m = pin_of("f(positional a: f64, b: f64) = a - b;\n");
+    assert_eq!(pin_of("f(positional z: f64, b: f64) = z - b;\n"), m);
+    assert_ne!(pin_of("f(positional a: f64, c: f64) = a - c;\n"), m);
+    // Whether a parameter is named is part of it too: `f(a: 1.0, b: 2.0)` no longer checks.
+    assert_ne!(m, n);
+    assert_ne!(m, a);
+    // The one parameter of a function that has one may be named even when written
+    // `positional`: `half(x: 3.0)` is a valid call of both.
+    let half = pin_of("half(positional x: f64) = x / 2.0;\n");
+    assert_ne!(pin_of("half(positional y: f64) = y / 2.0;\n"), half);
+    assert_eq!(pin_of("half(x: f64) = x / 2.0;\n"), half);
+    // A lambda bound at the top level has a parameter a call may name when it has one.
+    let inc = pin_of("inc = (x: int) -> x + 1;\n");
+    assert_ne!(pin_of("inc = (y: int) -> y + 1;\n"), inc);
+    // Each arrow of an overloaded name keeps the names of its own parameters.
+    let two = pin_of("g(x: int) = x;\ng(x: f64) = x;\n");
+    assert_ne!(pin_of("g(x: int) = x;\ng(y: f64) = y;\n"), two);
+    assert_ne!(pin_of("g(y: int) = y;\ng(x: f64) = x;\n"), two);
+    // A binder inside a body is local, whatever it is called.
+    let body = pin_of("f(a: f64, b: f64) { s = a + b; return s * 2.0; }\n");
+    assert_eq!(
+        pin_of("f(a: f64, b: f64) { t = a + b; return t * 2.0; }\n"),
+        body
+    );
+}
+
+/// The rename changes the address of the export it is a parameter of, and of no other: the
+/// export the re-pin report (step L2.8a) lists.
+#[test]
+fn a_renamed_parameter_changes_its_own_export_only() {
+    let exports = |text: &str| {
+        let mut db = Db::new();
+        let p = load(&mut db, &files(&[("pricing.zed", text)]), &["pricing"]);
+        let resolved = p.unit("pricing").and_then(|u| u.resolved.clone());
+        let address = db.address(text, &resolved.expect("the unit resolves").res.exports);
+        let addressed = (*address)
+            .as_ref()
+            .expect("the unit compiles alone")
+            .as_ref()
+            .expect("memory for the address");
+        addressed
+            .exports()
+            .map(|(n, a)| (n.to_string(), a))
+            .collect::<Vec<_>>()
+    };
+    let changed = |old: &str, new: &str| {
+        let (old, new) = (exports(old), exports(new));
+        (old.iter().zip(&new))
+            .filter(|(o, n)| o != n)
+            .map(|(o, _)| o.0.clone())
+            .collect::<Vec<_>>()
+    };
+    let renamed = "net(x: f64) = x / 1.2;\ngross(n: f64) = n * 1.2;\n";
+    assert_eq!(changed(PRICING, renamed), ["net"]);
+    // An export that calls the renamed function by the parameter's name keeps its address:
+    // the call is elaborated with each argument in its place, so its value reads no name.
+    assert_eq!(
+        changed(
+            "net(g: f64) = g / 1.2;\ngross(n: f64) = net(g: n) * 1.44;\n",
+            "net(x: f64) = x / 1.2;\ngross(n: f64) = net(x: n) * 1.44;\n"
+        ),
+        ["net"]
+    );
+    // So does one whose call fills a default, which elaboration writes by binding the call's
+    // arguments under the parameters' own names: the canonicalizer renames those binders.
+    assert_eq!(
+        changed(
+            "net(g: f64, r: f64 = 1.2) = g / r;\ngross(n: f64) = net(g: n) * 1.44;\n",
+            "net(x: f64, r: f64 = 1.2) = x / r;\ngross(n: f64) = net(x: n) * 1.44;\n"
+        ),
+        ["net"]
+    );
 }
 
 #[test]

@@ -14,7 +14,8 @@
 //! pin of a kind this build does not know is kept as it is written.
 //!
 //! A unit's address is that of its exported declarations ([`canon::unit_address`], step M0.11),
-//! each addressed by the canonicalizer from its elaborated value ([`address`]). It is a function
+//! each addressed by the canonicalizer from its elaborated value and by the names of its
+//! parameters that a call may write ([`address`]). It is a function
 //! of the unit's text, so the database keeps it under the text
 //! ([`Query::Address`](crate::query::Query::Address)).
 //!
@@ -97,16 +98,28 @@ pub type Address = Option<Result<Addressed, TooLarge>>;
 
 /// The address of the elaborated unit `unit`, whose top level defines `exports`: each
 /// definition, in dependency order, addressed with each name it uses of an earlier definition
-/// read as that definition's address, and the unit addressed by those it exports. O(t log t)
-/// for definitions of size t in all, the canonicalizer's cost, and O(e log e) for e exports.
+/// read as that definition's address, and the unit addressed by those it exports, each export
+/// by its address and the names of the parameters a call may write ([`canon::export_address`],
+/// DESIGN.md sec:units). O(t log t) for definitions of size t in all, the canonicalizer's cost,
+/// O(p) for the bytes of the exports' parameter names, and O(e log e) for e exports.
 pub fn address(unit: &Arc<Unit>, exports: &Exports) -> Result<Addressed, TooLarge> {
     let mut known: HashMap<&str, ContentAddress> = HashMap::with_capacity(unit.defs.len());
     let mut out = Vec::new();
     for (i, d) in unit.defs.iter().enumerate() {
         let a = canon::address_of_body(&d.name, &d.term, &|x| known.get(x).copied())?;
+        // A later definition reads this one by its body's address, without its parameter
+        // names: the checker places each named argument of a call before elaboration
+        // (DESIGN.md sec:values_morphisms), so no elaborated term reads a callee's names; a
+        // filled default binds the arguments under the parameters' names with `let`, and the
+        // canonicalizer renames every local binder to its level (canon's rule 1; a `Let` is
+        // serialized without its name). So a rename changes the address of no caller (tested by
+        // a_renamed_parameter_changes_its_own_export_only). The rename reaches an importer
+        // through this definition's own export address below, when it is exported; a local
+        // definition's names no importer can write.
         known.insert(&d.kernel, a);
         if exports.get(&d.name).is_some_and(|e| !e.local) {
-            out.push((i, a));
+            let params = unit.param_names.get(&d.kernel).map_or(&[][..], |p| &p[..]);
+            out.push((i, canon::export_address(a, params)));
         }
     }
     let named: Vec<(&str, ContentAddress)> = out

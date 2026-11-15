@@ -11714,6 +11714,27 @@ impl Sig {
             .collect()
     }
 
+    /// The parameters a call may pass as `name:`, each by its index and name, in order: every
+    /// parameter not passed by position, and the one parameter of a signature that has one,
+    /// either way (DESIGN.md sec:values_morphisms, "A function with one parameter takes its
+    /// argument in either form"). A name that is not a name a call can write is left out: the
+    /// text `(a, b)` of a tuple-destructuring parameter (`ast::Param::name`) and the empty
+    /// name of a function type's unnamed parameter. These names are part of an exported
+    /// function's interface, so its content address keeps them (DESIGN.md sec:units, "Imports
+    /// pin hashes"). O(parameters × name length).
+    // The rule is that of the resolver's overload index (`zedc_resolve::resolve::pick::arm`),
+    // where each parameter of a function with one is entered as named whatever its mark, and
+    // any other only when it is neither `positional` nor a tuple; here a tuple parameter is
+    // told by its name, which `ast::Param::name` makes its text and so never a name.
+    pub fn callable_names(&self) -> Vec<(u32, Arc<str>)> {
+        let one = self.params.len() == 1;
+        let written = |n: &str| zedc_syntax::lex::name_end(n, 0) == Some(n.len());
+        (self.params.iter().enumerate())
+            .filter(|(_, p)| (one || !p.positional) && written(&p.name))
+            .map(|(i, p)| (i as u32, p.name.clone()))
+            .collect()
+    }
+
     /// Whether it has the same parameter names and kinds as `other`.
     pub fn same_kinds(&self, other: &Sig) -> bool {
         self.params.len() == other.params.len()

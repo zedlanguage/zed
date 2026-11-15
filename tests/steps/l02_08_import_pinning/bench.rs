@@ -10,7 +10,9 @@ use zedc::pin::{Edit, Pins, apply};
 use zedc::query::Db;
 use zedc::unit::{Memory, load};
 
-use crate::scaling::{importers_of_one, pin_edits, pin_file, pinned_fan, unpinned_fan};
+use crate::scaling::{
+    importers_of_one, pin_edits, pin_file, pinned_fan, unpinned_fan, wide_params,
+};
 
 /// Checks that loading each package of `pkgs` from `main` is linear in its size, up to a
 /// logarithm.
@@ -34,6 +36,18 @@ fn a_unit_importing_many_pinned_units_is_checked_in_linear_time() {
 #[test]
 fn many_units_importing_one_unit_are_pinned_in_linear_time() {
     linear("pinning many importers of one unit", 150, importers_of_one);
+}
+
+/// The address keeps the name of each parameter a call may write (ADDR-param-names): hashing
+/// them is linear in their bytes, so pinning a unit whose one function has many named
+/// parameters stays linear in them, its checking and elaboration included.
+#[test]
+fn a_function_of_many_parameters_is_pinned_in_linear_time() {
+    linear(
+        "pinning a function of many named parameters",
+        300,
+        wide_params,
+    );
 }
 
 #[test]

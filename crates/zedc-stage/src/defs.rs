@@ -61,6 +61,11 @@ pub struct Unit {
     /// as integers (RUNG2-carrier). `front::linear_questions` reads them; a mixed unit, which
     /// nothing asks a question of, leaves this empty.
     pub int_params: HashMap<Arc<str>, Vec<bool>>,
+    /// For each top-level definition that is a function, by its kernel name, the parameters a
+    /// call may pass as `name:`, by index and name (`Sig::callable_names`): part of the
+    /// definition's interface, which its content address as an export keeps (`pin::address`,
+    /// DESIGN.md sec:units). A definition with none is absent.
+    pub param_names: HashMap<Arc<str>, Vec<(u32, Arc<str>)>>,
     /// The limits written before `main` (DESIGN.md sec:ports, "`main` may limit its own run"),
     /// as the checker read them (`Info::limits`), which the run and an executable enforce.
     pub limits: zed_kernel::limits::MainLimits,

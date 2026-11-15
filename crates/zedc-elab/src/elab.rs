@@ -17,9 +17,12 @@
 //! word is the free variable of its name, bound by the interpreter (L1.18); a `test` table
 //! belongs to a function at the unit's top level.
 
+use std::collections::HashMap;
+
 use zed_kernel::Shared;
 
 use zedc_base::work::{self, Stage};
+use zedc_check::check::ty::Sig;
 use zedc_check::check::{self, Info};
 use zedc_resolve::resolve::Resolution;
 use zedc_resolve::resolve::tables::Tables;
@@ -135,6 +138,26 @@ fn lower<'a>(
         ..Unit::default()
     };
     if let Some((binds, _)) = e.scope(unit, true) {
+        // The parameters a call may name, of each definition that is a function: a declared
+        // function's from its signature, by its binder's kernel name; a name bound by `=` to a
+        // function, as `inc = x -> x + 1`, from its type when that holds one function, since a
+        // call through the name passes arguments as that function's signature says (DESIGN.md
+        // sec:values_morphisms). O(functions + definitions × parameters).
+        let declared: HashMap<&str, &Sig> = (e.info.sigs.iter())
+            .map(|(&id, sig)| (&*e.names[id], &**sig))
+            .collect();
+        for (name, kernel, _) in &binds {
+            let sig = (declared.get(&**kernel).copied()).or_else(|| {
+                e.info
+                    .tops
+                    .get(name)
+                    .and_then(|t| t.fns.only().map(|s| &**s))
+            });
+            let names = sig.map(Sig::callable_names).unwrap_or_default();
+            if !names.is_empty() {
+                out.param_names.insert(kernel.clone(), names);
+            }
+        }
         out.defs = binds
             .into_iter()
             .map(|(name, kernel, term)| Def {

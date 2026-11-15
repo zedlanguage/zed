@@ -33,6 +33,9 @@ use super::graph;
 /// below), FAIL-kernel-canon-misplaced-level.
 /// Version 9 writes a string value by the nodes of its text (BUILD-doubling-60s), and adds a
 /// graph with two string constants to the set.
+/// Version 10 adds the names of an export's parameters that a call may write to its address
+/// (ADDR-param-names, `canon::export_address`) and changes no normal form, so its hash is
+/// version 9's.
 const HISTORY: &[(u32, &str)] = &[
     (
         6,
@@ -48,6 +51,10 @@ const HISTORY: &[(u32, &str)] = &[
     ),
     (
         9,
+        "188a450908788f16778a4a114a6ce47e4226048131afe23336fd176abf472408",
+    ),
+    (
+        10,
         "188a450908788f16778a4a114a6ce47e4226048131afe23336fd176abf472408",
     ),
 ];
