@@ -94,7 +94,8 @@ fn every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one() {
         ranks_fall(random(&mut rng));
     }
     // A definition built so that each rule fires: the binder written `x` is not spelled as its
-    // level, 0 (binders); one facet is a hint (hints); `units` before `doc` is out of order
+    // level, 0 (binders); one facet is a hint, and the binders rule adds a second, the
+    // written name it records as a hint facet (hints); `units` before `doc` is out of order
     // (facets); and `0..=10` with every member a multiple of 3 is not in normal form, whose
     // ends are members, `0..=9` (domain).
     let mut d = def("d", lam(&["x"], var("x")));
