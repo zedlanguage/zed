@@ -1,5 +1,6 @@
 //! Name resolution refuses each form of layer L3 that zedc does not compile yet (the displays,
-//! `in`, `not in` and `><` by an operator are built, plan row MAP-run); the parser
+//! `in`, `not in`, `><` and the operator sections are built, plan rows MAP-run and
+//! MAP-run-rest; a fold by a function is the checker's to refuse or take); the parser
 //! refuses the parts of a `for` and a reduction that belong to later layers.
 
 use super::{check as check_sx, refused};
@@ -24,24 +25,10 @@ fn each_form_names_the_step_that_compiles_it() {
             &[concat!(zed_tests::not_yet!("a range"), " [0..<x]")],
         ),
         (
-            "f(m, g) = m >< g;",
-            &[concat!(
-                zed_tests::not_yet!("a reduction `><` by a function"),
-                " [m >< g]"
-            )],
-        ),
-        (
             "f(x) = x::len;",
             &[concat!(
                 zed_tests::not_yet!("a metadata read `::`"),
                 " [x::len]"
-            )],
-        ),
-        (
-            "f(x) = (+);",
-            &[concat!(
-                zed_tests::not_yet!("an operator section"),
-                " [(+)]"
             )],
         ),
         (

@@ -85,7 +85,7 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
-    PowerUse, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms,
+    PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms,
     carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
@@ -522,6 +522,9 @@ pub struct Info {
     /// Each fold `m >< (op)`, by its span: the identity of `op` at the carrier of the
     /// entries, the result of folding an empty level (step L3.2, DESIGN.md sec:reduction).
     pub reduce: HashMap<Span, Value>,
+    /// Each fold `m >< f` whose operator `f` is a function, not an operator section, by the
+    /// fold's span: the prelude word it is, `max` or `min` (step L3.2).
+    pub reducers: HashMap<Span, Reducer>,
     /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
     /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
     pub remaps: HashMap<Span, RemapPlan>,

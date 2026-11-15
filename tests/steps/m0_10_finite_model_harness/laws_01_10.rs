@@ -563,14 +563,18 @@ fn law_08_an_associative_fold_regroups() {
 }
 
 #[test]
-fn law_08_regrouping_a_float_sum_rounds_more_than_once() {
-    // A float `+` fold is the exact sum rounded once; partial sums round each chunk.
-    let xs = [0.1, 0.2, 0.3].map(Value::float);
+fn law_08_regrouping_a_float_sum_rounds_on_another_tree() {
+    // A float `+` fold rounds at each node of the canonical tree of its level (DESIGN.md
+    // sec:reduction items 1 and 2: "No float policy claims exactness"), so chunking the level
+    // changes the tree: chunk 1 is `(1e16 + 1.0) + -1e16`, 0.0, and the sum 1.0, while the
+    // flat tree `(1.0 + 1e16) + (1.0 + -1e16)` is 0.0.
+    let xs = [1.0, 1e16, 1.0, -1e16].map(Value::float);
     let chunks = lit(Value::Family(
         Family::from_leaves(vec![
             (vec![Value::Int(0), Value::Int(0)], xs[0].clone()),
-            (vec![Value::Int(0), Value::Int(1)], xs[1].clone()),
+            (vec![Value::Int(1), Value::Int(1)], xs[1].clone()),
             (vec![Value::Int(1), Value::Int(2)], xs[2].clone()),
+            (vec![Value::Int(1), Value::Int(3)], xs[3].clone()),
         ])
         .unwrap(),
     ));
@@ -582,7 +586,7 @@ fn law_08_regrouping_a_float_sum_rounds_more_than_once() {
     });
     assert_eq!(
         (a.unwrap(), b.unwrap()),
-        (Value::float(0.1 + 0.2 + 0.3), Value::float(0.6))
+        (Value::float(1.0), Value::float(0.0))
     );
 }
 

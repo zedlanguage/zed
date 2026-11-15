@@ -245,7 +245,109 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "${[[1, 2], [3, 4, 5]].map(r -> 2 in r)}",
             map_rows(lists(&[&[1, 2], &[3, 4, 5]]), |r| found(get(r, lit(2)))),
         ),
+        // Plan row MAP-run-rest. `><` by `max` and `min`, which have no identity at `int`, so
+        // an empty level folds to `#empty` (DESIGN.md sec:reduction, "Identity as data").
+        (
+            "max_of_a_list",
+            "${[3, 9, 4] >< max}",
+            reduce(list(&[3, 9, 4]), Prim::Max, None),
+        ),
+        (
+            "min_of_a_string_keyed_map",
+            "${{\"a\" -> 3, \"b\" -> 7} >< min}",
+            reduce(
+                family(vec![(s("a"), i(3)), (s("b"), i(7))]),
+                Prim::Min,
+                None,
+            ),
+        ),
+        (
+            "max_of_each_row",
+            "${[[1, 5], [7, 2]].map(r -> r >< max)}",
+            map_rows(lists(&[&[1, 5], &[7, 2]]), |r| reduce(r, Prim::Max, None)),
+        ),
+        (
+            "max_of_an_empty_display_is_empty",
+            "${([] >< max) else -1}",
+            or(reduce(list(&[]), Prim::Max, None), "empty", -1),
+        ),
+        // A float fold goes round the canonical tree of sec:reduction item 1:
+        // `((x0 + x1) + (x2 + x3)) + (x4 + x5)` for six entries, which the kernel `fold` walks.
+        (
+            "a_float_sum_on_the_canonical_tree",
+            "${[0.1, 0.2, 0.3, 0.4, 0.5, 0.6] >< (+)}",
+            reduce(
+                floats(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6]),
+                Prim::Add,
+                Some(Value::float(-0.0)),
+            ),
+        ),
+        (
+            "a_float_max",
+            "${[1.5, -2.5, 0.5] >< max}",
+            reduce(floats(&[1.5, -2.5, 0.5]), Prim::Max, None),
+        ),
+        // `.foldl(init, op)` and `.foldr(op, init)` over a rank: the definedness fix of the
+        // accumulators (zed_tests::kernel::foldl), against the `gen` zedc elaborates them to.
+        (
+            "foldl_reads_left_to_right",
+            "${[1, 2, 3, 4].foldl(0, (a, x) -> a * 10 + x)}",
+            foldl(
+                list(&[1, 2, 3, 4]),
+                lit(0),
+                func(|[a, x]| add(mul(a, lit(10)), x)),
+            ),
+        ),
+        (
+            "foldr_reads_right_to_left",
+            "${[1, 2, 3, 4].foldr((x, a) -> a * 10 + x, 0)}",
+            foldr(
+                list(&[1, 2, 3, 4]),
+                func(|[x, a]| add(mul(a, lit(10)), x)),
+                lit(0),
+            ),
+        ),
+        (
+            "foldl_by_a_non_associative_section",
+            "${[10, 2, 3].foldl(100, (-))}",
+            foldl(list(&[10, 2, 3]), lit(100), func(|[a, b]| sub(a, b))),
+        ),
+        (
+            "foldr_by_a_non_associative_section",
+            "${[10, 2, 3].foldr((-), 0)}",
+            foldr(list(&[10, 2, 3]), func(|[a, b]| sub(a, b)), lit(0)),
+        ),
+        (
+            "foldl_of_an_empty_list_is_its_start",
+            "${[].foldl(5, (a, x) -> a + x)}",
+            foldl(list(&[]), lit(5), func(|[a, x]| add(a, x))),
+        ),
+        (
+            "foldl_whose_accumulator_is_another_type",
+            "${[1, -2, 3].foldl(true, (b, x) -> b && x > 0)}",
+            foldl(
+                list(&[1, -2, 3]),
+                lit(true),
+                func(|[b, x]| and(b, bin(Prim::Gt, x, lit(0)))),
+            ),
+        ),
+        (
+            "foldl_of_each_row",
+            "${[[1, 2], [3, 4, 5]].map(r -> r.foldl(0, (+)))}",
+            map_rows(lists(&[&[1, 2], &[3, 4, 5]]), |r| {
+                foldl(r, lit(0), func(|[a, b]| add(a, b)))
+            }),
+        ),
     ]
+}
+
+/// `[x0, x1, …]` of floats.
+fn floats(xs: &[f64]) -> Term {
+    family(
+        (xs.iter().enumerate())
+            .map(|(k, &x)| (i(k as i64), Value::float(x)))
+            .collect(),
+    )
 }
 
 /// The output the model gives for a case.

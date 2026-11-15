@@ -169,7 +169,7 @@ fn expr_kids<'a>(
         | ExprKind::Atom(_)
         | ExprKind::Name(_)
         | ExprKind::This
-        | ExprKind::Section(_) => {}
+        | ExprKind::Section(..) => {}
         ExprKind::Str(parts) => out.extend(parts.iter().filter_map(|p| match p {
             StrPart::Hole(e) => Some(e),
             StrPart::Text(_) => None,

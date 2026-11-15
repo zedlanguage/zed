@@ -29,7 +29,7 @@ use zedc_syntax::lex::{Span, unread_literal};
 
 use super::mark::{Mark, mark_of, mutable};
 use super::state::{Bind, Elab};
-use zedc_check::check::ty::{Carrier, Sig};
+use zedc_check::check::ty::{Carrier, Reducer, Sig};
 use zedc_syntax::ast::Param;
 
 /// The inputs a row of `main`'s table gives, by the position of each in a key that is a tuple:
@@ -187,6 +187,9 @@ enum Frame<'a> {
     /// `x.map(f)`, or `x.where(f)` when the flag is set, once `f` is elaborated: `x`'s term
     /// (step L3.2).
     MapFn(Term, bool),
+    /// `x.foldl(init, f)` or, when the flag is set, `x.foldr(f, init)`, once both arguments are
+    /// elaborated, in the order written: `x`'s term (step L3.3).
+    FoldDir(Term, bool),
     /// `x.group(f)`, `f` being elaborated: the term of `x` (`group_term`).
     Group(Term),
     /// `m >< (op)` once `m` is elaborated: the operator and the span of the fold.
@@ -741,11 +744,13 @@ impl<'a> Elab<'a> {
             | ExprKind::Match { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
-            ExprKind::Range(..)
-            | ExprKind::Read { .. }
-            | ExprKind::Section(_)
-            | ExprKind::For { .. } => {
+            ExprKind::Range(..) | ExprKind::Read { .. } | ExprKind::For { .. } => {
                 unreachable!("resolve rejects the forms of layer L3 not built yet")
+            }
+            // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
+            ExprKind::Section(_, lambda) => {
+                m.stack.push(Job::Expr(lambda));
+                return;
             }
             ExprKind::Remap { of, levels, .. } => {
                 // `as` alone only names the levels: the remap is its source.
@@ -780,10 +785,13 @@ impl<'a> Elab<'a> {
             }
             ExprKind::Reduce { of, op } => {
                 let p = match op.kind {
-                    ExprKind::Section(BinaryOp::Add) => Prim::Add,
-                    ExprKind::Section(BinaryOp::Mul) => Prim::Mul,
-                    ExprKind::Section(BinaryOp::And) => Prim::And,
-                    ExprKind::Section(BinaryOp::Or) => Prim::Or,
+                    ExprKind::Section(BinaryOp::Add, _) => Prim::Add,
+                    ExprKind::Section(BinaryOp::Mul, _) => Prim::Mul,
+                    ExprKind::Section(BinaryOp::And, _) => Prim::And,
+                    ExprKind::Section(BinaryOp::Or, _) => Prim::Or,
+                    // A function the checker took as the prelude word `max` or `min`.
+                    _ if self.info.reducers.get(&e.span) == Some(&Reducer::Max) => Prim::Max,
+                    _ if self.info.reducers.get(&e.span) == Some(&Reducer::Min) => Prim::Min,
                     // The checker rejects a fold by any other operator, at its error.
                     _ => {
                         m.give(None);
@@ -1563,6 +1571,75 @@ impl<'a> Elab<'a> {
         )
     }
 
+    /// `x.foldl(init, f)`, or with `right` `x.foldr(f, init)`: the serial `gen` over the rank of
+    /// `x` that DESIGN.md's method register gives (`initial acc = init; acc' = op(acc, m[t]);`,
+    /// from the far end with `op(m[t], acc)` for `foldr`). Each frame is the pair
+    /// `(t, acc)`; the guard goes on while `t < n`, `n` the number of entries, and the result
+    /// is the accumulator of frame `n`, the last. The checker took only a rank, keys
+    /// `0 ..< n` every one present, so `m[t]` and `m[n - 1 - t]` always hit. A loose atom `x`
+    /// passes through, as at `map`.
+    // Complexity tradeoff: n steps, each a read `m[t]` of the persistent map, O(log n), so
+    // O(n log n) with the n frames kept in the `gen` family; a kernel loop that kept only the
+    // last frame would save the O(n) frames, but `gen`'s result is the family of every frame.
+    fn fold_dir_term(&mut self, x: Term, init: Term, f: Term, right: bool) -> Term {
+        let (xs, g, n, fr, gn) = (
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+            self.temp(),
+        );
+        let var = |v: &Arc<str>| Term::Var(v.clone());
+        let int = |i: i64| Term::Lit(Value::Int(i));
+        let part = |i: i64| Term::Prim(Prim::TupleGet, vec![var(&fr), int(i)]);
+        let at = match right {
+            false => part(0),
+            true => Term::Prim(
+                Prim::Sub,
+                vec![Term::Prim(Prim::Sub, vec![var(&n), int(1)]), part(0)],
+            ),
+        };
+        let entry = Term::Prim(Prim::Get, vec![var(&xs), at]);
+        let args = match right {
+            false => vec![part(1), entry],
+            true => vec![entry, part(1)],
+        };
+        let next = Term::Prim(
+            Prim::Tuple,
+            vec![
+                Term::Prim(Prim::Add, vec![part(0), int(1)]),
+                Term::App(Shared::new(var(&g)), args),
+            ],
+        );
+        let frames = Term::Gen {
+            init: Shared::new(Term::Prim(Prim::Tuple, vec![int(0), init])),
+            step: Shared::new(Term::Lam(vec![fr.clone()], Shared::new(next))),
+            guard: Shared::new(Term::Lam(
+                vec![fr.clone()],
+                Shared::new(Term::Prim(Prim::Lt, vec![part(0), var(&n)])),
+            )),
+            pos: zed_kernel::term::GuardPos::Before,
+        };
+        let last = Term::Prim(
+            Prim::TupleGet,
+            vec![Term::Prim(Prim::Get, vec![var(&gn), var(&n)]), int(1)],
+        );
+        let run = Term::Let(
+            n.clone(),
+            Shared::new(Term::Prim(Prim::Count, vec![var(&xs)])),
+            Shared::new(Term::Let(gn, Shared::new(frames), Shared::new(last))),
+        );
+        let body = Term::Match(
+            Shared::new(var(&xs)),
+            vec![(KPattern::AnyAtom, var(&xs)), (KPattern::Wild, run)],
+        );
+        Term::Let(
+            xs,
+            Shared::new(x),
+            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
+        )
+    }
+
     /// `x.where(f)`: the kernel's `discard(x, sel)` (DESIGN.md sec:kernel), with `sel` testing
     /// `f` on the entries of `x`'s top level only. `discard` descends into a kept sub-family
     /// and asks `sel` again at each of its entries, so `sel` keeps every entry below the top
@@ -1819,6 +1896,20 @@ impl<'a> Elab<'a> {
                         }
                     }
                 }
+                // `foldl` and `foldr` are built in as `map` is (step L3.3); the checker rejects
+                // any other argument list and a level that is not a rank.
+                Some(_) if name == "foldl" || name == "foldr" => match call.positional {
+                    [a, b] if call.named.is_empty() && !call.curry => {
+                        m.k(Frame::MemberEnd(wrap));
+                        m.k(Frame::FoldDir(receiver, name == "foldr"));
+                        m.seq(vec![a, b], false);
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
                 // `group` is built in as `map` is (step L4.1); the checker rejects every
                 // `rekey` and any other argument list.
                 Some(_) if name == "group" => match call.positional {
@@ -1872,6 +1963,10 @@ impl<'a> Elab<'a> {
     /// parameters are in another order or carry defaults, or a declared function whose
     /// named parameters are in another order.
     fn fit(&mut self, m: &mut M<'a>, e: &'a Expr, fit: &'a Fit) {
+        // A section is fitted as the lambda it stands for (`ExprKind::Section`).
+        if let ExprKind::Section(_, lambda) = &e.kind {
+            return self.fit(m, lambda, fit);
+        }
         match (fit, &e.kind) {
             (Fit::Lambda { order, extra }, ExprKind::Lambda { params, body }) => {
                 let mut names = Vec::new();
@@ -1958,6 +2053,16 @@ impl<'a> Elab<'a> {
                 let t = m.t().map(|f| match filter {
                     true => self.where_term(x, f),
                     false => self.map_term(x, f),
+                });
+                m.give(t);
+            }
+            Frame::FoldDir(x, right) => {
+                let t = all(m.got()).map(|ts| {
+                    let [a, b]: [Term; 2] = ts.try_into().expect("two arguments");
+                    match right {
+                        false => self.fold_dir_term(x, a, b, false),
+                        true => self.fold_dir_term(x, b, a, true),
+                    }
                 });
                 m.give(t);
             }

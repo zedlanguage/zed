@@ -273,7 +273,7 @@ fn expr_kids<'e>(e: &'e Expr, work: &mut Vec<Work<'e>>) {
         | ExprKind::Bool(_)
         | ExprKind::Atom(_)
         | ExprKind::This
-        | ExprKind::Section(_)
+        | ExprKind::Section(..)
         | ExprKind::Loop { .. }
         | ExprKind::Name(_) => {}
         ExprKind::Str(parts) => exprs(
@@ -1708,7 +1708,7 @@ fn every_path<'e>(
                     | ExprKind::Bool(_)
                     | ExprKind::Atom(_)
                     | ExprKind::This
-                    | ExprKind::Section(_)
+                    | ExprKind::Section(..)
                     | ExprKind::Loop { .. } => {}
                     ExprKind::Name(n) => {
                         if let Some(w) = ctx.key_of {

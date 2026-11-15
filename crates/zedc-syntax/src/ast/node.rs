@@ -171,8 +171,13 @@ pub enum ExprKind {
         /// The metadata's name.
         name: String,
     },
-    /// An operator section `(+)`: the binary operator as a function.
-    Section(BinaryOp),
+    /// An operator section `(+)`: the binary operator as a function, and the lambda it stands
+    /// for, `(l, r) -> l + r` (sec:reduction, "`(+)` is the operator section"). The lambda's
+    /// parameters have names no identifier spells, so they meet no name of the program; its
+    /// body is at the operator's text and its two names at the parentheses, so no two of its
+    /// nodes share a span. A fold `x >< (+)` reads the operator; a section anywhere else is
+    /// its lambda.
+    Section(BinaryOp, Box<Expr>),
     /// An array display `[a, b, c]`, its elements in written order: the array
     /// `{0 -> a, 1 -> b, 2 -> c}` of type `int[0..<3] -> T`, keyed by rank, each element's
     /// rank its position (sec:grammar, `ArrayExpr`). It is not a `Seq` (sec:order), whose keys

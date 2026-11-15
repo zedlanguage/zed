@@ -252,7 +252,7 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<Show<'a>>) {
         ExprKind::Read { of, name } => {
             out.extend([Text("(:: "), at(of), Text(" "), Text(name), Text(")")]);
         }
-        ExprKind::Section(op) => out.extend([Text("(section "), Text(op.as_str()), Text(")")]),
+        ExprKind::Section(op, _) => out.extend([Text("(section "), Text(op.as_str()), Text(")")]),
         ExprKind::Array(es) => {
             out.push(Text("(array"));
             each(out, es, Show::Expr);

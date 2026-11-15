@@ -103,7 +103,7 @@ fn level(e: &Expr) -> u8 {
         | ExprKind::Record(_)
         | ExprKind::This
         | ExprKind::Match { .. }
-        | ExprKind::Section(_)
+        | ExprKind::Section(..)
         | ExprKind::Array(_)
         | ExprKind::Set(_)
         | ExprKind::Map(_)
@@ -1414,7 +1414,7 @@ impl<'a> Formatter<'a> {
                     place: Place::Branch,
                 });
             }
-            ExprKind::Section(op) => self.put(format!("({op})")),
+            ExprKind::Section(op, _) => self.put(format!("({op})")),
             ExprKind::Array(items) => {
                 self.put("[");
                 then![stack;

@@ -61,27 +61,85 @@ fn a_fold_of_a_row_that_may_be_empty_needs_else() {
 }
 
 #[test]
-fn a_fold_by_an_operator_without_a_built_in_identity_is_not_built() {
+fn a_fold_by_a_non_associative_operator_is_rejected() {
+    // Bare `><` folds in any grouping and so needs an associative operator (DESIGN.md
+    // sec:reduction); the repairs are the directional folds, which owe no law.
     let e = refused("minus", "${[1, 2] >< (-)}");
-    assert!(e.contains("a fold `><` by `(-)`"), "{e}");
+    assert!(e.contains("`-` is not associative"), "{e}");
+    assert!(e.contains("xs.foldl(init, (a, x) -> a - x)"), "{e}");
+    assert!(e.contains("xs.foldr((x, a) -> x - a, init)"), "{e}");
+}
+
+#[test]
+fn a_section_is_a_function_and_not_data() {
+    // `(+)` outside `><` is the function `(a, b) -> a + b`; interpolation takes data.
+    let e = refused("section", "${(+)}");
+    assert!(e.contains("interpolation takes data"), "{e}");
+    let e = refused("section_map", "${[1, 2].map((+))}");
+    assert!(
+        e.contains("`map` calls its function with one argument, and this function needs 2"),
+        "{e}"
+    );
+}
+
+#[test]
+fn foldl_and_foldr_take_a_start_value_and_a_function_of_two_parameters() {
+    for (name, body, what) in [
+        (
+            "foldl_one",
+            "${[1, 2].foldl(0)}",
+            "`foldl` takes a start value and a function, passed by position",
+        ),
+        (
+            "foldl_arity",
+            "${[1, 2].foldl(0, x -> x)}",
+            "`foldl` calls its function with 2 arguments, and this function takes 1",
+        ),
+        (
+            "foldr_order",
+            "${[1, 2].foldr(0, (+))}",
+            "`foldr` takes a function of two parameters, and this value is 0",
+        ),
+        (
+            "foldl_scalar",
+            "${(3).foldl(0, (+))}",
+            "`foldl` folds the entries of a family, and this value is 3",
+        ),
+        (
+            "foldl_grows",
+            "${[1, 2].foldl((0, 0), (a, x) -> (a, x))}",
+            "no one type holds every step",
+        ),
+    ] {
+        let e = refused(name, body);
+        assert!(e.contains(what), "{name}: {e}");
+    }
 }
 
 #[test]
 fn the_forms_not_built_are_refused_as_not_built() {
     // The messages name no step: the program's words only. The steps are named at the
-    // refusals in zedc-resolve: ranges and operator sections outside `><` are step L3.2's,
-    // metadata reads steps L3.2 and L3.2a's.
+    // refusals: ranges and metadata reads in zedc-resolve (steps L3.2 and L3.2a), a fold by a
+    // function that owes a proof of associativity and a directional fold over a keyed level
+    // in the checker (plan rows REDUCE-by-function and FOLD-keyed).
     for (name, body, what) in [
         ("range", "${0 ..< 3}", "a range is part of the Zed language"),
-        (
-            "section",
-            "${(+)}",
-            "an operator section is part of the Zed language",
-        ),
         (
             "read",
             "${[1]::len}",
             "a metadata read `::` is part of the Zed language",
+        ),
+        (
+            "fold_by_function",
+            "${[1, 2] >< ((a, b) -> a + b)}",
+            "a fold `><` by a function other than `max`, `min` or an operator section is part \
+             of the Zed language",
+        ),
+        (
+            "foldl_keyed",
+            "${{1 -> 2, 5 -> 3}.foldl(0, (+))}",
+            "`foldl` over a family whose keys are not `0`, `1`, … in turn is part of the Zed \
+             language",
         ),
     ] {
         let e = refused(name, body);

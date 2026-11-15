@@ -640,13 +640,15 @@ fn law_23_two_folds_of_one_level_are_one_pass() {
 }
 
 #[test]
-fn law_23_a_float_component_keeps_its_own_exact_accumulator() {
-    // The exact float sum of `fold(+)` is not the canonical-tree sum a fused fold with a
-    // pairing operator computes; the fusion keeps the accumulator per component.
+fn law_23_a_float_component_sums_on_the_same_tree() {
+    // A float `+` fold rounds at each node of the canonical tree (DESIGN.md sec:reduction
+    // items 1 and 2: "No float policy claims exactness"), and a fused fold with a pairing
+    // operator walks the same tree, so each component of the fused fold is its own fold, bit
+    // for bit.
     let nonempty = shortlex(&bmc_floats(), 3)
         .into_iter()
         .filter(|xs| !xs.is_empty());
-    let (xs, _, _) = refuted(nonempty, |xs| {
+    let n = holds(nonempty, |xs| {
         let both = func(|[a, b]| {
             tuple(vec![
                 add(nth(a.clone(), 0), nth(b.clone(), 0)),
@@ -661,7 +663,7 @@ fn law_23_a_float_component_keeps_its_own_exact_accumulator() {
             fold(map(seq(xs), |v| tuple(vec![v.clone(), v])), both, None),
         )
     });
-    assert_eq!(xs.len(), 3);
+    assert!(n > 0);
 }
 
 #[test]

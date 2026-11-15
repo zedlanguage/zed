@@ -2,10 +2,10 @@
 
 template: $0 >< (+)
 int -> int => int !! L3.2: error - -- the checker reads a written key type `int -> int` as a function type, not a family (plan row MAP-run); sec:lexical "><  reduce"; sec:corner_cases "a reduction of nothing is #empty (or the operator's identity)"
-int -> f64 => f64 !! L3.2: error - -- as above, and a float fold needs the canonical tree of sec:reduction, not built; sec:lexical "><  reduce"; sec:corner_cases "or the operator's identity"
+int -> f64 => f64 !! L3.2: error - -- as above; sec:lexical "><  reduce"; sec:corner_cases "or the operator's identity"
 
 template: $0 >< max
-int -> int => int | #empty !! L3.2: notyet -- sec:corner_cases "a reduction of nothing is #empty"
+int -> int => int | #empty !! L3.2: error - -- as for `><` by `(+)` above; sec:corner_cases "a reduction of nothing is #empty"
 
 template: ($0, $1) into ($0 && $1 -> v)
 int -> f64, int -> bool => int -> (f64, bool) !! L5.4a: notyet -- sec:joins "One flat value per chain": "V for the first operand and each && operand"

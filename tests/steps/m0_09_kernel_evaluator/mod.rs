@@ -63,7 +63,7 @@ fn orders() -> Value {
 }
 
 #[test]
-fn revenue_by_region_is_the_exact_sum() {
+fn revenue_by_region_sums_on_the_canonical_tree() {
     let amounts = reindex(
         lit(orders()),
         lam(&["p", "o"], path(vec![nth(var("o"), 1), key(var("p"), 0)])),
@@ -76,16 +76,21 @@ fn revenue_by_region_is_the_exact_sum() {
         Some(lit(Value::float(0.0))),
     );
     let out = eval(&revenue).unwrap();
-    // 0.1 + 0.2 + 0.3 is exactly 0.6 rounded once; left to right it would be 0.6000000000000001.
-    assert_eq!(out.to_string(), r#"{"north" -> 0.6, "south" -> 2.5}"#);
+    // DESIGN.md sec:reduction items 1 and 2: a float `+` fold rounds at each node of the
+    // canonical tree, `(0.1 + 0.2) + 0.3`, and no float policy claims exactness (an exact sum
+    // is written through `rat`).
+    assert_eq!(
+        out.to_string(),
+        r#"{"north" -> 0.6000000000000001, "south" -> 2.5}"#
+    );
 }
 
 #[test]
-fn a_float_fold_of_another_operator_uses_the_canonical_tree() {
+fn a_float_fold_of_any_operator_uses_the_canonical_tree() {
     let xs = Value::Family(Family::of(
         [(0, 0.1), (1, 0.2), (2, 0.3)].map(|(k, x)| (Value::Int(k), Value::float(x))),
     ));
-    // A function whose body is `a + b` is not the primitive `+`, so it folds on the tree
+    // A function whose body is `a + b` and the primitive `+` both fold on the tree
     // ((x0 + x1) + x2), rounding at each node.
     let plus = lam(&["a", "b"], add(var("a"), var("b")));
     assert_eq!(
@@ -94,7 +99,7 @@ fn a_float_fold_of_another_operator_uses_the_canonical_tree() {
     );
     assert_eq!(
         eval(&fold(lit(xs), Term::PrimFn(Prim::Add), None)).unwrap(),
-        Value::float(0.6)
+        Value::float(0.1 + 0.2 + 0.3)
     );
 }
 

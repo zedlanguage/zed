@@ -280,11 +280,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         for &j in folded.iter().rev() {
             let op = match s.levels[j].reduce.as_ref().map(|r| &r.kind) {
-                Some(ExprKind::Section(op)) => *op,
+                Some(ExprKind::Section(op, _)) => *op,
                 _ => unreachable!("name resolution refuses a `><` by a function"),
             };
             folds.insert(j, op);
-            inner = self.reduce_end(op, &family(ty(j), inner), s.levels[j].span);
+            inner = self.reduce_end(Reducer::Op(op), &family(ty(j), inner), s.levels[j].span);
         }
         let outer = match truncate {
             true => &kept[..kept.len() - 1],

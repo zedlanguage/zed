@@ -466,8 +466,16 @@ pub(super) enum Frame<'a> {
     /// `x.flatMap(f)`, `f` being checked: `x`'s type and the call's span (step L4.1;
     /// `flat_map_end`).
     FlatMap(Ty, Span),
-    /// `m >< (op)`, waiting for `m`: the operator and the span of the reduction.
-    Reduce(BinaryOp, Span),
+    /// `x.foldl(init, f)` or, with `true`, `x.foldr(f, init)`, waiting for `init`: `x`'s type,
+    /// `f`, and the call's span (step L3.3; `fold_dir_end`).
+    FoldInit(Ty, &'a Expr, Span, bool),
+    /// The same, waiting for `f`: `x`'s type, `init`'s type, and the call's span.
+    FoldFn(Ty, Ty, Span, bool),
+    /// `m >< op`, waiting for `m`: the operator and the span of the reduction.
+    Reduce(Reducer, Span),
+    /// `m >< f`, `f` not an operator section, waiting for `f`: `m` and the span of the
+    /// reduction (`reduce_by`).
+    ReduceBy(&'a Expr, Span),
     /// `k in m`, waiting for `k`: `m` and the span of the test.
     InKey(&'a Expr, Span),
     /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
@@ -946,10 +954,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.flat_map_end(&x, f, span);
                 m.ty(t);
             }
+            Frame::FoldInit(x, f, span, right) => {
+                let init = m.take_arg();
+                m.k(Frame::FoldFn(x, init.ty, span, right));
+                m.job(Job::Arg(f, Want::default()));
+            }
+            Frame::FoldFn(x, init, span, right) => {
+                let f = m.take_arg();
+                let t = self.fold_dir_end(&x, &init, f, span, right);
+                m.ty(t);
+            }
             Frame::Reduce(op, span) => {
                 let x = m.take_ty();
                 let t = self.reduce_end(op, &x, span);
                 m.ty(t);
+            }
+            Frame::ReduceBy(of, span) => {
+                let f = m.take_ty();
+                match self.reduce_by(&f, span) {
+                    Some(r) => {
+                        m.k(Frame::Reduce(r, span));
+                        m.job(Job::Expr(of));
+                    }
+                    None => m.ty(Ty::empty()),
+                }
             }
             Frame::InKey(set, span) => {
                 let k = m.take_ty();
@@ -2784,6 +2812,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// function type is fitted to it, and a generic literal takes its one numeric carrier,
     /// where a plain literal of another carrier is rejected.
     fn expr_at(&mut self, m: &mut M<'a>, e: &'a Expr, want: Want) {
+        if let (Some(_), ExprKind::Section(_, lambda)) = (&want.fun, &e.kind) {
+            return self.expr_at(m, lambda, want);
+        }
         if let Some(sig) = want.fun {
             if let ExprKind::Lambda { params, body } = &e.kind {
                 return self.fit_lambda(m, params, body, sig, e.span);
@@ -2835,12 +2866,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     "name resolution rejects every record, with, this and match before the checker reads the program"
                 )
             }
-            ExprKind::Range(..)
-            | ExprKind::Read { .. }
-            | ExprKind::Section(_)
-            | ExprKind::For { .. } => unreachable!(
-                "name resolution rejects every range, read, section outside `><`, and for before the checker reads the program"
+            ExprKind::Range(..) | ExprKind::Read { .. } | ExprKind::For { .. } => unreachable!(
+                "name resolution rejects every range, read and for before the checker reads the program"
             ),
+            // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
+            ExprKind::Section(_, lambda) => m.job(Job::Expr(lambda)),
             ExprKind::Remap { .. } => self.remap_start(m, e),
             ExprKind::Array(items) | ExprKind::Set(items) => {
                 let kind = match &e.kind {
@@ -2854,13 +2884,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let es = entries.iter().flat_map(|(k, v)| [k, v]).collect();
                 self.display_step(m, Box::new(DisplayF::new(Display::Map, es)));
             }
-            ExprKind::Reduce { of, op } => {
-                let ExprKind::Section(op) = op.kind else {
-                    unreachable!("name resolution rejects a reduction by no operator section")
-                };
-                m.k(Frame::Reduce(op, e.span));
-                m.job(Job::Expr(of));
-            }
+            ExprKind::Reduce { of, op: f } => match f.kind {
+                ExprKind::Section(op, _) => {
+                    m.k(Frame::Reduce(Reducer::Op(op), e.span));
+                    m.job(Job::Expr(of));
+                }
+                _ => {
+                    m.k(Frame::ReduceBy(of, e.span));
+                    m.job(Job::Expr(f));
+                }
+            },
             ExprKind::In { of, set, .. } => {
                 m.k(Frame::InKey(set, e.span));
                 m.job(Job::Expr(of));
@@ -3076,6 +3109,33 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(Ty::func(Arc::new(sig)));
     }
 
+    /// Whether `fsig`, the function given to the built-in `word`, can be called with `n`
+    /// arguments by position: it needs no more than `n` and takes at least `n`. Any other is
+    /// rejected at `at` with `shape`, a function of the right number of parameters, as the
+    /// repair; the kernel calls a function with exactly the arguments given and does not
+    /// curry, so a `map` by a function of two parameters would otherwise reach the evaluator.
+    fn takes_args(&mut self, word: &str, fsig: &Sig, n: usize, shape: &str, at: Span) -> bool {
+        let needs = fsig.params.iter().filter(|p| p.default.is_none()).count();
+        let has = fsig.params.len();
+        if needs <= n && n <= has {
+            return true;
+        }
+        let what = match n {
+            1 => "one argument".to_string(),
+            n => format!("{n} arguments"),
+        };
+        let why = match needs > n {
+            true => format!("needs {needs}"),
+            false => format!("takes {has}"),
+        };
+        self.error_offering(
+            at,
+            format!("{word} calls its function with {what}, and this function {why}"),
+            [format!("repair: pass a function of {what}, as `{shape}`")],
+        );
+        false
+    }
+
     /// `x.map(f)`, with `x` of type `x` and `f` checked: each family `x` may be, with the
     /// same keys, and each entry `f` applied to it (step L3.2, DESIGN.md sec:type_language,
     /// the `map` row: "the guarantee and the permission ride through unchanged"). Each arrow
@@ -3109,6 +3169,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return Ty::empty();
             }
         };
+        let example = if filter { "x -> x > 0" } else { "x -> x + 1" };
+        if !self.takes_args(word, &fsig, 1, example, f.at.unwrap_or(span)) {
+            return Ty::empty();
+        }
         for p in x.pieces() {
             match p {
                 Piece::Fn(sig) if sig.data => {
@@ -3210,15 +3274,197 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// `x >< (op)`, `x` of type `x` (step L3.2; DESIGN.md sec:reduction): the operator folded
+    /// `x.foldl(init, f)` or, with `right`, `x.foldr(f, init)`, `x` of type `x`, `init` of type
+    /// `init` (step L3.3; DESIGN.md sec:reduction, the non-associative row, and the
+    /// `foldl`/`foldr` row of the method register): a serial `gen` over the level's rank,
+    /// `f` taking the accumulator first for `foldl` and second for `foldr`, typed
+    /// `(A, (A, V) -> A) -> A` and `((V, A) -> A, A) -> A`. `A` is `init`'s type widened to its
+    /// carriers ([`Ty::carriers`]), joined with what `f` gives until `f` gives nothing new. The
+    /// level must be a rank, keys `0 ..< n` every one present ([`Sig::dense`]); a keyed level
+    /// reads its sorted view, step L3.4's, and is refused by name. A loose atom `x` may be
+    /// passes through, as at `map`. A value whose type is a class (a parameter of a generic
+    /// function, or of a lambda checked before its argument) takes the fold as a need, checked
+    /// on each type that flows into the class, as `><` does.
+    // Complexity tradeoff: each round applies `f` once to the accumulator type, and the rounds
+    // stop when the type settles; a naive check would apply `f` once per entry. At most
+    // `Carrier::ALL.len() + 1` rounds run (below).
+    fn fold_dir_end(&mut self, x: &Ty, init: &Ty, f: Arg<'a>, span: Span, right: bool) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let (word, shape) = match right {
+            false => ("`foldl`", "`(a, x) -> a + x`"),
+            true => ("`foldr`", "`(x, a) -> x + a`"),
+        };
+        let out = self.passing(x, word, span, None);
+        let Some(fsig) = only_fn(&f.ty) else {
+            let t = self.text(&f.ty);
+            self.error_offering(
+                f.at.unwrap_or(span),
+                format!("{word} takes a function of two parameters, and this value is {t}"),
+                [format!(
+                    "repair: pass a function of two parameters, as {shape}"
+                )],
+            );
+            return Ty::empty();
+        };
+        if !self.takes_args(
+            word,
+            &fsig,
+            2,
+            &shape[1..shape.len() - 1],
+            f.at.unwrap_or(span),
+        ) {
+            return Ty::empty();
+        }
+        // A class alone takes the fold as a need (CHK-need-bound); `meet` calls back here
+        // with `replaying` set.
+        if let ([Piece::Var(v)], true) = (x.pieces().as_slice(), x.fns.is_empty()) {
+            let r = self.class_root(v);
+            return match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                Some((_, Some(t))) => self.fold_dir_end(&t, init, f, span, right),
+                Some((r, None)) => {
+                    let kind = NeedKind::Fold {
+                        tys: vec![init.clone(), f.ty.clone()],
+                        right,
+                    };
+                    self.need(r, kind, true, span)
+                }
+                None => Ty::dynamic(),
+            };
+        }
+        let mut values = Ty::empty();
+        for p in x.pieces() {
+            match p {
+                Piece::Fn(sig) if sig.data && sig.dense => {
+                    let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result));
+                    values = values.union(&all.without(&misses));
+                }
+                Piece::Fn(sig) if sig.data => {
+                    // Over other keys the fold reads the level's sorted view, step L3.4's.
+                    let what =
+                        format!("{word} over a family whose keys are not `0`, `1`, … in turn");
+                    self.error_offering(
+                        span,
+                        zedc_base::rejection::not_yet(&what),
+                        ["repair: fold by an associative operator, as `xs >< (+)`".to_string()],
+                    );
+                    return Ty::empty();
+                }
+                Piece::Dyn => self.any(word, span),
+                Piece::Var(_) => {
+                    let what = format!("{word} on a value whose type is a type parameter");
+                    self.error(span, zedc_base::rejection::not_yet(&what));
+                    return Ty::empty();
+                }
+                p if p.is_atoms() => {}
+                p => {
+                    let t = self.text(&p.ty());
+                    self.error_offering(
+                        span,
+                        format!("{word} folds the entries of a family, and this value is {t}"),
+                        [format!(
+                            "repair: fold a family, as `[1, 2, 3].{}`",
+                            match right {
+                                false => "foldl(0, (a, x) -> a + x)",
+                                true => "foldr((x, a) -> x + a, 0)",
+                            }
+                        )],
+                    );
+                    return Ty::empty();
+                }
+            }
+        }
+        // The accumulator's type: `init`'s carriers, joined with the carriers of what `f`
+        // gives, until `f` gives nothing outside it. A scalar's carriers settle within one
+        // round per carrier; a round past that adds only deeper tuples or payloads, which
+        // never settle, so the walk stops there with a refusal.
+        // Not proved: that no accumulator whose type settles needs more than
+        // `Carrier::ALL.len() + 1` rounds; the cases tried (scalars, tuples of scalars, atoms
+        // from `f`) settle within two.
+        let mut acc = init.carriers();
+        let mut grew = Vec::new();
+        for _ in 0..=Carrier::ALL.len() {
+            if values.lists_nothing() {
+                return out.union(&acc);
+            }
+            let (a, v) = (Arg::of(acc.clone()), Arg::of(values.clone()));
+            let args = match right {
+                false => vec![Some(a), Some(v)],
+                true => vec![Some(v), Some(a)],
+            };
+            let what = Label::Text(match right {
+                false => "the function given to `foldl`",
+                true => "the function given to `foldr`",
+            });
+            let gives = self.apply(what, &fsig, args, false, span).0;
+            if self.subtype(&gives, &acc) {
+                return out.union(&acc);
+            }
+            acc = acc.union(&gives.carriers());
+            grew.push(gives);
+        }
+        // The first two results outside the accumulator's type show how it grows; the
+        // union of every round is too long to read.
+        let i = self.text(init);
+        let (a, b) = (self.text(&grew[0]), self.text(&grew[1]));
+        self.error_offering(
+            span,
+            format!(
+                "the accumulator of {word} starts as {i}, and its function makes it {a}, then \
+                 {b}: no one type holds every step"
+            ),
+            [format!(
+                "repair: give the function a result of the start value's type, as {shape}"
+            )],
+        );
+        Ty::empty()
+    }
+
+    /// The operator of `x >< f`, `f` of type `f` and not an operator section (step L3.2;
+    /// DESIGN.md sec:reduction): the prelude word `max` or `min`, whose associativity,
+    /// commutativity and idempotence are built in (sec:reduction item 5). Any other function
+    /// owes a proof of its associativity (rungs 2 and 5 of sec:reduction), which this zedc
+    /// does not build, so it is refused by name, with the left fold, which owes no law, as the
+    /// repair (row REDUCE-by-function).
+    fn reduce_by(&mut self, f: &Ty, span: Span) -> Option<Reducer> {
+        let word = match (f.pieces().as_slice(), f.loose().is_empty()) {
+            ([Piece::Fn(sig)], true) => sig.word.clone(),
+            _ => None,
+        };
+        let r = match word.as_deref() {
+            Some("max") => Reducer::Max,
+            Some("min") => Reducer::Min,
+            _ => {
+                self.error_offering(
+                    span,
+                    zedc_base::rejection::not_yet(
+                        "a fold `><` by a function other than `max`, `min` or an operator section",
+                    ),
+                    ["repair: fold left to right, which owes no law, as \
+                      `xs.foldl(init, (a, x) -> f(a, x))`"
+                        .to_string()],
+                );
+                return None;
+            }
+        };
+        self.info.reducers.insert(span, r);
+        Some(r)
+    }
+
+    /// `x >< op`, `x` of type `x` (step L3.2; DESIGN.md sec:reduction): the operator folded
     /// over the one level of each family `x` may be. The operators taken are those whose
-    /// associativity and identity are built in, `+` and `*` on `int` and on `rat`, `&&` and
-    /// `||` on `bool`, so an empty level folds to the identity and the result has no `#empty`.
-    /// Records the identity at the values' carrier for elaboration ([`Info::reduce`]).
+    /// associativity is built in: `+` and `*` on numbers, `&&` and `||` on `bool`, and `max`
+    /// and `min` on numbers. On floats the fold is the canonical balanced tree of item 1, which
+    /// the kernel `fold` computes. An operator with an identity at the entries' carrier (item
+    /// 3: `+` is `0`, or `-0.0` on floats; `*` is `1`; `&&` is `true`; `||` is `false`; `max`
+    /// and `min` on floats are `-inf` and `inf`) folds an empty level to it; one without
+    /// (`max` and `min` on `int` and `rat`) folds it to `#empty`, so the result gains `#empty`
+    /// unless every family `x` may be has a key always present. Records the identity at the
+    /// values' carrier for elaboration ([`Info::reduce`]). A non-associative operator is
+    /// rejected with the left and right folds as the repairs.
     // Complexity tradeoff: the result is the operator's carrier, not the interval a sum of
     // `card` values in `[lo, hi]` lies in; that transfer is step L3.6's. A naive interval sum
     // here would need the level's cardinality, which this step does not track.
-    fn reduce_end(&mut self, op: BinaryOp, x: &Ty, span: Span) -> Ty {
+    fn reduce_end(&mut self, op: Reducer, x: &Ty, span: Span) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let entries = Ty::union_all(
             (x.fns.iter())
@@ -3226,7 +3472,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .flat_map(|s| s.arrows.iter().map(|a| &a.result)),
         )
         .without(&misses);
-        let written = op.as_str();
+        let written = op.written();
         // A class takes the fold as a need, checked at each call of the generic function,
         // as `sum` does (CHK-need-bound); `meet` calls back here with `replaying` set.
         let var = x.pieces().into_iter().find_map(|p| match p {
@@ -3260,47 +3506,96 @@ impl<'t, 'a> Ck<'t, 'a> {
                 span,
                 format!("`><` folds the entries of a family, and this value is {t}"),
                 [format!(
-                    "repair: fold a family, as `{{0 -> 1, 1 -> 2}} >< ({written})`"
+                    "repair: fold a family, as `{{0 -> 1, 1 -> 2}} >< {written}`"
                 )],
             );
             return Ty::empty();
         }
-        let identity = match op {
-            BinaryOp::Add | BinaryOp::Mul => match entries.numeric_carrier() {
-                Some(c @ (Carrier::Int | Carrier::Rat))
-                    if self.subtype(&entries, &Ty::carrier(c)) =>
-                {
-                    let one = op == BinaryOp::Mul;
-                    let v = match c {
-                        Carrier::Int => Value::Int(one as i64),
-                        _ => Value::rat(Rat::int((one as i64).into())),
-                    };
-                    Some((v, Ty::carrier(c)))
-                }
-                _ => None,
-            },
-            BinaryOp::And | BinaryOp::Or if self.subtype(&entries, &Ty::carrier(Carrier::Bool)) => {
-                Some((Value::Bool(op == BinaryOp::And), Ty::carrier(Carrier::Bool)))
+        // A non-associative operator has no fold `><` (sec:reduction: "bare `><` there still
+        // demands the law"); `foldl` and `foldr` fix the grouping and owe none.
+        if let Reducer::Op(
+            b @ (BinaryOp::Sub
+            | BinaryOp::Div
+            | BinaryOp::IntDiv
+            | BinaryOp::Mod
+            | BinaryOp::Pow
+            | BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge),
+        ) = op
+        {
+            let o = b.as_str();
+            self.error_offering(
+                span,
+                format!(
+                    "`><` folds in any grouping, and `{o}` is not associative: \
+                     `(a {o} b) {o} c` and `a {o} (b {o} c)` differ"
+                ),
+                [
+                    format!("repair: fold left to right, as `xs.foldl(init, (a, x) -> a {o} x)`"),
+                    format!("repair: fold right to left, as `xs.foldr((x, a) -> x {o} a, init)`"),
+                ],
+            );
+            return Ty::empty();
+        }
+        let carrier = entries
+            .numeric_carrier()
+            .filter(|&c| self.subtype(&entries, &Ty::carrier(c)));
+        let float = |x: f64, c: Carrier| match c {
+            Carrier::F32 => Value::float32(x as f32),
+            _ => Value::float(x),
+        };
+        // The fold's carrier, and its identity there if it has one.
+        let fold: Option<(Carrier, Option<Value>)> = match (op, carrier) {
+            (Reducer::Op(o @ (BinaryOp::Add | BinaryOp::Mul)), Some(c)) => {
+                let one = o == BinaryOp::Mul;
+                let v = match c {
+                    Carrier::Int => Value::Int(one as i64),
+                    Carrier::Rat => Value::rat(Rat::int((one as i64).into())),
+                    // `-0.0` is the identity of float `+`: `-0.0 + x` is `x` for every `x`,
+                    // `0.0` included, where `0.0 + -0.0` is `0.0` (IEEE 754 sec. 6.3).
+                    _ => float(if one { 1.0 } else { -0.0 }, c),
+                };
+                Some((c, Some(v)))
+            }
+            (Reducer::Op(o @ (BinaryOp::And | BinaryOp::Or)), _)
+                if self.subtype(&entries, &Ty::carrier(Carrier::Bool)) =>
+            {
+                Some((Carrier::Bool, Some(Value::Bool(o == BinaryOp::And))))
+            }
+            (Reducer::Max | Reducer::Min, Some(c)) => {
+                let inf = match op {
+                    Reducer::Max => f64::NEG_INFINITY,
+                    _ => f64::INFINITY,
+                };
+                let v = matches!(c, Carrier::F64 | Carrier::F32).then(|| float(inf, c));
+                Some((c, v))
             }
             _ => None,
         };
-        // A float fold is not built: bare `><` on floats folds on the canonical balanced tree
-        // of sec:reduction (item 1), and the kernel `fold` is serial, so it would give other
-        // bits. Operators with no built-in identity wait for the operator table of step L3.2.
-        let Some((v, t)) = identity else {
+        // `++` folds wait for its operator table (step L5.2, FP-ops-run); an operator on
+        // entries it does not take is not a fold either.
+        let Some((c, identity)) = fold else {
             let shown = self.text(&entries);
-            let what = format!("a fold `><` by `({written})` of entries of type {shown}");
+            let what = format!("a fold `><` by `{written}` of entries of type {shown}");
             self.error(span, zedc_base::rejection::not_yet(&what));
             return Ty::empty();
         };
-        if self.replaying == 0 {
+        let t = Ty::carrier(c);
+        if self.replaying == 0
+            && let Some(v) = identity
+        {
             self.info.reduce.insert(span, v);
             return t;
         }
         // A need met at a call of a generic function: the one fold the body elaborates to
         // serves every call, whose carriers differ, so it takes no identity and an empty
-        // family folds to `#empty`. A family with a key always present, an arrow whose result
-        // holds no miss, is not empty, and its fold never gives `#empty`.
+        // family folds to `#empty`; so does an operator with no identity at the carrier. A
+        // family with a key always present, an arrow whose result holds no miss, is not
+        // empty, and its fold never gives `#empty`.
         let nonempty = (x.fns.iter()).filter(|s| s.data).all(|s| {
             (s.arrows.iter()).any(|a| {
                 a.params.first().is_some_and(|k| !k.lists_nothing())
@@ -5534,6 +5829,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                         m.ty(Ty::empty());
                     }
                 },
+                // `foldl` and `foldr` (step L3.3, sec:reduction: "a stated direction along the
+                // level's order"), built in as `map` is: `init` first, then the function.
+                Some(_) if name == "foldl" || name == "foldr" => {
+                    match (positional, named, curry) {
+                        ([a, b], [], false) => {
+                            let right = name == "foldr";
+                            let (init, f) = if right { (b, a) } else { (a, b) };
+                            m.k(Frame::FoldInit(x.ty, f, span, right));
+                            m.job(Job::Arg(init, Want::default()));
+                        }
+                        _ => {
+                            let shape = match name {
+                                "foldl" => "`xs.foldl(init, (a, x) -> a + x)`",
+                                _ => "`xs.foldr((x, a) -> x + a, init)`",
+                            };
+                            self.error_offering(
+                            span,
+                            format!("`{name}` takes a start value and a function, passed by position"),
+                            [format!("repair: write {shape}")],
+                        );
+                            m.ty(Ty::empty());
+                        }
+                    }
+                }
                 // `flatMap` (step L4.1, sec:grouping "Multiple emissions are typed"), built in as
                 // `map` is.
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
@@ -8620,6 +8939,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.map_end(&on, f, span, *filter)
             }
             NeedKind::Reduce(op) => self.reduce_end(*op, &on, span),
+            NeedKind::Fold { tys, right } => {
+                let init = self.bound(&tys[0], binds);
+                let f = Arg::of(self.bound(&tys[1], binds));
+                self.fold_dir_end(&on, &init, f, span, *right)
+            }
             NeedKind::NoInt(d) => {
                 self.no_int(&on, d, span);
                 Ty::empty()

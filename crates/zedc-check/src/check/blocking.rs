@@ -392,7 +392,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             [] => return,
             [one] => {
                 let named = self.t.res.uses.get(&value.span);
-                let seen = matches!(value.kind, ExprKind::Lambda { .. } | ExprKind::Section(_))
+                let seen = matches!(value.kind, ExprKind::Lambda { .. } | ExprKind::Section(..))
                     || (matches!(value.kind, ExprKind::Name(_))
                         && (matches!(named, Some(Ref::Prelude(_)))
                             || self.functions_in(named).is_some()));
@@ -471,7 +471,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::Reduce { .. }
             | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
-            | ExprKind::Section(_)
+            | ExprKind::Section(..)
             | ExprKind::Array(_)
             | ExprKind::Set(_)
             | ExprKind::Map(_)
@@ -515,7 +515,7 @@ impl<'t, 'a> Walk<'t, 'a> {
         }
         let Some(f) = owner else { return };
         let unseen = match (&callee.kind, r) {
-            (ExprKind::Lambda { .. } | ExprKind::Section(_), _) => false,
+            (ExprKind::Lambda { .. } | ExprKind::Section(..), _) => false,
             // A prelude word, or a read of the file port by a call (`main::files(p)`), counted
             // with the reads above.
             (_, Some(Ref::Prelude(_) | Ref::Main(_))) => false,
@@ -605,7 +605,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                 | ExprKind::Reduce { .. }
                 | ExprKind::Remap { .. }
                 | ExprKind::Read { .. }
-                | ExprKind::Section(_)
+                | ExprKind::Section(..)
                 | ExprKind::Array(_)
                 | ExprKind::Set(_)
                 | ExprKind::Map(_)
@@ -873,7 +873,7 @@ pub(super) fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
         | ExprKind::Atom(_)
         | ExprKind::Name(_)
         | ExprKind::This
-        | ExprKind::Section(_)
+        | ExprKind::Section(..)
         | ExprKind::Block(_) => {}
         ExprKind::Str(parts) => (parts.iter()).for_each(|p| match p {
             StrPart::Hole(e) => push(e),

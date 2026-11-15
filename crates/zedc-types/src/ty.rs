@@ -1513,6 +1513,11 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             });
             parts.extend([Dbg::Text(", curry: "), Dbg::Leaf(curry), Dbg::Text(" }")]);
         }
+        NeedKind::Fold { tys, right } => {
+            parts.push(Dbg::Text("Fold { tys: "));
+            debug_list(parts, "[", tys, "]", |p, t| p.push(Dbg::Ty(t)));
+            parts.extend([Dbg::Text(", right: "), Dbg::Leaf(right), Dbg::Text(" }")]);
+        }
         NeedKind::Into { what, ty } => parts.extend([
             Dbg::Text("Into { what: "),
             Dbg::Leaf(what),
@@ -3211,6 +3216,30 @@ pub struct Need {
     pub span: Span,
 }
 
+/// The operator a fold `m >< op` folds by (DESIGN.md sec:reduction): an operator section, as
+/// `(+)`, or the prelude word `max` or `min`, whose associativity, commutativity and
+/// idempotence are built in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Reducer {
+    /// An operator section, `(op)`.
+    Op(zedc_syntax::ast::BinaryOp),
+    /// The prelude word `min`.
+    Min,
+    /// The prelude word `max`.
+    Max,
+}
+
+impl Reducer {
+    /// The operator as a program writes it after `><`: `(+)`, `min`, `max`.
+    pub fn written(self) -> String {
+        match self {
+            Reducer::Op(op) => format!("({})", op.as_str()),
+            Reducer::Min => "min".into(),
+            Reducer::Max => "max".into(),
+        }
+    }
+}
+
 /// The uses a [`Need`] records.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NeedKind {
@@ -3292,7 +3321,16 @@ pub enum NeedKind {
     },
     /// `v >< (op)`: the value is a family whose entries `op` folds, and the use gives the fold
     /// (step L3.2; DESIGN.md sec:reduction).
-    Reduce(zedc_syntax::ast::BinaryOp),
+    Reduce(Reducer),
+    /// `v.foldl(init, f)`, or `v.foldr(f, init)` when `right` is set: the value is a rank whose
+    /// entries `f` folds from `init`, and the use gives the accumulator (step L3.3; DESIGN.md
+    /// sec:reduction). `tys` is the types of `init` and of `f`, in that order.
+    Fold {
+        /// The types of the start value and of the function.
+        tys: Vec<Ty>,
+        /// Whether the use is `foldr`.
+        right: bool,
+    },
     /// A use that takes an int in its domain, of the value of the parameter at position
     /// `param` of the function whose signature holds it: each call shows the ints of its
     /// argument in the domain, or passes on a parameter of its own, whose calls then show them
@@ -3495,6 +3533,10 @@ impl Need {
                     filter: *filter,
                 },
                 NeedKind::Reduce(op) => NeedKind::Reduce(*op),
+                NeedKind::Fold { tys, right } => NeedKind::Fold {
+                    tys: tys.iter().map(&mut f).collect(),
+                    right: *right,
+                },
                 NeedKind::Destructure { i, n } => NeedKind::Destructure { i: *i, n: *n },
                 NeedKind::Call {
                     what,
@@ -3573,6 +3615,7 @@ impl Need {
             NeedKind::Call {
                 positional, named, ..
             } => (None, positional, named),
+            NeedKind::Fold { tys, .. } => (None, tys, &[]),
         };
         std::iter::once(&self.on)
             .chain(index)
@@ -3605,6 +3648,7 @@ impl Need {
                 .iter()
                 .chain(named.iter().map(|(_, t)| t))
                 .collect(),
+            NeedKind::Fold { tys, .. } => tys.iter().collect(),
         };
         std::iter::once(&self.on)
             .chain(more)
@@ -3638,6 +3682,7 @@ impl Need {
                 positional.extend(named.into_iter().map(|(_, t)| t));
                 positional
             }
+            NeedKind::Fold { tys, .. } => tys,
         };
         std::iter::once(self.on).chain(more).chain(self.result)
     }

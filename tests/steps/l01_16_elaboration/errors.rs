@@ -129,11 +129,8 @@ fn forms_of_later_steps_and_layers() {
             "`map` takes a function, and this value is 1. [1]",
         ),
         (
-            "p = [1];\nx = p.foldl(1);",
-            concat!(
-                zed_tests::not_yet!("the prelude word `foldl`"),
-                " [p.foldl]"
-            ),
+            "p = [1];\nx = p.scan(1);",
+            concat!(zed_tests::not_yet!("the prelude word `scan`"), " [p.scan]"),
         ),
         (
             "f = (x = 1) -> x;",

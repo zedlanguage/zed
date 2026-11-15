@@ -326,9 +326,10 @@ impl<'a, 's> Builder<'a, 's> {
                 let op = self.op(self.tree.nodes[n].start + 1);
                 let op = BinaryOp::of_token(op)
                     .expect("OpFunction = '(' BinOp ')', each BinOp a binary operator");
+                let span = self.span(n);
                 Ok(Expr {
-                    kind: ExprKind::Section(op),
-                    span: self.span(n),
+                    kind: ExprKind::Section(op, Box::new(section_lambda(op, span))),
+                    span,
                 })
             }
             "ArrayExpr" => Ok(Expr {
@@ -966,5 +967,50 @@ impl Error {
                 .collect(),
             row: c.row,
         }
+    }
+}
+
+/// The lambda `(l, r) -> l op r` that the section `(op)` at `span` stands for
+/// ([`ExprKind::Section`]): the parameters `<left>` and `<right>`, names no identifier spells,
+/// read at the opening and closing parentheses, and the body at the text between them.
+fn section_lambda(op: BinaryOp, span: Span) -> Expr {
+    let open = Span {
+        start: span.start,
+        end: span.start + 1,
+    };
+    let close = Span {
+        start: span.end - 1,
+        end: span.end,
+    };
+    let inner = Span {
+        start: open.end,
+        end: close.start,
+    };
+    let name = |text: &str, at: Span| Expr {
+        kind: ExprKind::Name(text.to_string()),
+        span: at,
+    };
+    let param = |text: &str, at: Span| Param {
+        name: text.to_string(),
+        tuple: None,
+        positional: false,
+        ty: None,
+        default: None,
+        span: at,
+        name_at: at,
+    };
+    Expr {
+        kind: ExprKind::Lambda {
+            params: vec![param("<left>", open), param("<right>", close)],
+            body: Box::new(Expr {
+                kind: ExprKind::Binary(
+                    op,
+                    Box::new(name("<left>", open)),
+                    Box::new(name("<right>", close)),
+                ),
+                span: inner,
+            }),
+        },
+        span,
     }
 }

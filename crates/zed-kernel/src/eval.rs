@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
-use crate::exact::{CanonicalTree, TreeStep, exact_sum};
+use crate::exact::{CanonicalTree, TreeStep};
 use crate::num::{Test, TooLarge, refused};
 use crate::sites::{Sites, Span};
 use crate::value::KernelError;
@@ -2567,7 +2567,9 @@ impl<'t> Machine<'_, 't> {
 }
 
 /// The result of a level that needs no call of `op`: an empty level's, or, for the primitive
-/// `+`, that of a level holding an atom or only floats, which is the exact sum, rounded once.
+/// `+`, that of a level holding an atom, which is its first atom. A level of floats goes
+/// round the canonical tree like any other: sec:reduction item 1 fixes the tree, and item 2
+/// says no float policy is the exact sum (that is `rat`'s, written `xs.map(x -> rat(x)) >< (+)`).
 fn reduced(values: &[Value], op: &V<'_>, identity: &Option<Value>) -> Option<Value> {
     if values.is_empty() {
         return Some(identity.clone().unwrap_or_else(|| Value::atom("empty")));
@@ -2575,16 +2577,6 @@ fn reduced(values: &[Value], op: &V<'_>, identity: &Option<Value>) -> Option<Val
     if matches!(op, V::Prim(Prim::Add)) {
         if let Some(atom) = values.iter().find(|v| matches!(v, Value::Atom(_))) {
             return Some(atom.clone());
-        }
-        let floats: Option<Vec<f64>> = values
-            .iter()
-            .map(|v| match v {
-                Value::Float(x) => Some(x.get()),
-                _ => None,
-            })
-            .collect();
-        if let Some(xs) = floats {
-            return Some(Value::float(exact_sum(&xs)));
         }
     }
     None

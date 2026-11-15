@@ -2864,11 +2864,10 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(of));
             }
             // An operator section as the operator of `><` is the operator itself, which names
-            // nothing; elsewhere a section is not built yet (step L3.2). A fold by a function,
-            // `m >< g`, is step L3.2's too, and is not built yet.
+            // nothing; elsewhere a section is its lambda (below). A fold by a function,
+            // `m >< g`, resolves `g`; the checker takes `max` and `min` and refuses the rest.
             ExprKind::Reduce { of, op } => {
-                if !matches!(op.kind, ExprKind::Section(_)) {
-                    self.later(e.span, "a reduction `><` by a function");
+                if !matches!(op.kind, ExprKind::Section(..)) {
                     todo.push(Task::Expr(op));
                 }
                 todo.push(Task::Expr(of));
@@ -2905,7 +2904,7 @@ impl Resolver<'_> {
                 // A level's `><` takes an operator section, as `x >< (+)` does; a function in
                 // its place is a later step's form, as there.
                 for op in levels.iter().rev().filter_map(|l| l.reduce.as_ref()) {
-                    if !matches!(op.kind, ExprKind::Section(_)) {
+                    if !matches!(op.kind, ExprKind::Section(..)) {
                         self.later(op.span, "a reduction `><` by a function");
                         todo.push(Task::Expr(op));
                     }
@@ -2921,7 +2920,8 @@ impl Resolver<'_> {
                     _ => todo.push(Task::Expr(of)),
                 }
             }
-            ExprKind::Section(_) => self.later(e.span, "an operator section"),
+            // A section anywhere but as the operator of `><` is the lambda it stands for.
+            ExprKind::Section(_, lambda) => todo.push(Task::Expr(lambda)),
             ExprKind::Array(items) => {
                 todo.extend(items.iter().rev().map(Task::Expr));
             }
