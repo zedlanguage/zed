@@ -3780,15 +3780,45 @@ impl<'t, 'a> Ck<'t, 'a> {
     // A type that is variables and atoms, as `if b { xs } else { ys }` gives with two, takes
     // the use once per variable: reading only the first left `ys` unchecked, so a call
     // passing a string there was accepted. A variable beside a tuple or a family reaches here
-    // too (`sum_by_region`), and the rest beside the variables is summed as it stands.
+    // too (`sum_by_region`), and the rest beside the variables is summed as it stands, but
+    // for families with no entries beside tuples, which are summed with each variable
+    // (`sum_beside`, below).
     // `sum(x)` written as a call reaches here as `x.sum` does (`word_applied`).
     // Complexity tradeoff: one need or one recursion per variable, as at `fold_level`, and it
     // ends as there: `rest` and each resolved `t` hold no variable (the invariant at
     // `Class::resolved`), so the inner call goes to `fold_level` or `sum` on a type with none.
+    // Families with no entries beside the variables (`beside`, as `[]` in
+    // `(if b { xs } else { [] }).sum`) are summed with each variable, not on their own:
+    // rule 6 makes the families one region, folded at the carrier of all their entries, so
+    // `[]` folds at the carrier a call gives the variable (`0` at `int`, `-0.0` at `f64`) and
+    // at none beside a tuple (`#empty`), as the concrete join of the call's type with `[]`
+    // does. Folded alone at the definition it would record no carrier under no call's frame,
+    // which `finish` refuses beside any call's identity. They are split off only where the
+    // rest beside them is tuples and atoms: beside a string or a function the concrete
+    // receiver is refused by the fold (`.sum` folds the entries of a family), and the rest is
+    // left whole so that the definition is refused with that message.
+    // Why summing `t` joined with `beside` at a call gives what the concrete `.sum` of the
+    // call's type gives: the variable's region at the call is `t`, and `t | beside` is the
+    // concrete receiver less the pieces summed here at the definition, which are tuples and
+    // atoms; a tuple is summed alone and atoms pass on both sides, so the families, which
+    // the fold takes together, are the same in both. Under two variables each check folds
+    // `beside` again; that adds no carrier, and the empty level takes the carrier any check
+    // of the fold at the call found (`Ck::saw_empty`).
     pub(super) fn sum_method(&mut self, x: &Ty, span: Span, site: Span) -> Ty {
+        self.sum_beside(x, &Ty::empty(), span, site)
+    }
+
+    /// [`Self::sum_method`] of `x` joined with `beside`, families with no entries, which are
+    /// summed with each variable of `x` and kept out of the rest of `x`.
+    pub(super) fn sum_beside(&mut self, x: &Ty, beside: &Ty, span: Span, site: Span) -> Ty {
         if !x.vars.is_empty() {
-            let mut rest = x.clone();
+            let mut rest = x.union(beside);
             rest.vars = VarSet::new();
+            let mut beside = Ty::empty();
+            if let Some(empty) = empty_families_beside_tuples(&rest) {
+                rest.fns = (rest.fns.iter()).filter(|s| !s.data).cloned().collect();
+                beside = empty;
+            }
             let mut out = match rest.without_loose().pieces().iter().all(|p| p.is_atoms()) {
                 true => self.passing(x, "`.sum`", span, None),
                 false => self.sum_method(&rest, span, site),
@@ -3796,8 +3826,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             for v in x.vars.iter() {
                 let r = self.class_root(v);
                 let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                    Some((_, Some(t))) => self.sum_method(&t, span, site),
-                    Some((r, None)) => self.need(r, NeedKind::SumMethod(site), true, span),
+                    Some((_, Some(t))) => self.sum_method(&t.union(&beside), span, site),
+                    Some((r, None)) => {
+                        let kind = NeedKind::SumMethod {
+                            site,
+                            beside: beside.clone(),
+                        };
+                        self.need(r, kind, true, span)
+                    }
                     // As at `fold_level`: a variable with no class records no carrier, which
                     // `finish` rejects beside any identity.
                     None => {
@@ -3809,6 +3845,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return out;
         }
+        let joined;
+        let x = match beside.fns.is_empty() {
+            true => x,
+            false => {
+                joined = x.union(beside);
+                &joined
+            }
+        };
         if x.fns.iter().any(|s| s.data) {
             let out = self.passing(x, "`.sum`", span, None);
             let add = Reducer::Op(BinaryOp::Add);
@@ -3841,6 +3885,28 @@ impl<'t, 'a> Ck<'t, 'a> {
         let out = self.passing(x, form.word(), span, None);
         let t = self.fold_level(op, &x.without_loose(), span, span, form);
         out.union(&t)
+    }
+
+    /// Records that the fold written at `site` met a family with no entries, as `[]`, for
+    /// [`Ck::finish`]: under a call's frame, the call (`FoldChecks::empty`), whose empty level
+    /// then folds at the carrier another check of the fold at that call found, else to
+    /// `#empty`; under none, no carrier, as before.
+    // Why the empty level may take another check's carrier: at one call the fold's checks
+    // are the regions of one receiver, the variables' types and what is beside them, each
+    // met in turn (`sum_beside`, `fold_level`); the concrete receiver joins them, so its
+    // families are one region whose entries are those of all the checks together, and the
+    // fold takes the identity at their carrier (DESIGN.md sec:type_resolution, rule 6;
+    // sec:reduction, "Identity as data"). A family with no entries adds no entry, so the
+    // carrier is the other checks'. Two other checks at two carriers are refused by `finish`
+    // as they were. Under no call's frame there is no call to group the checks by.
+    fn saw_empty(&mut self, site: Span) {
+        if self.trying {
+            return;
+        }
+        match self.call_frames.last().and_then(|f| f.call) {
+            Some(call) => self.folds.entry(site).or_default().empty.push(call),
+            None => self.saw_fold(site, None, None),
+        }
     }
 
     /// Records that the `.sum` at `site` was met under the current call's frame on what it
@@ -3919,7 +3985,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A family with no entries beside the variables adds no entry, so it takes no
             // carrier: recording none, as `[]` alone does, would refuse every call that
             // gives the variables a carrier with an identity (`finish`), where the concrete
-            // `(if b { [3, 4] } else { [] }).sum` folds at `int` and gives `0`. Its empty
+            // `(if b { [3, 4] } else { [] }) >< (+)` folds at `int` and gives `0`. (`.sum`
+            // does not reach here with variables: `sum_beside` sums `[]` with each.) Its empty
             // level folds to the identity the variables' carrier has; `max` and `min` have
             // none at `int` and `rat`, so for them it may give `#empty`, which the result
             // then holds. At `f64`, where `max` has `-inf`, that `#empty` is more than the
@@ -3953,9 +4020,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             return out;
         }
         // A family with no entries, as `[]`, has no carrier to take an identity from, and
-        // folds to `#empty` (DESIGN.md sec:reduction).
+        // folds to `#empty` (DESIGN.md sec:reduction), unless another check of the fold at the
+        // same call gives one (`saw_empty`). The type keeps `#empty` either way: sound, and
+        // looser than the concrete join where the call's other values give a carrier with an
+        // identity.
         if !others && x.loose().is_empty() && !x.fns.is_empty() && entries.lists_nothing() {
-            self.saw_fold(site, None, None);
+            self.saw_empty(site);
             return Ty::set(KType::atom("empty"));
         }
         if others || !x.loose().is_empty() {
@@ -9568,7 +9638,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty::empty()
             }
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
-            NeedKind::SumMethod(site) => self.sum_method(&on, span, *site),
+            NeedKind::SumMethod { site, beside } => self.sum_beside(&on, beside, span, *site),
             NeedKind::Map { f, filter } => {
                 let f = Arg::of(self.bound(f, binds));
                 self.map_end(&on, f, span, *filter)
@@ -17976,30 +18046,47 @@ impl<'t, 'a> Ck<'t, 'a> {
 /// parameter, which may be a family at one call and a tuple at another, or both a family and a
 /// tuple. `sum` takes a family by the fold of the method register (`xs.sum // = xs >< (+)`)
 /// and a tuple by adding its components (step L1.18).
-/// The one exception is type parameters beside a family with no entries, as
-/// `if b { xs } else { [] }` gives: the empty level folds to the identity at the parameters'
-/// carrier (`Ck::fold_level`), which a call passing a tuple does not give, so that receiver
-/// keeps the fold of `family_fold` and a call passing a tuple is rejected (not proved to agree
-/// with rule 6, which the concrete `(if b { (3, 4) } else { [] }).sum` follows, giving
-/// `#empty`; row FAIL-sum-empty-family-beside-parameter).
+/// Type parameters beside a family with no entries, as `if b { xs } else { [] }` gives, are
+/// no exception: the empty level is summed with each parameter at its call
+/// ([`Ck::sum_beside`]), so it folds at the carrier the call gives and to `#empty` beside a
+/// tuple, as the concrete `(if b { (3, 4) } else { [] }).sum` does (row
+/// FAIL-sum-empty-family-beside-parameter).
 fn sum_by_region(x: &Ty) -> bool {
     let x = x.without_loose();
-    let pieces = x.pieces();
-    let tuple = pieces.iter().any(|p| matches!(p, Piece::Tuple(_)));
-    let family = x.fns.iter().any(|s| s.data);
-    if x.vars.is_empty() {
-        return tuple && family;
+    if !x.vars.is_empty() {
+        return true;
     }
+    let tuple = x.pieces().iter().any(|p| matches!(p, Piece::Tuple(_)));
+    tuple && x.fns.iter().any(|s| s.data)
+}
+
+/// The families of `x`, a type with no variable at its outer level, as one type, where they
+/// hold no entry (as `[]`) and no variable, and every other piece of `x` is a tuple or
+/// atoms; none otherwise. These are the families [`Ck::sum_beside`] sums with each variable
+/// beside `x` in place of on their own. A family that holds a variable is left to the fold
+/// at the definition, as before: the need carries `beside` unreplaced (`NeedKind::SumMethod`),
+/// so a variable inside it would not take the call's type.
+fn empty_families_beside_tuples(x: &Ty) -> Option<Ty> {
     let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
-    let empty_family = family
-        && pieces.iter().all(|p| match p {
-            Piece::Fn(s) => {
-                s.data && (s.arrows.iter()).all(|a| a.result.without(&misses).lists_nothing())
+    let mut families = false;
+    for p in x.pieces() {
+        match p {
+            Piece::Fn(s) if s.data => {
+                if !(s.arrows.iter()).all(|a| a.result.without(&misses).lists_nothing()) {
+                    return None;
+                }
+                families = true;
             }
-            Piece::Var(_) => true,
-            p => p.is_atoms(),
-        });
-    !empty_family
+            Piece::Tuple(_) => {}
+            p if p.is_atoms() => {}
+            _ => return None,
+        }
+    }
+    let empty = Ty {
+        fns: (x.fns.iter()).filter(|s| s.data).cloned().collect(),
+        ..Ty::empty()
+    };
+    (families && !empty.holds_vars()).then_some(empty)
 }
 
 /// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed

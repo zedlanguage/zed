@@ -471,10 +471,13 @@ fn a_parameter_joined_with_the_empty_family_folds_at_the_parameters_carrier() {
                t = s([3, 4], true);\nf = s([3, 4], false);\n";
     prints(src, "t", "4");
     prints(src, "f", "#empty");
-    rejected(
-        "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\nt = s((3, 4), false);\n",
-        &["folds the entries of a family"],
-    );
+    // A tuple passed there is summed by adding, and `[]` beside it has no carrier, as in the
+    // concrete `(if b { (3, 4) } else { [] }).sum` (rule 6 of sec:type_resolution; row
+    // FAIL-sum-empty-family-beside-parameter).
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n\
+               t = s((3, 4), true);\nf = s((3, 4), false);\n";
+    prints(src, "t", "7");
+    prints(src, "f", "#empty");
 }
 
 #[test]
@@ -875,10 +878,10 @@ fn a_generic_fold_rejected_at_a_call_names_the_form_written() {
          t = s((3, 4), true);\n",
         &["`><` folds the entries of a family"],
     );
-    // `.sum` beside a family with no entries keeps the fold (row
-    // FAIL-sum-empty-family-beside-parameter), so a string passed there is rejected by it:
-    // sec:reduction, a fold takes a family; the message names `.sum`, as the concrete
-    // `(if b { "ab" } else { [] }).sum` does.
+    // `.sum` beside a family with no entries folds that family with what each call passes
+    // (row FAIL-sum-empty-family-beside-parameter), so a string passed there is rejected by
+    // the fold: sec:reduction, a fold takes a family; the message names `.sum`, as the
+    // concrete `(if b { "ab" } else { [] }).sum` does.
     rejected(
         "f(positional b) = (if b { \"ab\" } else { [] }).sum;\nt = f(true);\n",
         &["`.sum` folds the entries of a family"],
@@ -888,4 +891,126 @@ fn a_generic_fold_rejected_at_a_call_names_the_form_written() {
          t = s(\"ab\", true);\n",
         &["`.sum` folds the entries of a family"],
     );
+}
+
+// ---- `.sum` of a type parameter beside a family with no entries is taken region by region
+// (row FAIL-sum-empty-family-beside-parameter) ----
+
+#[test]
+fn sum_of_a_parameter_beside_an_empty_family_is_taken_region_by_region() {
+    // DESIGN.md sec:type_resolution, rule 6: "over each region of the argument type, the
+    // codomains of all arrows covering that region intersect; across regions, results union".
+    // A tuple is summed by adding its components and a family by the fold; `[]` has no carrier
+    // and folds to `#empty` (sec:reduction, "Identity as data"). The concrete
+    // `(if b { (3, 4) } else { [] }).sum` gives `7` and `#empty`, and so does the generic body
+    // at a call that passes the tuple.
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n";
+    prints(&format!("{src}t = s((3, 4), true);\n"), "t", "7");
+    prints(&format!("{src}t = s((3, 4), false);\n"), "t", "#empty");
+    let src = "f(positional b) = (if b { (3, 4) } else { [] }).sum;\nt = f(true);\nu = f(false);\n";
+    prints(src, "t", "7");
+    prints(src, "u", "#empty");
+    // The call form `sum(x)` takes the same path.
+    let src = "s(positional xs, positional b) = sum(if b { xs } else { [] });\n";
+    prints(&format!("{src}t = s((3, 4), true);\n"), "t", "7");
+    prints(&format!("{src}t = s((3, 4), false);\n"), "t", "#empty");
+    // At `int` the empty level gives `0`, a number the caller can add to.
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n\
+               t = s([3, 4], false) + 1;\n";
+    prints(src, "t", "1");
+}
+
+#[test]
+fn each_call_folds_the_empty_family_at_the_carrier_it_gives() {
+    // sec:reduction, "Identity as data": the empty level folds to the identity of `+` at the
+    // carrier of the call's entries, `0` at `int` and `-0.0` at `f64`, and to `#empty` where
+    // the call gives no carrier, beside a tuple. One program holds the three calls, so the
+    // fold has one body per identity, chosen at each call (REDUCE-generic-identity).
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n\
+               t = (s((3, 4), false), s([3, 4], false), s([1.5], false));\n\
+               u = (s((3, 4), true), s([3, 4], true), s([1.5], true));\n";
+    prints(src, "t", "(#empty, 0, -0.0)");
+    prints(src, "u", "(7, 7, 1.5)");
+    // Through another generic function, whose calls decide the identity.
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n\
+               k(positional ys, positional c) = s(ys, c);\n\
+               t = (k((3, 4), false), k([3, 4], false), k((3, 4), true));\n";
+    prints(src, "t", "(#empty, 0, 7)");
+}
+
+#[test]
+fn a_tuple_and_an_empty_family_beside_a_parameter_are_summed_as_the_concrete_join_is() {
+    // The tuple `(1, 2)` beside `[]` is summed at the definition; `[]` folds at the carrier the
+    // call gives `xs`, as in the concrete `(if b { [3, 4] } else { if c { (1, 2) } else { [] }
+    // }).sum`, where `[3, 4]` and `[]` are one region, folded at `int`.
+    let body = "(if b { xs } else { if c { (1, 2) } else { [] } }).sum";
+    let src = format!(
+        "s(positional xs, positional b, positional c) = {body};\n\
+         t = (s([3, 4], true, true), s([3, 4], false, true), s([3, 4], false, false));\n\
+         u = (s((5, 6), true, true), s((5, 6), false, true), s((5, 6), false, false));\n"
+    );
+    prints(&src, "t", "(7, 3, 0)");
+    prints(&src, "u", "(11, 3, #empty)");
+    let concrete = "f(positional b, positional c) = \
+                    (if b { [3, 4] } else { if c { (1, 2) } else { [] } }).sum;\n\
+                    g(positional b, positional c) = \
+                    (if b { (5, 6) } else { if c { (1, 2) } else { [] } }).sum;\n\
+                    t = (f(true, true), f(false, true), f(false, false));\n\
+                    u = (g(true, true), g(false, true), g(false, false));\n";
+    prints(concrete, "t", "(7, 3, 0)");
+    prints(concrete, "u", "(11, 3, #empty)");
+}
+
+#[test]
+fn an_empty_level_at_a_call_takes_the_carrier_the_other_parameters_give() {
+    // Two parameters beside `[]`: at one call the fold is checked once for each, and `[]`
+    // folds at the carrier any of them gives, as in the concrete join, where `(1, 2)` beside
+    // `[3, 4]` and `[]` sums the families at `int` and `[]` gives `0`.
+    let sum = "s(positional xs, positional ys, positional b, positional c) = \
+               (if b { xs } else { if c { ys } else { [] } }).sum;\n";
+    let src = format!(
+        "{sum}t = (s((1, 2), [3, 4], false, false), s((1, 2), (5, 6), false, false), \
+         s([1], [2], false, false), s((1, 2), [3, 4], false, true));\n"
+    );
+    prints(&src, "t", "(0, #empty, 0, 7)");
+    let concrete = "f(positional c) = (if c { [3, 4] } else { [] }).sum;\n\
+                    g(positional b, positional c) = \
+                    (if b { (1, 2) } else { if c { [3, 4] } else { [] } }).sum;\n\
+                    t = (g(false, false), f(false));\n";
+    prints(concrete, "t", "(0, 0)");
+    // A parameter given `[]` beside one given a family: the empty level takes that family's
+    // carrier, as the concrete `(if b { [] } else { [1, 2] }).sum` folds at `int`.
+    let src = "s(positional xs, positional ys, positional b) = (if b { xs } else { ys }).sum;\n\
+               t = s([], [1, 2], true);\n";
+    prints(src, "t", "0");
+    prints(
+        "f(positional b) = (if b { [] } else { [1, 2] }).sum;\nt = f(true);\n",
+        "t",
+        "0",
+    );
+    let src = "s(positional xs, positional ys, positional b) = (if b { xs } else { ys }) >< max;\n\
+               t = s([], [1.0], true);\nu = s([], [1], true);\n";
+    prints(src, "t", "-inf");
+    prints(src, "u", "#empty");
+    prints(
+        "f(positional b) = (if b { [] } else { [1.0] }) >< max;\nt = f(true);\n",
+        "t",
+        "-inf",
+    );
+}
+
+#[test]
+fn the_region_split_of_a_parameter_beside_a_tuple_takes_each_calls_identity() {
+    // Row FAIL-sum-word-family split `sum(x)` by region; REDUCE-generic-identity gives the
+    // fold one body per identity. Together: the family region of each call folds an empty
+    // level at that call's carrier, `0` at `int` and `-0.0` at `f64`, and the tuple region
+    // is added, in one program.
+    let src = "s(positional xs, positional b) = sum(if b { xs } else { (1, 2) });\n\
+               ei = [1].where(v -> v > 3);\nef = [1.0].where(v -> v > 3.0);\n\
+               t = (s(ei, true), s(ef, true), s(ei, false), s([3, 4], true), s((5, 6), true));\n";
+    prints(src, "t", "(0, -0.0, 3, 7, 11)");
+    let src = "s(positional xs, positional b) = (if b { xs } else { (1, 2) }).sum;\n\
+               ei = [1].where(v -> v > 3);\nef = [1.0].where(v -> v > 3.0);\n\
+               t = (s(ei, true), s(ef, true), s(ei, false));\n";
+    prints(src, "t", "(0, -0.0, 3)");
 }

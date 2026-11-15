@@ -299,6 +299,40 @@ fn n_calls_of_a_generic_sum_written_as_a_call_on_a_union_are_checked_in_linear_t
     );
 }
 
+#[test]
+fn n_calls_of_a_generic_sum_beside_an_empty_family_run_in_linear_time() {
+    // `[]` beside the parameter is summed with what each call passes: a tuple, where it folds
+    // to `#empty`, an `int` family (`0`) or an `f64` family (`-0.0`), so the fold has three
+    // bodies and each call takes one (row FAIL-sum-empty-family-beside-parameter).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 3 {
+                0 => format!("x{i} = s(({i}, 1), false);\n"),
+                1 => format!("x{i} = s([{i}, 1], false);\n"),
+                _ => format!("x{i} = s([{i}.5], false);\n"),
+            })
+            .collect::<String>();
+        let last = format!("t = (x0, x1, x2, x{});\n", n - 1);
+        format!(
+            "s(positional xs, positional b) = (if b {{ xs }} else {{ [] }}).sum;\n{calls}{last}"
+        )
+    });
+    let run = |n: usize| {
+        let want = match (n - 1) % 3 {
+            0 => "#empty",
+            1 => "0",
+            _ => "-0.0",
+        };
+        assert_eq!(value(&srcs[&n], "t"), format!("(#empty, 0, -0.0, {want})"));
+    };
+    scaling::check(
+        "n calls of a generic `.sum` of a parameter beside `[]`, at a tuple, `int` and `f64`, \
+         whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
 /// The leaves `leaves` joined by a balanced tree of `if`s, the k-th `if` met on the way down
 /// testing its own parameter `ck`: every leaf is reachable, and the tree is about log n deep.
 fn if_tree(leaves: &[String], next: &mut usize) -> String {

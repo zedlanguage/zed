@@ -1407,6 +1407,10 @@ struct FoldChecks {
     /// Each call whose needs were being checked when `.sum` met its receiver as a tuple, which
     /// it sums without the fold ([`Ck::saw_unfolded`]); a call may appear more than once.
     unfolded: Vec<Span>,
+    /// Each call whose needs were being checked when the fold met a family with no entries
+    /// ([`Ck::saw_empty`]): its empty level takes the carrier the call's other checks found,
+    /// else none. A call may appear more than once.
+    empty: Vec<Span>,
 }
 
 struct Ck<'t, 'a> {
@@ -4283,10 +4287,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         // for it.
         for (span, seen) in std::mem::take(&mut self.folds) {
             let FoldChecks {
-                carriers,
-                by_call,
+                mut carriers,
+                mut by_call,
                 mut unfolded,
+                mut empty,
             } = seen;
+            // A call whose only checks met a family with no entries found no carrier, as `[]`
+            // alone folds; one with another check takes that check's carrier (`saw_empty`).
+            // Complexity tradeoff: a sort of the e records and one map lookup each,
+            // O(e log e), against a scan of `by_call` per record, O(e × calls).
+            empty.sort_unstable();
+            empty.dedup();
+            for call in empty {
+                if let std::collections::btree_map::Entry::Vacant(e) = by_call.entry(Some(call)) {
+                    e.insert(vec![(None, None)]);
+                    if !carriers.iter().any(|(c, _)| c.is_none()) {
+                        carriers.push((None, None));
+                    }
+                }
+            }
             match carriers.as_slice() {
                 [(Some(_), Some(v))] => {
                     self.info.reduce.insert(span, v.clone());
@@ -4372,7 +4391,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut todo: Vec<&Sig> = vec![sig];
                 while let Some(s) = todo.pop() {
                     for n in &s.needs {
-                        if let NeedKind::Reduce(_, site, _) | NeedKind::SumMethod(site) = n.kind
+                        if let NeedKind::Reduce(_, site, _) | NeedKind::SumMethod { site, .. } =
+                            n.kind
                             && self.info.split_folds.contains_key(&site)
                         {
                             sites.push(site);

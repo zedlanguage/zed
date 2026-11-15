@@ -1542,6 +1542,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         NeedKind::Narrow(Narrow::Not(t)) => {
             parts.extend([Dbg::Text("Narrow(Not("), Dbg::Ty(t), Dbg::Text("))")]);
         }
+        NeedKind::SumMethod { site, beside } => parts.extend([
+            Dbg::Text("SumMethod { site: "),
+            Dbg::Leaf(site),
+            Dbg::Text(", beside: "),
+            Dbg::Ty(beside),
+            Dbg::Text(" }"),
+        ]),
         NeedKind::Order {
             what,
             word,
@@ -1565,7 +1572,6 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
         | NeedKind::Sum
-        | NeedKind::SumMethod(_)
         | NeedKind::Reduce(..)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
@@ -3383,7 +3389,16 @@ pub enum NeedKind {
     /// [`NeedKind::Sum`] sums it (DESIGN.md, the method register: `tot = xs.sum; // = xs >< (+)`).
     /// The span is the call's own, as at [`NeedKind::Reduce`], so that the fold's checks at
     /// every call are found together.
-    SumMethod(Span),
+    SumMethod {
+        /// Where the `.sum` is written.
+        site: Span,
+        /// The families with no entries joined with the value at the `.sum`, as `[]` in
+        /// `(if b { xs } else { [] }).sum`, or the empty type: the use is met on the value's
+        /// type joined with them, as the receiver is at the call's types, so an empty level
+        /// takes the carrier the value gives, or none beside a tuple (DESIGN.md
+        /// sec:type_resolution, rule 6). They hold no variable.
+        beside: Ty,
+    },
     /// `v.map(f)`, or `v.where(f)` when `filter` is set, with `f` of type `f`: the value is a
     /// family, and the use gives the family `map` or `where` makes of it (step L3.2).
     Map {
@@ -3714,7 +3729,10 @@ impl Need {
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
                 NeedKind::Power(p) => NeedKind::Power(p.clone()),
                 NeedKind::Sum => NeedKind::Sum,
-                NeedKind::SumMethod(site) => NeedKind::SumMethod(*site),
+                NeedKind::SumMethod { site, beside } => NeedKind::SumMethod {
+                    site: *site,
+                    beside: beside.clone(),
+                },
                 NeedKind::InDomain {
                     domain,
                     param,
@@ -3767,7 +3785,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
-            | NeedKind::SumMethod(_)
+            | NeedKind::SumMethod { .. }
             | NeedKind::Into { .. }
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
@@ -3798,7 +3816,6 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
-            | NeedKind::SumMethod(_)
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
@@ -3808,6 +3825,7 @@ impl Need {
             | NeedKind::Group { f: t, .. }
             | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
+            | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
@@ -3833,7 +3851,6 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
-            | NeedKind::SumMethod(_)
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
@@ -3843,6 +3860,7 @@ impl Need {
             | NeedKind::Group { f: t, .. }
             | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
+            | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
             NeedKind::Call {
