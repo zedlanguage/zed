@@ -7555,6 +7555,9 @@ fn star_pairs<P: Placed>(
     Some(out)
 }
 
+/// The pairs of functions to compare at each spot whose nodes form stars ([`PlaceFns::starred`]).
+type Starred = HashMap<Spot, Vec<(Arc<Sig>, Arc<Sig>)>>;
+
 impl PlaceFns {
     /// For each spot where the side compared, `self`, and `whole`, the type compared with,
     /// both have two or more functions, the pairs [`star_pairs`] finds between the nodes of
@@ -7562,11 +7565,7 @@ impl PlaceFns {
     /// reads, where they form stars. Such a spot is decided by comparing those pairs; at the
     /// others with two or more functions a side, [`Forms::tied`] and the skipping of
     /// [`Comparing::form_verdict`] apply.
-    fn starred(
-        &self,
-        near: &PlaceFns,
-        whole: &PlaceFns,
-    ) -> HashMap<Spot, Vec<(Arc<Sig>, Arc<Sig>)>> {
+    fn starred(&self, near: &PlaceFns, whole: &PlaceFns) -> Starred {
         let mut out = HashMap::new();
         for (spot, fs) in self.spots(whole) {
             if fs.len() < 2 || whole.get(&spot).is_none_or(|gs| gs.len() < 2) {
@@ -7913,12 +7912,7 @@ impl Forms {
     /// Since FAIL-types-loose-pairing-decided, a spot whose pairs of nodes that may share a
     /// value form stars ([`PlaceFns::starred`], `starred`) is not tied: those pairs are
     /// compared, as many as the functions.
-    fn tied(
-        &self,
-        left: &PlaceFns,
-        right: &PlaceFns,
-        starred: &HashMap<Spot, Vec<(Arc<Sig>, Arc<Sig>)>>,
-    ) -> Option<Spot> {
+    fn tied(&self, left: &PlaceFns, right: &PlaceFns, starred: &Starred) -> Option<Spot> {
         // The spots of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
         left.spots(right).find_map(|(spot, fs)| {
