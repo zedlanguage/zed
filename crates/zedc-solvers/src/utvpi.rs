@@ -733,23 +733,76 @@ mod tests {
         z ^ (z >> 31)
     }
 
+    /// The answers [`random_graphs_get_the_decisions_of_bellman_ford_moore`] must meet, in the
+    /// order of [`decided`], each with a graph over the literals of one variable built to give
+    /// it (checked alone by [`each_graph_built_for_an_answer_gives_it`]): a negative cycle
+    /// `+x → -x → +x` of weight -2; a zero-weight cycle whose part from `+x` to `-x` weighs 1;
+    /// one edge, which has a potential and no cycle. An odd zero-weight cycle comes in about
+    /// 1.6% of the random graphs, so 400 miss it in about 1 run of 400 (seen in 1 of 100
+    /// seeds); an answer the graphs did not give is given by its built graph, and no number of
+    /// graphs is relied on (PROOF-test-coverage-constructive).
+    const ANSWERS: [(&str, fn() -> Vec<Vec<(usize, Int)>>); 3] = [
+        ("a negative cycle", || {
+            vec![vec![(1, Int::from(-1))], vec![(0, Int::from(-1))]]
+        }),
+        ("an odd zero-weight cycle", || {
+            vec![vec![(1, Int::from(1))], vec![(0, Int::from(-1))]]
+        }),
+        ("a potential", || vec![vec![(1, Int::from(3))], vec![]]),
+    ];
+
+    /// Every search on the graph `out` over the literals of `vars` variables agrees with
+    /// [`bellman_ford_moore`] on a negative cycle, gives potentials that hold on every edge,
+    /// and gives the same parity decision. Gives the place in [`ANSWERS`] of the answer.
+    fn decided(vars: usize, out: &[Vec<(usize, Int)>]) -> usize {
+        let reference = bellman_ford_moore(out);
+        let found = [
+            potential(out),
+            goldberg_radzik(out),
+            bf_dijkstra(out),
+            negsssp::potential_alone(out),
+        ];
+        for p in &found {
+            assert_eq!(p.is_some(), reference.is_some(), "graph {out:?}");
+        }
+        let Some(q) = reference else {
+            return 0;
+        };
+        let decision = odd_zero_cycle(vars, out, &q);
+        for p in found.iter().flatten() {
+            for (u, edges) in out.iter().enumerate() {
+                for (v, w) in edges {
+                    assert!(
+                        p[*v] <= &p[u] + w,
+                        "edge {u} → {v} of weight {w:?} in {out:?}"
+                    );
+                }
+            }
+            assert_eq!(odd_zero_cycle(vars, out, p), decision, "graph {out:?}");
+        }
+        if decision { 1 } else { 2 }
+    }
+
+    /// Each graph of [`ANSWERS`] gives its answer.
+    #[test]
+    fn each_graph_built_for_an_answer_gives_it() {
+        for (i, (answer, graph)) in ANSWERS.into_iter().enumerate() {
+            let out = graph();
+            assert_eq!(decided(1, &out), i, "{answer}: {out:?}");
+        }
+    }
+
     #[test]
     fn random_graphs_get_the_decisions_of_bellman_ford_moore() {
-        // At least 400 graphs of the rows of 25 variables, so 50 literals, from a new seed each
-        // run, with 10 to 109 rows of one or two literals `l1 + l2 <= k` and constants -5 to 20,
-        // built as `integer_empty` builds them. Every search must agree on a negative cycle, give
-        // potentials that hold on every edge, and give the same parity decision; the race and
-        // Goldberg and Radzik's search, BF-Dijkstra and Duong's search, each alone, are checked.
-        // The graphs go on past 400 until each answer has occurred, at most 4,000: an odd
-        // zero-weight cycle comes in about 1.6% of them, so 400 alone miss it in about 1 run of
-        // 400 (seen in 1 of 100 seeds), and 4,000 in about e^-64.
+        // 400 graphs of the rows of 25 variables, so 50 literals, from a new seed each run,
+        // with 10 to 109 rows of one or two literals `l1 + l2 <= k` and constants -5 to 20,
+        // built as `integer_empty` builds them ([`decided`]); the race and Goldberg and
+        // Radzik's search, BF-Dijkstra and Duong's search, each alone, are checked. Then the
+        // graph of [`ANSWERS`] for each answer the random graphs did not give.
         let vars = 25usize;
         let mut state = crate::seed::seed("random_graphs_get_the_decisions_of_bellman_ford_moore");
-        let (mut negative, mut odd, mut point) = (0, 0, 0);
-        for graph in 0..4000 {
-            if graph >= 400 && negative > 0 && odd > 0 && point > 0 {
-                break;
-            }
+        let mut answers = [0usize; 3];
+        for _ in 0..400 {
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); 2 * vars];
             let rows = 10 + next(&mut state) % 100;
             for _ in 0..rows {
@@ -769,42 +822,17 @@ mod tests {
                     out[l2 ^ 1].push((l1, k));
                 }
             }
-            let reference = bellman_ford_moore(&out);
-            let found = [
-                potential(&out),
-                goldberg_radzik(&out),
-                bf_dijkstra(&out),
-                negsssp::potential_alone(&out),
-            ];
-            for p in &found {
-                assert_eq!(p.is_some(), reference.is_some(), "graph {out:?}");
-            }
-            let Some(q) = reference else {
-                negative += 1;
-                continue;
-            };
-            let decision = odd_zero_cycle(vars, &out, &q);
-            for p in found.iter().flatten() {
-                for (u, edges) in out.iter().enumerate() {
-                    for (v, w) in edges {
-                        assert!(
-                            p[*v] <= &p[u] + w,
-                            "edge {u} → {v} of weight {w:?} in {out:?}"
-                        );
-                    }
-                }
-                assert_eq!(odd_zero_cycle(vars, &out, p), decision, "graph {out:?}");
-            }
-            if decision {
-                odd += 1;
-            } else {
-                point += 1;
+            answers[decided(vars, &out)] += 1;
+        }
+        let [negative, odd, point] = answers;
+        eprintln!("negative {negative}, odd {odd}, potential {point}");
+        for (i, (answer, graph)) in ANSWERS.into_iter().enumerate() {
+            if answers[i] == 0 {
+                let out = graph();
+                assert_eq!(decided(1, &out), i, "{answer} is not given: {out:?}");
+                eprintln!("{answer} given only by the graph built for it");
             }
         }
-        assert!(
-            negative > 0 && odd > 0 && point > 0,
-            "{negative} {odd} {point}"
-        );
     }
 
     /// Plain Bellman–Ford from a source joined to each node by an edge of weight 0: `n` passes

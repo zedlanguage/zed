@@ -6472,42 +6472,78 @@ mod tests {
         // group by group, each cap rewriting a row that the later groups' decisions read
         // (LOAD-max-div-xr I23: the groups came from a hash map, whose order changes between
         // maps). Each system is leaned 4 times, each run with new maps, and must give the
-        // same rows. Atoms 0 and 1 are the `y`s, 2 to 5 the form atoms. Not red on the hash map:
-        // each rewrite is implied by the rows, and these decisions are not refused, so the order
-        // did not change the rows here; the ordered map makes the order fixed by construction.
+        // same rows ([`leaned_alike`]). Not red on the hash map: each rewrite is implied by the
+        // rows, and these decisions are not refused, so the order did not change the rows here;
+        // the ordered map makes the order fixed by construction.
         let mut seed = crate::seed::seed("lean_keeps_the_same_rows_on_every_run");
         let mut next = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             (seed >> 33) as i64
         };
-        // Systems are drawn until one has a capped ray (about one in fifteen); 300 systems
-        // without one fail the test.
+        // 15 systems, about one of which has a capped ray; when none has, the system built
+        // with one is leaned too, and no number of systems is relied on
+        // (PROOF-test-coverage-constructive).
         let mut capped = 0;
-        for _ in 0..300 {
-            if capped > 0 {
-                break;
-            }
-            let mut rows = Vec::new();
-            for n in 2..6 {
-                rows.push(con(&[(n, 1)], next() % 4 + 1, Rel::Ge));
-                rows.push(con(&[(n, -1)], next() % 9 + 1, Rel::Ge));
-            }
-            for y in 0..2u32 {
-                for (u, v) in [(2u32, 3u32), (4, 5), (2, 4)] {
-                    for _ in 0..3 {
-                        let m = next() % 6 + 1;
-                        rows.push(con(&[(y, 1), (u, -m), (v, -m)], next() % 20 - 10, Rel::Ge));
-                    }
-                }
-                rows.push(con(&[(y, -1), (2, 1), (5, 1)], next() % 30, Rel::Ge));
-            }
-            let first = lean(rows.clone());
-            capped += usize::from(first.iter().any(|r| !rows.contains(r)));
-            for _ in 0..3 {
-                assert_eq!(lean(rows.clone()), first, "{rows:?}");
-            }
+        for _ in 0..15 {
+            capped += usize::from(leaned_alike(&lean_system(&mut next)));
         }
-        assert!(capped > 0, "no system had a capped ray");
+        eprintln!("{capped} of 15 systems had a capped ray");
+        if capped == 0 {
+            let rows = capped_system();
+            assert!(leaned_alike(&rows), "no capped ray in {rows:?}");
+        }
+    }
+
+    /// A system that [`lean`] caps a ray of, found by shrinking a drawn system of
+    /// [`lean_system`] row by row while it stayed capped: the group of `y = Aux(1)` over the
+    /// form `x2 + x4` has the lines `y >= x2 + x4 + 4` and `y >= 6 * (x2 + x4) - 7`, and with
+    /// `y <= x2 + x5 + 1` and the other rows the steeper line is capped by `x2 + x4 <= 2`.
+    fn capped_system() -> Vec<Con> {
+        vec![
+            con(&[(3, 1)], 4, Rel::Ge),
+            con(&[(1, 1), (2, -6), (3, -6)], 0, Rel::Ge),
+            con(&[(1, 1), (4, -4), (5, -4)], -5, Rel::Ge),
+            con(&[(1, 1), (2, -1), (4, -1)], -4, Rel::Ge),
+            con(&[(1, 1), (2, -6), (4, -6)], 7, Rel::Ge),
+            con(&[(1, -1), (2, 1), (5, 1)], 1, Rel::Ge),
+        ]
+    }
+
+    /// The system of [`capped_system`] has a capped ray.
+    #[test]
+    fn the_system_built_with_a_capped_ray_has_one() {
+        let rows = capped_system();
+        assert!(leaned_alike(&rows), "no capped ray in {rows:?}");
+    }
+
+    /// A system of [`lean_keeps_the_same_rows_on_every_run`] drawn from `next`: atoms 0 and 1
+    /// are the `y`s, 2 to 5 the form atoms.
+    fn lean_system(next: &mut impl FnMut() -> i64) -> Vec<Con> {
+        let mut rows = Vec::new();
+        for n in 2..6 {
+            rows.push(con(&[(n, 1)], next() % 4 + 1, Rel::Ge));
+            rows.push(con(&[(n, -1)], next() % 9 + 1, Rel::Ge));
+        }
+        for y in 0..2u32 {
+            for (u, v) in [(2u32, 3u32), (4, 5), (2, 4)] {
+                for _ in 0..3 {
+                    let m = next() % 6 + 1;
+                    rows.push(con(&[(y, 1), (u, -m), (v, -m)], next() % 20 - 10, Rel::Ge));
+                }
+            }
+            rows.push(con(&[(y, -1), (2, 1), (5, 1)], next() % 30, Rel::Ge));
+        }
+        rows
+    }
+
+    /// `rows` leaned 4 times, each run with new maps, gives the same rows each time. Gives
+    /// whether a ray was capped, which rewrites a row.
+    fn leaned_alike(rows: &[Con]) -> bool {
+        let first = lean(rows.to_vec());
+        for _ in 0..3 {
+            assert_eq!(lean(rows.to_vec()), first, "{rows:?}");
+        }
+        first.iter().any(|r| !rows.contains(r))
     }
 
     #[test]
