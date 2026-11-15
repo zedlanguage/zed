@@ -3773,7 +3773,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     // passing a string there was accepted. A variable beside a tuple or a family does not
     // reach here (`member_end` sends it to `sum` and `family_fold`), but a need met with such
     // a type does, and its rest is summed as it stands.
-    // Complexity tradeoff: one need or one recursion per variable, as at `fold_level`.
+    // Complexity tradeoff: one need or one recursion per variable, as at `fold_level`, and it
+    // ends as there: `rest` and each resolved `t` hold no variable (the invariant at
+    // `Class::resolved`), so the inner call goes to `fold_level` or `sum` on a type with none.
     pub(super) fn sum_method(&mut self, x: &Ty, span: Span, site: Span) -> Ty {
         if !x.vars.is_empty() {
             let mut rest = x.clone();
@@ -3865,8 +3867,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         // gives, each take the fold. Atoms beside the variables are not folded: the callers
         // pass the loose ones out first, and a variable's atoms are met with its class.
         // Complexity tradeoff: one need or one recursion per variable of `x`, plus one fold
-        // of the rest; a resolved class's type holds no class that resolves back to it (a
-        // class is resolved to a type built before it), so the recursion ends.
+        // of the rest. The recursion ends after one step (PROOF-fold-level-recursion-
+        // terminates): `rest` holds no variable, and the type `t` of a root `class_root`
+        // gives holds none (the invariant at `Class::resolved`), so neither call below comes
+        // back to this branch, and the branches past it call this function on no type. The one
+        // other way back is `need`, which checks the use at once on the values that flowed
+        // into the class, and so may reach here again on another class: it records the use in
+        // the class's `known` before that check, and gives the recorded result to a repeat,
+        // so each pair of a class and a use is checked once, and classes that flow into each
+        // other end too (`known` is the visited set of P207 on that path).
+        // Tests: `l08_02_remaps::empty`, the cycles of parameters through calls and lambdas.
         if !x.vars.is_empty() {
             let mut rest = x.clone();
             rest.vars = VarSet::new();

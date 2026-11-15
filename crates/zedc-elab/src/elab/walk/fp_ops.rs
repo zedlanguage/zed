@@ -134,6 +134,12 @@ impl<'a> Elab<'a> {
     // the key map's result apart into keys (`key_of`, `placed` in `eval.rs`). (c) The ZIR
     // readers make one only where the text or binary form holds one, which the writers give
     // only for a constant that was a keypath, and so by (a) and (b) only inside a key map.
+    // That covers ZIR the writers made from checked terms, and no other: ZIR written by hand
+    // or edited may hold a keypath anywhere, and the validator checks structure only, the
+    // types of values being the checker's (DESIGN.md step L1.31), so a hand-made keypath
+    // passed to this function takes the tuple branch. `Prim::Sum` then stops the run on it,
+    // as it stops on a hand-made tuple of strings, and gives no value: the test
+    // `l08_02_remaps::empty::a_keypath_written_into_zir_by_hand_stops_the_sum`.
     // So a keypath's keys are the only parts of it a program's terms see; a key is no
     // keypath, since a family's keys are the values its key maps and literals give, the
     // keys of a keypath among them, and so, by induction on the run, none is one. Hence the

@@ -546,3 +546,123 @@ fn two_parameters_in_nested_branches_beside_a_family_each_take_the_fold() {
         "3",
     );
 }
+
+// ---- The fold of a generic function ends on every cycle of classes, and hand-made ZIR does
+// not make it give a wrong value (row PROOF-fold-level-recursion-terminates; the proofs at
+// `Class::resolved` in zedc-check and at `Elab::generic_sum` in zedc-elab) ----
+
+#[test]
+fn a_cycle_of_parameters_through_calls_folds_at_each_call() {
+    // `r` swaps the parameters and `s` swaps them back, so `s(a, b, c)` is `q(a, b, c)`
+    // (sec:values_morphisms, a call is its body with the arguments put for the parameters).
+    // `[1, 2].sum` is `[1, 2] >< (+)`, `3` (the method register, "tot = xs.sum; // = xs >< (+)"),
+    // and `(3, 4).sum` is `7` (L1.18, `sum` of a tuple).
+    let q = "r(positional xs, positional ys, positional b) = q(ys, xs, b);\n\
+             s(positional xs, positional ys, positional b) = r(ys, xs, b);\n";
+    let src = format!(
+        "q(positional xs, positional ys, positional b) = (if b {{ xs }} else {{ ys }}).sum;\n{q}\
+         t = s([1, 2], (3, 4), true);\nu = s([1, 2], (3, 4), false);\n"
+    );
+    prints(&src, "t", "3");
+    prints(&src, "u", "7");
+    let src = format!(
+        "q(positional xs, positional ys, positional b) = (if b {{ xs }} else {{ ys }}) >< (+);\n\
+         {q}t = s([1, 2], [3, 4], false);\n"
+    );
+    prints(&src, "t", "7");
+    // Both orders at once: `s(a, b, false)` is `b.reduce((+)) + a.reduce((+))`, `7 + 3`.
+    let src = "q(positional xs, positional ys, positional b) = \
+               (if b { xs } else { ys }).reduce((+));\n\
+               r(positional xs, positional ys, positional b) = q(ys, xs, b) + q(xs, ys, b);\n\
+               s(positional xs, positional ys, positional b) = r(ys, xs, b);\n\
+               t = s([1, 2], [3, 4], false);\n";
+    prints(src, "t", "10");
+}
+
+#[test]
+fn one_type_variable_on_two_parameters_folds_once() {
+    // `T` written twice makes `xs` and `ys` one class (sec:type_resolution); `[3, 4].sum` is 7.
+    let src = "s(positional xs: T, positional ys: T, positional b) = \
+               (if b { xs } else { ys }).sum;\nt = s([1, 2], [3, 4], false);\n";
+    prints(src, "t", "7");
+}
+
+#[test]
+fn a_lambda_given_the_parameters_swapped_folds_at_its_call() {
+    // The lambda takes `ys` as `a`, so with `b` it folds `[3, 4]`, 7; the `map` folds `xs`
+    // at each of the two keys of `[xs, xs]`.
+    let src = "s(positional xs, positional ys, positional b) = \
+               ((positional a, positional c) -> (if b { a } else { c }).sum)(ys, xs);\n\
+               t = s([1, 2], [3, 4], true);\n";
+    prints(src, "t", "7");
+    let src = "s(positional xs, positional b) = [xs, xs].map(v -> (if b { v } else { xs }).sum);\n\
+               t = s([1, 2], false);\n";
+    prints(src, "t", "{0 -> 3, 1 -> 3}");
+}
+
+#[test]
+fn a_generic_fold_of_a_generic_fold_folds_each_level() {
+    // `q` folds each inner level, `[1, 2]` to 3 and `[3]` to 3, and `s` folds those, 6.
+    let src = "q(positional xs) = xs >< (+);\ns(positional xs) = xs.map(v -> q(v)) >< (+);\n\
+               t = s([[1, 2], [3]]);\n";
+    prints(src, "t", "6");
+}
+
+#[test]
+fn a_parameter_joined_with_a_family_of_itself_is_refused_and_the_check_ends() {
+    // A class beside a family whose entries are that class: the fold's entries have no
+    // carrier this zedc compiles, so it is refused at the definition, for each form.
+    for fold in [".sum", " >< (+)"] {
+        rejected(
+            &format!(
+                "s(positional xs, positional b) = (if b {{ xs }} else {{ [xs] }}){fold};\n\
+                 t = s([1, 2], true);\n"
+            ),
+            &["does not compile it yet"],
+        );
+    }
+    rejected(
+        "s(positional xs, positional b) = (if b { xs } else { { 0 -> xs, 1 -> [xs] } }).sum;\n\
+         t = s([1, 2], true);\n",
+        &["does not compile it yet"],
+    );
+}
+
+/// The ZIR text of `t` in `s(positional xs) = xs.sum; t = s((3, 4));`, with the argument of
+/// the call given as the constant `arg`, written in the text form by hand.
+fn sum_with_argument_by_hand(arg: &str) -> zed_kernel::Term {
+    use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
+    let u = elab("s(positional xs) = xs.sum;\nt = s((3, 4));\n").unwrap();
+    let g = zedc::zir::lower::lower(&with_prelude(u.get("t").unwrap().clone())).unwrap();
+    let text = zedc::zir::text::print(&g);
+    let tuple = (text.lines())
+        .find_map(|l| l.strip_suffix(" prim tuple (3, 4) -> (_)"))
+        .unwrap_or_else(|| panic!("no tuple node in\n{text}"));
+    let from = format!(", {tuple}^0) -> (_ hint name \"t\")");
+    assert_eq!(text.matches(&from).count(), 1, "{text}");
+    let text = text.replace(&from, &format!(", {arg}) -> (_ hint name \"t\")"));
+    let g = zedc::zir::text::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    zedc::zir::validate::validate(&g).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    zedc::zir::lower::raise(&g).unwrap_or_else(|e| panic!("{e}\n{text}"))
+}
+
+#[test]
+fn a_keypath_written_into_zir_by_hand_stops_the_sum() {
+    // The writers give a keypath constant only inside a key map (`Elab::generic_sum`, case
+    // (c)); the validator checks structure, not the types of values (DESIGN.md step L1.31),
+    // so a keypath written by hand as the argument of a generic `.sum` is read, validated
+    // and run. It takes the tuple branch, and `sum` stops on it, in the kernel and natively,
+    // as on a tuple of strings written by hand: neither gives a value. The tuple `(3, 4)`
+    // written the same way gives 7, `(3, 4).sum` (L1.18).
+    use zed_tests::step_helpers::l01_36_cranelift::{kernel, native};
+    let t = sum_with_argument_by_hand("(3, 4)");
+    assert_eq!(kernel(&t).map(|v| v.to_string()), Ok("7".to_string()));
+    assert_eq!(native(&t).map(|o| o.value.to_string()), Ok("7".to_string()));
+    for arg in ["[3 -> 4]", "[]", "(\"a\", 4)"] {
+        let t = sum_with_argument_by_hand(arg);
+        let k = kernel(&t).expect_err(arg);
+        assert!(k.contains("`sum` applied to"), "{arg}: {k}");
+        let n = native(&t).expect_err(arg);
+        assert!(n.contains("`sum` applied to"), "{arg}: {n}");
+    }
+}

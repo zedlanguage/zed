@@ -1276,6 +1276,20 @@ struct Class {
     /// The uses that removed carriers from it.
     reasons: Vec<Reason>,
     /// Its type, once the function of its level ends.
+    // Invariant: a type here holds no type variable, or is exactly `$k`, the variable of this
+    // class's own index `k`; and no variable inside any of its parts either. Proof, by the
+    // four places that write the field: (1) `Ck::resolve` writes a carrier or `$r` of the
+    // class `r` it writes; (2) `Ck::resolve_top_parts` writes a carrier or a union of literal
+    // types; (3) `walk.rs`, at the end of a level, writes `Ty::dynamic()`, which holds no
+    // variable; (4) the undo of a tried repair (`Undo::Class`) puts back a copy of the same
+    // class taken earlier, which held the invariant by induction on the writes. `Ck::class`
+    // starts the field at `None`, and `merge` does not touch it. So `Ck::class_root`, which
+    // gives no root whose type is its own variable, gives a root whose type, if any, holds
+    // no variable; every use that reads a class's type in place of its variable (`sum`,
+    // `sum_method`, `fold_level`, `map_end`, `group_of`, `fold_dir_end`, `remap.rs`) then
+    // meets no variable in it, and so recurses through classes at most once per variable
+    // (PROOF-fold-level-recursion-terminates). A visited set (P207) would cost a set per use
+    // to guard a cycle the four writes cannot make.
     resolved: Option<Ty>,
     /// The name it is shown by, if it is a type variable of the function of its level, which
     /// ended: `resolved` is then its own variable `$k`, and it is a class no more.
@@ -3878,7 +3892,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let r = self.find(class_id(v).filter(|&k| k < self.classes.len())?);
         let resolved = self.classes[r].resolved.as_ref();
         let own = resolved.and_then(Ty::as_var).and_then(|w| class_id(w));
-        (own.map(|k| self.find(k)) != Some(r)).then_some(r)
+        let root = (own.map(|k| self.find(k)) != Some(r)).then_some(r);
+        // The invariant at `Class::resolved`: a root given here holds no variable in its type.
+        debug_assert!(root.is_none() || resolved.is_none_or(|t| t.vars.is_empty()));
+        root
     }
 
     /// The class `t` is, if it is one and nothing else.
