@@ -6,7 +6,6 @@ use crate::source::{does_not_parse, same, with_sales};
 // quantitySold)`) and the rank insertions (`asc`, `desc`) wait in
 // /home/luke/Work/wt/failing-tests, rows L8.2b and L8.2.
 
-
 const M: &str = "m = { \"a\" -> { 1 -> 10, 2 -> 20 }, \"b\" -> { 1 -> 30 } };\n";
 
 fn with_m(src: &str) -> String {
@@ -134,4 +133,3 @@ fn a_single_sort_key_takes_no_trailing_comma() {
     let src = format!("{SCORES}x = scores as (name -> score) into (desc score,);\n");
     does_not_parse(&src);
 }
-

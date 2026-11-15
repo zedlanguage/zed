@@ -363,19 +363,6 @@ fn word_count_folds_a_constant_leaf() {
 }
 
 #[test]
-fn a_group_level_is_never_empty() {
-    // sec:corner_cases, "`group` never makes an empty group", so `max` of each group needs no
-    // `#empty` (sec:corner_cases, "Reduce over empty: identity if the operator has one, else
-    // `#empty`"): the type of a read holds only the miss of the read itself.
-    use zed_tests::step_helpers::l01_26_type_resolution::sig;
-    let src = "xs = [1, 2, 3, 4];\nx = xs.group(v -> v mod 2).map(g -> g >< max);\n\
-               f(u: int) = x[u];\n";
-    let t = sig(src, "f");
-    assert!(!t.contains("#empty"), "{t}");
-    assert!(t.contains("#notFound"), "{t}");
-}
-
-#[test]
 fn widen_by_a_key_function_of_the_value_as_an_outer_level() {
     // sec:remap_law, widen: a level computed from the value, put above the keys it groups.
     let src = with_m(

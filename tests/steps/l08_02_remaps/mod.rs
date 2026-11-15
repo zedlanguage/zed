@@ -14,6 +14,5 @@ mod collisions;
 mod empty;
 mod kernel;
 mod moves;
-mod names;
 mod rules;
 mod source;

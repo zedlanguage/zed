@@ -4,9 +4,8 @@
 //!
 //! sec:remap_law: "A key whose inner level is empty, `"a"` in `{"a" -> {}}`, is a keypath
 //! that ends early, and a remap carries it wherever the output pattern can place it." Its
-//! example `into (k.upper -> j -> v)` is a collision as written, since `upper` is not in the
-//! witness catalog of sec:grouping (case mapping sends "a" and "A" to one key), so these
-//! tests use the witnessed `k + 1` for the same rule. The warning `#emptyLevelDropped` waits
+//! example widens the key to `(k, k.upper)`; `k.upper` alone is a collision, since case
+//! mapping sends "a" and "A" to one key (DESIGN d2c5d1e). The warning `#emptyLevelDropped` waits
 //! for row EMPTY-level-swap, and a fold by `max` or `min` in a pattern for row
 //! REDUCE-by-function (/home/luke/Work/wt/failing-tests).
 
@@ -29,6 +28,21 @@ fn an_outer_level_computed_from_the_key_keeps_the_empty_level() {
         "x = m as (k -> j -> v) into (k + 1 -> j -> v);\nwant = { 2 -> {}, 3 -> { 0 -> 5 } };\n",
     );
     same(&src, "x", "want");
+}
+
+#[test]
+fn the_design_example_widened_by_upper_keeps_the_empty_level() {
+    // sec:remap_law: "`{"a" -> {}} as (k -> j -> v) into ((k, k.upper) -> j -> v)` is
+    // `{("a", "A") -> {}}`".
+    let src = "a = { \"a\" -> {} };\nx = a as (k -> j -> v) into ((k, k.upper) -> j -> v);\n";
+    prints(src, "x", "{(\"a\", \"A\") -> {}}");
+}
+
+#[test]
+fn upper_alone_as_the_outer_key_collides() {
+    // "`k.upper` alone is no witness, since `"a"` and `"A"` meet at `"A"`".
+    let src = "a = { \"a\" -> {} };\nx = a as (k -> j -> v) into (k.upper -> j -> v);\n";
+    rejected(src, &["k.upper"]);
 }
 
 #[test]
@@ -110,6 +124,18 @@ fn and_and_or_of_an_empty_level_are_their_identities() {
                o = m as (k -> j -> v) into (k -> j >< (||) -> v);\nwantO = { 1 -> false, 2 -> true };\n";
     same(src, "a", "wantA");
     same(src, "o", "wantO");
+}
+
+#[test]
+fn max_and_min_of_an_empty_int_level_are_empty() {
+    // sec:reduction, "Identity as data": "`max` over a possibly-empty domain at `int`, which
+    // has no identity for it, is `T | #empty`"; `min` likewise. (The `f64` case, which gets
+    // `-inf` from its own identity, waits for row FAIL-f64-max-empty-identity in
+    // /home/luke/Work/wt/failing-tests.)
+    let src = "m = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where(v -> v > 3));\n\
+               hi = m.map(r -> r >< max);\nlo = m.map(r -> r >< min);\n";
+    prints(src, "hi", "{\"a\" -> #empty, \"b\" -> 5}");
+    prints(src, "lo", "{\"a\" -> #empty, \"b\" -> 5}");
 }
 
 // ---- Miss atoms of a read on a remap result (sec:type_language: "`a[i] : T | #outOfBounds`

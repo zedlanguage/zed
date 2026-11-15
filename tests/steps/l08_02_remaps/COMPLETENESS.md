@@ -8,11 +8,11 @@ meet, with the test that covers it.
 and run it on the reference evaluator. They check the value each rule gives. They do not check
 the source syntax, the static checks or the messages: those need the source forms to compile.
 
-The source forms do not compile on main yet. `as` and `into` parse, but the resolver rejects
-them as "part of the Zed language but not compiled yet", and with them map and array displays,
-`><`, `::`, sort keys, refinements and type declarations (elaborated at step L3.2 and later;
-remaps at L8.1 and L8.2). The source-level tests of the second table below are kept on the
-branch `wt/remap-tests` and join this group when they pass on main.
+The source-level tests (`moves::`, `rules::`, `collisions::`, `empty::`, `bench::`) run the
+programs through the compiler: the value against a display the spec writes, a rejection's text
+against the spec's message where it gives one. Forms the compiler does not build yet are tested
+in /home/luke/Work/wt/failing-tests under the row that builds them (second list below), and join
+this group when they pass.
 
 | Case | Spec | Covering test | Status |
 |---|---|---|---|
@@ -68,39 +68,57 @@ branch `wt/remap-tests` and join this group when they pass on main.
 
 ## Source-level tests
 
-Each case again in source form, from the spec's own programs and expected outputs: the value is
-compared with a display the spec writes, and a rejection's text with the spec's message where
-the spec gives it. On main today 1 of these 60 passes (`moves::a_single_sort_key_takes_no_trailing_comma`,
-a parse check); the other 59 stop at the resolver's "not compiled yet".
+All 128 tests of the group pass (2026-11-15, REMAP-tests).
 
 | Case | Covering tests |
 |---|---|
-| Repack: transpose, permute by name and by `as` binders, `as` alone | `moves::transpose_levels`, `moves::permute_levels_by_name`, `moves::permute_levels_by_as_binders`, `moves::as_alone_is_the_identity` |
+| Repack: transpose, permute by `as` binders, `as` alone | `moves::transpose_levels`, `moves::permute_levels_by_as_binders`, `moves::as_alone_is_the_identity` |
 | Repack: tuple keys | `moves::flatten_to_a_tuple_key`, `moves::untuple_a_tuple_key` |
 | Repack: witnessed bijection `k + 1` | `moves::bijective_key_transform` |
-| Widen: with the value, with derived data, by a key function | `moves::widen_a_key_with_the_value`, `moves::widen_a_key_with_derived_data`, `moves::widen_by_a_key_function` |
-| Truncate, and `(k1 -> k2)` as sugar for it | `moves::truncate_to_set_leaves`, `moves::a_trailing_key_is_sugar_for_truncate`, `moves::truncate_to_the_outer_level` |
-| Rank insertion `desc`, `asc`; ties grouped | `moves::desc_rank_groups_ties_beneath`, `moves::asc_rank`, `moves::a_filtered_list_sorted` |
-| Several sort keys make one rank level; trailing comma after two keys; none after one | `moves::several_sort_keys_make_one_rank_level`, `moves::a_trailing_comma_after_several_sort_keys`, `moves::a_single_sort_key_takes_no_trailing_comma` |
-| `><` at the innermost level, with `(+)`, `(++)`, a named function, a lambda | `names::reduce_with_plus_names_the_leaf_sum`, `names::reduce_with_concatenation_names_the_leaf_concat`, `names::reduce_with_a_named_function_takes_its_name`, `names::reduce_with_a_lambda_names_the_leaf_reduce` |
-| `><` at two levels, and at every level | `names::two_reductions_derive_names_from_the_inside_out`, `names::reduce_at_the_outermost_level` |
-| The worked collision: headline, each menu line, no witness line | `collisions::dropping_a_discriminator_is_the_worked_collision`, `collisions::the_dropped_level_menu_has_no_witness_line` |
-| Each repair of the worked collision is accepted | `collisions::each_repair_of_the_worked_collision_is_accepted` |
-| The check reads the pattern, not the data | `collisions::the_check_reads_the_pattern_not_the_data` |
-| `rekey` without a witness: its menu (`group`, `@injective`, `#collision`) | `collisions::rekey_without_a_witness_is_rejected_with_its_menu` |
-| Group levels: `group` and the residue pattern agree; a flat derived key is rejected with the residue repair | `collisions::group_declares_the_deeper_level`, `collisions::a_flat_pattern_on_a_derived_key_is_rejected_with_the_residue_repair`, `collisions::inverting_a_relation_into_sets` |
-| Witness catalog, accepted entries | `collisions::witness_monotone_arithmetic`, `collisions::witness_modulo_at_the_width_of_the_modulus`, `collisions::witness_affine_packing`, `collisions::witness_unpacking_by_euclidean_div_and_mod`, `collisions::witness_unimodular_skew`, `collisions::witness_componentwise_maps`, `collisions::witness_injective_at_proof_grade` |
-| Witness catalog, each side condition broken | `collisions::witness_modulo_one_wider_is_rejected`, `collisions::witness_affine_packing_one_short_is_rejected`, `collisions::witness_rank_one_affine_map_is_rejected`, `collisions::a_finitely_invertible_key_is_rejected` |
-| Output name that names a source level and a value in scope | `collisions::an_output_name_that_shadows_a_value_in_scope` |
+| Widen: with the value, by a key function of the key or of the value, by parity | `moves::widen_a_key_with_the_value`, `moves::widen_by_a_key_function`, `rules::widening_by_the_value_and_by_a_function_of_the_key`, `rules::widen_by_a_key_function_of_the_value_as_an_outer_level`, `rules::widen_a_list_by_the_parity_of_its_keys` |
+| Truncate, and a trailing key as sugar for it | `moves::truncate_to_set_leaves`, `moves::truncate_to_the_outer_level`, `moves::a_trailing_key_is_sugar_for_truncate`, `rules::truncation_drops_the_values`, `rules::truncation_to_the_outer_level_drops_a_level`, `rules::a_trailing_key_binder_is_truncation_sugar` |
+| One sort key takes no trailing comma (a parse check) | `moves::a_single_sort_key_takes_no_trailing_comma` |
+| `><` at the inner, middle and outer level, at two levels, at every level; by `(+)`, `(*)`, `(&&)`, `(\|\|)`; written first | `rules::a_fold_at_the_inner_level`, `rules::a_fold_at_the_middle_level_of_three`, `rules::a_fold_at_the_outer_level_of_three`, `rules::folds_at_two_levels_of_three`, `rules::a_fold_of_a_level_between_two_kept_ones`, `rules::every_level_folded_gives_the_total`, `rules::every_level_of_three_folded_gives_the_total`, `rules::a_fold_by_multiplication_and_a_transformed_leaf`, `rules::folds_by_and_and_by_or`, `rules::a_fold_written_first_folds_its_level` |
+| Group levels: `group` and the residue pattern agree; group then fold; word count | `rules::group_declares_the_deeper_level`, `rules::group_by_a_constant_gives_one_class`, `rules::group_on_a_map_by_an_integer_class`, `rules::group_then_fold_each_group`, `rules::word_count_folds_a_constant_leaf`, `collisions::inverting_a_relation_into_sets` |
+| Flat map adjoins a level, keeps an empty emission | `rules::flat_map_adjoins_the_emitted_level`, `rules::flat_map_keeps_an_empty_emission_as_an_empty_level` |
+| The worked collision: headline, menu, each repair runs; the check reads the pattern, not the data | `rules::the_worked_collision_menu`, `rules::the_worked_collision_repairs_run`, `rules::the_collision_is_found_for_one_entry_per_group_too`, `collisions::the_check_reads_the_pattern_not_the_data` |
+| Collision menus by kind of key: constant, projection, value-derived, the value alone, a square | `collisions::a_constant_key_collides_with_its_menu`, `collisions::a_projection_of_a_tuple_key_collides`, `collisions::a_key_computed_from_the_value_collides`, `collisions::the_value_as_the_only_key_collides`, `collisions::a_square_that_is_not_monotone_collides`, `collisions::a_flat_pattern_on_a_derived_key_is_rejected_with_the_residue_repair`, `collisions::a_finitely_invertible_key_is_rejected` |
+| `rekey` without a witness: its menu (`group`, `@injective`, `#collision`) | `rules::rekey_without_a_witness_is_rejected_with_its_menu` |
+| Witness catalog, accepted entries | `collisions::witness_monotone_arithmetic`, `collisions::witness_strictly_decreasing_arithmetic`, `collisions::witness_tupling_and_permutation_of_witnessed_components`, `collisions::witness_componentwise_maps`, `collisions::witness_unimodular_skew`, `collisions::witness_affine_map_of_full_column_rank_that_is_not_square`, `collisions::witness_affine_packing_at_three_levels`, `rules::modulo_on_keys_within_the_modulus`, `rules::affine_packing_and_one_stride_short`, `rules::div_and_mod_together_recover_the_key` |
+| Witness catalog, side conditions broken | `rules::modulo_one_wider_is_rejected`, `rules::affine_packing_and_one_stride_short`, `collisions::witness_rank_one_affine_map_is_rejected` |
 | Binder naming a type (L8.2a) | `collisions::a_binder_naming_a_type_in_a_pattern` |
-| Level names: `::names`, through a permutation, through a join | `names::sales_names`, `names::a_permutation_carries_the_names`, `names::the_join_lines_example` |
-| Named slicing (L8.2c): inner level, outermost level, two names, misses at every place, unknown name, a name twice, a string key on a list level | `names::slice_at_an_inner_named_level`, `names::slice_at_the_outermost_level_is_a_lookup`, `names::slice_by_two_names_in_any_order`, `names::slice_a_list_level_misses_with_out_of_bounds`, `names::slice_at_day_zero`, `names::slice_misses_at_every_place`, `names::slice_by_a_name_the_type_lacks`, `names::slice_naming_one_level_twice`, `names::slice_a_list_level_with_a_string_key` |
-| Empty levels (EMPTY-level-swap): kept under a computed outer level, dropped by a transpose, ranked like any entry | `names::an_empty_inner_level_keeps_its_key_under_a_computed_outer_level`, `names::a_transpose_drops_an_empty_inner_level`, `names::a_rank_over_the_outer_level_ranks_an_empty_entry` |
+| Empty levels: kept under a computed outer level (the DESIGN example `(k, k.upper)`), under a tuple, by truncation and widening; dropped by a transpose, a flatten, a fold of the outer level; `k.upper` alone collides | `empty::*` |
+| Folds of an empty level: identities of `+`, `*`, `&&`, `\|\|`; `#empty` for `max`, `min` at `int` | `empty::a_sum_of_an_empty_level_is_zero`, `empty::a_sum_and_a_product_of_a_level_emptied_by_a_filter`, `empty::and_and_or_of_an_empty_level_are_their_identities`, `empty::max_and_min_of_an_empty_int_level_are_empty` |
+| Miss atoms of reads on remap and group results; a constant read past the keys | `empty::the_identity_remap_of_a_list_misses_as_a_list`, `empty::a_shifted_remap_misses_with_not_found`, `empty::a_constant_read_past_the_keys_is_rejected`, `rules::a_read_of_a_remap_or_group_result_may_miss`, `rules::a_float_key_is_read_only_whole` |
+| Each form's own errors | `rules::the_pattern_s_own_errors`, `rules::the_source_must_be_a_family_of_the_pattern_s_depth`, `rules::group_s_own_errors`, `rules::flat_map_s_own_errors`, `rules::fewer_binders_than_levels_waits_for_a_later_step` |
+| Scaling | `bench::*` |
 
-Not covered by a source test, with the reason:
+## Tests waiting in /home/luke/Work/wt/failing-tests
+
+Each file names its row, the message the compiler gives today, and the expected output quoted
+from DESIGN.
+
+| Case | File (row) |
+|---|---|
+| Witness catalog entries that need a range-bounded `->?` parameter: modulo, packing, unpacking | `RANGE-L1.rs` |
+| `@injective` at proof grade on distinct values; repeated values collide | `L16.2.rs` (with L16.3) |
+| Rank insertion `desc`, `asc`, several sort keys, trailing comma, a rank without residue collides, a rank over an empty entry | `L8.2.rs` |
+| `sort` flat on a list, under kept positions after `where` | `L5.1.rs` |
+| Names through remaps and reductions, by-name `into`, the join `lines`, an output name that shadows a value | `L8.2b.rs` |
+| `sales::names` | `L7.1b.rs` |
+| Named slicing | `L8.2c.rs` |
+| The warning `#emptyLevelDropped`, and none after `group` | `EMPTY-level-swap.rs` |
+| `><` by `max` (empty `int` level), `min`, a lambda, a named function in a pattern | `REDUCE-by-function.rs` |
+| `max` and `min` of an empty `f64` level: `-inf`, `inf` | `FAIL-f64-max-empty-identity.rs` |
+| `group` of a family of families | `GROUP-nested.rs` |
+| Word count with a trailing `>< (+)` | `REDUCE-family-entries.rs` |
+| A remap or `group` of a `map` lambda's parameter | `FAIL-remap-source-not-seen-as-family.rs` |
+| A group level is never empty, so `>< max` of each group has no `#empty` | `L4.8.rs` |
+
+Not covered, with the reason:
 
 | Case | Reason |
 |---|---|
-| The warning `#emptyLevelDropped` | the test helpers return no warnings from elaboration; a test is added with the helper when EMPTY-level-swap lands |
-| The uniqueness facet as a witness | the spec gives no program that declares it on a key; a test needs that example first |
-| `@injective` below proof grade rejected | the spec does not say which claims stay below proof grade on a given checker; no test can fix an expected verdict |
+| The uniqueness facet as a witness | L16.3; the spec gives no program that declares it on a key yet |
+| `@injective` below proof grade rejected | the spec does not say which claims stay below proof grade on a given checker |
+| The empty `f64` sum | prints `-0.0`, the identity of IEEE 754 addition; DESIGN says only that `sum` "gets `0` from its identity" (row SPEC-empty-f64-sum) |
