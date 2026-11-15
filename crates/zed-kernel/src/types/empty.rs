@@ -1192,7 +1192,7 @@ impl Simulation {
                 // values `x` holds, and each must lie under a row of `b`. A row under one row
                 // of `b` has each of its rows under it, so the proof finds no less.
                 //
-                // Complexity tradeoff (COMPLEXITY.md K118): unsplit, `((0,) | … | (n-1,),)`
+                // Complexity tradeoff (COMPLEXITY.md K119): unsplit, `((0,) | … | (n-1,),)`
                 // against `((0,),) | … | ((n-1,),)` met every row of `b`, and each pair
                 // `((0,) | … | (n-1,), (i,))` met each shape of the column: n² pairs, and the
                 // proof failed, leaving the difference to decide (1.7 s at n = 320). Split,

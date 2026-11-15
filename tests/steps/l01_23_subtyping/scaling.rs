@@ -1186,7 +1186,7 @@ fn a_few_nested_meets_are_finite_and_listed() {
 
 /// A row whose first column is a union of `n` tuple shapes, `((0,) | … | (n-1,), 7)`, and the
 /// rows it splits into, `((0,), 7) | … | ((n-1,), 7)`, the second with `last` in place of 7 at
-/// its last row. The proof of `<:` splits the first at its column (COMPLEXITY.md K118).
+/// its last row. The proof of `<:` splits the first at its column (COMPLEXITY.md K119).
 fn split_row(n: usize, last: usize) -> (Type, Type) {
     let one = |i: usize| Type::tuple(vec![lit(i)]);
     let column = Type::union_all((0..n).map(one));

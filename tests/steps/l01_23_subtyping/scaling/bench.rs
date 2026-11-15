@@ -1095,7 +1095,7 @@ fn finding_the_boxes_of_nested_meets_scales() {
 }
 
 /// [`split_row`] at `n` and `8n`, built before the runs: the row is within the rows it splits
-/// into, proved by splitting it at its first column (COMPLEXITY.md K118). Unsplit, the row met
+/// into, proved by splitting it at its first column (COMPLEXITY.md K119). Unsplit, the row met
 /// each of the `n` rows, and each pair met each shape of the column, `n²` pairs, and the proof
 /// failed, leaving the difference to decide: 1.7 s at n = 320 (found by
 /// FAIL-types-fn-param-exact-domain, through `l01_26_type_resolution`'s
