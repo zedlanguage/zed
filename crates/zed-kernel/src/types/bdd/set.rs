@@ -215,6 +215,64 @@ fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
     (l, r)
 }
 
+/// The set of `keys`, sorted with no atom twice, built bottom up: the shape is found first
+/// over their indices, a Cartesian tree by priority made with one stack in `O(k)` (Vuillemin,
+/// "A unifying look at data structures", CACM 23(4), 1980), and each node is then made once,
+/// over children already made, in post-order. Priorities decide the shape, so it is the set
+/// that adding the literals one at a time makes.
+// Complexity tradeoff (PERF-equal-functions-forms-ratio): `k` nodes made, each looked up once in
+// the table, `O(k)` after the sort; adding the literals one at a time makes `O(k log k)`, and
+// joining sets of them in pairs ([`union_if_agree`]) remakes each merged set's nodes at each of
+// `log k` levels, `O(k log k)` too.
+pub(super) fn from_sorted<A: Atom>(keys: Vec<Key<A>>) -> Tree<A> {
+    debug_assert!(
+        keys.windows(2).all(|w| w[0].0 < w[1].0),
+        "sorted, no atom twice"
+    );
+    const NONE: usize = usize::MAX;
+    let n = keys.len();
+    let prios: Vec<u64> = keys.iter().map(priority).collect();
+    let (mut left, mut right) = (vec![NONE; n], vec![NONE; n]);
+    // The right spine of the tree of the keys so far, root first: a key above the bottom of
+    // the spine takes what it passes as its left subtree and hangs from what it stops at.
+    let mut spine: Vec<usize> = Vec::new();
+    for i in 0..n {
+        let mut passed = NONE;
+        while let Some(&top) = spine.last() {
+            if (prios[top], &keys[top]) < (prios[i], &keys[i]) {
+                passed = top;
+                spine.pop();
+            } else {
+                break;
+            }
+        }
+        left[i] = passed;
+        if let Some(&top) = spine.last() {
+            right[top] = i;
+        }
+        spine.push(i);
+    }
+    let root = *spine.first()?;
+    let mut keys: Vec<Option<Key<A>>> = keys.into_iter().map(Some).collect();
+    let mut made: Vec<Tree<A>> = vec![None; n];
+    let mut todo = vec![(root, false)];
+    while let Some((i, ready)) = todo.pop() {
+        if ready {
+            let l = (left[i] != NONE).then(|| made[left[i]].take()).flatten();
+            let r = (right[i] != NONE).then(|| made[right[i]].take()).flatten();
+            made[i] = Some(make(keys[i].take().expect("each key made once"), l, r));
+            continue;
+        }
+        todo.push((i, true));
+        for c in [right[i], left[i]] {
+            if c != NONE {
+                todo.push((c, false));
+            }
+        }
+    }
+    made[root].take()
+}
+
 /// The set with the nodes of `path` rebuilt over `node`, the last of `path` its parent; each
 /// entry says whether the child is the node's left.
 fn rebuild<A: Atom>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<A> {
@@ -448,6 +506,56 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
             .flatten()
             .expect("the union of two sets has a root"),
     )
+}
+
+/// The literals of `x` whose atom is not in `y`, or `None` when an atom is in both, taken in
+/// one and not in the other. Each node of `y` from the root down splits the part of `x` it
+/// covers at its atom, after removing the literal on that atom, and the two sides are joined
+/// past the node; two subtrees that are one node leave nothing. For `m <= n` literals,
+/// `O(m log(n/m + 1))` nodes are visited in expectation (Blelloch, Ferizovic and Sun, "Just
+/// join for parallel ordered sets", SPAA 2016), each split or join in `O(log n)`; the walk
+/// keeps a stack of its own.
+pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Option<Tree<A>> {
+    /// A pair of subtrees whose difference is wanted, or the join of the last two differences.
+    enum Step<A: Atom> {
+        Minus(Tree<A>, Option<Arc<Set<A>>>),
+        Join,
+    }
+    let mut todo = vec![Step::Minus(Some(x.clone()), Some(y.clone()))];
+    let mut done: Vec<Tree<A>> = Vec::new();
+    while let Some(step) = todo.pop() {
+        let (x, y) = match step {
+            Step::Join => {
+                let r = done.pop().expect("the right side is made");
+                let l = done.pop().expect("the left side is made");
+                done.push(join(l.as_ref(), r.as_ref()));
+                continue;
+            }
+            Step::Minus(None, _) => {
+                done.push(None);
+                continue;
+            }
+            Step::Minus(x, None) => {
+                done.push(x);
+                continue;
+            }
+            Step::Minus(Some(x), Some(y)) if x.id == y.id => {
+                done.push(None);
+                continue;
+            }
+            Step::Minus(Some(x), Some(y)) => (x, y),
+        };
+        let x = match get(Some(&x), &y.key.0) {
+            None => Some(x),
+            Some(t) if t == y.key.1 => remove(&x, &y.key),
+            Some(_) => return None,
+        };
+        let (l, r) = split(x.as_ref(), &y.key);
+        todo.push(Step::Join);
+        todo.push(Step::Minus(r, y.right.clone()));
+        todo.push(Step::Minus(l, y.left.clone()));
+    }
+    Some(done.pop().expect("the difference is made"))
 }
 
 /// The literals in exactly one of the two sets: each of the smaller's added to the larger, or

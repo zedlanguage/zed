@@ -496,6 +496,83 @@ fn union_all_of_atom_types_is_the_union_joined_one_at_a_time() {
     }
 }
 
+/// `union_all` joins the types of tuples alone, each a union of tuple literals at each length,
+/// at once, their literals sorted and one set of them built bottom up (PERF-equal-functions-
+/// forms-ratio); the union must be the one a fold of `|` gives, for every subset, in both
+/// orders, of tuples of two lengths, a union of several, a tuple repeated, a complement (every
+/// other length, so joined in pairs), the empty type, and a tuple beside an atom; and for 300
+/// tuples in a scrambled order, where the pairs and the fold made the set by many paths.
+#[test]
+fn union_all_of_tuple_types_is_the_union_joined_one_at_a_time() {
+    let one = |t: Type| Type::tuple(vec![t]);
+    let two = |a: &str, b: &str| Type::tuple(vec![Type::atom(a), Type::atom(b)]);
+    let ts = [
+        one(Type::int()),
+        two("a", "b"),
+        &two("b", "a") | &(&two("c", "c") | &one(Type::bool())),
+        two("a", "b"),
+        !&one(Type::atom("x")),
+        Type::empty(),
+        &two("d", "d") | &Type::atom("y"),
+        one(Type::atom_with("p", &one(Type::int()))),
+        Type::tuple(vec![]),
+    ];
+    for mask in 0..1u32 << ts.len() {
+        let chosen: Vec<Type> = (0..ts.len())
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| ts[i].clone())
+            .collect();
+        let fold = chosen.iter().fold(Type::empty(), |u, t| &u | t);
+        assert_eq!(Type::union_all(chosen.clone()), fold, "mask {mask:#b}");
+        assert_eq!(
+            Type::union_all(chosen.into_iter().rev()),
+            fold,
+            "mask {mask:#b}"
+        );
+    }
+    // 300 tuples, the i-th taken at 7i mod 300, a repeat of each tenth.
+    let many: Vec<Type> = (0..330usize)
+        .map(|i| (i * 7) % 300)
+        .map(|i| Type::tuple(vec![Type::atom(&format!("n{i}")), Type::int()]))
+        .collect();
+    let fold = many.iter().fold(Type::empty(), |u, t| &u | t);
+    assert_eq!(Type::union_all(many.clone()), fold);
+    assert_eq!(Type::union_all(many.into_iter().rev()), fold);
+}
+
+/// A union of tuple literals met with the complement of another, or joined to it, is made at
+/// once from the two blocks (`Bdd::zip_chain`, PERF-equal-functions-forms-ratio); it must be
+/// the type that taking the tuples away, or adding the complements, one at a time gives: for
+/// sets that overlap, one inside the other, equal, apart, of one tuple against many, and a set
+/// with the complement of a tuple, whose atom the other set takes.
+#[test]
+fn a_union_of_tuples_less_another_is_the_tuples_taken_away_one_at_a_time() {
+    let row = |i: usize| Type::tuple(vec![Type::atom(&format!("r{i}")), Type::int()]);
+    let union = |rows: &[usize]| Type::union_all(rows.iter().map(|&i| row(i)));
+    let ranges: [(&[usize], &[usize]); 7] = [
+        (&[0, 1, 2, 3, 4, 5, 6, 7], &[4, 5, 6, 7, 8, 9, 10, 11]),
+        (&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], &[2, 3, 4]),
+        (&[2, 3, 4], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        (&[1, 2, 3, 4, 5], &[1, 2, 3, 4, 5]),
+        (&[0, 2, 4, 6, 8], &[1, 3, 5, 7, 9]),
+        (&[7], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        (&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], &[7, 12]),
+    ];
+    for (a, b) in ranges {
+        let (ta, tb) = (union(a), union(b));
+        let less = b.iter().fold(ta.clone(), |u, &i| &u - &row(i));
+        assert_eq!(&ta - &tb, less, "{a:?} less {b:?}");
+        // `ta | !tb` is `!(tb - ta)`, with `tb - ta` taken one tuple at a time.
+        let more = !&a.iter().fold(tb.clone(), |u, &i| &u - &row(i));
+        assert_eq!(&ta | &!&tb, more, "{a:?} with the complement of {b:?}");
+        // The complement of one tuple beside the others: an atom taken by one block and
+        // refused by the other.
+        let with_not = &union(&b[1..]) | &!&row(b[0]);
+        let less = b[1..].iter().fold(&ta - &!&row(b[0]), |u, &i| &u - &row(i));
+        assert_eq!(&ta - &with_not, less, "{a:?} less {b:?} with a complement");
+    }
+}
+
 /// `union_all` joins the types of finitely many booleans, numbers and strings alone into the
 /// sets of the largest before the pairs; the union must be the one a fold of `|` gives, for every
 /// subset, in both orders, of literals of each kind, a set of several, a value repeated, a

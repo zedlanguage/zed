@@ -268,6 +268,40 @@ impl<A: Literal> Bdd<A> {
                 None => Bdd::Leaf(op == Op::Or),
             });
         }
+        // A long chain under `op` met with a long chain under the other connective, as
+        // `a & !b` of two unions of literals, is made at once (PERF-equal-functions-forms-
+        // ratio). Let `j` be the chain under `op`, one block of value `!v` before the leaf `v`,
+        // and `x` the other, one block of value `v` before the leaf `!v`. When a literal of `j`
+        // holds, the result is `!v`. When none holds, the result is `x`, in which each literal
+        // of `j` is now false: a literal of `x` on the same atom with the same polarity is false
+        // and leaves its block, and one with the opposite polarity is true and gives `v`, the
+        // value `j` gives too, so the result is then `j` itself. Otherwise the list is `j`'s
+        // block, then `x`'s without the atoms of `j`, then `!v` ([`set::difference_if_agree`]).
+        // Complexity tradeoff: the difference splits the larger block at each node of the
+        // smaller, `O(m log(n/m + 1))` nodes for blocks of `m <= n` literals (Blelloch,
+        // Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016); the literals of
+        // `j` joined one at a time to `x` made `O(log n)` nodes each, `O(m log n)`, the 10.8
+        // times as many nodes from n = 256 to 2048 left in
+        // `functions_equal_at_one_place_are_decided_a_second_time_in_linear_time` after the
+        // tuple unions were built at once.
+        let other_op = match op {
+            Op::Or => Op::And,
+            Op::And => Op::Or,
+        };
+        for (x, j) in [(self, other), (other, self)] {
+            if let (Bdd::List(xc, v), Bdd::List(jc, _)) = (x, j)
+                && x.is_long_chain(other_op)
+                && j.is_long_chain(op)
+            {
+                return Some(match set::difference_if_agree(&xc.block, &jc.block) {
+                    Some(rest) => Bdd::assemble(
+                        vec![(!*v, Some(jc.block.clone())), (*v, rest)],
+                        &Bdd::Leaf(!*v),
+                    ),
+                    None => j.clone(),
+                });
+            }
+        }
         // Only the chain joined is listed: listing the other too would cost its length at each
         // literal added to a long chain.
         let (base, joined) = match (self.chain_len(op), other.chain_len(op)) {
@@ -775,6 +809,34 @@ impl<A: Literal> Part<A> {
 
     pub(super) fn literal(a: A) -> Part<A> {
         Part::Bdd(Bdd::literal(a))
+    }
+
+    /// Whether the part is a list that is a union of literals, of any number, in O(1).
+    pub(super) fn is_union_of_literals(&self) -> bool {
+        matches!(self, Part::Bdd(b) if b.chain_len(Op::Or).is_some())
+    }
+
+    /// The union of `ps`, each [`Part::is_union_of_literals`], made at once: their literals
+    /// sorted and the one set of them built bottom up ([`set::from_sorted`]), `k` set nodes for
+    /// `k` literals, where joining them in pairs made the nodes of each merged set again at each
+    /// level, `O(k log k)`. The list is the one [`Part::zip`] makes of them, as a list has one
+    /// form. `None` when one takes an atom another refuses, left to [`Part::zip`].
+    pub(super) fn union_of_literals(ps: &[&Part<A>]) -> Option<Part<A>> {
+        let mut keys = Vec::new();
+        for p in ps {
+            let Part::Bdd(b) = p else { return None };
+            keys.extend(b.chain_keys(Op::Or)?);
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        if keys.windows(2).any(|w| w[0].0 == w[1].0) {
+            return None;
+        }
+        Some(Part::Bdd(match keys.len() {
+            0 => Bdd::Leaf(false),
+            1 => Bdd::literal_key(keys.pop().expect("one literal")),
+            _ => Bdd::assemble(vec![(true, set::from_sorted(keys))], &Bdd::Leaf(false)),
+        }))
     }
 
     /// Whether the part is no value (`Some(false)`) or every value (`Some(true)`) as built.

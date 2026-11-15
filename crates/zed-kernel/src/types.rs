@@ -1566,11 +1566,23 @@ impl Type {
     // as literal types (`shared_integer_columns`), in one process at load 33: joined here,
     // 1.46 s; folded with `|`, 7.66 s (262,144: 0.26 s and 0.78 s); making the literal types
     // takes 2.69 s more either way.
+    // Complexity tradeoff (PERF-equal-functions-forms-ratio): the types whose every value is a
+    // tuple of a union of tuple literals at each length, as `KType::tuple` makes, are joined at
+    // once ([`Tuples::union_of_literals`]): their literals sorted, `O(k log k)` comparisons, and
+    // the one treap of them built bottom up, `k` set nodes each looked up once in the table.
+    // In pairs, each level of the pairing made the nodes of the merged treaps again, `O(k log k)`
+    // nodes made and looked up in all, each lookup comparing tuple types: 71% of the set nodes
+    // made by `functions_equal_at_one_place_are_decided_a_second_time_in_linear_time`, 10.9
+    // times as many from n = 256 to 2048. The joined type is the one the pairs made, since a
+    // list and a treap have one form, and the types left in `rest` are then joined to it in
+    // pairs as before. Where one of those holds tuples as an expression (`Part::Expr`), the
+    // order of joining differs from before; that the expression's form does not depend on the
+    // order is not proved (the tests compare the result with `|` one at a time, both orders).
     pub fn union_all(ts: impl IntoIterator<Item = Type>) -> Type {
         // The literal types are joined as they come, each dropped once joined, so that `k` of
         // them are never all held at once; the smaller set is added to the larger.
         let (mut first_lits, mut lits): (Option<Type>, Option<Parts>) = (None, None);
-        let (mut atoms, mut rest) = (Vec::new(), Vec::new());
+        let (mut atoms, mut tuples, mut rest) = (Vec::new(), Vec::new(), Vec::new());
         for t in ts {
             if t.finite_literals_only() {
                 match (&first_lits, &mut lits) {
@@ -1595,11 +1607,24 @@ impl Type {
                         }
                     }
                 }
+            } else if t.tuple_literals_only() {
+                tuples.push(t);
             } else if t.atoms_only() && !t.p().atoms.cofinite {
                 atoms.push(t);
             } else {
                 rest.push(t);
             }
+        }
+        let joined = match tuples.len() {
+            0 | 1 => None,
+            _ => {
+                let parts: Vec<_> = tuples.iter().map(Type::p).collect();
+                Tuples::union_of_literals(parts.iter().map(|p| &p.tuples))
+            }
+        };
+        match joined {
+            Some(joined) => rest.push(Type::with(|p| p.tuples = joined)),
+            None => rest.extend(tuples),
         }
         match lits {
             Some(joined) => rest.push(Type::new(joined)),
@@ -2508,6 +2533,16 @@ impl Parts {
             && self.morphisms.is_leaf() == Some(false)
     }
 
+    /// Whether these hold tuples only, at each length a union of literals
+    /// ([`Tuples::literals_only`]).
+    fn tuple_literals_only(&self) -> bool {
+        !self.has_scalars()
+            && self.atoms.is_default()
+            && !self.structs
+            && self.morphisms.is_leaf() == Some(false)
+            && self.tuples.literals_only()
+    }
+
     /// Whether it lists atoms and nothing else: no boolean, number, string, tuple, struct or
     /// morphism. Its every value is then an atom, as an atom's payload is within the tuples
     /// and structs ([`AtomPart`]).
@@ -2626,6 +2661,12 @@ impl Type {
     /// in O(1). False for a recursive node.
     fn finite_literals_only(&self) -> bool {
         matches!(&*self.0, Node::Parts(p, _) if p.finite_literals_only())
+    }
+
+    /// Whether its parts hold tuples only, at each length a union of literals
+    /// ([`Tuples::literals_only`]); read in O(1). False for a recursive node.
+    fn tuple_literals_only(&self) -> bool {
+        matches!(&*self.0, Node::Parts(p, _) if p.tuple_literals_only())
     }
 
     /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its
@@ -3067,6 +3108,28 @@ impl Tuples {
             rest: false,
             lens: BTreeMap::from([(items.len(), Part::literal(Row::new(items)))]),
         }
+    }
+
+    /// Whether it holds no length it does not list and, at each length listed, a union of
+    /// literals ([`Part::is_union_of_literals`]), in O(1) a length.
+    fn literals_only(&self) -> bool {
+        !self.rest && self.lens.values().all(Part::is_union_of_literals)
+    }
+
+    /// The union of `ts`, each [`Tuples::literals_only`], made at once at each length
+    /// ([`Part::union_of_literals`]); `None` when two take and refuse one tuple type.
+    fn union_of_literals<'t>(ts: impl Iterator<Item = &'t Tuples>) -> Option<Tuples> {
+        let mut at: BTreeMap<usize, Vec<&Part<Row>>> = BTreeMap::new();
+        for t in ts {
+            for (n, p) in &t.lens {
+                at.entry(*n).or_default().push(p);
+            }
+        }
+        let lens = at
+            .into_iter()
+            .map(|(n, ps)| Some((n, Part::union_of_literals(&ps)?)))
+            .collect::<Option<_>>()?;
+        Some(Tuples::normal(false, lens))
     }
 
     fn get(&self, len: usize) -> Part<Row> {
