@@ -95,7 +95,8 @@ fn a_model_may_hold_values_past_128_bits() {
     assert!(f.holds(&m));
     assert!(m.values().any(|v| v.to_i128().is_none()));
     // The projection is read through such a point; its bounds lie past `i64`, as no bound.
-    let hull = project(&f, &sym("x0")).unwrap();
+    // `.0`, the hull: `growing` has no disjunction, so no cause of one left out.
+    let hull = project(&f, &sym("x0")).unwrap().0;
     assert!(hull.bounds().is_some(), "{hull:?}");
 }
 
@@ -104,7 +105,8 @@ fn a_bound_past_i64_is_exact() {
     // `2^70 <= x <= 2^70 + 5`: both ends lie past the 64-bit range, and the hull is exact.
     let v = 1i128 << 70;
     let f = Formula::and(vec![ge(&[("x", 1)], -v), ge(&[("x", -1)], v + 5)]);
-    let hull = project(&f, &sym("x")).unwrap();
+    // `.0`, the hull: no disjunction, and compared with the exact hull.
+    let hull = project(&f, &sym("x")).unwrap().0;
     assert_eq!(
         hull,
         IntervalSet::range(End::Fin(Num::from(v)), End::Fin(Num::from(v + 5)))
@@ -500,6 +502,7 @@ pub(super) fn reordered_formulas_agree(rng: &mut Rng, from: usize, to: usize) ->
         disjunctive += usize::from(f != g);
         assert_eq!(satisfiable(&f), satisfiable(&g), "{f} and {g}");
         for s in ["a", "b", "c"] {
+            // The hull and the causes of a disjunction left out: a reordering changes neither.
             assert_eq!(project(&f, &sym(s)), project(&g, &sym(s)), "{f} and {g}");
         }
     }

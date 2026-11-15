@@ -1,5 +1,6 @@
 //! Why the solver refuses a question ([`Refusal`]), how a refusal is written for the program's
-//! author, and the shape of [`project_each`](super::project_each)'s result ([`Each`]).
+//! author, and the shape of the results of [`project_each`](super::project_each) ([`Each`])
+//! and [`project`](super::project) ([`One`]).
 //!
 //! These are kept in a file below both `presburger.rs` and `row_sums.rs`, which both name them,
 //! since a name of `presburger.rs` from `row_sums.rs` would put the two files in an import
@@ -351,3 +352,7 @@ impl fmt::Display for Closed<'_> {
 /// The projections of [`super::project_each`], one for each symbol, and the causes for which a
 /// disjunction was left out of them.
 pub type Each = (Vec<Result<IntervalSet, Refusal>>, Vec<Refusal>);
+
+/// The projection of [`super::project`] onto one symbol, and the causes for which a
+/// disjunction was left out of it.
+pub type One = (IntervalSet, Vec<Refusal>);

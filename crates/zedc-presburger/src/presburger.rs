@@ -121,7 +121,7 @@ use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
 use nesting::nesting;
-pub use refusal::{Each, Refusal, Split, Tie, Written, free_names, names_in};
+pub use refusal::{Each, One, Refusal, Split, Tie, Written, free_names, names_in};
 pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
 pub use slack::ROW_ORDER_SCAN;
 use slack::{
@@ -17660,8 +17660,14 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 /// holds every value; one of 60 is wider than the hull). COMPLEXITY.md rows S7 and S16. A
 /// complete solution would project each combination of disjuncts, or a decision diagram over
 /// the disjuncts, at a cost exponential in the worst case.
-pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
-    project_each(f, std::slice::from_ref(sym))?.0.remove(0)
+///
+/// With the set, the causes for which a disjunction was left out of it, as [`project_each`]
+/// gives them: each such disjunction leaves the set wider but sound (FAIL-by-halves-seed-1446,
+/// where a question refused for [`Refusal::Growth`] left `v0 = 0` in a set whose exact hull is
+/// `[1, 4]`). A caller that needs the hull itself, not a set holding it, must look at them.
+pub fn project(f: &Formula, sym: &Atom) -> Result<One, Refusal> {
+    let (mut hulls, causes) = project_each(f, std::slice::from_ref(sym))?;
+    Ok((hulls.remove(0)?, causes))
 }
 
 /// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
@@ -27655,12 +27661,81 @@ mod by_halves_against_old {
         out
     }
 
+    /// Whether a point of `f` with `sym` at `val` is found: by [`satisfiable`] on the new path
+    /// or, where that finds none or refuses, on the old one, and only a point that `holds`
+    /// checks. `false` says no point was found, not that none exists.
+    fn has_point(f: &Formula, sym: &Atom, val: i128) -> bool {
+        let g = Formula::and(vec![
+            f.clone(),
+            eq(Lin::atom(sym.clone()).minus(&Lin::constant(val))),
+        ]);
+        let found = |p: Result<Option<Model>, Refusal>| matches!(p, Ok(Some(m)) if g.holds(&m));
+        found(satisfiable(&g)) || found(old(|| satisfiable(&g)))
+    }
+
+    /// The batch hull `x` of `sym` over `f` ([`project_each`] of every symbol, which left
+    /// disjunctions out for `x_causes`) against the single hull `one` ([`project`], which left
+    /// them out for `one_causes`), in four cases by which side reports a cause:
+    ///
+    /// - Both: each side is sound, so each holds every value of `sym` at a point of `f`;
+    ///   asserted for each value in `0..=20` (the box every group has) at which [`has_point`]
+    ///   finds a point. This holds for every draw: soundness is the contract of
+    ///   [`project_each`] ("leaves each hull wider but sound"), and `has_point` reports only a
+    ///   point `holds` checked.
+    /// - Neither: the hulls are equal.
+    /// - One: the side with no cause lies within the side with one.
+    ///
+    /// The last two do not follow from the contracts as written, and are asserted as the
+    /// orchestrator's decision on FAIL-by-halves-seed-1446 (2026-11-15) directs, to find where
+    /// they fail. They rest on this claim: a side that reports no cause gives each symbol the
+    /// meet, over the disjunctions, of the union of each disjunct's exact hull, a function of
+    /// `f` and `sym` alone; and a side that leaves a disjunction out gives the meet over fewer
+    /// disjunctions, which can only be wider. Not proved (ASSUME-documented, the same claim as
+    /// at the `hull_from` fallback of `Level::open`, "batch and single projection now give each
+    /// symbol the same hull"): each disjunct's hull is asked of a kernel that depends on the
+    /// symbols asked ([`by_halves`]), and `tighten` moves the ends of the meet by a rule not
+    /// shown to be monotone. [`project`]'s own note says the answer is not exact even with no
+    /// cause (parity, and the gaps between disjuncts of two or more disjunctions), which these
+    /// asserts do not contradict, since both sides lose the same gaps if the claim holds.
+    /// Evidence (2026-11-15): seeds 1 to 2000 and 14461253816647718467 pass, over 299,116
+    /// comparisons: 298,708 with no cause on either side, 86 with a cause on batch alone (4 of
+    /// them with the single hull strictly within), none on single alone, and 322 on both. If false, a symbol's hull depends on which other symbols
+    /// were asked with it: precision only, both sides staying sound.
+    fn batch_and_single_agree(
+        f: &Formula,
+        sym: &Atom,
+        (x, x_causes): (&IntervalSet, &[Refusal]),
+        (one, one_causes): (&IntervalSet, &[Refusal]),
+        at: &str,
+    ) {
+        match (x_causes.is_empty(), one_causes.is_empty()) {
+            (true, true) => assert_eq!(one, x, "batch and single, {sym}, {at}: {f}"),
+            (false, true) => assert!(
+                one.is_subset(x),
+                "single {one:?} with no cause not in batch {x:?} with {x_causes:?}, {sym}, {at}: {f}"
+            ),
+            (true, false) => assert!(
+                x.is_subset(one),
+                "batch {x:?} with no cause not in single {one:?} with {one_causes:?}, {sym}, {at}: {f}"
+            ),
+            (false, false) => {
+                for val in (0..=20i128).filter(|&val| has_point(f, sym, val)) {
+                    assert!(
+                        x.contains(val as i64) && one.contains(val as i64),
+                        "{sym} = {val} has a point, batch {x:?}, single {one:?}, {at}: {f}"
+                    );
+                }
+            }
+        }
+    }
+
     /// The projections by halves (DISJ-diff-fast, DISJ-incremental) give the answers of the
     /// path before them: [`decide`] the same answer, [`satisfiable`] a point exactly when the
     /// old one does, and a point of the formula; [`project_each`] and [`project`] a hull within
     /// the old one, equal to it on every symbol whose old hull was found without a refused
     /// question, and never a refusal where the old path answered. Batch ([`project_each`]) and
-    /// single ([`project`]) projections agree on the new path.
+    /// single ([`project`]) projections agree on the new path as [`batch_and_single_agree`]
+    /// states.
     #[test]
     fn answers_are_those_of_the_old_path() {
         let mut rng = Rng(crate::seed::seed("answers_are_those_of_the_old_path") | 1);
@@ -27717,12 +27792,15 @@ mod by_halves_against_old {
                                         );
                                     }
                                 }
-                                let one = project(&f, sym);
-                                assert_eq!(
-                                    one.as_ref().ok(),
-                                    Some(x),
-                                    "batch and single, {sym}, case {case}: {f}"
-                                );
+                                if let Ok((one, one_causes)) = project(&f, sym) {
+                                    batch_and_single_agree(
+                                        &f,
+                                        sym,
+                                        (x, causes.as_slice()),
+                                        (&one, one_causes.as_slice()),
+                                        &format!("case {case}"),
+                                    );
+                                }
                             }
                             (Err(_), Ok(_)) => panic!("{sym} refused, case {case}: {f}"),
                             _ => {}
@@ -27756,7 +27834,8 @@ mod by_halves_against_old {
                 })
                 .collect();
             let batch = each[i].as_ref().expect("batch hull");
-            let single = project(&f, sym).expect("single hull");
+            // The causes are not needed: the hull is compared with the exact values below.
+            let (single, _) = project(&f, sym).expect("single hull");
             for c in 0..=20i64 {
                 assert_eq!(
                     batch.contains(c),
@@ -27808,25 +27887,28 @@ mod by_halves_against_old {
         Formula::and(fs)
     }
 
-    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`, and batch and single projection
-    /// both give it. The exact set, checked with no projection: each of 1 to 4 has the point
-    /// listed below (`holds` evaluates the formula), and no point has `v0` at 0 or above 4. By
-    /// hand: rows 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
+    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`; batch projection gives it, and
+    /// single projection gives a set holding it with the cause of the disjunction it left out.
+    /// The exact set, checked with no projection: each of 1 to 4 has the point listed below
+    /// (`holds` evaluates the formula), and no point has `v0` at 0 or above 4. By hand: rows
+    /// 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
     /// `v2 + 2·v7 <= 2`; then `v1 <= v2 - v10 <= 2` and `v0 <= v1 + 2 <= 4`. At `v0 = 0` the
     /// disjunction reads `v5 == v1 + 4`, `v5 >= v1 + 3` or `v1 == v5 + 6`; the last needs
     /// `v1 >= 6`, so `v5 >= v1 + 3 >= 3`. Rows 2, 10, 9 and 8 give
     /// `v2 >= v1 + v10 >= v1 + v6 + v9 - 1 >= v1 + v6 + v5 + v4 + v7 - 1`, and with
     /// `v2 <= 2 - 2·v7` that is `v1 + v4 + v5 + v6 + 3·v7 <= 3`: `v5 = 3` and the others 0. Row 6,
     /// `v6 >= v5 + v7 - 2`, then needs `v6 >= 1`, which is false.
-    /// At e051752ad single projection gives `[0, 4]`: its question "is there a point with
-    /// `v0 <= 1`" over the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel of that disjunct
-    /// for `v0` alone, is refused for `Refusal::Growth`, and the hull keeps the 0 it cannot rule
-    /// out. Batch projection of all eleven symbols, or of `v0` and `v10`, gives `[1, 4]`.
-    /// `project_each(&f, &[v0])` reports the cause, `[Growth]`, of the disjunction it left out;
-    /// [`project`] drops it. Batch of all eleven reports `[Growth]` too and is exact; batch of
-    /// `v0` and `v10` reports none.
+    /// Single projection gives `[0, 4]`: its question "is there a point with `v0 <= 1`" over
+    /// the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel of that disjunct for `v0` alone, is
+    /// refused for `Refusal::Growth`, and the hull keeps the 0 it cannot rule out. Until
+    /// FAIL-by-halves-seed-1446, [`project`] dropped that cause. That single projection gives
+    /// `[1, 4]` with no cause is row PRES-growth-hull-side-one-symbol, whose parked test is
+    /// /home/luke/Work/wt/failing-tests/PRES-growth-hull-side-one-symbol.rs; its fix makes the
+    /// "single reports a cause" assert below fail, and moves the exact assert back here. Batch
+    /// of all eleven symbols reports `[Growth]` too and is exact; batch of `v0` and `v10`
+    /// reports none.
     #[test]
-    fn seed_1446_case_7_batch_and_single_hulls_are_exact() {
+    fn seed_1446_case_7_batch_is_exact_and_single_reports_its_cause() {
         let f = seed_1446_case_7();
         let syms: Vec<Atom> = (0..11).map(|i| Atom::Sym(format!("v{i}").into())).collect();
         for p in [
@@ -27843,11 +27925,16 @@ mod by_halves_against_old {
         let exact = IntervalSet::range(End::Fin(Num::from(1)), End::Fin(Num::from(4)));
         let (all, _) = project_each(&f, &syms).expect("batch of all answers");
         assert_eq!(all[0].as_ref().ok(), Some(&exact), "batch of all symbols");
-        let (two, _) = project_each(&f, &[syms[0].clone(), syms[10].clone()])
+        let (two, causes) = project_each(&f, &[syms[0].clone(), syms[10].clone()])
             .expect("batch of v0 and v10 answers");
         assert_eq!(two[0].as_ref().ok(), Some(&exact), "batch of v0 and v10");
-        let one = project(&f, &syms[0]);
-        assert_eq!(one.as_ref().ok(), Some(&exact), "single");
+        assert_eq!(causes, [], "batch of v0 and v10");
+        let (one, causes) = project(&f, &syms[0]).expect("single answers");
+        assert!(!causes.is_empty(), "single {one:?} reports no cause");
+        assert!(
+            exact.is_subset(&one),
+            "single {one:?} does not hold {exact:?}"
+        );
     }
 
     /// `n` copies of the rows of [`chain_of_sums`], copy `c` over `v(9c)` to `v(9c + 8)`, each
@@ -27891,7 +27978,10 @@ mod by_halves_against_old {
         // The symbols of the link, and the one in each copy where batch was coarser.
         for k in [4, 8, 9, 13] {
             let s = &syms[k];
-            assert_eq!(each[k], project(&f, s), "batch and single on {s}");
+            // The hulls are equal on this formula, though batch leaves a disjunction out
+            // ([`Refusal::Growth`]), where `batch_and_single_agree` asserts only containment.
+            let one = project(&f, s).map(|(hull, _)| hull);
+            assert_eq!(each[k], one, "batch and single on {s}");
         }
     }
 
@@ -28110,11 +28200,8 @@ mod by_halves_against_old {
                 values[i]
             );
             assert!(x.is_subset(y), "{sym}: new {x} not in old {y}");
-            assert_eq!(
-                project(&f, sym).as_ref().ok(),
-                Some(x),
-                "batch and single, {sym}"
-            );
+            let (one, one_causes) = project(&f, sym).expect("single answers");
+            batch_and_single_agree(&f, sym, (x, &new.1), (&one, &one_causes), "fixed case");
         }
         assert_eq!(
             new.0[3].as_ref().ok().map(ToString::to_string).as_deref(),
@@ -28189,11 +28276,8 @@ mod by_halves_against_old {
                 values[i]
             );
             assert!(x.is_subset(y), "{sym}: new {x} not in old {y}");
-            assert_eq!(
-                project(&f, sym).as_ref().ok(),
-                Some(x),
-                "batch and single, {sym}"
-            );
+            let (one, one_causes) = project(&f, sym).expect("single answers");
+            batch_and_single_agree(&f, sym, (x, &new.1), (&one, &one_causes), "fixed case");
         }
         assert_eq!(
             new.0[0].as_ref().ok().map(ToString::to_string).as_deref(),

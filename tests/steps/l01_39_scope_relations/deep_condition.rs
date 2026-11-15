@@ -489,9 +489,11 @@ fn the_relation_of_a_deep_test_holds_where_the_test_does() {
         let rs = relations(&[&fallbacks(d)], &names, false).expect("in the domain");
         assert_eq!(rs.len(), 1, "d = {d}");
         let f = presburger::Formula::and(vec![rs[0].defined(), rs[0].body.clone()]);
+        // The hull alone: each is compared with the exact one, which a wider hull fails.
         let hull = |n: &Arc<str>| {
             presburger::project(&f, &presburger::Atom::Sym(n.clone()))
                 .expect("answered")
+                .0
                 .to_string()
         };
         assert_eq!(hull(&names[0]), "[0..]", "d = {d}");

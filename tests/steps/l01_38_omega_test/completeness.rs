@@ -85,8 +85,9 @@ fn true_and_false_answer_every_question() {
     assert_eq!(decide(&f), Ok(false));
     // A symbol no constraint mentions takes every value where the formula holds, and none
     // where it holds nowhere.
-    assert_eq!(project(&t, &sym("x")), Ok(IntervalSet::top()));
-    assert_eq!(project(&f, &sym("x")), Ok(IntervalSet::empty()));
+    // With no disjunction, no disjunction is left out: no cause.
+    assert_eq!(project(&t, &sym("x")), Ok((IntervalSet::top(), vec![])));
+    assert_eq!(project(&f, &sym("x")), Ok((IntervalSet::empty(), vec![])));
     assert_eq!(row_box(&t, &[sym("x")]), vec![IntervalSet::top()]);
     assert_eq!(row_box(&f, &[sym("x")]), vec![IntervalSet::empty()]);
     // No symbol asked: no set.
@@ -275,7 +276,8 @@ fn a_set_as_a_formula_holds_exactly_at_its_members() {
         }
         // The projection of the set's formula is the set: over a disjunction of boxes, the
         // union of each box's projection.
-        assert_eq!(project(&f, &x).as_ref(), Ok(s), "{f}");
+        // The hull alone: it is compared with the exact set, which a wider hull fails.
+        assert_eq!(project(&f, &x).map(|o| o.0).as_ref(), Ok(s), "{f}");
         assert_eq!(decide(&f), Ok(true));
     }
     // The values of a term: `0 <= x + y <= 1`.
@@ -883,7 +885,7 @@ fn project_each_answers_a_repeated_and_an_absent_symbol() {
         ge(&[("y", -1)], 3),
     ]);
     assert_eq!(project(&e, &sym("x")), project(&two, &sym("x")));
-    assert_eq!(project(&e, &sym("x")), Ok(range(0, 6)));
+    assert_eq!(project(&e, &sym("x")), Ok((range(0, 6), vec![])));
     // An unsatisfiable formula projects every symbol, mentioned or not, to the empty set.
     let none = Formula::and(vec![f, ge(&[("y", -1)], 1)]);
     let (each, _) = project_each(&none, &[sym("x"), sym("z")]).unwrap();

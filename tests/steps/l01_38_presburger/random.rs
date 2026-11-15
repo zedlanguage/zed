@@ -234,7 +234,9 @@ fn checked_round(t: &Term, g: &Term, ns: &[Arc<str>]) -> Option<[bool; 4]> {
     check_model(m.as_ref().map(|m| point(m, ns)), &inside, ns).unwrap();
     let claimed: Vec<IntervalSet> = ns
         .iter()
-        .map(|n| project(&f, &Atom::Sym(n.clone())).expect("answered"))
+        // The hull alone: `check_projection` fails one wider than the hull of its values, so a
+        // cause of a disjunction left out cannot pass a wrong hull.
+        .map(|n| project(&f, &Atom::Sym(n.clone())).expect("answered").0)
         .collect();
     // Option A (STATUS.md, L1.38): one projection of the 60, of `y` on a term with `div`,
     // `mod`, `min` and `if`, was [-4..=5] where the points take [0..=5]. Since HULL3 (XT3 B4)

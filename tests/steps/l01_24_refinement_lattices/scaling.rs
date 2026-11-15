@@ -337,11 +337,14 @@ fn run_ends(w: &EndsWork) {
 fn check_ends(what: &str, base: num_bigint::BigInt, n: usize) {
     let (small, large) = (ends_work(n, &base), ends_work(scaling::FACTOR * n, &base));
     for (w, m) in [(&small, n), (&large, scaling::FACTOR * n)] {
+        // `.0`, the hull, without the causes of a disjunction left out: `w.hull` has no
+        // disjunction, and the hull is compared with the exact one, which a wider hull fails.
         let hull = zedc::store::presburger::project(
             &w.hull,
             &zedc::store::presburger::Atom::Sym("x".into()),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         let lo = zedc::store::interval::Num::from(&base + 3 * (m - 1));
         let hi = zedc::store::interval::Num::from(&base + 3 * m + 5);
         assert_eq!(hull, IntervalSet::range(Fin(lo), Fin(hi)), "{what} at {m}");
@@ -616,7 +619,8 @@ fn ends_near_0_and_2_to_the_200_move_scale_and_project_exactly() {
     ] {
         for n in [1usize, 3] {
             let w = ends_work(n, &base);
-            let hull = project(&w.hull, &Atom::Sym("x".into())).unwrap();
+            // The hull alone: no disjunction, and compared with the exact hull below.
+            let hull = project(&w.hull, &Atom::Sym("x".into())).unwrap().0;
             let lo = Num::from(&base + 3 * (n - 1));
             let hi = Num::from(&base + 3 * n + 5);
             assert_eq!(hull, IntervalSet::range(Fin(lo), Fin(hi)), "{base} {n}");

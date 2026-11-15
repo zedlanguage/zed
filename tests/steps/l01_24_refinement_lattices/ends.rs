@@ -136,14 +136,16 @@ fn between(a: &BigInt, b: &BigInt) -> Formula {
 #[test]
 fn a_bound_of_2_to_the_200_is_kept_exactly() {
     let p = BigInt::from(1) << 200;
+    // `.0`, the hull, without the causes of a disjunction left out: these formulas have no
+    // disjunction, and each hull is compared with the exact one, which a wider hull fails.
     // A closed range at 2^200, and its negation.
-    let hull = project(&between(&p, &(&p + 3)), &x()).unwrap();
+    let hull = project(&between(&p, &(&p + 3)), &x()).unwrap().0;
     assert_eq!(
         hull,
         IntervalSet::range(End::Fin(Num::from(&p)), End::Fin(Num::from(&p + 3)))
     );
     let (lo, hi) = (-(&p + BigInt::from(3)), -&p);
-    let hull = project(&between(&lo, &hi), &x()).unwrap();
+    let hull = project(&between(&lo, &hi), &x()).unwrap().0;
     assert_eq!(
         hull,
         IntervalSet::range(End::Fin(Num::from(&lo)), End::Fin(Num::from(&hi)))
@@ -151,12 +153,12 @@ fn a_bound_of_2_to_the_200_is_kept_exactly() {
     // One side only: `x >= 2^200` is the ray from 2^200, not every integer.
     let ray = Formula::Con(Con::ge(&Lin::atom(x()), &Lin::constant(p.clone())));
     assert_eq!(
-        project(&ray, &x()).unwrap(),
+        project(&ray, &x()).unwrap().0,
         IntervalSet::range(End::Fin(Num::from(&p)), End::PosInf)
     );
     // `2x == 2^200 + 1` has no integer point however far out it lies.
     let odd = Formula::Con(Con::eq(&Lin::atom(x()).times(2), &Lin::constant(&p + 1)));
-    assert_eq!(project(&odd, &x()).unwrap(), IntervalSet::empty());
+    assert_eq!(project(&odd, &x()).unwrap().0, IntervalSet::empty());
     // The interval arithmetic: `2^100 * 2^100`.
     let h = IntervalSet::point(Num::from(BigInt::from(1) << 100));
     assert_eq!(forward(&Op::Mul, &h, &h), IntervalSet::point(Num::from(&p)));

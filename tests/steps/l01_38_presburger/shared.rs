@@ -92,6 +92,8 @@ fn agree(f: &Formula, written: &Formula, what: &str) {
     }
     for n in ["x", "y"] {
         let s = Atom::Sym(n.into());
+        // The hull and the causes of a disjunction left out: writing shared parts out changes
+        // neither.
         assert_eq!(project(f, &s), project(written, &s), "{what}: {n}");
     }
     let x: Arc<str> = "x".into();
@@ -192,7 +194,8 @@ fn a_rule_shared_by_both_arms_of_a_disjunction_bounds_each_arm() {
     agree(&f, &written_out(&f), "a rule in both arms");
     assert!(!f.holds(&model(0, 0)));
     assert!(f.holds(&model(0, 5)) && f.holds(&model(5, 0)));
-    let x = project(&f, &Atom::Sym("x".into())).expect("a projection");
+    // The hull alone: it is compared with the exact one, which a wider hull fails.
+    let (x, _) = project(&f, &Atom::Sym("x".into())).expect("a projection");
     assert_eq!(x.to_string(), "[..=0, 5..]");
 }
 
@@ -226,8 +229,8 @@ fn a_part_shared_many_times_over_is_read_once_per_pass() {
     let small = doubled(6);
     agree(&small, &written_out(&small), "six levels");
     assert_eq!(
-        project(&small, &Atom::Sym("x".into())).map(|s| s.to_string()),
-        Ok("[0..]".to_string())
+        project(&small, &Atom::Sym("x".into())).map(|(s, causes)| (s.to_string(), causes)),
+        Ok(("[0..]".to_string(), vec![]))
     );
 }
 
