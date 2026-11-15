@@ -7617,14 +7617,13 @@ fn met_at<'a, P: Addressed>(
 /// `g`'s node only if the two nodes share a value, and [`Near`] lists every node that may.
 /// So the forms made with only those pairs compared hold the form compared exactly when the
 /// forms made with every pair compared do: fewer marks are held only at places no value of the
-/// side compared reaches with them. Assumption, not proved: this holds at every kind of spot,
-/// for nodes nested in rows and payloads, where a node of one side met at a depth may be held
-/// by nodes of the other side under parents that share no value with its parent (more pairs
-/// are then compared, never fewer), and where a component of the side compared is `_` (no
-/// function there; the kernel then needs `_` of the other side there, whatever the marks).
-/// Evidence: `random_unions_of_tuples_with_functions_agree_with_pairing_every_function` (3000
-/// cases a run, against pairing every function; its types hold functions at the top of a
-/// tuple only), and the tests of `l01_22`, `l01_23` and `l01_26`.
+/// side compared reaches with them. Proof, at every kind of spot (rows and payloads, nested,
+/// shared, `_` on either side, marks a set of every name holds nested): COMPLEXITY.md,
+/// PROOF-star-pairs, direction 2, which rests on the place lemma ([`Forms::comp`]), the depth
+/// of a node ([`Forms::fns`]) and `Near` listing every node not [`apart`]. The early return on
+/// `most` fires only where the edges form no stars (the same section, "The pair count").
+/// Tests: `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
+/// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`.
 ///
 /// Complexity tradeoff (COMPLEXITY.md F124): the pairs are as many as the functions at the
 /// spot at most, since in each pair one function is in that pair only, so they are counted as
@@ -7880,6 +7879,10 @@ struct Forms {
     marks: Option<KType>,
     /// Each set that holds the atoms of every name it does not list, with the marks cut out.
     cuts: RefCell<HashMap<KType, KType>>,
+    /// The form of the unknown of the other side as the last item of a payload with no fields:
+    /// every value but the marks of field names ([`Forms::comp`]); none until the marks are
+    /// numbered.
+    unknown: Option<KType>,
     /// The functions skipped, when the forms are made with every skipped pair taken to fit.
     merged: Option<Merged>,
 }
@@ -8077,7 +8080,9 @@ impl Forms {
         // One mark for every function of `t`, which every function of `other` holds: a
         // component of `t` meets only the components of `other` at its place, so this is the
         // form in which each function at a spot fits each of the other side's there, made
-        // with one mark in place of the product of the two sides' functions.
+        // with one mark in place of the product of the two sides' functions. Proof that a
+        // false verdict here is false for every pairing, marks a set of every name holds
+        // nested included: COMPLEXITY.md, PROOF-star-pairs, `Forms::tie`.
         forms.ids = left.all().map(|f| (f.clone(), 0)).collect();
         forms.number_marks();
         forms.fits = right.all().map(|g| (g.clone(), vec![0])).collect();
@@ -8103,8 +8108,14 @@ impl Forms {
                 }
                 continue;
             }
-            let ks: Vec<KType> = (n.comps().into_iter())
-                .map(|(_, c)| self.comp(c, left))
+            // The last item of a payload with no fields sits where a payload with fields of one
+            // item fewer has the mark of its field names ([`payload_form`]).
+            let end = match n {
+                Node::Shape(_, s) if s.fields.is_empty() => s.items.len().checked_sub(1),
+                _ => None,
+            };
+            let ks: Vec<KType> = (n.comps().into_iter().enumerate())
+                .map(|(i, (_, c))| self.comp(c, left, end == Some(i)))
                 .collect();
             // A component of no value, as a function of the other side that no function fits,
             // leaves the tuple or payload no value: built as empty, not as a row the kernel
@@ -8140,6 +8151,8 @@ impl Forms {
         let names = fns.chain(self.fields.iter().cloned());
         let marks = names.map(|n| mark(&n)).chain([mark("\u{0}unknown")]);
         self.marks = Some(KType::union_all(marks));
+        let fields = KType::union_all(self.fields.iter().map(|n| mark(n)));
+        self.unknown = Some(&KType::top() - &fields);
     }
 
     /// `set` without the marks, when it holds the atoms of every name it does not list: a
@@ -8167,11 +8180,22 @@ impl Forms {
             .clone()
     }
 
-    /// The form of the component `c`.
-    fn comp(&self, c: &Ty, left: bool) -> KType {
-        // The unknown of the other side holds any value ([`Ty::sub`]): every mark too.
+    /// The form of the component `c`; `end` when it is the last item of a payload with no
+    /// fields, where a payload with fields has the mark of their names.
+    fn comp(&self, c: &Ty, left: bool, end: bool) -> KType {
+        // The unknown of the other side holds any value ([`Ty::sub`]): every mark too, but at
+        // `end` not the marks of field names, which there stand for no value but for where a
+        // payload's fields end. Before (PROOF-star-pairs) it held them there too, so
+        // `#n(1, x: 2) <: #n(1, 2, _)` held: the payload of one item and a field, `(1, 2,
+        // fields x)`, met the three items' `(1, 2, _)`. Now a node's form shares no value with
+        // that of a node at another place (COMPLEXITY.md, PROOF-star-pairs, the place lemma). Only at
+        // `end`: elsewhere a mark of field names is a value a set of every atom of the side
+        // compared may hold nested (FAIL-forms-nested-marks), which `_` must still hold.
         if c.dynamic && !left {
-            return KType::top();
+            return match end {
+                true => (self.unknown.clone()).expect("the marks are numbered first"),
+                false => KType::top(),
+            };
         }
         let mut ks = vec![self.data(c, left)];
         let merged = self.merged.as_ref();

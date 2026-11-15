@@ -1025,3 +1025,191 @@ fn functions_at_one_place_are_decided_by_their_pairing() {
         assert_eq!(x.subtype(&y), *holds, "{a} <: {b}");
     }
 }
+
+/// Each kind of spot where comparing only the star pairs decides (COMPLEXITY.md,
+/// PROOF-star-pairs): flat tuples, a left tuple meeting two right tuples, nested tuples at one
+/// depth, a nested tuple met at two depths (paired at every depth), `_` on either side,
+/// payloads with items and with fields, and payloads inside tuples. Each comparison has two or
+/// more functions a side at one place, so its pairs are the star pairs, and is checked three
+/// ways: it is not refused for want of a pairing; its verdict is the one written; and it equals
+/// the verdict of comparing each member of the side compared alone, which has one function at
+/// the place and so pairs it with every function there. A pairing rule that keeps only the
+/// first tuple each tuple meets fails the second case.
+#[test]
+fn star_pairs_decide_as_every_pair_in_each_kind_of_spot() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let pairing = "the checker does not try every way of pairing them";
+    // `f` fits `g` and `g2`; `h` fits `f`; `g` fits neither `f` nor `h`.
+    let (f, g, g2, h) = (
+        "(int -> int)",
+        "(int -> int | #a)",
+        "(int -> int | #b)",
+        "((int | String) -> int)",
+    );
+    let check = |members: &[Ty], other: &Ty, holds: bool, label: &str| {
+        let t = Ty::union_all(members);
+        assert!(!t.refused(other).contains(pairing), "{label}: refused");
+        assert_eq!(t.subtype(other), holds, "{label}");
+        let each = members.iter().all(|m| m.subtype(other));
+        assert_eq!(each, holds, "{label}: member by member");
+    };
+    // (members of the side compared, type expected, holds)
+    let cases: Vec<(Vec<String>, String, bool)> = vec![
+        // Flat tuples.
+        (
+            vec![format!("({f}, 1)"), format!("({h}, 2)")],
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            true,
+        ),
+        (
+            vec![format!("({f}, 1)"), format!("({g}, 2)")],
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            false,
+        ),
+        // A left tuple meeting two right tuples, each with one function: both pairs needed.
+        (
+            vec![format!("({f}, 1 | 2)"), format!("({h}, 3)")],
+            format!("({g}, 1) | ({g2}, 2) | ({h}, 3)"),
+            true,
+        ),
+        (
+            vec![format!("({f}, 1 | 2)"), format!("({h}, 3)")],
+            format!("({g}, 1) | ({h}, 2) | ({h}, 3)"),
+            false,
+        ),
+        // Nested tuples, at depth 1.
+        (
+            vec![format!("(0, ({f}, 1))"), format!("(0, ({h}, 2))")],
+            format!("(0, ({g}, 1)) | (0, ({f}, 2)) | (0, ({h}, 3))"),
+            true,
+        ),
+        (
+            vec![format!("(0, ({f}, 1))"), format!("(0, ({g}, 2))")],
+            format!("(0, ({g}, 1)) | (0, ({f}, 2)) | (0, ({h}, 3))"),
+            false,
+        ),
+        // `_` on the side compared, in another column.
+        (
+            vec![format!("(_, {f}, 1)"), format!("(_, {h}, 2)")],
+            format!("(_, {g}, 1) | (_, {f}, 2) | (_, {h}, 3)"),
+            true,
+        ),
+        (
+            vec![format!("(_, {f}, 1)"), format!("(_, {g}, 2)")],
+            format!("(_, {g}, 1) | (_, {f}, 2) | (_, {h}, 3)"),
+            false,
+        ),
+        // `_` on the type expected: in another column, and at the place of the functions.
+        (
+            vec![format!("({f}, 1, #x)"), format!("({h}, 2, #y)")],
+            format!("({g}, _, #x) | ({f}, 2, #y) | ({h}, 3, #y)"),
+            true,
+        ),
+        (
+            vec![format!("({f}, 1)"), format!("({h}, 2)")],
+            format!("(_, 1) | ({f}, 2) | ({h}, 3)"),
+            true,
+        ),
+        (
+            vec![format!("({f}, 1)"), format!("({g}, 2)")],
+            format!("(_, 1) | ({f}, 2) | ({h}, 3)"),
+            false,
+        ),
+        // Payloads with items.
+        (
+            vec![format!("#n({f}, 1)"), format!("#n({h}, 2)")],
+            format!("#n({g}, 1) | #n({f}, 2) | #n({h}, 3)"),
+            true,
+        ),
+        (
+            vec![format!("#n({f}, 1)"), format!("#n({g}, 2)")],
+            format!("#n({g}, 1) | #n({f}, 2) | #n({h}, 3)"),
+            false,
+        ),
+        // Payloads with fields.
+        (
+            vec![format!("#n({f}, k: 1)"), format!("#n({h}, k: 2)")],
+            format!("#n({g}, k: 1) | #n({f}, k: 2) | #n({h}, k: 3)"),
+            true,
+        ),
+        (
+            vec![format!("#n({f}, k: 1)"), format!("#n({g}, k: 2)")],
+            format!("#n({g}, k: 1) | #n({f}, k: 2) | #n({h}, k: 3)"),
+            false,
+        ),
+        // Payloads inside tuples.
+        (
+            vec![format!("(#n({f}, 1), #a)"), format!("(#n({h}, 2), #b)")],
+            format!("(#n({g}, 1), #a) | (#n({f}, 2), #b) | (#n({h}, 3), #b)"),
+            true,
+        ),
+        (
+            vec![format!("(#n({f}, 1), #a)"), format!("(#n({g}, 2), #b)")],
+            format!("(#n({g}, 1), #a) | (#n({f}, 2), #b) | (#n({h}, 3), #b)"),
+            false,
+        ),
+    ];
+    for (members, other, holds) in &cases {
+        let ms: Vec<Ty> = members.iter().map(|m| parse_type(m).unwrap()).collect();
+        let label = format!("{} <: {other}", members.join(" | "));
+        check(&ms, &parse_type(other).unwrap(), *holds, &label);
+    }
+    // A tuple met at depth 0 and, as the same node, at depth 1: its place is paired at every
+    // depth (`Spot::Any`).
+    let r1 = parse_type(&format!("({f}, 1)")).unwrap();
+    let r2 = parse_type(&format!("({h}, 2)")).unwrap();
+    let outer = Ty::tuple(vec![parse_type("0").unwrap(), r1.clone()]);
+    let members = [r1, r2, outer];
+    for (other, holds) in [
+        (
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3) | (0, ({g}, 1))"),
+            true,
+        ),
+        (
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3) | (0, ({h}, 1))"),
+            false,
+        ),
+    ] {
+        let label = format!("shared ({f}, 1) <: {other}");
+        check(&members, &parse_type(&other).unwrap(), holds, &label);
+    }
+}
+
+/// A payload with fields and one with no fields and one item more never share a value, whatever
+/// the last item: the mark of the field names, which stands last in the form of a payload with
+/// fields, is no value of `_` there (COMPLEXITY.md, PROOF-star-pairs, the place lemma). Before,
+/// `#n(1, x: 2) <: #n(1, 2, _)` held.
+#[test]
+fn a_payload_with_fields_never_meets_one_more_item_of_any_value() {
+    use zedc::check::read::parse_type;
+    let f = "(int -> int)";
+    let cases = [
+        ("#n(1, x: 2)".to_string(), "#n(1, 2, _)".to_string(), false),
+        ("#n(1, x: 2)".to_string(), "#n(1, 2, #_)".to_string(), false),
+        ("#n(1, 2, #q)".to_string(), "#n(1, x: 2)".to_string(), false),
+        (
+            format!("#n({f}, x: 1)"),
+            format!("#n(({f} | #a), 1, _)"),
+            false,
+        ),
+        // Where the shapes agree, `_` at the end still holds every value.
+        ("#n(1, 2)".to_string(), "#n(1, _)".to_string(), true),
+        ("#n(1, x: 2)".to_string(), "#n(1, x: _)".to_string(), true),
+        ("#n(1, x: 2)".to_string(), "#n(_, x: 2)".to_string(), true),
+        (
+            format!("#n({f}, x: 1)"),
+            format!("#n(({f} | #a), x: 1)"),
+            true,
+        ),
+        (
+            "#n(1, x: 2)".to_string(),
+            "#n(1, 2, _) | #n(1, x: int)".to_string(),
+            true,
+        ),
+    ];
+    for (a, b, holds) in &cases {
+        let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
+        assert_eq!(x.subtype(&y), *holds, "{a} <: {b}");
+    }
+}
