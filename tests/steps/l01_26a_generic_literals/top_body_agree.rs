@@ -7,7 +7,7 @@
 //! leaves `rat` among the carriers, `0.5^2` or `0.5 * 2`, is rejected in both places.
 
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
-use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+use zed_tests::step_helpers::l01_26_type_resolution::{menu, tried, type_errors};
 
 /// Each line `e` bound in three places, as named values `y0`, `y1`, …: at the top level,
 /// `y0 = e;`; as a function's value, `g0() = e;`; and as a name bound in a function's
@@ -438,4 +438,174 @@ fn a_top_level_line_of_powers_takes_f64() {
     // A small instance of the benchmark
     // `bench::top_body_agree::a_top_level_line_of_many_powers_takes_f64_in_linear_time`.
     assert_eq!(type_errors(&powers(3)), Vec::<String>::new());
+}
+
+/// The type errors of `e` in the three places of [`places`]: the top level, a body and a block.
+fn messages_in_every_place(e: &str) -> [Vec<String>; 3] {
+    places(&[e]).map(|src| type_errors(&src))
+}
+
+#[test]
+fn an_exponent_no_float_format_holds_leaves_rat_alone_and_is_rejected_in_every_place() {
+    // An `int` exponent that no float format holds exactly, a literal or an operation on
+    // integer literals, leaves the integer literal base `rat` alone: `f32 ^ int` is for a base
+    // that is already an `f32` (DESIGN.md L1.17), and `f64 ^ f64` and `f32 ^ f32` take no such
+    // exponent. Nothing in the line asks for `rat`, so its integer literals stay `int`, which
+    // `/` does not take, and the line is rejected in all three places with the exact `rat`
+    // form as its one fix (POW-domains; plan row LIT-f32-inexact-exponent). A body listed
+    // `f32 | rat`, and the top level and a block offered `y0 = 2.0f64 ^ … / 3`, which is
+    // rejected too, since the exponent is no `f64`.
+    let big = "1267650600228229401496703205375";
+    let ints = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
+    // Where every literal is rewritten, as `2.0f64 ^ (2.0f64^100 - 1) / 3` does, the `f64` forms
+    // compile and stay offered at the top level and in a block, as `f64s` lists them.
+    let pow = "2.0f64 ^ (2.0f64^100 - 1) / 3";
+    let cast = "f64(2) ^ (f64(2)^100 - 1) / 3";
+    for (e, rat, first, span, f64s, value) in [
+        (
+            format!("2 ^ {big} / 3"),
+            format!("2r ^ {big} / 3"),
+            "2",
+            None,
+            None,
+            None,
+        ),
+        (
+            "2 ^ (2^100 - 1) / 3".into(),
+            "2r ^ (2^100 - 1) / 3".into(),
+            "2",
+            None,
+            Some((pow, cast)),
+            None,
+        ),
+        (
+            format!("(1/2) ^ {big} * 0"),
+            format!("(1r/2) ^ {big} * 0"),
+            "1",
+            Some("(1/2)"),
+            None,
+            None,
+        ),
+        // `9007199254740993` is no `f64` either, so no `f64` form is offered for it.
+        (
+            "1 / 9007199254740993".into(),
+            "1r / 9007199254740993".into(),
+            "1",
+            None,
+            None,
+            Some("1r/9007199254740993r"),
+        ),
+    ] {
+        let [top, body, block] = messages_in_every_place(&e);
+        let fix = format!("g0() = {rat};");
+        let holds = format!("the literal is then exactly {first}, a rat");
+        let fixes = [(fix.as_str(), holds.as_str())];
+        let head = format!("Nothing gives the literal `{first}` a carrier of `rat`");
+        let want = format!("{head}{}{} [{first}]", tried(&fixes), menu(&fixes));
+        assert_eq!(body, vec![want], "body: {e}");
+        let fixed = places(&[e.as_str()])[1].replace(&format!("g0() = {e};"), &fix);
+        assert_eq!(
+            type_errors(&fixed),
+            Vec::<String>::new(),
+            "body fix:\n{fixed}"
+        );
+        let [top_src, _, block_src] = places(&[e.as_str()]);
+        let (top_line, block_line) = (format!("y0 = {e};"), format!("g0() = {{ z = {e}; z }};"));
+        for (got, place, name, line, src, written) in [
+            (
+                top,
+                "top",
+                "y0",
+                format!("y0 = {rat};"),
+                &top_src,
+                &top_line,
+            ),
+            (
+                block,
+                "block",
+                "z",
+                format!("g0() = {{ z = {rat}; z }};"),
+                &block_src,
+                &block_line,
+            ),
+        ] {
+            let holds = format!("{name} is {}", value.unwrap_or(rat.as_str()));
+            let mut owned = vec![(line.clone(), holds)];
+            if let Some((pow, cast)) = f64s {
+                let at = |f: &str| line.replace(&rat, f);
+                owned.insert(0, (at(pow), format!("{name} is inf")));
+                owned.push((at(cast), format!("{name} is inf")));
+            }
+            let fixes: Vec<(&str, &str)> = owned
+                .iter()
+                .map(|(l, h)| (l.as_str(), h.as_str()))
+                .collect();
+            let head = format!("{ints}: `{name} = {e}`");
+            let at = span.unwrap_or(e.as_str());
+            let want = format!("{head}{}{} [{at}]", tried(&fixes), menu(&fixes));
+            assert_eq!(got, vec![want], "{place}: {e}");
+            // Each fix the menu offers is a program the checker takes.
+            for (fixed, _) in &fixes {
+                let src = src.replace(written.as_str(), fixed);
+                assert_eq!(
+                    type_errors(&src),
+                    Vec::<String>::new(),
+                    "{place} fix:\n{src}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_literal_base_takes_no_f32_through_f32_power_int() {
+    // `f32 ^ int` is for a base that is already an `f32` (DESIGN.md L1.17): a literal base
+    // with an `int` exponent no `f32` holds exactly takes `f32` in no place, while a base of
+    // type `f32` keeps the arrow. A body read `x * 2 ^ …` at `f32` and gave `inf`.
+    let big = "1267650600228229401496703205375";
+    for src in [
+        format!("g(positional x: f32) = x * 2 ^ {big};\n"),
+        "g(positional x: f32) = x + (-1) ^ 16777217;\n".to_string(),
+        format!("g() = 0.0f32 + 2 ^ {big};\n"),
+        format!("g(positional x) = 2 ^ {big} + x;\ny = g(1.0f32);\n"),
+        "g(positional x) = (-1) ^ 16777217 + x;\ny = g(0.0f32);\n".to_string(),
+    ] {
+        let errs = type_errors(&src);
+        assert!(!errs.is_empty(), "accepted:\n{src}");
+        assert!(
+            errs.iter()
+                .all(|m| !m.contains("f32 |") && !m.contains("| f32")),
+            "{src}{errs:#?}"
+        );
+    }
+    // A base of type `f32`, or an exponent `f32` holds exactly, keeps `f32`.
+    for (src, want) in [
+        (
+            format!("g(positional x: f32) = x ^ {big};\ny = g(2.0f32);\n"),
+            "inf",
+        ),
+        (
+            "g(positional x: f32) = x ^ 16777217;\ny = g(-1.0f32);\n".into(),
+            "-1.0",
+        ),
+        (
+            "g(positional x: f32) = x * 2 ^ 3;\ny = g(1.5f32);\n".into(),
+            "12.0",
+        ),
+        (
+            "g(positional x) = (-1) ^ 16777217 + x;\ny = g(0.0f64);\n".into(),
+            "-1.0",
+        ),
+        (
+            "g(positional x) = 2 ^ 16777216 * x;\ny = g(0.0f32);\n".into(),
+            "nan",
+        ),
+    ] {
+        let src =
+            format!("{src}main(args: MainArgs) -> int = {{ args.stdout <- \"${{y}}\"; 0 }};\n");
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        let out = run("l01_26a_top_body_agree_f32_base", &src, "", &[]);
+        assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{src}");
+        assert_eq!(out.stdout, format!("{want}\n"), "{src}");
+    }
 }

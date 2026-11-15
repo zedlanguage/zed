@@ -8572,6 +8572,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let generic = self.classes[child].generic;
         let asked = self.classes[child].asked;
         let floats = self.classes[child].floats;
+        let rat = self.classes[child].rat;
         let decimal = self.classes[child].decimal;
         let given = self.classes[child].given;
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
@@ -8583,6 +8584,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.generic &= generic;
         c.asked |= asked;
         c.floats |= floats;
+        c.rat |= rat;
         c.decimal |= decimal;
         // Its values are no longer those of one `min` or `max` use only.
         c.order_of = None;
@@ -16943,8 +16945,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:
     /// an operator, a prelude word, or a section of one. The classes of the arguments merge,
-    /// since every arrow takes one carrier for all its parameters, and its literals join
-    /// them; without a class, each literal adopts the carrier of its parameter on the
+    /// since every arrow but `f32 ^ int` takes one carrier for all its parameters, and its
+    /// literals join them; a literal, or a class of literals alone, takes no float format
+    /// through an arrow of two carriers (DESIGN.md L1.17); without a class, each literal adopts the carrier of its parameter on the
     /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
     /// the arrows still alive and the carriers they allow where the class stands
     /// ([`ClassAt`]): a state per such pair, not per combination of pieces.
@@ -17054,10 +17057,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                         None => (alive.clone(), *dyn_),
                         // A class may still take any value its mask allows, so it keeps
                         // every arrow; the restriction after the arguments narrows it.
-                        Some(p) if self.class_of(p).is_some() => {
+                        // A literal, or a class of literals alone, takes no float format
+                        // through an arrow of two carriers, `f32 ^ int`, which is for a base
+                        // that is already an `f32` (DESIGN.md L1.17): in `2 ^ (2^100 - 1)`
+                        // the base keeps `f32` only through `f32 ^ f32`, whose exponent the
+                        // literal one does not fit, and so takes no `f32` (plan row
+                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`.
+                        Some(p) if let Some(k) = self.class_of(p) => {
+                            let literal = (a.as_ref())
+                                .is_some_and(|a| a.lit.is_some() || a.branches.is_some())
+                                || self.classes[k].generic;
                             let m = at.get_or_insert_with(|| vec![EVERY; sig.arrows.len()]);
                             for &j in alive {
-                                m[j] &= mask_of(&sig.arrows[j].params[i]);
+                                let ps = &sig.arrows[j].params;
+                                let mut b = mask_of(&ps[i]);
+                                if literal && ps.iter().any(|q| q != &ps[i]) {
+                                    b &= !(Carrier::F32.bit() | Carrier::F64.bit());
+                                }
+                                m[j] &= b;
                             }
                             (alive.clone(), *dyn_)
                         }

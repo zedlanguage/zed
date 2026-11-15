@@ -1322,6 +1322,15 @@ struct Class {
     /// `2^(1 + 1) / 3`, leave a `/` of integer literals alone, which is rejected as at the top
     /// level (DESIGN.md sec:domains).
     floats: bool,
+    /// Whether a use asked it for `rat` alone (its mask, of the numeric carriers, holds `rat` and
+    /// nothing else), as a parameter of type `rat`, an operand of type `rat` or the literal `2r`
+    /// does, whether or not that removed a carrier. Of a merged class, whether either was. Only
+    /// then do its literals take `rat` where it is the one carrier left ([`Ck::lits_take`]):
+    /// uses that each take another carrier too, as `^` (`int | rat` with an `int` exponent no
+    /// float format holds exactly) and `/` (`f32 | f64 | rat`) do in `2 ^ (2^100 - 1) / 3`,
+    /// leave literals that nothing gives a carrier, which are rejected as at the top level and as
+    /// `2 ^ 3 / 3` is (DESIGN.md sec:domains, POW-domains: no implicit choice of `rat`).
+    rat: bool,
     /// Whether it is what a use of another class's values gives, as `args[k]` is in the body
     /// of `r(fs, args, k)`: at a call it may hold any atom, and a test narrows it by a need
     /// ([`Ck::narrowed`]). Of a merged class, whether both were. A parameter's class is not:
@@ -3397,6 +3406,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             generic: false,
             asked: false,
             floats: false,
+            rat: false,
             given: false,
             narrowed_to: Vec::new(),
             narrows: false,
@@ -3519,6 +3529,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         if numbers != 0 && numbers & !floats == 0 && !self.classes[r].floats {
             self.touch(r);
             self.classes[r].floats = true;
+        }
+        if numbers == Carrier::Rat.bit() && !self.classes[r].rat {
+            self.touch(r);
+            self.classes[r].rat = true;
         }
         let m = self.classes[r].mask & mask;
         if m == self.classes[r].mask {
@@ -3757,19 +3771,28 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`floats_take_f64`]), and a decimal literal or a use of float formats alone left them
     /// ([`Class::floats`]): `2^(1 + 1) / 3` is rejected, as it is at the top level, and not
     /// read at `f64`.
+    /// Where `rat` alone is left, the literals take it only if a use asked for it
+    /// ([`Class::rat`]): in `2 ^ (2^100 - 1) / 3` the operations alone leave it, no float
+    /// format holding the exponent exactly, and the base is rejected naming `rat`, as an
+    /// integer literal no use fixes stays an `int` (plan rows POW-domains and
+    /// LIT-f32-inexact-exponent).
     // Complexity tradeoff: O(1) where the mask holds `int` or one carrier, which is every
     // class a binding has already fixed; otherwise one pass over the class's literals for
     // whether one is decimal, and, only where the class is rejected, one more for the first
     // in the text, O(l) for l literals. A flag kept on the class would make the first pass
     // O(1), but must be merged at every union, and such a class is passed over once: the
     // pass ends in `f64` or a rejection, which leaves one carrier.
+    // The test for `rat` alone is O(1): `left` holds at most the numeric carriers.
     fn lits_take(&self, r: usize) -> LitsTake {
         let c = &self.classes[r];
         if c.mask & Carrier::Int.bit() != 0 {
             return LitsTake::Int;
         }
         let left: Vec<Carrier> = Carrier::of_mask(c.mask).filter(|c| c.numeric()).collect();
-        if left.len() <= 1 {
+        // `rat` alone is taken only where a use asked for it ([`Class::rat`]): literals alone
+        // whose operations left it, as in `2 ^ (2^100 - 1) / 3`, are rejected (POW-domains).
+        let unasked_rat = left == [Carrier::Rat] && c.generic && !c.rat;
+        if left.len() <= 1 && !unasked_rat {
             return LitsTake::Left;
         }
         let decimal = || c.lits.iter().any(|(l, _)| is_decimal(&l.value));
@@ -8759,6 +8782,18 @@ fn unfixed_binding(
     };
     let (leaves, rat_leaves) = (leaves_at(false), leaves_at(true));
     let digits = (leaves.iter()).all(|p| lit_digits(p).bytes().all(|b| b.is_ascii_digit()));
+    // An `f64` form, the suffix or the cast, rewrites the literals `leaves` and leaves each
+    // other literal to take `f64`, which it must hold exactly, as `1267650600228229401496703205375`
+    // in `y = 2 ^ 1267650600228229401496703205375 / 3` and `9007199254740993` in
+    // `y = 1 / 9007199254740993` do not: there the form is rejected too, and is not offered
+    // (plan row LIT-f32-inexact-exponent).
+    // Complexity tradeoff: a set of the rewritten literals' sites, O(l) for l literals; the
+    // naive search of `leaves` for each literal costs O(l^2).
+    let rewritten: HashSet<Span> = leaves.iter().map(|p| p.span).collect();
+    let exact = (lits.iter())
+        .filter(|l| !rewritten.contains(&l.span))
+        .all(|l| fits(l, Carrier::F64));
+    let forms = forms.filter(|f| exact || f.carrier() != Carrier::F64);
     let forms = forms.filter(|f| digits || *f != Form::Suffix(Carrier::F64));
     // Without decimal digits both forms are casts, written `f64(0xFF)` then `rat(0xFF)`.
     let mut forms: Vec<Form> = forms.collect();
