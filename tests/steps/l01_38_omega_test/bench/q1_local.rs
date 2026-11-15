@@ -109,20 +109,30 @@ fn growth_of_chained_blocks_with_a_far_contradiction() {
 
 #[test]
 fn the_census_of_fresh_seed_1() {
+    // 1365 with a point and 432 refused with one until 5a5084526 (FAIL-abs-hull-rows-tie), which
+    // takes a tie that a swap of the tied variables maps onto itself. It decides system 1911
+    // (counted from 0), refused with Growth before: `7·x2 - 3·x3 - 2 >= 0`,
+    // `x0 + x1 + 4·x2 + 7·x3 + 15 >= 0` and `-x0 - x1 - 3·x2 - 4·x3 + 1 >= 0` in the box, the
+    // same under a swap of x0 and x1, with the point (-1, -1, 1, 0); the census checks the
+    // model it gives against enumeration of the box.
     let c = fresh_census(0x5eed_0001, 2000);
     assert_eq!(
         counts(&c),
-        (1365, 52, g(432, 121, 30), vec![(3, 1), (4, 16), (5, 104)]),
+        (1366, 52, g(431, 121, 30), vec![(3, 1), (4, 16), (5, 104)]),
         "{c:?}"
     );
 }
 
 #[test]
 fn the_census_of_fresh_seed_2() {
+    // 1376 with a point and 438 refused with one until 5a5084526 (FAIL-abs-hull-rows-tie), which
+    // decides system 1331 (counted from 0), refused with Growth before:
+    // `5·x0 + 5·x1 - 7·x2 + 5·x3 - 11 >= 0` and `-x0 - 4·x1 + 6·x2 - x3 - 7 >= 0` in the box, the
+    // same under a swap of x0 and x3, with the point (4, 0, 2, 1).
     let c = fresh_census(0x5eed_0002, 2000);
     assert_eq!(
         counts(&c),
-        (1376, 55, g(438, 116, 15), vec![(3, 1), (4, 16), (5, 99)]),
+        (1377, 55, g(437, 116, 15), vec![(3, 1), (4, 16), (5, 99)]),
         "{c:?}"
     );
 }

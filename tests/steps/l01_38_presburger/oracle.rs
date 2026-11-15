@@ -593,7 +593,7 @@ fn small_coefficients_answer_the_same_under_any_names_and_order() {
 
 #[test]
 fn small_coefficients_over_four_variables_are_refused_81_times_in_300() {
-    // The first 300 systems of the 3000 in `bench::oracle` (839 refused there).
+    // The first 300 systems of the 3000 in `bench::oracle` (838 refused there).
     assert_eq!(refusals_at(0x38_40, 300, 4, 4, small_coefficients), 81);
 }
 
