@@ -9,7 +9,7 @@ use super::*;
 /// `an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region`.
 #[test]
 fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
-    image_holds(600, 100_000);
+    image_holds(600);
 }
 
 #[test]

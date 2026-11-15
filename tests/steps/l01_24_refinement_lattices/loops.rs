@@ -191,7 +191,22 @@ fn a_loop_counting_down_keeps_its_symbolic_bound() {
 fn every_solution_holds_every_value_a_run_takes() {
     let (mut rng, seed) = Rng::fresh("loop systems over symbolic bounds");
     let envs = envs();
-    let mut symbolic = 0;
+    let holds_run = |s: &System| {
+        let solved = solve(s).unwrap_or_else(|e| panic!("{s:?}: {e:?}, ZED_TEST_SEED={seed}"));
+        for &env in &envs {
+            let run = s.run(env);
+            for (v, values) in run.iter().enumerate() {
+                for &x in values {
+                    assert!(
+                        solved[v].contains(x, &at(env)),
+                        "cell {v} takes {x} at {env:?}, outside {}: {s:?}, ZED_TEST_SEED={seed}",
+                        solved[v]
+                    );
+                }
+            }
+        }
+        solved
+    };
     for _ in 0..RANDOM_INSTANCES / 4 {
         let cells = 1 + rng.below(4);
         let init = (0..cells).map(|_| random_bounds(&mut rng)).collect();
@@ -206,30 +221,15 @@ fn every_solution_holds_every_value_a_run_takes() {
                     .collect()
             })
             .collect();
-        let s = System::new(init, terms);
-        let solved = solve(&s).unwrap_or_else(|e| panic!("{s:?}: {e:?}, ZED_TEST_SEED={seed}"));
-        symbolic += solved
-            .iter()
-            .filter(|c| c.to_string().contains('n'))
-            .count();
-        for &env in &envs {
-            let run = s.run(env);
-            for (v, values) in run.iter().enumerate() {
-                for &x in values {
-                    assert!(
-                        solved[v].contains(x, &at(env)),
-                        "cell {v} takes {x} at {env:?}, outside {}: {s:?}, ZED_TEST_SEED={seed}",
-                        solved[v]
-                    );
-                }
-            }
-        }
+        holds_run(&System::new(init, terms));
     }
-    // The solutions keep symbolic bounds, so the check above tests them. Over 1600 fresh seeds
-    // (TEST-l0124-fixed-seeds) the 128 systems of a run had 243 symbolic cells on average, sd
-    // 13, fewest 194: the floor of one has a margin of about 18 sd and stays as it is.
+    // A solution with a symbolic bound, so the check above tests one whatever the draws gave:
+    // the loop counting from 0 while below `n` ends at `max(0, n)` and sees `0..=n - 1` in its
+    // body (`a_counting_loop_keeps_its_symbolic_bound`), and no constant end holds those at
+    // every `n`.
+    let solved = holds_run(&counting_up());
     assert!(
-        symbolic > 0,
-        "no solution kept a symbol, ZED_TEST_SEED={seed}"
+        solved.iter().all(|c| c.to_string().contains('n')),
+        "the counting loop kept no symbol: {solved:?}, ZED_TEST_SEED={seed}"
     );
 }

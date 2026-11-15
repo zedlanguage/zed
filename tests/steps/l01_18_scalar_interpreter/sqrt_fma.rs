@@ -445,7 +445,7 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
     }
     // fma of operands that cannot overflow, a third of them with the addend the negated
     // rounded product, where one rounding and two differ most.
-    let abc: Vec<[f64; 3]> = (0..n)
+    let mut abc: Vec<[f64; 3]> = (0..n)
         .map(|_| {
             let (a, b) = (
                 bounded_f64(&mut rng, -500, 500),
@@ -458,12 +458,19 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
             [a, b, c]
         })
         .collect();
+    // A row built so that one rounding and two differ, whatever the draws gave: with
+    // `a = b = 1 + 2^-52`, the exact product is `1 + 2^-51 + 2^-104`, which rounds to
+    // `1 + 2^-51` (the last term is far below half an ulp of 1, `2^-53`). With `c` that rounded
+    // product negated, `a * b + c` rounds twice to 0, and the fused `a * b + c` is exactly
+    // `2^-104`, a power of two and so a float.
+    let one_up = f64::from_bits(1f64.to_bits() + 1);
+    let built = abc.len();
+    abc.push([one_up, one_up, -(one_up * one_up)]);
     let rows: Vec<Vec<Term>> = (abc.iter())
         .map(|r| r.iter().map(|x| f64v(x.to_bits())).collect())
         .collect();
     let body = fma(var("a"), var("b"), var("c"));
     let fmas = components(&agreed(&applied(&["a", "b", "c"], body, &rows), true));
-    let mut differ = 0;
     for ([a, b, c], r) in abc.iter().zip(&fmas) {
         let r = f64::from_bits(bits(r));
         let (ea, eb, ec) = (exact(*a).unwrap(), exact(*b).unwrap(), exact(*c).unwrap());
@@ -475,14 +482,13 @@ fn random_operands_give_the_same_bits_in_the_kernel_and_in_native_code() {
             nearest(&v, r, r.next_down(), r.next_up(), even),
             "fma({a:e}, {b:e}, {c:e}) = {r:e}, seed {seed}"
         );
-        differ += usize::from(r.to_bits() != (a * b + c).to_bits());
     }
-    // Over 8 seeds, 52 to 72 of the 200 cases differed, a third of all cases having the addend
-    // the negated product; n / 10 lies about 7 standard deviations below, so no seed fails it
-    // by chance.
-    assert!(
-        differ > n / 10,
-        "one rounding and two differ on {differ} of {n}, seed {seed}"
+    let [a, b, c] = abc[built];
+    let r = f64::from_bits(bits(&fmas[built]));
+    assert_eq!(
+        (r.to_bits(), (a * b + c).to_bits()),
+        (2f64.powi(-104).to_bits(), 0),
+        "fma({a:e}, {b:e}, {c:e}) = {r:e}: the built row does not round once, seed {seed}"
     );
     // f32: both operations, on operands of every class.
     let rows: Vec<Vec<Term>> = (0..n / 4)

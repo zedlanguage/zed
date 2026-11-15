@@ -459,17 +459,20 @@ fn headline_repair(message: &str) -> Option<&str> {
 /// (row MSG-apply-try-headline), and that call, written in place of the call the error is
 /// at, gives a program with no error: `y = rat(n) + r` for `y = n + r`, `y = min(f64(n), x)`
 /// for `y = min(n, x)`. Over the grid, the headlines that end with a repair at the span of
-/// their error are each written, and at least one of each kind of application is seen.
+/// their error are each written; then one line built for each kind of application, `+`, `^`
+/// and `min`, is checked the same way and must have such a headline.
 #[test]
 fn every_headline_repair_checks_as_written() {
     let seed = zed_tests::seed::seed(
         "l01_29_repairs_and_printing::offered_repairs::every_headline_repair_checks_as_written",
     );
     let mut failed = Vec::new();
-    let mut tried = Vec::new();
-    for line in grid(seed) {
+    // Writes each headline repair of `line` that rewrites the call its error is at, and
+    // records a failure where the result has an error; true when one was written.
+    let mut check = |line: &str| {
         let src = format!("{PRELUDE}{line}\n");
         let (i, _) = info(&src);
+        let mut tried = false;
         for e in &i.errors {
             let Some(call) = headline_repair(&e.message) else {
                 continue;
@@ -484,26 +487,25 @@ fn every_headline_repair_checks_as_written() {
                 continue;
             }
             let fixed = format!("{}{call}{}", &src[..e.span.start], &src[e.span.end..]);
-            tried.push(line.clone());
+            tried = true;
             let errors = std::panic::catch_unwind(|| type_errors(&fixed))
                 .unwrap_or_else(|_| vec!["not resolved".to_string()]);
             if !errors.is_empty() {
                 failed.push(format!("{line}\n  {call}\n  -> {}", errors.join("\n     ")));
             }
         }
-    }
-    eprintln!(
-        "{} headline repairs tried, {} fail",
-        tried.len(),
-        failed.len()
-    );
+        tried
+    };
+    let tried = grid(seed).iter().filter(|line| check(line)).count();
+    eprintln!("{tried} headline repairs tried");
+    // The built lines: `n + r` adds an `int` to a `rat`, `min(n, x)` takes an `int` and an
+    // `f64`, and `n ^ x` raises an `int` to an `f64`; no arrow takes any of the three pairs as
+    // it is, and a cast of `n` gives a pair one arrow takes: the headlines end "Try `rat(n) + r`
+    // instead.", "Try `min(f64(n), x)` instead." and "Try `f64(n) ^ x` instead.".
+    let built = ["y = n + r;", "y = n ^ x;", "y = min(n, x);"];
+    let missed: Vec<&str> = built.into_iter().filter(|line| !check(line)).collect();
     assert!(failed.is_empty(), "{}", failed.join("\n"));
-    for kind in [" + ", " ^ ", "min("] {
-        assert!(
-            tried.iter().any(|l| l.contains(kind)),
-            "no headline repair of {kind}"
-        );
-    }
+    assert!(missed.is_empty(), "no headline repair of {missed:?}");
 }
 
 /// A numeric cast of a value none of its arrows takes, `int(b)` with `b` a `bool`, is not

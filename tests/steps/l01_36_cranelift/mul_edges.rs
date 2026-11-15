@@ -256,9 +256,15 @@ const PAIRS: usize = 2 * CHUNK;
 #[test]
 fn sampled_integer_pairs_agree_with_the_kernel_and_are_exact() {
     let seed = zed_tests::seed::seed("sampled_integer_pairs_agree_with_the_kernel_and_are_exact");
-    let pairs = int_pairs(seed, PAIRS);
+    let mut pairs = int_pairs(seed, PAIRS);
+    // Both sides of the edge, whatever the draws gave: `i64::MAX * 2 = 2^64 - 2` leaves the
+    // word, and `2 * 3 = 6` stays in it.
+    (pairs[0], pairs[1]) = ((MAX, 2), (2, 3));
+    assert!(
+        !inline(MAX, 2) && inline(2, 3),
+        "seed {seed}: the built pairs are on one side of the edge"
+    );
     let values: Vec<(Value, Value)> = pairs.iter().map(|&(x, y)| (int(x), int(y))).collect();
-    let overflows = pairs.iter().filter(|&&(x, y)| !inline(x, y)).count();
     // The lowering keeps one node for equal nodes (CSE by content address, zir/lower.rs), so
     // a pair repeated in one program is multiplied once there.
     let distinct: usize = pairs
@@ -294,11 +300,6 @@ fn sampled_integer_pairs_agree_with_the_kernel_and_are_exact() {
     assert_eq!(
         calls, distinct as u64,
         "seed {seed}: kernel calls against overflowing products"
-    );
-    // The sample reaches both sides of the edge often: more than a fifth of the pairs each way.
-    assert!(
-        overflows > PAIRS / 5 && overflows < 4 * PAIRS / 5,
-        "seed {seed}: {overflows} overflows"
     );
 }
 

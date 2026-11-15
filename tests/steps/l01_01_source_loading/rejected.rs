@@ -98,61 +98,66 @@ impl Lcg {
 /// sign pair broke before FAIL-source-lvt-jamo: a later end that is not NFC is no shorter
 /// answer when the character before it composes with its first.
 ///
-/// `cases` texts from `seed`; at least a quarter are rejected and a twentieth accepted.
+/// `cases` texts from `seed`, then two built ones, so both answers are checked whatever the
+/// draws gave: `a` is accepted, as ASCII text is NFC, and `e` followed by the combining acute
+/// U+0301 is rejected, as NFC composes the two into `é` U+00E9.
 pub(super) fn spans_of_random_texts(seed: u64, cases: usize) {
     let alphabet = [
         'a', 'e', 'n', 'x', ' ', '\u{301}', '\u{303}', '\u{323}', '\u{307}', '\u{212b}', '\u{c5}',
         '\u{1100}', '\u{1161}', '\u{11a8}', '\u{ac00}', '\u{b47}', '\u{b3e}', '\u{344}',
     ];
     let mut rng = Lcg(seed);
-    let (mut rejected, mut accepted) = (0, 0);
     for _ in 0..cases {
         let len = 1 + rng.next(8);
         let s: String = (0..len)
             .map(|_| alphabet[rng.next(alphabet.len())])
             .collect();
-        match load(s.as_bytes()) {
-            Ok(text) => {
-                assert!(is_nfc(&s), "{s:?} accepted but not NFC");
-                assert_eq!(text, s);
-                accepted += 1;
-            }
-            Err(Reject::NotNfc { span, nfc }) => {
-                assert!(!is_nfc(&s), "{s:?} rejected but NFC");
-                assert!(
-                    is_nfc(&s[..span.start]),
-                    "{s:?}: text before the span is not NFC"
-                );
-                let spanned = &s[span.start..span.end];
-                assert!(!is_nfc(spanned), "{s:?}: the span is NFC");
-                assert_eq!(nfc, spanned.nfc().collect::<String>());
-                // The repair: the text before the span, then the span's NFC spelling, begins
-                // the NFC of the text, so the next rejection is after it.
-                let repaired = format!("{}{nfc}", &s[..span.start]);
-                assert!(
-                    s.nfc().collect::<String>().starts_with(&repaired),
-                    "{s:?}: the span {span:?} spelled as NFC does not repair it"
-                );
-                // A later start is a shorter answer only if it also repairs: NFC leaves the
-                // text before it alone and changes the rest.
-                let starts = spanned.char_indices().skip(1);
-                for (b, _) in starts.filter(|&(_, c)| canonical_combining_class(c) == 0) {
-                    let (head, tail) = spanned.split_at(b);
-                    let split = format!("{head}{}", tail.nfc().collect::<String>());
-                    assert!(
-                        is_nfc(tail) || split != nfc,
-                        "{s:?}: the span {span:?} could start later"
-                    );
-                }
-                rejected += 1;
-            }
-            Err(r) => panic!("{s:?}: {r}"),
-        }
+        span_of(&s);
     }
-    assert!(
-        rejected > cases / 4 && accepted > cases / 20,
-        "{rejected} rejected, {accepted} accepted"
-    );
+    assert!(span_of("a"), "\"a\" rejected");
+    assert!(!span_of("e\u{301}"), "\"e\\u{{301}}\" accepted");
+}
+
+/// Loads `s` and checks the answer as `spans_of_random_texts` states; true when `s` is
+/// accepted.
+fn span_of(s: &str) -> bool {
+    match load(s.as_bytes()) {
+        Ok(text) => {
+            assert!(is_nfc(s), "{s:?} accepted but not NFC");
+            assert_eq!(text, s);
+            true
+        }
+        Err(Reject::NotNfc { span, nfc }) => {
+            assert!(!is_nfc(s), "{s:?} rejected but NFC");
+            assert!(
+                is_nfc(&s[..span.start]),
+                "{s:?}: text before the span is not NFC"
+            );
+            let spanned = &s[span.start..span.end];
+            assert!(!is_nfc(spanned), "{s:?}: the span is NFC");
+            assert_eq!(nfc, spanned.nfc().collect::<String>());
+            // The repair: the text before the span, then the span's NFC spelling, begins
+            // the NFC of the text, so the next rejection is after it.
+            let repaired = format!("{}{nfc}", &s[..span.start]);
+            assert!(
+                s.nfc().collect::<String>().starts_with(&repaired),
+                "{s:?}: the span {span:?} spelled as NFC does not repair it"
+            );
+            // A later start is a shorter answer only if it also repairs: NFC leaves the
+            // text before it alone and changes the rest.
+            let starts = spanned.char_indices().skip(1);
+            for (b, _) in starts.filter(|&(_, c)| canonical_combining_class(c) == 0) {
+                let (head, tail) = spanned.split_at(b);
+                let split = format!("{head}{}", tail.nfc().collect::<String>());
+                assert!(
+                    is_nfc(tail) || split != nfc,
+                    "{s:?}: the span {span:?} could start later"
+                );
+            }
+            false
+        }
+        Err(r) => panic!("{s:?}: {r}"),
+    }
 }
 
 /// 2,000 texts from a new seed each run; 20,000 are in `bench/random.rs`.

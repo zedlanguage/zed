@@ -185,30 +185,28 @@ fn random(r: &mut Rng, depth: usize) -> E {
 fn membership_is_the_expression_read_as_a_predicate() {
     let vs = values();
     let (mut r, seed) = Rng::fresh("membership read as a predicate");
-    let (mut members, mut nonmembers) = (0, 0);
-    for _ in 0..1500 {
-        let e = random(&mut r, 3);
-        let t = build(&e);
+    let agrees = |e: &E| {
+        let t = build(e);
         assert!(t.decidable(), "{e:?} (ZED_TEST_SEED={seed})");
         for v in &vs {
-            let want = holds(&e, Probe::Value(v));
             assert_eq!(
                 t.contains(v),
-                want,
+                holds(e, Probe::Value(v)),
                 "{v} in {t}, from {e:?} (ZED_TEST_SEED={seed})"
             );
-            if want {
-                members += 1;
-            } else {
-                nonmembers += 1;
-            }
         }
+        t
+    };
+    for _ in 0..1500 {
+        agrees(&random(&mut r, 3));
     }
-    // Both answers occur often, so neither a type that holds everything nor one that holds
-    // nothing would pass.
+    // Both answers, whatever the draws gave, so neither a type that holds everything nor one
+    // that holds nothing passes: `int` holds of `2` and not of `"b"`, both in `values()` (by
+    // `holds`, `Base("int")` holds of an `Int` or `Big` value and of nothing else).
+    let t = agrees(&E::Base("int"));
     assert!(
-        members > 10_000 && nonmembers > 10_000,
-        "{members} {nonmembers} (ZED_TEST_SEED={seed})"
+        t.contains(&int(2)) && !t.contains(&Value::str("b")),
+        "{t} (ZED_TEST_SEED={seed})"
     );
 }
 

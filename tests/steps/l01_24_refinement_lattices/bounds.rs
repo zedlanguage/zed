@@ -49,7 +49,15 @@ fn meet_is_exact_and_join_and_widening_hold_both_sides() {
 fn the_order_is_sound_and_holds_of_meets_and_joins() {
     let (mut rng, seed) = Rng::fresh("the order of bounds");
     let envs = envs();
-    let mut below = 0;
+    let sound = |a: &Bounds, b: &Bounds| {
+        for &env in &envs {
+            let (ma, mb) = (members(a, env), members(b, env));
+            assert!(
+                ma.iter().all(|x| mb.contains(x)),
+                "{a} is taken as below {b}, but not at {env:?}, ZED_TEST_SEED={seed}"
+            );
+        }
+    };
     for _ in 0..RANDOM_INSTANCES {
         let (a, b) = (random_bounds(&mut rng), random_bounds(&mut rng));
         assert!(a.leq(&a), "{a} is not below itself, ZED_TEST_SEED={seed}");
@@ -62,21 +70,28 @@ fn the_order_is_sound_and_holds_of_meets_and_joins() {
             "the meet of {a} and {b} is not below {a}, ZED_TEST_SEED={seed}"
         );
         if a.leq(&b) {
-            below += 1;
-            for &env in &envs {
-                let (ma, mb) = (members(&a, env), members(&b, env));
-                assert!(
-                    ma.iter().all(|x| mb.contains(x)),
-                    "{a} is taken as below {b}, but not at {env:?}, ZED_TEST_SEED={seed}"
-                );
-            }
+            sound(&a, &b);
         }
     }
-    // The bottom and the tops of the random elements make the order hold sometimes: over
-    // 20000 fresh seeds (TEST-l0124-fixed-seeds) 82.5 of the 512 pairs on average were ordered,
-    // sd 8.3, fewest 51. A pair is ordered with chance about 0.16, so no pair being ordered has
-    // chance about 0.84^512 < 10^-38, and the floor stays as it is.
-    assert!(below > 0, "no pair was ordered, ZED_TEST_SEED={seed}");
+    // An ordered pair with a symbolic bound, whatever the draws gave: `0 <= x <= n` is below
+    // `-1 <= x <= n + 1`, as its lower end is above the other's and its upper bound `n` is
+    // below `n + 1` at every `n`.
+    let upto = |c: i64| Bound {
+        affine: affine([1, 0], c),
+        floor: End::NegInf,
+    };
+    let a = Bounds::from_bounds(
+        IntervalSet::range(End::of(0), End::PosInf),
+        vec![],
+        vec![upto(0)],
+    );
+    let b = Bounds::from_bounds(
+        IntervalSet::range(End::of(-1), End::PosInf),
+        vec![],
+        vec![upto(1)],
+    );
+    assert!(a.leq(&b), "{a} is not below {b}, ZED_TEST_SEED={seed}");
+    sound(&a, &b);
 }
 
 #[test]

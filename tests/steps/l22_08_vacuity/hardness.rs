@@ -93,17 +93,33 @@ fn clause_laws_have_one_model_per_satisfying_assignment() {
         "clause_laws_have_one_model_per_satisfying_assignment",
     ));
     let mut with_dead_ends = 0;
+    let mut models = |n: usize, cnf: &[Clause]| {
+        let t = sat_theory(n, cnf);
+        let (count, dead) = model_count(&t);
+        assert_eq!(count, count_sat(n, cnf), "{}", describe(&t));
+        with_dead_ends += usize::from(dead > 0);
+        (count, dead)
+    };
     for _ in 0..150 {
         let n = 4 + rng.below(9);
         let m = rng.below(5 * n);
-        let cnf = random_cnf(&mut rng, n, m);
-        let t = sat_theory(n, &cnf);
-        let (count, dead) = model_count(&t);
-        assert_eq!(count, count_sat(n, &cnf), "{}", describe(&t));
-        with_dead_ends += usize::from(dead > 0);
+        models(n, &random_cnf(&mut rng, n, m));
     }
-    eprintln!("random 3-CNF theories with a dead end: {with_dead_ends} of 150");
-    assert!(with_dead_ends > 0);
+    // A search with a dead end, whatever the draws gave: the eight clauses of every sign
+    // pattern over three variables. Each assignment falsifies the clause of the literals it
+    // makes false, so there is no model; and each clause law alone leaves every choice of one
+    // field open (another field of the clause can be the projection that reaches `x`), so no
+    // choice is refuted before the search makes one, and each path of the search ends in a
+    // conflict.
+    let every_sign: Vec<Clause> = (0..8)
+        .map(|s: usize| (0..3).map(|v| (v, (s >> v) & 1 == 1)).collect())
+        .collect();
+    let (count, dead) = models(3, &every_sign);
+    eprintln!("random 3-CNF theories with a dead end: {with_dead_ends} of 151");
+    assert!(
+        count == 0 && dead > 0,
+        "every sign pattern over three variables: {count} models, {dead} dead ends"
+    );
 }
 
 /// The Fano plane: seven points and seven lines of three, which no 2-coloring leaves

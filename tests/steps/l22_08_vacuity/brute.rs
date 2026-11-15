@@ -284,7 +284,21 @@ fn the_report_agrees_with_brute_force_on_random_theories() {
         "random theories: {forest} in the forest fragment ({forest_dead} dead ends), {other} \
          outside it ({other_dead} with a dead end)"
     );
-    assert!(forest >= 100, "too few theories in the fragment: {forest}");
+    // A theory in the forest fragment, whatever the draws gave: each law is one atom, the
+    // first joined to `f` and `g`, the second to `g` alone, so the atoms and fields form a
+    // tree (three edges over four nodes, no cycle). Checked as the draws are.
+    let mut t = Theory::new("Forest");
+    t.field("f", 1);
+    t.field("g", 1);
+    t.law("same", "a", "f(a) == g(a)");
+    t.law("moves", "a", "g(a) != a");
+    assert!(in_forest_fragment(&t), "{}", describe(&t));
+    assert_eq!(
+        check(&t),
+        0,
+        "a theory in the forest fragment reached a dead end\n{}",
+        describe(&t)
+    );
 }
 
 /// A law as written: name, binders and body.
