@@ -225,8 +225,8 @@ fn same(a: &Ty, b: &Ty) -> bool {
 
 /// Types generated at random, each printed: the text parses back to the type (round trip), and
 /// deleting any one pair of its parentheses either fails to parse or gives another type
-/// (minimality). The forms the printed texts hold are counted, so that a generator that stops
-/// reaching one shows.
+/// (minimality). The forms the printed texts hold are counted, and a form no draw printed is
+/// printed by the text [`FORMS`] builds for it.
 #[test]
 fn printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need() {
     read_back_round(zed_tests::seed::seed(
@@ -255,7 +255,8 @@ fn printed_types_read_back_on_seeds_that_met_one_index_for_two_tuple_lengths() {
 /// the key's pair the clause may go to the end of the union. Seed 306 drew `(rat .. (rat | _) ->
 /// String) | (String .. (String | _) -> 0)` in a payload, whose `rat | _` reads back as `_`,
 /// and the checker refuses to compare two functions at one place of a payload when they are
-/// not all equal. Seed 7108425237053606485 printed no difference in its first 3000 draws.
+/// not all equal. Seed 7108425237053606485 printed no difference in its 3000 draws, which the
+/// text [`FORMS`] builds for it prints.
 #[test]
 fn printed_types_read_back_on_seeds_that_met_a_clause_in_a_key_union() {
     for seed in [24_u64, 306, 7108425237053606485] {
@@ -273,26 +274,84 @@ fn a_payload_of_the_empty_tuple_and_one_of_a_pair_are_told_apart() {
     assert!(!same(&a, &b), "{a} and {b}");
 }
 
+/// The random draws of [`read_back_round`], about seven of which print ` \ ` in a seed.
+const DRAWS: usize = 3000;
+
+/// The forms the printed texts of [`read_back_round`] must hold, each with a text built to
+/// print it (checked alone by [`each_text_built_for_a_form_prints_it`]). A seed may print a
+/// form rarely, as ` \ `, which the printer simplifies in most differences (no ` \ ` in 3000
+/// draws for seed 7108425237053606485, FAIL-parens-wrong-is-empty-seed), so a form the draws
+/// did not print is printed by its text, and no number of draws is relied on
+/// (PROOF-test-coverage-constructive).
+const FORMS: [(&str, &str); 9] = [
+    (" -> ", "(int) -> bool"),
+    (" ->? ", "(int) ->? bool"),
+    (" .. ", "(int | #a) .. (int | #a | #b) -> int"),
+    (" | ", "int | #a"),
+    (" & ", "((int) -> int) & ((f64) -> f64)"),
+    (" \\ ", "(int \\ 3) -> int"),
+    (" for ", "((T) -> T for T in int | f64)"),
+    ("#box(", "#box(int)"),
+    (",)", "((int,)) -> int"),
+];
+
+/// Checks the type `t` read from `text` and printed as `printed`: the printed text parses
+/// back to `t` (round trip), and deleting any one pair of its parentheses either fails to
+/// parse or gives another type (minimality). Each failure is pushed to `wrong`.
+fn check_printed(text: &str, t: &Ty, printed: &str, wrong: &mut Vec<String>) {
+    match parse_type(printed) {
+        Ok(back) if same(&back, t) => {}
+        Ok(_) => wrong.push(format!(
+            "`{text}` prints `{printed}`, read back as another type"
+        )),
+        Err(e) => wrong.push(format!(
+            "`{text}` prints `{printed}`, which does not parse: {e}"
+        )),
+    }
+    for (a, b) in pairs(printed) {
+        let less = format!(
+            "{}{}{}",
+            &printed[..a],
+            &printed[a + 1..b],
+            &printed[b + 1..]
+        );
+        if parse_type(&less).is_ok_and(|back| same(&back, t)) {
+            wrong.push(format!(
+                "`{text}` prints `{printed}`; `{less}` reads the same"
+            ));
+        }
+    }
+}
+
+/// Each text of [`FORMS`] reads, prints its form, and passes the round trip and minimality
+/// checks.
+#[test]
+fn each_text_built_for_a_form_prints_it() {
+    let mut wrong = Vec::new();
+    for (form, text) in FORMS {
+        let t = parse_type(text).unwrap_or_else(|e| panic!("`{text}`: {e}"));
+        let printed = t.to_string();
+        assert!(
+            printed.contains(form),
+            "`{text}` prints `{printed}`, no `{form}`"
+        );
+        check_printed(text, &t, &printed, &mut wrong);
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// One round of [`printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need`]
-/// with the random generator seeded by `seed`.
+/// with the random generator seeded by `seed`: [`DRAWS`] random types, then, for each form of
+/// [`FORMS`] none of them printed, the text built to print it, checked as the draws are.
+/// Fails when a form is still not printed, which happens only when the printer no longer
+/// writes it.
 fn read_back_round(seed: u64) {
     let mut rng = Rng(seed);
     let mut wrong = Vec::new();
     let mut read = 0;
     let mut seen = HashSet::new();
-    let mut forms = [
-        " -> ", " ->? ", " .. ", " | ", " & ", " \\ ", " for ", "#box(", ",)",
-    ]
-    .map(|f| (f, 0usize));
-    // 3000 draws, then more until every form has been printed: a form a seed draws rarely,
-    // as ` \ ` (printed about 7 times in 3000 draws, never in 1 seed of about 3000, since the
-    // printer simplifies most differences), is still checked, and the first 3000 draws stay
-    // those of a seed recorded before (FAIL-parens-wrong-is-empty-seed). The 30000 cap only
-    // ends a generator that stops producing a form, which the assertion below then reports.
-    for draw in 0..30000 {
-        if draw >= 3000 && forms.iter().all(|(_, n)| *n > 0) {
-            break;
-        }
+    let mut forms = FORMS.map(|(f, _)| (f, 0usize));
+    for _ in 0..DRAWS {
         let text = generated(&mut rng, 3);
         let Ok(t) = parse_type(&text) else { continue };
         let printed = t.to_string();
@@ -303,39 +362,29 @@ fn read_back_round(seed: u64) {
         for (f, n) in forms.iter_mut() {
             *n += usize::from(printed.contains(*f));
         }
-        match parse_type(&printed) {
-            Ok(back) if same(&back, &t) => {}
-            Ok(_) => wrong.push(format!(
-                "`{text}` prints `{printed}`, read back as another type"
-            )),
-            Err(e) => wrong.push(format!(
-                "`{text}` prints `{printed}`, which does not parse: {e}"
-            )),
-        }
-        for (a, b) in pairs(&printed) {
-            let less = format!(
-                "{}{}{}",
-                &printed[..a],
-                &printed[a + 1..b],
-                &printed[b + 1..]
-            );
-            if parse_type(&less).is_ok_and(|back| same(&back, &t)) {
-                wrong.push(format!(
-                    "`{text}` prints `{printed}`; `{less}` reads the same"
-                ));
-            }
-        }
+        check_printed(&text, &t, &printed, &mut wrong);
     }
+    eprintln!("{read} distinct types read: {forms:?}");
+    let mut built = Vec::new();
+    for ((form, n), (_, text)) in forms.iter().zip(FORMS) {
+        if *n > 0 {
+            continue;
+        }
+        let t = parse_type(text).unwrap_or_else(|e| panic!("`{text}`: {e}"));
+        let printed = t.to_string();
+        assert!(
+            printed.contains(form),
+            "`{form}` is not printed: `{text}` prints `{printed}`"
+        );
+        check_printed(text, &t, &printed, &mut wrong);
+        built.push(*form);
+    }
+    eprintln!("printed only by the texts built for them: {built:?}");
     assert!(
         wrong.is_empty(),
         "{} of {read}:\n{}",
         wrong.len(),
         wrong.join("\n")
-    );
-    assert!(read >= 300, "only {read} distinct types read: {forms:?}");
-    assert!(
-        forms.iter().all(|(_, n)| *n > 0),
-        "a form never printed: {forms:?}"
     );
 }
 
@@ -673,7 +722,7 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
         "the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
     ));
     let (mut wrong, mut read, mut seen, mut unpaired) = (Vec::new(), 0, HashSet::new(), 0);
-    let mut forms = [" -> ", " ->? ", " .. ", " | ", " & ", "#box(", ",)"].map(|f| (f, 0usize));
+    let mut forms = KERNEL_FORMS.map(|(f, _)| (f, 0usize));
     for _ in 0..3000 {
         let Built { t: k, text } = kernel_generated(&mut rng, 3);
         let printed = k.surface();
@@ -684,33 +733,27 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
         for (f, n) in forms.iter_mut() {
             *n += usize::from(printed.root.contains(*f));
         }
-        let want = match parse_type(&text) {
-            Ok(want) => want,
-            Err(e) => {
-                wrong.push(format!("the reference `{text}` does not parse: {e}"));
-                continue;
-            }
-        };
-        // Two or more functions of each side at one place, each unlike those of the other side
-        // there, are not paired, and the comparison is refused (COMPLEXITY.md F124): as with
-        // `(rat .. (rat | _) -> f64) | (_ .. (_ | int) -> bool)` in a tuple, printed
-        // `(_ -> bool) | (rat .. _ -> f64)`. A refusal is no misprint; such texts are counted.
-        let refused = |x: &Ty, y: &Ty| {
-            x.subtype(y)
-                || x.refused(y)
-                    .contains("does not try every way of pairing them")
-        };
-        if let Ok(back) = parse_type(&printed.root)
-            && !(back.subtype(&want) && want.subtype(&back))
-            && refused(&back, &want)
-            && refused(&want, &back)
-        {
-            unpaired += 1;
+        unpaired += usize::from(kernel_read_back(&text, &printed.root, &mut wrong));
+    }
+    eprintln!("{read} distinct types read: {forms:?}");
+    // A form the draws did not print is printed by the type built for it, checked as the
+    // draws are.
+    for ((form, n), (_, build)) in forms.iter().zip(KERNEL_FORMS) {
+        if *n > 0 {
             continue;
         }
-        for w in misprinted(&printed.root, &want) {
-            wrong.push(format!("`{text}`: {w}"));
-        }
+        let Built { t, text } = build();
+        let printed = t.surface();
+        assert!(
+            printed.exact && printed.defs.is_empty() && printed.root.contains(form),
+            "`{form}` is not printed: `{text}` prints `{}`",
+            printed.root
+        );
+        assert!(
+            !kernel_read_back(&text, &printed.root, &mut wrong),
+            "`{text}`"
+        );
+        eprintln!("`{form}` printed only by `{text}`");
     }
     assert!(
         wrong.is_empty(),
@@ -718,15 +761,100 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
         wrong.len(),
         wrong.join("\n")
     );
-    assert!(read >= 300, "only {read} distinct types read: {forms:?}");
     assert!(
         unpaired * 20 <= read,
         "{unpaired} of {read} comparisons refused for unpaired functions"
     );
-    assert!(
-        forms.iter().all(|(_, n)| *n > 0),
-        "a form never printed: {forms:?}"
-    );
+}
+
+/// The forms the kernel printer must write in
+/// [`the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need`], each
+/// with a type built to print it (checked alone by
+/// [`each_kernel_type_built_for_a_form_prints_it`]): a form its draws did not print is
+/// printed by its type, and no number of draws is relied on (PROOF-test-coverage-constructive).
+const KERNEL_FORMS: [(&str, fn() -> Built); 7] = [
+    (" -> ", || Built {
+        t: KType::exact(KType::int(), KType::bool()),
+        text: "(int) -> (bool)".into(),
+    }),
+    (" ->? ", || Built {
+        t: KType::partial(KType::int(), KType::bool()),
+        text: "(int) ->? (bool)".into(),
+    }),
+    (" .. ", || Built {
+        t: KType::morphism(KType::int(), &KType::int() | &KType::bool(), KType::f64()),
+        text: "(int) .. ((int) | (bool)) -> (f64)".into(),
+    }),
+    (" | ", || Built {
+        t: &KType::int() | &KType::atom("a"),
+        text: "(int) | (#a)".into(),
+    }),
+    (" & ", || Built {
+        t: &KType::exact(KType::int(), KType::bool())
+            & &KType::partial(KType::f64(), KType::bool()),
+        text: "((int) -> (bool)) & ((f64) ->? (bool))".into(),
+    }),
+    ("#box(", || Built {
+        t: KType::atom_with("box", &KType::tuple(vec![KType::int()])),
+        text: "#box((int))".into(),
+    }),
+    (",)", || Built {
+        t: KType::tuple(vec![KType::int()]),
+        text: "((int),)".into(),
+    }),
+];
+
+/// Checks the kernel printer's text `printed` of the type built from `text`: it reads back as
+/// that type, and no grouping pair of its parentheses can go. Each failure is pushed to
+/// `wrong`. Gives whether the comparison was refused for unpaired functions instead.
+fn kernel_read_back(text: &str, printed: &str, wrong: &mut Vec<String>) -> bool {
+    let want = match parse_type(text) {
+        Ok(want) => want,
+        Err(e) => {
+            wrong.push(format!("the reference `{text}` does not parse: {e}"));
+            return false;
+        }
+    };
+    // Two or more functions of each side at one place, each unlike those of the other side
+    // there, are not paired, and the comparison is refused (COMPLEXITY.md F124): as with
+    // `(rat .. (rat | _) -> f64) | (_ .. (_ | int) -> bool)` in a tuple, printed
+    // `(_ -> bool) | (rat .. _ -> f64)`. A refusal is no misprint; such texts are counted.
+    let refused = |x: &Ty, y: &Ty| {
+        x.subtype(y)
+            || x.refused(y)
+                .contains("does not try every way of pairing them")
+    };
+    if let Ok(back) = parse_type(printed)
+        && !(back.subtype(&want) && want.subtype(&back))
+        && refused(&back, &want)
+        && refused(&want, &back)
+    {
+        return true;
+    }
+    for w in misprinted(printed, &want) {
+        wrong.push(format!("`{text}`: {w}"));
+    }
+    false
+}
+
+/// Each type of [`KERNEL_FORMS`] prints its form and reads back.
+#[test]
+fn each_kernel_type_built_for_a_form_prints_it() {
+    let mut wrong = Vec::new();
+    for (form, build) in KERNEL_FORMS {
+        let Built { t, text } = build();
+        let printed = t.surface();
+        assert!(
+            printed.exact && printed.defs.is_empty() && printed.root.contains(form),
+            "`{text}` prints `{}`, no `{form}`",
+            printed.root
+        );
+        assert!(
+            !kernel_read_back(&text, &printed.root, &mut wrong),
+            "`{text}`"
+        );
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 /// A body expression of a recursive group built at random, `depth` levels deep at most, from
@@ -849,8 +977,7 @@ fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_ne
         "the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
     ));
     let (mut wrong, mut read, mut seen) = (Vec::new(), 0, HashSet::new());
-    let mut forms =
-        [" -> ", " ->? ", " .. ", " | ", " & ", " \\ ", "#box(", ",)"].map(|f| (f, 0usize));
+    let mut forms = GROUP_FORMS.map(|(f, _)| (f, 0usize));
     for _ in 0..3000 {
         let (e, text) = body_generated(&mut rng, 3);
         let Some(printed) = shown(e) else { continue };
@@ -861,16 +988,23 @@ fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_ne
         for (f, n) in forms.iter_mut() {
             *n += usize::from(printed.contains(*f));
         }
-        let want = match parse_type(&text) {
-            Ok(want) => want,
-            Err(e) => {
-                wrong.push(format!("the reference `{text}` does not parse: {e}"));
-                continue;
-            }
-        };
-        for w in misprinted(&printed, &want) {
-            wrong.push(format!("`{text}`: {w}"));
+        group_read_back(&text, &printed, &mut wrong);
+    }
+    eprintln!("{read} distinct texts read: {forms:?}");
+    // A form the draws did not print is printed by the body built for it, checked as the
+    // draws are.
+    for ((form, n), (_, build)) in forms.iter().zip(GROUP_FORMS) {
+        if *n > 0 {
+            continue;
         }
+        let (e, text) = build();
+        let printed = shown(e).unwrap_or_else(|| panic!("`{text}` is not shown"));
+        assert!(
+            printed.contains(form),
+            "`{form}` is not printed: `{text}` prints `{printed}`"
+        );
+        group_read_back(&text, &printed, &mut wrong);
+        eprintln!("`{form}` printed only by `{text}`");
     }
     assert!(
         wrong.is_empty(),
@@ -878,11 +1012,109 @@ fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_ne
         wrong.len(),
         wrong.join("\n")
     );
-    assert!(read >= 300, "only {read} distinct texts read: {forms:?}");
-    assert!(
-        forms.iter().all(|(_, n)| *n > 0),
-        "a form never printed: {forms:?}"
-    );
+}
+
+/// The forms the group printer must write in
+/// [`the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need`], each
+/// with a body built to print it (checked alone by
+/// [`each_group_body_built_for_a_form_prints_it`]): a form its draws did not print is printed
+/// by its body, and no number of draws is relied on (PROOF-test-coverage-constructive).
+const GROUP_FORMS: [(&str, fn() -> (Expr, String)); 8] = [
+    (" -> ", || {
+        (
+            Expr::exact(Expr::Ref(0, vec![]), Expr::Type(KType::int())),
+            "(#u) -> (int)".into(),
+        )
+    }),
+    (" ->? ", || {
+        (
+            group_partial(Expr::Ref(0, vec![]), Expr::Type(KType::int())),
+            "(#u) ->? (int)".into(),
+        )
+    }),
+    (" .. ", || {
+        let int = || Expr::Type(KType::int());
+        let upper = Expr::Union(vec![int(), Expr::Ref(0, vec![])]);
+        let e = Expr::Morphism(
+            Box::new(int()),
+            Box::new(upper),
+            Box::new(Expr::Ref(0, vec![])),
+        );
+        (e, "(int) .. ((int) | (#u)) -> (#u)".into())
+    }),
+    // A recursive occurrence needs a tuple, payload or function type above it.
+    (" | ", || {
+        let e = Expr::Union(vec![
+            Expr::Tuple(vec![Expr::Ref(0, vec![])]),
+            Expr::Type(KType::int()),
+        ]);
+        (e, "((#u),) | (int)".into())
+    }),
+    (" & ", || {
+        let e = Expr::And(vec![
+            Expr::exact(Expr::Ref(0, vec![]), Expr::Type(KType::int())),
+            group_partial(Expr::Type(KType::bool()), Expr::Type(KType::int())),
+        ]);
+        (e, "((#u) -> (int)) & ((bool) ->? (int))".into())
+    }),
+    (" \\ ", || {
+        let e = Expr::Diff(
+            Box::new(Expr::Type(KType::rat())),
+            Box::new(Expr::Ref(0, vec![])),
+        );
+        (
+            Expr::Atom("box".into(), vec![e]),
+            "#box((rat \\ (#u)))".into(),
+        )
+    }),
+    ("#box(", || {
+        (
+            Expr::Atom("box".into(), vec![Expr::Ref(0, vec![])]),
+            "#box((#u))".into(),
+        )
+    }),
+    (",)", || {
+        (Expr::Tuple(vec![Expr::Ref(0, vec![])]), "((#u),)".into())
+    }),
+];
+
+/// The body `k ->? v`, as [`body_generated`] builds it.
+fn group_partial(k: Expr, v: Expr) -> Expr {
+    Expr::Morphism(
+        Box::new(Expr::Type(KType::empty())),
+        Box::new(k),
+        Box::new(v),
+    )
+}
+
+/// Checks the group printer's text `printed` of the body built from `text`: it reads back as
+/// that body, and no grouping pair of its parentheses can go. Each failure is pushed to
+/// `wrong`.
+fn group_read_back(text: &str, printed: &str, wrong: &mut Vec<String>) {
+    match parse_type(text) {
+        Ok(want) => {
+            for w in misprinted(printed, &want) {
+                wrong.push(format!("`{text}`: {w}"));
+            }
+        }
+        Err(e) => wrong.push(format!("the reference `{text}` does not parse: {e}")),
+    }
+}
+
+/// Each body of [`GROUP_FORMS`] is shown with its form and reads back.
+#[test]
+fn each_group_body_built_for_a_form_prints_it() {
+    let mut wrong = Vec::new();
+    for (form, build) in GROUP_FORMS {
+        let (e, text) = build();
+        let printed = shown(e).unwrap_or_else(|| panic!("`{text}` is not shown"));
+        assert!(
+            printed.contains(form),
+            "`{text}` prints `{printed}`, no `{form}`"
+        );
+        group_read_back(&text, &printed, &mut wrong);
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 /// A partial arrow first in a group message, `U ->? ()`, is written without its guarantee,

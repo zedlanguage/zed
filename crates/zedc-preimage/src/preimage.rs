@@ -13929,9 +13929,10 @@ mod tests {
     /// 2.2 to 2.6 ms a round).
     const JOIN_ROUNDS: usize = 120;
 
-    /// The chain translator against the translation two at a time, on [`JOIN_ROUNDS`] or more
-    /// random programs from a new seed each run (printed; `ZED_TEST_SEED` repeats a run); every
-    /// fourth round also builds preimages.
+    /// The chain translator against the translation two at a time, on [`JOIN_ROUNDS`] random
+    /// programs from a new seed each run (printed; `ZED_TEST_SEED` repeats a run), then the
+    /// programs of [`JOIN_KINDS`] for the kinds they missed ([`joins_as_two_at_a_time_from`]);
+    /// every fourth round also builds preimages.
     #[test]
     fn the_translator_joins_a_chain_as_it_joined_it_two_at_a_time() {
         let seed = crate::seed::seed("the_translator_joins_a_chain_as_it_joined_it_two_at_a_time");
@@ -13969,16 +13970,28 @@ mod tests {
         }
     }
 
-    fn joins_as_two_at_a_time_from(mut g: Gen) {
-        let (mut some, mut none, mut kept, mut stopped, mut fewer) = (0, 0, 0, 0, 0);
-        let mut round = 0;
-        // At least [`JOIN_ROUNDS`] rounds, and more until every kind of case counted below has
-        // occurred, up to the 4,000 rounds of the test before: with 120 rounds, 1 seed of 40
-        // met only one translation that fails and one stop.
-        while round < JOIN_ROUNDS
-            || (round < 4000 && [some, kept, none, stopped, fewer].contains(&0))
+    /// The kinds of case [`joins_as_two_at_a_time_from`] must meet, in the order of
+    /// [`join_round`]'s answer, each with a program built to make it (checked alone by
+    /// [`each_program_built_for_a_kind_of_join_makes_it`]). With 120 random rounds, 1 seed in
+    /// 40 met only one translation that fails and one stop, so a kind the rounds missed is
+    /// met by its program, and no number of rounds is relied on
+    /// (PROOF-test-coverage-constructive).
+    const JOIN_KINDS: [(&str, fn() -> Term); 5] = [
+        ("a formula with no part kept whole", written::two_tests),
+        ("a formula with a part kept whole", written::kept_part),
+        ("a translation that fails", written::product_test),
+        ("a translation that stops", written::hit_with_cut),
+        (
+            "a chain whose inner entries are not made",
+            written::three_tests,
+        ),
+    ];
+
+    /// One round of the translator against the translation two at a time on `t`: asserts
+    /// that both agree, and gives which kinds of [`JOIN_KINDS`] `t` makes. Every fourth round
+    /// also builds preimages.
+    fn join_round(t: &Term, round: usize) -> [bool; 5] {
         {
-            let t = program(&mut g);
             let (old, new) = (translate(&t, true), translate(&t, false));
             assert_eq!(new.formula, old.formula, "round {round}: {t:?}");
             assert_eq!(new.defs, old.defs, "round {round}: {t:?}");
@@ -14021,7 +14034,6 @@ mod tests {
                     "round {round}, entry {k:?}: {t:?}"
                 );
             }
-            fewer += usize::from(!extra.is_empty());
             // The whole preimage, with the relation's formula as built.
             let doms = domains();
             for w in [true, false].into_iter().filter(|_| round % 4 == 0) {
@@ -14033,18 +14045,54 @@ mod tests {
                 let rel = |p: &Preimage| p.relation.as_ref().map(|r| built(&r.body));
                 assert_eq!(rel(&pn), rel(&po), "round {round}, demand {w}: {t:?}");
             }
-            match &new.formula {
-                Some(_) if new.kept => kept += 1,
-                Some(_) => some += 1,
-                None => none += 1,
-            }
-            stopped += usize::from(new.stops > 0 || new.cut != usize::MAX);
-            round += 1;
+            [
+                new.formula.is_some() && !new.kept,
+                new.formula.is_some() && new.kept,
+                new.formula.is_none(),
+                new.stops > 0 || new.cut != usize::MAX,
+                !extra.is_empty(),
+            ]
         }
+    }
+
+    /// [`JOIN_ROUNDS`] random rounds from `g`, then, for each kind of [`JOIN_KINDS`] they did
+    /// not meet, the program built to make it. Fails when a kind is still not met, which
+    /// happens only when the code no longer makes it. Gives the kinds the built programs
+    /// supplied.
+    fn joins_as_two_at_a_time_from(mut g: Gen) -> Vec<&'static str> {
+        let mut counts = [0usize; 5];
+        for round in 0..JOIN_ROUNDS {
+            let t = program(&mut g);
+            for (n, made) in counts.iter_mut().zip(join_round(&t, round)) {
+                *n += usize::from(made);
+            }
+        }
+        let [some, kept, none, stopped, fewer] = counts;
         eprintln!("some {some}, kept {kept}, none {none}, stopped {stopped}, fewer {fewer}");
-        // Formulas, kept parts, translations that fail, stops and dropped entries all occur.
-        assert!(some > 0 && kept > 0 && none > 0, "{some} {kept} {none}");
-        assert!(stopped > 0 && fewer > 0, "{stopped} {fewer}");
+        // Formulas, kept parts, translations that fail, stops and dropped entries all occur: a
+        // kind the rounds missed is met by the program built to make it, compared as the
+        // rounds are (round 0, so that its preimages are compared too).
+        let mut built = Vec::new();
+        for (i, (kind, program)) in JOIN_KINDS.into_iter().enumerate() {
+            if counts[i] > 0 {
+                continue;
+            }
+            let t = program();
+            assert!(join_round(&t, 0)[i], "{kind} is not made: {t:?}");
+            built.push(kind);
+        }
+        eprintln!("met only by the programs built for them: {built:?}");
+        built
+    }
+
+    /// Each program of [`JOIN_KINDS`], compared alone, makes its kind.
+    #[test]
+    fn each_program_built_for_a_kind_of_join_makes_it() {
+        for (i, (kind, program)) in JOIN_KINDS.into_iter().enumerate() {
+            let t = program();
+            let made = join_round(&t, 0);
+            assert!(made[i], "{kind}: {made:?} {t:?}");
+        }
     }
 
     /// Chains of `&&` written as `if`s that test one name again, hold one `if` in two places,
@@ -14489,22 +14537,69 @@ mod tests {
         (pn, now.cut != usize::MAX, met, false)
     }
 
-    /// The rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] at
-    /// least, about 0.5 s (TEST-bench-move-crates: 1,000 rounds of one fixed seed in eight tests
+    /// The random rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`],
+    /// about 0.5 s (TEST-bench-move-crates: 1,000 rounds of one fixed seed in eight tests
     /// before, 17 ms a round).
     const ENTRY_ROUNDS: usize = 30;
 
-    /// The most rounds [`entries_rounds`] draws while some kind of read, stop or check has not
-    /// occurred, before its coverage asserts fail. It bounds only a run whose program no longer
-    /// makes some kind at all, about 5 s at 17 ms a round; a run that meets every kind stops
-    /// drawing as soon as it has, at [`ENTRY_ROUNDS`] or later, so the bound changes no
-    /// passing run. Assumption, not proved: every seed meets every kind well within this many
-    /// rounds while the code makes each kind. Evidence (FAIL-preimage-entries-seed-coverage,
-    /// 2026-11-15): of 4,400 seeds, the first round by which every kind had occurred was 1 for
-    /// 1,087, 3 at the median, over 30 for one (40), and the count past each round falls by
-    /// about 0.78 a round in the tail, which puts the chance of needing more than 300 rounds
-    /// near 10^-32.
-    const ENTRY_ROUNDS_MOST: usize = 300;
+    /// What the rounds of [`entries_rounds`] counted: the translations that stopped, the points
+    /// at which a demand was met, then [`READS`] and [`CHECKED`].
+    type EntryCounts = (usize, usize, [u64; 3], [u64; 5]);
+
+    /// Each kind of read, stop and check [`entries_rounds`] must meet, whether the counts show
+    /// it, and a program built to make it: the programs of [`written`], each of which makes
+    /// its kind by construction (checked alone by
+    /// [`each_program_built_for_a_kind_of_entry_read_makes_it`]). Any random round may miss
+    /// a kind (30 rounds missed a held read under other inputs under about 1 seed in 4,400,
+    /// FAIL-preimage-entries-seed-coverage), so a kind the rounds did not meet is met by its
+    /// program, and no number of rounds is relied on (PROOF-test-coverage-constructive).
+    const ENTRY_KINDS: [(&str, fn(&EntryCounts) -> bool, fn() -> Term); 9] = [
+        (
+            "a translation that stops",
+            |c| c.0 > 0,
+            written::hit_with_cut,
+        ),
+        (
+            "a point where a demand is met",
+            |c| c.1 > 0,
+            written::hit_with_cut,
+        ),
+        (
+            "a read of an entry made below a stop",
+            |c| c.2[0] > 0,
+            written::hit_with_cut,
+        ),
+        (
+            "a read of an entry made below a stop on a higher stack",
+            |c| c.2[1] > 0,
+            || written::read_higher("u"),
+        ),
+        (
+            "a read of an entry made below a stop under other inputs",
+            |c| c.2[2] > 0,
+            || written::read_higher("u"),
+        ),
+        (
+            "an entry made below a stop read again",
+            |c| c.3[0] > 0,
+            written::hit_with_cut,
+        ),
+        (
+            "an entry made below a stop read again on a higher stack",
+            |c| c.3[2] > 0,
+            || written::read_higher("u"),
+        ),
+        (
+            "an entry made below a stop read again under other inputs",
+            |c| c.3[3] > 0,
+            || written::read_higher("u"),
+        ),
+        (
+            "an entry that holds wherever it is reached read again",
+            |c| c.3[4] > 0,
+            || written::shared_chain(2, false),
+        ),
+    ];
 
     /// An entry made below a stop is read where the lambdas being read when it began are still
     /// being read, and it gives there what the memo before ST-formula-k2-rec gave, which
@@ -14520,24 +14615,32 @@ mod tests {
         entries_rounds(seed);
     }
 
+    /// Each program of [`ENTRY_KINDS`], read alone, makes its kind.
+    #[test]
+    fn each_program_built_for_a_kind_of_entry_read_makes_it() {
+        for (kind, shows, built) in ENTRY_KINDS {
+            MADE.with_borrow_mut(HashMap::clear);
+            READS.set([0; 3]);
+            CHECKED.set([0; 5]);
+            let t = built();
+            let (_, stopped, met, endless) = check(&t, 0);
+            assert!(!endless, "{kind}: {t:?}");
+            let counts = (usize::from(stopped), met, READS.get(), CHECKED.get());
+            assert!(shows(&counts), "{kind}: {counts:?} {t:?}");
+        }
+    }
+
     /// The rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] from
-    /// `seed`: at least [`ENTRY_ROUNDS`], and more until every kind of read, stop and check has
-    /// occurred, at most [`ENTRY_ROUNDS_MOST`]. Thirty rounds met no held read under other
-    /// inputs under about 1 seed in 4,400 (FAIL-preimage-entries-seed-coverage). Gives the
-    /// number of rounds.
-    fn entries_rounds(seed: u64) -> usize {
+    /// `seed`: [`ENTRY_ROUNDS`] random rounds, then, for each kind of read, stop and check of
+    /// [`ENTRY_KINDS`] they did not meet, the program built to make it. Fails when a kind is
+    /// still not met, which happens only when the code no longer makes it. Gives the kinds
+    /// the built programs supplied.
+    fn entries_rounds(seed: u64) -> Vec<&'static str> {
         let mut g = Gen::new(seed, true);
         READS.set([0; 3]);
         CHECKED.set([0; 5]);
-        let (mut met, mut endless, mut stopped, mut round) = (0, 0, 0, 0);
-        let every_kind = |stopped: usize, met: usize| {
-            let (r, c) = (READS.get(), CHECKED.get());
-            stopped > 0
-                && met > 0
-                && r.iter().all(|&n| n > 0)
-                && [c[0], c[2], c[3], c[4]].iter().all(|&n| n > 0)
-        };
-        while round < ENTRY_ROUNDS || (round < ENTRY_ROUNDS_MOST && !every_kind(stopped, met)) {
+        let (mut met, mut endless, mut stopped) = (0, 0, 0);
+        for round in 0..ENTRY_ROUNDS {
             g.pool.clear();
             let t = match g.rng.below(3) {
                 0 => g.group(4),
@@ -14555,37 +14658,42 @@ mod tests {
             stopped += usize::from(s);
             met += m;
             endless += usize::from(e);
-            round += 1;
         }
         let [reads, higher, other] = READS.get();
         let [checked, unchecked, raised, inside, everywhere] = CHECKED.get();
         eprintln!(
-            "rounds {round}, held reads {reads}, on a higher stack {higher}, under other inputs \
-             {other}; read again {checked}, of kinds not compared {unchecked}, on a higher stack \
-             {raised}, under other inputs {inside}, entries that hold anywhere {everywhere}; \
-             stopped {stopped}, points met {met}, rounds out of fuel {endless}"
+            "rounds {ENTRY_ROUNDS}, held reads {reads}, on a higher stack {higher}, under other \
+             inputs {other}; read again {checked}, of kinds not compared {unchecked}, on a higher \
+             stack {raised}, under other inputs {inside}, entries that hold anywhere \
+             {everywhere}; stopped {stopped}, points met {met}, rounds out of fuel {endless}"
         );
-        // Every kind of read, stop and check occurs.
-        assert!(stopped > 0 && met > 0, "{stopped} {met}");
-        assert!(
-            reads > 0 && higher > 0 && other > 0,
-            "{reads} {higher} {other}"
-        );
-        assert!(
-            checked > 0 && raised > 0 && inside > 0,
-            "{checked} {raised} {inside}"
-        );
-        assert!(everywhere > 0);
-        round
+        // Every kind of read, stop and check occurs: a kind the rounds missed is met by the
+        // program built to make it, which is checked as the rounds are.
+        let mut built = Vec::new();
+        for (kind, shows, program) in ENTRY_KINDS {
+            if shows(&(stopped, met, READS.get(), CHECKED.get())) {
+                continue;
+            }
+            let t = program();
+            let (_, s, m, e) = check(&t, ENTRY_ROUNDS + built.len());
+            assert!(!e, "{kind}: {t:?}");
+            stopped += usize::from(s);
+            met += m;
+            let counts = (stopped, met, READS.get(), CHECKED.get());
+            assert!(shows(&counts), "{kind} is not made: {counts:?} {t:?}");
+            built.push(kind);
+        }
+        eprintln!("met only by the programs built for them: {built:?}");
+        built
     }
 
     /// Seed 649647126551038262 of
-    /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`]: its first thirty
-    /// rounds make no held read under other inputs, so it draws more
+    /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`]: its thirty rounds
+    /// make no held read under other inputs, which the program built for that kind supplies
     /// (FAIL-preimage-entries-seed-coverage).
     #[test]
     fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_seed_649647126551038262() {
-        assert!(entries_rounds(649647126551038262) > ENTRY_ROUNDS);
+        entries_rounds(649647126551038262);
     }
 
     /// The rounds of [`summaries_read_again_give_what_reading_the_term_again_gives`], about
@@ -14597,28 +14705,45 @@ mod tests {
     /// ([`ByClass`]) that [`RECHECK`] reads again give what reading their terms again gives,
     /// on the random programs of
     /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] whose tests may
-    /// also compare a chain with a constant ([`Gen::chain_test`]): at least [`SUMMARY_ROUNDS`]
-    /// of a new seed each run (printed; `ZED_TEST_SEED` repeats a run), and more until both
-    /// kinds of summary that hold wherever they are reached are met. A summary made below a
-    /// stop is met by some runs only, and [`a_summary_made_below_a_stop_is_read_again`] makes
-    /// one on purpose.
+    /// also compare a chain with a constant ([`Gen::chain_test`]): [`SUMMARY_ROUNDS`] of a new
+    /// seed each run (printed; `ZED_TEST_SEED` repeats a run), then each kind of
+    /// [`SUMMARY_KINDS`] they did not meet. A summary made below a stop is met by some runs
+    /// only, and [`a_summary_made_below_a_stop_is_read_again`] makes one on purpose.
     #[test]
     fn summaries_read_again_give_what_reading_the_term_again_gives() {
         let seed = crate::seed::seed("summaries_read_again_give_what_reading_the_term_again_gives");
         summaries_read_again(seed);
     }
 
+    /// The two kinds of summary that hold wherever they are reached which
+    /// [`summaries_read_again`] must meet, by their places in [`SUMMARIES`], each with the
+    /// program of [`written::a_shared_chain_gives_one_preimage_in_either_order`] that makes it
+    /// by construction: with `m = 8` the plain summaries ([`Pa`]), with `m = 2` those by class
+    /// ([`ByClass`]). Ten random rounds met no summary by class that holds wherever it is
+    /// reached under 1 seed in 400 (FAIL-preimage-summaries-rounds-seed), so a kind the rounds
+    /// missed is met by its program, and no number of rounds is relied on
+    /// (PROOF-test-coverage-constructive).
+    const SUMMARY_KINDS: [(&str, usize, i64); 2] = [
+        (
+            "a summary over one input that holds wherever it is reached",
+            1,
+            8,
+        ),
+        ("a summary by class that holds wherever it is reached", 3, 2),
+    ];
+
     /// The rounds of [`summaries_read_again_give_what_reading_the_term_again_gives`] from
-    /// `seed`, drawn until both kinds of summary are met: ten rounds met no summary over the
-    /// classes of remainders that holds wherever it is reached under 1 seed in 400
-    /// (FAIL-preimage-summaries-rounds-seed). Gives the number of rounds.
-    fn summaries_read_again(seed: u64) -> usize {
+    /// `seed`: [`SUMMARY_ROUNDS`] random rounds, then, for each kind of [`SUMMARY_KINDS`] they
+    /// did not meet, the program built to make it. Fails when a kind is still not met, which
+    /// happens only when the code no longer makes it. Gives the kinds the built programs
+    /// supplied.
+    fn summaries_read_again(seed: u64) -> Vec<&'static str> {
         let mut g = Gen::new(seed, true);
         g.chains = true;
         CHECKED.set([0; 5]);
         SUMMARIES.set([0; 4]);
-        let (mut met, mut endless, mut round) = (0, 0, 0);
-        while round < SUMMARY_ROUNDS || SUMMARIES.get()[1] == 0 || SUMMARIES.get()[3] == 0 {
+        let (mut met, mut endless) = (0, 0);
+        for round in 0..SUMMARY_ROUNDS {
             g.pool.clear();
             let t = match g.rng.below(4) {
                 0 => g.group(3),
@@ -14636,27 +14761,57 @@ mod tests {
             let (_, _, m, e) = check(&t, round);
             met += m;
             endless += usize::from(e);
-            round += 1;
         }
         let [checked, unchecked, _, _, everywhere] = CHECKED.get();
         let [pa, pa_everywhere, by_class, by_class_everywhere] = SUMMARIES.get();
         eprintln!(
-            "rounds {round}, read again {checked}, of kinds not compared {unchecked}, entries \
-             that hold anywhere {everywhere}; summaries held {pa}, anywhere {pa_everywhere}; by \
-             class held {by_class}, anywhere {by_class_everywhere}; points met {met}, rounds out \
-             of fuel {endless}"
+            "rounds {SUMMARY_ROUNDS}, read again {checked}, of kinds not compared {unchecked}, \
+             entries that hold anywhere {everywhere}; summaries held {pa}, anywhere \
+             {pa_everywhere}; by class held {by_class}, anywhere {by_class_everywhere}; points \
+             met {met}, rounds out of fuel {endless}"
         );
-        assert_eq!(unchecked, 0);
-        round
+        // Both kinds of summary occur: a kind the rounds missed is met by the program built to
+        // make it, which is checked as the rounds are.
+        let mut built = Vec::new();
+        for (kind, at, m) in SUMMARY_KINDS {
+            if SUMMARIES.get()[at] > 0 {
+                continue;
+            }
+            let t = written::shared_chain(m, false);
+            let (_, _, _, e) = check(&t, SUMMARY_ROUNDS + built.len());
+            assert!(!e, "{kind}: {t:?}");
+            assert!(
+                SUMMARIES.get()[at] > 0,
+                "{kind} is not made: {:?} {t:?}",
+                SUMMARIES.get()
+            );
+            built.push(kind);
+        }
+        eprintln!("met only by the programs built for them: {built:?}");
+        assert_eq!(CHECKED.get()[1], 0);
+        built
     }
 
     /// Seed 150777271703164204 of
-    /// [`summaries_read_again_give_what_reading_the_term_again_gives`]: its first ten rounds
-    /// meet no summary over the classes of remainders that holds wherever it is reached, so
-    /// it draws more.
+    /// [`summaries_read_again_give_what_reading_the_term_again_gives`]: its ten rounds meet no
+    /// summary over the classes of remainders that holds wherever it is reached, which the
+    /// program built for that kind supplies.
     #[test]
     fn summaries_read_again_give_what_reading_the_term_again_gives_seed_150777271703164204() {
-        assert!(summaries_read_again(150777271703164204) > SUMMARY_ROUNDS);
+        summaries_read_again(150777271703164204);
+    }
+
+    /// Each program of [`SUMMARY_KINDS`], read alone, makes its kind.
+    #[test]
+    fn each_program_built_for_a_kind_of_summary_makes_it() {
+        for (kind, at, m) in SUMMARY_KINDS {
+            CHECKED.set([0; 5]);
+            SUMMARIES.set([0; 4]);
+            let t = written::shared_chain(m, false);
+            let (_, _, _, endless) = check(&t, 0);
+            assert!(!endless, "{kind}: {t:?}");
+            assert!(SUMMARIES.get()[at] > 0, "{kind}: {:?}", SUMMARIES.get());
+        }
     }
 
     /// Seed 7776978274844439420 of
@@ -15459,6 +15614,30 @@ mod tests {
 
         use Prim::{Add, And, Eq, Ge, Le, Lt, Min, Mul, Or, Sub};
 
+        /// `x >= 0 && y <= 3`: a conjunction of two comparisons, whose formula keeps no part
+        /// whole.
+        pub(super) fn two_tests() -> Term {
+            prim(And, prim(Ge, v("x"), int(0)), prim(Le, v("y"), int(3)))
+        }
+
+        /// `(x >= 0 && y <= 3) && x <= 4`: a chain of three, whose inner `&&` the translation
+        /// two at a time remembers and the chain translator does not.
+        pub(super) fn three_tests() -> Term {
+            prim(And, two_tests(), prim(Le, v("x"), int(4)))
+        }
+
+        /// `let s = x >= 1 && y >= 0 in s && x <= 4`: the named conjunction is a part of the
+        /// outer one, kept whole.
+        pub(super) fn kept_part() -> Term {
+            let s = prim(And, prim(Ge, v("x"), int(1)), prim(Ge, v("y"), int(0)));
+            let_("s", s, prim(And, v("s"), prim(Le, v("x"), int(4))))
+        }
+
+        /// `x * y <= 3`: a product of two inputs, which no linear formula states.
+        pub(super) fn product_test() -> Term {
+            prim(Le, prim(Mul, v("x"), v("y")), int(3))
+        }
+
         /// `f(f, n - c)`.
         fn again(c: i64) -> Term {
             app(v("f"), vec![v("f"), prim(Sub, v("n"), int(c))])
@@ -15542,6 +15721,14 @@ mod tests {
         /// again within the lambda of `p`, on a higher stack and with `p` among the inputs.
         /// With `p` named `x`, the `x <= n` within it is another term than the one in `a`.
         fn higher(p: &str) -> ([u64; 3], [u64; 5], String) {
+            let (made, reads, checked, shown) = run(&read_higher(p));
+            assert!(made > 0 && reads[1] > 0 && reads[2] > 0, "{reads:?}");
+            assert!(checked[2] > 0 && checked[3] > 0, "{checked:?}");
+            (reads, checked, shown)
+        }
+
+        /// The program of [`higher`].
+        pub(super) fn read_higher(p: &str) -> Term {
             let a = prim(Or, again(1), prim(Le, v("x"), v("n")));
             let inner = lam(
                 &[p],
@@ -15556,10 +15743,7 @@ mod tests {
                 a,
                 prim(And, v("a"), app(inner, vec![prim(Add, v("n"), v("x"))])),
             );
-            let (made, reads, checked, shown) = run(&rec(prim(Le, v("n"), v("y")), step, int(2)));
-            assert!(made > 0 && reads[1] > 0 && reads[2] > 0, "{reads:?}");
-            assert!(checked[2] > 0 && checked[3] > 0, "{checked:?}");
-            (reads, checked, shown)
+            rec(prim(Le, v("n"), v("y")), step, int(2))
         }
 
         #[test]
@@ -15585,6 +15769,19 @@ mod tests {
         /// `u` reads `s` only from the memo, and stops where `s` stopped.
         #[test]
         fn a_hit_passes_its_cut_to_the_reader() {
+            let (made, reads, checked, shown) = run(&hit_with_cut());
+            assert_eq!(
+                shown,
+                "x [] y [] exact stops 1; x [-6..=6] y [-6..=6] exact stops 1"
+            );
+            assert!(
+                made > 0 && reads[0] > 0 && checked[0] > 0,
+                "{reads:?} {checked:?}"
+            );
+        }
+
+        /// The program of [`a_hit_passes_its_cut_to_the_reader`].
+        pub(super) fn hit_with_cut() -> Term {
             let s = prim(
                 Or,
                 again(1),
@@ -15596,15 +15793,7 @@ mod tests {
                 s,
                 prim(Or, prim(Or, v("s"), prim(Lt, v("n"), v("n"))), inner),
             );
-            let (made, reads, checked, shown) = run(&rec(prim(Lt, int(2), int(2)), step, int(-3)));
-            assert_eq!(
-                shown,
-                "x [] y [] exact stops 1; x [-6..=6] y [-6..=6] exact stops 1"
-            );
-            assert!(
-                made > 0 && reads[0] > 0 && checked[0] > 0,
-                "{reads:?} {checked:?}"
-            );
+            rec(prim(Lt, int(2), int(2)), step, int(-3))
         }
 
         /// `x mod m == r`.
@@ -15657,23 +15846,28 @@ mod tests {
                      [-6..=6] exact stops 0",
                 ),
             ] {
-                let u = if_(class(m, 0), v("x"), prim(Add, v("x"), int(1)));
-                let t = if_(
-                    prim(Lt, v("x"), int(0)),
-                    prim(Add, v("u"), int(1)),
-                    prim(Sub, int(3), v("u")),
-                );
-                let (a, b) = (prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3)));
-                let both =
-                    |p: Term, q: Term| let_("u", u.clone(), let_("t", t.clone(), prim(And, p, q)));
                 SUMMARIES.set([0; 4]);
-                let (ab, _, _, _) = check(&both(a.clone(), b.clone()), 0);
-                let (ba, _, _, _) = check(&both(b.clone(), a.clone()), 1);
+                let (ab, _, _, _) = check(&shared_chain(m, false), 0);
+                let (ba, _, _, _) = check(&shared_chain(m, true), 1);
                 assert_eq!(ab, ba, "m = {m}");
                 assert!(SUMMARIES.get()[kind] > 0, "m = {m}: {:?}", SUMMARIES.get());
-                let (_, _, _, shown) = run(&both(a, b));
+                let (_, _, _, shown) = run(&shared_chain(m, false));
                 assert_eq!(shown, expected, "m = {m}");
             }
+        }
+
+        /// The program of [`a_shared_chain_gives_one_preimage_in_either_order`] for `m`, its
+        /// two tests swapped when `swapped`.
+        pub(super) fn shared_chain(m: i64, swapped: bool) -> Term {
+            let u = if_(class(m, 0), v("x"), prim(Add, v("x"), int(1)));
+            let t = if_(
+                prim(Lt, v("x"), int(0)),
+                prim(Add, v("u"), int(1)),
+                prim(Sub, int(3), v("u")),
+            );
+            let (a, b) = (prim(Le, v("t"), int(2)), prim(Ge, v("t"), int(-3)));
+            let (p, q) = if swapped { (b, a) } else { (a, b) };
+            let_("u", u, let_("t", t, prim(And, p, q)))
         }
 
         /// `f(f, n) = if n <= 0 { x <= 1 } else { (if x mod 2 == 0 { s } else { s - 1 }) <= 3 }`,
