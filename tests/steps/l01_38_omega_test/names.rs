@@ -1751,3 +1751,63 @@ fn guards_alike_as_rows_are_told_apart_by_their_nesting() {
         assert!(f.holds(&m), "{m:?}");
     }
 }
+
+/// `(if g0 > 0 { 2 } else { 0 }) + ... + (if g[n-1] > 0 { 2 } else { 0 }) != k` as the
+/// preimage asks it, or `== k` when `!holds`: for each `i`, `(g[i] <= 0 && q[i] == 0) ||
+/// (g[i] >= 1 && q[i] == 2)`, beside `!(Σ q[i] == k)`. The atom `g[i]` is named `v{name[i]}`
+/// and `q[i]` is named `v{name[n + i]}`. Exchanging `g[i]` with `g[j]` maps the formula onto
+/// itself only together with `q[i]` and `q[j]`, so the ties of the `g` and of the `q` are
+/// symmetries jointly and not one at a time (FAIL-tie-sum-ne-constant-refused).
+pub(super) fn tie_sum(n: usize, k: i64, holds: bool, name: &[usize]) -> Formula {
+    let v = |i: usize| Lin::atom(Atom::Sym(format!("v{}", name[i]).into()));
+    let c = Lin::constant;
+    let con = Formula::Con;
+    let mut fs = Vec::with_capacity(n + 1);
+    let sum = (0..n).fold(c(0), |s, i| s.plus(&v(n + i)));
+    let e = con(Con::eq(&sum, &c(k)));
+    fs.push(if holds { Formula::negate(e) } else { e });
+    for i in 0..n {
+        let (g, q) = (v(i), v(n + i));
+        fs.push(Formula::or(vec![
+            Formula::and(vec![con(Con::ge(&c(0), &g)), con(Con::eq(&q, &c(0)))]),
+            Formula::and(vec![con(Con::ge(&g, &c(1))), con(Con::eq(&q, &c(2)))]),
+        ]));
+    }
+    Formula::and(fs)
+}
+
+/// A sum of two or three conditionals of 0 or 2 compared with each `k` (FAIL-tie-sum-ne-
+/// constant-refused, FAIL-ladder-rung2-front-disagree): before, only the questions that the
+/// disjuncts of least color answered were decided (`!= 1`, `!= 2`, `!= 3` of two), and the
+/// rest were refused as `Unordered`. Each is now decided under every naming of its atoms (all
+/// 24 of two conditionals, 200 random ones of three), with the true answer: the sum takes
+/// the even values `0..=2n`, so `== k` has a point exactly for those, and `!= k` always has
+/// one; each point `satisfiable` gives is one.
+#[test]
+fn a_sum_of_conditionals_tied_jointly_is_decided_for_every_constant() {
+    let mut rng = Rng::new(0x7e5u64);
+    for n in [2, 3] {
+        for k in -1..=2 * n as i64 + 2 {
+            for holds in [true, false] {
+                let want = holds || (k >= 0 && k <= 2 * n as i64 && k % 2 == 0);
+                let check = |name: &[usize]| {
+                    let f = tie_sum(n, k, holds, name);
+                    assert_eq!(decide(&f), Ok(want), "{f}");
+                    let m = satisfiable(&f).unwrap_or_else(|e| panic!("{f}: {e}"));
+                    assert_eq!(m.is_some(), want, "{f}");
+                    if let Some(m) = m {
+                        assert!(f.holds(&m), "{f}: {m:?}");
+                    }
+                };
+                if n == 2 {
+                    each_permutation(2 * n, |p| check(p));
+                } else {
+                    check(&(0..2 * n).collect::<Vec<_>>());
+                    for _ in 0..200 {
+                        check(&shuffled(&mut rng, 2 * n));
+                    }
+                }
+            }
+        }
+    }
+}

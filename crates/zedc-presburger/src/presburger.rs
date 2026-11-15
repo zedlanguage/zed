@@ -2238,7 +2238,9 @@ fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
 /// when no two disjunctions left are linked ([`alone`]), test what is otherwise left with the
 /// disjuncts their colors choose ([`settle_tied`], [`by_color`]), rename it, when a second
 /// coloring that also reads its nesting tells its atoms apart ([`Renamed::untied`]: two guards
-/// alike as rows but in disjuncts with different rows beside them, PREIMAGE-tie-indep-let),
+/// alike as rows but in disjuncts with different rows beside them, PREIMAGE-tie-indep-let;
+/// or, for a tie that is a symmetry only with another, after one tied class is given colors
+/// by name and refined, [`Renamed::individualized`], FAIL-tie-sum-ne-constant-refused),
 /// and search it, and otherwise refuse with [`Refusal::Unordered`]; [`project_each`] projects it by
 /// [`project_parts`] with `sets`, which asks only such questions and keeps every disjunction.
 /// What is given up: a formula with such atoms whose point or whose emptiness only the search
@@ -2339,10 +2341,11 @@ impl Renamed {
     // automorphism exchanges; the joining of equal parts into one vertex is the step whose
     // effect on that argument is not proved. Evidence: the name tests of
     // `l01_38_omega_test::names` rename every system and compare the answers.
+    // A tie the pair coloring leaves goes to [`Renamed::individualized`].
     fn untied(f: &Formula) -> Option<Renamed> {
         let (atoms, joins, color) = Self::colored(f);
         let (rows, groups) = nesting(f, &joins);
-        let nested = stable_colors(&atoms, &rows, &groups);
+        let nested = stable_colors(&atoms, &rows, &groups, &[]);
         let mut by_pair: Vec<usize> = (0..atoms.len()).collect();
         by_pair.sort_unstable_by_key(|&i| (color[i], nested[i]));
         let mut paired = vec![0; atoms.len()];
@@ -2351,10 +2354,132 @@ impl Renamed {
             paired[q] = paired[p] + usize::from((color[p], nested[p]) != (color[q], nested[q]));
         }
         let plain = Self::plain_by(&atoms, &paired);
-        if plain.windows(2).any(|w| paired[w[0]] == paired[w[1]]) {
+        let Some(tie) = plain
+            .chunk_by(|&p, &q| paired[p] == paired[q])
+            .find(|c| c.len() > 1)
+        else {
+            let from = plain.iter().map(|&i| atoms[i].clone()).collect();
+            return Some(Self::by_ranks(f, from, None));
+        };
+        Self::individualized(f, &atoms, &rows, &groups, &paired, &plain, tie)
+    }
+
+    /// `f`, whose pair coloring ([`Renamed::untied`]) still ties the atoms `tie` (places in
+    /// `atoms`, by name), renamed by a coloring that starts from `paired` with each atom of
+    /// `tie` given its own color by its place there, when that coloring tells every atom apart
+    /// and each permutation of `tie` is the part on `tie` of an exchange of atoms that maps `f`
+    /// onto itself; otherwise `None`.
+    ///
+    /// The case: `(if m > 0 { 2 } else { 0 }) + (if u > 0 { 2 } else { 0 }) != k`, the
+    /// disjunctions `(m <= 0 && q0 == 0) || (m >= 1 && q0 == 2)` and the same over `u` and `q1`
+    /// beside `!(q0 + q1 == k)`. Exchanging `m` with `u` and `q0` with `q1` together maps it
+    /// onto itself, but no exchange of `m` with `u` alone does, so [`Numbered::ties_are_symmetries`],
+    /// which tries the exchanges of one tie at a time, finds the atoms tied and the formula was
+    /// settled only by [`settle_tied`]'s choice of the disjuncts of least color: decided when
+    /// that choice happened to answer it (k = 1, 2, 3 asked whether it can be true), refused
+    /// otherwise (FAIL-tie-sum-ne-constant-refused, FAIL-ladder-rung2-front-disagree).
+    ///
+    /// Method (individualization and refinement, as in McKay and Piperno's nauty and Traces,
+    /// one level deep): the atoms of `tie` are given colors by their order of names and the
+    /// coloring refined ([`stable_colors`] with starting colors), which tells `q0` from `q1` by
+    /// the guard beside each. Two more colorings start from other orders of `tie`: rotated by
+    /// one place, and with its first two atoms exchanged. A refinement numbers its colors by
+    /// the structure and the starting colors alone, so where an exchange `h` of atoms maps `f`
+    /// onto itself and sends the order of `tie` to the rotated one, the rotated coloring is the
+    /// first one moved by `h`, and `h` is read off as the atom of each color in one coloring
+    /// to the atom of that color in the other. Each exchange so read is then tested on the
+    /// formula ([`Numbered::permutes_onto_itself`]), so a wrong reading can only refuse. The
+    /// rotation and the exchange of two neighbors make every permutation of `tie`, so for any
+    /// order of its names there is an exchange `g` of atoms that maps `f` onto itself and the
+    /// order by names onto that order; the coloring from that order is the first one moved by
+    /// `g`, and the renamed formula is the same. Where the coloring leaves two atoms tied, or
+    /// either exchange fails its test, the answer is `None`, as before.
+    // Complexity tradeoff: naive version, individualize each atom of every tie in turn, refining
+    // after each, until the coloring is discrete, and test each exchange of two neighbors in
+    // the tie with its partners, one refinement per exchange: O(A L log L) for A tied atoms and
+    // L links of the graph, quadratic on a sum of A conditionals. Used: one refinement for the
+    // order by names and one for each of two generators of all permutations of `tie`, and one
+    // test of each generator on the formula, O(L log L + N log N) for the N distinct parts. What
+    // is given up: a formula whose tie stays after one level of individualization (two families
+    // of tied atoms that do not determine each other) is still refused; that needs a search
+    // tree of individualizations, exponential in the worst case.
+    // Not proved: that `stable_colors` numbers its colors by the structure and the starting
+    // colors alone, so that an exchange of atoms that maps the formula onto itself moves the
+    // coloring as it moves the starting colors (its doc and Berkholz, Bonsma and Grohe's
+    // section 3 say so; `l01_38_presburger/canonical.rs` tests it), and that
+    // [`Numbered::permutes_onto_itself`] says yes only to an exchange that maps the formula
+    // onto itself (its argument is that of [`Numbered::swaps_onto_itself`]). If the first
+    // failed, two namings could give two renamed formulas; the answers would still be right,
+    // since a renaming keeps the points, but could differ in a refusal or in the model found.
+    // Evidence: `l01_38_omega_test::names` renames every system of its tests and compares the
+    // answers, including the sums of conditionals of this case.
+    fn individualized(
+        f: &Formula,
+        atoms: &[Atom],
+        rows: &[&Con],
+        groups: &[nesting::Group],
+        paired: &[usize],
+        plain: &[usize],
+        tie: &[usize],
+    ) -> Option<Renamed> {
+        let a = tie.len();
+        // The coloring with the atom `tie[k]` at place `place(k)` among the colors of `tie`.
+        let colors = |place: &dyn Fn(usize) -> usize| {
+            let mut key: Vec<(usize, usize)> = paired.iter().map(|&p| (p, 0)).collect();
+            for (k, &i) in tie.iter().enumerate() {
+                key[i].1 = place(k) + 1;
+            }
+            let mut order: Vec<usize> = (0..atoms.len()).collect();
+            order.sort_unstable_by_key(|&i| key[i]);
+            let mut first = vec![0; atoms.len()];
+            for w in 1..order.len() {
+                let (p, q) = (order[w - 1], order[w]);
+                first[q] = first[p] + usize::from(key[p] != key[q]);
+            }
+            let mut color = stable_colors(atoms, rows, groups, &first);
+            color.truncate(atoms.len());
+            color
+        };
+        let named = colors(&|k| k);
+        let mut from: Vec<usize> = plain.to_vec();
+        from.sort_unstable_by_key(|&i| named[i]);
+        if from.windows(2).any(|w| named[w[0]] == named[w[1]]) {
             return None;
         }
-        let from = plain.iter().map(|&i| atoms[i].clone()).collect();
+        let of_color: HashMap<usize, usize> = from.iter().map(|&i| (named[i], i)).collect();
+        let numbered = Numbered::of(f);
+        // Whether the exchange read off the coloring from the order `place` sends `tie[k]` to
+        // `tie[image(k)]` and maps `f` onto itself.
+        let maps = |place: &dyn Fn(usize) -> usize, image: &dyn Fn(usize) -> usize| {
+            let other = colors(place);
+            let mut to: HashMap<Atom, Atom> = HashMap::new();
+            let mut hit = vec![false; atoms.len()];
+            for &y in plain {
+                let Some(&x) = of_color.get(&other[y]) else {
+                    return false;
+                };
+                if hit[x] {
+                    return false;
+                }
+                hit[x] = true;
+                if x != y {
+                    to.insert(atoms[x].clone(), atoms[y].clone());
+                }
+            }
+            let moves = |k: usize| to.get(&atoms[tie[k]]).unwrap_or(&atoms[tie[k]]);
+            (0..a).all(|k| *moves(k) == atoms[tie[image(k)]]) && numbered.permutes_onto_itself(&to)
+        };
+        // Rotated: `tie[k]` at place k + 1, so the exchange sends `tie[k]` to `tie[k - 1]`.
+        let rotated = || maps(&|k| (k + 1) % a, &|k| (k + a - 1) % a);
+        let first_two = |k: usize| match k {
+            0 => 1,
+            1 => 0,
+            k => k,
+        };
+        if !maps(&first_two, &first_two) || (a > 2 && !rotated()) {
+            return None;
+        }
+        let from = from.iter().map(|&i| atoms[i].clone()).collect();
         Some(Self::by_ranks(f, from, None))
     }
 
@@ -2383,7 +2508,7 @@ impl Renamed {
         }
         cons.extend(joins.iter());
         let atoms: Vec<Atom> = atoms.into_iter().collect();
-        let mut color = stable_colors(&atoms, &cons, &[]);
+        let mut color = stable_colors(&atoms, &cons, &[], &[]);
         color.truncate(atoms.len());
         (atoms, joins, color)
     }
@@ -2634,19 +2759,51 @@ impl Numbered {
     // `l01_38_omega_test::names::decide_on_tied_disjunctions_scales`, whose leaves every swap maps
     // onto themselves. COMPLEXITY.md row NAME-ties-or.
     fn swaps_onto_itself(&self, a: &Atom, b: &Atom) -> bool {
-        let swap = |x: Atom| {
-            if x == *a {
+        let swap = |x: &Atom| {
+            if x == a {
                 b.clone()
-            } else if x == *b {
+            } else if x == b {
                 a.clone()
             } else {
-                x
+                x.clone()
             }
         };
+        // A constraint with no product that holds `a` and `b` at one coefficient is its own
+        // image: found from the two terms, not by writing the constraint out swapped, which on
+        // one row over all of `k` tied atoms (`subset_sum`) cost O(k) at each of k swaps.
+        let own = |c: &Con| {
+            let (ka, kb) = (c.lin.terms.get(a), c.lin.terms.get(b));
+            ka.is_some() && ka == kb
+        };
+        self.maps_onto_itself(&[a, b], &swap, &own)
+    }
+
+    /// Whether the permutation `to` of the atoms that are not products, each atom it moves
+    /// mapped to its image and every other atom fixed, applied everywhere in the formula
+    /// (in products too), gives the formula again, up to the order of the parts of each
+    /// conjunction and disjunction. `to` must be one-to-one, with its images the atoms it moves.
+    /// As [`Numbered::swaps_onto_itself`]: the parts above a constraint with an atom moved are
+    /// numbered anew, from the lowest up; O(N log N) for the N distinct parts at most.
+    fn permutes_onto_itself(&self, to: &HashMap<Atom, Atom>) -> bool {
+        let moved: Vec<&Atom> = to.keys().collect();
+        let map = |x: &Atom| to.get(x).cloned().unwrap_or_else(|| x.clone());
+        self.maps_onto_itself(&moved, &map, &|_| false)
+    }
+
+    /// Whether `map`, a permutation of the atoms that moves only atoms among `touched`, gives the
+    /// formula again ([`Numbered::swaps_onto_itself`]); `own` says of a constraint with no
+    /// product that it is its own image without writing it out.
+    fn maps_onto_itself(
+        &self,
+        touched: &[&Atom],
+        map: &dyn Fn(&Atom) -> Atom,
+        own: &dyn Fn(&Con) -> bool,
+    ) -> bool {
+        let swap = |x: Atom| map(&x);
         let factor = |x: &Factor| Factor::of(&swap(x.atom())).expect("a swapped factor");
-        let none: Vec<usize> = Vec::new();
-        let mut starts: Vec<usize> = (self.uses.get(a).unwrap_or(&none).iter())
-            .chain(self.uses.get(b).unwrap_or(&none))
+        let mut starts: Vec<usize> = (touched.iter())
+            .filter_map(|a| self.uses.get(*a))
+            .flatten()
             .copied()
             .collect();
         starts.sort_unstable();
@@ -2669,12 +2826,7 @@ impl Numbered {
         };
         for n in starts {
             let c = self.con[n].as_ref().expect("a constraint numbered");
-            // A constraint with no product that holds `a` and `b` at one coefficient is its own
-            // image:
-            // found from the two terms, not by writing the constraint out swapped, which on one
-            // row over all of `k` tied atoms (`subset_sum`) cost O(k) at each of k swaps.
-            let (ka, kb) = (c.lin.terms.get(a), c.lin.terms.get(b));
-            if ka.is_some() && ka == kb && !self.product[n] {
+            if !self.product[n] && own(c) {
                 continue;
             }
             let terms = c.lin.terms.iter().map(|(x, k)| {
@@ -14397,7 +14549,7 @@ impl Ties {
 /// rows. The colors of the rows, in the order taken, come with them.
 fn canonical(atoms: Vec<Atom>, cons: &[&Con]) -> Canonical {
     let n = atoms.len();
-    let color = stable_colors(&atoms, cons, &[]);
+    let color = stable_colors(&atoms, cons, &[], &[]);
     let by_color = |v: &usize| (color[*v], *v);
     let mut rows_of: Vec<Vec<usize>> = vec![Vec::new(); n];
     let vars_of: Vec<Vec<usize>> = cons
@@ -14544,7 +14696,15 @@ pub fn colors(cons: &[Con]) -> (Vec<Atom>, BTreeMap<Atom, u64>) {
 // O(n + m + t); a coloring is a stable partition, not a canonical labeling, so symmetric
 // variables stay in one class. Tests in `tests/steps/l01_38_presburger/canonical.rs`;
 // COMPLEXITY.md row S32.
-fn stable_colors(atoms: &[Atom], cons: &[&Con], groups: &[nesting::Group]) -> Vec<usize> {
+///
+/// `first`, when not empty, gives each variable its starting color, numbered `0..k` with each
+/// number used, in place of one color for all ([`Renamed::individualized`]).
+fn stable_colors(
+    atoms: &[Atom],
+    cons: &[&Con],
+    groups: &[nesting::Group],
+    first: &[usize],
+) -> Vec<usize> {
     let (n, m) = (atoms.len(), cons.len());
     let mut terms: Vec<(usize, usize, &Int)> = Vec::new();
     for (r, c) in cons.iter().enumerate() {
@@ -14558,6 +14718,10 @@ fn stable_colors(atoms: &[Atom], cons: &[&Con], groups: &[nesting::Group]) -> Ve
     // Vertices: the variables, then the rows, then the terms, then the groups.
     let mut color = vec![0; size];
     let mut next = usize::from(n > 0);
+    if !first.is_empty() {
+        color[..n].copy_from_slice(first);
+        next = first.iter().max().map_or(0, |&k| k + 1);
+    }
     let mut rows: Vec<usize> = (0..m).collect();
     let row = |r: usize| (cons[r].rel, &cons[r].lin.constant);
     rows.sort_by(|&p, &q| row(p).cmp(&row(q)));

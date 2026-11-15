@@ -458,18 +458,104 @@ fn conditionals_are_refused_raw_and_proved_once_joined() {
     // `(if a > 0 { 1 } else { 0 }) + (if b > 0 { 1 } else { 0 }) <= 2` is proved with no
     // split." Asked raw, rung 2 proves it too: the rows each conditional implies, its value in
     // `0..=1`, hold at every point and leave the negation no point, which no name decides
-    // (PRES-nest-empty). A sum those rows do not decide is refused raw: `a` and `b` are
-    // interchangeable, and telling the arms apart needs a choice that the Presburger layer
-    // would make by the names (sec:domains). Joined, each value in `0..=1`, it is proved.
+    // (PRES-nest-empty). A sum those rows do not decide is proved raw too: `a` and `b` are
+    // interchangeable only together with the values of their conditionals, and the
+    // Presburger layer names them by one choice of order that every other choice maps onto
+    // (FAIL-ladder-rung2-front-disagree, refused before). Joined, each value in `0..=1`, it
+    // is proved.
     let raw = "ok(a, b) = (if a > 0 { 1 } else { 0 }) + (if b > 0 { 1 } else { 0 }) <= 2;";
     assert_proved("ok(a, b) = true;", raw);
     let raw = "ok(a, b) = (if a > 0 { 2 } else { 0 }) + (if b > 0 { 2 } else { 0 }) != 3;";
-    let e = rung2("ok(a, b) = true;", raw);
-    assert!(matches!(e, Entailment::Refused(_)), "{e}");
+    assert_proved("ok(a, b) = true;", raw);
     assert_proved(
         "ok(p, q) = 0 <= p && p <= 1 && 0 <= q && q <= 1;",
         "ok(p, q) = p + q <= 2;",
     );
+}
+
+#[test]
+fn a_symmetric_sum_of_two_conditionals_is_decided_alike_on_every_path() {
+    // FAIL-tie-sum-ne-constant-refused and FAIL-ladder-rung2-front-disagree: the front decided
+    // `(if m > 0 { 2 } else { 0 }) + (if u > 0 { 2 } else { 0 }) != k` for k = 1, 2, 3 only,
+    // and rung 2 refused k = 3; whether a question was decided hung on whether the disjuncts
+    // of least color answered it. Each verdict must not depend on k, on the order of the two
+    // conditionals or on the names. The value depends only on the signs of the parameters,
+    // so the window -1..=1 holds every case: the sum is 0, 2 or 4, so `ok` can always be true
+    // and can be false only for k in {0, 2, 4}. Asked of the front (the unit accepted), of the
+    // front's two questions (`preimage::Scoped` and `Extending::defined_with`), of rung 2 from
+    // the premise `true` (proved exactly when `ok` cannot be false, refuted otherwise) and of
+    // the interpreter.
+    use zed_kernel::{Shared, Term};
+    use zed_tests::step_helpers::l01_16_elaboration::elab;
+    use zedc::elab::Cones;
+    use zedc::interp::prelude;
+    use zedc::store::preimage::Scoped;
+    use zedc::store::presburger::extend::Extending;
+
+    for k in -1..=6 {
+        for (x, y) in [("m", "u"), ("u", "m"), ("a", "b")] {
+            for (first, second) in [(x, y), (y, x)] {
+                let goal = format!(
+                    "ok({x}, {y}) = (if {first} > 0 {{ 2 }} else {{ 0 }}) + \
+                     (if {second} > 0 {{ 2 }} else {{ 0 }}) != {k};"
+                );
+                let can_fail = [0, 2, 4].contains(&k);
+                let text = int_ok(&goal);
+                let front = zedc::query::Db::new().front(&text);
+                match &*front {
+                    Ok((_, _, warnings)) => assert!(warnings.is_empty(), "{goal}: {warnings:?}"),
+                    Err(ds) => panic!("{goal}: rejected: {ds:?}"),
+                }
+
+                let unit = elab(&text).unwrap_or_else(|e| panic!("{goal}: {e:?}"));
+                let lets = prelude(
+                    (unit.defs.iter().rev()).fold(Term::Lit(Value::Bool(true)), |body, d| {
+                        Term::Let(d.kernel.clone(), d.term.clone(), Shared::new(body))
+                    }),
+                );
+                let (ps, body): (&[Arc<str>], &Term) = (unit.defs.iter())
+                    .find_map(|d| match &*d.term {
+                        Term::Lam(ps, body) if d.name.as_str() == "ok" => {
+                            Some((ps.as_slice(), &**body))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{goal} defines `ok`"));
+                let mut scoped = Scoped::new(&lets);
+                let r = (scoped.relation(body, ps, ps, true))
+                    .unwrap_or_else(|| panic!("{goal}: `ok` is a linear question"));
+                let answers =
+                    Extending::new().defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+                assert_eq!(
+                    answers.holds.as_ref().ok(),
+                    Some(&true),
+                    "{goal}: can be true"
+                );
+                assert_eq!(
+                    answers.fails.as_ref().ok(),
+                    Some(&can_fail),
+                    "{goal}: can be false"
+                );
+
+                let want = if can_fail { "refuted" } else { "proved" };
+                let premise = format!("ok({x}, {y}) = true;");
+                assert_eq!(kind(&rung2(&premise, &goal)), want, "rung 2: {goal}");
+
+                let closed = prelude(Cones::new(&unit).close(body.clone()));
+                let values: Vec<bool> = (window(ps.len(), -1, 1).iter())
+                    .map(|p| match at(&closed, ps, p) {
+                        Some(Value::Bool(b)) => b,
+                        v => panic!("{goal}: `ok` at {p:?} gives {v:?}"),
+                    })
+                    .collect();
+                assert_eq!(
+                    (values.contains(&true), values.contains(&false)),
+                    (true, can_fail),
+                    "{goal}: the interpreter's values in the window"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -546,7 +632,7 @@ fn the_verdict_does_not_depend_on_order_or_names() {
                 "ok(x, n) = (if x > 0 { 2 } else { 0 }) + (if n > 0 { 2 } else { 0 }) != 3;",
                 "ok(x, n) = (if n > 0 { 2 } else { 0 }) + (if x > 0 { 2 } else { 0 }) != 3;",
             ],
-            "refused",
+            "proved",
         ),
     ];
     let renamed = |s: &str| {

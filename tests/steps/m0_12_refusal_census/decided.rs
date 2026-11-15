@@ -41,8 +41,11 @@ struct Left {
 ///   with the parameters renamed and the two conditionals in either order: the value depends
 ///   only on whether each parameter is positive, so the window `-1..=1` holds every case; the
 ///   sum is 0, 2 or 4, never 3, so `ok` is always true. Decided since e0a174b59
-///   (PREIMAGE-tie-indep-let), whose second coloring over the formula's nesting tells the two
-///   parameters apart.
+///   (PREIMAGE-tie-indep-let), though its coloring over the formula's nesting does not tell the
+///   two parameters apart: `!= 3` was answered by the disjuncts of least color that
+///   `settle_tied` chooses, and `!= 0` or `!= 4` was refused. Decided for every constant since
+///   FAIL-tie-sum-ne-constant-refused (`Renamed::individualized`, and
+///   `ladder::a_symmetric_sum_of_two_conditionals_is_decided_alike_on_every_path`).
 const LEFT: [Left; 6] = [
     Left {
         hash: "baf57900",

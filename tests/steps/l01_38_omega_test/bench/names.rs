@@ -264,3 +264,28 @@ fn decide_scales_over_guards_told_apart_by_their_nesting() {
         let _ = std::hint::black_box(decide(f));
     });
 }
+
+/// `decide` and `satisfiable` on a sum of `n` conditionals of 0 or 2 ([`tie_sum`]), asked
+/// whether it can be 2: the guards and the values tie jointly, so the formula is renamed by the
+/// coloring that individualizes the guards (FAIL-tie-sum-ne-constant-refused) and searched. One
+/// refinement for the order by names and two for the generators, and one test of each generator
+/// on the formula. The question whether the sum can be other than 0 is renamed at the same cost,
+/// but its search grows 14.7 times at 8n, and 12.0 times on a version with no ties that never
+/// reaches the renaming (on c636566c2 too): row FAIL-search-sum-ne-disjunctions-growth.
+#[test]
+fn decide_scales_over_a_sum_of_conditionals_tied_jointly() {
+    let n = 64;
+    let f = |n: usize, k: i64, holds: bool| tie_sum(n, k, holds, &(0..2 * n).collect::<Vec<_>>());
+    let small = [f(n, 2, false)];
+    let large = [f(n * scaling::FACTOR, 2, false)];
+    for g in small.iter().chain(&large) {
+        assert_eq!(decide(g), Ok(true), "{g}");
+        assert!(satisfiable(g).expect("not refused").is_some(), "{g}");
+    }
+    scaling::check("decide on a sum of conditionals tied jointly", n, |m| {
+        for g in if m == n { &small } else { &large } {
+            let _ = std::hint::black_box(decide(g));
+            let _ = std::hint::black_box(satisfiable(g));
+        }
+    });
+}
