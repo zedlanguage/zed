@@ -4,7 +4,7 @@ use crate::omega::*;
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
-use zedc::store::presburger::{Atom, Formula, project_each, row_box, satisfiable};
+use zedc::store::presburger::{Atom, Formula, decide, project_each, row_box, satisfiable};
 
 #[test]
 fn chains_of_equalities_cost_the_digits_of_their_values() {
@@ -264,4 +264,27 @@ fn the_answer_does_not_depend_on_the_order_of_the_disjuncts_in_a_fourth_quarter(
 #[test]
 fn a_disjunct_with_no_point_beside_a_point_gives_one_answer_in_60_writings() {
     case_236_in_writings(&mut Rng::new(0x236), 60);
+}
+
+#[test]
+fn factors_defined_alike_merge_in_time_near_linear() {
+    // n copies of a tied decision left unsettled by the search by colors: the merge of the
+    // atoms defined alike is one pass in the order of their dependencies with a hash lookup
+    // each, plus one pass over the products, and the merged formula is decided once.
+    let n = 40;
+    let (small, large) = (
+        tied_factor_blocks(n),
+        tied_factor_blocks(scaling::FACTOR * n),
+    );
+    for f in [&small, &large] {
+        assert_eq!(decide(f).ok(), Some(true), "{f}");
+    }
+    scaling::check_order(
+        "factors defined alike merged before a tied decision",
+        n,
+        1,
+        |m| {
+            drop(decide(if m == n { &small } else { &large }));
+        },
+    );
 }

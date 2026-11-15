@@ -330,7 +330,9 @@ fn lines(fixture: &str) -> impl Iterator<Item = &str> {
 }
 
 /// The 226 distinct calls of main's dump (420 with repeats) whose answer the new transfer
-/// changes: each kept or made finer. 85 are made exact, 113 narrower and still inexact; 28
+/// changes: each kept or made finer. 90 are made exact, 108 narrower and still inexact (85
+/// and 113 until FAIL-presburger-propagation-seed, whose merge of atoms defined alike lets
+/// `decide` answer 5 tied questions it refused; all 226 calls checked at their points); 28
 /// keep main's domains and exactness and differ in a stop, a listing, a relation or a
 /// refusal, which the replay compares and this file does not keep. Every call is answered
 /// and compared with main's box; the interpreter runs at the [`points`] of 5 calls of each part
@@ -372,8 +374,8 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_1() {
         1,
         Kept {
             same: 6,
-            narrower: 32,
-            made_exact: 19,
+            narrower: 30,
+            made_exact: 21,
         },
     );
 }
@@ -384,8 +386,8 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_2() {
         2,
         Kept {
             same: 11,
-            narrower: 24,
-            made_exact: 21,
+            narrower: 23,
+            made_exact: 22,
         },
     );
 }
@@ -396,8 +398,8 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_3() {
         3,
         Kept {
             same: 6,
-            narrower: 29,
-            made_exact: 21,
+            narrower: 27,
+            made_exact: 23,
         },
     );
 }

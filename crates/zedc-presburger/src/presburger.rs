@@ -748,7 +748,22 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
         Naming::Tied(vars, color) => match settle_tied(f, &color, true)? {
             Settled::Empty => Ok(None),
             Settled::Point(m) => Ok(Some(m)),
-            Settled::Left(p) => Err(unordered(vars, &p)),
+            // As in [`decide_named`]; each replaced atom takes the value of the atom that
+            // replaced it.
+            Settled::Left(p) => match twins_merged(f, &[], true) {
+                Some((g, to)) => match satisfiable_named(&g) {
+                    Ok(found) => Ok(found.map(|mut m| {
+                        for (a, by) in to {
+                            if let Some(v) = m.get(&by).cloned() {
+                                m.insert(a, v);
+                            }
+                        }
+                        m
+                    })),
+                    Err(_) => Err(unordered(vars, &p)),
+                },
+                None => Err(unordered(vars, &p)),
+            },
         },
     }
 }
@@ -907,7 +922,12 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
         Naming::Tied(vars, color) => match settle_tied(f, &color, false)? {
             Settled::Empty => Ok(false),
             Settled::Point(_) => Ok(true),
-            Settled::Left(p) => Err(unordered(vars, &p)),
+            // With atoms defined alike made one, the tie may be gone. Each merge leaves
+            // fewer atoms, so the call ends.
+            Settled::Left(p) => match twins_merged(f, &[], true) {
+                Some((g, _)) => decide_named(&g).map_err(|_| unordered(vars, &p)),
+                None => Err(unordered(vars, &p)),
+            },
         },
     }
 }
@@ -16780,7 +16800,7 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
             // With atoms defined alike made one, the tie may be gone; each answer is sound,
             // so their meet is, and no wider than either. Each merge leaves fewer atoms,
             // so the call below ends.
-            let Some(g) = twins_merged(f, syms) else {
+            let Some((g, _)) = twins_merged(f, syms, false) else {
                 return tied();
             };
             return match (project_each_named(&g, syms), tied()) {
@@ -16820,9 +16840,21 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// The atoms are numbered as in value numbering: an atom with one defining conjunct is
 /// numbered once every other atom of that conjunct defined so has been, by the conjunct
 /// written with the atom as `#` and each other atom as its number; two atoms with the same
-/// such conjunct get one number. An atom used as a factor of a product, an atom with two
-/// defining conjuncts or none, an atom whose conjunct defines another atom too, and an atom
-/// whose definition reaches itself through others, is its own number.
+/// such conjunct get one number. An atom used as a factor of a product (unless `factors_too`),
+/// an atom with two defining conjuncts or none, an atom whose conjunct defines another atom
+/// too, and an atom whose definition reaches itself through others, is its own number.
+///
+/// With `factors_too`, a factor of a product may be replaced as well, and each product of a
+/// replaced factor by the product of the factors that replaced them (`x * y` by `x * x` when
+/// `y` is replaced by `x`), unless two products would become one: the solver reads each
+/// product as an atom of its own, and two made one would be read as a constraint `f` does
+/// not have. The map returned gives each replaced atom, products included, the atom that
+/// replaced it, so that a point of the result gives a point of `f`.
+///
+/// A decision whose atoms are tied ([`decide_named`], [`satisfiable_named`]) and left
+/// unsettled asks again on the result: in `x == -2 && y == -2 && D(x * y, ...)` the two
+/// factors share a color only because the formula defines them alike (seed
+/// 11777143762957258550 of `forced_against_solver`, FAIL-presburger-propagation-seed).
 ///
 /// The formula of a tied projection ([`Naming::Tied`]) whose atoms share a color because the
 /// formula defines two of them alike, as the old transfer writes a shared subterm once at
@@ -16845,8 +16877,19 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 // `l01_38_omega_test::omega::twin_definitions_are_merged_before_a_tied_projection` and
 // `l01_38_omega_test::omega::twin_definitions_merge_in_time_near_linear` (control: the
 // pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1).
-// COMPLEXITY.md row PROJECT-box-half-open.
-fn twins_merged(f: &Formula, syms: &[Atom]) -> Option<Formula> {
+// COMPLEXITY.md row PROJECT-box-half-open. With `factors_too` (FAIL-presburger-propagation-seed)
+// one more pass renames the products, a hash lookup for each factor, O(P) for P products, and
+// a collision among them repeats the call once without factors. The tied decision that calls
+// it asks again on the merged formula, which has fewer atoms, so the calls end; each asks
+// again only when a merge renamed a product into a new twin definition, which the formulas
+// met so far never do (one call). Test:
+// `l01_38_omega_test::bench::omega::factors_defined_alike_merge_in_time_near_linear`.
+// COMPLEXITY.md row FAIL-presburger-propagation-seed.
+fn twins_merged(
+    f: &Formula,
+    syms: &[Atom],
+    factors_too: bool,
+) -> Option<(Formula, HashMap<Atom, Atom>)> {
     let atoms = f.atoms();
     let factors: HashSet<Atom> = (atoms.iter())
         .filter_map(|a| match a {
@@ -16855,9 +16898,12 @@ fn twins_merged(f: &Formula, syms: &[Atom]) -> Option<Formula> {
         })
         .flatten()
         .collect();
-    let syms: HashSet<&Atom> = syms.iter().collect();
-    let definable =
-        |a: &Atom| !matches!(a, Atom::Product(..)) && !syms.contains(a) && !factors.contains(a);
+    let kept: HashSet<&Atom> = syms.iter().collect();
+    let definable = |a: &Atom| {
+        !matches!(a, Atom::Product(..))
+            && !kept.contains(a)
+            && (factors_too || !factors.contains(a))
+    };
     let defines = functional(f);
     let conjuncts = f.conjuncts();
     // The conjunct that defines each atom, when one alone does.
@@ -16949,11 +16995,40 @@ fn twins_merged(f: &Formula, syms: &[Atom]) -> Option<Formula> {
             *l = a;
         }
     }
-    let to: HashMap<Atom, Atom> = (number.iter())
+    let mut to: HashMap<Atom, Atom> = (number.iter())
         .map(|(a, n)| (a.clone(), least[n].clone()))
         .filter(|(a, l)| a != l)
         .collect();
-    Some(f.map_cons(&|c| Formula::Con(con_renamed(c, &|a| to.get(a).cloned()))))
+    // A product of a replaced factor is the product of the factors that replaced them. When
+    // two products of `f` would become one, the solver, which reads each product as an atom
+    // of its own, would read the result as stronger than `f`; the factors then stay apart.
+    if factors_too {
+        let mut products: HashMap<Atom, Atom> = HashMap::new();
+        for a in atoms.iter() {
+            let Atom::Product(x, y) = a else { continue };
+            let by =
+                |x: &Factor| (to.get(&x.atom()).and_then(Factor::of)).unwrap_or_else(|| x.clone());
+            let p = Atom::product_of(by(x), by(y));
+            if p != *a {
+                products.insert(a.clone(), p);
+            }
+        }
+        let images: HashSet<&Atom> = (atoms.iter())
+            .filter(|a| matches!(a, Atom::Product(..)))
+            .map(|a| products.get(a).unwrap_or(a))
+            .collect();
+        if images.len()
+            < atoms
+                .iter()
+                .filter(|a| matches!(a, Atom::Product(..)))
+                .count()
+        {
+            return twins_merged(f, syms, false);
+        }
+        to.extend(products);
+    }
+    let g = f.map_cons(&|c| Formula::Con(con_renamed(c, &|a| to.get(a).cloned())));
+    Some((g, to))
 }
 
 /// `c` with each atom `a` replaced by `to(a)` where that is given, the coefficients of the
@@ -25801,6 +25876,88 @@ mod forced_against_solver {
 
     fn eq(a: &Lin, b: &Lin) -> Formula {
         Formula::Con(Con::eq(a, b))
+    }
+
+    /// The formula of seed 11777143762957258550 (FAIL-presburger-propagation-seed): three
+    /// definitions by cases of `q0`, `q1` and `q2` over the product `x * y`, linked through
+    /// `q0`, with `x` bounded to -2 on both sides and `y == -2`.
+    fn seed_11777143762957258550() -> Formula {
+        let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
+        let def = |g: Formula, then: Formula, other: Formula| {
+            Formula::or(vec![
+                Formula::and(vec![g.clone(), then]),
+                Formula::and(vec![Formula::negate(g), other]),
+            ])
+        };
+        Formula::and(vec![
+            def(ge(&p, &k(2)), eq(&q(0), &p.plus(&k(-1))), eq(&q(0), &k(1))),
+            def(ge(&q(0), &k(1)), eq(&q(1), &p), eq(&q(1), &k(-1))),
+            def(ge(&p, &k(-2)), eq(&q(2).times(2), &p), eq(&q(2), &k(1))),
+            ge(&sym("x"), &k(-2)),
+            ge(&k(-2), &sym("x")),
+            eq(&sym("y"), &k(-2)),
+        ])
+    }
+
+    #[test]
+    fn factors_defined_alike_are_merged_when_their_tie_is_left_unsettled() {
+        // Once `x >= -2 && x <= -2` is read as `x == -2`, `x` and `y` share a color, and
+        // the disjunctions, linked through `q0`, left the tie unsettled: `decide` refused
+        // what the solver answers as written. Brute force over a box, each product read as
+        // an atom of its own, shows the formula holds.
+        let f = seed_11777143762957258550();
+        let (x, y) = (Atom::Sym(Arc::from("x")), Atom::Sym(Arc::from("y")));
+        let p = Atom::product(&Arc::from("x"), &Arc::from("y"));
+        let mut points = 0;
+        for v in -8..=8 {
+            for q0 in -8..=8 {
+                for q1 in -8..=8 {
+                    for q2 in -8..=8 {
+                        let at: Model = [
+                            (x.clone(), Int::from(-2)),
+                            (y.clone(), Int::from(-2)),
+                            (p.clone(), Int::from(v)),
+                            (Atom::Aux(0), Int::from(q0)),
+                            (Atom::Aux(1), Int::from(q1)),
+                            (Atom::Aux(2), Int::from(q2)),
+                        ]
+                        .into_iter()
+                        .collect();
+                        points += usize::from(holds_at(&f, &at, &mut HashMap::new()));
+                    }
+                }
+            }
+        }
+        assert!(points > 0, "{f}");
+        assert_eq!(decide(&f).ok(), Some(true), "{f}");
+        let mut at = satisfiable(&f).expect("answered").expect("a point");
+        for a in f.atoms() {
+            at.entry(a).or_insert(Int::ZERO);
+        }
+        assert!(
+            holds_at(&f, &at, &mut HashMap::new()),
+            "{at:?} is no point of {f}"
+        );
+        agrees(&f);
+    }
+
+    #[test]
+    fn factors_stay_apart_when_two_products_would_become_one() {
+        // With `y` replaced by `x`, `y * y` would become `x * x`: the solver reads both as
+        // atoms of their own, so the two made one would add `x * x == y * y`, which `f`
+        // does not have.
+        let (x, y) = (Arc::from("x"), Arc::from("y"));
+        let xx = Lin::atom(Atom::product(&x, &x));
+        let yy = Lin::atom(Atom::product(&y, &y));
+        let xy = Lin::atom(Atom::product(&x, &y));
+        let f = Formula::and(vec![
+            eq(&sym("x"), &k(-2)),
+            eq(&sym("y"), &k(-2)),
+            Formula::or(vec![ge(&xx, &yy.plus(&k(1))), ge(&yy, &xx.plus(&k(1)))]),
+            ge(&xy, &k(0)),
+        ]);
+        assert!(twins_merged(&f, &[], true).is_none(), "{f}");
+        assert_ne!(decide(&f).ok(), Some(false), "{f}");
     }
 
     /// What the whole solver says of `f`: the point it finds, or `None` when it finds none, and

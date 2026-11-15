@@ -1361,6 +1361,39 @@ pub(super) fn twin_absolute_values(n: usize) -> Formula {
     Formula::and(parts)
 }
 
+/// `n` copies of the formula of seed 11777143762957258550 of `forced_against_solver`
+/// (FAIL-presburger-propagation-seed). Copy `i` has `x{i} == y{i} == -2 - i` and three
+/// definitions by cases over the product `x{i} * y{i}`, of its own `q(3i)`, `q(3i+1)` and
+/// `q(3i+2)`, linked through `q(3i)`. `x{i}` and `y{i}` share a color, and the search by
+/// colors takes a choice of cases with no point, so before that item `decide` refused it;
+/// each copy holds with the product, read as an atom of its own, 2.
+pub(super) fn tied_factor_blocks(n: usize) -> Formula {
+    let mut parts = Vec::new();
+    let ge = |a: &Lin, b: &Lin| Formula::Con(Con::ge(a, b));
+    let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+    let k = Lin::constant;
+    for i in 0..n {
+        let (x, y): (Arc<str>, Arc<str>) = (format!("x{i}").into(), format!("y{i}").into());
+        let p = Lin::atom(Atom::product(&x, &y));
+        let q = |j: u32| Lin::atom(Atom::Aux(3 * i as u32 + j));
+        let c = -2 - i as i64;
+        parts.push(picked(
+            ge(&p, &k(2)),
+            eq(&q(0), &p.plus(&k(-1))),
+            eq(&q(0), &k(1)),
+        ));
+        parts.push(picked(ge(&q(0), &k(1)), eq(&q(1), &p), eq(&q(1), &k(-1))));
+        parts.push(picked(
+            ge(&p, &k(-2)),
+            eq(&q(2).times(2), &p),
+            eq(&q(2), &k(1)),
+        ));
+        parts.push(eq(&Lin::atom(Atom::Sym(x)), &k(c)));
+        parts.push(eq(&Lin::atom(Atom::Sym(y)), &k(c)));
+    }
+    Formula::and(parts)
+}
+
 /// s22 case 1185 of `l01_25_preimage_catalog` as the reference transfer writes it: a shared
 /// term written once at each use, so `q2` and `q3`, `q4` and `q5`, `q7` and `q8`, and `q9`,
 /// `q10` and `q11` are each defined alike. Its one point has `i == -9`.
@@ -1409,6 +1442,39 @@ fn case_1185() -> Formula {
         aux_ge(&[("q12", -1)], 26),
     ]);
     Formula::and(parts)
+}
+
+#[test]
+fn factors_defined_alike_are_merged_when_a_tied_decision_is_left_unsettled() {
+    // Each copy's point is checked by evaluation: the solver's point, with each product read
+    // as an atom of its own, gives each constraint its value.
+    for n in 1..=4 {
+        let f = tied_factor_blocks(n);
+        assert_eq!(decide(&f).ok(), Some(true), "{f}");
+        let p = satisfiable(&f).expect("answered").expect("a point");
+        for i in 0..n {
+            let at = |a: Atom| p.get(&a).cloned().unwrap_or(Int::ZERO);
+            let (x, y): (Arc<str>, Arc<str>) = (format!("x{i}").into(), format!("y{i}").into());
+            let c = Int::from(-2 - i as i64);
+            assert_eq!(
+                (at(Atom::Sym(x.clone())), at(Atom::Sym(y.clone()))),
+                (c.clone(), c)
+            );
+            let v = at(Atom::product(&x, &y));
+            let q = |j: u32| at(Atom::Aux(3 * i as u32 + j));
+            let two = Int::from(2);
+            let one = Int::from(1);
+            let q0 = if v >= two { &v - &one } else { one.clone() };
+            assert_eq!(q(0), q0, "{f} at {p:?}");
+            let q1 = if q0 >= one { v.clone() } else { -&one };
+            assert_eq!(q(1), q1, "{f} at {p:?}");
+            if v >= -&two {
+                assert_eq!(&q(2) * &two, v, "{f} at {p:?}");
+            } else {
+                assert_eq!(q(2), one, "{f} at {p:?}");
+            }
+        }
+    }
 }
 
 #[test]
