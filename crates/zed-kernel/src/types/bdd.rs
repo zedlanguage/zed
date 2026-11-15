@@ -1610,6 +1610,62 @@ impl<A: Literal> Part<A> {
         })
     }
 
+    /// The part with each atom `a` replaced by `map(a)`. Whether a value is in a part is its
+    /// connectives applied to whether the value is in each of its atoms, so the part made has a
+    /// value exactly when the part's connectives, applied to whether the value is in each
+    /// `map(a)`, give true, for any `map`. A list is made again from its blocks, last first:
+    /// a block of value `v` takes the values in one of its literals and leaves the others to
+    /// the blocks after it; each expression from its operands made again, each list and
+    /// expression once.
+    ///
+    /// Complexity tradeoff: the literals of a block are joined in pairs, `O(k log k)` nodes
+    /// joined for a block of `k`, against `O(k^2)` one at a time (as [`crate::types::Type::union_all`]
+    /// does); each block after that costs one union or meet with what follows it, so a list
+    /// costs what building it by its blocks costs. A list is not copied with its atoms renamed
+    /// in place, since two atoms may be renamed to one and the atoms' order follows their
+    /// digests, which renaming changes.
+    pub(super) fn map_atoms(&self, map: &impl Fn(&A) -> A) -> Part<A> {
+        let mut lists: DigestMap<u64, Part<A>> = DigestMap::default();
+        self.rebuild(|p| match p {
+            Part::Bdd(Bdd::Leaf(v)) => Some(Part::leaf(*v)),
+            Part::Bdd(b) => Some(
+                lists
+                    .entry(b.id())
+                    .or_insert_with(|| {
+                        let list = b.list();
+                        let mut after = Part::leaf(list.tail);
+                        for (v, literals) in list.blocks.iter().rev() {
+                            let mut ps: Vec<Part<A>> = (literals.iter())
+                                .map(|(a, taken)| {
+                                    let x = Part::literal(map(a));
+                                    if *taken { x } else { x.not() }
+                                })
+                                .collect();
+                            while ps.len() > 1 {
+                                let mut joined = Vec::with_capacity(ps.len().div_ceil(2));
+                                let mut it = ps.into_iter();
+                                while let Some(x) = it.next() {
+                                    joined.push(match it.next() {
+                                        Some(y) => x.zip(&y, Op::Or),
+                                        None => x,
+                                    });
+                                }
+                                ps = joined;
+                            }
+                            let block = ps.pop().unwrap_or_else(|| Part::leaf(false));
+                            after = match v {
+                                true => block.zip(&after, Op::Or),
+                                false => block.not().zip(&after, Op::And),
+                            };
+                        }
+                        after
+                    })
+                    .clone(),
+            ),
+            Part::Expr(_) => None,
+        })
+    }
+
     /// The part with each expression rebuilt from its rebuilt operands by its connective, each
     /// once, after its operands, from a stack. `base` gives what a diagram becomes, and what an
     /// expression it decides becomes; `None` for an expression to rebuild.

@@ -1213,3 +1213,86 @@ fn a_payload_with_fields_never_meets_one_more_item_of_any_value() {
         assert_eq!(x.subtype(&y), *holds, "{a} <: {b}");
     }
 }
+
+#[test]
+fn a_cofinite_atom_set_minus_one_pair_is_a_subtype_of_a_union_holding_a_function() {
+    use zedc::check::read::parse_type;
+    let l = parse_type("(#_, 1) \\ (#a, 1)").unwrap();
+    for r in [
+        "(#_, 1) | (1, (int -> int))",
+        "(#_, int) | (1, (int -> int))",
+        "(#_, 1)",
+    ] {
+        assert!(
+            l.subtype(&parse_type(r).unwrap()),
+            "(#_, 1) \\ (#a, 1) <: {r}"
+        );
+    }
+}
+
+/// Each case: the type checked, the type expected, whether it is a subtype.
+fn judge(cases: &[(&str, &str, bool)]) {
+    use zedc::check::read::parse_type;
+    let bad: Vec<String> = (cases.iter())
+        .filter(|(a, b, holds)| parse_type(a).unwrap().subtype(&parse_type(b).unwrap()) != *holds)
+        .map(|(a, b, holds)| format!("{a} <: {b} should be {holds}"))
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// A set of every atom nested in a tuple or an atom's payload holds no function, as at the
+/// top level: before (FAIL-forms-nested-marks) the nested set kept the marks that stand for
+/// functions in the forms compared, so a function was taken to be an atom there.
+#[test]
+fn marks_nested_in_sets_of_every_atom_stand_for_no_function() {
+    judge(&[
+        ("((int -> int), 1)", "(#_, 1) \\ (#a, 1)", false),
+        ("((int -> int), 1)", "((#_, 1) \\ (#a, 1)) | (1, 2)", false),
+        ("(((int -> int), 1), 2)", "((#_, 1), 2)", false),
+        ("(((int -> int), 1), 2)", "((#_, 1) \\ (#a, 1), 2)", false),
+        ("#q((int -> int), 1)", "#q(#_, 1) \\ #q(#a, 1)", false),
+        (
+            "((int -> int), 1) | (1, 1)",
+            "((#_, 1) \\ (#a, 1)) | (1, 1)",
+            false,
+        ),
+        ("#q(#b, 1)", "#q(#_, 1) \\ #q(#a, 1)", true),
+        ("(#b, 1)", "((#_, 1) \\ (#a, 1)) | (1, (int -> int))", true),
+        // `(..)` holds every function, nested too.
+        ("((int -> int), 1)", "(..) \\ (#a, 1)", true),
+        ("(((int -> int), 1), 2)", "((..) \\ (#a, 1), 2)", true),
+    ]);
+}
+
+/// The unknown `_` of the type checked holds every value, `(#a, 1)` among them: before
+/// (FAIL-forms-nested-marks) its form was a mark of its own, which a set of every value minus
+/// `(#a, 1)` held.
+#[test]
+fn the_unknown_checked_is_every_value_not_a_value_of_its_own() {
+    judge(&[
+        ("(_, 1)", "(..) \\ (#a, 1)", false),
+        ("((_, 1), 2)", "((..) \\ (#a, 1), 2)", false),
+        ("(_, 1)", "((#_, 1) \\ (#a, 1)) | (1, 1)", false),
+        ("(_, 1)", "(_, 1)", true),
+        ("(_, 1)", "(..)", true),
+    ]);
+}
+
+/// A union of `n` rows `((#_, i) \ (#a, i), (int -> int))`, each a set of every atom nested
+/// beside a function, and the type `((#_, int), (int -> int))` that holds it.
+fn nested_cut_rows(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let rows: Vec<String> = (0..n)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), (int -> int))"))
+        .collect();
+    let left = parse_type(&rows.join(" | ")).unwrap();
+    (left, parse_type("((#_, int), (int -> int))").unwrap())
+}
+
+/// The small instance of `bench::nested_sets_of_every_atom_are_cut_in_linear_time`.
+#[test]
+fn many_nested_sets_of_every_atom_beside_functions_are_decided() {
+    let (left, right) = nested_cut_rows(4);
+    assert!(left.subtype(&right));
+    assert!(!right.subtype(&left));
+}

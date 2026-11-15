@@ -1920,6 +1920,129 @@ impl Type {
         self.p().morphisms.is_leaf() == Some(true)
     }
 
+    /// Whether it holds every function (`Some(true)`) or none (`Some(false)`), read from its
+    /// parts in O(1); `None` when it holds some and not others.
+    pub fn functions_leaf(&self) -> Option<bool> {
+        self.p().morphisms.is_leaf()
+    }
+
+    /// The type with each node of parts at every depth outside functions made again by
+    /// `level`: the type itself, the payload of each atom name its parts list, and each
+    /// component of each tuple type its tuple parts are made of, each made by `level` from the
+    /// node with the nodes below it made first. A name its parts do not list, the tuples of a
+    /// length they do not list, its structs and its functions are kept as they are. `None` when
+    /// `level` gives none for a node, or for a recursive node whose unfolding holds, at any
+    /// depth, a node `level` does not give back unchanged: such a node is not made again.
+    ///
+    /// A tuple part is made again from the tuple types it is made of, each replaced by the one
+    /// of its components made again (`Part::map_atoms`): a value is in a tuple part exactly
+    /// when the part's connectives, applied to whether the value is in each tuple type, give
+    /// true, so a value is in the part made again exactly when they give true applied to
+    /// whether it is in each tuple type made again.
+    ///
+    /// `memo` holds what each node was made into, across calls: each node is made once, from a
+    /// stack, since nodes nest as deep as the program. A recursive node's unfolding is walked
+    /// once, by node number, stopping at nodes `memo` has; a node it changes ends the walk with
+    /// `None`. Cost: the nodes of the type not in `memo`, each read once and `level` once, plus
+    /// the tuple parts made again (`Part::map_atoms`); a node no node below it changes, and
+    /// `level` gives back, is the node itself, with nothing built.
+    pub fn rewrite_levels(
+        &self,
+        memo: &mut HashMap<Type, Option<Type>>,
+        level: &mut impl FnMut(&Type) -> Option<Type>,
+    ) -> Option<Type> {
+        let mut stack = vec![(self.clone(), false)];
+        while let Some((t, ready)) = stack.pop() {
+            if memo.contains_key(&t) {
+                continue;
+            }
+            let Node::Parts(p, _) = &*t.0 else {
+                let kept = Type::rec_kept(&t, memo, level).then(|| t.clone());
+                memo.insert(t, kept);
+                continue;
+            };
+            let rows: Vec<(usize, Vec<Row>)> = (p.tuples.lens.iter())
+                .map(|(n, part)| (*n, part.distinct_atoms()))
+                .collect();
+            let payloads = p.atoms.names.values().map(|a| &a.payload);
+            let mut below = payloads.chain(rows.iter().flat_map(|(_, rs)| rs.iter().flatten()));
+            if !ready {
+                stack.push((t.clone(), true));
+                let left: Vec<Type> = below.filter(|c| !memo.contains_key(*c)).cloned().collect();
+                stack.extend(left.into_iter().map(|c| (c, false)));
+                continue;
+            }
+            if below.any(|c| memo[c].is_none()) {
+                memo.insert(t, None);
+                continue;
+            }
+            let made = |c: &Type| memo[c].clone().expect("tested above");
+            let mut q: Option<Parts> = None;
+            for (n, a) in &p.atoms.names {
+                let payload = made(&a.payload);
+                if payload != a.payload {
+                    let bare = a.bare;
+                    (q.get_or_insert_with(|| p.clone()).atoms).set(n, AtomPart { bare, payload });
+                }
+            }
+            for (n, rs) in &rows {
+                let again: HashMap<&Row, Row> = (rs.iter())
+                    .filter_map(|r| {
+                        let cs: Vec<Type> = r.iter().map(made).collect();
+                        (cs.iter().zip(r.iter()).any(|(c, d)| c != d)).then(|| (r, Row::new(cs)))
+                    })
+                    .collect();
+                if !again.is_empty() {
+                    let part = p.tuples.lens[n].map_atoms(&|r| again.get(r).unwrap_or(r).clone());
+                    (q.get_or_insert_with(|| p.clone()).tuples.lens).insert(*n, part);
+                }
+            }
+            let node = match q {
+                None => t.clone(),
+                Some(mut q) => {
+                    q.tuples = Tuples::normal(q.tuples.rest, std::mem::take(&mut q.tuples.lens));
+                    Type::new(q)
+                }
+            };
+            let r = level(&node);
+            memo.insert(t, r);
+        }
+        memo[self].clone()
+    }
+
+    /// Whether `level` gives back unchanged every node of the recursive node `t`'s unfolding at
+    /// every depth outside functions, walked once by node number and not past a node `memo`
+    /// has. When it does, each node walked is put in `memo` as kept.
+    fn rec_kept(
+        t: &Type,
+        memo: &mut HashMap<Type, Option<Type>>,
+        level: &mut impl FnMut(&Type) -> Option<Type>,
+    ) -> bool {
+        let (mut seen, mut walked) = (HashSet::new(), Vec::new());
+        let mut stack = vec![t.clone()];
+        while let Some(u) = stack.pop() {
+            if !seen.insert(u.node_id()) {
+                continue;
+            }
+            match memo.get(&u) {
+                Some(Some(v)) if *v == u => continue,
+                Some(_) => return false,
+                None => {}
+            }
+            if level(&u).is_none_or(|v| v != u) {
+                return false;
+            }
+            let p = u.p();
+            stack.extend(p.atoms.names.values().map(|a| a.payload.clone()));
+            for part in p.tuples.lens.values() {
+                stack.extend(part.distinct_atoms().iter().flat_map(|r| r.iter().cloned()));
+            }
+            walked.push(u);
+        }
+        memo.extend(walked.into_iter().map(|u| (u.clone(), Some(u))));
+        true
+    }
+
     /// Whether `self` is known to have finitely many values: it holds only bools, finite
     /// literal sets, bare atoms, and tuples whose boxes (`Type::boxes`) hold only types known
     /// finite. A recursive type, a payload, a struct or a function is not known finite, and a

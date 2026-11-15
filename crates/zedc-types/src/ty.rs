@@ -6574,8 +6574,8 @@ impl<'m, 's> Comparing<'m, 's> {
                 }
             }
         }
-        let a = forms.form(t, true);
-        let b = forms.form(other, false);
+        let a = forms.form(t, true)?;
+        let b = forms.form(other, false)?;
         let verdict = a.subtype_verdict(&b);
         if !matches!(verdict, Verdict::Inhabited) || skipped.left.is_empty() {
             return Some(verdict);
@@ -6584,15 +6584,16 @@ impl<'m, 's> Comparing<'m, 's> {
         // applied to the plain ones, at every kind of spot: a `_` of the other side, which
         // holds every mark, holds [`MERGED`] too; functions nested in payloads or tuples inside
         // tuples are renamed as those at the top; and the memo `cuts`, kept from the first
-        // forms, is still right, since [`MERGED`] is among the marks in both. Evidence: the
+        // forms, is still right, since [`MERGED`] is among the marks in both, and so is `levels`,
+        // since [`MERGED`] is among every function's marks in both. Evidence: the
         // random test `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
         // (3000 cases a run, seeds 1 to 8, no wrong yes and no wrong definite no; its types hold
         // functions at the top of a tuple only, with no `_` and no named fields), and the tests
         // of `l01_22`, `l01_23` and `l01_26`, unchanged.
         forms.made.clear();
         forms.merged = Some(skipped);
-        let a = forms.form(t, true);
-        let b = forms.form(other, false);
+        let a = forms.form(t, true)?;
+        let b = forms.form(other, false)?;
         if !matches!(a.subtype_verdict(&b), Verdict::Inhabited) {
             self.refuse(|| UNPAIRED.to_string());
         }
@@ -7904,7 +7905,9 @@ impl<'a> Node<'a> {
 /// Each function of the side compared is a mark of its own ([`mark`]), one for equal
 /// functions; each function of the other side holds the marks of the functions at its place
 /// that are equal to it or fit it, found before the forms are made ([`Comparing::by_form`]);
-/// the unknown of the side compared is a mark only the unknown of the other holds. A payload
+/// the unknown of the side compared is every value but the marks of field names; each kernel
+/// type a form holds, at every depth, holds a function's mark exactly where it holds every
+/// function ([`Forms::level`]), so no mark stands for a value the type does not hold. A payload
 /// with fields is its items and fields in name order, then a mark of the names
 /// ([`payload_form`]). A variable on either side, or the unknown on the other, is not put in a
 /// form: a shape may bind a variable, and the unknown holds any value.
@@ -7924,14 +7927,20 @@ struct Forms {
     made: HashMap<(*const (), bool, Option<Arc<str>>), KType>,
     /// The names of the marks of the field names of the payloads met on either side.
     fields: HashSet<String>,
-    /// Every mark the two forms may hold: of each function of the side compared, of the
-    /// unknown and of each set of field names met; none until the functions are numbered.
+    /// Every mark the two forms may hold: of each function of the side compared, [`MERGED`]
+    /// and of each set of field names met; none until the functions are numbered.
     marks: Option<KType>,
+    /// The marks of the functions of the side compared and [`MERGED`]: every function's mark;
+    /// none until the functions are numbered.
+    fn_marks: Option<KType>,
     /// Each set that holds the atoms of every name it does not list, with the marks cut out.
     cuts: RefCell<HashMap<KType, KType>>,
-    /// The form of the unknown of the other side as the last item of a payload with no fields:
-    /// every value but the marks of field names ([`Forms::comp`]); none until the marks are
-    /// numbered.
+    /// Each kernel type met, at any depth, as [`Forms::level`] makes it, or none where it is
+    /// not made ([`KType::rewrite_levels`]).
+    levels: RefCell<HashMap<KType, Option<KType>>>,
+    /// The form of the unknown of the side compared, and of the other side as the last item of
+    /// a payload with no fields: every value but the marks of field names ([`Forms::comp`]);
+    /// none until the marks are numbered.
     unknown: Option<KType>,
     /// The functions skipped, when the forms are made with every skipped pair taken to fit.
     merged: Option<Merged>,
@@ -8136,15 +8145,15 @@ impl Forms {
         forms.ids = left.all().map(|f| (f.clone(), 0)).collect();
         forms.number_marks();
         forms.fits = right.all().map(|g| (g.clone(), vec![0])).collect();
-        let a = forms.form(t, true);
-        let b = forms.form(other, false);
+        let a = forms.form(t, true)?;
+        let b = forms.form(other, false)?;
         (held(a.subtype_verdict(&b)) != Some(false)).then_some(UNPAIRED)
     }
 
     /// The normal form of the scalars, atoms with their payloads, kind-wide part and tuples of
     /// `t`, on the side compared if `left`. Its rows and shapes are made bottom up, each once,
     /// on a stack of its own, since they nest as deep as the program.
-    fn form(&mut self, t: &Ty, left: bool) -> KType {
+    fn form(&mut self, t: &Ty, left: bool) -> Option<KType> {
         let mut stack: Vec<(Node, bool)> = Node::below(t).map(|n| (n, false)).collect();
         while let Some((n, ready)) = stack.pop() {
             let key = n.key(left);
@@ -8166,7 +8175,7 @@ impl Forms {
             };
             let ks: Vec<KType> = (n.comps().into_iter().enumerate())
                 .map(|(i, (_, c))| self.comp(c, left, end == Some(i)))
-                .collect();
+                .collect::<Option<_>>()?;
             // A component of no value, as a function of the other side that no function fits,
             // leaves the tuple or payload no value: built as empty, not as a row the kernel
             // would prove empty again in each comparison.
@@ -8181,32 +8190,85 @@ impl Forms {
     }
 
     /// The form of `t`'s scalars, atoms with their payloads, kind-wide part and tuples, its
-    /// rows and shapes made, the marks cut from its set.
-    fn data(&self, t: &Ty, left: bool) -> KType {
-        let form = |n: Node| {
-            n.kept()
-                .cloned()
-                .or_else(|| self.made.get(&n.key(left)).cloned())
+    /// rows and shapes made; each kernel type of `t` read, its set and the exact kernel types
+    /// of the rows and shapes kept ([`Node::kept`]), made by [`Forms::level`] at every depth.
+    /// None where one is not made.
+    fn data(&self, t: &Ty, left: bool) -> Option<KType> {
+        let form = |n: Node| match n.kept() {
+            Some(k) => self.deep(k),
+            None => Some(self.made[&n.key(left)].clone()),
         };
         let shape = |n: &Arc<str>, s: &Shape| form(Node::Shape(n, s));
-        let set = payload_set(&self.cut(&t.set), &t.payloads, shape).expect("each shape is made");
-        let rows = (t.tuples.iter()).map(|r| form(Node::Row(r)).expect("each row is made"));
-        KType::union_all(std::iter::once(set).chain(rows))
+        let set = payload_set(&self.deep(&t.set)?, &t.payloads, shape)?;
+        let rows = (t.tuples.iter().map(|r| form(Node::Row(r)))).collect::<Option<Vec<_>>>()?;
+        Some(KType::union_all(std::iter::once(set).chain(rows)))
     }
 
     /// Numbers the marks ([`Forms::marks`]), once the functions of the side compared are.
     fn number_marks(&mut self) {
         let fns = (0..self.ids.len()).map(|i| format!("\u{0}fn {i}"));
-        let fns = fns.chain([MERGED.to_string()]);
-        let names = fns.chain(self.fields.iter().cloned());
-        let marks = names.map(|n| mark(&n)).chain([mark("\u{0}unknown")]);
-        self.marks = Some(KType::union_all(marks));
+        let fns: Vec<KType> = fns.chain([MERGED.to_string()]).map(|n| mark(&n)).collect();
+        self.fn_marks = Some(KType::union_all(fns.iter().cloned()));
         let fields = KType::union_all(self.fields.iter().map(|n| mark(n)));
+        self.marks = Some(KType::union_all(fns.into_iter().chain([fields.clone()])));
         self.unknown = Some(&KType::top() - &fields);
     }
 
+    /// The kernel type `k` of a type of either side, made by [`Forms::level`] at every depth
+    /// outside functions ([`KType::rewrite_levels`]), each node once per comparison; none where
+    /// a node is not made.
+    fn deep(&self, k: &KType) -> Option<KType> {
+        let mut levels = self.levels.borrow_mut();
+        k.rewrite_levels(&mut levels, &mut |n| self.level(n))
+    }
+
+    /// The node `n` of a kernel type of either side, the nodes below it made, as its form holds
+    /// it: the marks cut from it where it holds the atoms of every name it does not list
+    /// ([`Forms::cut`]), and every function's mark ([`Forms::fn_marks`]) put in it where it holds
+    /// every function. None where it holds some functions and not others,
+    /// which no type written has (a decidable type holds every function or none,
+    /// [`KType::functions`]), so the comparison goes shape by shape (`accepts`).
+    ///
+    /// Why the verdict on forms so made is the verdict on the types (FAIL-forms-nested-marks).
+    /// Let `σ` map a value of the side compared to its form: each function to its mark (to
+    /// [`MERGED`] when skipped), each payload with fields to its items and fields then the mark
+    /// of their names, and the rest as it is. For a kernel type `k` of either side, and every
+    /// value `w` of the side compared, `σ(w)` is in `level`'s `k` exactly when `w` is in `k`:
+    /// by induction on `k`'s nodes, below first. At an atom name `k` lists, `σ` maps the
+    /// payload, made below. At a tuple type `k`'s parts are made of, `σ` maps each component,
+    /// made below; a tuple part is its connectives applied to its tuple types, so the part made
+    /// again, of the tuple types made again, holds `σ(w)` exactly when the part holds `w`
+    /// ([`KType::rewrite_levels`]). A mark is `σ(w)` only for `w` a function of the side
+    /// compared, at a place where its form puts it: `k` holds it exactly when `k` holds every
+    /// function, and so does the node made, by the marks cut from it and every function's put
+    /// in; no value has a mark of field names at a place `k` stands for, since a payload with
+    /// fields is never a value of a kernel type ([`Node::kept`]); a value of `k` that is no
+    /// mark is `σ` of itself. So a node of every value is made every value but the marks of
+    /// field names, as [`Forms::unknown`]: kept whole, a right one would hold the mark of a
+    /// payload's field names where a payload with no fields has its last item (the place
+    /// lemma of PROOF-star-pairs). So the form of each side holds `σ` of its values,
+    /// and the other side's form holds `σ(w)` only for its values `w`: true on the forms is
+    /// true on the types. Before, a set of every atom nested in a tuple or a payload kept the
+    /// marks, so `((int) -> int, 1) <: (#_, 1) \ (#a, 1)` held, the function's mark in `#_`.
+    ///
+    /// Complexity tradeoff: each node is made once per comparison ([`Forms::levels`]): a
+    /// type of `n` nodes costs `O(n)` nodes read, plus `O(m)` per node cut for `m` marks
+    /// ([`Forms::cut`]) and the tuple parts made again where a component changed
+    /// (`Part::map_atoms` in the kernel, a union or meet per block). Before, only the outer
+    /// set was cut, O(1) more per comparison, and a nested set kept the marks, which made a
+    /// wrong yes. Test: `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
+    /// `marks_nested_in_sets_of_every_atom_stand_for_no_function`; COMPLEXITY.md F124.
+    fn level(&self, n: &KType) -> Option<KType> {
+        let every = n.functions_leaf()?;
+        let cut = self.cut(n);
+        Some(match (every, &self.fn_marks) {
+            (true, Some(fns)) => &cut | fns,
+            _ => cut,
+        })
+    }
+
     /// `set` without the marks, when it holds the atoms of every name it does not list: a
-    /// component written `#_` holds no function, so its form holds no mark ([`mark`]).
+    /// set written `#_` holds no function, so its form holds no mark ([`mark`]).
     ///
     /// Complexity tradeoff: each such set is cut once per comparison, at the cost of the
     /// marks. What is given up: `k` distinct sets of that kind against `m` marks cost `k m`.
@@ -8231,23 +8293,27 @@ impl Forms {
     }
 
     /// The form of the component `c`; `end` when it is the last item of a payload with no
-    /// fields, where a payload with fields has the mark of their names.
-    fn comp(&self, c: &Ty, left: bool, end: bool) -> KType {
-        // The unknown of the other side holds any value ([`Ty::sub`]): every mark too, but at
-        // `end` not the marks of field names, which there stand for no value but for where a
-        // payload's fields end. Before (PROOF-star-pairs) it held them there too, so
-        // `#n(1, x: 2) <: #n(1, 2, _)` held: the payload of one item and a field, `(1, 2,
-        // fields x)`, met the three items' `(1, 2, _)`. Now a node's form shares no value with
-        // that of a node at another place (COMPLEXITY.md, PROOF-star-pairs, the place lemma). Only at
-        // `end`: elsewhere a mark of field names is a value a set of every atom of the side
-        // compared may hold nested (FAIL-forms-nested-marks), which `_` must still hold.
-        if c.dynamic && !left {
-            return match end {
+    /// fields, where a payload with fields has the mark of their names. None where a kernel
+    /// type of it is not made ([`Forms::level`]).
+    fn comp(&self, c: &Ty, left: bool, end: bool) -> Option<KType> {
+        // The unknown holds any value ([`Ty::sub`]). On the side compared it is every value but
+        // the marks of field names ([`Forms::unknown`]): every function's mark among them, so
+        // it is held only where every function is. Before (FAIL-forms-nested-marks) it was a
+        // mark of its own, which only the unknown of the other side held, and a set of every
+        // atom too: so `(_, 1) <: (..) \ (#a, 1)` held, though `(#a, 1)` is a value of `_`.
+        // On the other side it is every value, but at `end` not the marks of field names,
+        // which there stand for no value but for where a payload's fields end. Before
+        // (PROOF-star-pairs) it held them there too, so `#n(1, x: 2) <: #n(1, 2, _)` held: the
+        // payload of one item and a field, `(1, 2, fields x)`, met the three items' `(1, 2,
+        // _)`. Now a node's form shares no value with that of a node at another place
+        // (COMPLEXITY.md, PROOF-star-pairs, the place lemma).
+        if c.dynamic {
+            return Some(match end || left {
                 true => (self.unknown.clone()).expect("the marks are numbered first"),
                 false => KType::top(),
-            };
+            });
         }
-        let mut ks = vec![self.data(c, left)];
+        let mut ks = vec![self.data(c, left)?];
         let merged = self.merged.as_ref();
         let fn_mark = |i: &usize| match merged.is_some_and(|m| m.left.contains(i)) {
             true => mark(MERGED),
@@ -8263,10 +8329,7 @@ impl Forms {
                 ks.push(mark(MERGED));
             }
         }
-        if c.dynamic {
-            ks.push(mark("\u{0}unknown"));
-        }
-        KType::union_all(ks)
+        Some(KType::union_all(ks))
     }
 }
 

@@ -239,3 +239,19 @@ fn functions_at_one_place_meeting_one_by_one_are_paired_in_linear_time() {
         },
     );
 }
+
+/// The forms of a union of `n` rows, each with its own set of every atom nested beside a
+/// function, cut the marks from each nested set once (FAIL-forms-nested-marks): linear in `n`.
+#[test]
+fn nested_sets_of_every_atom_are_cut_in_linear_time() {
+    let n = 256;
+    let pairs = scaling::inputs(n, nested_cut_rows);
+    scaling::check(
+        "the forms of n rows with a nested set of every atom",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}
