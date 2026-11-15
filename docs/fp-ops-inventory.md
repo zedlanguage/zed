@@ -37,7 +37,7 @@ follows from the definitions but no DESIGN example writes it.
 | `reverse` | `List.rev` | `reverse` | `for i in xs::domain { xs[xs.count - 1 - i] }`, as DESIGN writes `rev` in the tests of the proof ladder; reading a family in reverse order needs no copy: `rev(o)` of sec:order serves `.foldl`, `.first`, `.take`, scans | composition | L3.2; `rev(o)` L5.1c |
 | `transpose` | — | `transpose` | `m into (j -> i -> m[i][j])`, a remap | composition (remap) | L8.2 |
 | `zip`, `Map.intersectionWith (,)` | `List.combine` | `zip` | `a.zip(b)`; keyspaces must be equal (`#assertEmpty` on both one-sided regions) | word | L5.2 |
-| `zipWith f` | `List.map2 f` | `zip(...).map` | `a.zip(b).map((x, y) -> f(x, y))` | composition | L5.2 |
+| `zipWith f` | `List.map2 f` | `zip(...).map` | `a.zip(b).map(p -> f(p[0], p[1]))` (a lambda `(x, y) -> e` takes two parameters, not one pair, sec:grammar) | composition | L5.2 |
 | `zip3`, `zipWith3` | `List.map3` (none) | `lazyZip` | `(a, b, c).join(on: k)` gives one flat triple per key; `a.zip(b).zip(c)` gives nested pairs | composition | L5.2, sec:joins |
 | `unzip` | `List.split` | `unzip` | `(z.map(p -> p[0]), z.map(p -> p[1]))` | composition | L3.2 |
 | `zip [0..]` | `List.mapi` | `zipWithIndex` | not needed: a list's keys are its positions; `for i -> x in xs` binds both | composition | L3.2 |
@@ -103,7 +103,7 @@ follows from the definitions but no DESIGN example writes it.
 | `maximumBy`, `minimumBy` | — | `maxBy`, `minBy` | `xs.maxBy(f)`, `xs.minBy(f)`, which keep every tie (a family, not one entry) | word | L5.1 |
 | `length`, `Map.size` | `List.length`, `Map.cardinal` | `size`, `length` | `xs.count`, or `xs::len` on a rank-keyed level | word / metadata | L3.2 |
 | — | — | `count(p)` | `xs.where(p).count` | composition | L3.2 |
-| `scanl` | — | `scanLeft` | `xs.scan(op)`, the prefix folds; the last entry equals `xs >< op` | word | L5.3 |
+| `scanl` | — | `scanLeft` | `xs.scan((+))`, the prefix folds (DESIGN writes the operator as a section); the last entry equals `xs >< op` | word | L5.3 |
 | `scanr` | — | `scanRight` | a scan reading `rev(o)`, the suffix scan | word + order | L5.1c, L5.3 |
 | `mapAccumL` | `List.fold_left_map` | — | a `loop` with `initial acc = init;` and a generation per entry (sec:generations) | composition (`loop`) | L6.1 |
 | `Map.foldr`, `Map.elems` folds | `Map.fold` | `foldLeft` on a map | the same words on a keyed level, read in key order through the sorted view | word | L3.4 |
