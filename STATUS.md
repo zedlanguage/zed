@@ -2379,16 +2379,28 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| FAIL-abs-hull-rows-tie | merged and pushed (the commit "FAIL-abs-hull-rows-tie: ..." that marks the row Done); no spec change | 2026-11-14 16:30 | The `abs` hull rows of 9ade05ff8 made `x0`, `y0` a tie. `Omega::untie` decides a tie that a swap of the tied variables maps onto itself; `broken_swap` checks the swaps in the splinter search. Tests red before (names, ladder max chain), 200 random symmetric systems against enumeration; control with the rule off. The two l01_38 benchmarks stay over: products_along_a_chain_with_a_disjunction_on_each_link_scale (Growth at k >= 9, row FAIL-abs-chain-growth-bench), products_whose_factors_keep_open_sides_scale (10.68, not the hull rows, row FAIL-open-sides-bench-ratio); also FAIL-batch-single-hull-seed |
-| FAIL-check-finished-names-clash | impl attempt 1 | 2026-11-14 13:54 | started in wt/fix-names-sub (also FAIL-types-sub-level-variables next) |
-| FAIL-linked-case-group-wake | impl attempt 1 | 2026-11-14 14:17 | start, worktree /home/luke/Work/wt/lcgw; load 33.60 |
-| FAIL-types-sub-level-variables | running | 2026-11-14 13:54 |  |
-| PREIMAGE-summaries-slow-seed | merged and pushed (the commit "PREIMAGE-summaries-slow-seed: ..." and the commit that marks the row Done); no spec change | 2026-11-14 | The linear stage gave each copy of one `if` its own auxiliary variable with the same disjunction, and the solver split on each: seed 7776978274844439420 53 s to 11.1 s (load 51). One variable per `if` of one guard and arms (`Tr::choices`). Tests: the seed test (under 20 s) and `copies_of_an_if_are_one_variable_in_the_linear_stage`, both red before; `chains_of_slow_families_keep_their_preimages` requires a renamed result to equal the term written with `let`. COMPLEXITY.md PREIMAGE-summaries-slow-seed. New row PREIMAGE-tie-indep-let |
-| PREIMAGE-chain-cliff | merged and pushed (the commit "PREIMAGE-chain-cliff: ..." and the commit that marks the row Done); no spec change | 2026-11-14 | The bound of a summary by class after a clamp kept the multipliers of the doublings below it, passed `i64` near k = 320 (and 2150 for the mixed chain), and every `if` above fell back to reading its guard and both arms: 6.8 s at k = 400, 7.7 s at 2250. Now the bound of the clamped leaves (`ByClass::clamp`, `cls_clamp`); `Terms::form` on an explicit stack (stack overflow at k = 4000 gone). 20 ms at k = 400, 0.1 s at 4000. Benchmarks raised from k = 40 and 250 to 16,000: 7.59 and 7.92 times. Tests `a_summary_clamped_after_each_doubling_keeps_its_bound` (red before) and the cliff test at k = 400, 2250, 4000. COMPLEXITY.md PREIMAGE-chain-cliff |
-| STUDY-memo-arenas | impl attempt 1 | 2026-11-14 15:08 | started: design of @memoized + unified arenas (P198/P199) |
-| TEST-kernel-hash-keys | impl attempt 1 | 2026-11-14 15:13 | started in wt/kernel-parens-hash |
-| TEST-presburger-unreached-paths | part 3 merged and pushed (row stays Part done; rest in PRES-unreached-3-left; the ladder failure is FAIL-abs-hull-rows-tie); no spec change | 2026-11-14 15:45 | sweep_row_unbounded 45 to 0 lines unreached, try_pick_disjoint_wide 92 to 17, resolve_disj 54 to 15, fill_row_model 58 to 7; one completeness fix in slack.rs; dead checks removed |
-| TEST-renamed-relation-same-set | running | 2026-11-14 14:17 |  |
+| EMPTY-level-swap | running | 2026-11-07 21:20 | 2026-11-11: sink given a consumer (author: every DAG node must have a descendant) |
+| FAIL-batch-linked-copies-growth | impl attempt 1 | 2026-11-14 17:42 | started in wt/fix-batch-growth from 47675dfe7 + cherry-pick d43d535ab; then FAIL-batch-single-hull-seed |
+| FAIL-batch-single-hull-seed | impl attempt 1 | 2026-11-14 16:53 | NOT FIXED: single exact, batch coarser (v4 [0,18] vs {0..2,6..18}, also v5-v7); cause Growth refusal depends on row writing, which depends on symbols asked; hal |
+| FAIL-bench-bounded-or-free-time | impl attempt 1 | 2026-11-14 18:47 | start; load 26.35 36.54 41.85 |
+| FAIL-kernel-empty-tuple-diff-union | impl attempt 1 | 2026-11-14 18:54 | started (fix-empty-tuple-diff) |
+| FAIL-open-sides-bench-ratio | impl attempt 1 | 2026-11-14 16:53 | not reproduced as 10.68: main f6bab0ff1 by run_tests --bench 10.10-10.13 (4 runs, 95.5M/966M instr), raw binary without GLIBC_TUNABLES 10.37; 9ade05ff8^ (998893 |
+| FAIL-or-if-projection-not-exact | running |  |  |
+| FAIL-or-if-tie-refusal | impl attempt 1 | 2026-11-14 16:54 | reproduced on f6bab0ff1 (with Omega::untie of 5a5084526): seed 3178640468583431682 round 104 still Unordered Tie [x, y]; untie works on Omega rows, this tie is  |
+| FAIL-project-each-coarser-seed | impl attempt 1 | 2026-11-14 18:54 | merged aa8366a07, plan cc27e29a8: precision fault (old path exact by brute force); a disjunction left with one disjunct by drop_jointly_empty now joins the base |
+| FAIL-scope-chain-scales-bytes | impl attempt 1 | 2026-11-14 18:20 | not fixed: join of row sums builds a pair table per question (k^3 in all); join off is linear with same facts; needs PRES-project-exact-solver/PRES-join-cost-pr |
+| FAIL-types-binding-tuple-shapes-copied | impl attempt 1 | 2026-11-14 18:15 | Members persistent list for Ty::tuples/fns; bench one variable taking n tuple shapes 32.332x -> 9.113x instr (bytes 25.4x -> 8.30x) at load 33.6; negative contr |
+| FAIL-types-loose-over-refusal | running | 2026-11-14 18:15 |  |
+| FAIL-types-singleton-tuple-union-match | running | 2026-11-14 18:15 |  |
+| L8.1 | running | 2026-11-05 04:07 |  |
+| L8.2a | running | 2026-11-05 04:07 |  |
+| L8.2b | running |  |  |
+| L8.2c | running |  |  |
+| L8.2 | running | 2026-11-05 04:07 |  |
+| PRES-project-exact-solver | impl attempt 1 | 2026-11-14 19:45 | start, worktree wt/pres-exact at 07f18406f |
+| PRES-sign-tie-names | impl attempt 1 | 2026-11-14 16:54 | started in wt/fix-ties at f6bab0ff1; load 17.88 9.21 12.04 |
+| PRES-solve-equation-sign | impl attempt 1 | 2026-11-14 18:34 | reproduced: new probe (layered family + a - b == 0 style equations, every writing and naming, shuffled parts) on main: 98 of 1800 systems over 6 seeds change an |
+| REMAP-tests | impl attempt 1 | 2026-11-14 19:24 | paused, row open: kernel group l08_02_remaps (39 tests) on main since b0334072b; 60 source tests on branch wt/remap-tests b5b8f0820, not pushed (1 passes, 59 st |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
