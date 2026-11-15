@@ -113,12 +113,13 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these twenty-four rows yet: plan rows L7.4 (the first, the third to the
-    // sixth, the eighth, the twenty-second and the twenty-fourth), IMPL-consume-unless (the
-    // seventh), FFI-release-failure (the ninth), FFI-release-zed (the tenth), FFI-token-check (the
-    // eleventh and twelfth), FFI-held (the thirteenth to fifteenth), FFI-thread (the sixteenth
-    // and seventeenth), FFI-isolate (the eighteenth to twentieth), STRICT-build (the
-    // twenty-first), TERM-1 and EXPORT-unique emit them.
+    // No diagnostic uses these thirty rows yet. The plan rows that emit them: L7.4 the first, third,
+    // fifth and thirtieth; TERM-1 the second; FFI-token-check the fourth, eighth and eleventh to
+    // fourteenth; IMPL-consume-unless the sixth and seventh; FFI-release-failure the ninth;
+    // FFI-release-zed the tenth; FFI-held the fifteenth to seventeenth; FFI-thread the eighteenth
+    // and nineteenth; FFI-isolate the twentieth to twenty-second and the twenty-eighth;
+    // FFI-sandbox-linux the twenty-third to twenty-sixth; STRICT-build the twenty-seventh;
+    // EXPORT-unique the twenty-ninth.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
@@ -143,6 +144,10 @@ rows! {
     IsolatedAndNot => "One foreign library declared isolated and not isolated",
     IsolatedWithoutOneToken => "Isolated foreign library without one token",
     IsolatedMemoryRead => "Foreign memory of an isolated library read in the program",
+    RestrictionNotIsolated => "Restriction of a library that is not isolated",
+    RestrictedTwoWays => "One isolated library restricted in two ways",
+    RestrictionNotEnforceable => "Restriction the target cannot enforce",
+    RestrictionRelativePath => "Relative path in a restriction",
     NotIsolatedInStrictBuild => "Foreign library not isolated in a strict build",
     ForeignFailureNotInResult => "Failure of a foreign call not written in the result type",
     SymbolExportedTwice => "One C symbol exported twice",

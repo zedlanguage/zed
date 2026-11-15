@@ -38,7 +38,7 @@ main(m: MainArgs) {
 }
 ```
 
-<!-- EXAMPLES.md:66 layer L10: ring L10, word none, label none; section [2. Bindings and values] 1 -->
+<!-- EXAMPLES.md:66 layer L1: ring L1, word none, label none; section [2. Bindings and values] 1 -->
 ```zed
 // [d4] sec:tour_basics, sec:lexical
 x = 42;                          // int, inferred domain int[42..=42]: a singleton, a subtype of every interval containing it
@@ -63,7 +63,7 @@ f(x) {
 }
 ```
 
-<!-- EXAMPLES.md:93 layer L10: ring L10, word L7 (u8), label none; section [3. Numbers] 1 -->
+<!-- EXAMPLES.md:93 layer L7: ring L1, word L7 (u8), label none; section [3. Numbers] 1 -->
 ```zed
 // [d4] sec:domains, sec:lexical
 x   = 3;
@@ -82,7 +82,7 @@ w: i32 = shl(1, 30);       // no bitwise operators: bitAnd, bitOr, shl are ordin
 z   = 7 / 2;               // ✗ Decimal literal, or `/` of integer literals, that nothing gives a carrier: `/` is for the float formats and rat only, so 7 and 2 stay without one; write f64(7) / 2 or declare z: f64
 ```
 
-<!-- EXAMPLES.md:111 layer L10: ring L10, word none, label none, documentation notation; section [3. Numbers] 2 -->
+<!-- EXAMPLES.md:111 layer L3: ring L3, word none, label none, documentation notation; section [3. Numbers] 2 -->
 ```zed
 // [d4] sec:failure, sec:domains — division is total on the domain that excludes zero
 (div) : ((int, int \ 0) -> int) & ((int, 0) -> #divByZero)   // the built-in's type, shown as a judgment — no ';' (sec:lexical)
@@ -92,7 +92,7 @@ r1 = ratio(a, b) else 0;
 r2 = match ratio(a, b) { #divByZero -> 0, v -> v };
 ```
 
-<!-- EXAMPLES.md:124 layer L3: ring L3, word L3 (split), label none; section [4. Strings] 1 -->
+<!-- EXAMPLES.md:124 layer L3: ring L1, word L3 (split), label none; section [4. Strings] 1 -->
 ```zed
 // [d4] sec:lexical, sec:order
 s  = "Hello" ++ ", " ++ "world";     // ++ concatenates: associative, not commutative
@@ -108,7 +108,7 @@ doc = """
 esc = "tab\t quote\" newline\n";
 ```
 
-<!-- EXAMPLES.md:139 layer L3: ring L3, word L1 (char32), label L3; section [4. Strings] 2 -->
+<!-- EXAMPLES.md:139 layer L3: ring L1, word L1 (char32), label L3; section [4. Strings] 2 -->
 ```zed
 // [d4] sec:order, sec:lexical — comparing a character with one written from a literal
 // layer L3
@@ -685,7 +685,7 @@ asInts(positional t: PTree(int)) = t;
 checked(positional t: PTree(Utf8String)) = asInts(t.map(A: s -> int(s)));   // a PTree(int), or #invalid passed out of the A positions (rule 6)
 ```
 
-<!-- EXAMPLES.md:716 layer L10: ring L10, word L4 (flatMap), label none; section [15. Trees and graphs] 3 -->
+<!-- EXAMPLES.md:716 layer L6: ring L6, word L4 (flatMap), label none; section [15. Trees and graphs] 3 -->
 ```zed
 // [d4*] sec:values_morphisms, sec:generations — reachability is a fixpoint on sets
 edges: Id ->? [Id] = { 1 -> [2, 3], 2 -> [4], 3 -> [4], 4 -> [] };
@@ -715,7 +715,7 @@ dist = loop {
 };
 ```
 
-<!-- EXAMPLES.md:750 layer L10: ring L10, word L5 (last), label none; section [16. Generics and interfaces] 1 -->
+<!-- EXAMPLES.md:750 layer L5: ring L3, word L5 (last), label none; section [16. Generics and interfaces] 1 -->
 ```zed
 // [d4] sec:type_resolution
 head(positional xs) = xs[0];                        // (int[0..<n] -> T) -> T | #notFound
@@ -776,7 +776,7 @@ import geometry.shapes.{Point, dist};    // unqualified; the alternatives are `i
 far = dist(Point(x: 0, y: 0), Point(x: 3, y: 4));
 ```
 
-<!-- EXAMPLES.md:812 layer L3: ring L3, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->
+<!-- EXAMPLES.md:812 layer L3: ring L1, word L3 (map), label none; section [18. Files, stores, and the world] 1 -->
 ```zed
 // [d4] sec:tour_failure, sec:ports — fs : Files, the file port, which every function reads as `main::files` (Files = Path ->? Utf8String | #ioError)
 fs    = main::files;
@@ -822,7 +822,7 @@ config: Utf8String ->? Utf8String with store(file("app.cfg", KeyVal));   // the 
 hit = cache[key] else fetch(key);                                                   // else strips #timeout with the rest: a read that ran out of time is a miss
 ```
 
-<!-- EXAMPLES.md:852 layer L7: ring L3, word L7 (clock), label L7; section [18. Files, stores, and the world] 7 -->
+<!-- EXAMPLES.md:852 layer L7: ring L1, word L7 (clock), label L7; section [18. Files, stores, and the world] 7 -->
 ```zed
 // [d4] sec:ports, steps L1.19a, L7.3 and L7.3f — the command line is a field of main's argument, a clock is opened where it is needed, and the exit status is main's result
 // layer L7
@@ -993,7 +993,7 @@ n = int(input);                           // int | #invalid
 p2 = n?.refine(v -> v in 1..=65535);      // int | #invalid, and the refinement is what the checker keeps
 ```
 
-<!-- EXAMPLES.md:1018 layer L10: ring L10, word none, label none; section [21. Domains] 2 -->
+<!-- EXAMPLES.md:1018 layer L3: ring L3, word none, label none; section [21. Domains] 2 -->
 ```zed
 // [d4] sec:type_language (m[k] row) — indexing is total on a matching domain
 grid: int[0..<w] -> int[0..<h] -> Cell = …;
@@ -1101,7 +1101,7 @@ life = loop t {
 };
 ```
 
-<!-- EXAMPLES.md:1129 layer L5: ring L3, word L5 (maxBy), label none; section [24. Small programs] 4 -->
+<!-- EXAMPLES.md:1129 layer L5: ring L2, word L5 (maxBy), label none; section [24. Small programs] 4 -->
 ```zed
 // [d4*] sec:grouping, sec:reduction — log analytics
 struct Req { path: Utf8String, status: int, ms: int }

@@ -24,7 +24,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   4 | counts = words «as» ( l -> i -> w ) «into» ( w . lower -> ( l , i ) -> 1₍10₎ ) >< ( + ) ;
   5 | m . stdout <- [ str[${counts :: card} " distinct words"] ] ;
   6 | }
-== EXAMPLES.md [2. Bindings and values] 1 L10
+== EXAMPLES.md [2. Bindings and values] 1 L1
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;
   4 | name = str["Zed"] ;
@@ -41,7 +41,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   5 | z = { y = 0₍10₎ ; y } ;
   6 | y + z
   7 | }
-== EXAMPLES.md [3. Numbers] 1 L10
+== EXAMPLES.md [3. Numbers] 1 L7
   2 | x = 3₍10₎ ;
   3 | q = 7₍10₎ «div» 2₍10₎ ;
   4 | r = - 7₍10₎ «mod» 2₍10₎ ;
@@ -55,7 +55,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
  13 | b : u8 = 255₍10₎ ;
  14 | w : i32 = shl ( 1₍10₎ , 30₍10₎ ) ;
  15 | z = 7₍10₎ / 2₍10₎ ;
-== EXAMPLES.md [3. Numbers] 2 L10
+== EXAMPLES.md [3. Numbers] 2 L3
   2 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
   3 | half ( n ) = n «div» 2₍10₎ ;
   4 | ratio ( «positional» a , «positional» b ) = a «div» b ;
@@ -427,7 +427,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | «law» mapCount ( t : PTree ( int ) ) = count ( t . map ( A : x -> - x ) ) == count ( t ) ;
   8 | asInts ( «positional» t : PTree ( int ) ) = t ;
   9 | checked ( «positional» t : PTree ( Utf8String ) ) = asInts ( t . map ( A : s -> int ( s ) ) ) ;
-== EXAMPLES.md [15. Trees and graphs] 3 L10
+== EXAMPLES.md [15. Trees and graphs] 3 L6
   2 | edges : Id ->? [ Id ] = { 1₍10₎ -> [ 2₍10₎ , 3₍10₎ ] , 2₍10₎ -> [ 4₍10₎ ] , 3₍10₎ -> [ 4₍10₎ ] , 4₍10₎ -> [ ] } ;
   3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» [ ] ) . image ;
   4 | reach = «loop» {
@@ -445,7 +445,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
  12 | d' [ v «in» nodes ] = minD ( d [ v ] , ( «for» u «in» preds [ v ] { addD ( d [ u ] , w [ u ] [ v ] ) } ) >< minD «else» #inf ) ;
  13 | «until» d' == d ;
  14 | } ;
-== EXAMPLES.md [16. Generics and interfaces] 1 L10
+== EXAMPLES.md [16. Generics and interfaces] 1 L5
   2 | head ( «positional» xs ) = xs [ 0₍10₎ ] ;
   3 | swap ( p ) { a , b = p ; ( b , a ) }
   4 | «type» Stack ( T ) = [ T ] ;
@@ -594,7 +594,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   7 | q : Port = 70000₍10₎ ;
   8 | n = int ( input ) ;
   9 | p2 = n ?. refine ( v -> v «in» 1₍10₎ ..= 65535₍10₎ ) ;
-== EXAMPLES.md [21. Domains] 2 L10
+== EXAMPLES.md [21. Domains] 2 L3
   2 | grid : int [ 0₍10₎ ..< w ] -> int [ 0₍10₎ ..< h ] -> Cell = … ;
   3 | cell = grid [ x ] [ y ] ;
   4 | all = «for» x -> y -> _ «in» grid { grid [ x ] [ y ] } ;

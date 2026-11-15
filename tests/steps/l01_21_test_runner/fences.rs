@@ -7,7 +7,7 @@ use zedc::testing::test;
 #[test]
 fn every_l1_fence_passes_but_for_its_free_names() {
     let (mut clean, mut rejection) = (Vec::new(), 0);
-    let (mut alternatives, mut declared) = (Vec::new(), Vec::new());
+    let (mut alternatives, mut declared, mut ascribed) = (Vec::new(), Vec::new(), Vec::new());
     for f in zed_tests::fences::all()
         .iter()
         .filter(|f| f.layer <= 1 && !f.notation)
@@ -38,6 +38,14 @@ fn every_l1_fence_passes_but_for_its_free_names() {
             declared.push(f.key.clone());
             continue;
         }
+        // The layer audit (DESIGN 23a88fd, author P254) puts `x: T = e` at L1, and with it the
+        // range suffix (`port: int[1..=65535] = 8080;`); zedc refuses it as a form it does not
+        // compile yet until plan rows LAYER-L1-forms and RANGE-L1 build it.
+        let binding = |w: &&String| w.starts_with("the binding with a declared type ");
+        if failures.iter().all(|w| binding(w) || free(w)) && failures.iter().any(binding) {
+            ascribed.push(f.key.clone());
+            continue;
+        }
         let unchecked = |w: &&String| w.as_str() == "the line is marked ✗ and has no diagnostic";
         assert!(
             failures.iter().any(free) && failures.iter().all(|w| free(w) || unchecked(w)),
@@ -62,6 +70,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
             "EXAMPLES.md [5. Conditionals] 1"
         ]
     );
+    assert_eq!(ascribed, ["EXAMPLES.md [2. Bindings and values] 1"]);
     assert_eq!(rejection, 1);
     // The rebinding fence checks its one mark; the lambda fence binds every name it uses, and
     // the environment fence reads only `m.env`, a field of `main`'s argument.
