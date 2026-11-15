@@ -834,7 +834,32 @@ tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
 # first in the queue polls the slots and they are taken first come, first served; a killed waiter
 # frees the queue as a killed piece frees its slot. Six pieces polling without it used 2.9-3.1 s of
 # processor time in 5 s.
-slots=12
+# BUILD-slots-measure (author P211, 2026-11-14) kept 12 for correctness pieces, after benchmarks
+# moved to --bench. Eight whole suites, each with as many jobs as slots (a run's own `jobs`, 6 by
+# default, caps the pieces it runs at once below the slot count) and ZED_TEST_SLOTS set; 2333
+# pieces, the same 4 failures in all of them. Other agents ran beside them, so the load differs:
+#   slots  wall   pieces' span  at once  wait/piece  slice peak  load1 start/end
+#   12     67 s   34 s           9.5      17 ms      42 GB       1 / 25
+#   12    111 s   77 s           8.9      60 ms      33 GB      39 / 55
+#   16    164 s   87 s          10.1     159 ms      27 GB      72 / 70
+#   16     73 s   47 s          11.4      49 ms      26 GB      37 / 41
+#   20     89 s   50 s          12.1     120 ms      28 GB      63 / 51
+#   20     76 s   43 s          12.9      88 ms      28 GB      42 / 48
+#   24    143 s   88 s          10.5     406 ms      24 GB      17 / 80
+#   24     93 s   55 s          11.7     231 ms      28 GB      35 / 46
+# Wall time follows the load, not the count. A suite takes 913-948 s of processor time whatever
+# the count, so 32 cores need at least 28 s for its pieces, and 12 slots, started on a quiet
+# machine, took 34 s. Above 12, more pieces did not run at once: the first in the queue takes the
+# slots one at a time, trying each from the first with a `flock` process (3 ms each at load 76),
+# so a slot is seldom free for long (24 slots were all held in 1 of 63 samples; 24 workers
+# taking a slot for 0.15 s each, about a mean piece, held 14-16 at once). Pieces that failed only
+# at some counts failed for their random seed, not the crowding: l01_15_kernel_terms and
+# zedc_presburger fail alone at the seed they printed, and zed-kernel's
+# an_index_whose_hash_reads_sharing_is_caught fails in 17 of 200 runs alone (a random hasher).
+# ZED_TEST_SLOTS sets the count for a measurement like this one; --bench always uses 12, whatever
+# ZED_TEST_SLOTS says. Each piece's line gives `wait=`, the time it waited for a slot.
+slots=${ZED_TEST_SLOTS:-12}
+[ "$run_kind" = test ] || slots=12
 slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
 mkdir -p "$slot_dir"
 # glibc's memcpy and memset use rep movsb and rep stosb on a CPU with erms or fsrm, and the hardware
@@ -875,12 +900,14 @@ take_slot() {
 piece() {
   name=$1 dir=$2
   shift 2
+  asked=${EPOCHREALTIME//[!0-9]/}
   take_slot
   scratch=$out/slot-$slot.out
   log=$out/$name.log
   read -r load _ </proc/loadavg
   limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 20 * l / c; print (x > 20 ? int(x + 1) : 20) }')
   start=$(date +%s%N)
+  wait=$(((start / 1000 - asked) / 1000))
   # %p: a test may run other programs of the build, each writing a profile of its own.
   [ -z "$cov" ] || export LLVM_PROFILE_FILE=$cov/$name-%p.profraw
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
@@ -888,7 +915,7 @@ piece() {
     timeout -k 5 "$limit" "$@" >"$scratch" 2>&1)
   rc=$?
   ms=$((($(date +%s%N) - start) / 1000000))
-  echo "$name rc=$rc ${ms}ms load=$load limit=${limit}s $(grep -E '^test result' "$scratch" | tail -1)"
+  echo "$name rc=$rc ${ms}ms load=$load limit=${limit}s wait=${wait}ms $(grep -E '^test result' "$scratch" | tail -1)"
   # A benchmark prints a few `bench ` lines, far less than the buffer grep writes at once, to a
   # file opened for appending, so the lines of pieces that end together are not mixed.
   [ "$run_kind" = test ] || grep "^bench " "$scratch" >>"$out/bench.log"
