@@ -150,9 +150,10 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
 /// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`.
 #[test]
 fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
-    // n 256: 1x 0.23 s by `ns`, load 31; 9.33 times the instructions at 256 and 2048. Over the goal
-    // 9 before this fix: the definite no alone took 9.56 times on the code before the second
-    // verdict and 9.42 with it (row PERF-equal-functions-forms-ratio).
+    // n 256: 1x 0.23 s by `ns`, load 31; 9.33 times the instructions at 256 and 2048 (9.18 at
+    // 3dacf9885, 0.17 s, load 36). Over the goal 9 before this fix: the definite no alone took
+    // 9.56 times on the code before the second verdict and 9.42 with it (row
+    // PERF-equal-functions-forms-ratio).
     use zedc::check::read::parse_type;
     use zedc::check::ty::Ty;
     let sides = |m: usize, extra: &str| {

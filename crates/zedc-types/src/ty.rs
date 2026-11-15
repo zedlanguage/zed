@@ -6195,6 +6195,15 @@ impl<'m, 's> Comparing<'m, 's> {
         if !matches!(verdict, Verdict::Inhabited) || skipped.left.is_empty() {
             return Some(verdict);
         }
+        // Assumption, not proved: the forms made below are the renaming `φ` of [`Merged`]
+        // applied to the plain ones, at every kind of spot: a `_` of the other side, which
+        // holds every mark, holds [`MERGED`] too; functions nested in payloads or tuples inside
+        // tuples are renamed as those at the top; and the memo `cuts`, kept from the first
+        // forms, is still right, since [`MERGED`] is among the marks in both. Evidence: the
+        // random test `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
+        // (3000 cases a run, seeds 1 to 8, no wrong yes and no wrong definite no; its types hold
+        // functions at the top of a tuple only, with no `_` and no named fields), and the tests
+        // of `l01_22`, `l01_23` and `l01_26`, unchanged.
         forms.made.clear();
         forms.merged = Some(skipped);
         let a = forms.form(t, true);
