@@ -127,7 +127,15 @@ Item ::: type Color = #red | #green | #blue; ::: (type Color = ((#red | #green) 
 Type ::: r -> c -> f64 ::: (r -> (c -> f64))
 Type ::: (A, B) -> C ::: ((( A , B )) -> C)
 Type ::: ((A, B)) -> C ::: ((( (( A , B )) )) -> C)
-Type ::: A | B -> C ::: ((A | B) -> C)
+Type ::: A | B -> C ::: ERROR
+Type ::: (A | B) -> C ::: ((( (A | B) )) -> C)
+Type ::: A | (B -> C) ::: (A | (( (B -> C) )))
+Type ::: A -> B | C ::: (A -> (B | C))
+Type ::: A & B -> C ::: ERROR
+Type ::: A \ B -> C ::: ERROR
+Type ::: A | B ->? C ::: ERROR
+Type ::: A | B .. C -> D ::: ERROR
+Type ::: (A | B) .. C -> D ::: ((( (A | B) )) .. C -> D)
 Type ::: int[0..<n] ::: (int ([ (0 ..< n) ]))
 Type ::: int where x > 0 ::: (int (where (x > 0)))
 Type ::: A | B \ C & D ::: ERROR
@@ -278,7 +286,8 @@ Type ::: (x: T,) -> R ::: ((( x : T , )) -> R)
 Type ::: (x: T,) ->? R ::: ((( x : T , )) ->? R)
 Type ::: (T,) ::: (( T , ))
 Type ::: (T,) -> R ::: ((( T , )) -> R)
-Type ::: A .. A | B -> V ::: (A .. (A | B) -> V)
+Type ::: A .. A | B -> V ::: ERROR
+Type ::: A .. (A | B) -> V ::: (A .. (( (A | B) )) -> V)
 Type ::: A .. B -> C .. D -> V ::: (A .. B -> (C .. D -> V))
 Type ::: A .. B ->? V ::: ERROR
 Expr ::: for x in m into (k -> { v }) { x } ::: (for (x in (m (into ( (k -> ({ v })) )))) ({ x }))

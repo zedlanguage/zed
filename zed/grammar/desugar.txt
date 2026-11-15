@@ -143,7 +143,7 @@ Type          : the set-theoretic type its arrow denotes (sec:type_language), wi
 TypeFacet     : a facet attached to the type (sec:facets)
 TypeWhere     : the refinement of the type to the values where the predicate holds
 TypeBounds    : bounds each named type variable of the type to the union of carriers after its `in` (step L1.26)
-Arrow         : a function type, its parameters' kinds recorded; `->?` a partial family type, whose reads may be #notFound; `L .. U -> V` a morphism type with guarantee `L` and permission `U`
+Arrow         : a function type, its parameters' kinds recorded; `->?` a partial family type, whose reads may be #notFound; `L .. U -> V` a morphism type with guarantee `L` and permission `U`. A key, guarantee or permission that is a union, intersection or difference is written in parentheses, since `|`, `&` and `\\` bind tighter than `->` on its right and a reader can take them either way on its left: `(int | #a) -> int`; the bare `int | #a -> int` is rejected with its two readings as the menu, `(int | #a) -> int` and `int | (#a -> int)` (author, 2026-11-14, P222)
 ArrowParams   : the parameter list of a function type
 TypeParam     : a parameter type, positional or named
 TypeUnion     : the union or difference of its alternative
