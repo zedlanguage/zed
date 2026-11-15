@@ -13970,13 +13970,16 @@ mod tests {
         }
     }
 
+    /// A function giving a program built for a kind of join.
+    type BuiltTerm = fn() -> Term;
+
     /// The kinds of case [`joins_as_two_at_a_time_from`] must meet, in the order of
     /// [`join_round`]'s answer, each with a program built to make it (checked alone by
     /// [`each_program_built_for_a_kind_of_join_makes_it`]). With 120 random rounds, 1 seed in
     /// 40 met only one translation that fails and one stop, so a kind the rounds missed is
     /// met by its program, and no number of rounds is relied on
     /// (PROOF-test-coverage-constructive).
-    const JOIN_KINDS: [(&str, fn() -> Term); 5] = [
+    const JOIN_KINDS: [(&str, BuiltTerm); 5] = [
         ("a formula with no part kept whole", written::two_tests),
         ("a formula with a part kept whole", written::kept_part),
         ("a translation that fails", written::product_test),
@@ -13991,68 +13994,69 @@ mod tests {
     /// that both agree, and gives which kinds of [`JOIN_KINDS`] `t` makes. Every fourth round
     /// also builds preimages.
     fn join_round(t: &Term, round: usize) -> [bool; 5] {
-        {
-            let (old, new) = (translate(&t, true), translate(&t, false));
-            assert_eq!(new.formula, old.formula, "round {round}: {t:?}");
-            assert_eq!(new.defs, old.defs, "round {round}: {t:?}");
-            assert_eq!(new.cut, old.cut, "round {round}: {t:?}");
+        let (old, new) = (translate(t, true), translate(t, false));
+        assert_eq!(new.formula, old.formula, "round {round}: {t:?}");
+        assert_eq!(new.defs, old.defs, "round {round}: {t:?}");
+        assert_eq!(new.cut, old.cut, "round {round}: {t:?}");
+        assert_eq!(
+            (new.lin, new.stops),
+            (old.lin, old.stops),
+            "round {round}: {t:?}"
+        );
+        // The old translation also remembered each inner `&&` of a chain; every other
+        // entry is the same.
+        for (k, v) in &new.memo {
             assert_eq!(
-                (new.lin, new.stops),
-                (old.lin, old.stops),
-                "round {round}: {t:?}"
+                old.memo.get(k),
+                Some(v),
+                "round {round}, entry {k:?}: {t:?}"
             );
-            // The old translation also remembered each inner `&&` of a chain; every other
-            // entry is the same.
-            for (k, v) in &new.memo {
-                assert_eq!(
-                    old.memo.get(k),
-                    Some(v),
-                    "round {round}, entry {k:?}: {t:?}"
-                );
-            }
-            let extra: Vec<&At> = old
-                .memo
-                .keys()
-                .filter(|k| !new.memo.contains_key(k))
-                .collect();
-            for k in &extra {
-                assert!(
-                    old.chains.contains(&k.0),
-                    "round {round}, entry {k:?}: {t:?}"
-                );
-            }
-            // Every other entry made is the same, and every entry the new translation made for
-            // a chain the old one made too, as the formula of the chain's top.
-            assert_eq!(old.log, new.log, "round {round}: {t:?}");
-            assert!(
-                new.chain_log.is_subset(&old.chain_log),
-                "round {round}: {t:?}"
-            );
-            for k in &extra {
-                assert!(
-                    old.chain_log.contains(k),
-                    "round {round}, entry {k:?}: {t:?}"
-                );
-            }
-            // The whole preimage, with the relation's formula as built.
-            let doms = domains();
-            for w in [true, false].into_iter().filter(|_| round % 4 == 0) {
-                TWO_AT_A_TIME.set(true);
-                let po = preimage(&t, &doms, &Demand::Bool(w));
-                TWO_AT_A_TIME.set(false);
-                let pn = preimage(&t, &doms, &Demand::Bool(w));
-                assert_eq!(pn, po, "round {round}, demand {w}: {t:?}");
-                let rel = |p: &Preimage| p.relation.as_ref().map(|r| built(&r.body));
-                assert_eq!(rel(&pn), rel(&po), "round {round}, demand {w}: {t:?}");
-            }
-            [
-                new.formula.is_some() && !new.kept,
-                new.formula.is_some() && new.kept,
-                new.formula.is_none(),
-                new.stops > 0 || new.cut != usize::MAX,
-                !extra.is_empty(),
-            ]
         }
+        let extra: Vec<&At> = old
+            .memo
+            .keys()
+            .filter(|k| !new.memo.contains_key(k))
+            .collect();
+        for k in &extra {
+            assert!(
+                old.chains.contains(&k.0),
+                "round {round}, entry {k:?}: {t:?}"
+            );
+        }
+        // Every other entry made is the same, and every entry the new translation made for
+        // a chain the old one made too, as the formula of the chain's top.
+        assert_eq!(old.log, new.log, "round {round}: {t:?}");
+        assert!(
+            new.chain_log.is_subset(&old.chain_log),
+            "round {round}: {t:?}"
+        );
+        for k in &extra {
+            assert!(
+                old.chain_log.contains(k),
+                "round {round}, entry {k:?}: {t:?}"
+            );
+        }
+        // The whole preimage, with the relation's formula as built.
+        let doms = domains();
+        for w in [true, false]
+            .into_iter()
+            .filter(|_| round.is_multiple_of(4))
+        {
+            TWO_AT_A_TIME.set(true);
+            let po = preimage(t, &doms, &Demand::Bool(w));
+            TWO_AT_A_TIME.set(false);
+            let pn = preimage(t, &doms, &Demand::Bool(w));
+            assert_eq!(pn, po, "round {round}, demand {w}: {t:?}");
+            let rel = |p: &Preimage| p.relation.as_ref().map(|r| built(&r.body));
+            assert_eq!(rel(&pn), rel(&po), "round {round}, demand {w}: {t:?}");
+        }
+        [
+            new.formula.is_some() && !new.kept,
+            new.formula.is_some() && new.kept,
+            new.formula.is_none(),
+            new.stops > 0 || new.cut != usize::MAX,
+            !extra.is_empty(),
+        ]
     }
 
     /// [`JOIN_ROUNDS`] random rounds from `g`, then, for each kind of [`JOIN_KINDS`] they did
@@ -14546,6 +14550,9 @@ mod tests {
     /// at which a demand was met, then [`READS`] and [`CHECKED`].
     type EntryCounts = (usize, usize, [u64; 3], [u64; 5]);
 
+    /// A kind of entry read: its name, whether counts meet it, and a program built to make it.
+    type EntryKind = (&'static str, fn(&EntryCounts) -> bool, fn() -> Term);
+
     /// Each kind of read, stop and check [`entries_rounds`] must meet, whether the counts show
     /// it, and a program built to make it: the programs of [`written`], each of which makes
     /// its kind by construction (checked alone by
@@ -14553,7 +14560,7 @@ mod tests {
     /// a kind (30 rounds missed a held read under other inputs under about 1 seed in 4,400,
     /// FAIL-preimage-entries-seed-coverage), so a kind the rounds did not meet is met by its
     /// program, and no number of rounds is relied on (PROOF-test-coverage-constructive).
-    const ENTRY_KINDS: [(&str, fn(&EntryCounts) -> bool, fn() -> Term); 9] = [
+    const ENTRY_KINDS: [EntryKind; 9] = [
         (
             "a translation that stops",
             |c| c.0 > 0,

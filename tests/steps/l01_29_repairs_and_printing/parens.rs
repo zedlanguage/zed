@@ -767,12 +767,15 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
     );
 }
 
+/// A function giving a type built to print a form.
+type BuiltType = fn() -> Built;
+
 /// The forms the kernel printer must write in
 /// [`the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need`], each
 /// with a type built to print it (checked alone by
 /// [`each_kernel_type_built_for_a_form_prints_it`]): a form its draws did not print is
 /// printed by its type, and no number of draws is relied on (PROOF-test-coverage-constructive).
-const KERNEL_FORMS: [(&str, fn() -> Built); 7] = [
+const KERNEL_FORMS: [(&str, BuiltType); 7] = [
     (" -> ", || Built {
         t: KType::exact(KType::int(), KType::bool()),
         text: "(int) -> (bool)".into(),
@@ -1014,12 +1017,15 @@ fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_ne
     );
 }
 
+/// A function giving a group body and the text it prints.
+type GroupBody = fn() -> (Expr, String);
+
 /// The forms the group printer must write in
 /// [`the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need`], each
 /// with a body built to print it (checked alone by
 /// [`each_group_body_built_for_a_form_prints_it`]): a form its draws did not print is printed
 /// by its body, and no number of draws is relied on (PROOF-test-coverage-constructive).
-const GROUP_FORMS: [(&str, fn() -> (Expr, String)); 8] = [
+const GROUP_FORMS: [(&str, GroupBody); 8] = [
     (" -> ", || {
         (
             Expr::exact(Expr::Ref(0, vec![]), Expr::Type(KType::int())),

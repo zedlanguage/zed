@@ -25841,6 +25841,9 @@ pub(super) mod tests {
         }
     }
 
+    /// A function giving the rows of a system built to be empty.
+    type BuiltRows = fn() -> Vec<(Vec<i128>, i128)>;
+
     /// The ways the box test shows a system empty, in the order of [`box_answer`]'s
     /// `crossed`, each with a system `Σ c·x + k >= 0` built to be empty that way (checked alone
     /// by [`each_system_built_for_a_way_of_being_empty_is_empty_that_way`]): `-x1 - 2·x3 >= 12`
@@ -25851,7 +25854,7 @@ pub(super) mod tests {
     /// the box, give a variable bounds that cross (found the same way; two-variable rows whose
     /// bounds cross by hand, such as `x0 + x1 >= 7` and `x1 - x0 >= 3`, are found empty when
     /// the system is built).
-    const BOX_EMPTY: [(&str, fn() -> Vec<(Vec<i128>, i128)>); 2] = [
+    const BOX_EMPTY: [(&str, BuiltRows); 2] = [
         ("empty by a row below zero", || {
             vec![(vec![0, -1, 0, -2], -12), (vec![-2, 6, 7, 2], -19)]
         }),
@@ -28827,6 +28830,9 @@ mod forced_against_solver {
         }
     }
 
+    /// A function giving a ladder built for a kind.
+    type BuiltFormula = fn() -> Formula;
+
     /// The kinds of ladder [`rounds_at_the_bounds_do_not_depend_on_names_or_order`] must meet,
     /// in the order of [`ladder_kinds`], each with a ladder built to make it (checked alone by
     /// [`each_ladder_built_for_a_kind_makes_it`]): the two ladders of
@@ -28835,7 +28841,7 @@ mod forced_against_solver {
     /// [`swapped`] renames only `x`, `y` and the `qi`); and a ladder of `x == 6` and three
     /// steps `qi >= prev + 1`, each forced once the step before has its value, decided in
     /// round 3 (with two steps, in round 2).
-    const LADDERS: [(&str, fn() -> Formula); 3] = [
+    const LADDERS: [(&str, BuiltFormula); 3] = [
         ("decided in round 2 or later", || {
             Formula::and(vec![
                 ge(&sym("x"), &k(6)),

@@ -193,11 +193,13 @@ fn random_tests_agree_with_the_interpreter() {
         }
     }
 }
+/// A function giving a pair of terms built for an answer.
+type BuiltPair = fn() -> (Term, Term);
 
 /// The answers [`random_tests_agree_with_the_interpreter`] must meet, in the order of
 /// [`checked_round`], each with a pair of terms built to give it (checked alone by
 /// [`each_pair_built_for_an_answer_gives_it`]).
-const BUILT_ANSWERS: [(&str, fn() -> (Term, Term)); 4] = [
+const BUILT_ANSWERS: [(&str, BuiltPair); 4] = [
     ("satisfiable", || (eq_x(1), eq_x(1))),
     ("not satisfiable", || {
         (prim(Prim::And, vec![eq_x(1), eq_x(2)]), eq_x(1))

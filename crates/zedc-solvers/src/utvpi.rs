@@ -733,6 +733,9 @@ mod tests {
         z ^ (z >> 31)
     }
 
+    /// A function giving a graph built for an answer.
+    type BuiltGraph = fn() -> Vec<Vec<(usize, Int)>>;
+
     /// The answers [`random_graphs_get_the_decisions_of_bellman_ford_moore`] must meet, in the
     /// order of [`decided`], each with a graph over the literals of one variable built to give
     /// it (checked alone by [`each_graph_built_for_an_answer_gives_it`]): a negative cycle
@@ -741,7 +744,7 @@ mod tests {
     /// 1.6% of the random graphs, so 400 miss it in about 1 run of 400 (seen in 1 of 100
     /// seeds); an answer the graphs did not give is given by its built graph, and no number of
     /// graphs is relied on (PROOF-test-coverage-constructive).
-    const ANSWERS: [(&str, fn() -> Vec<Vec<(usize, Int)>>); 3] = [
+    const ANSWERS: [(&str, BuiltGraph); 3] = [
         ("a negative cycle", || {
             vec![vec![(1, Int::from(-1))], vec![(0, Int::from(-1))]]
         }),
