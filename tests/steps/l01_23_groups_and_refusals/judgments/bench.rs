@@ -155,12 +155,13 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
 /// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`.
 #[test]
 fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
-    // n 256: 1x 0.13 to 0.35 s by `ns`, load 41 to 56; 8.14 to 8.16 times the instructions at
-    // 256 and 2048 (870 M and 7.10 G), three runs (PERF-equal-functions-forms-ratio). Before,
-    // 9.15 (1.58 G and 14.47 G): the unions of tuple types were joined in pairs, remaking
-    // each merged set's nodes at each level, and the rows taken away from a union were
-    // taken one at a time; both are now made at once (`Type::union_all`, `Bdd::zip_chain`),
-    // and the set nodes made fell from 300 k and 3.26 M to 33 k and 258 k.
+    // n 256: 1x 0.15 to 0.21 s by `ns`, load 27 to 42; 8.30 times the instructions at 256 and
+    // 2048 (1.16 G and 9.66 G), three runs at ae23e9509 (PERF-equal-functions-forms-ratio).
+    // Before, 8.80 there (1.65 G and 14.50 G) and 9.15 at dc060f8b9 (1.58 G and 14.47 G): the
+    // unions of tuple types were joined in pairs, remaking each merged set's nodes at each
+    // level, and the rows taken away from a union were taken one at a time; both are now made
+    // at once (`Type::union_all`, `Bdd::zip_chain`), and at dc060f8b9 the set nodes made fell
+    // from 300 k and 3.26 M to 33 k and 258 k.
     use zedc::check::read::parse_type;
     use zedc::check::ty::Ty;
     let sides = |m: usize, extra: &str| {
