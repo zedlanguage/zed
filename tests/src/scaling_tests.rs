@@ -981,3 +981,30 @@ fn one_test_at_a_time_is_read_from_the_options_of_libtest_or_its_variable() {
 }
 
 mod bench;
+
+/// A benchmark whose first run at 1x takes over 20 s / 10.5 asks for more than the runner's 20 s
+/// (author P214): 2 s asks for 21 s, which tools/bench_limit.sh takes over its base of 20 s.
+#[test]
+fn bench_limit_a_1x_over_20_s_over_10_5_raises_the_limit() {
+    assert_eq!(bench_limit_ms(2_000_000_000), 21_000);
+    assert!(bench_limit_ms(1_904_000_000) < 20_000 && bench_limit_ms(1_905_000_000) > 20_000);
+    let path = crate::scratch::scratch("bench-limit-raised");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let most = AtomicU64::new(0);
+    write_bench_limit(&path, 2_000_000_000, &most);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "21000\n");
+    // A later, smaller 1x of the same benchmark keeps the larger limit.
+    write_bench_limit(&path, 1_000_000_000, &most);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "21000\n");
+    write_bench_limit(&path, 3_000_000_000, &most);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "31500\n");
+}
+
+/// A benchmark whose first run at 1x takes under 20 s / 10.5 asks for less than 20 s, so the
+/// runner's 20 s holds: 1 s asks for 10.5 s.
+#[test]
+fn bench_limit_a_1x_under_20_s_over_10_5_keeps_20_s() {
+    assert_eq!(bench_limit_ms(1_000_000_000), 10_500);
+    assert_eq!(bench_limit_ms(1), 1);
+    assert!(bench_limit_ms(1_904_000_000) < 20_000);
+}

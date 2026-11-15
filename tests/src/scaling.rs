@@ -83,6 +83,7 @@
 
 use std::cell::Cell;
 use std::hint::black_box;
+use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
@@ -804,7 +805,15 @@ fn compare_by_dyn(
         last: None,
     };
     let warm_bytes = Cell::new(0);
-    let mut warm = Some(meter.work(|| warm_bytes.set(alone(&small).0)));
+    // The first run at 1x, before any at 8n, sets the benchmark's time limit (author P214).
+    // Written after the run, so its work is not counted in the run's.
+    let warm_ns = Cell::new(0);
+    let mut warm = Some(meter.work(|| {
+        let (bytes, ns) = alone(&small);
+        warm_bytes.set(bytes);
+        warm_ns.set(ns);
+    }));
+    raise_bench_limit(warm_ns.get());
     let mut first_runs = String::new();
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
@@ -958,6 +967,47 @@ fn compare_by_dyn(
         seen.join("; then "),
         meter.unit()
     );
+}
+
+/// The variable naming the file a benchmark writes its raised time limit to, in milliseconds,
+/// when it is set (tools/run_tests.sh --bench sets it; tools/bench_limit.sh reads it). A
+/// benchmark's limit is max(20 s, [`LIMIT`] × t1), where t1 is the time of the first run at its
+/// 1x size in the same process (author P214): a benchmark whose run at n takes t1 takes about
+/// 10 t1 for its runs (two at n, one at 8n), so a fixed 20 s failed a benchmark that scaled well
+/// but was large. The ratio of the sizes is held to [`LIMIT`] as before; only the time the piece
+/// may take is raised. The 20 s (raised with load) stays with the runner.
+pub const BENCH_LIMIT_FILE: &str = "ZED_BENCH_LIMIT_FILE";
+
+/// The time limit in milliseconds that a first run at 1x of `t1_ns` nanoseconds asks for:
+/// [`LIMIT`] × t1, rounded up. The runner takes the larger of this and its own limit.
+pub fn bench_limit_ms(t1_ns: u64) -> u64 {
+    (LIMIT * t1_ns as f64 / 1e6).ceil() as u64
+}
+
+/// The most [`bench_limit_ms`] asked for in this process, so a benchmark of several checks
+/// keeps the largest.
+static BENCH_LIMIT_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Writes [`bench_limit_ms`]`(t1_ns)` to the file [`BENCH_LIMIT_FILE`] names, if it is set and
+/// the limit is above every one written before in this process. The runner reads it at its next look, within 0.1 s.
+pub(crate) fn raise_bench_limit(t1_ns: u64) {
+    let Some(path) = std::env::var_os(BENCH_LIMIT_FILE) else {
+        return;
+    };
+    write_bench_limit(std::path::Path::new(&path), t1_ns, &BENCH_LIMIT_MS);
+}
+
+/// [`raise_bench_limit`] to the file `path`, where `most` holds the most written before. The
+/// limit is written to `<path>.new` and renamed over `path`, so the runner never reads the file
+/// empty or half written.
+pub(crate) fn write_bench_limit(path: &std::path::Path, t1_ns: u64, most: &AtomicU64) {
+    let ms = bench_limit_ms(t1_ns);
+    if most.fetch_max(ms, std::sync::atomic::Ordering::Relaxed) < ms {
+        let new = path.with_extension("new");
+        std::fs::write(&new, format!("{ms}\n"))
+            .and_then(|()| std::fs::rename(&new, path))
+            .unwrap_or_else(|e| panic!("{BENCH_LIMIT_FILE}: writing to {}: {e}", path.display()));
+    }
 }
 
 /// The variable naming the file every check ([`check_order`], [`compare`] and the rest) appends a

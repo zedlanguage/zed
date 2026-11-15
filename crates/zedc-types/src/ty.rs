@@ -3598,7 +3598,13 @@ impl Piece {
 #[derive(Clone, Default)]
 pub struct Binds {
     map: BindMap,
-    keys: std::sync::OnceLock<BindKeys>,
+    // Complexity tradeoff (row FAIL-bench-bounded-or-free-time): the index held inline, over
+    // 512 bytes, was copied whole with every copy of the binding (one per shape a search tries,
+    // two per memo entry), O(64) a copy, and made every table of bindings that much larger.
+    // Behind an `Arc` a copy is O(1), and an insert or removal copies it only while it is
+    // shared (`Arc::make_mut`), the same O(64) the inline copy cost, now paid only on a write.
+    // The many-bounded-variables bench allocates 29% fewer bytes and runs 3% fewer instructions.
+    keys: std::sync::OnceLock<Arc<BindKeys>>,
     /// The bound of each bounded variable of the signature whose arrow binds these variables,
     /// by name, when there is one: a variable is bound to a piece only where its bound holds
     /// the piece ([`accepts`]). Shared, so a copy of the binding tried for one shape and
@@ -3710,7 +3716,7 @@ impl Binds {
 
     /// The index of its variables, made now if not yet.
     fn index(&self) -> &BindKeys {
-        self.keys.get_or_init(|| BindKeys::of(&self.map))
+        self.keys.get_or_init(|| Arc::new(BindKeys::of(&self.map)))
     }
 
     /// Binds `v` to `t`, giving what it was bound to.
@@ -3718,7 +3724,7 @@ impl Binds {
         if let Some(keys) = self.keys.get_mut()
             && !self.map.contains_key(&v)
         {
-            keys.add(&v);
+            Arc::make_mut(keys).add(&v);
         }
         self.digest = self.digest.wrapping_add(bind_digest(&v, &t));
         let old = self.map.insert(v.clone(), t);
@@ -3734,7 +3740,7 @@ impl Binds {
         if let Some(o) = &out {
             self.digest = self.digest.wrapping_sub(bind_digest(v, o));
             if let Some(keys) = self.keys.get_mut() {
-                keys.remove(v);
+                Arc::make_mut(keys).remove(v);
             }
         }
         out
