@@ -109,8 +109,9 @@ fn random(seed: &mut u64, depth: u32) -> Type {
 #[test]
 fn lists_agree_with_membership() {
     // Ran 600 types from seed 1 (6.3 s alone), over 300 of them listed; now types from a new
-    // seed each run, printed, until 40 are listed, at most 200 drawn
-    // (TEST-bench-move-l0123, author P169: random tests run fewer cases). Each type is a random
+    // seed each run, printed, 100 of them (TEST-bench-move-l0123, author P169: random tests
+    // run fewer cases; until 2026-11-15 drawn until 40 were listed, at most 200, which a run
+    // short of 40 failed). Each type is a random
     // tree of all six constructs, so every construct is met in each run.
     // Every value a random type can hold: the literals 0..3 and pairs of them, nested down to
     // the depth `random` builds.
@@ -135,21 +136,44 @@ fn lists_agree_with_membership() {
     let (_, mut seed) = Rng::fresh("random listed types");
     let first = seed;
     let mut checked = 0;
-    let mut drawn = 0;
-    while checked < 40 && drawn < 200 {
-        drawn += 1;
+    for _ in 0..100 {
         let t = random(&mut seed, 3);
-        let Some(got) = listed(&t) else {
-            continue;
-        };
-        checked += 1;
-        let want: BTreeSet<Value> = all.iter().filter(|v| t.contains(v)).cloned().collect();
-        assert_eq!(got, want, "{t} (ZED_TEST_SEED={first})");
+        checked += usize::from(lists_as_it_holds(&t, &all, first));
     }
-    assert_eq!(
-        checked, 40,
-        "{checked} of {drawn} types listed (ZED_TEST_SEED={first})"
-    );
+    eprintln!("{checked} of 100 types listed (ZED_TEST_SEED={first})");
+    // All 100 were listed on each of five seeds (2026-11-15). When none is, the type built to
+    // be listed is checked,
+    // so no number of types is relied on (PROOF-test-coverage-constructive).
+    if checked == 0 {
+        let t = built_listed();
+        assert!(lists_as_it_holds(&t, &all, first), "{t} is not listed");
+    }
+}
+
+/// When `t` is listed, checks that it lists the values of `all` that it holds; gives whether
+/// it is listed.
+fn lists_as_it_holds(t: &Type, all: &[Value], first: u64) -> bool {
+    let Some(got) = listed(t) else {
+        return false;
+    };
+    let want: BTreeSet<Value> = all.iter().filter(|v| t.contains(v)).cloned().collect();
+    assert_eq!(got, want, "{t} (ZED_TEST_SEED={first})");
+    true
+}
+
+/// A finite type of every construct `random` draws: `((0 | 1 | 2, 0 | 1 | 2) - (0, 0)) |
+/// ((0 | 1) & (1 | 2))`, of nine values.
+fn built_listed() -> Type {
+    let s = Type::union_all((0..3).map(lit));
+    let square = Type::tuple(vec![s.clone(), s]);
+    let pairs = &square - &Type::tuple(vec![lit(0), lit(0)]);
+    &pairs | &(&(&lit(0) | &lit(1)) & &(&lit(1) | &lit(2)))
+}
+
+#[test]
+fn the_type_built_to_be_listed_is() {
+    let t = built_listed();
+    assert_eq!(listed(&t).map(|v| v.len()), Some(9), "{t}");
 }
 
 /// `t(0) = 0 | 1`, `t(i + 1) = (t(i), t(i))`: `d + 1` types, `2^(2^d)` values.

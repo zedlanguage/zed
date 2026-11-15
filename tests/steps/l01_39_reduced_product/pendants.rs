@@ -981,7 +981,7 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 
 /// On random parts from a new seed each run, the projection by pendants, where it is taken,
 /// and that of the whole part, where neither refuses, are each sound, over the same names
-/// ([`pendants_against_whole`]); parts are drawn until [`PENDANT_COMPARED`] are compared.
+/// ([`pendants_against_whole`]); [`PENDANT_PARTS`] parts are drawn.
 /// Each must be the exact set (author P197); until PRES-switchover-not-race makes both
 /// exact, the test asserts soundness and prints how many names of each are wider.
 /// Seed 0x7e4d at 400 parts took 1.6 s.
@@ -1055,56 +1055,91 @@ fn compared(
     }
 }
 
-/// The parts [`pendants_against_whole`] compares in a run. Over 956 seeds (FAIL-pendants-route-
-/// quarter-seed) 30.8% of the parts are compared, 4.9 parts in 120 the standard deviation,
-/// so a fixed 120 parts compared fewer than a quarter (30) on 58 seeds, and 400 parts fewer
-/// than a quarter (100) on 4: the floor of a quarter lies 2.5 standard deviations under the
-/// mean at either size. Reaching 40 took 130 parts on average and 193 at most.
-const PENDANT_COMPARED: usize = 40;
+/// The parts [`pendants_against_whole`] draws: 130, the mean that reaching 40 compared took
+/// over 956 seeds (FAIL-pendants-route-quarter-seed), where 30.8% of the parts are compared.
+/// No count of compared parts is required of them (PROOF-test-coverage-constructive): when
+/// none is compared, the part [`built_compared_part`] is compared in their place.
+const PENDANT_PARTS: usize = 130;
 
-/// The parts [`pendants_against_whole`] may draw before it has compared [`PENDANT_COMPARED`]:
-/// 240, where 74 are compared on average, 55 at least over the 956 seeds, and 40 lies 4.9
-/// standard deviations under the mean. It fails when the route is taken on fewer than one
-/// part in six, half the rate measured.
-const PENDANT_PARTS_MAX: usize = 240;
+/// A part built so that the projection by pendants is taken and that of the whole part
+/// answers (the first part of
+/// [`a_part_with_a_point_by_the_unbounded_shortcut_is_projected_as_the_whole`]): its items
+/// and boxes.
+fn built_compared_part() -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+    (
+        parse("b <= c + z2 - 5 && (2 * b >= c - 6 || c >= 10)"),
+        boxes("b=[-7,-7] c=[3,inf] z2=[-inf,inf]"),
+    )
+}
 
-/// Random parts drawn from `r` until [`PENDANT_COMPARED`] are compared, within
-/// [`PENDANT_PARTS_MAX`] parts: where the projection by pendants is taken and neither it nor
-/// that of the whole part refuses, the two are the same, since each is the exact set
-/// (PRES-switchover-not-race); where they differ, [`compared`] (brute force) names the
-/// wrong one in the failure. Prints the count of names that differ by the precision of each
-/// answer, which is empty when the test passes.
+/// Compares the projection by pendants of one part with that of the whole part: `None` where
+/// the route is not taken, `Some(None)` where it is and the whole part refuses, else
+/// `Some(Some(fault))`, `fault` empty where the two agree. They must be the same, since each
+/// is the exact set (PRES-switchover-not-race); where they differ, [`compared`] (brute force)
+/// names the wrong one in the fault, and the names that differ are counted in `kinds` by the
+/// precision of each answer.
+fn compare_part(
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    kinds: &mut BTreeMap<(Precision, Precision), usize>,
+) -> Option<Option<String>> {
+    let s = scope(bs);
+    let f = formula(items);
+    let got = kept(&s, &f)?;
+    let Some(want) = whole(&s, &f) else {
+        return Some(None);
+    };
+    if got == want {
+        return Some(Some(String::new()));
+    }
+    let e = match compared(items, bs, &got, &want) {
+        Ok(differ) => {
+            for (_, p, q) in &differ {
+                *kinds.entry((*p, *q)).or_default() += 1;
+            }
+            format!("{differ:?}")
+        }
+        Err(e) => e,
+    };
+    Some(Some(format!(
+        "{f}\n  boxes {bs:?}\n  hung  {got:?}\n  whole {want:?}\n  {e}"
+    )))
+}
+
+/// [`PENDANT_PARTS`] random parts drawn from `r`, each checked by [`compare_part`]; when none
+/// was compared, [`built_compared_part`] is, so the comparison is never skipped. Prints the
+/// count of names that differ by the precision of each answer, which is empty when the test
+/// passes.
 fn pendants_against_whole(mut r: Rng, seed: u64) {
-    let (mut same, mut taken, mut cases, mut compared_on) = (0, 0, 0, 0);
+    let (mut same, mut taken, mut compared_on) = (0, 0, 0);
     let mut kinds: BTreeMap<(Precision, Precision), usize> = BTreeMap::new();
     let mut wrong = Vec::new();
-    while compared_on < PENDANT_COMPARED && cases < PENDANT_PARTS_MAX {
+    for part in 1..=PENDANT_PARTS {
         let (items, bs) = next_case(&mut r, false);
-        let s = scope(&bs);
-        let f = formula(&items);
-        cases += 1;
-        let Some(got) = kept(&s, &f) else { continue };
-        taken += 1;
-        let Some(want) = whole(&s, &f) else { continue };
-        compared_on += 1;
-        if got == want {
-            same += 1;
+        let Some(answer) = compare_part(&items, &bs, &mut kinds) else {
             continue;
-        }
-        // Both projections are exact (PRES-switchover-not-race), so they must be equal; the
-        // check by brute force names which one is wrong.
-        let e = match compared(&items, &bs, &got, &want) {
-            Ok(differ) => {
-                for (_, p, q) in &differ {
-                    *kinds.entry((*p, *q)).or_default() += 1;
-                }
-                format!("{differ:?}")
-            }
-            Err(e) => e,
         };
-        wrong.push(format!(
-            "part {cases}: {f}\n  boxes {bs:?}\n  hung  {got:?}\n  whole {want:?}\n  {e}"
-        ));
+        taken += 1;
+        let Some(fault) = answer else { continue };
+        compared_on += 1;
+        if fault.is_empty() {
+            same += 1;
+        } else {
+            wrong.push(format!("part {part}: {fault}"));
+        }
+    }
+    eprintln!(
+        "{PENDANT_PARTS} parts, the route taken on {taken}, compared on {compared_on}, the \
+         same on {same}; names that differ (by pendants, whole): {kinds:?}"
+    );
+    if compared_on == 0 {
+        let (items, bs) = built_compared_part();
+        match compare_part(&items, &bs, &mut kinds) {
+            Some(Some(fault)) if fault.is_empty() => {}
+            Some(Some(fault)) => wrong.push(format!("the built part: {fault}")),
+            other => panic!("the built part is not compared: {other:?}"),
+        }
+        eprintln!("no part compared; the built part compared in their place");
     }
     assert!(
         wrong.is_empty(),
@@ -1112,13 +1147,17 @@ fn pendants_against_whole(mut r: Rng, seed: u64) {
         wrong.len(),
         wrong.join("\n")
     );
-    eprintln!(
-        "{cases} parts, the route taken on {taken}, compared on {compared_on}, the same on \
-         {same}; names that differ (by pendants, whole): {kinds:?}"
-    );
-    assert!(
-        compared_on >= PENDANT_COMPARED,
-        "seed {seed}: {compared_on} compared of {cases}: too few to show anything"
+}
+
+/// The part built for [`pendants_against_whole`] takes the route by pendants, the whole part
+/// answers, and the two agree.
+#[test]
+fn the_part_built_to_be_compared_is_compared_and_agrees() {
+    let (items, bs) = built_compared_part();
+    let mut kinds = BTreeMap::new();
+    assert_eq!(
+        compare_part(&items, &bs, &mut kinds),
+        Some(Some(String::new()))
     );
 }
 
@@ -2444,8 +2483,8 @@ fn a_part_with_a_point_by_the_unbounded_shortcut_is_projected_as_the_whole() {
 
 /// The seeds on which a fixed 120 parts compared fewer than a quarter of them
 /// (FAIL-pendants-route-quarter-seed), no part differing: 4023886734010713935 compared 28,
-/// 11312057540586612196 compared 26 and 6901888717729865865 compared 24. Drawn until
-/// [`PENDANT_COMPARED`] are compared, each reaches the count.
+/// 11312057540586612196 compared 26 and 6901888717729865865 compared 24. Each of their
+/// [`PENDANT_PARTS`] parts compared agrees.
 #[test]
 fn the_seeds_that_compared_too_few_parts_reach_the_count() {
     for seed in [

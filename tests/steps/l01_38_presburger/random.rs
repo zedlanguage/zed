@@ -168,57 +168,104 @@ fn window_term(names: &[Arc<str>]) -> Term {
 fn random_tests_agree_with_the_interpreter() {
     let mut rng = Rng::new(0x1_38);
     let ns = names();
-    let (mut checked, mut models, mut entailments, mut wider, mut unordered) = (0, 0, 0, 0, 0);
-    while checked < 60 {
+    // 60 pairs of terms. Both answers of each question occur among them (about 30 of the 60
+    // satisfiable, about 20 entailments proved); an answer they did not give is given by the
+    // pair of [`BUILT_ANSWERS`] built for it, so neither check passes by never being asked and
+    // no number of pairs is relied on (PROOF-test-coverage-constructive). Until 2026-11-15 the
+    // pairs were drawn until 60 were answered, and the counts held to ranges.
+    let mut met = [0usize; 4];
+    for _ in 0..60 {
         let t = bool_term(&mut rng, 2);
-        let Some(rs) = relations(&[&t], &ns, false) else {
-            panic!("{t}: outside the domain, though built from its operators")
-        };
-        let r = &rs[0];
-        check_points(r, &t, &ns).unwrap();
-        let f = whole(r, &ns);
-        let Ok(m) = satisfiable(&f) else {
-            continue;
-        };
-        let inside = prim(Prim::And, vec![t.clone(), window_term(&ns)]);
-        check_model(m.as_ref().map(|m| point(m, &ns)), &inside, &ns).unwrap();
-        models += usize::from(m.is_some());
-        let claimed: Vec<IntervalSet> = ns
-            .iter()
-            .map(|n| project(&f, &Atom::Sym(n.clone())).expect("answered"))
-            .collect();
-        wider += usize::from(!check_projection(&claimed, &inside, &ns).unwrap());
-        // Rung 2 from the window and this test to a second one.
         let g = bool_term(&mut rng, 1);
-        let rs = relations(&[&inside, &g], &ns, false).expect("in the domain");
-        let e = entails(&rs[0], &rs[1]);
-        check_entailment(&e, &inside, &g, &ns).unwrap();
-        entailments += usize::from(matches!(e, Entailment::Proved(_)));
-        unordered += usize::from(matches!(e, Entailment::Refused(Refusal::Unordered(_))));
-        checked += 1;
+        if let Some(answers) = checked_round(&t, &g, &ns) {
+            for (n, a) in met.iter_mut().zip(answers) {
+                *n += usize::from(a);
+            }
+        }
     }
-    // Option A (STATUS.md, L1.38): one projection of the 60, of `y` on a term with `div`, `mod`,
-    // `min` and `if`, is [-4..=5] where the points take [0..=5]. A question it asks of a disjunct
-    // is refused, so the bound below stays where no question showed it can move. The linear
-    // program before design R decided that question; this count measures that strength, not
-    // correctness, which the check above holds for every projection. Since HULL3 (XT3 B4), the
-    // only change, that projection is [0..=5]: every projection is the hull of its values. It
-    // stays so with `live3` alone, since that stage was removed (HULL3-subsumed).
-    assert_eq!(wider, 0, "projections wider than the hull of their values");
-    // From NAME-ties repair 2 to FAIL-or-if-tie-refusal, one entailment of the 60, from `x != y`
-    // in the window to `-x == y - 1`, was refused: `x` and `y` occur alike, and two disjunctions
-    // were left that only an order chosen by name would search. Swapping `x` and `y` maps that
-    // question onto itself, so every order is as good as another, and it is answered again.
-    assert_eq!(
-        unordered, 0,
-        "entailments refused for a search order only names fix"
-    );
-    // Both answers occur, so neither check passes by never being asked.
-    assert!(models > 10 && models < 55, "{models} of 60 satisfiable");
+    eprintln!("satisfiable, not, entailment proved, not: {met:?}");
+    for (i, (answer, pair)) in BUILT_ANSWERS.into_iter().enumerate() {
+        if met[i] == 0 {
+            let (t, g) = pair();
+            let got = checked_round(&t, &g, &ns).expect("answered");
+            assert!(got[i], "{answer} is not given: {t}, {g}");
+            eprintln!("{answer} given only by the pair built for it");
+        }
+    }
+}
+
+/// The answers [`random_tests_agree_with_the_interpreter`] must meet, in the order of
+/// [`checked_round`], each with a pair of terms built to give it (checked alone by
+/// [`each_pair_built_for_an_answer_gives_it`]).
+const BUILT_ANSWERS: [(&str, fn() -> (Term, Term)); 4] = [
+    ("satisfiable", || (eq_x(1), eq_x(1))),
+    ("not satisfiable", || {
+        (prim(Prim::And, vec![eq_x(1), eq_x(2)]), eq_x(1))
+    }),
+    ("an entailment proved", || {
+        (eq_x(1), prim(Prim::Le, vec![lit(0), Term::Var("x".into())]))
+    }),
+    ("an entailment not proved", || {
+        (prim(Prim::Le, vec![lit(0), Term::Var("x".into())]), eq_x(1))
+    }),
+];
+
+/// `x == v`.
+fn eq_x(v: i64) -> Term {
+    prim(Prim::Eq, vec![Term::Var("x".into()), lit(v)])
+}
+
+/// Checks the term `t` against the interpreter at every point of the window: its relation's
+/// points, the model the solver gives, and each projection, which is the hull of its values;
+/// then rung 2 from the window and `t` to the term `g`, whose answer is checked too, and which
+/// is never refused for a search order only names fix. Gives `None` when the solver refuses
+/// `t`, else whether `t` is satisfiable, is not, entails `g` (proved), and does not.
+fn checked_round(t: &Term, g: &Term, ns: &[Arc<str>]) -> Option<[bool; 4]> {
+    let Some(rs) = relations(&[t], ns, false) else {
+        panic!("{t}: outside the domain, though built from its operators")
+    };
+    let r = &rs[0];
+    check_points(r, t, ns).unwrap();
+    let f = whole(r, ns);
+    let m = satisfiable(&f).ok()?;
+    let inside = prim(Prim::And, vec![t.clone(), window_term(ns)]);
+    check_model(m.as_ref().map(|m| point(m, ns)), &inside, ns).unwrap();
+    let claimed: Vec<IntervalSet> = ns
+        .iter()
+        .map(|n| project(&f, &Atom::Sym(n.clone())).expect("answered"))
+        .collect();
+    // Option A (STATUS.md, L1.38): one projection of the 60, of `y` on a term with `div`,
+    // `mod`, `min` and `if`, was [-4..=5] where the points take [0..=5]. Since HULL3 (XT3 B4)
+    // every projection is the hull of its values. It stays so with `live3` alone, since that
+    // stage was removed (HULL3-subsumed).
     assert!(
-        entailments > 3 && entailments < 57,
-        "{entailments} of 60 proved"
+        check_projection(&claimed, &inside, ns).unwrap(),
+        "{t}: a projection wider than the hull of its values"
     );
+    let rs = relations(&[&inside, g], ns, false).expect("in the domain");
+    let e = entails(&rs[0], &rs[1]);
+    check_entailment(&e, &inside, g, ns).unwrap();
+    // From NAME-ties repair 2 to FAIL-or-if-tie-refusal, one entailment of the 60, from
+    // `x != y` in the window to `-x == y - 1`, was refused: `x` and `y` occur alike, and two
+    // disjunctions were left that only an order chosen by name would search. Swapping `x` and
+    // `y` maps that question onto itself, so every order is as good as another, and it is
+    // answered again.
+    assert!(
+        !matches!(e, Entailment::Refused(Refusal::Unordered(_))),
+        "{t} to {g}: refused for a search order only names fix"
+    );
+    let proved = matches!(e, Entailment::Proved(_));
+    Some([m.is_some(), m.is_none(), proved, !proved])
+}
+
+#[test]
+fn each_pair_built_for_an_answer_gives_it() {
+    let ns = names();
+    for (i, (answer, pair)) in BUILT_ANSWERS.into_iter().enumerate() {
+        let (t, g) = pair();
+        let got = checked_round(&t, &g, &ns).expect("answered");
+        assert!(got[i], "{answer}: {t}, {g}");
+    }
 }
 
 /// Plan item SOUND-div-exact: `c^0` fails where `c` does (DESIGN.md sec:failure), so `(1 div x)^0 == 1`
