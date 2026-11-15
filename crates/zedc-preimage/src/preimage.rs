@@ -3295,6 +3295,8 @@ struct Run {
     sids: u32,
     fwds: HashMap<u32, Fwd>,
     backs: HashMap<(u32, Demand), Res>,
+    /// The summaries whose bodies were scanned for stops wherever they are reached
+    /// ([`Walk::scan`]).
     scanned: HashSet<u32>,
     /// Whether an input's domain is empty, so that no point exists.
     void: bool,
@@ -3569,7 +3571,8 @@ struct Memo {
     /// Whether a term may read a remainder, so that its transfer may depend on a split's class
     /// ([`Walk::reads_mod`]).
     reads_mod: HashMap<At, Entry<bool>>,
-    scan: HashSet<At>,
+    /// The terms scanned for stops ([`Walk::scan`]).
+    scan: HashMap<At, Entry<()>>,
     lin: HashMap<At, Entry<Option<Lin>>>,
     formula: HashMap<At, Entry<Option<Formula>>>,
     /// The translations of calls, by the lambda and the translations of the arguments: a
@@ -6872,12 +6875,25 @@ impl<'m, 't> Walk<'m, 't> {
     }
 
     /// Reports the stops in a term whose value the transfer does not follow. A term is
-    /// scanned once in each scope: its stops are reported the first time.
+    /// scanned once in each scope wherever its scan holds, and its stops are reported the
+    /// first time; a scan that a call stopped in, at a lambda being read before it began, is
+    /// kept as the memo entries are ([`Walk::cached`]). Kept wherever it is reached, it lost
+    /// the stops of a scan on a lower stack: in `a = w(w, true, x, shown); w(w, a, 0, plain)
+    /// && len(a) > 0`, `a` is first scanned within `w`, where its call of `w` stops, and then
+    /// on the empty stack, where its call reads `shown`, whose `show` stops
+    /// (PREIMAGE-scan-stack-blind).
+    // Complexity tradeoff: naive version, a set of (term, scope) with no height: O(1) per
+    // read, each term scanned once per scope, and a stop lost where the first scan stopped at
+    // a lambda the later one is not reading. Used: the memo's held entries ([`Entry`]), O(1)
+    // per read; a term whose scan stopped below where it began is scanned again once each time
+    // the stack drops below that place, as every other memo table's entries are. Tradeoff: an
+    // entry that holds everywhere is not scanned again on a higher stack, where it might reach
+    // a lambda read since and stop there, the limit [`Entry`] states for every table. Tests:
+    // `a_term_scanned_within_a_call_it_makes_is_scanned_again_below_it`,
+    // `a_summary_scanned_below_a_stop_is_scanned_again_without_it`,
+    // `l01_25_preimage_catalog::bench::stops::scans_below_a_stop_are_linear`.
     fn scan(&'m self, t: Tid, env: Eid) -> Deep<'m, ()> {
-        if !self.with(|tx| tx.run.memo.scan.insert((t, env))) {
-            return Stack::ready(());
-        }
-        self.stack.call(move || self.scan_at(t, env))
+        self.cached(|m| &mut m.scan, (t, env), move || self.scan_at(t, env))
     }
 
     async fn scan_at(&'m self, t: Tid, env: Eid) {
@@ -6914,12 +6930,18 @@ impl<'m, 't> Walk<'m, 't> {
                     };
                     match self.summon(ps, body, lam, args, env).await {
                         Some(call) => {
-                            if self.with(|tx| tx.run.scanned.insert(call.sid)) {
+                            // A summary's body whose scan held wherever it is reached is not
+                            // scanned again, as `fwds` and `backs` keep only such summaries;
+                            // one that stopped below `place` is scanned again through the
+                            // memo, which keeps it while the lambdas below are being read.
+                            if !self.with(|tx| tx.run.scanned.contains(&call.sid)) {
                                 let (outer, e) = self.with(|tx| tx.open(&call, lam));
                                 self.scan(body, e).await;
                                 self.with(|tx| {
                                     let cut = tx.shut(outer);
-                                    tx.closes(cut, place);
+                                    if tx.closes(cut, place) {
+                                        tx.run.scanned.insert(call.sid);
+                                    }
                                 });
                             }
                         }
@@ -13028,6 +13050,9 @@ mod tests {
             // A summary read again builds its own treaps and trees, so the two are compared
             // by what they state: each piece, and each class's summary.
             Some(shown_any(a) == shown_any(b))
+        } else if a.is::<()>() {
+            // A scan for stops ([`Walk::scan`]) gives no value; its cut is compared below.
+            Some(true)
         } else {
             None
         };
@@ -15464,6 +15489,135 @@ mod tests {
                 }
             };
             check(&t, round);
+        }
+    }
+
+    /// A term scanned for stops within a call it makes itself, where that call stops, is
+    /// scanned again once the stack is below it, and its stops there are reported: `a` calls
+    /// `w` with `shown`, whose `show` stops. Scanned first within `w` (the call of `w` first),
+    /// its call stops as a recursion; scanned again on the empty stack, it reads `shown`. Both
+    /// orders of `&&` report both stops. Before, the scan within `w` was kept wherever it was
+    /// reached and `show` was not reported with the call of `w` first
+    /// (PREIMAGE-scan-stack-blind).
+    #[test]
+    fn a_term_scanned_within_a_call_it_makes_is_scanned_again_below_it() {
+        let v = |s: &str| Term::Var(s.into());
+        let int = |n: i64| Term::Lit(Value::Int(n));
+        let sh = Shared::new;
+        let names = |ns: &[&str]| ns.iter().map(|&n| Arc::<str>::from(n)).collect::<Vec<_>>();
+        let len_pos = |t: Term| Term::Prim(Prim::Gt, vec![Term::Prim(Prim::Len, vec![t]), int(0)]);
+        // w = (g, p, n, h) -> if n <= 0 { len(p) > 0 } else { h(n) }
+        let body = Term::If(
+            sh(Term::Prim(Prim::Le, vec![v("n"), int(0)])),
+            sh(len_pos(v("p"))),
+            sh(Term::App(sh(v("h")), vec![v("n")])),
+        );
+        let w = Term::Lam(names(&["g", "p", "n", "h"]), sh(body));
+        // plain = (m) -> m > 0; shown = (m) -> len(show(m)) > 0
+        let plain = Term::Lam(
+            names(&["m"]),
+            sh(Term::Prim(Prim::Gt, vec![v("m"), int(0)])),
+        );
+        let shown = Term::Lam(
+            names(&["m"]),
+            sh(len_pos(Term::Prim(Prim::Show, vec![v("m")]))),
+        );
+        let a = Term::App(
+            sh(v("w")),
+            vec![v("w"), Term::Lit(Value::Bool(true)), v("x"), v("shown")],
+        );
+        let call = Term::App(sh(v("w")), vec![v("w"), v("a"), int(0), v("plain")]);
+        let len = len_pos(v("a"));
+        let want: BTreeSet<String> = [
+            "a call of a function already being read at w(w, true, x, shown)",
+            "string operation `String` stops the transfer at String(m)",
+        ]
+        .map(String::from)
+        .into();
+        for (order, top) in [
+            ("call first", [call.clone(), len.clone()]),
+            ("len first", [len, call]),
+        ] {
+            let top = Term::Prim(Prim::And, top.into());
+            let top = Term::Let("a".into(), sh(a.clone()), sh(top));
+            let top = Term::Let("shown".into(), sh(shown.clone()), sh(top));
+            let top = Term::Let("plain".into(), sh(plain.clone()), sh(top));
+            let t = Term::Let("w".into(), sh(w.clone()), sh(top));
+            for d in [true, false].map(Demand::Bool) {
+                let p = preimage(&t, &domains(), &d);
+                let got: BTreeSet<String> = p.stop_texts().into_iter().collect();
+                assert_eq!(got, want, "{order}, {d:?}");
+                assert!(!p.exact, "{order}, {d:?}");
+            }
+        }
+    }
+
+    /// A summary's body scanned for stops where a call in it stops at a lambda being read
+    /// before the summary's call is scanned again where that lambda is not being read, and its
+    /// stops there are reported: `l(x)` is first scanned within `m`, where `l`'s body calls `m`
+    /// and stops as a recursion; `l(x + 0)`, the same summary, is then scanned on the empty
+    /// stack, where `l`'s body reads `m` with `shown`, whose `show` stops. Before, the summary
+    /// was marked scanned wherever it was reached and `show` was not reported
+    /// (PREIMAGE-scan-stack-blind).
+    #[test]
+    fn a_summary_scanned_below_a_stop_is_scanned_again_without_it() {
+        let v = |s: &str| Term::Var(s.into());
+        let int = |n: i64| Term::Lit(Value::Int(n));
+        let sh = Shared::new;
+        let names = |ns: &[&str]| ns.iter().map(|&n| Arc::<str>::from(n)).collect::<Vec<_>>();
+        let len_pos = |t: Term| Term::Prim(Prim::Gt, vec![Term::Prim(Prim::Len, vec![t]), int(0)]);
+        // m = (h, n, b) -> if n <= 0 { len(b) > 0 } else { h(n) }
+        let m = Term::Lam(
+            names(&["h", "n", "b"]),
+            sh(Term::If(
+                sh(Term::Prim(Prim::Le, vec![v("n"), int(0)])),
+                sh(len_pos(v("b"))),
+                sh(Term::App(sh(v("h")), vec![v("n")])),
+            )),
+        );
+        // l = (q) -> m(shown, q, true)
+        let l = Term::Lam(
+            names(&["q"]),
+            sh(Term::App(
+                sh(v("m")),
+                vec![v("shown"), v("q"), Term::Lit(Value::Bool(true))],
+            )),
+        );
+        let plain = Term::Lam(
+            names(&["k"]),
+            sh(Term::Prim(Prim::Gt, vec![v("k"), int(0)])),
+        );
+        let shown = Term::Lam(
+            names(&["k"]),
+            sh(len_pos(Term::Prim(Prim::Show, vec![v("k")]))),
+        );
+        let l_x = Term::App(sh(v("l")), vec![v("x")]);
+        let l_x0 = Term::App(
+            sh(v("l")),
+            vec![Term::Prim(Prim::Add, vec![v("x"), int(0)])],
+        );
+        let top = Term::Prim(
+            Prim::And,
+            vec![
+                Term::App(sh(v("m")), vec![v("plain"), int(0), l_x]),
+                len_pos(l_x0),
+            ],
+        );
+        let mut t = top;
+        for (n, e) in [("l", l), ("m", m), ("shown", shown), ("plain", plain)] {
+            t = Term::Let(n.into(), sh(e), sh(t));
+        }
+        let want: BTreeSet<String> = [
+            "a call of a function already being read at m(shown, q, true)",
+            "string operation `String` stops the transfer at String(k)",
+        ]
+        .map(String::from)
+        .into();
+        for d in [true, false].map(Demand::Bool) {
+            let p = preimage(&t, &domains(), &d);
+            let got: BTreeSet<String> = p.stop_texts().into_iter().collect();
+            assert_eq!(got, want, "{d:?}");
+            assert!(!p.exact, "{d:?}");
         }
     }
 

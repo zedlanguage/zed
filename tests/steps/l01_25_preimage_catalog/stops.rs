@@ -305,3 +305,59 @@ fn stops_over_one_shared_term_are_each_reported() {
         );
     }
 }
+
+/// `n` names `a1 … an`, each a call of `w` that reads the one before and passes `shown`, whose
+/// `show` stops, read by a call of `w` and then on their own:
+/// `a<i> = w(w, a<i-1>, x, shown); w(w, a<n>, 0, plain) && len(a<n>) > 0`. Each `a<i>` is
+/// scanned for stops first within `w`, where its call of `w` stops, and again on the empty
+/// stack, where its call reads `shown` (PREIMAGE-scan-stack-blind).
+pub(super) fn scans_below_a_stop(n: usize) -> Term {
+    use zed_kernel::term::build::{app, if_, let_};
+    let len_pos = |t: Term| prim(Prim::Gt, vec![prim(Prim::Len, vec![t]), lit(0)]);
+    let w = lam(
+        &["g", "p", "n", "h"],
+        if_(
+            prim(Prim::Le, vec![var("n"), lit(0)]),
+            len_pos(var("p")),
+            app(var("h"), vec![var("n")]),
+        ),
+    );
+    let plain = lam(&["m"], prim(Prim::Gt, vec![var("m"), lit(0)]));
+    let shown = lam(&["m"], len_pos(prim(Prim::Show, vec![var("m")])));
+    let a = |i: usize| format!("a{i}");
+    let top = prim(
+        Prim::And,
+        vec![
+            app(var("w"), vec![var("w"), var(&a(n)), lit(0), var("plain")]),
+            len_pos(var(&a(n))),
+        ],
+    );
+    let body = (1..=n).rev().fold(top, |b, i| {
+        let before = if i == 1 { lit(true) } else { var(&a(i - 1)) };
+        let_(
+            &a(i),
+            app(var("w"), vec![var("w"), before, var("x"), var("shown")]),
+            b,
+        )
+    });
+    let_("w", w, let_("plain", plain, let_("shown", shown, body)))
+}
+
+/// [`scans_below_a_stop`] at small sizes: the stop of `show` in `shown` is reported beside the
+/// recursion stop of each `a<i>` (`bench::stops` times 64 and 512 names).
+#[test]
+fn scans_below_a_stop_report_the_stops_above_it() {
+    let ds = doms(&[("x", None, None)]);
+    for n in [1, 2, 5] {
+        let p = preimage(&scans_below_a_stop(n), &ds, &Demand::Bool(true));
+        let strings = p
+            .stops
+            .iter()
+            .filter(|s| matches!(s.kind, StopKind::String(_)));
+        assert!(
+            strings.count() == 1 && p.stops.iter().any(|s| s.kind == StopKind::Recursion),
+            "{}",
+            shown(&p)
+        );
+    }
+}

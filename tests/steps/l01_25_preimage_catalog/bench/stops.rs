@@ -22,3 +22,19 @@ fn many_stops_over_one_shared_term_make_no_text() {
         })
     });
 }
+
+/// A term scanned for stops within a call that stops is scanned again where that call's lambda
+/// is not being read; `n` such names, each reading the one before, take time of order `n`,
+/// since each is scanned again once, on the empty stack (PREIMAGE-scan-stack-blind).
+#[test]
+fn scans_below_a_stop_are_linear() {
+    let ds = doms(&[("x", None, None)]);
+    let ds = &ds;
+    let terms = scaling::inputs(2048, crate::stops::scans_below_a_stop);
+    scaling::on_a_thread(2 << 20, || {
+        scaling::check("names scanned again below a stop", 2048, |n| {
+            let p = preimage(&terms[&n], ds, &Demand::Bool(true));
+            assert!(!p.stops.is_empty());
+        })
+    });
+}
