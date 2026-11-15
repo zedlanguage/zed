@@ -1613,3 +1613,30 @@ fn nested_sets_against_a_wider_second_component_are_decided() {
         assert_eq!(wider.subtype(&right), held, "{extra}");
     }
 }
+
+/// DESIGN.md sec:type_language, "Morphism types carry two domain bounds": plain `K -> V` is
+/// exact (`L = U = K`), `K ->? V` has `L = {}` and `U = K`, and `<:` holds iff `L2 <: L1`,
+/// `U1 <: U2` and `V1 <: V2`. "Because a domain is observable (`::domain`, `.count`), a wider
+/// exact domain is not a subtype of a narrower one: `int -> int` is not `<: int[0..<10] ->
+/// int`." The same text gives `{"a","b"} -> int <: Utf8String ->? int`. Before
+/// (FAIL-types-fn-param-exact-domain) the checker compared parameters contravariantly and
+/// read `K ->? V` as `K -> (V | #notFound)`, so four of these failed. Each answer is derived
+/// from the rule, `L1`, `U1` of the left and `L2`, `U2` of the right.
+#[test]
+fn a_function_type_has_an_exact_domain() {
+    judge(&[
+        // L1 = U1 = int, L2 = U2 = 1 | 2: U1 <: U2 fails.
+        ("(int -> int)", "((1 | 2) -> int)", false),
+        // L2 = int, L1 = 1 | 2: L2 <: L1 fails.
+        ("((1 | 2) -> int)", "(int -> int)", false),
+        // The same with a set of every atom nested in the parameter (D = (#_, 1) \ (#a, 1)).
+        ("(((#_, 1)) -> int)", "(((#_, 1) \\ (#a, 1)) -> int)", false),
+        ("(((#_, 1) \\ (#a, 1)) -> int)", "(((#_, 1)) -> int)", false),
+        // DESIGN's own example: L2 = {} <: L1, U1 = {"a","b"} <: String, V1 <: V2.
+        ("((\"a\" | \"b\") -> int)", "(String ->? int)", true),
+        // An exact domain is not a partial one: L2 = int is not within L1 = {}.
+        ("(int ->? 1)", "(int -> (1 | #notFound))", false),
+        // Each holds itself.
+        ("(int -> int)", "(int -> int)", true),
+    ]);
+}
