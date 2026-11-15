@@ -60,3 +60,23 @@ fn reading_an_overload_nested_in_parentheses_back_scales() {
         );
     }
 }
+
+/// Printing a union that leaves a bounds clause to its end as an arrow's key, nested `n` deep
+/// through the key of a member arrow: each union writes its clause before its own `)`, once
+/// (FAIL-parens-wrong-is-empty-seed), so the text and the work are linear in `n`.
+#[test]
+fn printing_key_unions_that_keep_their_clauses_nested_scales() {
+    let n = 500;
+    let inputs = scaling::inputs(n, |m| {
+        let text = format!(
+            "{}int{}",
+            "((rat) | ((((T) -> T for T in int | f64)) & ((f64) -> (_))) | ((".repeat(m),
+            ") -> int)) -> int".repeat(m)
+        );
+        back(&text)
+    });
+    scaling::check("printing n nested key unions with clauses", n, |size| {
+        let printed = inputs[&size].to_string();
+        assert_eq!(printed.matches(" for ").count(), size, "{printed}");
+    });
+}

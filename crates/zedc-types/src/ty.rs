@@ -11309,9 +11309,14 @@ impl Ty {
         // intersection of arrows once, after its last member: `TypeBounds` ends the `Type`
         // (`Type = Arrow TypeFacet* TypeWhere? TypeBounds?`), so `rat | (T -> T) & (f64 -> _)
         // for T in int | f64` reads as `rat | ((T -> T) & (f64 -> _) for T in int | f64)`, one
-        // pair fewer (P191). Elsewhere the clause would bound the arrow around the union.
-        let hoist = members >= 2 && at == PrintAt::Any;
+        // pair fewer (P191). So does a union as an arrow's key or a bound: it is parenthesized
+        // there, and inside the pair a whole `Type` stands (`GroupType = '(' nest(Type) ')'`),
+        // so `(rat | (T -> T) & (f64 -> _) for T in int | f64) -> int` writes the clause before
+        // the `)` ([`Print::Closes`]) (FAIL-parens-wrong-is-empty-seed). Elsewhere the clause
+        // would bound the arrow around the union.
+        let hoist = members >= 2 && matches!(at, PrintAt::Any | PrintAt::Key | PrintAt::Bound);
         let hoisting = hoist && self.fns.iter().any(|s| s.hoists());
+        let inside = hoisting && at != PrintAt::Any;
         if hoisting {
             parts.push(Print::Opens);
         }
@@ -11394,9 +11399,9 @@ impl Ty {
             hole(parts, t);
         }
         let others = members > usize::from(!self.vars.is_empty() || self.dynamic);
-        parts.push(Print::End(self, others));
+        parts.push(Print::End(self, others, inside));
         if hoisting {
-            parts.push(Print::Closes(self));
+            parts.push(Print::Closes(self, inside));
         }
     }
 
@@ -11503,10 +11508,13 @@ impl Ty {
     /// variables. A union of two members or more written as an arrow's key or a bound is closed
     /// with `)`, and where its `(` goes is given back, to be put in with the kernel sets
     /// ([`write_parts`]): the members are counted only as they are written, since a type
-    /// variable may be written by several names or as `_` with others (author P222).
+    /// variable may be written by several names or as `_` with others (author P222). With
+    /// `inside` the union is such a key or bound that leaves a bounds clause to its end, and
+    /// [`Print::Closes`] writes the `)`.
     fn write_end(
         &self,
         others: bool,
+        inside: bool,
         out: &mut String,
         scope: &Scope,
         walk: &mut Walk,
@@ -11545,6 +11553,13 @@ impl Ty {
             }
             (false, n) => n,
         };
+        // A union that leaves a bounds clause to its end as a key or a bound (`inside`) is
+        // parenthesized whatever the members written, since the clause and a lone intersection
+        // of arrows each need the pair there, and [`Print::Closes`] writes its `)` after the
+        // clause.
+        if inside {
+            return Some(end.wrap.expect("a key or a bound is entered at its place"));
+        }
         let open = end.wrap.filter(|_| members >= 2);
         if open.is_some() {
             out.push(')');
@@ -11756,9 +11771,10 @@ enum Print<'a> {
     /// The type variables of a type, with the kernel set `String` it holds, to be written
     /// among them ([`Ty::write_vars`]).
     Vars(&'a Ty, Option<(KType, TextPlace, bool)>),
-    /// The end of a type's text ([`Ty::write_end`]), and whether its union holds members
-    /// other than type variables.
-    End(&'a Ty, bool),
+    /// The end of a type's text ([`Ty::write_end`]), whether its union holds members other
+    /// than type variables, and whether it is a key or a bound whose `)` comes after the
+    /// bounds clause [`Print::Closes`] writes.
+    End(&'a Ty, bool, bool),
     /// A kernel set, written once the rest of the text is ([`write_parts`]), at its place, and
     /// whether it is printed apart from the rest of its set ([`Kernel`]).
     Set(KType, TextPlace, bool),
@@ -11769,8 +11785,9 @@ enum Print<'a> {
     /// The start of a union that leaves a bounds clause to its end ([`Scope::unions`]).
     Opens,
     /// One bounds clause for the member signatures of a union that left theirs to its end
-    /// ([`PrintAt::Member`]), which closes the variables they opened.
-    Closes(&'a Ty),
+    /// ([`PrintAt::Member`]), which closes the variables they opened, and whether the union is a
+    /// key or a bound, whose `)` the clause is then written before.
+    Closes(&'a Ty, bool),
 }
 
 /// Where the text of a type stands, which decides the parentheses it needs to read back as one
@@ -11800,9 +11817,10 @@ enum PrintAt {
     Bound,
     /// An operand of `|`: a function is parenthesized.
     Union,
-    /// An operand of `|` in a union that stands where a whole `Type` stands: as at
-    /// [`PrintAt::Union`], but an intersection of arrows leaves its bounds clause to the end
-    /// of the union ([`Sig::hoists`], [`Print::Closes`]) and needs no pair.
+    /// An operand of `|` in a union that stands where a whole `Type` stands, or inside the pair
+    /// of a key or a bound (`GroupType`): as at [`PrintAt::Union`], but an intersection of arrows
+    /// leaves its bounds clause to the end of the union ([`Sig::hoists`], [`Print::Closes`]) and
+    /// needs no pair.
     Member,
 }
 
@@ -11966,8 +11984,8 @@ fn walk_parts<'a>(
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, string) => t.write_vars(string, out, scope, walk, &mut kernel),
-            Print::End(t, others) => {
-                if let Some(at) = t.write_end(others, out, scope, walk) {
+            Print::End(t, others, inside) => {
+                if let Some(at) = t.write_end(others, inside, out, scope, walk) {
                     kernel.opens.push(at);
                 }
             }
@@ -11986,7 +12004,7 @@ fn walk_parts<'a>(
                 }
                 scope.close(s);
             }
-            Print::Closes(t) => {
+            Print::Closes(t, inside) => {
                 let sigs = t.fns.iter().filter(|s| s.hoists());
                 let own = scope.hoisted.len() - sigs.clone().count();
                 let mut first = true;
@@ -11996,6 +12014,10 @@ fn walk_parts<'a>(
                     out.push_str(&v);
                     out.push_str(" in ");
                     out.push_str(&mask_text(m));
+                }
+                // A key's or a bound's pair closes after the clause ([`Ty::write_end`]).
+                if inside {
+                    out.push(')');
                 }
                 for s in sigs.rev() {
                     scope.close(s);

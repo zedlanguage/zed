@@ -55,6 +55,7 @@ fn printed_by(text: &str) -> (Vec<(Ty, String)>, String) {
 /// whether its keys are one integer interval are not written in a type. The payloads of atoms
 /// are (L29-print). A type variable is written only with a bound of carriers: one that no
 /// signature around it bounds so, or whose bound holds other values, is `_` (DESIGN.md L1.26).
+/// A union that holds `_` is `_` alone, since `_` absorbs the other members (A92).
 pub(super) fn stated(t: &Ty) -> Ty {
     stated_in(t, Arc::default())
 }
@@ -66,6 +67,11 @@ fn stated_in(t: &Ty, scope: Arc<HashSet<Arc<str>>>) -> Ty {
     let free = t.vars.iter().any(|v| !scope.contains(v));
     t.vars.retain(|v| scope.contains(v));
     t.dynamic |= free;
+    // `_` holds every value, so a union that holds it is `_` alone, as the printer writes it
+    // (A92): `(_ | 1) -> #a` is `_ -> #a` (FAIL-parens-wrong-is-empty-seed).
+    if t.dynamic {
+        return Ty::dynamic();
+    }
     // A payload shape and a row are shared and keep a hash of what they hold, so they are
     // made again; so is a signature, as the list of functions keeps the hashes of its members.
     for s in t.payloads.values_mut().flatten().flatten() {

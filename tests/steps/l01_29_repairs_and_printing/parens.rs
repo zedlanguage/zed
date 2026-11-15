@@ -212,10 +212,13 @@ fn pairs(text: &str) -> Vec<(usize, usize)> {
 
 /// Whether `a` and `b` are one type: the same as type syntax states them, or each a subtype of
 /// the other with one printed text. The reader keeps a type as written, the printer in its own
-/// order and form, so `(bool, bool) | (1, f64)` and `(1, f64) | (bool, bool)` read apart, and
-/// the reader keeps the other members of a union that holds `_`, which the printer drops,
-/// since `_` absorbs them (A92). Subtyping alone does not tell payloads apart, `#box(#pair(f64,
-/// bool))` from `#box(#pairf64, bool)`, so the texts must agree too.
+/// order and form, so `(bool, bool) | (1, f64)` and `(1, f64) | (bool, bool)` read apart.
+/// The reader keeps the other members of a union that holds `_`, which the printer drops,
+/// since `_` absorbs them (A92); [`stated`] drops them too, so `#box((_ .. (_ | 1) -> #a) | (0
+/// .. (0 | _) -> rat))` reads back as itself, though the checker refuses to compare two
+/// functions at one place of a payload with two others not all equal. Subtyping alone does not
+/// tell payloads apart, `#box(#pair(f64, bool))` from `#box(#pairf64, bool)`, so the texts must
+/// agree too.
 fn same(a: &Ty, b: &Ty) -> bool {
     stated(a) == stated(b) || (a.subtype(b) && b.subtype(a) && a.to_string() == b.to_string())
 }
@@ -246,6 +249,20 @@ fn printed_types_read_back_on_seeds_that_met_one_index_for_two_tuple_lengths() {
     }
 }
 
+/// The round trip and minimality test above on seeds that failed it
+/// (FAIL-parens-wrong-is-empty-seed). Seed 24 printed `(0 | ((T -> T) & (f64 -> _) for T in int |
+/// f64)) -> #notFound`, a pair too many around the intersection in a key union, since inside
+/// the key's pair the clause may go to the end of the union. Seed 306 drew `(rat .. (rat | _) ->
+/// String) | (String .. (String | _) -> 0)` in a payload, whose `rat | _` reads back as `_`,
+/// and the checker refuses to compare two functions at one place of a payload when they are
+/// not all equal. Seed 7108425237053606485 printed no difference in its first 3000 draws.
+#[test]
+fn printed_types_read_back_on_seeds_that_met_a_clause_in_a_key_union() {
+    for seed in [24_u64, 306, 7108425237053606485] {
+        read_back_round(seed);
+    }
+}
+
 /// The smallest pair seen for FAIL-kernel-candidates-key-past-columns: the printed type of
 /// seed 6869086033364754509 and one deletion the minimality check tries. The two are
 /// different types (the payload of `#pair` is the empty tuple in one, a pair in the other).
@@ -267,7 +284,15 @@ fn read_back_round(seed: u64) {
         " -> ", " ->? ", " .. ", " | ", " & ", " \\ ", " for ", "#box(", ",)",
     ]
     .map(|f| (f, 0usize));
-    for _ in 0..3000 {
+    // 3000 draws, then more until every form has been printed: a form a seed draws rarely,
+    // as ` \ ` (printed about 7 times in 3000 draws, never in 1 seed of about 3000, since the
+    // printer simplifies most differences), is still checked, and the first 3000 draws stay
+    // those of a seed recorded before (FAIL-parens-wrong-is-empty-seed). The 30000 cap only
+    // ends a generator that stops producing a form, which the assertion below then reports.
+    for draw in 0..30000 {
+        if draw >= 3000 && forms.iter().all(|(_, n)| *n > 0) {
+            break;
+        }
         let text = generated(&mut rng, 3);
         let Ok(t) = parse_type(&text) else { continue };
         let printed = t.to_string();
@@ -378,6 +403,21 @@ fn function_types_print_with_exactly_the_parentheses_the_grammar_needs() {
         (
             "(((T) -> T for T in int)) & ((f64) -> (_)) | (((U) -> U for U in f64)) & ((rat) -> (_))",
             "(T -> T) & (f64 -> _) | (U -> U) & (rat -> _) for T in int, U in f64",
+        ),
+        // A union as a key is parenthesized, and inside the pair a whole type stands
+        // (`GroupType = '(' Type ')'`), so the clause goes once to the end of the union there
+        // too, before the `)` (FAIL-parens-wrong-is-empty-seed).
+        (
+            "((rat) | ((((T) -> T for T in int | f64)) & ((f64) -> (_)))) -> int",
+            "(rat | (T -> T) & (f64 -> _) for T in int | f64) -> int",
+        ),
+        (
+            "((rat) | ((((T) -> T for T in int | f64)) & ((f64) -> (_)))) ->? int",
+            "(rat | (T -> T) & (f64 -> _) for T in int | f64) ->? int",
+        ),
+        (
+            "((int) -> ((rat) | ((((T) -> T for T in int | f64)) & ((f64) -> (_))))) -> int",
+            "(int -> rat | ((T -> T) & (f64 -> _) for T in int | f64)) -> int",
         ),
         // The clause at the end bounds the members before it too, so it takes a name none of
         // their clauses wrote: `for T` twice does not read.
