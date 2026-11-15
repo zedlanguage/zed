@@ -2,8 +2,8 @@
 // 04 running variance: after each input value, the mean and the population
 // variance of the values so far, from three prefix sums (count, sum, sum of
 // squares). Tupling synthesis must fuse the three scans into one scan over a
-// triple; the float `+` scans are exact prefix sums rounded once (sec:reduction),
-// so the printed digits do not depend on the plan.
+// triple; each float `+` scan entry is the canonical-tree sum of the values so
+// far (sec:reduction), so the printed digits do not depend on the plan.
 main(m: MainArgs) {
   xs = m.stdin.map(l -> f64(l) else 0.0);
   n  = xs.map(x -> 1.0).scan((+));

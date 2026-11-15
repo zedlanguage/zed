@@ -1,5 +1,6 @@
 //! 21 stats. Zed rules used: f64(s) parses a decimal (#invalid -> 0.0 by the program's else); a
-//! float `.sum` is the exact sum rounded once (fsum); `/`, `-`, `*` and `.sqrt` are IEEE; floats
+//! float `.sum` is plain IEEE addition on the canonical tree (fsum, DESIGN sec:reduction items 1
+//! and 2); `/`, `-`, `*` and `.sqrt` are IEEE; floats
 //! print shortest round-trip (fmt_float). Only mean and sd are printed; the second column is not
 //! read.
 
@@ -13,8 +14,8 @@ pub fn run(lines: &[String], out: &mut String) -> Result<(), String> {
         return Err("float division by zero".into());
     }
     let n = xs.len() as f64;
-    let mx = fsum(xs.iter().copied())? / n;
-    let sd = (fsum(xs.iter().map(|x| (x - mx) * (x - mx)))? / n).sqrt();
+    let mx = fsum(xs.iter().copied()) / n;
+    let sd = (fsum(xs.iter().map(|x| (x - mx) * (x - mx))) / n).sqrt();
     say!(out, "mean {}", fmt_float(mx));
     say!(out, "sd {}", fmt_float(sd));
     Ok(())

@@ -4,8 +4,8 @@
 //!   notation when the decimal exponent is in -6..<21 (at least one digit on each side of the
 //!   point), otherwise one digit, a point, the remaining digits ('0' if none), 'e', and the
 //!   exponent ('-' only when negative); special values print inf, -inf, nan.
-//! - `fsum(xs)`: a float `+` fold or scan entry is the exact sum rounded once. An exact zero is
-//!   0.0, and both inf and -inf, or a finite sum that rounds to an infinity, are errors.
+//! - `fsum(xs)` and `TreeSum`: a float `+` fold or scan entry is plain IEEE addition on the
+//!   canonical tree (DESIGN sec:reduction items 1 and 2); an empty fold is 0.0.
 //! - `read_lines(path)`: stdin as Lines, the lines of the input with the final newline not
 //!   starting an extra empty line. "\r\n" and "\r" end a line too, and a leading byte order mark
 //!   is kept as U+FEFF.
@@ -32,7 +32,6 @@
 use std::sync::LazyLock;
 
 use num_bigint::{BigInt, BigUint, Sign};
-use num_traits::{ToPrimitive, Zero};
 
 pub mod product;
 
@@ -76,112 +75,76 @@ pub fn fmt_float(x: f64) -> String {
     format!("{s}{}.{rest}e{e10}", &ds[..1])
 }
 
-/// A float `+` over values that arrive one at a time: the exact sum so far, whose size is fixed by
-/// the range of doubles, so an addition does not grow with the number of values.
+/// A float `+` over values that arrive one at a time, on DESIGN's canonical tree (sec:reduction
+/// item 1): over `n` values the tree is the binary representation of `n`, power-of-two blocks
+/// from the largest down, each a perfect tree starting at a multiple of its size, combined left
+/// to right; every node is one IEEE addition. Entry `i` of a scan is the tree over values
+/// `0..=i`, and a fold is the last entry.
+///
+/// Proof that `add` gives that tree, by induction on the count `k` of values added. Claim: after
+/// `k` values, `blocks` holds one block per set bit of `k`, largest first, consecutive from
+/// position 0; each block starts at a multiple of twice its size (the larger bits before it are
+/// such multiples); its `sum` is the perfect tree over its positions, the two halves reduced
+/// separately and the left combined with the right; and its `prefix` is the canonical tree over
+/// every position up to its end. Adding a value pushes a block of size 1 at position `k`; while
+/// the last block has the size `s` of the new one, the two are the left and right halves of a
+/// block of size `2s` that starts at a multiple of `2s`, so the left `sum` plus the right `sum`
+/// is that block's perfect tree. This is the carry of binary addition, so the sizes are then
+/// the set bits of `k + 1`, and the last block's size `p` is the largest power of two dividing
+/// `k + 1`. The blocks below it are unchanged and cover `k + 1 - p` values, so the `prefix` of
+/// the one just below is the canonical tree over them; DESIGN's tree over `k + 1` values is that
+/// tree combined with the tree over the last `p`, which is the new block's `sum`, and with no
+/// block below `k + 1` is `p` itself and the tree is the block's `sum`.
+///
+/// Complexity tradeoff: recomputing the tree over `0..=i` for each scan entry costs `i`
+/// additions, `O(n²)` for a scan of `n`; reusing the blocks costs one addition per merge (at
+/// most `n - 1` in all, each removing one of the `n` blocks pushed) and at most one per entry
+/// for the `prefix`, fewer than `2n` (DESIGN's count), with `⌊log₂ n⌋ + 1` blocks in memory.
 #[derive(Default)]
-pub struct ExactSum {
-    nan: bool,
-    pos_inf: bool,
-    neg_inf: bool,
-    /// The sum of the finite values, in units of 2^-1074, the smallest exponent of a double.
-    units: BigInt,
+pub struct TreeSum {
+    /// The blocks of the values so far, largest first.
+    blocks: Vec<Block>,
 }
 
-impl ExactSum {
-    /// Adds `x`.
-    pub fn add(&mut self, x: f64) {
-        if x.is_nan() {
-            self.nan = true;
-        } else if x.is_infinite() {
-            self.pos_inf |= x > 0.0;
-            self.neg_inf |= x < 0.0;
-        } else if x != 0.0 {
-            let (m, e) = decompose(x);
-            self.units += BigInt::from(m) << (e + 1074);
+/// A block of a power-of-two count of consecutive values (see `TreeSum`).
+struct Block {
+    size: u64,
+    /// The perfect tree over the block's values.
+    sum: f64,
+    /// The canonical tree over every value up to the end of the block.
+    prefix: f64,
+}
+
+impl TreeSum {
+    /// Adds `x` and returns the sum so far, the next scan entry.
+    pub fn add(&mut self, x: f64) -> f64 {
+        let (mut size, mut sum) = (1, x);
+        while let Some(left) = self.blocks.pop_if(|b| b.size == size) {
+            sum = left.sum + sum;
+            size *= 2;
         }
+        let prefix = self.blocks.last().map_or(sum, |below| below.prefix + sum);
+        self.blocks.push(Block { size, sum, prefix });
+        prefix
     }
 
-    /// The sum rounded once to the nearest double, ties to even.
-    pub fn value(&self) -> Result<f64, String> {
-        if self.pos_inf && self.neg_inf {
-            return Err("-inf + inf in fsum".into());
-        }
-        if self.nan {
-            return Ok(f64::NAN);
-        }
-        if self.pos_inf {
-            return Ok(f64::INFINITY);
-        }
-        if self.neg_inf {
-            return Ok(f64::NEG_INFINITY);
-        }
-        let r = round(&self.units, -1074);
-        if r.is_infinite() {
-            return Err("intermediate overflow in fsum".into());
-        }
-        Ok(r)
+    /// The sum so far; with no value, the identity 0.0 that `sum` takes on an empty level
+    /// (DESIGN sec:reduction, "Identity as data").
+    pub fn value(&self) -> f64 {
+        self.blocks.last().map_or(0.0, |b| b.prefix)
     }
 }
 
-/// The exact sum of `xs` rounded once to the nearest double, ties to even.
-pub fn fsum(xs: impl IntoIterator<Item = f64>) -> Result<f64, String> {
-    let mut sum = ExactSum::default();
+/// The float `+` fold of `xs` on the canonical tree (see `TreeSum`). No case is an error: IEEE
+/// addition gives NaN for `inf + -inf` and an infinity on overflow, and these are the values of a
+/// float `+` without `@fpwarn` (DESIGN sec:reduction, the unlifted-carrier rule, item 1). A NaN
+/// keeps the sign and payload the hardware gives; the references only print it, as `nan`.
+pub fn fsum(xs: impl IntoIterator<Item = f64>) -> f64 {
+    let mut sum = TreeSum::default();
     for x in xs {
         sum.add(x);
     }
     sum.value()
-}
-
-/// Finite `x` as mantissa * 2^exponent.
-fn decompose(x: f64) -> (i64, i64) {
-    let bits = x.to_bits();
-    let biased = ((bits >> 52) & 0x7ff) as i64;
-    let fraction = (bits & ((1 << 52) - 1)) as i64;
-    let (m, e) = if biased == 0 {
-        (fraction, -1074)
-    } else {
-        (fraction | (1 << 52), biased - 1075)
-    };
-    (if bits >> 63 == 1 { -m } else { m }, e)
-}
-
-/// `sum` * 2^`scale` rounded to the nearest double, ties to even (0.0 for zero).
-fn round(sum: &BigInt, scale: i64) -> f64 {
-    if sum.is_zero() {
-        return 0.0;
-    }
-    let a = sum.magnitude();
-    let mut q = (scale + a.bits() as i64 - 1 - 52).max(-1074); // exponent of the last kept bit
-    let mut m = a << (scale - q).max(0) as u64;
-    if q > scale {
-        let shift = (q - scale) as u64;
-        m = a >> shift;
-        let rem = a - (&m << shift);
-        let half = num_bigint::BigUint::from(1u32) << (shift - 1);
-        if rem > half || (rem == half && m.bit(0)) {
-            m += 1u32;
-        }
-    }
-    let mut mi = m.to_u64().expect("at most 54 bits are kept");
-    if mi == 1 << 53 {
-        mi >>= 1;
-        q += 1;
-    }
-    let negative = sum.sign() == Sign::Minus;
-    let bits = if mi >= 1 << 52 {
-        let biased = q + 52 + 1023;
-        if biased >= 0x7ff {
-            return if negative {
-                f64::NEG_INFINITY
-            } else {
-                f64::INFINITY
-            };
-        }
-        ((biased as u64) << 52) | (mi - (1 << 52))
-    } else {
-        mi // subnormal: q is -1074
-    };
-    f64::from_bits(bits | (u64::from(negative) << 63))
 }
 
 /// The lines of the input at `path`.

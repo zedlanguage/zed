@@ -1,9 +1,9 @@
-//! 04 running variance. Zed rules used: a float `+` scan entry is the exact prefix sum rounded
-//! once (fsum, here kept exact from one line to the next); `/`, `*`, `-` are IEEE binary64;
-//! floats print by the shortest round-trip rule (fmt_float); "${x}" is String(x); f64(s) reads
-//! the input text.
+//! 04 running variance. Zed rules used: a float `+` scan entry is plain IEEE addition on the
+//! canonical tree over the values so far (TreeSum, DESIGN sec:reduction items 1 and 2); `/`,
+//! `*`, `-` are IEEE binary64; floats print by the shortest round-trip rule (fmt_float); "${x}"
+//! is String(x); f64(s) reads the input text.
 
-use crate::zedrt::{ExactSum, fmt_float, parse_float};
+use crate::zedrt::{TreeSum, fmt_float, parse_float};
 
 /// Runs the program.
 pub fn run(lines: &[String], out: &mut String) -> Result<(), String> {
@@ -11,18 +11,12 @@ pub fn run(lines: &[String], out: &mut String) -> Result<(), String> {
         .iter()
         .map(|l| parse_float(l))
         .collect::<Result<Vec<f64>, String>>()?;
-    let (mut count, mut sum, mut squares) = (
-        ExactSum::default(),
-        ExactSum::default(),
-        ExactSum::default(),
-    );
+    let (mut count, mut sum, mut squares) =
+        (TreeSum::default(), TreeSum::default(), TreeSum::default());
     for &x in &xs {
-        count.add(1.0);
-        sum.add(x);
-        squares.add(x * x);
-        let n = count.value()?;
-        let s1 = sum.value()?;
-        let s2 = squares.value()?;
+        let n = count.add(1.0);
+        let s1 = sum.add(x);
+        let s2 = squares.add(x * x);
         let m = s1 / n;
         say!(
             out,

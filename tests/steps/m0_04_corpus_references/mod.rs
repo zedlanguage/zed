@@ -168,20 +168,22 @@ fn a_parent_outside_the_children_is_a_root() {
 }
 
 #[test]
-fn a_running_sum_stays_exact_where_doubles_alone_would_lose_it() {
-    // 1e308 + 1e308 overflows a double, and fsum says so at that line, after the lines before it.
+fn a_running_sum_is_ieee_addition_on_the_canonical_tree() {
+    // DESIGN sec:reduction items 1 and 2: each scan entry adds in IEEE on the canonical tree, and
+    // a float `+` without `@fpwarn` gives IEEE's own values, so nothing here is an error.
+    // 1e308 + 1e308 overflows to inf, and inf - inf is NaN.
     let (out, result) = on_text("04", "sum_overflow", "1e308\n1e308\n");
-    assert_eq!(result, Err("intermediate overflow in fsum".to_string()));
-    assert_eq!(out.lines().count(), 1);
-    // A value lost beside a large one by plain addition survives when the large one cancels.
-    let (out, result) = on_text("04", "sum_exact", "1e100\n1\n-1e100\n");
+    assert_eq!(result, Ok(()));
+    assert_eq!(out, "1.0e308 1.0e308 nan\n1.0e308 inf nan\n");
+    // Entry 2 is (1e100 + 1) + -1e100: the 1 is lost beside 1e100 before -1e100 cancels it.
+    let (out, result) = on_text("04", "sum_lost", "1e100\n1\n-1e100\n");
     assert_eq!(result, Ok(()));
     let third = out.lines().nth(2).expect("three lines");
-    assert!(third.starts_with("-1.0e100 0.333"), "{third}");
-    // inf and -inf together are an error, at the line that brings the second.
+    assert!(third.starts_with("-1.0e100 0.0 "), "{third}");
+    // inf + -inf is NaN at the line that brings the second.
     let (out, result) = on_text("04", "sum_inf", "inf\n-inf\n");
-    assert_eq!(result, Err("-inf + inf in fsum".to_string()));
-    assert_eq!(out.lines().count(), 1);
+    assert_eq!(result, Ok(()));
+    assert_eq!(out, "inf inf nan\n-inf nan nan\n");
 }
 
 #[test]

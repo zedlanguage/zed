@@ -1,5 +1,6 @@
 //! 06 matrix multiply. Zed rules used: each product x * y is one IEEE multiplication; the `+`
-//! reduction over a float family is the exact sum rounded once (fsum); floats print by
+//! reduction over a float family is plain IEEE addition on the canonical tree (fsum, DESIGN
+//! sec:reduction items 1 and 2); floats print by
 //! fmt_float. Every line, the header "n m p" included, must read as floats; the row ranges are
 //! slices: a negative bound counts from the end, and a bound outside the rows is moved to the
 //! nearer end.
@@ -47,7 +48,7 @@ pub fn run(lines: &[String], out: &mut String) -> Result<(), String> {
             for c in 0..mi {
                 products.push(at(row, c)? * at(at(b, c)?, k)?);
             }
-            cells.push(fmt_float(fsum(products)?));
+            cells.push(fmt_float(fsum(products)));
         }
         say!(out, "{}", cells.join(" "));
     }

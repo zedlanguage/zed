@@ -5,43 +5,82 @@
 //! `COMPLETENESS.md`.
 
 use super::on_text;
-use zed_corpus_ref::zedrt::{fsum, lower, parse_float};
+use zed_corpus_ref::zedrt::{TreeSum, fsum, lower, parse_float};
+
+/// DESIGN sec:reduction item 1's canonical tree over `xs`, transcribed from its recursive
+/// definition: one value is itself; a power-of-two count reduces its two halves and adds the left
+/// result to the right; any other count `n`, with `p` the largest power of two dividing it,
+/// reduces the first `n - p` and the last `p` and adds the left to the right.
+fn tree(xs: &[f64]) -> f64 {
+    let n = xs.len();
+    if n == 1 {
+        return xs[0];
+    }
+    let p = 1 << n.trailing_zeros();
+    let split = if p == n { n / 2 } else { n - p };
+    tree(&xs[..split]) + tree(&xs[split..])
+}
 
 #[test]
-fn a_float_sum_is_the_exact_sum_rounded_once_at_every_kind_of_value() {
-    let bits = |xs: &[f64]| fsum(xs.iter().copied()).map(f64::to_bits);
-    // No value and an exact zero are 0.0.
-    assert_eq!(bits(&[]), Ok(0));
-    assert_eq!(bits(&[1.0, -1.0]), Ok(0));
-    // Rounded once: 0.1 + 0.2 + 0.3 left to right is 0.6000000000000001.
-    assert_eq!(fsum([0.1, 0.2, 0.3]), Ok(0.6));
-    // No intermediate overflow where the exact sum is finite.
-    assert_eq!(fsum([f64::MAX, f64::MAX, -f64::MAX]), Ok(f64::MAX));
+fn a_float_sum_is_ieee_addition_on_the_canonical_tree_at_every_kind_of_value() {
+    let bits = |xs: &[f64]| fsum(xs.iter().copied()).to_bits();
+    // No value is the identity 0.0 (sec:reduction, "Identity as data"); one value is itself, so
+    // a lone -0.0 keeps its sign, as IEEE's -0.0 + -0.0 does; x + -x is +0.0.
+    assert_eq!(bits(&[]), 0);
+    assert_eq!(bits(&[-0.0]), (-0.0f64).to_bits());
+    assert_eq!(bits(&[-0.0, -0.0]), (-0.0f64).to_bits());
+    assert_eq!(bits(&[1.0, -1.0]), 0);
+    // n = 3 is (e0 + e1) + e2: 0.1 + 0.2 + 0.3 is 0.6000000000000001, where the exact sum
+    // rounded once would be 0.6, and 1 is lost beside 1e16 before -1e16 cancels it.
+    assert_eq!(fsum([0.1, 0.2, 0.3]), 0.6000000000000001);
+    assert_eq!(fsum([1.0, 1e16, -1e16]), 0.0);
+    // n = 4 is (e0 + e1) + (e2 + e3): the last two ones add to 2 before they meet 1e16, where a
+    // left-to-right sum loses each 1 (1e16 + 1 is a tie, kept at the even 1e16).
+    assert_eq!(fsum([1e16, 1.0, 1.0, 1.0]), 10000000000000002.0);
+    assert_eq!(((1e16 + 1.0) + 1.0) + 1.0, 1e16);
+    // n = 6 is ((e0 + e1) + (e2 + e3)) + (e4 + e5), DESIGN's own example: 1e16 + 2 + 2.
+    assert_eq!(fsum([1e16, 1.0, 1.0, 1.0, 1.0, 1.0]), 10000000000000004.0);
+    // Overflow is IEEE's: an infinity, even where the exact sum is finite.
+    assert_eq!(fsum([f64::MAX, f64::MAX, -f64::MAX]), f64::INFINITY);
+    assert_eq!(fsum([f64::MAX, f64::MAX]), f64::INFINITY);
+    assert_eq!(fsum([-f64::MAX, -f64::MAX]), f64::NEG_INFINITY);
     // Subnormal terms and results: 2 * 2^-1074, and the largest subnormal.
-    assert_eq!(bits(&[5e-324, 5e-324]), Ok(2));
-    assert_eq!(
-        bits(&[f64::MIN_POSITIVE, -5e-324]),
-        Ok(0x000F_FFFF_FFFF_FFFF)
-    );
+    assert_eq!(bits(&[5e-324, 5e-324]), 2);
+    assert_eq!(bits(&[f64::MIN_POSITIVE, -5e-324]), 0x000F_FFFF_FFFF_FFFF);
     // Ties to even: 2^53 - 1 + 0.5 rounds up into the next binade, 2^53 - 2 + 0.5 down.
     let two53 = 2f64.powi(53);
-    assert_eq!(fsum([two53 - 1.0, 0.5]), Ok(two53));
-    assert_eq!(fsum([two53 - 2.0, 0.5]), Ok(two53 - 2.0));
-    // The special values.
-    assert!(fsum([f64::NAN, 1.0]).is_ok_and(f64::is_nan));
-    assert!(fsum([1.0, f64::NAN, f64::INFINITY]).is_ok_and(f64::is_nan));
-    assert_eq!(fsum([f64::INFINITY, 1.0]), Ok(f64::INFINITY));
-    assert_eq!(fsum([f64::NEG_INFINITY, 1.0]), Ok(f64::NEG_INFINITY));
-    assert_eq!(
-        fsum([f64::INFINITY, f64::NEG_INFINITY]),
-        Err("-inf + inf in fsum".to_string())
-    );
-    // A finite sum beyond the largest double, at either sign.
-    for x in [f64::MAX, -f64::MAX] {
+    assert_eq!(fsum([two53 - 1.0, 0.5]), two53);
+    assert_eq!(fsum([two53 - 2.0, 0.5]), two53 - 2.0);
+    // The special values: NaN in, NaN out (item 5); inf + -inf is NaN, not an error, as a float
+    // `+` without `@fpwarn` gives IEEE's own values (the unlifted-carrier rule, item 1).
+    assert!(fsum([f64::NAN, 1.0]).is_nan());
+    assert!(fsum([1.0, f64::NAN, f64::INFINITY]).is_nan());
+    assert_eq!(fsum([f64::INFINITY, 1.0]), f64::INFINITY);
+    assert_eq!(fsum([f64::NEG_INFINITY, 1.0]), f64::NEG_INFINITY);
+    assert!(fsum([f64::INFINITY, f64::NEG_INFINITY]).is_nan());
+}
+
+#[test]
+fn every_scan_entry_and_fold_is_the_canonical_tree_over_its_prefix() {
+    // Values of magnitudes from 2^-60 to 2^70 and both signs, so that the grouping changes the
+    // rounding (a left-to-right sum fails this test at entry 2); the prefix lengths 1 to 300
+    // reach every stack of up to eight blocks.
+    let xs: Vec<f64> = (0..300)
+        .map(|i: i32| {
+            let x = f64::from((i * 7919) % 1009 + 1) * 2f64.powi((i * 37) % 121 - 60);
+            if i % 3 == 0 { -x } else { x }
+        })
+        .collect();
+    let mut scan = TreeSum::default();
+    for i in 0..xs.len() {
+        let want = tree(&xs[..=i]).to_bits();
+        assert_eq!(scan.add(xs[i]).to_bits(), want, "scan entry {i}");
+        assert_eq!(scan.value().to_bits(), want, "value after entry {i}");
         assert_eq!(
-            fsum([x, x]),
-            Err("intermediate overflow in fsum".to_string()),
-            "{x}"
+            fsum(xs[..=i].iter().copied()).to_bits(),
+            want,
+            "fold of {}",
+            i + 1
         );
     }
 }
