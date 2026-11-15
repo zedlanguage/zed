@@ -47,6 +47,20 @@ costs!(nest_empty_decide, nest_empty, "x0", 'd', 2800, 1, 2);
 costs!(nest_empty_satisfiable, nest_empty, "x0", 's', 3400, 1, 2);
 costs!(nest_empty_project_each, nest_empty, "x0", 'p', 16, 1, 2);
 costs!(nest_empty_answers, nest_empty, "x0", 'a', 2000, 1, 2);
+// `project_each` on a deeper nest (FAIL-nest-empty-project-each-scaling): each level of the nest
+// read the atoms of every level below it in `forest_domains`, Θ(k²) in all. At k = 16 to 128 that
+// cost was 10.24 times at 8n under tools/run_tests.sh and 11.38 times run directly; at 128 to
+// 1024 it was 17.89 times under tools/run_tests.sh, 8.13 after the fix (COMPLEXITY.md
+// PRES-exp-families).
+costs!(
+    nest_empty_project_each_deep,
+    nest_empty,
+    "x0",
+    'p',
+    128,
+    1,
+    2
+);
 
 // Subset sum is held to order k log k, one run each (k^3 log k before PRES-overlap-fast). The
 // exact method of PRES-overlap-fast (module `row_sums`) answers it at every size (2026-11-13,

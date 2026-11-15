@@ -22320,8 +22320,8 @@ fn forest_domains(
     }
     // Each component of simple disjunctions, by its least unit.
     let mut comps: BTreeMap<usize, ForestComponent> = BTreeMap::new();
-    for j in 0..ors.len() {
-        let Some(&u0) = units_of[j].first() else {
+    for (j, us) in units_of.iter().enumerate() {
+        let Some(&u0) = us.first() else {
             continue;
         };
         let c = find(&mut uf, u0);
@@ -22332,7 +22332,7 @@ fn forest_domains(
             simple: !marked[c],
         });
         e.ors.push(j);
-        for &u in &units_of[j] {
+        for &u in us {
             if u < n_base {
                 e.groups.insert(u);
             }
