@@ -235,6 +235,8 @@ struct ScopeF<'a> {
     /// The statements' order, last first.
     order: Vec<usize>,
     top: bool,
+    /// The statement being elaborated, an index into `items`.
+    at: usize,
     binds: Vec<Bind>,
     ok: bool,
     export: Option<&'a [Expr]>,
@@ -448,6 +450,7 @@ impl<'a> Elab<'a> {
             items,
             order,
             top,
+            at: 0,
             binds: Vec::new(),
             ok: true,
             export,
@@ -458,6 +461,7 @@ impl<'a> Elab<'a> {
     fn scope_step(&mut self, m: &mut M<'a>, mut sf: Box<ScopeF<'a>>) {
         if let Some(i) = sf.order.pop() {
             let (s, top) = (sf.items[i], sf.top);
+            sf.at = i;
             m.k(Frame::Scope(sf));
             self.stmt(m, s, top);
             return;
@@ -2153,7 +2157,14 @@ impl<'a> Elab<'a> {
                 };
                 match binds {
                     Some(binds) => sf.binds.extend(binds),
-                    None => sf.ok = false,
+                    None => {
+                        sf.ok = false;
+                        // The first top-level definition that gave no term, which `lower`
+                        // names when no error says why (FAIL-elab-none-without-error).
+                        if sf.top {
+                            self.dropped.get_or_insert(sf.items[sf.at]);
+                        }
+                    }
                 }
                 self.scope_step(m, sf);
             }

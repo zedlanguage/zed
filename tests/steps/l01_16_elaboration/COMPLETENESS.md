@@ -54,6 +54,7 @@ before the last three tests of `complete.rs` were added:
 | `marks` on primitives that can fail at run time | none in this group | Set only when the elaborator is asked for marks by a later step |
 | `is` against a function type | none | A function type in `is` is resolved at a later layer |
 | `unreachable!` arms ("resolve rejects the forms of layer L2/L6", "a term", "a binding", ...) | none | Unreachable by construction: resolve rejects those forms before elaboration |
+| A unit the checker accepts and elaboration gives no term for, with no error (FAIL-elab-none-without-error): a bug in zedc, reported at the first top-level definition that gave none | kept.rs `a_unit_that_checks_keeps_every_definition` (red under an injected fault, a remap with no plan giving no term: "the unit lost `x`"; with the fix and the fault, the bug message naming `f`); kept.rs `every_program_that_checks_elaborates_every_top_level_definition` (corpus programs and step units: 10 keep every definition, 1 is refused by elaboration, none loses one) | The fault is unreachable on main, so no committed test reaches the message; it was shown under the injected fault, under `zedc run` too |
 
 DESIGN note: L1.16's "a cycle is an error naming layer L6" is worded for function recursion; a
 cycle among values is an error with its own report (see `a_cycle_is_reported_for_each_form...`).

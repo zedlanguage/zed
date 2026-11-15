@@ -21,12 +21,13 @@ use std::collections::HashMap;
 
 use zed_kernel::Shared;
 
+use zedc_base::rejection;
 use zedc_base::work::{self, Stage};
 use zedc_check::check::ty::Sig;
 use zedc_check::check::{self, Info};
 use zedc_resolve::resolve::Resolution;
 use zedc_resolve::resolve::tables::Tables;
-use zedc_syntax::ast::{Error, Stmt, StmtKind};
+use zedc_syntax::ast::{Error, Stmt, StmtKind, Target};
 
 pub mod mark;
 mod state;
@@ -137,40 +138,85 @@ fn lower<'a>(
         limits: e.info.limits,
         ..Unit::default()
     };
-    if let Some((binds, _)) = e.scope(unit, true) {
-        // The parameters a call may name, of each definition that is a function: a declared
-        // function's from its signature, by its binder's kernel name; a name bound by `=` to a
-        // function, as `inc = x -> x + 1`, from its type when that holds one function, since a
-        // call through the name passes arguments as that function's signature says (DESIGN.md
-        // sec:values_morphisms). O(functions + definitions × parameters).
-        let declared: HashMap<&str, &Sig> = (e.info.sigs.iter())
-            .map(|(&id, sig)| (&*e.names[id], &**sig))
-            .collect();
-        for (name, kernel, _) in &binds {
-            let sig = (declared.get(&**kernel).copied()).or_else(|| {
-                e.info
-                    .tops
-                    .get(name)
-                    .and_then(|t| t.fns.only().map(|s| &**s))
-            });
-            let names = sig.map(Sig::callable_names).unwrap_or_default();
-            if !names.is_empty() {
-                out.param_names.insert(kernel.clone(), names);
+    match e.scope(unit, true) {
+        Some((binds, _)) => {
+            // The parameters a call may name, of each definition that is a function: a declared
+            // function's from its signature, by its binder's kernel name; a name bound by `=` to a
+            // function, as `inc = x -> x + 1`, from its type when that holds one function, since a
+            // call through the name passes arguments as that function's signature says (DESIGN.md
+            // sec:values_morphisms). O(functions + definitions × parameters).
+            let declared: HashMap<&str, &Sig> = (e.info.sigs.iter())
+                .map(|(&id, sig)| (&*e.names[id], &**sig))
+                .collect();
+            for (name, kernel, _) in &binds {
+                let sig = (declared.get(&**kernel).copied()).or_else(|| {
+                    e.info
+                        .tops
+                        .get(name)
+                        .and_then(|t| t.fns.only().map(|s| &**s))
+                });
+                let names = sig.map(Sig::callable_names).unwrap_or_default();
+                if !names.is_empty() {
+                    out.param_names.insert(kernel.clone(), names);
+                }
             }
+            out.defs = binds
+                .into_iter()
+                .map(|(name, kernel, term)| Def {
+                    first_order: e.info.tops.get(&name).is_some_and(|t| t.first_order()),
+                    name,
+                    kernel,
+                    term: Shared::new(term),
+                })
+                .collect();
         }
-        out.defs = binds
-            .into_iter()
-            .map(|(name, kernel, term)| Def {
-                first_order: e.info.tops.get(&name).is_some_and(|t| t.first_order()),
-                name,
-                kernel,
-                term: Shared::new(term),
-            })
-            .collect();
+        // A unit that gives no term with no error of the checker's or of elaboration's would
+        // be run or tested as if it declared nothing; it is a bug in zedc, reported at the
+        // first definition that gave no term (FAIL-elab-none-without-error).
+        None if errors.is_empty() && e.errors.is_empty() => {
+            let at = e
+                .dropped
+                .or_else(|| (unit.iter()).find(|s| matches!(s.kind, StmtKind::Return(_))));
+            // A unit's scope gives no term only at a cycle, which pushes its errors, at a
+            // statement that gives none, which sets `dropped`, or at its export.
+            let at = at.expect("a unit that gives no term has a statement that gives none");
+            e.errors.push(Error {
+                menu: String::new(),
+                row: None,
+                span: at.span,
+                message: rejection::bug(
+                    &format!(
+                        "each definition the checker accepts is elaborated or elaboration says \
+                         why it is not, and {} was neither",
+                        named(at)
+                    ),
+                    Some((file!(), line!())),
+                ),
+                notes: Vec::new(),
+            });
+        }
+        None => {}
     }
     out.tests = std::mem::take(&mut e.tests).into();
     errors.append(&mut e.errors);
     (out, e.marks.take(), errors)
+}
+
+/// The definition `s` names in a message: `` `f` `` for a function, `` `a`, `b` `` for a
+/// binding, and the unit's `return` for its export.
+fn named(s: &Stmt) -> String {
+    match &s.bare().kind {
+        StmtKind::Function(f) => format!("`{}`", f.name),
+        StmtKind::Bind { targets, .. } => (targets.iter())
+            .map(|t| match t {
+                Target::Name(n, _) => format!("`{n}`"),
+                Target::Wild => "`_`".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        StmtKind::Return(_) => "the unit's `return`".to_string(),
+        _ => "a statement".to_string(),
+    }
 }
 
 /// `out` and `marks`, or `errors` sorted by place and message, each once.

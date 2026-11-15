@@ -13,7 +13,7 @@ use zedc_check::check::{Info, Misfit, Witness};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Kind, Ref, prelude_layer};
 use zedc_stage::defs::Test;
-use zedc_syntax::ast::{Error, Expr, ExprKind, Pattern, Type};
+use zedc_syntax::ast::{Error, Expr, ExprKind, Pattern, Stmt, Type};
 use zedc_syntax::lex::Span;
 use zedc_types::kernel_type::kernel_type;
 use zedc_types::ty::Carrier;
@@ -61,6 +61,8 @@ pub(super) struct Elab<'a> {
     /// The output ports of the unit's `main`, `m.stdout` and `m.stderr` where it pushes to
     /// them, in the order of its header; empty when the unit has no `main`.
     pub(super) outputs: Vec<Arc<str>>,
+    /// The first top-level statement, in the order elaboration takes them, that gave no term.
+    pub(super) dropped: Option<&'a Stmt>,
 }
 
 impl<'a> Elab<'a> {
@@ -110,6 +112,7 @@ impl<'a> Elab<'a> {
             checker_spans: Vec::new(),
             sited: HashSet::new(),
             outputs,
+            dropped: None,
         }
     }
 
