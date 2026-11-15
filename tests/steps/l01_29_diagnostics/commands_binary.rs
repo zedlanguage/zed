@@ -464,8 +464,8 @@ fn recovered_syntax(file: &Path) -> String {
         "{at}:2:1: Syntax error at `area`. Try \
          `perimeter(positional w, positional h) = 2 * (w + h);` instead.\n  \
          [1] 2:1: expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or \
-         'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or \
-         'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' \
+         'div' or 'mod' or '+' or '-' or '++' or an infix call such as `~plus~` or '..<' or \
+         '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' \
          or '==' or '!=' or '&&' or '||' or 'else' or ')' or ','\n      \
          2 | area(positional w, positional h) = w * * h;\n        \
          | ^^^^\n  \

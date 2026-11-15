@@ -38,12 +38,14 @@ fn a_float_fold_keeps_its_identity_and_its_tree() {
     ));
     let plus = lam(&["a", "b"], add(var("a"), var("b")));
     keeps(&fold(lit(xs.clone()), plus, None), "fold", 1);
-    let exact = fold(
+    // Float `+` goes round the canonical tree with plain IEEE additions (DESIGN sec:reduction
+    // items 1 and 2): three elements give (0.1 + 0.2) + 0.3, not the exact sum 0.6.
+    let summed = fold(
         lit(xs),
         Term::PrimFn(Prim::Add),
         Some(lit(Value::float(0.0))),
     );
-    assert_eq!(round_trip(&exact), Ok("0.6".into()));
+    assert_eq!(round_trip(&summed), Ok("0.6000000000000001".into()));
     // An empty family folds to the identity, which the graph keeps as the fold's third input.
     let empty = fold(lit(Family::new()), Term::PrimFn(Prim::Add), Some(lit(7)));
     assert_eq!(round_trip(&empty), Ok("7".into()));
@@ -228,25 +230,29 @@ fn nested_patterns_bind_in_preorder() {
 
 #[test]
 fn a_primitive_passed_as_a_value_stays_the_primitive() {
-    // A fold of `+` itself sums exactly, and of a lambda that adds rounds at each step; the
+    // A fold of `+` itself and a fold of a lambda that adds give the same value: both go round
+    // the canonical tree with plain float additions (DESIGN sec:reduction items 1 and 2). The
     // graph keeps the two apart, as a `prim` node with no inputs and as a `lambda`.
     let xs = Value::Family(Family::of(
         [(0, 0.1), (1, 0.2), (2, 0.3)].map(|(k, x)| (Value::Int(k), Value::float(x))),
     ));
-    let exact = let_(
+    let primitive = let_(
         "plus",
         Term::PrimFn(Prim::Add),
         fold(lit(xs.clone()), var("plus"), None),
     );
-    let tree = fold(lit(xs), lam(&["a", "b"], add(var("a"), var("b"))), None);
-    assert_eq!(round_trip(&exact), Ok("0.6".into()));
-    assert_eq!(round_trip(&tree), Ok("0.6000000000000001".into()));
-    keeps(&exact, "lambda", 0);
-    keeps(&tree, "lambda", 1);
-    let g = lower(&exact).unwrap();
-    assert!(
-        g.nodes
+    let lambda = fold(lit(xs), lam(&["a", "b"], add(var("a"), var("b"))), None);
+    assert_eq!(round_trip(&primitive), Ok("0.6000000000000001".into()));
+    assert_eq!(round_trip(&lambda), Ok("0.6000000000000001".into()));
+    keeps(&primitive, "lambda", 0);
+    keeps(&lambda, "lambda", 1);
+    let bare_prim = |t: &Term| {
+        lower(t)
+            .unwrap()
+            .nodes
             .iter()
             .any(|n| n.inputs.is_empty() && zedc::zir::op_name(&n.op) == "prim")
-    );
+    };
+    assert!(bare_prim(&primitive));
+    assert!(!bare_prim(&lambda));
 }
