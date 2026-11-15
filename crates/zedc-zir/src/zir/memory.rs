@@ -2143,11 +2143,11 @@ impl<'g> Machine<'g, '_> {
     /// values entered wait on a stack with the terms of their parts so far. Each closure's and
     /// held value's term is built once, in `lets.built`.
     fn term(&mut self, v: &Mv<'g>, lets: &mut Lets) -> Result<Term, String> {
-        let mut stack: Vec<(Mv<'g>, Vec<Term>)> = Vec::new();
+        let mut stack: Vec<(Mv<'g>, Vec<HeldPart>)> = Vec::new();
         let mut got = enter_term(v, lets, &mut stack);
         loop {
             let Some((m, terms)) = stack.last_mut() else {
-                return Ok(got.expect("a term"));
+                return Ok(got.expect("a term").into_term());
             };
             terms.extend(got.take());
             let parts = match m {
@@ -2164,8 +2164,16 @@ impl<'g> Machine<'g, '_> {
                 None => {
                     let (m, terms) = stack.pop().expect("an entered value");
                     let t = match &m {
-                        Mv::Clo(c) => raise_with(self.alone(c.node, c.id), &terms)?,
-                        Mv::Fun(f) => fun_term(&f.params, &f.body, &f.names, terms),
+                        Mv::Clo(c) => HeldPart::closure(raise_with(
+                            self.alone(c.node, c.id),
+                            &HeldPart::terms(terms),
+                        )?)?,
+                        Mv::Fun(f) => HeldPart::closure(fun_term(
+                            &f.params,
+                            &f.body,
+                            &f.names,
+                            HeldPart::terms(terms),
+                        ))?,
                         // Bound once, outside the node's term, as native code binds it: a
                         // use, however often the term runs it, reads the one value.
                         Mv::Held(h) => {
@@ -2175,9 +2183,8 @@ impl<'g> Machine<'g, '_> {
                                 HeldKind::Atom((n, f)) => held_term(Some((n, f)), key, terms),
                                 HeldKind::Family(f) => held_family_term(f, key, terms),
                             };
-                            let x = cell_var(key);
-                            lets.held.push((x.clone(), made));
-                            Term::Var(x)
+                            lets.held.push((cell_var(key), made));
+                            HeldPart::held(key)
                         }
                         _ => unreachable!("only closures and held values are entered"),
                     };
@@ -2571,7 +2578,9 @@ fn read_held<'a, 'g>(t: &'a Mv<'g>, k: &'a Mv<'g>) -> Option<&'a Mv<'g>> {
     }
 }
 
-fn port_var(p: &str) -> Arc<str> {
+/// The variable the lookup port `p` is bound to by `wrap`; native code names its ports so
+/// too, as [`HeldPart::port`] does.
+pub fn port_var(p: &str) -> Arc<str> {
     format!("\0port {p}").into()
 }
 
@@ -2602,7 +2611,7 @@ struct Lets {
     /// which no other value of the run has: a closure captured on many paths is built once, so
     /// the term is a graph the size of the closures, not a tree of every path (COMPLEXITY.md
     /// R9). A closure's term is a `let` of its lambda, whose parts are shared, so a copy costs
-    /// a few words; a held value's is a `let` of its primitive, as cheap to copy.
+    /// a few words; a held value's is its variable ([`cell_var`]), as cheap to copy.
     // Complexity tradeoff: the naive build walks a closure once per path to it, 2^d for d
     // levels each capturing the level below twice (R9: 4 times per 2 levels). Here each
     // closure's term is built once per kernel call and kept by `Clo::cell` (the machine never
@@ -2610,7 +2619,7 @@ struct Lets {
     // Tradeoff: one map entry per closure for the call. Nothing is refused. Tests
     // `l01_36_cranelift::shared_closures` and
     // zed-native's `hooks::tests::a_closure_captured_twice_at_each_level_is_built_once`.
-    built: HashMap<usize, Term>,
+    built: HashMap<usize, HeldPart>,
     /// Each held value met, its variable ([`cell_var`]) and the term that makes it, in the
     /// order finished, so a value's parts come before it; [`wrap`] binds each once, outside
     /// the node's term, as native code's `Lets::held` does. Why the early build cannot fail or
@@ -2629,8 +2638,8 @@ struct Lets {
 fn enter_term<'g>(
     v: &Mv<'g>,
     lets: &mut Lets,
-    stack: &mut Vec<(Mv<'g>, Vec<Term>)>,
-) -> Option<Term> {
+    stack: &mut Vec<(Mv<'g>, Vec<HeldPart>)>,
+) -> Option<HeldPart> {
     match v {
         Mv::Clo(_) | Mv::Fun(_) | Mv::Held(_) => {
             let got = lets.built.get(&v.cell().expect("a cell")).cloned();
@@ -2647,13 +2656,13 @@ fn enter_term<'g>(
 /// `parts`: the tuple primitive, or the atom primitive on its name and its field names in the
 /// order of its parts, in a `let` named by `key`, which no other held value of the term has.
 /// The native runtime builds its held values' terms with it too.
-pub fn held_term(atom: Option<(&Arc<str>, &Fields)>, key: u64, parts: Vec<Term>) -> Term {
+pub fn held_term(atom: Option<(&Arc<str>, &Fields)>, key: u64, parts: Vec<HeldPart>) -> Term {
     let made = match atom {
-        None => Term::Prim(Prim::Tuple, parts),
+        None => Term::Prim(Prim::Tuple, HeldPart::terms(parts)),
         Some((name, fields)) => {
             let names = fields.iter().map(|f| Value::str(f)).collect();
             let mut args = vec![Term::Lit(Value::str(name)), Term::Lit(Value::tuple(names))];
-            args.extend(parts);
+            args.extend(parts.into_iter().map(HeldPart::into_term));
             Term::Prim(Prim::Atom, args)
         }
     };
@@ -2663,8 +2672,8 @@ pub fn held_term(atom: Option<(&Arc<str>, &Fields)>, key: u64, parts: Vec<Term>)
 /// The term that makes the held family `f` again from its parts' terms `parts`: the display
 /// primitive on its entries in key order, each data entry a literal and part `i` the term
 /// `parts[i]`, in a `let` named by `key`, as [`held_term`]. The native runtime's.
-pub fn held_family_term(f: &HeldFamily, key: u64, parts: Vec<Term>) -> Term {
-    let mut parts: Vec<Option<Term>> = parts.into_iter().map(Some).collect();
+pub fn held_family_term(f: &HeldFamily, key: u64, parts: Vec<HeldPart>) -> Term {
+    let mut parts: Vec<Option<Term>> = parts.into_iter().map(|p| Some(p.into_term())).collect();
     let mut args = Vec::with_capacity(2 * f.len());
     for (k, e) in f.iter() {
         args.push(Term::Lit(k.clone()));
@@ -2682,18 +2691,93 @@ fn held_let(key: u64, made: Term) -> Term {
     Term::Let(x.clone(), Shared::new(made), Shared::new(Term::Var(x)))
 }
 
+/// The term of a part of a held value, as the term that makes the value again ([`held_term`],
+/// [`held_family_term`]) reads it. Those terms are made before the node that uses the value,
+/// on paths it may not take, so evaluating a part must run no function, read no port and not
+/// stop (the proof at native code's `Lets::held`). The field is private: a part is made only by
+/// the five constructors below, one for each kind of term with that property, so a held value's
+/// term takes no other input. The first four hold their property by their type; the fifth,
+/// [`HeldPart::closure`], checks the term it is given and refuses any other (row
+/// PROOF-early-build-input-kinds).
+#[derive(Clone, Debug)]
+pub struct HeldPart(Term);
+
+impl HeldPart {
+    /// 1. Data: a literal.
+    pub fn data(v: Value) -> HeldPart {
+        HeldPart(Term::Lit(v))
+    }
+
+    /// 2. A primitive used as a value.
+    pub fn prim(p: Prim) -> HeldPart {
+        HeldPart(Term::PrimFn(p))
+    }
+
+    /// 3. The variable of the lookup port `p`, which the term's outer `let`s read once, before
+    ///    every held value is made.
+    pub fn port(p: &str) -> HeldPart {
+        HeldPart(Term::Var(port_var(p)))
+    }
+
+    /// 4. The variable ([`cell_var`]) of the held value with key `key`, made before the values
+    ///    that hold it.
+    pub fn held(key: u64) -> HeldPart {
+        HeldPart(Term::Var(cell_var(key)))
+    }
+
+    /// 5. The term of a closure: a lambda, as `raise_node` of a lambda node and `fun_term` give
+    ///    it, or `let x = <lambda> in x`, as `raise_with` of a one-node region gives it.
+    ///    Evaluating either makes a closure and calls nothing. Any other term may run code when
+    ///    it is evaluated, so it is refused: lowering a lambda to another form is a fault of
+    ///    zedc, and the refusal stops the run before the held value is made.
+    pub fn closure(t: Term) -> Result<HeldPart, String> {
+        let lambda = match &t {
+            Term::Lam(..) => true,
+            Term::Let(x, e, b) => {
+                matches!(&**e, Term::Lam(..)) && matches!(&**b, Term::Var(y) if y == x)
+            }
+            _ => false,
+        };
+        if lambda {
+            Ok(HeldPart(t))
+        } else {
+            Err(format!(
+                "zedc made the term of a closure as `{t}`, which is not a lambda. A value that \
+                 holds the closure is made before the code that uses it, so making it from this \
+                 term could run code the program does not run there. This is a fault of zedc, \
+                 not of the program; the run stops here instead."
+            ))
+        }
+    }
+
+    /// The part's term.
+    pub fn into_term(self) -> Term {
+        self.0
+    }
+
+    /// The terms of `parts`, in order.
+    // Complexity tradeoff: a copy into a new vector is O(parts) words; `HeldPart` is one
+    // `Term`, so the standard library's collect of a map over a vector's own iterator reuses
+    // the vector's memory and only moves each part out, O(parts) with no allocation (its
+    // in-place collect, which it does for items of equal size and alignment but does not
+    // promise; without it the cost is the copy, O(parts)). Nothing is refused.
+    pub fn terms(parts: Vec<HeldPart>) -> Vec<Term> {
+        parts.into_iter().map(HeldPart::into_term).collect()
+    }
+}
+
 /// The kernel term for `v`, which is not a closure or a held value; a lookup port is read
 /// once, by a `let` in `lets`.
-fn flat_term(v: &Mv<'_>, lets: &mut Lets) -> Term {
+fn flat_term(v: &Mv<'_>, lets: &mut Lets) -> HeldPart {
     match v {
-        Mv::Data(v, _) => Term::Lit(v.clone()),
-        Mv::Prim(p) => Term::PrimFn(*p),
-        Mv::State => Term::Lit(Value::tuple(Vec::new())),
+        Mv::Data(v, _) => HeldPart::data(v.clone()),
+        Mv::Prim(p) => HeldPart::prim(*p),
+        Mv::State => HeldPart::data(Value::tuple(Vec::new())),
         Mv::Source(p) => {
             if lets.seen.insert(p.clone()) {
                 lets.order.push(p.clone());
             }
-            Term::Var(port_var(p))
+            HeldPart::port(p)
         }
         Mv::Clo(_) | Mv::Fun(_) | Mv::Held(_) => {
             unreachable!("a closure's or held value's term is built on the stack of `term`")

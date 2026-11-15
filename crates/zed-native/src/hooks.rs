@@ -15,7 +15,7 @@ use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
-use zedc::zir::memory::{Mode, cell_var, held_family_term, held_term};
+use zedc::zir::memory::{HeldPart, Mode, cell_var, held_family_term, held_term, port_var};
 
 use zed_rt::{FunObj, Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
@@ -1033,11 +1033,11 @@ fn run(s: &mut Run, q: &Term) -> Result<Value, String> {
 fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, String> {
     // Closures capture closures, and held values hold them, as deep as a program builds them,
     // so the values in progress are on a stack, each with the terms of its parts so far.
-    let mut stack: Vec<(Word, Vec<Term>)> = Vec::new();
+    let mut stack: Vec<(Word, Vec<HeldPart>)> = Vec::new();
     let mut made = term_of(t, s, w, lets, &mut stack)?;
     loop {
         let Some((clo, terms)) = stack.last_mut() else {
-            return Ok(made.expect("an empty stack follows a finished term"));
+            return Ok((made.expect("an empty stack follows a finished term")).into_term());
         };
         terms.extend(made.take());
         let caps = match s.heap.obj(*clo)? {
@@ -1052,13 +1052,17 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                 let q = match s.heap.obj(*clo)? {
                     Some(Obj::Clo { lambda, .. }) => {
                         let ni = &t.nodes[t.lambdas[*lambda].node];
-                        raise_node(ni.node(), ni.number, &t.swapped, terms)?
+                        let caps = HeldPart::terms(std::mem::take(terms));
+                        HeldPart::closure(raise_node(ni.node(), ni.number, &t.swapped, &caps)?)?
                     }
                     // A closure the kernel made: its lambda with its captures bound inside,
                     // as a closure the program made is raised (`raise_node`'s `Caps::Given`).
-                    Some(Obj::Fun(f)) => {
-                        fun_term(&f.params, &f.body, &f.names, std::mem::take(terms))
-                    }
+                    Some(Obj::Fun(f)) => HeldPart::closure(fun_term(
+                        &f.params,
+                        &f.body,
+                        &f.names,
+                        HeldPart::terms(std::mem::take(terms)),
+                    ))?,
                     _ => {
                         let h = s.heap.held(*clo)?.expect("a held value");
                         let (key, parts) = (clo.bits as u64, std::mem::take(terms));
@@ -1067,9 +1071,8 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                             HeldShape::Atom(n, f) => held_term(Some((n, f)), key, parts),
                             HeldShape::Family(f) => held_family_term(f, key, parts),
                         };
-                        let x = cell_var(key);
-                        lets.held.push((x.clone(), made));
-                        Term::Var(x)
+                        lets.held.push((cell_var(key), made));
+                        HeldPart::held(key)
                     }
                 };
                 let (clo, _) = stack.pop().expect("the closure finished");
@@ -1087,17 +1090,17 @@ fn term_of(
     s: &mut Run,
     w: Word,
     lets: &mut Lets,
-    stack: &mut Vec<(Word, Vec<Term>)>,
-) -> Result<Option<Term>, String> {
+    stack: &mut Vec<(Word, Vec<HeldPart>)>,
+) -> Result<Option<HeldPart>, String> {
     Ok(Some(match w.tag {
-        Word::PRIM => Term::PrimFn(t.prims[w.bits as usize]),
-        Word::STATE => Term::Lit(Value::tuple(Vec::new())),
+        Word::PRIM => HeldPart::prim(t.prims[w.bits as usize]),
+        Word::STATE => HeldPart::data(Value::tuple(Vec::new())),
         Word::SOURCE => {
             let p = t.ports[w.bits as usize].clone();
             if lets.seen.insert(p.clone()) {
                 lets.order.push(p.clone());
             }
-            Term::Var(port_var(&p))
+            HeldPart::port(&p)
         }
         Word::CELL if s.heap.holds_function(w)? => match lets.closures.get(&w.bits) {
             Some(q) => q.clone(),
@@ -1106,12 +1109,8 @@ fn term_of(
                 return Ok(None);
             }
         },
-        _ => Term::Lit(s.heap.value(w)?),
+        _ => HeldPart::data(s.heap.value(w)?),
     }))
-}
-
-fn port_var(p: &str) -> Arc<str> {
-    format!("\0port {p}").into()
 }
 
 /// `t` with each held value in `lets` made first, each before the ones that hold it, and each
@@ -1142,7 +1141,7 @@ struct Lets {
     // and generation, so a cell freed and taken again is a new key), and every later use is a
     // copy sharing the body: O(closures + captures). Tradeoff: one map entry per closure for
     // the call. Nothing is refused. Tests `l01_36_cranelift::shared_closures`.
-    closures: HashMap<i64, Term>,
+    closures: HashMap<i64, HeldPart>,
     /// Each held value met, a variable and the term that makes it, in the order finished, so
     /// a value's parts come before it; [`wrap`] binds each once, outside the node's term.
     // Complexity tradeoff: the naive term puts the making of a held value where the node uses
@@ -1156,18 +1155,25 @@ struct Lets {
     // Proof that making a held value early cannot fail, refuse, read a port, run a function or
     // change the result (row PROOF-native-held-early-build; author P246). Each entry is
     // `let \0held k = P(a…) in \0held k` (`held_term`, `held_family_term`), P being `Tuple`,
-    // `Atom` or `Entries`, and each argument `a` one of:
-    //  1. a literal: a data part, or an atom's name and field names, or a display's key;
-    //  2. `PrimFn`, a primitive used as a value;
-    //  3. `\0port p`, bound by `wrap`'s outer lets. `term_of` adds that let whenever a source
-    //     is met, held or not, and the same let was there when held values were made at their
-    //     uses, so making a value early adds no read;
-    //  4. `\0cell j`, an earlier entry: `term` finishes a part before its holder and pushes it
-    //     first, and `wrap` binds earlier entries outside later ones;
-    //  5. a closure's term, a `Term::Lam`: for `Obj::Clo`, `raise_node` of a lambda node
-    //     (lower.rs `Op::Lambda => Term::Lam`, its captures placed inside the body); for
-    //     `Obj::Fun`, `fun_term`, whose application of the captures is inside its lambda.
-    //     Evaluating one makes a closure and calls nothing.
+    // `Atom` or `Entries`, and each argument `a` a literal the builder adds (an atom's name and
+    // field names, a display's key or data entry) or a `HeldPart`, the only type those take
+    // for a part. Its field is private, so a part is one of the five kinds its constructors
+    // make (row PROOF-early-build-input-kinds):
+    //  1. `HeldPart::data`, a literal;
+    //  2. `HeldPart::prim`, `PrimFn`, a primitive used as a value;
+    //  3. `HeldPart::port`, `\0port p`, bound by `wrap`'s outer lets. `term_of` adds that let
+    //     whenever a source is met, held or not, and the same let was there when held values
+    //     were made at their uses, so making a value early adds no read;
+    //  4. `HeldPart::held`, `\0cell j`, an earlier entry: `term` finishes a part before its
+    //     holder and pushes it first, and `wrap` binds earlier entries outside later ones;
+    //  5. `HeldPart::closure`, a closure's term, which it checks is a `Term::Lam` (or `let x =
+    //     <lambda> in x`, the form ZIR's memory machine gives) and refuses otherwise, stopping
+    //     the run before the value is made. Here it is given `raise_node` of a lambda node
+    //     (lower.rs `Op::Lambda => Term::Lam`, its captures placed inside the body) or
+    //     `fun_term` (its application of the captures inside its lambda), so the check passes
+    //     today; a later path that gives it anything else is refused, not run (test
+    //     `hooks::tests::the_term_of_a_closure_a_held_value_holds_is_checked_to_run_no_code`).
+    //     Evaluating a lambda makes a closure and calls nothing.
     // So evaluating the arguments runs no function, reads no port and cannot stop. Then P, in
     // the kernel (eval.rs, the held rules beside `Prim::Tuple`):
     //  - `Tuple` takes any arguments.
@@ -1537,6 +1543,44 @@ mod tests {
     #[test]
     fn a_closure_with_no_closure_below_becomes_a_term() {
         a_chain_of_closures_of_depth_becomes_a_term(1);
+    }
+
+    /// A held value is made before the node that uses it (`Lets::held`), so the term of a
+    /// closure it holds must make a closure and run nothing. Every term `term` builds for a
+    /// closure passes the check, and one that would run code, read a port or read a name of
+    /// another value is refused with the check's message (row PROOF-early-build-input-kinds).
+    #[test]
+    fn the_term_of_a_closure_a_held_value_holds_is_checked_to_run_no_code() {
+        let (mut s, inner) = two_captures();
+        let w = s.run.heap.alloc(Obj::Clo {
+            lambda: inner,
+            caps: vec![Word::int(1), Word::int(2)].into(),
+        });
+        let made = term(&s.t, &mut s.run, w, &mut Lets::default()).unwrap();
+        assert!(matches!(made, Term::Lam(..)));
+        assert!(HeldPart::closure(made.clone()).is_ok());
+        let x: Arc<str> = "x".into();
+        let bound = |e: Term, b: Term| Term::Let(x.clone(), Shared::new(e), Shared::new(b));
+        assert!(HeldPart::closure(bound(made.clone(), var("x"))).is_ok());
+        let call = app(lam(&["y"], var("y")), vec![lit(1i64)]);
+        for runs in [
+            call.clone(),
+            bound(call, var("x")),
+            bound(made.clone(), var("z")),
+            Term::Read("m.stdin".into()),
+            app(made, vec![lit(1i64), lit(2i64)]),
+        ] {
+            let shown = runs.to_string();
+            assert_eq!(
+                HeldPart::closure(runs).err(),
+                Some(format!(
+                    "zedc made the term of a closure as `{shown}`, which is not a lambda. A \
+                     value that holds the closure is made before the code that uses it, so \
+                     making it from this term could run code the program does not run there. \
+                     This is a fault of zedc, not of the program; the run stops here instead."
+                ))
+            );
+        }
     }
 
     /// A run of `(a, b) -> (y) -> if y < 1 { a } else { b(y - 1) }`, and the index of its inner
