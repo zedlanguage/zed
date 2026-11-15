@@ -4,8 +4,11 @@
 //! and `a_merge_of_fewer_than_two_pieces_returns_them`. The `_measurement` tests check no
 //! ratio; they print the work at two sizes for the record.
 //! Sizes are set (2026-11-14) so a piece stays under 20 s, with the 1x case at about 0.3 to 1 s;
-//! where building the inputs takes most of the piece (the unbalanced unions, the unequal
-//! frontiers, the functional keys and the wide questions), the 1x case is 0.05 to 0.15 s.
+//! where building the inputs takes most of the piece (the unequal frontiers and the functional
+//! keys), the 1x case is 0.05 to 0.15 s. The unbalanced unions and the wide questions kept that
+//! size from when their inputs were built in O(n²) (FAIL-r5-bench-battery-time: 48 s of a 49 s
+//! piece); built in O(n) now, each piece takes about 1 s. The 800,000 leaves of the leaf
+//! frontiers are built and warmed in chunks on several threads (`r5_leaf_frontier_fixture`).
 
 use super::*;
 
@@ -130,7 +133,7 @@ fn r5_diamond_unions_scale() {
 
 #[test]
 fn r5_independent_leaf_frontiers_scale() {
-    let inputs = crate::scaling::inputs(100_000, |n| r5_frontier_fixture(n as u32, 1, false));
+    let inputs = crate::scaling::inputs(100_000, |n| r5_leaf_frontier_fixture(n as u32));
     crate::scaling::check_order("wide independent leaf frontier", 100_000, 1, |n| {
         let (sums, defs, reads) = &inputs[&n];
         let def = |n: u32| defs[n as usize].clone();

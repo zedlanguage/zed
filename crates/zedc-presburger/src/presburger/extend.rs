@@ -6822,6 +6822,77 @@ mod tests {
         (sums, defs, ends)
     }
 
+    /// `r5_frontier_fixture(width, 1, false)`, the same definitions `a(j) == s_j + 1` and the
+    /// same summaries, built and warmed in up to 8 chunks of leaves at once, one thread each.
+    /// The benchmark of wide leaf frontiers builds 100,000 and 800,000 leaves before it times
+    /// anything; one thread took 10 to 15 s of the 20 s its piece may take (12 µs a leaf to
+    /// build and warm, 3 times the work timed), and the piece ran over in 3 of 4 runs beside
+    /// other benchmarks (FAIL-r5-bench-battery-time). Each leaf reads only its own symbol and
+    /// variable, so [`Summaries::syms`] of a leaf reads no other definition, and the chunks'
+    /// summaries are disjoint: merged, they are those of one thread. Not proved: this equality is
+    /// checked only at widths 1 to 6 and 20, in
+    /// `the_benchmark_inputs_have_their_answers_at_small_sizes`, not at 800,000; it rests on
+    /// the leaf reading only itself, which the `expect` in each chunk checks. The chunk count
+    /// changes only how many threads build the input, never the input or what is timed.
+    fn r5_leaf_frontier_fixture(width: u32) -> (Summaries, Vec<Formula>, BTreeSet<Atom>) {
+        let step = width.div_ceil(8).max(1);
+        let shards: Vec<(Summaries, Vec<Formula>)> = std::thread::scope(|scope| {
+            let chunks: Vec<_> = (0..width)
+                .step_by(step as usize)
+                .map(|start| {
+                    scope.spawn(move || {
+                        let end = (start + step).min(width);
+                        let defs: Vec<Formula> = (start..end)
+                            .map(|j| {
+                                Formula::And(Shared::new(vec![Formula::Con(Con::eq(
+                                    &Lin::atom(a(j)),
+                                    &Lin::atom(Atom::Sym(format!("s{j}").into()))
+                                        .plus(&Lin::constant(1)),
+                                ))]))
+                            })
+                            .collect();
+                        let def = |n: u32| {
+                            let i = n.checked_sub(start).expect("a leaf reads only itself");
+                            defs[i as usize].clone()
+                        };
+                        let mut sums = Summaries::default();
+                        for f in &defs {
+                            sums.syms(f.clone(), &def);
+                        }
+                        (sums, defs)
+                    })
+                })
+                .collect();
+            (chunks.into_iter())
+                .map(|c| c.join().expect("building a chunk of leaves"))
+                .collect()
+        });
+        let mut sums = Summaries::default();
+        let mut defs = Vec::with_capacity(width as usize);
+        for (shard, part) in shards {
+            // Every field named, so a field added to `Summaries` is merged here or the build
+            // fails. `syms` fills only `syms`, `cone`, `branch_cone` and `cyclic`.
+            let Summaries {
+                images: _,
+                rays: _,
+                by,
+                syms,
+                cone,
+                branch_cone,
+                branch_roots,
+                functional_leaves,
+                cyclic,
+            } = shard;
+            assert!(by.is_empty() && branch_roots.is_empty() && functional_leaves.is_empty());
+            sums.syms.extend(syms);
+            sums.cone.extend(cone);
+            sums.branch_cone.extend(branch_cone);
+            sums.cyclic.extend(cyclic);
+            defs.extend(part);
+        }
+        (sums, defs, (0..width).map(a).collect())
+    }
+
     fn r5_diamond_defs(n: u32) -> Vec<Formula> {
         let mut defs = Vec::new();
         let mut prev = None;
@@ -7010,7 +7081,9 @@ mod tests {
                     &input.plus(&Lin::constant(1)),
                 ))])));
                 if j + 1 == depth {
-                    sum = sum.plus(&Lin::atom(a(n)));
+                    // In place: `sum = sum.plus(..)` copied the sum so far at each leaf, O(n²)
+                    // set-up (FAIL-r5-bench-battery-time).
+                    sum.plus_assign(&Lin::atom(a(n)));
                 }
             }
         }
@@ -7178,7 +7251,9 @@ mod tests {
                 &Lin::atom(a(n + i)),
                 &Lin::atom(Atom::Sym(format!("q{i}").into())),
             ))])));
-            rhs = rhs.plus(&Lin::atom(a(n + i)));
+            // Added in place: `rhs = rhs.plus(..)` copied the sum so far at each term, O(n²)
+            // set-up, 97% of the benchmark's time at 24,000 (FAIL-r5-bench-battery-time).
+            rhs.plus_assign(&Lin::atom(a(n + i)));
         }
         defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
             &Lin::atom(a(2 * n)),
@@ -7940,6 +8015,30 @@ mod tests {
                 Local::Ready(_, _)
             )
         };
+        // The chunked build of the leaf frontier benchmark gives the definitions and reads of
+        // `r5_frontier_fixture(n, 1, false)` and the summaries one thread makes warming its
+        // definitions in order.
+        let chunked_as_one_thread = |n: u32, defs: &[Formula], reads: &BTreeSet<Atom>| {
+            let (par, par_defs, par_reads) = r5_leaf_frontier_fixture(n);
+            assert_eq!(par_defs, defs, "{n}");
+            assert_eq!(&par_reads, reads, "{n}");
+            let mut seq = Summaries::default();
+            let def = |m: u32| par_defs[m as usize].clone();
+            for f in &par_defs {
+                seq.syms(f.clone(), &def);
+            }
+            assert!(
+                par.syms == seq.syms
+                    && par.cone == seq.cone
+                    && par.branch_cone == seq.branch_cone
+                    && par.cyclic == seq.cyclic,
+                "{n}"
+            );
+            assert_eq!(ready(&par, &par_defs, &par_reads), n > 1, "{n}");
+        };
+        // 20 leaves make chunks of 3 and a last of 2.
+        let (_, defs, reads) = r5_frontier_fixture(20, 1, false);
+        chunked_as_one_thread(20, &defs, &reads);
         for n in 1..=6 {
             for (depth, shared) in [(1, false), (4, false), (20, true)] {
                 let (mut sums, defs, reads) = r5_frontier_fixture(n, depth, shared);
@@ -7950,6 +8049,7 @@ mod tests {
             let (sums, defs, reads) = r5_frontier_fixture(n, 1, false);
             // Without the warming above, `local` is ready at once only from two leaves on.
             assert_eq!(ready(&sums, &defs, &reads), n > 1, "{n}");
+            chunked_as_one_thread(n, &defs, &reads);
             let (sums, defs, reads) = r5_unequal_shared_frontier(n);
             assert!(ready(&sums, &defs, &reads), "{n}");
             let (sums, defs, reads) = functional_leaf_key_fixture(n as usize);
