@@ -142,9 +142,9 @@ fn a_mixed_component_is_refused_with_its_own_message() {
             "type A = (#k, C & A) | (B & (_, _), int -> C);",
             // MSG-derive-type-size: a tuple with no part of its own is written in full wherever
             // it stands, as `A` and `C` write it. Before, `B`, which writes `(_, _)` twice,
-            // named it `T1`, declared after the definitions (PRINT-fmt-audit,
-            // PRINT-group-site-defs): `type B = ((int) -> C & T1) | (B & ((int) -> C), B) |
-            // (A & T1,);` and `type T1 = (_, _);`.
+            // named it `Part1`, declared after the definitions (PRINT-fmt-audit,
+            // PRINT-group-site-defs): `type B = ((int) -> C & Part1) | (B & ((int) -> C), B) |
+            // (A & Part1,);` and `type Part1 = (_, _);`.
             "type B = (int -> C & (_, _)) | (B & (int -> C), B) | (A & (_, _),);",
             "type C = (B & (_, _), B) | (int -> A);",
         ]

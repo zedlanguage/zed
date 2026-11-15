@@ -801,7 +801,9 @@ payload-built-by-position
         message: "The type `Utf8String` is not defined.",
         steps: [],
         menu: "",
-        row: None,
+        row: Some(
+            UnknownTypeName,
+        ),
     },
     Diagnostic {
         line: 6,

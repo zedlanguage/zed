@@ -162,6 +162,6 @@ pub(super) fn declaring_shared_parts(n: usize) -> Term {
 fn a_term_with_type_tests_that_write_a_part_twice_declares_each_part() {
     for n in [1, 3] {
         let text = declaring_shared_parts(n).to_string();
-        assert_eq!(text.matches("type T").count(), n, "{text}");
+        assert_eq!(text.matches("type Part").count(), n, "{text}");
     }
 }

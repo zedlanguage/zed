@@ -158,11 +158,11 @@ fn a_literal_at_a_union_of_two_carriers() {
     let text = "f(positional x: int | f64) = x is f64;\ny = f(0.5);\n";
     assert_eq!(value(text, "y"), "true");
     // Two carriers, neither `int`: nothing chooses one. The note that writes `f`'s type names
-    // the part it uses twice, `T1`, defined before the menu of fixes.
+    // the part it uses twice, `Part1`, defined before the menu of fixes.
     for lit in ["1", "-1", "0.5"] {
         let defined = two_carriers(lit, |w| format!("y = f({w});")).replacen(
             "\n  fixes, each checked here:",
-            "\n  T1 stands for a part written more than once:\n    type T1 = f64 | rat;\n  \
+            "\n  Part1 stands for a part written more than once:\n    type Part1 = f64 | rat;\n  \
              fixes, each checked here:",
             1,
         );

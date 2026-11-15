@@ -445,12 +445,12 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
  12 | d' [ v «in» nodes ] = minD ( d [ v ] , ( «for» u «in» preds [ v ] { addD ( d [ u ] , w [ u ] [ v ] ) } ) >< minD «else» #inf ) ;
  13 | «until» d' == d ;
  14 | } ;
-== EXAMPLES.md [16. Generics and interfaces] 1 L5
+== EXAMPLES.md [16. Generics and interfaces] 1 L10
   2 | head ( «positional» xs ) = xs [ 0₍10₎ ] ;
   3 | swap ( p ) { a , b = p ; ( b , a ) }
   4 | «type» Stack ( T ) = [ T ] ;
   5 | push ( s : Stack ( T ) , x : T ) = s ++ [ x ] ;
-  6 | top ( s : Stack ( T ) ) = s . last ;
+  6 | top ( s : Stack ( _ ) ) = s . last ;
 == EXAMPLES.md [16. Generics and interfaces] 2 L10
   2 | «interface» Named { name : Utf8String }
   3 | greet ( «positional» n : Named ) = str["Hi, " ${n . name}] ;

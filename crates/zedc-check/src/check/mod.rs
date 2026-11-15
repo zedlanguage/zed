@@ -1144,7 +1144,7 @@ const DECLARE: &str = "\u{FDD8}";
 
 /// Writes the types of one message, its text, its notes and its menu, in one numbering, in
 /// the order they are printed: each part written more than once gets one definition, named
-/// `T1`, `T2`, … with no name the program binds or the message writes ([`fresh_name`]), and
+/// `Part1`, `Part2`, … with no name the program binds or the message writes ([`fresh_name`]), and
 /// the definitions stand after the sentence on lines of their own (module `defs` of the
 /// kernel), before the notes. A repair note whose code names one says, where it
 /// wrote [`DECLARE`], to declare them at the top level; elsewhere [`DECLARE`] is dropped. A

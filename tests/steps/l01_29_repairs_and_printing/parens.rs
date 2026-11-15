@@ -915,7 +915,7 @@ fn a_group_message_opening_with_a_partial_arrow_is_written() {
     );
 }
 
-/// A tuple key written by a name needs no parentheses: `T1 -> (T1,)`, not `(T1) -> (T1,)`.
+/// A tuple key written by a name needs no parentheses: `Part1 -> (Part1,)`, not `(Part1) -> (Part1,)`.
 /// The printer used to put the pair a tuple key needs, `((A, B)) -> V`, around the reference
 /// to the tuple before the naming pass decided whether to name it, so a named key kept the
 /// pair. Found by `printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need`,
@@ -925,7 +925,7 @@ fn a_tuple_key_written_by_a_name_has_no_parentheses() {
     for (text, want) in [
         (
             "(((), rat)) -> (((), rat),)",
-            "type T1 = ((), rat);\nT1 -> (T1,)",
+            "type Part1 = ((), rat);\nPart1 -> (Part1,)",
         ),
         // Negative controls: written in full, the key keeps the pair it needs.
         ("(((), rat)) -> ((), rat)", "(((), rat)) -> ((), rat)"),

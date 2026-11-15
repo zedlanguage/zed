@@ -2,7 +2,9 @@
 //! (DESIGN.md sec:diagnostics, "Types in a message"): a type in a message is read in the
 //! program's scope, so a program that binds `T` never sees a variable printed `T`, which a
 //! reader would take for the program's own `T` (MSG-fresh-name-clash). The names are those of
-//! the whole file, in any scope, so one numbering serves every message of the file.
+//! the whole file, in any scope, so one numbering serves every message of the file. Since
+//! QUESTIONS Q23 only a type variable has a name of the form `[A-Z][0-9]*`, so a program binds
+//! such a name by writing it in a signature ([`holding`]).
 
 use std::sync::Arc;
 
@@ -43,6 +45,14 @@ fn writes_back_beside(defs: &str, text: &str) {
     );
 }
 
+/// A function for each of `names` whose signature writes it twice, so the file binds it as a
+/// type variable.
+fn holding(names: &[&str]) -> String {
+    (names.iter().enumerate())
+        .map(|(i, n)| format!("k{i}(a: {n}, b: {n}) = 0;\n"))
+        .collect()
+}
+
 /// The names the bounds clauses of `text` bind, in the order of the clauses.
 fn bound_names(text: &str) -> Vec<Arc<str>> {
     let t = parse_type(text).unwrap_or_else(|why| panic!("{why}"));
@@ -52,9 +62,9 @@ fn bound_names(text: &str) -> Vec<Arc<str>> {
 
 #[test]
 fn a_program_that_binds_t_and_u_sees_its_variable_named_v() {
-    // The finding: with `T` and `U` bound to numbers, the message printed `(T) -> T for T in
-    // …`, and a reader of `T` here could not tell the variable from the program's `T`.
-    let defs = "T = 1;\nU = 2;\n";
+    // The finding: with `T` and `U` bound (to numbers, before Q23), the message printed `(T) -> T for
+    // T in …`, and a reader of `T` here could not tell the variable from the program's `T`.
+    let defs = &holding(&["T", "U"]);
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
     assert_eq!(shown, "V -> V for V in int | f32 | f64 | rat");
     assert_eq!(bound_names(&shown), ["V".into()] as [Arc<str>; 1]);
@@ -67,8 +77,10 @@ fn a_program_that_binds_t_and_u_sees_its_variable_named_v() {
 
 #[test]
 fn every_derivation_step_of_the_message_uses_the_same_free_name() {
-    let out =
-        rejected("T = 1;\nU = 2;\ninc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n");
+    let out = rejected(&format!(
+        "{}inc = x -> x + 1;\nboxed = #box(inc);\nsame = boxed == boxed;\n",
+        holding(&["T", "U"])
+    ));
     assert!(
         out.contains("`inc` is V -> V for V in int | f32 | f64 | rat here"),
         "{out}"
@@ -87,7 +99,7 @@ fn every_derivation_step_of_the_message_uses_the_same_free_name() {
 #[test]
 fn the_names_after_w_are_skipped_too() {
     // `T`, `U`, `V`, `W` and `T5` are the program's; the next free name is `T6`.
-    let defs = "T = 1;\nU = 2;\nV = 3;\nW = 4;\nT5 = 5;\n";
+    let defs = &holding(&["T", "U", "V", "W", "T5"]);
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
     assert_eq!(shown, "T6 -> T6 for T6 in int | f32 | f64 | rat");
     writes_back_beside(defs, &shown);
@@ -97,22 +109,25 @@ fn the_names_after_w_are_skipped_too() {
 fn only_the_names_a_variable_could_take_are_skipped() {
     // Two variables: `U` is the program's, so they are `T` and `V`.
     let pair = "pair(positional x, positional y) = (x * 2, y * 2);\nsame = pair == pair;\n";
-    let shown = compared(&format!("U = 1;\n{pair}"));
+    let one = holding(&["U"]);
+    let shown = compared(&format!("{one}{pair}"));
     assert_eq!(
         shown,
         "(T, V) -> (T, V) for T in int | f32 | f64 | rat, V in int | f32 | f64 | rat"
     );
-    writes_back_beside("U = 1;\n", &shown);
-    // `T1` to `T4` and `T05` are no variable's name, so binding them changes nothing; a
-    // parameter `T` of another function is a name of the file too, and is skipped.
-    let defs = "T1 = 1;\nT2 = 2;\nT4 = 4;\nT05 = 5;\n";
+    writes_back_beside(&one, &shown);
+    // `T1` to `T4` and `T05` are no printed variable's name, so binding them changes nothing;
+    // a variable `T` of another function's body is a name of the file too, and is skipped.
+    let defs = &holding(&["T1", "T2", "T4", "T05"]);
     let shown = compared(&format!("{defs}{pair}"));
     assert_eq!(
         shown,
         "(T, U) -> (T, U) for T in int | f32 | f64 | rat, U in int | f32 | f64 | rat"
     );
     writes_back_beside(defs, &shown);
-    let shown = compared(&format!("g(positional T) = T;\n{pair}"));
+    let shown = compared(&format!(
+        "g(positional x) = {{ h = (y: T, z: T) -> y; h(x, x) }};\n{pair}"
+    ));
     assert_eq!(
         shown,
         "(U, V) -> (U, V) for U in int | f32 | f64 | rat, V in int | f32 | f64 | rat"
@@ -164,12 +179,13 @@ fn the_printer_renames_an_inner_signature_apart_from_the_program_names() {
     );
 }
 
-/// A program binding `T`, `U`, `V`, `W` and `T5` to `T(n + 4)`, with `n` generic functions and
-/// one comparison of the first: each function's variable is named `T(n + 5)`.
+/// A program binding `T`, `U`, `V`, `W` and `T5` to `T(n + 4)` as type variables, each in a
+/// signature of its own, with `n` generic functions and one comparison of the first: each
+/// function's variable is named `T(n + 5)`.
 pub(super) fn crowded(n: usize) -> String {
-    let mut src = String::from("T = 0;\nU = 0;\nV = 0;\nW = 0;\n");
+    let mut src = holding(&["T", "U", "V", "W"]);
     for k in 5..n + 5 {
-        src += &format!("T{k} = {k};\n");
+        src += &format!("t{k}(a: T{k}, b: T{k}) = 0;\n");
     }
     for i in 0..n {
         src += &format!("g{i} = x -> x + {i};\n");
@@ -207,11 +223,12 @@ fn defining(defs: &str) -> String {
 #[test]
 fn a_definition_skips_the_program_names_by_the_same_rule() {
     // The definitions (MSG-type-defs-layout) pick their names with the same function as the
-    // variables, so the names the program binds are skipped there too.
+    // variables, so the names the program binds are skipped there too. A type variable `T1`
+    // is no definition's name, so it changes nothing.
     for (defs, name) in [
-        ("", "T1"),
-        ("T1 = 1;\nT2 = 2;\n", "T3"),
-        ("T = 1;\nT2 = 2;\n", "T1"),
+        ("", "Part1"),
+        ("Part1 = 1;\nPart2 = 2;\n", "Part3"),
+        ("Part2 = 2;\nk(a: T1, b: T1) = 0;\n", "Part1"),
     ] {
         let out = rejected(&defining(defs));
         assert!(

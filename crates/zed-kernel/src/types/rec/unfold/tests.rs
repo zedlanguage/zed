@@ -120,20 +120,20 @@ fn a_nest_of_parts_prints_as_it_did_before_names_were_shared() {
         (
             4,
             "(#q40, #q40 | #w((((#q42, (#q43 -> q4R) ->? #q43)) ->? #q42) | #q41))",
-            "type T1 = #q43 -> T6;\ntype T2 = T1 ->? #q43;\ntype T3 = (#q42, T2);\n\
-             type T4 = (T3 ->? #q42) | #q41;\ntype T5 = #q40 | #w(T4);\n\
-             type T6 = (#q40, T5);\nT6",
+            "type Part1 = #q43 -> Part6;\ntype Part2 = Part1 ->? #q43;\ntype Part3 = (#q42, Part2);\n\
+             type Part4 = (Part3 ->? #q42) | #q41;\ntype Part5 = #q40 | #w(Part4);\n\
+             type Part6 = (#q40, Part5);\nPart6",
         ),
         (
             6,
-            "type T1 = T9 | #q65;\ntype T2 = #q64 | #w(T1);\ntype T3 = (#q64, T2);\n\
-             type T4 = #q63 -> T3;\ntype T5 = T4 ->? #q63;\ntype T6 = (#q62, T5);\n\
-             type T7 = (T6 ->? #q62) | #q61;\ntype T8 = #q60 | #w(T7);\n\
-             type T9 = (#q60, T8);\nT9",
-            "type T1 = T9 | #q65;\ntype T2 = #q64 | #w(T1);\ntype T3 = (#q64, T2);\n\
-             type T4 = #q63 -> T3;\ntype T5 = T4 ->? #q63;\ntype T6 = (#q62, T5);\n\
-             type T7 = (T6 ->? #q62) | #q61;\ntype T8 = #q60 | #w(T7);\n\
-             type T9 = (#q60, T8);\nT9",
+            "type Part1 = Part9 | #q65;\ntype Part2 = #q64 | #w(Part1);\ntype Part3 = (#q64, Part2);\n\
+             type Part4 = #q63 -> Part3;\ntype Part5 = Part4 ->? #q63;\ntype Part6 = (#q62, Part5);\n\
+             type Part7 = (Part6 ->? #q62) | #q61;\ntype Part8 = #q60 | #w(Part7);\n\
+             type Part9 = (#q60, Part8);\nPart9",
+            "type Part1 = Part9 | #q65;\ntype Part2 = #q64 | #w(Part1);\ntype Part3 = (#q64, Part2);\n\
+             type Part4 = #q63 -> Part3;\ntype Part5 = Part4 ->? #q63;\ntype Part6 = (#q62, Part5);\n\
+             type Part7 = (Part6 ->? #q62) | #q61;\ntype Part8 = #q60 | #w(Part7);\n\
+             type Part9 = (#q60, Part8);\nPart9",
         ),
     ];
     for (k, expected_by_name, expected_plain) in expected {

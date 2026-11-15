@@ -410,12 +410,12 @@ fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
             zed_tests::not_yet("an indexed definition") + " [a[i] = i;]",
         ),
         (
-            "struct P { a: int }",
-            zed_tests::not_yet("a struct declaration") + " [struct P { a: int }]",
+            "struct Point { a: int }",
+            zed_tests::not_yet("a struct declaration") + " [struct Point { a: int }]",
         ),
         (
-            "type T = int;",
-            zed_tests::not_yet("a type declaration") + " [type T = int;]",
+            "type Tint = int;",
+            zed_tests::not_yet("a type declaration") + " [type Tint = int;]",
         ),
         (
             "local x = 1;",

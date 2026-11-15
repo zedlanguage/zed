@@ -374,16 +374,16 @@ fn nested_body() -> Expr {
 ///
 /// - `L(int | #x)` was `L((| int #x))`
 /// - `L(int ->? int)` was `L((->? int int))`
-/// - `(T1, T1)` with `type T1 = int | #x;` was `(tuple (| int #x) (| int #x))`
-/// - `#c(int, _) & #c(T1, L(T1))` with the same `T1` was
+/// - `(Part1, Part1)` with `type Part1 = int | #x;` was `(tuple (| int #x) (| int #x))`
+/// - `#c(int, _) & #c(Part1, L(Part1))` with the same `Part1` was
 ///   `(#c (& (tuple (| int #x) L((| int #x))) (tuple int _)))`
 /// - `#w() | #w(int, P(int))` was `(#w (| (tuple) (tuple int P(int))))`
 /// - `#c(int, _) & #c(int, M(int))` was `(#c (& (tuple int M(int)) (tuple int _)))`
 /// - `Q(int | #x)` was `Q((| int #x))`
-/// - `#c(int, _) & #c(T1, (T1, Q(T1)))` with the same `T1` was
+/// - `#c(int, _) & #c(Part1, (Part1, Q(Part1)))` with the same `Part1` was
 ///   `(#c (& (tuple (| int #x) ((| int #x), Q((| int #x)))) (tuple int _)))`
 ///
-/// `int | (int ->? int)`, `M(int)` and `P(int)` were written so before too. `T1` is declared on
+/// `int | (int ->? int)`, `M(int)` and `P(int)` were written so before too. `Part1` is declared on
 /// a line of its own under the sentence, after a line that says what it stands for, as in a
 /// checker's message (DESIGN sec:diagnostics). Each text parses as
 /// a type and each definition as one; that the printer's text reads back as the same type is
@@ -397,7 +397,7 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
     let p = instance("P", seq_body(), Type::int());
     let q = instance("Q", nested_body(), int_or_x.clone());
     let c_int = Type::atom_with("c", &Type::tuple(vec![Type::int(), Type::top()]));
-    let t1 = "type T1 = int | #x;";
+    let t1 = "type Part1 = int | #x;";
     // Each type, the definitions declared under the sentence, its text, and whether the text stands
     // unparenthesized on the left of `\`.
     for (t, defs, text, primary) in [
@@ -411,10 +411,10 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
         (
             Type::tuple(vec![int_or_x.clone(), int_or_x.clone()]),
             t1,
-            "(T1, T1)",
+            "(Part1, Part1)",
             true,
         ),
-        (&l & &c_int, t1, "#c(int, _) & #c(T1, L(T1))", false),
+        (&l & &c_int, t1, "#c(int, _) & #c(Part1, L(Part1))", false),
         (&Type::int() | &partial, "", "int | (int ->? int)", false),
         (
             Type::atom_with("w", &p),
@@ -426,7 +426,12 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
         (&m & &c_int, "", "#c(int, _) & #c(int, M(int))", false),
         (p, "", "P(int)", true),
         (q.clone(), "", "Q(int | #x)", true),
-        (&q & &c_int, t1, "#c(int, _) & #c(T1, (T1, Q(T1)))", false),
+        (
+            &q & &c_int,
+            t1,
+            "#c(int, _) & #c(Part1, (Part1, Q(Part1)))",
+            false,
+        ),
     ] {
         let message = refusal(
             &["N"],
@@ -443,7 +448,7 @@ fn a_refused_group_writes_the_types_it_holds_as_a_program_would() {
         );
         let under = match defs.is_empty() {
             true => String::new(),
-            false => format!("\n  T1 stands for a part written more than once:\n    {defs}"),
+            false => format!("\n  Part1 stands for a part written more than once:\n    {defs}"),
         };
         assert!(
             message.ends_with(&under)

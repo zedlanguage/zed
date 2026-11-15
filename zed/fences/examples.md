@@ -715,14 +715,14 @@ dist = loop {
 };
 ```
 
-<!-- EXAMPLES.md:750 layer L5: ring L3, word L5 (last), label none; section [16. Generics and interfaces] 1 -->
+<!-- EXAMPLES.md:750 layer L10: ring L10, word L5 (last), label none; section [16. Generics and interfaces] 1 -->
 ```zed
 // [d4] sec:type_resolution
 head(positional xs) = xs[0];                        // (int[0..<n] -> T) -> T | #notFound
 swap(p) { a, b = p; (b, a) }
 type Stack(T) = [T];
 push(s: Stack(T), x: T) = s ++ [x];
-top(s: Stack(T)) = s.last;               // T | #none
+top(s: Stack(_)) = s.last;               // T | #none
 ```
 
 <!-- EXAMPLES.md:759 layer L10: ring L10, word L1 (Utf8String), label none; section [16. Generics and interfaces] 2 -->

@@ -195,7 +195,7 @@ fn the_reason_writes_the_domain_in_type_syntax() {
 /// Item PRINT-group-site-defs: a part the domain writes twice is named, and declared after
 /// the sentence as a checker's message declares it, a line each, as a user writes it. The
 /// declarations and the type in the sentence read back as the domain. Before, the definition
-/// stood inside the backticks: `type T1 = int | #x; (T1, T1)`.
+/// stood inside the backticks: `type Part1 = int | #x; (Part1, Part1)`.
 #[test]
 fn a_part_the_domain_writes_twice_is_declared_after_the_reason() {
     use zedc::check::read::parse_type;
@@ -209,9 +209,9 @@ fn a_part_the_domain_writes_twice_is_declared_after_the_reason() {
     };
     assert_eq!(
         why,
-        "the domain `(T1, T1)` is not known to be finite\n  \
-         T1 stands for a part written more than once:\n    \
-         type T1 = int | #x;"
+        "the domain `(Part1, Part1)` is not known to be finite\n  \
+         Part1 stands for a part written more than once:\n    \
+         type Part1 = int | #x;"
     );
     let root = why.split('`').nth(1).expect("the domain in backticks");
     let decls: Vec<&str> = (why.lines().skip(2)).map(str::trim).collect();

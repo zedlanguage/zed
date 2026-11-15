@@ -2,9 +2,9 @@
 # later use, and reads of a tuple.
 
 template: ($0 + $1) * $2
-int | #a, int | #b, int => type T1 = #a | #b; int | #a | #b | #errs(T1 ->? T1) -- sec:failure "they merge into #errs carrying the set of distinct failures (of type #errs(E ->? E))"
+int | #a, int | #b, int => type Part1 = #a | #b; int | #a | #b | #errs(Part1 ->? Part1) -- sec:failure "they merge into #errs carrying the set of distinct failures (of type #errs(E ->? E))"
 int | #a, int | #a, int => int | #a -- sec:failure "a singleton unwraps"
-int | #a, int, int | #b => type T1 = #a | #b; int | #a | #b | #errs(T1 ->? T1) -- sec:failure "they merge into #errs"
+int | #a, int, int | #b => type Part1 = #a | #b; int | #a | #b | #errs(Part1 ->? Part1) -- sec:failure "they merge into #errs"
 int | #none, =1, =2 => int | #none -- sec:failure "an atom an operand carries in passes through"
 f64 | #none, =1.5, f64 => f64 | #none -- sec:failure "passes through"; L1.26b "a literal takes that carrier"
 =2, =3, rat => rat -- L1.26b "a literal takes that carrier, exactly or not at all"

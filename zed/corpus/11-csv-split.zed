@@ -6,14 +6,14 @@
 // so the pass runs in parallel. A wrong composition order misplaces a field
 // boundary. States: 0 outside quotes, 1 inside quotes, 2 a quote seen inside
 // quotes (the end of the quoted part, or the first half of "").
-struct T3 { a: int, b: int, c: int }               // next state from state 0, 1, 2
+struct Next3 { a: int, b: int, c: int }             // next state from state 0, 1, 2
 
 pick(positional t, positional s) = if s == 0 { t.a } else if s == 1 { t.b } else { t.c };
 compose(positional f, positional g) =               // f, then g
-  T3(a: pick(g, f.a), b: pick(g, f.b), c: pick(g, f.c));
+  Next3(a: pick(g, f.a), b: pick(g, f.b), c: pick(g, f.c));
 
-quote = T3(a: 1, b: 2, c: 1);
-other = T3(a: 0, b: 1, c: 0);
+quote = Next3(a: 1, b: 2, c: 1);
+other = Next3(a: 0, b: 1, c: 0);
 
 fields(positional l) = {
   after = l.map(c -> if c == "\"" { quote } else { other }).scan(compose).map(t -> t.a);

@@ -231,7 +231,7 @@ fn a_key_that_may_be_present_keeps_its_atom() {
     );
     assert_eq!(
         sig("f(m: #a .. (#a | #b) -> int, k: #a | #b) = m[k];", "f"),
-        "type T1 = #a | #b;\n(m: #a .. T1 -> int, k: T1) -> int | #notFound"
+        "type Part1 = #a | #b;\n(m: #a .. Part1 -> int, k: Part1) -> int | #notFound"
     );
 }
 

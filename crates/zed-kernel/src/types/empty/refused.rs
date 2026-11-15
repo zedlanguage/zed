@@ -163,7 +163,7 @@ impl Type {
     ///
     /// Each definition is written as a user declares it, `type name = body;`. Outside a
     /// checker's message, a part written more than once among them is declared once more
-    /// after them, as `type T1 = …;`, and named by `T1` where it stands; inside one, the
+    /// after them, as `type Part1 = …;`, and named by `Part1` where it stands; inside one, the
     /// message around the site lays it out (module `defs`). Time linear in the texts.
     pub fn refusal_site(&self, cause: Refusal) -> Option<GroupSite> {
         let local = defs::local();

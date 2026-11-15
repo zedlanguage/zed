@@ -441,6 +441,38 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:39",
         Some("name `#sigint`, `#sigterm` or `#sighup` in its place, or remove it"),
     ),
+    (
+        Row::TypeVariableOnce,
+        "main() = 0;\n",
+        "f(c: int) = 0;\n",
+        "f(c: T) = 0;\n",
+        "2:6",
+        Some("`c`"),
+    ),
+    (
+        Row::UnknownTypeName,
+        "main() = 0;\n",
+        "f(c: String) = 0;\n",
+        "f(c: Strng) = 0;\n",
+        "2:6",
+        Some("`String`"),
+    ),
+    (
+        Row::TypeVariableFormDeclared,
+        "main() = 0;\n",
+        "r = 1;\n",
+        "R = 1;\n",
+        "2:1",
+        Some("`r = 1;`"),
+    ),
+    (
+        Row::StructFieldTypeVariable,
+        "main() = 0;\n",
+        "struct Box { a: int }\n",
+        "struct Box { a: T }\n",
+        "2:17",
+        Some("write the field's type in full"),
+    ),
 ];
 
 /// Rows whose accepted program holds a form zedc does not compile yet (a boundary `with`, step
@@ -461,6 +493,8 @@ const LATER: &[Row] = &[
     Row::CarryWord,
     Row::SignalsReadWithoutHandles,
     Row::SignalDeclarationCannotHold,
+    // A struct declaration is not compiled yet: the accepted program is rejected as not yet.
+    Row::StructFieldTypeVariable,
 ];
 
 /// The `.rs` files under `dir`, in no order.

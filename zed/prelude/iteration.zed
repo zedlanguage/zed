@@ -37,14 +37,14 @@ dependencyGraph(positional reads) =
 // #component(head: h, body: [element]). A depth-first number is 0 (unvisited),
 // a positive int (on the stack), or #done, which is above every int.
 
-struct W { dfn: [Any], num: int, stack: [int] }
-struct V { w: W, head: Any, isLoop: bool, out: [Any] }
+struct Walk { dfn: [Any], num: int, stack: [int] }
+struct WalkState { w: Walk, head: Any, isLoop: bool, out: [Any] }
 
 dfnLe(positional a, positional b) = b == #done || (a != #done && a <= b);
 
 wto(positional succ, positional by) = {
   run = loop v {
-    initial st = V(w: W(dfn: succ.map(x -> 0), num: 0, stack: []), head: 0, isLoop: false, out: []);
+    initial st = WalkState(w: Walk(dfn: succ.map(x -> 0), num: 0, stack: []), head: 0, isLoop: false, out: []);
     st' = if st.w.dfn[by[v]] == 0 { visit(succ, by[v], st.w, st.out) } else { st };
     while v < succ::len;
   };
@@ -55,17 +55,17 @@ wto(positional succ, positional by) = {
 // the paper prepends). The result's head is the least number v reaches.
 visit(positional succ, positional v, positional w, positional out) = {
   n = w.num + 1;
-  w1 = W(dfn: put(w.dfn, v, n), num: n, stack: w.stack ++ [v]);
-  s = successors(succ, v, 0, V(w: w1, head: n, isLoop: false, out: out));
+  w1 = Walk(dfn: put(w.dfn, v, n), num: n, stack: w.stack ++ [v]);
+  s = successors(succ, v, 0, WalkState(w: w1, head: n, isLoop: false, out: out));
   if s.head != s.w.dfn[v] { s }
   else {
-    w2 = W(dfn: put(s.w.dfn, v, #done), num: s.w.num, stack: s.w.stack);
+    w2 = Walk(dfn: put(s.w.dfn, v, #done), num: s.w.num, stack: s.w.stack);
     if s.isLoop {
       w3 = unwind(w2, v);
       c = component(succ, v, w3);
-      V(w: c.w, head: s.head, isLoop: s.isLoop, out: s.out ++ c.out)
+      WalkState(w: c.w, head: s.head, isLoop: s.isLoop, out: s.out ++ c.out)
     } else {
-      V(w: W(dfn: w2.dfn, num: w2.num, stack: w2.stack.take(w2.stack::len - 1)),
+      WalkState(w: Walk(dfn: w2.dfn, num: w2.num, stack: w2.stack.take(w2.stack::len - 1)),
         head: s.head, isLoop: s.isLoop, out: s.out ++ [#vertex(v)])
     }
   }
@@ -75,31 +75,31 @@ successors(positional succ, positional v, positional i, positional s) =
   if i >= succ[v]::len { s }
   else {
     x = succ[v][i];
-    r = if s.w.dfn[x] == 0 { visit(succ, x, s.w, s.out) } else { V(w: s.w, head: s.w.dfn[x], isLoop: false, out: s.out) };
+    r = if s.w.dfn[x] == 0 { visit(succ, x, s.w, s.out) } else { WalkState(w: s.w, head: s.w.dfn[x], isLoop: false, out: s.out) };
     reached = r.head;
     better = dfnLe(reached, s.head);
     successors(succ, v, i + 1,
-      V(w: r.w, head: if better { reached } else { s.head }, isLoop: s.isLoop || better, out: r.out))
+      WalkState(w: r.w, head: if better { reached } else { s.head }, isLoop: s.isLoop || better, out: r.out))
   };
 
 // Pops the stack down to v, resetting every vertex above it to unvisited.
 unwind(positional w, positional v) = {
   top = w.stack.last else v;
-  rest = W(dfn: w.dfn, num: w.num, stack: w.stack.take(w.stack::len - 1));
-  if top == v { rest } else { unwind(W(dfn: put(rest.dfn, top, 0), num: rest.num, stack: rest.stack), v) }
+  rest = Walk(dfn: w.dfn, num: w.num, stack: w.stack.take(w.stack::len - 1));
+  if top == v { rest } else { unwind(Walk(dfn: put(rest.dfn, top, 0), num: rest.num, stack: rest.stack), v) }
 };
 
 // The component headed by v, whose other vertices were just reset.
 component(positional succ, positional v, positional w) = {
-  body = componentBody(succ, v, 0, V(w: w, head: 0, isLoop: false, out: []));
-  V(w: body.w, head: 0, isLoop: false, out: [#component(head: v, body: body.out.reverse)])
+  body = componentBody(succ, v, 0, WalkState(w: w, head: 0, isLoop: false, out: []));
+  WalkState(w: body.w, head: 0, isLoop: false, out: [#component(head: v, body: body.out.reverse)])
 };
 
 componentBody(positional succ, positional v, positional i, positional s) =
   if i >= succ[v]::len { s }
   else {
     x = succ[v][i];
-    next = if s.w.dfn[x] == 0 { r = visit(succ, x, s.w, s.out); V(w: r.w, head: 0, isLoop: false, out: r.out) } else { s };
+    next = if s.w.dfn[x] == 0 { r = visit(succ, x, s.w, s.out); WalkState(w: r.w, head: 0, isLoop: false, out: r.out) } else { s };
     componentBody(succ, v, i + 1, next)
   };
 

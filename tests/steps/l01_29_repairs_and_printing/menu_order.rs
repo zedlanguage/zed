@@ -1,6 +1,6 @@
 //! The parts of a message with a menu of fixes stand in DESIGN.md's order (sec:diagnostics,
 //! sec:domains): the first sentence, the definitions of the names a type is written with
-//! ("T1 stands for ..."), the numbered steps of the derivation, then the menu. Each example in
+//! ("Part1 stands for ..."), the numbered steps of the derivation, then the menu. Each example in
 //! DESIGN.md with a menu is compiled where zedc can produce it, and its message is compared
 //! with DESIGN's: the first sentence word for word, and the order of the parts.
 //!
@@ -27,7 +27,7 @@ use super::rejected;
 enum Part {
     /// The first sentence, on the first line.
     First,
-    /// The definitions of the names a printed type is written with: `  T1 stands for ...`.
+    /// The definitions of the names a printed type is written with: `  Part1 stands for ...`.
     Definitions,
     /// A numbered step of the derivation: `  1. ...` in DESIGN.md, `  [1] ...` in zedc.
     Step,
@@ -42,7 +42,7 @@ fn parts(text: &str) -> Vec<Part> {
     for line in text.lines().skip(1) {
         let part = if line.starts_with("  fixes, each checked here:") {
             Part::Menu
-        } else if line.starts_with("  T") && line.contains(" stand") && line.ends_with(':') {
+        } else if line.starts_with("  Part") && line.contains(" stand") && line.ends_with(':') {
             Part::Definitions
         } else if is_step(line) {
             Part::Step
@@ -263,7 +263,7 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
 
 #[test]
 fn a_message_with_definitions_steps_and_a_menu_writes_them_in_that_order() {
-    // The definitions of `T1` come before the steps, and the menu after them.
+    // The definitions of `Part1` come before the steps, and the menu after them.
     let out = rejected(&program("f(positional x: f64 | rat) = x;\ny = f(1);"));
     assert_eq!(
         parts(&out),
@@ -275,7 +275,7 @@ fn a_message_with_definitions_steps_and_a_menu_writes_them_in_that_order() {
 #[test]
 fn the_parts_of_a_message_are_read_as_written() {
     // DESIGN's step form and zedc's, and a message with no menu.
-    let design = "error: a\n  T1 stands for b:\n    type T1 = int;\n  1. c (1:1)\n       x\n  \
+    let design = "error: a\n  Part1 stands for b:\n    type Part1 = int;\n  1. c (1:1)\n       x\n  \
                   fixes, each checked here:\n    y    z\n";
     assert_eq!(
         parts(design),

@@ -133,9 +133,9 @@ fn nested_lambdas_name_their_variables_as_before() {
     // The names a lambda takes skip those of the lambdas inside it, found from their facts.
     // A variable bounded by carriers is printed by name; of the others, one that stands in two
     // places or more takes the next free name, and one that stands once is `_` (DESIGN.md
-    // sec:diagnostics, PRINT-tyvars, UNDERSCORE-print). The file binds `T` in the third row;
-    // a message skips it and prints `U` (l01_29 `tyvars`), but a signature printed alone has no
-    // program around it, so its names start at `T`.
+    // sec:diagnostics, PRINT-tyvars, UNDERSCORE-print). A signature printed alone has no program
+    // around it, so its names start at `T` (a message skips the names the file binds: l01_29
+    // `tyvars`).
     for (text, want) in [
         (
             "g(positional a) = (b) -> (c) -> (a, b, c);\n",
@@ -146,7 +146,7 @@ fn nested_lambdas_name_their_variables_as_before() {
             "T -> U -> V -> W -> T5 -> T6 -> T7 -> (T, U, V, W, T5, T6, T7)",
         ),
         (
-            "g(positional a) = (T) -> (b) -> (c) -> a;\n",
+            "g(positional a) = (t) -> (b) -> (c) -> a;\n",
             "T -> _ -> _ -> _ -> T",
         ),
         (
@@ -479,7 +479,7 @@ fn rows_shared_on_many_paths_are_replaced_once() {
     // `((0, (0, 1)), ((0, (0, 1)), 2))`.
     assert_eq!(
         info.tops["y"].to_string(),
-        "type T1 = (0, (0, 1));\n(T1, (T1, 2))"
+        "type Part1 = (0, (0, 1));\n(Part1, (Part1, 2))"
     );
     assert_eq!(
         sig(&shared_rows(2, false), "f"),

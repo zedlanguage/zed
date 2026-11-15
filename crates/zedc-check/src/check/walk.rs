@@ -51,11 +51,13 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     // lays out message by message.
     let _defs = defs::collect();
     // The type variables of the signatures and messages are named apart from every name the
-    // unit binds, in any scope: a field is not in scope, so its name is free.
+    // unit binds or writes as a type variable, in any scope: a field is not in scope, so its
+    // name is free.
     let _names = ty::ProgramNames::hold(
         (t.res.binders.iter())
             .filter(|b| b.kind != zedc_resolve::resolve::Kind::Field)
-            .map(|b| b.name.as_str()),
+            .map(|b| b.name.as_str())
+            .chain(t.res.type_vars.iter().map(String::as_str)),
     );
     let mut ck = Ck::new(t, Ck::fixes_checked);
     // A misused output port stops the check, as the builder's rejection of a read of `m.stdout`
@@ -106,7 +108,8 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     let _names = ty::ProgramNames::hold(
         (t.res.binders.iter())
             .filter(|b| b.kind != zedc_resolve::resolve::Kind::Field)
-            .map(|b| b.name.as_str()),
+            .map(|b| b.name.as_str())
+            .chain(t.res.type_vars.iter().map(String::as_str)),
     );
     let (first, rest) = unit.split_first().expect("a unit with a first statement");
     let id = (res.binders.iter())

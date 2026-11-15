@@ -141,13 +141,20 @@ fn the_signature_holds_the_bound() {
 
 #[test]
 fn an_unbounded_name_is_an_error() {
+    // Since QUESTIONS Q23 `U` is a type variable wherever it is written: a clause need not
+    // bound it, but written once it is rejected by the row "Type variable written once".
+    let errors = resolve_errors("f(g: (T) -> U for T in int) = 0;\n");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].starts_with(
+            "The type variable `U` is written once in this signature and nowhere in its body. [U]"
+        ),
+        "{errors:?}"
+    );
+    // A name of another form that names nothing is undefined, and no note offers to bound it.
     assert_eq!(
-        resolve_errors("f(g: (T) -> U for T in int) = 0;\n"),
-        [
-            "The type `U` is not defined. [U]; a type variable is bounded by the clause after its \
-             type, as `for U in int | f64`; this clause does not bound `U` \
-             [(T) -> U for T in int]"
-        ]
+        resolve_errors("f(g: (T) -> u for T in int) = 0;\n"),
+        ["The type `u` is not defined. [u]"]
     );
 }
 

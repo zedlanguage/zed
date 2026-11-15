@@ -197,5 +197,5 @@ fn pncx_random_of_seeds_0_to_19() {
 /// load 25): all eight names, 64 functions.
 #[test]
 fn pncx_renamed_parameters_and_case56_match_under_eight_names() {
-    crate::pncx_probe::renamed_parameters_match(&["A", "a", "b", "w", "x", "y", "z", "zz"]);
+    crate::pncx_probe::renamed_parameters_match(&["Ab", "a", "b", "w", "x", "y", "z", "zz"]);
 }

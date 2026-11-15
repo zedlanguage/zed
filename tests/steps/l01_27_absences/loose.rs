@@ -32,7 +32,7 @@ fn the_pattern_form_handles_the_atom_it_names_and_keeps_the_rest() {
     let other = format!("f({LOOKUP}) = x else #empty -> 0;\n");
     assert_eq!(
         sig(&other, "f"),
-        "type T1 = int | #none | #notFound;\nT1 -> T1"
+        "type Part1 = int | #none | #notFound;\nPart1 -> Part1"
     );
 }
 
@@ -98,7 +98,7 @@ fn the_three_absences_stay_three_facts() {
             "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n",
             "f"
         ),
-        "type T1 = #none | #notFound;\n(int | #notFound, int | #none) -> int | #errs(T1 ->? T1) | #none | #notFound"
+        "type Part1 = #none | #notFound;\n(int | #notFound, int | #none) -> int | #errs(Part1 ->? Part1) | #none | #notFound"
     );
     let run = "f(positional x: int | #notFound, positional y: int | #none) = x + y;\n\
                a = f(#notFound, 1);\nb = f(1, #none);\nc = f(#notFound, #none);\n";
@@ -110,7 +110,7 @@ fn the_three_absences_stay_three_facts() {
 #[test]
 fn a_loose_atom_flows_through_safe_navigation() {
     let t = "f(positional x: int | #notFound) = x?.abs;\n";
-    assert_eq!(sig(t, "f"), "type T1 = int | #notFound;\nT1 -> T1");
+    assert_eq!(sig(t, "f"), "type Part1 = int | #notFound;\nPart1 -> Part1");
     assert!(type_errors(t).is_empty());
     let run = format!("{t}a = f(#notFound);\nb = f(-3);\n");
     assert_eq!(value(&run, "a"), "#notFound");
@@ -123,7 +123,7 @@ fn a_loose_atom_passes_through_a_declared_function_whose_type_omits_it() {
     let t = "g(positional n: int) = n + 1;\n\
              f(positional x: int | #notFound) = g(x);\n";
     assert!(type_errors(t).is_empty());
-    assert_eq!(sig(t, "f"), "type T1 = int | #notFound;\nT1 -> T1");
+    assert_eq!(sig(t, "f"), "type Part1 = int | #notFound;\nPart1 -> Part1");
     let run = format!("{t}a = f(#notFound);\nb = f(2);\n");
     assert_eq!(value(&run, "a"), "#notFound");
     assert_eq!(value(&run, "b"), "3");
@@ -136,7 +136,7 @@ fn a_loose_atom_passes_through_a_generic_function_bounded_to_carriers() {
     let t = "add(positional a, positional b) = a + b;\n\
              h(positional y: int | #nf) = add(y, 1);\n";
     assert!(type_errors(t).is_empty());
-    assert_eq!(sig(t, "h"), "type T1 = int | #nf;\nT1 -> T1");
+    assert_eq!(sig(t, "h"), "type Part1 = int | #nf;\nPart1 -> Part1");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");
     assert_eq!(value(&run, "a"), "#nf");
     assert_eq!(value(&run, "b"), "3");
@@ -189,14 +189,14 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
              r(positional x, positional v) = if (x else 0) == 0 { size(v) } else { x + size(v) };\n";
     assert_eq!(
         sig(t, "r"),
-        "type T1 = int | #_;\n((int, T) -> int) & ((T1, T) -> T1)"
+        "type Part1 = int | #_;\n((int, T) -> int) & ((Part1, T) -> Part1)"
     );
     let bad = format!("{t}h(positional y: int | #nf) = r(1, y);\n");
     assert_eq!(
         type_errors(&bad),
         [
-            "`r` does not take (1, int | #nf): no arrow of `r` takes these types.\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]",
-            "`size` does not take #nf, only int | (int, int).\n  T1 stands for a part written more than once:\n    type T1 = int | #_; [r(1, y)]"
+            "`r` does not take (1, int | #nf): no arrow of `r` takes these types.\n  Part1 stands for a part written more than once:\n    type Part1 = int | #_; [r(1, y)]",
+            "`size` does not take #nf, only int | (int, int).\n  Part1 stands for a part written more than once:\n    type Part1 = int | #_; [r(1, y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int | #nf) = r(y, 2);\na = h(#nf);\nb = h(2);\n");
@@ -246,7 +246,7 @@ fn no_is_repair_is_offered_for_a_function_type() {
 }
 
 /// Item REPAIR-is-shared-type: the `is` repair on a type with a part written twice. Before, the
-/// repair wrote the definition inside the code, `if v is type T1 = int | #x; (T1, T1) { … }`,
+/// repair wrote the definition inside the code, `if v is type Part1 = int | #x; (Part1, Part1) { … }`,
 /// which no parser reads. Now the message writes the definition once, on a line of its own,
 /// and the repair says to write it at the top level; its name is no name of the program.
 /// Applied, the repaired program parses and resolves, and the declaration is the one thing
@@ -263,8 +263,8 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
     };
     assert!(
         out.contains(
-            "`ap` does not take #nf, only (T1, T1).\n  \
-             T1 stands for a part written more than once:\n    type T1 = int | #x;\n"
+            "`ap` does not take #nf, only (Part1, Part1).\n  \
+             Part1 stands for a part written more than once:\n    type Part1 = int | #x;\n"
         ),
         "{out}"
     );
@@ -272,25 +272,27 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
     // (MSG-is-repair-v).
     assert!(
         out.contains(
-            "repair: `if y is (T1, T1) { k(y) } else { … }`, with the declaration above written \
+            "repair: `if y is (Part1, Part1) { k(y) } else { … }`, with the declaration above written \
              first at the top level of the file, before the function\n"
         ),
         "{out}"
     );
     assert!(
-        out.contains("repair: handle the values that are not (T1, T1) with `else` or `match`"),
+        out.contains(
+            "repair: handle the values that are not (Part1, Part1) with `else` or `match`"
+        ),
         "{out}"
     );
     assert!(!out.contains("`v`"), "{out}");
     assert!(
-        out.contains("repair: pass `ap` a value of (T1, T1)\n"),
+        out.contains("repair: pass `ap` a value of (Part1, Part1)\n"),
         "{out}"
     );
-    assert!(!out.contains("type T1 = int | #x; "), "{out}");
+    assert!(!out.contains("type Part1 = int | #x; "), "{out}");
     // The repair applied: it parses and resolves, and only the declaration is refused.
     let fixed = format!(
-        "type T1 = int | #x;\n{t}k(positional a) = (ap(a), a);\n\
-         h(positional y: (int | #x, int | #x) | #nf) = if y is (T1, T1) {{ k(y) }} else {{ 0 }};\n"
+        "type Part1 = int | #x;\n{t}k(positional a) = (ap(a), a);\n\
+         h(positional y: (int | #x, int | #x) | #nf) = if y is (Part1, Part1) {{ k(y) }} else {{ 0 }};\n"
     );
     let refused = match zedc::run::load(fixed.as_bytes()) {
         Ok(_) => panic!("type declarations compile now: check the repair in full:\n{fixed}"),
@@ -310,17 +312,17 @@ fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
         "{:?}",
         type_errors(&inline)
     );
-    // A program that names something `T1` gets the next free name.
-    let taken = format!("T1(positional q) = q;\n{bad}");
+    // A program that names something `Part1` gets the next free name.
+    let taken = format!("Part1(positional q) = q;\n{bad}");
     let out = match zedc::run::load(taken.as_bytes()) {
         Ok(_) => panic!("accepted:\n{taken}"),
         Err(e) => e,
     };
     assert!(
-        out.contains("repair: `if y is (T2, T2) { k(y) } else { … }`"),
+        out.contains("repair: `if y is (Part2, Part2) { k(y) } else { … }`"),
         "{out}"
     );
-    assert!(out.contains("\n    type T2 = int | #x;\n"), "{out}");
+    assert!(out.contains("\n    type Part2 = int | #x;\n"), "{out}");
 }
 
 /// A `main` that loads checks the functions beside it.
@@ -336,14 +338,14 @@ fn the_is_repair_binds_an_argument_expression_to_the_parameters_name() {
     for (h, want, fixed) in [
         (
             "h(positional y: (int | #x, int | #x) | #nf) = k(y else 1);\n",
-            "repair: `a = y else 1; if a is (T1, T1) { k(a) } else { … }`",
+            "repair: `a = y else 1; if a is (Part1, Part1) { k(a) } else { … }`",
             "h(positional y: (int | #x, int | #x) | #nf) = \
              { a = y else 1; if a is (int | #x, int | #x) { k(a) } else { 0 } };\n",
         ),
         // The parameter's name is a name the call writes: the next one is taken.
         (
             "h(positional a: (int | #x, int | #x) | #nf) = k(a else 1);\n",
-            "repair: `a2 = a else 1; if a2 is (T1, T1) { k(a2) } else { … }`",
+            "repair: `a2 = a else 1; if a2 is (Part1, Part1) { k(a2) } else { … }`",
             "h(positional a: (int | #x, int | #x) | #nf) = \
              { a2 = a else 1; if a2 is (int | #x, int | #x) { k(a2) } else { 0 } };\n",
         ),
@@ -373,7 +375,7 @@ fn the_is_repair_binds_an_argument_expression_to_the_parameters_name() {
 /// MSG-is-repair-v: no `is` repair is offered where no value of the argument passes the test,
 /// as no test of an int is offered where no value of it lies in the ints (DESIGN.md
 /// sec:diagnostics). Such a test is accepted, and the call in its branch never runs: with `y`
-/// of `int | #nf`, `if y is (T1, T1) { k(y) } else { 0 }` is always 0.
+/// of `int | #nf`, `if y is (Part1, Part1) { k(y) } else { 0 }` is always 0.
 #[test]
 fn no_is_repair_is_offered_where_no_value_passes_the_test() {
     let t = "ap(positional g: (int | #x, int | #x)) = 0;\nk(positional a) = (ap(a), a);\n";
@@ -384,7 +386,9 @@ fn no_is_repair_is_offered_where_no_value_passes_the_test() {
     };
     assert!(!out.contains(" is ("), "{out}");
     assert!(
-        out.contains("repair: handle the values that are not (T1, T1) with `else` or `match`"),
+        out.contains(
+            "repair: handle the values that are not (Part1, Part1) with `else` or `match`"
+        ),
         "{out}"
     );
     // The control: the test such a repair would write is accepted, with a branch that never

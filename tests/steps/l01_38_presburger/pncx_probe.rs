@@ -178,14 +178,15 @@ fn pncx_t8_enum_suite_pairs_first_formulas() {
     t8_enum_suite(3, 0..6, 0);
 }
 
-/// A condition of one variable, written under four names (capital, small, other letter, two
+/// A condition of one variable, written under four names (capitalized, small, other letter, two
 /// letters), alone and beside an alias 8 below it under each other name: asked in one batch in
 /// both orders and one by one, each gives the same answers, and the aliased forms are all
 /// answered and both sides hold. All eight names (64 functions, 1.9 s at load 25) are in
-/// `bench::pncx_probe`.
+/// `bench::pncx_probe`. The capitalized name is `Ab`: `A` has the form of a type variable
+/// (QUESTIONS Q23).
 #[test]
 fn pncx_renamed_parameters_and_case56_match() {
-    renamed_parameters_match(&["A", "a", "x", "zz"]);
+    renamed_parameters_match(&["Ab", "a", "x", "zz"]);
 }
 
 /// [`pncx_renamed_parameters_and_case56_match`] over the names `names`.

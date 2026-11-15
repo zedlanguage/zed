@@ -274,9 +274,9 @@ fn each_form_prints_as_written_and_reads_back_as_the_same_type() {
 /// set was written with its own definitions, which stood in the middle of the compiler's text
 /// where a set was not first:
 ///
-/// - `type T1 = int | #x;`, then `((int) -> int, (T1, T1))` on the next line, was
-///   `((int) -> int, type T1 = int | #x; (T1, T1))`, which no parser reads
-/// - `type T1 = int | #x;`, then `((int) -> int, T1, T1)`, was `((int) -> int, int | #x, int | #x)`:
+/// - `type Part1 = int | #x;`, then `((int) -> int, (Part1, Part1))` on the next line, was
+///   `((int) -> int, type Part1 = int | #x; (Part1, Part1))`, which no parser reads
+/// - `type Part1 = int | #x;`, then `((int) -> int, Part1, Part1)`, was `((int) -> int, int | #x, int | #x)`:
 ///   a part used in two sets is now a part used twice
 ///
 /// Item PRINT-group-site-defs put each definition on a line of its own, as a user declares it;
@@ -298,27 +298,27 @@ fn the_kernel_sets_in_a_compiler_type_put_their_definitions_first() {
     for (t, text, set) in [
         (
             Ty::set(shared.clone()),
-            "type T1 = int | #x;\n(T1, T1)",
+            "type Part1 = int | #x;\n(Part1, Part1)",
             true,
         ),
         (
             Ty::set(&shared | &Type::atom("y")),
-            "type T1 = int | #x;\n(T1, T1) | #y",
+            "type Part1 = int | #x;\n(Part1, Part1) | #y",
             true,
         ),
         (
             ty("(bool, bool)").union(&Ty::set(shared.clone())),
-            "type T1 = int | #x;\n(T1, T1) | (bool, bool)",
+            "type Part1 = int | #x;\n(Part1, Part1) | (bool, bool)",
             true,
         ),
         (
             Ty::tuple(vec![f.clone(), Ty::set(shared.clone())]),
-            "type T1 = int | #x;\n(int -> int, (T1, T1))",
+            "type Part1 = int | #x;\n(int -> int, (Part1, Part1))",
             false,
         ),
         (
             Ty::tuple(vec![f, Ty::set(int_or_x.clone()), Ty::set(int_or_x)]),
-            "type T1 = int | #x;\n(int -> int, T1, T1)",
+            "type Part1 = int | #x;\n(int -> int, Part1, Part1)",
             false,
         ),
         (
@@ -1784,10 +1784,10 @@ fn a_tuple_type_taken_away_in_part_from_a_wide_tuple_type_leaves_its_values_out(
             "{outside} is in {param}, read as {t}"
         );
         // MSG-derive-type-size: in the last case `((1, 2), 3)` is the type of a step of its own
-        // and a part of the argument, and it holds a part, so the message names it `T1` and
-        // writes the argument `(T1, 4)`; the shorter `(1, 2)` stays in full.
+        // and a part of the argument, and it holds a part, so the message names it `Part1` and
+        // writes the argument `(Part1, 4)`; the shorter `(1, 2)` stays in full.
         let written = if taken == "(((1, 2), 3), 4)" {
-            "(T1, 4)"
+            "(Part1, 4)"
         } else {
             taken
         };

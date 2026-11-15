@@ -1547,7 +1547,7 @@ impl Printer<'_> {
     /// The node whose name each node's text is, or `None`: a node whose text is one reference
     /// to another is that one's, and a `marked` node whose text is not, or whose reference
     /// leads to no name, is its own. A marked node whose text is so another node's name takes
-    /// that name, rather than a definition `type T2 = T1;` of its own; each of its cycles passes
+    /// that name, rather than a definition `type Part2 = Part1;` of its own; each of its cycles passes
     /// through the node it names, which keeps a name. Each node is followed once, with a list
     /// of those whose answer waits on the next: time linear in the nodes.
     fn same_names(&self, marked: &dyn Fn(usize) -> bool) -> Vec<Option<usize>> {
@@ -1887,7 +1887,7 @@ impl Printer<'_> {
                     // A part the message may write in full, a tuple ([`defs::add_soft`]) or a
                     // part named by count ([`defs::add_counted`]), binds as its text does: it is
                     // parenthesized if that text does not bind at `at` and the message writes it
-                    // in full, and not if the message names it, `T1 -> V` (author rule P191).
+                    // in full, and not if the message names it, `Part1 -> V` (author rule P191).
                     Some(name)
                         if (defs::is_soft(name) || defs::is_counted(name))
                             && !at.admits(self.own_class(i)) =>
@@ -2212,7 +2212,7 @@ mod tests {
     /// more parts.
     #[test]
     fn a_cycle_of_parts_written_by_name_is_defined() {
-        // `type T1 = T2 | #a0; type T2 = (#a0, T1);` and `T2` for one part, of either family.
+        // `type Part1 = Part2 | #a0; type Part2 = (#a0, Part1);` and `Part2` for one part, of either family.
         for (k, t) in [1, 2, 3, 5]
             .into_iter()
             .flat_map(|k| [(k, part_cycle(k)), (k, part_ring(k))])
@@ -2268,7 +2268,7 @@ mod tests {
     fn a_shared_part_is_a_reference_while_collecting_and_reads_alone_as_before() {
         let t = Type::tuple(vec![defs_abc(), defs_abc(), defs_abc()]);
         let alone = t.surface().to_string();
-        assert_eq!(alone, "type T1 = #a | #b | #c;\n(T1, T1, T1)");
+        assert_eq!(alone, "type Part1 = #a | #b | #c;\n(Part1, Part1, Part1)");
         let _on = collect();
         let s = t.surface();
         assert!(s.defs.is_empty());
@@ -2293,13 +2293,16 @@ mod tests {
         let mut message = format!("`f` does not take ({x}, {y})");
         let mut note = format!("`f` takes {z}");
         let defs = lift(&mut [&mut message, &mut note], &|_| false);
-        assert_eq!(message, "`f` does not take ((T1, T1), (T1, T1, T1))");
-        assert_eq!(note, "`f` takes (T2, T2)");
+        assert_eq!(
+            message,
+            "`f` does not take ((Part1, Part1), (Part1, Part1, Part1))"
+        );
+        assert_eq!(note, "`f` takes (Part2, Part2)");
         assert_eq!(
             defs,
             [
-                ("T1".to_string(), "#a | #b | #c".to_string()),
-                ("T2".to_string(), "#a | #b".to_string())
+                ("Part1".to_string(), "#a | #b | #c".to_string()),
+                ("Part2".to_string(), "#a | #b".to_string())
             ]
         );
     }
@@ -2338,15 +2341,15 @@ mod tests {
             .iter()
             .map(|t| printed_in_turn(std::slice::from_ref(t))[0].clone())
             .collect();
-        let t1 = || vec![("T1".to_string(), "1 | 2".to_string())];
+        let t1 = || vec![("Part1".to_string(), "1 | 2".to_string())];
         assert_eq!(
             alone,
             [
                 ("(1 | 2, 0)".to_string(), vec![]),
                 ("((1 | 2, 0), 0)".to_string(), vec![]),
                 ("(((1 | 2, 0), 0), 0)".to_string(), vec![]),
-                ("((T1, 0), T1)".to_string(), t1()),
-                ("(((T1, 0), 0), T1)".to_string(), t1()),
+                ("((Part1, 0), Part1)".to_string(), t1()),
+                ("(((Part1, 0), 0), Part1)".to_string(), t1()),
             ]
         );
         assert_eq!(printed_in_turn(&ts), alone);
@@ -2356,10 +2359,10 @@ mod tests {
     fn a_name_the_message_or_the_program_holds_is_skipped() {
         let _on = collect();
         let x = Type::tuple(vec![defs_abc(), defs_abc()]).surface().root;
-        let mut message = format!("`T1` does not take {x}");
-        let defs = lift(&mut [&mut message], &|w| w == "T2");
-        assert_eq!(message, "`T1` does not take (T3, T3)");
-        assert_eq!(defs[0].0, "T3");
+        let mut message = format!("`Part1` does not take {x}");
+        let defs = lift(&mut [&mut message], &|w| w == "Part2");
+        assert_eq!(message, "`Part1` does not take (Part3, Part3)");
+        assert_eq!(defs[0].0, "Part3");
     }
 
     #[test]
@@ -2386,7 +2389,7 @@ mod tests {
             &row(a.clone(), a.clone()) - &(&row(b.clone(), a.clone()) - &row(b.clone(), c.clone()));
         assert_eq!(
             t.surface().to_string(),
-            "type T1 = #a -> int;\ntype T2 = #b ->? bool;\n(T1, T1) \\ ((T2, T1) \\ (T2, int -> Never))"
+            "type Part1 = #a -> int;\ntype Part2 = #b ->? bool;\n(Part1, Part1) \\ ((Part2, Part1) \\ (Part2, int -> Never))"
         );
         // Every morphism but some is no type of L1, and keeps `_`.
         let t = &Type::universe(super::super::Universe::Morphism) - &a;

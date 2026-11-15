@@ -414,7 +414,7 @@ fn a_type_used_twice_is_named_once() {
     let s = round_trip(&shared(3));
     assert_eq!(
         s.to_string(),
-        "type T1 = (0, 0);\ntype T2 = (T1, T1);\n(T2, T2)"
+        "type Part1 = (0, 0);\ntype Part2 = (Part1, Part1);\n(Part2, Part2)"
     );
     for n in [1, 2, 6] {
         round_trip(&shared(n));
@@ -443,10 +443,16 @@ fn list() -> Type {
 fn a_list_type_prints_as_a_definition_that_names_itself() {
     let s = list().surface();
     assert!(s.exact, "{s}");
-    assert_eq!(s.to_string(), "type T1 = #cons(int, T1) | #nil;\nT1");
-    accepts("type T1 = #cons(int, T1) | #nil;", "Unit").unwrap();
+    assert_eq!(
+        s.to_string(),
+        "type Part1 = #cons(int, Part1) | #nil;\nPart1"
+    );
+    accepts("type Part1 = #cons(int, Part1) | #nil;", "Unit").unwrap();
     let s = tuple(&[list(), lit(1)]).surface();
-    assert_eq!(s.to_string(), "type T1 = #cons(int, T1) | #nil;\n(T1, 1)");
+    assert_eq!(
+        s.to_string(),
+        "type Part1 = #cons(int, Part1) | #nil;\n(Part1, 1)"
+    );
 }
 
 #[test]
@@ -559,8 +565,8 @@ fn list_of(arg: Type) -> Type {
 /// its kernel part inside the rest of its text, a recursive type is its group's name for it, a
 /// part used once is written where it stands, and a part used twice or more gets a definition
 /// placed before the whole type, never inside it. Before, the compiler wrote the kernel text
-/// with its definitions in the middle of its own text: in a union, `#y | type T1 = int | #x;
-/// (T1, T1)`, which no parser reads. Each text reads back as its type.
+/// with its definitions in the middle of its own text: in a union, `#y | type Part1 = int | #x;
+/// (Part1, Part1)`, which no parser reads. Each text reads back as its type.
 #[test]
 fn a_type_written_by_name_puts_its_definitions_first() {
     let int_or_x = &Type::int() | &Type::atom("x");
@@ -570,14 +576,14 @@ fn a_type_written_by_name_puts_its_definitions_first() {
         (
             tuple(&[int_or_x.clone(), int_or_x.clone()]),
             TextPlace::Any,
-            "type T1 = int | #x;\n(T1, T1)",
+            "type Part1 = int | #x;\n(Part1, Part1)",
         ),
         // A part shared at each of three levels is defined once per level. Written out at
         // each use, it was `(((0, 0), (0, 0)), ((0, 0), (0, 0)))`: 2^k leaves for k levels.
         (
             shared(3),
             TextPlace::Any,
-            "type T1 = (0, 0);\ntype T2 = (T1, T1);\n(T2, T2)",
+            "type Part1 = (0, 0);\ntype Part2 = (Part1, Part1);\n(Part2, Part2)",
         ),
         (partial.clone(), TextPlace::Any, "int ->? int"),
         (partial.clone(), TextPlace::Union, "(int ->? int)"),
@@ -618,7 +624,7 @@ fn a_type_written_by_name_puts_its_definitions_first() {
         (list_of(inner.clone()), "L(L(int | (int ->? int)))"),
         (
             tuple(&[inner.clone(), inner]),
-            "type T1 = L(int | (int ->? int));\n(T1, T1)",
+            "type Part1 = L(int | (int ->? int));\n(Part1, Part1)",
         ),
     ] {
         let s = t.surface_by_name(TextPlace::Any);
@@ -641,11 +647,11 @@ fn types_written_together_by_name_share_their_definitions() {
     assert_eq!(
         s.defs,
         [
-            ("T1".to_string(), "int | #x".to_string()),
-            ("T2".to_string(), "(T1, 1)".to_string())
+            ("Part1".to_string(), "int | #x".to_string()),
+            ("Part2".to_string(), "(Part1, 1)".to_string())
         ]
     );
-    assert_eq!(s.roots, ["T2", "T1", "T2"]);
+    assert_eq!(s.roots, ["Part2", "Part1", "Part2"]);
     // A part used once in all of them is written where it stands.
     let s = Type::surfaces_by_name(&[
         (int_or_x, TextPlace::Union),

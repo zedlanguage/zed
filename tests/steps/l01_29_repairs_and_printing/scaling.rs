@@ -106,9 +106,9 @@ pub(super) fn shared_parts(n: usize) -> String {
 /// line (step MSG-type-defs-layout).
 pub(super) fn a_message_with_definitions(src: &str, n: usize) {
     let out = rejected(src);
-    let last = format!("    type T{n} = #a{m} | #b{m};\n", m = n - 1);
+    let last = format!("    type Part{n} = #a{m} | #b{m};\n", m = n - 1);
     assert!(out.contains(&last), "{out}");
-    assert_eq!(out.matches("    type T").count(), n);
+    assert_eq!(out.matches("    type Part").count(), n);
 }
 
 #[test]

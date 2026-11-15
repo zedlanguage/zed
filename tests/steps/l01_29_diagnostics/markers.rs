@@ -6,7 +6,7 @@
 
 use super::rejected;
 
-/// `ap` takes a pair of two `int | #x`, so its messages define `T1`; `h` passes it `arg`.
+/// `ap` takes a pair of two `int | #x`, so its messages define `Part1`; `h` passes it `arg`.
 fn passing(arg: &str) -> String {
     format!("ap(positional g: (int | #x, int | #x)) = 0;\nh() = ap({arg});\nmain() = 0;\n")
 }
@@ -39,10 +39,10 @@ fn a_string_with_the_marks_is_written_escaped_beside_the_definitions() {
             );
             assert_eq!(
                 lines.next(),
-                Some("  T1 stands for a part written more than once:")
+                Some("  Part1 stands for a part written more than once:")
             );
-            assert_eq!(lines.next(), Some("    type T1 = int | #x;"));
-            assert!(out.contains("`ap` takes ((T1, T1)) -> 0"), "{out}");
+            assert_eq!(lines.next(), Some("    type Part1 = int | #x;"));
+            assert!(out.contains("`ap` takes ((Part1, Part1)) -> 0"), "{out}");
             // Only the source lines quoted under a step hold the character as written.
             for line in out.lines().filter(|l| !l.contains(" | ")) {
                 assert!(!line.contains(c), "{line:?} in {out}");

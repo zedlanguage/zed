@@ -885,15 +885,15 @@ fn a_call_of_literal_values_beside_a_generic_operand_is_an_int_today() {
 #[test]
 fn a_call_of_literal_values_at_a_union_of_carriers_is_rejected_whole() {
     // Item TESTS-lbo-probe-cases: the full message of the `f64 | rat` case above. Its last
-    // part names `T1`, which the message never uses, for a type written once; a printer fix
+    // part names `Part1`, which the message never uses, for a type written once; a printer fix
     // changes this pin.
     let src = "g(positional c: bool) = if c { 2 } else { 1 };\nh(positional z: f64 | rat) = z;\n\
                f(positional c: bool) = h(g(c));\n";
     assert_eq!(
         type_errors(src),
         vec![
-            "`h` does not take (1 | 2): no arrow of `h` takes these types. Try `h(rat(g(c)))` instead.\n  T1 stands for a part written more than once:\n    \
-             type T1 = f64 | rat; [h(g(c))]"
+            "`h` does not take (1 | 2): no arrow of `h` takes these types. Try `h(rat(g(c)))` instead.\n  Part1 stands for a part written more than once:\n    \
+             type Part1 = f64 | rat; [h(g(c))]"
                 .to_string()
         ]
     );

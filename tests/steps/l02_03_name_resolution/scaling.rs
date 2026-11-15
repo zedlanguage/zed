@@ -163,6 +163,52 @@ pub(super) fn nested_fors(k: usize) -> Vec<(String, String)> {
     vec![("main.zed".into(), text)]
 }
 
+/// One unit of `k` functions, each writing its own type variable `T{i}` in its signature and
+/// again in a lambda of its body, which looks the variable up through the lambda's table
+/// (plan row TYPEVAR-names): each use is counted in `O(1)`.
+pub(super) fn type_variables(k: usize) -> Vec<(String, String)> {
+    let text: String = (0..k)
+        .map(|i| format!("g{i}(x: T{i}, y: T{i}) = (z: T{i}) -> x;\n"))
+        .collect();
+    vec![("main.zed".into(), text)]
+}
+
+/// One unit of `k` structs `Config{i}`, `k` functions each writing the misspelling `Confg`, and
+/// `k` bindings `R{i}` named like type variables (plan row TYPEVAR-names): `2k` errors, the
+/// nearest type found once for the one misspelling while the types in scope are unchanged.
+pub(super) fn type_name_errors(k: usize) -> Vec<(String, String)> {
+    let mut text: String = (0..k)
+        .map(|i| format!("struct Config{i} {{ a: int }}\n"))
+        .collect();
+    for i in 0..k {
+        text.push_str(&format!("f{i}(c: Confg) = 0;\nR{i} = {i};\n"));
+    }
+    vec![("main.zed".into(), text)]
+}
+
+/// The type-name packages at small sizes: the variables load with no mistake, and the errors
+/// are one per misspelled use and one per binding named like a type variable.
+#[test]
+fn the_type_name_packages_have_their_mistakes_at_small_sizes() {
+    for k in [1, 2, 9] {
+        assert_eq!(
+            loaded(&memory(type_variables(k))),
+            Vec::<String>::new(),
+            "{k}"
+        );
+        let m = loaded(&memory(type_name_errors(k)));
+        let unknown = m
+            .iter()
+            .filter(|e| e.contains("The type `Confg` is not defined."))
+            .count();
+        let formed = m
+            .iter()
+            .filter(|e| e.contains("has the form of a type variable"))
+            .count();
+        assert_eq!((unknown, formed, m.len()), (k, k, 2 * k), "{m:#?}");
+    }
+}
+
 /// Each package that loads with no mistake but the forms of later steps, at small sizes.
 #[test]
 fn each_package_that_loads_has_no_mistake_at_small_sizes() {

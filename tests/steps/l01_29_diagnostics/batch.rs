@@ -121,10 +121,10 @@ fn batch_and_single_file_checking_agree() {
         Some(
             "2:7: Nothing chooses one carrier of `f64 | rat` for the literal `1`. Try `r = \
              f(1r)` instead.\n  \
-             T1 stands for a part written more than once:\n    \
-             type T1 = f64 | rat;\n  \
+             Part1 stands for a part written more than once:\n    \
+             type Part1 = f64 | rat;\n  \
              [1] 1:1: `f` is declared here with no type written for its result; the type the \
-             checker found for `f` is `T1 -> T1`\n      \
+             checker found for `f` is `Part1 -> Part1`\n      \
              1 | f(positional x: f64 | rat) = x;\n        \
              | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  \
              fixes, each checked here:\n    \

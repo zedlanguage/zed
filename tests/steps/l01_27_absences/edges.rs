@@ -115,7 +115,7 @@ fn a_default_that_may_fail_or_is_an_atom_puts_its_own_atoms_in_the_type() {
     let t = format!("f({TWO}) = x else y;\n");
     assert_eq!(
         sig(&t, "f"),
-        "type T1 = int | #none;\n(int | #notFound, T1) -> T1"
+        "type Part1 = int | #none;\n(int | #notFound, Part1) -> Part1"
     );
     values(
         &t,
@@ -195,7 +195,7 @@ fn failures_of_two_arguments_of_a_call_merge_as_those_of_two_operands_do() {
     assert!(type_errors(&t).is_empty(), "{:?}", type_errors(&t));
     assert_eq!(
         sig(&t, "f"),
-        "type T1 = #none | #notFound;\n(int | #notFound, int | #none) -> int | #errs(T1 ->? T1) | #none | #notFound"
+        "type Part1 = #none | #notFound;\n(int | #notFound, int | #none) -> int | #errs(Part1 ->? Part1) | #none | #notFound"
     );
     values(
         &t,
@@ -221,7 +221,10 @@ fn failures_of_two_arguments_of_a_call_merge_as_those_of_two_operands_do() {
 #[test]
 fn a_unary_operator_passes_its_one_operands_failures_unmerged() {
     let t = format!("f({LOOKUP}) = -x;\n");
-    assert_eq!(sig(&t, "f"), "type T1 = int | #none | #notFound;\nT1 -> T1");
+    assert_eq!(
+        sig(&t, "f"),
+        "type Part1 = int | #none | #notFound;\nPart1 -> Part1"
+    );
     values(
         &t,
         &[

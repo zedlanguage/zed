@@ -1,10 +1,11 @@
 //! The names a printed type makes up: its type variables, `T`, `U`, `V`, `W`, `T5`, …, and the
-//! definitions a message lifts out of it, `T1`, `T2`, … ([`crate::types::defs`]). Every place that
-//! makes up such a name picks it with [`fresh_name`], so all of them follow one rule: a made-up
-//! name is the next of its sequence that the program does not bind ([`ProgramNames`]) and that
-//! the caller's `taken` does not hold, such as a name the message already writes. The two
-//! sequences share the names from `T5` on, so a message that writes a variable `T5` defines
-//! its parts as `T1` to `T4`, `T6`, …: the definitions skip the words of the message.
+//! definitions a message lifts out of it, `Part1`, `Part2`, … ([`crate::types::defs`]; DESIGN.md
+//! sec:diagnostics, "Types in a message"). Every place that makes up such a name picks it with
+//! [`fresh_name`], so all of them follow one rule: a made-up name is the next of its sequence
+//! that the program does not bind ([`ProgramNames`]) and that the caller's `taken` does not hold,
+//! such as a name the message already writes. The two sequences share no name: a name of the
+//! form `[A-Z][0-9]*` is a type variable and names nothing else (QUESTIONS Q23, plan row
+//! TYPEVAR-names), so a definition printed as `type T1 = …;`, as before, would not read back.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -15,7 +16,7 @@ use std::rc::Rc;
 pub enum Names {
     /// A signature's own type variables: `T`, `U`, `V`, `W`, `T5`, `T6`, ….
     Variables,
-    /// The definitions of a printed type: `T1`, `T2`, ….
+    /// The definitions of a printed type: `Part1`, `Part2`, ….
     Definitions,
 }
 
@@ -23,33 +24,59 @@ pub enum Names {
 const LETTERS: [&str; 4] = ["T", "U", "V", "W"];
 
 impl Names {
-    /// The `n`th name of the sequence, counted from 0: `T` or `T1` first. From `n = 4` on both
-    /// sequences give `T{n + 1}`.
+    /// The `n`th name of the sequence, counted from 0: `T` or `Part1` first. From `n = 4` on the
+    /// variables are `T{n + 1}`.
     pub fn nth<S: From<&'static str> + From<String>>(self, n: usize) -> S {
         match (self, n) {
             (Names::Variables, 0..4) => LETTERS[n].into(),
-            _ => format!("T{}", n + 1).into(),
+            (Names::Variables, _) => format!("T{}", n + 1).into(),
+            (Names::Definitions, _) => format!("Part{}", n + 1).into(),
         }
     }
 }
 
 /// The names a program binds that a sequence could give: for each, the letter's place, or the
-/// number `k - 1` of a name `T{k}` (`k` at least 1, written without a leading zero).
+/// number `k - 1` of a name `T{k}` or `Part{k}` (`k` at least 1, written without a leading zero).
 enum Place {
     Letter(usize),
     Numbered(usize),
+    Part(usize),
+}
+
+/// The number `k - 1` of `rest` written as a `k` of at least 1 with no leading zero.
+fn number(rest: &str) -> Option<usize> {
+    if rest.starts_with('0') || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let k: usize = rest.parse().ok()?;
+    Some(k - 1)
 }
 
 fn place(name: &str) -> Option<Place> {
     if let Some(i) = LETTERS.iter().position(|&l| l == name) {
         return Some(Place::Letter(i));
     }
-    let digits = name.strip_prefix('T')?;
-    if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    if let Some(rest) = name.strip_prefix("Part") {
+        return number(rest).map(Place::Part);
     }
-    let k: usize = digits.parse().ok()?;
-    Some(Place::Numbered(k - 1))
+    number(name.strip_prefix('T')?).map(Place::Numbered)
+}
+
+/// For each `n` of `numbered`, the first `m > n` not in it: a run of bound names is stepped over
+/// at once. Each run is walked once, from its first, so `O(k)` for `k` numbers.
+fn run_ends(numbered: &HashSet<usize>) -> HashMap<usize, usize> {
+    let mut ends = HashMap::with_capacity(numbered.len());
+    for &n in numbered {
+        if n > 0 && numbered.contains(&(n - 1)) {
+            continue;
+        }
+        let mut end = n + 1;
+        while numbered.contains(&end) {
+            end += 1;
+        }
+        ends.extend((n..end).map(|k| (k, end)));
+    }
+    ends
 }
 
 /// The names of [`Names`] a program binds, as [`ProgramNames`] holds them.
@@ -60,6 +87,8 @@ struct Held {
     /// For each `n` such that the program binds `T{n + 1}`, the first `m > n` such that it
     /// binds none of `T{n + 1}` to `T{m}`: a run of bound names is stepped over at once.
     ends: HashMap<usize, usize>,
+    /// The same for the names `Part{n + 1}`.
+    part_ends: HashMap<usize, usize>,
 }
 
 thread_local! {
@@ -80,27 +109,20 @@ impl ProgramNames {
     /// for `k` names.
     pub fn hold<'n>(names: impl IntoIterator<Item = &'n str>) -> ProgramNames {
         let mut held = Held::default();
-        let mut numbered = HashSet::new();
+        let (mut numbered, mut parts) = (HashSet::new(), HashSet::new());
         for p in names.into_iter().filter_map(place) {
             match p {
                 Place::Letter(i) => held.letters[i] = true,
                 Place::Numbered(n) => {
                     numbered.insert(n);
                 }
+                Place::Part(n) => {
+                    parts.insert(n);
+                }
             }
         }
-        // Each run of consecutive numbers is walked once, from its first.
-        held.ends.reserve(numbered.len());
-        for &n in &numbered {
-            if n > 0 && numbered.contains(&(n - 1)) {
-                continue;
-            }
-            let mut end = n + 1;
-            while numbered.contains(&end) {
-                end += 1;
-            }
-            held.ends.extend((n..end).map(|k| (k, end)));
-        }
+        held.ends = run_ends(&numbered);
+        held.part_ends = run_ends(&parts);
         ProgramNames(HELD.replace(Rc::new(held)))
     }
 }
@@ -122,17 +144,17 @@ where
 {
     HELD.with_borrow(|held| {
         loop {
-            match (names, *n) {
+            let ends = match (names, *n) {
                 (Names::Variables, 0..4) if held.letters[*n] => {
                     *n += 1;
                     continue;
                 }
-                (Names::Variables, 0..4) => {}
-                _ => {
-                    if let Some(&end) = held.ends.get(n) {
-                        *n = end;
-                    }
-                }
+                (Names::Variables, 0..4) => None,
+                (Names::Variables, _) => Some(&held.ends),
+                (Names::Definitions, _) => Some(&held.part_ends),
+            };
+            if let Some(&end) = ends.and_then(|e| e.get(n)) {
+                *n = end;
             }
             let name: S = names.nth(*n);
             *n += 1;
@@ -158,34 +180,40 @@ mod tests {
             picks(Names::Variables, 6, |_| false),
             ["T", "U", "V", "W", "T5", "T6"]
         );
-        assert_eq!(picks(Names::Definitions, 3, |_| false), ["T1", "T2", "T3"]);
+        assert_eq!(
+            picks(Names::Definitions, 3, |_| false),
+            ["Part1", "Part2", "Part3"]
+        );
     }
 
     #[test]
-    fn the_program_names_are_skipped_in_both_sequences() {
-        let _names = ProgramNames::hold(["T", "V", "T2", "T3", "T5", "T05", "T0", "x"]);
+    fn the_program_names_are_skipped_in_each_sequence() {
+        let _names = ProgramNames::hold([
+            "T", "V", "T2", "T3", "T5", "T05", "T0", "x", "Part2", "Part3", "Part03", "Part0",
+        ]);
         assert_eq!(
             picks(Names::Variables, 4, |_| false),
             ["U", "W", "T6", "T7"]
         );
+        // `T2` and `T3` are variables: they do not move the definitions.
         assert_eq!(
-            picks(Names::Definitions, 4, |_| false),
-            ["T1", "T4", "T6", "T7"]
+            picks(Names::Definitions, 3, |_| false),
+            ["Part1", "Part4", "Part5"]
         );
-        // A name the caller holds is skipped too: a variable `T6` the message writes.
+        // A name the caller holds is skipped too: a definition `Part4` the message writes.
         assert_eq!(
-            picks(Names::Definitions, 3, |w| w == "T6"),
-            ["T1", "T4", "T7"]
+            picks(Names::Definitions, 3, |w| w == "Part4"),
+            ["Part1", "Part5", "Part6"]
         );
     }
 
     #[test]
     fn a_hold_inside_another_gives_the_outer_names_back() {
-        let _outer = ProgramNames::hold(["T1"]);
+        let _outer = ProgramNames::hold(["Part1"]);
         {
-            let _inner = ProgramNames::hold(["T2"]);
-            assert_eq!(picks(Names::Definitions, 2, |_| false), ["T1", "T3"]);
+            let _inner = ProgramNames::hold(["Part2"]);
+            assert_eq!(picks(Names::Definitions, 2, |_| false), ["Part1", "Part3"]);
         }
-        assert_eq!(picks(Names::Definitions, 2, |_| false), ["T2", "T3"]);
+        assert_eq!(picks(Names::Definitions, 2, |_| false), ["Part2", "Part3"]);
     }
 }

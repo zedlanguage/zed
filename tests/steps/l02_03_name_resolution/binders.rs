@@ -51,7 +51,17 @@ fn a_type_parameter_is_in_scope_in_its_declaration_only() {
         describe(text, &r, "Pair", 1),
         ["type type Pair(T) = (T, T);"]
     );
-    assert_eq!(errors(text), ["The type `T` is not defined. [T]"]);
+    // Outside it, `T` is a type variable of `bad`'s signature, written once there (plan row
+    // TYPEVAR-names); the text read alone gives the repair from the parameter's name.
+    assert_eq!(
+        errors(text),
+        [
+            "The type variable `T` is written once in this signature and nowhere in its body. \
+             [T]; a capital letter alone, or followed only by digits, as `T`, names a type \
+             variable, which stands for one type at each place it is written; written once, `T` \
+             asks nothing that no type at all would ask [T]; repair: `x` [x: T]"
+        ]
+    );
 }
 
 #[test]

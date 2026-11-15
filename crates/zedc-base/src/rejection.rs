@@ -150,9 +150,11 @@ rows! {
     // gives the same answer.
     EqNoCommonCarrier => "Two values compared by `==` or `!=` whose types share no value",
     UnusedMatchBinder => "Match binder unused in its guard and arm",
-    CapitalizedFreeName => "Capitalized free name used once in a signature and nowhere in the body",
-    UndeclaredNameInField =>
-        "Capitalized name in a `struct` field that is neither a declared type parameter nor a name in scope",
+    TypeVariableOnce => "Type variable",
+    UnknownTypeName => "Capitalized name, not of a type variable's form, that names no type in scope",
+    TypeVariableFormDeclared => "Name of a type variable's form, or of that form followed by `'`, declared as a type, `struct`, interface, field, function, parameter, value or module",
+    StructFieldTypeVariable =>
+        "Type variable in a `struct` field that is not one of the struct's declared type parameters",
     UnusedTypeParameter =>
         "Type parameter that no field of its `struct`, or the body of its `type`, uses",
     StructParameterNamesField => "`struct` type parameter with the name of a field",

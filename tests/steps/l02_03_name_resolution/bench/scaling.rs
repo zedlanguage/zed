@@ -13,7 +13,7 @@ use zedc::unit::{Memory, load, order};
 use crate::scaling::{
     Graph, ambiguous_uses, chain, chain_back, chain_of_cycles, complete, cycles_of_two, dense, fan,
     graph, imports_back, ladder, later_forms, long_cycle, memory, names, nested_fors, own_main,
-    pairs, pairs_of_units, placeholders, ring,
+    pairs, pairs_of_units, placeholders, ring, type_name_errors, type_variables,
 };
 
 /// Checks that loading the package `make(k)` from `main` is linear in `k`, from `k` = `n`.
@@ -171,5 +171,23 @@ fn reads_of_main_files_in_a_unit_with_its_own_main_are_rejected_in_linear_time()
         |k| {
             std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
         },
+    );
+}
+
+#[test]
+fn many_type_variables_resolve_in_linear_time() {
+    linear(
+        "many functions writing type variables",
+        1000,
+        type_variables,
+    );
+}
+
+#[test]
+fn many_misspelled_type_names_resolve_in_linear_time() {
+    linear(
+        "many misspelled type names and type-variable-named bindings",
+        500,
+        type_name_errors,
     );
 }

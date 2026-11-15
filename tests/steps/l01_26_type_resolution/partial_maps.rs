@@ -140,7 +140,7 @@ fn a_key_in_the_permission_alone_may_be_not_found() {
     );
     assert_eq!(
         lookup("int .. (int | String) -> bool", "int | String"),
-        "type T1 = int | String;\n(m: int .. T1 -> bool, k: T1) -> bool | #notFound"
+        "type Part1 = int | String;\n(m: int .. Part1 -> bool, k: Part1) -> bool | #notFound"
     );
     assert_eq!(
         sig("f(m: #a .. (#a | #b) -> int) = m[#b];", "f"),
@@ -197,7 +197,7 @@ fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
     assert_eq!(
         type_errors(&format!("{pass}g = f(m: (k) -> #notFound);")),
         [
-            "the lambda returns #notFound, and `int .. (int | String) -> bool` returns bool: the lambda is passed where a function of type `int .. (int | String) -> bool` is expected, so its result must be bool.\n  T1 stands for a part written more than once:\n    type T1 = int | String; [#notFound]"
+            "the lambda returns #notFound, and `int .. (int | String) -> bool` returns bool: the lambda is passed where a function of type `int .. (int | String) -> bool` is expected, so its result must be bool.\n  Part1 stands for a part written more than once:\n    type Part1 = int | String; [#notFound]"
         ]
     );
 }
@@ -208,22 +208,24 @@ fn a_bounded_map_reads_back_in_every_position() {
     // PRINT-fmt-audit gives `int | String`, used twice in it, a definition placed first. Before,
     // the first was `(m: (int .. int | String -> bool, int)) -> (int .. int | String -> bool,
     // int)`.
-    let t1 = "type T1 = int | String;\n";
+    let t1 = "type Part1 = int | String;\n";
     for (m, shown, signature) in [
         (
             "(int .. (int | String) -> bool, int)",
             "(int .. (int | String) -> bool, int)",
-            format!("{t1}(m: (int .. T1 -> bool, int)) -> (int .. T1 -> bool, int)"),
+            format!("{t1}(m: (int .. Part1 -> bool, int)) -> (int .. Part1 -> bool, int)"),
         ),
         (
             "(int .. (int | String) -> bool) | int",
             "int | (int .. (int | String) -> bool)",
-            format!("{t1}(m: int | (int .. T1 -> bool)) -> int | (int .. T1 -> bool)"),
+            format!("{t1}(m: int | (int .. Part1 -> bool)) -> int | (int .. Part1 -> bool)"),
         ),
         (
             "int .. (int | String) -> (int .. (int | String) -> bool)",
             "int .. (int | String) -> int .. (int | String) -> bool",
-            format!("{t1}(m: int .. T1 -> int .. T1 -> bool) -> int .. T1 -> int .. T1 -> bool"),
+            format!(
+                "{t1}(m: int .. Part1 -> int .. Part1 -> bool) -> int .. Part1 -> int .. Part1 -> bool"
+            ),
         ),
         (
             "(String ->? int, int)",
@@ -280,6 +282,6 @@ fn many_and_deep_bounded_maps_are_looked_up_and_printed() {
     );
     assert_eq!(
         sig(&bounded(2), "g"),
-        "type T1 = int | String;\n(m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
+        "type Part1 = int | String;\n(m: int .. Part1 -> int .. Part1 -> bool, k: int) -> bool"
     );
 }

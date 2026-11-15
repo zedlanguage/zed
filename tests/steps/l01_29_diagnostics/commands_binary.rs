@@ -358,27 +358,27 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_chain_of_names() {
         format!(
             "{}:{}",
             f.display(),
-            r#"4:5: `+` does not take ((T1, 2), 1): no arrow of `+` takes these types.
-  T1 stands for a part written more than once:
-    type T1 = ((0, 0), 1);
-  [1]  4:5: `a2` is (T1, 2) here
+            r#"4:5: `+` does not take ((Part1, 2), 1): no arrow of `+` takes these types.
+  Part1 stands for a part written more than once:
+    type Part1 = ((0, 0), 1);
+  [1]  4:5: `a2` is (Part1, 2) here
        4 | u = a2 + 1;
          |     ^^ [1]
          |     ^^^^^^ [15, 16, 17, 18]
          |          ^ [14]
-  [2]  3:6: `a2` is defined as this expression, (T1, 2)
+  [2]  3:6: `a2` is defined as this expression, (Part1, 2)
        3 | a2 = (a1, 2);
          |      ^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^ [13]
-  [3]  3:6: this expression gives (T1, 2)
-  [4]  3:7: `a1` is T1 here
-  [5]  2:6: `a1` is defined as this expression, T1
+  [3]  3:6: this expression gives (Part1, 2)
+  [4]  3:7: `a1` is Part1 here
+  [5]  2:6: `a1` is defined as this expression, Part1
        2 | a1 = (a0, 1);
          |      ^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^ [12]
-  [6]  2:6: this expression gives T1
+  [6]  2:6: this expression gives Part1
   [7]  2:7: `a0` is (0, 0) here
   [8]  1:6: `a0` is defined as this expression, (0, 0)
        1 | a0 = (0, 0);
@@ -408,27 +408,27 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_doubled_tuple() {
         format!(
             "{}:{}",
             f.display(),
-            r#"4:5: `+` does not take ((T1, T1), 1): no arrow of `+` takes these types.
-  T1 stands for a part written more than once:
-    type T1 = ((1, 1), (1, 1));
-  [1]  4:5: `t2` is (T1, T1) here
+            r#"4:5: `+` does not take ((Part1, Part1), 1): no arrow of `+` takes these types.
+  Part1 stands for a part written more than once:
+    type Part1 = ((1, 1), (1, 1));
+  [1]  4:5: `t2` is (Part1, Part1) here
        4 | u = t2 + 1;
          |     ^^ [1]
          |     ^^^^^^ [15, 16, 17, 18]
          |          ^ [14]
-  [2]  3:6: `t2` is defined as this expression, (T1, T1)
+  [2]  3:6: `t2` is defined as this expression, (Part1, Part1)
        3 | t2 = (t1, t1);
          |      ^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^ [13]
-  [3]  3:6: this expression gives (T1, T1)
-  [4]  3:7: `t1` is T1 here
-  [5]  2:6: `t1` is defined as this expression, T1
+  [3]  3:6: this expression gives (Part1, Part1)
+  [4]  3:7: `t1` is Part1 here
+  [5]  2:6: `t1` is defined as this expression, Part1
        2 | t1 = (t0, t0);
          |      ^^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^^ [12]
-  [6]  2:6: this expression gives T1
+  [6]  2:6: this expression gives Part1
   [7]  2:7: `t0` is (1, 1) here
   [8]  1:6: `t0` is defined as this expression, (1, 1)
        1 | t0 = (1, 1);
@@ -439,7 +439,7 @@ fn zedc_run_prints_the_rejection_of_1_added_to_a_doubled_tuple() {
   [10] 1:7: this literal, 1, is 1
   [11] 1:10: this literal, 1, is 1
   [12] 2:11: `t0` is (1, 1) here
-  [13] 3:11: `t1` is T1 here
+  [13] 3:11: `t1` is Part1 here
   [14] 4:10: this literal, 1, is 1
   [15] 4:5: `+` takes (int, int) -> int
   [16] 4:5: `+` takes (f64, f64) -> f64
@@ -532,10 +532,10 @@ const NO_UNION: &str = "a0 = (1, 0);\na1 = (a0, 2);\na2 = (a1, 2);\na3 = (a2, 2)
 
 #[test]
 fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
-    // The sentence, read first, uses `1 | 2` four times, so it names the union `T1` and every
-    // step after it writes `T1`, `a0`'s steps and `g`'s result too (DESIGN sec:diagnostics,
-    // "Types in a message"); `a0`'s tuple `(T1, 0)`, written in its steps and inside `T3`, is
-    // `T2`. `g`, a function of one positional parameter, prints as `bool -> T1`: `(bool) -> T1`
+    // The sentence, read first, uses `1 | 2` four times, so it names the union `Part1` and every
+    // step after it writes `Part1`, `a0`'s steps and `g`'s result too (DESIGN sec:diagnostics,
+    // "Types in a message"); `a0`'s tuple `(Part1, 0)`, written in its steps and inside `Part3`, is
+    // `Part2`. `g`, a function of one positional parameter, prints as `bool -> Part1`: `(bool) -> Part1`
     // reads the same, `(bool)` a `GroupType` key, and a printed type has parentheses only where
     // the grammar needs them (DESIGN sec:diagnostics, "a function of one positional parameter
     // prints as `int -> bool`").
@@ -545,51 +545,51 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
         format!(
             "{}:{}",
             f.display(),
-            r#"6:5: Cannot compare unequal types: `a3 : (T4, T1)` with the right operand (`1`) in `a3 < 1`.
-  T1, T2, T3 and T4 stand for parts written more than once:
-    type T1 = 1 | 2;
-    type T2 = (T1, 0);
-    type T3 = (T2, T1);
-    type T4 = (T3, T1);
-  [1]  6:5: `a3` is (T4, T1) here
+            r#"6:5: Cannot compare unequal types: `a3 : (Part4, Part1)` with the right operand (`1`) in `a3 < 1`.
+  Part1, Part2, Part3 and Part4 stand for parts written more than once:
+    type Part1 = 1 | 2;
+    type Part2 = (Part1, 0);
+    type Part3 = (Part2, Part1);
+    type Part4 = (Part3, Part1);
+  [1]  6:5: `a3` is (Part4, Part1) here
        6 | u = a3 < 1;
          |     ^^ [1]
          |     ^^^^^^ [19, 20]
-  [2]  5:6: `a3` is defined as this expression, (T4, T1)
+  [2]  5:6: `a3` is defined as this expression, (Part4, Part1)
        5 | a3 = (a2, g(false));
          |      ^^^^^^^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^^^^^^^ [18]
-  [3]  5:6: this expression gives (T4, T1)
-  [4]  5:7: `a2` is T4 here
-  [5]  4:6: `a2` is defined as this expression, T4
+  [3]  5:6: this expression gives (Part4, Part1)
+  [4]  5:7: `a2` is Part4 here
+  [5]  4:6: `a2` is defined as this expression, Part4
        4 | a2 = (a1, g(false));
          |      ^^^^^^^^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^^^^^^^^ [17]
-  [6]  4:6: this expression gives T4
-  [7]  4:7: `a1` is T3 here
-  [8]  3:6: `a1` is defined as this expression, T3
+  [6]  4:6: this expression gives Part4
+  [7]  4:7: `a1` is Part3 here
+  [8]  3:6: `a1` is defined as this expression, Part3
        3 | a1 = (a0, g(false));
          |      ^^^^^^^^^^^^^^ [8, 9]
          |       ^^ [10]
          |           ^^^^^^^^ [16]
-  [9]  3:6: this expression gives T3
-  [10] 3:7: `a0` is T2 here
-  [11] 2:6: `a0` is defined as this expression, T2
+  [9]  3:6: this expression gives Part3
+  [10] 3:7: `a0` is Part2 here
+  [11] 2:6: `a0` is defined as this expression, Part2
        2 | a0 = (g(true), 0);
          |      ^^^^^^^^^^^^ [11, 12]
          |       ^^^^^^^ [13]
          |                ^ [15]
-  [12] 2:6: this expression gives T2
-  [13] 2:7: this call of `g` gives T1
-  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> T1`
+  [12] 2:6: this expression gives Part2
+  [13] 2:7: this call of `g` gives Part1
+  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> Part1`
        1 | g(positional c: bool) = if c { 1 } else { 2 };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [15] 2:16: this literal, 0, is 0
-  [16] 3:11: this call of `g` gives T1
-  [17] 4:11: this call of `g` gives T1
-  [18] 5:11: this call of `g` gives T1
+  [16] 3:11: this call of `g` gives Part1
+  [17] 4:11: this call of `g` gives Part1
+  [18] 5:11: this call of `g` gives Part1
   [19] 6:5: `<` compares a tuple only with a tuple, not `1`
   [20] 6:5: repair: change the type of `a3` or the right operand so that the two compare
 "#
@@ -605,34 +605,34 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_holding_no_union_as_before(
         format!(
             "{}:{}",
             f.display(),
-            r#"5:5: Cannot compare unequal types: `a3 : (T2, 2)` with the right operand (`1`) in `a3 < 1`.
-  T1 and T2 stand for parts written more than once:
-    type T1 = ((1, 0), 2);
-    type T2 = (T1, 2);
-  [1]  5:5: `a3` is (T2, 2) here
+            r#"5:5: Cannot compare unequal types: `a3 : (Part2, 2)` with the right operand (`1`) in `a3 < 1`.
+  Part1 and Part2 stand for parts written more than once:
+    type Part1 = ((1, 0), 2);
+    type Part2 = (Part1, 2);
+  [1]  5:5: `a3` is (Part2, 2) here
        5 | u = a3 < 1;
          |     ^^ [1]
          |     ^^^^^^ [18, 19]
-  [2]  4:6: `a3` is defined as this expression, (T2, 2)
+  [2]  4:6: `a3` is defined as this expression, (Part2, 2)
        4 | a3 = (a2, 2);
          |      ^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^ [17]
-  [3]  4:6: this expression gives (T2, 2)
-  [4]  4:7: `a2` is T2 here
-  [5]  3:6: `a2` is defined as this expression, T2
+  [3]  4:6: this expression gives (Part2, 2)
+  [4]  4:7: `a2` is Part2 here
+  [5]  3:6: `a2` is defined as this expression, Part2
        3 | a2 = (a1, 2);
          |      ^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^ [16]
-  [6]  3:6: this expression gives T2
-  [7]  3:7: `a1` is T1 here
-  [8]  2:6: `a1` is defined as this expression, T1
+  [6]  3:6: this expression gives Part2
+  [7]  3:7: `a1` is Part1 here
+  [8]  2:6: `a1` is defined as this expression, Part1
        2 | a1 = (a0, 2);
          |      ^^^^^^^ [8, 9]
          |       ^^ [10]
          |           ^ [15]
-  [9]  2:6: this expression gives T1
+  [9]  2:6: this expression gives Part1
   [10] 2:7: `a0` is (1, 0) here
   [11] 1:6: `a0` is defined as this expression, (1, 0)
        1 | a0 = (1, 0);

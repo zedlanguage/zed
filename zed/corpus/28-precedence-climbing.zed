@@ -7,7 +7,7 @@
 // tokens and step len flushes the operator stack, so the end test is
 // inclusive; an exclusive test leaves operators unapplied.
 // Input: one expression per line, tokens separated by single spaces.
-struct S { vals: [int], ops: [Utf8String] }
+struct Stacks { vals: [int], ops: [Utf8String] }
 
 wrap(positional x) = x mod 65536;
 
@@ -24,7 +24,7 @@ reduce1(positional s) = {
   b = s.vals.last else 0;
   a = s.vals[s.vals::len - 2] else 0;
   o = s.ops.last else "+";
-  S(vals: s.vals.take(s.vals::len - 2) ++ [apply(o, a, b)], ops: s.ops.take(s.ops::len - 1))
+  Stacks(vals: s.vals.take(s.vals::len - 2) ++ [apply(o, a, b)], ops: s.ops.take(s.ops::len - 1))
 };
 
 pops(positional s, positional o) =
@@ -37,13 +37,13 @@ reduceFor(positional s, positional o) = if pops(s, o) { reduceFor(reduce1(s), o)
 flush(positional s) = if s.ops::len == 0 { s } else { flush(reduce1(s)) };
 
 step(positional s, positional tok) =
-  if isOp(tok) { r = reduceFor(s, tok); S(vals: r.vals, ops: r.ops ++ [tok]) }
-  else { S(vals: s.vals ++ [wrap(int(tok) else 0)], ops: s.ops) };
+  if isOp(tok) { r = reduceFor(s, tok); Stacks(vals: r.vals, ops: r.ops ++ [tok]) }
+  else { Stacks(vals: s.vals ++ [wrap(int(tok) else 0)], ops: s.ops) };
 
 evalLine(positional l) = {
   toks = l.split(" ");
   run = loop t {
-    initial s = S(vals: [], ops: []);
+    initial s = Stacks(vals: [], ops: []);
     s' = if t == toks::len { flush(s) } else { step(s, toks[t] else "") };
     while t <= toks::len;
   };

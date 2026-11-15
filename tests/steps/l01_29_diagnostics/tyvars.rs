@@ -316,16 +316,17 @@ fn every_value_in_a_union_absorbs_the_other_members() {
 
 #[test]
 fn the_names_skip_a_name_the_program_binds() {
-    // The file binds `T`, a value, so in a message the variable that stands twice takes `U`.
-    let src = "T = 5;\nh(positional a, positional b) = (b, b);\n";
+    // The file binds `T`, a type variable of `k`, so in a message the variable that stands
+    // twice takes `U`.
+    let src = "k(x: T, y: T) = 0;\nh(positional a, positional b) = (b, b);\n";
     let shown = declared(&format!("{src}m(positional n: int) = h(n);\n"));
     assert_eq!(shown, "(_, U) -> (U, U)");
     // With no `T` bound, the first name is `T`.
     let shown = declared("h(positional a, positional b) = (b, b);\nm(positional n: int) = h(n);\n");
     assert_eq!(shown, "(_, T) -> (T, T)");
-    // A lambda's parameter named `T` is bound by the file too.
-    let shown = declared("g(positional a) = (T) -> (b) -> (c) -> a;\nm = g + 1;\n");
-    assert_eq!(shown, "U -> _ -> _ -> _ -> U");
+    // A type variable a lambda in a body writes is bound by the file too.
+    let shown = declared("g(positional a) = { h = (y: T, z: T) -> y; h(a, a) };\nm = g + 1;\n");
+    assert_eq!(shown, "U -> U");
     // A signature printed outside a message has no program around it, so its names start at
     // `T` whatever the file binds.
     assert_eq!(sig(src, "h").to_string(), "(_, T) -> (T, T)");

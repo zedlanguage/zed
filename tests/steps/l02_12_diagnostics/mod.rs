@@ -11,6 +11,7 @@
 
 mod bench;
 mod completeness;
+mod type_names;
 
 use std::path::{Path, PathBuf};
 

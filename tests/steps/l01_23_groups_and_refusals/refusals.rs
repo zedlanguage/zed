@@ -342,14 +342,14 @@ fn a_call_whose_check_was_refused_says_why() {
     // Item PRINT-fmt-audit: the argument type is written with a definition for the part it uses
     // three times. Before: `((#a | #b | #c, #a | #b | #c, #a | #b | #c))`, the part at each
     // use. Item MSG-type-defs-layout: the definition stands on a line of its own after the
-    // sentence, which names the part `T1`; before, the sentence read
-    // `` `g` does not take (type T1 = #a | #b | #c; (T1, T1, T1)) ``.
+    // sentence, which names the part `Part1`; before, the sentence read
+    // `` `g` does not take (type Part1 = #a | #b | #c; (Part1, Part1, Part1)) ``.
     // Item TESTS-L1.23-refusal-text: a refused check is no proof that `g` does not take the
     // argument, so the headline says that the checker could not decide it, and the reason, with
     // its repair, stands on the line after it. Before, the one sentence read `` `g` does not
-    // take ((T1, T1, T1)); this is not proved wrong: the checker could not decide whether it
+    // take ((Part1, Part1, Part1)); this is not proved wrong: the checker could not decide whether it
     // fits, because one part of the tuple types involved is decided only by ... ``.
-    let shown = "(T1, T1, T1)";
+    let shown = "(Part1, Part1, Part1)";
     let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
         panic!("accepted")
     };
@@ -374,10 +374,10 @@ fn a_call_whose_check_was_refused_says_why() {
         panic!("accepted")
     };
     assert!(
-        all.contains("\n  T1, T2, T3 and T4 stand for parts written more than once:\n    type T1 = #a | #b | #c;\n"),
+        all.contains("\n  Part1, Part2, Part3 and Part4 stand for parts written more than once:\n    type Part1 = #a | #b | #c;\n"),
         "{all}"
     );
-    assert_eq!(all.matches("type T1").count(), 1, "{all}");
+    assert_eq!(all.matches("type Part1").count(), 1, "{all}");
     assert!(all.contains(&format!("`y` is declared `{shown}`")), "{all}");
 }
 

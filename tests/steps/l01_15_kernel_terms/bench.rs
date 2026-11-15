@@ -110,7 +110,7 @@ fn a_term_declaring_its_shared_parts_scales() {
         1,
         |n| {
             let text = super::scaling::declaring_shared_parts(n).to_string();
-            assert_eq!(text.matches("type T").count(), n);
+            assert_eq!(text.matches("type Part").count(), n);
             std::hint::black_box(text);
         },
     );

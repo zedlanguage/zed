@@ -2536,14 +2536,14 @@ fn a_member_whose_tuple_part_its_body_shares_prints_as_definitions() {
     let r0 = kernel(&sys, "shares").remove(0).expect("admitted");
     assert_eq!(
         prints_as_syntax(&r0, "R0"),
-        "type T1 = T2 | #a | #b;\ntype T2 = (#a | #b, T1) \\ (#b, #a);\nT2"
+        "type Part1 = Part2 | #a | #b;\ntype Part2 = (#a | #b, Part1) \\ (#b, #a);\nPart2"
     );
     // Two such cycles: the shared `#a | #b` is named once, and each part names the other.
     assert_eq!(
         prints_as_syntax(&shared_chain(2, false, "chain-two"), "a chain of 2"),
         concat!(
-            "type T1 = #a | #b;\ntype T2 = T4 | #a | #b;\n",
-            "type T3 = ((T1, T2) \\ (#b, #a)) | #a | #b;\ntype T4 = (T1, T3) \\ (#b, #a);\nT4"
+            "type Part1 = #a | #b;\ntype Part2 = Part4 | #a | #b;\n",
+            "type Part3 = ((Part1, Part2) \\ (#b, #a)) | #a | #b;\ntype Part4 = (Part1, Part3) \\ (#b, #a);\nPart4"
         )
     );
 }
@@ -3203,7 +3203,7 @@ fn named_graphs_of_one_class_keep_their_own_printed_bodies() {
 
 /// Seed 3228 of the X14 family with meets (GSX-unsolved). The operands of a meet print in the
 /// order of their digests, names-aware first (`digests_cmp` in zed-kernel), so its first
-/// member writes `T8 & T6`. The text is the same when copies of the group with the definitions
+/// member writes `Part8 & Part6`. The text is the same when copies of the group with the definitions
 /// reversed, other names, or the arms in another order were built and decided first, and when
 /// the members print last first.
 #[test]
@@ -3248,10 +3248,10 @@ fn a_group_prints_the_same_text_whatever_was_built_before_it() {
     let fresh = printed(false, false);
     assert_eq!(
         fresh[0],
-        "type T1 = (#k, T1); / type T2 = T8 & T6; / type T3 = (#k, T1) & (#k, T3); / \
-         type T4 = (#k, T3) & ((T2, T5) | (#k, T2)); / \
-         type T5 = (#k, T3) & ((T1, T7) | (#k, T4)); / type T6 = (T2, T5) | (#k, T2); / \
-         type T7 = int -> T6; / type T8 = (T1, T7) | (#k, T4); / type T9 = T8 | (int -> T3); / T9"
+        "type Part1 = (#k, Part1); / type Part2 = Part8 & Part6; / type Part3 = (#k, Part1) & (#k, Part3); / \
+         type Part4 = (#k, Part3) & ((Part2, Part5) | (#k, Part2)); / \
+         type Part5 = (#k, Part3) & ((Part1, Part7) | (#k, Part4)); / type Part6 = (Part2, Part5) | (#k, Part2); / \
+         type Part7 = int -> Part6; / type Part8 = (Part1, Part7) | (#k, Part4); / type Part9 = Part8 | (int -> Part3); / Part9"
     );
     assert_eq!(printed(true, false), fresh);
     assert_eq!(printed(false, true), fresh);

@@ -145,8 +145,8 @@ fn a_type_pattern_writes_its_type_in_type_syntax() {
 
 /// Item PRINT-group-site-defs: a part a type test writes twice is declared once, on a line of
 /// its own before the term, as a user declares it, and the term after it uses the name. The
-/// declaration and the term read back as a unit, and the type tested as `(T1, T1)`.
-/// Before, the definition stood inside the pattern: `(is type T1 = int | #x; (T1, T1))`.
+/// declaration and the term read back as a unit, and the type tested as `(Part1, Part1)`.
+/// Before, the definition stood inside the pattern: `(is type Part1 = int | #x; (Part1, Part1))`.
 #[test]
 fn a_part_a_type_test_writes_twice_is_declared_before_the_term() {
     let int_or_x = &Type::int() | &Type::atom("x");
@@ -158,7 +158,7 @@ fn a_part_a_type_test_writes_twice_is_declared_before_the_term() {
             (Pattern::Wild, lit("other")),
         ],
     );
-    let want = "type T1 = int | #x;\nmatch v { is (T1, T1) -> \"pair\", _ -> \"other\" }";
+    let want = "type Part1 = int | #x;\nmatch v { is (Part1, Part1) -> \"pair\", _ -> \"other\" }";
     assert_eq!(written(&t, before_at, &|_| true), want);
     assert_eq!(t.to_string(), want.replace("match v ", "match v@1 "));
     assert_eq!(reads_back(&t, want).same, 1);

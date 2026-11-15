@@ -34,7 +34,7 @@ fn checking_and_printing_many_and_deep_bounded_maps_scales() {
     );
     assert_eq!(
         sig(&bounded(2), "g"),
-        "type T1 = int | String;\n(m: int .. T1 -> int .. T1 -> bool, k: int) -> bool"
+        "type Part1 = int | String;\n(m: int .. Part1 -> int .. Part1 -> bool, k: int) -> bool"
     );
     let units: BTreeMap<usize, Resolved> = [1600, scaling::FACTOR * 1600]
         .into_iter()

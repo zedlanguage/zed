@@ -2,9 +2,9 @@
 //! [`collect`] is on, a printed type writes no definitions of its own. Each part it would
 //! define goes into one table for the thread, merged with an equal one already there, and each
 //! use writes a reference to it. A message's texts are finished by [`lift`], which names the
-//! definitions they reach `T1`, `T2`, … in one numbering, and gives them back to be written once,
+//! definitions they reach `Part1`, `Part2`, … in one numbering, and gives them back to be written once,
 //! outside the sentence ([`under`]); [`plain`] finishes one text alone, each definition
-//! declared on a line of its own before it ([`declare`]), as `type T1 = …;` and then `T1`.
+//! declared on a line of its own before it ([`declare`]), as `type Part1 = …;` and then `Part1`.
 //!
 //! A reference is `\u{FDD5}k\u{FDD6}`, `k` the definition's place in the table: Unicode
 //! noncharacters, which no user text in a message holds. The lexer refuses them outside a
@@ -55,7 +55,7 @@ const COUNT: char = '\u{FDD3}';
 /// As [`COUNT`], where the part written in full is parenthesized, as `(1 | 2)[]`.
 const WRAP: char = '\u{FDD2}';
 /// As [`SOFT`], where the tuple written in full is parenthesized, as the key of
-/// `((A, B)) -> V`; written by a name it has no parentheses, `T1 -> V` (author rule P191).
+/// `((A, B)) -> V`; written by a name it has no parentheses, `Part1 -> V` (author rule P191).
 const SOFT_WRAP: char = '\u{FDDF}';
 /// Every mark that opens a reference.
 const MARKS: [char; 5] = [REF, SOFT, COUNT, WRAP, SOFT_WRAP];
@@ -288,7 +288,7 @@ fn place(body: String, kind: Kind) -> usize {
     TABLE.with_borrow_mut(|t| {
         let t = t.as_mut().expect("collecting");
         // A body that is one reference, as that of a union of one tuple, is the part it
-        // refers to: defining it again would print `type T2 = T1;`.
+        // refers to: defining it again would print `type Part2 = Part1;`.
         let k = match only_reference(&body).or_else(|| t.index.get(&body).copied()) {
             Some(k) => k,
             None => {
@@ -562,12 +562,12 @@ fn first_named(t: &Table, texts: &[&mut String]) -> HashMap<usize, usize> {
     from
 }
 
-/// Names the definitions `texts` reach, directly or through other definitions, `T1`, `T2`, …
+/// Names the definitions `texts` reach, directly or through other definitions, `Part1`, `Part2`, …
 /// and writes each reference to a named one by its name. Gives the definitions, name and body,
 /// each before its uses but where definitions refer to each other in a cycle. Numbers are given
 /// in that order, which is found from the texts alone, so equal texts get equal names. A name is
 /// skipped if the program binds it, `taken` says so or a text holds it as a word, so a
-/// variable `T5` the message writes leaves `T5` to it ([`fresh_name`]). First the unbounded
+/// definition `Part5` the message writes leaves `Part5` to it ([`fresh_name`]). First the unbounded
 /// variables the texts mark are named, skipping every word of the texts ([`name_vars`]). `texts`
 /// with no mark or reference are left as they are, and give no definition.
 ///
@@ -597,7 +597,7 @@ pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(Str
 
 /// As [`lift`], and also whether each text names a definition once lifted. With `headline`,
 /// the first text is a message's sentence, which writes each tuple it writes whole in full,
-/// its parts named as anywhere else: `(T1, T1)`, not a `T2` the reader would have to look up
+/// its parts named as anywhere else: `(Part1, Part1)`, not a `Part2` the reader would have to look up
 /// below (DESIGN sec:diagnostics, "Types in a message"). That adds one body per tuple the
 /// sentence writes. The parts are counted as if the sentence wrote those tuples by reference,
 /// so a part written once inside a tuple that both the sentence and a step write is not
@@ -855,7 +855,7 @@ pub fn holds_reference(text: &str) -> bool {
     text.contains(MARKS)
 }
 
-/// Writes the definition of `name` as a user declares it at the top level, `type T1 = …;`, and
+/// Writes the definition of `name` as a user declares it at the top level, `type Part1 = …;`, and
 /// ends the line: a type printed alone has its definitions on lines of their own before it
 /// (DESIGN sec:diagnostics, "Types in a message").
 pub fn declare(out: &mut impl fmt::Write, name: &str, body: &str) -> fmt::Result {
@@ -863,7 +863,7 @@ pub fn declare(out: &mut impl fmt::Write, name: &str, body: &str) -> fmt::Result
 }
 
 /// The definition of a name, given with its body, as a user declares it at the top level:
-/// `type T1 = …;`.
+/// `type Part1 = …;`.
 pub struct Declaration<'a>(pub &'a str, pub &'a str);
 
 impl fmt::Display for Declaration<'_> {
@@ -941,14 +941,14 @@ mod tests {
         fill(u, format!("({0}, {0})", reference(t)));
         let mut text = format!("{} | {}", reference(outer), reference(t));
         let defs = lift(&mut [&mut text], &|_| false);
-        assert_eq!(text, "T2 | T4");
+        assert_eq!(text, "Part2 | Part4");
         assert_eq!(
             defs,
             [
-                ("T1".to_string(), "#a | #b".to_string()),
-                ("T2".to_string(), "(T1, T1)".to_string()),
-                ("T3".to_string(), "(T4, T4)".to_string()),
-                ("T4".to_string(), "#x(T3) | #y".to_string())
+                ("Part1".to_string(), "#a | #b".to_string()),
+                ("Part2".to_string(), "(Part1, Part1)".to_string()),
+                ("Part3".to_string(), "(Part4, Part4)".to_string()),
+                ("Part4".to_string(), "#x(Part3) | #y".to_string())
             ]
         );
         // An equal body is merged with the one there; a reserved one never is.
@@ -984,24 +984,24 @@ mod tests {
         // tuples with no part, `x7` is named, 2 × 21 > 21 + 9 + 3 × 3; `x5` is not,
         // 2 × 15 ≤ 15 + 9 + 3 × 3; `d0`, 2 × 6, and `a0`, 1 × 6, are not.
         let expected = [
-            "(T1, T1)",
-            "(T2, 5)",
-            "(T2, 6)",
+            "(Part1, Part1)",
+            "(Part2, 5)",
+            "(Part2, 6)",
             "((0, 1, 2, 3, 4), 5)",
             "((0, 1, 2, 3, 4), 6)",
             "(int, int)",
             "(int, int)",
-            "T3",
-            "(T3, 2)",
+            "Part3",
+            "(Part3, 2)",
         ];
         assert_eq!(t, expected);
         let defs: Vec<(&str, &str)> = defs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
         assert_eq!(
             defs,
             [
-                ("T1", "((1, 1), (1, 1))"),
-                ("T2", "(0, 1, 2, 3, 4, 5, 6)"),
-                ("T3", "((0, 0), 1)")
+                ("Part1", "((1, 1), (1, 1))"),
+                ("Part2", "(0, 1, 2, 3, 4, 5, 6)"),
+                ("Part3", "((0, 0), 1)")
             ]
         );
         assert_eq!(
@@ -1013,9 +1013,9 @@ mod tests {
         let mut t = format!("({0}, {0})", soft_reference(d0));
         assert_eq!(
             lift(&mut [&mut t], &|_| false),
-            [("T1".to_string(), "(1, 1)".to_string())]
+            [("Part1".to_string(), "(1, 1)".to_string())]
         );
-        assert_eq!(t, "(T1, T1)");
+        assert_eq!(t, "(Part1, Part1)");
     }
 
     #[test]
@@ -1030,9 +1030,12 @@ mod tests {
             soft_reference(d2),
         );
         let (defs, _) = lift_holding(&mut [&mut s, &mut n], true, &|_| false);
-        assert_eq!(s, "`+` does not take ((T1, T1), 1)");
-        assert_eq!(n, "(T1, T1)");
-        assert_eq!(defs, [("T1".to_string(), "((1, 1), (1, 1))".to_string())]);
+        assert_eq!(s, "`+` does not take ((Part1, Part1), 1)");
+        assert_eq!(n, "(Part1, Part1)");
+        assert_eq!(
+            defs,
+            [("Part1".to_string(), "((1, 1), (1, 1))".to_string())]
+        );
         // A pair written once in `o`, which the sentence and a note both write: the sentence
         // writing `o` whole does not make the pair written twice inside another part.
         let u = add("#a | #b".into());
@@ -1043,9 +1046,9 @@ mod tests {
             soft_reference(o),
         );
         let (defs, _) = lift_holding(&mut [&mut s, &mut n], true, &|_| false);
-        assert_eq!(s, "`g` does not take ((T1, T1), 0)");
-        assert_eq!(n, "((T1, T1), 0)");
-        assert_eq!(defs, [("T1".to_string(), "#a | #b".to_string())]);
+        assert_eq!(s, "`g` does not take ((Part1, Part1), 0)");
+        assert_eq!(n, "((Part1, Part1), 0)");
+        assert_eq!(defs, [("Part1".to_string(), "#a | #b".to_string())]);
     }
 
     #[test]
@@ -1075,12 +1078,12 @@ mod tests {
             [
                 "#a | #b",
                 "(#a | #b)[]",
-                "`f` is `(T1) -> (T1, 0)`",
-                "T1",
-                "T1[]"
+                "`f` is `(Part1) -> (Part1, 0)`",
+                "Part1",
+                "Part1[]"
             ]
         );
-        assert_eq!(defs, [("T1".to_string(), "#a | #b".to_string())]);
+        assert_eq!(defs, [("Part1".to_string(), "#a | #b".to_string())]);
         // Used once by each type, it is never named, though a step writes two such types.
         let mut t: Vec<String> = vec![
             format!("`v : {}` is not `{}`", ty(r.clone()), ty(r.clone())),

@@ -53,59 +53,59 @@ pub(super) fn same(n: usize, m: usize) -> String {
 fn a_tuple_doubled_at_each_level_is_named_once_per_level() {
     assert_eq!(
         rejected(&doubling(6)),
-        r#"8:5: `+` does not take ((T5, T5), 1): no arrow of `+` takes these types.
-  T1, T2, T3, T4 and T5 stand for parts written more than once:
-    type T1 = ((1, 1), (1, 1));
-    type T2 = (T1, T1);
-    type T3 = (T2, T2);
-    type T4 = (T3, T3);
-    type T5 = (T4, T4);
-  [1]  8:5: `t6` is (T5, T5) here
+        r#"8:5: `+` does not take ((Part5, Part5), 1): no arrow of `+` takes these types.
+  Part1, Part2, Part3, Part4 and Part5 stand for parts written more than once:
+    type Part1 = ((1, 1), (1, 1));
+    type Part2 = (Part1, Part1);
+    type Part3 = (Part2, Part2);
+    type Part4 = (Part3, Part3);
+    type Part5 = (Part4, Part4);
+  [1]  8:5: `t6` is (Part5, Part5) here
        8 | u = t6 + 1;
          |     ^^ [1]
          |     ^^^^^^ [31, 32, 33, 34]
          |          ^ [30]
-  [2]  7:6: `t6` is defined as this expression, (T5, T5)
+  [2]  7:6: `t6` is defined as this expression, (Part5, Part5)
        7 | t6 = (t5, t5);
          |      ^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^ [29]
-  [3]  7:6: this expression gives (T5, T5)
-  [4]  7:7: `t5` is T5 here
-  [5]  6:6: `t5` is defined as this expression, T5
+  [3]  7:6: this expression gives (Part5, Part5)
+  [4]  7:7: `t5` is Part5 here
+  [5]  6:6: `t5` is defined as this expression, Part5
        6 | t5 = (t4, t4);
          |      ^^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^^ [28]
-  [6]  6:6: this expression gives T5
-  [7]  6:7: `t4` is T4 here
-  [8]  5:6: `t4` is defined as this expression, T4
+  [6]  6:6: this expression gives Part5
+  [7]  6:7: `t4` is Part4 here
+  [8]  5:6: `t4` is defined as this expression, Part4
        5 | t4 = (t3, t3);
          |      ^^^^^^^^ [8, 9]
          |       ^^ [10]
          |           ^^ [27]
-  [9]  5:6: this expression gives T4
-  [10] 5:7: `t3` is T3 here
-  [11] 4:6: `t3` is defined as this expression, T3
+  [9]  5:6: this expression gives Part4
+  [10] 5:7: `t3` is Part3 here
+  [11] 4:6: `t3` is defined as this expression, Part3
        4 | t3 = (t2, t2);
          |      ^^^^^^^^ [11, 12]
          |       ^^ [13]
          |           ^^ [26]
-  [12] 4:6: this expression gives T3
-  [13] 4:7: `t2` is T2 here
-  [14] 3:6: `t2` is defined as this expression, T2
+  [12] 4:6: this expression gives Part3
+  [13] 4:7: `t2` is Part2 here
+  [14] 3:6: `t2` is defined as this expression, Part2
        3 | t2 = (t1, t1);
          |      ^^^^^^^^ [14, 15]
          |       ^^ [16]
          |           ^^ [25]
-  [15] 3:6: this expression gives T2
-  [16] 3:7: `t1` is T1 here
-  [17] 2:6: `t1` is defined as this expression, T1
+  [15] 3:6: this expression gives Part2
+  [16] 3:7: `t1` is Part1 here
+  [17] 2:6: `t1` is defined as this expression, Part1
        2 | t1 = (t0, t0);
          |      ^^^^^^^^ [17, 18]
          |       ^^ [19]
          |           ^^ [24]
-  [18] 2:6: this expression gives T1
+  [18] 2:6: this expression gives Part1
   [19] 2:7: `t0` is (1, 1) here
   [20] 1:6: `t0` is defined as this expression, (1, 1)
        1 | t0 = (1, 1);
@@ -116,11 +116,11 @@ fn a_tuple_doubled_at_each_level_is_named_once_per_level() {
   [22] 1:7: this literal, 1, is 1
   [23] 1:10: this literal, 1, is 1
   [24] 2:11: `t0` is (1, 1) here
-  [25] 3:11: `t1` is T1 here
-  [26] 4:11: `t2` is T2 here
-  [27] 5:11: `t3` is T3 here
-  [28] 6:11: `t4` is T4 here
-  [29] 7:11: `t5` is T5 here
+  [25] 3:11: `t1` is Part1 here
+  [26] 4:11: `t2` is Part2 here
+  [27] 5:11: `t3` is Part3 here
+  [28] 6:11: `t4` is Part4 here
+  [29] 7:11: `t5` is Part5 here
   [30] 8:10: this literal, 1, is 1
   [31] 8:5: `+` takes (int, int) -> int
   [32] 8:5: `+` takes (f64, f64) -> f64
@@ -134,63 +134,63 @@ fn comparing_two_doubled_tuples_names_each_level_once() {
     assert_eq!(
         rejected(&compared(6)),
         r#"15:5: Cannot compare unequal types: `t6[1][1][1][1][1][1][1] : 1 < s6[1][1][1][1][1][1][1] : true` in `t6 < s6`.
-  T1, T2, T3, T4, T5, T6, T7, T8, T9 and T10 stand for parts written more than once:
-    type T1 = ((1, 1), (1, 1));
-    type T2 = (T1, T1);
-    type T3 = (T2, T2);
-    type T4 = (T3, T3);
-    type T5 = (T4, T4);
-    type T6 = ((1, true), (1, true));
-    type T7 = (T6, T6);
-    type T8 = (T7, T7);
-    type T9 = (T8, T8);
-    type T10 = (T9, T9);
-  [1]  15:5: `t6` is (T5, T5) here
+  Part1, Part2, Part3, Part4, Part5, Part6, Part7, Part8, Part9 and Part10 stand for parts written more than once:
+    type Part1 = ((1, 1), (1, 1));
+    type Part2 = (Part1, Part1);
+    type Part3 = (Part2, Part2);
+    type Part4 = (Part3, Part3);
+    type Part5 = (Part4, Part4);
+    type Part6 = ((1, true), (1, true));
+    type Part7 = (Part6, Part6);
+    type Part8 = (Part7, Part7);
+    type Part9 = (Part8, Part8);
+    type Part10 = (Part9, Part9);
+  [1]  15:5: `t6` is (Part5, Part5) here
        15 | u = t6 < s6;
           |     ^^ [1]
           |     ^^^^^^^ [59, 60, 61, 62, 63, 64, 65, 66, 67, 68]
           |          ^^ [30]
-  [2]  13:6: `t6` is defined as this expression, (T5, T5)
+  [2]  13:6: `t6` is defined as this expression, (Part5, Part5)
        13 | t6 = (t5, t5);
           |      ^^^^^^^^ [2, 3]
           |       ^^ [4]
           |           ^^ [29]
-  [3]  13:6: this expression gives (T5, T5)
-  [4]  13:7: `t5` is T5 here
-  [5]  11:6: `t5` is defined as this expression, T5
+  [3]  13:6: this expression gives (Part5, Part5)
+  [4]  13:7: `t5` is Part5 here
+  [5]  11:6: `t5` is defined as this expression, Part5
        11 | t5 = (t4, t4);
           |      ^^^^^^^^ [5, 6]
           |       ^^ [7]
           |           ^^ [28]
-  [6]  11:6: this expression gives T5
-  [7]  11:7: `t4` is T4 here
-  [8]  9:6: `t4` is defined as this expression, T4
+  [6]  11:6: this expression gives Part5
+  [7]  11:7: `t4` is Part4 here
+  [8]  9:6: `t4` is defined as this expression, Part4
         9 | t4 = (t3, t3);
           |      ^^^^^^^^ [8, 9]
           |       ^^ [10]
           |           ^^ [27]
-  [9]  9:6: this expression gives T4
-  [10] 9:7: `t3` is T3 here
-  [11] 7:6: `t3` is defined as this expression, T3
+  [9]  9:6: this expression gives Part4
+  [10] 9:7: `t3` is Part3 here
+  [11] 7:6: `t3` is defined as this expression, Part3
         7 | t3 = (t2, t2);
           |      ^^^^^^^^ [11, 12]
           |       ^^ [13]
           |           ^^ [26]
-  [12] 7:6: this expression gives T3
-  [13] 7:7: `t2` is T2 here
-  [14] 5:6: `t2` is defined as this expression, T2
+  [12] 7:6: this expression gives Part3
+  [13] 7:7: `t2` is Part2 here
+  [14] 5:6: `t2` is defined as this expression, Part2
         5 | t2 = (t1, t1);
           |      ^^^^^^^^ [14, 15]
           |       ^^ [16]
           |           ^^ [25]
-  [15] 5:6: this expression gives T2
-  [16] 5:7: `t1` is T1 here
-  [17] 3:6: `t1` is defined as this expression, T1
+  [15] 5:6: this expression gives Part2
+  [16] 5:7: `t1` is Part1 here
+  [17] 3:6: `t1` is defined as this expression, Part1
         3 | t1 = (t0, t0);
           |      ^^^^^^^^ [17, 18]
           |       ^^ [19]
           |           ^^ [24]
-  [18] 3:6: this expression gives T1
+  [18] 3:6: this expression gives Part1
   [19] 3:7: `t0` is (1, 1) here
   [20] 1:6: `t0` is defined as this expression, (1, 1)
         1 | t0 = (1, 1);
@@ -201,53 +201,53 @@ fn comparing_two_doubled_tuples_names_each_level_once() {
   [22] 1:7: this literal, 1, is 1
   [23] 1:10: this literal, 1, is 1
   [24] 3:11: `t0` is (1, 1) here
-  [25] 5:11: `t1` is T1 here
-  [26] 7:11: `t2` is T2 here
-  [27] 9:11: `t3` is T3 here
-  [28] 11:11: `t4` is T4 here
-  [29] 13:11: `t5` is T5 here
-  [30] 15:10: `s6` is (T10, T10) here
-  [31] 14:6: `s6` is defined as this expression, (T10, T10)
+  [25] 5:11: `t1` is Part1 here
+  [26] 7:11: `t2` is Part2 here
+  [27] 9:11: `t3` is Part3 here
+  [28] 11:11: `t4` is Part4 here
+  [29] 13:11: `t5` is Part5 here
+  [30] 15:10: `s6` is (Part10, Part10) here
+  [31] 14:6: `s6` is defined as this expression, (Part10, Part10)
        14 | s6 = (s5, s5);
           |      ^^^^^^^^ [31, 32]
           |       ^^ [33]
           |           ^^ [58]
-  [32] 14:6: this expression gives (T10, T10)
-  [33] 14:7: `s5` is T10 here
-  [34] 12:6: `s5` is defined as this expression, T10
+  [32] 14:6: this expression gives (Part10, Part10)
+  [33] 14:7: `s5` is Part10 here
+  [34] 12:6: `s5` is defined as this expression, Part10
        12 | s5 = (s4, s4);
           |      ^^^^^^^^ [34, 35]
           |       ^^ [36]
           |           ^^ [57]
-  [35] 12:6: this expression gives T10
-  [36] 12:7: `s4` is T9 here
-  [37] 10:6: `s4` is defined as this expression, T9
+  [35] 12:6: this expression gives Part10
+  [36] 12:7: `s4` is Part9 here
+  [37] 10:6: `s4` is defined as this expression, Part9
        10 | s4 = (s3, s3);
           |      ^^^^^^^^ [37, 38]
           |       ^^ [39]
           |           ^^ [56]
-  [38] 10:6: this expression gives T9
-  [39] 10:7: `s3` is T8 here
-  [40] 8:6: `s3` is defined as this expression, T8
+  [38] 10:6: this expression gives Part9
+  [39] 10:7: `s3` is Part8 here
+  [40] 8:6: `s3` is defined as this expression, Part8
         8 | s3 = (s2, s2);
           |      ^^^^^^^^ [40, 41]
           |       ^^ [42]
           |           ^^ [55]
-  [41] 8:6: this expression gives T8
-  [42] 8:7: `s2` is T7 here
-  [43] 6:6: `s2` is defined as this expression, T7
+  [41] 8:6: this expression gives Part8
+  [42] 8:7: `s2` is Part7 here
+  [43] 6:6: `s2` is defined as this expression, Part7
         6 | s2 = (s1, s1);
           |      ^^^^^^^^ [43, 44]
           |       ^^ [45]
           |           ^^ [54]
-  [44] 6:6: this expression gives T7
-  [45] 6:7: `s1` is T6 here
-  [46] 4:6: `s1` is defined as this expression, T6
+  [44] 6:6: this expression gives Part7
+  [45] 6:7: `s1` is Part6 here
+  [46] 4:6: `s1` is defined as this expression, Part6
         4 | s1 = (s0, s0);
           |      ^^^^^^^^ [46, 47]
           |       ^^ [48]
           |           ^^ [53]
-  [47] 4:6: this expression gives T6
+  [47] 4:6: this expression gives Part6
   [48] 4:7: `s0` is (1, true) here
   [49] 2:6: `s0` is defined as this expression, (1, true)
         2 | s0 = (1, true);
@@ -258,11 +258,11 @@ fn comparing_two_doubled_tuples_names_each_level_once() {
   [51] 2:7: this literal, 1, is 1
   [52] 2:10: this expression is true
   [53] 4:11: `s0` is (1, true) here
-  [54] 6:11: `s1` is T6 here
-  [55] 8:11: `s2` is T7 here
-  [56] 10:11: `s3` is T8 here
-  [57] 12:11: `s4` is T9 here
-  [58] 14:11: `s5` is T10 here
+  [54] 6:11: `s1` is Part6 here
+  [55] 8:11: `s2` is Part7 here
+  [56] 10:11: `s3` is Part8 here
+  [57] 12:11: `s4` is Part9 here
+  [58] 14:11: `s5` is Part10 here
   [59] 15:5: `<` compares two tuples component by component, as far as the shorter goes
   [60] 15:5: components `[1]` are tuples, compared the same way
   [61] 15:5: components `[1]` are tuples, compared the same way
@@ -280,43 +280,43 @@ fn comparing_two_doubled_tuples_names_each_level_once() {
 fn a_chain_of_names_each_holding_the_one_before_names_each_link() {
     assert_eq!(
         rejected(&growing(4)),
-        r#"6:5: `+` does not take ((T3, 4), 1): no arrow of `+` takes these types.
-  T1, T2 and T3 stand for parts written more than once:
-    type T1 = ((0, 0), 1);
-    type T2 = (T1, 2);
-    type T3 = (T2, 3);
-  [1]  6:5: `a4` is (T3, 4) here
+        r#"6:5: `+` does not take ((Part3, 4), 1): no arrow of `+` takes these types.
+  Part1, Part2 and Part3 stand for parts written more than once:
+    type Part1 = ((0, 0), 1);
+    type Part2 = (Part1, 2);
+    type Part3 = (Part2, 3);
+  [1]  6:5: `a4` is (Part3, 4) here
        6 | u = a4 + 1;
          |     ^^ [1]
          |     ^^^^^^ [23, 24, 25, 26]
          |          ^ [22]
-  [2]  5:6: `a4` is defined as this expression, (T3, 4)
+  [2]  5:6: `a4` is defined as this expression, (Part3, 4)
        5 | a4 = (a3, 4);
          |      ^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^ [21]
-  [3]  5:6: this expression gives (T3, 4)
-  [4]  5:7: `a3` is T3 here
-  [5]  4:6: `a3` is defined as this expression, T3
+  [3]  5:6: this expression gives (Part3, 4)
+  [4]  5:7: `a3` is Part3 here
+  [5]  4:6: `a3` is defined as this expression, Part3
        4 | a3 = (a2, 3);
          |      ^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^ [20]
-  [6]  4:6: this expression gives T3
-  [7]  4:7: `a2` is T2 here
-  [8]  3:6: `a2` is defined as this expression, T2
+  [6]  4:6: this expression gives Part3
+  [7]  4:7: `a2` is Part2 here
+  [8]  3:6: `a2` is defined as this expression, Part2
        3 | a2 = (a1, 2);
          |      ^^^^^^^ [8, 9]
          |       ^^ [10]
          |           ^ [19]
-  [9]  3:6: this expression gives T2
-  [10] 3:7: `a1` is T1 here
-  [11] 2:6: `a1` is defined as this expression, T1
+  [9]  3:6: this expression gives Part2
+  [10] 3:7: `a1` is Part1 here
+  [11] 2:6: `a1` is defined as this expression, Part1
        2 | a1 = (a0, 1);
          |      ^^^^^^^ [11, 12]
          |       ^^ [13]
          |           ^ [18]
-  [12] 2:6: this expression gives T1
+  [12] 2:6: this expression gives Part1
   [13] 2:7: `a0` is (0, 0) here
   [14] 1:6: `a0` is defined as this expression, (0, 0)
        1 | a0 = (0, 0);
@@ -396,20 +396,20 @@ fn a_value_written_in_two_ways_is_written_as_each_step_writes_it() {
     // write it as `a1`'s line does, though `a0`'s type was printed before them.
     assert_eq!(
         rejected("a0 = (0x1F, 1);\na1 = (a0, 31);\na2 = (a1, a1);\nu = a2 + 1;\n"),
-        r#"4:5: `+` does not take ((T1, T1), 1): no arrow of `+` takes these types.
-  T1 stands for a part written more than once:
-    type T1 = ((0x1F, 1), 0x1F);
-  [1]  4:5: `a2` is (T1, T1) here
+        r#"4:5: `+` does not take ((Part1, Part1), 1): no arrow of `+` takes these types.
+  Part1 stands for a part written more than once:
+    type Part1 = ((0x1F, 1), 0x1F);
+  [1]  4:5: `a2` is (Part1, Part1) here
        4 | u = a2 + 1;
          |     ^^ [1]
          |     ^^^^^^ [15, 16, 17, 18]
          |          ^ [14]
-  [2]  3:6: `a2` is defined as this expression, (T1, T1)
+  [2]  3:6: `a2` is defined as this expression, (Part1, Part1)
        3 | a2 = (a1, a1);
          |      ^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^ [13]
-  [3]  3:6: this expression gives (T1, T1)
+  [3]  3:6: this expression gives (Part1, Part1)
   [4]  3:7: `a1` is ((31, 1), 31) here
   [5]  2:6: `a1` is defined as this expression, ((31, 1), 31)
        2 | a1 = (a0, 31);
@@ -442,20 +442,20 @@ fn a_zero_written_with_and_without_its_sign_is_written_as_each_step_writes_it() 
     // `a1` is.
     assert_eq!(
         rejected("a0 = (-0r, 1);\na1 = (a0, 0r);\na2 = (a1, a1);\nu = a2 + 1;\n"),
-        r#"4:5: `+` does not take ((T1, T1), 1): no arrow of `+` takes these types.
-  T1 stands for a part written more than once:
-    type T1 = ((-0r, 1), -0r);
-  [1]  4:5: `a2` is (T1, T1) here
+        r#"4:5: `+` does not take ((Part1, Part1), 1): no arrow of `+` takes these types.
+  Part1 stands for a part written more than once:
+    type Part1 = ((-0r, 1), -0r);
+  [1]  4:5: `a2` is (Part1, Part1) here
        4 | u = a2 + 1;
          |     ^^ [1]
          |     ^^^^^^ [16, 17, 18, 19]
          |          ^ [15]
-  [2]  3:6: `a2` is defined as this expression, (T1, T1)
+  [2]  3:6: `a2` is defined as this expression, (Part1, Part1)
        3 | a2 = (a1, a1);
          |      ^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^ [14]
-  [3]  3:6: this expression gives (T1, T1)
+  [3]  3:6: this expression gives (Part1, Part1)
   [4]  3:7: `a1` is ((0r, 1), 0r) here
   [5]  2:6: `a1` is defined as this expression, ((0r, 1), 0r)
        2 | a1 = (a0, 0r);
@@ -494,40 +494,40 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
              g(positional c: bool) = if c { (x, b0) } else { (x, a0) };\n\
              v = (g(true), x);\nw = (v, v);\nu = w + 1;\n"
         ),
-        r#"7:5: `+` does not take ((T3, T3), 1): no arrow of `+` takes these types.
-  T1, T2 and T3 stand for parts written more than once:
-    type T1 = (1, true);
-    type T2 = ((9, "z"), T1);
-    type T3 = ((T2, T1) | (T2, (9, "z")), T2);
-  [1]  7:5: `w` is (T3, T3) here
+        r#"7:5: `+` does not take ((Part3, Part3), 1): no arrow of `+` takes these types.
+  Part1, Part2 and Part3 stand for parts written more than once:
+    type Part1 = (1, true);
+    type Part2 = ((9, "z"), Part1);
+    type Part3 = ((Part2, Part1) | (Part2, (9, "z")), Part2);
+  [1]  7:5: `w` is (Part3, Part3) here
        7 | u = w + 1;
          |     ^ [1]
          |     ^^^^^ [24, 25, 26, 27]
          |         ^ [23]
-  [2]  6:5: `w` is defined as this expression, (T3, T3)
+  [2]  6:5: `w` is defined as this expression, (Part3, Part3)
        6 | w = (v, v);
          |     ^^^^^^ [2, 3]
          |      ^ [4]
          |         ^ [22]
-  [3]  6:5: this expression gives (T3, T3)
-  [4]  6:6: `v` is T3 here
-  [5]  5:5: `v` is defined as this expression, T3
+  [3]  6:5: this expression gives (Part3, Part3)
+  [4]  6:6: `v` is Part3 here
+  [5]  5:5: `v` is defined as this expression, Part3
        5 | v = (g(true), x);
          |     ^^^^^^^^^^^^ [5, 6]
          |      ^^^^^^^ [7]
          |               ^ [9]
-  [6]  5:5: this expression gives T3
-  [7]  5:6: this call of `g` gives (T2, (9, "z")) | (T2, T1)
-  [8]  4:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> (T2, (9, "z")) | (T2, T1)`
+  [6]  5:5: this expression gives Part3
+  [7]  5:6: this call of `g` gives (Part2, (9, "z")) | (Part2, Part1)
+  [8]  4:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> (Part2, (9, "z")) | (Part2, Part1)`
        4 | g(positional c: bool) = if c { (x, b0) } else { (x, a0) };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  [9]  5:15: `x` is T2 here
-  [10] 3:5: `x` is defined as this expression, T2
+  [9]  5:15: `x` is Part2 here
+  [10] 3:5: `x` is defined as this expression, Part2
        3 | x = (b0, a0);
          |     ^^^^^^^^ [10, 11]
          |      ^^ [12]
          |          ^^ [17]
-  [11] 3:5: this expression gives T2
+  [11] 3:5: this expression gives Part2
   [12] 3:6: `b0` is (9, "z") here
   [13] 1:6: `b0` is defined as this expression, (9, "z")
        1 | b0 = (9, "z");
@@ -537,16 +537,16 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
   [14] 1:6: this expression gives (9, "z")
   [15] 1:7: this literal, 9, is 9
   [16] 1:10: this expression is "z"
-  [17] 3:10: `a0` is T1 here
-  [18] 2:6: `a0` is defined as this expression, T1
+  [17] 3:10: `a0` is Part1 here
+  [18] 2:6: `a0` is defined as this expression, Part1
        2 | a0 = (1, true);
          |      ^^^^^^^^^ [18, 19]
          |       ^ [20]
          |          ^^^^ [21]
-  [19] 2:6: this expression gives T1
+  [19] 2:6: this expression gives Part1
   [20] 2:7: this literal, 1, is 1
   [21] 2:10: this expression is true
-  [22] 6:9: `v` is T3 here
+  [22] 6:9: `v` is Part3 here
   [23] 7:9: this literal, 1, is 1
   [24] 7:5: `+` takes (int, int) -> int
   [25] 7:5: `+` takes (f64, f64) -> f64
@@ -557,53 +557,53 @@ fn a_union_of_tuples_printed_before_keeps_the_order_of_its_members() {
 
 #[test]
 fn a_union_inside_a_tuple_printed_before_is_named_from_the_first_step_that_uses_it_twice() {
-    // `1 | 2` is written twice in the sentence's type, so it is `T1` from the sentence on,
-    // and `a0`'s steps, which use it once, write `T1` too (MSG-derive-print-union-names).
+    // `1 | 2` is written twice in the sentence's type, so it is `Part1` from the sentence on,
+    // and `a0`'s steps, which use it once, write `Part1` too (MSG-derive-print-union-names).
     // Before, a union was named by how often each type used it, and `a0`'s steps wrote
-    // `(1 | 2, 3)`. With `T1` a part of it, `(T1, 3)`, written inside `T3` and in `a0`'s
+    // `(1 | 2, 3)`. With `Part1` a part of it, `(Part1, 3)`, written inside `Part3` and in `a0`'s
     // steps, is named as any tuple holding a named part is.
     assert_eq!(
         rejected(
             "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 3);\n\
              a1 = (a0, g(false));\na2 = (a1, a1);\nu = a2 + 1;\n"
         ),
-        r#"5:5: `+` does not take ((T3, T3), 1): no arrow of `+` takes these types.
-  T1, T2 and T3 stand for parts written more than once:
-    type T1 = 1 | 2;
-    type T2 = (T1, 3);
-    type T3 = (T2, T1);
-  [1]  5:5: `a2` is (T3, T3) here
+        r#"5:5: `+` does not take ((Part3, Part3), 1): no arrow of `+` takes these types.
+  Part1, Part2 and Part3 stand for parts written more than once:
+    type Part1 = 1 | 2;
+    type Part2 = (Part1, 3);
+    type Part3 = (Part2, Part1);
+  [1]  5:5: `a2` is (Part3, Part3) here
        5 | u = a2 + 1;
          |     ^^ [1]
          |     ^^^^^^ [16, 17, 18, 19]
          |          ^ [15]
-  [2]  4:6: `a2` is defined as this expression, (T3, T3)
+  [2]  4:6: `a2` is defined as this expression, (Part3, Part3)
        4 | a2 = (a1, a1);
          |      ^^^^^^^^ [2, 3]
          |       ^^ [4]
          |           ^^ [14]
-  [3]  4:6: this expression gives (T3, T3)
-  [4]  4:7: `a1` is T3 here
-  [5]  3:6: `a1` is defined as this expression, T3
+  [3]  4:6: this expression gives (Part3, Part3)
+  [4]  4:7: `a1` is Part3 here
+  [5]  3:6: `a1` is defined as this expression, Part3
        3 | a1 = (a0, g(false));
          |      ^^^^^^^^^^^^^^ [5, 6]
          |       ^^ [7]
          |           ^^^^^^^^ [13]
-  [6]  3:6: this expression gives T3
-  [7]  3:7: `a0` is T2 here
-  [8]  2:6: `a0` is defined as this expression, T2
+  [6]  3:6: this expression gives Part3
+  [7]  3:7: `a0` is Part2 here
+  [8]  2:6: `a0` is defined as this expression, Part2
        2 | a0 = (g(true), 3);
          |      ^^^^^^^^^^^^ [8, 9]
          |       ^^^^^^^ [10]
          |                ^ [12]
-  [9]  2:6: this expression gives T2
-  [10] 2:7: this call of `g` gives T1
-  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> T1`
+  [9]  2:6: this expression gives Part2
+  [10] 2:7: this call of `g` gives Part1
+  [11] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> Part1`
        1 | g(positional c: bool) = if c { 1 } else { 2 };
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [12] 2:16: this literal, 3, is 3
-  [13] 3:11: this call of `g` gives T1
-  [14] 4:11: `a1` is T3 here
+  [13] 3:11: this call of `g` gives Part1
+  [14] 4:11: `a1` is Part3 here
   [15] 5:10: this literal, 1, is 1
   [16] 5:5: `+` takes (int, int) -> int
   [17] 5:5: `+` takes (f64, f64) -> f64
@@ -615,15 +615,15 @@ fn a_union_inside_a_tuple_printed_before_is_named_from_the_first_step_that_uses_
 #[test]
 fn a_union_is_written_in_full_until_a_step_uses_it_twice_and_named_in_every_step_after() {
     // The sentence and steps [1] to [3] use `#a | #b` once and write it; step [4] uses it
-    // twice and names it `T1`; step [6] uses it once and keeps the name.
+    // twice and names it `Part1`; step [6] uses it once and keeps the name.
     assert_eq!(
         rejected(
             "k(positional p: #a | #b) = (p, 0);\nm(positional p: #a | #b) = 0;\n\
              a0 = k(#a);\nu = a0 + m(#b);\n"
         ),
         r#"4:5: `+` does not take ((#a | #b, 0), 0): no arrow of `+` takes these types.
-  T1 stands for a part written more than once:
-    type T1 = #a | #b;
+  Part1 stands for a part written more than once:
+    type Part1 = #a | #b;
   [1]  4:5: `a0` is (#a | #b, 0) here
        4 | u = a0 + m(#b);
          |     ^^ [1]
@@ -633,11 +633,11 @@ fn a_union_is_written_in_full_until_a_step_uses_it_twice_and_named_in_every_step
        3 | a0 = k(#a);
          |      ^^^^^
   [3]  3:6: this call of `k` gives (#a | #b, 0)
-  [4]  1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `T1 -> (T1, 0)`
+  [4]  1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `Part1 -> (Part1, 0)`
        1 | k(positional p: #a | #b) = (p, 0);
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [5]  4:10: this call of `m` gives 0
-  [6]  2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `T1 -> 0`
+  [6]  2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `Part1 -> 0`
        2 | m(positional p: #a | #b) = 0;
          | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [7]  4:5: `+` takes (int, int) -> int
@@ -649,25 +649,25 @@ fn a_union_is_written_in_full_until_a_step_uses_it_twice_and_named_in_every_step
 
 #[test]
 fn a_union_the_sentence_uses_twice_is_named_in_every_step() {
-    // The sentence writes `#a | #b` twice, so step [2], which uses it once, writes `T1`.
+    // The sentence writes `#a | #b` twice, so step [2], which uses it once, writes `Part1`.
     assert_eq!(
         rejected(
             "k(positional p: #a | #b) = (p, p);\nm(positional p: #a | #b) = 0;\n\
              u = m(#b) + k(#a);\n"
         ),
-        r#"3:5: `+` does not take (0, (T1, T1)): no arrow of `+` takes these types.
-  T1 stands for a part written more than once:
-    type T1 = #a | #b;
+        r#"3:5: `+` does not take (0, (Part1, Part1)): no arrow of `+` takes these types.
+  Part1 stands for a part written more than once:
+    type Part1 = #a | #b;
   [1] 3:5: this call of `m` gives 0
       3 | u = m(#b) + k(#a);
         |     ^^^^^ [1]
         |     ^^^^^^^^^^^^^ [5, 6, 7, 8]
         |             ^^^^^ [3]
-  [2] 2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `T1 -> 0`
+  [2] 2:1: `m` is declared here with no type written for its result; the type the checker found for `m` is `Part1 -> 0`
       2 | m(positional p: #a | #b) = 0;
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  [3] 3:13: this call of `k` gives (T1, T1)
-  [4] 1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `T1 -> (T1, T1)`
+  [3] 3:13: this call of `k` gives (Part1, Part1)
+  [4] 1:1: `k` is declared here with no type written for its result; the type the checker found for `k` is `Part1 -> (Part1, Part1)`
       1 | k(positional p: #a | #b) = (p, p);
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [5] 3:5: `+` takes (int, int) -> int
@@ -758,10 +758,10 @@ pub(super) fn compared_with_1(src: String) -> String {
     src[..at].to_string() + " < 1;\n"
 }
 
-/// The `type T… = …;` lines of the rejection `out`, each its right side.
+/// The `type Part… = …;` lines of the rejection `out`, each its right side.
 fn declared_parts(out: &str) -> Vec<&str> {
     out.lines()
-        .filter_map(|l| l.trim_start().strip_prefix("type T"))
+        .filter_map(|l| l.trim_start().strip_prefix("type Part"))
         .filter_map(|l| Some(l.split_once(" = ")?.1.trim_end_matches(';')))
         .collect()
 }

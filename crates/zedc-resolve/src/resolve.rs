@@ -209,6 +209,11 @@ pub struct Resolution {
     /// [`Resolution::pushes`], what the checker reads to tell a port passed whole to a
     /// parameter that is pushed to from a read of the port (DESIGN.md L1.19).
     pub calls: Vec<NamedCall>,
+    /// The name of each type variable the unit writes in a signature or a body, in any scope,
+    /// each once, in no order (QUESTIONS Q23): with the binders, the names a variable printed
+    /// in a message steps over (DESIGN.md sec:diagnostics, "Types in a message": the next name
+    /// "that the file does not bind in any scope").
+    pub type_vars: HashSet<String>,
 }
 
 /// A call `f(a, x: b)` whose callee is a name, by the text of its parts.
@@ -847,8 +852,6 @@ struct Resolver<'u> {
     tvars: HashMap<String, TypeVar>,
     /// The function types around the type being walked, outermost first, by their text.
     arrows: Vec<Span>,
-    /// The bounds clauses around the type being walked, outermost first, by their text.
-    clauses: Vec<Span>,
     /// When a printed type is read ([`printed_type`]): the names that stand for its leaves of
     /// layer L10.
     printed: Option<HashSet<Arc<str>>>,
@@ -881,6 +884,23 @@ struct Resolver<'u> {
     tops: HashSet<usize>,
     /// The binders bound to a lambda, `f = (x) -> e;`, which call like functions.
     lambdas: HashSet<usize>,
+    /// The tables of type variables of the signatures, top-level statements and field lists
+    /// being walked, innermost last ([`FreeVars`]).
+    free: Vec<FreeVars>,
+    /// For each type variable a table of `free` holds, the indices of those tables, innermost
+    /// last, so a use finds its variable in `O(1)` however deep lambdas nest.
+    // Complexity tradeoff (COMPLEXITY.md TYPEVAR-names): walking the tables outward is O(depth)
+    // per use; a stack per name is O(1) per use, at one entry per variable and a pop of each
+    // variable a table holds when it ends.
+    free_at: HashMap<String, Vec<usize>>,
+    /// The names of the types in scope, with how many binders in the open scopes give each, and
+    /// a count of the changes to them, which keys [`Resolver::nearest`]'s memo.
+    type_names: HashMap<String, usize>,
+    type_changes: u64,
+    /// For each unknown type name, the nearest type name found for it and the count of changes
+    /// to `type_names` when it was found: a name written again in the same scope is answered in
+    /// `O(1)`.
+    nearest_memo: HashMap<String, (u64, Option<String>)>,
 }
 
 /// A block, a parameter list or a field list: its binders, and each of its items (a statement,
@@ -899,6 +919,36 @@ struct TypeVar {
     /// Its first use, and the outermost function type inside the clause that holds the use,
     /// if one does.
     first: Option<(Span, Option<Span>)>,
+}
+
+/// The type variables of one signature, top-level statement or field list: the names of a type
+/// variable's form, `[A-Z][0-9]*`, that no bounds clause, printed type or type parameter
+/// names (DESIGN.md sec:type_language, rule 4).
+struct FreeVars {
+    owner: Owner,
+    /// Whether the walk is still in the signature: a function's parameters, before its body.
+    in_signature: bool,
+    vars: HashMap<String, FreeVar>,
+}
+
+/// What a [`FreeVars`] table belongs to.
+enum Owner {
+    /// A function's, a method's or a lambda's signature: each parameter's name and text, the
+    /// text of its type when the type is one name, and whether it has a default.
+    Signature(Vec<(String, Span, Option<Span>, bool)>),
+    /// A top-level statement that is no function: its type variables are counted, never
+    /// reported.
+    Statement,
+    /// A struct's field list, where a type variable must be a declared type parameter.
+    Fields,
+}
+
+/// A type variable of a [`FreeVars`] table: its first use, and how often its signature and its
+/// body write it.
+struct FreeVar {
+    first: Span,
+    signature: u32,
+    body: u32,
 }
 
 /// A name's binders in one scope.
@@ -946,7 +996,8 @@ impl Resolver<'_> {
         kind: Kind,
         signature: Option<Vec<Option<String>>>,
     ) {
-        if name.ends_with('\'') {
+        // A primed name of a type variable's form is reported by that row alone, and bound.
+        if !self.form_declared(name, at, span, kind) && name.ends_with('\'') {
             return self.primed(name, span);
         }
         if TYPES.contains(&name) {
@@ -1012,6 +1063,9 @@ impl Resolver<'_> {
         if v.last().is_none_or(|b| b.level != level) {
             v.push(Bound::new(level, kind, false));
             self.scopes.last_mut().expect("a scope").push(name.into());
+            if kind.is_type() {
+                type_named(&mut self.type_names, &mut self.type_changes, name, 1);
+            }
         }
         let b = v.last_mut().expect("pushed above");
         b.ids.push_back(id);
@@ -1037,6 +1091,9 @@ impl Resolver<'_> {
     /// scope. Two imports of one name are kept, and make its uses ambiguous unless all are
     /// functions or both come from one unit.
     fn bind_import(&mut self, name: &str, span: Span, kind: Kind, unit: &Arc<str>) -> usize {
+        if kind == Kind::Unit {
+            self.form_declared(name, span, span, kind);
+        }
         if TYPES.contains(&name) {
             self.names_type(name, span, span, kind.binder());
         }
@@ -1083,6 +1140,9 @@ impl Resolver<'_> {
                 b.ids.push_back(id);
                 v.insert(pos, b);
                 self.scopes[level - 1].push(name.into());
+                if kind.is_type() {
+                    type_named(&mut self.type_names, &mut self.type_changes, name, 1);
+                }
             }
         }
         if level == IMPORTS {
@@ -1105,7 +1165,10 @@ impl Resolver<'_> {
     fn close(&mut self) {
         for name in self.scopes.pop().expect("an open scope") {
             let v = self.visible.get_mut(&name).expect("bound in the scope");
-            v.pop();
+            let b = v.pop().expect("bound in the scope");
+            if self.out.binders[b.ids[0]].kind.is_type() {
+                type_named(&mut self.type_names, &mut self.type_changes, &name, -1);
+            }
             if v.is_empty() {
                 self.visible.remove(&name);
             }
@@ -1659,7 +1722,14 @@ impl Resolver<'_> {
                     self.stmts(kept.map(|(s, _)| s), true, &mut todo);
                 }
                 Task::Stmts(stmts) => self.stmts(stmts.iter(), false, &mut todo),
-                Task::Stmt(s, top) => self.stmt(s, top, &mut todo),
+                Task::Stmt(s, top) => {
+                    // A function opens its own table, inside this one, which stays empty.
+                    if top {
+                        self.free_open(Owner::Statement);
+                        todo.push(Task::FreeEnd);
+                    }
+                    self.stmt(s, top, &mut todo)
+                }
                 Task::Function {
                     params,
                     ports,
@@ -1747,6 +1817,12 @@ impl Resolver<'_> {
                     self.arrows.pop();
                 }
                 Task::ForEnd(ty, bounds) => self.for_end(ty, bounds),
+                Task::SignatureEnd => {
+                    if let Some(t) = self.free.last_mut() {
+                        t.in_signature = false;
+                    }
+                }
+                Task::FreeEnd => self.free_end(),
             }
         }
     }
@@ -2061,6 +2137,8 @@ impl Resolver<'_> {
     fn fields<'a>(&mut self, st: &'a Struct, span: Span, todo: &mut Vec<Task<'a>>) {
         let start = self.out.binders.len();
         self.open();
+        self.free_open(Owner::Fields);
+        todo.push(Task::FreeEnd);
         todo.push(Task::Close);
         let level = self.scopes.len();
         let mut items = Vec::new();
@@ -2072,6 +2150,7 @@ impl Resolver<'_> {
                     default,
                     span: at,
                 } => {
+                    self.form_declared(name, *at, *at, Kind::Field);
                     // The builder rejects a field declared twice, so each name is new here.
                     let id = self.out.binders.len();
                     let mut b = Bound::new(level, Kind::Field, false);
@@ -2662,11 +2741,25 @@ impl Resolver<'_> {
             items.push((p.span, (self.out.binders.len() == id + 1).then_some(id)));
         }
         self.list(first, items);
+        let written = params.iter().map(|p| {
+            let whole =
+                p.ty.as_ref()
+                    .filter(|t| matches!(t.kind, TypeKind::Name(_)));
+            (
+                p.name.clone(),
+                p.span,
+                whole.map(|t| t.span),
+                p.default.is_some(),
+            )
+        });
+        self.free_open(Owner::Signature(written.collect()));
+        todo.push(Task::FreeEnd);
         todo.push(Task::Close);
         todo.push(match &body.kind {
             ExprKind::Block(stmts) => Task::Stmts(stmts),
             _ => Task::Expr(body),
         });
+        todo.push(Task::SignatureEnd);
         for p in params.iter().rev() {
             todo.extend(p.default.as_ref().map(Task::Expr));
             todo.extend(p.ty.as_ref().map(Task::Ty));
@@ -3083,7 +3176,6 @@ impl Resolver<'_> {
                     };
                     self.tvars.insert(b.name.clone(), var);
                 }
-                self.clauses.push(t.span);
                 todo.push(Task::ForEnd(ty, bounds));
                 todo.push(Task::Ty(ty));
             }
@@ -3170,6 +3262,18 @@ impl Resolver<'_> {
         if self.printed.as_ref().is_some_and(|l| l.contains(n)) {
             return;
         }
+        // A name of a type variable's form is a type parameter in scope or a type variable,
+        // never a struct or a type of that name, which its declaration reports.
+        if type_var_form(n) {
+            if let Some(Found::Bound(ids)) = self.find(n)
+                && self.out.binders[ids[0]].kind == Kind::TypeParam
+            {
+                self.order(n, span, &ids);
+                self.out.uses.insert(span, Ref::Bound(ids));
+                return;
+            }
+            return self.free_var(n, span);
+        }
         if let Some((q, name)) = n.split_once('.') {
             return self.qualified_type(q, name, span);
         }
@@ -3220,6 +3324,9 @@ impl Resolver<'_> {
             Some(Found::Word(_)) | None => match later_type_layer(n) {
                 Some(_) => not_yet(&format!("the prelude type `{n}`")),
                 None if self.prelude_broken(n, span) => return,
+                None if n.starts_with(|c: char| c.is_ascii_uppercase()) => {
+                    return self.unknown_type(n, span);
+                }
                 None => undefined_type(n),
             },
         };
@@ -3228,19 +3335,10 @@ impl Resolver<'_> {
             menu: String::new(),
             span,
             message,
-            // Inside a clause, the name reads as a type variable its clause forgot.
-            notes: self
-                .clauses
-                .last()
-                .map(|&span| Note {
-                    span,
-                    text: format!(
-                        "a type variable is bounded by the clause after its type, as \
-                         `for {n} in int | f64`; this clause does not bound `{n}`"
-                    ),
-                })
-                .into_iter()
-                .collect(),
+            // No note names a bounds clause: since QUESTIONS Q23 a name of a type variable's
+            // form is always a type variable, so a name that names nothing is never a
+            // variable its clause forgot to bound.
+            notes: Vec::new(),
         });
     }
 
@@ -3350,12 +3448,216 @@ impl Resolver<'_> {
         });
     }
 
+    /// Opens a table of type variables for a signature, a top-level statement or a field list.
+    fn free_open(&mut self, owner: Owner) {
+        let in_signature = matches!(owner, Owner::Signature(_));
+        self.free.push(FreeVars {
+            owner,
+            in_signature,
+            vars: HashMap::new(),
+        });
+    }
+
+    /// The use at `span` of the type variable `n`: a name of a type variable's form that no
+    /// clause, printed type or type parameter names. In a struct's field list it is the row
+    /// "Type variable in a `struct` field …", since this zedc declares no struct type
+    /// parameters; elsewhere it is the variable of the innermost signature or statement that
+    /// writes it, counted in `O(1)` ([`Resolver::free_at`]).
+    fn free_var(&mut self, n: &str, span: Span) {
+        // Outside every table the type is a printed one or an import's, which writes no
+        // signature of this unit.
+        let Some(inner) = self.free.len().checked_sub(1) else {
+            return;
+        };
+        if matches!(self.free[inner].owner, Owner::Fields) {
+            return self.errors.push(field_type_var(n, span));
+        }
+        let at = match self.free_at.get(n).and_then(|v| v.last()) {
+            Some(&at) => at,
+            None => {
+                if !self.out.type_vars.contains(n) {
+                    self.out.type_vars.insert(n.into());
+                }
+                self.free_at.entry(n.into()).or_default().push(inner);
+                let var = FreeVar {
+                    first: span,
+                    signature: 0,
+                    body: 0,
+                };
+                self.free[inner].vars.insert(n.into(), var);
+                inner
+            }
+        };
+        let table = &mut self.free[at];
+        let var = table.vars.get_mut(n).expect("a variable of its table");
+        if table.in_signature {
+            var.signature += 1;
+        } else {
+            var.body += 1;
+        }
+    }
+
+    /// Ends the innermost table of type variables. Each variable a signature writes once and
+    /// its body never is the row "Type variable" (DESIGN.md sec:type_language, rule 4): it ties
+    /// nothing to anything. One pass over the table's variables, after the walk counted each
+    /// use in `O(1)`.
+    fn free_end(&mut self) {
+        let table = self.free.pop().expect("an open table");
+        for name in table.vars.keys() {
+            let v = self.free_at.get_mut(name).expect("held by the table");
+            v.pop();
+            if v.is_empty() {
+                self.free_at.remove(name);
+            }
+        }
+        let Owner::Signature(params) = &table.owner else {
+            return;
+        };
+        let mut once: Vec<(&String, Span)> = (table.vars.iter())
+            .filter(|(_, v)| v.signature == 1 && v.body == 0)
+            .map(|(n, v)| (n, v.first))
+            .collect();
+        once.sort_by_key(|(_, s)| s.start);
+        for (n, first) in once {
+            let whole = params.iter().find(|(_, _, t, _)| *t == Some(first));
+            let param = whole.map(|(name, at, _, default)| (name.as_str(), *at, *default));
+            self.errors.push(written_once(n, first, param));
+        }
+    }
+
+    /// The row "Name of a type variable's form, … declared as …" (DESIGN.md sec:diagnostics):
+    /// `kind`'s binder `name`, written at `at` in the text `site`, has the form `[A-Z][0-9]*`,
+    /// or that form followed by `'`, which only a type variable has. A value's, a function's,
+    /// a field's or a parameter's menu is its lowercase name when that is unused in scope; a
+    /// type's or a struct's asks for a longer name, with no menu. Whether it was reported.
+    fn form_declared(&mut self, name: &str, at: Span, site: Span, kind: Kind) -> bool {
+        // A method is bound as `Receiver.name`; its own name is the part after the dot.
+        let own = name.rsplit('.').next().unwrap_or(name);
+        if kind == Kind::TypeParam
+            || kind == Kind::Receiver
+            || !type_var_form(own.strip_suffix('\'').unwrap_or(own))
+        {
+            return false;
+        }
+        let binder = kind.binder();
+        let base = own.strip_suffix('\'').unwrap_or(own);
+        let mut notes = vec![Note {
+            span: at,
+            text: format!(
+                "a capital letter alone, or followed only by digits, as `{base}`, names a type \
+                 variable wherever it is written, so it cannot name {binder}"
+            ),
+        }];
+        let lower = own.to_ascii_lowercase();
+        match kind {
+            Kind::Struct | Kind::Type => notes.push(Note {
+                span: at,
+                text: format!(
+                    "repair: give {binder} a longer name, one that is not a capital letter \
+                     alone or followed only by digits"
+                ),
+            }),
+            // DESIGN.md gives no menu for a module; the qualifier is renamed with `as`.
+            Kind::Unit => notes.push(Note {
+                span: at,
+                text: "repair: rename the qualifier with `as`, to a name that is not a capital \
+                       letter alone or followed only by digits"
+                    .into(),
+            }),
+            _ if self.find(&lower).is_none() => notes.push(Note {
+                span: site,
+                text: format!("repair: `{}`", self.renamed(own, &lower, at, site)),
+            }),
+            _ => notes.push(Note {
+                span: at,
+                text: format!(
+                    "repair: rename {binder}; `{lower}` already names something in scope"
+                ),
+            }),
+        }
+        self.errors.push(Error {
+            row: Some(Row::TypeVariableFormDeclared),
+            menu: String::new(),
+            span: at,
+            message: format!("T{} `{own}` has the form of a type variable.", &binder[1..]),
+            notes,
+        });
+        true
+    }
+
+    /// The first line of the text `site`, with `own` at or after `at` written `lower`, and
+    /// " …" when `site` runs on past the line.
+    fn renamed(&self, own: &str, lower: &str, at: Span, site: Span) -> String {
+        let Some(text) = self.text else {
+            return lower.into();
+        };
+        let site_text = &text[site.start..site.end];
+        let from = at.start.max(site.start) - site.start;
+        let mut out = site_text.to_string();
+        if let Some(i) = site_text[from..].find(own) {
+            out.replace_range(from + i..from + i + own.len(), lower);
+        }
+        match out.split_once('\n') {
+            Some((first, _)) => format!("{} …", first.trim_end()),
+            None => out,
+        }
+    }
+
+    /// The row "Capitalized name, not of a type variable's form, that names no type in scope"
+    /// (DESIGN.md sec:diagnostics): `n`, at `span`, is a misspelling, never a fresh type
+    /// variable; the menu is the nearest type name by spelling.
+    fn unknown_type(&mut self, n: &str, span: Span) {
+        let mut notes = Vec::new();
+        // Assumption, not proved: the definition checks with the nearest name in place, which
+        // DESIGN.md asks of the menu; this zedc offers it without checking the definition again.
+        if let Some(near) = self.nearest(n) {
+            notes.push(Note {
+                span,
+                text: format!("repair: `{near}`"),
+            });
+        }
+        self.errors.push(Error {
+            row: Some(Row::UnknownTypeName),
+            menu: String::new(),
+            span,
+            message: format!("The type `{n}` is not defined."),
+            notes,
+        });
+    }
+
+    /// The type name in scope nearest in spelling to `n` (DESIGN.md sec:diagnostics, "Nearest
+    /// in spelling"): of the prelude types and the type binders in scope that are one slip from
+    /// `n` or equal to it once case and underscores are folded ([`near_in_spelling`]), the first
+    /// in name order, or none when no name is near; never a name of a type variable's form.
+    // Complexity tradeoff (COMPLEXITY.md TYPEVAR-names): DESIGN.md step L1.29e's spelling
+    // index answers every written name of a unit together in O(n log n); that index is its own
+    // row (L1.29e), so this scan tests each of the K candidates in O(L) for a name of length
+    // L, O(K·L) for one name, and the memo answers a name written again while the types in
+    // scope are unchanged in O(1): U uses of D distinct unknown names cost O(U + D·K·L), where
+    // the naive search (no memo) costs O(U·K·L). Assumption, not proved: D stays small, since
+    // each distinct unknown name is a separate misspelling the program holds; L1.29e removes
+    // the D·K term.
+    fn nearest(&mut self, n: &str) -> Option<String> {
+        if let Some((at, near)) = self.nearest_memo.get(n)
+            && *at == self.type_changes
+        {
+            return near.clone();
+        }
+        let in_scope = self.type_names.keys().map(String::as_str);
+        let near = (TYPES.iter().copied().chain(in_scope))
+            .filter(|c| !type_var_form(c) && near_in_spelling(n, c))
+            .min()
+            .map(str::to_string);
+        self.nearest_memo
+            .insert(n.into(), (self.type_changes, near.clone()));
+        near
+    }
+
     /// The end of the type `ty` of a bounds clause of `bounds`: the clause closes, each variable
     /// it bounded leaves scope, and one the type does not hold is an error. A bound of a name
     /// already bounded bound nothing, and the variable in scope under the name is another's:
     /// its text is not the bound's.
     fn for_end(&mut self, ty: &Type, bounds: &[TypeBound]) {
-        self.clauses.pop();
         for b in bounds {
             if self.tvars.get(&b.name).is_none_or(|v| v.span != b.span) {
                 continue;
@@ -3478,6 +3780,10 @@ enum Task<'a> {
     ArrowEnd,
     /// The end of the type of a bounds clause, and the clause's bounds.
     ForEnd(&'a Type, &'a [TypeBound]),
+    /// The end of a function's signature: the type names after it are in its body.
+    SignatureEnd,
+    /// The end of the innermost table of type variables ([`Resolver::free_end`]).
+    FreeEnd,
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.
@@ -3611,4 +3917,139 @@ fn main_args_elsewhere(span: Span) -> Error {
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.
 pub fn undefined_type(name: &str) -> String {
     format!("The type `{name}` is not defined.")
+}
+
+/// Whether `name` has a type variable's form, `[A-Z][0-9]*`: a capital letter alone or followed
+/// only by digits (DESIGN.md sec:type_language, rule 4). The analysis of the tree decides it,
+/// not the lexer, which reads every capitalized name as one `TypeName` token.
+pub fn type_var_form(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|c| c.is_ascii_uppercase()) && bytes.all(|c| c.is_ascii_digit())
+}
+
+/// Adds `by` to the count of binders in the open scopes that name the type `name`, removing it
+/// at zero, and counts the change.
+fn type_named(names: &mut HashMap<String, usize>, changes: &mut u64, name: &str, by: isize) {
+    *changes += 1;
+    let count = names.entry(name.into()).or_default();
+    *count = count.saturating_add_signed(by);
+    if *count == 0 {
+        names.remove(name);
+    }
+}
+
+/// Whether `written` and `name` are near in spelling (DESIGN.md sec:diagnostics, "Nearest in
+/// spelling"): they differ by one slip, one character inserted, deleted or replaced or two
+/// adjacent characters swapped, or they are equal once ASCII letters are lowercased and
+/// underscores dropped. Equal names are not near. O(|written| + |name|) time.
+fn near_in_spelling(written: &str, name: &str) -> bool {
+    let a: Vec<char> = written.chars().collect();
+    let b: Vec<char> = name.chars().collect();
+    if a == b {
+        return false;
+    }
+    let fold = |s: &[char]| -> Vec<char> {
+        (s.iter())
+            .filter(|&&c| c != '_')
+            .map(char::to_ascii_lowercase)
+            .collect()
+    };
+    if fold(&a) == fold(&b) {
+        return true;
+    }
+    // The first and the last place where the two differ, from each end.
+    let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let tail = (a.iter().rev().zip(b.iter().rev()))
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (short, long) = if a.len() <= b.len() {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    match long.len() - short.len() {
+        // One character inserted or deleted: the shorter is the longer with one dropped.
+        1 => head + tail >= short.len(),
+        // One replaced, or two adjacent swapped.
+        0 => {
+            let n = a.len();
+            head + tail + 1 == n
+                || (head + tail + 2 == n && a[head] == b[head + 1] && a[head + 1] == b[head])
+        }
+        _ => false,
+    }
+}
+
+/// The row "Type variable in a `struct` field that is not one of the struct's declared type
+/// parameters" (DESIGN.md sec:diagnostics) for `n` at `span`. DESIGN.md's menu declares the
+/// struct's parameters, `struct Pair(A, B) {…}`, a form this zedc does not compile yet, so the
+/// error offers no menu.
+fn field_type_var(n: &str, span: Span) -> Error {
+    Error {
+        row: Some(Row::StructFieldTypeVariable),
+        menu: String::new(),
+        span,
+        message: format!(
+            "The type variable `{n}` stands in a field of a struct that declares no type \
+             parameter `{n}`."
+        ),
+        notes: vec![
+            Note {
+                span,
+                text: format!(
+                    "a capital letter alone, or followed only by digits, as `{n}`, names a type \
+                     variable; a struct's field may name only the struct's own type parameters, \
+                     which this version of zedc does not compile yet"
+                ),
+            },
+            Note {
+                span,
+                text: "repair: write the field's type in full".into(),
+            },
+        ],
+    }
+}
+
+/// The row "Type variable" (DESIGN.md sec:diagnostics): the type variable `n`, written at
+/// `first`, is written once in its signature and nowhere in its body. `param` is the name and
+/// text of the parameter whose whole type it is, and whether that parameter has a default, if
+/// it is one.
+fn written_once(n: &str, first: Span, param: Option<(&str, Span, bool)>) -> Error {
+    let mut notes = vec![Note {
+        span: first,
+        text: format!(
+            "a capital letter alone, or followed only by digits, as `{n}`, names a type \
+             variable, which stands for one type at each place it is written; written once, \
+             `{n}` asks nothing that no type at all would ask"
+        ),
+    }];
+    // DESIGN.md's menu is the site written `_`, which this zedc refuses until step L10. A
+    // parameter with no type is inferred as one written `_` is, so for a parameter whose whole
+    // type is the variable the menu drops the type. Assumption, not proved: the definition
+    // then checks, since `n` constrained that parameter no further than no type does
+    // (evidence: the tests of tests/steps/l02_12_diagnostics/type_names.rs). Inside a larger
+    // type no rewrite this zedc compiles says the same, so no menu is offered.
+    notes.push(match param {
+        Some((name, at, default)) => Note {
+            span: at,
+            text: format!("repair: `{name}{}`", if default { " = …" } else { "" }),
+        },
+        None => Note {
+            span: first,
+            text: format!(
+                "`_` in place of `{n}` is part of the Zed language, and this version of zedc \
+                 does not compile it yet; name the type, or write `{n}` where the body or \
+                 another parameter has the same type"
+            ),
+        },
+    });
+    Error {
+        row: Some(Row::TypeVariableOnce),
+        menu: String::new(),
+        span: first,
+        message: format!(
+            "The type variable `{n}` is written once in this signature and nowhere in its body."
+        ),
+        notes,
+    }
 }
