@@ -5,10 +5,12 @@
 //! ratio; they print the work at two sizes for the record.
 //! Sizes are set (2026-11-14) so a piece stays under 20 s, with the 1x case at about 0.3 to 1 s;
 //! where building the inputs takes most of the piece (the unequal frontiers and the functional
-//! keys), the 1x case is 0.05 to 0.15 s. The unbalanced unions and the wide questions kept that
-//! size from when their inputs were built in O(n²) (FAIL-r5-bench-battery-time: 48 s of a 49 s
-//! piece); built in O(n) now, each piece takes about 1 s. The 800,000 leaves of the leaf
-//! frontiers are built and warmed in chunks on several threads (`r5_leaf_frontier_fixture`).
+//! keys), the 1x case is 0.05 to 0.15 s. The unbalanced unions (30,000) and the wide questions
+//! (9000) were raised from 3000 and 2000 (2026-11-15), once their inputs were built in O(n)
+//! (FAIL-r5-bench-battery-time): at the old sizes their 1x took 0.06 and 0.13 s, and a set of
+//! seen roots kept in a list in `Rays::same_sign_sum` passed the wide questions at 9.27x; at
+//! 9000 it fails at 13.09x. The 800,000 leaves of the leaf frontiers are built and warmed in
+//! chunks on several threads (`r5_leaf_frontier_fixture`).
 
 use super::*;
 
@@ -191,10 +193,10 @@ fn r5_actual_wide_questions_measurement() {
 
 #[test]
 fn r5_actual_wide_questions_scale() {
-    let inputs = crate::scaling::inputs(2000, |n| r5_actual_frontier_defs(n as u32, 4, 0));
+    let inputs = crate::scaling::inputs(9000, |n| r5_actual_frontier_defs(n as u32, 4, 0));
     crate::scaling::check_order(
         "cold questions over independent four-link chains",
-        2000,
+        9000,
         1,
         |n| {
             let (defs, q) = &inputs[&n];
@@ -247,10 +249,10 @@ fn r5_second_adversaries_measurement() {
 
 #[test]
 fn r5_unbalanced_unions_scale() {
-    let inputs = crate::scaling::inputs(3000, |n| r5_unbalanced_union_defs(n as u32));
+    let inputs = crate::scaling::inputs(30_000, |n| r5_unbalanced_union_defs(n as u32));
     crate::scaling::check_order(
         "one large persistent set beside independent singleton inputs",
-        3000,
+        30_000,
         1,
         |n| {
             let defs = &inputs[&n];

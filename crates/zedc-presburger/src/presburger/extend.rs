@@ -6827,13 +6827,40 @@ mod tests {
     /// The benchmark of wide leaf frontiers builds 100,000 and 800,000 leaves before it times
     /// anything; one thread took 10 to 15 s of the 20 s its piece may take (12 µs a leaf to
     /// build and warm, 3 times the work timed), and the piece ran over in 3 of 4 runs beside
-    /// other benchmarks (FAIL-r5-bench-battery-time). Each leaf reads only its own symbol and
-    /// variable, so [`Summaries::syms`] of a leaf reads no other definition, and the chunks'
-    /// summaries are disjoint: merged, they are those of one thread. Not proved: this equality is
-    /// checked only at widths 1 to 6 and 20, in
-    /// `the_benchmark_inputs_have_their_answers_at_small_sizes`, not at 800,000; it rests on
-    /// the leaf reading only itself, which the `expect` in each chunk checks. The chunk count
-    /// changes only how many threads build the input, never the input or what is timed.
+    /// other benchmarks (FAIL-r5-bench-battery-time). Making the definitions on one thread and
+    /// only warming in chunks was tried: the piece then took 14 to 19 s under the test runner.
+    ///
+    /// The merged summaries are those [`Summaries::syms`] makes on one thread over the same
+    /// `defs` in order (the test `the_benchmark_inputs_have_their_answers_at_small_sizes` also
+    /// compares them at widths 1 to 6 and 20). The argument, from what `syms(h, def)` reads:
+    ///
+    /// 1. Definitions: only `h` and `def(n)` for the variables `n` of the formulas it reaches.
+    ///    Each chunk's `def` panics on a variable outside the chunk, so each formula a chunk's
+    ///    calls reach is one of that chunk's definitions (here each leaf reaches only itself).
+    /// 2. Memory: only the entries of `syms`, `cone`, `branch_cone` and `cyclic` keyed by the
+    ///    ids of the formulas it reaches, and it writes only entries of those four maps under
+    ///    those ids. It never reads or writes `images`, `rays`, `by`, `branch_roots` or
+    ///    `functional_leaves`; the merge asserts the last three empty.
+    /// 3. Nothing else: the functions it calls (`reads`, `auxes`, `free`, `Def::of`,
+    ///    `is_func_sym_leaf`, `cases`, `Formula::atoms`, `shared_set_union`) are functions of
+    ///    their arguments. The only thread-local state on the path is the test visit counters,
+    ///    which it increments and never reads.
+    /// 4. Ids: an id is drawn when a formula is made and travels with it. `syms` makes no
+    ///    formula and changes none (it clones), so the ids in the result are those of the
+    ///    returned `defs`, the objects the benchmark reads. Ids are only compared, hashed and
+    ///    ordered, so their values do not change what `syms` computes; they reach the result as
+    ///    map keys and as members of the `cone` and `branch_cone` sets, whose equality does not
+    ///    depend on order. Two cases for the merge:
+    ///    (a) ids distinct across chunks, which `zed_kernel::value::fresh_id` gives (each
+    ///    thread draws its ids from its own block of a global atomic counter): then by 1 and 2
+    ///    the calls of two chunks read and write disjoint keys, so by induction over the
+    ///    one-thread order the entries each chunk makes are those the one-thread build makes
+    ///    for its leaves, and the union of the chunks' maps is the one-thread map;
+    ///    (b) two chunks sharing an id: the merge asserts that no key is inserted twice, so
+    ///    this case panics instead of giving a wrong input.
+    ///
+    /// The chunk count changes only how many threads build the input, never the input or what
+    /// is timed.
     fn r5_leaf_frontier_fixture(width: u32) -> (Summaries, Vec<Formula>, BTreeSet<Atom>) {
         let step = width.div_ceil(8).max(1);
         let shards: Vec<(Summaries, Vec<Formula>)> = std::thread::scope(|scope| {
@@ -6852,8 +6879,12 @@ mod tests {
                             })
                             .collect();
                         let def = |n: u32| {
+                            // A variable outside the chunk panics here (step 1 of the
+                            // argument above): below `start`, or at or past `end`.
                             let i = n.checked_sub(start).expect("a leaf reads only itself");
-                            defs[i as usize].clone()
+                            defs.get(i as usize)
+                                .expect("a leaf reads only itself")
+                                .clone()
                         };
                         let mut sums = Summaries::default();
                         for f in &defs {
@@ -6884,10 +6915,25 @@ mod tests {
                 cyclic,
             } = shard;
             assert!(by.is_empty() && branch_roots.is_empty() && functional_leaves.is_empty());
+            // Case 4(b) of the argument above: a key already present from another chunk
+            // panics, so the union is of disjoint maps or the fixture is not built.
+            let before = (
+                sums.syms.len() + syms.len(),
+                sums.cone.len() + cone.len(),
+                sums.branch_cone.len() + branch_cone.len(),
+                sums.cyclic.len() + cyclic.len(),
+            );
             sums.syms.extend(syms);
             sums.cone.extend(cone);
             sums.branch_cone.extend(branch_cone);
             sums.cyclic.extend(cyclic);
+            let after = (
+                sums.syms.len(),
+                sums.cone.len(),
+                sums.branch_cone.len(),
+                sums.cyclic.len(),
+            );
+            assert_eq!(before, after, "two chunks share an id");
             defs.extend(part);
         }
         (sums, defs, (0..width).map(a).collect())
