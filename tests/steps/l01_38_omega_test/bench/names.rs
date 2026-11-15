@@ -2,7 +2,7 @@
 
 use crate::names::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{decide, project_each, satisfiable};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each, satisfiable};
 
 #[test]
 fn decide_scales_over_copies_of_a_tie() {
@@ -174,4 +174,78 @@ fn tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_toge
 #[test]
 fn the_splinters_are_searched_a_batch_at_a_time_under_80_namings_of_seed_0x5b1() {
     splinters_answer_alike(&mut zed_tests::instances::Rng::new(0x5b1), 60, 20, 0x5b1);
+}
+
+/// The size of `decide_scales_over_copies_of_the_or_if_question`.
+const K: usize = 2000;
+
+/// `k` copies of the question of plan row FAIL-or-if-tie-refusal: `x` in `-6..=-1` or `1..=6`,
+/// `y` as `x` (`y_may_be_zero` false, no point) or in `-6..=6` (true), and `x == 0 || y == 0`.
+/// Atoms of different copies share a color, and the first swap in name order is no symmetry (it
+/// moves one copy's `x` into another's), so `Numbered::ties_are_symmetries` ends at it; the
+/// copies share no atom and are decided one by one.
+fn copies_of_the_or_if_question(k: usize, y_may_be_zero: bool) -> Formula {
+    let v = |name: String| Lin::atom(Atom::Sym(name.into()));
+    let c = |x: i64| Lin::constant(x);
+    let within_six = |a: &Lin| {
+        vec![
+            Formula::Con(Con::ge(a, &c(-6))),
+            Formula::Con(Con::ge(&c(6), a)),
+        ]
+    };
+    let away_from_zero = |a: &Lin| {
+        let mut fs = within_six(a);
+        fs.push(Formula::or(vec![
+            Formula::Con(Con::ge(&c(-1), a)),
+            Formula::Con(Con::ge(a, &c(1))),
+        ]));
+        Formula::and(fs)
+    };
+    let mut fs = Vec::new();
+    for i in 0..k {
+        let (x, y) = (v(format!("x{i}")), v(format!("y{i}")));
+        fs.push(away_from_zero(&x));
+        fs.push(match y_may_be_zero {
+            false => away_from_zero(&y),
+            true => Formula::and(within_six(&y)),
+        });
+        fs.push(Formula::or(vec![
+            Formula::Con(Con::eq(&x, &c(0))),
+            Formula::Con(Con::eq(&y, &c(0))),
+        ]));
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn decide_scales_over_copies_of_the_or_if_question() {
+    // Satisfied and projected as decided: one copy and two alike.
+    for k in [1, 2] {
+        let f = copies_of_the_or_if_question(k, false);
+        assert_eq!(
+            (decide(&f), satisfiable(&f)),
+            (Ok(false), Ok(None)),
+            "{k} copies"
+        );
+        let (each, skipped) = project_each(&f, &[Atom::Sym("x0".into())]).unwrap();
+        assert!(skipped.is_empty() && each[0].as_ref().unwrap().pieces().next().is_none());
+        // With `y` free to be 0 there is a point, and the one found is one: each `y` is 0.
+        let f = copies_of_the_or_if_question(k, true);
+        assert_eq!(decide(&f), Ok(true), "{k} copies");
+        let m = satisfiable(&f).unwrap().expect("a point");
+        for i in 0..k {
+            let at = |s: String| m[&Atom::Sym(s.into())].clone();
+            let (x, y) = (at(format!("x{i}")), at(format!("y{i}")));
+            assert!(y == 0.into() && x != 0.into(), "copy {i}: x = {x}, y = {y}");
+        }
+    }
+    let (small, large) = (
+        copies_of_the_or_if_question(K, false),
+        copies_of_the_or_if_question(K * scaling::FACTOR, false),
+    );
+    assert_eq!((decide(&small), decide(&large)), (Ok(false), Ok(false)));
+    scaling::check_order("decide on copies of the or-if question", K, 1, |n| {
+        let f = if n == K { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
 }

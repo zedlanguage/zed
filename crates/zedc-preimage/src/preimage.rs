@@ -14201,8 +14201,10 @@ mod tests {
             // PRES-switchover-not-race; then this class goes. A preimage whose question of
             // exactness the solver refuses for the `||` shape and decides for the `if` shape is
             // marked necessary, as the doc above allows; it is counted apart. In 2500 fresh seeds
-            // each such refusal is `Unordered`: the `||` shape is symmetric in `x` and `y`, so the
-            // coloring ties them, and that refusal has its own row (FAIL-or-if-tie-refusal). The
+            // each such refusal was `Unordered`: the `||` shape is symmetric in `x` and `y`, so the
+            // coloring ties them. Since FAIL-or-if-tie-refusal a formula that swapping the tied
+            // atoms maps onto itself is searched, and those questions are decided
+            // (`or_if_questions_symmetric_in_x_and_y_are_decided_as_their_if_forms_are`). The
             // `Disjuncts` refusal of seed 10347845748276606162 came from a constraint with no atom
             // and is fixed (PRESBURGER-or-if-disjuncts-refusal). A preimage with the same box that
             // is no longer exact is the failure this test looks for.
@@ -15953,6 +15955,30 @@ mod tests {
             .filter(|(_, w, _)| w.starts_with("if "))
             .count();
         assert_eq!(ifs, 1, "{:?}", rel.defs);
+    }
+
+    /// Two rounds whose question of exactness the solver refused as `||` ([`Walk::or_if`]) with
+    /// `Unordered`, since the formula is symmetric in `x` and `y`, and decided as an `if`
+    /// (FAIL-or-if-tie-refusal): swapping `x` and `y` maps the formula onto itself, so ranking
+    /// them by name gives one formula under every naming, which is searched.
+    #[test]
+    fn or_if_questions_symmetric_in_x_and_y_are_decided_as_their_if_forms_are() {
+        for (seed, round, w) in [
+            (3178640468583431682u64, 104usize, false),
+            (11972348173366867610, 36, true),
+        ] {
+            let mut g = Gen::new(seed, false);
+            g.and_ifs = true;
+            g.or_ifs = true;
+            let mut t = program(&mut g);
+            for _ in 0..round {
+                t = program(&mut g);
+            }
+            let (as_if, as_or) = both_readings(&t, w);
+            assert_eq!(as_if.refusal, None, "seed {seed} round {round}: {t:?}");
+            assert_eq!(as_or.refusal, None, "seed {seed} round {round}: {t:?}");
+            assert_eq!(as_or.exact, as_if.exact, "seed {seed} round {round}: {t:?}");
+        }
     }
 }
 

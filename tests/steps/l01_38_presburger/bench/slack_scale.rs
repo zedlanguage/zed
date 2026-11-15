@@ -251,11 +251,18 @@ fn dense_scales() {
 
 /// I22: neither size has repeated weights. The old survivor's endpoint query was followed
 /// by logarithmically many whole-formula questions even though its probe was immune.
+///
+/// `weights_distinct`, whose 4096 weights are distinct: with `weights_untied` the 4096 weights
+/// of the large size repeat and the names tie, so the two sizes took different paths. Before
+/// FAIL-or-if-tie-refusal the eight whole-formula questions of the large size were refused
+/// (`Unordered`) where those of the small size were searched (3.3 times, 10.2G instructions
+/// at 4096); since then the tied ones are searched too (13.3 times, 41.4G). Ties at both
+/// sizes are measured by `tied_projection_endpoint_reports_scale_past_512`.
 #[test]
 fn untied_projection_uses_the_endpoint_report() {
     let k = 512;
-    let small = subset_sum_dp(&weights_untied(k));
-    let large = subset_sum_dp(&weights_untied(8 * k));
+    let small = subset_sum_dp(&weights_distinct(k));
+    let large = subset_sum_dp(&weights_distinct(8 * k));
     let y0 = [sym("y0")];
     let red = std::env::var_os("PDCX_RED").is_some();
     // The solver alone: the join of row sums (module `row_sums`) answers both sizes exactly with
@@ -264,7 +271,7 @@ fn untied_projection_uses_the_endpoint_report() {
         ROW_SUMS_OFF.with(|o| o.set(true));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(red));
         let got = project_each(if m == k { &small } else { &large }, &y0).expect("projection");
-        assert!(got.0[0].as_ref().expect("set").contains(3000));
+        assert!(got.0[0].as_ref().expect("set").contains(9000));
         zedc::store::presburger::HULL_BISECT.with(|c| c.set(false));
         ROW_SUMS_OFF.with(|o| o.set(false));
     });

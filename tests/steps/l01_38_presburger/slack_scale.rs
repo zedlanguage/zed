@@ -58,6 +58,15 @@ pub(super) fn weights_untied(k: usize) -> Vec<i64> {
         .collect()
 }
 
+/// Tie-free weights up to `k = 4105`, as [`weights_untied`] with the prime `8209 > 2 * 4104`,
+/// so `i^2 != j^2 (mod 8209)` for all `0 <= i < j <= 4104`, and `w_i in [9000, 17208]`
+/// (`max_w < 2 * min_w`).
+pub(super) fn weights_distinct(k: usize) -> Vec<i64> {
+    (0..k)
+        .map(|i| 9000 + 37 * (i as i64) * (i as i64) % 8209)
+        .collect()
+}
+
 pub(super) fn choice_sum(w: &[i64], t: i64) -> Formula {
     let names: Vec<String> = (0..w.len()).map(|i| format!("y{i}")).collect();
     let mut fs: Vec<Formula> = names

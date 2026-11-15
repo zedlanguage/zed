@@ -205,11 +205,12 @@ fn random_tests_agree_with_the_interpreter() {
     // only change, that projection is [0..=5]: every projection is the hull of its values. It
     // stays so with `live3` alone, since that stage was removed (HULL3-subsumed).
     assert_eq!(wider, 0, "projections wider than the hull of their values");
-    // Since NAME-ties repair 2, one entailment of the 60, from `x != y` in the window to
-    // `-x == y - 1`, is refused: `x` and `y` occur alike, and two disjunctions are left that only
-    // an order chosen by name would search. Before, it was answered.
+    // From NAME-ties repair 2 to FAIL-or-if-tie-refusal, one entailment of the 60, from `x != y`
+    // in the window to `-x == y - 1`, was refused: `x` and `y` occur alike, and two disjunctions
+    // were left that only an order chosen by name would search. Swapping `x` and `y` maps that
+    // question onto itself, so every order is as good as another, and it is answered again.
     assert_eq!(
-        unordered, 1,
+        unordered, 0,
         "entailments refused for a search order only names fix"
     );
     // Both answers occur, so neither check passes by never being asked.

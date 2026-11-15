@@ -742,29 +742,55 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
     match Renamed::of(f) {
         Naming::Kept => satisfiable_inner(f),
         Naming::Renamed(r) => {
+            // Atoms ranked by name are settled first as tied ones are, at the cost of that
+            // path; the search answers what it leaves.
+            if let Some(color) = &r.tied {
+                match settle_tied(f, color, true) {
+                    Ok(Settled::Empty) => return Ok(None),
+                    Ok(Settled::Point(m)) => return Ok(Some(m)),
+                    Ok(Settled::Left(_)) | Err(_) => {}
+                }
+            }
             let found = satisfiable_inner(&r.f).map_err(|e| r.back_refusal(e))?;
             Ok(found.map(|m| m.into_iter().map(|(a, v)| (r.back(&a), v)).collect()))
         }
-        Naming::Tied(vars, color) => match settle_tied(f, &color, true)? {
-            Settled::Empty => Ok(None),
-            Settled::Point(m) => Ok(Some(m)),
-            // As in [`decide_named`]; each replaced atom takes the value of the atom that
-            // replaced it.
-            Settled::Left(p) => match twins_merged(f, &[], true) {
-                Some((g, to)) => match satisfiable_named(&g) {
-                    Ok(found) => Ok(found.map(|mut m| {
-                        for (a, by) in to {
-                            if let Some(v) = m.get(&by).cloned() {
-                                m.insert(a, v);
+        Naming::Tied(vars, color) => {
+            let whole = || match settle_tied(f, &color, true)? {
+                Settled::Empty => Ok(None),
+                Settled::Point(m) => Ok(Some(m)),
+                // As in [`decide_named`]; each replaced atom takes the value of the atom that
+                // replaced it.
+                Settled::Left(p) => match twins_merged(f, &[], true) {
+                    Some((g, to)) => match satisfiable_named(&g) {
+                        Ok(found) => Ok(found.map(|mut m| {
+                            for (a, by) in to {
+                                if let Some(v) = m.get(&by).cloned() {
+                                    m.insert(a, v);
+                                }
                             }
-                        }
-                        m
-                    })),
-                    Err(_) => Err(unordered(vars, &p)),
+                            m
+                        })),
+                        Err(_) => Err(unordered(vars.clone(), &p)),
+                    },
+                    None => Err(unordered(vars.clone(), &p)),
                 },
-                None => Err(unordered(vars, &p)),
-            },
-        },
+            };
+            // As in [`decide_named`]: each group that shares no atom with the others alone,
+            // the points of all of them joined; the whole asked as before where one is
+            // refused and none is empty.
+            let Some(parts) = atom_disjoint_parts(f) else {
+                return whole();
+            };
+            let (mut point, mut refused) = (Model::new(), false);
+            for g in &parts {
+                match satisfiable_named(g) {
+                    Ok(None) => return Ok(None),
+                    Ok(Some(m)) => point.extend(m),
+                    Err(_) => refused = true,
+                }
+            }
+            if refused { whole() } else { Ok(Some(point)) }
+        }
     }
 }
 
@@ -918,18 +944,100 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
     }
     match Renamed::of(f) {
         Naming::Kept => unit_rows_have_a_point(f).map_or_else(|| decide_inner(f), Ok),
-        Naming::Renamed(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
-        Naming::Tied(vars, color) => match settle_tied(f, &color, false)? {
-            Settled::Empty => Ok(false),
-            Settled::Point(_) => Ok(true),
-            // With atoms defined alike made one, the tie may be gone. Each merge leaves
-            // fewer atoms, so the call ends.
-            Settled::Left(p) => match twins_merged(f, &[], true) {
-                Some((g, _)) => decide_named(&g).map_err(|_| unordered(vars, &p)),
-                None => Err(unordered(vars, &p)),
-            },
-        },
+        Naming::Renamed(r) => {
+            // As in [`satisfiable_named`]: the tied path first, the search on what it leaves.
+            if let Some(color) = &r.tied {
+                match settle_tied(f, color, false) {
+                    Ok(Settled::Empty) => return Ok(false),
+                    Ok(Settled::Point(_)) => return Ok(true),
+                    Ok(Settled::Left(_)) | Err(_) => {}
+                }
+            }
+            decide_inner(&r.f).map_err(|e| r.back_refusal(e))
+        }
+        Naming::Tied(vars, color) => {
+            let whole = || match settle_tied(f, &color, false)? {
+                Settled::Empty => Ok(false),
+                Settled::Point(_) => Ok(true),
+                // With atoms defined alike made one, the tie may be gone. Each merge leaves
+                // fewer atoms, so the call ends.
+                Settled::Left(p) => match twins_merged(f, &[], true) {
+                    Some((g, _)) => decide_named(&g).map_err(|_| unordered(vars.clone(), &p)),
+                    None => Err(unordered(vars.clone(), &p)),
+                },
+            };
+            // Each group that shares no atom with the others decided alone: empty when one
+            // is; where one is refused and none is empty, the whole is asked as before.
+            let Some(parts) = atom_disjoint_parts(f) else {
+                return whole();
+            };
+            let mut refused = false;
+            for g in &parts {
+                match decide_named(g) {
+                    Ok(false) => return Ok(false),
+                    Ok(true) => {}
+                    Err(_) => refused = true,
+                }
+            }
+            if refused { whole() } else { Ok(true) }
+        }
     }
+}
+
+/// The top-level conjuncts of `f` in groups that share no atom, a product sharing its factors,
+/// each group as one conjunction; `None` where they make one group. A tied formula is decided
+/// group by group ([`decide_named`], [`satisfiable_named`]): the formula has a point exactly
+/// when each group has one, and each group is named by its own colors, so a tie between atoms
+/// of different groups, which no swap within one group maps onto itself, does not refuse it
+/// (plan row FAIL-or-if-tie-refusal: two copies of `x == 0 || y == 0` with `x` and `y` away
+/// from 0 were refused where one copy was decided). Only where a group is refused and none is
+/// empty is the whole asked as before ([`settle_tied`], then [`twins_merged`]). The groups
+/// are made from the conjuncts' atoms and are the same under every naming.
+// Complexity tradeoff: union and find over the conjuncts, joined at each atom to the first
+// conjunct that holds it, with path halving: O(n log n) for the n terms of `f`, where joining
+// every pair of conjuncts that share an atom would be O(c^2) for c conjuncts. The groups are
+// asked before the whole is settled as tied: settling the whole first, as the first version
+// did, cost 80% of the test below and its sorted maps of atoms made the instructions per copy
+// grow by 24% from 250 to 2000 copies (ratio 9.93); each group is asked once, the groups hold
+// the formula's parts once, so their sizes sum to the formula's (a group asked alone may again
+// be tied, and is split no further, being one group). The whole is asked as before only
+// where a group is refused, which costs what that refusal cost before plus the groups. Test:
+// `l01_38_omega_test::bench::names::decide_scales_over_copies_of_the_or_if_question`.
+fn atom_disjoint_parts(f: &Formula) -> Option<Vec<Formula>> {
+    let parts = f.conjuncts();
+    if parts.len() < 2 {
+        return None;
+    }
+    fn root(up: &mut [usize], mut i: usize) -> usize {
+        while up[i] != i {
+            up[i] = up[up[i]];
+            i = up[i];
+        }
+        i
+    }
+    let mut up: Vec<usize> = (0..parts.len()).collect();
+    let mut first: HashMap<Atom, usize> = HashMap::new();
+    for (i, g) in parts.iter().enumerate() {
+        for c in g.cons() {
+            for a in c.lin.terms.keys() {
+                let factors = match a {
+                    Atom::Product(x, y) => vec![x.atom(), y.atom()],
+                    Atom::Sym(_) | Atom::Aux(_) => vec![a.clone()],
+                };
+                for x in factors {
+                    let j = *first.entry(x).or_insert(i);
+                    let (ri, rj) = (root(&mut up, i), root(&mut up, j));
+                    up[ri.max(rj)] = ri.min(rj);
+                }
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<Formula>> = BTreeMap::new();
+    for (i, g) in parts.iter().enumerate() {
+        let r = root(&mut up, i);
+        groups.entry(r).or_default().push((*g).clone());
+    }
+    (groups.len() > 1).then(|| groups.into_values().map(Formula::and).collect())
 }
 
 /// Whether `f`, a conjunction with no disjunction or negation, has an integer point, when each
@@ -2066,8 +2174,22 @@ fn rename(to: &HashMap<Atom, Arc<str>>, a: &Atom) -> Atom {
 /// the coloring is given, for each product, a row joining it to its two factors, so that a factor
 /// that occurs only in products has a color too.
 ///
-/// Complexity tradeoff: when two atoms share a color ([`Naming::Tied`]), no renaming is
-/// fixed by the structure, so the formula is not searched: [`decide`] and [`satisfiable`]
+/// Atoms that share a color are still ranked by name, and the formula searched, when every
+/// permutation among the atoms of each such color maps the formula onto itself, which
+/// [`Numbered::ties_are_symmetries`] checks by the swaps of atoms adjacent in name order: any
+/// naming then ranks them by such a permutation and gives the one formula, up to the order of
+/// the parts, which [`nnf`] sorts (plan row FAIL-or-if-tie-refusal: `x == 0 || x == x - y`
+/// with `x` and `y` alike was refused, though its `if` form was answered). Such a formula is
+/// first answered as a tied one is ([`settle_tied`], [`project_each_tied`]), at that path's
+/// cost, and searched only for what that leaves: a question it neither shows empty nor gives a
+/// point of, a projection with a refused symbol or a disjunction kept whole, which is then met
+/// with the tied projection ([`projections_met`]). Neither result depends on the names. Cost:
+/// a question the tied path leaves now pays for the search where it was refused at once
+/// (I22's tied size in `slack_scale`: 10.2G to 41.4G instructions at 4096 weights).
+///
+/// Complexity tradeoff: when two atoms share a color and some swap among them does not map the
+/// formula onto itself ([`Naming::Tied`]), no renaming is fixed by the structure, so the
+/// formula is not searched: [`decide`] and [`satisfiable`]
 /// settle it by [`settle_as_sets`], whose result no order of its parts changes, answer it
 /// when no two disjunctions left are linked ([`alone`]), test what is otherwise left with the
 /// disjuncts their colors choose ([`settle_tied`], [`by_color`]), and refuse
@@ -2094,6 +2216,10 @@ struct Renamed {
     from: Vec<Atom>,
     /// The new name of each atom renamed.
     to: HashMap<Atom, Arc<str>>,
+    /// When atoms that share a color were ranked by name, since every permutation among them
+    /// maps the formula onto itself ([`Numbered::ties_are_symmetries`]): the color of each
+    /// atom, with which the formula is first settled as a tied one is ([`settle_tied`]).
+    tied: Option<HashMap<Atom, usize>>,
 }
 
 /// How the names of a formula's atoms reach its answer ([`Renamed::of`]).
@@ -2142,15 +2268,19 @@ impl Renamed {
         let mut plain: Vec<usize> = (0..atoms.len())
             .filter(|&i| !matches!(atoms[i], Atom::Product(..)))
             .collect();
-        plain.sort_unstable_by_key(|&i| color[i]);
-        if let Some(w) = plain.windows(2).find(|w| color[w[0]] == color[w[1]]) {
-            let tied = color[w[0]];
-            let mut vars: Vec<Atom> = (plain.iter())
-                .filter(|&&i| color[i] == tied)
-                .map(|&i| atoms[i].clone())
-                .collect();
-            vars.sort_unstable();
-            return Naming::Tied(vars, atoms.into_iter().zip(color).collect());
+        // Stable, so that atoms of one color stay in the order of their names.
+        plain.sort_by_key(|&i| color[i]);
+        let ties: Vec<Vec<Atom>> = (plain.chunk_by(|&p, &q| color[p] == color[q]))
+            .filter(|c| c.len() > 1)
+            .map(|c| c.iter().map(|&i| atoms[i].clone()).collect())
+            .collect();
+        // Atoms that share a color but that every permutation among them maps the formula
+        // onto ([`Numbered::swaps_onto_itself`]) are ranked by name: any other naming ranks them
+        // by a permutation of that kind, and so renames to the same formula.
+        if let Some(vars) = ties.first()
+            && !Numbered::of(f).ties_are_symmetries(&ties)
+        {
+            return Naming::Tied(vars.clone(), atoms.into_iter().zip(color).collect());
         }
         let from: Vec<Atom> = plain.iter().map(|&i| atoms[i].clone()).collect();
         // The rank is written with leading zeros to one width, so that names compare as their
@@ -2173,7 +2303,9 @@ impl Renamed {
                 rel: c.rel,
             })
         });
-        Naming::Renamed(Renamed { f, from, to })
+        let tied =
+            (!ties.is_empty()).then(|| atoms.iter().cloned().zip(color.iter().copied()).collect());
+        Naming::Renamed(Renamed { f, from, to, tied })
     }
 
     /// The new name of `a`; an atom not in the formula keeps its own.
@@ -2233,6 +2365,240 @@ impl Renamed {
             })),
             Refusal::Growth | Refusal::Shadows | Refusal::Disjuncts | Refusal::Work => e,
         }
+    }
+}
+
+/// A formula's distinct parts, each numbered by its structure, so that two parts with the same
+/// constraints, written alike, under the same connectives, with the parts of a conjunction or
+/// disjunction in any order, have one number ([`Renamed::of`]).
+struct Numbered {
+    /// The number of each constraint.
+    cons: HashMap<Con, usize>,
+    /// The constraint of each part numbered that is one.
+    con: Vec<Option<Con>>,
+    /// The number of each compound part, by its connective (`0` negation, `1` conjunction,
+    /// `2` disjunction) and the numbers of its parts, sorted.
+    keys: HashMap<(u8, Vec<usize>), usize>,
+    /// The connective of each part numbered, `3` for a constraint.
+    kind: Vec<u8>,
+    /// The numbers of the parts of each part numbered, sorted; none for a constraint.
+    kids: Vec<Vec<usize>>,
+    /// The parts that each part numbered is a part of, each once.
+    parents: Vec<Vec<usize>>,
+    /// The height of each part numbered: 0 for a constraint, else one more than its parts'.
+    height: Vec<u32>,
+    /// Whether each part numbered is a constraint with a product among its terms.
+    product: Vec<bool>,
+    /// The constraints numbered that each atom other than a product occurs in, alone or as a
+    /// factor of a product.
+    uses: HashMap<Atom, Vec<usize>>,
+    /// The number of the formula.
+    root: usize,
+}
+
+impl Numbered {
+    /// The parts of `f` numbered.
+    fn of(f: &Formula) -> Numbered {
+        let mut s = Numbered {
+            cons: HashMap::new(),
+            con: Vec::new(),
+            keys: HashMap::new(),
+            kind: Vec::new(),
+            kids: Vec::new(),
+            parents: Vec::new(),
+            height: Vec::new(),
+            product: Vec::new(),
+            uses: HashMap::new(),
+            root: 0,
+        };
+        let root = f.fold(
+            (),
+            |_, ()| (),
+            |g, (), mut parts: Vec<usize>| match g {
+                Formula::Con(c) => {
+                    if let Some(&n) = s.cons.get(c) {
+                        return n;
+                    }
+                    let n = s.add(3, Vec::new());
+                    s.cons.insert(c.clone(), n);
+                    s.con[n] = Some(c.clone());
+                    for a in c.lin.terms.keys() {
+                        let factors = match a {
+                            Atom::Product(x, y) if x == y => {
+                                s.product[n] = true;
+                                vec![x.atom()]
+                            }
+                            Atom::Product(x, y) => {
+                                s.product[n] = true;
+                                vec![x.atom(), y.atom()]
+                            }
+                            Atom::Sym(_) | Atom::Aux(_) => vec![a.clone()],
+                        };
+                        for x in factors {
+                            s.uses.entry(x).or_default().push(n);
+                        }
+                    }
+                    n
+                }
+                Formula::Not(_) | Formula::And(_) | Formula::Or(_) => {
+                    let kind = match g {
+                        Formula::Not(_) => 0,
+                        Formula::And(_) => 1,
+                        Formula::Con(_) | Formula::Or(_) => 2,
+                    };
+                    parts.sort_unstable();
+                    if let Some(&n) = s.keys.get(&(kind, parts.clone())) {
+                        return n;
+                    }
+                    let n = s.add(kind, parts.clone());
+                    s.keys.insert((kind, parts), n);
+                    n
+                }
+            },
+        );
+        s.root = root;
+        s
+    }
+
+    /// A new part numbered, of connective `kind` over the sorted `parts`.
+    fn add(&mut self, kind: u8, parts: Vec<usize>) -> usize {
+        let n = self.kind.len();
+        let mut height = 0;
+        for (i, &p) in parts.iter().enumerate() {
+            height = height.max(self.height[p] + 1);
+            if i == 0 || parts[i - 1] != p {
+                self.parents[p].push(n);
+            }
+        }
+        self.kind.push(kind);
+        self.con.push(None);
+        self.kids.push(parts);
+        self.parents.push(Vec::new());
+        self.height.push(height);
+        self.product.push(false);
+        n
+    }
+
+    /// Whether, for each list of `ties`, every permutation of its atoms maps the formula onto
+    /// itself: whether each swap of two atoms next to each other in it does, since those swaps
+    /// make every permutation.
+    fn ties_are_symmetries(&self, ties: &[Vec<Atom>]) -> bool {
+        (ties.iter()).all(|t| t.windows(2).all(|w| self.swaps_onto_itself(&w[0], &w[1])))
+    }
+
+    /// Whether swapping the atoms `a` and `b`, which are not products, everywhere in the
+    /// formula (in products too) gives the formula again, up to the order of the parts of each
+    /// conjunction and disjunction.
+    ///
+    /// Only the parts above a constraint with `a` or `b` are numbered anew, from the lowest up.
+    /// A part is unchanged when its parts changed make, as a multiset, the same numbers as
+    /// before, which is found from those parts alone; otherwise it is numbered anew from all
+    /// its parts, and the swap fails when the part made is no part of the formula, since a
+    /// swap that gives the formula again maps each of its parts onto one of its parts.
+    // Complexity tradeoff: the naive way writes the formula out swapped and compares it with
+    // the formula, O(N log N) for the N distinct parts at each of the A - 1 swaps of A tied
+    // atoms, O(A N log N) in all: quadratic when each atom has its own disjunction
+    // (`decide_on_tied_disjunctions_scales`). Here a swap reads the parts above the
+    // constraints of its two atoms, up to the lowest that it leaves unchanged; a part is read
+    // in time near the number of its parts changed when it is unchanged, and near the number
+    // of all its parts when it is not. Since each atom is in two swaps, the parts unchanged
+    // are read in time near the occurrences of the tied atoms in all; a part changed by a
+    // swap holds one of its atoms and not the other, and when its own parts are many and it
+    // holds many tied atoms, each swapped with one outside it, it is read once per such swap:
+    // that case costs O(A N) as the naive way. The first swap that fails ends the check.
+    // Tests: `l01_38_omega_test::names::a_tie_that_every_swap_maps_onto_itself_is_renamed` and
+    // `l01_38_omega_test::names::decide_on_tied_disjunctions_scales`, whose leaves every swap maps
+    // onto themselves. COMPLEXITY.md row NAME-ties-or.
+    fn swaps_onto_itself(&self, a: &Atom, b: &Atom) -> bool {
+        let swap = |x: Atom| {
+            if x == *a {
+                b.clone()
+            } else if x == *b {
+                a.clone()
+            } else {
+                x
+            }
+        };
+        let factor = |x: &Factor| Factor::of(&swap(x.atom())).expect("a swapped factor");
+        let none: Vec<usize> = Vec::new();
+        let mut starts: Vec<usize> = (self.uses.get(a).unwrap_or(&none).iter())
+            .chain(self.uses.get(b).unwrap_or(&none))
+            .copied()
+            .collect();
+        starts.sort_unstable();
+        starts.dedup();
+        // The new number of each part changed, the parts changed of each part above one, and
+        // the parts left to read, lowest first.
+        let mut now: HashMap<usize, usize> = HashMap::new();
+        let mut changed: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut left: BTreeSet<(u32, usize)> = BTreeSet::new();
+        let moved = |n: usize,
+                     m: usize,
+                     now: &mut HashMap<usize, usize>,
+                     changed: &mut HashMap<usize, Vec<usize>>,
+                     left: &mut BTreeSet<(u32, usize)>| {
+            now.insert(n, m);
+            for &p in &self.parents[n] {
+                changed.entry(p).or_default().push(n);
+                left.insert((self.height[p], p));
+            }
+        };
+        for n in starts {
+            let c = self.con[n].as_ref().expect("a constraint numbered");
+            // A constraint with no product that holds `a` and `b` at one coefficient is its own
+            // image:
+            // found from the two terms, not by writing the constraint out swapped, which on one
+            // row over all of `k` tied atoms (`subset_sum`) cost O(k) at each of k swaps.
+            let (ka, kb) = (c.lin.terms.get(a), c.lin.terms.get(b));
+            if ka.is_some() && ka == kb && !self.product[n] {
+                continue;
+            }
+            let terms = c.lin.terms.iter().map(|(x, k)| {
+                let x = match x {
+                    Atom::Product(p, q) => Atom::product_of(factor(p), factor(q)),
+                    Atom::Sym(_) | Atom::Aux(_) => swap(x.clone()),
+                };
+                (x, k.clone())
+            });
+            let image = Con {
+                lin: Lin {
+                    terms: terms.collect(),
+                    constant: c.lin.constant.clone(),
+                },
+                rel: c.rel,
+            };
+            match self.cons.get(&image) {
+                None => return false,
+                Some(&m) if m != n => moved(n, m, &mut now, &mut changed, &mut left),
+                Some(_) => {}
+            }
+        }
+        while let Some((_, p)) = left.pop_first() {
+            let kids = &self.kids[p];
+            let times =
+                |k: usize| kids.partition_point(|&x| x <= k) - kids.partition_point(|&x| x < k);
+            // Each part changed counted out as it was and in as it is now.
+            let mut count: Vec<(usize, isize)> = Vec::new();
+            for &k in &changed.remove(&p).unwrap_or_default() {
+                let t = times(k) as isize;
+                count.push((k, -t));
+                count.push((now[&k], t));
+            }
+            count.sort_unstable();
+            let same = count
+                .chunk_by(|x, y| x.0 == y.0)
+                .all(|c| c.iter().map(|x| x.1).sum::<isize>() == 0);
+            if same {
+                continue;
+            }
+            let mut parts: Vec<usize> = kids.iter().map(|k| *now.get(k).unwrap_or(k)).collect();
+            parts.sort_unstable();
+            match self.keys.get(&(self.kind[p], parts)) {
+                None => return false,
+                Some(&m) => moved(p, m, &mut now, &mut changed, &mut left),
+            }
+        }
+        !now.contains_key(&self.root)
     }
 }
 
@@ -2493,7 +2859,8 @@ enum Settled {
 /// tied leaves with a disjunction each (8 to 64 leaves: 22 ms to 10.8 s). Here the test is one
 /// [`solve`] after the settling, and the links are read once. Trigger: a formula with two
 /// linked disjunctions left after settling, two of whose atoms the coloring does not tell
-/// apart. Tests:
+/// apart, where some swap of two such atoms does not map the formula onto itself (one that
+/// every swap maps onto itself is searched: [`Numbered::ties_are_symmetries`]). Tests:
 /// `l01_38_omega_test::names::a_formula_whose_atoms_share_a_color_is_settled_or_refused`,
 /// `l01_38_omega_test::names::decide_on_tied_disjunctions_scales` and
 /// `l01_38_omega_test::names::decide_on_separate_tied_disjunctions_scales`. COMPLEXITY.md row
@@ -17129,45 +17496,70 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     let r = match Renamed::of(f) {
         Naming::Kept => return project_each_inner(f, syms),
         Naming::Renamed(r) => r,
-        // Projected with each disjunction kept, by questions that no order of the parts
-        // changes ([`project_parts`] with `sets`).
-        Naming::Tied(..) => {
-            let tied = || match settle_as_sets(absorbed(f, syms).0)? {
-                None => Ok(no_points(syms)),
-                // A projection may keep a disjunct not shown to have a point.
-                Some(AsSets { p, .. }) => {
-                    project_parts(p, syms, Some(f), true, &mut HashMap::new())
-                }
-            };
-            // With atoms defined alike made one, the tie may be gone; each answer is sound,
-            // so their meet is, and no wider than either. Each merge leaves fewer atoms,
-            // so the call below ends.
-            let Some((g, _)) = twins_merged(f, syms, false) else {
-                return tied();
-            };
-            return match (project_each_named(&g, syms), tied()) {
-                (Ok((mut each, skipped)), Ok((others, other_skipped))) => {
-                    meet_each(&mut each, others);
-                    let skipped = if other_skipped.is_empty() {
-                        other_skipped
-                    } else {
-                        skipped
-                    };
-                    Ok((each, skipped))
-                }
-                (Ok(each), Err(_)) => Ok(each),
-                (Err(_), r) => r,
-            };
-        }
+        Naming::Tied(..) => return project_each_tied(f, syms),
     };
+    // Atoms that share a color, ranked by name since every permutation among them maps `f`
+    // onto itself, are projected first as tied ones are, with the disjunctions kept, at the
+    // cost of that path; where it leaves a refusal, the search's projection is met with it.
+    // Neither depends on the names, so their meet does not.
+    let tied = r.tied.is_some().then(|| project_each_tied(f, syms));
+    if let Some(Ok((each, skipped))) = &tied
+        && skipped.is_empty()
+        && each.iter().all(Result::is_ok)
+    {
+        return tied.expect("a tied projection");
+    }
     let there: Vec<Atom> = syms.iter().map(|s| r.there(s)).collect();
-    let (each, skipped) = project_each_inner(&r.f, &there).map_err(|e| r.back_refusal(e))?;
-    Ok((
-        each.into_iter()
-            .map(|s| s.map_err(|e| r.back_refusal(e)))
-            .collect(),
-        skipped.into_iter().map(|e| r.back_refusal(e)).collect(),
-    ))
+    let renamed = project_each_inner(&r.f, &there)
+        .map_err(|e| r.back_refusal(e))
+        .map(|(each, skipped)| {
+            (
+                each.into_iter()
+                    .map(|s| s.map_err(|e| r.back_refusal(e)))
+                    .collect(),
+                skipped.into_iter().map(|e| r.back_refusal(e)).collect(),
+            )
+        });
+    match tied {
+        Some(tied) => projections_met(renamed, tied),
+        None => renamed,
+    }
+}
+
+/// [`project_each`] of a formula two of whose atoms share a color ([`Naming::Tied`]): with each
+/// disjunction kept, by questions that no order of the parts changes ([`project_parts`] with
+/// `sets`), met with the projection of `f` with atoms defined alike made one
+/// ([`twins_merged`]).
+fn project_each_tied(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    let tied = || match settle_as_sets(absorbed(f, syms).0)? {
+        None => Ok(no_points(syms)),
+        // A projection may keep a disjunct not shown to have a point.
+        Some(AsSets { p, .. }) => project_parts(p, syms, Some(f), true, &mut HashMap::new()),
+    };
+    // With atoms defined alike made one, the tie may be gone. Each merge leaves fewer atoms,
+    // so the call below ends.
+    let Some((g, _)) = twins_merged(f, syms, false) else {
+        return tied();
+    };
+    projections_met(project_each_named(&g, syms), tied())
+}
+
+/// The meet of two sound projections of one formula, so sound, and no wider than either; the
+/// disjunctions left out are the second's when it left out none, else the first's.
+fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result<Each, Refusal> {
+    match (a, b) {
+        (Ok((mut each, skipped)), Ok((others, other_skipped))) => {
+            meet_each(&mut each, others);
+            let skipped = if other_skipped.is_empty() {
+                other_skipped
+            } else {
+                skipped
+            };
+            Ok((each, skipped))
+        }
+        (Ok(each), Err(_)) => Ok(each),
+        (Err(_), r) => r,
+    }
 }
 
 /// The atoms of `f`, other than `syms`, that a top-level conjunct of `f` defines alike: two

@@ -1142,9 +1142,12 @@ fn regular_with_disjunctions(rng: &mut Rng, n: usize) -> Disjunctive {
 /// and Growth under the others. Such a formula is now settled without a search, then answered
 /// when each disjunction left is alone in its group of linked rows or the colors choose its
 /// disjunct, and refused with `Refusal::Unordered` otherwise (COMPLEXITY.md NAME-ties-or):
-/// under one naming, 682 of the 1,000 are decided (311 `true`, 371 `false`) against 814
-/// searched as written (440, 374), and 256 are refused for their order. The 1,000 took 23 s;
-/// 15 are drawn now, and the five are kept below.
+/// under one naming, 682 of the 1,000 were decided (311 `true`, 371 `false`) against 814
+/// searched as written (440, 374), and 256 refused for their order. Since plan row
+/// FAIL-or-if-tie-refusal, a tie that every swap maps onto itself is ranked by name and
+/// searched where the tied path leaves it: 716 decided (321 `true`, 395 `false`), 232 refused
+/// for their order, 52 with `Growth`, none name-dependent. The 1,000 took 23 s; 15 are drawn
+/// now, and the five are kept below.
 #[test]
 fn disjunctions_whose_atoms_share_a_color() {
     one_answer_on_fresh_systems("four variables sharing colors", 4, 15, |rng| {
@@ -1272,6 +1275,20 @@ fn pigeons(n: usize, slots: i64) -> Formula {
     Formula::and(fs)
 }
 
+/// [`pigeons`] with the tasks joined in a ring by `t[(i + 1) % n] <= t[i] + 2`, which the
+/// bounds imply: the tasks still occur alike, but swapping two of them moves the ring's rows.
+fn pigeons_in_a_ring(n: usize, slots: i64) -> Formula {
+    let v = |i: usize| -> Lin { Lin::atom(Atom::Sym(format!("t{i}").into())) };
+    let mut fs = vec![pigeons(n, slots)];
+    for i in 0..n {
+        fs.push(Formula::Con(Con::ge(
+            &v(i).plus(&Lin::constant(2)),
+            &v((i + 1) % n),
+        )));
+    }
+    Formula::and(fs)
+}
+
 #[test]
 fn a_formula_whose_atoms_share_a_color_is_settled_or_refused() {
     // With `x, y >= 5` neither disjunct of `x <= 4 || y <= 4` has a point: no point, under
@@ -1299,9 +1316,10 @@ fn a_formula_whose_atoms_share_a_color_is_settled_or_refused() {
     // disjunct, since each has a point with the base. With `x + y >= 10` the choice has a
     // point; with `x + y <= 10` it has none (both late is 14), but each shift at its lower
     // bound, `x == 0 && y == 0`, is a point, which propagation from the bounds shows before
-    // any choice is made. With `1 <= x + y` as well that point is excluded, and the formula is
-    // refused, though `x == 1 && y == 0` is a point: the loss of choosing by color, not by a
-    // search.
+    // any choice is made. With `1 <= x + y` as well that point is excluded; the choice by
+    // color has no point, but swapping `x` and `y` maps the formula onto itself, so they are
+    // ranked by name and searched, which finds `x == 1 && y == 0` (before plan row
+    // FAIL-or-if-tie-refusal the formula was refused).
     let shifts = |total: Formula| {
         let k = Lin::constant;
         let mut fs = vec![total];
@@ -1330,19 +1348,20 @@ fn a_formula_whose_atoms_share_a_color_is_settled_or_refused() {
         early.clone(),
         Formula::Con(Con::ge(&sum, &Lin::constant(1))),
     ]);
-    assert!(
-        matches!(decide(&not_both_zero), Err(Refusal::Unordered(_))),
-        "{:?}",
-        decide(&not_both_zero)
-    );
+    assert_eq!(decide(&not_both_zero), Ok(true));
+    let m = satisfiable(&not_both_zero).unwrap().expect("a point");
+    assert!(not_both_zero.holds(&m), "{m:?}");
     // Tasks in slots, each pair apart: the two disjuncts of `t0 <= t1 - 1 || t0 >= t1 + 1`
     // differ only by which task is first, so they tie, and the disjunctions are linked through
-    // the tasks; three tasks in two slots, which have no point, are refused like four in
-    // three, and the message names the tied tasks and the disjunctions left
+    // the tasks. Every swap of two tasks maps the formula onto itself, so it is searched
+    // (`a_tie_that_every_swap_maps_onto_itself_is_renamed`); joined in a ring by
+    // `t[i+1] <= t[i] + 2`, which the bounds imply, a swap moves the ring's rows, and three
+    // tasks in two slots, which have no point, are refused like four in three, the message
+    // naming the tied tasks and the disjunctions left
     // (`omega::each_cause_of_a_refusal_has_its_own_message` reads it whole).
     for (n, slots, pairs) in [(3, 2, 3), (4, 3, 6)] {
-        let Err(Refusal::Unordered(t)) = decide(&pigeons(n, slots)) else {
-            panic!("{n} tied tasks in {slots} slots are refused");
+        let Err(Refusal::Unordered(t)) = decide(&pigeons_in_a_ring(n, slots)) else {
+            panic!("{n} tied tasks in a ring in {slots} slots are refused");
         };
         assert_eq!(t.vars.len(), n, "{t:?}");
         assert_eq!(t.rows.len(), pairs, "{t:?}");
@@ -1369,6 +1388,106 @@ pub(super) fn star(n: usize) -> Formula {
         fs.push(Formula::Con(Con::ge(&top, &x)));
     }
     Formula::and(fs)
+}
+
+/// `x` and `y` each in `[-6, -1]` or in `[1, 6]`, and `x == at || y == at`, the atoms named
+/// `names`. With `at` zero it is the question of exactness of `if x == 0 { true } else { x ==
+/// x - y }` read as `||` (`zedc_preimage`, seed 3178640468583431682 round 104, plan row
+/// FAIL-or-if-tie-refusal). Swapping `x` and `y` maps the formula onto itself.
+fn either_at(at: i64, names: [&str; 2]) -> Formula {
+    let v = |s: &str| Lin::atom(Atom::Sym(s.into()));
+    let k = Lin::constant;
+    let mut fs = Vec::new();
+    for s in names {
+        let within = |lo: i64, hi: i64| {
+            Formula::and(vec![
+                Formula::Con(Con::ge(&v(s), &k(lo))),
+                Formula::Con(Con::ge(&k(hi), &v(s))),
+            ])
+        };
+        fs.push(Formula::or(vec![within(-6, -1), within(1, 6)]));
+    }
+    let at = names.iter().map(|s| Formula::Con(Con::eq(&v(s), &k(at))));
+    fs.push(Formula::or(at.collect()));
+    Formula::and(fs)
+}
+
+/// Two triangles and a hexagon over `v0..v11`, each variable in `[0, 2]` and at `0` or at
+/// `2`, the two ends of each edge summing to at most 3: every variable has two edges, so color
+/// refinement gives all twelve one color, but swapping a variable of a triangle with one of
+/// the hexagon does not map the formula onto itself.
+fn triangles_and_a_hexagon() -> Disjunctive {
+    let n = 12;
+    let unit = |i: usize, s: i64| {
+        let mut c = vec![0; n];
+        c[i] = s;
+        c
+    };
+    let mut base = Vec::new();
+    let edges = [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)]
+        .into_iter()
+        .chain((0..6).map(|i| (6 + i, 6 + (i + 1) % 6)));
+    for (i, j) in edges {
+        let mut c = vec![0; n];
+        c[i] = -1;
+        c[j] = -1;
+        base.push(ge(&c, 3));
+    }
+    let mut ors = Vec::new();
+    for i in 0..n {
+        base.push(ge(&unit(i, 1), 0));
+        base.push(ge(&unit(i, -1), 2));
+        ors.push(vec![vec![ge(&unit(i, -1), 0)], vec![ge(&unit(i, 1), -2)]]);
+    }
+    (base, ors)
+}
+
+#[test]
+fn a_tie_that_every_swap_maps_onto_itself_is_renamed() {
+    // `x` and `y` share a color, but every permutation of the two maps the formula onto
+    // itself, so ranking them by name renames every naming to one formula, which is searched:
+    // before, each of these was refused with `Refusal::Unordered`.
+    for names in [["x", "y"], ["y", "x"]] {
+        assert_eq!(decide(&either_at(0, names)), Ok(false), "{names:?}");
+        assert_eq!(decide(&either_at(1, names)), Ok(true), "{names:?}");
+        let f = either_at(-6, names);
+        let m = satisfiable(&f).unwrap().expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
+    // Every permutation of the tasks maps `pigeons` onto itself: `n` tasks fit in `slots`
+    // slots, each pair apart, exactly when `n <= slots`. Four tasks in three slots are refused
+    // by the search, as the tasks joined in a chain are, which no naming orders
+    // (`omega::each_cause_of_a_refusal_has_its_own_message`): the search shows no choice
+    // empty by propagation, and refusing is the cost of the pigeonhole, not of the names.
+    for (n, slots) in [(3, 2), (3, 3), (4, 3), (4, 4)] {
+        let want = if (n, slots) == (4, 3) {
+            Err(Refusal::Disjuncts)
+        } else {
+            Ok(n as i64 <= slots)
+        };
+        assert_eq!(
+            decide(&pigeons(n, slots)),
+            want,
+            "{n} tasks in {slots} slots"
+        );
+        let want = want == Ok(true);
+        if want {
+            let f = pigeons(n, slots);
+            let m = satisfiable(&f).unwrap().expect("a point");
+            assert!(f.holds(&m), "{m:?}");
+        }
+    }
+    // A tie that a swap does not map onto itself is settled as before, with one answer under
+    // every naming tried: all twelve at 0 is a point.
+    let sys = triangles_and_a_hexagon();
+    let mut seen = std::collections::BTreeSet::new();
+    for r in 0..12 {
+        let rotated: Vec<usize> = (0..12).map(|i| (i + r) % 12).collect();
+        let reversed: Vec<usize> = (0..12).map(|i| (12 + r - i) % 12).collect();
+        seen.insert(answer(&disjunctive_formula(&sys, &rotated)));
+        seen.insert(answer(&disjunctive_formula(&sys, &reversed)));
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["Ok(true)"]);
 }
 
 #[test]

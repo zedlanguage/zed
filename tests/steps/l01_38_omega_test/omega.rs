@@ -171,20 +171,20 @@ fn each_cause_of_a_refusal_has_its_own_message() {
     // neighbors. (A row of one task, such as `3·t >= -1`, would not: the solver divides it by
     // its coefficient and it becomes `t >= 0`, like every other task's.)
     let tasks = ["a", "b", "c", "d"];
-    let pigeons = |apart: bool| {
+    let pigeons = |ring: bool| {
         let mut rows = Vec::new();
         for (i, t) in tasks.iter().enumerate() {
             rows.push(ge(&[(t, 1)], 0));
             rows.push(ge(&[(t, -1)], 2));
-            if apart && i > 0 {
-                rows.push(ge(&[(t, 1), (tasks[i - 1], -1)], 2));
+            if i > 0 || ring {
+                rows.push(ge(&[(t, 1), (tasks[(i + 3) % 4], -1)], 2));
             }
             rows.extend(tasks[..i].iter().map(|s| differ(s, t)));
         }
         Formula::and(rows)
     };
     refused(
-        pigeons(true),
+        pigeons(false),
         Refusal::Disjuncts,
         "the conditions hold alternatives, where one of several cases is enough (from `||`, \
          from `!=`, which holds when either side is the larger, or from a negated `&&`), and \
@@ -193,13 +193,16 @@ fn each_cause_of_a_refusal_has_its_own_message() {
          out none of the cases. The checker stopped there, with no values found and none ruled \
          out",
     );
-    // With no such rows the tasks occur alike, so the search would take them in an order
-    // chosen by name, and the disjunctions left are named.
-    let Err(why @ Refusal::Unordered(_)) = satisfiable(&pigeons(false)) else {
+    // With the chain closed into a ring, by `a - d >= -2`, the tasks occur alike, so the search
+    // would take them in an order chosen by name, and the disjunctions left are named. (With no
+    // rows joining them the tasks are decided: every swap of two maps the conditions onto
+    // themselves, so every order of the names is as good as another; a swap in the ring moves
+    // its rows.)
+    let Err(why @ Refusal::Unordered(_)) = satisfiable(&pigeons(true)) else {
         panic!("the tied tasks are refused for their order");
     };
     let e = entails(
-        &Relation::of(pigeons(false)),
+        &Relation::of(pigeons(true)),
         &Relation::of(Formula::bottom()),
     );
     assert_eq!(e, Entailment::Refused(why));

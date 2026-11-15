@@ -246,16 +246,19 @@ fn following_each_repair_of_the_menu_makes_the_program_check() {
             ["out\n", "out\n"],
             None,
         ),
-        // Two shifts in 0..=9, each early or late, with a total from 1 to 10: `x` and `y`
-        // occur alike, so only their names could order the search
-        // (`l01_38_omega_test::names`, the shifts with `1 <= x + y <= 10`). Without
-        // `1 <= x + y`, the shifts at their lower bounds, `x == 0 && y == 0`, are a point,
-        // found before any search.
+        // Three shifts in 0..=9, each early or late, with a total from 1 to 10, joined in a
+        // ring by `y <= x + 8`, `z <= y + 8` and `x <= z + 8`: the shifts occur alike, so only
+        // their names could order the search, and a swap of two of them moves the ring's rows,
+        // so not every order of the names is as good as another. Without `1 <= x + y + z`, the
+        // shifts at their lower bounds are a point, found before any search. (Two shifts with
+        // no ring, refused here before, are decided now: swapping `x` and `y` maps their
+        // conditions onto themselves; plan row FAIL-or-if-tie-refusal.)
         (
             "unordered",
-            "x, y",
-            "ok(x, y) = 0 <= x && x <= 9 && 0 <= y && y <= 9 && 1 <= x + y && x + y <= 10 && (x \
-             <= 2 || x >= 7) && (y <= 2 || y >= 7);"
+            "x, y, z",
+            "ok(x, y, z) = 0 <= x && x <= 9 && 0 <= y && y <= 9 && 0 <= z && z <= 9 && 1 <= x + y \
+             + z && x + y + z <= 10 && y <= x + 8 && z <= y + 8 && x <= z + 8 && (x <= 2 || x >= \
+             7) && (y <= 2 || y >= 7) && (z <= 2 || z >= 7);"
                 .to_string(),
             format!("{ALTERNATIVES}. After every case that cannot hold is removed"),
             ["out\n", "out\n"],
@@ -539,8 +542,8 @@ fn pughs_example_is_decided_and_its_arm_is_unreachable() {
 #[test]
 fn shifts_that_hold_at_their_lower_bounds_are_decided() {
     // Two shifts in 0..=9, each early or late, with a total of at most 10: `x` and `y` occur
-    // alike, and the search through the cases would be refused for their order, as it is with
-    // `1 <= x + y` as well (`following_each_repair_of_the_menu_makes_the_program_check`); but
+    // alike, and before swaps that map the conditions onto themselves were read
+    // (FAIL-or-if-tie-refusal) the search through the cases was refused for their order; but
     // each shift at its lower bound, 0, meets every condition, so the test can hold and the
     // program checks and runs.
     let src = program(
