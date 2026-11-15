@@ -12150,8 +12150,12 @@ impl Scope {
     /// other than a pendant's `x` whose integers are more than one interval, number at most
     /// one, so that the projection is the hull in each disjunct, and the hull of the image is
     /// the image of the hull. With fewer names, the integer solver refuses fewer questions
-    /// (Growth, Tie) than on the whole part; where it refuses none on either, the answers are
-    /// the same.
+    /// (Growth, Tie) than on the whole part. Where it refuses none on either, the answers are
+    /// the same only where the whole part is projected exactly: a whole part with no plan for
+    /// the join of row sums gets the solver's hull in each disjunct, which loses a parity an
+    /// equality forces (seed 8090022510343574640, part 46, of `pendants_against_whole`:
+    /// `2 * b + 2 * c + z0 == 3`, `z0` odd by pendants, all of `[-23, -9]` whole), a wrong
+    /// answer until PRES-project-exact-solver (FAIL-whole-projection-parity-seed).
     // Complexity tradeoff: a part with two disjunctions or more, or whose would-be pendants
     // have a coefficient other than one or minus one at `x`, or an `x` with holes or a class,
     // is projected whole, at O(k) names per question: for k such constraints added one at a

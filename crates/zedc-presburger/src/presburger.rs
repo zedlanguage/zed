@@ -17641,8 +17641,14 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
 }
 
 /// The values of a symbol over the formula's points, as a union of intervals (see the module
-/// note): exact when one disjunction is left, a set holding them otherwise. A bound past `i64`
-/// is read as no bound.
+/// note): exact where the join of row sums answers (module `row_sums`), a set holding them
+/// otherwise. A bound past `i64` is read as no bound.
+///
+/// The solver's projection is not exact even with one disjunction or none: it gives each
+/// disjunct its hull, which loses the parity or the holes an equality forces (`x + 2 * y == 0`
+/// gives `x` its hull, not its even values), a wrong answer under author P197 until
+/// PRES-project-exact-solver (FAIL-or-if-projection-not-exact,
+/// FAIL-whole-projection-parity-seed).
 ///
 /// Complexity tradeoff: with two or more disjunctions the answer is the meet of each
 /// disjunction's union of projections, with its two ends moved in by `tighten`; the gaps
