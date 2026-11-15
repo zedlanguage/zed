@@ -5728,6 +5728,67 @@ impl<'m, 's> Comparing<'m, 's> {
         Some(a.subtype_verdict(&b))
     }
 
+    /// [`Self::diff`] on the explicit stack, for a difference inside a difference
+    /// ([`Self::shape_rest`]): a payload nested 20,000 deep would otherwise take 20,000 native
+    /// frames.
+    fn diff_deep(&'m self, t: Ty, u: Ty, solve: Option<Solve<'s>>) -> Deep<'m, Ty> {
+        self.stack
+            .call(move || async move { self.diff(&t, &u, solve).await })
+    }
+
+    /// The rest of the payload shape `s` once the shapes `cut` are taken from it, as shapes.
+    /// `s` and `cut` have kernel types, so they have items and no fields ([`ShapeData::exact`]),
+    /// and [`near_pairs`] lists only shapes of as many items. Each shape of `cut` splits each
+    /// shape left so far that it meets, by the difference of products: `(A1, A2) \ (B1, B2)`
+    /// is `(A1 \ B1, A2)` with `(A1 & B1, A2 \ B2)`, and so on for more items, each part with
+    /// no value left out. A shape left that the shape of `cut` does not meet, found at the
+    /// first item whose meet is empty, is kept whole.
+    ///
+    /// Cost: for each shape left and each shape of `cut`, up to w meets and w differences of
+    /// items, for w items. A shape of `cut` turns each shape it meets into at most w shapes;
+    /// `cut` holds the shapes `near_pairs` lists for `s`, which may share a value with it, so
+    /// a shape held in part by one shape of `cut` costs O(w) operations on items and leaves at
+    /// most w shapes.
+    async fn shape_rest(
+        &'m self,
+        s: &Shape,
+        cut: &[Shape],
+        solve: Option<Solve<'s>>,
+    ) -> Vec<Shape> {
+        let mut left = vec![s.items.clone()];
+        for c in cut {
+            let mut next = Vec::with_capacity(left.len());
+            for b in left {
+                let mut met = Vec::with_capacity(b.len());
+                for (x, y) in b.iter().zip(&c.items) {
+                    let m = x.meet(y);
+                    if m.is_empty() {
+                        break;
+                    }
+                    met.push(m);
+                }
+                if met.len() < b.len() {
+                    next.push(b);
+                    continue;
+                }
+                for (i, (x, y)) in b.iter().zip(&c.items).enumerate() {
+                    let rest = self.diff_deep(x.clone(), y.clone(), solve).await;
+                    if !rest.is_empty() {
+                        let items = (met[..i].iter().cloned())
+                            .chain(std::iter::once(rest))
+                            .chain(b[i + 1..].iter().cloned());
+                        next.push(items.collect());
+                    }
+                }
+            }
+            left = next;
+        }
+        (left.into_iter())
+            .map(|items| Shape::new(items, BTreeMap::new()))
+            .filter(|s| !s.void)
+            .collect()
+    }
+
     /// Whether each component and field of the payload `a` is in the one of `b` at its place
     /// ([`Comparing::sub_by_shape`]), `b` of as many items and the same field names, in a
     /// frame of its own: with `b` and what it binds. Compared once for each binding the pair
@@ -6229,8 +6290,19 @@ impl<'m, 's> Comparing<'m, 's> {
         // Complexity tradeoff (COMPLEXITY.md F144): comparing each shape with all of `u`'s
         // shapes of the atom costs O(l·r) for l and r shapes (70.2 times the bytes at 8 times
         // the shapes in the negative control); the shapes that may share a value with it are
-        // found as for the meet, O((l·G + r·H)·w + p), and a shape held only in part is kept
-        // whole, so the type may hold more than the difference, as for tuples.
+        // found as for the meet, O((l·G + r·H)·w + p).
+        //
+        // A shape that `u`'s shapes near it hold only in part leaves its rest as shapes
+        // ([`Self::shape_rest`]), as a tuple's rest is left above. Before
+        // (FAIL-kernel-terms-seed) the shape was kept whole, and `#a(int | String) \ #a(int)`
+        // read as `#a(int | String)`, which holds `#a(1)`. The rest is kept as shapes, not in
+        // the set as a tuple's is: the set holds a listed atom with any payload, which every
+        // other operation on the shapes relies on, and the kernel's test of whether a meet of
+        // two unions of n tuples is empty grows as n^2.3 (10 s at n = 1,024), where the shapes
+        // are met through `near_pairs`. A shape with no kernel type, or near a shape of `u`
+        // with none, or a `u` that holds a variable or the unknown, is still kept whole, so
+        // the type may hold more than the difference, as for tuples.
+        let exact_u = !u.dynamic && u.vars.is_empty();
         let mut gone = Vec::new();
         for (n, us) in &listed {
             let Some(Some(ts)) = t.payloads.get(*n) else {
@@ -6240,6 +6312,7 @@ impl<'m, 's> Comparing<'m, 's> {
                 continue;
             }
             let mut left = Vec::with_capacity(ts.len());
+            let mut changed = false;
             for (s, near) in ts.iter().zip(near_pairs(ts, us)) {
                 if !near.is_empty() {
                     *self.cx.borrow_mut() = Cx {
@@ -6247,10 +6320,18 @@ impl<'m, 's> Comparing<'m, 's> {
                         ..Cx::default()
                     };
                     let one = payload_ty(n, vec![s.clone()]);
-                    let near = payload_ty(n, near.into_iter().map(|j| us[j].clone()).collect());
+                    let cut: Vec<Shape> = near.into_iter().map(|j| us[j].clone()).collect();
+                    let near = payload_ty(n, cut.clone());
                     let mut b = Binds::new();
                     let held = self.sub_near(&one, &near, None, &mut b).await;
                     if self.cx.borrow().decided(held) && b.is_empty() {
+                        changed = true;
+                        continue;
+                    }
+                    let exact = s.0.exact.is_some() && cut.iter().all(|c| c.0.exact.is_some());
+                    if exact_u && exact {
+                        left.extend(self.shape_rest(s, &cut, solve).await);
+                        changed = true;
                         continue;
                     }
                 }
@@ -6259,7 +6340,7 @@ impl<'m, 's> Comparing<'m, 's> {
             if left.is_empty() {
                 out.payloads.remove(*n);
                 gone.push(KType::atom_with(n, &KType::top()));
-            } else if left.len() < ts.len() {
+            } else if changed {
                 out.payloads.insert((*n).clone(), Some(left));
             }
         }

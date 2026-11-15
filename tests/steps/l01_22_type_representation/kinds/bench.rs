@@ -542,6 +542,26 @@ fn the_difference_of_many_payloads_of_one_atom_scales() {
 }
 
 #[test]
+fn the_difference_of_many_payloads_held_in_part_scales() {
+    // Each shape of the left side that the right side holds in part leaves its rest as shapes,
+    // found from the right side's shapes near it, as for the meet (FAIL-kernel-terms-seed):
+    // n shapes less n costs n comparisons of one shape with one, and the rest is written and
+    // read back as n shapes. 1x measured 1,076 ms (ns=1075581967) at load 50.5 on 2026-11-14.
+    let inputs = scaling::inputs(2048, partial_payload_pairs);
+    scaling::check(
+        "the difference of n payloads #a(i, int | bool) and n payloads #a(i, bool), printed and read back",
+        2048,
+        |n| {
+            let (l, r) = &inputs[&n];
+            let d = l.diff(r);
+            assert!(d.meet(r).is_empty() && !d.is_empty());
+            let back = ty(&d.to_string());
+            assert!(back.subtype(&d) && d.subtype(&back));
+        },
+    );
+}
+
+#[test]
 fn the_difference_of_many_wide_tuple_types_scales() {
     // Each tuple type of the left side that the right side holds in part loses what the right
     // side's tuple types near it hold, found as for the meet: n tuple types less n costs n

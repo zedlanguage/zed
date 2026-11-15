@@ -1636,6 +1636,18 @@ fn payload_pairs(n: usize) -> (Ty, Ty) {
     (each(&int), each(&|_| ty("int")))
 }
 
+/// The union of `n` shapes `#a(i, int | bool)` and the union of `n` shapes `#a(i, bool)`, for
+/// i < n: each shape of the left side is held in part by one of the right side.
+fn partial_payload_pairs(n: usize) -> (Ty, Ty) {
+    let each = |c: &str| -> Ty {
+        let ts: Vec<Ty> = (0..n)
+            .map(|i| with_payloads("a", vec![vec![int(i), ty(c)]]))
+            .collect();
+        Ty::union_all(&ts)
+    };
+    (each("int | bool"), each("bool"))
+}
+
 #[test]
 fn the_difference_of_payloads_of_one_atom_takes_the_payloads() {
     // `\` of a type of one atom takes from the left side the payloads the right side holds,
@@ -1663,13 +1675,49 @@ fn the_difference_of_payloads_of_one_atom_takes_the_payloads() {
         assert!(t.subtype(&w) && w.subtype(&t), "{text} is {want}, not {t}");
         assert_eq!(t.is_empty(), want == "Never", "{text}");
     }
-    // A shape held only in part is kept whole, as a tuple is: more than the difference, never
-    // less.
-    let t = ty("#a(1 | 2) \\ #a(1)");
-    assert!(
-        ty("#a(2)").subtype(&t) && t.subtype(&ty("#a(1 | 2)")),
-        "{t}"
-    );
+}
+
+#[test]
+fn a_payload_shape_taken_away_in_part_leaves_its_rest() {
+    // `\` of a payload shape that the right side holds only in part leaves the rest of the
+    // shape, as it does for a tuple, and the type is written as it holds its values. Before
+    // FAIL-kernel-terms-seed the shape was kept whole: `#a(int | String) \ #a(int)` read as
+    // `#a(int | String)`, which holds `#a(1)`.
+    for (text, want) in [
+        ("#a(int | String) \\ #a(int)", "#a(String)"),
+        ("#a(1 | 2) \\ #a(1)", "#a(2)"),
+        ("#a(int | bool, int) \\ #a(bool, int)", "#a(int, int)"),
+        (
+            "#a(int | bool, 1 | 2) \\ #a(bool, 1)",
+            "#a(int, 1 | 2) | #a(bool, 2)",
+        ),
+        (
+            "#a(1 | 2 | 3, 1 | 2) \\ (#a(1, 1) | #a(2, 2))",
+            "#a(3, 1 | 2) | #a(1, 2) | #a(2, 1)",
+        ),
+        ("#a(#b(int | bool)) \\ #a(#b(bool))", "#a(#b(int))"),
+        ("(#a(int | bool) | #b) \\ #a(bool | String)", "#a(int) | #b"),
+        (
+            "(#a(int | bool) | #a(String)) \\ #a(bool)",
+            "#a(int) | #a(String)",
+        ),
+        ("(String, #a(int | bool) \\ #a(int))", "(String, #a(bool))"),
+    ] {
+        let (t, w) = (ty(text), ty(want));
+        assert!(t.subtype(&w) && w.subtype(&t), "{text} is {want}, not {t}");
+        assert!(!t.is_empty(), "{text}");
+        let shown = t.to_string();
+        let back = ty(&shown);
+        assert!(back.subtype(&w) && w.subtype(&back), "{shown} is {want}");
+    }
+    // The rest takes part in what follows as any type does.
+    let d = ty("#a(int | bool) \\ #a(bool)");
+    let u = d.union(&ty("#a(String)"));
+    let want = ty("#a(int | String)");
+    assert!(u.subtype(&want) && want.subtype(&u), "{u}");
+    assert!(d.meet(&ty("#a(bool)")).is_empty());
+    assert!(d.diff(&ty("#a(int)")).is_empty());
+    assert!(!d.subtype(&ty("#a(bool)")) && d.subtype(&ty("#a(int)")));
 }
 
 /// The type errors of `text`, each its message and its steps.

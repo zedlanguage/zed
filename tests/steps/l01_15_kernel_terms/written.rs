@@ -289,44 +289,88 @@ fn random_terms_with_type_tests_read_back() {
         20,
         zed_tests::seed::seed("random_terms_with_type_tests_read_back"),
     ] {
-        let mut rng = zed_tests::instances::Rng::new(seed);
-        let mut seed_seen = Seen::default();
-        let mut drawn = 0;
-        for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
-            let arms: Vec<(Pattern, Term)> = (0..1 + rng.below(4))
-                .map(|i| {
-                    let p = match i {
-                        // At least one type test, at the top of an arm.
-                        0 => Pattern::Is(random_type(&mut rng, 3)),
-                        _ => random_pattern(&mut rng, 3),
-                    };
-                    (p, lit(format!("arm {i}").as_str()))
-                })
-                .collect();
-            drawn += arms.iter().map(|(p, _)| type_tests(p)).sum::<usize>();
-            let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
-            let seen = reads_back(&t, &written(&t, before_at, &|_| true));
-            seed_seen.same += seen.same;
-            seed_seen.functions += seen.functions;
-            seed_seen.payloads += seen.payloads;
-        }
-        // Every type test drawn is read back one of the three ways, and each way is taken:
-        // over the seeds 0 to 63 the fewest of a seed were 410, 228 and 44.
-        let Seen {
-            same,
-            functions,
-            payloads,
-        } = seed_seen;
-        assert_eq!(
-            same + functions + payloads,
-            drawn,
-            "seed {seed}: {seed_seen:?}"
-        );
-        assert!(
-            same > 0 && functions > 0 && payloads > 0,
-            "seed {seed}: {seed_seen:?}"
-        );
+        random_terms_read_back_at(seed);
     }
+}
+
+/// The random test above at `ZED_TEST_SEED=11314808460272333804`, which failed 3 of 3 times
+/// before FAIL-kernel-terms-seed (a payload shape held in part by `\` was kept whole), kept
+/// as a test of its own so each stays well under 1 s. Seeds 15558250212600039442,
+/// 7125535198814380333, 8477942358681157849, 9755088965094563274 and 3853258758798874519
+/// failed the same way among 200 more.
+#[test]
+fn random_terms_read_back_at_the_seed_of_a_payload_held_in_part() {
+    random_terms_read_back_at(11314808460272333804);
+}
+
+/// The terms of [`random_terms_with_type_tests_read_back`] at `seed`: each printed term reads
+/// back, and every type test drawn is read back one of the three ways, each taken.
+fn random_terms_read_back_at(seed: u64) {
+    let mut rng = zed_tests::instances::Rng::new(seed);
+    let mut seed_seen = Seen::default();
+    let mut drawn = 0;
+    for _ in 0..zed_tests::instances::RANDOM_INSTANCES {
+        let arms: Vec<(Pattern, Term)> = (0..1 + rng.below(4))
+            .map(|i| {
+                let p = match i {
+                    // At least one type test, at the top of an arm.
+                    0 => Pattern::Is(random_type(&mut rng, 3)),
+                    _ => random_pattern(&mut rng, 3),
+                };
+                (p, lit(format!("arm {i}").as_str()))
+            })
+            .collect();
+        drawn += arms.iter().map(|(p, _)| type_tests(p)).sum::<usize>();
+        let t = Term::Match(zed_tests::kernel::rc(var("v@1")), arms);
+        let seen = reads_back(&t, &written(&t, before_at, &|_| true));
+        seed_seen.same += seen.same;
+        seed_seen.functions += seen.functions;
+        seed_seen.payloads += seen.payloads;
+    }
+    // Every type test drawn is read back one of the three ways, and each way is taken:
+    // over the seeds 0 to 63 the fewest of a seed were 410, 228 and 44.
+    let Seen {
+        same,
+        functions,
+        payloads,
+    } = seed_seen;
+    assert_eq!(
+        same + functions + payloads,
+        drawn,
+        "seed {seed}: {seed_seen:?}"
+    );
+    assert!(
+        same > 0 && functions > 0 && payloads > 0,
+        "seed {seed}: {seed_seen:?}"
+    );
+}
+
+/// The smallest term the random test above failed on at `ZED_TEST_SEED=11314808460272333804`
+/// (FAIL-kernel-terms-seed): a payload shape the right side of `\` holds in part. Before, the
+/// reader kept the shape `int | String` whole, so `#a(int | String) \ #a(int)` read back as
+/// `#a(int | String)`, which holds `#a(1)`; the kernel's set is `#a(String)`.
+#[test]
+fn a_payload_held_in_part_by_a_difference_reads_back() {
+    let pay = |t: Type| Type::atom_with("a", &Type::tuple(vec![t]));
+    let t = Term::Match(
+        zed_tests::kernel::rc(var("v@1")),
+        vec![(
+            Pattern::Is(&pay(&Type::int() | &Type::string()) - &pay(Type::int())),
+            lit("arm 0"),
+        )],
+    );
+    let shown = written(&t, before_at, &|_| true);
+    assert_eq!(
+        shown,
+        "match v { is #a(int | String) \\ #a(int) -> \"arm 0\" }"
+    );
+    assert_eq!(
+        reads_back(&t, &shown),
+        Seen {
+            payloads: 1,
+            ..Seen::default()
+        }
+    );
 }
 
 /// How many type tests the pattern `p` holds, at any depth.
