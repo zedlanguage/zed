@@ -1,19 +1,21 @@
 // layer L5
-// 06 matrix multiply, method register: entry (i, k) of A·B is the zip of row i
-// of A with column k of B, multiplied and summed (an equality join on ranks,
-// then a `+` reduction). The calculus-register spelling (L8) and the stdlib
-// method (L14) are in variants/; all three must converge.
-// Input: a line "n m p", then n rows of A (m numbers each), then m rows of B
-// (p numbers each). Output: the n rows of A·B.
+// 06 matrix multiply, iteration register: entry (i, k) of A·B is the `+`
+// reduction over the rows c of B of A's cell at column c times B's cell at
+// column k, each read by a lookup with the default 0.0 (a left join, sec:duality).
+// The calculus-register spelling (L8) and the stdlib method (L14) are in
+// variants/; all three must converge on every input with a row of B.
+// Input: a line "n inner p", then n rows of A (inner numbers each), then inner
+// rows of B (p numbers each). Output: one row of A·B for each row of A present.
+// A missing or unreadable number reads as 0.0, so a short row or too few rows is
+// not an error, and the work is bounded by the input times p.
 main(m: MainArgs) {
-  rows = m.stdin.map(l -> l.split(" ").map(t -> f64(t) else 0.0));
-  hdr  = (m.stdin[0] else "").split(" ").map(t -> int(t) else 0);   // m.stdin is keyed by line rank from 0
-  n = hdr[0] else 0;
-  m = hdr[1] else 0;
-  p = hdr[2] else 0;
-  a = rows.slice(1, 1 + n);
-  b = rows.slice(1 + n, 1 + n + m);
-  col(positional k) = for r in b { r[k] else 0.0 };
-  prod = for i -> row in a { for k in 0..<p { row.zip(col(k)).map(((x, y)) -> x * y).sum } };
+  rows  = m.stdin.map(l -> l.split(" ").map(t -> f64(t) else 0.0));
+  hdr   = (m.stdin[0] else "").split(" ").map(t -> int(t) else 0);   // m.stdin is keyed by line rank from 0
+  n     = hdr[0] else 0;
+  inner = hdr[1] else 0;
+  p     = hdr[2] else 0;
+  a     = rows.slice(1..<1 + n);                // `.slice` keeps the keys: A's rows are keyed from 1,
+  b     = rows.slice(1 + n..<1 + n + inner);    // and B's from 1 + n, so B's row c meets A's column c - 1 - n
+  prod  = for row in a { for k in 0..<p { (for c -> r in b { (row[c - 1 - n] else 0.0) * (r[k] else 0.0) }).sum } };
   m.stdout <- prod.map(r -> r.map(v -> "${v}").concat(" "));
 }

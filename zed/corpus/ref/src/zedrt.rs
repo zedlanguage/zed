@@ -5,7 +5,8 @@
 //!   point), otherwise one digit, a point, the remaining digits ('0' if none), 'e', and the
 //!   exponent ('-' only when negative); special values print inf, -inf, nan.
 //! - `fsum(xs)` and `TreeSum`: a float `+` fold or scan entry is plain IEEE addition on the
-//!   canonical tree (DESIGN sec:reduction items 1 and 2); an empty fold is 0.0.
+//!   canonical tree (DESIGN sec:reduction items 1 and 2); an empty fold is -0.0, the identity
+//!   of IEEE addition (sec:reduction, "Identity as data").
 //! - `read_lines(path)`: stdin as Lines, the lines of the input with the final newline not
 //!   starting an extra empty line. "\r\n" and "\r" end a line too, and a leading byte order mark
 //!   is kept as U+FEFF.
@@ -130,10 +131,11 @@ impl TreeSum {
         prefix
     }
 
-    /// The sum so far; with no value, the identity 0.0 that `sum` takes on an empty level
-    /// (DESIGN sec:reduction, "Identity as data").
+    /// The sum so far; with no value, the identity -0.0 that a float `+` fold takes on an empty
+    /// level (DESIGN sec:reduction, "Identity as data": `-0.0 + x` is `x` for every `x`, while
+    /// `0.0 + -0.0` is `0.0`).
     pub fn value(&self) -> f64 {
-        self.blocks.last().map_or(0.0, |b| b.prefix)
+        self.blocks.last().map_or(-0.0, |b| b.prefix)
     }
 }
 

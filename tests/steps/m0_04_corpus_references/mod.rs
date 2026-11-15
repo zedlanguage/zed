@@ -197,16 +197,18 @@ fn a_histogram_counts_each_length_up_to_the_longest() {
 
 #[test]
 fn a_matrix_header_of_huge_sizes_reserves_nothing() {
-    // A huge p is not here: `r[k] else 0.0` makes each of A's rows p cells long, so the output
-    // itself would be that large.
-    for header in ["100000000000000 1 1", "1 100000000000000 1"] {
+    // 06-matrix-multiply.zed reads A's rows and B's rows from the lines present and sums over
+    // B's rows, so a huge n or inner costs only the input. With n huge, A is lines 1 and 2 and B
+    // is empty: each cell is the empty sum, -0.0 (sec:reduction). With inner huge, A is line 1
+    // and B line 2: 1.0 * 1.0. A huge p is not here: the output itself has p cells per row of A.
+    let cases = [
+        ("100000000000000 1 1", "-0.0\n-0.0\n"),
+        ("1 100000000000000 1", "1.0\n"),
+    ];
+    for (header, expected) in cases {
         let input = format!("{header}\n1\n1\n");
         let (out, result) = on_text("06", "matrix_huge", &input);
-        assert_eq!(out, "", "{header}");
-        assert!(
-            result.is_err_and(|e| e.contains("out of range")),
-            "{header}"
-        );
+        assert_eq!((out.as_str(), result), (expected, Ok(())), "{header}");
     }
 }
 

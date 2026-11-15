@@ -39,9 +39,9 @@ DESIGN.md line 1561 assigns. Every label equals the line 1561 layer.
 | 3 | 03-edit-distance.zed | top-down memoized and bottom-up wavefront converge | L6 | L6 / L3 (split) / L6 | L6 |
 | 4 | 04-running-variance.zed | scan + tupling synthesis | L5 | L3 / L5 (scan) / L5 | L5 |
 | 5 | 05-max-prefix-sum.zed | combiner synthesis | L5 | L3 / L5 (scan) / L5 | L5 |
-| 6 | 06-matrix-multiply.zed | matrix multiply | L5 | L3 / L5 (zip) / L5 | L5 |
+| 6 | 06-matrix-multiply.zed | matrix multiply | L5 | L3 / L5 (slice) / L5 | L5 |
 | 6v | variants/06-matrix-multiply-remap.zed | the remap | L8 | L8 / L5 (slice) / L8 | L8 |
-| 6m | variants/06-matrix-multiply-method.zed | the stdlib method `matmul` | L14 | L1 / L14 (matmul) / L14 | (none) |
+| 6m | variants/06-matrix-multiply-method.zed | the stdlib method `matmul` | L14 | L3 / L14 (matmul) / L14 | (none) |
 | 7 | 07-json-parser/main.zed (+ json.zed) | grammar round trip, error recovery | L20 | L20 / L20 (serialize) / L20 | L20 |
 | 8 | 08-utf8-percent.zed | UTF-8 decode fused with percent decoding, zero intermediates | L6 | L6 / L5 (orderedValues) / L6 | L6 |
 | 9 | 09-canonical-equal.zed | equality against an unmaterialized canonical form | L3 | L1 / L3 (split) / L3 | L3 |
@@ -88,8 +88,12 @@ core", reading the core as L1 to L7 (line 1501: "L1–L7 build the core").
   the stdlib method `matmul` is an L14 word in the table, so that spelling
   cannot be enabled at L8. The corpus carries it as
   `variants/06-matrix-multiply-method.zed`, labeled L14; line 1561 has no
-  layer for it. The L5 main program uses the iteration register (`zip` of a
-  row with a column), which is neither of the two spellings line 1559 names.
+  layer for it. The L5 main program uses the iteration register (a `for`
+  over B's rows with a lookup into A's row, a left join with the default 0.0),
+  which is neither of the two spellings line 1559 names. It does not `zip` a
+  row of A with a column of B: `zip` is an equality join on keys
+  (`joinR(#assertEmpty, #keep, #assertEmpty)`), and the two keyspaces are not
+  provably equal for every input (item FAIL-corpus-06-zip-keys).
 
 ## Corrections to the ledger descriptions
 
@@ -245,7 +249,7 @@ program                            units  ring table (word)     label enabled ag
 03-edit-distance.zed                   1    L6 L3 (split)          L6      L6 yes
 04-running-variance.zed                1    L3 L5 (scan)           L5      L5 yes
 05-max-prefix-sum.zed                  1    L3 L5 (scan)           L5      L5 yes
-06-matrix-multiply.zed                 1    L3 L5 (zip)            L5      L5 yes
+06-matrix-multiply.zed                 1    L3 L5 (slice)          L5      L5 yes
 08-utf8-percent.zed                    1    L6 L5 (orderedValues)    L6      L6 yes
 09-canonical-equal.zed                 1    L1 L3 (split)          L3      L3 yes
 11-csv-split.zed                       1    L3 L5 (slice)          L5      L5 yes
@@ -272,7 +276,7 @@ program                            units  ring table (word)     label enabled ag
 30-client-server/main.zed              3   L20 L20 (serialize)    L20     L20 yes
 31-typechecker/main.zed                3    L6 L5 (take)           L6      L6 yes
 02-histogram-push.zed                  1    L7 L7 (reducer)        L7      L7 yes
-06-matrix-multiply-method.zed          1    L1 L14 (matmul)       L14     L14 yes
+06-matrix-multiply-method.zed          1    L3 L14 (matmul)       L14     L14 yes
 06-matrix-multiply-remap.zed           1    L8 L5 (slice)          L8      L8 yes
 20-taint-error.zed                     1    L7 L13 (taint)        L13     L13 yes
 23-join-zoo-remap.zed                  1    L8 L5 (orderedValues)    L8      L8 yes
@@ -333,7 +337,7 @@ pos-shadow-scan.zed                    1    L1 L3 (map)            L3      L3 ye
 31-typechecker/check.zed L3
 31-typechecker/main.zed L6
 variants/02-histogram-push.zed L7
-variants/06-matrix-multiply-method.zed L1
+variants/06-matrix-multiply-method.zed L3
 variants/06-matrix-multiply-remap.zed L8
 variants/20-taint-error.zed L7
 variants/23-join-zoo-remap.zed L8

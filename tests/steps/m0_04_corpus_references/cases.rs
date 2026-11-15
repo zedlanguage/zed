@@ -24,9 +24,9 @@ fn tree(xs: &[f64]) -> f64 {
 #[test]
 fn a_float_sum_is_ieee_addition_on_the_canonical_tree_at_every_kind_of_value() {
     let bits = |xs: &[f64]| fsum(xs.iter().copied()).to_bits();
-    // No value is the identity 0.0 (sec:reduction, "Identity as data"); one value is itself, so
-    // a lone -0.0 keeps its sign, as IEEE's -0.0 + -0.0 does; x + -x is +0.0.
-    assert_eq!(bits(&[]), 0);
+    // No value is the identity of IEEE addition, -0.0 (sec:reduction, "Identity as data"); one
+    // value is itself, so a lone -0.0 keeps its sign, as IEEE's -0.0 + -0.0 does; x + -x is +0.0.
+    assert_eq!(bits(&[]), (-0.0f64).to_bits());
     assert_eq!(bits(&[-0.0]), (-0.0f64).to_bits());
     assert_eq!(bits(&[-0.0, -0.0]), (-0.0f64).to_bits());
     assert_eq!(bits(&[1.0, -1.0]), 0);
@@ -184,15 +184,15 @@ fn an_unreadable_number_or_a_missing_field_takes_the_programs_else_default() {
         "0.0 0.0 0.0\n2.0 1.0 1.0\n",
         Ok(()),
     );
-    // 06-matrix-multiply.zed:9 reads each cell as `f64(t) else 0.0`: A = [[0.0]] and
+    // 06-matrix-multiply.zed:12 reads each cell as `f64(t) else 0.0`: A = [[0.0]] and
     // B = [[3.0]] give 0.0.
     check("06", "else_cell", "1 1 1\nx\n3\n", "0.0\n", Ok(()));
-    // Line 10 reads the header fields as `int(t) else 0` and lines 11-13 a missing one as
-    // `hdr[i] else 0`. With "1 1" p is 0, and A, rows 1..2 of one line, is empty.
+    // Line 13 reads the header fields as `int(t) else 0` and lines 14-16 a missing one as
+    // `hdr[i] else 0`. With "1 1" p is 0, and A, lines 1..<2 of one line, is empty.
     check("06", "else_head_short", "1 1\n", "", Ok(()));
     // With "x 1 1" n is 0, so A is empty.
     check("06", "else_head_text", "x 1 1\n2\n3\n", "", Ok(()));
-    // Line 16 reads a cell of B past its row as `r[k] else 0.0`: p = 3 over a B of width 1.
+    // Line 19 reads a cell of B past its row as `r[k] else 0.0`: p = 3 over a B of width 1.
     check(
         "06",
         "else_column",
@@ -204,8 +204,33 @@ fn an_unreadable_number_or_a_missing_field_takes_the_programs_else_default() {
 
 #[test]
 fn a_matrix_row_range_before_the_first_row_is_empty() {
-    // n = -5: the rows 1..-4 of three, -4 counting from the end to -1, which is moved to 0.
+    // n = -5: A is `rows.slice(1..<-4)`, the lines whose rank lies in 1..<-4, and no rank does
+    // (DESIGN counts no rank from the end).
     check("06", "case_rows", "-5 1 1\n2\n3\n", "", Ok(()));
+}
+
+#[test]
+fn a_short_matrix_row_or_too_few_rows_read_as_zeros() {
+    // 06-matrix-multiply.zed:19 sums over the lines of B present, reading A's cell as
+    // `row[c - 1 - n] else 0.0` and B's as `r[k] else 0.0`, with no `zip` and so no claim that
+    // the two have one keyspace (row FAIL-corpus-06-zip-keys). A row of A shorter than inner:
+    // A = [[1.0]] over B = [[2.0], [3.0]] is 1.0 * 2.0 + 0.0 * 3.0.
+    check("06", "zip_short", "1 2 1\n1\n2\n3\n", "2.0\n", Ok(()));
+    // Fewer lines of B than inner: B is the one line 2, so only A's column 0 is read.
+    check("06", "few_b_rows", "1 3 1\n1 1 1\n2\n", "2.0\n", Ok(()));
+    // A's columns from inner on are not read: 2.0 * 3.0, the 7 left out.
+    check("06", "long_a_row", "1 1 1\n2 7\n3\n", "6.0\n", Ok(()));
+    // inner = 0: each of the p cells is the empty sum, -0.0, the identity of IEEE addition
+    // (sec:reduction, "Identity as data").
+    check("06", "no_b_rows", "1 0 2\n5\n", "-0.0 -0.0\n", Ok(()));
+    // Two rows of A, one short, over a 2 × 2 B: [1, 2] · B = [1 + 6, 2 + 8] and [4] · B = [4, 8].
+    check(
+        "06",
+        "ragged",
+        "2 2 2\n1 2\n4\n1 2\n3 4\n",
+        "7.0 10.0\n4.0 8.0\n",
+        Ok(()),
+    );
 }
 
 #[test]
