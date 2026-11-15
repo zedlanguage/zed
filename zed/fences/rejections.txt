@@ -86,8 +86,10 @@ Decimal literal, or `/` of integer literals, that nothing gives a carrier
 Two numeric values with no common carrier
 Two values compared by `==` or `!=` whose types share no value
 Match binder unused in its guard and arm
-Capitalized free name used once in a signature and nowhere in the body
-Capitalized name in a `struct` field that is neither a declared type parameter nor a name in scope
+Type variable
+Capitalized name, not of a type variable's form, that names no type in scope
+Name of a type variable's form, or of that form followed by `'`, declared as a type, `struct`, interface, field, function, parameter, value or module
+Type variable in a `struct` field that is not one of the struct's declared type parameters
 Type parameter that no field of its `struct`, or the body of its `type`, uses
 `struct` type parameter with the name of a field
 Struct law not proved at a value built, ascribed or passed at the struct type

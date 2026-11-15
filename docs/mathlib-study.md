@@ -281,7 +281,7 @@ law dvdMulRight(a: int[0..], b: int[0..]) = dvd(a, a * b);
 law dvdMulLeftOfDvd(a: int[0..], b: int[0..], c: int[0..]) = dvd(a, b).implies(dvd(a, c * b));
 law notDvdSucc(d: int[2..], x: int[0..]) = dvd(d, x).implies(!dvd(d, x + 1));
 
-law allIntro(m: K -> V, p: (V) -> bool where m.map(p) == m.map(v -> true)) = m.all(p) proof { byCollectionInduction(m) }
+law allIntro(m: _ -> V, p: (V) -> bool where m.map(p) == m.map(v -> true)) = m.all(p) proof { byCollectionInduction(m) }
 
 law euclidChain(n: int[0..]) = (n..=fact(n) + 1).any(p -> isPrime(p)) proof {
   #chain(steps: [
@@ -325,7 +325,7 @@ law euclidChain(n: int[0..]) = (n..=fact(n) + 1).any(p -> isPrime(p)) proof {
 - **In `minFacPrime`**, `m` is the range `2..<minFac(n)`, a self-map whose values are its keys (D:3062), so each half of the split is `minFac(n) mod k != 0` with `k` in `2..<minFac(n)`, which is `minFacMin` at `(n, k)`. Rung 3 uses every proved law in scope (D:1096); that it uses a law whose statement is a `bool` expression, not an equation, as a rewrite to `true`, with the binder's range read from the hypotheses, is [I], since D:1096 does not say how such a law is used.
 - **Its own proof** is by `byCollectionInduction(m)` (D:1122): at the empty collection `.all` is `true` (D:2123), and adding one entry adds one conjunct to `m.all(p)` and one key to each side of the premise [I].
 - **It is in the prelude.** When this section was written, D:1122 stated only the three laws above. Item MATHLIB-allintro-spec (2026-11-07) added `allIntro` to the prelude of DESIGN.md with the statement above, without its proof, and to step L15.7, whose test proves it with the other three. The test `l01_07_fences::mathlib` checks that DESIGN.md states it as this fence does.
-- `m: K -> V` takes a range because a range is a map (D:3062) [I: that a range value fills a binder of a map type].
+- `m: _ -> V` takes a range because a range is a map (D:3062) [I: that a range value fills a binder of a map type].
 
 **`euclidChain`, the proof of theorem 11 written out.** It proves `euclid`'s statement by the kernel's rules alone, as `gcdCommChain` does for theorem 9. With N = `fact(n) + 1` and p = `minFac(N)`:
 1. `minFacPrime` and `minFacDvd` at N give `isPrime(p)` and `dvd(p, N)`. N fills `n: int[2..]` because `fact`'s result type is `int[1..]`, an obligation rung 2 discharges.
