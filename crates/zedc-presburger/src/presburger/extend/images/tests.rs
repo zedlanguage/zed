@@ -708,43 +708,78 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
                 default: branch(&mut next),
             });
         }
-        let (defs, outputs) = map_chain(&steps, m);
-        let def = |n: u32| defs[n as usize].clone();
-        let mut images = ScalarImages::default();
-        // Each step moves a value by at most 5 m + 2 m from +-h.
-        let reach = 7 * m * steps.len() as i64;
-        let window = 3 * m + reach + 1;
-        let mut values: Vec<i64> = (-window..=window).collect();
-        let mut covered = true;
-        for (i, (step, out)) in steps.iter().zip(&outputs).enumerate() {
-            values = values.iter().map(|&h| step.value(h, m)).collect();
-            let skipping = step.guards.first().is_some_and(|g| *g == (0, 1, 0, 1))
-                && step.default == (1, 0, 2);
-            covered &= !skipping;
-            let seen: BTreeSet<i64> = values.iter().copied().collect();
-            for c in -3 * m..=3 * m {
-                let q = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(c)));
-                let got = images.answer(&q, &def);
-                let expected = seen.contains(&c);
-                trials += 1;
-                found += usize::from(expected);
-                if let Some(got) = got {
-                    answered += 1;
-                    assert_eq!(got, expected, "m={m} step {i} c={c}");
-                } else {
-                    assert!(!covered, "m={m} step {i} c={c} unanswered");
-                }
-                required += usize::from(covered);
-            }
-        }
+        let [a, r, f, t] = map_chain_checked(&steps, m);
+        answered += a;
+        required += r;
+        found += f;
+        trials += t;
     }
-    assert!(found > 0 && found < trials);
-    assert!(required > trials / 3, "{required} of {trials}");
+    // Every answer given is the window's and a chain with no skipping step answers every
+    // question. When the draws gave no question whose value is in the image, none whose value
+    // is not, or no chain that must answer, the chain built for all three does
+    // (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give both kinds of value
+    // and more than a third of the questions on chains that must answer).
+    if found == 0 || found == trials || required == 0 {
+        assert_eq!(map_chain_checked(&even_map(), 2), [13, 13, 7, 13]);
+    }
     eprintln!(
         "residue map answers={answered} required={required} trials={trials} in image={found}"
     );
 }
 
+/// The one step `h + (h mod 2)` at m = 2, with no guard: it maps an even h to h and an odd h
+/// to h + 1, so its image is the even numbers, 7 of the 13 values from -3·2 to 3·2. It is not
+/// the skipping step (that has the guard (0, 1, 0, 1)), so every question must be answered.
+fn even_map() -> Vec<MapStep> {
+    vec![MapStep {
+        guards: Vec::new(),
+        default: (1, 1, 0),
+    }]
+}
+
+#[test]
+fn the_chain_built_maps_onto_the_even_numbers() {
+    assert_eq!(map_chain_checked(&even_map(), 2), [13, 13, 7, 13]);
+}
+
+/// The chain of `steps` at modulus `m` against the values of every input in a window wide
+/// enough that no input outside it reaches the questions `out = c` asked, c from -3·m to 3·m
+/// at each step: each answer the scalar images give is the window's, and where no step so far
+/// is the skipping step, every question is answered. The numbers of questions answered, of
+/// those that had to be, of those whose value is in the image, and of all asked.
+fn map_chain_checked(steps: &[MapStep], m: i64) -> [usize; 4] {
+    let (mut answered, mut required, mut found, mut trials) = (0, 0, 0, 0);
+    let (defs, outputs) = map_chain(steps, m);
+    let def = |n: u32| defs[n as usize].clone();
+    let mut images = ScalarImages::default();
+    // Each step moves a value by at most 5 m + 2 m from +-h.
+    let reach = 7 * m * steps.len() as i64;
+    let window = 3 * m + reach + 1;
+    let mut values: Vec<i64> = (-window..=window).collect();
+    let mut covered = true;
+    for (i, (step, out)) in steps.iter().zip(&outputs).enumerate() {
+        values = values.iter().map(|&h| step.value(h, m)).collect();
+        let skipping =
+            step.guards.first().is_some_and(|g| *g == (0, 1, 0, 1)) && step.default == (1, 0, 2);
+        covered &= !skipping;
+        let seen: BTreeSet<i64> = values.iter().copied().collect();
+        for c in -3 * m..=3 * m {
+            let q = Formula::Con(Con::eq(&Lin::atom(out.clone()), &Lin::constant(c)));
+            let got = images.answer(&q, &def);
+            let expected = seen.contains(&c);
+            trials += 1;
+            found += usize::from(expected);
+            if let Some(got) = got {
+                answered += 1;
+                assert_eq!(got, expected, "m={m} step {i} c={c}");
+            } else {
+                assert!(!covered, "m={m} step {i} c={c} unanswered");
+            }
+            required += usize::from(covered);
+        }
+    }
+    [answered, required, found, trials]
+}
 #[test]
 fn residue_map_images_with_mixed_multipliers_agree_with_the_image_of_every_residue() {
     // LOAD-max-div-unsolved: chains h + w (h mod m) + c at moduli with two to four primes,
@@ -1001,35 +1036,74 @@ fn shift_chain_images_agree_with_the_image_of_every_residue() {
                 }
             })
             .collect();
-        let (defs, outputs) = shift_chain(&steps, m);
-        let def = |n: u32| defs[n as usize].clone();
-        let mut images = ScalarImages::default();
-        let mut image: BTreeSet<i64> = (0..m).collect();
-        let order: Vec<usize> = if chain % 2 == 0 {
-            (0..steps.len()).collect()
-        } else {
-            (0..steps.len()).rev().collect()
-        };
-        let mut sets = Vec::new();
-        for step in &steps {
-            image = image.iter().map(|&r| step.residue(r, m)).collect();
-            sets.push(image.clone());
-        }
-        for i in order {
-            for c in -m..2 * m {
-                let q = Formula::Con(Con::eq(&Lin::atom(outputs[i].clone()), &Lin::constant(c)));
-                let expected = sets[i].contains(&c.rem_euclid(m));
-                assert_eq!(
-                    images.answer(&q, &def),
-                    Some(expected),
-                    "chain {chain} m={m} step {i} c={c}"
-                );
-                inside += usize::from(expected);
-                asked += 1;
-            }
+        let [i, a] = shift_chain_checked(&steps, m, chain % 2 == 1, &format!("chain {chain}"));
+        inside += i;
+        asked += a;
+    }
+    // Every question is answered and equals the image's answer; when the draws gave no value
+    // in the image, or none outside it, the chain built for both does
+    // (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give both).
+    if inside == 0 || inside == asked {
+        assert_eq!(
+            shift_chain_checked(&merging_step(), 2, false, "built"),
+            [3, 6]
+        );
+    }
+}
+
+/// At m = 2, the one step `if h mod 2 == 0 { h + 1 } else { h }`: both residues go to 1, so
+/// of the questions `out = c` for c from -2 to 3, the three odd c (-1, 1, 3) are in the image
+/// and the three even ones are not.
+fn merging_step() -> Vec<ShiftStep> {
+    vec![ShiftStep::If(
+        4,
+        0,
+        Box::new(ShiftStep::Leaf(1)),
+        Box::new(ShiftStep::Leaf(0)),
+    )]
+}
+
+#[test]
+fn the_shift_chain_built_has_values_in_and_out_of_its_image() {
+    assert_eq!(
+        shift_chain_checked(&merging_step(), 2, false, "built"),
+        [3, 6]
+    );
+}
+
+/// The chain of `steps` at modulus `m`: every question `out = c` at each step (taken last to
+/// first when `reversed`), c from -m to 2·m, is answered by the scalar images and equals
+/// whether c mod m is in the image of Z_m. The numbers of questions in the image and asked.
+fn shift_chain_checked(steps: &[ShiftStep], m: i64, reversed: bool, at: &str) -> [usize; 2] {
+    let (mut inside, mut asked) = (0, 0);
+    let (defs, outputs) = shift_chain(steps, m);
+    let def = |n: u32| defs[n as usize].clone();
+    let mut images = ScalarImages::default();
+    let mut image: BTreeSet<i64> = (0..m).collect();
+    let order: Vec<usize> = if !reversed {
+        (0..steps.len()).collect()
+    } else {
+        (0..steps.len()).rev().collect()
+    };
+    let mut sets = Vec::new();
+    for step in steps {
+        image = image.iter().map(|&r| step.residue(r, m)).collect();
+        sets.push(image.clone());
+    }
+    for i in order {
+        for c in -m..2 * m {
+            let q = Formula::Con(Con::eq(&Lin::atom(outputs[i].clone()), &Lin::constant(c)));
+            let expected = sets[i].contains(&c.rem_euclid(m));
+            assert_eq!(
+                images.answer(&q, &def),
+                Some(expected),
+                "{at} m={m} step {i} c={c}"
+            );
+            inside += usize::from(expected);
+            asked += 1;
         }
     }
-    assert!(inside > 0 && inside < asked);
+    [inside, asked]
 }
 
 /// The definition of `x = min(a, b)` (`min`) or `x = max(a, b)` as the preimage writes it

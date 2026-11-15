@@ -368,51 +368,88 @@ mod tests {
         let mut built = 0;
         for seed in (0..100).map(|i| base.wrapping_add(i)) {
             let (cons, atoms, ends) = case(seed);
-            let refs: Vec<&Con> = cons.iter().collect();
-            let Some(b) = OneRow::of_cons(&refs) else {
-                continue;
-            };
-            // Every point lies in the window when all ends are given; with an end open, the
-            // window still holds a point when there is one near the box, and the built point
-            // is checked against the constraints.
-            let closed = ends.iter().all(|(l, h)| l.is_some() && h.is_some());
-            let mut found: [Option<(i64, i64)>; 3] = [None; 3];
-            for x in -9..=9 {
-                for y in -9..=9 {
-                    for z in -9..=9 {
-                        let m: Model = atoms
-                            .iter()
-                            .cloned()
-                            .zip([x, y, z].map(Int::from))
-                            .collect();
-                        if cons.iter().all(|c| c.holds_linear(&m)) {
-                            for (f, v) in found.iter_mut().zip([x, y, z]) {
-                                *f = Some(f.map_or((v, v), |(l, h)| (l.min(v), h.max(v))));
-                            }
+            built += usize::from(one_row_checked(
+                &cons,
+                &atoms,
+                &ends,
+                &format!("seed {seed}"),
+            ));
+        }
+        // Every point built meets the rows and none is missed; when no case built a point, the
+        // case built for it does (PROOF-test-count-thresholds; until 2026-11-15 the draws had
+        // to build more than 40).
+        if built == 0 {
+            let (cons, atoms, ends) = box_with_a_point();
+            assert!(one_row_checked(&cons, &atoms, &ends, "built"), "{cons:?}");
+        }
+    }
+
+    /// The box 0 <= x, y, z <= 2, every end given, and the row `x + y + z - 1 >= 0`, which
+    /// (1, 0, 0) meets: one row over a box, with a point.
+    fn box_with_a_point() -> (Vec<Con>, [Atom; 3], Ends) {
+        let atoms = ["x", "y", "z"].map(|n| Atom::Sym(n.into()));
+        let mut cons = Vec::new();
+        let mut row = Lin::constant(-1);
+        for a in &atoms {
+            let x = Lin::atom(a.clone());
+            cons.push(Con::ge(&x, &Lin::constant(0)));
+            cons.push(Con::ge(&Lin::constant(2), &x));
+            row = row.plus(&x);
+        }
+        cons.push(Con::ge(&row, &Lin::constant(0)));
+        (cons, atoms, [(Some(0), Some(2)); 3])
+    }
+
+    #[test]
+    fn the_box_built_for_one_row_has_a_point_built() {
+        let (cons, atoms, ends) = box_with_a_point();
+        assert!(one_row_checked(&cons, &atoms, &ends, "built"), "{cons:?}");
+    }
+
+    /// When [`OneRow::of_cons`] takes the rows: a point it builds meets them, it builds one
+    /// wherever there is one in [-9, 9]³, and with every end given its answer and projections
+    /// are those of the points. Whether it built a point.
+    fn one_row_checked(cons: &[Con], atoms: &[Atom; 3], ends: &Ends, at: &str) -> bool {
+        let refs: Vec<&Con> = cons.iter().collect();
+        let Some(b) = OneRow::of_cons(&refs) else {
+            return false;
+        };
+        // Every point lies in the window when all ends are given; with an end open, the
+        // window still holds a point when there is one near the box, and the built point
+        // is checked against the constraints.
+        let closed = ends.iter().all(|(l, h)| l.is_some() && h.is_some());
+        let mut found: [Option<(i64, i64)>; 3] = [None; 3];
+        for x in -9..=9 {
+            for y in -9..=9 {
+                for z in -9..=9 {
+                    let m: Model = atoms
+                        .iter()
+                        .cloned()
+                        .zip([x, y, z].map(Int::from))
+                        .collect();
+                    if cons.iter().all(|c| c.holds_linear(&m)) {
+                        for (f, v) in found.iter_mut().zip([x, y, z]) {
+                            *f = Some(f.map_or((v, v), |(l, h)| (l.min(v), h.max(v))));
                         }
                     }
                 }
             }
-            match b.point() {
-                Some(m) => {
-                    built += 1;
-                    assert!(
-                        cons.iter().all(|c| c.holds_linear(&m)),
-                        "seed {seed}: {m:?}"
-                    );
-                }
-                None => assert!(found[0].is_none(), "seed {seed}: a point was missed"),
+        }
+        match b.point() {
+            Some(m) => {
+                assert!(cons.iter().all(|c| c.holds_linear(&m)), "{at}: {m:?}");
             }
-            if closed {
-                assert_eq!(b.exists(), found[0].is_some(), "seed {seed}");
-                for (a, f) in atoms.iter().zip(found) {
-                    let want = f.map_or(IntervalSet::empty(), |(l, h)| {
-                        IntervalSet::range(End::Fin(Num::from(l)), End::Fin(Num::from(h)))
-                    });
-                    assert_eq!(b.project(a), want, "seed {seed}, {a:?}");
-                }
+            None => assert!(found[0].is_none(), "{at}: a point was missed"),
+        }
+        if closed {
+            assert_eq!(b.exists(), found[0].is_some(), "{at}");
+            for (a, f) in atoms.iter().zip(found) {
+                let want = f.map_or(IntervalSet::empty(), |(l, h)| {
+                    IntervalSet::range(End::Fin(Num::from(l)), End::Fin(Num::from(h)))
+                });
+                assert_eq!(b.project(a), want, "{at}, {a:?}");
             }
         }
-        assert!(built > 40, "{built} points");
+        b.point().is_some()
     }
 }

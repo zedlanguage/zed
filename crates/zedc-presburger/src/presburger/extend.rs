@@ -6328,26 +6328,90 @@ mod tests {
         );
     }
 
+    /// The rows of the box [-2, 2]³ over the atoms 0, 1, 2.
+    fn small_box() -> Vec<Con> {
+        let mut box_rows = Vec::new();
+        for n in 0..3 {
+            box_rows.push(con(&[(n, 1)], 2, Rel::Ge));
+            box_rows.push(con(&[(n, -1)], 2, Rel::Ge));
+        }
+        box_rows
+    }
+
+    /// Whether the rows over the atoms 0, 1, 2 hold at `xyz`.
+    fn small_holds(rows: &[Con], xyz: [i64; 3]) -> bool {
+        rows.iter().all(|r| {
+            let mut v = r.lin.constant.clone();
+            for (a, k) in &r.lin.terms {
+                let Atom::Aux(n) = a else { panic!("aux") };
+                v = &v + &(k * &Int::from(xyz[*n as usize]));
+            }
+            match r.rel {
+                Rel::Eq => v.is_zero(),
+                Rel::Ge => !v.is_negative(),
+            }
+        })
+    }
+
+    /// `envelope` and `lean` (rows forward and reversed) of the first piece keep exactly its
+    /// integer points in the box [-2, 2]³, `merge_pieces` of the two keeps their union, and
+    /// `decide_cons` agrees with the points; the number of points of the box (the control) at
+    /// which the first piece differs from it.
+    fn small_pieces_checked(pieces: &[Vec<Con>; 2], at: &str) -> usize {
+        let box_rows = small_box();
+        let mut reversed = pieces[0].clone();
+        reversed.reverse();
+        let outs = [
+            envelope(pieces[0].clone()),
+            lean(pieces[0].clone()),
+            lean(reversed),
+        ];
+        let merged = merge_pieces(pieces.iter().cloned().collect());
+        let (mut any, mut control_differs) = (false, 0);
+        for x in -2..=2 {
+            for y in -2..=2 {
+                for z in -2..=2 {
+                    let xyz = [x, y, z];
+                    let original = small_holds(&pieces[0], xyz);
+                    any |= original;
+                    for out in &outs {
+                        assert_eq!(original, small_holds(out, xyz), "{at} at {xyz:?}");
+                    }
+                    assert_eq!(
+                        pieces.iter().any(|p| small_holds(p, xyz)),
+                        merged.iter().any(|p| small_holds(p, xyz)),
+                        "merge, {at} at {xyz:?}"
+                    );
+                    if small_holds(&box_rows, xyz) != original {
+                        control_differs += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(decide_cons(pieces[0].clone()), Ok(any), "{at}");
+        control_differs
+    }
+
+    /// Two pieces: the box with `x0 - 1 >= 0`, which leaves out the 3·25 = 75 points of the
+    /// box with x0 in {-2, -1, 0}, and the box alone.
+    fn pieces_built() -> [Vec<Con>; 2] {
+        let mut first = small_box();
+        first.push(con(&[(0, 1)], -1, Rel::Ge));
+        [first, small_box()]
+    }
+
+    #[test]
+    fn the_pieces_built_differ_from_the_box() {
+        assert_eq!(small_pieces_checked(&pieces_built(), "built"), 75);
+    }
+
     #[test]
     fn envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems() {
         // Cross-review of LOAD-max-div-xr, round 3 (Codex): 50 random systems of five rows over
         // three atoms in the box [-2, 2]³, from a new seed each run. `envelope` and `lean` (rows forward and
         // reversed) keep exactly the integer points of the box, `merge_pieces` of two such
-        // pieces keeps their union, and `decide_cons` agrees with the points. The control (the
-        // box alone) must differ somewhere, so the comparison can fail.
-        let holds = |rows: &[Con], xyz: [i64; 3]| {
-            rows.iter().all(|r| {
-                let mut v = r.lin.constant.clone();
-                for (a, k) in &r.lin.terms {
-                    let Atom::Aux(n) = a else { panic!("aux") };
-                    v = &v + &(k * &Int::from(xyz[*n as usize]));
-                }
-                match r.rel {
-                    Rel::Eq => v.is_zero(),
-                    Rel::Ge => !v.is_negative(),
-                }
-            })
-        };
+        // pieces keeps their union, and `decide_cons` agrees with the points
+        // ([`small_pieces_checked`]).
         let mut seed = crate::seed::seed(
             "envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems",
         );
@@ -6357,14 +6421,8 @@ mod tests {
         };
         let mut control_differs = 0;
         for case in 0..50 {
-            let mut box_rows = Vec::new();
-            for n in 0..3 {
-                box_rows.push(con(&[(n, 1)], 2, Rel::Ge));
-                box_rows.push(con(&[(n, -1)], 2, Rel::Ge));
-            }
-            let mut pieces = Vec::new();
-            for _ in 0..2 {
-                let mut rows = box_rows.clone();
+            let pieces = [(); 2].map(|_| {
+                let mut rows = small_box();
                 for _ in 0..5 {
                     let ts: Vec<(u32, i64)> = (0..3)
                         .filter_map(|n| {
@@ -6374,40 +6432,16 @@ mod tests {
                         .collect();
                     rows.push(con(&ts, next() % 9 - 4, Rel::Ge));
                 }
-                pieces.push(rows);
-            }
-            let mut reversed = pieces[0].clone();
-            reversed.reverse();
-            let outs = [
-                envelope(pieces[0].clone()),
-                lean(pieces[0].clone()),
-                lean(reversed),
-            ];
-            let merged = merge_pieces(pieces.clone().into_iter().collect());
-            let mut any = false;
-            for x in -2..=2 {
-                for y in -2..=2 {
-                    for z in -2..=2 {
-                        let xyz = [x, y, z];
-                        let original = holds(&pieces[0], xyz);
-                        any |= original;
-                        for out in &outs {
-                            assert_eq!(original, holds(out, xyz), "case {case} at {xyz:?}");
-                        }
-                        assert_eq!(
-                            pieces.iter().any(|p| holds(p, xyz)),
-                            merged.iter().any(|p| holds(p, xyz)),
-                            "merge, case {case} at {xyz:?}"
-                        );
-                        if holds(&box_rows, xyz) != original {
-                            control_differs += 1;
-                        }
-                    }
-                }
-            }
-            assert_eq!(decide_cons(pieces[0].clone()), Ok(any), "case {case}");
+                rows
+            });
+            control_differs += small_pieces_checked(&pieces, &format!("case {case}"));
         }
-        assert!(control_differs > 0);
+        // The control (the box alone) must differ somewhere, so the comparison can fail; when
+        // no draw differed from it, the pieces built to differ at 75 points do
+        // (PROOF-test-count-thresholds; until 2026-11-15 the draws had to differ).
+        if control_differs == 0 {
+            assert_eq!(small_pieces_checked(&pieces_built(), "built"), 75);
+        }
     }
 
     #[test]

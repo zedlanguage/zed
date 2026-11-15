@@ -26135,14 +26135,102 @@ pub(super) mod tests {
             // A chain is a `&&` or `||` of two operands, never one operand alone.
             let c = Chain::Join(Box::new(chain(&mut rng, 4)), Box::new(chain(&mut rng, 4)));
             for and in [true, false] {
-                let (old, _) = two_at_a_time(&c, and);
-                let new = in_one(&c, and);
-                assert_eq!(built(&new), built(&old), "round {round}, and = {and}");
-                kinds.insert(built(&old).chars().take(3).collect::<String>());
+                kinds.insert(joined_alike(
+                    &c,
+                    and,
+                    &format!("round {round}, and = {and}"),
+                ));
             }
         }
-        // `true`, `false`, constraints, negations, conjunctions and disjunctions all occur.
-        assert!(kinds.len() >= 5, "{kinds:?}");
+        // `true`, `false`, constraints, negations, conjunctions and disjunctions: each the
+        // rounds did not give is given by the chain of `CHAIN_KINDS` built for it, so no count
+        // of kinds is relied on (PROOF-test-count-thresholds; until 2026-11-15 the rounds had
+        // to give 5 distinct openings of the formula).
+        for (kind, and, c) in chain_kinds() {
+            if !kinds.contains(kind) {
+                assert_eq!(
+                    joined_alike(&c, and, kind),
+                    kind,
+                    "the chain built for {kind}"
+                );
+            }
+        }
+    }
+
+    /// The chain `c` joined two at a time and in one `Joining` gives one tree; the kind of the
+    /// formula's top ([`formula_kind`]).
+    fn joined_alike(c: &Chain, and: bool, at: &str) -> &'static str {
+        let (old, _) = two_at_a_time(c, and);
+        let new = in_one(c, and);
+        assert_eq!(built(&new), built(&old), "{at}");
+        formula_kind(&old)
+    }
+
+    /// The kind of the top of `f`: `true` (a conjunction of nothing), `false` (a disjunction of
+    /// nothing), a constraint, a negation, a conjunction or a disjunction.
+    fn formula_kind(f: &Formula) -> &'static str {
+        match f {
+            Formula::Con(_) => "a constraint",
+            Formula::Not(_) => "a negation",
+            Formula::And(gs) if gs.is_empty() => "true",
+            Formula::And(_) => "a conjunction",
+            Formula::Or(gs) if gs.is_empty() => "false",
+            Formula::Or(_) => "a disjunction",
+        }
+    }
+
+    /// For each kind of [`formula_kind`], a chain of two operands and the join (`&&` when
+    /// true) built to give it: `true && true` is `true` (a conjunction drops `true`);
+    /// `false || false` is `false` (a disjunction drops `false`); `true && x >= 0` is the
+    /// constraint and `true && !(x >= 0)` the negation, `true` dropped; `x >= 0 && y >= 0`
+    /// and `x >= 0 || y >= 0` keep both constraints, which differ.
+    fn chain_kinds() -> [(&'static str, bool, Chain); 6] {
+        let leaf = |f: Formula| Box::new(Chain::Leaf(f, false));
+        let pair = |a: Formula, b: Formula| Chain::Join(leaf(a), leaf(b));
+        let ge = |n: &str| Formula::Con(Con::ge(&Lin::atom(sym(n)), &Lin::constant(0)));
+        [
+            ("true", true, pair(Formula::top(), Formula::top())),
+            ("false", false, pair(Formula::bottom(), Formula::bottom())),
+            ("a constraint", true, pair(Formula::top(), ge("x"))),
+            (
+                "a negation",
+                true,
+                pair(Formula::top(), Formula::negate(ge("x"))),
+            ),
+            ("a conjunction", true, pair(ge("x"), ge("y"))),
+            ("a disjunction", false, pair(ge("x"), ge("y"))),
+        ]
+    }
+
+    #[test]
+    fn each_chain_built_for_a_kind_of_formula_gives_it() {
+        for (kind, and, c) in chain_kinds() {
+            assert_eq!(
+                joined_alike(&c, and, kind),
+                kind,
+                "the chain built for {kind}"
+            );
+        }
+    }
+
+    /// When the difference rows `cons` have a point, the hull of each atom [`difference_hulls`]
+    /// gives is the one [`hull_from`] finds; the number of hulls compared (none without a
+    /// point).
+    fn difference_hulls_compared(cons: &[Con]) -> usize {
+        let Ok(Some(model)) = solve(cons, true) else {
+            return 0;
+        };
+        let refs: Vec<&Con> = cons.iter().collect();
+        let hulls = difference_hulls(&refs, &model).expect("difference rows");
+        let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+        for (a, h) in &hulls {
+            assert_eq!(
+                Ok(h.clone()),
+                hull_from(&whole, a, &model),
+                "{whole} onto {a}"
+            );
+        }
+        hulls.len()
     }
 
     /// The hulls of a system of difference constraints and bounds found by one shortest-path
@@ -26179,22 +26267,29 @@ pub(super) mod tests {
                     }
                 })
                 .collect();
-            let Ok(Some(model)) = solve(&cons, true) else {
-                continue;
-            };
-            let refs: Vec<&Con> = cons.iter().collect();
-            let hulls = difference_hulls(&refs, &model).expect("difference rows");
-            let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
-            for (a, h) in &hulls {
-                assert_eq!(
-                    Ok(h.clone()),
-                    hull_from(&whole, a, &model),
-                    "{whole} onto {a}"
-                );
-                compared += 1;
-            }
+            compared += difference_hulls_compared(&cons);
         }
-        assert!(compared > 500, "{compared}");
+        // Each system with a point compares its hulls; when no draw had one, the system built
+        // with a point, `a - b >= -2`, `b >= 0`, `3 - a >= 0` (a = b = 0 is one), compares
+        // the hulls of `a` and `b` (PROOF-test-count-thresholds; until 2026-11-15 more than
+        // 500 hulls had to be compared).
+        if compared == 0 {
+            let built = [
+                Con {
+                    lin: lin(&[("a", 1), ("b", -1)], 2),
+                    rel: Rel::Ge,
+                },
+                Con {
+                    lin: lin(&[("b", 1)], 0),
+                    rel: Rel::Ge,
+                },
+                Con {
+                    lin: lin(&[("a", -1)], 3),
+                    rel: Rel::Ge,
+                },
+            ];
+            assert!(difference_hulls_compared(&built) > 0, "the built system");
+        }
         let two = [Con {
             lin: lin(&[("a", 2), ("b", -1)], 0),
             rel: Rel::Ge,
@@ -26226,7 +26321,7 @@ pub(super) mod tests {
         let others = ["y", "z"];
         let mut rng =
             Rng(crate::seed::seed("substituted_difference_hulls_are_those_the_solver_finds") | 1);
-        let (mut compared, mut taken, mut not_taken) = (0, 0, 0);
+        let (mut taken, mut not_taken) = (0, 0);
         for _ in 0..800 {
             let rows = 1 + rng.below(9) as usize;
             let cons: Vec<Con> = (0..rows)
@@ -26249,30 +26344,103 @@ pub(super) mod tests {
                     }
                 })
                 .collect();
-            let Ok(Some(model)) = solve(&cons, true) else {
-                continue;
-            };
-            let refs: Vec<&Con> = cons.iter().collect();
-            let keep = |a: &Atom| kept.iter().any(|k| *a == sym(k));
-            let Some(hulls) = substituted_difference_hulls(&refs, &keep, &model) else {
-                not_taken += 1;
-                continue;
-            };
-            taken += 1;
-            let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
-            for (a, h) in &hulls {
-                assert_eq!(
-                    Ok(h.clone()),
-                    hull_from(&whole, a, &model),
-                    "{whole} onto {a}"
-                );
-                compared += 1;
+            match substituted_hulls_compared(&cons, &kept) {
+                Some(Some(_)) => taken += 1,
+                Some(None) => not_taken += 1,
+                None => {}
             }
         }
-        assert!(
-            compared > 300 && taken > 200 && not_taken > 60,
-            "{compared} {taken} {not_taken}"
-        );
+        // Every system with a point is compared or not taken; each of the two the draws did not
+        // give is given by the system built for it (PROOF-test-count-thresholds; until
+        // 2026-11-15 the draws had to give more than 300 hulls, 200 systems taken and 60 not).
+        let (taken_built, not_taken_built) = substituted_kinds();
+        if taken == 0 {
+            let compared = substituted_hulls_compared(&taken_built, &kept);
+            assert!(matches!(compared, Some(Some(n)) if n > 0), "{compared:?}");
+        }
+        if not_taken == 0 {
+            let compared = substituted_hulls_compared(&not_taken_built, &kept);
+            assert_eq!(compared, Some(None), "the system built not to be taken");
+        }
+    }
+
+    /// When the rows `cons` have a point: `Some` of the number of hulls
+    /// [`substituted_difference_hulls`] gives with `kept` kept, each checked against
+    /// [`hull_from`], or `Some(None)` when it does not take the rows; `None` without a point.
+    fn substituted_hulls_compared(cons: &[Con], kept: &[&str]) -> Option<Option<usize>> {
+        let Ok(Some(model)) = solve(cons, true) else {
+            return None;
+        };
+        let refs: Vec<&Con> = cons.iter().collect();
+        let keep = |a: &Atom| kept.iter().any(|k| *a == sym(k));
+        let Some(hulls) = substituted_difference_hulls(&refs, &keep, &model) else {
+            return Some(None);
+        };
+        let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+        for (a, h) in &hulls {
+            assert_eq!(
+                Ok(h.clone()),
+                hull_from(&whole, a, &model),
+                "{whole} onto {a}"
+            );
+        }
+        Some(Some(hulls.len()))
+    }
+
+    /// Two systems over the kept `a`, `b` and the other `y`, each with the point a = 0,
+    /// b = 1, y = 1. The first is taken: `b - a - y >= 0`, `y - 1 >= 0`, `2 - y >= 0`,
+    /// `a >= 0`, `5 - b >= 0`; every lower bound of `y` is from `y - 1 >= 0`, of `y` alone, so
+    /// `y` is set to 1 and the rows left, `b - a - 1 >= 0` and the bounds, are difference rows
+    /// and bounds. The second is not: `a - b + y >= 0` bounds `y` below and `b - a - y + 2 >= 0`
+    /// bounds it above, both rows with others, so `y` is not taken out and rows of three atoms
+    /// are left.
+    fn substituted_kinds() -> (Vec<Con>, Vec<Con>) {
+        let ge = |terms: &[(&str, i128)], k| Con {
+            lin: lin(terms, k),
+            rel: Rel::Ge,
+        };
+        (
+            vec![
+                ge(&[("b", 1), ("a", -1), ("y", -1)], 0),
+                ge(&[("y", 1)], -1),
+                ge(&[("y", -1)], 2),
+                ge(&[("a", 1)], 0),
+                ge(&[("b", -1)], 5),
+            ],
+            vec![
+                ge(&[("a", 1), ("b", -1), ("y", 1)], 0),
+                ge(&[("b", 1), ("a", -1), ("y", -1)], 2),
+            ],
+        )
+    }
+
+    #[test]
+    fn the_systems_built_for_substituted_hulls_are_taken_and_not_taken() {
+        let kept = ["a", "b", "c"];
+        let (taken, not_taken) = substituted_kinds();
+        let compared = substituted_hulls_compared(&taken, &kept);
+        assert!(matches!(compared, Some(Some(n)) if n > 0), "{compared:?}");
+        assert_eq!(substituted_hulls_compared(&not_taken, &kept), Some(None));
+    }
+
+    /// When the rows `cons` have a point: `Some` of the number of hulls [`forest_row_hulls`]
+    /// gives, each checked against [`hull_from`], or `Some(None)` when it does not take the
+    /// rows; `None` without a point.
+    fn forest_hulls_compared(cons: &[Con]) -> Option<Option<usize>> {
+        let Ok(Some(model)) = solve(cons, true) else {
+            return None;
+        };
+        let refs: Vec<&Con> = cons.iter().collect();
+        let hulls = forest_row_hulls(&refs)?;
+        let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+        for (a, h) in &hulls {
+            assert_eq!(
+                Ok(h.clone()),
+                hull_from(&whole, a, &model),
+                "{whole} onto {a}"
+            );
+        }
+        Some(Some(hulls.len()))
     }
 
     /// The hulls [`forest_row_hulls`] gives are those found by asking the solver of each atom
@@ -26285,7 +26453,6 @@ pub(super) mod tests {
     fn forest_row_hulls_are_those_the_solver_finds() {
         let names = ["a", "b", "c", "d", "e", "f"];
         let mut rng = Rng(crate::seed::seed("forest_row_hulls_are_those_the_solver_finds") | 1);
-        let (mut compared, mut taken, mut not_taken) = (0, 0, 0);
         for _ in 0..1000 {
             let rows = 1 + rng.below(7) as usize;
             let cons: Vec<Con> = (0..rows)
@@ -26316,31 +26483,14 @@ pub(super) mod tests {
                     }
                 })
                 .collect();
-            let Ok(Some(model)) = solve(&cons, true) else {
-                continue;
-            };
-            let refs: Vec<&Con> = cons.iter().collect();
-            let Some(hulls) = forest_row_hulls(&refs) else {
-                not_taken += 1;
-                continue;
-            };
-            taken += 1;
-            let whole = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
-            for (a, h) in &hulls {
-                assert_eq!(
-                    Ok(h.clone()),
-                    hull_from(&whole, a, &model),
-                    "{whole} onto {a}"
-                );
-                compared += 1;
-            }
+            forest_hulls_compared(&cons);
         }
-        assert!(
-            compared > 700 && taken > 150 && not_taken > 250,
-            "{compared} {taken} {not_taken}"
-        );
+        // A system taken and one not taken are built below and run on every run, so the draws
+        // are not counted (PROOF-test-count-thresholds; until 2026-11-15 they had to give more
+        // than 700 hulls, 150 systems taken and 250 not).
         // `a <= 1, b <= 2, c >= 0, d <= 0` and `a + 2·b - 3·c + d - 4 >= 0`: the others' terms
-        // are at most 4 + 0 + 0, so `a >= 0`.
+        // are at most 4 + 0 + 0, so `a >= 0`. It has the point a = 0, b = 2, c = d = 0 and is
+        // a forest of one row with bounds, so every hull is compared with the solver's.
         let ge = |terms: &[(&str, i128)], k| Con {
             lin: lin(terms, k),
             rel: Rel::Ge,
@@ -26352,6 +26502,11 @@ pub(super) mod tests {
             ge(&[("c", 1)], 0),
             ge(&[("d", -1)], 0),
         ];
+        assert_eq!(
+            forest_hulls_compared(&wide),
+            Some(Some(4)),
+            "the forest built"
+        );
         let refs: Vec<&Con> = wide.iter().collect();
         let hulls = forest_row_hulls(&refs).expect("a forest");
         let fin = |v: &Int| End::Fin(Num::from(v));
@@ -26394,7 +26549,7 @@ pub(super) mod tests {
                 rel,
             })
         };
-        let (mut compared, mut same, mut known) = (0, 0, 0);
+        let (mut same, mut known) = (0, 0);
         for _ in 0..300 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
@@ -26406,50 +26561,89 @@ pub(super) mod tests {
                 parts.push(Formula::or(vec![l, r]));
             }
             let whole = Formula::and(parts);
-            let Ok(Some(model)) = satisfiable_inner(&whole) else {
+            let atoms = whole.atoms();
+            let factors: Vec<Atom> = atoms.into_iter().filter(|_| rng.below(2) == 0).collect();
+            if let Some((_, s, k)) = part_bounds_compared(&whole, &factors) {
+                same += s;
+                known += k;
+            }
+        }
+        // Every hull the draws compared is in the bounds and every side known is the hull's;
+        // when no bound was the hull or no side was known, the part built for it, `a - 2 == 0`
+        // with `a` a factor (so it is kept, not eliminated), shows one: a lone difference row,
+        // so its bounds are hulls, 2 and 2, which is the hull {2}, and both sides are known as
+        // the hull's since the bounds are hulls and `a` is a factor
+        // (PROOF-test-count-thresholds; until 2026-11-15 more than 300 hulls had to be
+        // compared, a quarter of them the bounds and half with a side known).
+        if same == 0 || known == 0 {
+            let built = Formula::Con(Con {
+                lin: lin(&[("a", 1)], -2),
+                rel: Rel::Eq,
+            });
+            assert_eq!(
+                part_bounds_compared(&built, &[sym("a")]),
+                Some((1, 1, 2)),
+                "{built}"
+            );
+        }
+    }
+
+    /// When the part `whole` has a point, each hull the solver finds ([`hull_from`]) is in the
+    /// bounds [`part_bounds`] gives with `factors`, and each side [`products`] takes as known
+    /// is the hull's; the number of hulls compared, of those the bounds are, and of sides
+    /// known. `None` without a point.
+    fn part_bounds_compared(whole: &Formula, factors: &[Atom]) -> Option<(usize, usize, usize)> {
+        let Ok(Some(model)) = satisfiable_inner(whole) else {
+            return None;
+        };
+        let (mut compared, mut same, mut known) = (0, 0, 0);
+        let bounds = part_bounds(whole, &model, &factors.iter().collect::<Vec<_>>());
+        let signs = signs(whole);
+        for a in whole.atoms() {
+            let Ok(hull) = hull_from(whole, &a, &model) else {
                 continue;
             };
-            let factors: Vec<Atom> = (whole.atoms().into_iter())
-                .filter(|_| rng.below(2) == 0)
-                .collect();
-            let bounds = part_bounds(&whole, &model, &factors.iter().collect::<Vec<_>>());
-            let signs = signs(&whole);
-            for a in whole.atoms() {
-                let Ok(hull) = hull_from(&whole, &a, &model) else {
-                    continue;
-                };
-                let end =
-                    |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
-                let (lo, hi) = bounds.ends.get(&a).cloned().unwrap_or_default();
-                let found = IntervalSet::range(end(&lo, End::NegInf), end(&hi, End::PosInf));
-                assert!(
-                    hull.is_subset(&found),
-                    "{whole} onto {a}: {hull} in {found}"
-                );
-                compared += 1;
-                same += usize::from(hull.hull() == found);
-                let (h_lo, h_hi) = hull.bounds().expect("the part has a point");
-                let (pos, neg) = signs[&a];
-                let sides = [
-                    (&lo, End::NegInf, h_lo, !pos),
-                    (&hi, End::PosInf, h_hi, !neg),
-                ];
-                for (e, inf, h, open) in sides {
-                    let sure = (bounds.hulls && factors.contains(&a))
-                        || match e {
-                            Some(v) => model.get(&a) == Some(v),
-                            None => open,
-                        };
-                    if sure {
-                        known += 1;
-                        assert_eq!(&end(e, inf), h, "{whole} onto {a}: {e:?} for {hull}");
-                    }
+            let end =
+                |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
+            let (lo, hi) = bounds.ends.get(&a).cloned().unwrap_or_default();
+            let found = IntervalSet::range(end(&lo, End::NegInf), end(&hi, End::PosInf));
+            assert!(
+                hull.is_subset(&found),
+                "{whole} onto {a}: {hull} in {found}"
+            );
+            compared += 1;
+            same += usize::from(hull.hull() == found);
+            let (h_lo, h_hi) = hull.bounds().expect("the part has a point");
+            let (pos, neg) = signs[&a];
+            let sides = [
+                (&lo, End::NegInf, h_lo, !pos),
+                (&hi, End::PosInf, h_hi, !neg),
+            ];
+            for (e, inf, h, open) in sides {
+                let sure = (bounds.hulls && factors.contains(&a))
+                    || match e {
+                        Some(v) => model.get(&a) == Some(v),
+                        None => open,
+                    };
+                if sure {
+                    known += 1;
+                    assert_eq!(&end(e, inf), h, "{whole} onto {a}: {e:?} for {hull}");
                 }
             }
         }
-        assert!(
-            compared > 300 && same > compared / 4 && known > compared / 2,
-            "{same} and {known} of {compared}"
+        Some((compared, same, known))
+    }
+
+    #[test]
+    fn the_part_built_for_part_bounds_has_its_hull_and_known_sides() {
+        let built = Formula::Con(Con {
+            lin: lin(&[("a", 1)], -2),
+            rel: Rel::Eq,
+        });
+        assert_eq!(
+            part_bounds_compared(&built, &[sym("a")]),
+            Some((1, 1, 2)),
+            "{built}"
         );
     }
 
@@ -26798,7 +26992,7 @@ pub(super) mod tests {
                 rel,
             })
         };
-        let (mut sides, mut exact) = (0, 0);
+        let mut exact = 0;
         for _ in 0..150 {
             let mut parts: Vec<Formula> = (0..1 + rng.below(6)).map(|_| row(&mut rng)).collect();
             if rng.below(3) == 0 {
@@ -26807,22 +27001,55 @@ pub(super) mod tests {
                 let (l, r) = (side(&mut rng), side(&mut rng));
                 parts.push(Formula::or(vec![l, r]));
             }
-            let whole = Formula::and(parts);
-            let Ok(Some(model)) = satisfiable_inner(&whole) else {
-                continue;
-            };
-            for a in whole.atoms() {
-                for dir in [-1, 1] {
-                    let Ok(side) = hull_side(&whole, &a, &model, dir) else {
-                        continue;
-                    };
-                    is_side(&whole, &a, dir, &side);
-                    sides += 1;
-                    exact += usize::from(exact_side(&whole, &a, dir).is_some());
-                }
+            exact += hull_sides_checked(&Formula::and(parts)).map_or(0, |(_, e)| e);
+        }
+        // Every side found is the side; when no side was found by elimination alone, the
+        // conjunction built for it, `a >= 0 && 5 - a >= 0`, rows of `a` alone that elimination
+        // takes out entirely, gives both its sides, 0 and 5, by [`exact_side`]
+        // (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give more than 300
+        // sides, a quarter of them by elimination).
+        if exact == 0 {
+            let built = sides_built();
+            assert_eq!(hull_sides_checked(&built), Some((2, 2)), "{built}");
+        }
+    }
+
+    /// `a >= 0 && 5 - a >= 0`.
+    fn sides_built() -> Formula {
+        let ge = |k: i128, c: i128| {
+            Formula::Con(Con {
+                lin: lin(&[("a", k)], c),
+                rel: Rel::Ge,
+            })
+        };
+        Formula::and(vec![ge(1, 0), ge(-1, 5)])
+    }
+
+    /// When `whole` has a point, each side [`hull_side`] finds is the side ([`is_side`]); the
+    /// number of sides found and of those [`exact_side`] finds by elimination alone. `None`
+    /// without a point.
+    fn hull_sides_checked(whole: &Formula) -> Option<(usize, usize)> {
+        let Ok(Some(model)) = satisfiable_inner(whole) else {
+            return None;
+        };
+        let (mut sides, mut exact) = (0, 0);
+        for a in whole.atoms() {
+            for dir in [-1, 1] {
+                let Ok(side) = hull_side(whole, &a, &model, dir) else {
+                    continue;
+                };
+                is_side(whole, &a, dir, &side);
+                sides += 1;
+                exact += usize::from(exact_side(whole, &a, dir).is_some());
             }
         }
-        assert!(sides > 300 && exact > sides / 4, "{exact} of {sides}");
+        Some((sides, exact))
+    }
+
+    #[test]
+    fn the_conjunction_built_for_hull_sides_is_eliminated() {
+        let built = sides_built();
+        assert_eq!(hull_sides_checked(&built), Some((2, 2)), "{built}");
     }
 
     /// Calls `f` with each order of `0..n`, by Heap's method.
@@ -26990,11 +27217,35 @@ pub(super) mod tests {
             roots.insert(r);
             rank = rank.max(k);
         }
-        assert!(roots.len() > 1, "the roots never differ");
-        assert!(
-            rank >= 2,
-            "no join of two roots of rank 1: greatest rank {rank}"
-        );
+        // When the orders drawn never gave two sets of roots or never joined two roots of rank
+        // 1, the class built for both does (PROOF-test-count-thresholds; until 2026-11-15 the
+        // draws had to give both).
+        if roots.len() < 2 || rank < 2 {
+            two_roots_of_rank_one_joined();
+        }
+    }
+
+    /// One class {0, 1, 2, 3} joined by `0 = 1`, `2 = 3`, `0 = 2` in that order: the first two
+    /// joins make two roots of rank 1, and the third joins them, so the greatest rank is 2; the
+    /// third written `2 = 0` in place of `0 = 2` joins the same two roots of equal rank the
+    /// other way round, so the roots differ, and the representatives do not.
+    fn two_roots_of_rank_one_joined() {
+        let one = Classes {
+            value: vec![0; 4],
+            keys: vec![0; 4],
+            edges: vec![(0, 1), (2, 3), (0, 2)],
+        };
+        let want = one.expected();
+        let (got, r, k) = one.joined(&[0, 1, 2], &[false, false, false]);
+        let (got_flipped, r_flipped, k_flipped) = one.joined(&[0, 1, 2], &[false, false, true]);
+        assert_eq!((got, k), (want.clone(), 2), "as written");
+        assert_eq!((got_flipped, k_flipped), (want, 2), "the last join flipped");
+        assert_ne!(r, r_flipped, "the roots do not differ");
+    }
+
+    #[test]
+    fn two_roots_of_rank_one_are_joined_either_way() {
+        two_roots_of_rank_one_joined();
     }
 }
 
@@ -27123,25 +27374,75 @@ mod difference_rows {
                 });
                 edges.push((0, i + 1, c));
             }
-            let quick = solve(&cons, false);
-            let full = solve(&cons, true);
-            let (Ok(quick), Ok(full)) = (&quick, &full) else {
-                panic!("refused: {quick:?} {full:?} on {cons:?}");
-            };
-            assert_eq!(quick.is_some(), full.is_some(), "{cons:?}");
-            if let Some(m) = full {
+            if two_unit_answer(n, &cons, &edges, sums) {
                 point += 1;
-                assert!(cons.iter().all(|c| c.holds(m)), "{cons:?} at {m:?}");
             } else {
                 empty += 1;
             }
-            if !sums {
-                assert_eq!(negative_cycle(n, &edges), full.is_none(), "{cons:?}");
-            }
         }
+        // Every system is answered alike with and without a model, as Bellman-Ford answers it;
+        // when the draws gave no system without a point, or none with one, the system built for
+        // it does (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give more than
+        // 200 of each). `x0 - x1 - 1 >= 0` and `x1 - x0 - 1 >= 0` add to `-2 >= 0`: no point,
+        // the cycle 1 → 2 → 1 of weight -2. `x0 - x1 >= 0` alone has the point x0 = x1 = 0.
+        let (no_point, a_point) = two_unit_kinds();
+        if empty == 0 {
+            assert!(
+                !two_unit_answer(2, &no_point.0, &no_point.1, false),
+                "{no_point:?}"
+            );
+        }
+        if point == 0 {
+            assert!(
+                two_unit_answer(2, &a_point.0, &a_point.1, false),
+                "{a_point:?}"
+            );
+        }
+    }
+
+    type TwoUnit = (Vec<Con>, Vec<(usize, usize, i128)>);
+
+    /// The rows and Bellman-Ford edges of `x0 - x1 - 1 >= 0, x1 - x0 - 1 >= 0` (no point) and
+    /// of `x0 - x1 >= 0` (a point).
+    fn two_unit_kinds() -> (TwoUnit, TwoUnit) {
+        (
+            (
+                vec![row(0, 1, -1, false, false), row(1, 0, -1, false, false)],
+                vec![(1, 2, -1), (2, 1, -1)],
+            ),
+            (vec![row(0, 1, 0, false, false)], vec![(1, 2, 0)]),
+        )
+    }
+
+    /// `solve` answers the rows `cons` over `n` names with and without a model, alike, the
+    /// model meeting every row, and (without sums) as Bellman-Ford on `edges` does; whether
+    /// they have a point.
+    fn two_unit_answer(n: usize, cons: &[Con], edges: &[(usize, usize, i128)], sums: bool) -> bool {
+        let quick = solve(cons, false);
+        let full = solve(cons, true);
+        let (Ok(quick), Ok(full)) = (&quick, &full) else {
+            panic!("refused: {quick:?} {full:?} on {cons:?}");
+        };
+        assert_eq!(quick.is_some(), full.is_some(), "{cons:?}");
+        if let Some(m) = full {
+            assert!(cons.iter().all(|c| c.holds(m)), "{cons:?} at {m:?}");
+        }
+        if !sums {
+            assert_eq!(negative_cycle(n, edges), full.is_none(), "{cons:?}");
+        }
+        full.is_some()
+    }
+
+    #[test]
+    fn the_two_unit_systems_built_have_no_point_and_a_point() {
+        let (no_point, a_point) = two_unit_kinds();
         assert!(
-            empty > 200 && point > 200,
-            "{empty} empty, {point} with a point"
+            !two_unit_answer(2, &no_point.0, &no_point.1, false),
+            "{no_point:?}"
+        );
+        assert!(
+            two_unit_answer(2, &a_point.0, &a_point.1, false),
+            "{a_point:?}"
         );
     }
 }
@@ -27797,7 +28098,7 @@ mod dark_shadow {
     fn projections_with_dark_shadows_keep_the_integer_points() {
         let mut rng =
             Rng(crate::seed::seed("projections_with_dark_shadows_keep_the_integer_points") | 1);
-        let (mut cases, mut gone) = (0, 0);
+        let mut gone = 0;
         for _ in 0..50 {
             let mut rows = vec![
                 Con::ge(&Lin::atom(a("r")), &Lin::constant(-4)),
@@ -27812,25 +28113,56 @@ mod dark_shadow {
                     .plus(&Lin::constant(k(&mut rng, 6)));
                 rows.push(Con::ge(&lin, &Lin::default()));
             }
-            let keep = |x: &Atom| *x != a("r");
-            let Some(out) = shadow(&rows, &keep, true) else {
-                let none = (-12..=12).all(|y| (-12..=12).all(|z| !points(&rows, y, z)));
-                assert!(none, "{rows:?}: no point found, but it has one");
-                continue;
-            };
-            cases += 1;
-            gone += usize::from(out.iter().all(|c| !c.lin.terms.contains_key(&a("r"))));
-            for y in -12..=12 {
-                for z in -12..=12 {
-                    assert_eq!(
-                        points(&rows, y, z),
-                        points(&out, y, z),
-                        "{rows:?} projected to {out:?} at y = {y}, z = {z}"
-                    );
-                }
+            gone += usize::from(dark_shadow_checked(&rows) == Some(true));
+        }
+        // Every projection keeps the integer points; when no draw had `r` projected out, the
+        // system built for it, `-4 <= r <= 4` and `y - r >= 0`, `r - y >= 0`, does: `r = y`
+        // has unit coefficients, so its real shadow `-4 <= y <= 4` is exact and `r` is gone
+        // (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give 35 projections,
+        // 12 with `r` gone). A system with `r` kept is `bounds_with_a_gap_are_kept`.
+        if gone == 0 {
+            let built = r_equal_to_y();
+            assert_eq!(dark_shadow_checked(&built), Some(true), "{built:?}");
+        }
+    }
+
+    /// `-4 <= r <= 4`, `y - r >= 0` and `r - y >= 0`.
+    fn r_equal_to_y() -> Vec<Con> {
+        let (r, y) = (Lin::atom(a("r")), Lin::atom(a("y")));
+        vec![
+            Con::ge(&r, &Lin::constant(-4)),
+            Con::ge(&Lin::constant(4), &r),
+            Con::ge(&y, &r),
+            Con::ge(&r, &y),
+        ]
+    }
+
+    /// [`shadow`] with dark shadows of `rows` without `r` has the integer points of `rows` on
+    /// `y` and `z` from -12 to 12; whether `r` is gone from it, or `None` when it shows there
+    /// is no point (and there is none in that box).
+    fn dark_shadow_checked(rows: &[Con]) -> Option<bool> {
+        let keep = |x: &Atom| *x != a("r");
+        let Some(out) = shadow(rows, &keep, true) else {
+            let none = (-12..=12).all(|y| (-12..=12).all(|z| !points(rows, y, z)));
+            assert!(none, "{rows:?}: no point found, but it has one");
+            return None;
+        };
+        for y in -12..=12 {
+            for z in -12..=12 {
+                assert_eq!(
+                    points(rows, y, z),
+                    points(&out, y, z),
+                    "{rows:?} projected to {out:?} at y = {y}, z = {z}"
+                );
             }
         }
-        assert!(cases >= 35 && gone >= 12, "{cases} cases, {gone} projected");
+        Some(out.iter().all(|c| !c.lin.terms.contains_key(&a("r"))))
+    }
+
+    #[test]
+    fn r_equal_to_y_is_projected_out() {
+        let built = r_equal_to_y();
+        assert_eq!(dark_shadow_checked(&built), Some(true), "{built:?}");
     }
 
     /// The bounds `4·r <= y <= 4·r + 1` of `r` from 0 to 1 have `y` in {0, 1, 4, 5}: their real
@@ -28904,25 +29236,50 @@ mod forced_against_solver {
         // change alone would cost O(e), but it would be taken inside the methods of module
         // `state` that the test checks from outside.
         let mut rng = Rng(crate::seed::seed("the_state_never_loosens") | 1);
-        let mut events = 0;
+        let mut changed = 0;
         for case in 0..1000 {
             let f = match case % 3 {
                 0 => chain(&mut rng, false),
                 1 => chain(&mut rng, true),
                 _ => ladder(&mut rng),
             };
-            let states = forced::trace::states(&f);
-            events += states.len();
-            for w in states.windows(2) {
-                assert!(
-                    forced::trace::below(&w[1], &w[0]),
-                    "{f}: loosened from {:?} to {:?}",
-                    w[0],
-                    w[1]
-                );
-            }
+            changed += changes_never_loosen(&f);
         }
-        assert!(events >= 3000, "{events} events");
+        // When no draw changed the state, the ladder built to be decided in round 2 or later
+        // does (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give 3000
+        // events, changed or not).
+        if changed == 0 {
+            ladder_decided_late_changes_the_state();
+        }
+    }
+
+    /// Checks that each event of `f` leaves the state knowing at least what it knew; the number
+    /// of events that changed it.
+    fn changes_never_loosen(f: &Formula) -> usize {
+        let states = forced::trace::states(f);
+        for w in states.windows(2) {
+            assert!(
+                forced::trace::below(&w[1], &w[0]),
+                "{f}: loosened from {:?} to {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        states.windows(2).filter(|w| w[0] != w[1]).count()
+    }
+
+    /// The first of [`LADDERS`] is decided in round 2 or later
+    /// (`each_ladder_built_for_a_kind_makes_it`), so a state after its first round does not
+    /// yet hold the decision and a state after the decision does: some event changes it.
+    fn ladder_decided_late_changes_the_state() {
+        let (kind, f) = LADDERS[0];
+        let f = f();
+        assert!(changes_never_loosen(&f) > 0, "{kind}: {f}");
+    }
+
+    #[test]
+    fn the_ladder_decided_late_changes_the_state() {
+        ladder_decided_late_changes_the_state();
     }
 }
 
@@ -29435,29 +29792,72 @@ mod unit_interval_tests {
                     Con { lin, rel }
                 })
                 .collect();
-            let refs: Vec<&Con> = rows.iter().collect();
-            let (lo, hi) = unit_interval(&refs, &x).expect("one atom of unit coefficients");
-            for xv in -30i128..=30 {
-                let holds = |yv: i128| {
-                    rows.iter().all(|c| {
-                        let v = c.lin.constant.to_i128().unwrap()
-                            + c.lin.terms.get(&x).map_or(0, |k| k.to_i128().unwrap()) * xv
-                            + c.lin.terms[&y].to_i128().unwrap() * yv;
-                        if c.rel == Rel::Eq { v == 0 } else { v >= 0 }
-                    })
-                };
-                let point = (-400..=400).any(holds);
-                let inside = lo.as_ref().is_none_or(|l| Int::from(xv) >= *l)
-                    && hi.as_ref().is_none_or(|h| Int::from(xv) <= *h);
-                assert_eq!(
-                    point, inside,
-                    "x = {xv}, rows {rows:?}, interval {lo:?} {hi:?}"
-                );
-                nonempty += usize::from(point);
-            }
+            nonempty += unit_interval_checked(&rows);
         }
-        // Negative control on the test itself: both answers occur.
-        assert!(nonempty > 100 && nonempty < 100 * 61 - 100, "{nonempty}");
+        // Every interval is the points' x; when the draws gave no x with a point, or none
+        // without one, the rows built for both do (PROOF-test-count-thresholds; until
+        // 2026-11-15 the draws had to give more than 100 of each).
+        if nonempty == 0 || nonempty == 100 * 61 {
+            let built = some_x_without_a_point();
+            assert_eq!(unit_interval_checked(&built), 36, "{built:?}");
+        }
+    }
+
+    /// `y - x >= 0` and `5 - y >= 0`: `x <= y <= 5` has a point exactly where x <= 5, at 36 of
+    /// the x in [-30, 30] (-30 to 5), and none at the other 25.
+    fn some_x_without_a_point() -> Vec<Con> {
+        let (x, y) = (Atom::Sym("x".into()), Atom::Sym("y".into()));
+        let lin = |terms: &[(&Atom, i128)], k: i128| Lin {
+            terms: terms
+                .iter()
+                .map(|(a, c)| ((*a).clone(), Int::from(*c)))
+                .collect(),
+            constant: Int::from(k),
+        };
+        vec![
+            Con {
+                lin: lin(&[(&y, 1), (&x, -1)], 0),
+                rel: Rel::Ge,
+            },
+            Con {
+                lin: lin(&[(&y, -1)], 5),
+                rel: Rel::Ge,
+            },
+        ]
+    }
+
+    /// [`unit_interval`] of the rows over `x` and `y` holds an x in [-30, 30] exactly where a
+    /// y in [-400, 400] meets every row; the number of such x.
+    fn unit_interval_checked(rows: &[Con]) -> usize {
+        let (x, y) = (Atom::Sym("x".into()), Atom::Sym("y".into()));
+        let refs: Vec<&Con> = rows.iter().collect();
+        let (lo, hi) = unit_interval(&refs, &x).expect("one atom of unit coefficients");
+        let mut nonempty = 0;
+        for xv in -30i128..=30 {
+            let holds = |yv: i128| {
+                rows.iter().all(|c| {
+                    let v = c.lin.constant.to_i128().unwrap()
+                        + c.lin.terms.get(&x).map_or(0, |k| k.to_i128().unwrap()) * xv
+                        + c.lin.terms[&y].to_i128().unwrap() * yv;
+                    if c.rel == Rel::Eq { v == 0 } else { v >= 0 }
+                })
+            };
+            let point = (-400..=400).any(holds);
+            let inside = lo.as_ref().is_none_or(|l| Int::from(xv) >= *l)
+                && hi.as_ref().is_none_or(|h| Int::from(xv) <= *h);
+            assert_eq!(
+                point, inside,
+                "x = {xv}, rows {rows:?}, interval {lo:?} {hi:?}"
+            );
+            nonempty += usize::from(point);
+        }
+        nonempty
+    }
+
+    #[test]
+    fn the_rows_built_for_unit_interval_have_x_with_and_without_a_point() {
+        let built = some_x_without_a_point();
+        assert_eq!(unit_interval_checked(&built), 36, "{built:?}");
     }
 
     /// [`CoreClasses`] against the whole core: for random cores over `x` and four other atoms
@@ -29498,38 +29898,107 @@ mod unit_interval_tests {
             let mut core: Vec<Con> = (0..2 + next(6)).map(|_| row(&mut next, unit)).collect();
             core.push(Con::ge(&Lin::atom(x.clone()), &Lin::constant(-20)));
             core.push(Con::ge(&Lin::constant(20), &Lin::atom(x.clone())));
-            let whole = |own: &[Con]| {
-                let rows: Vec<&Con> = core.iter().chain(own).collect();
-                solve(&rows, false).map(|m| m.is_some())
-            };
-            let Some(classes) = CoreClasses::of(&core, &x) else {
-                assert_eq!(whole(&[]), Ok(false), "core {core:?}");
-                none += 1;
-                continue;
-            };
-            for _ in 0..4 {
-                let own: Vec<Con> = (0..next(3))
-                    .map(|_| {
-                        let unit = next(2) == 0;
-                        row(&mut next, unit)
-                    })
-                    .collect();
-                let Ok(expect) = whole(&own) else { continue };
-                let refs: Vec<&Con> = own.iter().collect();
-                assert_eq!(
-                    solve(&classes.with(&refs), false).map(|m| m.is_some()),
-                    Ok(expect),
-                    "core {core:?}, own {own:?}"
-                );
-                if expect { points += 1 } else { empty += 1 }
+            let questions: Vec<Vec<Con>> = (0..4)
+                .map(|_| {
+                    (0..next(3))
+                        .map(|_| {
+                            let unit = next(2) == 0;
+                            row(&mut next, unit)
+                        })
+                        .collect()
+                })
+                .collect();
+            match core_classes_checked(&core, &x, &questions) {
+                None => none += 1,
+                Some((p, e)) => {
+                    points += p;
+                    empty += e;
+                }
             }
         }
-        // Negative control on the test itself: each kind of answer occurs (163, 3951 and 1397
-        // of 1500 cores; about a fifth of that here).
-        assert!(
-            none > 12 && points > 400 && empty > 140,
-            "{none} {points} {empty}"
+        // Every answer is the whole core's; each kind of answer the draws did not give is given
+        // by the core built for it (PROOF-test-count-thresholds; until 2026-11-15 the draws had
+        // to give more than 12 cores with no class answer, 400 questions with a point and 140
+        // without).
+        let (no_point, core, questions) = core_classes_built();
+        if none == 0 {
+            assert_eq!(
+                core_classes_checked(&no_point, &x, &[]),
+                None,
+                "{no_point:?}"
+            );
+        }
+        if points == 0 || empty == 0 {
+            let answers = core_classes_checked(&core, &x, &questions);
+            assert_eq!(answers, Some((1, 1)), "{core:?} with {questions:?}");
+        }
+    }
+
+    /// [`CoreClasses::of`] the core over `x`: `None` when it gives none, and then the whole
+    /// core has no point; otherwise each question with the classes has a point exactly where
+    /// it has one with the whole core, and the numbers of questions with a point and without.
+    fn core_classes_checked(
+        core: &[Con],
+        x: &Atom,
+        questions: &[Vec<Con>],
+    ) -> Option<(usize, usize)> {
+        let whole = |own: &[Con]| {
+            let rows: Vec<&Con> = core.iter().chain(own).collect();
+            solve(&rows, false).map(|m| m.is_some())
+        };
+        let Some(classes) = CoreClasses::of(core, x) else {
+            assert_eq!(whole(&[]), Ok(false), "core {core:?}");
+            return None;
+        };
+        let (mut points, mut empty) = (0, 0);
+        for own in questions {
+            let Ok(expect) = whole(own) else { continue };
+            let refs: Vec<&Con> = own.iter().collect();
+            assert_eq!(
+                solve(&classes.with(&refs), false).map(|m| m.is_some()),
+                Ok(expect),
+                "core {core:?}, own {own:?}"
+            );
+            if expect { points += 1 } else { empty += 1 }
+        }
+        Some((points, empty))
+    }
+
+    /// Over `x` and `y0`: the core `y0 - 1 >= 0`, `-y0 >= 0` (with `x` in [-20, 20]), whose
+    /// class {y0} has no point, so [`CoreClasses::of`] gives `None`; and the core
+    /// `y0 - x >= 0` with `x` in [-20, 20], asked with no rows of its own (a point: x = y0 = 0)
+    /// and with `-y0 - 21 >= 0` (none: y0 <= -21 < -20 <= x <= y0).
+    fn core_classes_built() -> (Vec<Con>, Vec<Con>, Vec<Vec<Con>>) {
+        let (x, y) = (
+            || Lin::atom(Atom::Sym("x".into())),
+            || Lin::atom(Atom::Sym("y0".into())),
         );
+        let bounds = || {
+            vec![
+                Con::ge(&x(), &Lin::constant(-20)),
+                Con::ge(&Lin::constant(20), &x()),
+            ]
+        };
+        let mut no_point = bounds();
+        no_point.push(Con::ge(&y(), &Lin::constant(1)));
+        no_point.push(Con::ge(&Lin::constant(0), &y()));
+        let mut core = bounds();
+        core.push(Con::ge(&y(), &x()));
+        let below = vec![Con::ge(&Lin::constant(-21), &y())];
+        (no_point, core, vec![vec![], below])
+    }
+
+    #[test]
+    fn the_cores_built_for_core_classes_give_each_answer() {
+        let x = Atom::Sym("x".into());
+        let (no_point, core, questions) = core_classes_built();
+        assert_eq!(
+            core_classes_checked(&no_point, &x, &[]),
+            None,
+            "{no_point:?}"
+        );
+        let answers = core_classes_checked(&core, &x, &questions);
+        assert_eq!(answers, Some((1, 1)), "{core:?} with {questions:?}");
     }
 }
 
@@ -30036,36 +30505,67 @@ mod real_end_tests {
                     Con::ge(&l, &c(0))
                 });
             }
-            let f = and(cons);
-            let mut values: Vec<i64> = Vec::new();
-            for a in -6..=6 {
-                for b in -6..=6 {
-                    for z in -6..=6 {
-                        let m: Model = [(sym("a"), a), (sym("b"), b), (sym("z"), z)]
-                            .into_iter()
-                            .map(|(k, x)| (k, Int::from(x)))
-                            .collect();
-                        if f.holds(&m) {
-                            values.push(a);
-                        }
+            bounded += bounds_checked(&and(cons));
+        }
+        // No integer point is past a bound found; when the draws found none, the system built
+        // for it, `-6 <= a, b, z <= 6` and `a - b >= 0`, has `a` bounded both ways by its own
+        // rows (-6 and 6 over the reals), so both ends are found and checked
+        // (PROOF-test-count-thresholds; until 2026-11-15 the draws had to give more than 100
+        // bounds of 200).
+        if bounded == 0 {
+            let built = bounded_built();
+            assert_eq!(bounds_checked(&built), 2, "{built:?}");
+        }
+    }
+
+    /// `-6 <= a, b, z <= 6` and `a - b >= 0`.
+    fn bounded_built() -> Formula {
+        let mut cons: Vec<Con> = ["a", "b", "z"]
+            .iter()
+            .flat_map(|n| [Con::ge(&v(n), &c(-6)), Con::ge(&c(6), &v(n))])
+            .collect();
+        cons.push(Con::ge(&v("a"), &v("b")));
+        and(cons)
+    }
+
+    /// Each end of `a` that [`real_end`] finds over `f`, a system over `a`, `b`, `z` within
+    /// `-6..=6`, has no integer point of `f` past it; the number of ends found.
+    fn bounds_checked(f: &Formula) -> usize {
+        let mut values: Vec<i64> = Vec::new();
+        for a in -6..=6 {
+            for b in -6..=6 {
+                for z in -6..=6 {
+                    let m: Model = [(sym("a"), a), (sym("b"), b), (sym("z"), z)]
+                        .into_iter()
+                        .map(|(k, x)| (k, Int::from(x)))
+                        .collect();
+                    if f.holds(&m) {
+                        values.push(a);
                     }
                 }
             }
-            for dir in [1, -1] {
-                let Some(end) = real_end(&f, &sym("a"), dir) else {
-                    continue;
-                };
-                bounded += 1;
-                for x in &values {
-                    let x = Int::from(*x);
-                    assert!(
-                        if dir > 0 { x <= end } else { x >= end },
-                        "{f:?}: a = {x:?} past the bound {end:?} going {dir}"
-                    );
-                }
+        }
+        let mut bounded = 0;
+        for dir in [1, -1] {
+            let Some(end) = real_end(f, &sym("a"), dir) else {
+                continue;
+            };
+            bounded += 1;
+            for x in &values {
+                let x = Int::from(*x);
+                assert!(
+                    if dir > 0 { x <= end } else { x >= end },
+                    "{f:?}: a = {x:?} past the bound {end:?} going {dir}"
+                );
             }
         }
-        assert!(bounded > 100, "{bounded} bounds of 200");
+        bounded
+    }
+
+    #[test]
+    fn the_system_built_for_real_end_is_bounded_both_ways() {
+        let built = bounded_built();
+        assert_eq!(bounds_checked(&built), 2, "{built:?}");
     }
 }
 
