@@ -221,6 +221,84 @@ fn a_bug_of_zedc_in_the_run_stops_both_engines_alike() {
     }
 }
 
+/// The program address the record of a run names, the run made by `cmd` (`zedc run …` or an
+/// executable) with `--record <rec>` added; the run writes `first line` and exits with 0.
+fn recorded(cmd: &[&str], rec: &Path) -> String {
+    let ran = Command::new("timeout")
+        .arg("60")
+        .args(cmd)
+        .args(["--record", rec.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(ran.status.code(), Some(0), "{cmd:?}: {ran:?}");
+    let record = zedc::run::Record::from_bytes(&std::fs::read(rec).unwrap()).unwrap();
+    record
+        .program
+        .expect("a record names its program")
+        .to_string()
+}
+
+#[test]
+fn a_bug_of_zedc_in_the_run_names_the_program_on_both_engines() {
+    // DESIGN.md sec:checking_in_zed: "the run reports it as a compiler bug with the build's
+    // content address" (plan row EXE-bug-report-address). The address is the program's, which
+    // a record of the run names: each read of the build's target or an option is replaced by
+    // its literal before the address is taken, so an option the program reads gives the build
+    // another address, and the target is the host's.
+    let d = dir().join("bug_address");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("zed.manifest"), "options = \"fast, slow\";\n").unwrap();
+    let file = d.join("main.zed");
+    std::fs::write(
+        &file,
+        writes_then(
+            "    m.stderr <- if build.options.fast { \"fast\" } else { String(m.args) };\n",
+        ),
+    )
+    .unwrap();
+    let file = file.to_str().unwrap();
+    let zedc_exe = env!("CARGO_BIN_EXE_zedc");
+    let rec = d.join("run.rec");
+    let mut seen = Vec::new();
+    for on in [&[][..], &["--option", "fast"], &["--option", "slow"]] {
+        let exe = d.join(format!("main{}", on.join("")));
+        let exe = exe.to_str().unwrap();
+        let built = zedc(
+            &[&["build", file, "-o", exe][..], on].concat(),
+            Stdio::piped(),
+        );
+        assert_eq!(built.status.code(), Some(0), "building {on:?}: {built:?}");
+        let run = [&[zedc_exe, "run", file][..], on].concat();
+        let address = recorded(&run, &rec);
+        // The executable's record names the address `zedc run`'s does.
+        assert_eq!(recorded(&[exe], &rec), address, "{on:?}");
+        seen.push(address.clone());
+        // The switch exists only where debug assertions are on (crates/zedc/src/run.rs).
+        if cfg!(debug_assertions) {
+            for (engine, cmd) in [("zedc run", run), ("executable", vec![exe])] {
+                let ran = Command::new("timeout")
+                    .arg("60")
+                    .args(&cmd)
+                    .env("ZEDC_TEST_BUG", "1")
+                    .output()
+                    .unwrap();
+                let err = String::from_utf8_lossy(&ran.stderr);
+                assert_eq!(ran.status.code(), Some(3), "{engine} {on:?}: {err}");
+                assert!(
+                    err.contains(&format!(
+                        "The run was of the program whose content address is {address}, the \
+                         address a record of its run names."
+                    )),
+                    "{engine} {on:?}: {err}"
+                );
+            }
+        }
+    }
+    // `fast`, which the program reads, changes the address; `slow`, which it does not, does not.
+    assert_ne!(seen[0], seen[1]);
+    assert_eq!(seen[0], seen[2]);
+}
+
 #[test]
 fn a_nonzero_result_keeps_both_streams_in_order_on_both_engines() {
     let src = "main(m: MainArgs) -> int {\n    m.stdout <- \"first line\";\n    \

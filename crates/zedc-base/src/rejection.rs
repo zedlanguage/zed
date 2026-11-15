@@ -4,6 +4,8 @@
 //! any parenthesis; the sync tool copies them into `zed/fences/rejections.txt`, and a test
 //! holds this list equal to that copy.
 
+use crate::address::ContentAddress;
+
 /// Declares `Row`, each variant documented by its name, with `Row::ALL` and `Row::name`.
 macro_rules! rows {
     ($($row:ident => $name:literal,)*) => {
@@ -334,16 +336,39 @@ pub fn bug(expected: &str, place: Option<(&str, u32)>) -> String {
 /// What a run prints when it stops at a broken assumption of zedc's own (a panic) while it
 /// runs a program, under `zedc run` and in the executable `zedc build` makes alike (plan row
 /// EXE-panic-status): that this is a bug in zedc and not in the program, what zedc `expected`,
-/// the file and line of zedc where the run stopped, and how to report it. The run then exits
-/// with status 3, a fault of the run (DESIGN.md sec:ports).
-pub fn run_bug(expected: &str, place: Option<(&str, u32)>) -> String {
+/// the file and line of zedc where the run stopped, the content address of the program the
+/// run is of, when the run had come far enough to know it, and how to report it. The run then
+/// exits with status 3, a fault of the run (DESIGN.md sec:ports).
+///
+/// DESIGN.md sec:checking_in_zed: "the run reports it as a compiler bug with the build's
+/// content address". At this layer the program's content address, which a record names too
+/// (step L1.19b), is that address (plan row EXE-bug-report-address): a build is its target and
+/// the options it turns on (step L2.8d), each read of either is replaced by its literal before
+/// the address is taken, so the address changes with every part of the build the program
+/// reads; the target is the host's, the one target zedc builds for; and no other switch of
+/// `zedc run` or `zedc build` changes the program run (`--suppress` and `--addresses` change
+/// only what is printed, `--record` only what is written beside the run). Measured
+/// 2026-11-15: an option the program reads changes the address, and one it does not read
+/// leaves it as it is, as it leaves the program. A switch that changes the program built
+/// without a read, as `--strict` and `--total` will, joins the address when it is added.
+pub fn run_bug(
+    expected: &str,
+    place: Option<(&str, u32)>,
+    program: Option<ContentAddress>,
+) -> String {
     let place = place.map_or(String::new(), |(file, line)| {
         format!(" ({file}, line {line})")
     });
+    let program = program.map_or(String::new(), |a| {
+        format!(
+            "\nThe run was of the program whose content address is {a}, the address a record \
+             of its run names."
+        )
+    });
     format!(
         "the run stopped because of a bug in zedc, not in your program. zedc expected this to \
-         hold, and it did not: {expected}{place}.\n\
-         Please report it at {REPORT_TO}, with the program's source, the command line you ran \
-         and the files the run read, so that it can be repeated."
+         hold, and it did not: {expected}{place}.{program}\n\
+         Please report it at {REPORT_TO}, with this message, the program's source, the command \
+         line you ran and the files the run read, so that it can be repeated."
     )
 }

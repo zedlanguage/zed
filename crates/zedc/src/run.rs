@@ -259,6 +259,23 @@ impl Ports {
 /// checks of the program, which [`running`] reads.
 static RUNS: AtomicUsize = AtomicUsize::new(0);
 
+/// The content address of the program whose wave last started in this process, which
+/// [`stop_at_bug`] names (plan row EXE-bug-report-address); `None` before a wave of a known
+/// program starts. A wave of `zedc run` or `zedc replay` sets it where it takes the address
+/// for its record ([`Program::address`]), and an executable before its wave. The hook is
+/// installed only by the `zedc` executable and by an executable `zedc build` makes, each of
+/// which runs one program, so the last wave started is the one that stopped.
+static PROGRAM: std::sync::Mutex<Option<ContentAddress>> = std::sync::Mutex::new(None);
+
+/// Records `address` as the content address of the program whose wave starts now, for
+/// [`stop_at_bug`] to name.
+fn running_program(address: ContentAddress) {
+    // Nothing panics while the lock is held, so even a poisoned lock holds a whole value.
+    *PROGRAM
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(address);
+}
+
 /// A run in progress, counted in [`RUNS`] from its start until it is dropped, at the run's end
 /// or as a panic unwinds past it.
 struct Running;
@@ -284,7 +301,9 @@ pub fn running() -> bool {
 }
 
 /// Reports the panic `info` as a bug of zedc that stopped the run
-/// ([`crate::rejection::run_bug`]) and ends the process with status 3, a fault of the run
+/// ([`crate::rejection::run_bug`]), naming the content address of the program whose wave it
+/// stopped once the wave has taken it (`PROGRAM`, plan row EXE-bug-report-address), and
+/// ends the process with status 3, a fault of the run
 /// (DESIGN.md sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a `#bug`, a
 /// fault or a limit"): the panic hook of the
 /// executable `zedc build` makes, and of `zedc run` while [`running`] (plan row
@@ -302,10 +321,13 @@ pub fn stop_at_bug(info: &std::panic::PanicHookInfo<'_>) -> ! {
         .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
         .unwrap_or("something it does not describe");
     let place = info.location().map(|l| (l.file(), l.line()));
+    let program = *PROGRAM
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _ = writeln!(
         std::io::stderr(),
         "{}",
-        crate::rejection::run_bug(expected, place)
+        crate::rejection::run_bug(expected, place, program)
     );
     std::process::exit(3)
 }
@@ -671,6 +693,9 @@ impl Program {
             Some(main) => (self.term_of(main.clone()), None),
             None => (self.term(), Some(self.address()?)),
         };
+        if let Some(a) = program {
+            running_program(a);
+        }
         let mut out = self.ports.wave(lines, args, files, trace, |ev| {
             ev.set_sites(Some(Arc::clone(&self.sites)));
             map(&term, ev).map_err(|why| self.placed(why, ev.failed_at()))
@@ -1582,6 +1607,7 @@ pub fn executable(
         })?;
         let lines = options.read_lines(ports, stdin)?;
         let env = Arc::new(Environment::new(std::env::vars_os()));
+        running_program(address);
         let mut wave = ports
             .run(&lines, &words.args, local(ports, &env), run)
             .map_err(|e| stopped(&env, e))?;
