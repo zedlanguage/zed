@@ -90,23 +90,51 @@ fn random_family(rng: &mut Rng, depth: usize) -> Family {
         .expect("no leaves build the empty family")
 }
 
+/// The family of `leaves`, each a keypath of integers and an integer leaf.
+fn family(leaves: &[(&[i64], i64)]) -> Family {
+    Family::from_leaves(int_leaves(leaves)).unwrap()
+}
+
+fn int_leaves(leaves: &[(&[i64], i64)]) -> Vec<(Vec<Value>, Value)> {
+    leaves
+        .iter()
+        .map(|(p, v)| (p.iter().map(|&k| Value::Int(k)).collect(), Value::Int(*v)))
+        .collect()
+}
+
 #[test]
 fn the_union_agrees_with_the_union_of_the_leaves() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_union_agrees_with_the_union_of_the_leaves",
     ));
-    let (mut collisions, mut overlaps) = (0, 0);
     for _ in 0..2_000 {
-        let (a, b) = (random_family(&mut rng, 3), random_family(&mut rng, 3));
-        let want = union_by_leaves(&a, &b);
-        assert_eq!(a.union(&b), want, "{a} ∪ {b}");
-        collisions += want.is_err() as usize;
-        overlaps += (want.is_ok() && a.keys().any(|k| b.get(k).is_some())) as usize;
+        union_agrees(&random_family(&mut rng, 3), &random_family(&mut rng, 3));
     }
-    assert!(
-        collisions > 100 && overlaps > 100,
-        "{collisions} collisions, {overlaps} overlaps"
+    // Pairs built for each kind. `{0 -> 0}` and `{0 -> 1}` give two leaves at one keypath, a
+    // collision; `{0 -> 0}` and `{0 -> 0, 1 -> 1}` share the key 0 with the same leaf, an
+    // overlap the union keeps once.
+    let zero = family(&[(&[0], 0)]);
+    assert_eq!(
+        union_agrees(&zero, &family(&[(&[0], 1)])),
+        (true, false),
+        "collision"
     );
+    assert_eq!(
+        union_agrees(&zero, &family(&[(&[0], 0), (&[1], 1)])),
+        (false, true),
+        "overlap"
+    );
+}
+
+/// Asserts that `a ∪ b` is the union of their leaves; returns whether that is a collision, and
+/// whether it is a union of families sharing a key.
+fn union_agrees(a: &Family, b: &Family) -> (bool, bool) {
+    let want = union_by_leaves(a, b);
+    assert_eq!(a.union(b), want, "{a} ∪ {b}");
+    (
+        want.is_err(),
+        want.is_ok() && a.keys().any(|k| b.get(k).is_some()),
+    )
 }
 
 #[test]
@@ -116,15 +144,22 @@ fn families_are_ordered_by_their_entries() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "families_are_ordered_by_their_entries",
     ));
-    let mut both = [0; 3];
     for _ in 0..2_000 {
-        let (a, b) = (random_family(&mut rng, 2), random_family(&mut rng, 2));
-        let want = a.iter().cmp(b.iter());
-        assert_eq!(a.cmp(&b), want, "{a} against {b}");
-        both[(want as i8 + 1) as usize] += 1;
+        ordered_by_entries(&random_family(&mut rng, 2), &random_family(&mut rng, 2));
     }
-    assert!(both.iter().all(|&n| n > 50), "{both:?}");
-    let _ = Ordering::Less;
+    // Pairs built for each order: `{0 -> 0}` before `{0 -> 1}`, since their first entries share
+    // the key 0 and 0 < 1; after, the other way round; and equal to itself.
+    let (a, b) = (family(&[(&[0], 0)]), family(&[(&[0], 1)]));
+    assert_eq!(ordered_by_entries(&a, &b), Ordering::Less);
+    assert_eq!(ordered_by_entries(&a, &a), Ordering::Equal);
+    assert_eq!(ordered_by_entries(&b, &a), Ordering::Greater);
+}
+
+/// Asserts that `a` and `b` are ordered as their entries in key order are; returns the order.
+fn ordered_by_entries(a: &Family, b: &Family) -> Ordering {
+    let want = a.iter().cmp(b.iter());
+    assert_eq!(a.cmp(b), want, "{a} against {b}");
+    want
 }
 
 #[test]
@@ -134,7 +169,6 @@ fn a_family_built_with_families_as_leaves_agrees_with_its_leaves() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "a_family_built_with_families_as_leaves_agrees_with_its_leaves",
     ));
-    let (mut built, mut collisions) = (0, 0);
     for _ in 0..2_000 {
         let parts: Vec<(Vec<Value>, Value)> = (0..1 + rng.below(3))
             .map(|_| {
@@ -148,25 +182,34 @@ fn a_family_built_with_families_as_leaves_agrees_with_its_leaves() {
                 (path, v)
             })
             .collect();
-        // An empty family given as a leaf is an empty level beneath its keypath, which is a
-        // leaf of its own.
-        let flat = parts.iter().flat_map(|(p, v)| match v {
-            Value::Family(f) if !f.is_empty() => f
-                .leaves()
-                .into_iter()
-                .map(|(q, w)| ([p.clone(), q].concat(), w))
-                .collect(),
-            v => vec![(p.clone(), v.clone())],
-        });
-        let want = Family::from_leaves(flat.collect::<Vec<_>>());
-        assert_eq!(Family::from_leaves(parts.clone()), want, "{parts:?}");
-        built += want.is_ok() as usize;
-        collisions += want.is_err() as usize;
+        builds_as_its_leaves(parts);
     }
-    assert!(
-        built > 100 && collisions > 100,
-        "{built} built, {collisions} collisions"
-    );
+    // Parts built for each outcome. The family `{1 -> 0}` given at the keypath 0 is the leaf
+    // 0 at the keypath (0, 1), which builds; a leaf 1 at (0, 1) besides it is a second leaf
+    // at one keypath, a collision.
+    let inner = Value::Family(family(&[(&[1], 0)]));
+    let built = vec![(vec![Value::Int(0)], inner)];
+    assert!(builds_as_its_leaves(built.clone()), "built");
+    let collides = [built, int_leaves(&[(&[0, 1], 1)])].concat();
+    assert!(!builds_as_its_leaves(collides), "collision");
+}
+
+/// Asserts that the family built from `parts` is the one built from their leaves, each family
+/// given as a leaf flattened beneath its keypath; returns whether it builds.
+fn builds_as_its_leaves(parts: Vec<(Vec<Value>, Value)>) -> bool {
+    // An empty family given as a leaf is an empty level beneath its keypath, which is a
+    // leaf of its own.
+    let flat = parts.iter().flat_map(|(p, v)| match v {
+        Value::Family(f) if !f.is_empty() => f
+            .leaves()
+            .into_iter()
+            .map(|(q, w)| ([p.clone(), q].concat(), w))
+            .collect(),
+        v => vec![(p.clone(), v.clone())],
+    });
+    let want = Family::from_leaves(flat.collect::<Vec<_>>());
+    assert_eq!(Family::from_leaves(parts.clone()), want, "{parts:?}");
+    want.is_ok()
 }
 
 /// `let x0 = 0 in let x1 = x0 + 1 in … let x(n) = x0 + n in x0 + x(n)`: each `let` reads the

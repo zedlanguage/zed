@@ -115,31 +115,40 @@ fn reversed_and_rotated_units_give_the_same_cells() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "reversed_and_rotated_units_give_the_same_cells",
     ));
-    let mut cut = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let eq = System::random(&mut rng);
         let eq = if rng.below(2) == 0 { eq } else { eq.bare() };
-        let n = eq.names.len();
-        let want_order = by_name(&eq, &order(&eq).unwrap());
-        let want = cells_by_name(&eq);
-        if want_order.contains('(') {
-            cut += 1;
-        }
-        let reversed: Vec<usize> = (0..n).rev().collect();
-        let mut moves = vec![reversed];
-        moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
-        for old in moves {
-            let m = eq.renumbered(&old);
-            assert_eq!(
-                by_name(&m, &order(&m).unwrap()),
-                want_order,
-                "{old:?}: {eq:?}"
-            );
-            assert_eq!(cells_by_name(&m), want, "{old:?}: {eq:?}");
-        }
+        moves_keep_the_order_and_cells(&eq);
     }
-    // The sample has loops, where the head decides the cells.
-    assert!(cut > RANDOM_INSTANCES / 16, "{cut} systems with a loop");
+    // A system built with a loop, where the head decides the cells: `a = 0 ⊔ c; b = a + 1;
+    // c = b ⊓ int[..=4]` reads around a -> b -> c -> a, so its three cells are one component.
+    for eq in [
+        three_cell_loop(["a", "b", "c"], SIX[3]),
+        three_cell_loop(["a", "b", "c"], SIX[3]).bare(),
+    ] {
+        assert_eq!(moves_keep_the_order_and_cells(&eq), "(a b c)");
+    }
+}
+
+/// Asserts that `eq` with its equations reversed and rotated by each position gives the same
+/// order and cells by name; returns the order.
+fn moves_keep_the_order_and_cells(eq: &System) -> String {
+    let n = eq.names.len();
+    let want_order = by_name(eq, &order(eq).unwrap());
+    let want = cells_by_name(eq);
+    let reversed: Vec<usize> = (0..n).rev().collect();
+    let mut moves = vec![reversed];
+    moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
+    for old in moves {
+        let m = eq.renumbered(&old);
+        assert_eq!(
+            by_name(&m, &order(&m).unwrap()),
+            want_order,
+            "{old:?}: {eq:?}"
+        );
+        assert_eq!(cells_by_name(&m), want, "{old:?}: {eq:?}");
+    }
+    want_order
 }
 
 #[test]
@@ -376,59 +385,74 @@ fn checking_one_file_gives_the_cells_checking_all_files_gives() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "checking_one_file_gives_the_cells_checking_all_files_gives",
     ));
-    let mut cut = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let mut eq = System::random(&mut rng);
         if rng.below(2) == 0 {
             eq = eq.bare();
         }
-        let n = eq.names.len();
-        let form = eq.forms[0].clone();
-        let mut keys: Vec<Vector<Value>> = Vec::new();
-        while keys.len() < n {
-            let len = 1 + rng.below(2);
-            let p: Vec<i64> = (0..len).map(|_| rng.int(-3, 12)).collect();
-            let p = path(&p);
-            if !keys.contains(&p) {
-                keys.push(p);
-            }
-        }
-        eq.names = vec!["x".into(); n];
-        eq.addresses = vec![ContentAddress([9; 32]); n];
-        eq.forms = vec![form; n];
-        eq.keypaths = keys;
-        let batch = solve(&eq).unwrap();
-        if order(&eq)
-            .unwrap()
-            .iter()
-            .any(|e| matches!(e, Element::Component { .. }))
-        {
-            cut += 1;
-        }
-        let files: Vec<usize> = (0..n).map(|_| rng.below(3)).collect();
-        for file in 0..3 {
-            let mine: Vec<usize> = (0..n).filter(|&v| files[v] == file).collect();
-            let sub = reached(&eq, &mine);
-            let single = solve(&sub).unwrap();
-            for (v, cell) in single.iter().enumerate() {
-                let o = (0..n)
-                    .find(|&o| eq.keypaths[o] == sub.keypaths[v])
-                    .expect("a reached cell is a cell of the system");
-                assert_eq!(*cell, batch[o], "file {file}, cell {o}: {eq:?}");
-            }
-        }
-        let want = cells_by_name_and_keypath(&eq);
-        let mut moves: Vec<Vec<usize>> = vec![(0..n).rev().collect()];
-        moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
-        for old in moves {
-            assert_eq!(
-                cells_by_name_and_keypath(&eq.renumbered(&old)),
-                want,
-                "{old:?}"
-            );
+        one_file_gives_the_cells_all_files_give(&mut rng, eq);
+    }
+    // A system built with a loop: `a = 0 ⊔ c; b = a + 1; c = b ⊓ int[..=4]` reads around
+    // a -> b -> c -> a. Whether cells form a component depends on the reads alone, not on the
+    // names and keypaths drawn for them, so its three cells are one component.
+    for eq in [
+        three_cell_loop(["a", "b", "c"], SIX[3]),
+        three_cell_loop(["a", "b", "c"], SIX[3]).bare(),
+    ] {
+        assert!(
+            one_file_gives_the_cells_all_files_give(&mut rng, eq),
+            "the three-cell loop is a component"
+        );
+    }
+}
+
+/// Gives the cells of `eq` one static node and random keypaths, and asserts that checking
+/// each of three random files alone gives the cells checking all of them gives, and that the
+/// equations reversed and rotated give the same cells. Returns whether the order has a loop.
+fn one_file_gives_the_cells_all_files_give(rng: &mut Rng, mut eq: System) -> bool {
+    let n = eq.names.len();
+    let form = eq.forms[0].clone();
+    let mut keys: Vec<Vector<Value>> = Vec::new();
+    while keys.len() < n {
+        let len = 1 + rng.below(2);
+        let p: Vec<i64> = (0..len).map(|_| rng.int(-3, 12)).collect();
+        let p = path(&p);
+        if !keys.contains(&p) {
+            keys.push(p);
         }
     }
-    assert!(cut > RANDOM_INSTANCES / 16, "{cut} systems with a loop");
+    eq.names = vec!["x".into(); n];
+    eq.addresses = vec![ContentAddress([9; 32]); n];
+    eq.forms = vec![form; n];
+    eq.keypaths = keys;
+    let batch = solve(&eq).unwrap();
+    let looped = order(&eq)
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, Element::Component { .. }));
+    let files: Vec<usize> = (0..n).map(|_| rng.below(3)).collect();
+    for file in 0..3 {
+        let mine: Vec<usize> = (0..n).filter(|&v| files[v] == file).collect();
+        let sub = reached(&eq, &mine);
+        let single = solve(&sub).unwrap();
+        for (v, cell) in single.iter().enumerate() {
+            let o = (0..n)
+                .find(|&o| eq.keypaths[o] == sub.keypaths[v])
+                .expect("a reached cell is a cell of the system");
+            assert_eq!(*cell, batch[o], "file {file}, cell {o}: {eq:?}");
+        }
+    }
+    let want = cells_by_name_and_keypath(&eq);
+    let mut moves: Vec<Vec<usize>> = vec![(0..n).rev().collect()];
+    moves.extend((1..n).map(|r| (0..n).map(|v| (v + r) % n).collect()));
+    for old in moves {
+        assert_eq!(
+            cells_by_name_and_keypath(&eq.renumbered(&old)),
+            want,
+            "{old:?}"
+        );
+    }
+    looped
 }
 
 /// Cells with given reads and keys, whose equations give nothing: the cost of the order alone.

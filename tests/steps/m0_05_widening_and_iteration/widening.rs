@@ -99,29 +99,48 @@ fn interval_widening_chains_stay_on_the_first_ends_and_the_landmarks() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "interval_widening_chains_stay_on_the_first_ends_and_the_landmarks",
     ));
-    let mut longest = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let marks = random_marks(&mut rng);
         let first = random_set(&mut rng).join(&IntervalSet::single(rng.int(-50, 50)));
-        let mut fed = Some(first.clone());
-        let c = chain(
-            || fed.take().unwrap_or_else(|| random_set(&mut rng)),
-            &marks,
-            usize::MAX,
-        );
-        let k: BTreeSet<Num> = ends(&first).union(marks.ints()).cloned().collect();
-        assert!(
-            c.len() <= 2 * k.len() + 3,
-            "{} elements, |K| = {}",
-            c.len(),
-            k.len()
-        );
-        for x in &c[1..] {
-            assert!(ends(x).is_subset(&k), "{x} has an end outside {k:?}");
-        }
-        longest = longest.max(c.len());
+        stays_on_the_first_ends_and_the_landmarks(first, &marks, || random_set(&mut rng));
     }
-    assert!(longest > 3, "the chains are all short");
+    // A chain built to be long: from `0`, the values `0..=5`, `0..=15`, `0..=25`, `0..=35`,
+    // with landmarks from the literals 10, 20 and 30. Each value's upper end lies above the
+    // last element's, which is finite (a landmark lies above it), so each moves the upper end
+    // and adds an element: at least the bottom, `0`, and two more.
+    let mut k = 0;
+    let len = stays_on_the_first_ends_and_the_landmarks(
+        IntervalSet::single(0),
+        &Landmarks::of([10, 20, 30], []),
+        || {
+            k = (k + 1).min(4);
+            IntervalSet::of(0, 10 * k - 5)
+        },
+    );
+    assert!(len > 3, "the built chain has {len} elements");
+}
+
+/// Asserts that the widening chain from `first`, then the values `step` gives, keeps every
+/// element's finite ends in K, the first value's and the landmarks, and has at most
+/// 2|K| + 3 elements; returns its length.
+fn stays_on_the_first_ends_and_the_landmarks(
+    first: IntervalSet,
+    marks: &Landmarks,
+    mut step: impl FnMut() -> IntervalSet,
+) -> usize {
+    let mut fed = Some(first.clone());
+    let c = chain(|| fed.take().unwrap_or_else(&mut step), marks, usize::MAX);
+    let k: BTreeSet<Num> = ends(&first).union(marks.ints()).cloned().collect();
+    assert!(
+        c.len() <= 2 * k.len() + 3,
+        "{} elements, |K| = {}",
+        c.len(),
+        k.len()
+    );
+    for x in &c[1..] {
+        assert!(ends(x).is_subset(&k), "{x} has an end outside {k:?}");
+    }
+    c.len()
 }
 
 #[test]

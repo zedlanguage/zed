@@ -387,7 +387,6 @@ pub(super) fn indices(t: &Term, env: &mut Vec<Arc<str>>) -> String {
 
 #[test]
 fn addresses_agree_with_an_independent_alpha_equivalence_test() {
-    let (mut same, mut differ) = (0, 0);
     let base = zed_tests::seed::seed("addresses_agree_with_an_independent_alpha_equivalence_test");
     for i in 0..RANDOM_INSTANCES as u64 {
         let seed = base.wrapping_add(i);
@@ -400,17 +399,25 @@ fn addresses_agree_with_an_independent_alpha_equivalence_test() {
                 &BOUND,
             )
         };
-        let (s, t) = (make(seed ^ 0x51), make(seed ^ 0x9e));
-        let alpha = indices(&s, &mut vec![]) == indices(&t, &mut vec![]);
-        assert_eq!(
-            addr(&def("f", s.clone())) == addr(&def("f", t.clone())),
-            alpha,
-            "{s:?}\n{t:?}"
-        );
-        if alpha { same += 1 } else { differ += 1 }
+        addresses_agree(&make(seed ^ 0x51), &make(seed ^ 0x9e));
     }
-    // Both outcomes occur often enough for the agreement to mean something.
-    assert!(same > 50 && differ > 50, "{same} alike, {differ} different");
+    // A pair built for each outcome. `x -> x` and `y -> y` both read the innermost binder,
+    // index 0, so they are alike; `x -> x` and `x -> y` differ, since `y` is free there.
+    let id = lam(&["x"], var("x"));
+    assert!(addresses_agree(&id, &lam(&["y"], var("y"))), "alike");
+    assert!(!addresses_agree(&id, &lam(&["x"], var("y"))), "different");
+}
+
+/// Asserts that `s` and `t` get one address exactly when [`indices`] finds them α-equivalent;
+/// returns whether they are.
+pub(super) fn addresses_agree(s: &Term, t: &Term) -> bool {
+    let alpha = indices(s, &mut vec![]) == indices(t, &mut vec![]);
+    assert_eq!(
+        addr(&def("f", s.clone())) == addr(&def("f", t.clone())),
+        alpha,
+        "{s:?}\n{t:?}"
+    );
+    alpha
 }
 
 /// `canonicalize` renames every binder in one pass; the rules rename one per step. Both must

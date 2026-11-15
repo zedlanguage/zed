@@ -115,23 +115,50 @@ fn the_normal_form_admits_the_same_integers_and_is_unique() {
         "the_normal_form_admits_the_same_integers_and_is_unique",
     ));
     let mut by_members: BTreeMap<Vec<i64>, Domain> = BTreeMap::new();
-    let mut collisions = 0;
     for _ in 0..RANDOM_INSTANCES * 2 {
-        let d = random(&mut rng);
-        let n = d.normal();
-        assert_eq!(members(&n), members(&d), "{d:?}");
-        assert_eq!(n.normal(), n, "not idempotent on {d:?}");
-        assert_eq!(n.rank(), 0);
-        match by_members.get(&members(&d)) {
-            Some(m) => {
-                assert_eq!(*m, n, "two normal forms for one set: {d:?}");
-                collisions += 1;
-            }
-            None => {
-                by_members.insert(members(&d), n);
-            }
+        one_normal_form_per_set(&mut by_members, random(&mut rng));
+    }
+    // Spellings built to admit one set, the even numbers 0..=10: as the integers 0..=11 of
+    // class 0 mod 2, as 0..=10 of that class, and as 0..=10 of every class with the finite set
+    // {0, 2, …, 10}. The second and third meet the set the first recorded.
+    let mut by_members = BTreeMap::new();
+    let evens = || FiniteSet::of((0..=5).map(|k| 2 * k));
+    let spellings = [
+        dom(
+            IntervalSet::of(0, 11),
+            Congruence::new(2, 0),
+            FiniteSet::Top,
+        ),
+        dom(
+            IntervalSet::of(0, 10),
+            Congruence::new(2, 0),
+            FiniteSet::Top,
+        ),
+        dom(IntervalSet::of(0, 10), Congruence::new(1, 0), evens()),
+    ];
+    let met: Vec<bool> = spellings
+        .into_iter()
+        .map(|d| one_normal_form_per_set(&mut by_members, d))
+        .collect();
+    assert_eq!(met, [false, true, true], "three spellings of one set");
+}
+
+/// Asserts that `d`'s normal form admits the same integers, is its own normal form, and is the
+/// normal form recorded in `by_members` for the same set, if one is; records it otherwise.
+/// Returns whether one was recorded already.
+fn one_normal_form_per_set(by_members: &mut BTreeMap<Vec<i64>, Domain>, d: Domain) -> bool {
+    let n = d.normal();
+    assert_eq!(members(&n), members(&d), "{d:?}");
+    assert_eq!(n.normal(), n, "not idempotent on {d:?}");
+    assert_eq!(n.rank(), 0);
+    match by_members.get(&members(&d)) {
+        Some(m) => {
+            assert_eq!(*m, n, "two normal forms for one set: {d:?}");
+            true
+        }
+        None => {
+            by_members.insert(members(&d), n);
+            false
         }
     }
-    // Many spellings of one set were met, so uniqueness was tested.
-    assert!(collisions > 100, "{collisions}");
 }

@@ -106,29 +106,37 @@ fn both_phases_end_at_a_sound_post_fixpoint() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "both_phases_end_at_a_sound_post_fixpoint",
     ));
-    let mut narrowed = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
         let eq = System::random(&mut rng);
         let eq = if rng.below(2) == 0 { eq } else { eq.bare() };
-        let order = order(&eq).unwrap();
-        let mut cells = phase1(&eq, &order);
-        assert!(is_post_fixpoint(&eq, &cells), "phase 1: {eq:?}");
-        let before = cells.clone();
-        if narrow(&eq, &order, &mut cells) > 0 {
-            narrowed += 1;
-        }
-        assert!(is_post_fixpoint(&eq, &cells), "phase 2: {eq:?}");
-        for (v, values) in eq.concrete((-40, 40)).iter().enumerate() {
-            assert!(cells[v].is_subset(&before[v]));
-            for &x in values {
-                assert!(cells[v].contains(x), "cell {v} lost {x}: {eq:?}");
-            }
+        both_phases_are_sound(&eq);
+    }
+    // A system built for phase 2 to change: the counter `i = 0 ⊔ ((i ⊓ int[..=98]) + 1)` with
+    // no landmarks. Phase 1 widens its upper end to infinity, giving `0..`; one descending
+    // step gives `0 ⊔ ((0.. ⊓ ..=98) + 1)` = `0..=99`, which is smaller.
+    assert!(
+        both_phases_are_sound(&counter(99).bare()),
+        "phase 2 narrows the counter"
+    );
+}
+
+/// Asserts that phase 1 ends at a post-fixpoint, that phase 2 keeps it one and only removes
+/// values, and that every value of every execution in `-40..=40` stays; returns whether phase
+/// 2 changed a cell.
+fn both_phases_are_sound(eq: &System) -> bool {
+    let order = order(eq).unwrap();
+    let mut cells = phase1(eq, &order);
+    assert!(is_post_fixpoint(eq, &cells), "phase 1: {eq:?}");
+    let before = cells.clone();
+    let narrowed = narrow(eq, &order, &mut cells) > 0;
+    assert!(is_post_fixpoint(eq, &cells), "phase 2: {eq:?}");
+    for (v, values) in eq.concrete((-40, 40)).iter().enumerate() {
+        assert!(cells[v].is_subset(&before[v]));
+        for &x in values {
+            assert!(cells[v].contains(x), "cell {v} lost {x}: {eq:?}");
         }
     }
-    assert!(
-        narrowed > RANDOM_INSTANCES / 40,
-        "phase 2 changed only {narrowed} systems"
-    );
+    narrowed
 }
 
 /// `i = 0`, then `i = i + 1` while `i < bound`: the counter of `for i in 0..=bound`.

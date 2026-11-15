@@ -90,33 +90,55 @@ fn every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "every_rule_decreases_its_rank_and_no_later_rule_raises_an_earlier_one",
     ));
-    let mut fired = [0usize; 4];
     for _ in 0..RANDOM_INSTANCES / 4 {
-        let mut d = random(&mut rng);
-        loop {
-            let before = ranks(&d);
-            let Some(r) = RULES.iter().position(|r| (r.apply)(&mut d)) else {
-                break;
-            };
-            let after = ranks(&d);
-            fired[r] += 1;
-            assert!(
-                after[r] < before[r],
-                "{} did not decrease its rank",
-                RULES[r].name
-            );
-            for e in 0..r {
-                assert!(
-                    after[e] <= before[e],
-                    "{} raised the rank of {}",
-                    RULES[r].name,
-                    RULES[e].name
-                );
-            }
-            assert!(after < before);
-        }
+        ranks_fall(random(&mut rng));
     }
-    assert!(fired.iter().all(|&n| n > 10), "{fired:?}");
+    // A definition built so that each rule fires: the binder written `x` is not spelled as its
+    // level, 0 (binders); one facet is a hint (hints); `units` before `doc` is out of order
+    // (facets); and `0..=10` with every member a multiple of 3 is not in normal form, whose
+    // ends are members, `0..=9` (domain).
+    let mut d = def("d", lam(&["x"], var("x")));
+    d.facets = vec![facet("units", "cent"), facet("doc", 1)];
+    d.facets.push(Facet {
+        hint: true,
+        kind: "doc".into(),
+        value: Value::str("a hint"),
+    });
+    d.domain = Some(Domain {
+        ints: IntervalSet::of(0, 10),
+        class: Congruence::new(3, 0),
+        finite: FiniteSet::Top,
+    });
+    let fired = ranks_fall(d);
+    assert!(fired.iter().all(|&n| n > 0), "each rule fires: {fired:?}");
+}
+
+/// Applies the rules to `d` one step at a time until none applies, asserting that each step
+/// lowers its rule's rank and raises no earlier rule's; returns how often each rule fired.
+fn ranks_fall(mut d: Def) -> [usize; 4] {
+    let mut fired = [0usize; 4];
+    loop {
+        let before = ranks(&d);
+        let Some(r) = RULES.iter().position(|r| (r.apply)(&mut d)) else {
+            return fired;
+        };
+        let after = ranks(&d);
+        fired[r] += 1;
+        assert!(
+            after[r] < before[r],
+            "{} did not decrease its rank",
+            RULES[r].name
+        );
+        for e in 0..r {
+            assert!(
+                after[e] <= before[e],
+                "{} raised the rank of {}",
+                RULES[r].name,
+                RULES[e].name
+            );
+        }
+        assert!(after < before);
+    }
 }
 
 #[test]
@@ -141,10 +163,8 @@ fn many_facets_of_many_kinds_end_as_the_rules_leave_them() {
         "many_facets_of_many_kinds_end_as_the_rules_leave_them",
     ));
     let kinds = ["units", "unit", "u", "doc", "monotone", "units2", ""];
-    let mut repeats = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
-        let mut d = def("d", lit(0));
-        d.facets = (0..rng.below(40))
+        let facets = (0..rng.below(40))
             .map(|_| {
                 let i = rng.int(-2, 2);
                 Facet {
@@ -159,16 +179,26 @@ fn many_facets_of_many_kinds_end_as_the_rules_leave_them() {
                     },
                 }
             })
-            .collect();
-        let normal = canonicalize(&d);
-        let mut stepped = d.clone();
-        while RULES.iter().any(|r| (r.apply)(&mut stepped)) {}
-        assert_eq!(normal.facets, stepped.facets, "{:?}", d.facets);
-        let kept = d.facets.iter().filter(|f| !f.hint).count();
-        repeats += usize::from(normal.facets.len() < kept);
+            .collect::<Vec<_>>();
+        facets_end_as_the_rules_leave_them(facets);
     }
-    // The lists met repeated facets, which the canonicalizer dropped.
-    assert!(repeats > RANDOM_INSTANCES / 16, "{repeats}");
+    // A list built with a repeat: `u = 1` twice, not hints, so the facet rule meets the equal
+    // neighbors once sorted and drops one, leaving one facet of the two kept.
+    let dropped = facets_end_as_the_rules_leave_them(vec![facet("u", 1), facet("u", 1)]);
+    assert!(dropped, "the repeated facet is dropped");
+}
+
+/// Asserts that the canonicalizer leaves `facets` as the rules applied one step at a time
+/// leave them; returns whether it dropped a repeated non-hint facet.
+fn facets_end_as_the_rules_leave_them(facets: Vec<Facet>) -> bool {
+    let mut d = def("d", lit(0));
+    d.facets = facets;
+    let normal = canonicalize(&d);
+    let mut stepped = d.clone();
+    while RULES.iter().any(|r| (r.apply)(&mut stepped)) {}
+    assert_eq!(normal.facets, stepped.facets, "{:?}", d.facets);
+    let kept = d.facets.iter().filter(|f| !f.hint).count();
+    normal.facets.len() < kept
 }
 
 #[test]

@@ -277,44 +277,72 @@ fn the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_p
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_pick_is_the_same_in_every_arrival_order_and_minimal_over_every_feasible_plan",
     ));
-    let mut pruned = 0;
     for _ in 0..RANDOM_INSTANCES / 4 {
-        let mut plans: Vec<Plan> = (0..2 + rng.below(6))
+        let plans: Vec<Plan> = (0..2 + rng.below(6))
             .map(|_| random_plan(&mut rng, 2))
             .collect();
-        let first = pick(&plans, &t);
-        for _ in 0..4 {
-            let i = rng.below(plans.len());
-            let j = rng.below(plans.len());
-            plans.swap(i, j);
-            assert_eq!(pick(&plans, &t), first);
-        }
-        // Pruning to the frontier loses nothing: the pick has the least scalar of every
-        // feasible plan, and a plan the frontier drops is never cheaper than one it keeps.
-        let feasible_plans: Vec<&Plan> = plans.iter().filter(|q| feasible(q, &t)).collect();
-        let kept = frontier(&plans, &t);
-        pruned += feasible_plans.len() - kept.len();
-        match first {
-            None => assert!(feasible_plans.is_empty()),
-            Some(p) => {
-                for q in &feasible_plans {
-                    assert!(scalarize(q, &t) >= scalarize(&p, &t));
-                    if !kept.contains(q) {
-                        assert!(
-                            kept.iter()
-                                .any(|k| dominates(&vector(k, &t), &vector(q, &t))
-                                    && scalarize(k, &t) <= scalarize(q, &t))
-                        );
-                    }
+        pick_is_order_free_and_minimal(&mut rng, plans, &t);
+    }
+    // Plans built so that the frontier prunes one: `larger` has the work and footprint of
+    // `small` doubled and the same depth, so each quantity of its vector is at least
+    // `small`'s and the work is greater. Both fit the workstation, so `small` dominates a
+    // feasible plan and the frontier drops it.
+    let small = plan(
+        1,
+        vec![Region {
+            device: 0,
+            work: 100,
+            depth: 10,
+            footprint: 10,
+            retained: 0,
+        }],
+        vec![],
+    );
+    let larger = plan(
+        2,
+        vec![Region {
+            work: 200,
+            footprint: 20,
+            ..small.regions[0]
+        }],
+        vec![],
+    );
+    assert_eq!(
+        pick_is_order_free_and_minimal(&mut rng, vec![larger, small], &t),
+        1,
+        "the frontier drops the dominated plan"
+    );
+    assert_eq!(brent(0, 0, 8), 0);
+}
+
+/// Asserts that `plans` in four random orders give one pick, the least scalar of every
+/// feasible plan, and that a plan the frontier drops is dominated by one it keeps that is
+/// never dearer; returns the number of feasible plans the frontier dropped.
+fn pick_is_order_free_and_minimal(rng: &mut Rng, mut plans: Vec<Plan>, t: &Target) -> usize {
+    let first = pick(&plans, t);
+    for _ in 0..4 {
+        let i = rng.below(plans.len());
+        let j = rng.below(plans.len());
+        plans.swap(i, j);
+        assert_eq!(pick(&plans, t), first);
+    }
+    // Pruning to the frontier loses nothing: the pick has the least scalar of every
+    // feasible plan, and a plan the frontier drops is never cheaper than one it keeps.
+    let feasible_plans: Vec<&Plan> = plans.iter().filter(|q| feasible(q, t)).collect();
+    let kept = frontier(&plans, t);
+    match first {
+        None => assert!(feasible_plans.is_empty()),
+        Some(p) => {
+            for q in &feasible_plans {
+                assert!(scalarize(q, t) >= scalarize(&p, t));
+                if !kept.contains(q) {
+                    assert!(kept.iter().any(|k| dominates(&vector(k, t), &vector(q, t))
+                        && scalarize(k, t) <= scalarize(q, t)));
                 }
             }
         }
     }
-    assert!(
-        pruned > RANDOM_INSTANCES / 10,
-        "the frontier pruned only {pruned} plans"
-    );
-    assert_eq!(brent(0, 0, 8), 0);
+    feasible_plans.len() - kept.len()
 }
 
 /// `n` plans, each a fused or a split variant scaled by its distance from the end of the list,

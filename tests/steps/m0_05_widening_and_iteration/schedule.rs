@@ -830,85 +830,102 @@ fn the_engine_agrees_with_the_meaning_under_every_order() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_engine_agrees_with_the_meaning_under_every_order",
     ));
-    let mut refused = 0;
-    let mut solved_cycles = 0;
     for trial in 0..375 {
         let n = 1 + rng.below(24);
         let specs = random_program(&mut rng, n);
-        let keys: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
-        let (want, want_refusals) = reference(&specs, &keys);
-        for _ in 0..3 {
-            // Physical number of logical node `i` is `perm[i]`.
-            let mut perm: Vec<usize> = (0..n).collect();
-            shuffle(&mut rng, &mut perm);
-            let mut phys = vec![once(Vec::new()); n];
-            let mut phys_keys = vec![String::new(); n];
-            for i in 0..n {
-                phys[perm[i]] = match &specs[i] {
-                    Spec::Iterable { reads, base, inc } => {
-                        iterable(*base, *inc, reads.iter().map(|&r| perm[r]).collect())
-                    }
-                    Spec::Once { steps, reveals } => Spec::Once {
-                        steps: steps
-                            .iter()
-                            .map(|c| c.iter().map(|&r| perm[r]).collect())
-                            .collect(),
-                        reveals: *reveals,
-                    },
-                };
-                phys_keys[perm[i]] = keys[i].clone();
-            }
-            let mut roots: Vec<usize> = (0..n).collect();
-            shuffle(&mut rng, &mut roots);
-            // One file checked alone: a demand of one node gives every node it makes final the
-            // value the whole build gives it (the batch and single-file rule).
-            let root = roots[0];
-            let mut alone = Model::new(phys.clone(), phys_keys.clone());
-            let mut s = Schedule::new();
-            s.demand(&mut alone, root);
-            let mut m = Model::new(phys, phys_keys);
-            let got = m.run(&roots);
-            m.assert_protocol();
-            assert!(
-                s.values().get(root).is_some(),
-                "trial {trial}: the demanded node is final"
-            );
-            for (v, whole) in got.iter().enumerate() {
-                if let Some(value) = s.values().get(v) {
-                    assert_eq!(
-                        value, whole,
-                        "trial {trial}: node {v} alone and in the build"
-                    );
-                }
-            }
-            let mut inverse = vec![0; n];
-            for i in 0..n {
-                inverse[perm[i]] = i;
-            }
-            let got: Vec<Val> = (0..n).map(|i| got[perm[i]].clone()).collect();
-            assert_eq!(got, want, "trial {trial}: values");
-            let mut got_refusals: Vec<Refusal> = m
-                .refusals
-                .iter()
-                .map(|r| {
-                    sorted_members(Refusal {
-                        members: r.members.iter().map(|&x| inverse[x]).collect(),
-                        cycle: r.cycle.iter().map(|&x| inverse[x]).collect(),
-                    })
-                })
-                .collect();
-            got_refusals.sort_by(|a, b| a.members.cmp(&b.members));
-            assert_eq!(got_refusals, want_refusals, "trial {trial}: refusals");
-            solved_cycles += m.solves.iter().filter(|c| c.len() > 1).count();
-        }
-        refused += want_refusals.len();
+        agrees_under_three_orders(&mut rng, &specs, &format!("trial {trial}"));
     }
-    // The random programs exercise both kinds of cycle.
-    assert!(refused > 75, "{refused} refusals");
-    assert!(
-        solved_cycles > 75,
-        "{solved_cycles} iterable components of two or more"
+    // A program built with both kinds of cycle. Once facts 0 and 1 each ask for the other, so
+    // neither finishes and the component {0, 1} waits on nothing outside itself: a refusal.
+    // Iterable facts 2 and 3 each read the other: a component of two the engine solves.
+    let (refused, solved_cycles) = agrees_under_three_orders(
+        &mut rng,
+        &[
+            once(vec![vec![1]]),
+            once(vec![vec![0]]),
+            iterable(0, 1, vec![3]),
+            iterable(0, 1, vec![2]),
+        ],
+        "the built program",
     );
+    assert_eq!(refused, 1, "the built program refuses its once pair");
+    assert!(
+        solved_cycles > 0,
+        "the built program solves its iterable pair as one component"
+    );
+}
+
+/// Asserts that the engine gives `specs` the values and refusals [`reference`] gives, under
+/// three random numberings of the nodes and orders of the roots, and that one root demanded
+/// alone gives each node it makes final the value of the whole build. Returns the number of
+/// refusals and of iterable components of two or more the engine solved.
+fn agrees_under_three_orders(rng: &mut Rng, specs: &[Spec], trial: &str) -> (usize, usize) {
+    let n = specs.len();
+    let keys: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
+    let (want, want_refusals) = reference(specs, &keys);
+    let mut solved_cycles = 0;
+    for _ in 0..3 {
+        // Physical number of logical node `i` is `perm[i]`.
+        let mut perm: Vec<usize> = (0..n).collect();
+        shuffle(rng, &mut perm);
+        let mut phys = vec![once(Vec::new()); n];
+        let mut phys_keys = vec![String::new(); n];
+        for i in 0..n {
+            phys[perm[i]] = match &specs[i] {
+                Spec::Iterable { reads, base, inc } => {
+                    iterable(*base, *inc, reads.iter().map(|&r| perm[r]).collect())
+                }
+                Spec::Once { steps, reveals } => Spec::Once {
+                    steps: steps
+                        .iter()
+                        .map(|c| c.iter().map(|&r| perm[r]).collect())
+                        .collect(),
+                    reveals: *reveals,
+                },
+            };
+            phys_keys[perm[i]] = keys[i].clone();
+        }
+        let mut roots: Vec<usize> = (0..n).collect();
+        shuffle(rng, &mut roots);
+        // One file checked alone: a demand of one node gives every node it makes final the
+        // value the whole build gives it (the batch and single-file rule).
+        let root = roots[0];
+        let mut alone = Model::new(phys.clone(), phys_keys.clone());
+        let mut s = Schedule::new();
+        s.demand(&mut alone, root);
+        let mut m = Model::new(phys, phys_keys);
+        let got = m.run(&roots);
+        m.assert_protocol();
+        assert!(
+            s.values().get(root).is_some(),
+            "{trial}: the demanded node is final"
+        );
+        for (v, whole) in got.iter().enumerate() {
+            if let Some(value) = s.values().get(v) {
+                assert_eq!(value, whole, "{trial}: node {v} alone and in the build");
+            }
+        }
+        let mut inverse = vec![0; n];
+        for i in 0..n {
+            inverse[perm[i]] = i;
+        }
+        let got: Vec<Val> = (0..n).map(|i| got[perm[i]].clone()).collect();
+        assert_eq!(got, want, "{trial}: values");
+        let mut got_refusals: Vec<Refusal> = m
+            .refusals
+            .iter()
+            .map(|r| {
+                sorted_members(Refusal {
+                    members: r.members.iter().map(|&x| inverse[x]).collect(),
+                    cycle: r.cycle.iter().map(|&x| inverse[x]).collect(),
+                })
+            })
+            .collect();
+        got_refusals.sort_by(|a, b| a.members.cmp(&b.members));
+        assert_eq!(got_refusals, want_refusals, "{trial}: refusals");
+        solved_cycles += m.solves.iter().filter(|c| c.len() > 1).count();
+    }
+    (want_refusals.len(), solved_cycles)
 }
 
 /// A program of `n` groups: a two-fact iterable component reading the previous group's, a check

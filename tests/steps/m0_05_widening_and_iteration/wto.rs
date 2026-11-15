@@ -117,18 +117,38 @@ fn bourdoncle_agrees_with_the_declarative_definition() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "bourdoncle_agrees_with_the_declarative_definition",
     ));
-    let mut components = 0;
     for _ in 0..RANDOM_INSTANCES {
-        let g = random_graph(&mut rng);
-        let got = weak_topological_order(&g);
-        assert_eq!(show(&got), show(&oracle(&g)), "graph {g:?}");
-        components += got
-            .iter()
-            .filter(|e| matches!(e, Element::Component { .. }))
-            .count();
+        agrees(&random_graph(&mut rng));
     }
-    // The sample exercises components, not only acyclic graphs.
-    assert!(components > RANDOM_INSTANCES / 4, "{components} components");
+    // A graph built to have a component: 0 -> 1 -> 2 -> 3 -> 0 is a cycle, so 0 to 3 are
+    // mutually reachable and form one strongly connected component of four vertices, and a
+    // component of more than one vertex is a `Component` element.
+    assert!(
+        agrees(&parser_loop())
+            .iter()
+            .any(|e| matches!(e, Element::Component { .. })),
+        "the parser loop has a component"
+    );
+}
+
+/// Asserts that the order of `g` is the declarative one, and returns it.
+fn agrees(g: &[Vec<usize>]) -> Vec<Element> {
+    let got = weak_topological_order(g);
+    assert_eq!(show(&got), show(&oracle(g)), "graph {g:?}");
+    got
+}
+
+/// A tokenizer's main loop: 0 reads a character, 1 classifies it, 2 accumulates a token and
+/// loops on itself while the token continues, 3 emits it and returns to 0; 4 is the end of
+/// input, reached from 1.
+fn parser_loop() -> Vec<Vec<usize>> {
+    vec![vec![1], vec![2, 4], vec![2, 3], vec![0], vec![]]
+}
+
+/// Whether `e` is a component with a component somewhere in its body.
+fn nests(e: &Element) -> bool {
+    matches!(e, Element::Component { body, .. }
+        if body.iter().any(|b| matches!(b, Element::Component { .. }) || nests(b)))
 }
 
 /// The defining property of a weak topological order: every edge either goes forward in
@@ -201,7 +221,6 @@ fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_order_agrees_with_the_declarative_definition_on_larger_graphs",
     ));
-    let mut nested = 0;
     for _ in 0..RANDOM_INSTANCES / 2 {
         let n = 1 + rng.below(40);
         let g: Vec<Vec<usize>> = (0..n)
@@ -218,18 +237,15 @@ fn the_order_agrees_with_the_declarative_definition_on_larger_graphs() {
                     .collect()
             })
             .collect();
-        let got = weak_topological_order(&g);
-        assert_eq!(show(&got), show(&oracle(&g)), "graph {g:?}");
-        fn nests(e: &Element) -> bool {
-            matches!(e, Element::Component { body, .. }
-                if body.iter().any(|b| matches!(b, Element::Component { .. }) || nests(b)))
-        }
-        if got.iter().any(nests) {
-            nested += 1;
-        }
+        agrees(&g);
     }
-    // The sample exercises nested components.
-    assert!(nested > RANDOM_INSTANCES / 16, "{nested} with nesting");
+    // A graph built to nest: the parser loop's component has head 0 (the root, first in
+    // preorder). With the edges into 0 removed, 2 keeps its self-loop, so the order of the
+    // rest of the component holds 2 as a component of its own: "(0 1 (2) 3) 4".
+    assert!(
+        agrees(&parser_loop()).iter().any(nests),
+        "the parser loop nests a component"
+    );
 }
 
 /// The keyed order: the declarative order with the roots taken in the order of the keys and

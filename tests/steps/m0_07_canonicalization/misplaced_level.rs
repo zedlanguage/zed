@@ -11,7 +11,7 @@ use zed_kernel::term::{Evidence, FixKind, Pattern, Prim, Term};
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
 use zedc::canon::{binders, canonicalize};
 
-use super::alpha::{indices, one_pass_is_stepwise, random};
+use super::alpha::{addresses_agree, one_pass_is_stepwise, random};
 use super::{addr, def};
 
 /// The name of level `k`, as the canonicalizer writes it.
@@ -134,7 +134,6 @@ const POOL: [&str; 6] = ["a", "x", "\u{0}0", "\u{0}1", "\u{0}2", "\u{0}3"];
 
 #[test]
 fn random_terms_with_level_names_agree_with_an_independent_alpha_equivalence_test() {
-    let (mut same, mut differ) = (0, 0);
     let base = zed_tests::seed::seed(
         "random_terms_with_level_names_agree_with_an_independent_alpha_equivalence_test",
     );
@@ -150,23 +149,23 @@ fn random_terms_with_level_names_agree_with_an_independent_alpha_equivalence_tes
             )
         };
         let (s, t) = (make(seed ^ 0x51), make(seed ^ 0x9e));
-        let alpha = indices(&s, &mut vec![]) == indices(&t, &mut vec![]);
-        assert_eq!(
-            addr(&def("f", s.clone())) == addr(&def("f", t.clone())),
-            alpha,
-            "{s:?}\n{t:?}"
-        );
-        if alpha {
-            same += 1
-        } else {
-            differ += 1
-        }
+        addresses_agree(&s, &t);
         if i % 4 == 0 {
             one_pass_is_stepwise(s);
         }
     }
-    // Both outcomes occur often enough for the agreement to mean something.
-    assert!(same > 50 && differ > 50, "{same} alike, {differ} different");
+    // A pair built for each outcome, with a binder spelled as level 1 standing at level 0.
+    // `\01 -> \01` and `a -> a` both read the innermost binder, index 0, so they are alike;
+    // `(\01, a) -> \01` reads index 1 and `(\01, a) -> a` index 0, so they differ.
+    let l1 = POOL[3];
+    assert!(
+        addresses_agree(&lam(&[l1], var(l1)), &lam(&["a"], var("a"))),
+        "alike"
+    );
+    assert!(
+        !addresses_agree(&lam(&[l1, "a"], var(l1)), &lam(&[l1, "a"], var("a"))),
+        "different"
+    );
 }
 
 /// `f(match v { _ -> f(… \05. \a. … \a. \05 …) })`: the binder spelled `\05` under `n` calls and

@@ -204,7 +204,6 @@ fn the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick",
     ));
-    let (mut feasible_seen, mut infeasible_seen) = (0, 0);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let p = random_plan(&mut rng, 2);
         let i = rng.below(p.regions.len());
@@ -222,21 +221,37 @@ fn the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
         let plans: Vec<Plan> = (0..2 + rng.below(6))
             .map(|_| random_plan(&mut rng, 2))
             .collect();
-        let ok: Vec<&Plan> = plans.iter().filter(|q| feasible(q, &t)).collect();
-        feasible_seen += ok.len();
-        infeasible_seen += plans.len() - ok.len();
-        for a in &plans {
-            for b in &ok {
-                if dominates(&vector(a, &t), &vector(b, &t)) {
-                    assert!(feasible(a, &t), "{a:?} dominates {b:?}");
-                }
+        dominators_fit_and_the_pick_is_least(&plans, &t);
+    }
+    // Plans built so that one fits and one does not: a job of 1 KiB on the CPU peaks at 1 KiB,
+    // within the 1.5 MiB capacity; a job of 2 MiB peaks at 2 MiB, above it.
+    let plans = [
+        plan(1, vec![job(0, 1 << 10, 0)], vec![]),
+        plan(2, vec![job(0, 1 << 21, 0)], vec![]),
+    ];
+    assert_eq!(
+        dominators_fit_and_the_pick_is_least(&plans, &t),
+        (1, 1),
+        "one feasible plan, one infeasible"
+    );
+}
+
+/// Asserts that a plan dominating a feasible one of `plans` is feasible, that the pick is the
+/// least scalar, then address, of the feasible plans, and that the frontier holds only feasible
+/// plans; returns the numbers of feasible and infeasible plans.
+fn dominators_fit_and_the_pick_is_least(plans: &[Plan], t: &Target) -> (usize, usize) {
+    let ok: Vec<&Plan> = plans.iter().filter(|q| feasible(q, t)).collect();
+    for a in plans {
+        for b in &ok {
+            if dominates(&vector(a, t), &vector(b, t)) {
+                assert!(feasible(a, t), "{a:?} dominates {b:?}");
             }
         }
-        let best = ok.iter().min_by_key(|q| (scalarize(q, &t), q.address));
-        assert_eq!(pick(&plans, &t).as_ref(), best.copied());
-        assert!(frontier(&plans, &t).iter().all(|q| feasible(q, &t)));
     }
-    assert!(feasible_seen > 0 && infeasible_seen > 0);
+    let best = ok.iter().min_by_key(|q| (scalarize(q, t), q.address));
+    assert_eq!(pick(plans, t).as_ref(), best.copied());
+    assert!(frontier(plans, t).iter().all(|q| feasible(q, t)));
+    (ok.len(), plans.len() - ok.len())
 }
 
 /// `r` jobs alternating between the CPU and the GPU with footprints and retained bytes that

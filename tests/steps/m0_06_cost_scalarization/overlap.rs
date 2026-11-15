@@ -417,47 +417,60 @@ fn the_footprint_agrees_with_its_definition() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_footprint_agrees_with_its_definition",
     ));
-    let (mut nestings, mut timings) = (0, 0);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, before) = random_scheduled(&mut rng, 7, &t);
-        let expected = match &p.schedule {
-            Schedule::Nested(_) => {
-                nestings += 1;
-                footprints_by_states(&p.regions, &before, &t)
-            }
-            Schedule::Timed(spans) => {
-                timings += 1;
-                footprints_by_instants(&p.regions, spans, 2)
-            }
-        };
-        assert_eq!(footprints(&p, &t), expected, "{p:?}");
-        // The regions one after another, by nesting or by back-to-back spans on each device,
-        // give the sequential peak of step M0.6a.
-        let r = p.regions.len();
-        let in_order = scheduled(0, p.regions.clone(), Schedule::sequence(r));
-        let mut ends = [0u64; 2];
-        let spans: Vec<Span> = p
-            .regions
-            .iter()
-            .map(|x| {
-                let length = 1 + x.work % 3;
-                let start = ends[x.device];
-                ends[x.device] += length;
-                Span { start, length }
-            })
-            .collect();
-        let back_to_back = scheduled(0, p.regions.clone(), Schedule::Timed(spans));
-        let mut chain = vec![vec![false; r]; r];
-        for (i, row) in chain.iter_mut().enumerate() {
-            for b in &mut row[i + 1..] {
-                *b = true;
-            }
-        }
-        let sequential = footprints_by_states(&p.regions, &chain, &t);
-        assert_eq!(footprints(&in_order, &t), sequential, "{p:?}");
-        assert_eq!(footprints(&back_to_back, &t), sequential, "{p:?}");
+        footprint_agrees(&p, &before, &t);
     }
-    assert!(nestings > 20 && timings > 20);
+    // A plan of each kind of schedule, built as such: two jobs, on the 8-core device and on
+    // the one-core device, run in parallel by a nesting (no precedence) and overlapping in a
+    // static schedule.
+    let jobs = vec![job(0, 1 << 10, 0), job(1, 1 << 11, 1 << 10)];
+    let built = [
+        nested(1, jobs.clone(), &[R(0), R(1), Parallel(2)]),
+        timed(2, jobs, &[(0, 2), (1, 1)]),
+    ];
+    let kinds: Vec<bool> = built
+        .iter()
+        .map(|p| footprint_agrees(p, &[vec![false; 2], vec![false; 2]], &t))
+        .collect();
+    assert_eq!(kinds, [true, false], "a nesting, then a static schedule");
+}
+
+/// Asserts that the footprint of `p` on `t` is the one its definition gives, over the states
+/// `before` allows for a nesting or the instants of a static schedule, and that the regions
+/// one after another give the sequential peak. Returns whether `p`'s schedule is a nesting.
+fn footprint_agrees(p: &Plan, before: &[Vec<bool>], t: &Target) -> bool {
+    let (expected, is_nested) = match &p.schedule {
+        Schedule::Nested(_) => (footprints_by_states(&p.regions, before, t), true),
+        Schedule::Timed(spans) => (footprints_by_instants(&p.regions, spans, 2), false),
+    };
+    assert_eq!(footprints(p, t), expected, "{p:?}");
+    // The regions one after another, by nesting or by back-to-back spans on each device,
+    // give the sequential peak of step M0.6a.
+    let r = p.regions.len();
+    let in_order = scheduled(0, p.regions.clone(), Schedule::sequence(r));
+    let mut ends = [0u64; 2];
+    let spans: Vec<Span> = p
+        .regions
+        .iter()
+        .map(|x| {
+            let length = 1 + x.work % 3;
+            let start = ends[x.device];
+            ends[x.device] += length;
+            Span { start, length }
+        })
+        .collect();
+    let back_to_back = scheduled(0, p.regions.clone(), Schedule::Timed(spans));
+    let mut chain = vec![vec![false; r]; r];
+    for (i, row) in chain.iter_mut().enumerate() {
+        for b in &mut row[i + 1..] {
+            *b = true;
+        }
+    }
+    let sequential = footprints_by_states(&p.regions, &chain, t);
+    assert_eq!(footprints(&in_order, t), sequential, "{p:?}");
+    assert_eq!(footprints(&back_to_back, t), sequential, "{p:?}");
+    is_nested
 }
 
 #[test]
@@ -469,7 +482,6 @@ fn the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
     let mut rng = Rng::new(zed_tests::seed::seed(
         "the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick",
     ));
-    let (mut feasible_seen, mut infeasible_seen) = (0, 0);
     for _ in 0..RANDOM_INSTANCES / 4 {
         let (p, _) = random_scheduled(&mut rng, 5, &t);
         let i = rng.below(p.regions.len());
@@ -485,17 +497,32 @@ fn the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick() {
         let plans: Vec<Plan> = (0..2 + rng.below(6))
             .map(|_| random_scheduled(&mut rng, 5, &t).0)
             .collect();
-        let ok: Vec<&Plan> = plans.iter().filter(|q| feasible(q, &t)).collect();
-        feasible_seen += ok.len();
-        infeasible_seen += plans.len() - ok.len();
-        let best = ok
-            .iter()
-            .min_by_key(|q| (scalarize(q, &t), q.address))
-            .map(|q| (scalarize(q, &t), q.address));
-        let picked = pick(&plans, &t).map(|q| (scalarize(&q, &t), q.address));
-        assert_eq!(picked, best);
+        picks_the_least_feasible(&plans, &t);
     }
-    assert!(feasible_seen > 0 && infeasible_seen > 0);
+    // Plans built so that one fits and one does not: a job of 1 KiB on the 8-core device
+    // holds 1 KiB, within the 1.5 MiB capacity; a job of 2 MiB holds 2 MiB, above it.
+    let plans = [
+        nested(1, vec![job(0, 1 << 10, 0)], &[R(0)]),
+        nested(2, vec![job(0, 1 << 21, 0)], &[R(0)]),
+    ];
+    assert_eq!(
+        picks_the_least_feasible(&plans, &t),
+        (1, 1),
+        "one feasible plan, one infeasible"
+    );
+}
+
+/// Asserts that the pick from `plans` is the least scalar, then address, of the feasible ones;
+/// returns the numbers of feasible and infeasible plans.
+fn picks_the_least_feasible(plans: &[Plan], t: &Target) -> (usize, usize) {
+    let ok: Vec<&Plan> = plans.iter().filter(|q| feasible(q, t)).collect();
+    let best = ok
+        .iter()
+        .min_by_key(|q| (scalarize(q, t), q.address))
+        .map(|q| (scalarize(q, t), q.address));
+    let picked = pick(plans, t).map(|q| (scalarize(&q, t), q.address));
+    assert_eq!(picked, best);
+    (ok.len(), plans.len() - ok.len())
 }
 
 /// A target of `d` devices of 1 GiB, of one core and of 8 cores in turn.
