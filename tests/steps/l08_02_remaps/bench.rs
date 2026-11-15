@@ -546,6 +546,45 @@ const EMPTY_LEVELS: &str = "mi = { \"a\" -> [1], \"b\" -> [5] }.map(r -> r.where
                             m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v > 3.0));\n";
 
 #[test]
+fn n_functions_calls_return_run_in_linear_time() {
+    // Each `p{i}` is a call that runs the lambda it is passed and returns it; `d{i}` runs the
+    // returned lambda at the same carrier, compiled, and `r{i}` at the other one, refused
+    // (row REDUCE-identity-escaping-values).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let uses = (0..n)
+            .map(|i| {
+                format!("p{i} = h3(x -> top(x), m[\"a\"]);\nd{i} = (p{i}[0], p{i}[1](m[\"b\"]));\n")
+            })
+            .collect::<String>();
+        format!(
+            "top(positional xs) = xs >< max;\n{EMPTY_LEVELS}\
+             h3(positional f, positional y) = (f(y), f);\n{uses}"
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], &format!("d{}", n - 1)), "(-inf, 5.0)");
+    scaling::check(
+        "n calls returning the lambda they run, each run again at the same carrier, whole path",
+        N_LEVELS,
+        run,
+    );
+    let refused = scaling::inputs(N_LEVELS, |n| {
+        let uses = (0..n)
+            .map(|i| format!("p{i} = h3(x -> x >< max, m[\"a\"]);\nr{i} = p{i}[1](mi[\"a\"]);\n"))
+            .collect::<String>();
+        format!("{EMPTY_LEVELS}h3(positional f, positional y) = (f(y), f);\n{uses}")
+    });
+    let run = |n: usize| {
+        let errs = elab(&refused[&n]).expect_err("each fold runs at two carriers");
+        assert_eq!(errs.len(), n, "{errs:?}");
+    };
+    scaling::check(
+        "n calls returning the lambda they run, each run again at another carrier, refused",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
 fn n_calls_of_a_generic_fold_at_two_carriers_run_in_linear_time() {
     // The calls alternate `int` and `f64`, so `top` has two bodies, one per identity, and each
     // call takes one of them (row REDUCE-generic-identity).

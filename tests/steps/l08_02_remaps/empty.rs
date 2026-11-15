@@ -912,16 +912,103 @@ fn a_generic_fold_at_two_carriers_through_a_function_value_runs_at_each() {
 fn a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet() {
     // `h3` returns the lambda it is passed, and `p[1]` runs it at `int` after the call ran it
     // at `f64`: one value at two identities, which needs the identity passed when the program
-    // runs. Refused, never run at the wrong identity (row REDUCE-identity-escaping-values,
-    // whose expected value /home/luke/Work/wt/failing-tests/REDUCE-identity-escaping-values.rs
-    // holds).
-    rejected(
+    // runs. Refused, never run at the wrong identity (row REDUCE-identity-escaping-values; the
+    // proof is at the refusal, `Ck::finish`). Each other form keeps the function in a value
+    // the call returns, and runs it later at the other carrier: in a family, in a tuple in a
+    // family, in a tuple a returned lambda gives, returned by a lambda, bound to a name, made
+    // in a block of the called function, or with the fold written in the lambda itself.
+    for body in [
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(x -> top(x), mi[\"a\"]); (p[0], p[1](m[\"a\"])) };\n",
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(x -> x >< max, m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(top, m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
+        "h4(positional f, positional y) = (f(y), [f]);\n\
+         a = { p = h4(x -> top(x), m[\"a\"]); (p[0], p[1][0](mi[\"a\"])) };\n",
+        "h5(positional f, positional y) = (f(y), [(1, f)]);\n\
+         a = { p = h5(x -> x >< max, m[\"a\"]); (p[0], p[1][0][1](mi[\"a\"])) };\n",
+        "h6(positional f, positional y) = (f(y), {\"k\" -> (f, 1)});\n\
+         a = { p = h6(x -> top(x), m[\"a\"]); (p[0], p[1][\"k\"][0](mi[\"a\"])) };\n",
+        "hz(positional f, positional y) = (f(y), z -> (z, f));\n\
+         a = { p = hz(x -> x >< max, m[\"a\"]); (p[0], p[1](0)[1](mi[\"a\"])) };\n",
+        "hy(positional f) = z -> f;\n\
+         a = { p = hy(x -> x >< max); (p(0)(m[\"a\"]), p(0)(mi[\"a\"])) };\n",
+        "q(positional f) = f;\na = { g = q(x -> x >< max); (g(m[\"a\"]), g(mi[\"a\"])) };\n",
+        "k(positional xs) = { f = y -> y >< max; (f(xs), f) };\n\
+         a = { p = k(m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
+        // The call and the later run inside a generic function, whose calls bind the carriers.
+        "h3(positional f, positional y) = (f(y), f);\n\
+         o(positional ys, positional zs) = { p = h3(x -> top(x), ys); (p[0], p[1](zs)) };\n\
+         a = o(m[\"a\"], mi[\"a\"]);\n",
+        "h3(positional f, positional y) = (f(y), f);\n\
+         o(positional ys) = { p = h3(x -> x >< max, m[\"a\"]); (p[0], p[1](ys)) };\n\
+         a = o(mi[\"a\"]);\n",
+        // The returned function passed on to a function that runs it.
+        "h3(positional f, positional y) = (f(y), f);\nr(positional g, positional zs) = g(zs);\n\
+         a = { p = h3(x -> x >< max, m[\"a\"]); (p[0], r(p[1], mi[\"a\"])) };\n",
+    ] {
+        rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
+    }
+}
+
+#[test]
+fn a_function_a_call_returns_and_runs_at_the_same_carrier_runs_at_its_identity() {
+    // The forms above, with the returned function run at the carrier the call ran it at, or a
+    // lambda the call makes run at one carrier only: one identity for each fold, so each is
+    // compiled and gives the value of DESIGN.md sec:reduction ("Identity as data").
+    for body in [
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](m[\"b\"])) };\n",
+        "h3(positional f, positional y) = (f(y), f);\n\
+         a = { p = h3(x -> x >< max, m[\"a\"]); (p[0], p[1](m[\"b\"])) };\n",
+        "h5(positional f, positional y) = (f(y), [(1, f)]);\n\
+         a = { p = h5(x -> x >< max, m[\"a\"]); (p[0], p[1][0][1](m[\"b\"])) };\n",
+        "hz(positional f, positional y) = (f(y), z -> (z, f));\n\
+         a = { p = hz(x -> top(x), m[\"a\"]); (p[0], p[1](0)[1](m[\"b\"])) };\n",
+    ] {
+        prints(&format!("{TOP}{F}{I}{body}"), "a", "(-inf, 5.0)");
+    }
+    // `g`'s call runs `top` at `f64`; the lambda it returns runs its own fold at `int` only.
+    prints(
         &format!(
-            "{TOP}{F}{I}h3(positional f, positional y) = (f(y), f);\n\
-             a = {{ p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](mi[\"a\"])) }};\n"
+            "{TOP}{F}{I}g(positional xs) = (top(xs), y -> y >< max);\n\
+             a = {{ p = g(m[\"a\"]); (p[0], p[1](mi[\"a\"])) }};\n"
         ),
-        &["does not compile it yet"],
+        "a",
+        "(-inf, #empty)",
     );
+}
+
+#[test]
+fn a_call_whose_result_holds_the_function_at_any_depth_is_one_it_may_run_after() {
+    // Each call's result holds `f` where a later read can reach it: in a lambda's result
+    // (`hz`), in a family's values (`h5`; a family's type is an arrow from key to value), in
+    // an atom's payload (`h8`; reading a payload is not compiled yet, so only the check is
+    // tested), or its type says only "some tuple" (`hk`, through `k`'s `(..)`), which may hold
+    // it. Each call is recorded as one a function passed to it may run after
+    // (`Info::escaping_calls`), and elaboration puts no identity of it in force for the
+    // lambda passed (row REDUCE-identity-escaping-values).
+    for (h, decls, body) in [
+        ("hz", "", "(f(y), z -> (z, f))"),
+        ("h5", "", "(f(y), [(1, f)])"),
+        ("h8", "", "(f(y), #box(f))"),
+        ("hk", "k(positional t: (..)) = t;\n", "(f(y), k((1, f)))"),
+    ] {
+        let src = format!(
+            "{TOP}{F}{I}{decls}{h}(positional f, positional y) = {body};\n\
+             a = {{ p = {h}(x -> top(x), m[\"a\"]); p[0] }};\nb = top(mi[\"a\"]);\n"
+        );
+        let at = src.find(&format!("{h}(x")).unwrap();
+        let info = zed_tests::step_helpers::l01_16_elaboration::checked(&src).info;
+        assert!(
+            info.escaping_calls.iter().any(|c| c.start == at),
+            "{h}: {:?}",
+            info.escaping_calls
+        );
+    }
 }
 
 // ---- `sum(x)` is `x.sum`, and a receiver that may be a family or a tuple is summed region by

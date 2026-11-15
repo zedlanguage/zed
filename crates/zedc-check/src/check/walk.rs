@@ -20522,20 +20522,57 @@ fn holds_needs(s: &Sig) -> bool {
     false
 }
 
-/// Whether a function in `t`, or in a component of a tuple in it at any depth, holds needs
-/// ([`holds_needs`]): a value of type `t` may hold a function whose folds a later call
-/// decides (`Info::escaping_calls`). Cost: each tuple row visited once, kept by its address in
-/// `seen`, and each function as [`holds_needs`] visits it; an explicit stack, since tuples
-/// nest as deep as the text.
+/// Whether a value of type `t` may hold a function with needs, one whose folds a later call
+/// decides (`Info::escaping_calls`): a function in `t` with needs, or one reached from `t`
+/// at any depth through a tuple's components, an atom's payload (a struct's fields are one)
+/// or a function's results. A family's type is an arrow from key to value, so its values are
+/// a function's results. The results are walked as types, not by [`holds_needs`], which looks
+/// only at the functions a result holds directly: `hz` in `hz(f, y) = (f(y), z -> (z, f))`
+/// returns a lambda whose result is a tuple holding `f`, and `h5` in
+/// `h5(f, y) = (f(y), [(1, f)])` a family whose values hold it (row
+/// REDUCE-identity-escaping-values). A part that does not say what it holds is taken as
+/// holding such a function: the unknown `_` (`dynamic`), a type variable (`vars`; `close`
+/// leaves the class variables and those of an enclosing function), the kind-wide part of
+/// `set`, every tuple or struct (`k(positional t: (..)) = t` hides `f` in `k((1, f))`), and a
+/// payload listed as not known. Those are every part of a [`Ty`] that may hold a function,
+/// with one gap: an atom of `set` whose name `payloads` does not list has a payload that is
+/// not known, and is taken as holding none. Not proved that it holds none; no function in a
+/// payload can run after the call while this zedc compiles no read of a payload (`match` and
+/// `is #a(x)` are refused as not compiled yet).
+// Complexity tradeoff: each type and each function visited once, kept by its address in
+// `seen` and `seen_fns`, O(v) for v types and functions reachable from `t`; an explicit stack,
+// since tuples and returned functions nest as deep as the text. The naive form,
+// [`holds_needs`] from each function with a walk of each result's tuples, visits a function
+// shared by k results k times, O(k·v).
 fn type_holds_needs(t: &Ty) -> bool {
     let mut stack = vec![t];
     let mut seen: HashSet<*const Ty> = HashSet::new();
+    let mut seen_fns: HashSet<*const Sig> = HashSet::new();
     while let Some(t) = stack.pop() {
-        if t.fns.iter().any(|s| holds_needs(s)) {
+        if t.dynamic || !t.vars.is_empty() || !(&t.set & &zedc_types::ty::wide()).is_empty() {
             return true;
+        }
+        for s in t.fns.iter() {
+            if !seen_fns.insert(Arc::as_ptr(s)) {
+                continue;
+            }
+            if !s.needs.is_empty() {
+                return true;
+            }
+            let results = s.arrows.iter().map(|a| &a.result);
+            stack.extend(results.filter(|r| seen.insert(*r as *const Ty)));
         }
         for row in t.tuples.iter() {
             stack.extend(row.iter().filter(|c| seen.insert(*c as *const Ty)));
+        }
+        for shapes in t.payloads.values() {
+            let Some(shapes) = shapes else {
+                return true;
+            };
+            for p in shapes {
+                let parts = p.items.iter().chain(p.fields.values());
+                stack.extend(parts.filter(|c| seen.insert(*c as *const Ty)));
+            }
         }
     }
     false

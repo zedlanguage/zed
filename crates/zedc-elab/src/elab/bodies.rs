@@ -69,6 +69,27 @@ impl<'a> Elab<'a> {
     pub(super) fn check_instances(&mut self, defs: &[Def], tests: &[Test], export: Vec<Span>) {
         let info = self.info;
         let mut sites: BTreeSet<Span> = export.into_iter().collect();
+        // Why a function a call returns, run later at another identity, is refused here (row
+        // REDUCE-identity-escaping-values: `p = h3(x -> top(x), m["a"]); p[1](mi["a"])` with
+        // `h3(f, y) = (f(y), f)`). The checker accepts it: the check of the fold under `h3`'s
+        // call finds `f64`, the one under `p[1](…)` finds `int`, one carrier at each call. A
+        // call whose result may hold the function passed to it is in `Info::escaping_calls`,
+        // and `enter_expr` puts none of its identities in force, so no body takes its entry
+        // and the fold is refused below. It cannot be compiled with the closures the kernel
+        // has: `p[1]` is the one closure the call ran, both runs apply it to an empty level,
+        // and an empty family holds no carrier (`zed_kernel::value::Family` is its entries
+        // and two ids), so both runs compute the one identity term on equal inputs, while
+        // the language gives `-inf` at `f64` and `#empty` at `int`. Compiling it needs the
+        // identity chosen at each application, a closure holding one body per list of
+        // identities or the identity passed as an argument, which changes the value form of
+        // the kernel, ZIR and the native back end (row REDUCE-identity-closure-bodies).
+        // `escaping_calls` takes each call whose result's type reaches a function with needs
+        // through tuples, payloads, families and returned functions, or holds a part that
+        // does not say what it holds (`_`, a type variable, `(..)`), and each call that leaves
+        // parameters open (`type_holds_needs` in zedc-check's walk, which names the one
+        // unproved gap: an atom whose payload is not listed). Taking too many calls only
+        // refuses more: a call taken here gives no body.
+        // Cost: one lookup per entry of each decided call, O(e) for e entries, as before.
         for (&call, folds) in &info.fold_calls {
             for &(s, _) in folds {
                 if !self.inst.consumed.contains(&(call, s)) {

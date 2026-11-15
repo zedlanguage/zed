@@ -35,7 +35,8 @@
 //! What stays refused, as "not compiled yet": a fold whose identity no call decides where it
 //! is elaborated (a function the result of a call holds, run later at another identity, as
 //! `p[1]` of `p = h3(x -> top(x), m["a"])` for `h3(f, y) = (f(y), f)`, which needs the
-//! identity passed when the program runs, row REDUCE-identity-escaping-values; a block's
+//! identity chosen when the program runs: the proof is at `check_instances`, and row
+//! REDUCE-identity-closure-bodies holds the change that would compile it; a block's
 //! function named as a value other than as an argument of such a call; a default that
 //! folds), a use where calls of different identities for one fold are in force and none
 //! or several of different identities checked it, and a call whose decided folds are not all
