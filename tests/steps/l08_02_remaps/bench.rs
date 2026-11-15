@@ -230,3 +230,47 @@ fn n_calls_of_a_generic_remap_below_a_known_level_are_checked_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn a_generic_sum_of_a_map_lambdas_parameter_runs_in_linear_time() {
+    // `.sum` on the type parameter of `s` is decided at its one call, on the rows of `m`, and
+    // runs once per row (row FAIL-generic-sum-method).
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "s(positional xs) = xs.sum;\nm = {};\nx = m.map(r -> s(r));\nt = x >< (+);\n",
+            rows(n)
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), (n * (n - 1) / 2).to_string());
+    };
+    scaling::check(
+        "a generic `.sum` of each row of n entries in rows of 10, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
+#[test]
+fn n_calls_of_a_generic_sum_on_families_and_tuples_are_checked_in_linear_time() {
+    // Each call passes a family of another key type or a tuple, so `.sum` is decided once per
+    // call (row FAIL-generic-sum-method).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = s({{ {i} -> 1 }});\n"),
+                _ => format!("x{i} = s(({i}, 1));\n"),
+            })
+            .collect::<String>();
+        format!("s(positional xs) = xs.sum;\n{calls}")
+    });
+    let run = |n: usize| {
+        let u = elab(&srcs[&n]).unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(u.get(&format!("x{}", n - 1)).is_some());
+    };
+    scaling::check(
+        "n calls of a generic function that sums its parameter, a family or a tuple",
+        N_LEVELS,
+        run,
+    );
+}

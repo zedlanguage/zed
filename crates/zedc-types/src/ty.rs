@@ -1565,6 +1565,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
         | NeedKind::Sum
+        | NeedKind::SumMethod(_)
         | NeedKind::Reduce(..)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
@@ -3325,6 +3326,12 @@ pub enum NeedKind {
     Power(Arc<PowerUse>),
     /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
     Sum,
+    /// `v.sum` written at the span, on a value whose type is a type parameter: a family
+    /// folds its one level by `(+)`, as [`NeedKind::Reduce`] does, and a tuple is summed as
+    /// [`NeedKind::Sum`] sums it (DESIGN.md, the method register: `tot = xs.sum; // = xs >< (+)`).
+    /// The span is the call's own, as at [`NeedKind::Reduce`], so that the fold's checks at
+    /// every call are found together.
+    SumMethod(Span),
     /// `v.map(f)`, or `v.where(f)` when `filter` is set, with `f` of type `f`: the value is a
     /// family, and the use gives the family `map` or `where` makes of it (step L3.2).
     Map {
@@ -3597,6 +3604,7 @@ impl Need {
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
                 NeedKind::Power(p) => NeedKind::Power(p.clone()),
                 NeedKind::Sum => NeedKind::Sum,
+                NeedKind::SumMethod(site) => NeedKind::SumMethod(*site),
                 NeedKind::InDomain {
                     domain,
                     param,
@@ -3649,6 +3657,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::SumMethod(_)
             | NeedKind::Into { .. }
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
@@ -3679,6 +3688,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::SumMethod(_)
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
@@ -3713,6 +3723,7 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::SumMethod(_)
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),

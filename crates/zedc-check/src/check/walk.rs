@@ -3671,6 +3671,45 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.fold_level(op, x, span, site, FoldForm::Infix)
     }
 
+    /// `x.sum` written at `site` where `x`'s type was a type parameter: a family is folded by
+    /// `(+)` as `x >< (+)` is ([`Self::fold_level`], the method register's `sum` row), and any
+    /// other value is summed as a tuple by the prelude word of layer 1 ([`Self::sum`]), which
+    /// rejects what is no tuple of numbers. A class still open takes the use as a need, met
+    /// here again at each call with `span` the call's; a loose atom `x` may be passes through,
+    /// as at every member call. Errors are placed at `span`.
+    // Why elaboration's run-time test agrees with this check, by the cases of the met type
+    // (the loose atoms aside, which pass on both sides): (1) it has a data function: the
+    // fold, the test the concrete `.sum` arm of `member_end` applies, and `fold_level`
+    // rejects it unless every other piece is atoms, so each accepted value is a family, which
+    // is no tuple, and takes the fold branch. (2) It has none: `sum`, the call `.sum` makes
+    // on a concrete receiver with no data function, and `sum` accepts only tuples, atoms and
+    // classes (met again by `NeedKind::Sum`, which `sum` checks, so tuples) and rejects `_`
+    // (`Ck::any`), so each accepted value is a tuple and takes the tuple branch.
+    pub(super) fn sum_method(&mut self, x: &Ty, span: Span, site: Span) -> Ty {
+        if let Some(v) = sole_class_var(&x.without_loose()) {
+            let out = self.passing(x, "`.sum`", span, None);
+            let r = self.class_root(&v);
+            let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                Some((_, Some(t))) => self.sum_method(&t, span, site),
+                Some((r, None)) => self.need(r, NeedKind::SumMethod(site), true, span),
+                // As at `fold_level`: a variable with no class records no carrier, which
+                // `finish` rejects beside any identity.
+                None => {
+                    self.saw_fold(site, None, None);
+                    Ty::dynamic()
+                }
+            };
+            return out.union(&t);
+        }
+        if x.fns.iter().any(|s| s.data) {
+            let out = self.passing(x, "`.sum`", span, None);
+            let add = Reducer::Op(BinaryOp::Add);
+            let t = self.fold_level(add, &x.without_loose(), span, site, FoldForm::Sum);
+            return out.union(&t);
+        }
+        self.sum(Arg::of(x.clone()), span)
+    }
+
     /// [`Self::reduce_end`], its messages naming the fold as the program wrote it, `form`:
     /// `x >< op`, `x.reduce(op)` or `x.sum`.
     fn fold_level(&mut self, op: Reducer, x: &Ty, span: Span, site: Span, form: FoldForm) -> Ty {
@@ -3706,19 +3745,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let written = op.written();
         // A class takes the fold as a need, checked at each call of the generic function,
         // as `sum` does (CHK-need-bound); `meet` calls back here with `replaying` set.
-        let var = x.pieces().into_iter().find_map(|p| match p {
-            Piece::Var(v) => Some(v),
-            _ => None,
-        });
         let others = x.pieces().into_iter().any(|p| match p {
             Piece::Fn(sig) => !sig.data,
             Piece::Var(_) => false,
             p => !p.is_atoms(),
         });
-        if let Some(v) = var
-            && !others
-            && x.fns.is_empty()
-        {
+        if let Some(v) = sole_class_var(x) {
             let r = self.class_root(&v);
             return match r.map(|r| (r, self.classes[r].resolved.clone())) {
                 Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
@@ -6097,6 +6129,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.ty(Ty::empty());
                         }
                     }
+                }
+                // `.sum` on a type parameter is a fold at a call that passes a family and the
+                // word of layer 1 at one that passes a tuple, so it is decided at each call.
+                Some(1)
+                    if name == "sum"
+                        && matches!((positional, named, curry), ([], [], false))
+                        && sole_class_var(&x.ty.without_loose()).is_some() =>
+                {
+                    let t = self.sum_method(&x.ty, span, span);
+                    self.info.generic_sums.insert(span);
+                    m.ty(t);
                 }
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
@@ -9301,6 +9344,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty::empty()
             }
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
+            NeedKind::SumMethod(site) => self.sum_method(&on, span, *site),
             NeedKind::Map { f, filter } => {
                 let f = Arg::of(self.bound(f, binds));
                 self.map_end(&on, f, span, *filter)
@@ -17667,6 +17711,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         out
     }
+}
+
+/// The variable of `x` when `x` is a type parameter and nothing else but atoms: the receiver a
+/// fold of one level, and `.sum`, decide at each call of a generic function.
+fn sole_class_var(x: &Ty) -> Option<Arc<str>> {
+    let mut var = None;
+    for p in x.pieces() {
+        match p {
+            Piece::Var(v) => var = var.or(Some(v)),
+            p if p.is_atoms() => {}
+            _ => return None,
+        }
+    }
+    var.filter(|_| x.fns.is_empty())
 }
 
 /// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed

@@ -1818,6 +1818,14 @@ impl<'a> Elab<'a> {
                 return;
             }
             _ => match prelude_layer(name) {
+                // `.sum` on a type parameter, a family at some calls and a tuple at others: the
+                // value is tested at run time (row FAIL-generic-sum-method).
+                Some(1) if name == "sum" && self.info.generic_sums.contains(&call.span) => {
+                    let t = self.generic_sum(receiver, call.span);
+                    m.k(Frame::MemberEnd(wrap));
+                    m.give(Some(t));
+                    return;
+                }
                 // `.sum` on a family, `x >< (+)`, which the checker recorded by the call's span.
                 Some(1) if name == "sum" && self.info.family_sums.contains(&call.span) => {
                     let t = self.member_fold(receiver, Prim::Add, call.span);

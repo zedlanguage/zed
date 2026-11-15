@@ -308,3 +308,63 @@ fn reduce_in_a_generic_function_takes_the_identity_of_its_one_carrier() {
         &["does not compile it yet"],
     );
 }
+
+// ---- `.sum` in a generic function (row FAIL-generic-sum-method): DESIGN.md's method
+// register, "tot = xs.sum; // = xs >< (+)"; on a tuple `.sum` is the prelude word of layer 1 ----
+
+#[test]
+fn sum_in_a_generic_function_folds_a_family() {
+    let src = format!("s(positional xs) = xs.sum;\n{F}lo = m.map(r -> s(r));\n");
+    prints(&src, "lo", "{\"a\" -> -0.0, \"b\" -> 5.0}");
+    let src = "s(positional xs) = xs.sum;\nt = s([1, 2, 3]);\n";
+    prints(src, "t", "6");
+}
+
+#[test]
+fn sum_in_a_generic_function_adds_a_tuple() {
+    let src = "s(positional xs) = xs.sum;\nt = s((1, 2, 3));\n";
+    prints(src, "t", "6");
+}
+
+#[test]
+fn sum_in_a_generic_function_called_on_a_family_and_on_a_tuple() {
+    // One body serves both calls: the value is tested at run time, a tuple summed by the
+    // prelude word and a family folded by `(+)` with the identity of its one carrier.
+    let src = format!(
+        "s(positional xs) = xs.sum;\n{F}lo = m.map(r -> s(r));\nt = s((1.5f64, 2.5f64));\n"
+    );
+    prints(&src, "lo", "{\"a\" -> -0.0, \"b\" -> 5.0}");
+    prints(&src, "t", "4.0");
+}
+
+#[test]
+fn sum_reached_through_two_generic_functions_is_decided_at_the_outer_calls() {
+    let src = format!(
+        "s(positional xs) = xs.sum;\ng(positional ys) = s(ys);\n{F}lo = m.map(r -> g(r));\n\
+         t = g((1, 2));\n"
+    );
+    prints(&src, "lo", "{\"a\" -> -0.0, \"b\" -> 5.0}");
+    prints(&src, "t", "3");
+}
+
+#[test]
+fn sum_in_a_generic_function_at_two_carriers_is_not_compiled_yet() {
+    // `0` at `int` and `-0.0` at `f64` are two empty sums for one fold (row
+    // REDUCE-generic-identity), as for `><` and `.reduce`.
+    rejected(
+        "s(positional xs) = xs.sum;\na = s([1, 2]);\nb = s([1.0, 2.0]);\n",
+        &["does not compile it yet"],
+    );
+}
+
+#[test]
+fn sum_in_a_generic_function_rejects_what_is_neither_numbers_nor_a_family_of_them() {
+    rejected(
+        "s(positional xs) = xs.sum;\nt = s((\"a\", 1));\n",
+        &["`sum` does not take"],
+    );
+    rejected(
+        "s(positional xs) = xs.sum;\nt = s(3);\n",
+        &["`sum` does not take"],
+    );
+}

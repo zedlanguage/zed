@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use zed_kernel::term::{Evidence, Grade, GuardPos};
-use zed_kernel::{Pattern as KPattern, Prim, Shared, Term, Value};
+use zed_kernel::types::Type;
+use zed_kernel::{Pattern as KPattern, Prim, Shared, Term, Universe, Value};
 use zedc_syntax::ast::{BinaryOp, Expr, ExprKind};
 use zedc_syntax::lex::Span;
 
@@ -111,6 +112,32 @@ impl<'a> Elab<'a> {
         let body = Term::Match(
             Shared::new(var(&xs)),
             vec![(KPattern::AnyAtom, var(&xs)), (KPattern::Wild, fold)],
+        );
+        Term::Let(xs, Shared::new(x), Shared::new(body))
+    }
+
+    /// `x.sum` on a type parameter, which the checker decided at each call ([`zedc_check::
+    /// check::Info::generic_sums`]): a loose atom passes through, a tuple is summed by the
+    /// prelude word of layer 1, and a family is folded by `(+)` as [`Self::member_fold`] folds
+    /// it, with the identity found at `span`. The checker accepts a tuple at a call only where
+    /// `.sum` on that tuple is the word, and a family only where it is the fold, so the test
+    /// picks the branch the call was checked by.
+    // Complexity tradeoff: the test `is` the tuple universe costs O(1) on a family (the
+    // kernel's `Type::member` answers a family at its top) and O(k) on a tuple of k entries,
+    // which `Prim::Sum` then reads in full, so the sum stays O(k) and the fold O(n). Naive, one
+    // body elaborated per carrier the calls met: no test, but the body is copied once per kind
+    // of call, and the program a library exports would depend on its callers.
+    pub(super) fn generic_sum(&mut self, x: Term, span: Span) -> Term {
+        let xs = self.temp();
+        let fold = self.fold_one(var(&xs), Prim::Add, span);
+        let tuples = Type::universe(Universe::Tuple);
+        let body = Term::Match(
+            Shared::new(var(&xs)),
+            vec![
+                (KPattern::AnyAtom, var(&xs)),
+                (KPattern::Is(tuples), Term::Prim(Prim::Sum, vec![var(&xs)])),
+                (KPattern::Wild, fold),
+            ],
         );
         Term::Let(xs, Shared::new(x), Shared::new(body))
     }

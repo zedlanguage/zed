@@ -529,6 +529,11 @@ pub struct Info {
     /// identity is in [`Self::reduce`] (the method register's `sum` row). Any other `sum` is the
     /// prelude word of layer 1 on a tuple.
     pub family_sums: HashSet<Span>,
+    /// Each `x.sum` whose receiver's type is a type parameter, by the call's span: a family
+    /// at one call and a tuple at another, decided at each call. Elaboration tests the value
+    /// at run time: a tuple takes the prelude word of layer 1, a family the fold `x >< (+)`,
+    /// whose identity is in [`Self::reduce`] (row FAIL-generic-sum-method).
+    pub generic_sums: HashSet<Span>,
     /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
     /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
     pub remaps: HashMap<Span, RemapPlan>,
