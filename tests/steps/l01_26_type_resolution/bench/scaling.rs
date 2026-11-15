@@ -826,8 +826,8 @@ fn exact_arrows(arrows: Vec<(Vec<Ty>, Ty)>) -> zedc::check::ty::Sig {
 ///
 /// - one arrow over `0 | … | n-1` passed as n arrows `(x0: i) -> int`, held by the union of
 ///   their parameter types, whose arrows the index of keys gives;
-/// - n arrows `(x0: i) -> int` passed as the same arrows in reverse order, each found equal by
-///   hash (in reverse, so that the two signatures differ and are compared arrow by arrow);
+/// - n arrows passed as themselves in reverse order, in a test of its own
+///   (`n_arrows_passed_as_themselves_in_reverse_are_checked_in_linear_time`);
 /// - one arrow over `(0 | … | n-1, String)` passed as n arrows `(x0: i, x1: String) -> int`:
 ///   the arrows of `q` that hold `String` at `x1` hold the union at `x0`.
 ///
@@ -853,15 +853,6 @@ fn the_permission_of_an_overload_is_checked_in_linear_time() {
         let (s, q) = &union[&m];
         assert!(fits_sig(s, q));
     });
-    let reversed = scaling::inputs(n, |m| {
-        let mut back = one_each(m, &[]);
-        back.reverse();
-        (exact_arrows(one_each(m, &[])), exact_arrows(back))
-    });
-    scaling::check("n arrows passed as themselves in reverse", n, |m| {
-        let (s, q) = &reversed[&m];
-        assert!(fits_sig(s, q));
-    });
     let string = Ty::carrier(Carrier::Str);
     let two = scaling::inputs(n, |m| {
         let s = exact_arrows(vec![(vec![keys(m), string.clone()], int())]);
@@ -869,6 +860,35 @@ fn the_permission_of_an_overload_is_checked_in_linear_time() {
     });
     scaling::check("one arrow of two parameters passed as n arrows", n, |m| {
         let (s, q) = &two[&m];
+        assert!(fits_sig(s, q));
+    });
+}
+
+/// n arrows `(x0: i) -> int` passed as the same arrows in reverse order, each found equal by
+/// hash (in reverse, so that the two signatures differ and are compared arrow by arrow), in
+/// linear time (`permitted` and `cover` in zedc-types, FAIL-types-fn-param-exact-domain).
+///
+/// In a test of its own: run after the case of one arrow over n keys in one process, the run at
+/// 8n counted 417.8M instructions against 323.7M alone, the run at n the same, so 10.27 times
+/// against 7.96; one check alone counts 55M at 2000 keys and 442M at 16000 (8.0 times, the
+/// probe of 2026-11-15 with each size in a fresh process). The excess is left in the process by
+/// the earlier case, which allocates 228 MB at 16000; not traced further (malloc's per-thread
+/// cache ruled out: the same with it on).
+#[test]
+fn n_arrows_passed_as_themselves_in_reverse_are_checked_in_linear_time() {
+    use zed_kernel::Value;
+    use zedc::check::ty::fits_sig;
+    let int = || Ty::carrier(Carrier::Int);
+    let key = |i: usize| Ty::lit(&Value::int((i as i64).into()));
+    let one_each = |m: usize| (0..m).map(|i| (vec![key(i)], int())).collect::<Vec<_>>();
+    let n = 2000;
+    let reversed = scaling::inputs(n, |m| {
+        let mut back = one_each(m);
+        back.reverse();
+        (exact_arrows(one_each(m)), exact_arrows(back))
+    });
+    scaling::check("n arrows passed as themselves in reverse", n, |m| {
+        let (s, q) = &reversed[&m];
         assert!(fits_sig(s, q));
     });
 }
