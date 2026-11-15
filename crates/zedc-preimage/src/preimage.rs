@@ -9396,13 +9396,18 @@ impl<'m, 't> Walk<'m, 't> {
                 // it, which changes no point. Test
                 // `l01_25_preimage_catalog::bench::s22::relational_pairs_chain_scales_at_512`,
                 // COMPLEXITY.md FAIL-relational-if-chain-growth.
-                let named = self.whole(g, env);
+                // The translation two at a time (tests only) reads `g && a` here, as the
+                // translator did before [`Walk::chain`], and keeps its arms whole only where
+                // they are names, as it then did: the tests compare `Walk::chain`, which never
+                // reaches this arm, with that translation unchanged.
+                let as_before = two_at_a_time() && self.and_if(t).is_some();
+                let named = [g, a, b].map(|t| self.whole(t, env));
                 let g = self.formula(g, env).await?;
                 let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
                 let keep = [
-                    named && !self.claimed(&g),
-                    !self.claimed(&fa),
-                    !self.claimed(&fb),
+                    named[0] && !self.claimed(&g),
+                    (named[1] || !as_before) && !self.claimed(&fa),
+                    (named[2] || !as_before) && !self.claimed(&fb),
                 ];
                 Some(Formula::or(vec![
                     Formula::and_keeping(vec![g.clone(), fa], |i| keep[i]),
