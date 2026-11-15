@@ -206,6 +206,12 @@ fn name(p: Prim) -> &'static str {
         Entries => "entries",
         Has => "has",
         Range => "range",
+        FirstEntry => "firstEntry",
+        LastEntry => "lastEntry",
+        EntryAfter => "entryAfter",
+        EntryBefore => "entryBefore",
+        First => "first",
+        Last => "last",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),
@@ -217,10 +223,10 @@ impl Prim {
     /// `-` for both `Sub` and `Neg`, `!` for `Not`), the prelude word (`popCount`,
     /// `String`), or the form DESIGN.md gives one with no word of its own: a tuple `(..)`, a
     /// component `[i]` (`p[0]`), an entry `[k]` (`f[k]`), and the methods `.count` and
-    /// `.union`. An atom is `#_(..)`, an atom of any name with any payload, since a fixed text
+    /// `.union`, `.first` and `.last`. An atom is `#_(..)`, an atom of any name with any payload, since a fixed text
     /// cannot carry its name; a message that has the name writes `#err(..)` instead
-    /// ([`Prim::written_with`]). The three steps on key paths, which only the compiler
-    /// generates and for which DESIGN.md gives no written form, are words ([`Prim::in_words`]), not
+    /// ([`Prim::written_with`]). The three steps on key paths and the four entry steps, which only the
+    /// compiler generates and for which DESIGN.md gives no written form, are words ([`Prim::in_words`]), not
     /// code; a sentence names a primitive through [`Prim::named`], which quotes only code.
     pub fn written(self) -> &'static str {
         if let Some(words) = self.in_words() {
@@ -238,6 +244,8 @@ impl Prim {
             Prim::Entries => "{..}",
             Prim::Has => "in",
             Prim::Range => "..<",
+            Prim::First => ".first",
+            Prim::Last => ".last",
             Prim::Atom => "#_(..)",
             p => name(p),
         }
@@ -252,15 +260,23 @@ impl Prim {
         }
     }
 
-    /// The step in words, for the three primitives on key paths: the compiler generates them
-    /// in the key map and value map of a `reindex` and the test of a `discard` (the swap of
-    /// two key levels that `group` makes, for one), and no program writes them, so a message
-    /// says what the step does rather than print a name the program never had.
+    /// The step in words, for the three primitives on key paths and the four entry steps of
+    /// the folds, quantifiers and scans: the compiler generates them, the first three in the
+    /// key map and value map of a `reindex` and the test of a `discard` (the swap of two key
+    /// levels that `group` makes, for one), the entry steps in the `gen` that walks a level in
+    /// key order, and no program writes them, so a message says what the step does rather
+    /// than print a name the program never had.
     pub fn in_words(self) -> Option<&'static str> {
         match self {
             Prim::Path => Some("the step that builds a key path from its keys"),
             Prim::PathKey => Some("the step that reads the key at a given position of a key path"),
             Prim::PathLen => Some("the step that counts the keys of a key path"),
+            Prim::FirstEntry => Some("the step that reads the first entry of a level in key order"),
+            Prim::LastEntry => Some("the step that reads the last entry of a level in key order"),
+            Prim::EntryAfter => Some("the step that reads the next entry of a level in key order"),
+            Prim::EntryBefore => {
+                Some("the step that reads the entry before another of a level in key order")
+            }
             _ => None,
         }
     }

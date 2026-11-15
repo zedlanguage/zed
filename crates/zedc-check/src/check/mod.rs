@@ -525,6 +525,10 @@ pub struct Info {
     /// Each fold `m >< f` whose operator `f` is a function, not an operator section, by the
     /// fold's span: the prelude word it is, `max` or `min` (step L3.2).
     pub reducers: HashMap<Span, Reducer>,
+    /// Each `x.sum` whose receiver is a family, by the call's span: the fold `x >< (+)`, whose
+    /// identity is in [`Self::reduce`] (the method register's `sum` row). Any other `sum` is the
+    /// prelude word of layer 1 on a tuple.
+    pub family_sums: HashSet<Span>,
     /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
     /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
     pub remaps: HashMap<Span, RemapPlan>,

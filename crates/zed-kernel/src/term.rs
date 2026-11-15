@@ -181,6 +181,24 @@ pub enum Prim {
     /// itself, empty when `b <= a`; `a ..< b` is `range(a, b)` and `a ..= b` is
     /// `range(a, b + 1)` (DESIGN.md sec:grammar, rule Range, and step L3.2).
     Range,
+    /// `firstEntry(f)`: the entry of the least top-level key of the family `f`, as the tuple
+    /// `(k, v)`, or the empty tuple `()` when `f` has no entries. The four entry steps walk a
+    /// level in key order for the folds, quantifiers and scans of plan row FP-ops-run; the end
+    /// is `()`, not an atom, since a key may itself be an atom held as data.
+    FirstEntry,
+    /// `lastEntry(f)`: the entry of the greatest top-level key, `(k, v)`, or `()`.
+    LastEntry,
+    /// `entryAfter(f, e)`: the entry of the least top-level key of `f` above `e[0]`, the key of
+    /// the entry tuple `e`, as `(k, v)`, or `()` when there is none. `e[0]` need not be held.
+    EntryAfter,
+    /// `entryBefore(f, e)`: the entry of the greatest top-level key below `e[0]`, or `()`.
+    EntryBefore,
+    /// `f.first`: the leaf at the least keypath of `f`, descending through each level in key
+    /// order while the entry is a family, or `#none` when a level on the way is empty
+    /// (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic").
+    First,
+    /// `f.last`: the leaf at the greatest keypath of `f`, or `#none`.
+    Last,
 }
 
 impl Prim {
@@ -190,7 +208,7 @@ impl Prim {
         match self {
             Neg | Not | Count | PathLen | Show | CastInt | CastRat | CastF64 | CastF32 | Abs
             | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
-            | FromUtf8 | Sqrt => Some(1),
+            | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last => Some(1),
             Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom | Entries => None,
@@ -275,6 +293,12 @@ impl Prim {
             Entries => 66,
             Has => 67,
             Range => 68,
+            FirstEntry => 69,
+            LastEntry => 70,
+            EntryAfter => 71,
+            EntryBefore => 72,
+            First => 73,
+            Last => 74,
         }
     }
 }

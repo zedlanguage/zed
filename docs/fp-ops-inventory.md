@@ -197,4 +197,13 @@ those two sites (this row does not edit `iteration.zed`).
   `++`, `zip`, `scan`, `.chunkBy`, `sort` / `.orderedValues`, `take`, `drop`, `slice`,
   `takeWhile`, `.first` / `.last`, `.minBy` / `.maxBy`, the reverse of an order (L5.1c).
 
-The status of each of these is in the plan row FP-ops-run and in STATUS.md.
+Built by FP-ops-run piece 1 (2026-11-15): `.any`, `.all`, `.find`; `count`, `sum`, `.reduce`
+by `(+)`, `(*)`, `(&&)`, `(||)`, `max`, `min`; `.foldl` / `.foldr` over a level of any keys
+(so their use of the sorted view of L3.4 is the key order of the level, walked by entry);
+`.first` / `.last`. The rest moved to four rows, each with its failing tests in
+`tests/steps/l03_15a_fp_ops_run/cases.rs`: FP-ops-strings (`split`, `lines`, `concat`),
+FP-ops-order (`sort`, `.orderedValues`, `take`, `drop`, `slice`, `takeWhile`, `.minBy`,
+`.maxBy`, the reverse of an order), FP-ops-concat-zip (`++`, `zip`) and FP-ops-scan (`scan`,
+`.chunkBy`).
+
+The status of each of these is in the plan rows and in STATUS.md.

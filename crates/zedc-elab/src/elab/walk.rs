@@ -8,6 +8,8 @@
 //! the calls of the recursive walk ran, and each stops where that walk returned early, so the
 //! errors, the temporaries and the marks come out in the same order.
 
+mod fp_ops;
+
 use std::collections::{BTreeSet, HashMap};
 use std::mem;
 use std::sync::Arc;
@@ -29,7 +31,8 @@ use zedc_syntax::lex::{Span, unread_literal};
 
 use super::mark::{Mark, mark_of, mutable};
 use super::state::{Bind, Elab};
-use zedc_check::check::ty::{Carrier, Reducer, Sig};
+use fp_ops::Quantifier;
+use zedc_check::check::ty::{Carrier, Sig};
 use zedc_syntax::ast::Param;
 
 /// The inputs a row of `main`'s table gives, by the position of each in a key that is a tuple:
@@ -194,6 +197,9 @@ enum Frame<'a> {
     Group(Term),
     /// `m >< (op)` once `m` is elaborated: the operator and the span of the fold.
     Fold(Prim, Span),
+    /// `x.any(p)`, `x.all(p)` or `x.find(p)` once `p` is elaborated: `x`'s term (step
+    /// L3.15a).
+    Quantify(Term, Quantifier),
     /// A remap once its source and its levels' expressions are elaborated, in that order.
     Remap(&'a Expr),
     /// `k in m` once both are elaborated: whether it is `not in`.
@@ -797,19 +803,10 @@ impl<'a> Elab<'a> {
                 return;
             }
             ExprKind::Reduce { of, op } => {
-                let p = match op.kind {
-                    ExprKind::Section(BinaryOp::Add, _) => Prim::Add,
-                    ExprKind::Section(BinaryOp::Mul, _) => Prim::Mul,
-                    ExprKind::Section(BinaryOp::And, _) => Prim::And,
-                    ExprKind::Section(BinaryOp::Or, _) => Prim::Or,
-                    // A function the checker took as the prelude word `max` or `min`.
-                    _ if self.info.reducers.get(&e.span) == Some(&Reducer::Max) => Prim::Max,
-                    _ if self.info.reducers.get(&e.span) == Some(&Reducer::Min) => Prim::Min,
-                    // The checker rejects a fold by any other operator, at its error.
-                    _ => {
-                        m.give(None);
-                        return;
-                    }
+                // The checker rejects a fold by any other operator, at its error.
+                let Some(p) = self.reducer_prim(op, e.span) else {
+                    m.give(None);
+                    return;
                 };
                 m.k(Frame::Fold(p, e.span));
                 m.stack.push(Job::Expr(of));
@@ -1585,75 +1582,6 @@ impl<'a> Elab<'a> {
         )
     }
 
-    /// `x.foldl(init, f)`, or with `right` `x.foldr(f, init)`: the serial `gen` over the rank of
-    /// `x` that DESIGN.md's method register gives (`initial acc = init; acc' = op(acc, m[t]);`,
-    /// from the far end with `op(m[t], acc)` for `foldr`). Each frame is the pair
-    /// `(t, acc)`; the guard goes on while `t < n`, `n` the number of entries, and the result
-    /// is the accumulator of frame `n`, the last. The checker took only a rank, keys
-    /// `0 ..< n` every one present, so `m[t]` and `m[n - 1 - t]` always hit. A loose atom `x`
-    /// passes through, as at `map`.
-    // Complexity tradeoff: n steps, each a read `m[t]` of the persistent map, O(log n), so
-    // O(n log n) with the n frames kept in the `gen` family; a kernel loop that kept only the
-    // last frame would save the O(n) frames, but `gen`'s result is the family of every frame.
-    fn fold_dir_term(&mut self, x: Term, init: Term, f: Term, right: bool) -> Term {
-        let (xs, g, n, fr, gn) = (
-            self.temp(),
-            self.temp(),
-            self.temp(),
-            self.temp(),
-            self.temp(),
-        );
-        let var = |v: &Arc<str>| Term::Var(v.clone());
-        let int = |i: i64| Term::Lit(Value::Int(i));
-        let part = |i: i64| Term::Prim(Prim::TupleGet, vec![var(&fr), int(i)]);
-        let at = match right {
-            false => part(0),
-            true => Term::Prim(
-                Prim::Sub,
-                vec![Term::Prim(Prim::Sub, vec![var(&n), int(1)]), part(0)],
-            ),
-        };
-        let entry = Term::Prim(Prim::Get, vec![var(&xs), at]);
-        let args = match right {
-            false => vec![part(1), entry],
-            true => vec![entry, part(1)],
-        };
-        let next = Term::Prim(
-            Prim::Tuple,
-            vec![
-                Term::Prim(Prim::Add, vec![part(0), int(1)]),
-                Term::App(Shared::new(var(&g)), args),
-            ],
-        );
-        let frames = Term::Gen {
-            init: Shared::new(Term::Prim(Prim::Tuple, vec![int(0), init])),
-            step: Shared::new(Term::Lam(vec![fr.clone()], Shared::new(next))),
-            guard: Shared::new(Term::Lam(
-                vec![fr.clone()],
-                Shared::new(Term::Prim(Prim::Lt, vec![part(0), var(&n)])),
-            )),
-            pos: zed_kernel::term::GuardPos::Before,
-        };
-        let last = Term::Prim(
-            Prim::TupleGet,
-            vec![Term::Prim(Prim::Get, vec![var(&gn), var(&n)]), int(1)],
-        );
-        let run = Term::Let(
-            n.clone(),
-            Shared::new(Term::Prim(Prim::Count, vec![var(&xs)])),
-            Shared::new(Term::Let(gn, Shared::new(frames), Shared::new(last))),
-        );
-        let body = Term::Match(
-            Shared::new(var(&xs)),
-            vec![(KPattern::AnyAtom, var(&xs)), (KPattern::Wild, run)],
-        );
-        Term::Let(
-            xs,
-            Shared::new(x),
-            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
-        )
-    }
-
     /// `x.where(f)`: the kernel's `discard(x, sel)` (DESIGN.md sec:kernel), with `sel` testing
     /// `f` on the entries of `x`'s top level only. `discard` descends into a kept sub-family
     /// and asks `sel` again at each of its entries, so `sel` keeps every entry below the top
@@ -1886,6 +1814,13 @@ impl<'a> Elab<'a> {
                 return;
             }
             _ => match prelude_layer(name) {
+                // `.sum` on a family, `x >< (+)`, which the checker recorded by the call's span.
+                Some(1) if name == "sum" && self.info.family_sums.contains(&call.span) => {
+                    let t = self.member_fold(receiver, Prim::Add, call.span);
+                    m.k(Frame::MemberEnd(wrap));
+                    m.give(Some(t));
+                    return;
+                }
                 Some(1) => {
                     let f = Term::Var(name.into());
                     m.k(Frame::MemberEnd(wrap));
@@ -1911,7 +1846,7 @@ impl<'a> Elab<'a> {
                     }
                 }
                 // `foldl` and `foldr` are built in as `map` is (step L3.3); the checker rejects
-                // any other argument list and a level that is not a rank.
+                // any other argument list.
                 Some(_) if name == "foldl" || name == "foldr" => match call.positional {
                     [a, b] if call.named.is_empty() && !call.curry => {
                         m.k(Frame::MemberEnd(wrap));
@@ -1930,6 +1865,46 @@ impl<'a> Elab<'a> {
                     [f] if call.named.is_empty() && !call.curry => {
                         m.k(Frame::MemberEnd(wrap));
                         m.k(Frame::Group(receiver));
+                        m.stack.push(Job::Expr(f));
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
+                // `.count`, `.first` and `.last` are built in as `map` is (plan row FP-ops-run):
+                // the kernel's `count`, `first` and `last`, which pass a loose atom through.
+                Some(_) if matches!(name, "count" | "first" | "last") => {
+                    let p = match name {
+                        "count" => Prim::Count,
+                        "first" => Prim::First,
+                        _ => Prim::Last,
+                    };
+                    m.k(Frame::MemberEnd(wrap));
+                    m.give(Some(Term::Prim(p, vec![receiver])));
+                    return;
+                }
+                // `.reduce(op)`, `x >< op`; for a function not a section, the checker recorded
+                // the prelude word `max` or `min` it is by the call's span.
+                Some(_) if name == "reduce" => match call.positional {
+                    [op] if call.named.is_empty() && !call.curry => {
+                        let t = (self.reducer_prim(op, call.span))
+                            .map(|p| self.member_fold(receiver, p, call.span));
+                        m.k(Frame::MemberEnd(wrap));
+                        m.give(t);
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
+                // The quantifiers of step L3.15a, built in as `map` is.
+                Some(_) if let Some(q) = Quantifier::of(name) => match call.positional {
+                    [f] if call.named.is_empty() && !call.curry => {
+                        m.k(Frame::MemberEnd(wrap));
+                        m.k(Frame::Quantify(receiver, q));
                         m.stack.push(Job::Expr(f));
                         return;
                     }
@@ -2081,19 +2056,11 @@ impl<'a> Elab<'a> {
                 m.give(t);
             }
             Frame::Fold(p, span) => {
-                // The identity the checker found for the entries' carrier; none for a
-                // fold in a lambda's body over its parameter, which folds empty to `#empty`.
-                let identity = self.info.reduce.get(&span).cloned();
-                let t = m.t().map(|family| Term::Fold {
-                    family: Shared::new(family),
-                    op: Shared::new(Term::PrimFn(p)),
-                    identity: identity.map(|v| Shared::new(Term::Lit(v))),
-                    depth: 1,
-                    ev: zed_kernel::term::Evidence::from([(
-                        "assoc".into(),
-                        zed_kernel::term::Grade::Axiom,
-                    )]),
-                });
+                let t = m.t().map(|family| self.fold_one(family, p, span));
+                m.give(t);
+            }
+            Frame::Quantify(x, q) => {
+                let t = m.t().map(|f| self.quantifier_term(x, f, q));
                 m.give(t);
             }
             Frame::Group(x) => {

@@ -2067,7 +2067,9 @@ impl<'t> Machine<'_, 't> {
     /// or that it ran in none of them. The walk down the frames is O(depth) and runs once, on
     /// the refusal that ends the run.
     fn at_step(&self, p: Prim, m: String) -> String {
-        if p.in_words().is_none() {
+        // The entry steps are in words too, but the compiler generates them in the `gen` of a
+        // walk, not in a `reindex` or a `discard`, so where they ran is not said here.
+        if !matches!(p, Prim::Path | Prim::PathKey | Prim::PathLen) {
             return m;
         }
         let keys = |keys: &[Value]| {
@@ -3055,6 +3057,36 @@ fn range(a: &Value, b: &Value) -> Result<Value, KernelError> {
     Ok(Value::Family(Family::set(keys)))
 }
 
+/// An entry of a family as the tuple `(k, v)`, or the empty tuple `()` for none: the answer of
+/// the entry steps `firstEntry`, `lastEntry`, `entryAfter` and `entryBefore`.
+fn entry_tuple(e: Option<&(Value, Value)>) -> Value {
+    match e {
+        Some((k, v)) => Value::tuple(vec![k.clone(), v.clone()]),
+        None => Value::tuple(Vec::new()),
+    }
+}
+
+/// `f.first`, or with `last` `f.last`: the leaf at the least (greatest) keypath of `f`, each
+/// level read in key order, descending while the entry is a family; `#none` when a level on the
+/// way is empty, as in `[[]]` (DESIGN.md sec:corner_cases, "`first`/`last` are lexicographic").
+// Complexity tradeoff: the naive version lists the leaves (`Family::leaves`) and takes the
+// least keypath, O(n log n) for n leaves. Used: the least (greatest) entry of each level the
+// descent passes, O(log n) per level, O(d log n) for d levels. Tradeoff: none.
+fn leaf_at_end(f: &Family, last: bool) -> Value {
+    let mut level = f;
+    loop {
+        let e = match last {
+            false => level.0.get_min(),
+            true => level.0.get_max(),
+        };
+        match e {
+            None => return Value::atom("none"),
+            Some((_, Value::Family(inner))) => level = inner,
+            Some((_, v)) => return v.clone(),
+        }
+    }
+}
+
 /// [`prim_data`] for a primitive other than `Tuple` and `Path`, which keeps none of `vals`.
 fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
     use Value::{Bool, Float, Float32, Int, Str};
@@ -3245,6 +3277,14 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Range, [a, b]) if a.number_kind() == Some(0) && b.number_kind() == Some(0) => {
             range(a, b)?
         }
+        (Prim::FirstEntry, [Value::Family(f)]) => entry_tuple(f.0.get_min()),
+        (Prim::LastEntry, [Value::Family(f)]) => entry_tuple(f.0.get_max()),
+        (Prim::EntryAfter | Prim::EntryBefore, [Value::Family(f), Value::Tuple(e)])
+            if e.len() == 2 =>
+        {
+            entry_tuple(f.0.beside(&e[0], p == Prim::EntryAfter))
+        }
+        (Prim::First | Prim::Last, [Value::Family(f)]) => leaf_at_end(f, p == Prim::Last),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
             Value::atom_with(atom_name(name)?, args.to_vec())

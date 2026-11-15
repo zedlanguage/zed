@@ -3962,3 +3962,11 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `type_names: HashMap<String, usize>` counted up and down as type binders open and close, with a `u64` change counter, and `nearest_memo: HashMap<String, (u64, Option<String>)>` checked against the counter | `type_named`, `Resolver::bind`, `close`, `nearest` | Mutation (gap 11); a memo invalidated by a counter | the spelling index of step L1.29e, built once per unit, in place of both; until then a family from name to count threaded as a value, and the memo as a family keyed by name and counter |
 | `Vec<char>` of each name, compared by index from both ends, and `char::to_ascii_lowercase` | `near_in_spelling` | None (names are ASCII, author decision 2026-11-12) | the name's bytes as a view, read from both ends |
 | `run_ends`: a `HashMap<usize, usize>` from each held number to the end of its run, filled by walking each run once from its first; `Held` keeps one per sequence (`ends`, `part_ends`) behind a thread-local `RefCell<Rc<Held>>` swapped by `ProgramNames` | `zed-kernel/src/types/print/names.rs` (`run_ends`, `ProgramNames::hold`, `fresh_name`) | Mutation (gap 11); thread-local state | the held names passed to the printer as a value, each run table a family built by one fold over the sorted numbers |
+
+## Entries from FP-ops-run, piece 1 (`crates/zed-kernel/src/eval.rs`; `crates/zedc-check/src/check/walk/fp_ops.rs`, `walk.rs`, `mod.rs`; `crates/zedc-elab/src/elab/walk/fp_ops.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `loop` that rebinds `level: &Family` to the inner family of the least (greatest) entry until it reaches a leaf | `leaf_at_end` in `eval.rs` | Mutation (gap 11) | a recursive function on the level, which ends because each call is one level deeper |
+| `HashSet<Span>` of the `.sum` calls on a family, filled by the checker and read by `contains` in the elaborator | `Info::family_sums`, `Ck::member_end`, `member_call` | Mutation (gap 11); a set keyed by a span | a family `Span ->? ()` in the checker's findings, as for `main_pushes` |
+| `match` on a `(Prim, &[Value])` pair with slice patterns and a guard (`[Value::Family(f), Value::Tuple(e)] if e.len() == 2`) | `prim_on` in `eval.rs` | None | a `match` on the tuple of the primitive and its arguments, with the length in the pattern |

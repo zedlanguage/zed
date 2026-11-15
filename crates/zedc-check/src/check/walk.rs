@@ -22,7 +22,10 @@ use zedc_lattice::lattice::Lattice;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
 
+mod fp_ops;
 mod remap;
+
+use fp_ops::{FoldForm, Quantifier};
 
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
@@ -403,6 +406,12 @@ pub(super) enum Frame<'a> {
     FoldInit(Ty, &'a Expr, Span, bool),
     /// The same, waiting for `f`: `x`'s type, `init`'s type, and the call's span.
     FoldFn(Ty, Ty, Span, bool),
+    /// `x.any(p)`, `x.all(p)` or `x.find(p)`, waiting for `p`: `x`'s type, the quantifier
+    /// and the call's span (step L3.15a; `quantifier_end`).
+    Quantify(Ty, Quantifier, Span),
+    /// `x.reduce(f)`, `f` not an operator section, waiting for `f`: `x`'s type and the call's
+    /// span (`reduce_by`).
+    ReduceFn(Ty, Span),
     /// `m >< op`, waiting for `m`: the operator and the span of the reduction.
     Reduce(Reducer, Span),
     /// `m >< f`, `f` not an operator section, waiting for `f`: `m` and the span of the
@@ -911,6 +920,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.fold_dir_end(&x, &init, f, span, right);
                 m.ty(t);
             }
+            Frame::Quantify(x, q, span) => {
+                let f = m.take_arg();
+                let t = self.quantifier_end(&x, f, q, span);
+                m.ty(t);
+            }
+            Frame::ReduceFn(x, span) => {
+                let f = m.take_ty();
+                let t = match self.reduce_by(&f, span, FoldForm::Reduce) {
+                    Some(r) => self.family_fold(r, &x, span, FoldForm::Reduce),
+                    None => Ty::empty(),
+                };
+                m.ty(t);
+            }
             Frame::Reduce(op, span) => {
                 let x = m.take_ty();
                 let t = self.reduce_end(op, &x, span);
@@ -918,7 +940,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::ReduceBy(of, span) => {
                 let f = m.take_ty();
-                match self.reduce_by(&f, span) {
+                match self.reduce_by(&f, span, FoldForm::Infix) {
                     Some(r) => {
                         m.k(Frame::Reduce(r, span));
                         m.job(Job::Expr(of));
@@ -3248,12 +3270,11 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `x.foldl(init, f)` or, with `right`, `x.foldr(f, init)`, `x` of type `x`, `init` of type
     /// `init` (step L3.3; DESIGN.md sec:reduction, the non-associative row, and the
-    /// `foldl`/`foldr` row of the method register): a serial `gen` over the level's rank,
+    /// `foldl`/`foldr` row of the method register): a serial `gen` over the level's entries,
     /// `f` taking the accumulator first for `foldl` and second for `foldr`, typed
     /// `(A, (A, V) -> A) -> A` and `((V, A) -> A, A) -> A`. `A` is `init`'s type widened to its
-    /// carriers ([`Ty::carriers`]), joined with what `f` gives until `f` gives nothing new. The
-    /// level must be a rank, keys `0 ..< n` every one present ([`Sig::dense`]); a keyed level
-    /// reads its sorted view, step L3.4's, and is refused by name (plan row L3.4). A
+    /// carriers ([`Ty::carriers`]), joined with what `f` gives until `f` gives nothing new. Any
+    /// level folds, its entries taken in key order (plan row FP-ops-run), a rank by its index. A
     /// loose atom `x` passes through, as at `map`. A value whose type is a class (a parameter
     /// of a generic function, or of a lambda checked before its argument) takes the fold as a
     /// need, checked on each type that flows into the class, as `><` does.
@@ -3306,20 +3327,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut values = Ty::empty();
         for p in x.pieces() {
             match p {
-                Piece::Fn(sig) if sig.data && sig.dense => {
+                Piece::Fn(sig) if sig.data => {
                     let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result));
                     values = values.union(&all.without(&misses));
-                }
-                Piece::Fn(sig) if sig.data => {
-                    // Over other keys the fold reads the level's sorted view, step L3.4's.
-                    let what =
-                        format!("{word} over a family whose keys are not `0`, `1`, … in turn");
-                    self.error_offering(
-                        span,
-                        zedc_base::rejection::not_yet(&what),
-                        ["repair: fold by an associative operator, as `xs >< (+)`".to_string()],
-                    );
-                    return Ty::empty();
                 }
                 Piece::Dyn => self.any(word, span),
                 Piece::Var(_) => {
@@ -3397,7 +3407,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// owes a proof of its associativity (rungs 2 and 5 of sec:reduction), which this zedc
     /// does not build, so it is refused by name, with the left fold, which owes no law, as the
     /// repair (row REDUCE-by-function).
-    fn reduce_by(&mut self, f: &Ty, span: Span) -> Option<Reducer> {
+    fn reduce_by(&mut self, f: &Ty, span: Span, form: FoldForm) -> Option<Reducer> {
         let word = match (f.pieces().as_slice(), f.loose().is_empty()) {
             ([Piece::Fn(sig)], true) => sig.word.clone(),
             _ => None,
@@ -3408,9 +3418,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => {
                 self.error_offering(
                     span,
-                    zedc_base::rejection::not_yet(
-                        "a fold `><` by a function other than `max`, `min` or an operator section",
-                    ),
+                    zedc_base::rejection::not_yet(&format!(
+                        "{} by a function other than `max`, `min` or an operator section",
+                        form.fold_name()
+                    )),
                     ["repair: fold left to right, which owes no law, as \
                       `xs.foldl(init, (a, x) -> f(a, x))`"
                         .to_string()],
@@ -3437,6 +3448,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `card` values in `[lo, hi]` lies in; that transfer is step L3.6's. A naive interval sum
     // here would need the level's cardinality, which this step does not track.
     fn reduce_end(&mut self, op: Reducer, x: &Ty, span: Span) -> Ty {
+        self.fold_level(op, x, span, FoldForm::Infix)
+    }
+
+    /// [`Self::reduce_end`], its messages naming the fold as the program wrote it, `form`:
+    /// `x >< op`, `x.reduce(op)` or `x.sum`.
+    fn fold_level(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         let entries = Ty::union_all(
             (x.fns.iter())
@@ -3462,7 +3479,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             let r = self.class_root(&v);
             return match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                Some((_, Some(t))) => self.reduce_end(op, &t, span),
+                Some((_, Some(t))) => self.fold_level(op, &t, span, form),
                 Some((r, None)) => self.need(r, NeedKind::Reduce(op), true, span),
                 None => Ty::dynamic(),
             };
@@ -3476,9 +3493,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = self.text(x);
             self.error_offering(
                 span,
-                format!("`><` folds the entries of a family, and this value is {t}"),
+                format!(
+                    "{} folds the entries of a family, and this value is {t}",
+                    form.word()
+                ),
                 [format!(
-                    "repair: fold a family, as `{{0 -> 1, 1 -> 2}} >< {written}`"
+                    "repair: fold a family, as `{}`",
+                    form.example(&written)
                 )],
             );
             return Ty::empty();
@@ -3503,8 +3524,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error_offering(
                 span,
                 format!(
-                    "`><` folds in any grouping, and `{o}` is not associative: \
-                     `(a {o} b) {o} c` and `a {o} (b {o} c)` differ"
+                    "{} folds in any grouping, and `{o}` is not associative: \
+                     `(a {o} b) {o} c` and `a {o} (b {o} c)` differ",
+                    form.word()
                 ),
                 [
                     format!("repair: fold left to right, as `xs.foldl(init, (a, x) -> a {o} x)`"),
@@ -3553,7 +3575,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // (plan row REDUCE-family-entries).
         let Some((c, identity)) = fold else {
             let shown = self.text(&entries);
-            let what = format!("a fold `><` by `{written}` of entries of type {shown}");
+            let what = format!("{} of entries of type {shown}", form.what(&written));
             self.error(span, zedc_base::rejection::not_yet(&what));
             return Ty::empty();
         };
@@ -5814,6 +5836,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(Ref::Bound(_)) => m.ty(Ty::empty()),
             _ => match zedc_resolve::resolve::prelude_layer(name) {
+                // `.sum` on a family is `x >< (+)` (DESIGN.md, the method register's `sum` row,
+                // `fold(m, +, ev)`); on a tuple it is the prelude word of layer 1.
+                Some(1) if name == "sum" && x.ty.fns.iter().any(|s| s.data) => {
+                    match (positional, named, curry) {
+                        ([], [], false) => {
+                            let add = Reducer::Op(BinaryOp::Add);
+                            let t = self.family_fold(add, &x.ty, span, FoldForm::Sum);
+                            self.info.family_sums.insert(span);
+                            m.ty(t);
+                        }
+                        _ => {
+                            self.error_offering(
+                                span,
+                                "`.sum` of a family takes no arguments".to_string(),
+                                ["repair: write `xs.sum`".to_string()],
+                            );
+                            m.ty(Ty::empty());
+                        }
+                    }
+                }
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
                 }
@@ -5903,6 +5945,66 @@ impl<'t, 'a> Ck<'t, 'a> {
                                  `xs.{name}(f)`"
                             ),
                             [format!("repair: write `xs.{name}(x -> …)`")],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
+                // `.count`, `.first` and `.last` (plan row FP-ops-run), built in as `map` is.
+                Some(_) if matches!(name, "count" | "first" | "last") => {
+                    match (positional, named, curry) {
+                        ([], [], false) => {
+                            let t = match name {
+                                "count" => self.count_end(&x.ty, span),
+                                _ => self.end_end(&x.ty, name == "last", span),
+                            };
+                            m.ty(t);
+                        }
+                        _ => {
+                            self.error_offering(
+                                span,
+                                format!("`{name}` takes no arguments"),
+                                [format!("repair: write `xs.{name}`")],
+                            );
+                            m.ty(Ty::empty());
+                        }
+                    }
+                }
+                // `.reduce(op)`, `x >< op` (the method register's `reduce` row).
+                Some(_) if name == "reduce" => match (positional, named, curry) {
+                    ([f], [], false) => match f.kind {
+                        ExprKind::Section(op, _) => {
+                            let r = Reducer::Op(op);
+                            let t = self.family_fold(r, &x.ty, span, FoldForm::Reduce);
+                            m.ty(t);
+                        }
+                        _ => {
+                            m.k(Frame::ReduceFn(x.ty, span));
+                            m.job(Job::Expr(f));
+                        }
+                    },
+                    _ => {
+                        self.error_offering(
+                            span,
+                            "`reduce` takes one operator, passed by position".to_string(),
+                            ["repair: write `xs.reduce((+))`".to_string()],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
+                // The quantifiers of step L3.15a, built in as `map` is.
+                Some(_) if let Some(q) = Quantifier::of(name) => match (positional, named, curry) {
+                    ([f], [], false) => {
+                        m.k(Frame::Quantify(x.ty, q, span));
+                        m.job(Job::Arg(f, Want::default()));
+                    }
+                    _ => {
+                        self.error_offering(
+                            span,
+                            format!(
+                                "`{name}` takes one function, passed by position, as \
+                                 `xs.{name}(f)`"
+                            ),
+                            [format!("repair: write `xs.{name}(x -> x > 0)`")],
                         );
                         m.ty(Ty::empty());
                     }

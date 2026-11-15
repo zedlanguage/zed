@@ -137,8 +137,8 @@ fn the_forms_not_built_are_refused_as_not_built() {
     // The messages name no step: the program's words only. The plan rows are named at the
     // refusals: a range with no upper end (RANGE-open), metadata reads (META-read-run), `for`
     // (FOR-one-generator) and `discard` (DISCARD-standalone) in zedc-resolve; a fold by a
-    // function that owes a proof of associativity (REDUCE-by-function) and a directional fold
-    // over a keyed level (L3.4) in the checker.
+    // function that owes a proof of associativity (REDUCE-by-function) in the checker. A
+    // directional fold over a keyed level is built (FP-ops-run; l03_15a_fp_ops_run::cases).
     for (name, body, what) in [
         (
             "range_with_no_upper_end",
@@ -165,12 +165,6 @@ fn the_forms_not_built_are_refused_as_not_built() {
             "standalone_discard",
             "${discard([1, 2], x -> x > 1)}",
             "the prelude word `discard` is part of the Zed language",
-        ),
-        (
-            "foldl_keyed",
-            "${{1 -> 2, 5 -> 3}.foldl(0, (+))}",
-            "`foldl` over a family whose keys are not `0`, `1`, … in turn is part of the Zed \
-             language",
         ),
     ] {
         let e = refused(name, body);

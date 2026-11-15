@@ -205,8 +205,8 @@ path = "steps/l03_02_map_run/mod.rs"
 name = "l03_09_egraph"
 path = "steps/l03_09_egraph/mod.rs"
 [[test]]
-name = "l03_fp_ops_run"
-path = "steps/l03_fp_ops_run/mod.rs"
+name = "l03_15a_fp_ops_run"
+path = "steps/l03_15a_fp_ops_run/mod.rs"
 [[test]]
 name = "l06_01_parser"
 path = "steps/l06_01_parser/mod.rs"

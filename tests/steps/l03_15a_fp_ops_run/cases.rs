@@ -53,6 +53,28 @@ fn rejected(group: &str, exprs: &[&str]) {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Each program must be rejected at compile time, its message holding the given text.
+#[track_caller]
+fn saying(group: &str, cases: &[(&str, &str)]) {
+    let wrong: Vec<String> = cases
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &(expr, text))| {
+            let src = format!("main(m: MainArgs) {{\n  m.stdout <- \"${{{expr}}}\";\n}}\n");
+            let out = run(&format!("fp_ops/{group}_say_{i}"), &src, "", &[]);
+            (out.status == 0 || !out.stdout.is_empty() || !out.stderr.contains(text)).then(|| {
+                format!(
+                    "{expr}\n  want a message saying {text}\n  status {}, printed {}\n  {}",
+                    out.status,
+                    out.stdout.trim_end(),
+                    out.stderr.trim_end()
+                )
+            })
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// Step L3.15a: `.any`, `.all`, `.find`, in key order; `.find` gives the first key or `#none`.
 #[test]
 fn quantifiers_decide_in_key_order() {
@@ -64,12 +86,53 @@ fn quantifiers_decide_in_key_order() {
             ("{}.all(x -> x > 0)", "true"),
             ("[1, 2, 3].all(x -> x > 0)", "true"),
             ("[1, 2, 3].all(x -> x > 1)", "false"),
-            ("[5, 7, 9].find(x -> x > 6)", "1"),
+            // `find` may give `#none`, which no port writes, so each key is compared.
+            ("[5, 7, 9].find(x -> x > 6) == 1", "true"),
             ("[5, 7, 9].find(x -> x > 10) == #none", "true"),
-            ("{\"x\" -> 1, \"y\" -> 5, \"z\" -> 7}.find(v -> v > 2)", "y"),
+            (
+                "{\"x\" -> 1, \"y\" -> 5, \"z\" -> 7}.find(v -> v > 2) == \"y\"",
+                "true",
+            ),
             // `elem` and `elemIndex` of the inventory, as compositions.
             ("[5, 7, 9].any(x -> x == 7)", "true"),
-            ("[5, 7, 9].find(x -> x == 9)", "2"),
+            ("[5, 7, 9].find(x -> x == 9) == 2", "true"),
+        ],
+    );
+}
+
+/// Step L3.15a: the walk stops at the deciding entry, so a failure of `p` past it is never
+/// met, and a failure before it is the result. Each result may be the failure, so each is
+/// compared with `==`.
+#[test]
+fn quantifiers_stop_at_the_deciding_entry() {
+    prints(
+        "quantifiers_stop",
+        &[
+            ("[1, 0].any(x -> ({1 -> true})[x]) == true", "true"),
+            ("[1, 0].all(x -> ({1 -> false})[x]) == false", "true"),
+            ("[1, 0].find(x -> ({1 -> true})[x]) == 0", "true"),
+            ("[0, 1].any(x -> ({1 -> true})[x]) == #notFound", "true"),
+            ("[2, 0].all(x -> ({2 -> true})[x]) == #notFound", "true"),
+            ("[1, 2].find(x -> x > 5) == #none", "true"),
+            ("{}.any(x -> x > 0)", "false"),
+            ("{}.find(x -> x > 0) == #none", "true"),
+        ],
+    );
+}
+
+/// The quantifiers' misuses, each named in the program's own words.
+#[test]
+fn a_misused_quantifier_is_rejected_in_plain_words() {
+    saying(
+        "quantifiers",
+        &[
+            (
+                "[1, 2].any(x -> x + 1)",
+                "`any` asks its function of each entry",
+            ),
+            ("[1, 2].all(3)", "`all` takes a function"),
+            ("[1, 2].find()", "`find` takes one function"),
+            ("(3).any(x -> x > 0)", "`any` reads the entries of a family"),
         ],
     );
 }
@@ -86,7 +149,7 @@ fn folds_collapse_one_level() {
             ("[3, 1, 4] >< (*)", "12"),
             ("[3, 1, 4] >< max", "4"),
             ("[3, 1, 4] >< min", "1"),
-            ("[3, 1, 4].reduce(+)", "8"),
+            ("[3, 1, 4].reduce((+))", "8"),
             ("[3, 1, 4].where(x -> x > 9).sum", "0"),
             ("([3, 1, 4].where(x -> x > 9) >< max) == #empty", "true"),
             ("[1, 2, 3].foldl(0, (a, x) -> a * 10 + x)", "123"),
@@ -95,6 +158,23 @@ fn folds_collapse_one_level() {
                 "{\"b\" -> 2, \"a\" -> 1}.foldl(0, (a, x) -> a * 10 + x)",
                 "12",
             ),
+            // A keyed level folds in key order, from either end.
+            (
+                "{\"b\" -> 2, \"a\" -> 1}.foldr((x, a) -> a * 10 + x, 0)",
+                "21",
+            ),
+            ("{}.foldl(7, (a, x) -> a + x)", "7"),
+            (
+                "[1, 2, 3].where(x -> x > 1).foldl(0, (a, x) -> a * 10 + x)",
+                "23",
+            ),
+            ("[3, 1, 4].reduce(max)", "4"),
+            ("[3, 1, 4].reduce((*))", "12"),
+            ("{\"b\" -> 2, \"a\" -> 5}.sum", "7"),
+            ("{\"b\" -> 2, \"a\" -> 5}.count", "2"),
+            ("{}.count", "0"),
+            ("[1.5, 2.5].sum", "4.0"),
+            ("[true, false].reduce((||))", "true"),
         ],
     );
 }
@@ -102,12 +182,16 @@ fn folds_collapse_one_level() {
 /// sec:reduction: a non-associative operator on an ordered level is rejected.
 #[test]
 fn a_fold_by_a_non_associative_operator_is_rejected() {
-    rejected("folds", &["[1, 2, 3, 4] >< (-)"]);
+    rejected(
+        "folds",
+        &["[1, 2, 3, 4] >< (-)", "[1, 2, 3, 4].reduce((-))"],
+    );
 }
 
 /// Step L3.2: `split` keeps every piece; `lines` ends a line at `\n`, `\r\n` and a lone `\r`
-/// and keeps no empty line after the last line end; `concat` with no separator (the part of
-/// `concat` that every answer to QUESTIONS A105 shares).
+/// and keeps no empty line after the last line end; `concat(pieces, sep: s)` on strings, `sep`
+/// `""` when not given, with the join law `concat(s.split(sep), sep: sep) == s` (QUESTIONS
+/// A105, answered B); `concat` of a family of families is rejected, its repair `xss >< (++)`.
 #[test]
 fn split_lines_and_concat() {
     prints(
@@ -126,12 +210,66 @@ fn split_lines_and_concat() {
             ("\"a\\n\".split(\"\\n\") == [\"a\", \"\"]", "true"),
             ("concat([\"a\", \"\", \"bc\"])", "abc"),
             ("concat(\"x,y\".split(\",\"))", "xy"),
+            ("concat([\"a\", \"b\"], sep: \", \")", "a, b"),
+            ("concat([\"a\", \"\", \"b\"], sep: \",\")", "a,,b"),
+            ("concat([\"a\"], sep: \",\")", "a"),
+            ("concat([]) == \"\"", "true"),
+            ("concat([], sep: \",\") == \"\"", "true"),
+            (
+                "concat(\"a,,b,\".split(\",\"), sep: \",\") == \"a,,b,\"",
+                "true",
+            ),
+            ("concat(\"\".split(\",\"), sep: \",\") == \"\"", "true"),
+        ],
+    );
+    saying("strings", &[("concat([[1], [2]])", ">< (++)")]);
+}
+
+/// sec:corner_cases: `first` and `last` are lexicographic, the leaf at the least and greatest
+/// keypath; a level that may be empty adds `#none`.
+#[test]
+fn first_and_last_are_the_ends_in_key_order() {
+    prints(
+        "ends",
+        &[
+            ("[3, 1, 4].first", "3"),
+            ("[3, 1, 4].last", "4"),
+            ("[3, 1, 4].where(x -> x > 9).first == #none", "true"),
+            ("{\"b\" -> 2, \"a\" -> 5}.first", "5"),
+            ("{\"b\" -> 2, \"a\" -> 5}.last", "2"),
+            ("[[1, 2], [3]].last", "3"),
+            (
+                "{1 -> {\"y\" -> 3, \"x\" -> 4}, 0 -> {\"q\" -> 5}}.first",
+                "5",
+            ),
+        ],
+    );
+}
+
+/// The folds' and ends' misuses, each named in the program's own words.
+#[test]
+fn a_misused_fold_or_end_is_rejected_in_plain_words() {
+    saying(
+        "folds",
+        &[
+            ("[1, 2].count(1)", "`count` takes no arguments"),
+            ("[1, 2].last(0)", "`last` takes no arguments"),
+            ("[1, 2].reduce()", "`reduce` takes one operator"),
+            ("(3).first", "`first` reads the entries of a family"),
+            (
+                "[1, 2].reduce((-))",
+                "`.reduce` folds in any grouping, and `-` is not associative",
+            ),
+            (
+                "[1, 2].reduce((a, b) -> a)",
+                "a fold `.reduce` by a function other than",
+            ),
         ],
     );
 }
 
 /// Step L5.1: `sort` with `asc` / `desc` keys, `.orderedValues`, `.take`, `.drop`, `.slice`,
-/// `.takeWhile`, `.first`, `.last`, `.minBy`, `.maxBy` (ties kept).
+/// `.takeWhile`, `.minBy`, `.maxBy` (ties kept).
 #[test]
 fn order_and_positional_selection() {
     prints(
@@ -153,9 +291,6 @@ fn order_and_positional_selection() {
             ("[5, 6, 7, 8].take(2) == [5, 6]", "true"),
             ("[5, 6, 7, 8].drop(2) == {2 -> 7, 3 -> 8}", "true"),
             ("[5, 6, 7, 8].slice(1..<3) == {1 -> 6, 2 -> 7}", "true"),
-            ("[3, 1, 4].first", "3"),
-            ("[3, 1, 4].last", "4"),
-            ("[3, 1, 4].where(x -> x > 9).first == #none", "true"),
             ("[3, 9, 9].maxBy(x -> x) == {9 -> {1 -> 9, 2 -> 9}}", "true"),
             ("[3, 9, 3].minBy(x -> x) == {3 -> {0 -> 3, 2 -> 3}}", "true"),
         ],

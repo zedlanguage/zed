@@ -10,9 +10,10 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 /// The primitives no program names by a word of its own: elaboration builds them from other
 /// forms (a tuple, a component `p[0]`, an atom, a display, a read of a family whose keys are one integer
-/// interval), or they belong to later layers. A refusal names them by the form DESIGN.md writes,
-/// or else as the kernel's printer writes them.
-const UNNAMED: [Prim; 11] = [
+/// interval, a method `.count`, `.first`, `.last`, a step of a walk in key order), or they belong
+/// to later layers. A refusal names them by the form DESIGN.md writes, or else as the kernel's
+/// printer writes them.
+const UNNAMED: [Prim; 17] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -24,6 +25,12 @@ const UNNAMED: [Prim; 11] = [
     Prim::PathKey,
     Prim::PathLen,
     Prim::At,
+    Prim::FirstEntry,
+    Prim::LastEntry,
+    Prim::EntryAfter,
+    Prim::EntryBefore,
+    Prim::First,
+    Prim::Last,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.
@@ -52,6 +59,11 @@ fn check_refusal(p: Prim, w: &str, message: &str) {
             format!("{w} applied to a function, {OUTSIDE}"),
             "{p:?}"
         ),
+        // The entry steps of a walk in key order are in words as well, and only the `gen` of
+        // a walk generates them, so the refusal says no more than what was refused.
+        Prim::FirstEntry | Prim::LastEntry | Prim::EntryAfter | Prim::EntryBefore => {
+            assert_eq!(message, format!("{w} applied to a function"), "{p:?}")
+        }
         _ => assert_eq!(message, format!("`{w}` applied to a function"), "{p:?}"),
     }
 }
