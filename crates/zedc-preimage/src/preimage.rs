@@ -3175,30 +3175,65 @@ impl<'t> Terms<'t> {
     /// The first term numbered with the form of `t`: a term copied, which a given term is
     /// when it was cloned rather than shared, is one term here, so that what is kept by term
     /// ([`Walk::by_class`]) is computed once for every copy. `O(1)` per term, each read once.
+    ///
+    /// Complexity tradeoff: the recursion this replaces took one frame per level, so a chain
+    /// of 4000 `if`s overflowed a 2 MiB thread stack (PREIMAGE-chain-cliff); an explicit stack
+    /// of (term, parts done) pairs takes the parts first, in post-order, with `forms` as the
+    /// visited set, so a term shared by many parents is formed once: `O(n)` time and `O(n)`
+    /// heap for `n` terms below `t`, as the recursion, with no stack depth.
     fn form(&mut self, t: Tid) -> Tid {
         if let Some(&f) = self.forms.get(&t) {
             return f;
         }
-        let form = match self.nodes[t as usize] {
-            Node::Int(n) => Form::Int(n),
-            Node::Bool(b) => Form::Bool(b),
-            Node::Var(x) => Form::Var(x),
-            Node::App(f, args) => Form::App(self.form(f), self.forms(args)),
-            Node::Prim(p, args) => Form::Prim(std::mem::discriminant(&p), self.forms(args)),
-            Node::Let(x, e, b) => Form::Let(x, self.form(e), self.form(b)),
-            Node::If(g, a, b) => Form::If(self.form(g), self.form(a), self.form(b)),
-            Node::Lit(_) | Node::Lam(..) | Node::PrimFn(_) | Node::Follow(..) | Node::Other => {
-                Form::Own(t)
+        let mut todo = vec![(t, false)];
+        while let Some((u, parts_done)) = todo.pop() {
+            if self.forms.contains_key(&u) {
+                continue;
             }
-        };
-        let f = *self.by_form.entry(form).or_insert(t);
-        self.forms.insert(t, f);
-        f
+            if !parts_done {
+                todo.push((u, true));
+                let at = todo.len();
+                self.for_each_part(u, |p| todo.push((p, false)));
+                // The parts in their written order, the first on top.
+                todo[at..].reverse();
+                continue;
+            }
+            let form = match self.nodes[u as usize] {
+                Node::Int(n) => Form::Int(n),
+                Node::Bool(b) => Form::Bool(b),
+                Node::Var(x) => Form::Var(x),
+                Node::App(f, args) => Form::App(self.forms[&f], self.formed(args)),
+                Node::Prim(p, args) => Form::Prim(std::mem::discriminant(&p), self.formed(args)),
+                Node::Let(x, e, b) => Form::Let(x, self.forms[&e], self.forms[&b]),
+                Node::If(g, a, b) => Form::If(self.forms[&g], self.forms[&a], self.forms[&b]),
+                Node::Lit(_) | Node::Lam(..) | Node::PrimFn(_) | Node::Follow(..) | Node::Other => {
+                    Form::Own(u)
+                }
+            };
+            let f = *self.by_form.entry(form).or_insert(u);
+            self.forms.insert(u, f);
+        }
+        self.forms[&t]
     }
 
-    fn forms(&mut self, args: Span) -> Vec<Tid> {
+    /// The parts of `t` that [`Terms::form`] reads, in their written order.
+    fn for_each_part(&self, t: Tid, mut each: impl FnMut(Tid)) {
+        match self.nodes[t as usize] {
+            Node::App(f, args) => {
+                each(f);
+                (0..args.len()).for_each(|i| each(args.get(&self.kids, i)));
+            }
+            Node::Prim(_, args) => (0..args.len()).for_each(|i| each(args.get(&self.kids, i))),
+            Node::Let(_, e, b) => [e, b].into_iter().for_each(each),
+            Node::If(g, a, b) => [g, a, b].into_iter().for_each(each),
+            _ => {}
+        }
+    }
+
+    /// The forms of the terms `args`, each already formed.
+    fn formed(&self, args: Span) -> Vec<Tid> {
         (0..args.len())
-            .map(|i| self.form(args.get(&self.kids, i)))
+            .map(|i| self.forms[&args.get(&self.kids, i)])
             .collect()
     }
 
@@ -10954,11 +10989,21 @@ impl ByClass {
         on: Option<&[(usize, usize)]>,
     ) -> Option<ByClass> {
         let at = (self.base.as_ref(), (0, self.n), on);
-        let root = cls_clamp(&self.root, (1, self.shift), at, min, c, dom)?;
-        let bound = Bound {
-            b: self.bound.b.max(c.unsigned_abs().into()),
-            ..self.bound
+        // The bound is that of the clamped leaves, with no map above them, and not the bound
+        // before the clamp with `c` added: the bound before it holds the product of every
+        // multiplier the maps above the leaves ever had, which a chain of `k` levels each of
+        // which may double its term (`2 * t`) grows as `2^k` while the clamps keep the values
+        // small. Kept that way, the bound passed `i64` near `k = 320` and every enclosing
+        // `if` was read by its guard and arms, in time exponential in the depth (item
+        // PREIMAGE-chain-cliff). Each step before the clamp was checked against the bound
+        // when it was made, so the leaves now are all that a later step reads.
+        let mut bound = Bound {
+            a: 0,
+            b: 0,
+            x: self.bound.x,
+            mul: 1,
         };
+        let root = cls_clamp(&self.root, (1, self.shift), at, min, c, dom, &mut bound)?;
         bound.holds().then(|| ByClass {
             root,
             n: self.n,
@@ -11093,6 +11138,7 @@ type ClampAt<'a> = (Option<&'a Pa>, (usize, usize), Option<&'a [(usize, usize)]>
 /// The tree `node` over the classes `span` with the map `f` applied above it and every leaf's
 /// summary clamped ([`ByClass::clamp`]); `base` is the summary of the leaves [`Leaf::Base`].
 /// With `on`, a node that meets none of those ranges is a placeholder ([`Walk::by_class_on`]).
+/// `bound` is widened to hold each clamped leaf ([`Bound::of`]).
 fn cls_clamp(
     node: &Rc<Cls>,
     f: (i128, i128),
@@ -11100,6 +11146,7 @@ fn cls_clamp(
     min: bool,
     c: i64,
     dom: &IntervalSet,
+    bound: &mut Bound,
 ) -> Option<Rc<Cls>> {
     if on.is_some_and(|r| !ranges_meet(r, (lo, hi))) {
         return Some(cls_unread());
@@ -11114,13 +11161,15 @@ fn cls_clamp(
                     base?.affine(g.0, g.1)
                 }
             };
-            Cls::Same(Leaf::Own(pa.clamp(min, c, dom)?))
+            let pa = pa.clamp(min, c, dom)?;
+            *bound = bound.max(Bound::of(&pa, bound.x));
+            Cls::Same(Leaf::Own(pa))
         }
         Cls::Split { left, right, tag } => {
             let f = compose(*tag, f)?;
             Cls::Split {
-                left: cls_clamp(left, f, (base, (lo, mid), on), min, c, dom)?,
-                right: cls_clamp(right, f, (base, (mid, hi), on), min, c, dom)?,
+                left: cls_clamp(left, f, (base, (lo, mid), on), min, c, dom, bound)?,
+                right: cls_clamp(right, f, (base, (mid, hi), on), min, c, dom, bound)?,
                 tag: (1, 0),
             }
         }
@@ -14837,22 +14886,71 @@ mod tests {
         }
     }
 
-    /// The chains of the two benchmarks held below the length where reading them stops being
-    /// near linear (item PREIMAGE-chain-cliff, see `bench`) are read exactly on both sides of
-    /// it: guards on `x mod 3` (seed `0x5851_f42d_4c95_7f2d`, cliff near k = 340) at k = 320
-    /// and 350, 22 ms and 118 ms; mixed guards on `y` (seed `0xa`, cliff near k = 2150) at
-    /// k = 2000, 69 ms (measured 2026-11-14, load 28 to 45). Past its cliff the second chain
-    /// takes 0.5 s at k = 2150 and grows fourfold each 50 more, a benchmark's size, not a test's.
+    /// The chains of the two benchmarks are read exactly on both sides of the lengths where
+    /// reading them stopped being near linear before item PREIMAGE-chain-cliff (see `bench`):
+    /// guards on `x mod 3` (seed `0x5851_f42d_4c95_7f2d`, cliff near k = 340) at k = 320 and
+    /// 400, mixed guards on `y` (seed `0xa`, cliff near k = 2150) at k = 2000 and 2250, and
+    /// that chain at k = 4000, where the recursion of `Terms::form` overflowed the 2 MiB test
+    /// thread stack. Each took over 3 s past its cliff; now 20 to 100 ms (debug build,
+    /// measured 2026-11-14, load 25 to 38).
     #[test]
     fn chains_are_read_exactly_on_both_sides_of_the_cliff() {
         for (seed, k) in [
             (0x5851_f42d_4c95_7f2d, 320),
-            (0x5851_f42d_4c95_7f2d, 350),
+            (0x5851_f42d_4c95_7f2d, 400),
             (0xa, 2000),
+            (0xa, 2250),
+            (0xa, 4000),
         ] {
             chain_preimage(seed, k);
         }
     }
+
+    /// A summary by class of `x` doubled and clamped back to `[-3, 3]` a hundred times keeps
+    /// its bound, and its values are those of the steps run one by one: the bound after a
+    /// clamp is that of the clamped leaves. With the bound before the clamp kept, the
+    /// multipliers of the doublings passed `i64` near round 60 and the summary was refused,
+    /// the cause of the chains' cliff (item PREIMAGE-chain-cliff).
+    #[test]
+    fn a_summary_clamped_after_each_doubling_keeps_its_bound() {
+        let dom = IntervalSet::of(-6, 6);
+        let x: Arc<str> = "x".into();
+        let pa = Pa::Linear {
+            var: x.clone(),
+            a: Int::ONE,
+            b: Int::ZERO,
+        };
+        let bound = Bound {
+            a: 1,
+            b: 0,
+            x: 6,
+            mul: 1,
+        };
+        let mut c = ByClass::based(pa, Some(x), bound, 3).expect("x in [-6, 6]");
+        for round in 0..100 {
+            c = c
+                .affine((2, 0))
+                .and_then(|c| c.clamp(true, 3, &dom, None))
+                .and_then(|c| c.clamp(false, -3, &dom, None))
+                .unwrap_or_else(|| panic!("round {round}: the summary is refused"));
+        }
+        for class in 0..3 {
+            let pieces = pa_pieces(&c.get(class).expect("a summary in each class"));
+            for u in -6..=6_i64 {
+                let mut v = u;
+                for _ in 0..100 {
+                    v = (2 * v).clamp(-3, 3);
+                }
+                let at = End::of(u);
+                let (_, a, b) = (pieces.iter())
+                    .find(|(span, ..)| span.as_ref().is_none_or(|(lo, hi)| *lo <= at && at <= *hi))
+                    .unwrap_or_else(|| panic!("class {class}: a piece at {u}"));
+                let got = (&(a * &Int::from(u)) + b).to_i128();
+                assert_eq!(got, Some(v.into()), "class {class}, x = {u}");
+            }
+        }
+    }
+
     /// `false || (if 2x > max(x, x) {ym + -3 <= -6} else {2x > max(x, x)}) ||
     /// (let n0 = min(x, 3) - min(x, -3) in let n1 = stage(n0) in ... n_k == -7)`, with
     /// `ym = if y mod 2 != 1 {-1} else {-1}` and `stage(n) = if n < 2 {-1} else {(if n != -4

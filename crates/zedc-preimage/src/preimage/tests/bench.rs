@@ -51,29 +51,31 @@ fn a_chain_is_made_in_work_of_order_its_length() {
 /// term below, with `min` and `max` across their constant and `0 * u` (COMPLEXITY.md row
 /// S22-order-chain: 6.7 ms, 209 ms, 3.37 s and 30.2 s at k = 20, 40, 80 and 160). Each
 /// level is one summary over the classes ([`ByClass`]), so the shared term is read once.
-/// Held at k = 40 (1x about 1 ms): this seed's chain is read in 5 to 15 ms up to k = 320,
-/// then 54 ms at 340, 122 ms at 360, 0.93 s at 380, 3.5 s at 400 and over 60 s at 500
-/// (measured 2026-11-14, load 20 to 30), so 8k must stay under about 340 (item
-/// PREIMAGE-chain-cliff).
+/// Until item PREIMAGE-chain-cliff it was held at k = 40: past k = 320 the bound of the
+/// summaries by class ([`ByClass::clamp`]) kept the multipliers of the doublings that the
+/// clamps had undone, passed `i64`, and each level was read by its guard and arms, 3.5 s at
+/// k = 400 and over 60 s at 500. Now 20 ms at k = 400, 87 ms at 2000, 1.06 s at 32,000 and
+/// 2.3 s at 64,000 (debug build, measured 2026-11-14, load 25 to 38).
 #[test]
 fn a_chain_is_read_in_time_near_its_length() {
-    crate::scaling::check_order("the preimage of a chain of k ifs", 40, 1, |k| {
+    crate::scaling::check_order("the preimage of a chain of k ifs", 16_000, 1, |k| {
         chain_preimage(0x5851_f42d_4c95_7f2d, k)
     });
 }
 
 /// A chain on `y` whose guards compare `y` with constants or take `y mod 2`, with `min`
 /// arms across their constant, and `if`s on a comparison whose arms read the remainder in
-/// different ways ([`Walk::by_class_if`], [`ByClass::clamp`]). Held at k = 250 (1x about
-/// 25 ms): this seed's chain is read in 51 ms at k = 2000, then 0.34 s at 2150, 1.1 s at
-/// 2200, 4.4 s at 2250 and 17.5 s at 2300, and at 4000 the recursion of `Terms::form`
-/// overflows the default 2 MiB test thread stack (measured 2026-11-14; item
-/// PREIMAGE-chain-cliff).
+/// different ways ([`Walk::by_class_if`], [`ByClass::clamp`]). Until item PREIMAGE-chain-cliff
+/// it was held at k = 250: past k = 2000 the bound of [`ByClass::clamp`] passed `i64` as in
+/// [`a_chain_is_read_in_time_near_its_length`], 4.4 s at k = 2250 and 17.5 s at 2300, and at
+/// 4000 the recursion of `Terms::form` overflowed the 2 MiB test thread stack. Now 51 ms at
+/// k = 2250, 0.1 s at 4000, 0.95 s at 32,000 and 3.5 s at 64,000 (debug build, measured
+/// 2026-11-14, load 25 to 38).
 #[test]
 fn a_chain_with_clamps_is_read_in_time_near_its_length() {
     crate::scaling::check_order(
         "the preimage of a chain of k ifs, mixed guards",
-        250,
+        16_000,
         1,
         |k| chain_preimage(0xa, k),
     );
