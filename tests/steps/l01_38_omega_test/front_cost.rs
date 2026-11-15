@@ -48,16 +48,48 @@ fn holds_in_box(f: &Formula) -> bool {
     })
 }
 
-/// 200 conjunctions of [`unit_rows_agree`] of a new seed each run; both answers occur. The 600
-/// of seed 0x544 (1.1 s at load 25) are in `bench::front_cost`.
+/// 200 conjunctions of [`unit_rows_agree`] of a new seed each run. Both answers occur at every
+/// seed tried, but no count of them is reached at every seed, so none is asserted;
+/// [`unit_rows_built_with_and_without_a_point_agree`] asserts each answer. The 600 of seed 0x544
+/// (1.1 s at load 25) are in `bench::front_cost`.
 #[test]
 fn unit_rows_are_decided_as_enumeration_and_the_whole_path_decide_them() {
-    let (mut rng, seed) = Rng::fresh("front_cost unit rows");
-    let (with, without) = unit_rows_agree(&mut rng, 200);
-    assert!(
-        with >= 30 && without >= 30,
-        "seed {seed}: {with} with a point, {without} without"
-    );
+    let (mut rng, _) = Rng::fresh("front_cost unit rows");
+    unit_rows_agree(&mut rng, 200);
+}
+
+/// `decide` answers `f` as enumeration over the box `[-3, 3]^4` does and as `satisfiable` does,
+/// and the point `satisfiable` gives holds; whether `f` has a point.
+fn unit_rows_answer(f: &Formula) -> bool {
+    let point = holds_in_box(f);
+    assert_eq!(decide(f), Ok(point), "{f}");
+    let found = satisfiable(f).expect("answered");
+    assert_eq!(found.is_some(), point, "{f}");
+    if let Some(m) = &found {
+        assert!(f.holds(m), "{m:?} fails {f}");
+    }
+    point
+}
+
+/// Two conjunctions of the shape [`unit_rows_agree`] draws, the box rows and one row of two
+/// unit terms each: `x0 - x1 - 4 >= 0` holds at `x0 = 3, x1 = -1`; `x0 + x1 - 4 == 0` holds at
+/// `(2, 2)` beside `x0 - x1 - 1 == 0`, which asks for `2 x0 == 5`, so together they have no
+/// integer point.
+#[test]
+fn unit_rows_built_with_and_without_a_point_agree() {
+    let boxed = |mut rows: Vec<Formula>| {
+        rows.extend((0..4).flat_map(|i| [row(&[(i, 1)], 3, false), row(&[(i, -1)], 3, false)]));
+        Formula::and(rows)
+    };
+    assert!(unit_rows_answer(&boxed(vec![row(
+        &[(0, 1), (1, -1)],
+        -4,
+        false
+    )])));
+    assert!(!unit_rows_answer(&boxed(vec![
+        row(&[(0, 1), (1, 1)], -4, true),
+        row(&[(0, 1), (1, -1)], -1, true),
+    ])));
 }
 
 /// `count` random conjunctions of one to six rows of one or two unit terms, inequalities and
@@ -82,12 +114,7 @@ pub(super) fn unit_rows_agree(rng: &mut Rng, count: usize) -> (usize, usize) {
             rows.push(row(&terms, rng.int(-4, 4), rng.below(3) == 0));
         }
         let f = Formula::and(rows);
-        let point = holds_in_box(&f);
-        assert_eq!(decide(&f), Ok(point), "{f}");
-        let found = satisfiable(&f).expect("answered");
-        assert_eq!(found.is_some(), point, "{f}");
-        if let Some(m) = found {
-            assert!(f.holds(&m), "{m:?} fails {f}");
+        if unit_rows_answer(&f) {
             with += 1;
         } else {
             without += 1;

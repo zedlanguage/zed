@@ -267,13 +267,14 @@ pub(super) fn steps_down(n: usize, f: &Formula) -> usize {
     (0..n).filter(|&i| value(&m, i + 1) < value(&m, i)).count()
 }
 
-/// 80 formulas of a new seed each run, through [`unit_row_disjunctions_agree`]; both answers
-/// occur. The 400 of seed 0x9eed1 (1.46 s at load 25) are in `bench::model`.
+/// 80 formulas of a new seed each run, through [`unit_row_disjunctions_agree`]. Both answers
+/// occur at every seed tried, but no count of them is reached at every seed, so none is
+/// asserted; [`disjunctions_of_unit_rows_built_with_and_without_a_point_are_answered`] asserts
+/// each. The 400 of seed 0x9eed1 (1.46 s at load 25) are in `bench::model`.
 #[test]
 fn satisfiable_agrees_with_decide_on_disjunctions_of_unit_rows() {
-    let (mut rng, seed) = Rng::fresh("model disjunctions of unit rows");
-    let c = unit_row_disjunctions_agree(&mut rng, 80);
-    assert!(c.with > 12 && c.without > 12, "seed {seed}: {c:?}");
+    let (mut rng, _) = Rng::fresh("model disjunctions of unit rows");
+    unit_row_disjunctions_agree(&mut rng, 80);
 }
 
 /// The answers of [`unit_row_disjunctions_agree`]: with a point, without one, and refused by
@@ -311,48 +312,80 @@ pub(super) fn unit_row_disjunctions_agree(rng: &mut Rng, count: usize) -> UnitRo
         for _ in 0..rng.below(n) {
             rows.push(unit(rng));
         }
-        let mut parts = vec![formula(&rows)];
         let mut ors: Vec<Vec<Vec<Row>>> = Vec::new();
         for _ in 0..3 + rng.below(6) {
             let arms: Vec<Vec<Row>> = (0..2 + rng.below(2))
                 .map(|_| (0..1 + rng.below(2)).map(|_| unit(rng)).collect())
                 .collect();
-            parts.push(Formula::or(arms.iter().map(|a| formula(a)).collect()));
             ors.push(arms);
         }
-        let f = Formula::and(parts);
-        // Whether some point of the box meets the rows and one arm of each disjunction.
-        let expected = {
-            let mut p = vec![Int::from(-3); n];
-            'points: loop {
-                if meets(&rows, &p) && ors.iter().all(|arms| arms.iter().any(|a| meets(a, &p))) {
-                    break true;
-                }
-                for v in &mut p {
-                    if *v < Int::from(3) {
-                        *v = &*v + &Int::ONE;
-                        continue 'points;
-                    }
-                    *v = Int::from(-3);
-                }
-                break false;
-            }
-        };
-        let Ok(decided) = decide(&f) else {
-            c.refused += 1;
-            continue;
-        };
-        assert_eq!(decided, expected, "{f}");
-        let found = satisfiable(&f).unwrap_or_else(|e| panic!("{e:?} where decide answers {f}"));
-        assert_eq!(found.is_some(), decided, "{f}");
-        if let Some(m) = found {
-            assert!(f.holds(&m), "{m:?} fails {f}");
-            c.with += 1;
-        } else {
-            c.without += 1;
+        match disjunctions_answer(n, &rows, &ors) {
+            None => c.refused += 1,
+            Some(true) => c.with += 1,
+            Some(false) => c.without += 1,
         }
     }
     c
+}
+
+/// The formula of `rows` and of the disjunctions `ors`, each a list of arms of rows, over `n`
+/// variables in `[-3, 3]` (the box rows among `rows`): `None` when `decide` refuses it;
+/// otherwise `decide` answers as enumeration over the box does, `satisfiable` gives the same
+/// answer, and the point it gives meets the formula. Whether it has a point.
+fn disjunctions_answer(n: usize, rows: &[Row], ors: &[Vec<Vec<Row>>]) -> Option<bool> {
+    let mut parts = vec![formula(rows)];
+    parts.extend(
+        ors.iter()
+            .map(|arms| Formula::or(arms.iter().map(|a| formula(a)).collect())),
+    );
+    let f = Formula::and(parts);
+    // Whether some point of the box meets the rows and one arm of each disjunction.
+    let expected = {
+        let mut p = vec![Int::from(-3); n];
+        'points: loop {
+            if meets(rows, &p) && ors.iter().all(|arms| arms.iter().any(|a| meets(a, &p))) {
+                break true;
+            }
+            for v in &mut p {
+                if *v < Int::from(3) {
+                    *v = &*v + &Int::ONE;
+                    continue 'points;
+                }
+                *v = Int::from(-3);
+            }
+            break false;
+        }
+    };
+    let decided = decide(&f).ok()?;
+    assert_eq!(decided, expected, "{f}");
+    let found = satisfiable(&f).unwrap_or_else(|e| panic!("{e:?} where decide answers {f}"));
+    assert_eq!(found.is_some(), decided, "{f}");
+    if let Some(m) = found {
+        assert!(f.holds(&m), "{m:?} fails {f}");
+    }
+    Some(decided)
+}
+
+/// Two formulas of the shape [`unit_row_disjunctions_agree`] draws, over three variables in
+/// `[-3, 3]` with three disjunctions `x0 - x1 - 1 >= 0 || x1 - x0 - 1 >= 0`, that is
+/// `x0 != x1`: alone they hold at `(1, 0, 0)`; with the rows `x0 - x1 >= 0` and
+/// `x1 - x0 >= 0`, which make `x0 == x1`, no arm of a disjunction holds, so there is no point.
+/// Each is answered, not refused.
+#[test]
+fn disjunctions_of_unit_rows_built_with_and_without_a_point_are_answered() {
+    let rows: Vec<Row> = (0..3)
+        .flat_map(|i| [row(&[(i, 1)], 3), row(&[(i, -1)], 3)])
+        .collect();
+    let apart = vec![
+        vec![row(&[(0, 1), (1, -1)], -1)],
+        vec![row(&[(1, 1), (0, -1)], -1)],
+    ];
+    let ors = vec![apart.clone(), apart.clone(), apart];
+    assert_eq!(disjunctions_answer(3, &rows, &ors), Some(true));
+    let mut equal = rows;
+    equal.push(row(&[(0, 1), (1, -1)], 0));
+    equal.push(row(&[(1, 1), (0, -1)], 0));
+    assert_eq!(disjunctions_answer(3, &equal, &ors), Some(false));
 }
 
 #[test]

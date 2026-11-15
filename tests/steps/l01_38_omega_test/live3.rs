@@ -59,17 +59,22 @@ fn random_rows(rng: &mut Rng, n: usize, c: i64, k: i64) -> Vec<Row3> {
         .collect()
 }
 
-/// 600 random systems in the cube `[-3, 3]^3` of a new seed each run, against enumeration; both
-/// answers occur. The 3000 systems of seed 0x13a01 (1.5 s at load 25) are in `bench::live3`.
+/// 600 random systems in the cube `[-3, 3]^3` of a new seed each run, against enumeration. Both
+/// answers occur at every seed tried, but no count of them is reached at every seed, so none is
+/// asserted; [`built_systems_give_each_answer_of_each_family`] asserts each answer on a built
+/// system. The 3000 systems of seed 0x13a01 (1.5 s at load 25) are in `bench::live3`.
 #[test]
 fn random_bounded_systems_match_enumeration() {
-    let (mut rng, seed) = Rng::fresh("live3 bounded systems");
-    let (sat, unsat) = bounded_systems_match_enumeration(&mut rng, 600);
-    // Both answers occur, so neither check passes by never being asked.
-    assert!(
-        sat > 60 && unsat > 60,
-        "seed {seed}: {sat} with a point, {unsat} without"
-    );
+    let (mut rng, _) = Rng::fresh("live3 bounded systems");
+    bounded_systems_match_enumeration(&mut rng, 600);
+}
+
+/// `solve` answers `rows` as enumeration over the cube `[-3, 3]^3` answers; whether a point
+/// lies there.
+fn matches_enumeration_in_the_cube(rows: &[Row3]) -> bool {
+    let truth = enumerate(rows, 3);
+    assert_eq!(solve(rows).is_some(), truth, "{rows:?}");
+    truth
 }
 
 /// `count` random systems of 1 to 6 rows in the cube `[-3, 3]^3`, each answered as enumeration
@@ -80,9 +85,7 @@ pub(super) fn bounded_systems_match_enumeration(rng: &mut Rng, count: usize) -> 
         let n = 1 + rng.below(6);
         let mut rows = random_rows(rng, n, 6, 12);
         rows.extend(cube(3));
-        let truth = enumerate(&rows, 3);
-        assert_eq!(solve(&rows).is_some(), truth, "{rows:?}");
-        if truth {
+        if matches_enumeration_in_the_cube(&rows) {
             sat += 1;
         } else {
             unsat += 1;
@@ -91,17 +94,35 @@ pub(super) fn bounded_systems_match_enumeration(rng: &mut Rng, count: usize) -> 
     (sat, unsat)
 }
 
-/// 400 unbounded systems of [`unbounded_systems_match_enumeration`] of a new seed each run;
-/// each outcome occurs: a point in the window, one only outside it, and none. The 1500 of seed
-/// 0x13a02 (0.78 s at load 14, 1.2 s at load 38) are in `bench::live3`.
+/// 400 unbounded systems of [`unbounded_systems_match_enumeration`] of a new seed each run.
+/// Each outcome, a point in the window, one only outside it, and none, is asserted on a built
+/// system in [`built_systems_give_each_answer_of_each_family`], since no count of them is
+/// reached at every seed. The 1500 of seed 0x13a02 (0.78 s at load 14, 1.2 s at load 38) are in
+/// `bench::live3`.
 #[test]
 fn random_unbounded_systems_match_enumeration_in_a_window() {
-    let (mut rng, seed) = Rng::fresh("live3 unbounded systems");
-    let (inside, outside, none) = unbounded_systems_match_enumeration(&mut rng, 400);
-    assert!(
-        inside > 100 && outside > 0 && none > 8,
-        "seed {seed}: {inside}, {outside}, {none}"
-    );
+    let (mut rng, _) = Rng::fresh("live3 unbounded systems");
+    unbounded_systems_match_enumeration(&mut rng, 400);
+}
+
+/// What [`in_the_window`] saw: a point inside the window `[-8, 8]^3`, one only outside it, or
+/// none.
+#[derive(Debug, PartialEq)]
+enum Window {
+    Inside,
+    Outside,
+    None,
+}
+
+/// `solve` gives a point of `rows` when the window `[-8, 8]^3` holds one, and the point it gives
+/// holds every row.
+fn in_the_window(rows: &[Row3]) -> Window {
+    match (solve(rows), enumerate(rows, 8)) {
+        (Some(_), true) => Window::Inside,
+        (Some(_), false) => Window::Outside,
+        (None, false) => Window::None,
+        (None, true) => panic!("no point found in rows with one: {rows:?}"),
+    }
 }
 
 /// `count` systems of one to five rows with no bound: a point of the window `[-8, 8]^3` is a
@@ -116,27 +137,23 @@ pub(super) fn unbounded_systems_match_enumeration(
     for _ in 0..count {
         let n = 1 + rng.below(5);
         let rows = random_rows(rng, n, 5, 10);
-        let seen = enumerate(&rows, 8);
-        match (solve(&rows), seen) {
-            (Some(_), true) => inside += 1,
-            (Some(_), false) => outside += 1,
-            (None, false) => none += 1,
-            (None, true) => panic!("no point found in rows with one: {rows:?}"),
+        match in_the_window(&rows) {
+            Window::Inside => inside += 1,
+            Window::Outside => outside += 1,
+            Window::None => none += 1,
         }
     }
     (inside, outside, none)
 }
 
-/// 600 equalities in the cube `[-3, 3]^3` of a new seed each run, against enumeration; both
-/// answers occur. The 2000 of seed 0x13a03 (1.25 s at load 25) are in `bench::live3`.
+/// 600 equalities in the cube `[-3, 3]^3` of a new seed each run, against enumeration; each
+/// answer is asserted on a built system in [`built_systems_give_each_answer_of_each_family`],
+/// since no count of them is reached at every seed. The 2000 of seed 0x13a03 (1.25 s at load 25)
+/// are in `bench::live3`.
 #[test]
 fn flat_and_equality_systems_match_enumeration() {
-    let (mut rng, seed) = Rng::fresh("live3 flat and equality systems");
-    let (sat, unsat) = flat_and_equality_systems_match(&mut rng, 600);
-    assert!(
-        sat > 60 && unsat > 60,
-        "seed {seed}: {sat} with a point, {unsat} without"
-    );
+    let (mut rng, _) = Rng::fresh("live3 flat and equality systems");
+    flat_and_equality_systems_match(&mut rng, 600);
 }
 
 /// `count` equalities with up to two other rows in the cube `[-3, 3]^3`, each answered as
@@ -153,9 +170,7 @@ pub(super) fn flat_and_equality_systems_match(rng: &mut Rng, count: usize) -> (u
         let extra = rng.below(3);
         rows.extend(random_rows(rng, extra, 4, 8));
         rows.extend(cube(3));
-        let truth = enumerate(&rows, 3);
-        assert_eq!(solve(&rows).is_some(), truth, "{rows:?}");
-        if truth {
+        if matches_enumeration_in_the_cube(&rows) {
             sat += 1;
         } else {
             unsat += 1;
@@ -279,18 +294,70 @@ fn corner_cases() {
 
 /// Random systems of a new seed each run, under each order of the variables and with the rows
 /// reversed: 30 unbounded, most of which have a point, and 30 in the cube `[-3, 3]^3`, about 40%
-/// of which have none (fewer than 2 on either side about 5 times in a million), so both answers
-/// are moved. The 400 unbounded systems of seed 0x13a06 (2.5 s at load 25) are in
-/// `bench::live3`.
+/// of which have none. No count of either answer is reached at every seed, so each is moved on
+/// a built system in [`built_systems_give_each_answer_of_each_family`]. The 400 unbounded
+/// systems of seed 0x13a06 (2.5 s at load 25) are in `bench::live3`.
 #[test]
 fn the_answer_does_not_depend_on_the_order_of_variables_or_rows() {
-    let (mut rng, seed) = Rng::fresh("live3 order of variables and rows");
-    let free = order_does_not_change_the_answer(&mut rng, 30, false);
-    let (sat, unsat) = order_does_not_change_the_answer(&mut rng, 30, true);
-    assert!(
-        sat >= 2 && unsat >= 2,
-        "seed {seed}: in the cube, {sat} with a point, {unsat} without; unbounded {free:?}"
+    let (mut rng, _) = Rng::fresh("live3 order of variables and rows");
+    order_does_not_change_the_answer(&mut rng, 30, false);
+    order_does_not_change_the_answer(&mut rng, 30, true);
+}
+
+/// `rows` have the same answer under every order of the variables and with the rows reversed;
+/// whether they have a point.
+fn order_free(mut rows: Vec<Row3>) -> bool {
+    let perms = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let first = solve(&rows).is_some();
+    for p in perms {
+        let moved: Vec<Row3> = rows
+            .iter()
+            .map(|(a, k)| ([0, 1, 2].map(|i| a[p[i]].clone()), k.clone()))
+            .collect();
+        assert_eq!(solve(&moved).is_some(), first, "{rows:?} under {p:?}");
+    }
+    rows.reverse();
+    assert_eq!(solve(&rows).is_some(), first, "{rows:?} reversed");
+    first
+}
+
+/// Each answer of each random family above on a system of the family's shape built to give it.
+/// `x + y + z - 9 >= 0` in the cube `[-3, 3]^3` holds only at `(3, 3, 3)`, each term being at
+/// most 3; adding `-x - y - z + 8 >= 0` asks for a sum at least 9 and at most 8, so no point.
+/// Unbounded, in the window `[-8, 8]^3`: `x >= 0` holds at the origin; `x - 9 >= 0` holds at
+/// `(9, 0, 0)` and at no point of the window; `2x - 1 >= 0 && -2x + 1 >= 0` asks for `2x == 1`,
+/// a rational point and no integer one. As an equality in the cube: `x + y + z == 0` holds at
+/// the origin; `2x + 2y + 2z + 1 == 0` has an odd constant and even coefficients, so no
+/// integer point. The coefficients and constants lie in what each family draws.
+#[test]
+fn built_systems_give_each_answer_of_each_family() {
+    let in_cube = |mut rows: Vec<Row3>| {
+        rows.extend(cube(3));
+        rows
+    };
+    let corner = row([1, 1, 1], -9);
+    let point = in_cube(vec![corner.clone()]);
+    let empty = in_cube(vec![corner, row([-1, -1, -1], 8)]);
+    assert!(matches_enumeration_in_the_cube(&point));
+    assert!(!matches_enumeration_in_the_cube(&empty));
+    assert!(order_free(point));
+    assert!(!order_free(empty));
+    assert_eq!(in_the_window(&[row([1, 0, 0], 0)]), Window::Inside);
+    assert_eq!(in_the_window(&[row([1, 0, 0], -9)]), Window::Outside);
+    assert_eq!(
+        in_the_window(&[row([2, 0, 0], -1), row([-2, 0, 0], 1)]),
+        Window::None
     );
+    let equality = |a: [i64; 3], k: i64| in_cube(vec![row(a, k), row(a.map(|c| -c), -k)]);
+    assert!(matches_enumeration_in_the_cube(&equality([1, 1, 1], 0)));
+    assert!(!matches_enumeration_in_the_cube(&equality([2, 2, 2], 1)));
 }
 
 /// `count` random systems of 2 to 6 rows, in the cube `[-3, 3]^3` when `bounded`, each with
@@ -301,14 +368,6 @@ pub(super) fn order_does_not_change_the_answer(
     count: usize,
     bounded: bool,
 ) -> (usize, usize) {
-    let perms = [
-        [0, 1, 2],
-        [0, 2, 1],
-        [1, 0, 2],
-        [1, 2, 0],
-        [2, 0, 1],
-        [2, 1, 0],
-    ];
     let (mut sat, mut unsat) = (0, 0);
     for _ in 0..count {
         let n = 2 + rng.below(5);
@@ -316,17 +375,7 @@ pub(super) fn order_does_not_change_the_answer(
         if bounded {
             rows.extend(cube(3));
         }
-        let first = solve(&rows).is_some();
-        for p in perms {
-            let moved: Vec<Row3> = rows
-                .iter()
-                .map(|(a, k)| ([0, 1, 2].map(|i| a[p[i]].clone()), k.clone()))
-                .collect();
-            assert_eq!(solve(&moved).is_some(), first, "{rows:?} under {p:?}");
-        }
-        rows.reverse();
-        assert_eq!(solve(&rows).is_some(), first, "{rows:?} reversed");
-        if first {
+        if order_free(rows) {
             sat += 1;
         } else {
             unsat += 1;

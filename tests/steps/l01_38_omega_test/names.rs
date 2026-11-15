@@ -704,54 +704,89 @@ fn swap_symmetric(rng: &mut Rng) -> Vec<Row> {
 #[test]
 fn ties_taken_by_a_swap_agree_with_enumeration() {
     // The answer, whether or not the tie is taken and whatever splinters follow it, is that
-    // of enumerating the box, under the naming as written and under the swap.
+    // of enumerating the box, under the naming as written and under the swap. Most cases are
+    // answered (358 to 372 of 400 in three runs); some are refused with `Growth`, as they are
+    // without the rule. No count of the answered is reached at every seed, so none is
+    // asserted; `built_ties_taken_by_a_swap_are_answered` asserts an answer of each kind.
     let (mut rng, seed) = Rng::fresh("ties taken by a swap");
-    let span = -4..=4i64;
-    let mut answered = 0;
     for case in 0..200 {
         let rows = swap_symmetric(&mut rng);
-        let mut has_point = false;
-        'search: for a in span.clone() {
-            for b in span.clone() {
-                for c in span.clone() {
-                    for d in span.clone() {
-                        if holds(&rows, &[a, b, c, d]) {
-                            has_point = true;
-                            break 'search;
-                        }
+        swap_answers(&rows, &format!("seed {seed:#x}, case {case}"));
+    }
+}
+
+/// `rows`, of [`swap_symmetric`]'s shape, and the same rows with `v0 <= w <= 4` over a fifth
+/// variable `w`, each answered alike under the naming as written and under the swap of `v0`
+/// and `v1`, and as enumeration of the box `-4..=4` answers wherever `decide` answers; the
+/// answers of `decide` on the two, `None` where it refuses. `what` is named on failure.
+fn swap_answers(rows: &[Row], what: &str) -> [Option<bool>; 2] {
+    let span = -4..=4i64;
+    let mut has_point = false;
+    'search: for a in span.clone() {
+        for b in span.clone() {
+            for c in span.clone() {
+                for d in span.clone() {
+                    if holds(rows, &[a, b, c, d]) {
+                        has_point = true;
+                        break 'search;
                     }
                 }
             }
         }
-        // The control: the same rows with `v0 <= w <= 4` over a fifth variable `w`, which the
-        // swap does not map onto themselves. Its projection `v0 <= 4` the box holds, so `w`
-        // changes no answer; but `v0` and `v1` now differ in color, and no tie is taken.
-        let mut with_w: Vec<Row> = rows
-            .iter()
-            .map(|r| Row {
-                c: [&r.c[..], &[0]].concat(),
-                ..r.clone()
-            })
-            .collect();
-        with_w.push(ge(&[-1, 0, 0, 0, 1], 0));
-        with_w.push(ge(&[0, 0, 0, 0, -1], 4));
-        for rows in [&rows, &with_w] {
-            let [written, swapped] =
-                [[0, 1, 2, 3, 4], [1, 0, 2, 3, 4]].map(|name| formula(rows, &name));
-            assert_eq!(
-                answer(&written),
-                answer(&swapped),
-                "seed {seed:#x}, case {case}: {rows:?}"
-            );
-            if let Ok(got) = decide(&written) {
-                assert_eq!(got, has_point, "seed {seed:#x}, case {case}: {rows:?}");
-                answered += 1;
-            }
-        }
     }
-    // Most cases are answered (358 to 372 of 400 in three runs); some are refused with
-    // `Growth`, as they are without the rule.
-    assert!(answered > 0, "seed {seed:#x}: no case answered");
+    // The control: the same rows with `v0 <= w <= 4` over a fifth variable `w`, which the
+    // swap does not map onto themselves. Its projection `v0 <= 4` the box holds, so `w`
+    // changes no answer; but `v0` and `v1` now differ in color, and no tie is taken.
+    let mut with_w: Vec<Row> = rows
+        .iter()
+        .map(|r| Row {
+            c: [&r.c[..], &[0]].concat(),
+            ..r.clone()
+        })
+        .collect();
+    with_w.push(ge(&[-1, 0, 0, 0, 1], 0));
+    with_w.push(ge(&[0, 0, 0, 0, -1], 4));
+    [rows, &with_w[..]].map(|rows| {
+        let [written, swapped] =
+            [[0, 1, 2, 3, 4], [1, 0, 2, 3, 4]].map(|name| formula(rows, &name));
+        assert_eq!(answer(&written), answer(&swapped), "{what}: {rows:?}");
+        let got = decide(&written).ok();
+        if let Some(got) = got {
+            assert_eq!(got, has_point, "{what}: {rows:?}");
+        }
+        got
+    })
+}
+
+/// Two systems of [`swap_symmetric`]'s shape, each answered, with and without the fifth
+/// variable: `v0 >= 0`, its image `v1 >= 0` and `v0 + v1 >= 0` hold at the origin;
+/// `v0 >= 3`, `v1 >= 3` and `v0 + v1 <= 5` ask for a sum at least 6 and at most 5, so no
+/// point. The coefficients and constants lie in what [`swap_symmetric`] draws.
+#[test]
+fn built_ties_taken_by_a_swap_are_answered() {
+    let point = with_box(
+        &[
+            ge(&[1, 0, 0, 0], 0),
+            ge(&[0, 1, 0, 0], 0),
+            ge(&[1, 1, 0, 0], 0),
+        ],
+        4,
+        4,
+    );
+    assert_eq!(swap_answers(&point, "built, with a point"), [Some(true); 2]);
+    let empty = with_box(
+        &[
+            ge(&[1, 0, 0, 0], -3),
+            ge(&[0, 1, 0, 0], -3),
+            ge(&[-1, -1, 0, 0], 5),
+        ],
+        4,
+        4,
+    );
+    assert_eq!(
+        swap_answers(&empty, "built, with no point"),
+        [Some(false); 2]
+    );
 }
 
 #[test]

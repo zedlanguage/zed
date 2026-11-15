@@ -508,15 +508,14 @@ pub(super) fn reordered_formulas_agree(rng: &mut Rng, from: usize, to: usize) ->
 
 // A proof rule that held on one spelling of `a < 0 || b < 0` and not on `b < 0 || a < 0` would
 // change with a reformatting of the source. 40 formulas of a new seed each run here; the 2000 of
-// seed 0x1380 are many cases, so they run in `bench::omega` (author P178).
+// seed 0x1380 are many cases, so they run in `bench::omega` (author P178). Most draws are changed
+// by the reordering, but no count of them is reached at every seed, so none is asserted here; a
+// formula the reordering changes is checked at fixed seed in
+// `formulas_900_1081_and_1892_of_seed_0x1380_do_not_depend_on_the_order_of_their_disjuncts`.
 #[test]
 fn the_answer_does_not_depend_on_the_order_of_the_disjuncts() {
-    let (mut rng, seed) = Rng::fresh("omega: the order of the disjuncts");
-    let disjunctive = reordered_formulas_agree(&mut rng, 0, 40);
-    assert!(
-        disjunctive > 10,
-        "seed {seed}: {disjunctive} of 40 reordered"
-    );
+    let (mut rng, _) = Rng::fresh("omega: the order of the disjuncts");
+    reordered_formulas_agree(&mut rng, 0, 40);
 }
 
 /// Formulas 900, 1081 and 1892 of seed 0x1380, each changed by the reordering and checked as

@@ -1275,14 +1275,31 @@ pub(super) mod row_sums {
         assert_eq!(answered[3], (false, false));
     }
 
-    /// 200 formulas of the generator of `decide_sat.rs` at a fresh seed, each on both sides of
-    /// the switch, with the projection at the limit checked against brute force; prints how
-    /// often the solver answered below the limit.
+    /// 200 formulas of the generator of `decide_sat.rs` at a fresh seed, through
+    /// [`random_cases_alike_on_both_sides`]. Most have a plan, but no count of them is reached
+    /// at every seed, so none is asserted here; the 20 cases of seed 777 below have an exact
+    /// count, and the built families of
+    /// `each_family_is_answered_alike_on_both_sides_of_the_join_limit` each have a plan.
     #[test]
     fn random_shared_sums_are_answered_alike_on_both_sides_of_the_join_limit() {
         let (_, seed) = zed_tests::instances::Rng::fresh("row_sums: both sides of the limit");
+        random_cases_alike_on_both_sides(seed, 200);
+    }
+
+    /// The first 20 cases of seed 777 of the generator of `decide_sat.rs`, through
+    /// [`random_cases_alike_on_both_sides`]: the count with a plan is exact, so a plan lost
+    /// shows here at every run.
+    #[test]
+    fn the_first_20_shared_sums_of_seed_777_are_answered_alike_on_both_sides_of_the_join_limit() {
+        assert_eq!(random_cases_alike_on_both_sides(777, 20), 17);
+    }
+
+    /// Cases `0..n` of the generator of `decide_sat.rs` at `seed`, each that the join plans
+    /// checked on both sides of the switch, with the projection at the limit checked against
+    /// brute force; prints how often the solver answered below the limit. The count with a plan.
+    fn random_cases_alike_on_both_sides(seed: u64, n: usize) -> usize {
         let (mut decided, mut pointed, mut count) = (0, 0, 0);
-        for (c, (case, sets)) in random_cases(seed, 200).into_iter().enumerate() {
+        for (c, (case, sets)) in random_cases(seed, n).into_iter().enumerate() {
             let f = case.formula();
             let atoms: Vec<Atom> = (0..sets.len()).map(v).collect();
             if !has_plan(&f) {
@@ -1295,10 +1312,10 @@ pub(super) mod row_sums {
             case.is_answered_exactly();
         }
         eprintln!(
-            "both sides of the limit, seed {seed}: {count} of 200 with a plan; below the limit \
+            "both sides of the limit, seed {seed}: {count} of {n} with a plan; below the limit \
              the solver decided {decided} and found a point or none for {pointed}"
         );
-        assert!(count >= 150, "seed {seed}: {count} with a plan");
+        count
     }
 
     /// Whether the join plans `f`: a formula of the class, not settled by its bounds alone,
