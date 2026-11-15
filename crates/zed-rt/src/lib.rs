@@ -32,7 +32,7 @@ mod scaling;
 zed_alloc_count::meter_entry_points!();
 
 pub use bug::bug;
-pub use heap::{Heap, HeldObj, HeldShape, Obj, Parts, Stats, Word};
+pub use heap::{FunObj, Heap, HeldObj, HeldShape, Obj, Parts, Stats, Word};
 #[cfg(feature = "counts")]
 pub use heap::{Released, Survivor};
 // What `Heap::matches` records and `Heap::release` reads, shared with the counting machine.

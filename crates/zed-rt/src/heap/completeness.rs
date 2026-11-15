@@ -193,6 +193,22 @@ fn the_parts_of_each_kind_of_cell() {
             },
             0,
         ),
+        (
+            Obj::Fun(Box::new(FunObj {
+                params: vec!["y".into()],
+                body: Shared::new(zed_kernel::Term::Var("y".into())),
+                names: vec!["a".into(), "b".into()],
+                caps: ws[..2].into(),
+            })),
+            2,
+        ),
+        (
+            Obj::Held(Box::new(HeldObj {
+                shape: HeldShape::Tuple,
+                parts: ws.into(),
+            })),
+            3,
+        ),
     ];
     for (o, n) in objs {
         assert_eq!(o.parts(), &ws[..n], "{o:?}");

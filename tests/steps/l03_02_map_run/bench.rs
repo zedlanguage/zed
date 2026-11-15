@@ -290,3 +290,58 @@ fn a_display_of_functions_read_and_applied_runs_in_linear_time() {
         run,
     );
 }
+
+/// `zedc run` and the executable of a program whose display `b` of n functions `(y -> y + i)`
+/// goes through `op`, which keeps each, then has each function read and applied to 1 by
+/// `map`: n + n (n - 1) / 2 (row FAIL-held-family-operators: the kernel keeps a held family
+/// through `where` and a remap; the executable runs each in the kernel on a term that makes
+/// the family once, `Lets::held`). Small instances: `functions::entries_that_are_functions_
+/// are_read_and_applied`.
+fn through_display_of_functions(name: &str, op: &str) {
+    let n = N_PROGRAM / 2;
+    let srcs: HashMap<usize, _> = scaling::inputs(n, |k| {
+        let fs: Vec<String> = (0..k).map(|i| format!("{i} -> (y -> y + {i})")).collect();
+        let d = dir(&format!("l03_02_map_run/function_{name}_{k}"));
+        let src = d.join("f.zed");
+        let text = format!(
+            "main(m: MainArgs) {{\n    b = {{ {} }};\n    c = {op};\n    r = c.map(f -> f(1)) \
+             >< (+);\n    m.stdout <- \"${{r}}\";\n}}\n",
+            fs.join(", ")
+        );
+        std::fs::write(&src, text).unwrap();
+        let exe = d.join("f");
+        built(&src, &exe);
+        (src, exe)
+    });
+    let want = |k: usize| format!("{}\n", k + k * (k - 1) / 2);
+    let run = |k: usize| {
+        let ran = interpreter(&srcs[&k].0, &[], &[]);
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        &format!("`zedc run` of a display of n functions through {name}"),
+        n,
+        run,
+    );
+    let run = |k: usize| {
+        let ran = executable(&srcs[&k].1, &[], &[]);
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        &format!("an executable over a display of n functions through {name}"),
+        n,
+        run,
+    );
+}
+
+/// `where(f -> f(0) >= 0)`, which calls each function.
+#[test]
+fn where_over_a_display_of_functions_runs_in_linear_time() {
+    through_display_of_functions("where", "b.where(f -> f(0) >= 0)");
+}
+
+/// `as (k -> v) into (k -> v)`.
+#[test]
+fn a_remap_of_a_display_of_functions_runs_in_linear_time() {
+    through_display_of_functions("remap", "b as (k -> v) into (k -> v)");
+}

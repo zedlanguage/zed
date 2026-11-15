@@ -41,6 +41,8 @@ use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
 use crate::value::Value;
 
 mod env;
+mod made;
+pub use made::{Made, MadeFun, MadeNode, MadeShape, fun_term};
 /// The names in scope (see [`mod@env`]), each bound to a [`Binding`].
 type Env<'t> = env::Env<'t, Binding<'t>>;
 
@@ -167,7 +169,8 @@ impl Held<'_> {
 /// its parameters and body from it.
 struct Closure<'t> {
     params: &'t [Arc<str>],
-    body: &'t Term,
+    /// Shared, so that a closure given back apart from the run ([`made`]) keeps its body.
+    body: &'t Shared,
     /// The body's position, when provenance is recorded.
     at: At,
     env: Env<'t>,
@@ -626,7 +629,27 @@ impl Evaluator {
             !self.panic_on_run,
             "the run of the program does not stop here (a test stopped it, ZEDC_TEST_BUG)"
         );
-        self.run_from(term, None, None)
+        match self.run_in(term, None, None, false)? {
+            Ran::Data(v) => Ok(v),
+            Ran::Made(_) => unreachable!("a run expecting data gives data"),
+        }
+    }
+
+    /// Evaluates a closed term, which may give a function or a value that holds one, as
+    /// [`Evaluator::run`] does but for that: its value apart from the run ([`Made`]). A back
+    /// end that runs one node in the kernel takes back what the node makes, a family of
+    /// functions included (rows FAIL-native-fam-result-holds-function and
+    /// FAIL-machine-held-family).
+    pub fn run_made(&mut self, term: &Term) -> Result<Made, KernelError> {
+        #[cfg(debug_assertions)]
+        assert!(
+            !self.panic_on_run,
+            "the run of the program does not stop here (a test stopped it, ZEDC_TEST_BUG)"
+        );
+        match self.run_in(term, None, None, true)? {
+            Ran::Made(m) => Ok(m),
+            Ran::Data(_) => unreachable!("a run apart gives its value apart"),
+        }
     }
 
     /// Evaluates `term`, whose free names are `reads`, under `globals`, expecting data: what
@@ -647,15 +670,20 @@ impl Evaluator {
             self.trace.is_none(),
             "a run under globals records no provenance"
         );
-        self.run_from(term, Some(globals), global_env(reads))
+        match self.run_in(term, Some(globals), global_env(reads), false)? {
+            Ran::Data(v) => Ok(v),
+            Ran::Made(_) => unreachable!("a run expecting data gives data"),
+        }
     }
 
-    fn run_from<'t>(
+    /// Runs `term`; gives its value as data, or apart from the run when `apart`.
+    fn run_in<'t>(
         &mut self,
         term: &'t Term,
         globals: Option<&'t Globals>,
         env: Env<'t>,
-    ) -> Result<Value, KernelError> {
+        apart: bool,
+    ) -> Result<Ran, KernelError> {
         let mut marks = (0, 0);
         if let Some(t) = &mut self.trace {
             t.nodes = vec![Position::root()];
@@ -678,6 +706,22 @@ impl Evaluator {
             vals: Vec::new(),
         };
         let out = machine.run(term, env);
+        let ran = out.is_ok();
+        // Made apart while the machine lives: a closure's environment may name its globals.
+        let out = match (apart, out) {
+            (true, Ok(V::Data(v))) => Ok(Ran::Made(Made {
+                nodes: vec![MadeNode::Data(v)],
+            })),
+            (true, Ok(v)) => machine.made(v).map(Ran::Made),
+            (false, Ok(V::Data(v))) => Ok(Ran::Data(v)),
+            (false, Ok(V::Held(_))) => Err(Stop::Error(KernelError::Type(
+                "the program's result holds a function".into(),
+            ))),
+            (false, Ok(_)) => Err(Stop::Error(KernelError::Type(
+                "the program's result is a function".into(),
+            ))),
+            (_, Err(e)) => Err(e),
+        };
         let failed = machine.failed;
         drop(machine);
         drop(watch);
@@ -687,18 +731,12 @@ impl Evaluator {
             t.calls.truncate(marks.0);
             t.keys.truncate(marks.1);
             t.holds = Holds::default();
-            if out.is_ok() {
+            if ran {
                 t.term = Some(term.clone());
             }
         }
         match out {
-            Ok(V::Data(v)) => Ok(v),
-            Ok(V::Held(_)) => Err(KernelError::Type(
-                "the program's result holds a function".into(),
-            )),
-            Ok(_) => Err(KernelError::Type(
-                "the program's result is a function".into(),
-            )),
+            Ok(ran) => Ok(ran),
             Err(Stop::Error(e)) => Err(e),
             Err(Stop::Undefined { .. }) => {
                 unreachable!("only a definedness fix binds a partial family")
@@ -912,32 +950,40 @@ struct Fam<'t> {
     parts: Vec<V<'t>>,
 }
 
-/// A `reindex` running: the leaves left, the leaf being moved and its new key.
+/// A `reindex` running: the leaves left, the leaf being moved and its new key. A leaf of a
+/// family whose entries hold functions may be a function, or hold one (row
+/// FAIL-held-family-operators).
 struct Reindex<'t> {
-    leaves: std::vec::IntoIter<(Keypath, Value)>,
+    leaves: std::vec::IntoIter<(Keypath, V<'t>)>,
     kf: Operator<'t>,
     vf: Operator<'t>,
     from: Option<usize>,
     /// The path, the path as a value and the value of the leaf being moved.
     path: Keypath,
-    args: Option<(Value, Value)>,
+    args: Option<(Value, V<'t>)>,
     key: Option<Value>,
     /// Whether the leaf being moved is a keypath that ends early, above an empty level.
     short: bool,
-    out: Vec<(Keypath, Value)>,
+    /// Each leaf moved, keypath then value, `None` for the next of `parts`.
+    out: Vec<(Keypath, Option<Value>)>,
+    /// The leaves moved that are no data, in the order moved.
+    parts: Vec<V<'t>>,
 }
 
 /// One level of a `discard` running: the entries left and the entry being tested.
-struct Level {
-    entries: std::vec::IntoIter<(Value, Value)>,
-    entry: Option<Value>,
-    out: Vec<(Keypath, Value)>,
+struct Level<'t> {
+    entries: std::vec::IntoIter<(Value, V<'t>)>,
+    entry: Option<V<'t>>,
+    /// Each entry kept, key then value, `None` for the next of `parts`.
+    out: Vec<(Value, Option<Value>)>,
+    /// The entries kept that are no data, in key order.
+    parts: Vec<V<'t>>,
 }
 
 /// A `discard` running: the levels entered, each a family nested in the one before, and the
 /// keypath of the entry being tested.
 struct Discard<'t> {
-    levels: Vec<Level>,
+    levels: Vec<Level<'t>>,
     prefix: Keypath,
     sel: Operator<'t>,
     from: Option<usize>,
@@ -1474,9 +1520,14 @@ impl<'t> Machine<'_, 't> {
         );
         match i {
             // `map` reads a family whose entries may be functions (DESIGN.md
-            // sec:values_morphisms); it reads its domain's keys only.
-            0 if matches!(region, Term::Fam { .. })
-                && matches!(&v, V::Held(h) if matches!(h.shape, Shape::Family(_))) =>
+            // sec:values_morphisms); it reads its domain's keys only. `where` (a `discard`) and
+            // a remap (a `reindex`) pass such entries to their tests and maps, and keep them
+            // (row FAIL-held-family-operators; DESIGN.md L1.17: only a use that needs data, such
+            // as showing or `==`, is an error).
+            0 if matches!(
+                region,
+                Term::Fam { .. } | Term::Reindex { .. } | Term::Discard { .. }
+            ) && matches!(&v, V::Held(h) if matches!(h.shape, Shape::Family(_))) =>
             {
                 Ok(v)
             }
@@ -1501,11 +1552,27 @@ impl<'t> Machine<'_, 't> {
         let mut operands = operands.into_iter();
         let mut next = || operands.next().expect("the operands of a region");
         let first = next();
-        if let (Term::Fam { var, body, .. }, V::Held(h)) = (region, &first)
+        // A family whose entries hold functions: `map` reads its keys, a remap its leaves and
+        // `where` its entries, each part as it is.
+        if let V::Held(h) = &first
             && let Shape::Family(f) = &h.shape
         {
-            let keys: Vec<Value> = f.keys().cloned().collect();
-            return self.begin_fam(var, body, at, env, keys);
+            match region {
+                Term::Fam { var, body, .. } => {
+                    let keys: Vec<Value> = f.keys().cloned().collect();
+                    return self.begin_fam(var, body, at, env, keys);
+                }
+                Term::Reindex { .. } => {
+                    let leaves = held_leaves(h);
+                    let (kf, vf) = (next(), next());
+                    return self.begin_reindex(at, leaves, kf, vf, from);
+                }
+                Term::Discard { .. } => {
+                    let level = held_level(h);
+                    return self.begin_discard(at, level, next(), from);
+                }
+                _ => {}
+            }
         }
         let first = data(first)?;
         match region {
@@ -1514,30 +1581,14 @@ impl<'t> Machine<'_, 't> {
                 self.begin_fam(var, body, at, env, keys)
             }
             Term::Reindex { .. } => {
-                let kf = (next(), Some(self.ev.child(at, 1)));
-                let vf = (next(), Some(self.ev.child(at, 2)));
-                self.begin_pure();
-                self.reindex(Box::new(Reindex {
-                    leaves: family(first)?.leaves().into_iter(),
-                    kf,
-                    vf,
-                    from,
-                    path: Vec::new(),
-                    args: None,
-                    key: None,
-                    short: false,
-                    out: Vec::new(),
-                }))
+                let leaves = family(first)?.leaves().into_iter();
+                let leaves = leaves.map(|(p, v)| (p, V::Data(v))).collect();
+                let (kf, vf) = (next(), next());
+                self.begin_reindex(at, leaves, kf, vf, from)
             }
             Term::Discard { .. } => {
-                let sel = (next(), Some(self.ev.child(at, 1)));
-                self.begin_pure();
-                self.discard(Box::new(Discard {
-                    levels: vec![level(&family(first)?)],
-                    prefix: Vec::new(),
-                    sel,
-                    from,
-                }))
+                let level = level(&family(first)?);
+                self.begin_discard(at, level, next(), from)
             }
             Term::Fold {
                 identity, depth, ..
@@ -1695,7 +1746,7 @@ impl<'t> Machine<'_, 't> {
                 self.short_paths.pop();
                 self.ev.leave(st.path.len());
                 if let Some(path) = placed(data(v)?) {
-                    st.out.push((path, Value::Family(Family::new())));
+                    st.out.push((path, Some(Value::Family(Family::new()))));
                 }
                 self.reindex(st)
             }
@@ -1703,15 +1754,21 @@ impl<'t> Machine<'_, 't> {
                 st.key = Some(data(v)?);
                 let (p, leaf) = st.args.take().expect("a `reindex` has a leaf in hand");
                 self.ev.aim(st.vf.1, &[st.from; 2]);
-                let step = self.call2(&st.vf.0, p, leaf);
+                let step = self.apply(&st.vf.0, vec![V::Data(p), leaf]);
                 self.wait(Wait::ReindexValue(st));
                 step
             }
             Wait::ReindexValue(mut st) => {
-                let value = data(v)?;
                 self.ev.leave(st.path.len());
                 let key = key_of(st.key.take().expect("a `reindex` has a key in hand"));
-                st.out.push((key, value));
+                // A value map may give a function, or a value holding one, as `map` may.
+                match v {
+                    V::Data(value) => st.out.push((key, Some(value))),
+                    v => {
+                        st.parts.push(v);
+                        st.out.push((key, None));
+                    }
+                }
                 self.reindex(st)
             }
             Wait::Discard(st) => self.discarded(st, v),
@@ -1795,8 +1852,9 @@ impl<'t> Machine<'_, 't> {
                 for ((p, a), fact) in c.params.iter().zip(args).zip(facts) {
                     env = bind(env, p, a, fact);
                 }
+                let body: &'t Shared = c.body;
                 Ok(Step::Call {
-                    body: c.body,
+                    body,
                     at: c.at,
                     env,
                     site,
@@ -2318,22 +2376,169 @@ impl<'t> Machine<'_, 't> {
         }))
     }
 
+    /// Begins a `reindex` (child 0 at `at`) of `leaves` by the key map `kf` and the value map
+    /// `vf`.
+    fn begin_reindex(
+        &mut self,
+        at: At,
+        leaves: Vec<(Keypath, V<'t>)>,
+        kf: V<'t>,
+        vf: V<'t>,
+        from: Option<usize>,
+    ) -> R<Step<'t>> {
+        let kf = (kf, Some(self.ev.child(at, 1)));
+        let vf = (vf, Some(self.ev.child(at, 2)));
+        self.begin_pure();
+        self.reindex(Box::new(Reindex {
+            leaves: leaves.into_iter(),
+            kf,
+            vf,
+            from,
+            path: Vec::new(),
+            args: None,
+            key: None,
+            short: false,
+            out: Vec::new(),
+            parts: Vec::new(),
+        }))
+    }
+
+    /// Begins a `discard` (child 0 at `at`) of the family whose top level is `level` by the
+    /// test `sel`.
+    fn begin_discard(
+        &mut self,
+        at: At,
+        level: Level<'t>,
+        sel: V<'t>,
+        from: Option<usize>,
+    ) -> R<Step<'t>> {
+        let sel = (sel, Some(self.ev.child(at, 1)));
+        self.begin_pure();
+        self.discard(Box::new(Discard {
+            levels: vec![level],
+            prefix: Vec::new(),
+            sel,
+            from,
+        }))
+    }
+
+    /// The family of the top-level `entries`, key then value, `None` for the next of `parts`:
+    /// data when every entry is, and held ([`HeldFamily`]) when one is a function or holds
+    /// one. A key given twice is a collision, as in a display.
+    fn made_family(&self, entries: Vec<(Value, Option<Value>)>, parts: Vec<V<'t>>) -> R<V<'t>> {
+        if parts.is_empty() {
+            let leaves = entries.into_iter();
+            let leaves = leaves.map(|(k, v)| (vec![k], v.expect("every entry is data")));
+            let leaves: Vec<_> = leaves.collect();
+            return Ok(V::Data(Value::Family(Family::from_leaves(leaves)?)));
+        }
+        let f = HeldFamily::new(entries)?.expect("an entry that is no data was made");
+        Ok(V::Held(Rc::new(Held {
+            shape: Shape::Family(f),
+            parts,
+            drops: self.drops.clone(),
+        })))
+    }
+
+    /// The family of `leaves`, keypath then value, `None` for the next of `parts`, as a
+    /// `reindex` gives it: data when every leaf is; otherwise each level with a part at or
+    /// beneath one of its keys is a held family, a part of the level above it. Every error is
+    /// the one [`Family::from_leaves`] gives for the same leaves with each part a leaf of its
+    /// own.
+    // Complexity tradeoff: the naive build nests the leaves level by level by hand, a second
+    // copy of the key rules of `Family::from_leaves` (normalized keys, collisions and their
+    // keypaths, a leaf above a level) that must agree with it leaf for leaf. Used: the leaves
+    // are built once by `from_leaves` with each part written as a mark, the integer of its
+    // number, and the keypaths of the parts once more into a family of marks, O(n log n) for
+    // n leaves; then only the levels with a part beneath them are walked, each entry of such a
+    // level once, and each made held by [`HeldFamily::new`], O(m log m) for its m entries, so
+    // O(n log n) in all. The walk keeps its levels on a list, not the thread's stack, since a
+    // keypath may be as long as a program makes it. Tradeoff: a level with one part among many
+    // data entries is walked whole; the family of marks is a second map of the parts' keypaths.
+    fn held_leaves_family(
+        &self,
+        leaves: Vec<(Keypath, Option<Value>)>,
+        parts: Vec<V<'t>>,
+    ) -> R<V<'t>> {
+        if parts.is_empty() {
+            let leaves = leaves.into_iter();
+            let leaves = leaves.map(|(p, v)| (p, v.expect("every leaf is data")));
+            return Ok(V::Data(Value::Family(Family::from_leaves(
+                leaves.collect::<Vec<_>>(),
+            )?)));
+        }
+        let mut marked = Vec::with_capacity(leaves.len());
+        let mut marks = Vec::with_capacity(parts.len());
+        for (path, v) in leaves {
+            let v = v.unwrap_or_else(|| {
+                let mark = Value::Int(marks.len() as i64);
+                marks.push((path.clone(), mark.clone()));
+                mark
+            });
+            marked.push((path, v));
+        }
+        let all = Family::from_leaves(marked)?;
+        // The keypaths of the parts are keypaths of `all`, each ending at a leaf of its own,
+        // so none is a prefix of another and none is given twice: this cannot fail.
+        let marks = Family::from_leaves(marks)?;
+        let mut parts: Vec<Option<V<'t>>> = parts.into_iter().map(Some).collect();
+        // Each level being made: its entries left, its marks, the entries made so far, key
+        // then value `None` for the next of its parts, and those parts.
+        struct Making<'f, 't> {
+            entries: crate::btree::Iter<'f, Value, Value>,
+            marks: &'f Family,
+            out: Vec<(Value, Option<Value>)>,
+            parts: Vec<V<'t>>,
+        }
+        fn start<'f, 't>(f: &'f Family, marks: &'f Family) -> Making<'f, 't> {
+            Making {
+                entries: f.0.iter(),
+                marks,
+                out: Vec::new(),
+                parts: Vec::new(),
+            }
+        }
+        let mut levels = vec![start(&all, &marks)];
+        let mut keys: Vec<Value> = Vec::new();
+        loop {
+            let top = levels.last_mut().expect("the top level is popped last");
+            if let Some((k, v)) = top.entries.next() {
+                match (top.marks.get(k), v) {
+                    (None, v) => top.out.push((k.clone(), Some(v.clone()))),
+                    (Some(Value::Int(i)), _) => {
+                        top.out.push((k.clone(), None));
+                        let part = parts[*i as usize].take().expect("each part once");
+                        top.parts.push(part);
+                    }
+                    (Some(Value::Family(m)), Value::Family(sub)) => {
+                        keys.push(k.clone());
+                        levels.push(start(sub, m));
+                    }
+                    _ => unreachable!("a part's keypath ends at a leaf of `all`"),
+                }
+                continue;
+            }
+            let done = levels.pop().expect("the level just read");
+            let f = HeldFamily::new(done.out)?.expect("a level with a part beneath it");
+            let made = V::Held(Rc::new(Held {
+                shape: Shape::Family(f),
+                parts: done.parts,
+                drops: self.drops.clone(),
+            }));
+            let Some(top) = levels.last_mut() else {
+                return Ok(made);
+            };
+            top.out
+                .push((keys.pop().expect("the key of the level"), None));
+            top.parts.push(made);
+        }
+    }
+
     /// Evaluates the entry at the next key, or makes the family: data when every entry is,
     /// and held ([`HeldFamily`]) when one is a function or holds one.
     fn fam(&mut self, mut st: Box<Fam<'t>>) -> R<Step<'t>> {
         let Some(k) = st.keys.next() else {
-            if st.parts.is_empty() {
-                let leaves = st.out.into_iter();
-                let leaves = leaves.map(|(k, v)| (vec![k], v.expect("every entry is data")));
-                let leaves: Vec<_> = leaves.collect();
-                return give(Value::Family(Family::from_leaves(leaves)?));
-            }
-            let f = HeldFamily::new(st.out)?.expect("an entry that is no data was made");
-            return Ok(Step::Give(V::Held(Rc::new(Held {
-                shape: Shape::Family(f),
-                parts: st.parts,
-                drops: self.drops.clone(),
-            }))));
+            return Ok(Step::Give(self.made_family(st.out, st.parts)?));
         };
         self.ev.enter(std::slice::from_ref(&k));
         let env = bind(st.env.clone(), st.var, V::Data(k.clone()), None);
@@ -2348,7 +2553,8 @@ impl<'t> Machine<'_, 't> {
     /// leaf, entry, step or iterate.
     fn reindex(&mut self, mut st: Box<Reindex<'t>>) -> R<Step<'t>> {
         let Some((path, v)) = st.leaves.next() else {
-            return give(Value::Family(Family::from_leaves(st.out)?));
+            let (out, parts) = (std::mem::take(&mut st.out), std::mem::take(&mut st.parts));
+            return Ok(Step::Give(self.held_leaves_family(out, parts)?));
         };
         self.ev.enter(&path);
         let p = Value::path(path.clone());
@@ -2356,15 +2562,15 @@ impl<'t> Machine<'_, 't> {
         // A keypath above an empty level binds no leaf value and no key past its end: the key
         // map reads the kernel's own atom [`unbound`] there, not `#notFound`, which a key may
         // hold as data.
-        st.short = matches!(&v, Value::Family(f) if f.is_empty());
+        st.short = matches!(&v, V::Data(Value::Family(f)) if f.is_empty());
         let leaf = match (st.short, &p) {
             (true, Value::Path(keys)) => {
                 self.short_paths.push(keys.id());
-                unbound()
+                V::Data(unbound())
             }
             _ => v.clone(),
         };
-        let step = self.call2(&st.kf.0, p.clone(), leaf);
+        let step = self.apply(&st.kf.0, vec![V::Data(p.clone()), leaf]);
         st.path = path;
         st.args = Some((p, v));
         self.wait(Wait::ReindexKey(st));
@@ -2381,17 +2587,17 @@ impl<'t> Machine<'_, 't> {
                 st.prefix.push(k);
                 self.ev.aim(st.sel.1, &[st.from; 2]);
                 let path = Value::path(st.prefix.clone());
-                let step = self.call2(&st.sel.0, path, v);
+                let step = self.apply(&st.sel.0, vec![V::Data(path), v]);
                 self.wait(Wait::Discard(st));
                 return step;
             }
             let done = st.levels.pop().expect("a `discard` is inside a level");
-            let done = Family::from_leaves(done.out)?;
+            let done = self.made_family(done.out, done.parts)?;
             let Some(k) = st.prefix.pop() else {
-                return give(Value::Family(done));
+                return Ok(Step::Give(done));
             };
             let top = st.levels.last_mut().expect("the level above");
-            top.out.push((vec![k], Value::Family(done)));
+            top.keep(k, done);
             self.ev.leave(1);
         }
     }
@@ -2404,15 +2610,19 @@ impl<'t> Machine<'_, 't> {
         let entry = top.entry.take().expect("a `discard` has an entry in hand");
         match verdict {
             Value::Bool(true) => match entry {
-                Value::Family(sub) => {
+                V::Data(Value::Family(sub)) => {
                     st.levels.push(level(&sub));
                     return self.discard(st);
                 }
-                leaf => top.out.push((vec![k], leaf)),
+                V::Held(h) if matches!(h.shape, Shape::Family(_)) => {
+                    st.levels.push(held_level(&h));
+                    return self.discard(st);
+                }
+                leaf => top.keep(k, leaf),
             },
             Value::Bool(false) => {}
             Value::Atom(a) if &*a.name == "boundary" && a.is_bare() => {
-                top.out.push((vec![k.clone()], k))
+                top.keep(k.clone(), V::Data(k))
             }
             other => {
                 return type_err(format!(
@@ -2873,14 +3083,87 @@ fn placed(key: Value) -> Option<Keypath> {
     }
 }
 
+/// What [`Evaluator::run_in`] gives: data, or a value apart from the run.
+enum Ran {
+    Data(Value),
+    Made(Made),
+}
+
 /// The level of `family`'s top-level entries, before any is tested.
-fn level(family: &Family) -> Level {
-    let entries: Vec<(Value, Value)> = family.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+fn level<'t>(family: &Family) -> Level<'t> {
+    let entries = family.iter().map(|(k, v)| (k.clone(), V::Data(v.clone())));
     Level {
         out: Vec::new(),
-        entries: entries.into_iter(),
+        parts: Vec::new(),
+        entries: entries.collect::<Vec<_>>().into_iter(),
         entry: None,
     }
+}
+
+/// The level of the top-level entries of `h`, a held family, before any is tested: each data
+/// entry as it is, and each part.
+fn held_level<'t>(h: &Held<'t>) -> Level<'t> {
+    let Shape::Family(f) = &h.shape else {
+        unreachable!("a level of a held family")
+    };
+    let entries = f.iter().map(|(k, e)| match e {
+        HeldEntry::Data(v) => (k.clone(), V::Data(v.clone())),
+        HeldEntry::Part(i) => (k.clone(), h.parts[i].clone()),
+    });
+    Level {
+        out: Vec::new(),
+        parts: Vec::new(),
+        entries: entries.collect::<Vec<_>>().into_iter(),
+        entry: None,
+    }
+}
+
+impl<'t> Level<'t> {
+    /// Keeps the entry `v` at key `k`.
+    fn keep(&mut self, k: Value, v: V<'t>) {
+        match v {
+            V::Data(v) => self.out.push((k, Some(v))),
+            v => {
+                self.parts.push(v);
+                self.out.push((k, None));
+            }
+        }
+    }
+}
+
+/// The leaves of `h`, a held family, with their keypaths, in keypath order, as
+/// [`Family::leaves`] gives those of a data family: a part that is a held family is a level,
+/// and any other part a leaf.
+// Complexity tradeoff: the naive way turns the family to data first, which a function cannot
+// be. Used: the levels are walked in key order on a list of their own, each entry once, so
+// O(n) for n entries and leaves beside the keypaths copied, as `Family::leaves` costs; a data
+// level beneath a key is read by `Family::leaves` itself.
+fn held_leaves<'t>(h: &Held<'t>) -> Vec<(Keypath, V<'t>)> {
+    let mut out = Vec::new();
+    // Each level entered: its entries left, as from `held_level`, and the keypath above it.
+    let mut levels = vec![(held_level(h).entries, Vec::new())];
+    while let Some((entries, prefix)) = levels.last_mut() {
+        let Some((k, v)) = entries.next() else {
+            levels.pop();
+            continue;
+        };
+        let mut path = prefix.clone();
+        path.push(k);
+        match v {
+            V::Data(Value::Family(f)) if !f.is_empty() => {
+                for (mut sub, leaf) in f.leaves() {
+                    let mut whole = path.clone();
+                    whole.append(&mut sub);
+                    out.push((whole, V::Data(leaf)));
+                }
+            }
+            V::Held(h) if matches!(h.shape, Shape::Family(_)) => {
+                levels.push((held_level(&h).entries, path));
+            }
+            leaf => out.push((path, leaf)),
+        }
+    }
+    out
 }
 
 fn gen_end<'t>(st: Gen<'t>) -> R<Step<'t>> {

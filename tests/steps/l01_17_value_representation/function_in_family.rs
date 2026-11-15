@@ -141,5 +141,8 @@ fn where_and_a_remap_over_a_family_of_functions() {
     assert_eq!(a("c = b.where(f -> true);\na = c[\"a\"](2);\n"), "3");
     assert_eq!(a("a = b.where(f -> f(3) > 5).count;\n"), "1");
     assert_eq!(a("c = b.where(f -> f(3) > 5);\na = c[\"b\"](3);\n"), "6");
-    assert_eq!(a("c = b as (k -> v) into (k -> v);\na = c[\"a\"](2);\n"), "3");
+    assert_eq!(
+        a("c = b as (k -> v) into (k -> v);\na = c[\"a\"](2);\n"),
+        "3"
+    );
 }

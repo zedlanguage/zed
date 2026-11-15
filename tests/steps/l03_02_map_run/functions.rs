@@ -2,9 +2,9 @@
 //! executable `zedc build` makes (row FAIL-family-function-entry; DESIGN.md
 //! sec:values_morphisms, "Application is indexing"). The reference evaluator's values of the
 //! same programs are in `l01_17_value_representation::function_in_family`; each expected line
-//! is worked by hand. A `map` whose result holds a function runs in the interpreter only: an
-//! executable runs a `fam` node in the kernel, which gives data back (row
-//! FAIL-native-fam-result-holds-function).
+//! is worked by hand. A `map` whose result holds a function runs in an executable too: the
+//! executable runs a `fam` node in the kernel, which gives the family of functions back as a
+//! held value (row FAIL-native-fam-result-holds-function).
 
 use zed_tests::step_helpers::l01_36a_executables::{Ran, built, dir, executable, interpreter};
 

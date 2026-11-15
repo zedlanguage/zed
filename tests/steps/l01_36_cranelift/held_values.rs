@@ -7,7 +7,7 @@
 use zed_kernel::Shared;
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::types::Type;
-use zed_kernel::{KernelError, Pattern, Prim, Term, Value};
+use zed_kernel::{Family, KernelError, Pattern, Prim, Term, Value};
 
 use super::function_binders::{agree, bind, calls, ints, match1};
 
@@ -434,7 +434,12 @@ fn a_type_test_on_held_atoms_nested_held_tuples_and_primitives() {
 fn a_held_family_is_read_at_its_keys_and_applied() {
     let fam = prim(
         Prim::Entries,
-        vec![lit(Value::str("a")), var("f"), lit(Value::str("b")), var("z")],
+        vec![
+            lit(Value::str("a")),
+            var("f"),
+            lit(Value::str("b")),
+            var("z"),
+        ],
     );
     let m = let_(
         "t",
@@ -445,4 +450,168 @@ fn a_held_family_is_read_at_its_keys_and_applied() {
         ),
     );
     assert_eq!(agree(&calls(3, m)), Ok(ints(3)));
+}
+
+/// `t = (f, z); u = (k in {0, 1, 2, 3}) -> t; u[3][0](u[0][1]) + count(u)`: the family the
+/// kernel makes holds one held tuple at each key, one cell with a reference per key, in the
+/// machine as in native code, which bind each held value once outside the node's term (row
+/// PROOF-native-held-early-build).
+#[test]
+fn a_held_tuple_at_each_key_of_a_family_is_one_cell() {
+    let keys = Family::set((0..4).map(Value::Int));
+    let fam = Term::Fam {
+        domain: Shared::new(lit(Value::Family(keys))),
+        var: "k".into(),
+        body: Shared::new(var("t")),
+    };
+    let at = |k: i64, i: i64| prim(Prim::TupleGet, vec![app(var("u"), vec![lit(k)]), lit(i)]);
+    let m = let_(
+        "t",
+        pair(),
+        let_(
+            "u",
+            fam,
+            prim(
+                Prim::Add,
+                vec![
+                    app(at(3, 0), vec![at(0, 1)]),
+                    prim(Prim::Count, vec![var("u")]),
+                ],
+            ),
+        ),
+    );
+    let want = Value::tuple(vec![Value::Int(4), Value::Int(5), Value::Int(6)]);
+    assert_eq!(agree(&calls(3, m)), Ok(want));
+}
+
+/// `(k in {0, 1, 2}) -> body`, a family the kernel makes.
+fn three(body: Term) -> Term {
+    Term::Fam {
+        domain: Shared::new(lit(Value::Family(Family::set((0..3).map(Value::Int))))),
+        var: "k".into(),
+        body: Shared::new(body),
+    }
+}
+
+/// `(z, z + 1, z + 2)` for each `z` of `calls(3, _)`, plus `c`.
+fn plus(c: i64) -> Value {
+    Value::tuple((0..3).map(|z| Value::Int(z + c)).collect())
+}
+
+/// `t = { "a" -> f, "b" -> z }; u = (k in {0, 1, 2}) -> if k == j { t["b"](t["a"]) } else
+/// { k + z }; u[2]`: `t` is read only on the branch the family's entries do not take when `j`
+/// is 9, and native code and the machine make it before the kernel runs the family (row
+/// PROOF-native-held-early-build). Taken (`j` 2), the branch stops, applying data, in all three;
+/// not taken, nothing stops, and the counts agree.
+#[test]
+fn a_held_value_read_only_on_an_untaken_branch_is_made_without_stopping() {
+    let m = |j: i64| {
+        let t = prim(
+            Prim::Entries,
+            vec![
+                lit(Value::str("a")),
+                var("f"),
+                lit(Value::str("b")),
+                var("z"),
+            ],
+        );
+        let at = |s: &str| app(var("t"), vec![lit(Value::str(s))]);
+        let body = if_(
+            prim(Prim::Eq, vec![var("k"), lit(j)]),
+            app(at("b"), vec![at("a")]),
+            prim(Prim::Add, vec![var("k"), var("z")]),
+        );
+        let_(
+            "t",
+            t,
+            let_("u", three(body), app(var("u"), vec![lit(2i64)])),
+        )
+    };
+    assert_eq!(agree(&calls(3, m(9))), Ok(plus(2)));
+    assert!(agree(&calls(3, m(2))).is_err());
+}
+
+/// `g = (y) -> y + z; t = (g, z); u = (k in {0, 1, 2}) -> t[0](k); u[2] + count(u)`: `g`, made
+/// in each call, has no holder but `t` once `t` is made, and the family is `t`'s last use, so
+/// every part of `t` is owned by `t` alone when native code and the machine make `t` again for
+/// the kernel; the frees and the peak agree, fused and not.
+#[test]
+fn a_held_value_whose_parts_have_no_other_holder_is_made_for_its_last_use() {
+    let g = lam(&["y"], prim(Prim::Add, vec![var("y"), var("z")]));
+    let body = app(
+        prim(Prim::TupleGet, vec![var("t"), lit(0i64)]),
+        vec![var("k")],
+    );
+    let m = let_(
+        "g",
+        g,
+        let_(
+            "t",
+            prim(Prim::Tuple, vec![var("g"), var("z")]),
+            let_(
+                "u",
+                three(body),
+                prim(
+                    Prim::Add,
+                    vec![
+                        app(var("u"), vec![lit(2i64)]),
+                        prim(Prim::Count, vec![var("u")]),
+                    ],
+                ),
+            ),
+        ),
+    );
+    assert_eq!(agree(&calls(3, m)), Ok(plus(5)));
+}
+
+/// `t = (f, z); u = (k in {0, 1, 2}) -> ((y) -> t[0](y) + k); w = (f, z + 1); v = (k in {0, 1,
+/// 2}) -> u[k](w[1]) + t[1]; v[2] + v[0]`: two kernel calls in one run. The closures the first
+/// makes capture `t` under the name native code and the machine bound it to in that call, and
+/// the second binds `t` and `w` under names of its own; each closure binds its captures inside
+/// its lambda, so no name of one call reads a value of the other (`fun_term`).
+#[test]
+fn closures_a_kernel_call_made_read_their_own_held_values_in_a_later_call() {
+    let t0 = prim(Prim::TupleGet, vec![var("t"), lit(0i64)]);
+    let inner = lam(
+        &["y"],
+        prim(Prim::Add, vec![app(t0, vec![var("y")]), var("k")]),
+    );
+    let w = prim(
+        Prim::Tuple,
+        vec![var("f"), prim(Prim::Add, vec![var("z"), lit(1i64)])],
+    );
+    let get = |x: &str, i: i64| prim(Prim::TupleGet, vec![var(x), lit(i)]);
+    let v = three(prim(
+        Prim::Add,
+        vec![
+            app(app(var("u"), vec![var("k")]), vec![get("w", 1)]),
+            get("t", 1),
+        ],
+    ));
+    let m = let_(
+        "t",
+        pair(),
+        let_(
+            "u",
+            three(inner),
+            let_(
+                "w",
+                w,
+                let_(
+                    "v",
+                    v,
+                    prim(
+                        Prim::Add,
+                        vec![
+                            app(var("v"), vec![lit(2i64)]),
+                            app(var("v"), vec![lit(0i64)]),
+                        ],
+                    ),
+                ),
+            ),
+        ),
+    );
+    // v[k] = (z + 1) + k + z, so v[2] + v[0] = 4z + 4.
+    let want = Value::tuple((0..3).map(|z| Value::Int(4 * z + 4)).collect());
+    assert_eq!(agree(&calls(3, m)), Ok(want));
 }

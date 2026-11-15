@@ -10,14 +10,14 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::eval::leaf_at_end;
+use zed_kernel::eval::{Made, MadeNode, MadeShape, fun_term, leaf_at_end};
 use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
-use zedc::zir::memory::{Mode, held_family_term, held_term};
+use zedc::zir::memory::{Mode, cell_var, held_family_term, held_term};
 
-use zed_rt::{Heap, HeldObj, HeldShape, Obj, Paths, Word};
+use zed_rt::{FunObj, Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
 use crate::tables::{NodeInfo, Tables};
 
@@ -899,11 +899,99 @@ fn called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<Word>, String> {
     passed(s, p, args)
 }
 
-/// The kernel runs the node, the owned inputs are dropped, and the value is allocated.
+/// The kernel runs the node, the owned inputs are dropped, and the value is allocated. The
+/// value may be a function or hold one, a family of functions a `map` made included (row
+/// FAIL-native-fam-result-holds-function): the kernel gives it apart from its run
+/// ([`Made`]), and [`alloc_made`] allocates it, as the machine's `slow` does.
 fn slow(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Word, String> {
-    let v = kernel(t, s, ni, ins)?;
+    let q = kernel_term(t, s, ni, ins)?;
+    s.kernel_calls += 1;
+    let m = s.ev.run_made(&q).map_err(|e| e.to_string())?;
     consume(s, ni, ins)?;
-    s.heap.fresh(&v)
+    alloc_made(t, s, m)
+}
+
+/// Allocates the value `m`: each node in order, a part before what holds it, data as
+/// [`Heap::fresh`] makes it, a closure as an [`Obj::Fun`] and a held value as an
+/// [`Obj::Held`], whose parts move into it; a node held at more places than one gets a
+/// reference for each place past the first. As the machine's `alloc_made`.
+// Complexity tradeoff: the naive way hands the kernel's value to `Heap::fresh`, which takes
+// data only. Here each node is allocated once, O(nodes + parts), plus data as `fresh` costs.
+// Tradeoff: a closure the kernel gave back is an `Obj::Fun` and not the closure word it may
+// have been made from, so a call of it runs in the kernel. Nothing is refused.
+fn alloc_made(t: &Tables, s: &mut Run, m: Made) -> Result<Word, String> {
+    let mut words: Vec<Word> = Vec::with_capacity(m.nodes.len());
+    let mut used = vec![false; m.nodes.len()];
+    // Node `i`'s word for one more place: the first takes the reference it was made with.
+    let mut take = |heap: &mut Heap, words: &[Word], i: usize| -> Result<Word, String> {
+        if std::mem::replace(&mut used[i], true) {
+            heap.inc(words[i])?;
+        }
+        Ok(words[i])
+    };
+    for node in m.nodes {
+        let w = match node {
+            MadeNode::Data(v) => s.heap.fresh(&v)?,
+            // The kernel makes a primitive value from a term's `PrimFn` only, and every such
+            // term comes from a primitive node of the program or a word of the table.
+            MadeNode::Prim(p) => match t.prims.iter().position(|q| *q == p) {
+                Some(i) => Word {
+                    tag: Word::PRIM,
+                    bits: i as i64,
+                },
+                None => {
+                    return Err(zed_rt::bug(
+                        "was given back a primitive it has no word for",
+                        &format!("primitive {p:?} is not in the program's table"),
+                    ));
+                }
+            },
+            // As a primitive: a port the kernel reads is one of the program's `Read` nodes.
+            MadeNode::Source(p) => match t.port_at.get(&p) {
+                Some(&i) => Word {
+                    tag: Word::SOURCE,
+                    bits: i as i64,
+                },
+                None => {
+                    return Err(zed_rt::bug(
+                        "was given back a port it has no word for",
+                        &format!("port `{p}` is not in the program's table"),
+                    ));
+                }
+            },
+            MadeNode::Fun(f) => {
+                let mut caps = Vec::with_capacity(f.caps.len());
+                let mut names = Vec::with_capacity(f.caps.len());
+                for (x, i) in f.caps {
+                    caps.push(take(&mut s.heap, &words, i)?);
+                    names.push(x);
+                }
+                s.heap.alloc(Obj::Fun(Box::new(FunObj {
+                    params: f.params,
+                    body: f.body,
+                    names,
+                    caps: caps.into(),
+                })))
+            }
+            MadeNode::Held(shape, parts) => {
+                let mut ps = Vec::with_capacity(parts.len());
+                for i in parts {
+                    ps.push(take(&mut s.heap, &words, i)?);
+                }
+                let shape = match shape {
+                    MadeShape::Tuple => HeldShape::Tuple,
+                    MadeShape::Atom(n, f) => HeldShape::Atom(n, f),
+                    MadeShape::Family(f) => HeldShape::Family(Box::new(f)),
+                };
+                s.heap.alloc(Obj::Held(Box::new(HeldObj {
+                    shape,
+                    parts: ps.into(),
+                })))
+            }
+        };
+        words.push(w);
+    }
+    Ok(*words.last().expect("a value has a node"))
 }
 
 /// Drops each input the node takes owned.
@@ -918,13 +1006,19 @@ fn consume(s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<(), String> {
 
 /// The value the kernel gives node `ni` run alone on `ins`.
 fn kernel(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Value, String> {
+    let q = kernel_term(t, s, ni, ins)?;
+    run(s, &q)
+}
+
+/// The closed term the kernel runs node `ni` alone on `ins` by.
+fn kernel_term(t: &Tables, s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<Term, String> {
     let mut lets = Lets::default();
     let mut terms = Vec::with_capacity(ins.len());
     for w in ins {
         terms.push(term(t, s, *w, &mut lets)?);
     }
     let q = raise_node(ni.node(), ni.number, &t.swapped, &terms)?;
-    run(s, &wrap(lets, q))
+    Ok(wrap(lets, q))
 }
 
 fn run(s: &mut Run, q: &Term) -> Result<Value, String> {
@@ -946,20 +1040,26 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
             return Ok(made.expect("an empty stack follows a finished term"));
         };
         terms.extend(made.take());
-        let (lambda, caps) = match s.heap.obj(*clo)? {
-            Some(Obj::Clo { lambda, caps }) => (Some(*lambda), &**caps),
-            Some(Obj::Held(h)) => (None, &*h.parts),
+        let caps = match s.heap.obj(*clo)? {
+            Some(Obj::Clo { caps, .. }) => &**caps,
+            Some(Obj::Fun(f)) => &*f.caps,
+            Some(Obj::Held(h)) => &*h.parts,
             _ => unreachable!("only closures and held values are entered"),
         };
         match caps.get(terms.len()) {
             Some(&c) => made = term_of(t, s, c, lets, &mut stack)?,
             None => {
-                let q = match lambda {
-                    Some(lambda) => {
-                        let ni = &t.nodes[t.lambdas[lambda].node];
+                let q = match s.heap.obj(*clo)? {
+                    Some(Obj::Clo { lambda, .. }) => {
+                        let ni = &t.nodes[t.lambdas[*lambda].node];
                         raise_node(ni.node(), ni.number, &t.swapped, terms)?
                     }
-                    None => {
+                    // A closure the kernel made: its lambda with its captures bound inside,
+                    // as a closure the program made is raised (`raise_node`'s `Caps::Given`).
+                    Some(Obj::Fun(f)) => {
+                        fun_term(&f.params, &f.body, &f.names, std::mem::take(terms))
+                    }
+                    _ => {
                         let h = s.heap.held(*clo)?.expect("a held value");
                         let (key, parts) = (clo.bits as u64, std::mem::take(terms));
                         let made = match &h.shape {
@@ -967,7 +1067,7 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                             HeldShape::Atom(n, f) => held_term(Some((n, f)), key, parts),
                             HeldShape::Family(f) => held_family_term(f, key, parts),
                         };
-                        let x: Arc<str> = format!("\0cell {key}").into();
+                        let x = cell_var(key);
                         lets.held.push((x.clone(), made));
                         Term::Var(x)
                     }
@@ -1050,13 +1150,47 @@ struct Lets {
     // n functions made the family again for each entry, O(n²) (row FAIL-family-function-entry,
     // 0.25 s at 500 entries, 14 s at 4000). Here each is made once per kernel call, O(parts),
     // and each use reads a variable. Tradeoff: a held value on a path the node does not take
-    // is made anyway, O(its parts), no more than building its term cost. Making it early
-    // cannot fail or change the result: it is made again from a value that exists, so its
-    // atom's fields and its display's keys were accepted once (no collision, no refusal), and
-    // making it reads no port and runs no function. A part is made before the value holding it,
-    // since `term` finishes the part first, and `wrap` binds earlier entries outside later
-    // ones. Test `l03_02_map_run::bench::a_display_of_functions_read_and_applied_runs_in_
-    // linear_time`.
+    // is made anyway, O(its parts), no more than building its term cost. Test `l03_02_map_run::
+    // bench::a_display_of_functions_read_and_applied_runs_in_linear_time`.
+    //
+    // Proof that making a held value early cannot fail, refuse, read a port, run a function or
+    // change the result (row PROOF-native-held-early-build; author P246). Each entry is
+    // `let \0held k = P(a…) in \0held k` (`held_term`, `held_family_term`), P being `Tuple`,
+    // `Atom` or `Entries`, and each argument `a` one of:
+    //  1. a literal: a data part, or an atom's name and field names, or a display's key;
+    //  2. `PrimFn`, a primitive used as a value;
+    //  3. `\0port p`, bound by `wrap`'s outer lets. `term_of` adds that let whenever a source
+    //     is met, held or not, and the same let was there when held values were made at their
+    //     uses, so making a value early adds no read;
+    //  4. `\0cell j`, an earlier entry: `term` finishes a part before its holder and pushes it
+    //     first, and `wrap` binds earlier entries outside later ones;
+    //  5. a closure's term, a `Term::Lam`: for `Obj::Clo`, `raise_node` of a lambda node
+    //     (lower.rs `Op::Lambda => Term::Lam`, its captures placed inside the body); for
+    //     `Obj::Fun`, `fun_term`, whose application of the captures is inside its lambda.
+    //     Evaluating one makes a closure and calls nothing.
+    // So evaluating the arguments runs no function, reads no port and cannot stop. Then P, in
+    // the kernel (eval.rs, the held rules beside `Prim::Tuple`):
+    //  - `Tuple` takes any arguments.
+    //  - `Atom` gets the name and the field names of an atom that exists, sorted and distinct
+    //    as `prim_data` stored them, and one part per field in that order. `prim_data` accepted
+    //    those when the atom was first made, and it decides on them alone, so it accepts them
+    //    again and puts each part back at its place.
+    //  - `Entries` gets the top-level keys of an existing `HeldFamily`, from `HeldFamily::iter`:
+    //    distinct, in key order, each already its own key. `HeldFamily::new` then gives
+    //    `from_leaves` one keypath of length one per key, so there is no empty keypath and no
+    //    key twice. A data entry that is a family is placed beneath its key exactly as it lies
+    //    in `all`. At least one entry is a part, so `new` gives `Some`.
+    // The kernel's other refusals do not apply: the evaluators native code and the machine run
+    // are made by `Evaluator::new`, with no fuel limit (value.rs at `burn`), and P runs no step
+    // that could be refused. The value made equals the one in the cell: same shape, same parts
+    // in the same order, and a kernel value is pure. A use reads the variable, which is the
+    // value the inline making gave. `\0` cannot be written in source, so no program name is
+    // shadowed. The names are keys of live cells: a closure that captured `\0cell k` keeps
+    // that cell alive, so the key cannot name another value in a later call.
+    // Tests in `l01_36_cranelift::held_values`: `a_held_value_read_only_on_an_untaken_branch_
+    // is_made_without_stopping`, `a_held_value_whose_parts_have_no_other_holder_is_made_for_its_
+    // last_use`, `closures_a_kernel_call_made_read_their_own_held_values_in_a_later_call` and
+    // `a_held_tuple_at_each_key_of_a_family_is_one_cell`.
     held: Vec<(Arc<str>, Term)>,
 }
 

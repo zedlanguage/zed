@@ -54,6 +54,7 @@ use std::fmt::{Display, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use zed_kernel::eval::{Made, MadeNode, MadeShape, fun_term, leaf_at_end};
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::{Pattern, Prim, Shared, Term};
 use zed_kernel::value::{Fields, HeldEntry, HeldFamily, SharedParts, Value};
@@ -944,11 +945,47 @@ type AtomName = (Arc<str>, Fields);
 // `bench::held_values` (COMPLEXITY.md row HELD-cells).
 struct Held<'g> {
     cell: usize,
-    /// `None` for a tuple; for an atom, its name and its field names, sorted, empty for a
-    /// payload by position.
-    atom: Option<AtomName>,
-    /// The components of a tuple, or the payload of an atom in the order of its field names.
+    /// What it is.
+    shape: HeldKind,
+    /// The components of a tuple, the payload of an atom in the order of its field names, or
+    /// the entries of a family that are no data, numbered as its [`HeldFamily`] numbers them.
     parts: Vec<Mv<'g>>,
+}
+
+/// What a [`Held`] is, as the native runtime's `HeldShape`.
+enum HeldKind {
+    /// A tuple.
+    Tuple,
+    /// An atom: its name and its field names, sorted, empty for a payload by position.
+    Atom(AtomName),
+    /// A family with an entry that is no data (DESIGN.md sec:values_morphisms, row
+    /// FAIL-machine-held-family): its keys and its data entries; each other entry is a part.
+    Family(Box<HeldFamily>),
+}
+
+impl Held<'_> {
+    fn is_tuple(&self) -> bool {
+        matches!(self.shape, HeldKind::Tuple)
+    }
+
+    fn family(&self) -> Option<&HeldFamily> {
+        match &self.shape {
+            HeldKind::Family(f) => Some(f),
+            _ => None,
+        }
+    }
+}
+
+/// A closure the kernel made and gave back, which has no lambda node: its cell, its lambda's
+/// parameters and body, the name of each capture and the captures. The native runtime's
+/// `Obj::Fun` (rows FAIL-native-fam-result-holds-function, FAIL-machine-held-family). A call
+/// of it runs in the kernel.
+struct Fun<'g> {
+    cell: usize,
+    params: Vec<Arc<str>>,
+    body: Shared,
+    names: Vec<Arc<str>>,
+    caps: Vec<Mv<'g>>,
 }
 
 /// Drops `parts`; the closures and held values it alone holds are taken apart through a list,
@@ -966,8 +1003,19 @@ fn drop_parts(mut parts: Vec<Mv<'_>>) {
                     parts.append(&mut h.parts);
                 }
             }
+            Mv::Fun(rc) => {
+                if let Ok(mut f) = Rc::try_unwrap(rc) {
+                    parts.append(&mut f.caps);
+                }
+            }
             _ => {}
         }
+    }
+}
+
+impl Drop for Fun<'_> {
+    fn drop(&mut self) {
+        drop_parts(std::mem::take(&mut self.caps));
     }
 }
 
@@ -990,8 +1038,10 @@ enum Mv<'g> {
     Data(Value, Option<usize>),
     /// A closure.
     Clo(Rc<Clo<'g>>),
-    /// A tuple or an atom that holds a function.
+    /// A tuple, an atom or a family that holds a function.
     Held(Rc<Held<'g>>),
+    /// A closure the kernel made.
+    Fun(Rc<Fun<'g>>),
     /// A primitive as a function.
     Prim(Prim),
     /// A lookup port.
@@ -1006,20 +1056,34 @@ impl Mv<'_> {
             Mv::Data(_, c) => *c,
             Mv::Clo(c) => Some(c.cell),
             Mv::Held(h) => Some(h.cell),
+            Mv::Fun(f) => Some(f.cell),
             _ => None,
         }
     }
 
-    /// Whether `self` is no data: a function, or a tuple or an atom that holds one. A port's
-    /// state is neither.
+    /// Whether `self` is no data: a function, or a tuple, an atom or a family that holds one.
+    /// A port's state is neither.
     fn holds_function(&self) -> bool {
-        matches!(self, Mv::Clo(_) | Mv::Prim(_) | Mv::Source(_) | Mv::Held(_))
+        matches!(
+            self,
+            Mv::Clo(_) | Mv::Fun(_) | Mv::Prim(_) | Mv::Source(_) | Mv::Held(_)
+        )
     }
 
     /// Whether `self` is an atom that holds a function: a failure, which passes through a
     /// primitive and an `if` as a data atom does.
     fn held_atom(&self) -> bool {
-        matches!(self, Mv::Held(h) if h.atom.is_some())
+        matches!(self, Mv::Held(h) if matches!(h.shape, HeldKind::Atom(_)))
+    }
+
+    /// Whether `self` is a held tuple.
+    fn held_tuple(&self) -> bool {
+        matches!(self, Mv::Held(h) if h.is_tuple())
+    }
+
+    /// Whether `self` is a held family.
+    fn held_family(&self) -> bool {
+        matches!(self, Mv::Held(h) if h.family().is_some())
     }
 }
 
@@ -1333,8 +1397,34 @@ impl<'g> Machine<'g, '_> {
             // into its cell as a data tuple's are (DESIGN.md step L1.17).
             Op::Prim(Prim::Tuple) if ins.iter().any(Mv::holds_function) => {
                 let kids = ins.iter().map(Mv::cell).collect();
-                vec![self.held(None, kids, ins)]
+                vec![self.held(HeldKind::Tuple, kids, ins)]
             }
+            // A display with an entry that is no data is a held family, as native code makes
+            // it (`held_entries` in zed-native's hooks.rs); a key that is no data, or entries
+            // the kernel refuses, are the kernel's error.
+            Op::Prim(Prim::Entries) if ins.iter().any(Mv::holds_function) => {
+                match held_entries(&ins) {
+                    Some((f, parts)) => {
+                        for p in &parts {
+                            self.inc(p.cell());
+                        }
+                        let kids = parts.iter().map(Mv::cell).collect();
+                        let m = self.held(HeldKind::Family(Box::new(f)), kids, parts);
+                        self.consume(np, &ins)?;
+                        vec![m]
+                    }
+                    None => vec![self.slow(node, id, np, &ins)?],
+                }
+            }
+            // A held family read: the entry, owned, or what the kernel gives where it is not
+            // this one's to make.
+            Op::Prim(p) if family_at(*p, &ins).is_some() => match self.family_read(*p, &ins) {
+                Some(m) => {
+                    self.consume(np, &ins)?;
+                    vec![m]
+                }
+                None => vec![self.slow(node, id, np, &ins)?],
+            },
             Op::Prim(Prim::Atom)
                 if ins.len() > 2
                     && ins[..2].iter().all(data)
@@ -1345,7 +1435,7 @@ impl<'g> Machine<'g, '_> {
                         let parts: Vec<Mv<'g>> =
                             order.iter().map(|&i| ins[2 + i].clone()).collect();
                         let kids = parts.iter().map(Mv::cell).collect();
-                        vec![self.held(Some(atom), kids, parts)]
+                        vec![self.held(HeldKind::Atom(atom), kids, parts)]
                     }
                     // The kernel refuses the atom: its error.
                     None => vec![self.slow(node, id, np, &ins)?],
@@ -1353,9 +1443,7 @@ impl<'g> Machine<'g, '_> {
             }
             // A held tuple read at a key: the part, or what the kernel gives for a key outside
             // it (`#outOfBounds`, or a data atom key given back).
-            Op::Prim(Prim::TupleGet | Prim::At)
-                if ins.len() == 2 && matches!(&ins[0], Mv::Held(h) if h.atom.is_none()) =>
-            {
+            Op::Prim(Prim::TupleGet | Prim::At) if ins.len() == 2 && ins[0].held_tuple() => {
                 match read_held(&ins[0], &ins[1]) {
                     Some(m) => {
                         let m = m.clone();
@@ -1479,12 +1567,19 @@ impl<'g> Machine<'g, '_> {
                     });
                 }
                 _ => {
-                    let mut out = match called(&ins) {
-                        Some(m) => {
+                    // A held family applied to a key is read at it, as the kernel applies it;
+                    // a primitive called on one reads it as the primitive's node does.
+                    let read = family_called(&ins).map(|(p, a)| self.family_read(p, &ins[a..]));
+                    let mut out = match (read, called(&ins)) {
+                        (Some(Some(m)), _) => {
+                            self.consume(np, &ins)?;
+                            vec![m]
+                        }
+                        (None, Some(m)) => {
                             let m = m.clone();
                             self.give(np, &ins, m)?
                         }
-                        None => vec![self.slow(node, id, np, &ins)?],
+                        _ => vec![self.slow(node, id, np, &ins)?],
                     };
                     out.resize(node.outputs.len(), Mv::State);
                     out
@@ -1543,16 +1638,8 @@ impl<'g> Machine<'g, '_> {
                 };
                 vec![v, Mv::State]
             }
-            Op::Push(_) => {
-                let v = self.kernel(node, id, &ins)?;
-                self.consume(np, &ins)?;
-                vec![self.fresh(v), Mv::State]
-            }
-            _ => {
-                let v = self.kernel(node, id, &ins)?;
-                self.consume(np, &ins)?;
-                vec![self.fresh(v)]
-            }
+            Op::Push(_) => vec![self.slow(node, id, np, &ins)?, Mv::State],
+            _ => vec![self.slow(node, id, np, &ins)?],
         }))
     }
 
@@ -1787,7 +1874,9 @@ impl<'g> Machine<'g, '_> {
     }
 
     /// The kernel runs node `node`, occurrence `id`, on `ins`, the owned inputs are dropped, and
-    /// the value is allocated.
+    /// the value is allocated. The value may be a function or hold one, a family of functions
+    /// a `map` made included (row FAIL-machine-held-family): the kernel gives it apart from its
+    /// run ([`Made`]), and [`Machine::alloc_made`] allocates it, as native code's `slow` does.
     fn slow(
         &mut self,
         node: &'g Node,
@@ -1795,9 +1884,180 @@ impl<'g> Machine<'g, '_> {
         np: &NodePlan,
         ins: &[Mv<'g>],
     ) -> Result<Mv<'g>, String> {
-        let v = self.kernel(node, id, ins)?;
+        let q = self.kernel_term(node, id, ins)?;
+        let m = self.ev.run_made(&q).map_err(|e| e.to_string())?;
         self.consume(np, ins)?;
-        Ok(self.fresh(v))
+        Ok(self.alloc_made(m))
+    }
+
+    /// Allocates the value `m`: each node in order, a part before what holds it, data as
+    /// [`Machine::fresh`] makes it, a closure as an [`Mv::Fun`] and a held value as an
+    /// [`Mv::Held`], whose parts move into its cell; a node held at more places than one gets
+    /// a reference for each place past the first. As native code's `alloc_made`.
+    // Complexity tradeoff: the naive way hands the kernel's value to `fresh`, which takes data
+    // only. Here each node is allocated once, O(nodes + parts), plus data as `fresh` costs.
+    // Tradeoff: a closure the kernel gave back is an `Mv::Fun`, with no lambda node, so a call
+    // of it runs in the kernel. Nothing is refused.
+    fn alloc_made(&mut self, m: Made) -> Mv<'g> {
+        let mut vals: Vec<Mv<'g>> = Vec::with_capacity(m.nodes.len());
+        let mut used = vec![false; m.nodes.len()];
+        for node in m.nodes {
+            // Node `i`'s value for one more place: the first takes the reference it was made
+            // with.
+            let mut parts = |this: &mut Self, ids: &mut dyn Iterator<Item = usize>| {
+                ids.map(|i| {
+                    let v = vals[i].clone();
+                    if std::mem::replace(&mut used[i], true) {
+                        this.inc(v.cell());
+                    }
+                    v
+                })
+                .collect::<Vec<Mv<'g>>>()
+            };
+            let v = match node {
+                MadeNode::Data(v) => self.fresh(v),
+                MadeNode::Prim(p) => Mv::Prim(p),
+                MadeNode::Source(p) => Mv::Source(p),
+                MadeNode::Fun(f) => {
+                    let (names, ids): (Vec<Arc<str>>, Vec<usize>) = f.caps.into_iter().unzip();
+                    let caps = parts(self, &mut ids.into_iter());
+                    let cell = self.alloc(caps.iter().map(Mv::cell).collect());
+                    Mv::Fun(Rc::new(Fun {
+                        cell,
+                        params: f.params,
+                        body: f.body,
+                        names,
+                        caps,
+                    }))
+                }
+                MadeNode::Held(shape, ids) => {
+                    let ps = parts(self, &mut ids.into_iter());
+                    let shape = match shape {
+                        MadeShape::Tuple => HeldKind::Tuple,
+                        MadeShape::Atom(n, f) => HeldKind::Atom((n, f)),
+                        MadeShape::Family(f) => HeldKind::Family(Box::new(f)),
+                    };
+                    let kids = ps.iter().map(Mv::cell).collect();
+                    self.held(shape, kids, ps)
+                }
+            };
+            vals.push(v);
+        }
+        vals.pop().expect("a value has a node")
+    }
+
+    /// What primitive `p` gives on `ins`, which hold a held family where [`family_at`] says, as
+    /// the kernel's `Machine::held_family` gives it, owned; `None` where the kernel gives an
+    /// error, which is then the kernel's to give. As native code's `family_read`.
+    // Complexity tradeoff: the naive read hands the family to the kernel, O(n) per read to build
+    // its term, and an entry that is a function cannot come back as the machine's own value.
+    // Here each read is one lookup in the family's keys, O(log n), and `first` and `last`
+    // descend one level per step, O(depth · log n). Tradeoff: the kernel's rules for these
+    // reads are written a third time (kernel, native code, here); the three-way tests in
+    // `l01_36_cranelift::held_values` check that they agree.
+    fn family_read(&mut self, p: Prim, ins: &[Mv<'g>]) -> Option<Mv<'g>> {
+        enum Got<'a, 'g> {
+            Part(&'a Mv<'g>),
+            Data(Value),
+            Pair(Value, &'a Mv<'g>),
+        }
+        let at = family_at(p, ins).expect("a held family operand");
+        // The key read, or the entry tuple stepped from.
+        let other = (ins.len() == 2).then(|| &ins[1 - at]);
+        let key = match (p, other) {
+            (_, None) => None,
+            (Prim::EntryAfter | Prim::EntryBefore, Some(e)) => match e {
+                Mv::Held(h) => match (h.is_tuple(), &h.parts[..]) {
+                    (true, [Mv::Data(k, _), _]) => Some(k.clone()),
+                    _ => return None,
+                },
+                Mv::Data(Value::Tuple(e), _) if e.len() == 2 => Some(e[0].clone()),
+                _ => return None,
+            },
+            (_, Some(k)) => {
+                // A key that is a failure passes through.
+                if k.held_atom() {
+                    let k = k.clone();
+                    self.inc(k.cell());
+                    return Some(k);
+                }
+                match k {
+                    Mv::Data(k @ Value::Atom(_), _) => return Some(self.fresh(k.clone())),
+                    Mv::Data(k, _) => Some(k.clone()),
+                    _ => return None,
+                }
+            }
+        };
+        let Mv::Held(h) = &ins[at] else {
+            unreachable!("`family_at` found a held family")
+        };
+        let f = h.family().expect("a held family");
+        let entry = |e: HeldEntry<'_>| match e {
+            HeldEntry::Data(v) => Got::Data(v.clone()),
+            HeldEntry::Part(i) => Got::Part(&h.parts[i]),
+        };
+        let pair = |k: &Value, e: HeldEntry<'_>| match e {
+            HeldEntry::Data(v) => Got::Data(Value::tuple(vec![k.clone(), v.clone()])),
+            HeldEntry::Part(i) => Got::Pair(k.clone(), &h.parts[i]),
+        };
+        let none = || Got::Data(Value::tuple(Vec::new()));
+        let got = match p {
+            Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
+                let k = key.expect("a key");
+                match (p, f.get(&k)) {
+                    (Prim::Has, e) => Got::Data(Value::Bool(e.is_some())),
+                    (_, Some(e)) => entry(e),
+                    (Prim::At, None) => Got::Data(Value::atom("outOfBounds")),
+                    (_, None) => Got::Data(Value::atom("notFound")),
+                }
+            }
+            Prim::Count => Got::Data(Value::Int(f.len() as i64)),
+            Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
+                Some((k, e)) => pair(k, e),
+                None => none(),
+            },
+            Prim::EntryAfter | Prim::EntryBefore => {
+                match f.beside(&key.expect("a key"), p == Prim::EntryAfter) {
+                    Some((k, e)) => pair(k, e),
+                    None => none(),
+                }
+            }
+            Prim::First | Prim::Last => {
+                // A part that is a held family is a level beneath its key: descend into it.
+                let last = p == Prim::Last;
+                let mut cur: &Held<'g> = h;
+                loop {
+                    let f = cur.family().expect("only held families are entered");
+                    match f.end(last) {
+                        None => break Got::Data(Value::atom("none")),
+                        Some((_, HeldEntry::Data(Value::Family(inner)))) => {
+                            break Got::Data(leaf_at_end(inner, last));
+                        }
+                        Some((_, HeldEntry::Data(v))) => break Got::Data(v.clone()),
+                        Some((_, HeldEntry::Part(i))) => match &cur.parts[i] {
+                            Mv::Held(n) if n.family().is_some() => cur = n,
+                            m => break Got::Part(m),
+                        },
+                    }
+                }
+            }
+            _ => unreachable!("`family_at` names these primitives only"),
+        };
+        Some(match got {
+            Got::Data(v) => self.fresh(v),
+            Got::Part(m) => {
+                let m = m.clone();
+                self.inc(m.cell());
+                m
+            }
+            Got::Pair(k, m) => {
+                let k = self.fresh(k);
+                let m = m.clone();
+                self.inc(m.cell());
+                let kids = vec![k.cell(), m.cell()];
+                self.held(HeldKind::Tuple, kids, vec![k, m])
+            }
+        })
     }
 
     /// The node gives `m`, a part of its inputs or one of them: `m` gets a reference before
@@ -1808,15 +2068,11 @@ impl<'g> Machine<'g, '_> {
         Ok(vec![m])
     }
 
-    /// A new held tuple or atom of `parts`, which move into its cell, whose kids are `kids`.
-    fn held(
-        &mut self,
-        atom: Option<AtomName>,
-        kids: Vec<Option<usize>>,
-        parts: Vec<Mv<'g>>,
-    ) -> Mv<'g> {
+    /// A new held tuple, atom or family of `parts`, which move into its cell, whose kids are
+    /// `kids`.
+    fn held(&mut self, shape: HeldKind, kids: Vec<Option<usize>>, parts: Vec<Mv<'g>>) -> Mv<'g> {
         let cell = self.alloc(kids);
-        Mv::Held(Rc::new(Held { cell, atom, parts }))
+        Mv::Held(Rc::new(Held { cell, shape, parts }))
     }
 
     /// The name and field names of the atom node `node`, occurrence `id`, makes on `ins`, and
@@ -1849,13 +2105,19 @@ impl<'g> Machine<'g, '_> {
 
     /// The value the kernel gives node `node`, occurrence `id`, run alone on `ins`.
     fn kernel(&mut self, node: &'g Node, id: usize, ins: &[Mv<'g>]) -> Result<Value, String> {
+        let t = self.kernel_term(node, id, ins)?;
+        self.ev.run(&t).map_err(|e| e.to_string())
+    }
+
+    /// The kernel term of node `node`, occurrence `id`, run alone on `ins`.
+    fn kernel_term(&mut self, node: &'g Node, id: usize, ins: &[Mv<'g>]) -> Result<Term, String> {
         let mut lets = Lets::default();
         let mut terms = Vec::new();
         for v in ins {
             terms.push(self.term(v, &mut lets)?);
         }
         let t = raise_with(self.alone(node, id), &terms)?;
-        self.ev.run(&wrap(lets, t)).map_err(|e| e.to_string())
+        Ok(wrap(lets, t))
     }
 
     /// A one-node region running `node`, occurrence `id`, on its arguments, made the first time
@@ -1890,6 +2152,7 @@ impl<'g> Machine<'g, '_> {
             terms.extend(got.take());
             let parts = match m {
                 Mv::Clo(c) => &c.caps,
+                Mv::Fun(f) => &f.caps,
                 Mv::Held(h) => &h.parts,
                 _ => unreachable!("only closures and held values are entered"),
             };
@@ -1902,9 +2165,19 @@ impl<'g> Machine<'g, '_> {
                     let (m, terms) = stack.pop().expect("an entered value");
                     let t = match &m {
                         Mv::Clo(c) => raise_with(self.alone(c.node, c.id), &terms)?,
+                        Mv::Fun(f) => fun_term(&f.params, &f.body, &f.names, terms),
+                        // Bound once, outside the node's term, as native code binds it: a
+                        // use, however often the term runs it, reads the one value.
                         Mv::Held(h) => {
-                            let atom = h.atom.as_ref().map(|(n, f)| (n, f));
-                            held_term(atom, h.cell as u64, terms)
+                            let key = h.cell as u64;
+                            let made = match &h.shape {
+                                HeldKind::Tuple => held_term(None, key, terms),
+                                HeldKind::Atom((n, f)) => held_term(Some((n, f)), key, terms),
+                                HeldKind::Family(f) => held_family_term(f, key, terms),
+                            };
+                            let x = cell_var(key);
+                            lets.held.push((x.clone(), made));
+                            Term::Var(x)
                         }
                         _ => unreachable!("only closures and held values are entered"),
                     };
@@ -2224,14 +2497,64 @@ fn passed<'a, 'g>(p: Prim, ins: &'a [Mv<'g>]) -> Option<&'a Mv<'g>> {
 /// [`passed`] does. `None` where the kernel decides.
 fn called<'a, 'g>(ins: &'a [Mv<'g>]) -> Option<&'a Mv<'g>> {
     match (&ins[0], &ins[1..]) {
-        (t @ Mv::Held(h), [k]) if h.atom.is_none() => read_held(t, k),
+        (t, [k]) if t.held_tuple() => read_held(t, k),
         (m, _) if m.held_atom() => Some(m),
-        (Mv::Prim(Prim::TupleGet | Prim::At), [t @ Mv::Held(h), k]) if h.atom.is_none() => {
-            read_held(t, k)
-        }
+        (Mv::Prim(Prim::TupleGet | Prim::At), [t, k]) if t.held_tuple() => read_held(t, k),
         (Mv::Prim(p), args) if args.iter().any(|m| matches!(m, Mv::Held(_))) => passed(*p, args),
         _ => None,
     }
+}
+
+/// The entries of display `ins`, key then value, as a held family and its parts, each value
+/// that holds a function a part; `None` when a key is no data or the kernel refuses the
+/// entries, which is then the kernel's error to give. As native code's `held_entries`.
+// Complexity tradeoff: the naive display hands every entry to the kernel, O(n log n) and the
+// family given back apart (`Machine::alloc_made`). Here the keys and data entries are read out
+// of their values and the family built by the kernel's own rules ([`HeldFamily::new`]), the
+// same O(n log n) without a term, as native code builds it, so the two count alike.
+fn held_entries<'g>(ins: &[Mv<'g>]) -> Option<(HeldFamily, Vec<Mv<'g>>)> {
+    let mut entries = Vec::with_capacity(ins.len() / 2);
+    let mut parts = Vec::new();
+    for kv in ins.chunks(2) {
+        let [Mv::Data(k, _), v] = kv else {
+            return None;
+        };
+        match v {
+            Mv::Data(v, _) => entries.push((k.clone(), Some(v.clone()))),
+            Mv::State => return None,
+            v => {
+                parts.push(v.clone());
+                entries.push((k.clone(), None));
+            }
+        }
+    }
+    let Ok(Some(f)) = HeldFamily::new(entries) else {
+        return None;
+    };
+    Some((f, parts))
+}
+
+/// The position in `ins` of the held family primitive `p` reads, when it reads one.
+fn family_at(p: Prim, ins: &[Mv<'_>]) -> Option<usize> {
+    let (at, n) = match p {
+        Prim::Get | Prim::TupleGet | Prim::At | Prim::EntryAfter | Prim::EntryBefore => (0, 2),
+        Prim::Has => (1, 2),
+        Prim::Count | Prim::FirstEntry | Prim::LastEntry | Prim::First | Prim::Last => (0, 1),
+        _ => return None,
+    };
+    (ins.len() == n && ins[at].held_family()).then_some(at)
+}
+
+/// The primitive a call `ins[0](ins[1..])` reads a held family with, and where its operands
+/// start in `ins`: `Get` for the family applied to one key, or the primitive called.
+fn family_called(ins: &[Mv<'_>]) -> Option<(Prim, usize)> {
+    if ins.len() == 2 && family_at(Prim::Get, ins).is_some() {
+        return Some((Prim::Get, 0));
+    }
+    let Mv::Prim(p) = ins.first()? else {
+        return None;
+    };
+    family_at(*p, &ins[1..]).map(|_| (*p, 1))
 }
 
 /// What held tuple `t` read at key `k` gives when it is not the kernel's to make: the part at
@@ -2252,9 +2575,19 @@ fn port_var(p: &str) -> Arc<str> {
     format!("\0port {p}").into()
 }
 
-/// `t` with each lookup port in `ports` read first.
-fn wrap(ports: Lets, t: Term) -> Term {
-    ports.order.into_iter().rev().fold(t, |b, p| {
+/// The variable a held value with key `key` is bound to by `wrap`; native code names its
+/// held values so too.
+pub fn cell_var(key: u64) -> Arc<str> {
+    format!("\0cell {key}").into()
+}
+
+/// `t` with each held value in `lets` made first, each before the ones that hold it, and each
+/// lookup port read before them all.
+fn wrap(lets: Lets, t: Term) -> Term {
+    let t = (lets.held.into_iter().rev()).fold(t, |b, (x, made)| {
+        Term::Let(x, Shared::new(made), Shared::new(b))
+    });
+    lets.order.into_iter().rev().fold(t, |b, p| {
         Term::Let(port_var(&p), Shared::new(Term::Read(p)), Shared::new(b))
     })
 }
@@ -2278,6 +2611,18 @@ struct Lets {
     // `l01_36_cranelift::shared_closures` and
     // zed-native's `hooks::tests::a_closure_captured_twice_at_each_level_is_built_once`.
     built: HashMap<usize, Term>,
+    /// Each held value met, its variable ([`cell_var`]) and the term that makes it, in the
+    /// order finished, so a value's parts come before it; [`wrap`] binds each once, outside
+    /// the node's term, as native code's `Lets::held` does. Why the early build cannot fail or
+    /// change the result: native code's `Lets::held`.
+    // Complexity tradeoff: the naive term puts the making of a held value where the node uses
+    // it, and the node's term may run that place once per entry: a family the kernel makes
+    // with a held value at each of n keys made n values, n cells where native code made one,
+    // and O(n · parts) time (test `l01_36_cranelift::held_values::a_held_tuple_at_each_key_of_
+    // a_family_is_one_cell`). Here each is made once per kernel call, O(parts). Tradeoff: a
+    // held value on a path the node does not take is made anyway, O(its parts), no more than
+    // building its term cost.
+    held: Vec<(Arc<str>, Term)>,
 }
 
 /// The term of `v` when it has one already or has no parts; otherwise enters `v` on `stack`.
@@ -2287,7 +2632,7 @@ fn enter_term<'g>(
     stack: &mut Vec<(Mv<'g>, Vec<Term>)>,
 ) -> Option<Term> {
     match v {
-        Mv::Clo(_) | Mv::Held(_) => {
+        Mv::Clo(_) | Mv::Fun(_) | Mv::Held(_) => {
             let got = lets.built.get(&v.cell().expect("a cell")).cloned();
             if got.is_none() {
                 stack.push((v.clone(), Vec::new()));
@@ -2350,7 +2695,7 @@ fn flat_term(v: &Mv<'_>, lets: &mut Lets) -> Term {
             }
             Term::Var(port_var(p))
         }
-        Mv::Clo(_) | Mv::Held(_) => {
+        Mv::Clo(_) | Mv::Fun(_) | Mv::Held(_) => {
             unreachable!("a closure's or held value's term is built on the stack of `term`")
         }
     }
@@ -2429,13 +2774,17 @@ fn held_binders<'g>(
                     parts.push(Mv::Data(v.clone(), None));
                 }
             }
-            (Pattern::Tuple(ps) | Pattern::Atom(_, ps), Mv::Held(h)) => {
+            // A held family matches no tuple or atom pattern, so is never entered.
+            (Pattern::Tuple(ps) | Pattern::Atom(_, ps), Mv::Held(h)) if h.family().is_none() => {
                 for (i, (q, x)) in ps.iter().zip(&h.parts).enumerate() {
                     stack.push((paths.push(at, i), q, x));
                 }
             }
             (Pattern::Fields(_, fs), Mv::Held(h)) => {
-                let names: &[Arc<str>] = h.atom.as_ref().map_or(&[], |(_, f)| f);
+                let names: &[Arc<str>] = match &h.shape {
+                    HeldKind::Atom((_, f)) => f,
+                    _ => &[],
+                };
                 for (f, q) in fs {
                     if let Ok(i) = names.binary_search(f) {
                         stack.push((paths.push(at, i), q, &h.parts[i]));

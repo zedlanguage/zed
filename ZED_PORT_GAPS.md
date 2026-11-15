@@ -877,6 +877,15 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | `Option<Value>` per entry to say "a part goes here" while the family is built | `HeldFamily::new`, `held_entries` | None | A union `V \| #part` per entry |
 | A third arm in a `match` over a borrowed held value's shape, `HeldShape::{Tuple, Atom, Family}` | `hooks::term`, `Heap::held` users | None | A union member per shape |
 
+## Entries from FAIL-native-fam-result-holds-function and FAIL-machine-held-family (`zed-kernel/src/eval/made.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`, `zedc-zir/src/zir/memory.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A map from an `Rc`'s address to its node number, so a closure or held value reached twice is one node | `Machine::made` (`done`) | Address as identity | A node id the kernel gives each closure and held value, or the runtime's cell identity (author: address as id only for identity, never order; met here) |
+| A list of tasks with an output stack split by `split_off` at each closure and held value, in place of recursion | `Machine::made` (`Task`, `out`) | Mutation | An explicit stack value threaded through a loop |
+| A closure the kernel made, kept as its lambda's parameters, a shared body and its captures (`Box<FunObj>`, `Mv::Fun(Rc<Fun>)`) | `Obj::Fun`, `memory::Fun` | None | A struct member of the cell union |
+| Names `"\0cell k"` for held values bound outside a node's term, unwritable in source | `memory::cell_var`, `hooks::term` | None | A binder kind of its own in the kernel term, so no name is reserved |
+
 ## Entries from T2-eval-repair (`zed-kernel/src/deep.rs`, `value.rs`, `family.rs`, `types.rs`)
 
 | Rust construct | Sites | Gap | At the port |

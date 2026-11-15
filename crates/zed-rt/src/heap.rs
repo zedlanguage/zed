@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::{mem, slice};
 
 use zed_kernel::paths::{Kept, Paths};
-use zed_kernel::term::Pattern;
+use zed_kernel::term::{Pattern, Shared};
 use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::{Atom, Family, Fields, HeldFamily, Items, SharedParts, Value};
 
@@ -181,6 +181,29 @@ pub enum Obj {
     /// (DESIGN.md step L1.17): no data value, so never read as one, and its parts are words as
     /// a data tuple's are. The machine's `Mv::Held` (zedc-zir's memory.rs).
     Held(Box<HeldObj>),
+    /// A closure the kernel made and gave back, which has no lambda in the program's table: a
+    /// function a `map` made, or one a `where` or a remap kept, run in the kernel (rows
+    /// FAIL-native-fam-result-holds-function, FAIL-held-family-operators). A call of it runs
+    /// in the kernel. The machine's `Mv::Fun` (zedc-zir's memory.rs).
+    Fun(Box<FunObj>),
+}
+
+/// The contents of an [`Obj::Fun`]: the kernel's `MadeFun` with its captures as words.
+// Complexity tradeoff: the naive form would give such a closure a lambda in the program's
+// table, which is fixed when the program is compiled. Here the closure keeps its lambda's
+// parameters and body, shared with the kernel's term, and the name of each capture, so its
+// term is built in O(captures) as a closure's is (`MadeFun::term`). Boxed, so `Obj` keeps its
+// size. Tests `l03_02_map_run::functions` and `l01_36_cranelift::held_values`.
+#[derive(Clone, Debug)]
+pub struct FunObj {
+    /// The lambda's parameters.
+    pub params: Vec<Arc<str>>,
+    /// The lambda's body.
+    pub body: Shared,
+    /// The name each capture is bound to in the body, in the order of `caps`.
+    pub names: Vec<Arc<str>>,
+    /// The captures.
+    pub caps: Box<[Word]>,
 }
 
 /// The contents of an [`Obj::Held`].
@@ -249,7 +272,7 @@ impl Obj {
                 Value::Family(_) => "family",
                 _ => "kernel value",
             },
-            Obj::Clo { .. } => "closure",
+            Obj::Clo { .. } | Obj::Fun(_) => "closure",
             Obj::Held(h) => match h.shape {
                 HeldShape::Tuple => "tuple",
                 HeldShape::Atom(..) => "atom",
@@ -263,6 +286,7 @@ impl Obj {
             Obj::Tuple(xs) => xs,
             Obj::Atom { args, .. } => args,
             Obj::Clo { caps, .. } => caps,
+            Obj::Fun(f) => &f.caps,
             Obj::Held(h) => &h.parts,
             Obj::Str(_) | Obj::Data(_) => &[],
         }
@@ -826,7 +850,7 @@ impl Heap {
     pub fn is_function(&self, w: Word) -> Result<bool, String> {
         Ok(match w.tag {
             Word::PRIM | Word::SOURCE => true,
-            Word::CELL => matches!(self.obj(w)?, Some(Obj::Clo { .. })),
+            Word::CELL => matches!(self.obj(w)?, Some(Obj::Clo { .. } | Obj::Fun(_))),
             _ => false,
         })
     }
@@ -918,7 +942,9 @@ impl Heap {
                     return Ok(None);
                 }
                 Some(Obj::Data(v)) => (**v).clone(),
-                Some(Obj::Clo { .. } | Obj::Held(_)) => return Err(closure_as_data()),
+                Some(Obj::Clo { .. } | Obj::Fun(_) | Obj::Held(_)) => {
+                    return Err(closure_as_data());
+                }
                 None => unreachable!("obj_in checks the cell is live"),
             },
             t => return Err(not_data(t)),
@@ -1208,7 +1234,7 @@ impl Heap {
                     // A value that holds a function equals no data value: a pattern's literal is
                     // data, as the kernel's matching has it.
                     Some(Obj::Held(_)) => false,
-                    Some(Obj::Clo { .. }) => return Err(closure_as_data()),
+                    Some(Obj::Clo { .. } | Obj::Fun(_)) => return Err(closure_as_data()),
                     None => unreachable!("obj_in checks the cell is live"),
                 },
                 t => return Err(not_data(t)),
@@ -1243,7 +1269,7 @@ impl Heap {
             Some(Obj::Tuple(_)) => Type::universe(Universe::Tuple),
             Some(Obj::Atom { name, .. }) => Type::atom(name) | Type::atom_with(name, &Type::top()),
             Some(Obj::Held(_)) => return Ok(t.contains(&self.stand_in(w)?)),
-            Some(Obj::Clo { .. }) | None => return Ok(t.contains(&self.value(w)?)),
+            Some(Obj::Clo { .. } | Obj::Fun(_)) | None => return Ok(t.contains(&self.value(w)?)),
         };
         let held = t & &kind;
         if held == kind {

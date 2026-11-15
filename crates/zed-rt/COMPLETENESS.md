@@ -35,7 +35,7 @@ end with the reason.
 | Every NaN is one word (sec:kernel: NaN is canonical) | `heap::completeness::each_scalar_is_its_own_word_and_every_other_value_is_none` |
 | `Word::cell` index and generation at 0, at their largest, and both at once | `heap::completeness::a_cell_word_holds_its_index_and_generation_at_their_ends` |
 | `Parts` of 0 to 3 words, from a slice and from a vector; a pair held in place | `heap::completeness::a_pair_is_held_in_place_and_any_other_length_apart` |
-| `Obj::parts` of a string, a tuple of 1 and 2, an atom, a kernel value, a closure with and without captures | `heap::completeness::the_parts_of_each_kind_of_cell` |
+| `Obj::parts` of a string, a tuple of 1 and 2, an atom, a kernel value, a closure with and without captures, a closure the kernel made (`Obj::Fun`), a held tuple | `heap::completeness::the_parts_of_each_kind_of_cell` |
 | `uncounted`: scalars take no entry; the empty tuple, a bare atom and an atom with an empty payload are entered once and are their entry when made again; a constant with parts is a new entry at each call; `value_ref` and `value` of each | `heap::completeness::the_table_enters_each_empty_tuple_and_bare_atom_once_and_other_constants_each_time`, `heap::tests::an_empty_payload_is_an_entry_apart_from_the_bare_atom` |
 | `alloc`: a freed cell is taken again, last freed first, in its next generation; a new cell when none is free; `live`, `cell_slots`, the `peak` and `allocations` counts; an old word of a cell taken again is a freed word | `heap::completeness::a_freed_cell_is_taken_again_last_freed_first_in_its_next_generation` |
 | A cell freed in its last generation is never taken again | `heap::tests::a_cell_freed_in_its_last_generation_is_not_taken_again` |
