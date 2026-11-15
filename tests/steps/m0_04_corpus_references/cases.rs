@@ -144,13 +144,6 @@ fn check(number: &str, name: &str, input: &str, out: &str, result: Result<(), &s
 #[test]
 fn a_line_with_the_wrong_number_of_fields_is_an_error() {
     check(
-        "06",
-        "case_head",
-        "1 1\n",
-        "",
-        Err("the header is not n m p"),
-    );
-    check(
         "16",
         "case_tick",
         "1 a\n",
@@ -177,6 +170,35 @@ fn a_line_with_the_wrong_number_of_fields_is_an_error() {
         "a 1\n",
         "",
         Err("not \"id time value\": a 1"),
+    );
+}
+
+#[test]
+fn an_unreadable_number_or_a_missing_field_takes_the_programs_else_default() {
+    // 04-running-variance.zed:8 reads `f64(l) else 0.0`: "abc" is 0.0, so after it the mean
+    // and variance are 0.0, and after 2.0 they are 1.0 and 4/2 - 1 = 1.0.
+    check(
+        "04",
+        "else_float",
+        "abc\n2\n",
+        "0.0 0.0 0.0\n2.0 1.0 1.0\n",
+        Ok(()),
+    );
+    // 06-matrix-multiply.zed:9 reads each cell as `f64(t) else 0.0`: A = [[0.0]] and
+    // B = [[3.0]] give 0.0.
+    check("06", "else_cell", "1 1 1\nx\n3\n", "0.0\n", Ok(()));
+    // Line 10 reads the header fields as `int(t) else 0` and lines 11-13 a missing one as
+    // `hdr[i] else 0`. With "1 1" p is 0, and A, rows 1..2 of one line, is empty.
+    check("06", "else_head_short", "1 1\n", "", Ok(()));
+    // With "x 1 1" n is 0, so A is empty.
+    check("06", "else_head_text", "x 1 1\n2\n3\n", "", Ok(()));
+    // Line 16 reads a cell of B past its row as `r[k] else 0.0`: p = 3 over a B of width 1.
+    check(
+        "06",
+        "else_column",
+        "1 1 3\n2\n5\n",
+        "10.0 0.0 0.0\n",
+        Ok(()),
     );
 }
 

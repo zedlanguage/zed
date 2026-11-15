@@ -196,7 +196,9 @@ fn a_histogram_counts_each_length_up_to_the_longest() {
 
 #[test]
 fn a_matrix_header_of_huge_sizes_reserves_nothing() {
-    for header in ["1 1 100000000000000", "1 100000000000000 1"] {
+    // A huge p is not here: `r[k] else 0.0` makes each of A's rows p cells long, so the output
+    // itself would be that large.
+    for header in ["100000000000000 1 1", "1 100000000000000 1"] {
         let input = format!("{header}\n1\n1\n");
         let (out, result) = on_text("06", "matrix_huge", &input);
         assert_eq!(out, "", "{header}");

@@ -20,8 +20,9 @@ reasons).
 | Integer text of any length, zeros, nines, powers of ten, a long text that is not an integer; at each length the texts L1.18 makes `#invalid` (a `+`, white space, `_`, Arabic-Indic digits alone and mixed with ASCII) | `int_reading::*` |
 | Int and float text that DESIGN L1.18 calls `#invalid` (`+5`, `.5`, `infinity`, digits of other scripts, fullwidth digits, white space, `_` marks), and its neighbors: a lone or doubled sign, a sign after the digits, a point at either end, a capital or signed exponent, `Inf` and `NaN`, `-infinity`; a finite text past the largest `f64` (`#overflow`) | `fail_reading::*` (row FAIL-ref-text-reading, fixed): the references read all of them as numbers before. No corpus input uses these forms, so no `.out` changed |
 | `lower`: U+0130, capital sigma final and not, case-ignorable characters skipped on both sides | `cases::lower_takes_the_full_mapping_with_the_final_sigma` |
-| A line with the wrong number of fields: 06 header, 16, 23, 27, 29 | `cases::a_line_with_the_wrong_number_of_fields_is_an_error` |
+| A line with the wrong number of fields: 16, 23, 27, 29 | `cases::a_line_with_the_wrong_number_of_fields_is_an_error` |
 | 06 a row range before the first row; a header of huge sizes | `cases::a_matrix_row_range_before_the_first_row_is_empty`, `a_matrix_header_of_huge_sizes_reserves_nothing` |
+| 04 and 06: an unreadable number or a missing field takes the program's `else` default (04 line 8; 06 lines 9-16) | `cases::an_unreadable_number_or_a_missing_field_takes_the_programs_else_default` |
 | 07 JSON failures report the farthest position | `a_json_failure_deep_in_a_list_reports_the_farthest_position` |
 | 08 a surrogate or a value past U+10FFFF fails its line, output before it kept | `cases::percent_decoding_of_a_surrogate_or_a_value_past_u10ffff_fails_the_line` |
 | 09 balanced brackets | `balanced_brackets_agree_with_the_definition_on_every_short_line`, `balanced_brackets_of_a_line_with_other_characters` |
