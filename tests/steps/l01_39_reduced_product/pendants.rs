@@ -11,6 +11,7 @@ use zed_kernel::Prim;
 use zed_kernel::Term;
 use zed_kernel::term::build::{lit, prim, var};
 use zed_tests::instances::Rng;
+use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::cell::Premises;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{self, Atom, Con, Formula, Lin, Shared};
@@ -762,14 +763,17 @@ const REFUSED: &[(&str, &str, &str)] = &[
 ];
 
 /// Each of `rows` projected by pendants as the table says, which is the union over the
-/// disjuncts of the hulls the brute force finds (its exact sets of values shown on a mismatch).
+/// disjuncts of the hulls the brute force finds (its exact sets of values shown on a mismatch),
+/// with the solver alone ([`solver_alone`]); with the exact cover, the projection by pendants
+/// gives the same answer or none, where a question of the cover is refused (row 16).
 fn check(rows: &[(&str, &str, &str)]) {
     let mut wrong = Vec::new();
     for (part, bx, want) in rows {
         let items = parse(part);
         let bs = boxes(bx);
         let s = scope(&bs);
-        let got = hung(&s, &formula(&items));
+        let covered = hung(&s, &formula(&items));
+        let got = solver_alone(|| hung(&scope(&bs), &formula(&items)));
         let want: BTreeMap<String, String> = bracketed(want)
             .into_iter()
             .map(|(n, x)| (n, format!("[{x}]")))
@@ -778,13 +782,14 @@ fn check(rows: &[(&str, &str, &str)]) {
             .into_iter()
             .map(|(n, (h, _))| (n, h))
             .collect();
-        if hulls != want || got.as_ref() != Some(&want) {
+        let cover_wrong = covered.as_ref().is_some_and(|c| *c != want);
+        if hulls != want || got.as_ref() != Some(&want) || cover_wrong {
             let sets: BTreeMap<String, String> = brute(&items, &bs, NARROW, true)
                 .into_iter()
                 .map(|(n, (_, e))| (n, e))
                 .collect();
             wrong.push(format!(
-                "{part}\n  boxes {bx}\n  hulls {hulls:?}\n  sets  {sets:?}\n  hung  {got:?}\n  want  {want:?}"
+                "{part}\n  boxes {bx}\n  hulls {hulls:?}\n  sets  {sets:?}\n  hung  {got:?}\n  cover {covered:?}\n  want  {want:?}"
             ));
         }
     }
@@ -1751,7 +1756,10 @@ fn parts_once_answered_by_how_they_were_written_give_one_answer() {
 /// Row 3 of [`WRITTEN`], case 272 of seed 17.
 #[test]
 fn parts_once_answered_by_how_they_were_written_give_one_answer_row_3() {
-    written_rows(&WRITTEN[3..4]);
+    // With the solver alone: under the exact cover, which names of this row are refused
+    // depends on how it is written (row GROUP-order-verdicts), and each set it keeps holds
+    // the exact hull ([`refused_projections_keep_the_box_of_their_rows_in_each_writing`]).
+    solver_alone(|| written_rows(&WRITTEN[3..4]));
 }
 
 /// Each of `syms`, the names of `f` within the boxes of `s`: its set from
@@ -1883,25 +1891,63 @@ fn shown_boxes(got: &BTreeMap<String, (IntervalSet, bool)>) -> String {
 /// writings see [`refused_projections_keep_the_box_of_their_rows_in_each_writing`],
 /// [`refused_projections_keep_the_box_of_their_rows_in_rewritten_writings`] and
 /// [`refused_projections_keep_the_box_of_their_rows_in_scaled_writings`] (one test took 2 s).
+///
+/// These tests pin the solver alone ([`solver_alone`]). Under the exact cover the names
+/// refused, and so the sets kept, depend on how the case is written (as written `a`, `b`, `z1`
+/// and `z2`, `b` keeping `[-4,16]`; with the names reversed `z0`, `z1` and `z2`; row
+/// GROUP-order-verdicts); [`cover_keeps_the_exact_hulls`] checks that every set it keeps in
+/// each writing holds the exact hull.
 #[test]
 fn refused_projections_keep_the_box_of_their_rows() {
     let (part, bx, _) = WRITTEN[3];
     let items = parse(part);
     let bs = boxes(bx);
-    let want = boxed_as_named(&items, &bs, &formula(&items)).expect("one answer");
+    let want = solver_alone(|| boxed_as_named(&items, &bs, &formula(&items))).expect("one answer");
     assert_eq!(shown_boxes(&want), ROW_BOXES);
-    let exact = brute(&items, &bs, WIDE, false);
+    let exact = row_hulls();
     assert_eq!(
         exact
             .iter()
-            .map(|(n, (h, _))| format!("{n}={h}"))
+            .map(|(n, h)| format!("{n}={}", show(h)))
             .collect::<Vec<_>>()
             .join(" "),
         "a=[2,3] b=[-4,15] c=[-3,6] z0=[-6,-4] z1=[-7,6] z2=[-6,6]"
     );
-    for (n, (h, _)) in &exact {
-        let h = shown_set(h);
-        assert_eq!(want[n].0.meet(&h), h, "the box of {n} holds the exact hull");
+    for (n, h) in &exact {
+        assert_eq!(&want[n].0.meet(h), h, "the box of {n} holds the exact hull");
+    }
+    cover_keeps_the_exact_hulls(&formula(&items));
+    let to = reversing(&bs);
+    let (items2, bs2) = renamed(&items, &bs, &to);
+    let back: BTreeMap<&String, &String> = to.iter().map(|(k, v)| (v, k)).collect();
+    let got = boxed_names(&scope(&bs2), &formula(&items2), &item_names(&items2));
+    for (n, (x, _)) in got {
+        let h = &exact[back[&n]];
+        assert_eq!(
+            &x.meet(h),
+            h,
+            "renamed, the set of {n} holds the exact hull"
+        );
+    }
+}
+
+/// The exact hull of each name of case 272 of seed 17 within its boxes, by brute force.
+fn row_hulls() -> BTreeMap<String, IntervalSet> {
+    let (part, bx, _) = WRITTEN[3];
+    brute(&parse(part), &boxes(bx), WIDE, false)
+        .into_iter()
+        .map(|(n, (h, _))| (n, shown_set(&h)))
+        .collect()
+}
+
+/// Under the exact cover, each set [`boxed_names`] keeps for `g`, case 272 of seed 17 written
+/// another way, holds the exact hull of [`row_hulls`].
+fn cover_keeps_the_exact_hulls(g: &Formula) {
+    let exact = row_hulls();
+    let (items, bs) = (parse(WRITTEN[3].0), boxes(WRITTEN[3].1));
+    for (n, (x, _)) in boxed_names(&scope(&bs), g, &item_names(&items)) {
+        let h = &exact[&n];
+        assert_eq!(&x.meet(h), h, "{g}: the set of {n} holds the exact hull");
     }
 }
 
@@ -1909,7 +1955,8 @@ fn refused_projections_keep_the_box_of_their_rows() {
 #[test]
 fn refused_projections_keep_the_box_of_their_rows_in_each_writing() {
     for (how, g) in four_ways(&parse(WRITTEN[3].0)) {
-        assert_eq!(row_boxes(&g), ROW_BOXES, "{how}: {g}");
+        assert_eq!(solver_alone(|| row_boxes(&g)), ROW_BOXES, "{how}: {g}");
+        cover_keeps_the_exact_hulls(&g);
     }
 }
 
@@ -1921,7 +1968,8 @@ fn refused_projections_keep_the_box_of_their_rows_in_rewritten_writings() {
     let mut r = Rng::new(0x272);
     let writings = [false, true, false, true].map(|split| rewritten(&mut r, &items, split));
     for g in writings {
-        assert_eq!(row_boxes(&g), ROW_BOXES, "{g}");
+        assert_eq!(solver_alone(|| row_boxes(&g)), ROW_BOXES, "{g}");
+        cover_keeps_the_exact_hulls(&g);
     }
 }
 
@@ -1931,7 +1979,8 @@ fn refused_projections_keep_the_box_of_their_rows_in_scaled_writings() {
     let items = parse(WRITTEN[3].0);
     let mut rs = Rng::new(0x5ca1e);
     for g in (0..2).map(|_| scaled(&mut rs, &items)) {
-        assert_eq!(row_boxes(&g), ROW_BOXES, "{g}");
+        assert_eq!(solver_alone(|| row_boxes(&g)), ROW_BOXES, "{g}");
+        cover_keeps_the_exact_hulls(&g);
     }
 }
 
@@ -1945,6 +1994,12 @@ type RefusedCount = (usize, usize, usize);
 /// parts and of the names: reversed, two random orders drawn from `order`, and a random
 /// writing of [`rewritten`], so that a box whose answer depends on the order of the rows is
 /// caught. Adds to `count`, and describes each mismatch, under `label`, in `wrong`.
+///
+/// These checks are made with the solver alone ([`solver_alone`]). Under the exact cover the
+/// names refused depend on how the part is written (row GROUP-order-verdicts: seed
+/// 17956898709070133281 case 9 of the joined parts refuses `z1` as written and answers it
+/// with the names reversed), so there each set kept, refused or not, is checked only to hold
+/// its exact hull, where some name is refused.
 fn check_refused(
     label: &str,
     order: &mut Rng,
@@ -1954,12 +2009,64 @@ fn check_refused(
     count: &mut RefusedCount,
     wrong: &mut Vec<String>,
 ) {
+    let f = formula(items);
+    let covered = boxed_names(&scope(bs), &f, &item_names(items));
+    let cover_refused = covered.values().any(|(_, refused)| *refused);
+    let alone = solver_alone(|| refused_alike(label, order, items, bs, count, wrong));
+    if alone.is_none() && !cover_refused {
+        return;
+    }
+    let hulls = hulls();
+    if cover_refused {
+        for (n, (x, _)) in &covered {
+            let h = &hulls[n];
+            if x.meet(h) != *h {
+                wrong.push(format!(
+                    "{label}: {f}\n  boxes {bs:?}\n  under the cover {n} = {} misses {}",
+                    show(x),
+                    show(h)
+                ));
+            }
+        }
+    }
+    let Some((s, got)) = alone else { return };
+    for (n, (x, refused)) in &got {
+        if !*refused {
+            continue;
+        }
+        count.1 += 1;
+        if x != s.get(n).ints() {
+            count.2 += 1;
+        }
+        let h = &hulls[n];
+        if x.meet(h) != *h {
+            wrong.push(format!(
+                "{label}: {f}\n  boxes {bs:?}\n  {n} = {} misses {}",
+                show(x),
+                show(h)
+            ));
+        }
+    }
+}
+
+/// The checks of [`check_refused`] that do not read the hulls: where some name is refused, the
+/// same sets in each writing and order. Returns the scope and the sets, or `None` where no
+/// name is refused.
+#[allow(clippy::type_complexity)]
+fn refused_alike(
+    label: &str,
+    order: &mut Rng,
+    items: &[Item],
+    bs: &BTreeMap<String, Vec<Piece>>,
+    count: &mut RefusedCount,
+    wrong: &mut Vec<String>,
+) -> Option<(Scope, BTreeMap<String, (IntervalSet, bool)>)> {
     let s = scope(bs);
     let syms = item_names(items);
     let f = formula(items);
     let got = boxed_names(&s, &f, &syms);
     if !got.values().any(|(_, refused)| *refused) {
-        return;
+        return None;
     }
     count.0 += 1;
     if let Err(e) = boxed_as_named(items, bs, &f) {
@@ -1996,24 +2103,7 @@ fn check_refused(
             ));
         }
     }
-    let hulls = hulls();
-    for (n, (x, refused)) in &got {
-        if !*refused {
-            continue;
-        }
-        count.1 += 1;
-        if x != s.get(n).ints() {
-            count.2 += 1;
-        }
-        let h = &hulls[n];
-        if x.meet(h) != *h {
-            wrong.push(format!(
-                "{label}: {f}\n  boxes {bs:?}\n  {n} = {} misses {}",
-                show(x),
-                show(h)
-            ));
-        }
-    }
+    Some((s, got))
 }
 
 /// Each name's hull from [`brute`].

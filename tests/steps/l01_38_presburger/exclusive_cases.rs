@@ -19,6 +19,7 @@
 //! of the chain.
 
 use zed_tests::scaling;
+use zed_tests::step_helpers::l01_38_presburger::{project_alone, solver_alone};
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, project_each};
 
@@ -97,8 +98,19 @@ pub(super) fn own_stage(m: usize) -> Formula {
     chained(m, |k, _| k)
 }
 
+/// The solver's projection of `z`, checked against the exact cover's ([`project_alone`]): the
+/// cover gives the same set or passes its work limit (8.5M units, 157 ms, at most, when
+/// unlimited) and refuses.
 fn z_of(f: &Formula) -> IntervalSet {
-    let r = project_each(f, &[Atom::Sym("z".into())]).expect("a projection");
+    let r = project_alone(f, &[Atom::Sym("z".into())]);
+    r.0[0].clone().expect("a projection of z")
+}
+
+/// The solver's projection of `z` alone, for the benchmarks of [`projects`], which measure the
+/// solver's search through the cases; the cover's cost is measured by
+/// `l01_38_omega_test::bench::exact_cover`.
+fn z_of_alone(f: &Formula) -> IntervalSet {
+    let r = solver_alone(|| project_each(f, &[Atom::Sym("z".into())])).expect("a projection");
     r.0[0].clone().expect("a projection of z")
 }
 
@@ -137,6 +149,6 @@ pub(super) fn projects(
 ) {
     let inputs = scaling::inputs(n, fam);
     scaling::check_order(what, n, 1, |m| {
-        assert_eq!(z_of(&inputs[&m]), want(m), "{what}, m = {m}");
+        assert_eq!(z_of_alone(&inputs[&m]), want(m), "{what}, m = {m}");
     });
 }

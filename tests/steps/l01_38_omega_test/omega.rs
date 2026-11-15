@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
+use zed_tests::step_helpers::l01_38_presburger::{project_alone, solver_alone};
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
@@ -95,9 +96,12 @@ fn a_model_may_hold_values_past_128_bits() {
     assert!(f.holds(&m));
     assert!(m.values().any(|v| v.to_i128().is_none()));
     // The projection is read through such a point; its bounds lie past `i64`, as no bound.
-    // `.0`, the hull: `growing` has no disjunction, so no cause of one left out.
-    let hull = project(&f, &sym("x0")).unwrap().0;
+    // `.0`, the hull: `growing` has no disjunction, so no cause of one left out. The solver's
+    // hull, without the exact cover, which passes its work limit here (more than 47 s when
+    // unlimited) and refuses ([`project_alone`]).
+    let hull = solver_alone(|| project(&f, &sym("x0"))).unwrap().0;
     assert!(hull.bounds().is_some(), "{hull:?}");
+    project_alone(&f, &[sym("x0")]);
 }
 
 #[test]
@@ -851,7 +855,9 @@ pub(super) fn dead2(n: usize, chain: bool, zn: &str) -> Formula {
 /// Every stage's credit is exactly `[0..=5]` and its state `{0, 2}`, under either naming of
 /// the credits, chained or not: no stage can stall, since its state is 0 or 2, so its credit
 /// is at least 0 (item PROJECT-hull-credit-lower). Before it the credit's hull had no lower
-/// bound: the rows the state's disjunction implies, `0 <= y <= 2`, allow a stall.
+/// bound: the rows the state's disjunction implies, `0 <= y <= 2`, allow a stall. The solver's
+/// hulls; the exact cover gives the same sets or passes its work limit on the longer chains
+/// (554M units, 5.2 s, when unlimited) and refuses ([`project_alone`]).
 #[test]
 fn pipeline_stage_hulls_are_exact() {
     for chain in [false, true] {
@@ -861,8 +867,7 @@ fn pipeline_stage_hulls_are_exact() {
                 let syms: Vec<Atom> = (0..n)
                     .flat_map(|k| [sym(&format!("{zn}{k}")), sym(&format!("y{k}"))])
                     .collect();
-                let (each, skipped) =
-                    zedc::store::presburger::project_each(&f, &syms).expect("answered");
+                let (each, skipped) = project_alone(&f, &syms);
                 let hulls: Vec<String> = (each.iter())
                     .map(|h| h.as_ref().expect("not refused").to_string())
                     .collect();

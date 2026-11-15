@@ -887,7 +887,10 @@ fn project_each_answers_a_repeated_and_an_absent_symbol() {
     ]);
     assert_eq!(project(&e, &sym("x")), project(&two, &sym("x")));
     let evens = (0..=3).map(|v| (End::of(2 * v), End::of(2 * v))).collect();
-    assert_eq!(project(&e, &sym("x")), Ok((IntervalSet::from_pieces(evens), vec![])));
+    assert_eq!(
+        project(&e, &sym("x")),
+        Ok((IntervalSet::from_pieces(evens), vec![]))
+    );
     // An unsatisfiable formula projects every symbol, mentioned or not, to the empty set.
     let none = Formula::and(vec![f, ge(&[("y", -1)], 1)]);
     let (each, _) = project_each(&none, &[sym("x"), sym("z")]).unwrap();

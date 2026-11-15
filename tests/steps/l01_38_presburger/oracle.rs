@@ -129,8 +129,8 @@ fn run_on(
             Err(Refusal::Tie(_)) => t.tie += 1,
             Err(Refusal::Disjuncts) => panic!("a conjunction refused for its disjunctions: {f}"),
             Err(Refusal::Unordered(_)) => panic!("a conjunction refused for its disjunctions: {f}"),
-            Err(Refusal::Work) => {
-                panic!("a point refused for its work, which only a projection does: {f}")
+            Err(Refusal::Work | Refusal::Questions | Refusal::Repeats) => {
+                panic!("a point refused for a cause only a projection has: {f}")
             }
         }
         assert_eq!(

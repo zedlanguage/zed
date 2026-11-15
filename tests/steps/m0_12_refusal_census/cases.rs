@@ -63,6 +63,22 @@ fn every_kind_has_a_distinct_name_and_a_phrase_no_other_kind_holds() {
 }
 
 #[test]
+fn the_exact_cover_s_refusals_are_found_by_their_own_words() {
+    // The phrases of Questions and Repeats are read from the solver's own reasons, so a
+    // rewording there fails here rather than turning their census lines into `Other`.
+    use zedc::store::presburger::Refusal;
+    for (r, name) in [
+        (Refusal::Questions, "Questions"),
+        (Refusal::Repeats, "Repeats"),
+    ] {
+        let text = r
+            .closed_by("It kept the bounds of each variable.")
+            .to_string();
+        assert_eq!(kinds::of(&text), vec![name], "{text}");
+    }
+}
+
+#[test]
 fn a_census_line_is_tab_separated_on_one_line() {
     let mut out = String::new();
     line(

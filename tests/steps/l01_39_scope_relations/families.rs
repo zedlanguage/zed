@@ -1822,14 +1822,20 @@ fn scales(name: &str, n: usize, power: u32) {
 
 #[test]
 fn two_eq_case_against_the_oracle() {
-    // A lost bound, kept as it is: in the part `a <= 2`, `a == 2 * z1 + 1` alone gives
-    // `z1 <= 0` and `b <= 4`; `b <= 2` needs `a <= -3`, which takes both equalities with
-    // rounding between them, and the part's `z1 <= -2` does not reach `b` (PRODUCT-two-eq-round).
-    // The rule that one equality of two names per name is added to the part's rows is not
-    // the cause: with every such equality added, `b <= 4` still.
-    let k0 =
-        "a=[..=-3, 9..=39, 45..] b=[..=4, 8..] z0=[..=-1, 3..=13, 15..] z1=[..=-2, 4..=19, 22..]";
-    let k1 = "a=[..=-3, 9..] b=[..=4, 8..] z0=[..=-1, 3..] z1=[..=-2, 4..]";
+    // `a` is odd and a multiple of 3, so `a == 3 mod 6`. In the arm `a <= 2` that gives
+    // `a <= -3`, `z1 <= -2` and `b <= 2`, the bound PRODUCT-two-eq-round lacked; the exact
+    // cover (PRES-pugh-work-budget) now finds it. In the arm `b >= 8` (k = 0), `b - z1 <= 4`
+    // needs `z1 >= 4`, so `a >= 9`, or `z1 >= 20` gives `a >= 45`; between them `a` takes
+    // 9, 15, ..., 39, each with a point (a = 15: z0 = 5, z1 = 7, b = 8). The open ends stay
+    // intervals, so `..=-3` and `45..` include values of other remainders. The oracle's
+    // `9 mod 12` comes from its window, which holds only -3 and 9. At k = 1, with
+    // `a = 6t + 3`, `z1 = 3t + 1`: the arm `a <= 2` has `t <= -1`, so `b <= z1 + 4 <= 2`
+    // (`t = -1`, `b = 2` a point); the arm `b >= 8` has `z1 >= b - 4 >= 4`, so `t >= 1`,
+    // `a >= 9`, and every `b >= 8`; `b` in 3..=7 is in neither arm.
+    let k0 = "a=[..=-3, 9..=9, 15..=15, 21..=21, 27..=27, 33..=33, 39..=39, 45..] b=[..=2, 8..] \
+              z0=[..=-1, 3..=3, 5..=5, 7..=7, 9..=9, 11..=11, 13..=13, 15..] \
+              z1=[..=-2, 4..=4, 7..=7, 10..=10, 13..=13, 16..=16, 19..=19, 22..]";
+    let k1 = "a=[..=-3, 9..] b=[..=2, 8..] z0=[..=-1, 3..] z1=[..=-2, 4..]";
     for (k, want) in [(0, k0), (1, k1)] {
         check(
             "two_eq_case",

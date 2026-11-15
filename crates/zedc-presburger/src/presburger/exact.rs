@@ -49,7 +49,7 @@
 // solver on `f` and the gap, and O(|f|) for each cell: where the solver's hull was exact and
 // the first point's cell covers it, as most do, one question in all for every symbol of the
 // call together (the points found are kept for the other symbols). Measured on the families
-// of step 1 (COMPLEXITY.md row PRES-project-exact-solver).
+// of step 1 (COMPLEXITY.md row PRES-pugh-work-budget).
 // Trigger: a holed disjunct (a stride, `x + 2 * y == 0`), or values each disjunction allows
 // through a different disjunct. Tests: `exact::tests`, zedc_preimage
 // `or_if_projections_keep_the_gaps_the_if_reading_shows`.
@@ -67,11 +67,34 @@ mod projection;
 pub use projection::{METHOD, Method};
 use projection::{Strided, Tail};
 
-/// The work allowed to one call of `exact_each`, in units of one constraint read: a
-/// question of the solver is charged the constraints of the formula asked, and a cell the
-/// constraints read to make it. Past it the symbols left are refused with
-/// [`Refusal::Work`].
-pub const EXACT_LIMIT: u64 = 20_000_000;
+/// The work allowed to the cover of one symbol in `exact_each`. A unit is one value or residue
+/// the cover lists, or a hundredth of a constraint, term or row read ([`SOLVER_UNIT`]; each
+/// charging site says what it counts): a question of the solver is charged the constraints of the
+/// formula asked and the solver's own steps (`charge`), and a cell the constraints read to
+/// make it. Past it the symbol is refused with [`Refusal::Questions`]. The predicted work of
+/// a cover is 2 ms and 80 ns a unit of its CPU time, so 3,100,000 units are 250 ms (QUESTIONS
+/// A99): of 38,984 calls of `exact_each` in the step tests, run with no limit at loads of 65
+/// to 82 on 32 cores and measured whole (all their symbols' covers together), none took more
+/// CPU time than that, the closest 1.6 ms under it at 178,156 units (COMPLEXITY.md,
+/// PRES-pugh-work-budget). The 2 ms are two ticks of the clock read.
+// Complexity tradeoff: before PRES-pugh-work-budget a question was charged `size + 2` and its
+// run of the solver was not counted, so one question ran from 40 ms to more than 25 s
+// (`s22::chains_on_two_inputs_keep_their_boxes_at_50_and_51`) under a limit of 2·10^7. Naive
+// alternatives: time each question and stop at 250 ms, which makes the answer depend on the
+// machine and its load (deterministic checking forbids it); or keep the solver's coarser set
+// past the limit, which P197 and P13 forbid. Used: the solver charges its own steps (each
+// system solved, each row the Omega test makes, each canonical order, each row `live3`
+// reads, each probe, each search by halves) to the question's meter, a count the same on
+// every run, and stops at its next step once the meter is spent (`spent`); a question is
+// charged each constraint of its formula, which the checks before the solver's steps read at
+// about 4 µs each, a piece read by a residue question 16 units ([`PIECE`]), and each row an
+// exact elimination of a cell makes as it makes it. Cost: one thread-local read per charge.
+// Not proved: that 2 ms and 80 ns a unit bound the CPU time of every cover, at every load
+// and size of coefficient. It is measured, and the bound is loose for most covers: on the 185
+// calls past 3,100,000 units the CPU time per unit ran from 0.6 to 28 ns, median 16, and 139
+// of them took under 250 ms, so a cover refused at the limit may have needed far less
+// (COMPLEXITY.md, PRES-pugh-work-budget; the refit is row PRES-work-charge-fit).
+pub const EXACT_LIMIT: u64 = 3_100_000;
 
 thread_local! {
     /// Test control: a work limit in place of [`EXACT_LIMIT`].
@@ -96,66 +119,162 @@ impl Work {
         self.used = self.used.saturating_add(units);
         EXACT_WORK.set(EXACT_WORK.get().saturating_add(units));
         if self.used > self.limit {
-            return Err(Refusal::Work);
+            return Err(Refusal::Questions);
         }
         Ok(())
     }
+
+    /// Charges `rows` constraints or rows read whole (a question's formula, the formula read
+    /// at a point, an implicant's rows), [`SOLVER_UNIT`] each: a question costs about 4 µs
+    /// for each constraint of its formula before the solver's own steps (the checks the
+    /// solver makes first), where a value the cover lists costs tens of nanoseconds.
+    fn read(&mut self, rows: u64) -> Result<(), Refusal> {
+        self.charge(rows.saturating_mul(SOLVER_UNIT))
+    }
+
+    /// [`super::satisfiable`] of `q`, its work counted by the solver's meter ([`charge`]) and
+    /// charged here, the meter given the work left. A question that passes it is refused with
+    /// [`Refusal::Questions`], whatever the solver answered after: an error the solver drops on
+    /// its way (a search that reads a refusal as no point) could have changed that answer.
+    fn ask(&mut self, q: &Formula) -> Result<Option<Model>, Refusal> {
+        let before = self.used;
+        let answer = self.metered(|| super::satisfiable(q));
+        QUESTION_WORK.set(QUESTION_WORK.get().saturating_add(self.used - before));
+        answer?
+    }
+
+    /// `run`, its work counted by the solver's meter ([`charge`]) and charged here, the meter
+    /// given the work left: refused with [`Refusal::Questions`] where it passes the limit,
+    /// whatever `run` returned, since a step that reads a spent meter as no point (as
+    /// [`super::eliminated_whole`] and the solver's searches do) could have changed it.
+    fn metered<T>(&mut self, run: impl FnOnce() -> T) -> Result<T, Refusal> {
+        let left = self.limit.saturating_sub(self.used);
+        let outer = METER.replace(Some(Meter {
+            used: 0,
+            limit: left,
+        }));
+        let out = run();
+        let Meter { used, limit } = METER.get().expect("the meter set above");
+        // A meter open around this one (none is today: neither the solver nor an elimination
+        // asks a projection) is charged what this one used, in units, as it counts them.
+        METER.set(outer.map(|o| Meter {
+            used: o.used.saturating_add(used),
+            limit: o.limit,
+        }));
+        self.charge(used)?;
+        if used > limit {
+            return Err(Refusal::Questions);
+        }
+        Ok(out)
+    }
+}
+
+/// The solver's work while a question of the cover runs ([`Work::ask`]): units used and
+/// allowed.
+#[derive(Clone, Copy)]
+struct Meter {
+    used: u64,
+    limit: u64,
+}
+
+thread_local! {
+    /// The meter of the question running, if any.
+    static METER: Cell<Option<Meter>> = const { Cell::new(None) };
+    /// The units the questions of the cover have used on this thread, read by tests and
+    /// benchmarks.
+    pub static QUESTION_WORK: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The units of [`EXACT_LIMIT`] one unit of the solver's work counts for: a row, term or
+/// constraint read by the solver costs about a hundred times a value or residue the cover
+/// lists (PRES-pugh-work-budget).
+pub const SOLVER_UNIT: u64 = 100;
+
+/// The units a piece read by [`residues`] or [`outside`] is charged: its ends converted, two
+/// residues taken and a set joined or met, measured at 0.6 to 0.8 µs a piece where a unit
+/// of a cover costs at most 56 ns (s22 `remainder_splits_at_their_corners_keep_their_preimages`,
+/// PRES-pugh-work-budget), so 16, not the 1 a listed value costs.
+const PIECE: u64 = 16;
+
+/// Charges `units` of the solver's work, `SOLVER_UNIT` each, to the meter of the question
+/// running, and refuses with
+/// [`Refusal::Questions`] once it is past its limit; with no question running, as for every
+/// question but the cover's, it does nothing. A unit is one constraint, term or disjunct read
+/// by a step of the solver (each site says what it charges), and the units charged are a
+/// count, the same on every run.
+pub(super) fn charge(units: u64) -> Result<(), Refusal> {
+    match METER.get() {
+        None => Ok(()),
+        Some(Meter { used, limit }) => {
+            let used = used.saturating_add(units.saturating_mul(SOLVER_UNIT));
+            METER.set(Some(Meter { used, limit }));
+            if used > limit {
+                Err(Refusal::Questions)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Whether the question running is past its limit: a search that reads a refusal as no point
+/// stops at once, since the question's answer is then refused whatever it finds.
+pub(super) fn spent() -> bool {
+    METER.get().is_some_and(|m| m.used > m.limit)
 }
 
 /// The exact projection of `f` onto each of `syms`, from `found`, the solver's answer, each of
 /// its sets holding every value with a point (with any disjunction it left out, wider but
 /// still holding them). A symbol the solver refused keeps its refusal. A symbol whose cover
-/// has a question refused, a tail of holes without end (`projection::Tail`), or passes the
-/// work limit keeps the solver's set, narrowed by what the cover proved empty: never wider
-/// than the solver's answer (main's before the cover). The causes of the disjunctions left
-/// out are dropped only where every set answered here is the exact one.
+/// meets a refused question or the work limit is refused for that cause
+/// ([`Refusal::Questions`]): the solver's set is never kept in place of the exact one
+/// (PRES-pugh-work-budget, decided by P197 exact answers and P13 no surprises, as `row_sums`
+/// refuses past its limit). Every set answered is then exact, so the causes of the
+/// disjunctions the solver left out, which made its sets wider, are dropped, but for values
+/// with holes without end (`projection::Tail`): no set of ranges is exact there, so the piece
+/// that holds them is kept whole, the finest set of ranges holding them, and
+/// [`Refusal::Repeats`] is given as the cause of the wider answer, where refusing it dropped
+/// what the solver alone answers (`l01_39_reduced_product::scaling::an_even_number_that_is_
+/// odd_is_empty`, whose parity the reduction then finds).
 pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
-    if EXACT_OFF.get() || std::env::var_os("ZED_EXACT_OFF").is_some() {
+    if EXACT_OFF.get() {
         return found;
     }
-    let (each, skipped) = found;
+    let (each, _) = found;
     let size = constraints(f);
     let factors = factors(f);
-    let mut work = Work {
-        used: 0,
-        limit: EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT),
-    };
     let mut points: Vec<Model> = Vec::new();
-    let mut out = Vec::with_capacity(each.len());
-    let mut all_exact = true;
-    for (s, got) in syms.iter().zip(each) {
-        let t0 = std::time::Instant::now();
-        let q0 = EXACT_QUESTIONS.get();
-        let h0 = got.clone(); // TMPDBG
-        if std::env::var_os("ZED_EXACT_TRACE").is_some() {
-            eprintln!("ENTER s={s:?} h={got:?} f={f:?}");
-        } // TMPDBG
-        out.push(got.map(|h| {
-            let (r, exact) = cover(f, s, &h, size, &factors, &mut points, &mut work);
-            all_exact &= exact;
-            r
-        }));
-        if std::env::var_os("ZED_EXACT_TRACE").is_some() {
-            let ms = t0.elapsed().as_micros();
-            eprintln!(
-                "TRACE {ms}us q={} exact={all_exact} size={size} s={s:?} h={:?} out={:?} f={f:?}",
-                EXACT_QUESTIONS.get() - q0,
-                h0.as_ref().map(|h| h.pieces().count()),
-                out.last().map(|r| r.as_ref().map(|o| o.pieces().count()))
-            );
-        } // TMPDBG
-    }
-    let skipped = if !all_exact || out.iter().any(Result::is_err) {
-        skipped
-    } else {
-        Vec::new()
-    };
-    (out, skipped)
+    let mut wider = false;
+    let out: Vec<_> = (syms.iter().zip(each))
+        .map(|(s, got)| {
+            // Each symbol's cover has a limit of its own, as each refusal names one symbol: a
+            // limit shared by the call would refuse a symbol by the work of those before it,
+            // so by the order of `syms`, and batch where single answers.
+            let mut work = Work {
+                used: 0,
+                limit: EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT),
+            };
+            let (set, kept) = cover(f, s, &got?, size, &factors, &mut points, &mut work)?;
+            wider |= kept;
+            Ok(set)
+        })
+        .collect();
+    (
+        out,
+        if wider {
+            vec![Refusal::Repeats]
+        } else {
+            Vec::new()
+        },
+    )
 }
 
 /// The values of `s` with a point of `f`, given `h`, a set holding them all: the cover of the
 /// module note. `points` are points of `f` found before, for this symbol or another, and
-/// those found here are added to them.
+/// those found here are added to them. Refused where a question is refused (for its cause)
+/// and past the work limit ([`Refusal::Questions`]). Where the values have holes without end,
+/// which no set of ranges holds, the piece holding them is kept whole and the answer comes
+/// with `true`, wider than exact for that cause ([`Refusal::Repeats`]).
 fn cover(
     f: &Formula,
     s: &Atom,
@@ -164,7 +283,7 @@ fn cover(
     factors: &HashSet<Atom>,
     points: &mut Vec<Model>,
     work: &mut Work,
-) -> (IntervalSet, bool) {
+) -> Result<(IntervalSet, bool), Refusal> {
     let mut found = IntervalSet::empty();
     let mut gap = h.clone();
     let within = h.hull();
@@ -173,185 +292,194 @@ fn cover(
     // union that ranges cannot hold (`projection::ranges`).
     let mut open: Vec<Strided> = Vec::new();
     let mut tails: Vec<Tail> = Vec::new();
-    let mut read = 0;
-    // The pieces whose question was refused, kept unconfirmed.
+    // The tails whose holes repeat without end, kept whole.
     let mut kept = IntervalSet::empty();
-    let r = (|| -> Result<IntervalSet, Refusal> {
-        loop {
-            while read < points.len() && !gap.is_empty() {
-                let m = points[read].clone();
-                read += 1;
-                if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
-                    work.charge(size)?;
-                    let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
-                    if !holed.is_empty() {
-                        // The parts with holes and no end of every cell so far, joined: where the
-                        // values found fill a tail up to an end, the values left of it are listed.
-                        open.extend(holed);
-                        let (filled, left) = projection::ranges(&open, work)?;
-                        c = c.join(&filled);
-                        let known = found.join(&c);
-                        tails = Vec::new();
-                        let mut listed = Vec::new();
-                        for t in left {
-                            for (l, u) in t.piece.minus(&known).pieces() {
-                                if let (End::Fin(l), End::Fin(u)) = (l, u) {
-                                    let (l, u) = (Int::from(l), Int::from(u));
-                                    projection::listed(
-                                        &l,
-                                        &u,
-                                        &t.step,
-                                        &t.have,
-                                        work,
-                                        &mut listed,
-                                    )?;
-                                } else {
-                                    let piece = IntervalSet::range(l.clone(), u.clone());
-                                    tails.push(Tail {
-                                        piece,
-                                        step: t.step.clone(),
-                                        have: t.have.clone(),
-                                    });
-                                }
+    let mut read = 0;
+    loop {
+        while read < points.len() && !gap.is_empty() {
+            let m = points[read].clone();
+            read += 1;
+            if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
+                work.read(size)?;
+                let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
+                if !holed.is_empty() {
+                    // The parts with holes and no end of every cell so far, joined: where the
+                    // values found fill a tail up to an end, the values left of it are listed.
+                    open.extend(holed);
+                    let (filled, left) = projection::ranges(&open, work)?;
+                    c = c.join(&filled);
+                    let known = found.join(&c);
+                    tails = Vec::new();
+                    let mut listed = Vec::new();
+                    for t in left {
+                        for (l, u) in t.piece.minus(&known).pieces() {
+                            if let (End::Fin(l), End::Fin(u)) = (l, u) {
+                                let (l, u) = (Int::from(l), Int::from(u));
+                                projection::listed(&l, &u, &t.step, &t.have, work, &mut listed)?;
+                            } else {
+                                let piece = IntervalSet::range(l.clone(), u.clone());
+                                tails.push(Tail {
+                                    piece,
+                                    step: t.step.clone(),
+                                    have: t.have.clone(),
+                                });
                             }
                         }
-                        c = c.join(&IntervalSet::from_pieces(listed));
                     }
-                    gap = gap.minus(&c);
-                    found = found.join(&c);
-                    strides.extend(more);
+                    c = c.join(&IntervalSet::from_pieces(listed));
                 }
-            }
-            if gap.is_empty() {
-                return Ok(found.join(&kept));
-            }
-            // The residue question of a piece with holes and no end: a point of `f` there in a
-            // residue no part found holds. Where there is none, the values of `s` there are those
-            // residues alone, holes without end, which ranges cannot hold: refused.
-            if let Some(tail) = tails.pop() {
-                if gap.meet(&tail.piece).is_empty() {
-                    continue;
-                }
-                let other = IntervalSet::from_pieces(
-                    (tail.have.iter().enumerate())
-                        .filter(|(_, b)| !**b)
-                        .map(|(r, _)| (End::from(r as i64), End::from(r as i64)))
-                        .collect(),
-                );
-                work.charge(size + 4)?;
-                EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-                let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
-                let lin = Lin {
-                    terms: [
-                        (s.clone(), Int::from(1)),
-                        (t, -&tail.step),
-                        (j.clone(), Int::from(-1)),
-                    ]
-                    .into_iter()
-                    .collect(),
-                    constant: Int::from(0),
-                };
-                let q = Formula::and(vec![
-                    f.clone(),
-                    super::member(s, &tail.piece),
-                    Formula::Con(Con { lin, rel: Rel::Eq }),
-                    super::member(&j, &other),
-                ]);
-                match super::satisfiable(&q) {
-                    Ok(Some(m)) => points.push(m),
-                    // Holes without end, which ranges cannot hold, or a refused question: the
-                    // piece is kept as the solver's set had it, unconfirmed.
-                    r @ (Ok(None) | Err(_)) => {
-                        if std::env::var_os("ZED_EXACT_TRACE").is_some() {
-                            eprintln!("KEPT tail {:?} {:?}", tail.piece, r.err());
-                        } // TMPDBG
-                        let here = gap.meet(&tail.piece);
-                        kept = kept.join(&here);
-                        gap = gap.minus(&here);
-                    }
-                }
-                continue;
-            }
-            // The residue question of a progression: a point of `f` with `s` between its first and
-            // last values and in a residue class modulo its step that no value found there is in.
-            // Where there is none, every piece of the gap there shorter than the step, with no
-            // value in such a class, is dropped at once: the odd values between the even ones of a
-            // stride, which one question for each would cost as many questions as the answer has
-            // pieces.
-            if let Some(st) = strides.pop() {
-                let have = residues(&found, &st, work)?;
-                let all = IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1))));
-                let other = all.minus(&have);
-                if other.is_empty() {
-                    continue;
-                }
-                work.charge(size + 4)?;
-                EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-                let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
-                let lin = Lin {
-                    terms: [
-                        (s.clone(), Int::from(1)),
-                        (t, -&st.step),
-                        (j.clone(), Int::from(-1)),
-                    ]
-                    .into_iter()
-                    .collect(),
-                    constant: Int::from(0),
-                };
-                let span = IntervalSet::range(fin(&st.lo), fin(&st.hi));
-                let q = Formula::and(vec![
-                    f.clone(),
-                    super::member(s, &span),
-                    Formula::Con(Con { lin, rel: Rel::Eq }),
-                    super::member(&j, &other),
-                ]);
-                // A refusal of this question only leaves the gap to the questions by piece.
-                match super::satisfiable(&q) {
-                    Err(_) => {}
-                    Ok(None) => gap = gap.minus(&outside(&gap, &st, &have, work)?),
-                    Ok(Some(m)) => {
-                        points.push(m);
-                        strides.push(st);
-                    }
-                }
-                continue;
-            }
-            // One piece of the gap at a time, so that each question is `f` and two bounds: asked
-            // with the whole gap, a question after k cells carries the k holes they made, and k
-            // cells cost O(k^2) (the even values of `x == 2 * y` in a box, `exact::tests`).
-            let Some(piece) = gap.first().cloned() else {
-                return Ok(found.join(&kept));
-            };
-            work.charge(size + 2)?;
-            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-            let piece = IntervalSet::range(piece.0, piece.1);
-            let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
-            match super::satisfiable(&q) {
-                Ok(None) => gap = gap.minus(&piece),
-                Ok(Some(m)) => points.push(m),
-                // A refused question keeps its piece unconfirmed: the solver's set held it.
-                Err(e) => {
-                    if std::env::var_os("ZED_EXACT_TRACE").is_some() {
-                        eprintln!("KEPT piece {piece:?} {e:?}");
-                    } // TMPDBG
-                    kept = kept.join(&piece);
-                    gap = gap.minus(&piece);
-                }
+                gap = gap.minus(&c);
+                found = found.join(&c);
+                strides.extend(more);
             }
         }
-    })();
-    // A refusal past the work limit, or in a cell, keeps what is not yet confirmed: the answer
-    // is then the solver's set narrowed by the pieces proved empty, never wider than `h`
-    // (main's answer before the cover), never narrower than the projection.
-    match r {
-        Ok(x) => (x, kept.is_empty()),
-        Err(e) => {
-            if std::env::var_os("ZED_EXACT_TRACE").is_some() {
-                eprintln!("KEPT stop {e:?} gap={gap:?}");
+        if gap.is_empty() {
+            return Ok(ended(h, found, &kept));
+        }
+        // The residue question of a piece with holes and no end: a point of `f` there in a
+        // residue no part found holds. Where there is none, the values of `s` there are those
+        // residues alone, holes without end, which ranges cannot hold: refused.
+        if let Some(tail) = tails.pop() {
+            if gap.meet(&tail.piece).is_empty() {
+                continue;
             }
-            (found.join(&kept).join(&gap), false)
-        } // TMPDBG
+            let other = IntervalSet::from_pieces(
+                (tail.have.iter().enumerate())
+                    .filter(|(_, b)| !**b)
+                    .map(|(r, _)| (End::from(r as i64), End::from(r as i64)))
+                    .collect(),
+            );
+            work.read(size + 4)?;
+            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+            let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
+            let lin = Lin {
+                terms: [
+                    (s.clone(), Int::from(1)),
+                    (t, -&tail.step),
+                    (j.clone(), Int::from(-1)),
+                ]
+                .into_iter()
+                .collect(),
+                constant: Int::from(0),
+            };
+            let q = Formula::and(vec![
+                f.clone(),
+                super::member(s, &tail.piece),
+                Formula::Con(Con { lin, rel: Rel::Eq }),
+                super::member(&j, &other),
+            ]);
+            match work.ask(&q)? {
+                Some(m) => points.push(m),
+                // Holes without end, which ranges cannot hold: the part of the tail not shown
+                // empty is kept whole, the finest set of ranges holding its values, and the
+                // answer is wider than exact for that cause, given with it ([`exact_each`]).
+                None => {
+                    let left = gap.meet(&tail.piece);
+                    kept = kept.join(&left);
+                    gap = gap.minus(&left);
+                }
+            }
+            continue;
+        }
+        // The residue question of a progression: a point of `f` with `s` between its first and
+        // last values and in a residue class modulo its step that no value found there is in.
+        // Where there is none, every piece of the gap there shorter than the step, with no
+        // value in such a class, is dropped at once: the odd values between the even ones of a
+        // stride, which one question for each would cost as many questions as the answer has
+        // pieces.
+        if let Some(st) = strides.pop() {
+            let have = residues(&found, &st, work)?;
+            let all = IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1))));
+            let other = all.minus(&have);
+            if other.is_empty() {
+                continue;
+            }
+            work.read(size + 4)?;
+            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+            let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
+            let lin = Lin {
+                terms: [
+                    (s.clone(), Int::from(1)),
+                    (t, -&st.step),
+                    (j.clone(), Int::from(-1)),
+                ]
+                .into_iter()
+                .collect(),
+                constant: Int::from(0),
+            };
+            let span = IntervalSet::range(fin(&st.lo), fin(&st.hi));
+            let q = Formula::and(vec![
+                f.clone(),
+                super::member(s, &span),
+                Formula::Con(Con { lin, rel: Rel::Eq }),
+                super::member(&j, &other),
+            ]);
+            // A refusal of this question only leaves the gap to the questions by piece; past
+            // the work limit, the next charge refuses.
+            match work.ask(&q) {
+                Err(_) => {}
+                Ok(None) => gap = gap.minus(&outside(&gap, &st, &have, work)?),
+                Ok(Some(m)) => {
+                    points.push(m);
+                    strides.push(st);
+                }
+            }
+            continue;
+        }
+        // One piece of the gap at a time, so that each question is `f` and two bounds: asked
+        // with the whole gap, a question after k cells carries the k holes they made, and k
+        // cells cost O(k^2) (the even values of `x == 2 * y` in a box, `exact::tests`).
+        let Some(piece) = gap.first().cloned() else {
+            return Ok(ended(h, found, &kept));
+        };
+        work.read(size + 2)?;
+        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+        let piece = IntervalSet::range(piece.0, piece.1);
+        let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
+        match work.ask(&q)? {
+            None => gap = gap.minus(&piece),
+            Some(m) => points.push(m),
+        }
     }
+}
+
+/// The answer of [`cover`] once the gap is empty: `found`, exact, and, where `kept` holds the
+/// parts of tails with holes without end, each piece of `h` that meets `kept`, whole, with
+/// `true` for the cause ([`Refusal::Repeats`]).
+///
+/// P246, why an answer is the same for every order of `f`'s parts: a piece of `h` meets
+/// `kept` only when the values of `s` with a point there have holes without end (a tail,
+/// unbounded and within `h`, is kept only when its residue question finds no point there in
+/// another residue, so the values there miss that residue past any bound). Conversely, where
+/// they have such holes, the gap there cannot be emptied by listing values and ranges (a
+/// finite union of ranges is not those values) nor by questions (a question on a piece drops
+/// an empty piece, and one on a progression drops pieces between its finite ends), so the cover keeps a part of it or refuses. So when the cover answers, the
+/// pieces of `h` made whole are those where the values have holes without end, a property
+/// of `f` and of `h`, the solver's answer, which a reordering does not change
+/// (`l01_38_omega_test::omega::reordered_formulas_agree` checks `h` on main); outside them
+/// `found` is exact, so the same. A refusal past the work limit may still depend on the
+/// order, as the work does (row GROUP-order-verdicts).
+// Complexity tradeoff: before, `kept` alone was kept whole, the part of the tail the cells
+// had not filled when its question was asked; that point depends on which cells came first,
+// so on the order of the disjuncts (bench `omega::the_answer_does_not_depend_on_the_order_of_
+// the_disjuncts_in_a_*_quarter`: `[..-11, -8, -5..-1]` in one order and `[..-1]` in the
+// other, both with the cause). Naive canonical alternative: list the exact values down to
+// the start of the period of the holes and keep only the rest whole, finer but needing that
+// start, which no step here finds. Used: the pieces of `h` whole, coarser where the cells
+// had listed part of the tail, O(p log p) for p pieces of `h`.
+fn ended(h: &IntervalSet, found: IntervalSet, kept: &IntervalSet) -> (IntervalSet, bool) {
+    if kept.is_empty() {
+        return (found, false);
+    }
+    let whole = (h.pieces())
+        .filter(|(l, u)| {
+            !IntervalSet::range(l.clone(), u.clone())
+                .meet(kept)
+                .is_empty()
+        })
+        .cloned()
+        .collect();
+    (found.join(&IntervalSet::from_pieces(whole)), true)
 }
 
 /// A progression of values of a cell: `lo`, `lo + step`, ..., `hi`, `step` 2 or more.
@@ -362,14 +490,14 @@ struct Stride {
 }
 
 /// The residues modulo `st.step` of the values of `found` from `st.lo` to `st.hi`, each piece
-/// read charged one unit of `work`; a piece as long as the step holds every residue.
+/// read charged [`PIECE`] units of `work`; a piece as long as the step holds every residue.
 fn residues(found: &IntervalSet, st: &Stride, work: &mut Work) -> Result<IntervalSet, Refusal> {
     let mut have = IntervalSet::empty();
     for (l, u) in found
         .meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi)))
         .pieces()
     {
-        work.charge(1)?;
+        work.charge(PIECE)?;
         let (End::Fin(l), End::Fin(u)) = (l, u) else {
             continue;
         };
@@ -395,7 +523,8 @@ fn residues(found: &IntervalSet, st: &Stride, work: &mut Work) -> Result<Interva
 }
 
 /// The pieces of `gap` from `st.lo` to `st.hi`, each cut to that span, that are shorter than
-/// `st.step` and hold no value whose residue is in `have`; each piece read charged one unit.
+/// `st.step` and hold no value whose residue is in `have`; each piece read charged [`PIECE`]
+/// units.
 fn outside(
     gap: &IntervalSet,
     st: &Stride,
@@ -407,7 +536,7 @@ fn outside(
         .meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi)))
         .pieces()
     {
-        work.charge(1)?;
+        work.charge(PIECE)?;
         let (End::Fin(ln), End::Fin(un)) = (l, u) else {
             continue;
         };
@@ -521,11 +650,15 @@ fn cell(
                 holed = open;
             }
             // The elimination that never grows the rows first, then the one that does every
-            // exact step (`eliminated_whole`), its rows charged to the work.
-            let left = super::eliminated(&rows, &|a| a == s)
-                .or_else(|| super::eliminated_whole(&rows, &|a| a == s));
+            // exact step (`eliminated_whole`), the rows it makes charged as it makes them (so
+            // that it stops at the limit, not after rows without bound) and the rows left
+            // charged to the work.
+            let left = match super::eliminated(&rows, &|a| a == s) {
+                Some(left) => Some(left),
+                None => work.metered(|| super::eliminated_whole(&rows, &|a| a == s))?,
+            };
             if let Some(left) = left {
-                work.charge(left.len() as u64)?;
+                work.read(left.len() as u64)?;
                 c = c.join(&bounded(&left, s));
             } else {
                 // A stride atom stops the exact elimination. With one, the runs of `s` at each
@@ -545,7 +678,7 @@ fn cell(
                 }
             }
             for d in directions(&rows, s, factors) {
-                work.charge(constraints(f))?;
+                work.read(constraints(f))?;
                 let steps = along(f, m, &d, &mut HashMap::new());
                 let (p, stride) = progression(&steps, &v, &d[0].1, within, work)?;
                 c = c.join(&p);
@@ -733,7 +866,7 @@ fn runs(
         };
         let (mut v, u) = (Int::from(l), Int::from(u));
         while v <= u {
-            work.charge(two.len() as u64)?;
+            work.read(two.len() as u64)?;
             let at: Model = [(q.clone(), v.clone())].into_iter().collect();
             pieces.extend(
                 bounded(&fixed(&two, std::slice::from_ref(q), &at), s)
@@ -804,69 +937,105 @@ fn along(
     d: &[(Atom, Int)],
     memo: &mut HashMap<Id, IntervalSet>,
 ) -> IntervalSet {
-    let key = Id::of(f);
-    if let Some(k) = key
-        && let Some(v) = memo.get(&k)
-    {
-        return v.clone();
-    }
-    let out = match f {
-        Formula::Con(c) => {
-            let mut a = Int::from(0);
-            for (x, step) in d {
-                if let Some(k) = c.lin.terms.get(x) {
-                    a = &a + &(k * step);
-                }
-            }
-            let r = value(&c.lin, m);
-            match a.is_zero() {
-                true => {
-                    let holds = match c.rel {
-                        Rel::Ge => !r.is_negative(),
-                        Rel::Eq => r.is_zero(),
-                    };
-                    if holds {
-                        IntervalSet::top()
-                    } else {
-                        IntervalSet::empty()
-                    }
-                }
-                false => {
-                    let k = &d[0].0;
-                    let one = Con {
-                        lin: Lin {
-                            terms: [(k.clone(), a)].into_iter().collect(),
-                            constant: r,
-                        },
-                        rel: c.rel,
-                    };
-                    bounded(std::slice::from_ref(&one), k)
-                }
+    let con = |c: &Con| {
+        let mut a = Int::from(0);
+        for (x, step) in d {
+            if let Some(k) = c.lin.terms.get(x) {
+                a = &a + &(k * step);
             }
         }
-        Formula::Not(g) => IntervalSet::top().minus(&along(g, m, d, memo)),
-        Formula::And(gs) => {
-            let mut acc = IntervalSet::top();
-            for g in gs.iter() {
-                acc = acc.meet(&along(g, m, d, memo));
-                if acc.is_empty() {
-                    break;
+        let r = value(&c.lin, m);
+        match a.is_zero() {
+            true => {
+                let holds = match c.rel {
+                    Rel::Ge => !r.is_negative(),
+                    Rel::Eq => r.is_zero(),
+                };
+                if holds {
+                    IntervalSet::top()
+                } else {
+                    IntervalSet::empty()
                 }
             }
-            acc
-        }
-        Formula::Or(gs) => {
-            let mut acc = IntervalSet::empty();
-            for g in gs.iter() {
-                acc = acc.join(&along(g, m, d, memo));
+            false => {
+                let k = &d[0].0;
+                let one = Con {
+                    lin: Lin {
+                        terms: [(k.clone(), a)].into_iter().collect(),
+                        constant: r,
+                    },
+                    rel: c.rel,
+                };
+                bounded(std::slice::from_ref(&one), k)
             }
-            acc
         }
     };
-    if let Some(k) = key {
-        memo.insert(k, out.clone());
+    let join = |f: &Formula, parts: Vec<IntervalSet>| match f {
+        Formula::Not(_) => IntervalSet::top().minus(&parts[0]),
+        Formula::And(_) => parts.iter().fold(IntervalSet::top(), |acc, p| acc.meet(p)),
+        _ => parts
+            .iter()
+            .fold(IntervalSet::empty(), |acc, p| acc.join(p)),
+    };
+    fold(f, Id::of, memo, con, join)
+}
+
+/// A step of [`fold`]: a part to read, or a compound part whose parts are read.
+enum Step<'a> {
+    Read(&'a Formula),
+    Join(&'a Formula),
+}
+
+/// The value of `f` given by `con` at each constraint and by `join` at each compound part, of
+/// the values of its parts in order; a part with a key (`key`) is read once (`memo`). The
+/// parts wait on an explicit stack, not on the thread's: a nest can be deeper than a thread's
+/// stack allows (`l01_38_presburger::bench::nest_empty`, 512 levels in 256 KiB, and
+/// `bench::ids`, whose recursive walks here overflowed). Every part is read, where the
+/// recursive walks stopped a conjunction at its first false part: at most the parts the
+/// caller's charge of `f`'s size counts.
+fn fold<T: Clone>(
+    f: &Formula,
+    key: impl Fn(&Formula) -> Option<Id>,
+    memo: &mut HashMap<Id, T>,
+    mut con: impl FnMut(&Con) -> T,
+    mut join: impl FnMut(&Formula, Vec<T>) -> T,
+) -> T {
+    let mut stack = vec![Step::Read(f)];
+    let mut values: Vec<T> = Vec::new();
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Read(g) => {
+                if let Some(v) = key(g).and_then(|k| memo.get(&k)) {
+                    values.push(v.clone());
+                    continue;
+                }
+                match g {
+                    Formula::Con(c) => values.push(con(c)),
+                    Formula::Not(h) => stack.extend([Step::Join(g), Step::Read(h)]),
+                    Formula::And(gs) | Formula::Or(gs) => {
+                        stack.push(Step::Join(g));
+                        stack.extend(gs.iter().rev().map(Step::Read));
+                    }
+                }
+            }
+            Step::Join(g) => {
+                let n = match g {
+                    Formula::And(gs) | Formula::Or(gs) => gs.len(),
+                    _ => 1,
+                };
+                // A part pushed twice is read once: the first, read to its end before the
+                // second is popped (the stack is last in, first out), leaves its value in
+                // `memo` when it has a key, and a part with none has one holder.
+                let parts = values.split_off(values.len() - n);
+                let v = join(g, parts);
+                if let Some(k) = key(g) {
+                    memo.insert(k, v.clone());
+                }
+                values.push(v);
+            }
+        }
     }
-    out
+    values.pop().expect("the value of `f`")
 }
 
 /// Whether `f` is `want` at `m`, read as [`value`] reads atoms; and where it is, the
@@ -883,72 +1052,63 @@ fn implicant(
     seen: &mut HashSet<(Id, bool)>,
     truth: &mut HashMap<Id, bool>,
 ) -> bool {
-    let key = Id::of(f);
-    if let Some(k) = key
-        && seen.contains(&(k, want))
-    {
-        return true;
+    if holds_as(f, m, truth) != want {
+        return false;
     }
-    let ok = match f {
-        Formula::Con(c) => {
-            let v = value(&c.lin, m);
-            let holds = match c.rel {
-                Rel::Ge => !v.is_negative(),
-                Rel::Eq => v.is_zero(),
-            };
-            if holds == want {
-                rows.push(if want { c.clone() } else { negated(c, &v) });
-            }
-            holds == want
+    // Each part on the stack is `want` at `m`: `f` is; the part of a negation is the other;
+    // every part of a conjunction that holds or a disjunction that fails is the same as it;
+    // and the one part taken of the others is chosen so. The stack, not recursion, holds the
+    // parts waiting (see [`fold`]); they are popped in the order the recursive walk took
+    // them, first part first, so the rows come in the same order.
+    let mut stack: Vec<(&Formula, bool)> = vec![(f, want)];
+    while let Some((g, want)) = stack.pop() {
+        if let Some(k) = Id::of(g)
+            && !seen.insert((k, want))
+        {
+            continue;
         }
-        Formula::Not(g) => implicant(g, m, !want, rows, seen, truth),
-        Formula::And(gs) | Formula::Or(gs) => {
-            // A conjunction that holds, or a disjunction that fails, needs every part; the
-            // others need one.
-            let every = matches!(f, Formula::And(_)) == want;
-            if every {
-                gs.iter().all(|g| implicant(g, m, want, rows, seen, truth))
+        match g {
+            Formula::Con(c) => rows.push(if want {
+                c.clone()
             } else {
-                let at = rows.len();
-                let mut any = false;
-                for g in gs.iter() {
-                    if holds_as(g, m, truth) == want {
-                        any = implicant(g, m, want, rows, seen, truth);
-                        break;
-                    }
+                negated(c, &value(&c.lin, m))
+            }),
+            Formula::Not(h) => stack.push((h, !want)),
+            Formula::And(gs) | Formula::Or(gs) => {
+                // A conjunction that holds, or a disjunction that fails, needs every part; the
+                // others need one.
+                if matches!(g, Formula::And(_)) == want {
+                    stack.extend(gs.iter().rev().map(|h| (h, want)));
+                } else if let Some(h) = gs.iter().find(|h| holds_as(h, m, truth) == want) {
+                    stack.push((h, want));
                 }
-                if !any {
-                    rows.truncate(at);
-                }
-                any
             }
         }
-    };
-    if ok && let Some(k) = key {
-        seen.insert((k, want));
     }
-    ok
+    true
 }
 
-/// Whether `f` holds at `m`, read as [`value`] reads atoms; a shared part is read once (`memo`,
-/// by [`Id`]).
+/// Whether `f` holds at `m`, read as [`value`] reads atoms; each compound part is read once
+/// (`memo`, by [`Id`]).
+///
+/// Complexity tradeoff: [`implicant`] asks this of each part of every disjunction it passes
+/// on its way down, and a part holds the nest below it. Memoized for shared parts alone, as
+/// `along` is, each level of a nest d deep read the whole nest below it again, O(d^2) for
+/// one cell, against the `size` units [`cover`] charges for it: `heavy` of `l01_39_scope_
+/// relations::deep_condition` took 0.58 and 21.9 s at d = 180 and 1440, 37 times, for 6.8
+/// and 24.2 M units. With every compound part memoized, one cell reads each part once, O(the
+/// size of `f`) with one hash insert for each compound part, the cost the meter charges. The
+/// memo changes no answer: each memo serves one model `m` (the caller makes one per cell), and
+/// an [`Id`] names one part and is never reused, so an entry is this function's own value at
+/// that part and `m`, read again.
 fn holds_as(f: &Formula, m: &Model, memo: &mut HashMap<Id, bool>) -> bool {
-    let key = Id::of(f);
-    if let Some(k) = key
-        && let Some(&b) = memo.get(&k)
-    {
-        return b;
-    }
-    let out = match f {
-        Formula::Con(c) => holds_at(c, &value(&c.lin, m)),
-        Formula::Not(g) => !holds_as(g, m, memo),
-        Formula::And(gs) => gs.iter().all(|g| holds_as(g, m, memo)),
-        Formula::Or(gs) => gs.iter().any(|g| holds_as(g, m, memo)),
+    let key = |g: &Formula| (!matches!(g, Formula::Con(_))).then(|| Id::any(g));
+    let join = |g: &Formula, parts: Vec<bool>| match g {
+        Formula::Not(_) => !parts[0],
+        Formula::And(_) => parts.iter().all(|&b| b),
+        _ => parts.iter().any(|&b| b),
     };
-    if let Some(k) = key {
-        memo.insert(k, out);
-    }
-    out
+    fold(f, key, memo, |c| holds_at(c, &value(&c.lin, m)), join)
 }
 
 /// Whether the constraint `c` holds where its form is `v`.
@@ -979,49 +1139,46 @@ fn negated(c: &Con, v: &Int) -> Con {
 
 /// The number of constraints of `f`, each shared part counted once.
 fn constraints(f: &Formula) -> u64 {
-    fn walk(f: &Formula, seen: &mut HashSet<Id>) -> u64 {
-        if let Some(k) = Id::of(f)
-            && !seen.insert(k)
-        {
-            return 0;
-        }
-        match f {
-            Formula::Con(_) => 1,
-            Formula::Not(g) => walk(g, seen),
-            Formula::And(gs) | Formula::Or(gs) => gs.iter().map(|g| walk(g, seen)).sum(),
-        }
-    }
-    walk(f, &mut HashSet::new()).max(1)
+    let mut n = 0;
+    each_constraint(f, |_| n += 1);
+    n.max(1)
 }
 
 /// The atoms that are factors of a product atom of `f`.
 fn factors(f: &Formula) -> HashSet<Atom> {
-    fn walk(f: &Formula, out: &mut HashSet<Atom>, seen: &mut HashSet<Id>) {
-        if let Some(k) = Id::of(f)
-            && !seen.insert(k)
-        {
-            return;
-        }
-        match f {
-            Formula::Con(c) => {
-                for a in c.lin.terms.keys() {
-                    if let Atom::Product(p, q) = a {
-                        for x in [p, q] {
-                            out.insert(match x {
-                                Factor::Sym(n) => Atom::Sym(n.clone()),
-                                Factor::Aux(i) => Atom::Aux(*i),
-                            });
-                        }
-                    }
+    let mut out = HashSet::new();
+    each_constraint(f, |c| {
+        for a in c.lin.terms.keys() {
+            if let Atom::Product(p, q) = a {
+                for x in [p, q] {
+                    out.insert(match x {
+                        Factor::Sym(n) => Atom::Sym(n.clone()),
+                        Factor::Aux(i) => Atom::Aux(*i),
+                    });
                 }
             }
-            Formula::Not(g) => walk(g, out, seen),
-            Formula::And(gs) | Formula::Or(gs) => gs.iter().for_each(|g| walk(g, out, seen)),
+        }
+    });
+    out
+}
+
+/// Calls `at` on each constraint of `f`, a shared part read once (by [`Id`]), the parts
+/// waiting on an explicit stack (see [`fold`]).
+fn each_constraint(f: &Formula, mut at: impl FnMut(&Con)) {
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        if let Some(k) = Id::of(g)
+            && !seen.insert(k)
+        {
+            continue;
+        }
+        match g {
+            Formula::Con(c) => at(c),
+            Formula::Not(h) => stack.push(h),
+            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
         }
     }
-    let mut out = HashSet::new();
-    walk(f, &mut out, &mut HashSet::new());
-    out
 }
 
 /// The rows of `rows` joined to `s` through shared atoms. The others hold at the point the
@@ -1268,10 +1425,11 @@ mod tests {
         ])
     }
 
-    /// The work limit on both sides: allowed exactly the work the cover of [`evens`] takes, it
-    /// answers with the exact set (the even values); allowed one unit less, it keeps the
-    /// solver's set, which holds them and has values with no point. The work is counted, so
-    /// both runs stop at the same point.
+    /// The work limit on both sides: allowed exactly the work the cover of [`evens`] takes, the
+    /// solver's work for its questions included, it answers with the exact set (the even
+    /// values); allowed one unit less, it refuses ([`Refusal::Questions`]) and never answers
+    /// with the solver's set, which has values with no point (PRES-pugh-work-budget). The
+    /// work is counted, so a second run uses the same.
     #[test]
     fn the_work_limit_is_met_alike_on_both_sides() {
         let f = evens(20);
@@ -1289,30 +1447,34 @@ mod tests {
             "the work is not the same on a second run"
         );
         EXACT_LIMIT_SET.set(Some(used - 1));
-        let r = project_each(&f, &[a("x")]).unwrap().0.remove(0).unwrap();
+        let r = project_each(&f, &[a("x")]).unwrap();
         EXACT_LIMIT_SET.set(None);
+        assert_eq!(r.0, vec![Err(Refusal::Questions)]);
+        assert!(r.1.is_empty(), "{:?}", r.1);
         EXACT_OFF.set(true);
         let solver = project(&f, "x");
         EXACT_OFF.set(false);
-        assert!(
-            r.meet(&want) == want && solver.meet(&r) == r && r != want,
-            "{r}"
-        );
+        assert!(solver.meet(&want) == want && solver != want, "{solver}");
     }
 
     /// An unbounded set with holes, the even values of `x == 2 * y || x == 2 * z` with no
     /// bound, is not a finite union of ranges, so no answer is exact: the cover's tail
-    /// question proves the holes, and the symbol keeps the solver's set (every value).
+    /// question proves the holes, and the piece holding them is kept whole, every value,
+    /// with [`Refusal::Repeats`] as the cause of the wider answer.
     #[test]
-    fn an_unbounded_set_with_holes_keeps_the_solver_s_set() {
+    fn an_unbounded_set_with_holes_is_kept_whole_with_its_cause() {
         let f = Formula::or(vec![
             eq(&[("x", 1), ("y", -2)], 0),
             eq(&[("x", 1), ("z", -2)], 0),
         ]);
         EXACT_LIMIT_SET.set(Some(10_000));
-        let r = project_each(&f, &[a("x")]).unwrap().0.remove(0);
+        let (mut each, causes) = project_each(&f, &[a("x")]).unwrap();
         EXACT_LIMIT_SET.set(None);
-        assert_eq!(r, Ok(IntervalSet::top()));
+        assert_eq!(
+            each.remove(0),
+            Ok(IntervalSet::range(End::NegInf, End::PosInf))
+        );
+        assert_eq!(causes, vec![Refusal::Repeats]);
     }
 
     /// The conjunction of a pendants part that ran forever (l01_39 `pendants`, rows 5 to 9):
@@ -1349,17 +1511,16 @@ mod tests {
         );
     }
     /// The part of l01_39 `pendants` (case 272 of seed 17) whose `b` the solver answers
-    /// `[-4, 15]` and the cover once refused (`Refusal::Growth` on one of its questions), so the
-    /// caller fell back to the box `[-4, 16]`: a refused question now keeps its piece, so `b`
-    /// keeps 15 and never gets 16, which has no point (`a + b + 2·c == z2 + 5` with `z2 <= 6`,
-    /// `a >= 2` gives `c <= -4`, and `a + 2·c >= -4` gives `c >= -3`). 15 has one: `a == 2,
-    /// c == -3, z2 == 6, z1 == -7`. Every `b` in `-4..=15` has one (all points of the box with
-    /// `c` in `-3..=8` listed, PRES-pugh-findings), so the answer is the exact set; but the
+    /// `[-4, 15]`. Every `b` in `-4..=15` has a point (all points of the box with `c` in
+    /// `-3..=8` listed, PRES-pugh-findings; 15: `a == 2, c == -3, z2 == 6, z1 == -7`) and 16
+    /// has none (`a + b + 2·c == z2 + 5` with `z2 <= 6`, `a >= 2` gives `c <= -4`, and
+    /// `a + 2·c >= -4` gives `c >= -3`), so `[-4, 15]` is the exact set. But the cover's
     /// question of the piece `-4..=0` (or `-4..=-2`, by the in-cell method) is refused by the
-    /// solver (`Refusal::Growth`), so that piece is kept unconfirmed, not proved, with every
-    /// method.
+    /// solver (`Refusal::Growth`), so `b` is refused for that cause: a piece not confirmed is
+    /// never kept as the solver's set had it (PRES-pugh-work-budget; the caller reports it and
+    /// keeps the box of the rows).
     #[test]
-    fn the_pendants_part_of_row_3_projects_b_to_at_most_15() {
+    fn the_pendants_part_of_row_3_refuses_b_for_its_refused_question() {
         let mem = |s: &str, l: Option<i64>, u: Option<i64>| {
             let e = |v: Option<i64>, inf| v.map(End::of).unwrap_or(inf);
             member(
@@ -1384,8 +1545,8 @@ mod tests {
             ge(&[("a", 1), ("c", 1), ("z0", -1)], 12),
             eq(&[("a", 1), ("b", 1), ("c", 2), ("z2", -1)], -5),
         ]);
-        let b = project(&f, "b");
-        assert_eq!(b, IntervalSet::of(-4, 15), "{b}");
+        let b = project_each(&f, &[a("b")]).unwrap().0.remove(0);
+        assert_eq!(b, Err(Refusal::Growth), "{b:?}");
     }
 
     /// The questions of the cover on a stride, as the remainder reading writes one (`y == 2·q

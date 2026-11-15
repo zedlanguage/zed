@@ -1,8 +1,11 @@
 //! Random-term helpers of step L1.38 (tests/steps/l01_38_presburger/random.rs); in `pncx`, those
 //! of pncx_probe.rs; in `points`, the point and window helpers of both L1.38 folders; in
-//! `small_cost`, those of small_cost.rs.
+//! `small_cost`, those of small_cost.rs; and [`solver_alone`] and [`project_alone`], for the
+//! tests of the solver's hull under the exact cover.
 
 use zed_kernel::{Prim, Shared, Term, Value};
+use zedc::store::presburger::exact::EXACT_OFF;
+use zedc::store::presburger::{Atom, Each, Formula, Refusal, project_each};
 
 use crate::instances::Rng;
 
@@ -69,4 +72,31 @@ pub fn bool_term(rng: &mut Rng, d: u32) -> Term {
             Shared::new(sub(rng)),
         ),
     }
+}
+
+/// `f()` with the solver's answer as it is, without the exact cover (`exact::EXACT_OFF`): for
+/// the tests of the solver's own hull, which the cover would make exact or refuse.
+pub fn solver_alone<T>(f: impl FnOnce() -> T) -> T {
+    EXACT_OFF.set(true);
+    let r = f();
+    EXACT_OFF.set(false);
+    r
+}
+
+/// `project_each(f, syms)` as the solver alone answers it ([`solver_alone`]), checked against
+/// the answer with the exact cover: inside the solver's set, or a refusal with
+/// [`Refusal::Questions`] where the cover passed its work limit. A cover that passes its limit
+/// refuses the projection (P197): it does not keep the solver's set, even where that set is
+/// exact.
+pub fn project_alone(f: &Formula, syms: &[Atom]) -> Each {
+    let alone = solver_alone(|| project_each(f, syms)).expect("a projection");
+    let covered = project_each(f, syms).expect("a projection");
+    for (a, c) in alone.0.iter().zip(&covered.0) {
+        let inside = matches!((a, c), (Ok(a), Ok(c)) if c.is_subset(a));
+        assert!(
+            inside || c == a || matches!(c, Err(Refusal::Questions)),
+            "{f}: the cover's {c:?} against the solver's {a:?}"
+        );
+    }
+    alone
 }

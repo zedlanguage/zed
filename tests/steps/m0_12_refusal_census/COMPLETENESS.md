@@ -20,6 +20,7 @@ behavior on inputs the census itself does not hold.
 | Several kinds in one text, in the list's order; a phrase twice is one kind | `cases::a_text_with_several_kinds_has_each_in_the_order_of_the_list` |
 | Each undecided phrase alone is `Other`; a kind's phrase beside one is that kind alone; no text, a cut phrase, another letter case are no refusal | `cases::each_undecided_phrase_alone_is_of_kind_other_and_a_named_kind_wins` |
 | The kinds have distinct names, none `Other`, and no phrase holds another, so each phrase marks one kind | `cases::every_kind_has_a_distinct_name_and_a_phrase_no_other_kind_holds` |
+| The exact cover's refusals (Questions, Repeats) found by the solver's own reasons, so a rewording fails the census cases | `cases::the_exact_cover_s_refusals_are_found_by_their_own_words` |
 | A census line: tab-separated, kinds joined by commas, the reason trimmed and its line breaks written ` / ` | `cases::a_census_line_is_tab_separated_on_one_line` |
 | Totals: each kind of a line with several counted, list order then `Other`, zeros left out, only the kinds field read, whole names only; the empty census | `cases::totals_count_each_kind_of_each_line_in_the_list_order_and_leave_out_zeros` |
 | `programs.txt` reads back to its bytes: 120 units, each origin ending in `#` and 8 hex digits, lengths in bytes | `cases::the_programs_file_reads_back_to_its_bytes` |

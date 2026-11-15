@@ -10,6 +10,7 @@ use std::sync::Arc;
 use zed_kernel::term::build::{if_, let_, lit, prim, var};
 use zed_kernel::{Prim, Term};
 use zed_tests::scaling;
+use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::preimage::relations;
 use zedc::store::presburger;
 use zedc::store::product::{Arm, Scope, arms};
@@ -449,15 +450,21 @@ fn a_choice_two_levels_inside_a_branch_is_read_by_its_projections_only() {
 }
 
 /// Searches `if nest(d) { 1 } else { 2 }` for each nest of [`heavy`] and [`moving`] and each
-/// depth of `depths`, and checks that the search tests from one to 48 parts per level.
+/// depth of `depths`, and checks that the search tests from one to 48 parts per level. The
+/// search is the solver's, so it is counted with the solver alone ([`solver_alone`]); the
+/// questions of the exact cover search again, each within the cover's work limit, and their
+/// parts are printed.
 fn parts_tested_per_level(depths: [usize; 2]) {
     let scope = ints(&level_names());
     for (name, nest) in [("heavy", heavy as fn(usize) -> Term), ("moving", moving)] {
         for d in depths {
             let test = if_(nest(d), lit(1), lit(2));
             presburger::parts_tested();
-            std::hint::black_box(arms(&test, &scope));
+            solver_alone(|| std::hint::black_box(arms(&test, &scope)));
             let tested = presburger::parts_tested();
+            std::hint::black_box(arms(&test, &scope));
+            let covered = presburger::parts_tested();
+            eprintln!("{name}, d = {d}: {covered} parts tested with the exact cover");
             assert!(
                 tested >= d as u64,
                 "{name}, d = {d}: {tested} parts tested, fewer than one per level"

@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use zed_tests::scaling::Meter;
+use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, project_each};
 
@@ -112,15 +113,30 @@ fn a_linked_nest_projects_to_the_values_of_the_ways_through_it() {
                     .map(|&i| set_of(kept.iter().map(|x| x[i])))
                     .collect();
                 let what = format!("k = {k}, w = {w:?}, x{k} == {m} h + {r}");
-                let shared = project_each(&nest(k, &w, (m, r), true), &syms);
-                let apart = project_each(&nest(k, &w, (m, r), false), &syms);
-                assert_eq!(format!("{shared:?}"), format!("{apart:?}"), "{what}");
-                let (each, skipped) = shared.unwrap_or_else(|e| panic!("{what}: refused {e:?}"));
+                let alone =
+                    |shared| solver_alone(|| project_each(&nest(k, &w, (m, r), shared), &syms));
+                assert_eq!(
+                    format!("{:?}", alone(true)),
+                    format!("{:?}", alone(false)),
+                    "{what}"
+                );
+                let (each, skipped) = alone(true).unwrap_or_else(|e| panic!("{what}: {e:?}"));
                 assert!(skipped.is_empty(), "{what}: skipped {skipped:?}");
                 let got: Vec<IntervalSet> = (each.into_iter())
                     .map(|s| s.unwrap_or_else(|e| panic!("{what}: refused {e:?}")))
                     .collect();
                 assert_eq!(got, want, "{what}");
+                // With the exact cover, a symbol of either nest may be refused where one of the
+                // cover's questions refuses (`Disjuncts` at k = 4, w = [1, 3, 5, 7, 9],
+                // `x4 == 4 h + 2` written out, and at k = 4, w = [0, 3, 6, 9, 12],
+                // `x4 == 4 h + 2` held once): each answer either nest gives is the exact one.
+                for shared in [false, true] {
+                    let r = project_each(&nest(k, &w, (m, r), shared), &syms);
+                    let (each, _) = r.unwrap_or_else(|e| panic!("{what}: refused {e:?}"));
+                    for (got, want) in each.iter().zip(&want) {
+                        assert!(got.is_err() || got.as_ref() == Ok(want), "{what}: {got:?}");
+                    }
+                }
             }
         }
     }

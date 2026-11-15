@@ -14,9 +14,9 @@ use std::sync::Arc;
 use zedc_lattice::interval::IntervalSet;
 
 /// Why a question lies outside the fragment the solver decides. Each is reported in its own
-/// words (sec:diagnostics), and each but [`Refusal::Work`] is a property of the system's
-/// shape, never of its size or of the names of its variables; narrowing keeps the written
-/// constraint, which is sound.
+/// words (sec:diagnostics), and each but [`Refusal::Work`] and [`Refusal::Questions`] is a
+/// property of the system's shape, never of its size or of the names of its variables;
+/// narrowing keeps the written constraint, which is sound.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Refusal {
     /// Every elimination of a variable would enlarge the system, which has four variables or
@@ -44,6 +44,15 @@ pub enum Refusal {
     /// question that provably blows up, by a measured limit (P196, as A99 does), rather than
     /// answer with the solver's coarser set (P197; PRES-switchover-not-race).
     Work,
+    /// The values of a variable were to be found exactly by asking, one range of values at a
+    /// time, whether some point of the formula lies there (module `exact`), and that work,
+    /// the solver's work for each question included, passed its measured limit,
+    /// `exact::EXACT_LIMIT` (about 250 ms). A refusal by size, as [`Refusal::Work`] is
+    /// (PRES-pugh-work-budget).
+    Questions,
+    /// The values of a variable have gaps that repeat without end (`x == 2 * y` with `y`
+    /// unbounded gives the even numbers), which a set of ranges cannot hold (module `exact`).
+    Repeats,
 }
 
 /// The variables of a [`Refusal::Tie`], and the rows they share, written over the variables
@@ -328,6 +337,19 @@ impl fmt::Display for Closed<'_> {
                  values the cases allow, one condition at a time. Here the sums take so many \
                  different values that this would take longer than the checker allows (about \
                  a quarter of a second)."
+            ),
+            Refusal::Questions => write!(
+                f,
+                "to find exactly which values each variable can take, the checker asks, one \
+                 range of values at a time, whether some values there meet every condition. \
+                 Here those questions would take longer than the checker allows (about a \
+                 quarter of a second)."
+            ),
+            Refusal::Repeats => write!(
+                f,
+                "to find exactly which values each variable can take, the checker writes them \
+                 as ranges. Here the values have gaps that repeat without end, as the even \
+                 numbers do, which no list of ranges can hold."
             ),
             Refusal::Unordered(t) => write!(
                 f,

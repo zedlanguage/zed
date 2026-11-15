@@ -5,10 +5,11 @@
 //! checks' `types::Refusal` (Fork, Residues, TupleSplit, SharedCells, MorphismSplit, NoWitness,
 //! Group); the two refused arrow combinations of `ty.rs`, its functions at one place left
 //! unpaired (`Forms::tie`, FunctionPairs) and its unions whose shape is not chosen
-//! (`unchosen_text`, Unchosen); and the normal form's `poly::Refused` (PolyWork,
-//! PolyExponent). A diagnostic that says it could not decide, or that the
-//! checker does not try, and holds none of these phrases is of kind `Other`, so a new kind
-//! fails the census until it is named here.
+//! (`unchosen_text`, Unchosen); the normal form's `poly::Refused` (PolyWork,
+//! PolyExponent); and the exact cover's `presburger::Refusal::Questions` and `Repeats`
+//! (PRES-pugh-work-budget), listed last so that the kinds before keep their places. A
+//! diagnostic that says it could not decide, or that the checker does not try, and holds none
+//! of these phrases is of kind `Other`, so a new kind fails the census until it is named here.
 
 /// A kind of refusal: its name in the census and the phrase of its reason that marks it.
 pub struct Kind {
@@ -97,6 +98,14 @@ pub const KINDS: &[Kind] = &[
     Kind {
         name: "PolyExponent",
         phrase: ": an exponent is above",
+    },
+    Kind {
+        name: "Questions",
+        phrase: "Here those questions would take longer than the checker allows",
+    },
+    Kind {
+        name: "Repeats",
+        phrase: "which no list of ranges can hold",
     },
 ];
 

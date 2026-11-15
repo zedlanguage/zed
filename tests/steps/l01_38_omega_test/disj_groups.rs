@@ -4,6 +4,7 @@
 //! whole group.
 
 use zed_tests::scaling;
+use zed_tests::step_helpers::l01_38_presburger::{project_alone, solver_alone};
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{self, Atom, Con, Formula, Lin, decide, project_each};
 
@@ -114,25 +115,29 @@ pub(super) fn decides(what: &str, n: usize, fam: fn(usize, Holds) -> Formula) {
 }
 
 /// The check of the benchmarks that project the middle of a chain of `m` stages: a hull that is
-/// not empty.
+/// not empty. These benchmarks measure the solver's search through the disjunctions, so they
+/// ask the solver alone ([`solver_alone`]); the exact cover's cost is measured by
+/// `bench/exact_cover.rs`, and its answers on these chains by
+/// [`the_chains_of_the_benchmarks_are_answered_at_small_sizes`].
 pub(super) fn assert_middle_projected(f: &Formula, m: usize) {
-    let r = project_each(f, &middle(m)).expect("a projection");
+    let r = solver_alone(|| project_each(f, &middle(m))).expect("a projection");
     assert!(r.0[0].as_ref().is_ok_and(|s| !s.is_empty()), "{r:?}");
 }
 
 /// The check of the benchmark of [`cascade`] of `m` stages: the hull of the middle holds 0 and
-/// neither -1 nor 1.
+/// neither -1 nor 1. The solver alone, as in [`assert_middle_projected`].
 pub(super) fn assert_cascade_middle(f: &Formula, m: usize) {
-    let r = project_each(f, &middle(m)).expect("a projection");
+    let r = solver_alone(|| project_each(f, &middle(m))).expect("a projection");
     let s = r.0[0].clone().expect("a hull");
     assert!(s.contains(0) && !s.contains(-1) && !s.contains(1), "{s:?}");
 }
 
 /// The check of the benchmark of [`case_chain`] of `m` stages: the hull of `y[m / 2]` holds 0
-/// and 1,000,000, not -1.
+/// and 1,000,000, not -1. The solver alone, as in [`assert_middle_projected`].
 pub(super) fn assert_case_chain_middle(f: &Formula, m: usize) {
     let mid = m / 2;
-    let r = project_each(f, &[Atom::Sym(format!("y{mid:05}").into())]).expect("a projection");
+    let r = solver_alone(|| project_each(f, &[Atom::Sym(format!("y{mid:05}").into())]))
+        .expect("a projection");
     let s = r.0[0].clone().expect("a hull");
     assert!(
         s.contains(0) && !s.contains(-1) && s.contains(1_000_000),
@@ -141,20 +146,29 @@ pub(super) fn assert_case_chain_middle(f: &Formula, m: usize) {
 }
 
 /// The checks of the benchmarks of `bench/disj_groups.rs` at small sizes, but those of
-/// [`row_sums`], which has its own.
+/// [`row_sums`], which has its own; and the exact cover's answer on each chain, the solver's
+/// or refused for its work limit ([`project_alone`]).
 #[test]
 fn the_chains_of_the_benchmarks_are_answered_at_small_sizes() {
     for m in [2, 3, 8, 24] {
+        let mut fs = Vec::new();
         for fam in [difference_chain, general_chain] {
             assert_eq!(decide(&fam(m, Holds::None)), Ok(true), "{m}");
             assert_middle_projected(&fam(m, Holds::None), m);
+            fs.push(fam(m, Holds::None));
         }
         assert_middle_projected(&difference_chain(m, Holds::First), m);
+        fs.push(difference_chain(m, Holds::First));
         for written in [Written::AsIs, Written::Negated] {
             assert_middle_projected(&joint_chain(m, written), m);
+            fs.push(joint_chain(m, written));
         }
         for flipped in [false, true] {
             assert_cascade_middle(&cascade(m, flipped), m);
+            fs.push(cascade(m, flipped));
+        }
+        for f in &fs {
+            project_alone(f, &middle(m));
         }
         assert_case_chain_middle(&case_chain(m), m);
     }
@@ -165,7 +179,7 @@ fn the_chains_of_the_benchmarks_are_answered_at_small_sizes() {
 #[test]
 fn the_middle_of_a_chain_whose_disjuncts_do_not_hold_has_its_exact_hull() {
     let n = 64;
-    let r = project_each(&difference_chain(n, Holds::None), &middle(n)).expect("a projection");
+    let r = project_alone(&difference_chain(n, Holds::None), &middle(n));
     let s = r.0[0].clone().expect("a hull");
     // Every step at least 1, and at least 2 at the 8 stages of disjunctions before the
     // middle; the 31 steps after it, 8 of them at disjunctions, end at most at `4n`.
@@ -179,7 +193,7 @@ fn the_middle_of_a_chain_whose_disjuncts_do_not_hold_has_its_exact_hull() {
 #[test]
 fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_has_its_exact_hull() {
     let n = 64;
-    let r = project_each(&general_chain(n, Holds::None), &middle(n)).expect("a projection");
+    let r = project_alone(&general_chain(n, Holds::None), &middle(n));
     let s = r.0[0].clone().expect("a hull");
     // Every step at least 1, and at least 2 at the 8 stages of disjunctions before the
     // middle (`y <= 2` with `s >= 4`); the 31 steps after it, 8 of them at disjunctions, end
@@ -199,8 +213,10 @@ fn the_middle_of_a_chain_of_three_atom_rows_is_found_without_asking_for_a_side()
     for n in [8, 64, 512] {
         let f = Formula::and(general_rows(n));
         presburger::hull_sides_asked();
-        let r = project_each(&f, &middle(n)).expect("a projection");
+        let r = solver_alone(|| project_each(&f, &middle(n))).expect("a projection");
         assert_eq!(presburger::hull_sides_asked(), 0, "{n} stages");
+        // At 512 stages the cover passes its work limit (236M units, 7.1 s, when unlimited).
+        project_alone(&f, &middle(n));
         let s = r.0[0].clone().expect("a hull");
         // Every step at least 1: the middle lies in [n / 2, 8n - (n - 1 - n / 2)].
         let (lo, hi) = ((n / 2) as i64, (8 * n - (n - 1 - n / 2)) as i64);
@@ -299,7 +315,7 @@ pub(super) fn joint_chain_scales(written: Written, n: usize) {
 fn the_middle_of_a_chain_whose_disjunctions_jointly_leave_one_step_has_its_exact_hull() {
     let n = 64;
     for written in [Written::AsIs, Written::Reversed, Written::Negated] {
-        let r = project_each(&joint_chain(n, written), &middle(n)).expect("a projection");
+        let r = project_alone(&joint_chain(n, written), &middle(n));
         let s = r.0[0].clone().expect("a hull");
         let (lo, hi) = JOINT_MIDDLE_64;
         assert!(s.contains(lo) && !s.contains(lo - 1), "{written:?}: {s:?}");
@@ -528,9 +544,10 @@ fn an_end_only_case_reasoning_bounds_is_read_from_a_disjunct() {
 
 /// `z <= x + y` with `x <= 0` and `y <= 0` each by cases (`x <= 0 || p >= 1` with
 /// `x <= 0 || p <= 0`, the same for `y` with `q`): `z <= 0`, but no disjunct bounds `z` alone
-/// (`x <= 0` leaves `y` free), so no candidate end is found and the hull stays open, sound and
-/// wider than the exact `z <= 0` (the tradeoff of [`project_each`] at `tighten`, item
-/// PRES-pendants-wider).
+/// (`x <= 0` leaves `y` free), so the solver finds no candidate end and its hull stays open,
+/// sound and wider than the exact `z <= 0` (the tradeoff of [`project_each`] at `tighten`, item
+/// PRES-pendants-wider). The exact cover (PRES-pugh-work-budget) gives `z <= 0`: every `z <= 0`
+/// has the point `x = y = 0`.
 #[test]
 fn an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open() {
     let (x, y, z, p, q) = (named("x"), named("y"), named("z"), named("p"), named("q"));
@@ -542,7 +559,9 @@ fn an_end_that_cases_bound_at_a_value_no_disjunct_gives_is_left_open() {
         ]));
         fs.push(Formula::or(vec![ge(v.times(-1)), ge(w.times(-1))]));
     }
-    assert_hull(&Formula::and(fs), None, None);
+    let f = Formula::and(fs);
+    solver_alone(|| assert_hull(&f, None, None));
+    assert_hull(&f, None, Some(0));
 }
 
 /// A chain of `n` stages `y[i + 1] >= y[i] - 1` with `y[0] == 0`, and at the middle stage

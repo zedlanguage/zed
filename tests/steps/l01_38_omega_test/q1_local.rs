@@ -167,6 +167,8 @@ fn cause(r: &Refusal) -> String {
         Refusal::Tie(_) => "Tie",
         Refusal::Unordered(_) => "Unordered",
         Refusal::Work => "Work",
+        Refusal::Questions => "Questions",
+        Refusal::Repeats => "Repeats",
     }
     .to_string()
 }

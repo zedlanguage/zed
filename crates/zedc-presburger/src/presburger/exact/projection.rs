@@ -220,7 +220,7 @@ fn project(
     out: &mut Vec<Strided>,
 ) -> Result<(), Refusal> {
     let size: u64 = rows.iter().map(|k| k.lin.terms.len() as u64 + 1).sum();
-    work.charge(size)?;
+    work.read(size)?;
     let Some(mut rows) = tidied(rows) else {
         return Ok(());
     };
@@ -532,7 +532,9 @@ pub(super) fn ranges(
             .to_i128()
             .and_then(|n| u64::try_from(n).ok())
             .unwrap_or(u64::MAX);
-        work.charge(n)?;
+        // The table is filled and read a byte at a time, about a hundredth of a unit each
+        // (a unit is about 100 ns, `EXACT_LIMIT`): one unit for each 64 residues.
+        work.charge(n / 64 + 1)?;
         let mut have = vec![false; n as usize];
         for p in &active {
             let step = p.step.to_i128().expect("charged") as usize;
@@ -562,7 +564,7 @@ pub(super) fn ranges(
 }
 
 /// The values from `l` to `u` whose residue modulo `step` is marked in `have`, added to
-/// `pieces`, each charged one unit of `work`.
+/// `pieces`, each charged one unit of `work`, and the table one unit for each 64 residues.
 pub(super) fn listed(
     l: &Int,
     u: &Int,
@@ -571,6 +573,8 @@ pub(super) fn listed(
     work: &mut Work,
     pieces: &mut Vec<(End, End)>,
 ) -> Result<(), Refusal> {
+    // The table read once, one unit for each 64 residues, as where it is made.
+    work.charge(have.len() as u64 / 64 + 1)?;
     for (r, _) in have.iter().enumerate().filter(|(_, b)| **b) {
         let r = Int::from(r as i64);
         // The first value at or above `l` with residue `r`.
@@ -620,7 +624,7 @@ pub(super) fn rays(
             },
             rel: Rel::Ge,
         }));
-        work.charge(size + row_terms)?;
+        work.read(size + row_terms)?;
         EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
         let Ok(Some(d)) = super::super::satisfiable(&Formula::and(ask)) else {
             continue;
@@ -632,7 +636,7 @@ pub(super) fn rays(
         // One point of the rows in each residue of `s` modulo `g`.
         let mut r = Int::from(0);
         while r < g {
-            work.charge(size + row_terms + 2)?;
+            work.read(size + row_terms + 2)?;
             EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
             let k = Atom::Sym("#ray".into());
             let mut ask = rows_f.clone();

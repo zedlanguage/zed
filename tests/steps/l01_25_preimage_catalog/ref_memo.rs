@@ -23,6 +23,7 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Shared, Term, Value, eval};
 use zed_tests::instances::Rng;
+use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage_ref::{Demand, Domains, Listed, Preimage, preimage, preimage_listed};
 
@@ -279,9 +280,18 @@ struct Kept {
 /// Checks the new answer to `line` against main's: inside main's box (or empty), exact where
 /// main's was, with a relation or exact where main's had one, and sound and (when exact)
 /// exact at [`points`] when `at_points`. Counts it in `kept`.
+///
+/// Main's answers are those of the solver alone, so they are compared with the solver alone
+/// ([`solver_alone`]). The exact cover refuses a set it cannot confirm exact in place of
+/// keeping the solver's wider set (PRES-pugh-work-budget), and the transfer then keeps the box
+/// of the stage before, which can be wider than main's, with no relation (a call of part 2
+/// keeps `i` in `-13..-6`, where main kept `-12..-5`; a call of each of parts 0, 1 and 3
+/// loses main's relation; one call of `PINNED` is made exact): its answer is checked to be
+/// sound and (when exact) exact at the points, and, when exact, inside main's box.
 fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
     let c = call(line);
-    let p: Preimage = preimage_listed(&c.term, &c.inputs, &c.listed, &c.demand);
+    let covered: Preimage = preimage_listed(&c.term, &c.inputs, &c.listed, &c.demand);
+    let p: Preimage = solver_alone(|| preimage_listed(&c.term, &c.inputs, &c.listed, &c.demand));
     let empty = p.domains.values().any(IntervalSet::is_empty);
     let inside = |n: &Arc<str>, s: &IntervalSet| c.main.get(n).is_none_or(|m| s.is_subset(m));
     assert!(
@@ -294,27 +304,36 @@ fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
         !c.main_relation || p.exact || p.relation.is_some(),
         "{line}\nmain's relation lost"
     );
+    // An exact answer lies inside every sound one, so inside main's.
+    let cover_empty = covered.domains.values().any(IntervalSet::is_empty);
+    assert!(
+        !covered.exact || cover_empty || covered.domains.iter().all(|(n, s)| inside(n, s)),
+        "{line}\nthe cover's exact box is not inside main's: {:?}",
+        covered.domains
+    );
     let names: Vec<Arc<str>> = c.inputs.keys().cloned().collect();
-    let at = if at_points {
-        points(&c, &p.domains)
-    } else {
-        Vec::new()
-    };
-    for pt in at {
-        let hit = names.iter().zip(&pt).all(|(n, v)| {
-            p.domains
-                .get(n)
-                .is_none_or(|s| s.contains_end(&End::Fin(v.clone())))
-        });
-        let meets = meets(&c.term, &names, &pt, &c.demand);
-        assert!(
-            !meets || hit,
-            "{line}\nthe point {pt:?} meets the demand outside the new box"
-        );
-        assert!(
-            !p.exact || !hit || meets,
-            "{line}\nthe point {pt:?} of the new box, marked exact, fails the demand"
-        );
+    for (how, p) in [("new", &p), ("cover's", &covered)] {
+        let at = if at_points {
+            points(&c, &p.domains)
+        } else {
+            Vec::new()
+        };
+        for pt in at {
+            let meets = meets(&c.term, &names, &pt, &c.demand);
+            let hit = names.iter().zip(&pt).all(|(n, v)| {
+                p.domains
+                    .get(n)
+                    .is_none_or(|s| s.contains_end(&End::Fin(v.clone())))
+            });
+            assert!(
+                !meets || hit,
+                "{line}\nthe point {pt:?} meets the demand outside the {how} box"
+            );
+            assert!(
+                !p.exact || !hit || meets,
+                "{line}\nthe point {pt:?} of the {how} box, marked exact, fails the demand"
+            );
+        }
     }
     if p.exact && !c.main_exact {
         kept.made_exact += 1;
