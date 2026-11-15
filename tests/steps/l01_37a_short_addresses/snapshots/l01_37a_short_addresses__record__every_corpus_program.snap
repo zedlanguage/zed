@@ -43,6 +43,14 @@ expression: without_addresses(&out)
 44:79: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 46:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 09-canonical-equal.zed (L3): does not load: 7:23: the prelude word `split` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+10:15: A `Lines` port takes a `String` or a family of strings: the value pushed to `m.stdout` is int -> String | #ioError(op: String, path: String, why: String) | #notFound.
+  [1] 10:15: this call gives int -> String | #ioError(op: String, path: String, why: String) | #notFound
+      10 |   m.stdout <- m.stdin.map(l -> {
+         |               ^^^^^^^^^^^^^^^^^^ [1, 3, 4]
+         |                           ^^^^^^ [2]
+  [2] 10:27: this expression is _ -> String
+  [3] 10:15: the port `m.stdout` writes each value pushed to it as one line of text
+  [4] 10:15: repair: write the value into a string with `"${…}"`
 11:13: the prelude word `split` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
 10-regex-matcher.zed (L19): does not load: 9:1: the unit `regex` cannot be imported: no manifest `zed.manifest` marks a package root at or above this unit, so it imports no unit.
 9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.

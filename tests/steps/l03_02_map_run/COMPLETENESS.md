@@ -24,5 +24,5 @@ makes (the native path). The three must print the same text.
 | A loose atom in the entries passes through `map` | case `map_passes_a_loose_atom_through` |
 | Refusals: a disjoint key (R11); `map` given two functions or a non-function; `map` of a value with no entries; `where` whose test is not `bool`; a fold of a row that may be empty, in a function's body | `types::*` (5 tests) |
 | Forms not built, refused as not compiled: a range, an operator section outside `><`, a metadata read, a fold by an operator with no built-in identity, `where` over entries that may be loose atoms | `types::the_forms_not_built_are_refused_as_not_built`, `types::a_fold_by_an_operator_without_a_built_in_identity_is_not_built`, `types::where_over_loose_atoms_is_not_built` |
-| Scaling: `map` and `><` at n and 8n, the kernel run and the whole `zedc run` path | `bench::*` (3 benchmarks, `--bench`); ratios 8.40, 8.01 and 8.39 on 2026-11-14 |
+| Scaling: `map` and `><` at n and 8n, the kernel run and the whole `zedc run` path | `bench::*` (3 benchmarks, `--bench`), each held under 9 times at 8n by `scaling::hold_linear`; all three pass on 2026-11-14 |
 | One-generator `for`, standalone `discard`, `.foldl` and `.foldr`, float folds | Not built (plan row MAP-run lists the steps); refused at name resolution or in the checker |
