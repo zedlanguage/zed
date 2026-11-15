@@ -197,16 +197,20 @@ fn a_bug_of_zedc_in_the_run_stops_both_engines_alike() {
     ] {
         let rest = "    m.stderr <- String(m.args);\n";
         let p = program(name, &format!("{limit}{}", writes_then(rest)));
-        agree(
-            name,
-            &p,
-            both_with(&p, Stdio::piped, &[("ZEDC_TEST_BUG", "1")]),
-            (
-                Some(3),
-                "",
-                "the run stopped because of a bug in zedc, not in your program",
-            ),
-        );
+        // The switch exists only where debug assertions are on (crates/zedc/src/run.rs), so a
+        // release build of the tests checks the second half only.
+        if cfg!(debug_assertions) {
+            agree(
+                name,
+                &p,
+                both_with(&p, Stdio::piped, &[("ZEDC_TEST_BUG", "1")]),
+                (
+                    Some(3),
+                    "",
+                    "the run stopped because of a bug in zedc, not in your program",
+                ),
+            );
+        }
         // Without the variable the same build runs to its end.
         agree(
             name,
