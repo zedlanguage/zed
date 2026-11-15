@@ -58,22 +58,22 @@ fn a_cast_of_a_literal_shows_the_operand_and_the_menu() {
 #[test]
 fn a_key_outside_the_keys_shows_both_types_and_the_menu() {
     assert_eq!(
-        shown("f(m: int .. int | String -> bool, k: bool) = m[k];\n"),
+        shown("f(m: int .. (int | String) -> bool, k: bool) = m[k];\n"),
         "\
-1:46: this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound`.
-  [1] 1:46: this map has the keys `int | String`, which hold no `bool`
-      1 | f(m: int .. int | String -> bool, k: bool) = m[k];
-        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]         ^ [1, 4]
-        |                                   ^^^^^^^ [3]  ^ [2]
-        |                                              ^^^^ [6, 7, 8, 9]
-  [2] 1:48: `k` is bool here
-  [3] 1:35: `k` is declared `bool`
-  [4] 1:46: `m` is int .. int | String -> bool here
-  [5] 1:3: `m` is declared `int .. int | String -> bool`
-  [6] 1:46: repair: read the map with a key in `int | String`
-  [7] 1:46: repair: declare the map with the wider keys `int | bool | String ->? bool`, and handle `#notFound` where the key is missing
-  [8] 1:46: repair: write `#notFound` in place of this read, where the miss is meant
-  [9] 1:46: repair: write `#bug(\"…\")` in place of this read, where it is never meant to be reached
+1:48: this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound`.
+  [1] 1:48: this map has the keys `int | String`, which hold no `bool`
+      1 | f(m: int .. (int | String) -> bool, k: bool) = m[k];
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]         ^ [1, 4]
+        |                                     ^^^^^^^ [3]  ^ [2]
+        |                                                ^^^^ [6, 7, 8, 9]
+  [2] 1:50: `k` is bool here
+  [3] 1:37: `k` is declared `bool`
+  [4] 1:48: `m` is int .. (int | String) -> bool here
+  [5] 1:3: `m` is declared `int .. (int | String) -> bool`
+  [6] 1:48: repair: read the map with a key in `int | String`
+  [7] 1:48: repair: declare the map with the wider keys `(int | bool | String) ->? bool`, and handle `#notFound` where the key is missing
+  [8] 1:48: repair: write `#notFound` in place of this read, where the miss is meant
+  [9] 1:48: repair: write `#bug(\"…\")` in place of this read, where it is never meant to be reached
 "
         .trim_end()
     );
@@ -90,9 +90,9 @@ fn each_offered_repair_applied_makes_the_program_check() {
         "f(positional x: int, s: String) = int(s);\n",
         "f(positional x: int) = #invalid;\n",
         // A key in `int | String`, or the map declared with the wider keys.
-        "f(m: int .. int | String -> bool, k: int) = m[k];\n",
-        "f(m: bool | int | String ->? bool, k: bool) = m[k];\n",
-        "f(m: int .. int | String -> bool, k: bool) = #notFound;\n",
+        "f(m: int .. (int | String) -> bool, k: int) = m[k];\n",
+        "f(m: (bool | int | String) ->? bool, k: bool) = m[k];\n",
+        "f(m: int .. (int | String) -> bool, k: bool) = #notFound;\n",
     ];
     for src in cases {
         assert!(type_errors(src).is_empty(), "{src}\n{:?}", type_errors(src));

@@ -51,16 +51,18 @@ fn rule(g: &Grammar, name: &str) -> usize {
 /// of `|` stands on either side, as the right one (`TypeOr '|' TypeAnd`) at the most; an operand
 /// of `&` likewise (`TypeAnd '&' TypeNot`); the left of `\` is `TypeDiff` or `TypeNot`
 /// (`TypeDiff '\\' TypeNot | TypeNot '\\' TypeNot`); an operand of any connective is a
-/// `TypeNot`; a key (`TypeUnion '->' Arrow`) and a bound (`TypeUnion '..' TypeUnion`) are
-/// `TypeUnion`s.
-const PLACES: [(TextPlace, &[&str]); 7] = [
+/// `TypeNot`; a key (`TypeNot '->' Arrow`) and a bound (`TypeNot '..' TypeNot`) are `TypeNot`s,
+/// since `|`, `&` and `\` bind tighter than `->` (author P222); the type after `is` (`IsTest`,
+/// `IsPat`) is a `TypeUnion`.
+const PLACES: [(TextPlace, &[&str]); 8] = [
     (TextPlace::Any, &["Arrow"]),
     (TextPlace::Union, &["TypeAnd"]),
     (TextPlace::And, &["TypeNot"]),
     (TextPlace::DiffLeft, &["TypeDiff", "TypeNot"]),
     (TextPlace::Prim, &["TypeNot"]),
-    (TextPlace::Key, &["TypeUnion"]),
-    (TextPlace::Bound, &["TypeUnion"]),
+    (TextPlace::Key, &["TypeNot"]),
+    (TextPlace::Bound, &["TypeNot"]),
+    (TextPlace::Is, &["TypeUnion"]),
 ];
 
 /// Kernel types of each form, each with its text and the rule that produces that text.
@@ -295,7 +297,16 @@ fn function_types_print_with_exactly_the_parentheses_the_grammar_needs() {
         ("((int,)) -> int", "(int,) -> int"),
         ("(()) -> int", "(()) -> int"),
         ("() -> int", "() -> int"),
-        ("(int | #a) -> int", "int | #a -> int"),
+        ("(int | #a) -> int", "(int | #a) -> int"),
+        ("(int \\ 3) -> int", "(int \\ 3) -> int"),
+        (
+            "((int -> int) & (rat -> rat)) ->? int",
+            "((int -> int) & (rat -> rat)) ->? int",
+        ),
+        (
+            "(int | #a) ..(int | #a | #b) -> int",
+            "(int | #a) .. (int | #a | #b) -> int",
+        ),
         (
             "(int) -> int | #box((int) -> int)",
             "int -> int | #box(int -> int)",

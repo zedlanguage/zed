@@ -1550,7 +1550,9 @@ impl<'a> Formatter<'a> {
                             self.put("(");
                             then![stack; Job::Ty { t: p, min: 0 }, put(")")];
                         }
-                        _ => stack.push(Job::Ty { t: p, min: 2 }),
+                        // A key is a `TypeNot` (author P222): a union, intersection or difference
+                        // is parenthesized, `(int | #a) -> int`.
+                        _ => stack.push(Job::Ty { t: p, min: 4 }),
                     },
                     ps => {
                         self.put("(");
@@ -1564,9 +1566,9 @@ impl<'a> Formatter<'a> {
                 result,
             } => {
                 then![stack;
-                    Job::Ty { t: lower, min: 2 },
+                    Job::Ty { t: lower, min: 4 },
                     put(" .. "),
-                    Job::Ty { t: upper, min: 2 },
+                    Job::Ty { t: upper, min: 4 },
                     put(" -> "),
                     Job::Ty { t: result, min: 1 },
                 ];

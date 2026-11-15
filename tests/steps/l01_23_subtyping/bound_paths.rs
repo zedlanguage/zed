@@ -67,7 +67,7 @@ fn rejected_everywhere(src: &str, want: &[String]) {
     let s = src.to_string();
     let alone = std::thread::spawn(move || through_load(&s)).join().unwrap();
     assert_eq!(alone, want, "alone: {src}");
-    assert!(zedc::run::load(b"f(x: #a .. #a | #b -> int) = 0;\nmain() = 0;\n").is_ok());
+    assert!(zedc::run::load(b"f(x: #a .. (#a | #b) -> int) = 0;\nmain() = 0;\n").is_ok());
     assert_eq!(through_load(src), want, "after another: {src}");
     assert_eq!(through_load(src), want, "again: {src}");
 }
@@ -99,7 +99,7 @@ fn a_parameter_whose_morphism_bound_fails_is_rejected_on_every_path() {
 #[test]
 fn a_parameter_whose_morphism_bound_holds_is_taken() {
     for src in [
-        "f(x: #a .. #a | #b -> int) = 0;\nmain() = 0;\n",
+        "f(x: #a .. (#a | #b) -> int) = 0;\nmain() = 0;\n",
         "f(x: (int, #a .. #a -> int)) = 0;\nmain() = 0;\n",
     ] {
         assert!(zedc::run::load(src.as_bytes()).is_ok(), "{src}");
@@ -108,10 +108,10 @@ fn a_parameter_whose_morphism_bound_holds_is_taken() {
 }
 
 /// A program whose `f` has `n` parameters, each a bound that holds in a tuple that is one arm of
-/// a union: `(int, #a .. #a | #b -> int) | int`.
+/// a union: `(int, #a .. (#a | #b) -> int) | int`.
 fn nested_bounds(n: usize) -> String {
     let params: Vec<String> = (0..n)
-        .map(|i| format!("x{i}: (int, #a .. #a | #b -> int) | int"))
+        .map(|i| format!("x{i}: (int, #a .. (#a | #b) -> int) | int"))
         .collect();
     format!("f({}) = 0;\nmain() = 0;\n", params.join(", "))
 }

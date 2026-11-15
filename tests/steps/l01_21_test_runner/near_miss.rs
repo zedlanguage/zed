@@ -69,6 +69,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`(-1).abs`, the chain started at `-1`, which is 1"),
     ),
     (
+        Row::BareKey,
+        "",
+        "f(x: (int | #a) -> int) = 0;\n",
+        "f(x: int | #a -> int) = 0;\n",
+        "1:10",
+        Some("`(int | #a) -> int`, with the key `int | #a`"),
+    ),
+    (
         Row::DisplayInBody,
         LOOKUP,
         "t = lookup(3) else { (0, 1) };\n",

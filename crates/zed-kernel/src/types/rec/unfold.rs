@@ -523,10 +523,11 @@ fn unwritten(s: &Shape, i: usize) -> bool {
 }
 
 /// Where part `i` of the parts directly below an expression of shape `s` stands: `\` takes no
-/// `&` or `|` on either side and no `\` on its right, an arrow's key no arrow and no tuple,
-/// which would read as its parameters, and its bounds no arrow (DESIGN.md sec:grammar). So a
-/// key is parenthesized only where the grammar needs it (author rule P191): `K -> V`, and
-/// `((A, B)) -> V` for a tuple key.
+/// `&` or `|` on either side and no `\` on its right, an arrow's key and bounds no arrow and
+/// no connective, since the bare `A | B -> V` is rejected (author P222), and its
+/// key no tuple, which would read as its parameters (DESIGN.md sec:grammar). So a key is
+/// parenthesized only where the grammar needs it (author rule P191): `K -> V`, `(A | B) -> V`,
+/// and `((A, B)) -> V` for a tuple key.
 fn kid_place(s: &Shape, i: usize) -> Place {
     let (each, fixed): (Place, [Option<Place>; 3]) = match s {
         Shape::Union(_) => (Place::Union, [None; 3]),

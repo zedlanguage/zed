@@ -162,6 +162,7 @@ rows! {
         "Remap output name that names a source level and resolves to a value in scope",
     MethodOnValue => "Method declared on a value",
     PrefixMinus => "Prefix `-` on a numeric literal's postfix chain",
+    BareKey => "Union, intersection or difference written bare as a key, guarantee or permission",
     DisplayInBody => "Display in body position",
     SyntaxError => "Syntax error",
     ReservedWordAsName => "Reserved word written where a name stands",

@@ -213,7 +213,7 @@ fn a_key_that_shares_no_value_with_the_keys_is_rejected() {
              which share no value, so the read can only give `#notFound`. [m[#b]]",
         ),
         (
-            "f(m: int .. int | String -> bool, k: bool) = m[k];",
+            "f(m: int .. (int | String) -> bool, k: bool) = m[k];",
             "this read can never find its key: the key is `bool` and the map's keys are \
              `int | String`, which share no value, so the read can only give `#notFound`. [m[k]]",
         ),
@@ -230,7 +230,7 @@ fn a_key_that_may_be_present_keeps_its_atom() {
         "(m: int ->? String, k: int) -> String | #notFound"
     );
     assert_eq!(
-        sig("f(m: #a .. #a | #b -> int, k: #a | #b) = m[k];", "f"),
+        sig("f(m: #a .. (#a | #b) -> int, k: #a | #b) = m[k];", "f"),
         "type T1 = #a | #b;\n(m: #a .. T1 -> int, k: T1) -> int | #notFound"
     );
 }

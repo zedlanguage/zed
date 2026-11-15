@@ -103,7 +103,7 @@ fn an_unreachable_branch_adds_nothing_to_the_result() {
         (
             "f(positional x: int | String) = if x is int { 1 } else if x is String { 2 } else \
              { 3 };\n",
-            "int | String -> 1 | 2",
+            "(int | String) -> 1 | 2",
         ),
         // In the unreachable branch `x` is `Never`, so it adds nothing there either.
         (
@@ -122,7 +122,7 @@ fn an_unreachable_branch_adds_nothing_to_the_result() {
         // A test that may hold keeps both branches.
         (
             "f(positional x: int | bool) = if x is int { 1 } else { 2 };\n",
-            "int | bool -> 1 | 2",
+            "(int | bool) -> 1 | 2",
         ),
     ] {
         assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");

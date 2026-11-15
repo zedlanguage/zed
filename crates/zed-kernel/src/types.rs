@@ -5863,7 +5863,7 @@ pub struct Surfaces {
 
 /// Where a text stands, and so which classes it may have there unparenthesized: anywhere, as an
 /// operand of `|`, of `&`, the left of `\`, an operand of any connective, the key of an arrow,
-/// or a bound of `L .. U -> V` ([`Type::surface_by_name`]).
+/// a bound of `L .. U -> V`, or after `is` ([`Type::surface_by_name`]).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum TextPlace {
     /// Anywhere: the whole of a type.
@@ -5876,10 +5876,13 @@ pub enum TextPlace {
     DiffLeft,
     /// An operand of any connective.
     Prim,
-    /// The key of an arrow, `K -> V`.
+    /// The key of an arrow, `K -> V`: a `TypeNot`, so a union, intersection or difference is
+    /// parenthesized, `(int | #a) -> int` (author P222).
     Key,
-    /// A bound of `L .. U -> V`.
+    /// A bound of `L .. U -> V`: a `TypeNot`, as a key is, but a tuple stands bare.
     Bound,
+    /// After `is`, in `IsTest` and `IsPat`: a `TypeUnion`, so only an arrow is parenthesized.
+    Is,
 }
 
 impl fmt::Display for Surface {

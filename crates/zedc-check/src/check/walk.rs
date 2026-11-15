@@ -18168,7 +18168,7 @@ impl<'a> Ck<'_, 'a> {
         };
         let entries = Ty::union_all(sig.arrows.iter().map(|a| &a.result))
             .without(&(&KType::atom("notFound") | &KType::atom("outOfBounds")));
-        let (key, keys_text, entry) = (self.text(&x.ty), self.text(&keys), self.text(&entries));
+        let (key, keys_text) = (self.text(&x.ty), self.text(&keys));
         let at = x.at.unwrap_or(span);
         let mut notes = vec![Note {
             span: of,
@@ -18190,9 +18190,19 @@ impl<'a> Ck<'_, 'a> {
             .map(Ty::carrier)
             .filter(|c| x.ty.meets(c))
             .fold(Ty::set(x.ty.atoms()), |t, c| t.union(&c));
-            let wider = self.text(&keys.union(&wider));
+            // The map type itself, so that its key is printed as a key: in parentheses when it is
+            // a union (author P222), `(int | bool | String) ->? bool`.
+            let param = SParam {
+                name: "".into(),
+                positional: true,
+                default: None,
+            };
+            let found = entries.union(&Ty::set(KType::atom("notFound")));
+            let mut family = Sig::one(vec![param], vec![keys.union(&wider)], found);
+            family.data = true;
+            let declared = self.text(&Ty::func(Arc::new(family)));
             menu.push(format!(
-                "repair: declare the map with the wider keys `{wider} ->? {entry}`, and handle \
+                "repair: declare the map with the wider keys `{declared}`, and handle \
                  `#notFound` where the key is missing"
             ));
         }

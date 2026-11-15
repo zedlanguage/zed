@@ -2,6 +2,7 @@
 //! trees are the trees of the spec's bracketing cases and the rings of the fences.
 
 mod alternatives;
+mod bare_key;
 mod bench;
 mod cases;
 mod deep;

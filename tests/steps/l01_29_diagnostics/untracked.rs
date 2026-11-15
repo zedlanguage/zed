@@ -31,7 +31,7 @@ fn a_declared_type_prints_as_text_that_reads_back_as_itself() {
         "((int, String) | (bool, f64),)",
         "int & (int | String)",
         "(int) -> String",
-        "#a .. #a | #b -> int",
+        "#a .. (#a | #b) -> int",
     ] {
         let printed = shown(text).expect("a kernel type");
         // The text is a type a parameter may declare, and it prints as itself.

@@ -1864,7 +1864,7 @@ impl Shape {
         let mut first = true;
         for t in &self.items {
             between(parts, &mut first, ", ");
-            // The family of an `#errs` is written bare, `#errs(#a | #b ->? #a | #b)`.
+            // The family of an `#errs` is written bare, `#errs((#a | #b) ->? #a | #b)`.
             match t.fns.only() {
                 Some(s) if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
                     parts.push(Print::Family(s));
@@ -11347,6 +11347,7 @@ impl Ty {
                 walk.sep(out);
                 marks.sort_unstable();
                 marks.dedup();
+                let marks_len = marks.len();
                 out.push(defs::UNION);
                 for name in after {
                     out.push_str(name);
@@ -11359,6 +11360,13 @@ impl Ty {
                 }
                 out.pop();
                 out.push(defs::UNION_END);
+                // The group is one member written so far ([`Walk::sep`]), but [`defs::name_vars`]
+                // writes each of its distinct names as a member.
+                let end = walk
+                    .ends
+                    .last_mut()
+                    .expect("a type's variables are in the type");
+                end.members += after.len() + marks_len - 1;
             }
         }
     }
@@ -11366,8 +11374,17 @@ impl Ty {
     /// Writes the end of its text to `out`, which closes it as the type `walk` last entered:
     /// `_` for the variables printed so and the unknown, or `Never` if nothing of it is
     /// written and nothing is to be. With `others` its union holds members that are not type
-    /// variables.
-    fn write_end(&self, others: bool, out: &mut String, scope: &Scope, walk: &mut Walk) {
+    /// variables. A union of two members or more written as an arrow's key or a bound is closed
+    /// with `)`, and where its `(` goes is given back, to be put in with the kernel sets
+    /// ([`write_parts`]): the members are counted only as they are written, since a type
+    /// variable may be written by several names or as `_` with others (author P222).
+    fn write_end(
+        &self,
+        others: bool,
+        out: &mut String,
+        scope: &Scope,
+        walk: &mut Walk,
+    ) -> Option<usize> {
         let node = walk
             .open
             .pop()
@@ -11387,12 +11404,26 @@ impl Ty {
             };
             blank |= !end.occ.is_empty();
         }
-        match (blank, end.wrote) {
-            (true, true) => out.push_str(" | _"),
-            (true, false) => out.push('_'),
-            (false, true) => {}
-            (false, false) => out.push_str("Never"),
+        let members = match (blank, end.members) {
+            (true, 0) => {
+                out.push('_');
+                1
+            }
+            (true, n) => {
+                out.push_str(" | _");
+                n + 1
+            }
+            (false, 0) => {
+                out.push_str("Never");
+                1
+            }
+            (false, n) => n,
+        };
+        let open = end.wrap.filter(|_| members >= 2);
+        if open.is_some() {
+            out.push(')');
         }
+        open
     }
 }
 
@@ -11436,8 +11467,12 @@ struct Walk {
 /// What the end of a type entered and not yet closed is written by ([`Ty::write_end`]).
 #[derive(Default)]
 struct OpenEnd {
-    /// Whether a member of its union is written yet, so that the next is written after ` | `.
-    wrote: bool,
+    /// The number of members of its union written so far, so that the next is written after
+    /// ` | `, and a union of two or more as a key or a bound is parenthesized.
+    members: usize,
+    /// Where its text begins in the output, if it stands as an arrow's key or a bound of
+    /// `L .. U -> V`, where a union is parenthesized ([`PrintAt::Key`]).
+    wrap: Option<usize>,
     /// Whether a type variable of it is printed by name.
     named: bool,
     /// Whether its union holds `_` whatever the names ([`PrintNode::blank`]).
@@ -11461,10 +11496,10 @@ impl Walk {
     /// Writes ` | ` to `out` before a member of the type last entered, unless it is the first.
     fn sep(&mut self, out: &mut String) {
         let end = self.ends.last_mut().expect("a member is in a type");
-        if end.wrote {
+        if end.members > 0 {
             out.push_str(" | ");
         }
-        end.wrote = true;
+        end.members += 1;
     }
 
     /// Enters a type at `out`: whether its parts are to be written. On the second pass a type
@@ -11629,10 +11664,13 @@ enum PrintAt {
     /// An arrow's result, an `Arrow`: a function with a bounds clause is parenthesized, since
     /// its clause would bound the variables of the arrow around it.
     Result,
-    /// The key of `K -> V` or `K ->? V`, a `TypeUnion`: a function is parenthesized, and so is a
-    /// tuple of other than one component, which would read as the parameters.
+    /// The key of `K -> V` or `K ->? V`, a `TypeNot`: a function, a union, an intersection and a
+    /// difference are parenthesized, `(int | #a) -> int`, since the bare `int | #a -> int` is
+    /// rejected (author P222); and so is a tuple of other than one component, which would read
+    /// as the parameters.
     Key,
-    /// A bound of `L .. U -> V`, a `TypeUnion`: a function is parenthesized.
+    /// A bound of `L .. U -> V`, a `TypeNot`: a function, a union, an intersection and a
+    /// difference are parenthesized, `#a .. (#a | #b) -> int`.
     Bound,
     /// An operand of `|`: a function is parenthesized.
     Union,
@@ -11727,15 +11765,31 @@ fn write_parts<'a>(
             out.push(defs::VARS_END);
         }
     }
-    if !kernel.sets.is_empty() {
-        let texts = match spell {
-            Some(spell) => KType::surfaces_apart(&kernel.sets, &kernel.apart, Some(spell)),
-            None => KType::surfaces_apart(&kernel.sets, &kernel.apart, None),
+    if !kernel.sets.is_empty() || !kernel.opens.is_empty() {
+        let roots = match (kernel.sets.is_empty(), spell) {
+            (true, _) => Vec::new(),
+            (false, spell) => {
+                let texts = KType::surfaces_apart(&kernel.sets, &kernel.apart, spell);
+                debug_assert!(texts.defs.is_empty(), "the table holds the definitions");
+                texts.roots
+            }
         };
-        debug_assert!(texts.defs.is_empty(), "the table holds the definitions");
+        // The `(` of each union written as a key or a bound ([`Ty::write_end`]) goes in with
+        // the kernel sets. At one place a `(` comes first: a set there is the union's first
+        // member, written after the union began. A stable sort of k places, O(k log k).
+        let mut put: Vec<(usize, &str)> = (kernel.opens.iter().map(|&at| (at, "(")))
+            .chain(
+                kernel
+                    .at
+                    .iter()
+                    .copied()
+                    .zip(roots.iter().map(String::as_str)),
+            )
+            .collect();
+        put.sort_by_key(|&(at, _)| at);
         let rest = out.split_off(base);
         let mut from = 0;
-        for (at, text) in kernel.at.iter().zip(&texts.roots) {
+        for (at, text) in put {
             let at = at - base;
             out.push_str(&rest[from..at]);
             out.push_str(text);
@@ -11771,6 +11825,10 @@ fn walk_parts<'a>(
             Print::Text(text) => out.push_str(text),
             Print::Ty(t, at) => {
                 if walk.enter(out, scope) {
+                    if matches!(at, PrintAt::Key | PrintAt::Bound) {
+                        let end = walk.ends.last_mut().expect("entered");
+                        end.wrap = Some(out.len());
+                    }
                     t.parts(&mut stack, false, at);
                 }
             }
@@ -11782,7 +11840,11 @@ fn walk_parts<'a>(
             Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, string) => t.write_vars(string, out, scope, walk, &mut kernel),
-            Print::End(t, others) => t.write_end(others, out, scope, walk),
+            Print::End(t, others) => {
+                if let Some(at) = t.write_end(others, out, scope, walk) {
+                    kernel.opens.push(at);
+                }
+            }
             Print::Set(set, place, apart) => {
                 kernel.at.push(out.len());
                 kernel.sets.push((set, place));
@@ -11839,6 +11901,8 @@ struct Kernel {
     at: Vec<usize>,
     sets: Vec<(KType, TextPlace)>,
     apart: Vec<bool>,
+    /// Where a `(` goes before a union written as an arrow's key or a bound ([`Ty::write_end`]).
+    opens: Vec<usize>,
 }
 
 /// Pushes `sep` to `parts` before every item but the first, which `first` tells.
@@ -11887,10 +11951,11 @@ impl Sig {
         let wrap = match at {
             PrintAt::Any => false,
             PrintAt::Result => !bounds.is_empty(),
+            // A key or a bound is a `TypeNot`, so an intersection of arrows is parenthesized
+            // there as one arrow is (author P222).
+            PrintAt::Key | PrintAt::Bound => true,
             PrintAt::Member if several => false,
-            PrintAt::Key | PrintAt::Bound | PrintAt::Union | PrintAt::Member => {
-                !bounds.is_empty() || !several
-            }
+            PrintAt::Union | PrintAt::Member => !bounds.is_empty() || !several,
         };
         if wrap {
             parts.push(Print::Text("("));
@@ -11898,11 +11963,12 @@ impl Sig {
         if let Some(m) = morphism {
             m.parts(parts);
         } else {
-            // A function of one positional parameter is written `K -> V`, its key a `TypeUnion`
-            // (`Arrow = … | TypeUnion '->' Arrow`): `(K) -> V` would read the same, the pair a
+            // A function of one positional parameter is written `K -> V`, its key a `TypeNot`
+            // (`Arrow = … | TypeNot '->' Arrow`): `(K) -> V` would read the same, the pair a
             // `GroupType`, which the printer does not write where the grammar does not need it
             // (P191). The key stands at [`PrintAt::Key`], parenthesized only where it is a
-            // function or a tuple of other than one component.
+            // function, a union, an intersection, a difference, or a tuple of other than one
+            // component.
             let bare = matches!(&self.params[..], [p] if p.positional);
             let mut first = true;
             for a in &self.arrows {

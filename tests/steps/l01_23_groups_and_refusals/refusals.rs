@@ -6165,9 +6165,9 @@ fn r8_batch_and_single_file_checking_agree() {
     assert_eq!(alone, rev, "alone vs reversed batch");
 
     let units = [
-        "f(x: #a .. #a | #b -> int) = 0;\nmain() = 0;\n",
-        "f(x: (int, #a .. #a | #b -> int)) = 0;\nmain() = 0;\n",
-        "f(x: #a | #b .. #a -> int) = 0;\nmain() = 0;\n",
+        "f(x: #a .. (#a | #b) -> int) = 0;\nmain() = 0;\n",
+        "f(x: (int, #a .. (#a | #b) -> int)) = 0;\nmain() = 0;\n",
+        "f(x: (#a | #b) .. #a -> int) = 0;\nmain() = 0;\n",
         "f(x: (int -> #a | #b) .. ((int -> #a) | (int -> #b)) -> int) = 0;\nmain() = 0;\n",
     ];
     let u_alone: Vec<Option<String>> = units

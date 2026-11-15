@@ -1,7 +1,8 @@
 //! The messages for a parse that stops in a `with` clause that gives a sentinel value, and for
 //! a reserved word written where a name stands, for the removed declaration `mutable x = e;`,
-//! and for a word other than `carryForward` after `with` at the end of an `initial` statement
-//! (DESIGN.md sec:generations, sec:lexical, sec:diagnostics).
+//! for a word other than `carryForward` after `with` at the end of an `initial` statement, and for
+//! a union, intersection or difference written bare as a key, guarantee or permission (DESIGN.md
+//! sec:generations, sec:lexical, sec:grammar, sec:diagnostics).
 //!
 //! Since 2026-11-11 the sentinel value of a variable a loop updates is the statement `initial x
 //! = e;`, and a `with` clause stands only on an indexed definition, each item with its key,
@@ -314,14 +315,16 @@ impl Toks<'_, '_> {
 
 /// The [`Clause`] for a parse that stopped at token `far` in a `with` clause that gives a
 /// sentinel value, at or after a reserved word written where a name stands, at the removed
-/// declaration `mutable x = e;`, or at a word other than `carryForward` after `with` at the end
-/// of an `initial` statement. The scans run over the statement, its block or its line, and
-/// each check of a word or a repair is one more parse: linear in the unit, on the error path only.
+/// declaration `mutable x = e;`, at a word other than `carryForward` after `with` at the end
+/// of an `initial` statement, or at a union, intersection or difference written bare as a key.
+/// The scans run over the statement, its block, its line or the type, and each check of a word
+/// or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     with_item(t, far)
         .or_else(|| reserved(t, far))
         .or_else(|| mutable_decl(t, far))
         .or_else(|| carry_word(t, far))
+        .or_else(|| bare_key(t, far))
 }
 
 fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
@@ -973,6 +976,164 @@ fn carry_word(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         span,
         notes,
     })
+}
+
+/// The [`Clause`] for a union, intersection or difference written bare as the key of `->` or
+/// `->?`, or as the guarantee or the permission of `L .. U -> V` (row "Union, intersection or
+/// difference written bare as a key, guarantee or permission"; DESIGN.md sec:grammar, author
+/// P222): `Arrow` takes a `TypeNot` there, so the parse stops at the connective or at the arrow
+/// after it. The type is found from the first arrow at or after the token the parse stopped at,
+/// at its bracket depth: back from it to the token before the type (`:`, `=`, `,`, `;`, a
+/// keyword or an unmatched opening bracket), and on to the token after it. The first repair
+/// parenthesizes each key, guarantee and permission of the type that holds a connective
+/// outside brackets, `(int | #a) -> int`; where the type has one arrow, `->` or `->?`, the
+/// second makes the last operand of the connective the key, `int | (#a -> int)`. Each repair
+/// is offered only when the parse gets past it. The scans run over the type and each repair is
+/// one more parse: linear in the unit, on the error path only.
+fn bare_key(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    let arrow = |i: usize| matches!(t.t(i), "->" | "->?" | "..");
+    let keyword = |i: usize| t.toks.get(i).is_some_and(|k| k.0 == Kind::Keyword);
+    let n = t.tokens.len();
+    // The first arrow at or after `far`, at its depth, before the type ends.
+    let (mut a, mut d) = (far, 0);
+    while !(d == 0 && arrow(a)) {
+        let s = t.t(a);
+        if a >= n || d == 0 && matches!(s, "," | ";" | "=") || d + depth(s) < 0 {
+            return None;
+        }
+        d += depth(s);
+        a += 1;
+    }
+    // Back from the arrow to the first token of the type.
+    let (mut first, mut d) = (a, 0);
+    while first > 0 {
+        let p = t.t(first - 1);
+        if d == 0 && (matches!(p, ":" | "," | "=" | ";") || keyword(first - 1)) || d - depth(p) < 0
+        {
+            break;
+        }
+        d -= depth(p);
+        first -= 1;
+    }
+    // On from the arrow to the token after the type. A type holds the keywords of its facets,
+    // its `where` and its bounds, and of `matching` and `positional`.
+    let (mut after, mut d) = (a, 0);
+    while after < n {
+        let x = t.t(after);
+        let ends = keyword(after)
+            && !matches!(
+                x,
+                "with" | "where" | "for" | "in" | "matching" | "positional"
+            );
+        if d == 0 && (matches!(x, "," | ";" | "=") || ends) || d + depth(x) < 0 {
+            break;
+        }
+        d += depth(x);
+        after += 1;
+    }
+    let last = after.checked_sub(1)?;
+    // Each key, guarantee and permission that holds a connective outside brackets: its first
+    // and last tokens, its first and last connectives, and the arrow after it.
+    let mut bare: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+    let (mut from, mut conn, mut arrows, mut d) = (first, None, 0, 0);
+    for i in first..after {
+        if d == 0 && arrow(i) {
+            arrows += 1;
+            if let Some((c, l)) = conn {
+                bare.push((from, i - 1, c, l, i));
+            }
+            from = i + 1;
+            conn = None;
+        } else if d == 0 && matches!(t.t(i), "|" | "&" | "\\") {
+            conn = Some(conn.map_or((i, i), |(c, _): (usize, usize)| (c, i)));
+        }
+        d += depth(t.t(i));
+    }
+    // The parse stopped at this key, guarantee or permission.
+    let &(key_first, key_last, c, l, at) = bare.iter().find(|b| b.4 == a)?;
+    // A connective with no operand before or after it, `| #a -> int` or `int | -> int`, is no
+    // union: the plain syntax error says what is missing.
+    if c == key_first || l == key_last {
+        return None;
+    }
+    let text = |a: usize, b: usize| &t.text[a..b];
+    let start = t.span(first).start;
+    let end = t.span(last).end;
+    let written = text(start, end);
+    // Each key, guarantee and permission in parentheses.
+    let mut grouped = String::new();
+    let mut from = start;
+    for &(f, l, ..) in &bare {
+        grouped.push_str(text(from, t.span(f).start));
+        grouped.push('(');
+        grouped.push_str(text(t.span(f).start, t.span(l).end));
+        grouped.push(')');
+        from = t.span(l).end;
+    }
+    grouped.push_str(text(from, end));
+    let key = text(t.span(key_first).start, t.span(key_last).end);
+    let role = role_of(t, key_first, at);
+    let mut repairs = Vec::new();
+    if t.parses(first, last, &grouped) {
+        let what = if bare.len() == 1 {
+            format!("with the {role} `{key}`")
+        } else {
+            "with each key, guarantee and permission in parentheses".to_string()
+        };
+        repairs.push((grouped, what));
+    }
+    // The last operand of the connective as the key.
+    if arrows == 1 && t.t(at) != ".." {
+        let operand = text(t.span(l + 1).start, t.span(key_last).end);
+        let other = format!(
+            "{}({})",
+            text(start, t.span(l + 1).start),
+            text(t.span(l + 1).start, end)
+        );
+        if t.parses(first, last, &other) {
+            repairs.push((other, format!("with the key `{operand}`")));
+        }
+    }
+    let (kind, capital) = match t.t(c) {
+        "|" => ("union", "Union"),
+        "&" => ("intersection", "Intersection"),
+        _ => ("difference", "Difference"),
+    };
+    let mut headline = format!("{capital} written bare as a {role}: `{written}`.");
+    if let Some((r, _)) = repairs.first() {
+        headline.push_str(&format!(" Try `{r}` instead."));
+    }
+    let span = t.span(c);
+    let mut notes = vec![(
+        span,
+        format!(
+            "a {kind} as a {role} is written in parentheses, which say whether `{}` or `{}` \
+             groups first",
+            t.t(c),
+            t.t(at)
+        ),
+    )];
+    for (r, what) in repairs {
+        notes.push((span, format!("repair: `{r}`, {what}")));
+    }
+    Some(Clause {
+        row: Some(Row::BareKey),
+        message: headline,
+        span,
+        notes,
+    })
+}
+
+/// What the tokens from `first` up to the arrow `at` are in their type: the guarantee of `..`,
+/// the permission between `..` and `->`, or a key.
+fn role_of(t: &Toks<'_, '_>, first: usize, at: usize) -> &'static str {
+    if t.t(at) == ".." {
+        "guarantee"
+    } else if first > 0 && t.t(first - 1) == ".." {
+        "permission"
+    } else {
+        "key"
+    }
 }
 
 /// The kind of token the grammar names `tok` by.

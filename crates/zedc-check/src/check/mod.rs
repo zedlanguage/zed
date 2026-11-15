@@ -3207,7 +3207,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The atoms `atoms` of the value of the expression at `span`, with the payloads its type
-    /// gives them, `#errs(#a | #b ->? #a | #b)`; with any payload, `#errs(..)`, where the
+    /// gives them, `#errs((#a | #b) ->? #a | #b)`; with any payload, `#errs(..)`, where the
     /// expression has no type or the payloads are not in it.
     fn with_payloads(&self, span: Span, atoms: KType) -> Ty {
         match self.seen.get(&span) {
@@ -5156,7 +5156,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The first arrow of `sig` whose parameter `i` takes every atom of `loose[i]`, for each
     /// `i` where they are not empty, or else the first that takes some of them. The first rule
-    /// keeps a key `#a | #b` of `#a .. #a | #b -> V`, whose arrows are `(#a) -> V` and
+    /// keeps a key `#a | #b` of `#a .. (#a | #b) -> V`, whose arrows are `(#a) -> V` and
     /// `(#a | #b) -> V | #notFound`, from the arrow that takes `#a` alone (rule 6 of DESIGN.md
     /// sec:type_resolution: the region `#b` has the second arrow only).
     fn taking(&self, sig: &Sig, loose: &[KType]) -> Option<usize> {

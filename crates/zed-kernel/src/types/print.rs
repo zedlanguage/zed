@@ -60,23 +60,24 @@ impl Type {
     }
 
     /// The type in the surface syntax as the key of an arrow, `K -> V` or `K ->? V`, parenthesized
-    /// where it would not be one: an arrow, and a tuple, which would read as the parameters.
+    /// where it would not be one: an arrow, a union, an intersection or a difference, whose
+    /// bare form is rejected there, `(int | #a) -> int`, and a tuple, which
+    /// would read as the parameters.
     pub fn surface_key(&self) -> Surface {
         self.surface_at(At::Key)
     }
 
     /// The type in the surface syntax as a bound of `L .. U -> V`, parenthesized where it would
-    /// not be one: an arrow.
+    /// not be one: an arrow, a union, an intersection or a difference, `(#a | #b) .. #c -> V`.
     pub fn surface_bound(&self) -> Surface {
         self.surface_at(At::Bound)
     }
 
     /// The type in the surface syntax after `is`, where sec:grammar reads a `TypeUnion` (in
     /// `IsTest` and `IsPat`), parenthesized where it would not be one: an arrow. A union, a
-    /// difference and an intersection are written bare, `is int | bool`; a bound of
-    /// `L .. U -> V` is the same place ([`Type::surface_bound`]).
+    /// difference and an intersection are written bare, `is int | bool`.
     pub(crate) fn surface_after_is(&self) -> Surface {
-        self.surface_at(At::Bound)
+        self.surface_at(At::Is)
     }
 
     /// The type in the surface syntax at `at`, parenthesized where the text would not be read
@@ -226,8 +227,12 @@ impl At {
             At::And => matches!(c, C::And | C::Tuple | C::Prim),
             At::DiffLeft => matches!(c, C::Diff | C::Tuple | C::Prim),
             At::Prim => matches!(c, C::Tuple | C::Prim),
-            At::Key => matches!(c, C::Union | C::Diff | C::And | C::Prim),
-            At::Bound => c != C::Arrow,
+            // `Arrow` takes a `TypeNot` as its key, and `|`, `&` and `\` bind tighter than `->`
+            // (DESIGN.md sec:grammar, author P222), so a connective key is parenthesized,
+            // `(int | #a) -> int`; so is a tuple, which would read as the parameters.
+            At::Key => c == C::Prim,
+            At::Bound => matches!(c, C::Tuple | C::Prim),
+            At::Is => c != C::Arrow,
         }
     }
 }

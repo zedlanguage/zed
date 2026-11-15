@@ -13,6 +13,6 @@ expression: out
 "p = Point(x: 1 y: 2);"
   line 1, at "y": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ',' or ')'
 "type Bound = int | #unbounded\nlimit: Bound = 10;"
-  line 2, at "limit": expected '(' or '[' or 'matching' or '&' or '|' or '..' or '->' or '->?' or 'with' or 'where' or 'for' or ';'
+  line 2, at "limit": expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or ';'
 "y = x ** 2;"
   line 1, at "*": expected '-' or '!' or an annotation such as `@name` or a number or a string or 'true' or 'false' or an atom such as `#name` or a name or 'this' or '(' or 'if' or 'match' or 'for' or 'loop' or '[' or '{' or '?'

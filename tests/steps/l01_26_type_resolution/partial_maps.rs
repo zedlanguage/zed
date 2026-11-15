@@ -123,47 +123,47 @@ fn lookup(m: &str, k: &str) -> String {
 #[test]
 fn a_key_in_the_guarantee_of_a_bounded_map_finds_its_value() {
     assert_eq!(
-        lookup("int .. int | String -> bool", "int"),
-        "(m: int .. int | String -> bool, k: int) -> bool"
+        lookup("int .. (int | String) -> bool", "int"),
+        "(m: int .. (int | String) -> bool, k: int) -> bool"
     );
     assert_eq!(
-        sig("f(m: #a .. #a | #b -> int) = m[#a];", "f"),
-        "(m: #a .. #a | #b -> int) -> int"
+        sig("f(m: #a .. (#a | #b) -> int) = m[#a];", "f"),
+        "(m: #a .. (#a | #b) -> int) -> int"
     );
 }
 
 #[test]
 fn a_key_in_the_permission_alone_may_be_not_found() {
     assert_eq!(
-        lookup("int .. int | String -> bool", "String"),
-        "(m: int .. int | String -> bool, k: String) -> bool | #notFound"
+        lookup("int .. (int | String) -> bool", "String"),
+        "(m: int .. (int | String) -> bool, k: String) -> bool | #notFound"
     );
     assert_eq!(
-        lookup("int .. int | String -> bool", "int | String"),
+        lookup("int .. (int | String) -> bool", "int | String"),
         "type T1 = int | String;\n(m: int .. T1 -> bool, k: T1) -> bool | #notFound"
     );
     assert_eq!(
-        sig("f(m: #a .. #a | #b -> int) = m[#b];", "f"),
-        "(m: #a .. #a | #b -> int) -> int | #notFound"
+        sig("f(m: #a .. (#a | #b) -> int) = m[#b];", "f"),
+        "(m: #a .. (#a | #b) -> int) -> int | #notFound"
     );
     // An atom key that may lie outside the guarantee selects the arrow of the permission,
     // not the first arrow that takes some of its atoms.
     assert_eq!(
-        lookup("#a .. #a | #b | #c -> int", "#a | #b"),
-        "(m: #a .. #a | #b | #c -> int, k: #a | #b) -> int | #notFound"
+        lookup("#a .. (#a | #b | #c) -> int", "#a | #b"),
+        "(m: #a .. (#a | #b | #c) -> int, k: #a | #b) -> int | #notFound"
     );
 }
 
 #[test]
 fn a_key_not_inside_the_permission_is_a_static_error() {
     assert_eq!(
-        type_errors("f(m: int .. int | String -> bool, k: bool) = m[k];"),
+        type_errors("f(m: int .. (int | String) -> bool, k: bool) = m[k];"),
         [
             "this read can never find its key: the key is `bool` and the map's keys are `int | String`, which share no value, so the read can only give `#notFound`. [m[k]]"
         ]
     );
     assert_eq!(
-        type_errors("f(m: int .. int | String -> bool, k: int | bool) = m[k];"),
+        type_errors("f(m: int .. (int | String) -> bool, k: int | bool) = m[k];"),
         ["this function does not take (bool): no arrow of this function takes these types. [m[k]]"]
     );
 }
@@ -182,7 +182,7 @@ fn bounds_that_meet_are_a_total_map_and_an_empty_guarantee_a_partial_one() {
 
 #[test]
 fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
-    let pass = "f(m: int .. int | String -> bool) = m;\n";
+    let pass = "f(m: int .. (int | String) -> bool) = m;\n";
     assert_eq!(
         type_errors(&format!("{pass}g = f(m: (k) -> true);")),
         Vec::<String>::new()
@@ -197,7 +197,7 @@ fn a_function_that_answers_on_the_permission_fits_a_bounded_map() {
     assert_eq!(
         type_errors(&format!("{pass}g = f(m: (k) -> #notFound);")),
         [
-            "the lambda returns #notFound, and `int .. int | String -> bool` returns bool: the lambda is passed where a function of type `int .. int | String -> bool` is expected, so its result must be bool.\n  T1 stands for a part written more than once:\n    type T1 = int | String; [#notFound]"
+            "the lambda returns #notFound, and `int .. (int | String) -> bool` returns bool: the lambda is passed where a function of type `int .. (int | String) -> bool` is expected, so its result must be bool.\n  T1 stands for a part written more than once:\n    type T1 = int | String; [#notFound]"
         ]
     );
 }
@@ -211,18 +211,18 @@ fn a_bounded_map_reads_back_in_every_position() {
     let t1 = "type T1 = int | String;\n";
     for (m, shown, signature) in [
         (
-            "(int .. int | String -> bool, int)",
-            "(int .. int | String -> bool, int)",
+            "(int .. (int | String) -> bool, int)",
+            "(int .. (int | String) -> bool, int)",
             format!("{t1}(m: (int .. T1 -> bool, int)) -> (int .. T1 -> bool, int)"),
         ),
         (
-            "(int .. int | String -> bool) | int",
-            "int | (int .. int | String -> bool)",
+            "(int .. (int | String) -> bool) | int",
+            "int | (int .. (int | String) -> bool)",
             format!("{t1}(m: int | (int .. T1 -> bool)) -> int | (int .. T1 -> bool)"),
         ),
         (
-            "int .. int | String -> (int .. int | String -> bool)",
-            "int .. int | String -> int .. int | String -> bool",
+            "int .. (int | String) -> (int .. (int | String) -> bool)",
+            "int .. (int | String) -> int .. (int | String) -> bool",
             format!("{t1}(m: int .. T1 -> int .. T1 -> bool) -> int .. T1 -> int .. T1 -> bool"),
         ),
         (
@@ -252,12 +252,12 @@ fn a_bounded_map_reads_back_in_every_position() {
 /// deep looked up `n` times.
 pub(super) fn bounded(n: usize) -> String {
     let params: Vec<String> = (0..n)
-        .map(|i| format!("m{i}: int .. int | String -> int, k{i}: String"))
+        .map(|i| format!("m{i}: int .. (int | String) -> int, k{i}: String"))
         .collect();
     let reads: Vec<String> = (0..n).map(|i| format!("(m{i}[k{i}] else 0)")).collect();
     let deep = format!(
         "{}bool{}",
-        "int .. int | String -> (".repeat(n),
+        "int .. (int | String) -> (".repeat(n),
         ")".repeat(n)
     );
     format!(

@@ -2,6 +2,7 @@
 //! run (TEST-bench-move-rest). Each check they make besides the ratio is made at small sizes by
 //! a correctness test of the module whose name each file bears.
 
+mod bare_key;
 mod deep;
 mod grammar_read;
 mod grammar_scaling;

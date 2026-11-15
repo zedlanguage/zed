@@ -48,8 +48,11 @@ fn function_types_are_curried_and_partial_at_each_level() {
 #[test]
 fn bounded_function_types_keep_both_bounds() {
     for (written, kernel) in [
-        ("(#a | #c .. #a | #b -> int)", "#a | #c .. #a | #b -> int"),
-        ("(#a .. #a | #b -> int)", "#a .. #a | #b -> int"),
+        (
+            "((#a | #c) .. (#a | #b) -> int)",
+            "(#a | #c) .. (#a | #b) -> int",
+        ),
+        ("(#a .. (#a | #b) -> int)", "#a .. (#a | #b) -> int"),
         // A guarantee of nothing is a partial function; equal bounds an exact one.
         ("(Never .. int -> int)", "int ->? int"),
         ("(int .. int -> int)", "int -> int"),
@@ -177,7 +180,7 @@ fn is_accepts_a_type_with_every_function_or_none() {
 
 #[test]
 fn a_bounds_error_and_a_port_error_both_stand_in_written_order() {
-    let errs = elab("f(x) = x is (#a | #c .. #a | #b -> Lines);").unwrap_err();
+    let errs = elab("f(x) = x is ((#a | #c) .. (#a | #b) -> Lines);").unwrap_err();
     assert_eq!(errs.len(), 2, "{errs:?}");
     assert!(
         errs[0].starts_with("in a function type `L .. U -> V`, every function the guarantee `L`")

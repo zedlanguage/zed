@@ -555,7 +555,7 @@ fn a_dropped_repair_leaves_the_headline_too() {
 /// `"#" ++ String(s)` for `s: String | bool`, where `String` leaves the text as it is.
 #[test]
 fn a_text_repair_is_offered_only_where_it_changes_no_value_taken() {
-    let got = offered("f(m: int .. int | String -> bool, k: int | bool) = m[k];");
+    let got = offered("f(m: int .. (int | String) -> bool, k: int | bool) = m[k];");
     assert!(
         got.starts_with("this function does not take (bool)"),
         "{got}"

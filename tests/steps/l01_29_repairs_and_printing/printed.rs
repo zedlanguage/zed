@@ -328,7 +328,7 @@ fn a_merged_failure_reads_back() {
         assert_eq!(mismatch(alone, &alone.to_string()), None, "{alone}");
     }
     assert_eq!(
-        back("#errs(#a | #b ->? #a | #b)").payloads["errs"]
+        back("#errs((#a | #b) ->? #a | #b)").payloads["errs"]
             .as_ref()
             .map(Vec::len),
         Some(1)
@@ -347,7 +347,7 @@ fn a_partial_map_reads_back_with_its_miss() {
     let built = zedc::check::ty::errs_of(back("#a | #b"));
     let shown = built.to_string();
     // Item PRINT-fmt-audit: `#a | #b`, used twice, gets a definition placed first. Before:
-    // `#errs(#a | #b ->? #a | #b)`.
+    // `#errs((#a | #b) ->? #a | #b)`.
     assert_eq!(shown, "type T1 = #a | #b;\n#errs(T1 ->? T1)");
     assert_eq!(mismatch(&built, &shown), None, "{shown}");
     let errs = back(&shown);
@@ -444,7 +444,7 @@ fn an_intersection_of_function_types_reads_back_as_one_overload() {
     );
     // One variable may stand in several arrows: they are one function's, which a call binds,
     // as the checker prints a generic function that takes its parameter's atoms.
-    let text = "(T -> \"big\" | \"small\") & (T | #_ -> \"big\" | \"small\" | #_) \
+    let text = "(T -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
                 for T in int | f64 | rat";
     let r = back(text);
     assert_eq!(r.fns.len(), 1);
@@ -696,31 +696,34 @@ fn morphism_types_print_as_written_and_read_back_in_every_position() {
             "(k: String) -> int | #notFound",
         ),
         ("T ->? T for T in int | f64", "T ->? T for T in int | f64"),
-        ("int .. int | String -> bool", "int .. int | String -> bool"),
-        ("#a .. #a | #b -> int", "#a .. #a | #b -> int"),
+        (
+            "int .. (int | String) -> bool",
+            "int .. (int | String) -> bool",
+        ),
+        ("#a .. (#a | #b) -> int", "#a .. (#a | #b) -> int"),
         ("int .. int -> bool", "int -> bool"),
         ("Never .. int -> bool", "int ->? bool"),
         (
             "((int) -> bool) & ((int | String) -> bool | #notFound)",
-            "int .. int | String -> bool",
+            "int .. (int | String) -> bool",
         ),
         (
             "((int) -> bool) & ((String) -> bool | #notFound)",
             "(int -> bool) & (String -> bool | #notFound)",
         ),
         (
-            "(int .. int | String -> bool, int)",
-            "(int .. int | String -> bool, int)",
+            "(int .. (int | String) -> bool, int)",
+            "(int .. (int | String) -> bool, int)",
         ),
         // Item PRINT-fmt-audit: `int | String`, used twice, gets a definition placed first.
         // Before: `int .. int | String -> int .. int | String -> bool`.
         (
-            "int .. int | String -> (int .. int | String -> bool)",
+            "int .. (int | String) -> (int .. (int | String) -> bool)",
             "type T1 = int | String;\nint .. T1 -> int .. T1 -> bool",
         ),
         (
-            "(x: int .. int | String -> bool) -> int",
-            "(x: int .. int | String -> bool) -> int",
+            "(x: int .. (int | String) -> bool) -> int",
+            "(x: int .. (int | String) -> bool) -> int",
         ),
     ] {
         let t = back(text);
@@ -802,14 +805,14 @@ fn function_types_print_with_only_the_parentheses_the_grammar_needs() {
         ("((int, int)) ->? int", "((int, int)) ->? int"),
         ("(int,) ->? int", "(int,) ->? int"),
         ("int ->? (int ->? int)", "int ->? int ->? int"),
-        // A union as the key: each operand as in any union.
+        // A union as the key: in parentheses (author P222), each operand as in any union.
         (
             "(((int, int)) | String) ->? int",
-            "String | (int, int) ->? int",
+            "(String | (int, int)) ->? int",
         ),
         (
             "(((int) -> int) | String) ->? int",
-            "String | (int -> int) ->? int",
+            "(String | (int -> int)) ->? int",
         ),
         // A bounds clause as the value of `->?`, and in a list of parameters before another.
         (
