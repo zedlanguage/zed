@@ -1,14 +1,36 @@
 //! Binder normalization: each local binder is renamed to its de Bruijn level, the number of
 //! binders enclosing it, so that two terms that differ only in local names become one term.
 //!
-//! The rule renames one binder per step: the first binder in preorder that still carries its
-//! written name. Every binder before it in preorder is already canonical, so the binders
-//! enclosing it are too, and no binder inside its scope is: the new name cannot be captured,
-//! and a written binder of the same name inside the scope shadows the old name as before.
+//! A binder is canonical when it is spelled as its own level. A binder spelled as another level,
+//! `\05` at level 0 (no source text spells one, but a term that already holds level names can),
+//! counts as written and is renamed like any written binder (FAIL-kernel-canon-misplaced-level,
+//! the fault commit 0a516f19c fixed in the ZIR rule): otherwise `\x. x` and `\05. \05` would get
+//! two addresses.
+//!
+//! The rule renames one binder per step: the first binder in preorder that is not canonical.
+//! Every binder before it in preorder is canonical, so the binders enclosing it are too, and
+//! their levels are below its own. A binder inside its scope, or later in its own group, can be
+//! spelled as its new level, though, and would capture the renamed uses; so the step also gives
+//! each binder spelled as a level in that scope its own level, and the scope is renamed by a
+//! walk that resolves each use through the binders around it (the walk of [`canonical`],
+//! keeping written names), not by substituting one name for another. A written binder inside
+//! the scope keeps its name, and one of the old name shadows it as before. The rank still falls
+//! by one at least.
 
 use std::sync::Arc;
 
 use zed_kernel::term::{FixKind, Pattern, Shared, Term};
+
+/// Whether the binder `name` at level `level` is canonical: spelled as `level` itself.
+fn canonical_at(name: &str, level: usize) -> bool {
+    level_of(name) == Some(level)
+}
+
+/// The position in `names`, bound together at levels `depth`, `depth + 1`, …, of the first
+/// name that is not canonical.
+fn misplaced(names: &[Arc<str>], depth: usize) -> Option<usize> {
+    (0..names.len()).find(|&i| !canonical_at(&names[i], depth + i))
+}
 
 /// The canonical name of the binder at de Bruijn level `level`. It starts with U+0000, which no
 /// written name contains: the lexer rejects the character in source text.
@@ -21,70 +43,91 @@ pub fn level_of(name: &str) -> Option<usize> {
     name.strip_prefix('\0')?.parse().ok()
 }
 
-/// One rewrite: the first written binder in preorder renamed to its level, with its written
-/// name and preorder index returned for the hint facet. `None` when every binder is canonical.
+/// One rewrite: the first binder in preorder that is not canonical renamed to its level, with
+/// its written name and preorder index returned for the hint facet. `None` when every binder
+/// is canonical.
 pub fn step(t: &Term) -> Option<(Term, usize, Arc<str>)> {
+    // The index counts the binders before the renamed one in preorder. It is read off `t`
+    // before the step: a canonical binder can follow the renamed one in preorder (`\05. \01.`),
+    // so the binders still written afterward do not give it.
+    let (mut k, mut index) = (0, None);
+    each_binder(t, &mut |name, level| {
+        if index.is_none() && !canonical_at(name, level) {
+            index = Some(k);
+        }
+        k += 1;
+    });
     let (t, name) = rename_first(t, 0)?;
-    // The canonical binders are the binders before the renamed one in preorder, and it.
-    let index = (count(&t) - written(&t) - 1) as usize;
-    Some((t, index, name))
+    Some((t, index.expect("a binder to rename"), name))
 }
 
-/// The binders that still carry their written names: the rank of the rule.
+/// The binders that are not canonical: the rank of the rule.
 pub fn written(t: &Term) -> u64 {
+    written_at(t, 0)
+}
+
+/// The binders of `t`, which stands `depth` binders deep, that are not canonical.
+fn written_at(t: &Term, depth: usize) -> u64 {
     let mut n = 0;
-    each_binder(t, &mut |name| n += u64::from(level_of(name).is_none()));
+    each_binder_at(t, depth, &mut |name, level| {
+        n += u64::from(!canonical_at(name, level))
+    });
     n
 }
 
-/// All the binders of `t`.
-fn count(t: &Term) -> u64 {
-    let mut n = 0;
-    each_binder(t, &mut |_| n += 1);
-    n
+/// Calls `f` on the name and level of every binder of `t`, in preorder.
+fn each_binder(t: &Term, f: &mut impl FnMut(&str, usize)) {
+    each_binder_at(t, 0, f)
 }
 
-/// Calls `f` on the name of every binder of `t`, in preorder. The terms still to walk wait on a
+/// [`each_binder`] on `t` standing `depth` binders deep. The terms still to walk wait on a
 /// heap stack, so a deep term does not grow the thread's stack.
-fn each_binder(t: &Term, f: &mut impl FnMut(&str)) {
+fn each_binder_at(t: &Term, depth: usize, f: &mut impl FnMut(&str, usize)) {
     enum Job<'t> {
-        Term(&'t Term),
-        Name(&'t str),
-        Pattern(&'t Pattern),
+        Term(&'t Term, usize),
+        Name(&'t str, usize),
+        Pattern(&'t Pattern, usize),
     }
-    let mut todo = vec![Job::Term(t)];
+    let mut todo = vec![Job::Term(t, depth)];
     while let Some(job) = todo.pop() {
-        let t = match job {
-            Job::Name(x) => {
-                f(x);
+        let (t, depth) = match job {
+            Job::Name(x, level) => {
+                f(x, level);
                 continue;
             }
-            Job::Pattern(p) => {
+            Job::Pattern(p, depth) => {
+                let mut level = depth;
                 each_pattern(p, &mut |p| {
                     if let Pattern::Bind(x) = p {
-                        f(x)
+                        f(x, level);
+                        level += 1;
                     }
                 });
                 continue;
             }
-            Job::Term(t) => t,
+            Job::Term(t, depth) => (t, depth),
         };
         match t {
             Term::Lam(params, body) => {
-                params.iter().for_each(|p| f(p));
-                todo.push(Job::Term(body));
+                params.iter().enumerate().for_each(|(i, p)| f(p, depth + i));
+                todo.push(Job::Term(body, depth + params.len()));
             }
             Term::Let(x, e, body)
             | Term::Fam {
                 domain: e,
                 var: x,
                 body,
-            } => todo.extend([Job::Term(body), Job::Name(x), Job::Term(e)]),
+            } => todo.extend([
+                Job::Term(body, depth + 1),
+                Job::Name(x, depth),
+                Job::Term(e, depth),
+            ]),
             Term::Match(e, arms) => {
                 for (p, arm) in arms.iter().rev() {
-                    todo.extend([Job::Term(arm), Job::Pattern(p)]);
+                    let inner = depth + pattern_binds(p).len();
+                    todo.extend([Job::Term(arm, inner), Job::Pattern(p, depth)]);
                 }
-                todo.push(Job::Term(e));
+                todo.push(Job::Term(e, depth));
             }
             Term::Fix {
                 init,
@@ -94,14 +137,14 @@ fn each_binder(t: &Term, f: &mut impl FnMut(&str)) {
                 kind: FixKind::Definedness,
                 ..
             } => todo.extend([
-                Job::Term(step),
-                Job::Name(key),
-                Job::Name(this),
-                Job::Term(init),
+                Job::Term(step, depth + 2),
+                Job::Name(key, depth + 1),
+                Job::Name(this, depth),
+                Job::Term(init, depth),
             ]),
             _ => {
                 let start = todo.len();
-                each_child(t, |c| todo.push(Job::Term(c)));
+                each_child(t, |c| todo.push(Job::Term(c, depth)));
                 todo[start..].reverse();
             }
         }
@@ -253,58 +296,48 @@ pub(crate) fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term 
     }
 }
 
-/// One group of names bound together, at levels `depth`, `depth + 1`, …, with its first
-/// written name renamed.
-struct Renamed {
-    /// The group with the name renamed.
-    names: Vec<Arc<str>>,
-    /// The position of the renamed name in the group.
+/// The binder group `names`, bound together at levels `depth`, `depth + 1`, …, with the name at
+/// `at` renamed to its level, and `body`, the group's scope, renamed to match: the group's new
+/// names and the new scope. The binders in the scope, and the group's other names, that are
+/// spelled as a level get their own level, and written ones keep their names, so the new name
+/// is not captured (see the module comment). `O(s log s)` for a scope of size `s`.
+fn renamed_scope(
+    names: &[Arc<str>],
     at: usize,
-    /// Its written name.
-    old: Arc<str>,
-    /// Whether a later name of the group binds the same written name, so that the renamed
-    /// binder's scope holds none of its occurrences.
-    shadowed: bool,
-}
-
-impl Renamed {
-    fn of(names: &[Arc<str>], depth: usize) -> Option<Self> {
-        let at = names.iter().position(|x| level_of(x).is_none())?;
-        let old = names[at].clone();
-        let mut renamed = names.to_vec();
-        renamed[at] = level_name(depth + at);
-        let shadowed = names[at + 1..].contains(&old);
-        Some(Renamed {
-            names: renamed,
-            at,
-            old,
-            shadowed,
-        })
-    }
-
-    fn level(&self) -> &Arc<str> {
-        &self.names[self.at]
-    }
-
-    /// The scope `body` with the renamed binder's occurrences renamed.
-    fn scope(&self, body: &Term) -> Term {
-        if self.shadowed {
-            body.clone()
+    depth: usize,
+    body: &Term,
+) -> (Vec<Arc<str>>, Term) {
+    let mut walk = Levels {
+        scope: Default::default(),
+        mode: Mode::Written,
+    };
+    for (i, x) in names.iter().enumerate() {
+        let new = if i == at {
+            level_name(depth + i)
         } else {
-            rename(body, &self.old, self.level())
-        }
+            walk.new_name(x, depth + i)
+        };
+        walk.scope.entry(x.clone()).or_default().push(new);
     }
+    // Assumption, not proved: no use in the scope is free in the whole term and spelled as a
+    // level, since such a use would resolve to nothing here and could meet a binder's new name
+    // (the one-pass walk shares this). Evidence: elaboration names binders `x`, `x@k` and `$k`
+    // (zedc-elab `Elab::new`, `Elab::temp`), the free names of an addressed definition are
+    // source names, and every `\0`-prefixed name made in the crates outside this module holds
+    // a letter after the U+0000, so `level_of` reads none of them as a level.
+    let body = walk.term_at(body, depth + names.len());
+    (walk.unbind(names), body)
 }
 
-/// Renames the first written binder in preorder at binder depth `depth`. Returns the new term
-/// and the binder's written name.
+/// Renames the first binder in preorder that is not canonical, at binder depth `depth`.
+/// Returns the new term and the binder's name as it was.
 fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
     let arc = Shared::new;
     match t {
         Term::Lam(params, body) => {
-            if let Some(r) = Renamed::of(params, depth) {
-                let body = r.scope(body);
-                return Some((Term::Lam(r.names, arc(body)), r.old));
+            if let Some(at) = misplaced(params, depth) {
+                let (names, body) = renamed_scope(params, at, depth, body);
+                return Some((Term::Lam(names, arc(body)), params[at].clone()));
             }
             let (body, old) = rename_first(body, depth + params.len())?;
             Some((Term::Lam(params.clone(), arc(body)), old))
@@ -313,9 +346,9 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
             if let Some((e, old)) = rename_first(e, depth) {
                 return Some((Term::Let(x.clone(), arc(e), body.clone()), old));
             }
-            if level_of(x).is_none() {
-                let new = level_name(depth);
-                let body = rename(body, x, &new);
+            if !canonical_at(x, depth) {
+                let (mut new, body) = renamed_scope(std::slice::from_ref(x), 0, depth, body);
+                let new = new.pop().expect("one name");
                 return Some((Term::Let(new, e.clone(), arc(body)), x.clone()));
             }
             let (body, old) = rename_first(body, depth + 1)?;
@@ -327,15 +360,22 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
             }
             for (k, (p, arm)) in arms.iter().enumerate() {
                 let binds = pattern_binds(p);
-                let new_arm = if let Some(r) = Renamed::of(&binds, depth) {
-                    let p = rename_pattern_bind(p, &mut r.at.clone(), r.level());
-                    Some(((p, r.scope(arm)), r.old))
+                let new_arm = if let Some(at) = misplaced(&binds, depth) {
+                    let (names, arm) = renamed_scope(&binds, at, depth, arm);
+                    Some(((set_binds(p, &mut names.iter()), arm), binds[at].clone()))
                 } else {
                     rename_first(arm, depth + binds.len()).map(|(arm, old)| ((p.clone(), arm), old))
                 };
                 if let Some((arm, old)) = new_arm {
-                    let mut arms = arms.clone();
-                    arms[k] = arm;
+                    // The other arms are cloned and the new one moved in: cloning all the arms
+                    // first would copy the old arm too, once per level of nested `match`es.
+                    let mut arm = Some(arm);
+                    let arms = (0..arms.len())
+                        .map(|j| match arm.take_if(|_| j == k) {
+                            Some(arm) => arm,
+                            None => arms[j].clone(),
+                        })
+                        .collect();
                     return Some((Term::Match(e.clone(), arms), old));
                 }
             }
@@ -350,12 +390,12 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
                 };
                 return Some((t, old));
             }
-            if level_of(var).is_none() {
-                let new = level_name(depth);
+            if !canonical_at(var, depth) {
+                let (mut new, body) = renamed_scope(std::slice::from_ref(var), 0, depth, body);
                 let t = Term::Fam {
                     domain: domain.clone(),
-                    var: new.clone(),
-                    body: arc(rename(body, var, &new)),
+                    var: new.pop().expect("one name"),
+                    body: arc(body),
                 };
                 return Some((t, var.clone()));
             }
@@ -386,112 +426,49 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
             if let Some((i, old)) = rename_first(init, depth) {
                 return Some((fix(&arc(i), this, key, (**step).clone()), old));
             }
-            if let Some(r) = Renamed::of(&[this.clone(), key.clone()], depth) {
-                let step = r.scope(step);
-                return Some((fix(init, &r.names[0], &r.names[1], step), r.old));
+            let group = [this.clone(), key.clone()];
+            if let Some(at) = misplaced(&group, depth) {
+                let (names, step) = renamed_scope(&group, at, depth, step);
+                return Some((fix(init, &names[0], &names[1], step), group[at].clone()));
             }
             let (s, old) = rename_first(step, depth + 2)?;
             Some((fix(init, this, key, s), old))
         }
         _ => {
+            // Complexity tradeoff: the first child holding a binder to rename is found by trying
+            // each child in turn, not by counting each child's written binders first (the method
+            // before FAIL-kernel-canon-misplaced-level): a count walks the child, and descending
+            // `n` calls deep counted again at every level, O(n²) on a chain of calls. Trying
+            // walks a child that holds none once and stops at the first that holds one, so the
+            // search costs O(t) over the whole step. Nothing is given up.
             let kids = children(t);
-            let k = kids.iter().position(|c| written(c) > 0)?;
-            let (new, old) = rename_first(kids[k], depth)?;
-            let mut i = 0;
+            let (k, (new, old)) = kids
+                .iter()
+                .enumerate()
+                .find_map(|(k, c)| Some((k, rename_first(c, depth)?)))?;
+            // The renamed child is moved in, not cloned: a call's arguments are held inline, so a
+            // clone copies the whole child, and one per level of a chain of calls was O(n²). The
+            // other children are cloned, each node at most once in a step, since the children
+            // beside the path to the renamed binder are disjoint: O(t).
+            let (mut i, mut new) = (0, Some(new));
             let t = map_children(t, &mut |c| {
                 i += 1;
-                if i - 1 == k { new.clone() } else { c.clone() }
+                match new.take_if(|_| i - 1 == k) {
+                    Some(new) => new,
+                    None => c.clone(),
+                }
             });
             Some((t, old))
         }
     }
 }
 
-/// `p` with its `i`-th binder (left to right) renamed to `new`; `i` counts down as binders
-/// are passed.
-fn rename_pattern_bind(p: &Pattern, i: &mut usize, new: &Arc<str>) -> Pattern {
-    match p {
-        Pattern::Bind(x) => {
-            let hit = *i == 0;
-            *i = i.wrapping_sub(1);
-            Pattern::Bind(if hit { new.clone() } else { x.clone() })
-        }
-        Pattern::Atom(name, ps) => Pattern::Atom(
-            name.clone(),
-            ps.iter().map(|p| rename_pattern_bind(p, i, new)).collect(),
-        ),
-        Pattern::Tuple(ps) => {
-            Pattern::Tuple(ps.iter().map(|p| rename_pattern_bind(p, i, new)).collect())
-        }
-        Pattern::Fields(name, fs) => Pattern::Fields(
-            name.clone(),
-            fs.iter()
-                .map(|(f, p)| (f.clone(), rename_pattern_bind(p, i, new)))
-                .collect(),
-        ),
-        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => p.clone(),
-    }
-}
-
-/// `t` with the free occurrences of the variable `old` renamed to `new`. A binder of `old`
-/// inside `t` shadows it below.
-fn rename(t: &Term, old: &str, new: &Arc<str>) -> Term {
-    let arc = Shared::new;
-    let under = |names: &[&str], body: &Term| {
-        if names.contains(&old) {
-            body.clone()
-        } else {
-            rename(body, old, new)
-        }
-    };
-    match t {
-        Term::Var(x) if &**x == old => Term::Var(new.clone()),
-        Term::Lam(params, body) => {
-            let names: Vec<&str> = params.iter().map(|p| &**p).collect();
-            Term::Lam(params.clone(), arc(under(&names, body)))
-        }
-        Term::Let(x, e, body) => {
-            Term::Let(x.clone(), arc(rename(e, old, new)), arc(under(&[x], body)))
-        }
-        Term::Match(e, arms) => Term::Match(
-            arc(rename(e, old, new)),
-            arms.iter()
-                .map(|(p, arm)| {
-                    let binds = pattern_binds(p);
-                    let names: Vec<&str> = binds.iter().map(|x| &**x).collect();
-                    (p.clone(), under(&names, arm))
-                })
-                .collect(),
-        ),
-        Term::Fam { domain, var, body } => Term::Fam {
-            domain: arc(rename(domain, old, new)),
-            var: var.clone(),
-            body: arc(under(&[var], body)),
-        },
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind: FixKind::Definedness,
-            ev,
-        } => Term::Fix {
-            init: arc(rename(init, old, new)),
-            step: arc(under(&[this, key], step)),
-            this: this.clone(),
-            key: key.clone(),
-            kind: FixKind::Definedness,
-            ev: ev.clone(),
-        },
-        _ => map_children(t, &mut |c| rename(c, old, new)),
-    }
-}
-
 /// `t` with every binder renamed as the rule renames them one per step, in one walk: each
-/// written binder gets its level, and each variable the name of the binder it means. A binder
-/// already canonical keeps its name, as the rule leaves it. `O(t log t)` for a term of size `t`.
+/// binder that is not canonical gets its level, and each variable the name of the binder it
+/// means. A binder already canonical keeps its name, as the rule leaves it. `O(t log t)` for a
+/// term of size `t`.
 pub fn canonical(t: &Term) -> Term {
-    Levels::default().term(t)
+    Levels::default().term_at(t, 0)
 }
 
 /// What [`keyed`] renames a free name to, `None` to keep it.
@@ -510,9 +487,9 @@ pub type FreeNames<'a> = dyn Fn(&str) -> Option<Arc<str>> + 'a;
 pub fn keyed(t: &Term, free: &FreeNames<'_>) -> Term {
     Levels {
         scope: Default::default(),
-        keyed: Some(free),
+        mode: Mode::Keyed(free),
     }
-    .term(t)
+    .term_at(t, 0)
 }
 
 /// The binder name `x` with the number elaboration gave it dropped: the part before `@` of
@@ -526,15 +503,27 @@ fn unnumbered(x: &str) -> &str {
 }
 
 /// The names in scope during the walk: each written name to the new names of the binders of
-/// that name around the current subterm, innermost last. With `keyed`, the walk is
-/// [`keyed`]'s: a binder's new name keeps its written name, and `keyed` renames a free name.
+/// that name around the current subterm, innermost last, and how the binders are named.
 #[derive(Default)]
 struct Levels<'f> {
     scope: std::collections::BTreeMap<Arc<str>, Vec<Arc<str>>>,
-    keyed: Option<&'f FreeNames<'f>>,
+    mode: Mode<'f>,
 }
 
-/// A step of [`Levels::term`]'s walk, on its heap stack.
+/// The name [`Levels`] gives a binder whose name is not a level. A binder spelled as a level
+/// gets its own level in every mode.
+#[derive(Default)]
+enum Mode<'f> {
+    /// Its level: [`canonical`].
+    #[default]
+    Canonical,
+    /// Its level with its written name kept, and free names renamed by the map: [`keyed`].
+    Keyed(&'f FreeNames<'f>),
+    /// Its written name: the scope of one step of the rule ([`renamed_scope`]).
+    Written,
+}
+
+/// A step of [`Levels::term_at`]'s walk, on its heap stack.
 enum Walk<'t> {
     /// Rename `t`, `depth` binders deep, and put the result on the results.
     Term(&'t Term, usize),
@@ -558,16 +547,23 @@ enum Walk<'t> {
 
 impl Levels<'_> {
     /// Brings `names`, bound together at levels `depth`, `depth + 1`, …, into scope in order,
-    /// so that a later name of the group shadows an earlier one. A canonical name keeps its
-    /// name; a written one gets its level.
+    /// so that a later name of the group shadows an earlier one, each with the name
+    /// [`Levels::new_name`] gives it.
     fn bind(&mut self, names: &[Arc<str>], depth: usize) {
         for (i, x) in names.iter().enumerate() {
-            let new = match level_of(x) {
-                Some(_) => x.clone(),
-                None if self.keyed.is_some() => format!("\0{}:{}", depth + i, unnumbered(x)).into(),
-                None => level_name(depth + i),
-            };
+            let new = self.new_name(x, depth + i);
             self.scope.entry(x.clone()).or_default().push(new);
+        }
+    }
+
+    /// The new name of the binder `x` at level `level`: its level when `x` is spelled as a level
+    /// (`x` itself when it is that level already), else as the mode says.
+    fn new_name(&self, x: &Arc<str>, level: usize) -> Arc<str> {
+        match (level_of(x), &self.mode) {
+            (Some(l), _) if l == level => x.clone(),
+            (Some(_), _) | (None, Mode::Canonical) => level_name(level),
+            (None, Mode::Keyed(_)) => format!("\0{}:{}", level, unnumbered(x)).into(),
+            (None, Mode::Written) => x.clone(),
         }
     }
 
@@ -588,10 +584,11 @@ impl Levels<'_> {
 
     /// `t` renamed. The terms still to rename and the terms to build wait on heap stacks, so a
     /// deep term does not grow the thread's stack; the walk visits the subterms in the order
-    /// of the recursion it replaces, so the names come out the same.
-    fn term(&mut self, t: &Term) -> Term {
+    /// of the recursion it replaces, so the names come out the same. `t` stands `depth` binders
+    /// deep.
+    fn term_at(&mut self, t: &Term, depth: usize) -> Term {
         let arc = Shared::new;
-        let mut todo = vec![Walk::Term(t, 0)];
+        let mut todo = vec![Walk::Term(t, depth)];
         let mut done: Vec<Term> = Vec::new();
         let mut arms: Vec<(Pattern, Term)> = Vec::new();
         while let Some(w) = todo.pop() {
@@ -599,7 +596,10 @@ impl Levels<'_> {
                 Walk::Term(t, depth) => match t {
                     Term::Var(x) => done.push(match self.scope.get(x).and_then(|s| s.last()) {
                         Some(n) => Term::Var(n.clone()),
-                        None => match self.keyed.and_then(|free| free(x)) {
+                        None => match match self.mode {
+                            Mode::Keyed(free) => free(x),
+                            _ => None,
+                        } {
                             Some(n) => Term::Var(n),
                             None => t.clone(),
                         },

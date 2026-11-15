@@ -7,6 +7,7 @@ mod alpha;
 mod bench;
 mod cases;
 mod domains;
+mod misplaced_level;
 mod prim_codes;
 mod rules;
 mod scaling;

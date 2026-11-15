@@ -6,6 +6,7 @@
 
 use zed_tests::scaling;
 
+use super::misplaced_level::{steps_once, under_and_over};
 use super::scaling::{addresses_ignore_names, canonicalizes_chain, deep_terms, sorts_facets};
 use super::{addr, def};
 
@@ -62,4 +63,18 @@ fn terms_100000_deep_are_addressed_on_a_2_mib_stack() {
 #[test]
 fn terms_12500_deep_are_addressed_on_a_2_mib_stack() {
     zed_tests::deep::on_small_stack(|| addresses_ignore_names(12_500));
+}
+
+#[test]
+fn stepping_past_a_deep_binder_scales() {
+    // One step of the rule finds the binder to rename under n calls and `match` arms and walks
+    // its scope of n lambdas: O(n log n). The inputs are built before timing.
+    deep(|| {
+        let terms = scaling::inputs(2000, under_and_over);
+        scaling::check(
+            "one step of the binder rule, under n calls and match arms, over n lambdas",
+            2000,
+            |n| steps_once(&terms[&n]),
+        )
+    });
 }

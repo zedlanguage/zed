@@ -29,6 +29,8 @@ use super::graph;
 /// The hash `normal_forms` gives under each VERSION, oldest first: append, never edit.
 /// Version 6 is the hash before 0a516f19c: this file run with that commit's change to
 /// crates/zedc-zir/src/zir/canon.rs reverted, the only change to a normal form since version 6.
+/// Version 8 renames a kernel binder spelled as another level (`other_level` and `swapped`
+/// below), FAIL-kernel-canon-misplaced-level.
 const HISTORY: &[(u32, &str)] = &[
     (
         6,
@@ -37,6 +39,10 @@ const HISTORY: &[(u32, &str)] = &[
     (
         7,
         "41155e123640f443421c6f52ca6546ac8ae655429301fdfbf9dd600141f0ccfe",
+    ),
+    (
+        8,
+        "c85680ebe00c9fec4892ad04282208321ad49b3692b6fa1c4e49abdfcd6f8d18",
     ),
 ];
 

@@ -262,9 +262,15 @@ const BOUND: [&str; 3] = ["a", "b", "x"];
 const FREE: [&str; 2] = ["price", "qty"];
 
 /// A random term over the binding forms the canonicalizer renames. `names` picks the written
-/// name of each binder from its own stream, so two calls with one `shape` seed and different
-/// `names` seeds give terms of one shape and different names.
-fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static str>) -> Term {
+/// name of each binder from its own stream, out of `pool`, so two calls with one `shape` seed
+/// and different `names` seeds give terms of one shape and different names.
+pub(super) fn random(
+    shape: &mut Rng,
+    names: &mut Rng,
+    depth: u32,
+    scope: &mut Vec<&'static str>,
+    pool: &[&'static str],
+) -> Term {
     let leaf = depth == 0 || shape.below(4) == 0;
     if leaf {
         return match shape.below(3) {
@@ -277,19 +283,19 @@ fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static
         };
     }
     let sub = |scope: &mut Vec<&'static str>, shape: &mut Rng, names: &mut Rng| {
-        random(shape, names, depth - 1, scope)
+        random(shape, names, depth - 1, scope, pool)
     };
     match shape.below(6) {
         0 => {
             let n = 1 + shape.below(2);
-            let ps: Vec<&'static str> = (0..n).map(|_| names.pick(&BOUND)).collect();
+            let ps: Vec<&'static str> = (0..n).map(|_| names.pick(pool)).collect();
             scope.extend(&ps);
             let body = sub(scope, shape, names);
             scope.truncate(scope.len() - n);
             lam(&ps, body)
         }
         1 => {
-            let x = names.pick(&BOUND);
+            let x = names.pick(pool);
             let e = sub(scope, shape, names);
             scope.push(x);
             let body = sub(scope, shape, names);
@@ -298,7 +304,7 @@ fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static
         }
         2 => {
             let e = sub(scope, shape, names);
-            let x = names.pick(&BOUND);
+            let x = names.pick(pool);
             let p = Pattern::Tuple(vec![Pattern::Bind(x.into()), Pattern::Wild]);
             scope.push(x);
             let arm = sub(scope, shape, names);
@@ -308,7 +314,7 @@ fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static
         }
         3 => {
             let d = sub(scope, shape, names);
-            let x = names.pick(&BOUND);
+            let x = names.pick(pool);
             scope.push(x);
             let body = sub(scope, shape, names);
             scope.pop();
@@ -333,7 +339,7 @@ fn random(shape: &mut Rng, names: &mut Rng, depth: u32, scope: &mut Vec<&'static
 
 /// An independent rendering of a term's α-class: each bound variable written as its de
 /// Bruijn index, counted outward from the use, and each free one by name.
-fn indices(t: &Term, env: &mut Vec<Arc<str>>) -> String {
+pub(super) fn indices(t: &Term, env: &mut Vec<Arc<str>>) -> String {
     let under = |names: &[Arc<str>], body: &Term, env: &mut Vec<Arc<str>>| {
         env.extend(names.iter().cloned());
         let s = indices(body, env);
@@ -391,6 +397,7 @@ fn addresses_agree_with_an_independent_alpha_equivalence_test() {
                 &mut Rng::new(names),
                 4,
                 &mut Vec::new(),
+                &BOUND,
             )
         };
         let (s, t) = (make(seed ^ 0x51), make(seed ^ 0x9e));
@@ -425,6 +432,7 @@ fn the_normal_form_is_the_rules_applied_one_step_at_a_time() {
             &mut Rng::new(!seed),
             4,
             &mut Vec::new(),
+            &BOUND,
         ));
     }
     // A step reading `this` and the key, which are bound in that order.
@@ -439,7 +447,7 @@ fn the_normal_form_is_the_rules_applied_one_step_at_a_time() {
     });
     // `(x -> x)(x)`: the last `x` is outside the binder's scope and stays free.
     one_pass_is_stepwise(app(lam(&["x"], var("x")), vec![var("x")]));
-    // A binder already carrying a level name, though not its own level, keeps it.
+    // A binder spelled as a level, though not its own level, is renamed to its own level.
     let level = binders::level_name(5);
     one_pass_is_stepwise(lam(
         &["y", &level],
