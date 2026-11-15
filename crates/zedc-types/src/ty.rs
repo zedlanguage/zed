@@ -1492,6 +1492,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(filter),
             Dbg::Text(" }"),
         ]),
+        NeedKind::Group { f, recv } => parts.extend([
+            Dbg::Text("Group { f: "),
+            Dbg::Ty(f),
+            Dbg::Text(", recv: "),
+            Dbg::Leaf(recv),
+            Dbg::Text(" }"),
+        ]),
         NeedKind::Call {
             what,
             positional,
@@ -1552,6 +1559,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::Power(_)
         | NeedKind::Sum
         | NeedKind::Reduce(_)
+        | NeedKind::Remap(_)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
     parts.push(Dbg::Text(", result: "));
@@ -3319,6 +3327,18 @@ pub enum NeedKind {
         /// Whether the use is `where`.
         filter: bool,
     },
+    /// `v.group(f)`, with `f` of type `f` and `v` written at `recv`: the value is a family of
+    /// one level, and the use gives the family `group` makes of it (DESIGN.md sec:grouping).
+    Group {
+        /// The function's type.
+        f: Ty,
+        /// Where the receiver is written, for the error's words.
+        recv: Span,
+    },
+    /// The remap written at this span, of the value: the value is a family of as many levels
+    /// as the remap's `as` pattern names, and the use gives the remap's family (DESIGN.md
+    /// sec:remap_law). The key expressions are checked when the value's type is in hand.
+    Remap(Span),
     /// `v >< (op)`: the value is a family whose entries `op` folds, and the use gives the fold
     /// (step L3.2; DESIGN.md sec:reduction).
     Reduce(Reducer),
@@ -3532,6 +3552,11 @@ impl Need {
                     f: f(g),
                     filter: *filter,
                 },
+                NeedKind::Group { f: g, recv } => NeedKind::Group {
+                    f: f(g),
+                    recv: *recv,
+                },
+                NeedKind::Remap(at) => NeedKind::Remap(*at),
                 NeedKind::Reduce(op) => NeedKind::Reduce(*op),
                 NeedKind::Fold { tys, right } => NeedKind::Fold {
                     tys: tys.iter().map(&mut f).collect(),
@@ -3607,11 +3632,13 @@ impl Need {
             | NeedKind::Sum
             | NeedKind::Into { .. }
             | NeedKind::Reduce(_)
+            | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(_) => (None, &[], &[]),
-            NeedKind::Index(k) | NeedKind::Order { other: k, .. } | NeedKind::Map { f: k, .. } => {
-                (Some(k), &[], &[])
-            }
+            NeedKind::Index(k)
+            | NeedKind::Order { other: k, .. }
+            | NeedKind::Map { f: k, .. }
+            | NeedKind::Group { f: k, .. } => (Some(k), &[], &[]),
             NeedKind::Call {
                 positional, named, ..
             } => (None, positional, named),
@@ -3634,11 +3661,13 @@ impl Need {
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Reduce(_)
+            | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
             | NeedKind::Map { f: t, .. }
+            | NeedKind::Group { f: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
@@ -3666,11 +3695,13 @@ impl Need {
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Reduce(_)
+            | NeedKind::Remap(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
             | NeedKind::Map { f: t, .. }
+            | NeedKind::Group { f: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],

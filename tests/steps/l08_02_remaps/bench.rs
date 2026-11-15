@@ -142,3 +142,49 @@ fn the_collision_rule_on_an_affine_key_of_n_components() {
         run,
     );
 }
+
+#[test]
+fn a_remap_and_a_group_of_a_map_lambdas_parameter_run_in_linear_time() {
+    // Each row of `m` is the lambda's parameter `g`: the remap and the group are checked once,
+    // at the type of the rows, and run once per row.
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "m = {};\nx = m.map(g -> g as (k -> v) into (k + 1 -> v));\n\
+             t = x as (i -> j -> v) into (i >< (+) -> j >< (+) -> v);\n\
+             y = m.map(g -> g.group(v -> v mod 7));\n\
+             u = y as (i -> c -> j -> v) into (i >< (+) -> c >< (+) -> j >< (+) -> v);\n",
+            rows(n)
+        )
+    });
+    let run = |n: usize| {
+        let sum = (n * (n - 1) / 2).to_string();
+        assert_eq!(value(&srcs[&n], "t"), sum);
+        assert_eq!(value(&srcs[&n], "u"), sum);
+    };
+    scaling::check(
+        "a remap and a group of a `map` lambda's parameter over n entries in rows of 10, \
+         whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
+#[test]
+fn n_calls_of_a_generic_remap_are_checked_in_linear_time() {
+    // Each call passes a family of another key type, so the remap is checked once per call.
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| format!("x{i} = f(g: {{ {i} -> 1 }});\n"))
+            .collect::<String>();
+        format!("f(g) = g as (k -> v) into (k + 1 -> v);\n{calls}")
+    });
+    let run = |n: usize| {
+        let u = elab(&srcs[&n]).unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(u.get(&format!("x{}", n - 1)).is_some());
+    };
+    scaling::check(
+        "n calls of a generic function that remaps its parameter",
+        N_LEVELS,
+        run,
+    );
+}

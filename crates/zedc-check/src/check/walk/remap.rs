@@ -32,6 +32,43 @@ pub(in crate::check) struct RemapF<'a> {
     keys: HashMap<usize, usize>,
 }
 
+impl<'a> RemapF<'a> {
+    /// The remap, while the type of its source is not yet in hand.
+    pub(in crate::check) fn unsourced(&self) -> Option<&'a Expr> {
+        (!self.sourced).then_some(self.e)
+    }
+}
+
+/// What a remap's `into` pattern alone says of its plan: levels are counted by their place in
+/// the pattern.
+struct Layout {
+    /// The leaf's level.
+    last: usize,
+    /// Whether the remap drops the values: `_` at the leaf, or a key binder there.
+    truncate: bool,
+    /// The key levels, in written order.
+    keys: Vec<usize>,
+    /// The key levels kept, in written order.
+    kept: Vec<usize>,
+    /// The key levels a `><` folds, in written order.
+    folded: Vec<usize>,
+    /// The operator of each folded level.
+    folds: HashMap<usize, BinaryOp>,
+}
+
+impl Layout {
+    /// The plan with this layout and `witness`.
+    fn plan(&self, witness: Arc<str>) -> RemapPlan {
+        RemapPlan {
+            order: self.kept.iter().chain(&self.folded).copied().collect(),
+            kept: self.kept.len(),
+            folds: self.folds.clone(),
+            leaf: (!self.truncate).then_some(self.last),
+            witness,
+        }
+    }
+}
+
 /// An atom of a key expression's linear form: key binder `i`, whole or its component `j`.
 type Atom = (usize, Option<usize>);
 
@@ -244,9 +281,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         matches!(self.t.res.uses.get(&e.span), Some(Ref::Bound(ids)) if ids.len() == 1 && ids[0] == self.id(*span, name))
     }
 
-    /// The remap `s` with every level checked: its type, and its plan in [`Info::remaps`].
-    fn remap_end(&mut self, s: &RemapF<'a>, reduce: ReduceEnd<'t, 'a>) -> Option<Ty> {
-        let src = s.src.as_ref()?;
+    /// The plan of the remap `s` read from its text alone, the pattern's own errors given: every
+    /// field but the witness, which is `residue` for a truncation and otherwise the catalog
+    /// entries of no instance, the empty list, until a check at a source type adds its own
+    /// ([`Self::remap_end`]). The order of the levels, the levels kept, the folds and the leaf
+    /// read only the `into` pattern and which of its names are key binders, so every check of
+    /// the remap at any source type finds the same ones.
+    pub(in crate::check) fn remap_text_plan(&mut self, s: &RemapF<'a>) -> Option<RemapPlan> {
+        let l = self.remap_layout(s)?;
+        Some(l.plan(match l.truncate {
+            true => "residue".into(),
+            false => "".into(),
+        }))
+    }
+
+    /// The layout of the remap `s`'s `into` pattern, or its errors given.
+    fn remap_layout(&mut self, s: &RemapF<'a>) -> Option<Layout> {
         let last = s.levels.len() - 1;
         let leaf = &s.levels[last];
         let sugar = leaf.reduce.is_none()
@@ -285,20 +335,41 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             return None;
         }
+        let (kept, folded): (Vec<usize>, Vec<usize>) =
+            (keys.iter()).partition(|&&j| s.levels[j].reduce.is_none());
+        let folds = (folded.iter())
+            .map(|&j| match s.levels[j].reduce.as_ref().map(|r| &r.kind) {
+                Some(ExprKind::Section(op, _)) => (j, *op),
+                _ => unreachable!("name resolution refuses a `><` by a function"),
+            })
+            .collect();
+        Some(Layout {
+            last,
+            truncate,
+            keys,
+            kept,
+            folded,
+            folds,
+        })
+    }
+
+    /// The remap `s` with every level checked: its type, and its plan in [`Info::remaps`].
+    fn remap_end(&mut self, s: &RemapF<'a>, reduce: ReduceEnd<'t, 'a>) -> Option<Ty> {
+        let src = s.src.as_ref()?;
+        let l = self.remap_layout(s)?;
+        let (last, truncate, keys, kept, folded) =
+            (l.last, l.truncate, &l.keys, &l.kept, &l.folded);
         let witness: Arc<str> = match truncate {
             true => "residue".into(),
-            false => match self.injective(s, &keys, src) {
+            false => match self.injective(s, keys, src) {
                 Ok(w) => w,
                 Err(lost) => {
-                    self.collision(s, &keys, lost);
+                    self.collision(s, keys, lost);
                     return None;
                 }
             },
         };
         let ty = |j: usize| s.tys[j].clone().expect("a key level's type");
-        let (kept, folded): (Vec<usize>, Vec<usize>) =
-            (keys.iter()).partition(|&&j| s.levels[j].reduce.is_none());
-        let mut folds = HashMap::new();
         let mut inner = match truncate {
             true => {
                 let k = ty(*kept.last().expect("a kept level"));
@@ -307,11 +378,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             false => s.tys[last].clone().expect("the leaf's type"),
         };
         for &j in folded.iter().rev() {
-            let op = match s.levels[j].reduce.as_ref().map(|r| &r.kind) {
-                Some(ExprKind::Section(op, _)) => *op,
-                _ => unreachable!("name resolution refuses a `><` by a function"),
-            };
-            folds.insert(j, op);
+            let op = l.folds[&j];
             inner = reduce(
                 self,
                 Reducer::Op(op),
@@ -326,17 +393,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for &j in outer.iter().rev() {
             inner = family(ty(j), inner);
         }
-        let order = kept.iter().chain(&folded).copied().collect();
-        self.info.remaps.insert(
-            s.e.span,
-            RemapPlan {
-                order,
-                kept: kept.len(),
-                folds,
-                leaf: (!truncate).then_some(last),
-                witness,
-            },
-        );
+        self.info.remaps.insert(s.e.span, l.plan(witness));
         Some(inner)
     }
 

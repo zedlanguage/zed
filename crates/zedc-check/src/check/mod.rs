@@ -85,8 +85,8 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, Carrier, EVERY, IntDomain, Names, Narrow, Need, NeedKind, NodeId, OTHER, Piece,
-    PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, Vars, Via, Width, atoms,
-    carriers_text, class_id, errs, fresh_name, mask_text,
+    PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width,
+    atoms, carriers_text, class_id, errs, fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -462,7 +462,7 @@ struct WideProduct<'a> {
 /// `order`, then a `fold` of each level folded, innermost first, or for a truncation a
 /// `discard` that keeps the last key as a set leaf. Levels are counted by their place in the
 /// `into` pattern.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RemapPlan {
     /// The key levels in the order of the keypath built: the levels kept, in written order,
     /// then the levels a `><` folds, in written order, so each fold is of the innermost level.
@@ -1566,6 +1566,12 @@ struct Ck<'t, 'a> {
     /// How many checks of a generic function's needs are under way; they write nothing for
     /// elaboration.
     replaying: usize,
+    /// Each remap whose source held a class when it was walked, by its span: its key
+    /// expressions are checked when a [`NeedKind::Remap`] need on the class is checked, at the
+    /// type that flows into the class. Every need is made by the checker of one program
+    /// ([`Ck::new`] takes one program's tables, and no signature or need comes from
+    /// elsewhere), so the span names one remap of that program.
+    remap_exprs: HashMap<Span, &'a Expr>,
     /// The atoms an application inside a check of a need passed by at parameter `i` of the
     /// function value `what` it applied, for the check to give to the call of the function
     /// whose need it is: `(what, i, atoms)`.
@@ -1847,6 +1853,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             bound: Vec::new(),
             needs: 0,
             replaying: 0,
+            remap_exprs: HashMap::new(),
             refused: Vec::new(),
             need_passed: Vec::new(),
             need_args: None,

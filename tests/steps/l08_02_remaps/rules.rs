@@ -504,3 +504,134 @@ fn a_read_of_a_remap_or_group_result_may_miss() {
         assert_eq!(value(&text, "y"), val, "{text}");
     }
 }
+
+// ---- The source is a `map` lambda's parameter ----
+//
+// Inside `m.map(g -> ...)` the parameter `g` stands for each inner family of `m` in turn, so a
+// remap or a `group` of `g` gives what the same remap or group gives on each inner family
+// written out by hand.
+
+const NESTED: &str = "m = { \"a\" -> { 1 -> 1, 2 -> 2 }, \"b\" -> { 1 -> 3 } };\n";
+
+#[test]
+fn a_remap_of_a_map_lambdas_parameter() {
+    let src = format!(
+        "{NESTED}x = m.map(g -> g as (k -> v) into (k + 1 -> v));\n\
+         want = {{ \"a\" -> {{ 2 -> 1, 3 -> 2 }}, \"b\" -> {{ 2 -> 3 }} }};\n"
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn a_group_of_a_map_lambdas_parameter() {
+    let src = format!(
+        "{NESTED}x = m.map(g -> g.group(v -> v mod 2));\n\
+         want = {{ \"a\" -> {{ 0 -> {{ 2 -> 2 }}, 1 -> {{ 1 -> 1 }} }}, \"b\" -> {{ 1 -> {{ 1 -> 3 }} }} }};\n"
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn a_fold_of_every_level_of_a_map_lambdas_parameter() {
+    let src = format!(
+        "{NESTED}x = m.map(g -> g as (k -> v) into (k >< (+) -> v));\n\
+         want = {{ \"a\" -> 3, \"b\" -> 3 }};\n"
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn an_identity_remap_of_a_map_lambdas_parameter() {
+    let src = format!("{NESTED}x = m.map(g -> g as (k -> v) into (k -> v));\n");
+    same(&src, "x", "m");
+}
+
+#[test]
+fn a_remap_and_a_group_of_a_generic_functions_parameter() {
+    // A parameter with no declared type is generic: the remap is checked at each call, at the
+    // argument's type.
+    let src = "f(g) = g as (k -> v) into (k + 1 -> v);\n\
+               h(g) = g.group(v -> v mod 2);\n\
+               x = f(g: { 1 -> 10, 2 -> 20 });\n\
+               want = { 2 -> 10, 3 -> 20 };\n\
+               y = h(g: { 1 -> 1, 2 -> 2 });\n\
+               want2 = { 0 -> { 2 -> 2 }, 1 -> { 1 -> 1 } };\n";
+    same(src, "x", "want");
+    same(src, "y", "want2");
+}
+
+#[test]
+fn a_generic_function_never_called_is_accepted() {
+    let src = "f(g) = g as (k -> v) into (k + 1 -> v);\n\
+               h(g) = g.group(v -> v mod 2);\n\
+               x = 1;\n";
+    prints(src, "x", "1");
+}
+
+#[test]
+fn a_map_lambdas_parameter_that_is_no_family_is_rejected() {
+    rejected(
+        "xs = [1, 2];\nx = xs.map(g -> g.group(v -> v));\n",
+        &["`group` works on the entries of a family, and `g` is"],
+    );
+    rejected(
+        "xs = [1, 2];\nx = xs.map(g -> g as (k -> v) into (k + 1 -> v));\n",
+        &["a remap rearranges the keys of a family, and its source `g` is"],
+    );
+}
+
+#[test]
+fn rekey_of_a_map_lambdas_parameter_is_rejected_as_any_rekey() {
+    rejected(
+        &format!("{NESTED}x = m.map(g -> g.rekey(v -> v));\n"),
+        &["Cannot show that `v -> v` keeps the entries of `g` apart"],
+    );
+}
+
+#[test]
+fn a_generic_remap_at_two_types_records_both_reasons() {
+    // `(k mod 3, k)` keeps the keys apart by `modulo` and by `literal` on the keys 0 and 1,
+    // and by `literal` alone on 0 and 5, wider than the modulus. The remap is one piece of
+    // code for both calls, and its witness lists both reasons.
+    let src = "f(g) = g as (k -> v) into ((k mod 3, k) -> v);\n\
+               x = f(g: { 0 -> 1, 5 -> 2 });\n\
+               want = { (0, 0) -> 1, (2, 5) -> 2 };\n\
+               y = f(g: { 0 -> 1, 1 -> 2 });\n\
+               want2 = { (0, 0) -> 1, (1, 1) -> 2 };\n";
+    same(src, "x", "want");
+    same(src, "y", "want2");
+    let info = zed_tests::step_helpers::l01_16_elaboration::checked(src).info;
+    let mut witnesses: Vec<&str> = info.remaps.values().map(|p| &*p.witness).collect();
+    witnesses.sort();
+    assert_eq!(witnesses, ["literal+modulo"], "{src}");
+}
+
+#[test]
+fn a_generic_remap_s_pattern_errors_are_given_without_a_call() {
+    rejected(
+        "f(g) = g as (k -> v) into (_ -> k -> v);\n",
+        &["`_` stands only at the leaf of an `into` pattern"],
+    );
+    rejected(
+        "f(g) = g as (k -> v) into (k -> v >< (+));\n",
+        &["`><` folds a key level, and the last level of an `into` pattern is its leaf"],
+    );
+}
+
+#[test]
+fn a_remap_or_group_of_a_map_lambdas_parameter_over_empty_families() {
+    // The class of `g` takes no family, or an empty one: the remap and the group still
+    // compile, and give an empty result.
+    for (m, x) in [
+        ("{}", "m.map(g -> g as (k -> v) into (k + 1 -> v))"),
+        ("{}", "m.map(g -> g.group(v -> v mod 2))"),
+        (
+            "{ \"a\" -> {} }",
+            "m.map(g -> g as (k -> v) into (k + 1 -> v))",
+        ),
+        ("{ \"a\" -> {} }", "m.map(g -> g.group(v -> v mod 2))"),
+    ] {
+        let src = format!("m = {m};\nx = {x};\n");
+        same(&src, "x", "m");
+    }
+}

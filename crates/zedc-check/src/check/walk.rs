@@ -885,6 +885,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::Display(s) => self.display_step(m, s),
             Frame::Remap(s) => {
                 let t = m.take_ty();
+                if let Some(e) = s.unsourced().filter(|_| !t.vars.is_empty()) {
+                    // The plan from the text, so that a remap whose class takes no type, in a
+                    // generic function no call instantiates, still elaborates; and the
+                    // pattern's own errors, given where the remap is written.
+                    let Some(plan) = self.remap_text_plan(&s) else {
+                        m.ty(Ty::empty());
+                        return;
+                    };
+                    self.info.remaps.entry(e.span).or_insert(plan);
+                    let t = self.remap_of(e, &t);
+                    m.ty(t);
+                    return;
+                }
                 match self.remap_step(s, t, Self::reduce_end) {
                     remap::RemapNext::Key(s, k) => {
                         m.k(Frame::Remap(s));
@@ -900,7 +913,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Group(x, recv, span, rekey) => {
                 let f = m.take_arg();
-                let t = self.group_end(&x, recv, f, span, rekey, Self::apply);
+                let t = self.group_of(&x, recv, f, span, rekey);
                 m.ty(t);
             }
             Frame::FlatMap(x, span) => {
@@ -3266,6 +3279,156 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         out
+    }
+
+    /// `x.group(f)`, or `x.rekey(f)` with `rekey` ([`Self::group_end`]), where `x` may hold
+    /// classes. A class, as the parameter `g` of `m.map(g -> g.group(f))` stands for, takes
+    /// the use as a need, checked on each value that flows into it and at each call of a
+    /// generic function, as at `map` (CHK-need-bound): so `g.group(f)` there groups each inner
+    /// family of `m` (DESIGN.md sec:grouping, sec:reduction). A class already resolved is
+    /// grouped as its type, and the rest of `x` as it stands, the misses `#notFound` and
+    /// `#outOfBounds` dropped as [`Self::group_end`] drops them. `rekey` is rejected whatever
+    /// `x` is, by [`Self::group_end`].
+    // Complexity tradeoff: one need or one recursion per variable of `x`, plus the cost of
+    // `group_end` on the rest, as at `map`; a resolved class's type holds no class that
+    // resolves back to it (a class is resolved to a type built before it), so the recursion
+    // ends.
+    fn group_of(&mut self, x: &Ty, recv: Span, f: Arg<'a>, span: Span, rekey: bool) -> Ty {
+        if rekey || x.vars.is_empty() {
+            return self.group_end(x, recv, f, span, rekey, Self::apply);
+        }
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let mut rest = x.clone();
+        rest.vars = VarSet::new();
+        let only_misses = rest.pieces().into_iter().all(|p| match p {
+            Piece::Set(k) => (&k - &misses).is_empty(),
+            _ => false,
+        });
+        let mut out = match only_misses {
+            true => Ty::empty(),
+            false => self.group_end(&rest, recv, f.clone(), span, false, Self::apply),
+        };
+        for v in x.vars.iter() {
+            let r = self.class_root(v);
+            let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                Some((_, Some(t))) => self.group_of(&t, recv, f.clone(), span, false),
+                Some((r, None)) => {
+                    let kind = NeedKind::Group {
+                        f: f.ty.clone(),
+                        recv,
+                    };
+                    self.need(r, kind, true, span)
+                }
+                None => Ty::dynamic(),
+            };
+            out = out.union(&given);
+        }
+        out
+    }
+
+    /// The remap `e` of a source of type `x` that holds classes, as `g` in `m.map(g -> g as (k
+    /// -> v) into (k + 1 -> v))` does: a class takes the remap as a need (CHK-need-bound), and
+    /// the remap's key expressions are checked when the need is, at each type that flows into
+    /// the class, where the source's key and value types are in hand, as `g.map(f)` is checked
+    /// there (DESIGN.md sec:remap_law: the source is a family of the pattern's depth). The rest
+    /// of `x`, with each resolved class's type, is remapped as it stands, once
+    /// ([`Self::remap_alone`]). A class no type flows into, as a parameter of a generic
+    /// function no call instantiates, leaves the remap with the plan of its text alone.
+    // Complexity tradeoff: the classes are visited once each, with a visited set; the key
+    // expressions are checked once per check of the need, as each use of a generic function's
+    // parameter is, instead of once in the body: a remap of a parameter of a function called
+    // at c types is checked c times, the cost of checking it where it is written at each.
+    fn remap_of(&mut self, e: &'a Expr, x: &Ty) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let mut src = x.clone();
+        src.vars = VarSet::new();
+        let mut out = Ty::empty();
+        let mut todo: Vec<Arc<str>> = x.vars.iter().cloned().collect();
+        let mut seen = HashSet::new();
+        while let Some(v) = todo.pop() {
+            match self.class_root(&v) {
+                None => src = src.union(&Ty::dynamic()),
+                Some(r) if !seen.insert(r) => {}
+                Some(r) => match self.classes[r].resolved.clone() {
+                    Some(mut t) => {
+                        todo.extend(t.vars.iter().cloned());
+                        t.vars = VarSet::new();
+                        src = src.union(&t);
+                    }
+                    None => {
+                        self.remap_exprs.insert(e.span, e);
+                        let given = self.need(r, NeedKind::Remap(e.span), true, e.span);
+                        out = out.union(&given);
+                    }
+                },
+            }
+        }
+        let only_misses = src.pieces().into_iter().all(|p| match p {
+            Piece::Set(k) => (&k - &misses).is_empty(),
+            _ => false,
+        });
+        if !only_misses {
+            out = out.union(&self.remap_alone(e, &src));
+        }
+        out
+    }
+
+    /// The remap written at `at` checked as a need on `on`, the type that flowed into its
+    /// source's class ([`Self::remap_of`]).
+    fn remap_met(&mut self, at: Span, on: &Ty) -> Ty {
+        // Every need is recorded and checked by the checker of one program: `check` takes one
+        // unit, and name resolution rejects every import before the checker reads it, so no
+        // signature or need comes from another unit. A remap need is recorded only by
+        // `remap_of`, which first records its remap here.
+        let e = *(self.remap_exprs.get(&at))
+            .expect("a remap need is made only by `remap_of`, which records its remap");
+        self.remap_of(e, on)
+    }
+
+    /// The remap `e` checked with a source of type `src`, which holds no class at its outer
+    /// level: its key expressions, its type, and its plan in [`Info::remaps`].
+    ///
+    /// The remap elaborates to one term whatever type its source takes, so it keeps one plan.
+    /// The order of its levels, the levels kept, the folds and the leaf are read from its text
+    /// ([`Self::remap_text_plan`]) and are the same at every type; the witness, the catalog
+    /// entries that show the new keys kept apart, is found from the key types and may differ:
+    /// `(k mod 3, k)` uses `modulo` and `literal` on the keys 0 to 2, `literal` alone on 0 to 9.
+    /// The plan kept records every entry any check outside a trial used, each once, in the order
+    /// first used. The witness is a record only: the evaluator checks the collision rule on every
+    /// run whatever it says (`zed_kernel::term::Witness`). A trial's plan is not kept, as a
+    /// trial's errors are not.
+    fn remap_alone(&mut self, e: &'a Expr, src: &Ty) -> Ty {
+        let before = self.info.remaps.get(&e.span).cloned();
+        let (s, _) = self.remap_start(e);
+        let mut m = M::new();
+        m.ty(src.clone());
+        m.k(Frame::Remap(s));
+        self.drive(&mut m);
+        let after = self.info.remaps.get(&e.span).cloned();
+        let kept = match (before, after) {
+            (before, _) if self.trying => before,
+            (Some(mut b), Some(a)) => {
+                debug_assert!(
+                    (&b.order, b.kept, &b.folds, b.leaf) == (&a.order, a.kept, &a.folds, a.leaf),
+                    "a remap's plan but its witness is read from its text"
+                );
+                let mut entries: Vec<&str> =
+                    b.witness.split('+').filter(|w| !w.is_empty()).collect();
+                for w in a.witness.split('+').filter(|w| !w.is_empty()) {
+                    if !entries.contains(&w) {
+                        entries.push(w);
+                    }
+                }
+                b.witness = entries.join("+").into();
+                Some(b)
+            }
+            (b, a) => a.or(b),
+        };
+        match kept {
+            Some(p) => self.info.remaps.insert(e.span, p),
+            None => self.info.remaps.remove(&e.span),
+        };
+        m.take_ty()
     }
 
     /// `x.foldl(init, f)` or, with `right`, `x.foldr(f, init)`, `x` of type `x`, `init` of type
@@ -9063,6 +9226,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = Arg::of(self.bound(f, binds));
                 self.map_end(&on, f, span, *filter)
             }
+            NeedKind::Group { f, recv } => {
+                let f = Arg::of(self.bound(f, binds));
+                self.group_of(&on, *recv, f, span, false)
+            }
+            NeedKind::Remap(at) => self.remap_met(*at, &on),
             NeedKind::Reduce(op) => self.reduce_end(*op, &on, span),
             NeedKind::Fold { tys, right } => {
                 let init = self.bound(&tys[0], binds);
