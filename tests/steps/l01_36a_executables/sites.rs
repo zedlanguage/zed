@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use zed_tests::kernel::beyond_machine;
+use zed_tests::kernel::{beyond_machine, out_of_memory_repairs};
 use zedc::zir::lower::{lower, lower_sited};
 use zedc::zir::text::print;
 
@@ -76,8 +76,9 @@ fn a_number_too_large_is_placed_at_its_operation() {
              3.8 × 10^29 digits (1.6 × 10^29 bytes){}.\n  \
              [1] 3:24: the run stopped here\n      \
              3 |     m.stdout <- String(2^2^100 + n);\n        \
-               |                        ^^^^^^^^^^^\n",
-            beyond_machine()
+               |                        ^^^^^^^^^^^\n{}",
+            beyond_machine(),
+            out_of_memory_repairs("3:24")
         ),
     );
 }
@@ -111,8 +112,9 @@ fn a_power_too_large_is_named_as_written_with_its_size() {
             "FILE:4:36: Number too large for memory: `b ^ k` needs a number of about \
              3.6 × 10^20 digits (130 EiB){}.\n  [1] 4:36: the run stopped here\n      \
              4 |     m.stdout <- if k >= 0 {{ String(b ^ k) }} else {{ \"\" }};\n        \
-               |                                    ^^^^^\n",
-            beyond_machine()
+               |                                    ^^^^^\n{}",
+            beyond_machine(),
+            out_of_memory_repairs("4:36")
         ),
     );
 }
@@ -129,8 +131,9 @@ fn a_rational_power_too_large_is_named_as_written_with_its_size() {
             "FILE:4:36: Number too large for memory: `rat(b) ^ k` needs a number of about \
              3.6 × 10^20 digits (130 EiB){}.\n  [1] 4:36: the run stopped here\n      \
              4 |     m.stdout <- if k >= 0 {{ String(rat(b) ^ k) }} else {{ \"\" }};\n        \
-               |                                    ^^^^^^^^^^\n",
-            beyond_machine()
+               |                                    ^^^^^^^^^^\n{}",
+            beyond_machine(),
+            out_of_memory_repairs("4:36")
         ),
     );
 }
@@ -150,8 +153,9 @@ fn a_string_too_large_is_named_as_written_with_its_size() {
             "FILE:3:17: Text too large for memory: `String(2^(2^64) * b)` would write about \
              5.6 × 10^18 digits (4.8 EiB){}.\n  [1] 3:17: the run stopped here\n      \
              3 |     m.stdout <- String(2^(2^64) * b);\n        \
-               |                 ^^^^^^^^^^^^^^^^^^^^\n",
-            beyond_machine()
+               |                 ^^^^^^^^^^^^^^^^^^^^\n{}",
+            beyond_machine(),
+            out_of_memory_repairs("3:17")
         ),
     );
 }
@@ -182,8 +186,9 @@ fn lower_refused(line: usize, col: usize, call: &str, code: &str, under: &str) -
     format!(
         "FILE:{line}:{col}: String too large for memory: `{call}` would write a string of \
          8.0 EiB{}.\n  [1] {line}:{col}: the run stopped here\n      \
-         {line} | {code}\n      {pad} | {under}\n",
-        beyond_machine()
+         {line} | {code}\n      {pad} | {under}\n{}",
+        beyond_machine(),
+        out_of_memory_repairs(&format!("{line}:{col}"))
     )
 }
 

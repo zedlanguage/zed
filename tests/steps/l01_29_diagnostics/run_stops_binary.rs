@@ -86,12 +86,15 @@ fn both(name: &str, src: &str, args: &[&str]) -> (String, [(Option<i32>, String,
 }
 
 /// `text` with the amounts that depend on the machine and the moment written `_`: the memory
-/// in "this machine has 126 GiB of memory" and in "the run holds 25 MiB of 32 MiB".
+/// in "this machine has 126 GiB of memory", in "the run holds 25 MiB of 32 MiB", and in the
+/// limit a run out of memory is offered, a power of two below the machine's memory:
+/// "repair: `@limits(memory: 68719476736)` before `main`, 64 GiB, so the run stops".
 fn masked(text: &str) -> String {
     let mut out = text.to_string();
     for (before, after) in [
         ("this machine has ", " of memory"),
         ("the run holds ", " of "),
+        ("repair: `@limits(memory: ", ", so the run stops"),
     ] {
         if let Some(i) = out.find(before) {
             let from = i + before.len();
@@ -140,7 +143,14 @@ fn a_text_too_large_for_memory_stops_the_run() {
              of text; this machine has _ of memory.\n  \
              [1] 73:17: the run stopped here\n      \
              73 |     m.stdout <- String(a70);\n         \
-             |                 ^^^^^^^^^^^\n"
+             |                 ^^^^^^^^^^^\n  \
+             [2] 73:17: repair: `@limits(memory: _, so the run stops at the same size on every \
+             machine, with a message\n  \
+             [3] 73:17: repair: give the run a smaller input\n  \
+             [4] 73:17: repair: bound the input that sets the size where it is read, as `k: \
+             int[0..=30]`, so a larger input is refused where it is read\n  \
+             [5] 73:17: repair: build the program in the `preallocated` mode, which proves a \
+             bound on what the run holds\n"
         )
     });
 }
@@ -160,7 +170,10 @@ fn two_numbers_too_close_to_order_stop_the_run_past_its_memory_limit() {
              MiB of memory to compute it; the run holds _ of 32 MiB.\n  \
              [1] 7:24: the run stopped here\n      \
              7 |     m.stdout <- String(a < b);\n        \
-             |                        ^^^^^\n"
+             |                        ^^^^^\n  \
+             [2] 7:24: repair: `@limits(memory: 67108864)` before `main`, the limit doubled to \
+             64 MiB\n  \
+             [3] 7:24: repair: give the run a smaller input\n"
         )
     });
 }
@@ -180,7 +193,10 @@ fn two_numbers_too_large_to_compare_stop_the_run_past_its_memory_limit() {
              about 64 MiB of memory to compute it; the run holds _ of 64 MiB.\n  \
              [1] 7:24: the run stopped here\n      \
              7 |     m.stdout <- String(a == b);\n        \
-             |                        ^^^^^^\n"
+             |                        ^^^^^^\n  \
+             [2] 7:24: repair: `@limits(memory: 134217728)` before `main`, the limit doubled \
+             to 128 MiB\n  \
+             [3] 7:24: repair: give the run a smaller input\n"
         )
     });
 }
@@ -200,7 +216,10 @@ fn a_number_too_close_to_a_rounding_boundary_stops_the_run_past_its_memory_limit
              about 89 MiB of memory to compute it; the run holds _ of 64 MiB.\n  \
              [1] 6:24: the run stopped here\n      \
              6 |     m.stdout <- String(f64(q)) else \"\";\n        \
-             |                        ^^^^^^\n"
+             |                        ^^^^^^\n  \
+             [2] 6:24: repair: `@limits(memory: 134217728)` before `main`, the limit doubled \
+             to 128 MiB\n  \
+             [3] 6:24: repair: give the run a smaller input\n"
         )
     });
 }
@@ -246,4 +265,45 @@ fn a_read_the_record_lacks_stops_the_replay() {
             )
         )
     );
+}
+
+#[test]
+fn the_run_holds_its_values_not_the_memory_it_freed() {
+    // `a` holds 2^23592961 + 1, 23592962 bits (2.8 MiB), when `a < b` is refused. The message
+    // names what the run holds when the system refuses the step, not what it holds once the
+    // run has freed its values (19 KiB before MSG-run-stop-repairs), nor the system's count,
+    // which holds memory freed and kept for reuse. The figure is not exact
+    // (`zed_kernel::limits::held`), so the test asks for at least 2 MiB and less than the limit.
+    let src = with_args(
+        "@limits(memory: 33554432)",
+        "    a = if k >= 0 { 2 ^ k + 1 } else { 0 };\n    \
+         b = if k >= 0 { 2 ^ k } else { 0 };\n    m.stdout <- String(a < b);\n",
+    );
+    let (_, runs) = both("order_held", &src, &["23592961"]);
+    for (engine, (code, _, err)) in ["zedc run", "executable"].iter().zip(runs) {
+        assert_eq!(code, Some(3), "{engine}");
+        let held = err
+            .split_once("the run holds ")
+            .and_then(|(_, rest)| rest.split_once(" MiB of 32 MiB"))
+            .and_then(|(n, _)| n.parse::<f64>().ok());
+        assert!(
+            held.is_some_and(|h| (2.0..32.0).contains(&h)),
+            "{engine}: {err}"
+        );
+    }
+}
+
+#[test]
+fn a_run_out_of_memory_offers_a_limit_a_bound_and_the_preallocated_mode() {
+    let mut src = "main(m: MainArgs) {\n    a0 = m.args[0] else \"\";\n".to_string();
+    for i in 1..=70 {
+        src += &format!("    a{i} = (a{}, a{});\n", i - 1, i - 1);
+    }
+    src += "    m.stdout <- String(a70);\n}\n";
+    let (_, runs) = both("text_repair", &src, &["x"]);
+    for (engine, (code, _, err)) in ["zedc run", "executable"].iter().zip(runs) {
+        assert_eq!(code, Some(3), "{engine}");
+        assert!(err.contains("repair: `@limits(memory: "), "{engine}: {err}");
+        assert!(err.contains("preallocated"), "{engine}: {err}");
+    }
 }

@@ -1500,7 +1500,9 @@ impl<'a> Options<'a> {
 /// `file` when it has a name, in the layout of a diagnostic (DESIGN.md sec:diagnostics):
 /// `file:line:col: why`, then the source line with the expression the run stopped at marked
 /// under it; a refusal of memory under a limit of `main` names the limit
-/// ([`zed_kernel::value::under_memory_limit`]). `why` alone when it has no site. `zedc run` and an executable `zedc build` makes
+/// ([`zed_kernel::value::under_memory_limit`]), and a stop for memory offers its repairs
+/// ([`zed_kernel::value::memory_repairs`]). `why` and the repairs alone when it has no site.
+/// `zedc run` and an executable `zedc build` makes
 /// both print an error with it, so the two print the same text (plan row RT-sites).
 pub fn placed(
     text: &str,
@@ -1518,20 +1520,25 @@ pub fn placed(
     };
     // Under a memory limit of `main`, a refusal of memory names the limit, not the machine.
     let why = zed_kernel::value::under_memory_limit(why);
+    // A stop for memory offers its repairs, as code where they are code (MSG-run-stop-repairs).
+    let repairs = zed_kernel::value::memory_repairs(&why);
     let Some(at) = at else {
-        return why;
+        return repairs.iter().fold(why, |out, r| format!("{out}\n  {r}"));
     };
     let span = Span {
         start: at.start,
         end: at.end,
     };
+    let stopped = ast::Note {
+        span,
+        text: "the run stopped here".into(),
+    };
     let error = ast::Error {
         span,
         message: why,
-        notes: vec![ast::Note {
-            span,
-            text: "the run stopped here".into(),
-        }],
+        notes: std::iter::once(stopped)
+            .chain(repairs.into_iter().map(|text| ast::Note { span, text }))
+            .collect(),
         menu: String::new(),
         row: None,
     };

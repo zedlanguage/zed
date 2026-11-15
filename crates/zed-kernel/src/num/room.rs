@@ -139,12 +139,17 @@ pub fn fixed_room<R>(most: u64, f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// Whether the allocator gives `bits` bits at once, asked and freed at once.
+/// Whether the allocator gives `bits` bits at once, asked and freed at once; a refusal records
+/// what the run holds for its message ([`crate::limits::refused`]).
 fn given(bits: &BigUint) -> bool {
     let words = (bits + 63u32) >> 6u32;
-    words
+    let ok = words
         .to_usize()
-        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok())
+        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok());
+    if !ok {
+        crate::limits::refused();
+    }
+    ok
 }
 
 /// The machine's memory in bytes, `MemTotal` of `/proc/meminfo`, read once; `None` where that
@@ -167,21 +172,37 @@ pub fn machine_memory() -> Option<u64> {
 /// machine has 125 GiB` when neither is, as under a limit on the run's address space.
 ///
 /// Under a memory limit of `main` (DESIGN.md sec:ports), the limit is the bound the step
-/// passed, not the machine: `; the run holds 700 MiB of 1.0 GiB`, from the operating system's
-/// count of the run's data ([`crate::limits::held`]).
+/// passed, not the machine: `; the run holds 700 MiB of 1.0 GiB`, from the allocator's count
+/// of the bytes the run has in use ([`crate::limits::held`]). The operating system enforces the
+/// limit by its own count of the run's data ([`crate::limits::data_held`]), which holds memory
+/// freed and kept for reuse; where what the run holds and what the step asks for fit under the
+/// limit, that count is why the step was refused, and the message names it too: `; the run
+/// holds 10 MiB of 32 MiB, and the system counts 25 MiB for it, with memory freed and kept for
+/// reuse`. Without the allocator's count, the system's count alone is named.
 pub fn memory_clause(size: &BigUint, ask: &BigUint) -> String {
     if let Some((limit, _)) = crate::limits::memory() {
         let mut out = String::new();
         if ask > size {
             out = format!(", and about {} of memory to compute it", bytes_text(ask));
         }
-        let limit = bytes_text(&BigUint::from(limit));
-        out += &match crate::limits::held() {
-            Some(held) => format!(
-                "; the run holds {} of {limit}",
-                bytes_text(&BigUint::from(held))
+        let data = crate::limits::data_held().map(BigUint::from);
+        let limit = BigUint::from(limit);
+        let of = bytes_text(&limit);
+        out += &match (crate::limits::held().map(BigUint::from), data) {
+            (Some(held), Some(data)) if &held + ask.max(size) <= limit && data > held => format!(
+                "; the run holds {} of {of}, and the system counts {} for it, with memory freed \
+                 and kept for reuse",
+                bytes_text(&held),
+                bytes_text(&data)
             ),
-            None => format!("; the run may hold {limit}"),
+            (Some(held), _) => format!("; the run holds {} of {of}", bytes_text(&held)),
+            (None, Some(data)) => {
+                format!(
+                    "; the system counts {} of {of} for the run",
+                    bytes_text(&data)
+                )
+            }
+            (None, None) => format!("; the run may hold {of}"),
         };
         return out;
     }

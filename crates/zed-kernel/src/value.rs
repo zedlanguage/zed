@@ -2869,6 +2869,64 @@ pub fn is_fault(why: &str) -> bool {
         .any(|t| first.starts_with(t) || first.contains(&format!(": {t}: ")))
 }
 
+/// The repairs, each a `repair:` note's text, of `why`, a run's headline after
+/// [`under_memory_limit`] (DESIGN.md sec:diagnostics). Past the memory limit of `main`: the
+/// limit doubled, and a smaller input. Out of the machine's memory: a memory limit of `main`,
+/// so the run stops at the same size on every machine; a smaller input; a bound on the input
+/// that sets the size; and the `preallocated` mode. None for any other error. O(length of
+/// `why`).
+///
+/// DESIGN writes the limit in its prefixed unit, `@limits(memory: 64 with units("MiB"))`; this
+/// zedc does not compile units yet (they join at L12), so the repair is written in bytes, the
+/// form it compiles, with the prefixed amount in words (plan row MSG-limit-repair-units).
+pub fn memory_repairs(why: &str) -> Vec<String> {
+    let input = "repair: give the run a smaller input".to_string();
+    if why.starts_with(MEMORY_LIMIT_PASSED) {
+        let Some((limit, _)) = crate::limits::memory() else {
+            return vec![input];
+        };
+        let doubled = BigUint::from(limit) << 1u32;
+        return vec![
+            format!(
+                "repair: `@limits(memory: {doubled})` before `main`, the limit doubled to {}",
+                bytes_text(&doubled)
+            ),
+            input,
+        ];
+    }
+    if !MEMORY_TITLES.iter().any(|t| why.starts_with(t)) {
+        return Vec::new();
+    }
+    // A limit is reached before the machine runs out wherever the machine has that much memory
+    // free for the run, so the run stops with the limit's message at the same size on every
+    // such machine; not proved for a machine whose other processes hold the rest. The largest
+    // power of two of bytes not above this machine's memory is a round amount that can be
+    // reached here; any smaller one is as good a repair.
+    let limit = match crate::num::machine_memory() {
+        Some(m) if m > 0 => {
+            let b = 1u64 << m.ilog2();
+            format!(
+                "repair: `@limits(memory: {b})` before `main`, {}, so the run stops at the same \
+                 size on every machine, with a message",
+                bytes_text(&BigUint::from(b))
+            )
+        }
+        _ => "repair: `@limits(memory: b)` before `main`, with `b` the bytes the run may hold, so \
+              the run stops at the same size on every machine, with a message"
+            .to_string(),
+    };
+    vec![
+        limit,
+        input,
+        "repair: bound the input that sets the size where it is read, as `k: int[0..=30]`, so a \
+         larger input is refused where it is read"
+            .to_string(),
+        "repair: build the program in the `preallocated` mode, which proves a bound on what the \
+         run holds"
+            .to_string(),
+    ]
+}
+
 impl fmt::Display for KernelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -3034,6 +3092,20 @@ mod bench;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stop_for_memory_offers_repairs_and_no_other_error_does() {
+        // No test of this crate sets a memory limit of `main`, so the limit's repairs (which
+        // read the limit in force) are checked end to end, in run_stops_binary.rs.
+        let out = memory_repairs(&format!(
+            "{TEXT_TOO_LARGE}: `String(a70)` would write 7.0 ZiB"
+        ));
+        assert_eq!(out.len(), 4, "{out:?}");
+        assert!(out[0].starts_with("repair: `@limits(memory: "), "{out:?}");
+        assert!(out.iter().all(|r| r.starts_with("repair: ")), "{out:?}");
+        assert!(out[3].contains("`preallocated`"), "{out:?}");
+        assert!(memory_repairs("Division by zero: `a / b`").is_empty());
+    }
 
     #[test]
     fn a_value_is_56_bytes() {

@@ -204,7 +204,10 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
 /// memory of the value's copy of it (`Value::str`); else the error of `op`, before anything is
 /// written.
 fn reserved(op: &'static str, bytes: usize) -> Result<String, KernelError> {
-    let refused = || KernelError::StringCopyTooLarge { op, bytes };
+    let refused = || {
+        crate::limits::refused();
+        KernelError::StringCopyTooLarge { op, bytes }
+    };
     let mut out = String::new();
     out.try_reserve_exact(bytes).map_err(|_| refused())?;
     room(BigUint::from(bytes) << 3u32, BigUint::from(bytes) << 3u32).map_err(|_| refused())?;
@@ -388,7 +391,10 @@ fn print(x: &Value) -> Result<Value, KernelError> {
         .and_then(|n| usize::try_from(n).ok())
         .ok_or_else(refused)?;
     let mut out = String::new();
-    out.try_reserve_exact(bytes).map_err(|_| refused())?;
+    out.try_reserve_exact(bytes).map_err(|_| {
+        crate::limits::refused();
+        refused()
+    })?;
     {
         let ask = need.widest.max(BigUint::from(bytes) << 3u32);
         room(ask.clone(), ask)

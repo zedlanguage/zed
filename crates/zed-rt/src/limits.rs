@@ -32,7 +32,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use zed_kernel::limits::{MainLimits, data_bytes, duration_text, set_memory};
+use zed_kernel::limits::{MainLimits, count_in_use, data_bytes, duration_text, set_memory};
 
 /// The exit status of a run stopped by a fault (DESIGN.md sec:ports).
 pub const FAULT: c_int = 3;
@@ -314,7 +314,25 @@ fn memory(b: u64) -> Result<(), String> {
     install(libc::SIGABRT, on_abort)?;
     MEMORY_LIMIT.store(b, Ordering::Relaxed);
     set_memory(b, base);
+    count_in_use(in_use, in_use());
     set_limit(libc::RLIMIT_DATA, base.saturating_add(b), None, "memory")
+}
+
+/// The bytes the C library's allocator has in use, in its heaps and in blocks it mapped on
+/// their own (`uordblks + hblkhd` of `mallinfo2`, over every arena), which the Rust allocator
+/// of a run and of `zedc run` is: what a message under the memory limit names as what the run
+/// holds ([`zed_kernel::limits::held`]), where the operating system's count holds memory freed
+/// and kept for reuse too. Asked only when a message is written, once per run.
+// Complexity tradeoff: `mallinfo2` walks the free lists of each arena, O(f) for f free blocks,
+// against O(1) for reading a count the allocator keeps at every allocation, which would cost
+// each allocation of every run a counter update to make one message exact. Trigger: a step
+// refused under the memory limit, which ends the run. Test:
+// `l01_29_diagnostics::run_stops_binary::the_run_holds_its_values_not_the_memory_it_freed`.
+fn in_use() -> u64 {
+    #[expect(unsafe_code, reason = "mallinfo2 is a libc call")]
+    // SAFETY: mallinfo2 takes no argument and returns its counts by value.
+    let m = unsafe { libc::mallinfo2() };
+    u64::try_from(m.uordblks.saturating_add(m.hblkhd)).unwrap_or(u64::MAX)
 }
 
 /// The handler of `SIGABRT` under a memory limit: Rust's allocator aborts the process when the

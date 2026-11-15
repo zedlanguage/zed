@@ -381,3 +381,29 @@ pub fn beyond_machine() -> String {
         })
         .unwrap_or_default()
 }
+
+/// The repairs a run out of memory is offered, as the notes `[2]` to `[5]` of its message at
+/// `at`, `line:col` (DESIGN.md sec:diagnostics, row "Out of memory in a run"): a memory limit
+/// of `main`, the largest power of two of bytes not above this machine's memory, or `b` where
+/// that memory is unknown; a smaller input; a bound on the input; the `preallocated` mode.
+pub fn out_of_memory_repairs(at: &str) -> String {
+    let limit = match zed_kernel::num::machine_memory() {
+        Some(m) if m > 0 => {
+            let b = 1u64 << m.ilog2();
+            format!(
+                "`@limits(memory: {b})` before `main`, {},",
+                zed_kernel::num::bytes_text(&b.into())
+            )
+        }
+        _ => "`@limits(memory: b)` before `main`, with `b` the bytes the run may hold,".into(),
+    };
+    format!(
+        "  [2] {at}: repair: {limit} so the run stops at the same size on every machine, with a \
+         message\n  \
+         [3] {at}: repair: give the run a smaller input\n  \
+         [4] {at}: repair: bound the input that sets the size where it is read, as `k: \
+         int[0..=30]`, so a larger input is refused where it is read\n  \
+         [5] {at}: repair: build the program in the `preallocated` mode, which proves a bound on \
+         what the run holds\n"
+    )
+}

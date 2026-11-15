@@ -285,6 +285,7 @@ impl Text {
             Tree::Node { .. } | Tree::Deep { .. } => {
                 let mut out = String::new();
                 out.try_reserve_exact(self.len()).map_err(|_| {
+                    crate::limits::refused();
                     let bits = BigUint::from(self.len()) << 3u32;
                     TooLarge {
                         size: bits.clone(),

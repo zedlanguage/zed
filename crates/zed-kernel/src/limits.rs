@@ -10,7 +10,7 @@
 //! (step S.1f). The checker turns a written number of seconds into a [`Duration`] itself
 //! (`seconds` in zedc-check's `check/limits.rs`).
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 /// The limits written before `main`; every field `None` when none is.
@@ -148,11 +148,81 @@ pub fn data_bytes() -> Option<u64> {
     kib.checked_mul(1024)
 }
 
-/// The bytes the run holds under the memory limit in force: the process's data less what it
-/// held before the run; `None` when no limit is in force or the count cannot be read.
-pub fn held() -> Option<u64> {
+/// The bytes of data the operating system counts for the run under the memory limit in force:
+/// the process's data less what it held before the run; `None` when no limit is in force or
+/// the count cannot be read. The limit is enforced by this count, which holds memory the
+/// allocator freed and kept for reuse, and leaves out memory the run reuses that the compiler
+/// of `zedc run` freed before the run began, so it can be far from what the run holds
+/// ([`held`]): 25 MiB for two numbers of 2.8 MiB, 32 KiB for a number of 4 MiB
+/// (MSG-run-stop-repairs). The count when the system last refused the run memory, if it has
+/// ([`refused`]).
+pub fn data_held() -> Option<u64> {
+    match *at_refusal() {
+        Some((_, data)) => data,
+        None => data_now(),
+    }
+}
+
+/// [`data_held`] now.
+fn data_now() -> Option<u64> {
     let (_, base) = memory()?;
     Some(data_bytes()?.saturating_sub(base))
+}
+
+/// What the run held, [`held`] and [`data_held`], when the system last refused it memory under
+/// the memory limit; `None` until it has.
+static AT_REFUSAL: Mutex<Option<(Option<u64>, Option<u64>)>> = Mutex::new(None);
+
+/// [`AT_REFUSAL`], locked; a lock a panic left poisoned still holds the counts.
+fn at_refusal() -> std::sync::MutexGuard<'static, Option<(Option<u64>, Option<u64>)>> {
+    AT_REFUSAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Records what the run holds now, under the memory limit in force, as what it held when the
+/// system refused it the memory a step asked for: the message is written once the error has
+/// reached the run's caller, and by then the step's operands and everything the run built are
+/// freed, so a count read then names the memory of a run that has ended (MSG-run-stop-repairs:
+/// 19 KiB for a run that held two numbers of 2.8 MiB). Called where the kernel asks the system
+/// for memory and is refused; nothing without a limit. A message about a later refusal of a
+/// size no machine holds, which asks the system nothing, names this count too.
+pub fn refused() {
+    if memory().is_some() {
+        *at_refusal() = Some((held_now(), data_now()));
+    }
+}
+
+/// The allocator's count of the bytes the process has in use, and that count when the memory
+/// limit was set; set once, by [`count_in_use`].
+static IN_USE: OnceLock<(fn() -> u64, u64)> = OnceLock::new();
+
+/// Records `count`, the allocator's count of the bytes the process has in use, and `base`, its
+/// value when the run began, for [`held`]. The runtime sets it with the memory limit, since it
+/// asks the C library's allocator, which takes `unsafe` code this crate does not have.
+pub fn count_in_use(count: fn() -> u64, base: u64) {
+    let _ = IN_USE.set((count, base));
+}
+
+/// The bytes the run holds under the memory limit in force: the allocator's count of the bytes
+/// in use less that count when the run began ([`count_in_use`]); `None` when no limit is in
+/// force or the runtime registered no count. Memory freed and kept for reuse is not counted.
+/// Not proved exact: under `zedc run` the compiler's own data that is freed during the run is
+/// taken off the run's bytes, so the figure may be lower than the run's values by that amount.
+/// The runtime's own count of its values is plan row MAIN-limits-count. The count when the
+/// system last refused the run memory, if it has ([`refused`]).
+pub fn held() -> Option<u64> {
+    match *at_refusal() {
+        Some((held, _)) => held,
+        None => held_now(),
+    }
+}
+
+/// [`held`] now.
+fn held_now() -> Option<u64> {
+    memory()?;
+    let (count, base) = IN_USE.get()?;
+    Some(count().saturating_sub(*base))
 }
 
 #[cfg(test)]
