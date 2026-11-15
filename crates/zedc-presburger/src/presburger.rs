@@ -86,6 +86,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::mem;
+use std::ops;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -111,6 +112,7 @@ mod one_row;
 mod pairs;
 #[cfg(test)]
 mod pick_wide_tests;
+mod placing;
 mod refusal;
 mod row_domains;
 mod row_sums;
@@ -121,6 +123,7 @@ use forced::{Facts, Forced};
 pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
 use nesting::nesting;
+pub use placing::{Placing, placed};
 pub use refusal::{Each, One, Refusal, Split, Tie, Written, free_names, names_in};
 pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
 pub use slack::ROW_ORDER_SCAN;
@@ -9523,10 +9526,31 @@ fn local_refute(acc: &[Con], near: &Near, extra: &[Con]) -> bool {
     let seed: BTreeSet<&Atom> = extra.iter().flat_map(|c| c.lin.terms.keys()).collect();
     let mut ids = BTreeSet::new();
     let mut bounds = Vec::new();
-    for a in &seed {
-        if let Some(v) = near.by_atom.get(*a) {
-            let within = |i: &usize| acc[*i].lin.terms.keys().all(|b| seed.contains(b));
-            ids.extend(v.iter().copied().filter(within));
+    // Complexity tradeoff: the constraints whose atoms all lie in `seed` were found by reading
+    // every constraint listed under each atom of `seed` (`near.by_atom`), O(sum of their
+    // degrees) per call; on a chain of `k` arms `min(y, c_j) < -1`, `y` is read by `k` bounds
+    // `y >= m_j` and each of the `k` disjuncts read all of them, Θ(k^2)
+    // (FAIL-relational-if-chain-growth). Now each is found under its two least atoms
+    // ([`Near::pairs`]): for each atom `a` of `seed`, the smaller of `seed` and the atoms paired
+    // with `a` is walked and the other looked up, O(sum over `a` of min(|seed|, pairs of `a`)
+    // · log) plus the candidates read, never more than before up to the log. A constraint
+    // whose atoms all lie in `seed` has its two least atoms there, so it is found, and once:
+    // the set `ids` is the one the old scan built, and the answer is unchanged.
+    for &a in &seed {
+        if let Some(by_second) = near.pairs.get(a) {
+            let mut take = |v: &Vec<usize>| {
+                let within = |i: &usize| acc[*i].lin.terms.keys().all(|b| seed.contains(b));
+                ids.extend(v.iter().copied().filter(within));
+            };
+            if by_second.len() <= seed.len() {
+                (by_second.iter())
+                    .filter(|(b, _)| seed.contains(b))
+                    .for_each(|(_, v)| take(v));
+            } else {
+                (seed.range::<&Atom, _>((ops::Bound::Excluded(a), ops::Bound::Unbounded)))
+                    .filter_map(|b| by_second.get(*b))
+                    .for_each(&mut take);
+            }
         }
         near.bounds(a, &mut bounds);
     }
@@ -9669,132 +9693,141 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     // Reads the disjunction at `i` and the disjunctions below the disjuncts it takes, given the
     // constraints taken projected onto its atoms (`None`: not known), and returns the
     // constraints it takes. The model is a point of the constraints taken throughout.
-    let mut one = |i: usize, kernel: Option<Vec<Con>>| -> Result<Vec<Con>, Refusal> {
-        let mut added: Vec<Con> = Vec::new();
-        // The disjunctions below, read before the next of `batch`, as a queue of all of them
-        // would read them; the projection is of the atoms of the first alone.
-        let mut queue: Vec<&[Rc<Parts>]> = vec![batch[i]];
-        let mut kernel = kernel.map(Linked::of);
-        'next: while let Some(ds) = queue.pop() {
-            let kernel = kernel.take();
-            if !valid && kernel.is_none() {
-                model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
-                stamp = fresh_stamp();
-                valid = true;
-            }
-            // A disjunct that holds at the model is taken with the disjunct that holds first in
-            // each disjunction below it, which reading those disjunctions one by one would
-            // take, the model being unchanged; so the nest below is read once, not again at
-            // each level.
-            for d in ds.iter().filter(|_| valid) {
-                // A disjunct taken already under this stamp, with the disjuncts below it, holds,
-                // and reading it again would take the same parts, whose constraints are all
-                // among those taken ([`Linked::meet`] keeps a constraint taken again once): so
-                // it is passed over, and a disjunct shared by many disjunctions is read once
-                // while the values stand.
-                if d.held.get() == stamp {
-                    continue 'next;
-                }
-                held.clear();
-                let holds = if deep {
-                    d.witness(&model, stamp, &mut held)
-                } else {
-                    held.push(d);
-                    d.cons.iter().all(|c| c.holds_linear(&model))
-                };
-                if holds {
-                    for h in &held {
-                        h.held.set(stamp);
-                        take(&h.cons, &mut acc, &mut near);
-                        added.extend(h.cons.iter().cloned());
-                    }
-                    took.extend(held.iter().copied());
-                    continue 'next;
-                }
-            }
-            let mut taken: Option<(&Parts, Model)> = None;
-            let mut why = Refusal::Disjuncts;
-            for d in ds.iter().filter(|_| valid) {
-                // A disjunct whose constraints hold at the model, though the disjunctions below
-                // it may not, is taken with the model unchanged, so that the parts found not to
-                // hold below it are not read again.
-                if d.cons.iter().all(|c| c.holds_linear(&model)) {
-                    taken = Some((d, Model::new()));
-                    break;
-                }
-                if let Some(m) = local_repair(&acc.cons, &near, &model, &d.cons) {
-                    taken = Some((d, m));
-                    break;
-                }
-            }
-            for d in ds {
-                if taken.is_some() {
-                    break;
-                }
-                // Asked of the constraints taken projected onto the disjunction's atoms, which
-                // have a point with the disjunct exactly when the constraints taken do, and
-                // which give one there; the model takes the projection's point on the
-                // disjunct's group, whose atoms are kept. When the solver refuses that, of the
-                // groups of the constraints taken, as before.
-                if let Some(k) = &kernel {
-                    let mut cs = k.around(&d.cons);
-                    cs.extend(d.cons.iter());
-                    match solve(&cs, false) {
-                        Ok(None) => continue,
-                        Ok(Some(_)) => {
-                            taken = Some((d, Model::new()));
-                            valid = false;
-                            break;
-                        }
-                        Err(_) => {}
-                    }
-                }
+    let mut one =
+        |i: usize, kernel: &mut dyn FnMut() -> Option<Vec<Con>>| -> Result<Vec<Con>, Refusal> {
+            let mut added: Vec<Con> = Vec::new();
+            // The disjunctions below, read before the next of `batch`, as a queue of all of them
+            // would read them; the projection is of the atoms of the first alone, made when the
+            // model is unknown or a disjunct is not decided at it.
+            let mut queue: Vec<&[Rc<Parts>]> = vec![batch[i]];
+            let mut ask = Some(kernel);
+            'next: while let Some(ds) = queue.pop() {
+                let mut ask = ask.take();
+                let mut kernel = None;
                 if !valid {
+                    kernel = ask.take().and_then(|k| k()).map(Linked::of);
+                }
+                if !valid && kernel.is_none() {
                     model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
                     stamp = fresh_stamp();
                     valid = true;
                 }
-                let mut cs = acc.around(&d.cons);
-                cs.extend(d.cons.iter());
-                match solve(&cs, true) {
-                    Ok(Some(m)) => {
+                // A disjunct that holds at the model is taken with the disjunct that holds first in
+                // each disjunction below it, which reading those disjunctions one by one would
+                // take, the model being unchanged; so the nest below is read once, not again at
+                // each level.
+                for d in ds.iter().filter(|_| valid) {
+                    // A disjunct taken already under this stamp, with the disjuncts below it,
+                    // holds, and reading it again would take the same parts, whose constraints
+                    // are all among those taken ([`Linked::meet`] keeps a constraint taken again
+                    // once): so it is passed over, and a disjunct shared by many disjunctions is
+                    // read once while the values stand.
+                    if d.held.get() == stamp {
+                        continue 'next;
+                    }
+                    held.clear();
+                    let holds = if deep {
+                        d.witness(&model, stamp, &mut held)
+                    } else {
+                        held.push(d);
+                        d.cons.iter().all(|c| c.holds_linear(&model))
+                    };
+                    if holds {
+                        for h in &held {
+                            h.held.set(stamp);
+                            take(&h.cons, &mut acc, &mut near);
+                            added.extend(h.cons.iter().cloned());
+                        }
+                        took.extend(held.iter().copied());
+                        continue 'next;
+                    }
+                }
+                let mut taken: Option<(&Parts, Model)> = None;
+                let mut why = Refusal::Disjuncts;
+                for d in ds.iter().filter(|_| valid) {
+                    // A disjunct whose constraints hold at the model, though the disjunctions below
+                    // it may not, is taken with the model unchanged, so that the parts found not to
+                    // hold below it are not read again.
+                    if d.cons.iter().all(|c| c.holds_linear(&model)) {
+                        taken = Some((d, Model::new()));
+                        break;
+                    }
+                    if let Some(m) = local_repair(&acc.cons, &near, &model, &d.cons) {
                         taken = Some((d, m));
                         break;
                     }
-                    Ok(None) => {}
-                    Err(r) => why = r,
+                }
+                for d in ds {
+                    if taken.is_some() {
+                        break;
+                    }
+                    // Asked of the constraints taken projected onto the disjunction's atoms, which
+                    // have a point with the disjunct exactly when the constraints taken do, and
+                    // which give one there; the model takes the projection's point on the
+                    // disjunct's group, whose atoms are kept. When the solver refuses that, of the
+                    // groups of the constraints taken, as before.
+                    if let Some(k) = ask.take() {
+                        kernel = k().map(Linked::of);
+                    }
+                    if let Some(k) = &kernel {
+                        let mut cs = k.around(&d.cons);
+                        cs.extend(d.cons.iter());
+                        match solve(&cs, false) {
+                            Ok(None) => continue,
+                            Ok(Some(_)) => {
+                                taken = Some((d, Model::new()));
+                                valid = false;
+                                break;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    if !valid {
+                        model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
+                        stamp = fresh_stamp();
+                        valid = true;
+                    }
+                    let mut cs = acc.around(&d.cons);
+                    cs.extend(d.cons.iter());
+                    match solve(&cs, true) {
+                        Ok(Some(m)) => {
+                            taken = Some((d, m));
+                            break;
+                        }
+                        Ok(None) => {}
+                        Err(r) => why = r,
+                    }
+                }
+                let Some((d, m)) = taken else {
+                    return Err(why);
+                };
+                // A change of any value drops every mark, not only the marks of the parts that
+                // mention it, yet no part is read again below each level: a part is marked by the
+                // first walk that reaches it and fails, at the disjunction `D` popped then. The
+                // disjunctions popped after `D` and before the one that holds the part are those of
+                // the disjuncts taken on the way down, read last to first as that walk read them;
+                // each was found to hold by that walk, and each disjunct on the way has its
+                // constraints holding, so it is taken with the model unchanged. A disjunct taken
+                // earlier in its disjunction leaves the part unread. So the model is the same when
+                // the part is reached again, and its mark holds. Test `l01_39_scope_relations::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
+                // counts the parts tested ([`parts_tested`]) (COMPLEXITY S31).
+                if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
+                    stamp = fresh_stamp();
+                }
+                model.extend(m);
+                take(&d.cons, &mut acc, &mut near);
+                took.push(d);
+                added.extend(d.cons.iter().cloned());
+                if deep {
+                    queue.extend(d.ors.iter().map(Vec::as_slice));
                 }
             }
-            let Some((d, m)) = taken else {
-                return Err(why);
-            };
-            // A change of any value drops every mark, not only the marks of the parts that
-            // mention it, yet no part is read again below each level: a part is marked by the
-            // first walk that reaches it and fails, at the disjunction `D` popped then. The
-            // disjunctions popped after `D` and before the one that holds the part are those of
-            // the disjuncts taken on the way down, read last to first as that walk read them;
-            // each was found to hold by that walk, and each disjunct on the way has its
-            // constraints holding, so it is taken with the model unchanged. A disjunct taken
-            // earlier in its disjunction leaves the part unread. So the model is the same when
-            // the part is reached again, and its mark holds. Test `l01_39_scope_relations::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
-            // counts the parts tested ([`parts_tested`]) (COMPLEXITY S31).
-            if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
-                stamp = fresh_stamp();
-            }
-            model.extend(m);
-            take(&d.cons, &mut acc, &mut near);
-            took.push(d);
-            added.extend(d.cons.iter().cloned());
-            if deep {
-                queue.extend(d.ors.iter().map(Vec::as_slice));
-            }
-        }
-        Ok(added)
-    };
+            Ok(added)
+        };
     if asks {
-        by_halves(rows, &keep, &mut one)?;
+        by_halves_lazy(rows, &keep, &mut one)?;
     } else {
-        (0..batch.len()).try_for_each(|i| one(i, None).map(drop))?;
+        (0..batch.len()).try_for_each(|i| one(i, &mut || None).map(drop))?;
     }
     if !valid {
         model = solve(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
@@ -9823,6 +9856,10 @@ fn take(cons: &[Con], acc: &mut Linked, near: &mut Near) {
 #[derive(Clone, Default)]
 struct Near {
     by_atom: BTreeMap<Atom, Vec<usize>>,
+    /// The constraints of `by_atom` under their least atom and then their second least, so
+    /// that [`local_refute`] finds those whose atoms lie in a set without reading every
+    /// constraint of each atom.
+    pairs: BTreeMap<Atom, BTreeMap<Atom, Vec<usize>>>,
     /// The least and the greatest value of an atom; a least above the greatest leaves none.
     one: BTreeMap<Atom, (Option<Int>, Option<Int>)>,
 }
@@ -9833,6 +9870,11 @@ impl Near {
         let Some((a, lo, hi)) = one_bound(c) else {
             for a in c.lin.terms.keys() {
                 self.by_atom.entry(a.clone()).or_default().push(i);
+            }
+            let mut least = c.lin.terms.keys();
+            if let (Some(a), Some(b)) = (least.next(), least.next()) {
+                let by_second = self.pairs.entry(a.clone()).or_default();
+                by_second.entry(b.clone()).or_default().push(i);
             }
             return;
         };
@@ -10558,6 +10600,29 @@ fn by_halves<E>(
     keep: &[BTreeSet<Atom>],
     mut leaf: impl FnMut(usize, Option<Vec<Con>>) -> Result<Vec<Con>, E>,
 ) -> Result<(), E> {
+    by_halves_lazy(rows, keep, |i, k| leaf(i, k()))
+}
+
+/// [`by_halves`] with each leaf given a function that makes its projection, so that a leaf
+/// that needs none costs none: a range is projected when a leaf of it first asks, from its
+/// half's system as it then stands. A leaf that asks gets the projection [`by_halves`] would
+/// give it; one asked for after leaves that did not ask returned rows is that of the same
+/// system, those rows being projected with it rather than added after, and so has the same
+/// points on the leaf's atoms.
+// Complexity tradeoff: naive version, [`by_halves`] making every projection, O((m + k) log k)
+// on a system whose projections stay small and up to O(m k) where [`shadow`] keeps a core of
+// the system whole; [`settle`] and [`pick_by`] read a projection only for a disjunct that the
+// point and the local tests leave open, and on the S22 chain `cross_dead` at `k = 64` the
+// about 240 small calls of [`settle`] read no projection and of the three over 62
+// disjunctions two read 62 and 61 and one none, yet every projection was made. Now a range
+// is projected at most once, when a leaf first asks, so the work is that of the ranges above
+// the leaves that ask, never more than before: `cross_dead` 600.6 M to 508.1 M instructions at `k = 32`,
+// 1,336 M to 1,092 M at 64 (PERF-s22-cross-dead-first-runs).
+fn by_halves_lazy<E>(
+    rows: Vec<Con>,
+    keep: &[BTreeSet<Atom>],
+    mut leaf: impl FnMut(usize, &mut dyn FnMut() -> Option<Vec<Con>>) -> Result<Vec<Con>, E>,
+) -> Result<(), E> {
     let n = keep.len();
     if n == 0 {
         return Ok(());
@@ -10566,8 +10631,7 @@ fn by_halves<E>(
         && let Some(mut dw) = slack::DisjointWide::of_cons(&rows)
     {
         for i in 0..n {
-            let k = dw.project_keep(&keep[i]);
-            let added = leaf(i, k)?;
+            let added = leaf(i, &mut || dw.project_keep(&keep[i]))?;
             if !added.is_empty() && !dw.tighten_unary(&added) {
                 let mut fallback_rows = dw.to_cons();
                 fallback_rows.extend(added);
@@ -10584,7 +10648,7 @@ fn by_halves<E>(
 fn by_halves_general<E>(
     rows: Vec<Con>,
     keep: &[BTreeSet<Atom>],
-    mut leaf: impl FnMut(usize, Option<Vec<Con>>) -> Result<Vec<Con>, E>,
+    mut leaf: impl FnMut(usize, &mut dyn FnMut() -> Option<Vec<Con>>) -> Result<Vec<Con>, E>,
 ) -> Result<(), E> {
     let n = keep.len();
     if n == 0 {
@@ -10608,32 +10672,60 @@ fn by_halves_general<E>(
         let s = shadow(&near, &|a| atoms.contains(a), false)?;
         Some(linked_to(s, atoms.iter().copied()))
     };
-    // The ranges still to run after the one running, each with its system (`None`: unknown),
-    // to which the rows returned meanwhile are added; innermost last.
-    let mut open: Vec<(usize, usize, Option<Vec<Con>>)> = Vec::new();
-    let mut cur = Some((0, n, Some(rows)));
+    // The ranges from the whole down to the leaf running, each with its system once projected
+    // (`Some(None)`: unknown), to which the rows returned since are added. A range not yet
+    // projected reads its half's system when a leaf asks; `root` is the system of the whole
+    // until then, the rows returned meanwhile added to it.
+    struct Range {
+        l: usize,
+        r: usize,
+        sys: Option<Option<Vec<Con>>>,
+    }
+    let range = |l, r| Range { l, r, sys: None };
+    let mut root = Some(rows);
+    let mut path: Vec<Range> = vec![range(0, n)];
     loop {
-        if let Some((l, r, rows)) = cur.take() {
-            let k = rows.and_then(|rows| project(rows, l, r));
-            if r - l == 1 {
-                let added = leaf(l, k)?;
-                if !added.is_empty() {
-                    for (_, _, rows) in &mut open {
-                        if let Some(rows) = rows {
-                            rows.extend(added.iter().cloned());
-                        }
-                    }
-                }
-            } else {
-                let m = l + (r - l) / 2;
-                cur = Some((l, m, k.clone()));
-                open.push((m, r, k));
-                continue;
+        let top = path.last().expect("a range runs");
+        let (l, r) = (top.l, top.r);
+        if r - l > 1 {
+            path.push(range(l, l + (r - l) / 2));
+            continue;
+        }
+        let added = leaf(l, &mut || {
+            // The deepest range projected already, and each below it projected in turn.
+            let from = path
+                .iter()
+                .rposition(|g| g.sys.is_some())
+                .map_or(0, |j| j + 1);
+            for j in from..path.len() {
+                let rows = match j {
+                    0 => root.take(),
+                    _ => path[j - 1].sys.clone().flatten(),
+                };
+                path[j].sys = Some(rows.and_then(|rows| project(rows, path[j].l, path[j].r)));
+            }
+            path.last().and_then(|g| g.sys.clone()).flatten()
+        })?;
+        if !added.is_empty() {
+            let systems = (path.iter_mut()).filter_map(|g| g.sys.as_mut().and_then(Option::as_mut));
+            for rows in root.iter_mut().chain(systems) {
+                rows.extend(added.iter().cloned());
             }
         }
-        match open.pop() {
-            Some(next) => cur = Some(next),
-            None => return Ok(()),
+        // Up to the first range whose second half is still to run.
+        loop {
+            let Some(done) = path.pop() else {
+                return Ok(());
+            };
+            match path.last() {
+                Some(up) if up.l == done.l => {
+                    let up_r = up.r;
+                    path.push(range(done.r, up_r));
+                    break;
+                }
+                Some(_) => {}
+                None => return Ok(()),
+            }
         }
     }
 }
@@ -13255,9 +13347,12 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
             let rows: Vec<Con> = (base.around_atoms(keep.iter().flatten()).into_iter())
                 .cloned()
                 .collect();
-            // Tests the disjunction at `i`, given the base projected onto its atoms (`None`:
-            // not known), and returns the constraints it adds to the base.
-            let mut one = |i: usize, kernel: Option<Vec<Con>>| -> Result<Vec<Con>, ()> {
+            // Tests the disjunction at `i`, given a function that makes the base projected onto
+            // its atoms (`None`: not known), asked only when a disjunct needs it, and returns
+            // the constraints it adds to the base.
+            let mut one = |i: usize,
+                           kernel: &mut dyn FnMut() -> Option<Vec<Con>>|
+             -> Result<Vec<Con>, ()> {
                 let ds = std::mem::take(&mut todo[i]);
                 let n = ds.len();
                 // With `search`, whether a disjunct of this disjunction holds at the point.
@@ -13266,7 +13361,8 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         ds.iter().any(|d| d.cons.iter().all(|c| c.holds_linear(pt)))
                     });
                 // The projection is of a base with a point; one is known while `point` is.
-                let kernel = kernel.filter(|_| point.is_some()).map(Linked::of);
+                let mut ask = point.is_some().then_some(kernel);
+                let mut kernel: Option<Linked> = None;
                 let mut live: Vec<Rc<Parts>> = ds
                     .into_iter()
                     .filter(|d| {
@@ -13305,6 +13401,9 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                         // Asked of the base projected onto the disjunction's atoms, which has a
                         // point with the disjunct exactly when the base has one; when the
                         // solver refuses that, of the base's groups, as before.
+                        if let Some(k) = ask.take() {
+                            kernel = k().map(Linked::of);
+                        }
                         if let Some(k) = &kernel {
                             let mut cs = k.around(&d.cons);
                             cs.extend(d.cons.iter());
@@ -13375,9 +13474,9 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                 }
             };
             let done = if asks {
-                by_halves(rows, &keep, |i, k| one(next + i, k))
+                by_halves_lazy(rows, &keep, |i, k| one(next + i, k))
             } else {
-                (next..end).try_for_each(|i| one(i, None).map(drop))
+                (next..end).try_for_each(|i| one(i, &mut || None).map(drop))
             };
             if done.is_err() {
                 return Ok(None);

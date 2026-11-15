@@ -2308,6 +2308,7 @@ fn linear(
         defs: tr.written(0),
         bit_ands: tr.bit_ands(0),
     };
+    let placings = tr.placings();
     let go = || -> Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)> {
         let within = |d: &Domains| -> Formula {
             let parts = d
@@ -2316,7 +2317,11 @@ fn linear(
                 .collect();
             Formula::and(parts)
         };
-        let whole = Formula::and(vec![rel.defined(), within(dom), rel.body.clone()]);
+        // Each total definition in the part of the body that reads its variable, so that a nest
+        // of disjunctions does not carry the definitions of the levels below each level
+        // ([`presburger::placed`], FAIL-relational-if-chain-growth).
+        let (beside, body) = presburger::placed(&rel.body, &placings);
+        let whole = Formula::and(vec![beside, within(dom), body]);
         let mut mentioned = rel.body.atoms();
         for (_, _, f) in &rel.defs {
             mentioned.extend(f.atoms());
@@ -2458,6 +2463,41 @@ impl Tr {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The definitions as [`presburger::placed`] places them, a quotient and its remainder as
+    /// one, each marked total where some value of its variables satisfies it for every value
+    /// of the other atoms. Proof for each that is so marked: a quotient and remainder by a
+    /// constant `c` other than 0 (checked here) are those of Euclidean division, which exist
+    /// for every dividend; an `if` holds `g && x == a` or `!g && x == b`, and one of `g` and
+    /// `!g` holds; `min`, `max` and `abs` hold with `x` the value of the operation, which meets
+    /// both rows of the hull and the equation of the case whose condition holds. Any other
+    /// definition is not marked: a quotient by a term holds products a premise may tie, a
+    /// `bitAnd` is only bounded, the cases of a summary are not shown to cover every point,
+    /// and a claimed call holds its callee's relation. O(definitions).
+    fn placings(&self) -> Vec<presburger::Placing> {
+        let mut out: Vec<presburger::Placing> = Vec::new();
+        for (n, what, def) in &self.defs {
+            if what.remainder()
+                && let Some(last) = out.last_mut()
+                && last.own.last().copied() == n.checked_sub(1)
+            {
+                last.own.push(*n);
+                last.def = Formula::and(vec![last.def.clone(), def.clone()]);
+                continue;
+            }
+            let total = match what {
+                What::ByConstant("div", _, c) => !c.is_zero(),
+                What::If(..) | What::Abs(_) | What::Min(..) | What::Max(..) => true,
+                _ => false,
+            };
+            out.push(presburger::Placing {
+                own: vec![*n],
+                def: def.clone(),
+                total,
+            });
+        }
+        out
     }
 
     /// Undoes the definitions from `mark` on, and the pairs and claims among them.
@@ -9342,17 +9382,31 @@ impl<'m, 't> Walk<'m, 't> {
                 self.chain(Prim::Or, t, env).await
             }
             Node::If(g, a, b) => {
-                // The formula of a name is kept whole, as for `&&` below, and a claimed call's
-                // parts are added ([`Walk::claimed`]).
-                let mut named = [g, a, b].map(|t| self.whole(t, env));
+                // The formula of a guard that is a name is kept whole, as for `&&` below, and
+                // each arm's formula is kept whole; a claimed call's parts are added
+                // ([`Walk::claimed`]).
+                // Complexity tradeoff: an arm's formula is kept whole whether or not the arm is
+                // a name. Flattening it into the conjunction with the guard, as before
+                // FAIL-relational-if-chain-growth for an arm that is not a name, copied its
+                // parts: in a chain `if g1 { false } else { if g2 { false } else { ... } }`
+                // the `j`-th `if` copied the `k - j` conjuncts below it and the memo kept each
+                // copy, `Θ(k^2)` parts and bytes for `k` `if`s (18.8 times the bytes for 8
+                // times the `if`s at 512 and 4096); kept whole, `O(1)` new parts per `if`,
+                // `O(k)` in all. A kept part is not tightened against the constraints beside
+                // it, which changes no point. Test
+                // `l01_25_preimage_catalog::bench::s22::relational_pairs_chain_scales_at_512`,
+                // COMPLEXITY.md FAIL-relational-if-chain-growth.
+                let named = self.whole(g, env);
                 let g = self.formula(g, env).await?;
                 let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
-                for (i, f) in [&g, &fa, &fb].into_iter().enumerate() {
-                    named[i] = named[i] && !self.claimed(f);
-                }
+                let keep = [
+                    named && !self.claimed(&g),
+                    !self.claimed(&fa),
+                    !self.claimed(&fb),
+                ];
                 Some(Formula::or(vec![
-                    Formula::and_keeping(vec![g.clone(), fa], |i| named[i]),
-                    Formula::and_keeping(vec![Formula::negate(g), fb], |i| i == 1 && named[2]),
+                    Formula::and_keeping(vec![g.clone(), fa], |i| keep[i]),
+                    Formula::and_keeping(vec![Formula::negate(g), fb], |i| i == 1 && keep[2]),
                 ]))
             }
             Node::Prim(p, args) if p.arity().is_none_or(|n| n == args.len()) => {
@@ -9445,11 +9499,34 @@ impl<'m, 't> Walk<'m, 't> {
     /// comparison is the constant its formula is, and the formula is exact there; no point
     /// where the comparison fails is claimed, since the decision requires that it never does.
     ///
+    /// The two settings in which the decision is read on fewer points than the first box are
+    /// exact for the same reason. A part of the box the exact search halves to is read by a
+    /// run of its own, begun by [`Tx::start_from`] with an empty memo of forward values, so the
+    /// arm is decided over that part alone; the runs over classes of remainders
+    /// ([`split_residues`]) keep the forward values from one class to the next ([`Kept`]), but
+    /// the forward transfer never reads the class ([`Walk::reads_mod`]), so each kept value
+    /// holds every value of the term over the whole part, a superset of the class's points. A
+    /// summary read in the context [`Tx::open`] makes has its parameters over sets that hold
+    /// every argument it is called with, and is read again only for a call of the same
+    /// argument sets ([`Summary`] holds them), so a decision there holds at every call. In each
+    /// setting the set the decision is made over holds every point the formula is read at,
+    /// which is all the proof above needs. Tests:
+    /// `l01_25_preimage_catalog::s22::an_arm_decided_on_a_part_of_the_box_keeps_the_points_of_the_interpreter`
+    /// and `s22::an_arm_decided_in_a_summary_keeps_the_points_of_the_interpreter`, against the
+    /// interpreter at every point (TEST-preimage-decided-arm-open-summary).
+    ///
     /// Complexity tradeoff: an `if` is split only where the other operand translates, so a
     /// chain of `k` `if`s compared with a translated term makes `k` comparisons, each read
-    /// once by the memo, `O(k)` terms and a formula of `O(k)` parts, the size of the chain.
-    /// Splitting both operands where neither translates would make `k * m` comparisons for
-    /// chains of `k` and `m` arms; that is given up, and such a comparison has no formula, as
+    /// once by the memo, `O(k)` terms and a formula of `O(k)` parts, the size of the chain:
+    /// each arm's formula is a conjunct kept whole ([`Formula::and_keeping`]). Flattening
+    /// it into the conjunction with the guard, as before FAIL-relational-if-chain-growth,
+    /// copied the rest of the chain's conjuncts at each `if` whose other arm is `false`, and
+    /// kept each copy in the memo: `k - j` parts at the `j`-th `if`, `Θ(k^2)` in all, 19.8
+    /// times the bytes for 8 times the pairs on `y{j} < x{j}` at 512 and 4096
+    /// (`bench::s22::relational_pairs_chain_scales_at_512`). A kept part is not tightened
+    /// against the constraints beside it, which changes no point. Splitting both operands
+    /// where neither translates would make `k * m` comparisons for chains of `k` and `m`
+    /// arms; that is given up, and such a comparison has no formula, as
     /// before. The range decision is one [`Walk::fwd`] per arm, memoized per term, so `O(1)`
     /// beyond the walks of the arm's parts. Deciding every comparison that does not translate
     /// by its range, not only an arm's, was tried and given up: it walks the range of each
@@ -9459,9 +9536,10 @@ impl<'m, 't> Walk<'m, 't> {
     /// and 4096, past the limit of 10.5. Tests:
     /// `l01_25_preimage_catalog::s22::an_exact_case_of_min_beside_a_square_keeps_the_relation_before`,
     /// `s22::a_chain_of_ifs_beside_a_square_has_a_relation` and two other chains, and
-    /// `bench::s22::a_chain_of_ifs_beside_a_square_compares_in_linear_time` (8.6 times the
-    /// instructions, 9.8 the bytes, at 64 and 512); COMPLEXITY.md row
-    /// FAIL-s22-exact-min-square-relation.
+    /// `bench::s22::a_chain_of_ifs_beside_a_square_compares_in_linear_time` (8.4 times the
+    /// instructions, 8.1 the bytes, at 512 and 4096; 17.4 the bytes there before
+    /// FAIL-relational-if-chain-growth); COMPLEXITY.md rows
+    /// FAIL-s22-exact-min-square-relation and FAIL-relational-if-chain-growth.
     async fn compare_untranslated(
         &'m self,
         t: Tid,
@@ -9501,9 +9579,12 @@ impl<'m, 't> Walk<'m, 't> {
         }
         let fy = arms.pop()?;
         let fx = arms.pop()?;
+        // Each arm's formula is kept whole (`Formula::and_keeping`), not flattened into the
+        // conjunction with the guard: the else arm of a chain is the comparison of the rest of
+        // the chain, whose formula holds a part for each `if` below.
         Some(Formula::or(vec![
-            Formula::and(vec![fg.clone(), fx]),
-            Formula::and(vec![Formula::negate(fg), fy]),
+            Formula::and_keeping(vec![fg.clone(), fx], |i| i == 1),
+            Formula::and_keeping(vec![Formula::negate(fg), fy], |i| i == 1),
         ]))
     }
 
