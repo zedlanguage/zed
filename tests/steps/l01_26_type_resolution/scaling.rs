@@ -189,33 +189,31 @@ pub(super) fn overloads(n: usize) -> String {
     format!("p(f: {ov}) = 0;\nq(g: {ov}) = p(f: g);\n")
 }
 
-/// Like [`overloads`], but each arrow of `q`'s function takes its atom or `#z`, so no arrow
-/// of it equals the arrow of the slot it fits.
+/// Like [`overloads`], but each arrow of the slot returns its atom or `#z`, so no arrow of
+/// `q`'s function equals the arrow of the slot it fits. The wider part is in the result: a
+/// domain is exact (FAIL-types-fn-param-exact-domain), so an arrow whose parameter took `#z`
+/// as well would permit a value the slot does not.
 pub(super) fn wider_overloads(n: usize) -> String {
     let ov = |wide: &str| {
         (0..n)
-            .map(|i| format!("((x: #a{i}{wide}) -> #b{i})"))
+            .map(|i| format!("((x: #a{i}) -> #b{i}{wide})"))
             .collect::<Vec<_>>()
             .join(" & ")
     };
-    format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(""), ov(" | #z"))
+    format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(" | #z"), ov(""))
 }
 
-/// Like [`wider_overloads`], but every arrow of `q`'s function takes `#c` as well as its own
-/// atom, and each arrow of the slot takes `#c` alone: every arrow of the function offers what
-/// each arrow of the slot needs, and only the results tell them apart.
+/// Like [`wider_overloads`], but every arrow of `q`'s function and of the slot takes `#c`:
+/// every arrow of the function offers what each arrow of the slot needs, and only the results
+/// tell them apart.
 pub(super) fn shared_overloads(n: usize) -> String {
-    let ov = |param: &dyn Fn(usize) -> String| {
+    let ov = |wide: &str| {
         (0..n)
-            .map(|i| format!("((x: {}) -> #b{i})", param(i)))
+            .map(|i| format!("((x: #c) -> #b{i}{wide})"))
             .collect::<Vec<_>>()
             .join(" & ")
     };
-    format!(
-        "p(f: {}) = 0;\nq(g: {}) = p(f: g);\n",
-        ov(&|_| "#c".into()),
-        ov(&|i| format!("#c | #a{i}"))
-    )
+    format!("p(f: {}) = 0;\nq(g: {}) = p(f: g);\n", ov(" | #z"), ov(""))
 }
 
 /// A unit whose function `p` has a slot written as an overload of `n` arrows nested `n` deep
@@ -427,6 +425,7 @@ pub(super) fn functions_holding_one(
             arrows: vec![Arrow {
                 params: vec![o.clone()],
                 result: Ty::tuple(vec![o.clone(), h.clone()]),
+                partial: false,
             }],
             own: [name(o)].into(),
             held: [name(h)].into(),

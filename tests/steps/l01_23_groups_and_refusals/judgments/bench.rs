@@ -165,7 +165,7 @@ fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
     use zedc::check::read::parse_type;
     use zedc::check::ty::Ty;
     let sides = |m: usize, extra: &str| {
-        let f = |i: usize| format!("((x{i}: int | #z) -> int)");
+        let f = |i: usize| format!("((x{i}: int) -> int)");
         let h = |i: usize| format!("((x{i}: int) -> int | #z)");
         let left: Vec<String> = (0..m)
             .flat_map(|i| [format!("({}, #a{i})", f(i)), format!("({}, #b{i})", h(i))])
@@ -209,7 +209,7 @@ fn functions_at_one_place_meeting_one_by_one_are_paired_in_linear_time() {
     use zedc::check::read::parse_type;
     use zedc::check::ty::Ty;
     let sides = |m: usize| {
-        let f = |i: usize| format!("((x{i}: int | #z) -> int)");
+        let f = |i: usize| format!("((x{i}: int) -> int)");
         let h = |i: usize| format!("((x{i}: int) -> int | #z)");
         let left: Vec<String> = (0..m)
             .flat_map(|i| [format!("({}, #a{i})", f(i)), format!("({}, #b{i})", h(i))])

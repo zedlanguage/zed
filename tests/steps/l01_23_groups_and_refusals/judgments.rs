@@ -799,11 +799,7 @@ fn functions_equal_on_both_sides_at_one_place_meeting_one_by_one_are_decided() {
 fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() {
     use zedc::check::read::parse_type;
     let pairing = "the checker does not try every way of pairing them";
-    let (f, g, h) = (
-        "(int -> int)",
-        "(int -> int | #a)",
-        "((int | String) -> int)",
-    );
+    let (f, g, h) = ("(int -> int)", "(int -> int | #a)", "(int -> 1)");
     let s = "(String -> String)";
     // (side compared, type expected, true, refused when false)
     let cases = [
@@ -890,7 +886,8 @@ fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() 
 #[test]
 fn equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no() {
     use zedc::check::read::parse_type;
-    let f = "(int | #z) -> int";
+    // A domain is exact (DESIGN.md sec:type_language), so `f` fits `h` by its result alone.
+    let f = "(int) -> int";
     let h = "(int) -> int | #z";
     assert!(parse_type(f).unwrap().subtype(&parse_type(h).unwrap()));
     let a = parse_type(&format!("({f}, #a) | ({h}, #b)")).unwrap();
@@ -912,13 +909,16 @@ fn equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no() {
 #[test]
 fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
     use zedc::check::read::parse_type;
-    // Fits, by `subtype` on one function each side: F <: G <: H, F <: K <: H, S alone.
+    // Fits, by `subtype` on one function each side: F <: G <: H, F <: K <: H, S alone, and D
+    // alone: a domain is exact (DESIGN.md sec:type_language), so D, of a wider domain than G,
+    // fits neither G nor any other.
     let pool = [
-        "(int | #z) -> int",
+        "(int) -> 1",
         "(int) -> int",
         "(int) -> int | #z",
-        "(int | #z) -> int | #z",
+        "(int) -> 1 | #z",
         "(String) -> String",
+        "(int | #z) -> int",
     ];
     let fits: Vec<Vec<bool>> = (pool.iter())
         .map(|f| {
@@ -929,6 +929,7 @@ fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
         })
         .collect();
     assert!(fits[0][2] && !fits[2][0] && !fits[4][0] && !fits[0][4]);
+    assert!((0..5).all(|g| !fits[5][g] && !fits[g][5]));
     // A tuple: its functions, by number in `pool`, and its tag.
     type Row = (Vec<usize>, usize);
     let (mut rng, seed) = Rng::fresh("unions of tuples with functions");
@@ -996,11 +997,7 @@ fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
 fn functions_at_one_place_are_decided_by_their_pairing() {
     use zedc::check::read::parse_type;
     let pairing = "the checker does not try every way of pairing them";
-    let (f, g, h) = (
-        "(int -> int)",
-        "(int -> int | #a)",
-        "((int | String) -> int)",
-    );
+    let (f, g, h) = ("(int -> int)", "(int -> int | #a)", "(int -> 1)");
     let s = "(String -> String)";
     // (side compared, type expected, true)
     let cases = [
@@ -1048,7 +1045,7 @@ fn star_pairs_decide_as_every_pair_in_each_kind_of_spot() {
         "(int -> int)",
         "(int -> int | #a)",
         "(int -> int | #b)",
-        "((int | String) -> int)",
+        "(int -> 1)",
     );
     let check = |members: &[Ty], other: &Ty, holds: bool, label: &str| {
         let t = Ty::union_all(members);
@@ -1304,8 +1301,7 @@ fn the_unknown_checked_is_every_value_not_a_value_of_its_own() {
 ///
 /// The false judgments compare parameters neither of which holds the other, so they are false
 /// whichever way a parameter is compared. Parameters of which one holds the other, `D` and
-/// `(#_, 1)`, are row FAIL-types-fn-param-exact-domain: the checker takes `(#_, 1) -> int` to
-/// be a subtype of `D -> int`, against the exact domain of `K -> V`.
+/// `(#_, 1)`, are in `a_function_type_has_an_exact_domain` (FAIL-types-fn-param-exact-domain).
 #[test]
 fn a_set_of_every_atom_nested_in_a_parameter_type_is_compared_as_a_set() {
     let d_param = "(((#_, 1) \\ (#a, 1)) -> int, (#_, 2) \\ (#a, 2))";

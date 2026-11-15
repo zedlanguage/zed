@@ -1093,3 +1093,19 @@ fn finding_the_boxes_of_nested_meets_scales() {
         assert!(nested[&n].finite())
     });
 }
+
+/// [`split_row`] at `n` and `8n`, built before the runs: the row is within the rows it splits
+/// into, proved by splitting it at its first column (COMPLEXITY.md K118). Unsplit, the row met
+/// each of the `n` rows, and each pair met each shape of the column, `n²` pairs, and the proof
+/// failed, leaving the difference to decide: 1.7 s at n = 320 (found by
+/// FAIL-types-fn-param-exact-domain, through `l01_26_type_resolution`'s
+/// `one_variable_takes_n_tuple_shapes_in_linear_time`).
+#[test]
+fn a_row_of_a_union_of_shapes_is_split_in_linear_time() {
+    let n = 2000;
+    let pairs = scaling::inputs(n, |m| split_row(m, 7));
+    scaling::check("a row of a union of n shapes within its rows", n, |m| {
+        let (row, rows) = &pairs[&m];
+        assert_eq!(row.subtype_verdict(rows), Verdict::Empty);
+    });
+}

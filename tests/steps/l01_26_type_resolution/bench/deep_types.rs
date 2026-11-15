@@ -106,8 +106,11 @@ fn plain(a: &Ty, b: &Ty) -> bool {
         && (a.fns.iter().zip(&b.fns)).all(|(x, y)| {
             x.params == y.params
                 && x.arrows.len() == y.arrows.len()
-                && (x.arrows.iter().zip(&y.arrows))
-                    .all(|(p, q)| all(&p.params, &q.params) && plain(&p.result, &q.result))
+                && (x.arrows.iter().zip(&y.arrows)).all(|(p, q)| {
+                    all(&p.params, &q.params)
+                        && plain(&p.result, &q.result)
+                        && p.partial == q.partial
+                })
                 && x.bounds == y.bounds
                 && x.data == y.data
                 && x.word == y.word

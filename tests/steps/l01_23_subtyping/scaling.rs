@@ -1184,4 +1184,44 @@ fn a_few_nested_meets_are_finite_and_listed() {
     }
 }
 
+/// A row whose first column is a union of `n` tuple shapes, `((0,) | … | (n-1,), 7)`, and the
+/// rows it splits into, `((0,), 7) | … | ((n-1,), 7)`, the second with `last` in place of 7 at
+/// its last row. The proof of `<:` splits the first at its column (COMPLEXITY.md K118).
+fn split_row(n: usize, last: usize) -> (Type, Type) {
+    let one = |i: usize| Type::tuple(vec![lit(i)]);
+    let column = Type::union_all((0..n).map(one));
+    let rows = (0..n).map(|i| Type::tuple(vec![one(i), lit(if i + 1 == n { last } else { 7 })]));
+    (Type::tuple(vec![column, lit(7)]), Type::union_all(rows))
+}
+
+/// Small instance of `bench::a_row_of_a_union_of_shapes_is_split_in_linear_time`: the row is
+/// within the rows it splits into, and the rows within it; with one row changed it is not,
+/// and the value left out is found.
+#[test]
+fn a_row_of_a_union_of_shapes_is_within_the_rows_it_splits_into() {
+    for n in [2, 3, 10] {
+        let (row, rows) = split_row(n, 7);
+        assert_eq!(row.subtype_verdict(&rows), Verdict::Empty, "n = {n}");
+        assert_eq!(rows.subtype_verdict(&row), Verdict::Empty, "n = {n}");
+        let (row, rows) = split_row(n, 8);
+        assert_eq!(row.subtype_verdict(&rows), Verdict::Inhabited, "n = {n}");
+        assert!(!row.subtype(&rows), "n = {n}");
+    }
+}
+
+/// A first column of shapes of two lengths is split into both, and one holding a scalar
+/// beside its shapes is left whole: the verdicts are those of the sets.
+#[test]
+fn a_row_of_shapes_of_two_lengths_or_a_scalar_is_decided() {
+    let one = |i: usize| Type::tuple(vec![lit(i)]);
+    let two = Type::tuple(vec![lit(1), lit(2)]);
+    let row = |c: Type| Type::tuple(vec![c, lit(7)]);
+    let mixed = row(&one(0) | &two);
+    assert!(mixed.subtype(&(&row(one(0)) | &row(two.clone()))));
+    assert!(!mixed.subtype(&(&row(one(0)) | &row(one(1)))));
+    let scalar = row(&one(0) | &lit(5));
+    assert!(scalar.subtype(&(&row(one(0)) | &row(lit(5)))));
+    assert!(!scalar.subtype(&(&row(one(0)) | &row(lit(6)))));
+}
+
 mod bench;

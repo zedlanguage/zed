@@ -1184,7 +1184,41 @@ impl Simulation {
             }
             let whole: BTreeSet<&Row> = ys.iter().collect();
             let mut by_name = None;
+            let mut split = Vec::new();
             for x in &xs {
+                // A row whose first column no row of `b` shares, and holds tuples only, is
+                // split there into one row per tuple shape of the column ([`tuple_rows`]): a
+                // product distributes over a union in one component, so the rows hold the
+                // values `x` holds, and each must lie under a row of `b`. A row under one row
+                // of `b` has each of its rows under it, so the proof finds no less.
+                //
+                // Complexity tradeoff (COMPLEXITY.md K118): unsplit, `((0,) | … | (n-1,),)`
+                // against `((0,),) | … | ((n-1,),)` met every row of `b`, and each pair
+                // `((0,) | … | (n-1,), (i,))` met each shape of the column: n² pairs, and the
+                // proof failed, leaving the difference to decide (1.7 s at n = 320). Split,
+                // each row shares its first column with one row of `b`: O(n log n). Only
+                // against two rows of `b` or more: against one there is no choice, each row of
+                // the column meets that one row, and the check would cost each nested level
+                // (`l01_26_type_resolution::bench::deep_ops`). Given up: only the first column
+                // is split, and only when it holds tuples alone.
+                if *len > 0
+                    && ys.len() > 1
+                    && !first.contains_key(&x[0])
+                    && let Some(shapes) = tuple_rows(&x[0])
+                {
+                    split.extend(shapes.into_iter().map(|s| {
+                        let head = Type::tuple(s.to_vec());
+                        Row::new(
+                            std::iter::once(head)
+                                .chain(x[1..].iter().cloned())
+                                .collect(),
+                        )
+                    }));
+                    continue;
+                }
+                split.push(x.clone());
+            }
+            for x in &split {
                 // A row of `b` equal to `x` holds it, whatever the other rows need.
                 if whole.contains(x) {
                     continue;
@@ -1216,6 +1250,32 @@ impl Simulation {
         }
         Some(needs)
     }
+}
+
+/// The rows of the tuple shapes `t` is the union of, when it holds two or more and nothing
+/// else: no scalar, atom, struct or function, and no tuple of every length. Exact: each tuple
+/// part is the union of the rows [`Part::union_rows`] gives, or none is given.
+fn tuple_rows(t: &Type) -> Option<Vec<Row>> {
+    let p = t.p();
+    let none = Lits::default();
+    let scalars = p.bools != 0
+        || [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
+            .iter()
+            .any(|l| **l != none);
+    if scalars
+        || p.structs
+        || p.morphisms.is_leaf() != Some(false)
+        || p.atoms.cofinite
+        || !p.atoms.names.is_empty()
+        || p.tuples.rest
+    {
+        return None;
+    }
+    let mut out = Vec::new();
+    for f in p.tuples.lens.values() {
+        out.extend(f.union_rows()?);
+    }
+    (out.len() > 1).then_some(out)
 }
 
 /// The rows of the right side of a [`Simulation`] pair filed by the atom names of each column,

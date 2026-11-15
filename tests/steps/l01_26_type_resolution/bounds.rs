@@ -319,16 +319,18 @@ pub(super) fn many_bounds(n: usize) -> String {
 }
 
 /// A signature of `n` parameters, parameter `i` taking `(Bi,) | (T,)` with `Bi` bounded to
-/// `int | f64` and `T` free, one variable for all (written at least twice, so `n` is 2 or more), returning `(B{n-1},)`; and the signature that passes `(String,)`
-/// to each parameter but the last, `(int,)` to the last, and returns `result`. A `(String,)`
-/// is held by `(T,)` alone, since `Bi`'s bound does not hold `String`
-/// (FAIL-types-overload-bounded-tuple), so the first fits the second exactly when `result`
-/// holds `(int,)`.
+/// `int | f64` and `T` free, one variable for all (written at least twice, so `n` is 2 or more), returning `(B{n-1},)`; and the signature that passes `(int,) | (String,)`
+/// to each parameter and returns `result`. A `(String,)` is held by `(T,)` alone, since `Bi`'s
+/// bound does not hold `String` (FAIL-types-overload-bounded-tuple), and `(int,)` by `(Bi,)`,
+/// so the instance of the first at `T = String`, each `Bi = int`, takes exactly the
+/// parameters of the second, and fits it exactly when `result` holds `(int,)`. A domain is
+/// exact (FAIL-types-fn-param-exact-domain): with `(String,)` alone passed to a parameter,
+/// the instance would also take `(int,)` or `(f64,)` there, which the second does not.
 pub(super) fn bounded_or_free(n: usize, result: &str) -> (String, String) {
     let ps: Vec<String> = (0..n).map(|i| format!("x{i}: (B{i},) | (T,)")).collect();
     let bs: Vec<String> = (0..n).map(|i| format!("B{i} in int | f64")).collect();
     let qs: Vec<String> = (0..n)
-        .map(|i| format!("x{i}: ({},)", if i + 1 == n { "int" } else { "String" }))
+        .map(|i| format!("x{i}: (int,) | (String,)"))
         .collect();
     (
         format!("({}) -> (B{},) for {}", ps.join(", "), n - 1, bs.join(", ")),
@@ -337,7 +339,8 @@ pub(super) fn bounded_or_free(n: usize, result: &str) -> (String, String) {
 }
 
 /// `bounded_or_free` at small sizes: each `(String,)` skips the bounded shape for the free one,
-/// and the last parameter binds `B{n-1}` to `int`, which the result `(f64,)` does not hold.
+/// and each `(int,)` binds `Bi` to `int`, `B{n-1}` among them, which the result `(f64,)` does
+/// not hold.
 #[test]
 fn a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds() {
     use zedc::check::ty::{fits_sig, why_unfit};

@@ -2365,10 +2365,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             Arrow {
                 params: tys,
                 result: plain,
+                partial: false,
             },
             Arrow {
                 params: wide,
                 result,
+                partial: false,
             },
         ];
         sig
@@ -9617,6 +9619,7 @@ fn arrows(cs: &[Carrier], n: usize, result: impl Fn(Carrier) -> Ty) -> Vec<Arrow
         .map(|&c| Arrow {
             params: vec![Ty::carrier(c); n],
             result: result(c),
+            partial: false,
         })
         .collect()
 }
@@ -9752,11 +9755,13 @@ fn op_sig(op: Operator) -> Sig {
                     Arrow {
                         params: vec![Ty::carrier(Rat), Ty::carrier(Int)],
                         result: div0(Rat),
+                        partial: false,
                     },
                     // `f32 ^ int`, the one arrow between two carriers (DESIGN.md L1.18).
                     Arrow {
                         params: vec![Ty::carrier(F32), Ty::carrier(Int)],
                         result: same(F32),
+                        partial: false,
                     },
                 ],
             ]
@@ -9820,11 +9825,13 @@ fn word_sig(w: &str) -> Arc<Sig> {
     let arrow = |from: Carrier, to: Carrier, fails: &[&str]| Arrow {
         params: vec![Ty::carrier(from)],
         result: Ty::carrier(to).union(&a(fails)),
+        partial: false,
     };
     let arrows = match w {
         "String" => vec![Arrow {
             params: vec![Ty::dynamic()],
             result: Ty::carrier(Str),
+            partial: false,
         }],
         "int" => vec![
             arrow(Int, Int, &[]),
@@ -9871,10 +9878,12 @@ fn word_sig(w: &str) -> Arc<Sig> {
         "utf8" => vec![Arrow {
             params: vec![Ty::carrier(Str)],
             result: bytes(),
+            partial: false,
         }],
         "fromUtf8" => vec![Arrow {
             params: vec![bytes()],
             result: Ty::carrier(Str).union(&a(&["badUtf8"])),
+            partial: false,
         }],
         _ => vec![arrow(Str, Str, &[])],
     };
@@ -9982,6 +9991,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
         arrows: vec![Arrow {
             params: vec![Ty::carrier(from); names.len()],
             result: Ty::carrier(Carrier::Int),
+            partial: false,
         }],
         bounds: BTreeMap::new(),
         data: false,
@@ -10815,9 +10825,13 @@ fn port(key: Carrier, io: bool) -> Ty {
     }
     Ty::func(Arc::new(Sig {
         params: positional(1),
+        // A port guarantees no key: a family of lines holds the keys from 0 to its length,
+        // which the type does not know, and a path may name no file. So its arrow is partial,
+        // `int ->? V` or `Path ->? V` (DESIGN.md sec:ports, `Files = Path ->? ...`).
         arrows: vec![Arrow {
             params: vec![Ty::carrier(key)],
             result,
+            partial: true,
         }],
         bounds: BTreeMap::new(),
         data: key == Carrier::Int,
@@ -11645,8 +11659,8 @@ impl<'a> Denote<'a> {
                 a.diff(&b)
             }
             // A partial map `K ->? V` promises no key, so a lookup is `V | #notFound`
-            // (DESIGN.md sec:type_language); this checker keeps one domain per function, so
-            // that is the result of its arrow.
+            // (DESIGN.md sec:type_language): that is the result of its arrow, which is marked
+            // partial, permitting the keys of `K` and guaranteeing none.
             TypeKind::Arrow {
                 params, partial, ..
             } => {
@@ -11664,7 +11678,14 @@ impl<'a> Denote<'a> {
                         range: None,
                     })
                     .collect();
-                self.sig(names, tys, result)
+                self.sig_of(
+                    names,
+                    vec![Arrow {
+                        params: tys,
+                        result,
+                        partial: *partial,
+                    }],
+                )
             }
             // A morphism `L .. U -> V` answers `V` on a key of its guarantee `L`, and only
             // `V | #notFound` on a key of its permission `U` (DESIGN.md sec:type_language, lookup
@@ -11687,25 +11708,31 @@ impl<'a> Denote<'a> {
                     range: None,
                 }];
                 let missed = result.union(&Ty::set(KType::atom("notFound")));
+                // The arrow of the permission is partial: it permits the keys of `U` and
+                // guarantees none, so the guarantee of the whole is `L` (sec:type_language).
                 let arrows = if lower == upper {
                     vec![Arrow {
                         params: vec![upper],
                         result,
+                        partial: false,
                     }]
                 } else if lower == Ty::empty() {
                     vec![Arrow {
                         params: vec![upper],
                         result: missed,
+                        partial: true,
                     }]
                 } else {
                     vec![
                         Arrow {
                             params: vec![lower],
                             result,
+                            partial: false,
                         },
                         Arrow {
                             params: vec![upper],
                             result: missed,
+                            partial: true,
                         },
                     ]
                 };
@@ -11731,24 +11758,15 @@ impl<'a> Denote<'a> {
             .params = false;
     }
 
-    /// The signature of the function type opened last, with the bounds of the variables it
-    /// is the home of.
-    fn sig(&mut self, names: Vec<SParam>, tys: Vec<Ty>, result: Ty) -> Ty {
-        self.sig_of(
-            names,
-            vec![Arrow {
-                params: tys,
-                result,
-            }],
-        )
-    }
-
-    /// [`Self::sig`], of the arrows `arrows`, each with a type for each of `names`.
+    /// The signature of the function type opened last, of the arrows `arrows`, each with a
+    /// type for each of `names`, with the bounds of the variables it is the home of.
     fn sig_of(&mut self, names: Vec<SParam>, arrows: Vec<Arrow>) -> Ty {
         let open = self.open.pop().expect("each function type is opened first");
         let mut arrows = arrows.into_iter();
         let first = arrows.next().expect("a function type has an arrow");
+        let partial = first.partial;
         let mut sig = Sig::one(names, first.params, first.result);
+        sig.arrows[0].partial = partial;
         sig.arrows.extend(arrows);
         sig.own.extend(open.bounds.keys().cloned());
         sig.own.extend(open.free);

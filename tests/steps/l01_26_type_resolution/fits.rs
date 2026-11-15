@@ -203,11 +203,19 @@ fn an_overload_that_covers_a_slots_parameter_only_together_fits() {
                 q(g: ((positional y: int) -> String) & ((positional z: bool) -> String)) = \
                 p(f: g);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    // Three arrows, two of which cover the slot's parameter together.
+    // Three arrows, two of which cover the slot's parameter together, and the third takes
+    // `String`, which the slot does not: a domain is exact (DESIGN.md sec:type_language, `int
+    // -> int` is not a subtype of `int[0..<10] -> int`), so the overload, whose domain is
+    // `int | String | bool`, does not fit (FAIL-types-fn-param-exact-domain).
     let text = "p(f: (x: int | bool) -> String) = f(x: 1);\n\
                 q(g: ((x: int) -> String) & ((x: String) -> int) & ((x: bool) -> String)) = \
                 p(f: g);\n";
-    assert_eq!(type_errors(text), Vec::<String>::new());
+    assert_eq!(
+        type_errors(text),
+        [
+            "`p` does not take (((x: int) -> String) & ((x: String) -> int) & ((x: bool) -> String)): no arrow of `p` takes these types. [p(f: g)]"
+        ]
+    );
 }
 
 /// Arrows that cover the slot's parameter together but one of which returns outside the slot's
@@ -248,8 +256,10 @@ fn arrows_that_cover_only_across_two_parameters_are_refused_with_the_reason() {
             "`p` does not take (((x: int, y: int) -> String) & ((x: bool, y: bool) -> String) & ((x: int, y: bool) -> String) & ((x: bool, y: int) -> String)): at `(x: Part1, y: Part1) -> String`, the arrow `(x: int, y: int) -> String` takes a part of more than one parameter, and arrows are combined only when they differ at one parameter: telling whether arrows that each split several parameters cover them all can take time exponential in the number of parameters, so the checker does not try; to repair it, write the arrows so that they differ at one parameter.\n  Part1 stands for a part written more than once:\n    type Part1 = int | bool; [p(f: g)]"
         ]
     );
+    // Each arrow holds `y` at the slot's `int`: an arrow at `y: int | bool` would take `bool`,
+    // which the slot does not, and a domain is exact (FAIL-types-fn-param-exact-domain).
     let text = "p(f: (x: int | bool, y: int) -> String) = f(x: 1, y: 2);\n\
-                q(g: ((x: int, y: int) -> String) & ((x: bool, y: int | bool) -> String)) = \
+                q(g: ((x: int, y: int) -> String) & ((x: bool, y: int) -> String)) = \
                 p(f: g);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
 }
@@ -486,6 +496,7 @@ fn sig_of(
         arrows: vec![Arrow {
             params: vec![param],
             result,
+            partial: false,
         }],
         bounds: Default::default(),
         data: false,
@@ -564,6 +575,7 @@ fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
             arrows: vec![Arrow {
                 params: vec![param],
                 result: Ty::carrier(Carrier::Int),
+                partial: false,
             }],
             bounds: own
                 .iter()
@@ -619,6 +631,7 @@ pub(super) fn own_sig(
         arrows: vec![Arrow {
             params: vec![param],
             result,
+            partial: false,
         }],
         bounds: (names.iter())
             .filter_map(|v| bound.map(|m| (v.as_str().into(), m)))

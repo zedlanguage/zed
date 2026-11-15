@@ -185,6 +185,7 @@ fn a_signature_that_bounds_a_name_already_bounded_around_it_takes_a_fresh_name()
     inner.arrows[0] = Arrow {
         params: vec![Ty::var("T".into())],
         result: Ty::var("T".into()),
+        partial: false,
     };
     inner.own.insert("T".into());
     let mut s = shadowing("(int) -> int");

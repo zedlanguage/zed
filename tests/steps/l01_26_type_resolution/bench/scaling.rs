@@ -259,8 +259,8 @@ fn passing_an_overload_to_a_slot_of_other_arrows_scales() {
     );
 }
 
-/// The arrows share the piece of the parameter the slot's arrows need, so the index of arrows
-/// by parameter leaves every arrow; the index by result leaves one (COMPLEXITY.md F82; the
+/// The arrows all take the parameter the slot's arrows take, `#c`, so the index of arrows by
+/// parameter leaves every arrow; the index by result leaves one (COMPLEXITY.md F82; the
 /// parameter index alone cost n^2/2 comparisons, 57.6x at n and 8n).
 ///
 /// Besides its ratio: no type error. Small instance:
@@ -654,6 +654,7 @@ fn shapes_of_variables(
         arrows: vec![Arrow {
             params: vec![Ty::union_all(&members)],
             result: result(&vs),
+            partial: false,
         }],
         bounds: BTreeMap::new(),
         data: false,
@@ -784,4 +785,114 @@ fn n_pinned_shapes_of_variables_beside_scalars_fit_themselves_renamed_in_linear_
         15_000,
         true,
     );
+}
+
+/// The signature of the arrows `arrows`, each its parameter types and its result, exact, of
+/// the named parameters `x0`, `x1`, …, and no variable.
+fn exact_arrows(arrows: Vec<(Vec<Ty>, Ty)>) -> zedc::check::ty::Sig {
+    use zedc::check::ty::{Arrow, Facts, SParam, Sig};
+    let width = arrows[0].0.len();
+    Sig {
+        params: (0..width)
+            .map(|j| SParam {
+                name: format!("x{j}").into(),
+                positional: false,
+                default: None,
+                range: None,
+            })
+            .collect(),
+        arrows: (arrows.into_iter())
+            .map(|(params, result)| Arrow {
+                params,
+                result,
+                partial: false,
+            })
+            .collect(),
+        bounds: BTreeMap::new(),
+        data: false,
+        dense: false,
+        word: None,
+        needs: Vec::new(),
+        own: Default::default(),
+        held: Default::default(),
+        named: 0,
+        facts: Facts::default(),
+    }
+}
+
+/// The permission of a function, the keys it takes, is within that of the function type it is
+/// passed as (DESIGN.md sec:type_language, FAIL-types-fn-param-exact-domain), checked in linear
+/// time in each form `permitted` in zedc-types takes:
+///
+/// - one arrow over `0 | … | n-1` passed as n arrows `(x0: i) -> int`, held by the union of
+///   their parameter types, whose arrows the index of keys gives;
+/// - n arrows `(x0: i) -> int` passed as the same arrows in reverse order, each found equal by
+///   hash (in reverse, so that the two signatures differ and are compared arrow by arrow);
+/// - one arrow over `(0 | … | n-1, String)` passed as n arrows `(x0: i, x1: String) -> int`:
+///   the arrows of `q` that hold `String` at `x1` hold the union at `x0`.
+///
+/// Small instances: `l01_23_groups_and_refusals::judgments::a_function_type_has_an_exact_domain`.
+#[test]
+fn the_permission_of_an_overload_is_checked_in_linear_time() {
+    use zed_kernel::Value;
+    use zedc::check::ty::fits_sig;
+    let int = || Ty::carrier(Carrier::Int);
+    let key = |i: usize| Ty::lit(&Value::int((i as i64).into()));
+    let keys = |m: usize| Ty::union_all(&(0..m).map(key).collect::<Vec<_>>());
+    let one_each = |m: usize, more: &[Ty]| {
+        (0..m)
+            .map(|i| ([vec![key(i)], more.to_vec()].concat(), int()))
+            .collect::<Vec<_>>()
+    };
+    let n = 2000;
+    let union = scaling::inputs(n, |m| {
+        let s = exact_arrows(vec![(vec![keys(m)], int())]);
+        (s, exact_arrows(one_each(m, &[])))
+    });
+    scaling::check("one arrow over n keys passed as n arrows", n, |m| {
+        let (s, q) = &union[&m];
+        assert!(fits_sig(s, q));
+    });
+    let reversed = scaling::inputs(n, |m| {
+        let mut back = one_each(m, &[]);
+        back.reverse();
+        (exact_arrows(one_each(m, &[])), exact_arrows(back))
+    });
+    scaling::check("n arrows passed as themselves in reverse", n, |m| {
+        let (s, q) = &reversed[&m];
+        assert!(fits_sig(s, q));
+    });
+    let string = Ty::carrier(Carrier::Str);
+    let two = scaling::inputs(n, |m| {
+        let s = exact_arrows(vec![(vec![keys(m), string.clone()], int())]);
+        (s, exact_arrows(one_each(m, std::slice::from_ref(&string))))
+    });
+    scaling::check("one arrow of two parameters passed as n arrows", n, |m| {
+        let (s, q) = &two[&m];
+        assert!(fits_sig(s, q));
+    });
+}
+
+/// A bounded variable of two classes that stands n times in one parameter is found to stand
+/// more than once, and the function passed as the type it has, in linear time (`repeated` in
+/// zedc-types, FAIL-types-fn-param-exact-domain): `(x0: (T, …, T)) -> int for T in int | f64`,
+/// n items, passed as itself with `X` for `T`.
+#[test]
+fn a_variable_standing_n_times_is_found_repeated_in_linear_time() {
+    use zedc::check::ty::fits_sig;
+    let classes = Carrier::Int.bit() | Carrier::F64.bit();
+    let sig = |v: &str, m: usize| {
+        let p = Ty::tuple(vec![Ty::var(v.into()); m]);
+        let mut s = exact_arrows(vec![(vec![p], Ty::carrier(Carrier::Int))]);
+        s.own.insert(v.into());
+        s.bounds.insert(v.into(), classes);
+        s.note_held();
+        s
+    };
+    let n = 2000;
+    let sigs = scaling::inputs(n, |m| (sig("T", m), sig("X", m)));
+    scaling::check("a variable standing n times in one parameter", n, |m| {
+        let (s, q) = &sigs[&m];
+        assert!(fits_sig(s, q));
+    });
 }

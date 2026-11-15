@@ -977,6 +977,7 @@ impl<'a> Same<'a> {
             && arrows.len() == y.arrows.len()
             && (arrows.iter().zip(&y.arrows)).all(|(p, q)| {
                 p.params.len() == q.params.len()
+                    && p.partial == q.partial
                     && self.descend(
                         (p.params.iter().zip(&q.params)).chain([(&p.result, &q.result)]),
                     )
@@ -1441,7 +1442,13 @@ fn debug_sig<'a>(s: &'a Sig, parts: &mut Vec<Dbg<'a>>) {
     debug_list(parts, "[", arrows, "]", |p, a| {
         p.push(Dbg::Text("Arrow { params: "));
         debug_list(p, "[", &a.params, "]", |p, t| p.push(Dbg::Ty(t)));
-        p.extend([Dbg::Text(", result: "), Dbg::Ty(&a.result), Dbg::Text(" }")]);
+        p.extend([
+            Dbg::Text(", result: "),
+            Dbg::Ty(&a.result),
+            Dbg::Text(", partial: "),
+            Dbg::Leaf(&a.partial),
+            Dbg::Text(" }"),
+        ]);
     });
     parts.extend([
         Dbg::Text(", bounds: "),
@@ -2307,6 +2314,7 @@ fn sig_parts(s: &Sig, mut tys: impl Iterator<Item = Ty>) -> (Vec<Arrow>, Vec<Nee
         .map(|a| Arrow {
             params: a.params.iter().map(|_| next()).collect(),
             result: next(),
+            partial: a.partial,
         })
         .collect();
     let needs = s.needs.iter().map(|n| n.map_tys(|_| next())).collect();
@@ -3969,12 +3977,23 @@ pub struct SParam {
 }
 
 /// One arrow: a type for each parameter, and the result.
+///
+/// An arrow is exact or partial (DESIGN.md sec:type_language, "Morphism types carry two
+/// domain bounds"). An exact arrow guarantees its parameter types: a function of it answers
+/// at every value of them, so they are both a guarantee and a permission of the function's
+/// domain. A partial arrow, `K ->? V` and the upper bound of `L .. U -> V`, only permits: a
+/// key of it may be absent, and its lookup answers `#notFound` there, so `result` is its
+/// lookup type, `V | #notFound`, which is what an application of it gives. A partial arrow and
+/// an exact one with the same types are two types: `int ->? 1` is not `int -> 1 | #notFound`,
+/// whose domain is all of `int`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Arrow {
     /// The parameters' types.
     pub params: Vec<Ty>,
-    /// The result.
+    /// The result: for a partial arrow, its lookup type, its value type with `#notFound`.
     pub result: Ty,
+    /// Whether it is partial: its parameter types permit keys and guarantee none.
+    pub partial: bool,
 }
 
 /// A scalar carrier.
@@ -4155,6 +4174,7 @@ pub fn errs_of(e: Ty) -> Ty {
     };
     let found = e.union(&Ty::set(KType::atom("notFound")));
     let mut family = Sig::one(vec![param], vec![e], found);
+    family.arrows[0].partial = true;
     family.data = true;
     let mut t = Ty::set(errs());
     let shape = Shape::new(vec![Ty::func(Arc::new(family))], BTreeMap::new());
@@ -4643,6 +4663,20 @@ struct Cx<'s> {
     /// `s` may bind as it likes, read as `Never` where its parameters do not bind them
     /// ([`Binds::of_arrow`]).
     free: SortedNames,
+    /// The own variables of `q` held by a parameter in the innermost comparison of function
+    /// types open now ([`fits_in`]), by the names they are read as, each bound to every value
+    /// it may stand for: a bounded one to its carriers, an unbounded one to the unknown, which
+    /// as a type holds every value and is held only by the unknown ([`accepts`]). A variable
+    /// whose bound has two classes or more and that stands twice in the parameters of one
+    /// arrow is left out ([`repeated`]). The permission of `q` is read through it
+    /// ([`permitted`], [`instance_within`]).
+    wide: Binds,
+    /// Whether the comparisons made now, in the innermost comparison of function types open,
+    /// bind no variable ([`within_as_is`]): [`accepts`] then binds none, so a search goes on to
+    /// a shape that holds a piece as it is, and the memo of rows ([`Cx::compared`]) keeps
+    /// these answers apart ([`Compared::as_is`]). Cleared by [`fits_in`] for the comparisons
+    /// of function types inside, which bind their own variables.
+    bind_none: bool,
     /// The answer of each comparison of a row or payload shape with another, with the binding
     /// it gave, made in the innermost comparison of function types open now, or outside every
     /// one, by the two nodes and the binding it was given ([`Compared`]): a pair of nodes met
@@ -4941,14 +4975,19 @@ struct Compared {
     left: NodeId,
     right: NodeId,
     binds: Binds,
+    /// [`Cx::bind_none`] when compared: with no variable bound, [`accepts`] may answer
+    /// otherwise, so the two answers are kept apart.
+    as_is: bool,
 }
 
 impl Compared {
-    /// The comparison of `left` with `right` under `binds`; the copy of `binds` is `O(1)`.
-    fn new(left: NodeId, right: NodeId, binds: &Binds) -> Compared {
+    /// The comparison of `left` with `right` under `binds`, binding none where `as_is`; the
+    /// copy of `binds` is `O(1)`.
+    fn new(left: NodeId, right: NodeId, binds: &Binds, as_is: bool) -> Compared {
         Compared {
             left,
             right,
+            as_is,
             binds: Binds {
                 map: binds.map.clone(),
                 keys: std::sync::OnceLock::new(),
@@ -4962,7 +5001,7 @@ impl Compared {
 
 impl std::hash::Hash for Compared {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        (self.left, self.right, self.binds.digest).hash(h);
+        (self.left, self.right, self.binds.digest, self.as_is).hash(h);
     }
 }
 
@@ -4978,6 +5017,7 @@ impl PartialEq for Compared {
         let (a, b) = (&self.binds, &other.binds);
         self.left == other.left
             && self.right == other.right
+            && self.as_is == other.as_is
             && a.digest == b.digest
             && a.map == b.map
             && same(&a.bounds, &b.bounds)
@@ -6512,7 +6552,7 @@ impl<'m, 's> Comparing<'m, 's> {
     /// with ([`Cx::compared`]).
     fn rows(&'m self, cs: Row, ds: Row, mut b: Binds) -> Deep<'m, (bool, Binds)> {
         self.stack.call(move || async move {
-            let key = Compared::new(cs.node(), ds.node(), &b);
+            let key = Compared::new(cs.node(), ds.node(), &b, self.cx.borrow().bind_none);
             if let Some(kept) = self.recall(&key) {
                 return kept;
             }
@@ -6584,7 +6624,7 @@ impl<'m, 's> Comparing<'m, 's> {
         let mut cx = self.cx.borrow_mut();
         if cx.unchosen.is_none() {
             if ok {
-                let out = Compared::new(key.left, key.right, b);
+                let out = Compared::new(key.left, key.right, b, key.as_is);
                 cx.compared.insert(out, (true, b.clone()));
             }
             cx.compared.insert(key, (ok, b.clone()));
@@ -6938,7 +6978,7 @@ impl<'m, 's> Comparing<'m, 's> {
     /// is met with ([`Cx::compared`]).
     fn shape_in(&'m self, a: Shape, b: Shape, mut binds: Binds) -> Deep<'m, (bool, Binds)> {
         self.stack.call(move || async move {
-            let key = Compared::new(a.node(), b.node(), &binds);
+            let key = Compared::new(a.node(), b.node(), &binds, self.cx.borrow().bind_none);
             if let Some(kept) = self.recall(&key) {
                 return kept;
             }
@@ -10214,7 +10254,8 @@ async fn accepts<'m>(
             },
         }
     };
-    let bindable = |v: &&Arc<str>| !cx.rigid.contains_key(*v) && !cx.fns.contains_key(*v);
+    let bindable =
+        |v: &&Arc<str>| !cx.bind_none && !cx.rigid.contains_key(*v) && !cx.fns.contains_key(*v);
     let found = t.vars.iter().filter(bindable).find(|v| admits(v));
     // Outside every shape a piece no variable admits is bound to the first variable all the
     // same: that binding may hold more than `Var(w)` beside a variable bound alone to `w`, so
@@ -10320,8 +10361,10 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     if !same_params {
         return false;
     }
-    let (mark, sas, qas, renamed, free) = c.cx.borrow_mut().open(s, se, q, qe);
+    let (mark, sas, qas, renamed, free, wide) = c.cx.borrow_mut().open(s, se, q, qe);
     let outer = std::mem::replace(&mut c.cx.borrow_mut().free, free);
+    let outer_wide = std::mem::replace(&mut c.cx.borrow_mut().wide, wide);
+    let outer_bind_none = std::mem::replace(&mut c.cx.borrow_mut().bind_none, false);
     // The bounds of `s` by the names its arrows are read with: a function type inside another
     // whose bounded variable has the name of one the comparison around it reads as itself is
     // read under a new name, and its bound, kept under the name written, was not checked
@@ -10342,10 +10385,14 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     let fits = every_arrow_fits(s, &sas, &qas, c).await;
     if explain && !fits {
         // The first arrow of `q` not covered, compared again alone: only on the way to an
-        // error, at the cost of one more comparison of each arrow of `q`.
+        // error, at the cost of one more comparison of each arrow of `q`. Where each is
+        // covered, `s` takes a key `q` does not ([`permitted`]), a plain reason; so too where
+        // the permission, exact at one parameter, fails, which the verdict was decided by
+        // before any cover, so no refusal of a cover tried here is kept.
         let mut why = None;
-        for (k, qa) in qas.iter().enumerate() {
-            if !every_arrow_fits(s, &sas, std::slice::from_ref(qa), c).await {
+        let plain = s.params.len() == 1 && !permitted(s, &sas, &qas, c).await;
+        for (k, qa) in qas.iter().enumerate().filter(|_| !plain) {
+            if !covers(s, &sas, std::slice::from_ref(qa), c).await {
                 why = refused_cover(s, q, &sas, qa, k, c).await;
                 break;
             }
@@ -10354,6 +10401,8 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     }
     let mut cx = c.cx.borrow_mut();
     cx.free = outer;
+    cx.wide = outer_wide;
+    cx.bind_none = outer_bind_none;
     cx.forget(mark);
     fits
 }
@@ -10374,14 +10423,22 @@ impl Cx<'_> {
     /// mark of the names made and the own variables kept for it ([`Self::forget`]), the arrows
     /// of each as read, and the bounds of `s` by the names its variables are read as, where a
     /// bounded variable of `s` is read under a new name ([`Self::own_name`]), and the unbounded
-    /// own variables of `s` by the names they are read as, in order ([`Cx::free`]).
+    /// own variables of `s` by the names they are read as, in order ([`Cx::free`]), and the own
+    /// variables of `q` a parameter holds, each bound to what it may stand for ([`Cx::wide`]).
     fn open(
         &mut self,
         s: &Sig,
         se: &Env,
         q: &Sig,
         qe: &Env,
-    ) -> (Mark, Vec<Arrow>, Vec<Arrow>, Option<Masks>, SortedNames) {
+    ) -> (
+        Mark,
+        Vec<Arrow>,
+        Vec<Arrow>,
+        Option<Masks>,
+        SortedNames,
+        Binds,
+    ) {
         let cx = self;
         let mark = Mark {
             made: cx.made.len(),
@@ -10400,11 +10457,19 @@ impl Cx<'_> {
         // is sound and binds as before. Cost: a lookup in those names, made once for each
         // signature, and one in `owned`, for each own variable of `s`.
         let mut qe = qe.clone();
+        let mut wide = Binds::new();
+        // The bounded variables of `q` whose bound has two classes or more, by the names they
+        // are read as: each is widened only where it stands once in an arrow ([`repeated`]).
+        let mut several = HashSet::new();
         for v in &q.own {
             match q.bounds.get(v) {
                 Some(&m) if q.held.contains(v) => {
                     let w = cx.fresh(v);
                     cx.rigid.insert(w.clone(), m);
+                    wide.insert(w.clone(), Ty::of_mask(m));
+                    if m.count_ones() > 1 || m & OTHER != 0 {
+                        several.insert(w.clone());
+                    }
                     qe.insert(v.clone(), Read::Rigid(w));
                 }
                 Some(&m) => {
@@ -10412,6 +10477,7 @@ impl Cx<'_> {
                 }
                 None => {
                     let w = cx.own_name(v, &mut qe, false);
+                    wide.insert(w.clone(), Ty::dynamic());
                     cx.keep_own(w, None);
                 }
             }
@@ -10444,11 +10510,17 @@ impl Cx<'_> {
         let read = |a: &Arrow, env: &Env, cx: &mut Cx| Arrow {
             params: a.params.iter().map(|p| cx.read(p, env)).collect(),
             result: cx.read(&a.result, env),
+            partial: a.partial,
         };
         let sas: Vec<Arrow> = s.arrows.iter().map(|a| read(a, &se, cx)).collect();
         let qas: Vec<Arrow> = q.arrows.iter().map(|a| read(a, &qe, cx)).collect();
+        if !several.is_empty() {
+            for v in repeated(&qas, &several) {
+                wide.remove(&v);
+            }
+        }
         free.sort();
-        (mark, sas, qas, renamed, free.into())
+        (mark, sas, qas, renamed, free.into(), wide)
     }
 
     /// The name an own variable `v` of a function type opened is read as, in `env`, the
@@ -10516,6 +10588,432 @@ thread_local! {
         const { std::cell::Cell::new(tests::Reference::None) };
 }
 
+/// Whether a function whose arrows are `sas`, those of `s` as read, is a function whose arrows
+/// are `qas`, those of `q` as read. A morphism type is `(L ⊆ dom ⊆ U) -> V`, and `s <: q`
+/// holds iff `L_q <: L_s`, `U_s <: U_q` and `V_s <: V_q` (DESIGN.md sec:type_language). Here
+/// the guarantee `L` of a signature is the union of the parameter types of its exact arrows,
+/// and its permission `U` the union of those of all its arrows ([`Arrow`]). So:
+///
+/// - each exact arrow of `q` is covered by exact arrows of `s` ([`cover`]): its keys are in
+///   the guarantee of `s`, and their answers are within its result;
+/// - each partial arrow of `q` is covered by any arrows of `s`, or, failing that, each arrow
+///   of `s` that may take one of its keys answers within its result ([`answers_within`]): a key
+///   of a partial arrow need not be in the domain of `s`, and where it is, its answer is one
+///   the partial arrow allows, `#notFound` among them;
+/// - each arrow of `s` takes only keys some arrow of `q` permits ([`permitted`]).
+///
+/// The variables of the two sides are read apart. `s` is instantiated at the use (rule 2 of
+/// sec:type_resolution): an arrow of `s` that holds a variable the comparison binds, its own or
+/// one of a scope around it ([`holds_bindable`]), is compared at the binding its cover gave
+/// ([`instance_within`]). `q` is all its instances together: a bounded variable
+/// is one carrier at each call, so a bounded signature is the overload of one arrow per
+/// carrier (rule 6, "fixing a bounded variable to each carrier of its bound multiplies the
+/// arrows"), and an overload's permission is the union of its arrows' (sec:type_language,
+/// "Relation to semantic subtyping", (2)). So an own variable of `q` that a parameter holds is
+/// read, for the permission, as every value it may stand for ([`Cx::wide`]): `(x: int | f64)
+/// -> bool` fits `(x: T) -> bool for T in int | f64`, and `(x: (T,) | (int,)) -> (T,)` fits
+/// `(x: (U,) | (1,)) -> (U,)`. Only the top level of a parameter is so read; a variable of `q`
+/// inside a function type there is compared as itself.
+///
+/// Before the exact domain (FAIL-types-fn-param-exact-domain), only the first was checked,
+/// with every arrow of `s`, so a function type was contravariant in its domain: `int -> int`
+/// was a `(1 | 2) -> int`, and `int ->? 1` an `int -> 1 | #notFound`.
+async fn every_arrow_fits<'m>(
+    s: &Sig,
+    sas: &[Arrow],
+    qas: &[Arrow],
+    c: &'m Comparing<'m, '_>,
+) -> bool {
+    // The permission is checked first where it is exact, one parameter ([`permitted`]): a
+    // function that takes a key `q` does not fails, whatever the cover finds, so the verdict
+    // is a plain no and not a refusal the cover may make (`(x0: f64) -> ...` beside an arrow
+    // whose cover is refused, where `q` takes no `f64`). It binds nothing and reads only
+    // `Cx::wide`, so the cover is the same after it. With more parameters a false from it may
+    // be wrong, and a refusal of the cover, which names the repair, is kept.
+    let exact_permission = s.params.len() == 1;
+    if exact_permission && !permitted(s, sas, qas, c).await {
+        return false;
+    }
+    covers(s, sas, qas, c).await && (exact_permission || permitted(s, sas, qas, c).await)
+}
+
+/// The first two conditions of [`every_arrow_fits`]: each exact arrow of `qas` is covered by
+/// exact arrows of `sas`, and each partial one by any arrows or by answers within its result.
+/// Apart from the permission so that the explanation of an unfit signature ([`fits_in`]) can
+/// ask it of each arrow of `q` alone: the permission against one arrow of `q` alone is
+/// stricter than against all of them, and would name an arrow that is covered.
+async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
+    if !sas.iter().chain(qas).any(|a| a.partial) {
+        if !cover(s, sas, qas, c).await {
+            return false;
+        }
+    } else {
+        // A copy of the exact arrows of each side, only where a side has a partial arrow,
+        // which a family or a bounded morphism has one or two of.
+        let exact = |xs: &[Arrow]| {
+            xs.iter()
+                .filter(|a| !a.partial)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if !cover(s, &exact(sas), &exact(qas), c).await {
+            return false;
+        }
+        for qa in qas.iter().filter(|a| a.partial) {
+            let before = c.begin_alone();
+            let ok = cover(s, sas, std::slice::from_ref(qa), c).await;
+            let why = c.end_alone(before);
+            if ok && why.is_none() {
+                continue;
+            }
+            if !answers_within(s, sas, qa, c).await {
+                uncovered(why, c);
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether each arrow of `sas` of `s` that may take a key of the partial arrow `qa` answers
+/// within `qa`'s result, binding nothing ([`every_arrow_fits`]). Rule 6 of sec:type_resolution
+/// gives a key the first arrow that takes it, which is one of these, so each key of `qa` that
+/// `s` takes is answered within. An arrow is left out only where, at some parameter, its type
+/// and `qa`'s share no value ([`Ty::meets`] false). An arrow that holds a variable the
+/// comparison binds in a parameter ([`holds_bindable`]) and may take a key of `qa` is refused: which binding a key gives it is not
+/// worked out here, so this safe path does not take it. Cost: one [`Ty::meets`] per parameter
+/// and one comparison of results per arrow of `s`.
+async fn answers_within<'m>(s: &Sig, sas: &[Arrow], qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
+    for sa in sas {
+        if !sa.params.iter().zip(&qa.params).all(|(x, y)| x.meets(y)) {
+            continue;
+        }
+        if holds_bindable(s, sa, &c.cx.borrow()) {
+            return false;
+        }
+        if !within_as_is(&sa.result, &qa.result, c).await {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a variable the comparison may bind stands in a parameter type of the arrow `sa` of
+/// `s`, as read, at any depth: an own variable of `s`, unbounded ([`Cx::free`]) or bounded
+/// (`s.bounds`, by the names its arrows are read with, [`fits_in`]), or one of a scope around
+/// `s` that the comparison does not read as itself (not in [`Cx::rigid`] or [`Cx::fns`]), as
+/// the `$9` of `(z: $9) -> $9`, the type of an inner lambda whose parameter's type is that of
+/// an outer one's, not yet known. The cover of an arrow of `q` binds such a variable, so the
+/// permission of `sa` is that of its instance under that binding ([`instance_within`]); read
+/// unbound, `$9` was within no parameter of `q`, and the lambda did not fit
+/// (`l01_26_type_resolution::bounds::a_lambda_uses_its_bounded_parameters_as_a_declared_function_does`).
+/// Cost: for an arrow whose parameters hold no variable, the outer level of each
+/// ([`Ty::holds_vars`]); otherwise a walk of the parameter types and a lookup per variable.
+fn holds_bindable(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
+    if !sa.params.iter().any(Ty::holds_vars) {
+        return false;
+    }
+    let mut vs = Vars::default();
+    sa.params.iter().for_each(|p| p.vars_in(&mut vs));
+    vs.order.iter().any(|v| {
+        s.bounds.contains_key(v)
+            || cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok()
+            || (!cx.rigid.contains_key(v) && !cx.fns.contains_key(v))
+    })
+}
+
+/// Whether the arrow `sa` of `s`, its variables bound by `b`, takes only values of `qa`'s
+/// parameter types, binding nothing: the permission of the instance of `sa` that fits `qa`
+/// ([`every_arrow_fits`]). Only an arrow that holds a variable the comparison binds in a
+/// parameter ([`holds_bindable`]) is compared; one that holds none is compared with every
+/// arrow of `q` together
+/// ([`permitted`]). An unbounded variable `b` leaves unbound is bound to `Never`: no key of
+/// `qa` needed it, and its instance at `Never` fits as well, as a call binds such a variable
+/// (sec:type_resolution). Not proved: a bounded variable left unbound stays a variable, which
+/// no parameter of `q` holds without binding, so the arrow is refused (the safe path).
+///
+/// Complexity tradeoff: the parameters of the instance are compared with those of `qa` alone,
+/// not with the union of `q`'s arrows ([`permitted`]), which needs no other arrow at each fit:
+/// one comparison per parameter. What is given up: an instance that takes the keys of two
+/// arrows of `q` at once, `(x: T | bool) -> ...` fitting `(x: int) -> ...` beside `(x: bool)
+/// -> ...`, is refused.
+async fn instance_within<'m>(
+    s: &Sig,
+    sa: &Arrow,
+    qa: &Arrow,
+    b: &Binds,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
+    if !holds_bindable(s, sa, &c.cx.borrow()) {
+        return true;
+    }
+    let b = rest_bound(s, b.clone(), c);
+    let wide = c.cx.borrow().wide.clone();
+    // The instance holds the variables of `q` its cover bound the variables of `s` to, and
+    // these are widened as on `q`'s side: for each instance `σ` of `q`, the instance of `sa`
+    // at `σ` is within `x.subst(&b).subst(&wide)` (the widening replaces each variable by a
+    // type that holds every value it may take, outside functions, where a type is monotone in
+    // its variables), and that is within `y.subst(&wide)`, which is the union of `q`'s
+    // instances of `y` ([`Cx::wide`], [`repeated`]). Compared as variables of their own, the
+    // `X0` of `(X0,) | (X1,)`, bound by `X0 in int` and read as rigid, was not within the
+    // `int` its own variable was widened to on `q`'s side.
+    for (x, y) in sa.params.iter().zip(&qa.params) {
+        if !within_as_is(&x.subst(&b).subst(&wide), &y.subst(&wide), c).await {
+            return false;
+        }
+    }
+    true
+}
+
+/// `b` with each variable of `s` it leaves unbound bound as an instance of `s` binds it where
+/// no key needs it ([`instance_within`], [`permitted`]): an unbounded variable to `Never`, as
+/// a call binds such a variable (sec:type_resolution), and a bounded variable of one carrier
+/// to that carrier: a call fixes the variable to one carrier of its bound (rule 6), and its
+/// bound has one, so this is the only instance there is. The cover of `(Y0 | Y1,)` by `(X0,) |
+/// (X1,)` binds `X0` to `Y0 | Y1` and leaves `X1`, bounded by `int`, unbound; as a variable
+/// it was within no parameter of `q`. Not proved for a bound of several carriers: which one a
+/// call fixes is not worked out here, so such a variable stays a variable, within no
+/// parameter of `q`, and the arrow does not fit (the safe path).
+fn rest_bound(s: &Sig, mut b: Binds, c: &Comparing<'_, '_>) -> Binds {
+    let free = c.cx.borrow().free.clone();
+    for v in free.iter() {
+        if b.get(v).is_none() {
+            b.insert(v.clone(), Ty::empty());
+        }
+    }
+    for (v, &m) in &s.bounds {
+        if b.get(v).is_none() && m.count_ones() == 1 && m & OTHER == 0 {
+            b.insert(v.clone(), Ty::of_mask(m));
+        }
+    }
+    b
+}
+
+/// The arrow `sa` of `s` with each variable the comparison binds in its parameters
+/// ([`holds_bindable`]) bound as a call binds it where no key needs it: an unbounded variable
+/// to `Never` (sec:type_resolution), a variable bounded by one carrier to that carrier (rule 6).
+/// Outside function types a type is monotone in its variables, so the parameters of this
+/// instance are within those of every other: where it takes a key `q` lacks, every instance
+/// does, and the arrow does not fit at any binding ([`permitted`]). A variable bounded by
+/// several carriers has no least instance, one per carrier; it is bound to `Never` too, which
+/// is within each, so a key the result takes is still taken by every instance: refusing on it
+/// is right, but passing is not proof that some instance fits. The arrows that take part in a
+/// cover are compared again at its binding ([`instance_within`]); one that takes part in none
+/// and whose every instance takes, through such a variable, a key `q` lacks is a possible
+/// wrong yes (row FAIL-types-bindable-arrow-permission). Not proved for a variable inside a
+/// function type in a parameter, where `Never` gives the greatest instance there and not the
+/// least: the arrow may then be refused where an instance fits (a wrong no, never a wrong
+/// yes). Cost: a walk of the parameter types and one replacement.
+fn least_instance(s: &Sig, sa: &Arrow, cx: &Cx) -> Arrow {
+    let mut vs = Vars::default();
+    sa.params.iter().for_each(|p| p.vars_in(&mut vs));
+    let mut b = Binds::new();
+    for v in vs.order.iter() {
+        let bindable = s.bounds.contains_key(v)
+            || cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok()
+            || (!cx.rigid.contains_key(v) && !cx.fns.contains_key(v));
+        if !bindable {
+            continue;
+        }
+        let t = match s.bounds.get(v) {
+            Some(&m) if m.count_ones() == 1 && m & OTHER == 0 => Ty::of_mask(m),
+            _ => Ty::empty(),
+        };
+        b.insert(v.clone(), t);
+    }
+    Arrow {
+        params: sa.params.iter().map(|p| p.subst(&b)).collect(),
+        result: sa.result.clone(),
+        partial: sa.partial,
+    }
+}
+
+/// Whether `x` is within `y` with no variable bound: each variable on either side is compared
+/// as itself ([`Cx::bind_none`]). The permission of an arrow ([`permitted`],
+/// [`instance_within`], [`answers_within`]) asks whether its values are within `q`'s as they
+/// are; a comparison that may bind finds `(X0 | X1,)` within `(Y0,) | (Y1,)` only by binding
+/// `Y0`, which is then refused, where with nothing bound the search goes on and splits the
+/// member at the union `(X0,) | (X1,)` that it is. Cost: the comparison; the memo of rows
+/// ([`Cx::compared`]) keeps its answers apart from those found with binding allowed
+/// ([`Compared::as_is`]), so a shared row is compared once in each mode. Inside a function
+/// type, [`fits_in`] binds as before.
+async fn within_as_is<'m>(x: &Ty, y: &Ty, c: &'m Comparing<'m, '_>) -> bool {
+    // An equal type is within, binding nothing: an instance is built apart from `q`'s
+    // parameter, so it is seldom the same node, and `==` costs a walk of the shallower side.
+    if x == y {
+        return true;
+    }
+    let outer = std::mem::replace(&mut c.cx.borrow_mut().bind_none, true);
+    let mut rb = Binds::new();
+    let ok = c.sub_in(x, y, &mut rb).await;
+    c.cx.borrow_mut().bind_none = outer;
+    ok && rb.is_empty()
+}
+
+/// The variables of `vs` that stand twice or more in the parameter types of some arrow of
+/// `qas`, outside the functions those hold, or may: [`Cx::wide`] leaves them out.
+///
+/// Proof that the rest may be widened. A variable bounded by two classes or more is one of
+/// them at each call (DESIGN.md sec:type_resolution rule 6: "a call fixes the variable to one
+/// carrier"), so `q`'s arrow at `T` is the union of its instances at each class. Where `T`
+/// stands once in the arrow's parameters, outside functions, the parameters are monotone in
+/// `T` and depend on it at one place, so the union of the instances is the parameters with
+/// `T` replaced by the union of its classes: a union distributes over one component of a
+/// product (a tuple, a payload, the parameters of an arrow). Where it stands twice, as in
+/// `(T, T)`, that replacement holds `(int, f64)`, which no instance does, so the widening is
+/// too wide, and the variable is compared as itself, rigid, which is sound: `x <: y` with `T`
+/// rigid gives `x <: y` at each instance. An unbounded variable stands for every type (rule 4,
+/// universally quantified), the type of all values among them, and a variable of one carrier
+/// may be that carrier, so for these the widening is the instance at the widest type, and
+/// exact however often they stand.
+///
+/// Counted as twice, which only leaves a variable rigid: two members of one union, as in `(T,)
+/// | (T, T)`'s first member and `T | (T,)`, though there the widening is exact.
+///
+/// Complexity tradeoff: each tuple and payload shape is walked at most twice for each arrow,
+/// so a shared one is not walked once per path; a variable met on a second walk counts again,
+/// and a third arrival adds nothing a variable below it did not reach (it was counted twice
+/// already). O(size of the parameters) per arrow, and only for signatures with such a
+/// variable. A walk per path costs 2^depth on a type that holds each tuple twice.
+fn repeated(qas: &[Arrow], vs: &HashSet<Arc<str>>) -> HashSet<Arc<str>> {
+    enum Walk<'a> {
+        Ty(&'a Ty),
+        Row(&'a Row),
+        Shape(&'a Shape),
+    }
+    let mut out = HashSet::new();
+    for a in qas {
+        let mut count: HashMap<&Arc<str>, u8> = HashMap::new();
+        let mut walked: HashMap<NodeId, u8> = HashMap::new();
+        let mut stack: Vec<Walk> = a.params.iter().map(Walk::Ty).collect();
+        while let Some(w) = stack.pop() {
+            match w {
+                Walk::Row(r) => {
+                    let k = walked.entry(r.node()).or_default();
+                    if *k < 2 {
+                        *k += 1;
+                        stack.extend(r.iter().map(Walk::Ty));
+                    }
+                }
+                Walk::Shape(s) => {
+                    let k = walked.entry(s.node()).or_default();
+                    if *k < 2 {
+                        *k += 1;
+                        stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
+                    }
+                }
+                Walk::Ty(t) => {
+                    for v in t.vars.iter().filter(|v| vs.contains(*v)) {
+                        let n = count.entry(v).or_default();
+                        *n = n.saturating_add(1);
+                        if *n == 2 {
+                            out.insert(v.clone());
+                        }
+                    }
+                    stack.extend(t.tuples.iter().filter(|r| r.open()).map(Walk::Row));
+                    stack.extend(t.payload_shapes().filter(|s| s.open).map(Walk::Shape));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether each arrow of `sas` of `s` takes only keys some arrow of `qas` takes: the
+/// permission of `s` within that of `q` ([`every_arrow_fits`]). An arrow that holds a variable
+/// the comparison binds is taken at its least instance ([`rest_bound`]), and compared again at
+/// each fit it takes part in ([`instance_within`]).
+/// The parameter types of an arrow are a product, and those of `q` a union of products, so
+/// `sa` is within them where, for some parameter `j`, the arrows of `q` that hold each of its
+/// other parameter types hold its type at `j` together; that is exact for one parameter and
+/// sound for more. Taken first: an arrow of `q` of equal parameter types, found by hash.
+///
+/// Complexity tradeoff: naive, each arrow of `s` compared with each arrow of `q` at each
+/// parameter, n·m·p comparisons. Here the arrows of `q` that may hold `sa` at all but one
+/// parameter come from an index of their keys ([`ArrowIndex::covering`]), and an arrow of `q`
+/// equal at every parameter is found by hash, so equal overloads cost one lookup per arrow; in
+/// the worst case it is still n·m, the containment join of [`cover`], for which no n^(2-e)
+/// algorithm is expected (the Hitting Set conjecture there). Scaling test
+/// `l01_26_type_resolution::bench::scaling::the_permission_of_an_overload_is_checked_in_linear_time`.
+async fn permitted<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
+    let equal: HashSet<&[Ty]> = qas.iter().map(|a| &a.params[..]).collect();
+    // The parameters of `q` read with its own variables widened ([`Cx::wide`]); a copy only
+    // where `q` has such a variable.
+    let wide = c.cx.borrow().wide.clone();
+    let widened: Vec<Arrow>;
+    let qas = if wide.is_empty() {
+        qas
+    } else {
+        widened = qas
+            .iter()
+            .map(|a| Arrow {
+                params: a.params.iter().map(|p| p.subst(&wide)).collect(),
+                result: a.result.clone(),
+                partial: a.partial,
+            })
+            .collect();
+        &widened
+    };
+    let mut index: Option<ArrowIndex> = None;
+    for sa in sas {
+        if equal.contains(&sa.params[..]) {
+            continue;
+        }
+        // An arrow that holds a variable the comparison binds is taken at its least instance
+        // ([`least_instance`]): `(x0: (T,) | String) -> ...` at `T = Never` still takes
+        // `String`. The arrows that take part in a cover are also compared at the binding the
+        // cover made ([`instance_within`]).
+        let least;
+        let sa = if holds_bindable(s, sa, &c.cx.borrow()) {
+            least = least_instance(s, sa, &c.cx.borrow());
+            &least
+        } else {
+            sa
+        };
+        // An empty parameter: the parameters are a product, so the arrow takes no key, and the
+        // index of `q` offers no arrow for a type with no key. `(x0: Never) -> ...` was refused.
+        if sa.params.iter().any(Ty::is_empty) {
+            continue;
+        }
+        let index = index.get_or_insert_with(|| ArrowIndex::new(qas, s.params.len()));
+        // The parameter types at `j` of the arrows of `q` that hold `sa`'s at every other.
+        let mut at: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
+        let mut whole = false;
+        'qas: for k in index.covering(sa, false) {
+            let mut miss = None;
+            for (j, (x, y)) in sa.params.iter().zip(&qas[k].params).enumerate() {
+                if !within_as_is(x, y, c).await {
+                    if miss.is_some() {
+                        continue 'qas;
+                    }
+                    miss = Some(j);
+                }
+            }
+            match miss {
+                None => {
+                    whole = true;
+                    break;
+                }
+                Some(j) => at.entry(j).or_default().push(&qas[k].params[j]),
+            }
+        }
+        if whole {
+            continue;
+        }
+        let mut held = false;
+        for (j, ps) in at {
+            if within_as_is(&sa.params[j], &Ty::union_all(ps), c).await {
+                held = true;
+                break;
+            }
+        }
+        if !held {
+            return false;
+        }
+    }
+    true
+}
+
 /// Whether each arrow `qa` of `qas`, those of `q` as read, is covered by arrows of `sas`, those
 /// of `s` as read: by one arrow that takes its parameters and returns within its result
 /// ([`arrow_fits`]), or, at one parameter `j`, by arrows whose parameter types there together
@@ -10523,12 +11021,7 @@ thread_local! {
 /// ([`covered`]). Rule 6 of sec:type_resolution types an application region by region, so a
 /// call of `qa` at any value of its parameters reaches an arrow of `s` that returns within
 /// `qa`'s result.
-async fn every_arrow_fits<'m>(
-    s: &Sig,
-    sas: &[Arrow],
-    qas: &[Arrow],
-    c: &'m Comparing<'m, '_>,
-) -> bool {
+async fn cover<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
     #[cfg(test)]
     if REFERENCE.get() != tests::Reference::None {
         return tests::reference(s, sas, qas, c).await;
@@ -10895,8 +11388,9 @@ async fn covered<'m>(
     // The parts at each parameter, by parameter; a BTreeMap, so the parameters are tried in
     // order, and only those some arrow misses are held.
     let mut parts: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
+    let mut refused = None;
     for i in index.covering(qa, true) {
-        if let Some((Part::At(j, true), _)) = part_of(s, &sas[i], qa, c).await {
+        if let Some((Part::At(j, true), _)) = part_of_alone(s, &sas[i], qa, c, &mut refused).await {
             parts.entry(j).or_default().push(&sas[i].params[j]);
         }
     }
@@ -10907,7 +11401,39 @@ async fn covered<'m>(
             return true;
         }
     }
-    met(s, sas, &index.covering(qa, false), qa, c).await
+    if met(s, sas, &index.covering(qa, false), qa, c).await {
+        return true;
+    }
+    uncovered(refused, c);
+    false
+}
+
+/// [`part_of`] as an attempt of its own ([`Comparing::begin_alone`]): an arrow whose
+/// comparison is refused takes no part, and the first such refusal is kept in `refused`, for
+/// the caller to give as the reason where the cover fails ([`uncovered`]). Leaving an arrow
+/// out only shrinks what [`covered`] and [`met`] find: the union of the parts at a parameter
+/// holds less, and in [`met`] fewer results are intersected and the rest left at a parameter
+/// is larger, so the answer may go from yes to no, never the other way. Before, a refusal
+/// inside one arrow's attempt was kept by the comparison though other arrows covered `qa`,
+/// and the cover answered no: the index and the search of every set of arrows, which try
+/// different arrows, disagreed (seed 2929246812783321450 of
+/// `bench::the_index_of_arrows_gives_the_verdict_on_large_overloads`).
+async fn part_of_alone<'m>(
+    s: &Sig,
+    sa: &Arrow,
+    qa: &Arrow,
+    c: &'m Comparing<'m, '_>,
+    refused: &mut Option<String>,
+) -> Option<(Part, Binds)> {
+    let before = c.begin_alone();
+    let part = part_of(s, sa, qa, c).await;
+    match c.end_alone(before) {
+        Some(why) => {
+            refused.get_or_insert(why);
+            None
+        }
+        None => part,
+    }
 }
 
 /// How the arrow `sa` of `s` takes `qa`'s parameters ([`part_of`]).
@@ -10941,6 +11467,12 @@ async fn part_of<'m>(
         }
     }
     if !bounds_hold(s, sa, &b, &c.cx.borrow()) {
+        return None;
+    }
+    // The permission of the instance that takes part: within `qa`'s parameter types, the one
+    // at `j` included, which binds nothing ([`instance_within`]). An arrow of `s` that would take
+    // keys of another arrow of `q` beside a part of `qa`'s is refused (the safe path).
+    if !instance_within(s, sa, qa, &b, c).await {
         return None;
     }
     let part = match miss {
@@ -10996,9 +11528,10 @@ async fn met<'m>(
     let mut whole: Vec<Ty> = Vec::new();
     let mut within: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
     let mut outside: BTreeMap<usize, Vec<(&Ty, Ty)>> = BTreeMap::new();
+    let mut refused = None;
     for &i in cands {
         let sa = &sas[i];
-        match part_of(s, sa, qa, c).await {
+        match part_of_alone(s, sa, qa, c, &mut refused).await {
             Some((Part::Whole, b)) => whole.push(sa.result.subst(&b)),
             Some((Part::At(j, true), _)) => within.entry(j).or_default().push(&sa.params[j]),
             Some((Part::At(j, false), b)) => outside
@@ -11030,6 +11563,7 @@ async fn met<'m>(
             return true;
         }
     }
+    uncovered(refused, c);
     false
 }
 
@@ -11585,6 +12119,7 @@ async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_
         }
         ok = ok && bounds_hold(s, sa, &b, &c.cx.borrow());
         ok = ok && result_within(sa, qa, &b, c).await;
+        ok = ok && instance_within(s, sa, qa, &b, c).await;
         let Some(before) = before else {
             if let Some(why) = refused.filter(|_| !ok) {
                 c.refuse(|| why);
@@ -12068,6 +12603,7 @@ impl Sig {
             arrows: vec![Arrow {
                 params: tys,
                 result,
+                partial: false,
             }],
             bounds: BTreeMap::new(),
             data: false,
@@ -12137,6 +12673,7 @@ impl Sig {
                         Arrow {
                             params: a.params.iter().map(|p| p.replace(&b)).collect(),
                             result: a.result.replace(&b),
+                            partial: a.partial,
                         }
                     })
                 })
@@ -13620,10 +14157,11 @@ impl Sig {
     }
 
     /// The morphism type it is written as, if it is one: a function of one unnamed positional
-    /// parameter whose one arrow may answer `#notFound` is `K ->? V`, and one whose arrows are
-    /// `(L) -> V` and `(U) -> V | #notFound`, with `L` within `U` and not equal to it, is
+    /// parameter whose one arrow is partial is `K ->? V`, and one whose arrows are `(L) -> V`,
+    /// exact, and `(U) -> V | #notFound`, partial, with `L` within `U` and not equal to it, is
     /// `L .. U -> V` (DESIGN.md sec:type_language: a message prints a morphism type in that
     /// form when its bounds differ). Each reads back to the arrows the checker denotes it by.
+    /// An exact arrow that may answer `#notFound` is written as an arrow, `K -> V | #notFound`.
     fn morphism(&self) -> Option<Morphism<'_>> {
         let [p] = &self.params[..] else {
             return None;
@@ -13634,7 +14172,10 @@ impl Sig {
         let miss = KType::atom("notFound");
         match &self.arrows[..] {
             // A result of `#notFound` alone is written as it is, `(K) -> #notFound`.
-            [a] if (&miss - &a.result.set).is_empty() && a.result != Ty::set(miss.clone()) => {
+            [a] if a.partial
+                && (&miss - &a.result.set).is_empty()
+                && a.result != Ty::set(miss.clone()) =>
+            {
                 Some(Morphism::Partial {
                     key: &a.params[0],
                     value: &a.result,
@@ -13645,7 +14186,9 @@ impl Sig {
                 let set_only = |t: &Ty| {
                     t.tuples.is_empty() && t.fns.is_empty() && t.vars.is_empty() && !t.dynamic
                 };
-                (set_only(lower)
+                (!a.partial
+                    && b.partial
+                    && set_only(lower)
                     && set_only(upper)
                     && *lower != Ty::empty()
                     && lower != upper
@@ -13666,7 +14209,7 @@ impl Sig {
     /// so that [`Sig::family_parts`] can write it bare.
     fn is_family(&self) -> bool {
         matches!((&self.params[..], &self.arrows[..]), ([p], [a])
-            if self.data && p.positional && a.params[0].tuples.is_empty() && a.params[0].fns.is_empty()
+            if self.data && a.partial && p.positional && a.params[0].tuples.is_empty() && a.params[0].fns.is_empty()
                 && a.result == a.params[0].union(&Ty::set(KType::atom("notFound"))))
     }
 
@@ -13921,7 +14464,7 @@ mod tests {
             }
         }
         let held = bounds_hold(s, sa, &b, &c.cx.borrow());
-        held && result_within(sa, qa, &b, c).await
+        held && result_within(sa, qa, &b, c).await && instance_within(s, sa, qa, &b, c).await
     }
 
     /// Whether, at some parameter, a set of arrows of `sas` covers `qa`: each arrow of the set
@@ -13992,6 +14535,7 @@ mod tests {
                 let a = Arrow {
                     params: vec![Ty::set(KType::atom("a0"))],
                     result: Ty::set(KType::atom(&format!("a{}", rng.below(2)))),
+                    partial: false,
                 };
                 Ty::func(Arc::new(sig(vec![a], 1, false)))
             }
@@ -14048,6 +14592,7 @@ mod tests {
         Arrow {
             params: sa.params.iter().map(&mut vary).collect(),
             result: vary(&sa.result),
+            partial: sa.partial,
         }
     }
 
@@ -14068,6 +14613,7 @@ mod tests {
         Arrow {
             params,
             result: a.result.union(&b.result),
+            partial: a.partial,
         }
     }
 
@@ -14079,10 +14625,12 @@ mod tests {
             0 if wider => Arrow {
                 params: (0..width).map(|_| wider_union(rng, open)).collect(),
                 result: wider_union(rng, false),
+                partial: false,
             },
             0 => Arrow {
                 params: (0..width).map(|_| union(rng, false)).collect(),
                 result: union(rng, false),
+                partial: false,
             },
             1 | 2 => {
                 let (a, b) = (pick(rng), pick(rng));
@@ -14139,27 +14687,32 @@ mod tests {
     }
 
     /// Each verdict of [`Counts`] on a built overload of one parameter, so that the comparison
-    /// could fail with each on every run: `s` has the arrows `(a) -> a` and `(b) -> b`. The
-    /// arrow `(a) -> a` fits by its own arrow of `s`; `(c) -> c` fits by none, since no arrow
-    /// of `s` takes `c`; `(a | b) -> a | b` fits by no one arrow, since each takes only part
-    /// of `a | b`, but by the two together, each part going to its arrow and each result
-    /// inside `a | b`.
+    /// could fail with each on every run: `s` has the arrows `(a) -> a` and `(b) -> b`. `s`
+    /// itself fits by each arrow's own; `(c) -> c` fits by none, since no arrow of `s` takes
+    /// `c`; `(a | b) -> a | b` fits by no one arrow, since each takes only part of `a | b`,
+    /// but by the two together, each part going to its arrow and each result inside `a | b`.
+    /// `(a) -> a` does not fit: a domain is exact (FAIL-types-fn-param-exact-domain), and `s`
+    /// also takes `b`, which it does not.
     fn built_verdicts(a: Ty, b: Ty, c: Ty, what: &str) {
         let arrow = |p: &Ty, r: &Ty| Arrow {
             params: vec![p.clone()],
             result: r.clone(),
+            partial: false,
         };
         let s = sig(vec![arrow(&a, &a), arrow(&b, &b)], 1, false);
         let ab = a.union(&b);
+        let one = |q: &Ty| sig(vec![arrow(q, q)], 1, false);
         let mut counts = Counts::default();
-        for (q, verdict) in [(&a, [1, 0, 0]), (&c, [0, 1, 0]), (&ab, [0, 0, 1])] {
+        for (q, verdict) in [
+            (s.clone(), [1, 0, 0]),
+            (one(&a), [0, 1, 0]),
+            (one(&c), [0, 1, 0]),
+            (one(&ab), [0, 0, 1]),
+        ] {
             let before = counts.get();
-            counts.compare(&s, &sig(vec![arrow(q, q)], 1, false), what);
+            counts.compare(&s, &q, what);
             let got: Vec<usize> = (0..3).map(|i| counts.get()[i] - before[i]).collect();
-            assert_eq!(
-                got, verdict,
-                "{what}: ({q}) -> {q} in {s}: [fit, unfit, together]"
-            );
+            assert_eq!(got, verdict, "{what}: {q} in {s}: [fit, unfit, together]");
         }
     }
 
@@ -14347,6 +14900,7 @@ mod tests {
                 Arrow {
                     params,
                     result: union(rng, wide),
+                    partial: false,
                 }
             })
             .collect();
@@ -14495,6 +15049,7 @@ mod tests {
         Arrow {
             params: sa.params.iter().map(&mut vary).collect(),
             result: vary(&sa.result),
+            partial: sa.partial,
         }
     }
 
@@ -14573,6 +15128,7 @@ mod tests {
                 Arrow {
                     params,
                     result: wider_union(rng, wide),
+                    partial: false,
                 }
             })
             .collect();
@@ -14630,6 +15186,7 @@ mod tests {
             vec![Arrow {
                 params: vec![tup(v("T")).union(&tup(v("U")))],
                 result: tup(v("T")),
+                partial: false,
             }],
             1,
             false,
@@ -14656,6 +15213,7 @@ mod tests {
         let mut arrows = vec![Arrow {
             params: vec![p],
             result: r,
+            partial: false,
         }];
         arrows.extend_from_slice(more);
         let mut s = sig(arrows, 1, bounded);
@@ -14677,10 +15235,12 @@ mod tests {
         let string = Arrow {
             params: vec![Ty::carrier(Carrier::Str)],
             result: Ty::carrier(Carrier::Str),
+            partial: false,
         };
         let int_to_u = Arrow {
             params: vec![Ty::carrier(Carrier::Int)],
             result: tup(v("U")),
+            partial: false,
         };
         for a in [
             one_param(bu.clone(), tup(v("B")), &[], true),
@@ -14695,9 +15255,11 @@ mod tests {
             assert!(fits_sig(&a, &a), "{a} in itself");
             assert_eq!(why_unfit(&a, &a), None, "{a} in itself");
         }
+        // A function type's domain is exact (FAIL-types-fn-param-exact-domain): the overload
+        // takes `String`, which `one` does not, so it does not fit there, a plain no.
         let one = one_param(tu.clone(), tup(v("T")), &[], false);
         let both = one_param(tu.clone(), tup(v("T")), &[string], false);
-        assert!(fits_sig(&both, &one), "{one} in {both}");
+        assert!(!fits_sig(&both, &one), "{one} in {both}");
         assert_eq!(why_unfit(&both, &one), None, "{one} in {both}");
     }
 
@@ -14721,6 +15283,43 @@ mod tests {
         }
     }
 
+    /// An arrow that holds a variable of `s` and covers no arrow of `q` still takes keys at
+    /// every binding: `(x0: (T,) | String) -> int` takes `String` whatever `T` is, so beside
+    /// `(x0: int) -> int` it does not fit `(x0: int) -> int`, a function type's domain being
+    /// exact (FAIL-types-fn-param-exact-domain). With `T` alone it takes `(T,)`, no key at
+    /// `T = Never`, and fits.
+    #[test]
+    fn an_arrow_with_a_variable_that_covers_nothing_still_takes_its_keys() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let string = Ty::carrier(Carrier::Str);
+        let extra = |p: Ty| Arrow {
+            params: vec![p],
+            result: int.clone(),
+            partial: false,
+        };
+        let q = one_param(int.clone(), int.clone(), &[], false);
+        let s = one_param(
+            int.clone(),
+            int.clone(),
+            &[extra(tup(v("T")).union(&string))],
+            false,
+        );
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        let s = one_param(int.clone(), int.clone(), &[extra(tup(v("T")))], false);
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        // `B in int | f64` has no least instance; at `Never`, within each, it still takes
+        // `String`, so every instance does.
+        let s = one_param(
+            int.clone(),
+            int.clone(),
+            &[extra(tup(v("B")).union(&string))],
+            true,
+        );
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+    }
+
     /// An overload with a bounded variable fits where one of its arrows is expected
     /// (FAIL-types-overload-bounded-tuple): `(x0: (B,) | (U,)) -> (B,)` for `B in int | f64`,
     /// with `(x0: String) -> String` beside it. The arrow of `q` is read with `B` under a new
@@ -14728,6 +15327,11 @@ mod tests {
     /// `q`'s parameter in the shapes of `s`'s. `(B,)`, the first in written order, held it
     /// by binding `B` to `U`, which its bound does not hold, and the search kept that shape;
     /// now `B` is bound only to what its bound holds, and `(U,)` is found in `(U,)`.
+    ///
+    /// A function type's domain is exact (FAIL-types-fn-param-exact-domain), so the overload
+    /// fits where `q` takes `String` too: `q` here is the overload, and `s` is its two arrows in
+    /// the other order, the same function (their keys do not meet) but not equal to `q` as
+    /// written, so the comparison is made. Where `q` takes no `String`, `s` does not fit.
     #[test]
     fn an_overload_with_a_bounded_variable_fits_where_one_of_its_arrows_is_expected() {
         let v = |x: &str| Ty::var(x.into());
@@ -14736,10 +15340,24 @@ mod tests {
         let string = Arrow {
             params: vec![Ty::carrier(Carrier::Str)],
             result: Ty::carrier(Carrier::Str),
+            partial: false,
         };
-        let q = one_param(bu.clone(), tup(v("B")), &[], true);
-        let s = one_param(bu, tup(v("B")), std::slice::from_ref(&string), true);
+        let b_arrow = Arrow {
+            params: vec![bu.clone()],
+            result: tup(v("B")),
+            partial: false,
+        };
+        let q = one_param(bu.clone(), tup(v("B")), std::slice::from_ref(&string), true);
+        let s = one_param(
+            string.params[0].clone(),
+            string.result.clone(),
+            &[b_arrow],
+            true,
+        );
         assert!(fits_sig(&s, &q), "{q} in {s}");
+        assert_eq!(why_unfit(&s, &q), None, "{q} in {s}");
+        let q = one_param(bu, tup(v("B")), &[], true);
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
         assert_eq!(why_unfit(&s, &q), None, "{q} in {s}");
     }
 
@@ -14786,10 +15404,13 @@ mod tests {
                 one_param(strings.clone(), tup(int.clone()), &[], false),
                 true,
             ),
+            // `B` stands for one carrier of its bound in each instance, so the instance that
+            // takes `(String,)` at `(T,)` also takes `(int,)` or `(f64,)` at `(B,)`, which `q`
+            // does not: a function type's domain is exact (FAIL-types-fn-param-exact-domain).
             (
                 one_param(bt.clone(), tup(v("T")), &[], true),
                 one_param(tup(string.clone()), tup(string.clone()), &[], false),
-                true,
+                false,
             ),
             (
                 one_param(bt, tup(v("B")), &[], true),
@@ -14826,19 +15447,38 @@ mod tests {
         let to_string = Arrow {
             params: vec![string.clone()],
             result: string.clone(),
+            partial: false,
         };
         let bu = tup(v("B")).union(&tup(v("U")));
         let bv = tup(v("B")).union(&tup(v("V")));
+        // `p -> r` after `String -> String`: the same function as `p -> r` with `String ->
+        // String` after it, where `p` takes no `String`, but not equal to it as written, so the
+        // comparison is made. A function type's domain is exact
+        // (FAIL-types-fn-param-exact-domain), so an overload that takes `String` fits only
+        // where `String` is expected too.
+        let after_string = |p: Ty, r: Ty| {
+            let arrow = Arrow {
+                params: vec![p],
+                result: r,
+                partial: false,
+            };
+            one_param(string.clone(), string.clone(), &[arrow], true)
+        };
         let outer = [
             (
+                after_string(bv.clone(), tup(v("B"))),
                 one_param(
                     bv.clone(),
                     tup(v("B")),
                     std::slice::from_ref(&to_string),
                     true,
                 ),
-                one_param(bv.clone(), tup(v("B")), &[], true),
                 true,
+            ),
+            (
+                after_string(bv.clone(), tup(v("B"))),
+                one_param(bv.clone(), tup(v("B")), &[], true),
+                false,
             ),
             (
                 one_param(
@@ -14863,9 +15503,19 @@ mod tests {
         let strings = one_param(tup(string.clone()), tup(string.clone()), &[], false);
         let fns = [
             (
+                one_param(
+                    tup(v("B")),
+                    func(after_string(bu.clone(), tup(v("B")))),
+                    &[],
+                    true,
+                ),
+                one_param(tup(v("B")), func(inner_both.clone()), &[], true),
+                true,
+            ),
+            (
                 one_param(tup(v("B")), func(inner_both.clone()), &[], true),
                 one_param(tup(v("B")), func(inner.clone()), &[], true),
-                true,
+                false,
             ),
             (
                 one_param(tup(v("B")), func(inner.clone()), &[], true),
@@ -14883,14 +15533,19 @@ mod tests {
                 false,
             ),
             (
+                after_string(func(inner.clone()), int.clone()),
                 one_param(
                     func(inner.clone()),
                     int.clone(),
                     std::slice::from_ref(&to_string),
                     true,
                 ),
-                one_param(func(inner), int.clone(), &[], true),
                 true,
+            ),
+            (
+                after_string(func(inner.clone()), int.clone()),
+                one_param(func(inner), int.clone(), &[], true),
+                false,
             ),
         ];
         for (s, q, fits) in outer.into_iter().chain(fns) {
@@ -14900,17 +15555,12 @@ mod tests {
             }
         }
         let bc = tup(v("B")).union(&tup(v("C")));
-        let s = one_param(
-            bc.clone(),
-            tup(v("B")),
-            std::slice::from_ref(&to_string),
-            true,
-        );
-        let wants = one_param(bc, tup(v("B")), &[], true);
+        let s = after_string(bc.clone(), tup(v("B")));
+        let wants = one_param(bc, tup(v("B")), std::slice::from_ref(&to_string), true);
         let takes_string = one_param(
             tup(v("B")).union(&tup(string.clone())),
             tup(v("B")),
-            &[],
+            std::slice::from_ref(&to_string),
             true,
         );
         for (c, q, fits) in [
@@ -15008,6 +15658,7 @@ mod tests {
                 vec![Arrow {
                     params: vec![p(a), p(b)],
                     result,
+                    partial: false,
                 }],
                 2,
                 false,
@@ -15563,6 +16214,7 @@ mod tests {
             vec![Arrow {
                 params: vec![tup(tup(int.clone()))],
                 result: tup(tup(int.clone())),
+                partial: false,
             }],
             1,
             false,
@@ -15583,17 +16235,26 @@ mod tests {
     }
 
     /// A refusal with no arrow left that fits refuses the whole comparison, and the same
-    /// comparison with an arrow added to `s` that takes every value and returns none is
-    /// decided with no refusal. Seed 250, case 4, arrow 18 of `q`: the arrows of `s` tried for
-    /// it are refused inside ([`arrow_fits_alone`]) and none is dropped for one that fits, so
-    /// the refusal is kept ([`uncovered`]). Seed 195, case 4, arrow 27: no arrow alone is
-    /// refused, the cover of the arrows together is. Found by a sweep of seeds 0 to 299 of the
-    /// generator of [`wider_case`] (2026-11-14); these two are the kinds the sweep found. The
-    /// arrow added is not the arrow of `q` itself, which would fit as the arrow equal to it
-    /// with no comparison ([`equal_fits`]) and test nothing of the refusal.
+    /// comparison with an arrow added to `s` that takes the parameters of `q` and returns none
+    /// is decided with no refusal. Seed 59, case 0, arrow 0 of `q`: the one arrow of `s` would
+    /// take part of the parameter only by binding its variable. Seed 41, case 0, arrow 0: it
+    /// takes a part of more than one parameter. Seed 24, case 3, arrow 0: no arrow alone is
+    /// refused, the cover of the arrows together is. The arrow added takes `q`'s parameters
+    /// and no more: a function type's domain is exact (sec:type_resolution, `K -> V`), so an
+    /// arrow that takes every value (the `(_) -> Never` this test added before
+    /// FAIL-types-fn-param-exact-domain) makes `s` take keys `q` does not, and `s` does not
+    /// fit. Found by a sweep of seeds 0 to 299, cases 0 to 4, of the generator of
+    /// [`wider_case`], each arrow of `q` that `s` was refused at (2026-11-15); one of each kind
+    /// of refusal, the smallest. The arrow added is not the arrow of `q` itself, which would
+    /// fit as the arrow equal to it with no comparison ([`equal_fits`]) and test nothing of
+    /// the refusal.
     #[test]
     fn a_refusal_with_no_arrow_that_fits_refuses_the_comparison() {
-        for (seed, case, arrow) in [(250, 4, 18), (195, 4, 27)] {
+        // The last field: whether `q` takes every value, so that `(_) -> Never` added to `s`
+        // takes no key `q` does not (seed 24, `(x0: _) -> f64`).
+        for (seed, case, arrow, q_takes_all) in
+            [(59, 0, 0, false), (41, 0, 0, false), (24, 3, 0, true)]
+        {
             let mut rng = Rng(seed);
             let mut input = None;
             for c in 0..=case {
@@ -15606,16 +16267,25 @@ mod tests {
             assert!(why_unfit(&s, &q).is_some(), "{what}: refused");
             let mut t = s.clone();
             t.arrows.push(Arrow {
-                params: vec![Ty::set(KType::top()); width],
+                params: qas[arrow].params.clone(),
                 result: Ty::empty(),
+                partial: false,
             });
             t.note_held();
-            assert!(fits_sig(&t, &q), "{what}, with `(_) -> Never` added to s");
-            assert_eq!(
-                why_unfit(&t, &q),
-                None,
-                "{what}, with `(_) -> Never` added to s"
-            );
+            let added = "with an arrow from q's parameters to Never added to s";
+            assert!(fits_sig(&t, &q), "{what}, {added}");
+            assert_eq!(why_unfit(&t, &q), None, "{what}, {added}");
+            // Taking every value instead, `s` takes keys `q` does not, a plain no.
+            let mut u = s.clone();
+            u.arrows.push(Arrow {
+                params: vec![Ty::set(KType::top()); width],
+                result: Ty::empty(),
+                partial: false,
+            });
+            u.note_held();
+            let every = "with `(_) -> Never` added to s";
+            assert_eq!(fits_sig(&u, &q), q_takes_all, "{what}, {every}");
+            assert_eq!(why_unfit(&u, &q), None, "{what}, {every}");
         }
     }
 
@@ -15807,6 +16477,7 @@ mod tests {
             .map(|(ps, r)| Arrow {
                 params: ps.iter().map(|p| p.ty()).collect(),
                 result: r.ty(),
+                partial: false,
             })
             .collect();
         let mut s = sig(sas, width, false);
@@ -15816,6 +16487,7 @@ mod tests {
         let qa = Arrow {
             params: params.iter().map(|&m| of_values(m)).collect(),
             result: of_values(result),
+            partial: false,
         };
         let q = sig(vec![qa], width, false);
         let truth = covers_by_values(arrows, params, result);
@@ -15921,6 +16593,7 @@ mod tests {
             .map(|(ps, r)| Arrow {
                 params: ps.iter().map(|p| p.ty()).collect(),
                 result: r.ty(),
+                partial: false,
             })
             .collect();
         let mut s = sig(sas, width, false);
@@ -15930,6 +16603,7 @@ mod tests {
         let qa = Arrow {
             params: params.iter().map(|&p| u(p)).collect(),
             result: u(result),
+            partial: false,
         };
         let mut q = sig(vec![qa], width, false);
         q.own.insert("U".into());
@@ -15978,6 +16652,7 @@ mod tests {
             let a = Arrow {
                 params: vec![Ty::carrier(Carrier::Int)],
                 result: Ty::set(KType::atom(&format!("v{i}"))),
+                partial: false,
             };
             Ty::func(Arc::new(sig(vec![a], 1, false)))
         }
@@ -16178,12 +16853,14 @@ mod tests {
             .map(|(ps, r)| Arrow {
                 params: ps.iter().map(|p| p.ty()).collect(),
                 result: r.ty(),
+                partial: false,
             })
             .collect();
         let s = sig(sas, width, false);
         let qa = Arrow {
             params: params.iter().map(|p| p.ty()).collect(),
             result: result.ty(),
+            partial: false,
         };
         let q = sig(vec![qa], width, false);
         let ps: Vec<u16> = params.iter().map(|p| p.values()).collect();

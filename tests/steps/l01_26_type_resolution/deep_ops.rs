@@ -487,16 +487,20 @@ fn a_shared_pair_met_again_under_other_bindings_keeps_them() {
 /// refused, as `B`'s bucket cannot choose between `(int, int)` and `(int, int, int)`, and the
 /// second, `(A | ((bool,),), bool)`, is then tried with the refusal in force; the verdict is the
 /// refusal. A second shape equal to `(A, bool)` holds it at once, binding nothing, before any
-/// shape is tried in written order (`Comparing::held_as_is`), so there the parameter fits.
+/// shape is tried in written order (`Comparing::held_as_is`), so there the parameter fits;
+/// the slot is written `(A, bool) | (C, bool)` there, with a shape equal to `(A, bool)` of its
+/// own to be held so.
 #[test]
 fn rows_compared_after_a_refusal_give_the_refusal() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     let a = "((int, int),) | ((int, int, int),)";
     let b = "((int, bool) | (int, bool, bool),) | ((int, U) | (int, U, U),)";
-    let program = |g: &str| {
-        format!(
-            "p(f: (x: ({a}, bool)) -> int) = 0;\nq(g: (x: {g}) -> int for U in int) = p(f: g);\n"
-        )
+    // The values of `b` that `a` does not hold: `p`'s parameter holds them too, as a function
+    // type's domain is exact (DESIGN.md sec:type_language, "Plain `K -> V` is exact";
+    // FAIL-types-fn-param-exact-domain), so `g` takes no value `p`'s `f` does not.
+    let c = "((int, bool) | (int, bool, bool),)";
+    let program = |slot: &str, g: &str| {
+        format!("p(f: (x: {slot}) -> int) = 0;\nq(g: (x: {g}) -> int for U in int) = p(f: g);\n")
     };
     // The second tuple prints as `((int, int, int),)` or, where the message names it once as
     // a type variable, as that variable.
@@ -504,22 +508,31 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
         "the tuples ((int, int),) and ",
         "may each be held by one of the shapes",
     ];
-    for g in [
-        format!("({b}, bool)"),
-        format!("({b}, bool) | ({a} | ((bool,),), bool)"),
+    for (slot, g) in [
+        (format!("({a} | {c}, bool)"), format!("({b}, bool)")),
+        (
+            format!("({a} | {c} | ((bool,),), bool)"),
+            format!("({b}, bool) | ({a} | ((bool,),), bool)"),
+        ),
     ] {
-        let errs = type_errors(&program(&g));
+        let errs = type_errors(&program(&slot, &g));
         assert_eq!(errs.len(), 1, "{g}: {errs:?}");
         assert!(refusal.iter().all(|r| errs[0].contains(r)), "{g}: {errs:?}");
     }
     assert_eq!(
-        type_errors(&program(&format!("({b}, bool) | ({a}, bool)"))),
+        type_errors(&program(
+            &format!("({a}, bool) | ({c}, bool)"),
+            &format!("({b}, bool) | ({a}, bool)")
+        )),
         Vec::<String>::new()
     );
     // The control: with no shape refused, the parameter fits (`(U, int)`, which holds no
-    // value of `p`'s parameter, gives the bound its variable).
+    // value of `p`'s parameter but `(int, int)`, gives the bound its variable).
     assert_eq!(
-        type_errors(&program(&format!("({a}, bool) | (U, int)"))),
+        type_errors(&program(
+            &format!("({a}, bool) | (int, int)"),
+            &format!("({a}, bool) | (U, int)")
+        )),
         Vec::<String>::new()
     );
 }
@@ -527,7 +540,8 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
 /// An answer found after a refusal is not kept in the memo of rows (`Cx::compared`), where a
 /// later attempt, with nothing refused, would read it. `s` has the arrows
 /// `(x: #m(A) | #m(E) | int, y: #m(E) | int | V) -> int` and `(x: #m(X) | String, y: int) -> int`,
-/// `q` the arrows `(x: #m(X), y: int) -> int` and `(x: int, y: #m(X)) -> int`, where
+/// `q` the arrows `(x: #m(X), y: int) -> int`, `(x: #m(E) | int, y: #m(X) | #m(E) | int) -> int`
+/// and `(x: String, y: int) -> int`, where
 /// `X = #a(3, 5) | #a(4, 6)`, `A = #a(1 | 2, T) | #a(int, U)` and `E = #a(int, int)`, each
 /// payload shape `#m(X)` and `#m(E)` one node at each place (a shape with no variable is read
 /// as itself, `Cx::read`), and `V`, of `int`, keeps `#m(E) | int | V` from the kernel's forms.
@@ -538,6 +552,11 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
 /// refusal. Kept, that false was read when the same arrow was tried for the second arrow of
 /// `q`, as its own attempt with nothing refused; `#m(X)` was bound to `V`, outside its bound,
 /// and `s` did not fit `q`, though `X` is in `E` and that arrow takes it.
+///
+/// `q`'s second and third arrows are wider than `(x: int, y: #m(X))` was so that `q` takes
+/// every value `s` takes, as a function type's domain is exact (DESIGN.md sec:type_language, "Plain
+/// `K -> V` is exact"; FAIL-types-fn-param-exact-domain): `s`'s first arrow, with `T` and `U`
+/// unbound and `V` at `int`, takes `(#m(E), #m(E))`, and its second takes `String`.
 #[test]
 fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
     use zedc::check::read::parse_type;
@@ -566,6 +585,7 @@ fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
     let arrow = |x: &Ty, y: &Ty| ty::Arrow {
         params: vec![x.clone(), y.clone()],
         result: int.clone(),
+        partial: false,
     };
     let sig = |arrows: Vec<ty::Arrow>| {
         let params = ["x", "y"].map(|n| SParam {
@@ -588,10 +608,24 @@ fn an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt() {
     s.own = ["T".into(), "U".into(), "V".into()].into();
     s.bounds.insert("V".into(), ty::Carrier::Int.bit());
     s.held.insert("V".into());
-    let q = sig(vec![arrow(&mx, &int), arrow(&int, &mx)]);
+    // `#m(X) | #m(E)` with both shapes kept, `#m(X)`'s the node of `mx`'s, which a union
+    // would drop as held by `#m(E)`'s.
+    let mut mxe = Ty::set(Type::atom_with("m", &Type::top()));
+    let shapes = |t: &Ty| t.payloads["m"].clone().unwrap_or_default();
+    mxe.payloads
+        .insert("m".into(), Some([shapes(&mx), shapes(&me)].concat()));
+    let q_second = arrow(&Ty::union_all([&me, &int]), &Ty::union_all([&mxe, &int]));
+    let q = sig(vec![
+        arrow(&mx, &int),
+        q_second.clone(),
+        arrow(&t("String"), &int),
+    ]);
     assert!(ty::fits_sig(&s, &q));
-    // The control: the second arrow of `q` alone, with no refusal before it.
-    assert!(ty::fits_sig(&s, &sig(vec![arrow(&int, &mx)])));
+    // The control: the second arrow of `q` alone, with no refusal before it, against the
+    // first of `s`, the one that covers it.
+    let mut s_first = s.clone();
+    s_first.arrows.truncate(1);
+    assert!(ty::fits_sig(&s_first, &sig(vec![q_second])));
 }
 
 /// Small instances of

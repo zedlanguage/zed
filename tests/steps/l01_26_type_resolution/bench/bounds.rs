@@ -214,13 +214,16 @@ fn reading_back_a_printed_type_of_many_distinct_bounded_variables_scales() {
 
 #[test]
 fn a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_size() {
-    // `bounded_or_free`: n parameters, each `(Bi,) | (T,)`, given `(String,)` but the last.
+    // `bounded_or_free`: n parameters, each `(Bi,) | (T,)`, given `(int,) | (String,)`.
     // Each `(String,)` is refused by the shape `(Bi,)`, whose bound does not hold `String`,
     // and taken by `(T,)` (FAIL-types-overload-bounded-tuple). The refusal looks the bound up
     // in the signature's sorted bounds (`Binds::bound`, O(log n)) and checks the piece alone,
     // so the comparison is O(n log n); a linear scan of the bounds per piece would be O(n^2).
-    // The signatures are read before timing.
-    let n = 9600;
+    // The signatures are read before timing. n was 9600: the permission of each arrow's
+    // instance (`instance_within`, FAIL-types-fn-param-exact-domain) added about 8% of the
+    // instructions at an unchanged ratio, and at a load average of 37 the whole run took
+    // 21.5 s before that change, past the 20 s limit, so n is 8000 (18.4 s at that load).
+    let n = 8000;
     let inputs = zed_tests::scaling::inputs(n, |m| {
         let (s, q) = bounded_or_free(m, "(int,)");
         let read = |t: &str| parse_type(t).unwrap_or_else(|e| panic!("{e}"));

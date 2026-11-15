@@ -4237,6 +4237,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let int = Ty::carrier(Carrier::Int);
         let found = int.union(&Ty::set(KType::atom("notFound")));
         let mut sig = Sig::one(super::positional(1), vec![int], found);
+        sig.arrows[0].partial = true;
         sig.data = true;
         // Only a low end of the literal `0` makes the keys the ranks. A range from another
         // low end is not `dense`, so a read of it that misses gives `#notFound` where DESIGN.md
@@ -14063,6 +14064,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .map(|&j| sig.arrows[k].params[j].clone())
                     .collect(),
                 result: sig.arrows[k].result.clone(),
+                partial: sig.arrows[k].partial,
             })
             .collect();
         // A parameter left out keeps its need on its ints, at its place in the rest.
@@ -14369,6 +14371,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .map(|a| Arrow {
                     params: inv.iter().map(|&i| a.params[i].clone()).collect(),
                     result: a.result.clone(),
+                    partial: a.partial,
                 })
                 .collect(),
         };
@@ -19480,6 +19483,7 @@ impl<'a> Ck<'_, 'a> {
             };
             let found = entries.union(&Ty::set(KType::atom("notFound")));
             let mut family = Sig::one(vec![param], vec![keys.union(&wider)], found);
+            family.arrows[0].partial = true;
             family.data = true;
             let declared = self.text(&Ty::func(Arc::new(family)));
             menu.push(format!(
@@ -20666,6 +20670,7 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
         arrows: vec![Arrow {
             params: vec![arrow.params[j].clone()],
             result: arrow.result.clone(),
+            partial: arrow.partial,
         }],
         bounds: BTreeMap::new(),
         data: sig.data,
@@ -20719,6 +20724,7 @@ mod tests {
             vec![Ty::carrier(Carrier::Int)],
             values,
         );
+        sig.arrows[0].partial = true;
         sig.data = true;
         sig.note_held();
         Ty::func(Arc::new(sig))
@@ -20857,6 +20863,7 @@ mod tests {
             arrows: vec![Arrow {
                 params: vec![row.clone()],
                 result: Ty::empty(),
+                partial: false,
             }],
             bounds: BTreeMap::new(),
             data: false,

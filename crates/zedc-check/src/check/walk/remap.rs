@@ -1019,6 +1019,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 fn family(keys: Ty, values: Ty) -> Ty {
     let values = values.union(&Ty::set(KType::atom("notFound")));
     let mut sig = Sig::one(super::super::positional(1), vec![keys], values);
+    sig.arrows[0].partial = true;
     sig.data = true;
     sig.dense = false;
     sig.note_held();
