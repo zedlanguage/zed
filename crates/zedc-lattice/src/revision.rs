@@ -766,6 +766,7 @@ mod tests {
                 pairs.push((x.clone(), y));
             }
         }
+        let fixed = pairs.len();
         let mut seed =
             crate::seed::seed("a_sum_or_difference_of_two_pieces_is_what_the_parts_give") | 1;
         let mut below = |n: u64| {
@@ -794,12 +795,17 @@ mod tests {
         }
         let mut one = 0;
         for op in [Op::Add, Op::Sub] {
-            for (x, y) in &pairs {
-                one += usize::from(x.len() == 1 && y.len() == 1);
+            for (i, (x, y)) in pairs.iter().enumerate() {
+                one += usize::from(i < fixed && x.len() == 1 && y.len() == 1);
                 assert_eq!(forward(&op, x, y), general(&op, x, y), "{op:?} {x:?} {y:?}");
             }
         }
-        assert!(one > 8000, "{one} pairs of one piece each");
+        // The one-piece pairs are counted over the fixed operands only, whatever the draws
+        // (PROOF-test-count-thresholds): `operands` holds the empty set, two unions and one
+        // interval for each lo <= hi of the 11 ends -inf, -4..=4, +inf but [+inf, +inf] and
+        // [-inf, -inf], 66 - 2 = 64 intervals, so 64 * 64 pairs of one piece each for each of
+        // `+` and `-`.
+        assert_eq!(one, 2 * 64 * 64, "pairs of one piece each");
     }
 
     #[test]
