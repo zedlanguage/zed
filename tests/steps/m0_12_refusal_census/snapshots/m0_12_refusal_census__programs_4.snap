@@ -2,7 +2,7 @@
 source: tests/steps/m0_12_refusal_census/mod.rs
 expression: census(piece_4(0..7))
 ---
-Growth: 137
+Growth: 136
 
 l01_29_diagnostics::refused_warning::each_read_and_each_bound_value_has_its_own_warning#246eaad9	2:165	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics::refused_warning::each_read_and_each_bound_value_has_its_own_warning#246eaad9	3:13	warning	Growth	Cannot find exactly which values meet the conditions here.
@@ -90,7 +90,6 @@ l01_29_diagnostics#36651f4f	44:1021	warning	Growth	Cannot find exactly which val
 l01_29_diagnostics#36651f4f	44:1033	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics::refused_warning::each_read_and_each_bound_value_has_its_own_warning#1bbf06aa	2:165	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics::refused_warning::each_read_and_each_bound_value_has_its_own_warning#1bbf06aa	3:25	warning	Growth	Cannot find exactly which values meet the conditions here.
-l01_29_diagnostics::refused_warning::each_read_and_each_bound_value_has_its_own_warning#1bbf06aa	3:44	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics#afc637dc	1:178	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics#afc637dc	2:178	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics#afc637dc	3:178	warning	Growth	Cannot find exactly which values meet the conditions here.

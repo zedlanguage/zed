@@ -897,8 +897,10 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// none more in the refusal census, and made `programs_9` of that census run 4 times longer;
 /// asking as written where the one writing is refused would make the answer depend on the
 /// writing again.
-/// One writing does not answer every question another does: the census has one condition the
-/// chosen sign refuses for Shadows that its writing as given answered (PRES-solve-equation-sign).
+/// Before PRES-solver-equation-sign-free, the census had one condition that the chosen sign
+/// refused for Shadows and its writing as given answered (PRES-solve-equation-sign). Since
+/// then, no condition of the refusal census that this writing refuses is answered as written:
+/// asking each refused one again as written changed no piece of the census (2026-11-15).
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     let f = &signed(f, Signs::Chosen);
     // The formula with each shared part taken out of the disjunctions that hold it in every
