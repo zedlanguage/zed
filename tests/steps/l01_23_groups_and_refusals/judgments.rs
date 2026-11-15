@@ -1457,3 +1457,38 @@ fn many_nested_sets_of_every_atom_beside_functions_in_a_result_are_decided() {
     assert!(left.subtype(&right));
     assert!(!right.subtype(&left));
 }
+
+/// A union of `n` rows `((#_, i) \ (#a, i), x)`, each a set of every atom nested beside `x`,
+/// and the union `((#_, int), x) | (1, 2)` that holds it. The row `(1, 2)` shares no value
+/// with a left row, but it splits the first components into two classes, the nested sets and
+/// `1`, and the class of the nested sets holds `n + 1` cells (PERF-types-cut-rows-union-scaling).
+fn nested_cut_rows_beside_a_pair(n: usize, x: &str) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let rows: Vec<String> = (0..n)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), {x})"))
+        .collect();
+    let left = parse_type(&rows.join(" | ")).unwrap();
+    let right = parse_type(&format!("(((#_, int), {x}) | (1, 2))")).unwrap();
+    (left, right)
+}
+
+/// The small instance of `bench::nested_sets_of_every_atom_against_a_union_are_cut_in_linear_time`,
+/// beside a function, an integer and an atom with a payload. The left holds no `(1, 2)` and the
+/// right holds `(#a, 0)` in its first component, so neither holds the other. A left row with
+/// a string in its nested set is outside the right, which holds only integers there, and that
+/// value is found on the piece of the class of the nested sets.
+#[test]
+fn many_nested_sets_of_every_atom_beside_a_pair_are_decided() {
+    use zedc::check::read::parse_type;
+    for x in ["(int -> int)", "3", "#c(1)"] {
+        let (left, right) = nested_cut_rows_beside_a_pair(4, x);
+        assert!(left.subtype(&right), "{x}");
+        assert!(!right.subtype(&left), "{x}");
+        let rows: Vec<String> = (0..4)
+            .map(|i| format!("((#_, {i}) \\ (#a, {i}), {x})"))
+            .collect();
+        let wider = parse_type(&format!("{} | ((#_, \"s\"), {x})", rows.join(" | "))).unwrap();
+        assert!(!wider.subtype(&right), "{x}");
+        assert!(left.subtype(&wider), "{x}");
+    }
+}

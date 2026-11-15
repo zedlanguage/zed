@@ -273,3 +273,22 @@ fn nested_sets_of_every_atom_in_results_are_cut_in_linear_time() {
         },
     );
 }
+
+/// `nested_sets_of_every_atom_are_cut_in_linear_time` against the union of the one shape and
+/// `(1, 2)` (PERF-types-cut-rows-union-scaling): the kernel splits the first components into
+/// the class of the `n` nested sets and that of `1`, and decides the class of the nested sets
+/// on the component as it was, not on the union of its `n + 1` cells, which each test of a
+/// cell would read: linear in `n`. Before, 46.7 times the instructions from n 16 to 128.
+#[test]
+fn nested_sets_of_every_atom_against_a_union_are_cut_in_linear_time() {
+    let n = 256;
+    let pairs = scaling::inputs(n, |n| nested_cut_rows_beside_a_pair(n, "(int -> int)"));
+    scaling::check(
+        "n rows with a nested set of every atom against a union of two shapes",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}

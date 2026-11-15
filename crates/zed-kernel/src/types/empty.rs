@@ -5094,8 +5094,11 @@ impl<'m> Searching<'m> {
     /// step and each half takes the other's tuple types out, so each tuple type stays in the
     /// part of O(log k) of the k pieces, and the part is restricted O(log k) times over. Each
     /// piece's box holds in component `j` only the values of its own class, so a test of a cell
-    /// against it costs the size of the class, not of the component. `each` is done with the box
-    /// and the part of each piece whose part is not `false`, and answers whether to go on.
+    /// against it costs the size of the class, not of the component; but when `f` holds no tuple
+    /// outside the classes' tuple types, the box keeps the component as it is, which then adds
+    /// no tuple of the piece's part, and a test costs what it costs in `g`. `each` is done with
+    /// the box and the part of each piece whose part is not `false`, and answers whether to go
+    /// on.
     /// The halves are walked on a stack of their own, the lower half first, each restricted
     /// when it is reached.
     async fn split_classes(
@@ -5112,7 +5115,26 @@ impl<'m> Searching<'m> {
         let at = |a: &Row| class_of.get(&g.index[a]).copied();
         let mut forks = Vec::new();
         let out = f.restrict(&|a| at(a).map(|_| false));
-        if out.is_leaf() != Some(false) {
+        // Complexity tradeoff (PERF-types-cut-rows-union-scaling): naive, each class's piece
+        // keeps in component `j` only the union of the class's cells, so every test of a cell
+        // of the piece against its box reads that union: a class of `n` cells over a component
+        // the cells do not narrow costs order `n` per test and `n²` for its piece (`n` rows
+        // `((#_, i) \ (#a, i), 3)` against `((#_, int), 3) | (1, 2)`, one class of the nested
+        // sets and one of `1`: 5.21G instructions at n 128, 48.9 times n 16). Used: when `f`
+        // is `false` with every tuple type of every class taken out (`out`), the piece keeps
+        // the component as it is, whose tests cost what they cost in this box: 73.4M
+        // instructions at n 128, 7.4 times. Proof that the answer is the same: each tuple type
+        // of `f` is open on `j` and in one class (`classes`), so at a tuple whose component
+        // `j` lies in no cell of the class, the class's tuple types are false there, and the
+        // other classes' are taken out of the piece's part; the part is then `out`, `false`,
+        // so the values the wider box adds hold no tuple of the part, and the piece is empty,
+        // or holds a value (`Each::Seek`), exactly when it is on the class's box. A tuple whose
+        // component `j` lies in a cell of the class meets no cell of another class, so the
+        // piece's part agrees with `f` there. Given up: when `out` is not `false` (the rest of
+        // the component is then empty, or the rest's piece has answered), the meet is kept, so
+        // a large class over such a box still costs its size per test.
+        let wide = out.is_leaf() == Some(false);
+        if !wide {
             let met = Type::union_all(classes.iter().map(|(c, _)| c.clone()));
             let rest = &g.r[j] - &met;
             match self.empty_fork(&rest).await {
@@ -5147,7 +5169,9 @@ impl<'m> Searching<'m> {
             };
             if this.len() == 1 {
                 let mut r = g.r.clone();
-                r[j] = &r[j] & &classes[this.start].0;
+                if !wide {
+                    r[j] = &r[j] & &classes[this.start].0;
+                }
                 if f.is_leaf() != Some(false) {
                     let snap = self.fork_snapshot();
                     if !self.each(each, r, f).await {
