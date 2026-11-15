@@ -32,14 +32,15 @@
 ///   would pass a scaling test. Without them, a copy or fill of `n` bytes takes instructions in
 ///   proportion to `n` (test `copies_and_fills_count_by_their_length`). A setting glibc does not
 ///   know is ignored; this glibc leaves the stosb threshold alone without erms.
-/// - `glibc.malloc.tcache_count=0`: no per-thread cache in malloc. With the cache, the
-///   instructions malloc spends depend on what earlier threads left in the arena a new thread
-///   takes over: one check of the same program, on a new thread each time, took 30.39 or 30.65
-///   billion instructions, and the difference of two checks that l01_29's casts tests take came
-///   out 1.5 times its size in 3 of 30 runs; without it, 30 runs in 15 processes repeat to within
-///   0.04% (SCALE-casts-spread, test `malloc_keeps_no_state_from_earlier_threads`). The price is
-///   more instructions per allocation, a cost linear in the allocations, which lowers the ratio of
-///   a superlinear cost a little (TEST-scaling-direct-run-verdict measured it on each benchmark).
+///
+/// Until TEST-meter-allocator-bias the settings also held `glibc.malloc.tcache_count=0`, which
+/// turned off malloc's per-thread cache: with the cache the instructions malloc spends depend on
+/// what earlier threads left in the arena a new thread takes over (one check took 30.39 or 30.65
+/// billion instructions, SCALE-casts-spread), and without it each allocation took more
+/// instructions, which lowered the ratio of a superlinear cost by 0.82% on average and 17.6% at
+/// most (TEST-scaling-direct-run-verdict). A measured run now allocates from a heap of its own
+/// (module `meter` of zed-alloc-count), so the setting is gone and glibc's cache serves the rest
+/// of the process.
 ///
 /// `tools/run_tests.sh` exports the same text (test
 /// `run_tests_exports_the_settings_of_the_meter`). The mmap and trim thresholds are left at
@@ -47,8 +48,7 @@
 /// and one of 32 MiB moves the sizes at which the memory limits of l01_17 and l01_36 refuse.
 pub const GLIBC_TUNABLES: &str = "glibc.cpu.hwcaps=-ERMS,-FSRM:\
 glibc.cpu.x86_rep_movsb_threshold=0xffffffffffffffff:\
-glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff:\
-glibc.malloc.tcache_count=0";
+glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff";
 
 /// The variable a process started again by this crate finds in its environment, and removes.
 ///
@@ -209,16 +209,16 @@ mod tests {
             "glibc.malloc.check=3:{GLIBC_TUNABLES}"
         )));
         assert!(!holds_the_settings(""));
-        assert!(!holds_the_settings("glibc.malloc.tcache_count=0"));
+        assert!(!holds_the_settings("glibc.cpu.hwcaps=-ERMS,-FSRM"));
         assert!(!holds_the_settings(&format!(
-            "{GLIBC_TUNABLES}:glibc.malloc.tcache_count=7"
+            "{GLIBC_TUNABLES}:glibc.cpu.hwcaps=-AVX2"
         )));
     }
 
     #[test]
     fn adding_the_settings_keeps_other_items_and_replaces_those_of_the_same_names() {
         assert_eq!(with_the_settings(""), GLIBC_TUNABLES);
-        let added = with_the_settings("glibc.malloc.tcache_count=7:glibc.malloc.check=3");
+        let added = with_the_settings("glibc.cpu.hwcaps=-AVX2:glibc.malloc.check=3");
         assert_eq!(added, format!("glibc.malloc.check=3:{GLIBC_TUNABLES}"));
         assert!(holds_the_settings(&added));
     }

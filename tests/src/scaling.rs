@@ -30,16 +30,20 @@
 //! thread takes over and on the order the hash seed frees blocks in: one check of the same
 //! program took 0.26 billion instructions (0.9%) more in some runs than in others, all of it in
 //! malloc, and a difference of two such counts, of about 0.5 billion, came out 1.5 times its
-//! size. So the meter turns off malloc's cache per thread, and
-//! `malloc_keeps_no_state_from_earlier_threads` fails where it does not.
+//! size. Turning off malloc's cache per thread made the counts repeat but added work to each
+//! allocation, which lowered the ratio of a superlinear cost (TEST-meter-allocator-bias). So each
+//! run allocates from a heap of its own (`zed_alloc_count::metered`, module `meter` of that
+//! crate), whose instructions per call depend only on the run's own calls, and
+//! `the_instructions_of_a_run_repeat` fails where they do not.
 //!
-//! Both are glibc tunables, which glibc reads only as a process starts. The crate
-//! `zed-meter-settings` holds them (`GLIBC_TUNABLES`) and starts a test binary that was started
-//! without them again with them, before `main`, and [`Meter::new`] stops where they are still
-//! not in effect. So a test gives the same verdict run directly by `cargo test` as under
-//! `tools/run_tests.sh`, which exports the same settings (TEST-scaling-direct-run-verdict: a
-//! Θ(k²) cost took 11.29 times the instructions at 8n run directly, and 10.41 with the
-//! settings, which add instructions to each allocation).
+//! The settings against `rep movsb` and `rep stosb` are glibc tunables, which glibc reads only
+//! as a process starts. The crate `zed-meter-settings` holds them (`GLIBC_TUNABLES`) and starts
+//! a test binary that was started without them again with them, before `main`, and
+//! [`Meter::new`] stops where they are still not in effect. So a test gives the same verdict run
+//! directly by `cargo test` as under `tools/run_tests.sh`, which exports the same settings
+//! (TEST-scaling-direct-run-verdict: a Θ(k²) cost took 11.29 times the instructions at 8n run
+//! directly, and 10.41 with the settings of that time, which then also turned off malloc's
+//! cache).
 //!
 //! Where the hardware has no counter, as in most virtual machines, [`Meter`] falls back on the
 //! kernel's task clock: the processor time of this thread and the threads it starts, without the
@@ -351,7 +355,19 @@ impl Meter {
     /// The work `f` does, in instructions or nanoseconds, and the bytes it allocates on this
     /// thread, the threads it starts and the threads those start; each never 0. Off Linux both
     /// are of the whole process (see the module's documentation).
+    ///
+    /// `f` allocates from a heap of its own, as a run of [`check_order`] does
+    /// (`zed_alloc_count::metered`, TEST-meter-allocator-bias), unless this thread is in such a
+    /// run already; the start and end of that heap are outside the count. A block of the C
+    /// library's made before `f` and grown by `realloc` inside it stays the C library's, so its
+    /// cost is glibc's.
     pub fn work(&mut self, f: impl FnOnce()) -> Work {
+        zed_alloc_count::metered(|| self.work_on_the_c_heap(f))
+    }
+
+    /// [`Meter::work`] with `f` allocating from the C library's `malloc`, unless this thread is
+    /// in a metered run: for the test that compares the two.
+    pub(crate) fn work_on_the_c_heap(&mut self, f: impl FnOnce()) -> Work {
         let bytes = zed_alloc_count::allocated();
         let start = (self.read)();
         f();
@@ -487,6 +503,7 @@ pub(crate) enum Measures {
 /// happen: a setuid binary, an `execve` that failed, or `GLIBC_TUNABLES` changed by hand.
 #[cfg(target_os = "linux")]
 fn stop_unless_the_settings_are_in_effect() {
+    zed_alloc_count::ready_to_meter();
     if !zed_meter_settings::in_effect() {
         let args: Vec<String> = std::env::args().collect();
         panic!(
@@ -646,6 +663,14 @@ impl Drop for BenchLine<'_> {
 /// instructions does not (see the module's documentation). A panic in `f` goes on in the caller,
 /// with its own message.
 fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (T, u64, u64) {
+    // The run, the start of its thread, and the threads it starts allocate from heaps of their
+    // own, whose instructions per call depend on nothing but their own calls
+    // (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
+    zed_alloc_count::metered(|| counted_in_scope(stack, f))
+}
+
+/// [`counted_on_a_thread`] inside its metered heap.
+fn counted_in_scope<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (T, u64, u64) {
     std::thread::scope(|scope| {
         // The test's name, which libtest gives its thread, so a note of [`hold`] names the test.
         let mut thread = std::thread::Builder::new().stack_size(stack);

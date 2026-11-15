@@ -71,3 +71,33 @@ fn the_work_of_a_thread_a_run_starts_counts() {
         )));
     }
 }
+
+/// About 2n allocations on the meter's heap (module `meter` of zed-alloc-count, which every run
+/// of [`check_order`] allocates from), at `n` and 8n: `n` blocks of 1 to 1024 bytes, then every
+/// other one freed, so that about n/2 blocks wait on the free lists of their classes, then each
+/// of those allocated again, from the lists; a vector of `n` words grown by doubling; and a
+/// quarter of the blocks allocated on a thread the run starts and freed by the run, which does
+/// not reuse them. Each call is O(1) (the module's complexity note) however long the free lists
+/// are, so the whole is O(n) and the ratio about 8 (TEST-meter-allocator-bias). A `free` that
+/// walked its class's list, as an allocator whose cost grows with the heap's state would, makes
+/// the run Θ(n²) and fails (negative control, run once, 2026-11-15).
+#[test]
+fn a_metered_heap_is_linear() {
+    check("allocations on the metered heap", 1 << 16, |n| {
+        let churn = |n: usize, from: usize| {
+            let size = |i: usize| 1 + (from + i) * 37 % 1024;
+            let mut blocks: Vec<Vec<u8>> = (0..n).map(|i| vec![i as u8; size(i)]).collect();
+            for i in (0..n).step_by(2) {
+                blocks[i] = Vec::new();
+            }
+            for i in (0..n).step_by(2) {
+                blocks[i] = vec![i as u8; size(i)];
+            }
+            blocks
+        };
+        let theirs = std::thread::scope(|s| s.spawn(|| churn(n / 4, 1)).join().unwrap());
+        let mine = churn(n - n / 4, 0);
+        let grown: Vec<u64> = (0..n as u64).collect();
+        black_box((theirs, mine, grown));
+    });
+}

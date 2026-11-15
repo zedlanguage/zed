@@ -867,12 +867,12 @@ slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
 mkdir -p "$slot_dir"
 # The C library settings the scaling tests count work under: no rep movsb or rep stosb in memcpy
 # and memset (the hardware counter sees either as one instruction or few, so a quadratic copy
-# would pass), and no per-thread cache in malloc (with one, the instructions malloc spends depend
-# on earlier threads, SCALE-casts-spread). crates/zed-meter-settings/src/lib.rs holds the same
-# text, with the reasons and measurements, and a test binary started without it starts itself
-# again with it; this export saves that second start and gives the settings to the programs the
+# would pass). A measured run allocates from a heap of its own
+# (crates/zed-alloc-count/src/meter.rs, TEST-meter-allocator-bias), so malloc keeps its per-thread
+# cache. crates/zed-meter-settings/src/lib.rs holds the same text, with the reasons and
+# measurements, and a test binary started without it starts itself again with it; this export saves that second start and gives the settings to the programs the
 # tests run. Test run_tests_exports_the_settings_of_the_meter checks the two are equal.
-export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=0xffffffffffffffff:glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff:glibc.malloc.tcache_count=0
+export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=0xffffffffffffffff:glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff
 cores=$(nproc)
 export root out slots slot_dir cores run_kind cov
 take_slot() {

@@ -42,6 +42,11 @@ pub mod words;
 )]
 mod scaling;
 
+// The meter's `malloc` in this crate's test binary, which `scaling` measures each run with
+// (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
+#[cfg(test)]
+zed_alloc_count::meter_entry_points!();
+
 /// The completeness tests of plan row TEST-complete-kernel (COMPLETENESS.md).
 #[cfg(test)]
 mod completeness;

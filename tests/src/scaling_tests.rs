@@ -257,22 +257,124 @@ fn copies_and_fills_count_by_their_length() {
     }
 }
 
-/// Fails where glibc's malloc keeps a cache per thread, which glibc turns off only by
-/// `GLIBC_TUNABLES` as the process starts: there, the instructions a run spends in malloc
-/// depend on the threads before it, and a difference of two counts can be 1.5 times its size.
-/// A test binary run directly, as a coverage run under `-C instrument-coverage` runs it, has
-/// no such setting unless the run sets it; that, and not the coverage runtime, is why the test
-/// failed under coverage (TEST-malloc-state-under-cov: it fails in the normal build too without
-/// the variable, and passes in the coverage build with it).
+/// A run that allocates blocks of many sizes, frees half of them in a scattered order, grows a
+/// vector, and frees the rest. Its own work is the same each time: no hash seed, no thread.
+fn churn() {
+    let mut blocks: Vec<Option<Vec<u8>>> = (0..2000usize)
+        .map(|i| Some(vec![i as u8; 1 + i * 37 % 3000]))
+        .collect();
+    for i in 0..1000usize {
+        blocks[i * 7919 % 2000] = None;
+    }
+    let mut grown = Vec::new();
+    for i in 0..5000u64 {
+        grown.push(i);
+    }
+    black_box((blocks, grown));
+}
+
+/// [`churn`] on two threads at once, which allocate blocks the run frees.
+fn churn_on_threads() {
+    let theirs = std::thread::scope(|s| {
+        let a = s.spawn(churn);
+        let b = s.spawn(|| (0..300).map(|i| vec![0u32; i]).collect::<Vec<_>>());
+        a.join().unwrap();
+        b.join().unwrap()
+    });
+    black_box(theirs);
+}
+
+/// The instructions of `run` in five rounds, each after the heaps of the C library were left in
+/// another state and another thread had come and gone: on a thread of [`alone`], which allocates
+/// from a metered heap, when `metered`, and else on a thread started plainly, which allocates
+/// from glibc's malloc.
+///
+/// Two things change a count that are not the allocator's, and both are measured on a run that
+/// allocates nothing (`spin(10)` and `spin(1_000_000)` in `alone`, 2026-11-15): the first run in
+/// a process counts about 1,760 instructions more, the one-time work of the first thread `alone`
+/// starts, which the harness's warm-up run takes too (see `Meter::repeats`), so a warm-up run is
+/// left out here; and the counter now and then counts an instruction twice, 1 more in some runs,
+/// as the hardware counters of x86 overcount on an interrupt or a page fault and never undercount
+/// (Weaver, Terpstra and Moore, "Non-determinism and overcount on modern hardware performance
+/// counter implementations", ISPASS 2013), so each round takes the least of three runs.
+fn counts_of(run: fn(), metered: bool) -> Vec<u64> {
+    let mut meter = Meter::new();
+    let mut once = || {
+        if metered {
+            meter.work(|| _ = alone(&run)).units
+        } else {
+            meter
+                .work_on_the_c_heap(|| std::thread::scope(|s| s.spawn(run).join().unwrap()))
+                .units
+        }
+    };
+    once();
+    let mut counts = Vec::new();
+    let mut kept = Vec::new();
+    for round in 0..5usize {
+        kept.extend((0..round * 500).map(|i| vec![0u8; 1 + i * 13 % 900]));
+        std::thread::spawn(|| black_box(vec![0u8; 4096]))
+            .join()
+            .unwrap();
+        counts.push((0..3).map(|_| once()).min().unwrap());
+    }
+    black_box(kept);
+    counts
+}
+
+/// Prints the counts of [`churn_on_threads`] by [`counts_of`] on the meter's heap and on glibc's
+/// malloc, for `the_instructions_of_a_run_repeat`, which runs this test alone. It holds nothing
+/// itself: beside the other tests of the binary both sets of counts spread by about 1,000
+/// (2026-11-15, three runs of the binary), since a thread's start costs instructions that depend
+/// on the other threads alive (std's map of live threads, see zed-alloc-count's documentation,
+/// and glibc's cache of thread stacks); a scaling run is measured beside other tests too, and
+/// takes the least of its runs for that reason.
 #[test]
-fn malloc_keeps_no_state_from_earlier_threads() {
-    let tunables = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
-    let setting = "glibc.malloc.tcache_count=0";
+fn counts_of_a_run_on_each_heap() {
+    let ours = counts_of(churn_on_threads, true);
+    let glibc = counts_of(churn_on_threads, false);
+    println!("metered heap {ours:?}, glibc {glibc:?}");
+}
+
+/// The count of instructions of a run that starts threads changes less from run to run on the
+/// meter's heap than on glibc's malloc, whatever the heaps held before and the threads before:
+/// the meter's allocator (module `meter` of zed-alloc-count) spends on each call what the run's
+/// own calls decide (TEST-meter-allocator-bias). The counts come from
+/// `counts_of_a_run_on_each_heap` run alone in a process of its own, where no other test starts
+/// threads. Measured (2026-11-15, 3 processes each time, twice): the metered counts differ by at
+/// most 1, the counter's own overcount, and glibc's with its per-thread cache by 700 to 890. That
+/// the allocator's state follows the run's own calls alone is tested exactly, without the
+/// counter, by zed-alloc-count's test
+/// `a_metered_run_places_its_blocks_the_same_way_whatever_came_before`.
+#[test]
+fn the_instructions_of_a_run_repeat() {
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "scaling_tests::counts_of_a_run_on_each_heap",
+            "--show-output",
+            "--test-threads=1",
+        ])
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success(), "{out}");
+    let line = out
+        .lines()
+        .find_map(|l| l.strip_prefix("metered heap "))
+        .unwrap_or_else(|| panic!("no line of counts in:\n{out}"));
+    let (ours, glibc) = line.split_once(", glibc ").expect("two lists of counts");
+    let counts = |list: &str| -> Vec<u64> {
+        list.trim_matches(['[', ']'])
+            .split(", ")
+            .map(|c| c.parse().expect("a count"))
+            .collect()
+    };
+    let (ours, glibc) = (counts(ours), counts(glibc));
+    let spread = |c: &[u64]| c.iter().max().unwrap() - c.iter().min().unwrap();
     assert!(
-        tunables.split(':').any(|s| s == setting),
-        "GLIBC_TUNABLES ({tunables:?}) does not set {setting}. Run the tests by \
-         tools/run_tests.sh, which sets it, or, running a test binary directly (a coverage \
-         run), set GLIBC_TUNABLES as tools/run_tests.sh does"
+        spread(&ours) < spread(&glibc),
+        "the metered heap's counts {ours:?} spread as much as glibc's {glibc:?}"
     );
 }
 

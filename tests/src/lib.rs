@@ -6,6 +6,10 @@
 
 use std::path::PathBuf;
 
+// The meter's `malloc` in every test binary, which `scaling` measures each run with
+// (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
+zed_alloc_count::meter_entry_points!();
+
 pub mod check;
 pub mod deep;
 pub mod fences;

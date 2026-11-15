@@ -26,6 +26,11 @@ pub mod stack;
 )]
 mod scaling;
 
+// The meter's `malloc` in this crate's test binary, which `scaling` measures each run with
+// (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
+#[cfg(test)]
+zed_alloc_count::meter_entry_points!();
+
 pub use bug::bug;
 pub use heap::{Heap, HeldObj, HeldShape, Obj, Parts, Stats, Word};
 #[cfg(feature = "counts")]

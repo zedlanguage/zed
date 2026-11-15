@@ -31,6 +31,16 @@
 //! run, which do not hold that thread's start; a run that starts threads of its own still holds
 //! their starts.
 //!
+//! The counting allocator forwards to `System`, the C library's `malloc`. In a binary that
+//! invokes [`meter_entry_points`], which every test binary that holds `zed_tests::scaling` does,
+//! `malloc` and the functions like it are those of module `meter`: inside [`metered`] each thread
+//! allocates from a heap of its own, whose instructions per call depend on nothing but that
+//! thread's own calls, and elsewhere they forward to the C library's (TEST-meter-allocator-bias).
+//! Since they sit under the C library's functions and not under the Rust allocator, they also
+//! serve the C library's own allocations. A binary whose std is a shared library and which links
+//! no other workspace dylib (this crate's own tests) still sends std's allocations past the
+//! counting allocator (FAIL-std-allocations-uncounted).
+//!
 //! All of the above is the Linux build. On every other system there is one count, of the bytes
 //! every thread of the process allocates: Windows has no `pthread_create` to stand in for, and on
 //! macOS the counters of work (module `os`) are of the whole process too, so the scaling tests
@@ -45,6 +55,9 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 #[cfg(target_os = "linux")]
 use std::sync::{Arc, OnceLock};
 
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub mod meter;
 #[cfg(any(target_os = "macos", windows))]
 pub mod os;
 
@@ -232,6 +245,111 @@ pub fn live<R>(f: impl FnOnce() -> R) -> (R, Live) {
     (out, live)
 }
 
+/// Runs `f` with a heap of its own for this thread and the threads `f` starts, whose
+/// instructions per call depend only on each thread's own calls (module `meter`;
+/// TEST-meter-allocator-bias), so that a count of instructions of `f` repeats from run to run and
+/// the allocator adds the same cost to each call at every size. The scaling tests run each
+/// measured run in it (`zed_tests::scaling`); no other caller needs it. A block `f` leaves
+/// allocated may be freed anywhere afterwards. Inside another call of `metered` on this thread,
+/// `f` uses the outer heap. Off Linux this runs `f`.
+pub fn metered<R>(f: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "linux")]
+    return meter::run(f);
+    #[cfg(not(target_os = "linux"))]
+    f()
+}
+
+/// Makes ready what [`metered`] needs, so that a count taken afterwards does not hold that work:
+/// the reservation of the address space of its heaps, made once per process, and the check that
+/// the binary's `malloc` is the meter's ([`meter_entry_points`]), which stops the process with
+/// the fix when it is not. Off Linux, nothing.
+pub fn ready_to_meter() {
+    #[cfg(target_os = "linux")]
+    meter::ready();
+}
+
+/// Defines the C library's allocation functions (`malloc`, `free`, `calloc`, `realloc`,
+/// `reallocarray`, `memalign`, `aligned_alloc`, `posix_memalign`, `valloc`, `pvalloc` and
+/// `malloc_usable_size`) in the binary whose crate invokes it, once, as the meter's allocator
+/// (module `meter`): the heap of a metered run on its threads, the C library's elsewhere. The
+/// dynamic linker then sends every call of them in the process there, the C library's own
+/// included, as the C library allows a program that replaces `malloc` (glibc manual, "Replacing
+/// malloc"). Only the test binaries invoke it, so `zedc` and the programs it compiles keep the C
+/// library's allocator unchanged. Off Linux it defines nothing.
+#[macro_export]
+macro_rules! meter_entry_points {
+    () => {
+        #[cfg(target_os = "linux")]
+        const _: () = {
+            use ::std::ffi::{c_int, c_void};
+            use $crate::meter;
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+                // SAFETY: the caller's guarantees, passed on.
+                unsafe { meter::malloc(size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn calloc(n: usize, size: usize) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::calloc(n, size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn free(block: *mut c_void) {
+                // SAFETY: as `malloc`.
+                unsafe { meter::free(block) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn realloc(block: *mut c_void, size: usize) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::realloc(block, size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn reallocarray(
+                block: *mut c_void,
+                n: usize,
+                size: usize,
+            ) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::reallocarray(block, n, size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn memalign(align: usize, size: usize) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::memalign(align, size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn aligned_alloc(align: usize, size: usize) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::memalign(align, size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn posix_memalign(
+                out: *mut *mut c_void,
+                align: usize,
+                size: usize,
+            ) -> c_int {
+                // SAFETY: as `malloc`.
+                unsafe { meter::posix_memalign(out, align, size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn valloc(size: usize) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::valloc(size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn pvalloc(size: usize) -> *mut c_void {
+                // SAFETY: as `malloc`.
+                unsafe { meter::pvalloc(size) }
+            }
+            #[unsafe(no_mangle)]
+            unsafe extern "C" fn malloc_usable_size(block: *mut c_void) -> usize {
+                // SAFETY: as `malloc`.
+                unsafe { meter::malloc_usable_size(block) }
+            }
+        };
+    };
+}
+
 /// The system allocator, counting bytes per thread.
 pub struct Counting;
 
@@ -265,6 +383,12 @@ unsafe impl GlobalAlloc for Counting {
     }
 }
 
+/// Whether this thread is in a metered run.
+#[cfg(target_os = "linux")]
+fn in_metered_run() -> bool {
+    meter::in_run()
+}
+
 /// The allocator of every binary that links this crate.
 #[global_allocator]
 static COUNTING: Counting = Counting;
@@ -283,11 +407,14 @@ type Create = unsafe extern "C" fn(
 ) -> c_int;
 
 #[cfg(target_os = "linux")]
-/// What [`start`] needs: the thread's own routine and argument, and the count of its parent.
+/// What [`start`] needs: the thread's own routine and argument, the count of its parent, and
+/// whether the parent is in a metered run ([`metered`]), which the thread then joins with a heap
+/// of its own.
 struct Start {
     routine: Routine,
     arg: *mut c_void,
     parent: Option<Arc<Count>>,
+    metered: bool,
 }
 
 #[cfg(target_os = "linux")]
@@ -344,6 +471,7 @@ pub unsafe extern "C" fn pthread_create(
         routine,
         arg,
         parent,
+        metered: in_metered_run(),
     }));
     // SAFETY: the caller's guarantees about `thread` and `attr` are passed on; `start` with
     // `start_arg` runs `routine` with `arg`, as the caller asked.
@@ -358,8 +486,9 @@ pub unsafe extern "C" fn pthread_create(
 #[cfg(target_os = "linux")]
 /// The routine of every thread this crate's `pthread_create` starts: it gives the thread its
 /// count, runs the thread's own routine, and takes the count away again before dropping it. A
-/// thread that ends by `pthread_exit` keeps its count, which is never dropped; std ends none
-/// that way.
+/// thread that ends by `pthread_exit` keeps its count, which is never dropped, and leaves its
+/// metered heap's spans mapped; std ends none that way. A thread started in a metered run runs
+/// in [`metered`] from before its count is made until after it is dropped.
 extern "C" fn start(start_arg: *mut c_void) -> *mut c_void {
     #[expect(unsafe_code, reason = "taking back the argument pthread_create boxed")]
     // SAFETY: `start_arg` is the `Box<Start>` `pthread_create` made for this thread alone.
@@ -367,21 +496,34 @@ extern "C" fn start(start_arg: *mut c_void) -> *mut c_void {
         routine,
         arg,
         parent,
+        metered: in_run,
     } = *unsafe { Box::from_raw(start_arg.cast::<Start>()) };
-    let count = Arc::new(Count {
-        bytes: AtomicU64::new(0),
-        parent,
-    });
-    LOCAL.with(|local| local.count.set(Arc::as_ptr(&count)));
-    let out = routine(arg);
-    LOCAL.with(|local| local.count.set(std::ptr::null()));
-    drop(count);
-    out
+    let run = || {
+        let count = Arc::new(Count {
+            bytes: AtomicU64::new(0),
+            parent,
+        });
+        LOCAL.with(|local| local.count.set(Arc::as_ptr(&count)));
+        let out = routine(arg);
+        LOCAL.with(|local| local.count.set(std::ptr::null()));
+        drop(count);
+        out
+    };
+    if in_run { metered(run) } else { run() }
+}
+
+/// The meter's `malloc` in this crate's test binary, which the tests of [`metered`] need.
+#[cfg(test)]
+#[expect(unsafe_code, reason = "defining the C library's allocation functions")]
+mod entry_points {
+    crate::meter_entry_points!();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use meter::ours;
     use std::hint::black_box;
 
     /// The bytes `f` allocates on this thread and the threads it starts.
@@ -681,5 +823,307 @@ mod tests {
             }
         }
         assert!(all >= threads * 20 * WORKLOAD_BYTES, "{all}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_fixed_workload_counts_the_same_bytes_in_a_metered_run() {
+        assert_eq!(metered(|| bytes_of(workload)), WORKLOAD_BYTES);
+        assert_eq!(
+            metered(|| live(workload).1),
+            Live {
+                net: 0,
+                peak: WORKLOAD_PEAK
+            }
+        );
+    }
+
+    /// The layouts the metered heap's tests ask for: each class's edges, sizes past a span, and
+    /// alignments from 1 to a page.
+    #[cfg(target_os = "linux")]
+    fn layouts() -> Vec<Layout> {
+        let sizes = [
+            1,
+            15,
+            16,
+            17,
+            64,
+            65,
+            80,
+            81,
+            127,
+            128,
+            129,
+            4095,
+            4096,
+            100_000,
+            meter::SPAN - 1,
+            meter::SPAN,
+            3 * meter::SPAN + 5,
+        ];
+        let aligns = [1, 8, 16, 32, 64, 4096];
+        sizes
+            .iter()
+            .flat_map(|&s| aligns.map(|a| Layout::from_size_align(s, a).unwrap()))
+            .collect()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[expect(unsafe_code, reason = "calling the allocator by hand")]
+    fn a_metered_run_gives_distinct_aligned_blocks_of_its_own_that_hold_what_is_written() {
+        metered(|| {
+            let mut blocks = Vec::new();
+            for layout in layouts().into_iter().cycle().take(3 * layouts().len()) {
+                // SAFETY: every layout has a size that is not 0.
+                let block = unsafe { COUNTING.alloc(layout) };
+                assert!(!block.is_null(), "{layout:?}");
+                assert!(ours(block), "{layout:?}");
+                assert_eq!(block as usize % layout.align(), 0, "{layout:?}");
+                // SAFETY: the block is `layout.size()` bytes long.
+                unsafe { block.write_bytes(blocks.len() as u8, layout.size()) };
+                blocks.push((block, layout));
+            }
+            let mut ranges: Vec<_> = blocks
+                .iter()
+                .map(|&(b, l)| (b as usize, b as usize + l.size()))
+                .collect();
+            ranges.sort_unstable();
+            assert!(
+                ranges.windows(2).all(|w| w[0].1 <= w[1].0),
+                "blocks overlap"
+            );
+            for (i, &(block, layout)) in blocks.iter().enumerate() {
+                // SAFETY: the block is live and `layout.size()` bytes long.
+                let bytes = unsafe { std::slice::from_raw_parts(block, layout.size()) };
+                assert!(bytes.iter().all(|&b| b == i as u8), "{layout:?}");
+                // SAFETY: allocated just above with `layout`.
+                unsafe { COUNTING.dealloc(block, layout) };
+            }
+        });
+    }
+
+    /// Where a fixed metered run places its blocks: for each block, the order in which the run
+    /// first used its span, and its offset in the span. Spans start at multiples of
+    /// [`meter::SPAN`] (the reservation is aligned to it), and every block here is smaller.
+    #[cfg(target_os = "linux")]
+    #[expect(unsafe_code, reason = "calling the allocator by hand")]
+    fn placements() -> Vec<(usize, usize)> {
+        metered(|| {
+            let mut spans = Vec::new();
+            let mut place = |b: *mut u8| {
+                let span = b as usize / meter::SPAN;
+                let i = spans.iter().position(|&s| s == span).unwrap_or_else(|| {
+                    spans.push(span);
+                    spans.len() - 1
+                });
+                (i, b as usize % meter::SPAN)
+            };
+            let mut out = Vec::new();
+            let mut live = Vec::new();
+            for i in 0..3000usize {
+                let layout = Layout::from_size_align(1 + i * 37 % 5000, 1 << (i % 7)).unwrap();
+                // SAFETY: a size that is not 0.
+                let b = unsafe { COUNTING.alloc(layout) };
+                out.push(place(b));
+                live.push((b, layout));
+            }
+            for i in 0..1500usize {
+                let (b, layout) = live[i * 7919 % 3000];
+                if !b.is_null() {
+                    // SAFETY: allocated above with `layout` and not yet freed.
+                    unsafe { COUNTING.dealloc(b, layout) };
+                    live[i * 7919 % 3000].0 = std::ptr::null_mut();
+                }
+            }
+            for (b, layout) in &mut live {
+                if !b.is_null() {
+                    // SAFETY: live, allocated with `layout`; the new size is not 0.
+                    *b = unsafe { COUNTING.realloc(*b, *layout, layout.size() * 3) };
+                    *layout = Layout::from_size_align(layout.size() * 3, layout.align()).unwrap();
+                    out.push(place(*b));
+                }
+            }
+            for (b, layout) in live {
+                if !b.is_null() {
+                    // SAFETY: live, allocated or grown with `layout`.
+                    unsafe { COUNTING.dealloc(b, layout) };
+                }
+            }
+            out
+        })
+    }
+
+    /// A metered run's heap follows the run's own calls alone, so the instructions each call
+    /// spends do too: the same run places every block the same way whatever came before it, a
+    /// churned glibc heap, earlier metered runs, and another metered run holding spans at the
+    /// same time (TEST-meter-allocator-bias). This is the exact form of what
+    /// `zed_tests::scaling_tests::the_instructions_of_a_run_repeat` sees through the counter.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_metered_run_places_its_blocks_the_same_way_whatever_came_before() {
+        let first = placements();
+        let kept: Vec<Vec<u8>> = (0..2000).map(|i| vec![1; 1 + i * 13 % 900]).collect();
+        let held = std::sync::Barrier::new(2);
+        let done = std::sync::Barrier::new(2);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                metered(|| {
+                    let mine: Vec<Vec<u64>> = (0..5000).map(|i| vec![2; 1 + i % 3000]).collect();
+                    held.wait();
+                    done.wait();
+                    black_box(mine);
+                })
+            });
+            held.wait();
+            for _ in 0..3 {
+                assert_eq!(placements(), first);
+            }
+            done.wait();
+        });
+        black_box(kept);
+        assert_eq!(placements(), first);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[expect(unsafe_code, reason = "calling the allocator by hand")]
+    fn a_block_freed_in_a_metered_run_serves_the_next_request_of_its_class_zeroed_if_asked() {
+        metered(|| {
+            for layout in layouts() {
+                // SAFETY: a size that is not 0, and blocks freed with the layout they came with.
+                unsafe {
+                    let a = COUNTING.alloc(layout);
+                    a.write_bytes(7, layout.size());
+                    COUNTING.dealloc(a, layout);
+                    let b = COUNTING.alloc_zeroed(layout);
+                    assert_eq!(a, b, "{layout:?}");
+                    let bytes = std::slice::from_raw_parts(b, layout.size());
+                    assert!(bytes.iter().all(|&x| x == 0), "{layout:?}");
+                    COUNTING.dealloc(b, layout);
+                }
+            }
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_metered_block_grown_in_its_class_stays_and_one_grown_past_it_moves_with_its_bytes() {
+        metered(|| {
+            let mut v: Vec<u8> = Vec::with_capacity(65);
+            let at = v.as_ptr();
+            v.extend(0..65);
+            v.reserve_exact(80 - 65);
+            assert_eq!(v.as_ptr(), at, "65 and 80 bytes are one class");
+            v.reserve_exact(1000);
+            assert_ne!(v.as_ptr(), at);
+            assert!(ours(v.as_ptr().cast_mut()));
+            assert!(v.iter().copied().eq(0..65));
+            v.shrink_to_fit();
+            assert!(v.iter().copied().eq(0..65));
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[expect(unsafe_code, reason = "calling the allocator by hand")]
+    fn blocks_outside_a_metered_run_are_the_c_librarys_and_a_metered_block_grown_after_moves_out() {
+        let mut outside = vec![1u8; 100];
+        assert!(!ours(outside.as_mut_ptr()));
+        let mut inside = metered(|| {
+            outside.reserve_exact(100_000);
+            assert!(
+                !ours(outside.as_mut_ptr()),
+                "grown inside a run: still the C library's"
+            );
+            // Aligned to half a span: the C library's.
+            let big = Layout::from_size_align(16, meter::SPAN / 2).unwrap();
+            // SAFETY: a size that is not 0, freed with its layout.
+            unsafe {
+                let b = COUNTING.alloc(big);
+                assert!(!b.is_null() && !ours(b));
+                COUNTING.dealloc(b, big);
+            }
+            vec![2u8; 5000]
+        });
+        assert!(ours(inside.as_mut_ptr()));
+        inside.reserve_exact(50_000);
+        assert!(
+            !ours(inside.as_mut_ptr()),
+            "grown after the run: moved out of its heap"
+        );
+        assert!(outside[..100].iter().all(|&b| b == 1) && inside.iter().all(|&b| b == 2));
+    }
+
+    /// Whether the page at `at` is mapped readable, by `/proc/self/maps`.
+    #[cfg(target_os = "linux")]
+    fn readable(at: usize) -> bool {
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        maps.lines().any(|line| {
+            let mut fields = line.split_whitespace();
+            let range = fields.next().unwrap();
+            let perms = fields.next().unwrap();
+            let (lo, hi) = range.split_once('-').unwrap();
+            let lo = usize::from_str_radix(lo, 16).unwrap();
+            let hi = usize::from_str_radix(hi, 16).unwrap();
+            (lo..hi).contains(&at) && perms.starts_with('r')
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_span_is_unmapped_once_its_heap_has_ended_and_its_last_block_is_freed_anywhere() {
+        // A span of its own (larger than `SPAN`), so no other test's block shares it.
+        let kept = metered(|| vec![3u8; 2 * meter::SPAN]);
+        let at = kept.as_ptr() as usize;
+        assert!(readable(at));
+        let kept = std::thread::spawn(move || {
+            assert!(
+                readable(at),
+                "the heap has ended but one block of the span is out"
+            );
+            kept
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(move || drop(kept)).join().unwrap();
+        assert!(
+            !readable(at),
+            "the last block freed on another thread unmaps its span"
+        );
+        let at = metered(|| {
+            let v = vec![4u8; 2 * meter::SPAN];
+            let at = v.as_ptr() as usize;
+            drop(v);
+            at
+        });
+        assert!(
+            !readable(at),
+            "a span whose blocks were all freed is unmapped as its heap ends"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn threads_started_in_a_metered_run_have_heaps_of_their_own_and_threads_outside_none() {
+        let (theirs, mine) = metered(|| {
+            let mut mine = vec![0u8; 100];
+            let theirs = std::thread::spawn(|| {
+                let mut v = vec![0u8; 100];
+                assert!(ours(v.as_mut_ptr()));
+                v
+            })
+            .join()
+            .unwrap();
+            mine.push(1);
+            (theirs, mine)
+        });
+        assert!(ours(theirs.as_ptr().cast_mut()) && ours(mine.as_ptr().cast_mut()));
+        assert_ne!(
+            meter::owner(theirs.as_ptr().cast_mut()),
+            meter::owner(mine.as_ptr().cast_mut())
+        );
+        let mut outside = std::thread::spawn(|| vec![0u8; 100]).join().unwrap();
+        assert!(!ours(outside.as_mut_ptr()));
     }
 }
