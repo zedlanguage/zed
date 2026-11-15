@@ -6131,20 +6131,45 @@ impl<'m, 's> Comparing<'m, 's> {
         // Before (FAIL-types-tuple-subtype), a function of `t` equal to one of `other` at a
         // spot was compared with no other function there, so `(f, 1) <: (g, 1) | (f, 2)`, with
         // `f` fitting `g`, was false; where both sides have two or more functions it still is
-        // not compared, and a false verdict there is a refusal ([`Forms::loose`]).
+        // not compared (it is skipped), and a false verdict is then checked again with every
+        // skipped pair taken to fit ([`Merged`]): still false, it is a definite no; true, the
+        // comparison is refused.
         //
-        // Known false (ASSUME-documented, 2026-11-14): `loose` fires only when some function
-        // of `other` at the spot equals none of `t`'s. Where those of `other` are all among
-        // `t`'s, two or more on each side, the false verdict stands as a definite no:
-        // `(f, #a) | (g, #b) <: (g, #a) | (f, #b) | (g, #b)`, with `f` fitting `g`, is answered
-        // no with no refusal, though it holds. Plan row FAIL-types-equal-functions-subset-no,
-        // test in wt/failing-tests/FAIL-types-equal-functions-subset-no.rs.
+        // Before (FAIL-types-equal-functions-subset-no), the refusal was read from the two
+        // types alone (`Forms::loose`), only where some function of `other` at the spot equals
+        // none of `t`'s, so where those of `other` were all among `t`'s the false verdict stood:
+        // `(f, #a) | (g, #b) <: (g, #a) | (f, #b) | (g, #b)`, with `f` fitting `g`, was a
+        // definite no, though it holds; and a false verdict that no skipped pair could change
+        // was refused, though it is a definite no.
+        //
+        // Complexity tradeoff (COMPLEXITY.md F124): the skipped pairs are not compared. What
+        // is given up: a comparison whose verdict a skipped pair could change is refused, with
+        // the clause of [`Forms::tie`], though comparing the pairs could decide it. Why: the
+        // skipped pairs are the product of the functions at the spot, `n^2` comparisons of
+        // functions for a union of `n` shapes on each side, each with its own function there.
+        // Structure: two or more functions on each side at one place, one of `t`'s equal to
+        // one of `other`'s, and the verdict false only for want of a skipped pair. Tests:
+        // `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
+        // `functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired`,
+        // `equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no`,
+        // `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`. Naive
+        // version: every pair at the spot compared, O(n^2) comparisons of functions; used: the
+        // pairs as many as the functions, and a second kernel verdict, on forms of the same
+        // size, when the first is false and a pair was skipped. A complete solution would
+        // order the functions at a place, as for [`Forms::tied`].
+        let mut skipped = Merged::default();
         for (spot, fs) in left.spots(&whole.fns) {
             let Some(gs) = fns.get(&spot) else { continue };
             let all = whole.fns.get(&spot).unwrap_or(gs);
             let every = fs.len() == 1 || gs.len() == 1;
             let compared: Vec<&Arc<Sig>> =
                 fs.iter().filter(|f| every || !all.contains(*f)).collect();
+            // Each function of `t` here not compared is skipped against every function of
+            // `other` here but itself, of which there are one or more, as `gs` has two or more.
+            if compared.len() < fs.len() {
+                (skipped.left).extend(fs.iter().filter(|f| all.contains(*f)).map(|f| forms.ids[f]));
+                skipped.right.extend(gs.iter().cloned());
+            }
             for g in gs {
                 let mut fit = Vec::new();
                 if fs.contains(g) {
@@ -6166,7 +6191,18 @@ impl<'m, 's> Comparing<'m, 's> {
         }
         let a = forms.form(t, true);
         let b = forms.form(other, false);
-        Some(a.subtype_verdict(&b))
+        let verdict = a.subtype_verdict(&b);
+        if !matches!(verdict, Verdict::Inhabited) || skipped.left.is_empty() {
+            return Some(verdict);
+        }
+        forms.made.clear();
+        forms.merged = Some(skipped);
+        let a = forms.form(t, true);
+        let b = forms.form(other, false);
+        if !matches!(a.subtype_verdict(&b), Verdict::Inhabited) {
+            self.refuse(|| UNPAIRED.to_string());
+        }
+        Some(Verdict::Inhabited)
     }
 
     /// [`Self::diff`] on the explicit stack, for a difference inside a difference
@@ -7064,7 +7100,48 @@ struct Forms {
     marks: Option<KType>,
     /// Each set that holds the atoms of every name it does not list, with the marks cut out.
     cuts: RefCell<HashMap<KType, KType>>,
+    /// The functions skipped, when the forms are made with every skipped pair taken to fit.
+    merged: Option<Merged>,
 }
+
+/// The clause of a comparison refused because functions at one place were not all paired
+/// ([`Forms::tie`], [`Comparing::form_verdict`]).
+const UNPAIRED: &str = "two or more functions at one place of a tuple or an atom's payload meet \
+                        two or more functions at that place of the type expected, not all \
+                        equal, and the checker does not try every way of pairing them; give the \
+                        functions at that place one function type";
+
+/// The pairs of functions [`Comparing::form_verdict`] skips: each function of the side compared
+/// equal to one of the other side's at a spot where both sides have two or more is compared
+/// with no other there. Forms made with a `Merged` take every skipped pair to fit: each skipped
+/// function of the side compared is the one mark [`MERGED`], in place of its own, wherever it
+/// is, and each function of the other side at a spot where one was skipped holds that mark.
+///
+/// Why a false verdict on those forms is a definite no. Let `φ` rename the mark of each skipped
+/// function to [`MERGED`], on values. The forms of the side compared made with `Merged` are `φ`
+/// of the plain ones (a component's form outside its marks holds no mark, as [`Forms::cut`]
+/// takes them from sets of all atoms). If the true forms, with every pair compared, give
+/// `A <: B`, then `φ(A) <: φ(B)`, as `φ` is a function on values. A function `g` of the other
+/// side holds, in `B`, the marks of the functions that fit it; those compared are in the plain
+/// form, and `φ` maps them as the `Merged` form does; those not compared were skipped at a spot
+/// where `g` is, whose marks `φ` maps to [`MERGED`], which `g` holds. So `φ(B)` is within the
+/// `Merged` form of the other side, and `A <: B` gives the `Merged` verdict true. One mark for
+/// every spot, not one each, so that a function skipped at two spots is mapped one way; what is
+/// given up is only that a function holding the mark takes skipped functions of other spots
+/// too, which can turn a definite no into a refusal, never the reverse.
+///
+/// Cost: as many functions as the spots list, each kept once, and one more mark in each
+/// component of a function; the forms are made once more, the same size.
+#[derive(Default)]
+struct Merged {
+    /// The numbers of the skipped functions of the side compared.
+    left: HashSet<usize>,
+    /// The functions of the other side at a spot where one was skipped.
+    right: HashSet<Arc<Sig>>,
+}
+
+/// The name of the mark of every skipped function in forms made with a [`Merged`].
+const MERGED: &str = "\u{0}fn skipped";
 
 impl Forms {
     /// The number of the function `f` of the side compared.
@@ -7156,42 +7233,26 @@ impl Forms {
         })
     }
 
-    /// A spot where two or more functions of the side compared meet two or more of the other
-    /// side's, one of them equal to one of the other side's and another of the other side's
-    /// equal to none of them: the equal one is compared with no other there
-    /// ([`Comparing::form_verdict`]), so a false verdict is a refusal ([`Forms::tie`]).
-    ///
-    /// Complexity tradeoff: as for [`Forms::tied`], whose class this widens. Structure:
-    /// `(f, 1) | (h, 2) <: (g, 1) | (f, 2) | (h, 3)`, with `f` fitting `g`. Test:
-    /// `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
-    /// `functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired`; COMPLEXITY.md
-    /// F124. Naive version: each equal function compared with every other at the spot,
-    /// O(n^2) comparisons; used: those pairs not made, and a false verdict refused.
-    fn loose(left: &PlaceFns, right: &PlaceFns) -> Option<Spot> {
-        left.spots(right).find_map(|(spot, fs)| {
-            let gs = right.get(&spot)?;
-            let some_equal = fs.iter().any(|f| gs.contains(f));
-            let other = gs.iter().any(|g| !fs.contains(g));
-            (fs.len() >= 2 && gs.len() >= 2 && some_equal && other).then_some(spot)
-        })
-    }
-
-    /// Why `t <: other`, found false, was refused, if it was for the class [`Forms::tied`] or
-    /// [`Forms::loose`] names and some pairing of the functions could make it true.
+    /// Why `t <: other`, found false, was refused, if it was for the class [`Forms::tied`]
+    /// names and some pairing of the functions could make it true. A false verdict that a
+    /// function skipped where one side's functions equal the other's could change is refused
+    /// with the same clause, by [`Comparing::form_verdict`].
     ///
     /// The forms are made with each function of `other` holding the mark of every function of
     /// `t`, as if each fit each. A mark more only widens the form of `other`, so when even
     /// those forms give false, every pairing gives false: the comparison is
     /// decided, and false, with no pair tried. Before (FAIL-types-loose-over-refusal), every
-    /// comparison of the class was refused, as `(f, 1) | (h, 9) <: (g, 1) | (f, 2) | (h, 3)`,
-    /// which no pairing makes true, since no tuple of the type expected holds a `9`.
+    /// comparison of the class was refused, as `(f, 1) | (h, 9) <: (g, 1) | (k, 2)`, with `f`, `h`
+    /// unlike `g`, `k`, which no pairing makes true, since no tuple of the type expected holds a
+    /// `9`. (The same comparison with `f` written on both sides, where `loose` refused, is now
+    /// decided by the second verdict of [`Comparing::form_verdict`].)
     ///
     /// Complexity tradeoff (COMPLEXITY.md F124): one kernel comparison of the two forms, in the
     /// size of the two sides, and no function compared. What is given up: where those forms
     /// give true, the comparison is still refused, though one pairing may make it true, as
-    /// `(f, 1) | (h, 2) <: (g, 1) | (f, 2) | (h, 3)` with `f` fitting `g` and `h` fitting `f`;
-    /// deciding it compares each function equal to one of the other side with each other
-    /// function at the spot, O(n^2) for `n` shapes a side. Naive version: those pairs compared,
+    /// `(f, 1) | (h, 2) <: (g, 1) | (k, 2)` with `f` fitting `g` and `h` fitting `k`; deciding
+    /// it compares each function at the spot with each of the other side's there, O(n^2) for
+    /// `n` shapes a side. Naive version: those pairs compared,
     /// O(n^2) comparisons of functions; used: one comparison of forms, O(size).
     fn tie(t: &Ty, other: &Ty) -> Option<&'static str> {
         if other.dynamic || !other.vars.is_empty() {
@@ -7199,9 +7260,7 @@ impl Forms {
         }
         let mut forms = Forms::default();
         let (left, right) = forms.places(t, other)?;
-        forms
-            .tied(&left, &right)
-            .or_else(|| Forms::loose(&left, &right))?;
+        forms.tied(&left, &right)?;
         // One mark for every function of `t`, which every function of `other` holds: a
         // component of `t` meets only the components of `other` at its place, so this is the
         // form in which each function at a spot fits each of the other side's there, made
@@ -7211,12 +7270,7 @@ impl Forms {
         forms.fits = right.all().map(|g| (g.clone(), vec![0])).collect();
         let a = forms.form(t, true);
         let b = forms.form(other, false);
-        (held(a.subtype_verdict(&b)) != Some(false)).then_some(
-            "two or more functions at one place of a tuple or an atom's payload meet two or more \
-             functions at that place of the type expected, not all equal, and the checker does \
-             not try every way of pairing them; give the functions at that place one function \
-             type",
-        )
+        (held(a.subtype_verdict(&b)) != Some(false)).then_some(UNPAIRED)
     }
 
     /// The normal form of the scalars, atoms with their payloads, kind-wide part and tuples of
@@ -7269,6 +7323,7 @@ impl Forms {
     /// Numbers the marks ([`Forms::marks`]), once the functions of the side compared are.
     fn number_marks(&mut self) {
         let fns = (0..self.ids.len()).map(|i| format!("\u{0}fn {i}"));
+        let fns = fns.chain([MERGED.to_string()]);
         let names = fns.chain(self.fields.iter().cloned());
         let marks = names.map(|n| mark(&n)).chain([mark("\u{0}unknown")]);
         self.marks = Some(KType::union_all(marks));
@@ -7306,12 +7361,20 @@ impl Forms {
             return KType::top();
         }
         let mut ks = vec![self.data(c, left)];
+        let merged = self.merged.as_ref();
+        let fn_mark = |i: &usize| match merged.is_some_and(|m| m.left.contains(i)) {
+            true => mark(MERGED),
+            false => mark(&format!("\u{0}fn {i}")),
+        };
         for f in &c.fns {
             let ids = match left {
                 true => std::slice::from_ref(&self.ids[f]),
                 false => self.fits.get(f).map_or(&[][..], Vec::as_slice),
             };
-            ks.extend(ids.iter().map(|i| mark(&format!("\u{0}fn {i}"))));
+            ks.extend(ids.iter().map(fn_mark));
+            if !left && merged.is_some_and(|m| m.right.contains(f)) {
+                ks.push(mark(MERGED));
+            }
         }
         if c.dynamic {
             ks.push(mark("\u{0}unknown"));

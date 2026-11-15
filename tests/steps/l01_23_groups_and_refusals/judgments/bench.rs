@@ -141,3 +141,51 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
         },
     );
 }
+
+/// `n` rows of functions equal on both sides at one place, none compared there, decided in time
+/// linear in `n` when the forms are built a second time with the skipped pairs merged
+/// (FAIL-types-equal-functions-subset-no, COMPLEXITY.md F124): with a tag the right side lacks
+/// the answer is a definite no, and without it a refusal. Small instances:
+/// `equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no` and
+/// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`.
+#[test]
+fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
+    // n 256: 1x 0.23 s by `ns`, load 31; 9.33 times the instructions at 256 and 2048. Over the goal
+    // 9 before this fix: the definite no alone took 9.56 times on the code before the second
+    // verdict and 9.42 with it (row PERF-equal-functions-forms-ratio).
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let sides = |m: usize, extra: &str| {
+        let f = |i: usize| format!("((x{i}: int | #z) -> int)");
+        let h = |i: usize| format!("((x{i}: int) -> int | #z)");
+        let left: Vec<String> = (0..m)
+            .flat_map(|i| [format!("({}, #a{i})", f(i)), format!("({}, #b{i})", h(i))])
+            .chain([extra.to_string()].into_iter().filter(|e| !e.is_empty()))
+            .collect();
+        let right: Vec<String> = (0..m)
+            .flat_map(|i| {
+                let (f, h) = (f(i), h(i));
+                [
+                    format!("({h}, #a{i})"),
+                    format!("({f}, #b{i})"),
+                    format!("({h}, #b{i})"),
+                ]
+            })
+            .collect();
+        let parse = |rows: Vec<String>| parse_type(&rows.join(" | ")).expect("a union of tuples");
+        (parse(left), parse(right))
+    };
+    let n = 256;
+    let no = scaling::inputs(n, |m| sides(m, &format!("({}, #c)", "(int) -> int")));
+    let refused = scaling::inputs(n, |m| sides(m, ""));
+    scaling::check(
+        "n rows of functions equal on both sides at one place, decided twice",
+        n,
+        |m| {
+            let (a, b): &(Ty, Ty) = &no[&m];
+            assert!(!a.subtype(b) && a.refused(b).is_empty());
+            let (a, b): &(Ty, Ty) = &refused[&m];
+            assert!(!a.refused(b).is_empty());
+        },
+    );
+}

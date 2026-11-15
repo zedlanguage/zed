@@ -866,3 +866,108 @@ fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() 
         }
     }
 }
+
+/// Where the right side's functions at one place are all equal to functions of the left side,
+/// with two or more on each side, a subtype that holds through another pairing is answered
+/// yes, or refused, never a definite no.
+#[test]
+fn equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no() {
+    use zedc::check::read::parse_type;
+    let f = "(int | #z) -> int";
+    let h = "(int) -> int | #z";
+    assert!(parse_type(f).unwrap().subtype(&parse_type(h).unwrap()));
+    let a = parse_type(&format!("({f}, #a) | ({h}, #b)")).unwrap();
+    let b = parse_type(&format!("({h}, #a) | ({f}, #b) | ({h}, #b)")).unwrap();
+    let why = a.refused(&b);
+    assert!(
+        a.subtype(&b) || why.contains("the checker does not try every way of pairing them"),
+        "a definite no: {why:?}"
+    );
+}
+
+/// Random unions of tuples that hold functions, compared with a slow reference that pairs every
+/// function with every other: a left tuple is held when a right tuple of the same length holds
+/// each of its components, a tag equal and a function fitting (a function of the left side is
+/// one value to the comparison, so one right tuple must hold it all). Each subtype found must
+/// hold by the reference, and each false found with no refusal must be false by the reference:
+/// a refusal claims nothing. Before (FAIL-types-equal-functions-subset-no) the checker answered
+/// a definite no where the right side's functions at a place were all among the left side's.
+#[test]
+fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
+    use zedc::check::read::parse_type;
+    // Fits, by `subtype` on one function each side: F <: G <: H, F <: K <: H, S alone.
+    let pool = [
+        "(int | #z) -> int",
+        "(int) -> int",
+        "(int) -> int | #z",
+        "(int | #z) -> int | #z",
+        "(String) -> String",
+    ];
+    let fits: Vec<Vec<bool>> = (pool.iter())
+        .map(|f| {
+            let f = parse_type(f).unwrap();
+            (pool.iter())
+                .map(|g| f.subtype(&parse_type(g).unwrap()))
+                .collect()
+        })
+        .collect();
+    assert!(fits[0][2] && !fits[2][0] && !fits[4][0] && !fits[0][4]);
+    // A tuple: its functions, by number in `pool`, and its tag.
+    type Row = (Vec<usize>, usize);
+    let (mut rng, seed) = Rng::fresh("unions of tuples with functions");
+    let draw = |rng: &mut Rng| -> Vec<Row> {
+        (0..1 + rng.below(5))
+            .map(|_| {
+                let width = 1 + rng.below(2);
+                (
+                    (0..width).map(|_| rng.below(pool.len())).collect(),
+                    rng.below(3),
+                )
+            })
+            .collect()
+    };
+    let text = |rows: &[Row]| {
+        (rows.iter())
+            .map(|(fs, tag)| {
+                let fs: Vec<&str> = fs.iter().map(|&i| pool[i]).collect();
+                format!("({}, #{})", fs.join(", "), ["a", "b", "c"][*tag])
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let (mut yes, mut no, mut refused) = (0, 0, 0);
+    for _ in 0..3_000 {
+        let (a, mut b) = (draw(&mut rng), draw(&mut rng));
+        // About half the left tuples get a right tuple that holds them, each function replaced by
+        // one it fits, at a random place, so that many subtypes hold.
+        for (fs, tag) in &a {
+            if rng.below(2) == 0 {
+                let up = |f: usize, rng: &mut Rng| {
+                    let above: Vec<usize> = (0..pool.len()).filter(|&g| fits[f][g]).collect();
+                    above[rng.below(above.len())]
+                };
+                let gs = fs.iter().map(|&f| up(f, &mut rng)).collect();
+                let at = rng.below(b.len() + 1);
+                b.insert(at, (gs, *tag));
+            }
+        }
+        let expected = a.iter().all(|(fs, tag)| {
+            b.iter().any(|(gs, t)| {
+                t == tag && gs.len() == fs.len() && fs.iter().zip(gs).all(|(&f, &g)| fits[f][g])
+            })
+        });
+        let (sa, sb) = (text(&a), text(&b));
+        let (ta, tb) = (parse_type(&sa).unwrap(), parse_type(&sb).unwrap());
+        let label = format!("ZED_TEST_SEED={seed}: {sa} <: {sb}");
+        if ta.subtype(&tb) {
+            assert!(expected, "{label}: a subtype found where none holds");
+            yes += 1;
+        } else if ta.refused(&tb).is_empty() {
+            assert!(!expected, "{label}: a definite no where the subtype holds");
+            no += 1;
+        } else {
+            refused += 1;
+        }
+    }
+    eprintln!("ZED_TEST_SEED={seed}: {yes} yes, {no} no, {refused} refused");
+}
