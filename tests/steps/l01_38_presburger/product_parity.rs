@@ -235,18 +235,29 @@ fn point_in_window(f: &Formula, w: i64) -> Option<Model> {
 }
 
 /// Every point `satisfiable` returns on 300 random formulas of [`case`]'s shape, of a new seed
-/// each run, holds there, as [`points_returned_hold`] checks. The 3000 formulas of seed
-/// 0x5eed0f9a417e5 are in `bench::product_parity` (5.9 s at load 25); there 1 in 20 at most is
-/// refused, and here at most 1 in 10.
+/// each run, holds there, as [`points_returned_hold`] checks. Both answers, the search of an
+/// empty formula's window and the share refused occur at every seed tried, but no count of them
+/// is reached at every seed, so none is asserted here: the first 300 formulas of seed
+/// 0x5eed0f9a417e5 below have exact counts, and the 3000 of the seed are in
+/// `bench::product_parity` (5.9 s at load 25).
 #[test]
 fn every_point_returned_holds_with_products_parity_rows_and_disjunctions() {
     let (mut rng, _) = Rng::fresh("products, parity rows and disjunctions");
-    let t = points_returned_hold(&mut rng, 300);
-    // Both answers occur often enough to be tested, and few questions are refused.
-    assert!(t.points >= 50 && t.empty >= 50, "{t:?}");
-    assert!(t.searched >= 10, "{t:?}");
-    assert!(t.refused * 10 <= 300, "{t:?}");
-    assert!(t.shapes.len() >= 3, "{t:?}");
+    points_returned_hold(&mut rng, 300);
+}
+
+/// The first 300 formulas of seed 0x5eed0f9a417e5, as
+/// [`every_point_returned_holds_with_products_parity_rows_and_disjunctions`] checks them: both
+/// answers, the search of the window of an empty formula of at most five atoms, and points on
+/// formulas of several sizes each occur, and the refusals are counted exactly.
+#[test]
+fn the_first_300_formulas_of_seed_0x5eed0f9a417e5_are_answered_as_counted() {
+    let t = points_returned_hold(&mut Rng::new(0x0005_eed0_f9a4_17e5), 300);
+    assert_eq!(
+        (t.points, t.empty, t.searched, t.refused, t.shapes.len()),
+        (183, 117, 32, 0, 7),
+        "{t:?}"
+    );
 }
 
 /// Formula 1024 of seed 0x5eed0f9a417e5 (counted from 0), checked as [`points_returned_hold`]

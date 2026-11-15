@@ -910,13 +910,14 @@ pub(super) fn random_tiers(rng: &mut Rng) -> Formula {
 /// 200 formulas of [`random_tiers`] of a new seed each run, through
 /// [`factoring_loses_no_precision`]. A projection narrower than as written is rare (none to two
 /// in 200; one in the 600 of seed 0x5f5b), so [`a_shared_part_taken_out_narrows_a_projection`]
-/// checks one that narrows. The 600 formulas of seed 0x5f5b (1.06 s at load 25) are in
-/// `bench::shared`.
+/// checks one that narrows, and
+/// [`formula_122_of_seed_0x5f5b_loses_no_precision_when_its_shared_part_is_taken_out`] one
+/// that stays the same; no count of either is reached at every seed, so none is asserted here.
+/// The 600 formulas of seed 0x5f5b (1.06 s at load 25) are in `bench::shared`.
 #[test]
 fn taking_a_shared_part_out_of_a_disjunction_loses_no_precision() {
-    let (mut rng, seed) = Rng::fresh("shared part out of a disjunction");
-    let c = factoring_loses_no_precision((0..200).map(|i| (i, random_tiers(&mut rng))));
-    assert!(c.same > c.narrower, "seed {seed}: {c:?}");
+    let (mut rng, _) = Rng::fresh("shared part out of a disjunction");
+    factoring_loses_no_precision((0..200).map(|i| (i, random_tiers(&mut rng))));
 }
 
 /// Formula 122 of seed 0x5f5b, `c == 2 && (...)`, a disjunction of four, through

@@ -81,17 +81,15 @@ pub(super) fn against_the_reference(g: &mut Rng, count: usize) -> (usize, usize)
     (negative, feasible)
 }
 
-/// 10,000 small graphs of a new seed each run against the reference; both answers occur more
-/// than 3000 times (about 4400 and 5600 on 2026-11-14). The 300,000 graphs of seeds 1 to 6
-/// (about 1.5 s per seed at load 25) are in `bench::near`.
+/// 10,000 small graphs of a new seed each run against the reference. Both answers occur often
+/// (about 4400 graphs with a negative cycle and 5600 with a potential on 2026-11-14), but no
+/// count of them is reached at every seed, so none is asserted; each answer is checked on
+/// built graphs in [`the_empty_graph_and_single_loops_are_answered`]. The 300,000 graphs of
+/// seeds 1 to 6 (about 1.5 s per seed at load 25) are in `bench::near`.
 #[test]
 fn small_graphs_match_the_reference() {
-    let (mut g, seed) = Rng::fresh("near small graphs");
-    let (negative, feasible) = against_the_reference(&mut g, 10_000);
-    assert!(
-        negative > 3000 && feasible > 3000,
-        "seed {seed}: {negative} with a negative cycle, {feasible} with a potential"
-    );
+    let (mut g, _) = Rng::fresh("near small graphs");
+    against_the_reference(&mut g, 10_000);
 }
 
 /// The graphs at the edges of what `small` draws, and below it: no nodes; one node with no

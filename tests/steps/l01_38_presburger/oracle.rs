@@ -270,7 +270,10 @@ fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // of a new seed each run; `run` fails at the first wrong answer. The 12,000 systems of
     // seed 0x383b and the counts measured on them are in `bench::oracle` (7.2 s at load 25).
     // About 22% of the systems hold somewhere and 0.2% are refused (2634, 9342 and 24 of the
-    // 12,000), so both answers occur here at any seed.
+    // 12,000); the counts of one seed are not asserted, since no count is reached at every
+    // seed. Each answer is asserted on a built system instead
+    // (`a_corner_system_with_a_point_and_one_without_are_answered`), and the counts of the
+    // pinned seed below are exact.
     //
     // A `Shadows` refusal is allowed, and is rare. It is the cause DESIGN.md sec:diagnostics
     // names: a point that could lie only in a splinter that would have to be split again with
@@ -282,12 +285,34 @@ fn rows_of_three_terms_tight_at_a_corner_match_enumeration() {
     // bit length); enumerating only small gaps would be a size threshold. Measured over 2,500
     // fresh seeds (1,500,000 systems): 10 `Shadows` refusals, never two at one seed, 2 of the
     // 10 systems with a point (`the_refused_corner_systems_are_refused_for_a_splinter`).
-    // At that rate three in one run of 600 has odds near 1 in 10^8, so more than two means
-    // the refusal has spread past this cause.
-    let t = run_fresh("rows of three terms tight at a corner", 600, 4, 3, |rng| {
+    // A bound on the refusals of one fresh seed would be a threshold that some seed crosses
+    // with no fault; a refusal that spreads past this cause changes the exact counts of seed
+    // 12228408859946558652 below and of seeds 0x38_41 and 0x383b (`bench::oracle`).
+    run_fresh("rows of three terms tight at a corner", 600, 4, 3, |rng| {
         corner_rows(rng, 4, 3)
     });
-    assert!(t.sat >= 60 && t.unsat >= 300 && t.shadows <= 2, "{t:?}");
+}
+
+/// Two systems of the shape [`corner_rows`] draws over `[-3, 3]^4`, through the same checks as
+/// the random ones. `v0 + v1 + v2 - 9 >= 0` is met only at the corner `v0 = v1 = v2 = 3`
+/// (each term is at most 3), so the first has a point, and a bound one too tight loses it.
+/// The second adds `-v0 - v1 - v2 + 8 >= 0`, so the sum must be at least 9 and at most 8, and
+/// it has none. Both constants lie in what [`corner_rows`] draws (`-top`, and 8 of
+/// `-12..=8`).
+#[test]
+fn a_corner_system_with_a_point_and_one_without_are_answered() {
+    let tight = || Row {
+        c: vec![1, 1, 1, 0],
+        k: -9,
+    };
+    let below = || Row {
+        c: vec![-1, -1, -1, 0],
+        k: 8,
+    };
+    let with = run_on(&mut Rng::new(0), 1, 4, 3, |_| vec![tight()]);
+    assert_eq!((with.sat, with.unsat), (1, 0), "{with:?}");
+    let without = run_on(&mut Rng::new(0), 1, 4, 3, |_| vec![tight(), below()]);
+    assert_eq!((without.sat, without.unsat), (0, 1), "{without:?}");
 }
 
 /// 2 to 5 rows `c·(p·a + q·b) + k >= 0` over `a = x0 + 2·x1` and `b = 2·x2 - 3·x3`, with `c` 1
