@@ -164,6 +164,8 @@ use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
 use super::refusal::{Each, Refusal};
 use super::row_domains::{self, Settled, range};
 
+mod plane;
+
 /// A row `Σ c·y + k`, `== 0` or `>= 0`, over the atoms' indices.
 struct Row {
     terms: Vec<(usize, i128)>,
@@ -482,8 +484,7 @@ pub(super) fn project(
     for a in wanted.iter().flatten() {
         want[*a] = true;
     }
-    let answer = join_run(&rows, &want, move |plan, rows, want, work| {
-        let mut sets = plan.project(rows, want, work)?;
+    let each_of = move |mut sets: Vec<Option<IntervalSet>>| {
         let each = (wanted.iter())
             .map(|w| {
                 Ok(match w.and_then(|a| sets[a].take()) {
@@ -492,7 +493,17 @@ pub(super) fn project(
                 })
             })
             .collect();
-        Some((each, Vec::new()))
+        (each, Vec::new())
+    };
+    // Two atoms besides those an equation defines: the polygons' projections, whose cost does
+    // not grow with the ranges, where they are shown exact (`plane`); else the join. The test
+    // controls of the join's limit ask for the join itself, so they skip this.
+    let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
+    if !join_asked && let Some(sets) = plane::project(&rows, &want) {
+        return Ok(each_of(sets));
+    }
+    let answer = join_run(&rows, &want, move |plan, rows, want, work| {
+        Some(each_of(plan.project(rows, want, work)?))
     });
     match answer {
         Ok(t) => Ok(t),
@@ -576,10 +587,11 @@ thread_local! {
     /// two (PRES-overlap-fast). Kept here and re-exported by the parent, which does not read
     /// it, so that this file names nothing of the parent's own.
     pub static ROW_SUMS_OFF: Cell<bool> = const { Cell::new(false) };
-    /// Test control: the join with no work limit, where the formula has a plan.
+    /// Test control: the join with no work limit, where the formula has a plan; `project`
+    /// does not take the polygons of `plane` first.
     pub static ROW_SUMS_JOIN: Cell<bool> = const { Cell::new(false) };
     /// Test control: a work limit in place of [`JOIN_LIMIT`], to ask a formula on both sides
-    /// of the switch.
+    /// of the switch; as under [`ROW_SUMS_JOIN`], `project` asks the join.
     pub static JOIN_LIMIT_SET: Cell<Option<u64>> = const { Cell::new(None) };
     /// The units the last join on this thread spent and whether it answered; `None` where
     /// the last formula of the class had no plan.

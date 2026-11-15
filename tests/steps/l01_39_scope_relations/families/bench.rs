@@ -141,7 +141,13 @@ fn star_extra_scales() {
 /// 30 s. 10.9 times the instructions at 8n while each part of a test was certified idle again
 /// at each of its cases; 10.2 since the least part of each chain of disjunctions stands for the
 /// parts above it (XR-l139-family, `Scope::idle_by_chain`). On 2026-11-14, 9.8 times at 2, 9.0
-/// at 3, 8.7 at 4, 8.8 at 6, 9.6 at 8 and 10.8 at 12.
+/// at 3, 8.7 at 4, 8.8 at 6, 9.6 at 8 and 10.8 at 12. From 2026-11-14 to 15, 60.6 times the
+/// instructions (1,115M to 67,685M) and 10.93 times the bytes (187.7M to 2,052.5M) at 8: each
+/// test's pendant question (`two_wide_atoms` in l01_38_omega_test) went to the join of row
+/// sums, whose table of pairs grows as k^2 (FAIL-scope-chain-scales-bytes); since such
+/// questions are projected by polygons (`row_sums::plane`), 8.83 times the instructions
+/// (1,006M to 8,884M) and 7.50 times the bytes (185.7M to 1,393.7M), under
+/// `tools/run_tests.sh`.
 #[test]
 fn chain_scales() {
     scales("chain", 8, 1);
