@@ -230,6 +230,11 @@ thread_local! {
     /// The members of recursive groups this thread sent to the search of [`group_verdicts`]
     /// because their group's decider left them open ([`Type::members_searched`]).
     static SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Whether `Searching::nested_cover` is skipped, so that a box goes from the split into
+    /// disjoint parts straight to the split into the open tuple types, as before
+    /// PERF-types-nested-rows-wider-second: set only by [`Type::without_nested_cover`], for the
+    /// test that compares the two paths.
+    static NO_NESTED_COVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Keeps the verdicts of `members`, the recursive members of one group. A member the group's
@@ -535,6 +540,19 @@ impl Type {
     /// to show which groups the decider settles with no search.
     pub fn members_searched() -> usize {
         SEARCHED.with(std::cell::Cell::get)
+    }
+
+    /// Runs `f` with `Searching::nested_cover` skipped, the kept emptiness results dropped
+    /// before and after, so no result crosses from one path to the other. For the test that
+    /// compares the two paths (TEST-nested-cover-verdict-change).
+    #[doc(hidden)]
+    pub fn without_nested_cover<R>(f: impl FnOnce() -> R) -> R {
+        Type::forget_emptiness();
+        NO_NESTED_COVER.with(|c| c.set(true));
+        let r = f();
+        NO_NESTED_COVER.with(|c| c.set(false));
+        Type::forget_emptiness();
+        r
     }
 
     /// The emptiness the group of a recursive member decides for it, if any ([`judge`]), decided
@@ -5409,6 +5427,9 @@ impl<'m> Searching<'m> {
     /// `l01_23_groups_and_refusals::judgments::bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`.
     /// COMPLEXITY.md K118.
     async fn nested_cover(&'m self, g: &mut Region, f: &Part<Row>, open: &[usize]) -> bool {
+        if NO_NESTED_COVER.with(std::cell::Cell::get) {
+            return false;
+        }
         let Some(j) = (0..g.r.len())
             .filter(|&j| open.iter().any(|&k| g.is_open(k, j)))
             .min_by_key(|&j| g.open_cells(j, open).len())
@@ -5458,7 +5479,8 @@ impl<'m> Searching<'m> {
 
     /// The pieces of component `j` of the box `g` cut by its open cells `open_cells`, each with
     /// the cells holding it (it misses the others), in the order of their types, and their
-    /// union; `None` when a cell meets two pieces cut so far in part, or a test is not decided.
+    /// union; `None` when two cells cross (neither is within the other and they meet), a cell
+    /// meets two pieces cut so far in part, or a test is not decided.
     /// Each distinct cell `t` is added to the pieces of the cells before it, of union `u`: when
     /// `t & u` is empty, `t` is a piece; else when `u - t` is empty, every piece lies within
     /// `t`; else each piece `p` lies outside `t`, within it, or is cut into `p & t` and `p - t`;
@@ -5486,8 +5508,28 @@ impl<'m> Searching<'m> {
                 }
             }
         }
+        // Only cells pairwise nested or disjoint on the component are cut here: DESIGN (sec.
+        // L1.23) takes out of the box "each piece on which narrowing alone proves the part
+        // empty", a piece being the meet of the component with one open tuple type's cell, so
+        // a piece inside two crossing cells (`0 | 1` and `1 | 2` give `1`) is no such piece,
+        // and a box only such pieces settle is one DESIGN counts as inhabited unless a later
+        // step settles it. Proof that what is decided here is what that step decides: in a
+        // family of cells pairwise nested or disjoint, each piece cut below is a cell less the
+        // cells inside it, or the rest. Taking out the pieces of the innermost cells first,
+        // each a cell's meet with the component, leaves each cell around them met with the box
+        // equal to its own piece, which is then a step's piece in turn; the rest is the box
+        // left at the end. On each, the same cells hold or miss as on the piece here, so
+        // narrowing gives the same answer, and narrowing on a smaller box with more tuple types
+        // decided is false where it was false before (the part is evaluated in three-valued
+        // logic, which is monotone in what is known), so the order the pieces are taken out in
+        // does not matter. Not proved: that `narrow_tuples` as written, with its kept cuts, is
+        // monotone in this way; the three-valued evaluation of the part is. Crossing cells, or a test not decided, leave the box to the split
+        // below. Whether a cell crosses one before it is read off the pieces, each within or
+        // outside each earlier cell, so it takes no emptiness test beyond those of the cut
+        // and costs set operations on the cells the pieces hold.
         let mut pieces: Vec<(Type, BTreeSet<usize>)> = Vec::new();
         let mut union = Type::empty();
+        let mut rest_empty: Option<bool> = None;
         for (t, cs) in types {
             if self.shown(&(&t & &union)).await == Some(true) {
                 union = &union | &t;
@@ -5499,18 +5541,37 @@ impl<'m> Searching<'m> {
                     held.extend(&cs);
                 }
             } else {
+                rest_empty = Some(self.shown(&(&t - &union)).await?);
                 let mut cut = None;
+                // The cells held by a piece `t` meets, by one it misses or cuts, and by every
+                // piece it meets.
+                let (mut met, mut outside, mut every) = (BTreeSet::new(), BTreeSet::new(), None);
                 for (i, (p, held)) in pieces.iter_mut().enumerate() {
                     if self.shown(&(&*p & &t)).await? {
+                        outside.extend(held.iter().copied());
                         continue;
                     }
+                    met.extend(held.iter().copied());
+                    let common = every.get_or_insert_with(|| held.clone());
+                    common.retain(|c| held.contains(c));
                     if self.shown(&(&*p - &t)).await? {
                         held.extend(&cs);
                         continue;
                     }
+                    outside.extend(held.iter().copied());
                     if cut.replace(i).is_some() {
                         return None;
                     }
+                }
+                // A cell `c` crosses `t` when `t` meets it, it is not within `t` (a piece it
+                // holds is missed or cut by `t`), and `t` is not within it (a piece `t` meets
+                // misses it, or `t` holds more than the cells before it).
+                let every = every.unwrap_or_default();
+                if met
+                    .intersection(&outside)
+                    .any(|c| !every.contains(c) || rest_empty == Some(false))
+                {
+                    return None;
                 }
                 if let Some(i) = cut {
                     let (p, held) = &pieces[i];
@@ -5521,7 +5582,11 @@ impl<'m> Searching<'m> {
                     pieces.push(inside);
                 }
             }
-            if !self.shown(&(&t - &union)).await? {
+            let rest_empty = match rest_empty.take() {
+                Some(e) => e,
+                None => self.shown(&(&t - &union)).await?,
+            };
+            if !rest_empty {
                 pieces.push((&t - &union, cs));
             }
             union = &union | &t;

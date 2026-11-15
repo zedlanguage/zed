@@ -12,6 +12,7 @@ mod complete;
 mod cycle_dup;
 mod group_oracle;
 mod judgments;
+mod nested_cover;
 mod r6_reduction;
 mod refusals;
 mod sweep_agreement;
