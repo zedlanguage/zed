@@ -569,34 +569,77 @@ fn an_exclusive_or_is_found_again_when_only_its_complement_lives() {
 
 #[test]
 fn exclusive_ors_agree_with_their_values() {
-    let reached = exclusive_or_rounds(
+    let firsts = exclusive_or_rounds(
         crate::seed::seed("exclusive_ors_agree_with_their_values"),
         XOR_ROUNDS,
     );
-    // 2 · 64 - 2 functions are exclusive ors and no leaf.
-    assert!(reached >= 100, "{reached}");
+    every_exclusive_or_built_is_the_one_reached(&firsts);
 }
 
-/// The rounds of [`exclusive_or_rounds`] in a run. 2000 rounds reached 77 exclusive ors on
-/// seed 81 and 85 on seed 3601000514119134698, about 1 run in 200 below 100; 4000 rounds
-/// reached 117 to 126 on 5,600 seeds, all but 4 at 123 or more, in about 0.3 s a run.
+/// The rounds of [`exclusive_or_rounds`] in a run. 4000 rounds reached 117 to 126 of the 126
+/// exclusive ors on 5,600 seeds, in about 0.3 s a run; the ones a run misses are built by
+/// [`every_exclusive_or_built_is_the_one_reached`] (PROOF-test-count-thresholds; until
+/// 2026-11-15 the run asserted that at least 100 were reached, which 2000 rounds missed on
+/// about 1 seed in 200).
 const XOR_ROUNDS: usize = 4000;
 
-/// The seeds on which 2000 rounds reached too few exclusive ors.
+/// The seeds on which 2000 rounds reached fewer than 100 exclusive ors (77 on seed 81, 85 on
+/// seed 3601000514119134698); 4000 rounds reach the counts asserted.
 #[test]
 fn exclusive_ors_reach_their_count_on_the_seeds_that_failed() {
-    for seed in [3601000514119134698, 81] {
-        let reached = exclusive_or_rounds(seed, XOR_ROUNDS);
-        assert!(reached >= 100, "seed {seed}: {reached}");
+    for (seed, count) in [(3601000514119134698, 124), (81, 125)] {
+        let firsts = exclusive_or_rounds(seed, XOR_ROUNDS);
+        assert_eq!(firsts.len(), count, "seed {seed}");
+        every_exclusive_or_built_is_the_one_reached(&firsts);
+    }
+}
+
+/// Each of the 2 · 63 exclusive ors of a nonempty set of the six atoms, and their complements
+/// (2 · 64 - 2 functions, every exclusive or that is no leaf), built from the literals in two
+/// ways: by [`xor_by_or`] in increasing order of the atoms, and by [`xor_by_and`] in
+/// decreasing order with the complement taken on the first literal. Both are exclusive ors in
+/// their one form, have the values of the function, and are one node, the node `firsts`
+/// holds for the function when the random rounds reached it. So every exclusive or is checked
+/// whatever the rounds reached, and no count of them is relied on.
+fn every_exclusive_or_built_is_the_one_reached(firsts: &HashMap<u64, Part<Row>>) {
+    let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
+    let holds = |bits: u32| move |a: &Row| (0..6).any(|i| bits >> i & 1 == 1 && *a == atom(i));
+    for set in 1u32..64 {
+        let members: Vec<usize> = (0..6).filter(|i| set >> i & 1 == 1).collect();
+        let mask = (0..64u32)
+            .filter(|b| (b & set).count_ones() % 2 == 1)
+            .fold(0u64, |m, b| m | 1 << b);
+        for complement in [false, true] {
+            let first = |i: usize| match complement {
+                true => lits[i].not(),
+                false => lits[i].clone(),
+            };
+            let up = (members[1..].iter()).fold(first(members[0]), |f, &i| {
+                xor_by_or(&f, &lits[i])
+            });
+            let last = members.len() - 1;
+            let down = (members[..last].iter().rev()).fold(first(members[last]), |f, &i| {
+                xor_by_and(&f, &lits[i])
+            });
+            let mask = if complement { !mask } else { mask };
+            assert!(up.xor_tag().is_some(), "{set:b} {complement}: {up:?}");
+            for bits in 0..64 {
+                assert_eq!(up.eval(&holds(bits)), mask >> bits & 1 == 1, "{set:b} {bits:b}");
+            }
+            assert_eq!(down.id(), up.id(), "{set:b} {complement}");
+            if let Some(reached) = firsts.get(&mask) {
+                assert_eq!(reached.id(), up.id(), "{set:b} {complement}");
+            }
+        }
     }
 }
 
 /// Random parts over six atoms, each built with its set of values beside it as a mask of
 /// the 64 assignments; exclusive ors in their one form of one function are one node while
 /// they live. The first part of each function is held, so that a later one is compared with
-/// a live node: a node freed and made again takes a new id. Returns the number of distinct
-/// exclusive-or functions the `rounds` rounds from `seed` reached.
-fn exclusive_or_rounds(mut seed: u64, rounds: usize) -> usize {
+/// a live node: a node freed and made again takes a new id. Returns the first part made of
+/// each exclusive-or function the `rounds` rounds from `seed` reached, by its mask of values.
+fn exclusive_or_rounds(mut seed: u64, rounds: usize) -> HashMap<u64, Part<Row>> {
     const POOL: usize = 50;
     let lits: Vec<(Part<Row>, u64)> = (0..6)
         .map(|i| {
@@ -651,7 +694,7 @@ fn exclusive_or_rounds(mut seed: u64, rounds: usize) -> usize {
         }
         put(&mut pool, &made, pick);
     }
-    firsts.len()
+    firsts
 }
 
 #[test]
