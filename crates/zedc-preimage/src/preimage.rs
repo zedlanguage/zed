@@ -14951,13 +14951,14 @@ mod tests {
 
     /// Seed 7776978274844439420 of
     /// [`summaries_read_again_give_what_reading_the_term_again_gives`]: its round 1 took 36 s,
-    /// where the other rounds take milliseconds (PREIMAGE-summaries-slow-seed).
+    /// where the other rounds take milliseconds (PREIMAGE-summaries-slow-seed). Its cost, copies
+    /// of one `if` each written as a variable of its own, is held by the benchmark
+    /// `bench::copies_of_an_if_are_read_in_time_near_their_count` in instructions; the 20 s
+    /// wall-time limit this test held passed or failed with the machine's load
+    /// (FAIL-preimage-slow-seed-wall-time).
     #[test]
     fn summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420() {
-        let start = std::time::Instant::now();
         summaries_read_again(7776978274844439420);
-        let took = start.elapsed();
-        assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
     }
 
     /// The classes of [`unite`] without its remembered refusals and its look-up of the caller

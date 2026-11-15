@@ -1,7 +1,8 @@
 //! The benchmarks of `preimage::tests`, run by `tools/run_tests.sh --bench` and left out of
 //! its default run (TEST-bench-move-crates). The correctness tests that keep a small instance
 //! of what each checks besides the ratio are `two_large_classes_stay_apart`,
-//! `chains_are_read_exactly_at_small_lengths` and `a_staged_chain_is_read_exactly`.
+//! `chains_are_read_exactly_at_small_lengths`, `a_staged_chain_is_read_exactly` and
+//! `copies_of_an_if_are_one_variable_in_the_linear_stage`.
 //! Sizes are set (2026-11-14) so the 1x case takes about 0.4 to 0.7 s and a piece stays under
 //! 20 s, except the two chains held below the sizes where reading them stops being near
 //! linear (see each).
@@ -10,6 +11,9 @@ use super::*;
 
 /// The n of [`refused_joins_between_two_large_classes_scale`].
 const REFUSED_N: usize = 350_000;
+
+/// The k of [`copies_of_an_if_are_read_in_time_near_their_count`].
+const COPIES_N: usize = 8000;
 
 /// Eight pairs of classes of n/8 functions each, each pair sharing one function `s(x, y)`
 /// (`x` in the first class, `y` in the second), and n/8 functions
@@ -109,6 +113,52 @@ fn a_staged_chain_under_false_is_read_in_time_near_its_length() {
         |k| {
             let p = preimage(&staged_chain(k), &domains(), &Demand::Bool(false));
             assert!(p.exact, "k = {k}: {p:?}");
+        },
+    );
+}
+
+/// The linear stage ([`linear`]: the relation, then its projections) of `c + c + ... + c != 1`,
+/// a sum of k copies of `c = if y > -5 then 2 * y else min(y, 3)`, each copy made afresh (so
+/// each has its own term id, as the shallow copies of seed 7776978274844439420 of
+/// `summaries_read_again_give_what_reading_the_term_again_gives` had), added in a balanced tree
+/// so the term is of depth log k. Until PREIMAGE-summaries-slow-seed each copy was an
+/// auxiliary variable of its own, defined by the same disjunction of its arms, which the solver
+/// splits on; the four copies of that seed's round 1 took 13.5 s for one projection. Now
+/// `Tr::choices` keys each `if` by its translated guard and arms, so the copies are one
+/// variable (`copies_of_an_if_are_one_variable_in_the_linear_stage`). This holds that cost in
+/// instructions, in place of the 20 s wall-time limit the seed's test held, which passed or
+/// failed with the machine's load (FAIL-preimage-slow-seed-wall-time). Measured 2026-11-15
+/// (load 33 to 37): k = 8000 and 64,000, 0.53 s and 7.95 times the instructions; with the
+/// lookup in `Tr::choices` turned off, 9.26 times at k = 8 and 64, 26.0 times (21.8 times
+/// the bytes) at k = 64 and 512, and the run at k = 8000 passes the piece's time limit.
+#[test]
+fn copies_of_an_if_are_read_in_time_near_their_count() {
+    fn sum(k: usize) -> Term {
+        if k == 1 {
+            let v = |s: &str| Term::Var(s.into());
+            let i = |k: i64| Term::Lit(Value::Int(k));
+            return Term::If(
+                Shared::new(Term::Prim(Prim::Gt, vec![v("y"), i(-5)])),
+                Shared::new(Term::Prim(Prim::Mul, vec![i(2), v("y")])),
+                Shared::new(Term::Prim(Prim::Min, vec![v("y"), i(3)])),
+            );
+        }
+        Term::Prim(Prim::Add, vec![sum(k / 2), sum(k - k / 2)])
+    }
+    let terms = crate::scaling::inputs(COPIES_N, |k| {
+        Term::Prim(Prim::Ne, vec![sum(k), Term::Lit(Value::Int(1))])
+    });
+    crate::scaling::check_order(
+        "the linear stage of a sum of k copies of an if",
+        COPIES_N,
+        1,
+        |k| {
+            let mut tx = Tx::new();
+            let root = tx.terms.add(&terms[&k]);
+            let (rel, found) =
+                linear(&mut tx, root, &domains(), &Demand::Bool(true)).expect("linear");
+            assert!(found.is_ok(), "k = {k}: {found:?}");
+            std::hint::black_box(rel);
         },
     );
 }
