@@ -25664,6 +25664,74 @@ mod by_halves_against_old {
         eprintln!("hulls narrower than the old path's: {narrower}");
     }
 
+    /// Case 17 of [`answers_are_those_of_the_old_path`] at seed 10897834051988464728 (item
+    /// FAIL-batch-single-hull-seed): batch ([`project_each`]) and single ([`project`])
+    /// projection give the same hull of each symbol, and it is the exact hull, the values
+    /// at which [`decide`] finds a point.
+    #[test]
+    fn batch_and_single_hulls_are_exact_on_a_chain_of_sums() {
+        let k = Lin::constant;
+        let f = Formula::and(chain_of_sums(0));
+        let syms: Vec<Atom> = (0..9).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        let (each, _) = project_each(&f, &syms).expect("project_each answers");
+        for (i, sym) in syms.iter().enumerate() {
+            let exact: Vec<i64> = (0..=20i64)
+                .filter(|&c| {
+                    let g = Formula::and(vec![f.clone(), eq(v(i).minus(&k(c as i128)))]);
+                    decide(&g).expect("decide answers")
+                })
+                .collect();
+            let batch = each[i].as_ref().expect("batch hull");
+            let single = project(&f, sym).expect("single hull");
+            for c in 0..=20i64 {
+                assert_eq!(
+                    batch.contains(c),
+                    exact.contains(&c),
+                    "batch {sym} at {c}: {batch:?}"
+                );
+                assert_eq!(
+                    single.contains(c),
+                    exact.contains(&c),
+                    "single {sym} at {c}: {single:?}"
+                );
+            }
+        }
+    }
+
+    /// The rows of the case of [`batch_and_single_hulls_are_exact_on_a_chain_of_sums`] over
+    /// the atoms `v(o)` to `v(o + 8)`.
+    fn chain_of_sums(o: usize) -> Vec<Formula> {
+        let v = |i: usize| v(o + i);
+        let k = Lin::constant;
+        let mut fs: Vec<Formula> = Vec::new();
+        for i in 0..9 {
+            fs.push(ge(v(i)));
+            fs.push(ge(k(20).minus(&v(i))));
+        }
+        // a <= b + c, as b + c - a >= 0.
+        let le = |a: Lin, b: Lin| ge(b.minus(&a));
+        fs.push(le(v(0), v(1).minus(&k(2))));
+        fs.push(le(v(1).plus(&v(3)), v(2).plus(&k(2))));
+        fs.push(le(v(2), v(3).plus(&k(2))));
+        fs.push(le(v(3).plus(&v(7)), v(4).plus(&k(2))));
+        fs.push(le(v(2).plus(&v(4)), v(5).plus(&k(2))));
+        fs.push(le(v(0).plus(&v(5)), v(6).minus(&k(2))));
+        fs.push(le(v(0).plus(&v(6)), v(7)));
+        fs.push(le(v(1).plus(&v(7)), v(8)));
+        let s03 = v(0).plus(&v(3));
+        fs.push(Formula::or(vec![
+            eq(s03.minus(&v(4).plus(&k(4)))),
+            le(v(4).minus(&k(1)), s03.clone()),
+            le(s03, v(4).minus(&k(6))),
+        ]));
+        let s57 = v(5).plus(&v(7));
+        fs.push(Formula::or(vec![
+            le(v(6).minus(&k(3)), s57.clone()),
+            eq(s57.minus(&v(6).minus(&k(6)))),
+        ]));
+        fs
+    }
+
     /// `n` stages, each `y[k]` in `{0, -2}` with `y[k] == -1 or z[k] >= 0` and `z[k] <= 5`,
     /// with `chain`, `y[k+1] - y[k] >= -2` linking each stage to the next (item
     /// PROJECT-dead2-quadratic). The disjunct `y[k] == -1` has no point, but only beside the
