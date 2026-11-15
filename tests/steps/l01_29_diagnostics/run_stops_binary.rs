@@ -26,7 +26,7 @@ use std::process::{Command, Output, Stdio};
 /// A directory of its own for this test, under the test target's scratch directory; files in
 /// it are overwritten by each run, never deleted.
 fn dir() -> PathBuf {
-    let d = scratch::process_tmpdir().join("l01_29_stops_binary");
+    let d = scratch::process_tmpdir().join("run_stops_binary");
     std::fs::create_dir_all(&d).unwrap();
     d
 }
