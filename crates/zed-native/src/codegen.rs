@@ -595,7 +595,7 @@ impl<M: Module> Gen<'_, M> {
     fn float_word(&mut self, fx: &mut Fx<'_>, r: V) -> W {
         let nan = fx.b.ins().fcmp(FloatCC::Unordered, r, r);
         let bits = fx.b.ins().bitcast(I64, MemFlagsData::new(), r);
-        let canon = fx.b.ins().iconst(I64, f64::NAN.to_bits() as i64);
+        let canon = fx.b.ins().iconst(I64, zed_kernel::F64::NAN_BITS as i64);
         let bits = fx.b.ins().select(nan, canon, bits);
         (fx.b.ins().iconst(I64, Word::FLOAT), bits)
     }
@@ -769,7 +769,7 @@ impl<M: Module> Gen<'_, M> {
         if let Some((u, v)) = test {
             let (x, y) = (self.float(fx, u), self.float(fx, v));
             let nan = fx.b.ins().fcmp(FloatCC::Unordered, x, y);
-            let canon = fx.b.ins().iconst(I64, f64::NAN.to_bits() as i64);
+            let canon = fx.b.ins().iconst(I64, zed_kernel::F64::NAN_BITS as i64);
             let call = fx.b.create_block();
             fx.b.ins()
                 .brif(nan, merge, &args(&[(tag, canon)]), call, &[]);

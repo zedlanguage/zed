@@ -76,9 +76,36 @@ pub(crate) fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
 pub struct F64(f64);
 
 impl F64 {
+    /// The bits of the canonical NaN: quiet, sign clear, payload zero. Rust does not fix the
+    /// bits of `f64::NAN`, so the kernel fixes them itself (as `zedc_zir`'s binary form does).
+    pub const NAN_BITS: u64 = 0x7FF8_0000_0000_0000;
+
     /// Wraps `x`, replacing any NaN by the canonical NaN.
+    ///
+    /// The test is on the bits, not `x.is_nan()`, and the replacement an integer select: with
+    /// the float form `if x.is_nan() { NaN } else { x }` inlined after `x = a.sqrt()`, LLVM
+    /// (rustc 1.99, LLVM 22, opt-level 2 or 3) first rewrites `x.is_nan()` as `a < 0 or a is
+    /// NaN`, and code generation then drops the select as if every NaN were the same, so
+    /// `sqrt(-1.0)` kept the x86-64 default NaN 0xFFF8_0000_0000_0000 (item FAIL-sqrt-nan-sign;
+    /// the IR still had the select, the machine code had none). Integer operations on the bits
+    /// have no such NaN freedom in Rust or in LLVM, so the select stays.
+    ///
+    /// Proof that the test is exactly "is a NaN": a binary64 value is a NaN if and only if its
+    /// 11 exponent bits are all ones and its 52 significand bits are not all zero (IEEE Std
+    /// 754-2019, section 3.4). With the sign bit cleared, the bits read as an unsigned integer
+    /// are `e * 2^52 + m` with `e < 2^11` and `m < 2^52`; they exceed `0x7FF0_0000_0000_0000 =
+    /// (2^11 - 1) * 2^52` exactly when `e = 2^11 - 1` and `m > 0`, since `e < 2^11 - 1` gives at
+    /// most `(2^11 - 2) * 2^52 + 2^52 - 1`, below it. O(1), as before: one and, one compare and
+    /// one conditional move.
+    ///
+    /// `#[inline]`: the dev profile, built with LTO off, otherwise calls this out of line from
+    /// every other codegen unit, which hid the fault there (only `--release` failed); inlined,
+    /// both profiles run the shape the test `a_nan_from_sqrt_is_the_canonical_nan` checks.
+    #[inline]
     pub fn new(x: f64) -> Self {
-        if x.is_nan() { F64(f64::NAN) } else { F64(x) }
+        let b = x.to_bits();
+        let nan = b & !(1 << 63) > 0x7FF0_0000_0000_0000;
+        F64(f64::from_bits(if nan { Self::NAN_BITS } else { b }))
     }
 
     /// The wrapped float.
@@ -118,9 +145,19 @@ impl fmt::Debug for F64 {
 pub struct F32(f32);
 
 impl F32 {
-    /// Wraps `x`, replacing any NaN by the canonical NaN.
+    /// The bits of the canonical `f32` NaN, as [`F64::NAN_BITS`] is for `f64`.
+    pub const NAN_BITS: u32 = 0x7FC0_0000;
+
+    /// Wraps `x`, replacing any NaN by the canonical NaN, by the bits as [`F64::new`] does
+    /// and for the same reason (`sqrt(-1.0f32)` kept 0xFFC0_0000). A binary32 value is a NaN
+    /// if and only if its 8 exponent bits are all ones and its 23 significand bits are not all
+    /// zero; the proof at [`F64::new`] with `2^8` and `2^23` in place of `2^11` and `2^52`
+    /// shows that is exactly the sign-cleared bits above `0x7F80_0000 = (2^8 - 1) * 2^23`.
+    #[inline]
     pub fn new(x: f32) -> Self {
-        if x.is_nan() { F32(f32::NAN) } else { F32(x) }
+        let b = x.to_bits();
+        let nan = b & !(1 << 31) > 0x7F80_0000;
+        F32(f32::from_bits(if nan { Self::NAN_BITS } else { b }))
     }
 
     /// The wrapped float.
@@ -3017,6 +3054,41 @@ mod tests {
         let other_nan = f64::from_bits(f64::NAN.to_bits() ^ 1);
         assert!(other_nan.is_nan());
         assert_eq!(Value::float(other_nan), Value::float(f64::NAN));
+    }
+
+    /// A NaN that `sqrt` makes is the canonical NaN once wrapped, at both widths: wrapping
+    /// right after the `sqrt`, where it is inlined, once lost its NaN test in optimized code
+    /// and kept the x86-64 default NaN, sign set (item FAIL-sqrt-nan-sign). The operands pass
+    /// through `black_box` so that no `sqrt` is folded before the code runs. Every class of
+    /// operand that makes a NaN: below zero, `-inf`, NaNs of either sign, quiet and
+    /// signaling.
+    #[test]
+    fn a_nan_from_sqrt_is_the_canonical_nan() {
+        use std::hint::black_box;
+        for x in [
+            -1.0,
+            -f64::MIN_POSITIVE / 2.0,
+            f64::NEG_INFINITY,
+            f64::from_bits(0xFFF8_0000_0000_0000),
+            f64::from_bits(F64::NAN_BITS),
+            f64::from_bits(0x7FF0_0000_0000_0001),
+            f64::from_bits(0xFFF0_0000_0000_0001),
+        ] {
+            let r = F64::new(black_box(x).sqrt()).get().to_bits();
+            assert_eq!(r, F64::NAN_BITS, "sqrt({:#018x})", x.to_bits());
+        }
+        for x in [
+            -1.0f32,
+            -f32::MIN_POSITIVE / 2.0,
+            f32::NEG_INFINITY,
+            f32::from_bits(0xFFC0_0000),
+            f32::from_bits(F32::NAN_BITS),
+            f32::from_bits(0x7F80_0001),
+            f32::from_bits(0xFF80_0001),
+        ] {
+            let r = F32::new(black_box(x).sqrt()).get().to_bits();
+            assert_eq!(r, F32::NAN_BITS, "sqrt({:#010x})", x.to_bits());
+        }
     }
 
     #[test]
