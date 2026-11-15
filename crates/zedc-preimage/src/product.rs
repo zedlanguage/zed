@@ -2703,7 +2703,13 @@ impl fmt::Debug for Seen {
 /// edge goes, so a join that keeps the side whose edges closed cycles leaves the components
 /// larger than the strongly connected ones, and a later search of one reads all of it; an edge
 /// against the order costs the components the search that ends first finds, O(n) at worst for
-/// one edge.
+/// one edge. Since a component is never split, it may also hold names of several trees of the
+/// forest, as when a join drops the conjunct that joined a name to the others, so the order is
+/// one for the edges of all trees, and [`reorder`] and [`merge`] follow the edges of every
+/// tree: an order kept for one tree's edges alone let a reorder of that tree move a component
+/// past another tree's edge, whose cycle closed later went unseen (item
+/// FLAKE-l01-39-scope-one-failure; test
+/// `l01_39_scope_relations::linked::a_join_that_moves_a_name_to_another_tree_keeps_its_cycles_found`).
 /// Tests: `l01_39_scope_relations::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
 /// `…::if_statements_on_skip_links_of_a_chain_take_time_near_their_number`,
 /// `…::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear`,
@@ -3078,6 +3084,22 @@ fn tree_edges(relation: &Conjuncts, t: BlockId, name: &str) -> Vec<(Arc<Formula>
     out
 }
 
+/// The edges of the forest at `name`, of its tree, as [`tree_edges`] gives them: for the
+/// components of the potential, which may hold names of several trees ([`Potential`]).
+fn forest_edges(relation: &Conjuncts, name: &str) -> Vec<(Arc<Formula>, bool, Edge)> {
+    let mut out = Vec::new();
+    for g in relation.blocks().in_forest(name) {
+        let Some((e, back)) = conjuncts::edges(g) else {
+            continue;
+        };
+        out.push((g.clone(), false, e));
+        if let Some(e) = back {
+            out.push((g.clone(), true, e));
+        }
+    }
+    out
+}
+
 /// The search of [`Scope::repair`]: puts each edge of `pending` in the potential `pot` of
 /// tree `t` of the forest ([`Potential`]). A name `pot` lacks takes a value and a component of
 /// its own from an edge only when every edge at it is among `added`, ranked before the
@@ -3177,7 +3199,7 @@ fn put_in(
             };
             let (cu, cv) = (pot.comp_of(u)?, pot.comp_of(v)?);
             if cu != cv {
-                if pot.rank(cu) < pot.rank(cv) || !reorder(relation, t, &waiting, pot, cu, cv)? {
+                if pot.rank(cu) < pot.rank(cv) || !reorder(relation, &waiting, pot, cu, cv)? {
                     break 'round;
                 }
                 continue 'round;
@@ -3403,9 +3425,9 @@ impl Repair {
     }
 }
 
-/// Restores the order of the components of the potential `pot` of tree `t` of the forest
-/// after an edge from component `cu` to component `cv`, ranked before it, was put in, the
-/// edges `waiting` not yet (Pearce and Kelly, one side): a search forward from `cv` and one
+/// Restores the order of the components of the potential `pot` after an edge from component
+/// `cu` to component `cv`, ranked before it, was put in, the edges `waiting` not yet (Pearce
+/// and Kelly, one side), along the edges of every tree of the forest: a search forward from `cv` and one
 /// backward from `cu`, both within the components ranked from `cv` to `cu`, run in step, one
 /// conjunct each in turn, and the first to finish decides. When the forward one finishes, the
 /// components it found, `cv` among them, move in their order to just after `cu`: each edge
@@ -3432,7 +3454,6 @@ impl Repair {
 // and the tests of [`Potential`]; COMPLEXITY.md S25b.
 fn reorder(
     relation: &Conjuncts,
-    t: BlockId,
     waiting: &BTreeSet<(Arc<Formula>, bool)>,
     pot: &mut Potential,
     cu: u64,
@@ -3441,8 +3462,8 @@ fn reorder(
     let window = (pot.rank(cv), pot.rank(cu));
     let mut idle: Vec<Arc<str>> = Vec::new();
     let (forward, found, links) = {
-        let mut ahead = Search::new(relation, t, waiting, pot, window, cv, true);
-        let mut behind = Search::new(relation, t, waiting, pot, window, cu, false);
+        let mut ahead = Search::new(relation, waiting, pot, window, cv, true);
+        let mut behind = Search::new(relation, waiting, pot, window, cu, false);
         let done = loop {
             if ahead.step(&mut idle)? {
                 break ahead;
@@ -3461,7 +3482,7 @@ fn reorder(
         let cycle = on_cycle(links, far);
         moved.retain(|c| !cycle.contains(c));
         let rank = pot.rank(far);
-        let keep = merge(relation, t, waiting, pot, &cycle);
+        let keep = merge(relation, waiting, pot, &cycle);
         pot.rerank(keep, rank);
         keep
     } else {
@@ -3523,15 +3544,14 @@ fn drop_idle(pot: &mut Potential, idle: Vec<Arc<str>>) {
     }
 }
 
-/// A search of [`reorder`] in the potential `pot` of tree `t` of the forest, one conjunct at a
-/// step: the components ranked within `window`, both ends included, that its start reaches
-/// along the edges, or against them when not `forward`, the edges `waiting` and the edge just
+/// A search of [`reorder`] in the potential `pot`, one conjunct at a step: the components
+/// ranked within `window`, both ends included, that its start reaches along the edges of every
+/// tree of the forest, or against them when not `forward`, the edges `waiting` and the edge just
 /// put in, against the order, left out. Only the edges at each component's ends are read
 /// ([`Component`]); the component at the far end of the window is not searched from, for no
 /// edge goes on from it within the window.
 struct Search<'a> {
     relation: &'a Conjuncts,
-    t: BlockId,
     waiting: &'a BTreeSet<(Arc<Formula>, bool)>,
     pot: &'a Potential,
     window: (i64, i64),
@@ -3558,7 +3578,6 @@ type ForestAt<'a> = Box<dyn Iterator<Item = &'a Arc<Formula>> + 'a>;
 impl<'a> Search<'a> {
     fn new(
         relation: &'a Conjuncts,
-        t: BlockId,
         waiting: &'a BTreeSet<(Arc<Formula>, bool)>,
         pot: &'a Potential,
         window: (i64, i64),
@@ -3567,7 +3586,6 @@ impl<'a> Search<'a> {
     ) -> Search<'a> {
         Search {
             relation,
-            t,
             waiting,
             pot,
             window,
@@ -3619,10 +3637,10 @@ impl<'a> Search<'a> {
             self.end = None;
             return Ok(false);
         };
-        let blocks = self.relation.blocks();
-        if !blocks.of(g).is_some_and(|b| blocks.tree(b) == self.t) {
-            return Ok(false);
-        }
+        // Every edge at `x` is followed, of whatever tree: the order of the components is one
+        // for the edges of all trees ([`Potential`]), since a component may hold names of
+        // several, as when a join drops the conjunct that joined a name to the others (item
+        // FLAKE-l01-39-scope-one-failure).
         let Some((e, back)) = conjuncts::edges(g) else {
             return Ok(false);
         };
@@ -3660,10 +3678,10 @@ impl<'a> Search<'a> {
     }
 }
 
-/// Merges the components `cycle` of the potential `pot` of tree `t` of the forest, each on a
-/// cycle with an edge just put in, into the largest of them, which it returns. Each is first
-/// given a shift, in the order of their ranks, the least reduced weight below zero of the
-/// edges into it from those before with their shifts, the edges `waiting` left out: every
+/// Merges the components `cycle` of the potential `pot`, each on a cycle with an edge just put
+/// in, into the largest of them, which it returns. Each is first given a shift, in the order
+/// of their ranks, the least reduced weight below zero of the edges into it from those before
+/// with their shifts, the edges of every tree of the forest, those `waiting` left out: every
 /// edge between them but the new one goes up the order, so the potential, each component
 /// moved by its shift, holds at each of them. The shifts less the largest one's are applied,
 /// so that its names keep their values. In O(m log n) for the `m` edges at the ends of all
@@ -3677,7 +3695,6 @@ impl<'a> Search<'a> {
 // before (`l01_39_reduced_product::scaling::a_join_keeps_the_equalities_of_its_sides_and_scales`).
 fn merge(
     relation: &Conjuncts,
-    t: BlockId,
     waiting: &BTreeSet<(Arc<Formula>, bool)>,
     pot: &mut Potential,
     cycle: &BTreeSet<u64>,
@@ -3697,7 +3714,7 @@ fn merge(
             continue;
         }
         for x in &pot.parts[&c].ends {
-            for (g, back, e) in tree_edges(relation, t, x) {
+            for (g, back, e) in forest_edges(relation, x) {
                 let (Some(a), Some(b)) = (&e.from, &e.to) else {
                     continue;
                 };

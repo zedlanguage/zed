@@ -1501,6 +1501,44 @@ fn ladder_kinds_met(met: &[usize]) {
     }
 }
 
+#[test]
+fn a_join_that_moves_a_name_to_another_tree_keeps_its_cycles_found() {
+    // Item FLAKE-l01-39-scope-one-failure, seed 60 of
+    // `shortest_paths_give_the_intervals_of_the_projection_block_by_block`, minimized. The join
+    // drops `x4 - x2 == -1`, so `x2` leaves the tree of `x4` and `x5` but keeps its component
+    // of the potential, which is never split. `x2 - x3 >= 1` puts `x2` in a second tree. Then
+    // a reorder of the first tree (`x4 - x1 >= 0`) that read the first tree's edges alone
+    // either took `x2` out of its component's ends, its one edge being of the other tree (the
+    // first ladder), or moved its component past that of `x3` (the second), and
+    // `x2 - x3 <= -1` closed a negative cycle that no search saw: the scope was not bottom.
+    let eq = |a: &str, b: &str, c: i64| prim(Prim::Eq, prim(Prim::Sub, var(a), var(b)), int(c));
+    let p = Premises::new();
+    let ns = named(7, "x");
+    for ladder in [
+        vec![
+            (eq("x5", "x4", 2), true, false),
+            (eq("x4", "x2", -1), true, true),
+            (ge("x2", "x3", 1), true, false),
+            (ge("x6", "x1", -1), false, false),
+            (ge("x4", "x1", 0), true, false),
+            (ge("x2", "x3", 0), false, false),
+        ],
+        vec![
+            (eq("x5", "x4", 2), true, false),
+            (eq("x4", "x2", -1), true, true),
+            (ge("x6", "x4", -3), true, false),
+            (ge("x2", "x3", 1), true, false),
+            (ge("x6", "x1", -1), false, false),
+            (ge("x4", "x1", 0), true, false),
+            (ge("x2", "x3", 0), false, false),
+        ],
+    ] {
+        let [_, empty, _] = ladder_checked(&ns, &ladder, &p, "a minimized ladder");
+        // Both orders hold `x2 - x3 >= 1` and its negation, so both end empty.
+        assert_eq!(empty, 2, "{ladder:?}");
+    }
+}
+
 /// The ladder built for [`LADDER_KINDS`] meets each of them.
 #[test]
 fn the_ladder_built_for_each_kind_of_step_meets_it() {
