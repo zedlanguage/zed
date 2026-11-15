@@ -7,6 +7,15 @@ x = @        [4..5] `@` starts an annotation, and the annotation's name must fol
 #pаypal      [0..8] `#pаypal` is no atom: `а` (U+0430) is not ASCII. Try `#paypal` instead.
 cost = $5    [7..8] the character `$` (U+0024) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"$"`.
 a % b        [2..3] the character `%` (U+0025) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"%"`.
-x ~ y        [2..3] the character `~` (U+007E) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `"~"`.
+x ~ y        [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
 `cmd`        [0..1] the character `` ` `` (U+0060) starts no name, number, operator or other part of a Zed program. Remove it, or, if it is meant as text, write it inside a string, as `` "`" ``.
 x''          [2..3] `'` stands only right after a name, once, as in `x'`, and starts nothing by itself. Remove this `'`, or write it right after the name it marks.
+p ~ plus~ v  [2..9] `~ plus~` is no infix call: a space stands after the opening `~`. Try `~plus~` instead.
+p ~plus ~ v  [2..9] `~plus ~` is no infix call: a space stands before the closing `~`. Try `~plus~` instead.
+p ~plus v    [2..7] `~plus` is no infix call: the name must be closed by a `~` right after it, as in `a ~plus~ b`. For the bitwise complement, write `bitNot(plus)`.
+p ~plus      [2..7] `~plus` is no infix call: the name must be closed by a `~` right after it, as in `a ~plus~ b`. For the bitwise complement, write `bitNot(plus)`.
+~            [0..1] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
+x ~~ y       [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
+p ~ plus v   [2..3] `~` stands only around the name of a function written between its two arguments, as in `p ~plus~ v`, and means nothing alone. Remove it, or write the call as `~name~`.
+p ~café~ v   [3..8] `café` is no name: `é` (U+00E9) is not ASCII. Try `cafe` instead.
+~x + 1       [0..2] `~x` is no infix call: the name must be closed by a `~` right after it, as in `a ~x~ b`. For the bitwise complement, write `bitNot(x)`.

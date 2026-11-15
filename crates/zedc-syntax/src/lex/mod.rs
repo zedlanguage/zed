@@ -5,6 +5,7 @@
 //! reads is an error at that character, and lexing stops there.
 
 mod comment;
+mod infix;
 mod name;
 mod number;
 mod punct;
@@ -164,6 +165,10 @@ fn lex_from<'t>(
                 pos = end;
                 Some(Tok::Name(text[start..end].into()))
             }
+        } else if c == '~' {
+            let (end, name) = infix::infix(text, pos)?;
+            pos = end;
+            Some(Tok::Infix(name))
         } else if let Some(end) = name::wildcard(text, pos) {
             pos = end;
             Some(Tok::Wildcard)

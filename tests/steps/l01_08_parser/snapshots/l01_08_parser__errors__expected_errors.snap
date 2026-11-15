@@ -7,11 +7,11 @@ expression: out
 "discount = if member { 0.1 }; // `if` needs its `else`"
   line 1, at ";": expected 'else'
 "area(w, h) = w * h\nmain = area(2, 3);"
-  line 2, at "main": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ';' or 'test' or 'proof'
+  line 2, at "main": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or an infix call such as `~plus~` or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ';' or 'test' or 'proof'
 "xs = [1, 2, 3;"
-  line 1, at ";": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ',' or ']'
+  line 1, at ";": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or an infix call such as `~plus~` or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ',' or ']'
 "p = Point(x: 1 y: 2);"
-  line 1, at "y": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ',' or ')'
+  line 1, at "y": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or an infix call such as `~plus~` or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ',' or ')'
 "type Bound = int | #unbounded\nlimit: Bound = 10;"
   line 2, at "limit": expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or ';'
 "y = x ** 2;"

@@ -2,7 +2,7 @@ Source        = (Space | Comment | Token)* !ANY                                 
 Space         = [ \t\r\n]+                                                         L1
 Comment       = '//' (!'\n' ANY)* | BlockComment                                   L1
 BlockComment  = '/*' (BlockComment | !'*/' ANY)* '*/'                              L1
-Token         = Number | String | AtomLit | AnnotLit | Keyword | Wildcard | Ident | Operator   L1
+Token         = Number | String | AtomLit | AnnotLit | InfixName | Keyword | Wildcard | Ident | Operator   L1
 
 Number        = (Rational | Float | Integer) !NameChar                             L1
 Rational      = (Real | Decimal) 'r'                                               L1
@@ -26,10 +26,12 @@ BlockComment1 = '/*' (BlockComment1 | !'*/' !'\n' ANY)* '*/'                    
 
 AtomLit       = '#' Name                                                           L1
 AnnotLit      = '@' Name                                                           L1
+InfixName     = '~' Name '~'                                                       L1
 Keyword       = KeywordWord !NameChar                                              L1
 KeywordWord   = 'struct' | 'type' | 'interface' | 'grammar' | 'matching' | 'import' | 'asc' | 'as' | 'into' | 'local' | 'for' | 'initial' | 'in' | 'not' | 'loop' | 'until' | 'while' | 'break' | 'match' | 'if' | 'else' | 'is' | 'positional' | 'without' | 'with' | 'return' | 'test' | 'law' | 'proof' | 'emit' | 'this' | 'desc' | 'div' | 'mod' | 'true' | 'false' | 'unordered'   L1
 Wildcard      = '_' !NameChar                                                      L1
 Ident         = Name                                                               L1
 Name          = ([A-Za-z] | '_' &NameChar) NameChar* "'"?                          L1
+TypeVarName   = [A-Z] [0-9]* !NameChar !"'"                                        L1
 NameChar      = [A-Za-z0-9_]                                                       L1
 Operator      = '->?' | '->' | '...' | '..<' | '..=' | '..' | '?.' | '*.' | '^' | '++' | '<-' | '<=' | '>=' | '><' | '==' | '!=' | '&&' | '||' | '::' | '#_' | [+\-*/<>=!&|\\:,;.?()\[\]{}]   L1

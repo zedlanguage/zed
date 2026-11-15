@@ -267,21 +267,21 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  11 | «law» pointUnprefixed ( ) = ( offset != 0r ) . implies ( prefixes == [ ] ) ,
  12 | }
  13 | «struct» UnitSpelling { spelling : UnitName , means : UnitText }
- 15 | m = UnitDef ( name : str["m"] , unit : #base , prefixes : [ str["f"] , str["p"] , str["n"] , str["μ"] , str["m"] , str["c"] , str["d"] , str["k"] ] ) ;
- 16 | K = UnitDef ( name : str["K"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
- 17 | degK = UnitDef ( name : str["°K"] , ascii : str["degK"] , unit : str["K"] ) ;
- 18 | rad = UnitDef ( name : str["rad"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
- 19 | J = UnitDef ( name : str["J"] , unit : str["N m"] , prefixes : [ str["n"] , str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] ] ) ;
- 20 | Bq = UnitDef ( name : str["Bq"] , unit : str["1/s #activity"] , prefixes : [ str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] ] ) ;
- 21 | h = UnitDef ( name : str["h"] , unit : str["s"] , factor : 3600r ) ;
+ 15 | meter = UnitDef ( name : str["m"] , unit : #base , prefixes : [ str["f"] , str["p"] , str["n"] , str["μ"] , str["m"] , str["c"] , str["d"] , str["k"] ] ) ;
+ 16 | kelvin = UnitDef ( name : str["K"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
+ 17 | degreeKelvin = UnitDef ( name : str["°K"] , ascii : str["degK"] , unit : str["K"] ) ;
+ 18 | radian = UnitDef ( name : str["rad"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
+ 19 | joule = UnitDef ( name : str["J"] , unit : str["N m"] , prefixes : [ str["n"] , str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] ] ) ;
+ 20 | becquerel = UnitDef ( name : str["Bq"] , unit : str["1/s #activity"] , prefixes : [ str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] ] ) ;
+ 21 | hour = UnitDef ( name : str["h"] , unit : str["s"] , factor : 3600r ) ;
  22 | percent = UnitDef ( name : str["%"] , unit : str["#ratio"] , factor : 1r / 100r ) ;
- 23 | pc = UnitDef ( name : str["pc"] , unit : str["au"] , factor : 648000r , piPower : - 1₍10₎ , prefixes : [ str["k"] , str["M"] , str["G"] ] ) ;
+ 23 | parsec = UnitDef ( name : str["pc"] , unit : str["au"] , factor : 648000r , piPower : - 1₍10₎ , prefixes : [ str["k"] , str["M"] , str["G"] ] ) ;
  24 | celsius = UnitDef ( name : str["°C"] , ascii : str["degC"] , unit : str["K"] , offset : 27315r / 100r ) ;
  25 | ohm = UnitDef ( name : str["Ω"] , ascii : str["Ohm"] , unit : str["V/A"] , prefixes : [ str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] ] ) ;
  26 | micron = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
  27 | byte = UnitDef ( name : str["B"] , unit : #base , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] , str["Z"] , str["Y"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] , str["Pi"] , str["Ei"] ] ) ;
  28 | bit = UnitDef ( name : str["bit"] , unit : str["B"] , factor : 1r / 8r , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] ] ) ;
- 29 | px = UnitDef ( name : str["px"] , unit : #base ) ;
+ 29 | pixel = UnitDef ( name : str["px"] , unit : #base ) ;
 == DESIGN.md [sec:facets] 3 L18
   1 | @stack ( bytes : 1₍10₎ «with» units ( str["GiB"] ) ) deep ( n : int ) = n + 1₍10₎ ;
   2 | @stack ( 1₍10₎ «with» units ( str["Gbit"] ) ) wide ( n : int ) = n + 1₍10₎ ;
@@ -568,7 +568,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  29 | }
  31 | intRing : CommRing ( int ) = { mul : ( * ) , one : 1₍10₎ , add : ( + ) , zero : 0₍10₎ , neg : ( a -> - a ) } ;
 == DESIGN.md [sec:theories] 2 L22
-  1 | «law» square ( R : CommRing ( T ) , a : T , b : T ) = ( a + b ) * ( a + b ) == a * a + 2₍10₎ * a * b + b * b
+  1 | «law» square ( ring : CommRing ( T ) , a : T , b : T ) = ( a + b ) * ( a + b ) == a * a + 2₍10₎ * a * b + b * b
   2 | «proof» {
   3 | ( a + b ) * ( a + b )
   4 | == ( a + b ) * a + ( a + b ) * b
@@ -576,22 +576,22 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | == a * a + 2₍10₎ * a * b + b * b
   7 | }
 == DESIGN.md [sec:theories] 3 L22
-  1 | pow ( M : Monoid ( T ) , x : T , n : int [ 0₍10₎ .. ] ) -> T = «if» n == 0₍10₎ { 1₍10₎ } «else» { pow ( M : , x : , n : n - 1₍10₎ ) * x } ;
-  3 | «law» powAdd ( M : Monoid ( T ) , x : T , m : int [ 0₍10₎ .. ] , n : int [ 0₍10₎ .. ] ) =
-  4 | pow ( M : , x : , n : m + n ) == pow ( M : , x : , n : m ) * pow ( M : , x : , n : n )
+  1 | pow ( mon : Monoid ( T ) , x : T , n : int [ 0₍10₎ .. ] ) -> T = «if» n == 0₍10₎ { 1₍10₎ } «else» { pow ( mon : , x : , n : n - 1₍10₎ ) * x } ;
+  3 | «law» powAdd ( mon : Monoid ( T ) , x : T , m : int [ 0₍10₎ .. ] , n : int [ 0₍10₎ .. ] ) =
+  4 | pow ( mon : , x : , n : m + n ) == pow ( mon : , x : , n : m ) * pow ( mon : , x : , n : n )
   5 | «proof» { byInduction ( n ) }
 == DESIGN.md [sec:theories] 4 L22
-  1 | additive ( R : CommRing ( T ) ) -> Monoid ( T ) = { mul : R . add , one : R . zero } ;
+  1 | additive ( ring : CommRing ( T ) ) -> Monoid ( T ) = { mul : ring . add , one : ring . zero } ;
 == DESIGN.md [sec:theories] 5 L22
   1 | «interface» MonoInt {
   2 | f : ( int ) -> int ,
   3 | «law» mono ( a : int , b : int ) = ( a <= b ) . implies ( f ( a ) <= f ( b ) ) ,
   4 | }
-  6 | «law» monoTwice ( M : MonoInt , a : int , b : int ) = ( a <= b ) . implies ( M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ) «proof» {
+  6 | «law» monoTwice ( mon : MonoInt , a : int , b : int ) = ( a <= b ) . implies ( mon . f ( mon . f ( a ) ) <= mon . f ( mon . f ( b ) ) ) «proof» {
   7 | #implies ( assume : a <= b , then : #chain ( steps : [
-  8 | #use ( rule : M . mono , args : [ a , b ] ) ,
-  9 | #use ( rule : M . mono , args : [ M . f ( a ) , M . f ( b ) ] ) ,
- 10 | ] , claims : [ M . f ( a ) <= M . f ( b ) , M . f ( M . f ( a ) ) <= M . f ( M . f ( b ) ) ] ) )
+  8 | #use ( rule : mon . mono , args : [ a , b ] ) ,
+  9 | #use ( rule : mon . mono , args : [ mon . f ( a ) , mon . f ( b ) ] ) ,
+ 10 | ] , claims : [ mon . f ( a ) <= mon . f ( b ) , mon . f ( mon . f ( a ) ) <= mon . f ( mon . f ( b ) ) ] ) )
  11 | }
 == DESIGN.md [sec:corner_cases] 1 L3
   1 | total ( «positional» xs : [ int ] ) -> int {

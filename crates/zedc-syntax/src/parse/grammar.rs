@@ -35,6 +35,8 @@ pub enum Kind {
     Atom,
     /// `ANNOT`.
     Annot,
+    /// `INFIX`, an infix call `~name~`.
+    Infix,
     /// A keyword.
     Keyword,
     /// An operator or punctuation mark.
@@ -583,6 +585,7 @@ impl Kind {
             Kind::Str => "STRING",
             Kind::Atom => "ATOM",
             Kind::Annot => "ANNOT",
+            Kind::Infix => "INFIX",
             Kind::Keyword => "KW",
             Kind::Op => "OP",
             Kind::End => "END",
@@ -601,6 +604,7 @@ fn kind(name: &str) -> Option<Expr> {
         "STRING" => Expr::Kind(Kind::Str),
         "ATOM" => Expr::Kind(Kind::Atom),
         "ANNOT" => Expr::Kind(Kind::Annot),
+        "INFIX" => Expr::Kind(Kind::Infix),
         "END" => Expr::Kind(Kind::End),
         _ => return None,
     })

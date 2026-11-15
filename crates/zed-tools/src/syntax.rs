@@ -131,6 +131,7 @@ fn token_kind(rule: &str) -> Option<Kind> {
         "String" => Some(Kind::Str),
         "AtomLit" => Some(Kind::Atom),
         "AnnotLit" => Some(Kind::Annot),
+        "InfixName" => Some(Kind::Infix),
         "Keyword" => Some(Kind::Keyword),
         "Wildcard" => Some(Kind::Wild),
         "Ident" => Some(Kind::Ident),

@@ -28,8 +28,8 @@ use crate::syntax::lex;
 use crate::text::read_text;
 use crate::{Outcome, arg, impl_root, say};
 
-/// The number of token kinds, the variants of [`Kind`].
-const KINDS: usize = 11;
+/// The number of token kinds, the variants of [`Kind`], of which `End` is the last.
+const KINDS: usize = Kind::End as usize + 1;
 
 /// A set of small numbers, as bits.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

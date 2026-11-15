@@ -165,6 +165,7 @@ rows! {
     BareKey => "Union, intersection or difference written bare as a key, guarantee or permission",
     DisplayInBody => "Display in body position",
     SyntaxError => "Syntax error",
+    InfixOperand => "Arithmetic operator written without parentheses in an operand of an infix call",
     ReservedWordAsName => "Reserved word written where a name stands",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",

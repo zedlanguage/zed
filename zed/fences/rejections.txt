@@ -97,6 +97,7 @@ Prefix `-` on a numeric literal's postfix chain
 Union, intersection or difference written bare as a key, guarantee or permission
 Display in body position
 Syntax error
+Arithmetic operator written without parentheses in an operand of an infix call
 Reserved word written where a name stands
 Named argument before a positional one
 `positional` parameter after a named one

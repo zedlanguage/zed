@@ -24,6 +24,7 @@
 mod body;
 mod builder;
 mod drop;
+mod infix;
 mod initial;
 mod neglit;
 mod node;
@@ -197,10 +198,10 @@ fn forms() -> &'static [Form] {
     FORMS.get_or_init(|| {
         let form = |name: &str| match name {
             "Expr" | "Lambda" | "Expr12" | "Or" | "And" | "Additive" | "Multiplicative"
-            | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Prefix" | "Power"
-            | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If" | "Literal"
-            | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "ArrayExpr" | "For"
-            | "Loop" | "Break" => Form::Expr,
+            | "Equality" | "Compare" | "IsTest" | "Reduce" | "Range" | "Infix" | "Prefix"
+            | "Power" | "Postfix" | "AtomExpr" | "Group" | "TupleExpr" | "Block" | "If"
+            | "Literal" | "Display" | "This" | "Match" | "InTest" | "OpFunction" | "ArrayExpr"
+            | "For" | "Loop" | "Break" => Form::Expr,
             "Type" | "TypePostfix" | "Arrow" | "TypeDiff" | "TypeOr" | "TypeAnd" | "TypeName"
             | "AtomType" | "TupleType" | "GroupType" | "TypeApply" | "AtomApply" | "RecordType"
             | "RankArrayType" => Form::Type,
@@ -320,6 +321,7 @@ impl<'a, 's> Builder<'a, 's> {
                     span: self.span(n),
                 })
             }
+            "Infix" => self.infix_call(n),
             "OpFunction" => {
                 let op = self.op(self.tree.nodes[n].start + 1);
                 let op = BinaryOp::of_token(op)

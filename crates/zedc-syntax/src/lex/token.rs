@@ -52,6 +52,9 @@ pub enum Tok {
     Atom(String),
     /// An annotation `@name`, without the `@`.
     Annot(String),
+    /// An infix call `~name~`, without the tildes: the name of the function called (`a ~f~ b` is
+    /// `f(a, b)`).
+    Infix(String),
     /// A keyword.
     Keyword(&'static str),
     /// An operator or punctuation mark.
@@ -110,6 +113,8 @@ pub enum ErrorKind {
     BadString(String),
     /// A block comment that is not closed.
     BadComment(String),
+    /// A `~` that starts no infix call `~name~`, and what is wrong with it.
+    BadInfix(String),
     /// A number literal whose digits the system refused the memory to copy.
     Unread(TooLarge),
 }
@@ -127,7 +132,10 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             ErrorKind::Unexpected(c) => f.write_str(&unexpected(*c)),
-            ErrorKind::BadNumber(why) | ErrorKind::BadString(why) | ErrorKind::BadComment(why) => {
+            ErrorKind::BadNumber(why)
+            | ErrorKind::BadString(why)
+            | ErrorKind::BadComment(why)
+            | ErrorKind::BadInfix(why) => {
                 write!(f, "{why}")
             }
             ErrorKind::Unread(r) => write!(f, "{}", unread_literal(r)),

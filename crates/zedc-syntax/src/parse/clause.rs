@@ -1147,6 +1147,7 @@ pub(super) fn kind(tok: &Tok) -> Kind {
         Tok::Str(_) => Kind::Str,
         Tok::Atom(_) => Kind::Atom,
         Tok::Annot(_) => Kind::Annot,
+        Tok::Infix(_) => Kind::Infix,
         Tok::Keyword(_) => Kind::Keyword,
         Tok::Op(_) => Kind::Op,
     }

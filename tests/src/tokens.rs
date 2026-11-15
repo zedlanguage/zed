@@ -38,6 +38,7 @@ fn one(tok: &Tok) -> String {
         Tok::Op(o) => (*o).into(),
         Tok::Atom(a) => format!("#{a}"),
         Tok::Annot(a) => format!("@{a}"),
+        Tok::Infix(f) => format!("~{f}~"),
         Tok::Int { radix, digits } => format!("{digits}₍{radix}₎"),
         Tok::Float { digits, forced } => format!("{digits}{}", forced.map_or("f", |f| f.name())),
         Tok::Rat(r) => format!("{r}r"),

@@ -147,7 +147,7 @@ impl fmt::Display for Error {
 /// program's words, never the grammar's names. `WILD` is the one token `_`, so it is shown as
 /// the literal. `KW` and `OP` are no expected kind: the grammar writes a keyword or an operator
 /// as its literal.
-const KINDS: [(&str, &str); 9] = [
+const KINDS: [(&str, &str); 10] = [
     ("WILD", "'_'"),
     ("IDENT", "a name"),
     ("INT", "a number"),
@@ -156,6 +156,7 @@ const KINDS: [(&str, &str); 9] = [
     ("STRING", "a string"),
     ("ATOM", "an atom such as `#name`"),
     ("ANNOT", "an annotation such as `@name`"),
+    ("INFIX", "an infix call such as `~plus~`"),
     ("END", "the end of the text"),
 ];
 

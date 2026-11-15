@@ -30,6 +30,7 @@ fn sample(k: Kind) -> &'static [&'static str] {
         Kind::Str => &["\"s\""],
         Kind::Atom => &["#a", "#b"],
         Kind::Annot => &["@fused"],
+        Kind::Infix => &["~f~"],
         Kind::Wild => &["_"],
         Kind::Keyword | Kind::Op | Kind::End => &[],
     }

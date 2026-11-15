@@ -113,7 +113,7 @@ fn no_parse_error_names_a_kind_of_token_as_the_grammar_does() {
     assert_eq!(
         seen,
         [
-            "ANNOT", "ATOM", "END", "FLOAT", "IDENT", "INT", "RAT", "STRING", "WILD"
+            "ANNOT", "ATOM", "END", "FLOAT", "IDENT", "INFIX", "INT", "RAT", "STRING", "WILD"
         ],
         "the kinds of token the errors met expect"
     );

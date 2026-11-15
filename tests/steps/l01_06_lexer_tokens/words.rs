@@ -111,6 +111,26 @@ fn atoms_and_annotations() {
     );
 }
 
+/// `~f~` is one token, the name between its tildes (DESIGN.md sec:lexical, Q36); a dotted name
+/// is read whole, so that the syntax tree can reject it with the call written out.
+#[test]
+fn infix_calls() {
+    let cases = [
+        ("p ~plus~ v", "p ~plus~ v"),
+        ("p~plus~v", "p ~plus~ v"),
+        ("a ~f'~ b ~g_2~ c", "a ~f'~ b ~g_2~ c"),
+        ("p ~geometry.plus~ v", "p ~geometry.plus~ v"),
+        ("0..<a ~f~ b", "0₍10₎ ..< a ~f~ b"),
+        ("\"${a ~f~ b}\"", "str[${a ~f~ b}]"),
+    ];
+    for (src, want) in cases {
+        assert_eq!(render(&lex(src).unwrap()), want, "{src}");
+    }
+    let toks = lex("p ~plus~ v").unwrap();
+    assert_eq!(toks[1].tok, Tok::Infix("plus".into()));
+    assert_eq!((toks[1].span.start, toks[1].span.end), (2, 8));
+}
+
 #[test]
 fn expected_lexical_errors() {
     let cases = [
@@ -122,6 +142,15 @@ fn expected_lexical_errors() {
         "x ~ y",
         "`cmd`",
         "x''",
+        "p ~ plus~ v",
+        "p ~plus ~ v",
+        "p ~plus v",
+        "p ~plus",
+        "~",
+        "x ~~ y",
+        "p ~ plus v",
+        "p ~café~ v",
+        "~x + 1",
     ];
     let out: Vec<String> = cases
         .iter()
