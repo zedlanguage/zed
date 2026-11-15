@@ -38,6 +38,9 @@ use super::graph;
 /// version 9's.
 /// Version 11 writes a kernel string value by the rules of its canonical parse
 /// (CANON-term-string-nodes), and adds the definition `strings` to the set.
+/// Version 12 adds the names a call may write inside an export's type, as those of a function
+/// it returns or of a parameter's function type (ADDR-nested-param-names), and changes no
+/// normal form, so its hash is version 11's.
 const HISTORY: &[(u32, &str)] = &[
     (
         6,
@@ -61,6 +64,10 @@ const HISTORY: &[(u32, &str)] = &[
     ),
     (
         11,
+        "4363dd06fe402ce1532288c6e232775a85de5e5756988aad0b379eb2cd98ec17",
+    ),
+    (
+        12,
         "4363dd06fe402ce1532288c6e232775a85de5e5756988aad0b379eb2cd98ec17",
     ),
 ];

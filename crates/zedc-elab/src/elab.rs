@@ -23,7 +23,7 @@ use zed_kernel::Shared;
 
 use zedc_base::rejection;
 use zedc_base::work::{self, Stage};
-use zedc_check::check::ty::Sig;
+use zedc_check::check::ty::{NameDigests, Sig};
 use zedc_check::check::{self, Info};
 use zedc_resolve::resolve::Resolution;
 use zedc_resolve::resolve::tables::Tables;
@@ -38,7 +38,7 @@ use state::Elab;
 
 pub use walk::MAIN_KEY;
 pub use zedc_resolve::resolve::topo::{topo, topo_joined};
-pub use zedc_stage::defs::{Def, Test, Unit, written_name};
+pub use zedc_stage::defs::{CallNames, Def, Test, Unit, written_name};
 pub use zedc_stage::stage::Cones;
 
 /// The elaboration of `unit` under its resolution, or every error in it, in text order.
@@ -144,21 +144,28 @@ fn lower<'a>(
             // function's from its signature, by its binder's kernel name; a name bound by `=` to a
             // function, as `inc = x -> x + 1`, from its type when that holds one function, since a
             // call through the name passes arguments as that function's signature says (DESIGN.md
-            // sec:values_morphisms). O(functions + definitions × parameters).
+            // sec:values_morphisms). With them, the digest of the names a call may write inside
+            // the definition's type: a function it returns, a parameter's function type, a
+            // function in a tuple (ADDR-nested-param-names), each signature, row and shape the
+            // unit's types share hashed once for the whole unit. O(functions + definitions ×
+            // parameters + distinct nodes of the types).
             let declared: HashMap<&str, &Sig> = (e.info.sigs.iter())
                 .map(|(&id, sig)| (&*e.names[id], &**sig))
                 .collect();
+            let mut digests = NameDigests::default();
             for (name, kernel, _) in &binds {
-                let sig = (declared.get(&**kernel).copied()).or_else(|| {
-                    e.info
-                        .tops
-                        .get(name)
-                        .and_then(|t| t.fns.only().map(|s| &**s))
-                });
-                let names = sig.map(Sig::callable_names).unwrap_or_default();
-                if !names.is_empty() {
-                    out.param_names.insert(kernel.clone(), names);
-                }
+                let names = match (declared.get(&**kernel), e.info.tops.get(name)) {
+                    (Some(&sig), _) => CallNames {
+                        params: sig.callable_names(),
+                        inside: digests.sig(sig),
+                    },
+                    (None, Some(t)) => CallNames {
+                        params: (t.fns.only()).map_or(Vec::new(), |s| s.callable_names()),
+                        inside: digests.ty(t),
+                    },
+                    (None, None) => continue,
+                };
+                out.param_names.insert(kernel.clone(), names);
             }
             out.defs = binds
                 .into_iter()

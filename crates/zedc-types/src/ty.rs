@@ -11820,6 +11820,208 @@ impl Sig {
     }
 }
 
+/// The digests of the parameter names a call may write inside types (ADDR-nested-param-names):
+/// for a signature or a type, a BLAKE3-256 hash of [`Sig::callable_names`] of every function it
+/// holds at any depth, in the arrows' parameters and results and through tuples and atom
+/// payloads, each at its place. An importer may call a function a definition returns, as
+/// `p(k: 1.0)(z: 2.0)`, or pass one whose parameters must be named as a parameter's function
+/// type says, as `apply(f: h)` for `apply(f: (x: f64) -> f64)` (a function fits another only
+/// with the same names, [`Sig::param_list`]), so these names are part of the definition's
+/// interface and its content address keeps them (DESIGN.md sec:units, "Imports pin hashes").
+///
+/// Hashed: for a signature, its callable names (count, then each index and name), its arrows'
+/// count, and for each arrow its parameters' count, each parameter's type and the result's;
+/// for a row, its components' count and each component's type; for a payload shape, its items
+/// and its fields, each field with its name; for a type, its functions, rows and payloads, each
+/// list with its count and each function, row or shape by its own digest, each payload with its
+/// atom's name. Type variables, carriers and atoms are not hashed: they are no name a call
+/// writes, and a change to them changes the definition's value, whose address the export's
+/// holds already. A signature's needs are not hashed either: they are what its body asks of
+/// its type variables, not names a call writes.
+///
+/// Each signature, row and shape is hashed once, from the digests of those it holds, which are
+/// kept in a map for as long as the borrow `'a` of the types lasts. One `NameDigests` serves
+/// every definition of a unit, so a type shared by many places and many definitions costs its
+/// distinct nodes once: O(nodes + edges + bytes of names) for the unit (P207).
+// Complexity tradeoff: naive version, a walk of each type as a tree, hashing a shared
+// signature, row or shape once for each path to it: O(2^n) for n definitions each holding the
+// one before twice (`doubled_types` in the l02_08 benchmarks), and O(depth²) for function
+// types nested depth deep (`nested_fn_types`); both measured with that walk (the first ran
+// past the benchmark's 20 s limit, the second gave T(8n)/T(n) = 31.6). Used: a post-order walk on an
+// explicit stack (a function type nests as deep as the program) with each node's digest kept
+// by address, as `Sig::first_seen` and `Sig::held_without` keep the nodes they entered: every
+// node is borrowed for `'a`, so no key names a freed node, and the map is only read by key,
+// never iterated, so its order changes nothing. Given up: a map entry of 40 bytes per distinct
+// node, and the hashing of the types of signatures and rows that hold no function (each such
+// node hashes a few counts).
+pub struct NameDigests<'a> {
+    done: HashMap<*const (), [u8; 32]>,
+    held: std::marker::PhantomData<&'a Ty>,
+}
+
+/// A node [`NameDigests`] hashes once.
+#[derive(Clone, Copy)]
+enum NameNode<'a> {
+    Sig(&'a Sig),
+    Row(&'a Row),
+    Shape(&'a Shape),
+}
+
+impl<'a> NameNode<'a> {
+    /// Its address, the key of its digest.
+    fn key(self) -> *const () {
+        match self {
+            NameNode::Sig(s) => (s as *const Sig).cast(),
+            NameNode::Row(r) => r.addr(),
+            NameNode::Shape(s) => s.as_ptr().cast(),
+        }
+    }
+
+    /// The types it holds directly, in the order they are hashed.
+    fn tys(self) -> Vec<&'a Ty> {
+        match self {
+            NameNode::Sig(s) => (s.arrows.iter())
+                .flat_map(|a| a.params.iter().chain([&a.result]))
+                .collect(),
+            NameNode::Row(r) => r.iter().collect(),
+            NameNode::Shape(s) => s.items.iter().chain(s.fields.values()).collect(),
+        }
+    }
+}
+
+/// The signatures, rows and shapes `t` holds at its outer level.
+fn name_nodes(t: &Ty) -> impl Iterator<Item = NameNode<'_>> {
+    (t.fns.iter().map(|s| NameNode::Sig(s)))
+        .chain(t.tuples.iter().map(NameNode::Row))
+        .chain(t.payloads.values().flatten().flatten().map(NameNode::Shape))
+}
+
+impl<'a> Default for NameDigests<'a> {
+    fn default() -> Self {
+        NameDigests {
+            done: HashMap::new(),
+            held: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a> NameDigests<'a> {
+    /// The digest of the names a call may write in `s`: its own and those inside the types of
+    /// its arrows.
+    pub fn sig(&mut self, s: &'a Sig) -> [u8; 32] {
+        self.enter([NameNode::Sig(s)]);
+        self.done[&NameNode::Sig(s).key()]
+    }
+
+    /// The digest of the names a call may write inside the type `t`.
+    pub fn ty(&mut self, t: &'a Ty) -> [u8; 32] {
+        self.enter(name_nodes(t));
+        let mut h = blake3::Hasher::new();
+        h.update(b"zed-names-ty\0");
+        self.hash_ty(&mut h, t);
+        *h.finalize().as_bytes()
+    }
+
+    /// Hashes each of `roots` not yet hashed, and each node it holds, those it holds first.
+    // Each node is entered with a mark that it is still to be hashed; when that entry is met
+    // again its children are done, since a type holds no cycle. Proof: the walk follows only a
+    // signature's `arrows`, a row's `cs` and a shape's `items` and `fields`, plain `Vec`s and
+    // `BTreeMap`s with no cell or lock, so they are written only through a unique owner (an
+    // `Arc` is written only by `Arc::make_mut`, which copies a shared node first), and a node
+    // written while it is uniquely owned cannot be given an `Arc` of itself, which would make
+    // it shared: a node holds only nodes made before it. A node pushed again before it is hashed is
+    // pushed only along another edge to it, so the pushes are bounded by the edges.
+    fn enter(&mut self, roots: impl IntoIterator<Item = NameNode<'a>>) {
+        let mut stack: Vec<(NameNode<'a>, bool)> = roots.into_iter().map(|n| (n, false)).collect();
+        while let Some((n, ready)) = stack.pop() {
+            if self.done.contains_key(&n.key()) {
+                continue;
+            }
+            if ready {
+                let d = self.hash_node(n);
+                self.done.insert(n.key(), d);
+                continue;
+            }
+            stack.push((n, true));
+            for t in n.tys() {
+                let new = name_nodes(t).filter(|c| !self.done.contains_key(&c.key()));
+                stack.extend(new.map(|c| (c, false)));
+            }
+        }
+    }
+
+    /// The digest of `n`, whose nodes are all hashed.
+    fn hash_node(&self, n: NameNode<'_>) -> [u8; 32] {
+        let mut h = blake3::Hasher::new();
+        let count = |h: &mut blake3::Hasher, k: usize| {
+            h.update(&(k as u64).to_le_bytes());
+        };
+        match n {
+            NameNode::Sig(s) => {
+                h.update(b"zed-names-fn\0");
+                let names = s.callable_names();
+                count(&mut h, names.len());
+                for (i, name) in &names {
+                    h.update(&i.to_le_bytes());
+                    count(&mut h, name.len());
+                    h.update(name.as_bytes());
+                }
+                count(&mut h, s.arrows.len());
+                for a in &s.arrows {
+                    count(&mut h, a.params.len());
+                    a.params.iter().for_each(|t| self.hash_ty(&mut h, t));
+                    self.hash_ty(&mut h, &a.result);
+                }
+            }
+            NameNode::Row(r) => {
+                h.update(b"zed-names-row\0");
+                let cs: Vec<&Ty> = r.iter().collect();
+                count(&mut h, cs.len());
+                cs.into_iter().for_each(|t| self.hash_ty(&mut h, t));
+            }
+            NameNode::Shape(s) => {
+                h.update(b"zed-names-shape\0");
+                count(&mut h, s.items.len());
+                s.items.iter().for_each(|t| self.hash_ty(&mut h, t));
+                count(&mut h, s.fields.len());
+                for (name, t) in &s.fields {
+                    count(&mut h, name.len());
+                    h.update(name.as_bytes());
+                    self.hash_ty(&mut h, t);
+                }
+            }
+        }
+        *h.finalize().as_bytes()
+    }
+
+    /// Adds `t` to `h`: its functions, rows and payloads, each node by its digest.
+    fn hash_ty(&self, h: &mut blake3::Hasher, t: &Ty) {
+        let digest = |n: NameNode<'_>| self.done[&n.key()];
+        h.update(&(t.fns.len() as u64).to_le_bytes());
+        for s in &t.fns {
+            h.update(&digest(NameNode::Sig(s)));
+        }
+        h.update(&(t.tuples.len() as u64).to_le_bytes());
+        for r in &t.tuples {
+            h.update(&digest(NameNode::Row(r)));
+        }
+        h.update(&(t.payloads.len() as u64).to_le_bytes());
+        for (atom, shapes) in &t.payloads {
+            h.update(&(atom.len() as u64).to_le_bytes());
+            h.update(atom.as_bytes());
+            let Some(shapes) = shapes else {
+                h.update(&[0]);
+                continue;
+            };
+            h.update(&[1]);
+            h.update(&(shapes.len() as u64).to_le_bytes());
+            for s in shapes {
+                h.update(&digest(NameNode::Shape(s)));
+            }
+        }
+    }
+}
+
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut text = String::new();

@@ -13,6 +13,7 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
+blake3.workspace = true
 imbl.workspace = true
 zed-kernel.workspace = true
 zedc-syntax.workspace = true

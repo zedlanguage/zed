@@ -99,8 +99,8 @@ pub type Address = Option<Result<Addressed, TooLarge>>;
 /// The address of the elaborated unit `unit`, whose top level defines `exports`: each
 /// definition, in dependency order, addressed with each name it uses of an earlier definition
 /// read as that definition's address, and the unit addressed by those it exports, each export
-/// by its address and the names of the parameters a call may write ([`canon::export_address`],
-/// DESIGN.md sec:units). O(t log t) for definitions of size t in all, the canonicalizer's cost,
+/// by its address and the names a call may write, its parameters' and those inside its type
+/// ([`canon::export_address`], DESIGN.md sec:units). O(t log t) for definitions of size t in all, the canonicalizer's cost,
 /// O(p) for the bytes of the exports' parameter names, and O(e log e) for e exports.
 pub fn address(unit: &Arc<Unit>, exports: &Exports) -> Result<Addressed, TooLarge> {
     let mut known: HashMap<&str, ContentAddress> = HashMap::with_capacity(unit.defs.len());
@@ -118,8 +118,12 @@ pub fn address(unit: &Arc<Unit>, exports: &Exports) -> Result<Addressed, TooLarg
         // definition's names no importer can write.
         known.insert(&d.kernel, a);
         if exports.get(&d.name).is_some_and(|e| !e.local) {
-            let params = unit.param_names.get(&d.kernel).map_or(&[][..], |p| &p[..]);
-            out.push((i, canon::export_address(a, params)));
+            let names = unit.param_names.get(&d.kernel);
+            let params = names.map_or(&[][..], |n| &n.params[..]);
+            out.push((
+                i,
+                canon::export_address(a, params, names.map(|n| &n.inside)),
+            ));
         }
     }
     let named: Vec<(&str, ContentAddress)> = out

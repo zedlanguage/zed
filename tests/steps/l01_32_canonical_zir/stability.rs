@@ -188,10 +188,10 @@ fn the_address_is_pinned() {
     // The binary form fixes its own layout (little-endian 64-bit words, floats by their
     // IEEE-754 bits, big numbers by their 64-bit limbs or their prime powers), so this hash is
     // the same on every machine. It hashes the canonicalization VERSION, and is pinned again
-    // with each new one (version 11, item CANON-term-string-nodes).
+    // with each new one (version 12, item ADDR-nested-param-names).
     assert_eq!(
         address(&graph(DISCOUNT)).to_string(),
-        "332d533684525460be83ef89a155f37e6d38db84d4ba8878eccd366d55e23d33"
+        "3d6519d671b001d3d1859746217d83a0abf3d749e7206959d20228ed3e409587"
     );
 }
 

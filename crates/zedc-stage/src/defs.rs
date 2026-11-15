@@ -45,6 +45,18 @@ pub struct Test {
     pub span: Span,
 }
 
+/// The names a call may write of a top-level definition ([`Unit::param_names`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CallNames {
+    /// When it is a function, the parameters a call may pass as `name:`, by index and name
+    /// (`Sig::callable_names`); empty otherwise.
+    pub params: Vec<(u32, Arc<str>)>,
+    /// The digest of the names a call may write inside its type (`NameDigests`): those of each
+    /// function its type holds at any depth, as a function it returns, the function type of a
+    /// parameter, or a function in a tuple (ADDR-nested-param-names).
+    pub inside: [u8; 32],
+}
+
 /// An elaborated unit.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Unit {
@@ -61,11 +73,11 @@ pub struct Unit {
     /// as integers (RUNG2-carrier). `front::linear_questions` reads them; a mixed unit, which
     /// nothing asks a question of, leaves this empty.
     pub int_params: HashMap<Arc<str>, Vec<bool>>,
-    /// For each top-level definition that is a function, by its kernel name, the parameters a
-    /// call may pass as `name:`, by index and name (`Sig::callable_names`): part of the
-    /// definition's interface, which its content address as an export keeps (`pin::address`,
-    /// DESIGN.md sec:units). A definition with none is absent.
-    pub param_names: HashMap<Arc<str>, Vec<(u32, Arc<str>)>>,
+    /// For each top-level definition whose type the checker gives, by its kernel name, the names
+    /// a call may write ([`CallNames`]): part of the definition's interface, which its content
+    /// address as an export keeps (`pin::address`, DESIGN.md sec:units). A definition the
+    /// checker gives no type is absent.
+    pub param_names: HashMap<Arc<str>, CallNames>,
     /// The limits written before `main` (DESIGN.md sec:ports, "`main` may limit its own run"),
     /// as the checker read them (`Info::limits`), which the run and an executable enforce.
     pub limits: zed_kernel::limits::MainLimits,

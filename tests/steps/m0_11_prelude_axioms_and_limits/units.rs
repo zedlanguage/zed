@@ -74,7 +74,7 @@ fn the_address_is_pinned() {
     // canonicalization VERSION.
     assert_eq!(
         unit(&invoicing(8, "line"), &EXPORTS).to_string(),
-        "80ebce284057dcb9a7fe2477ecf678242134e29e37636bdb834cd086a60b318d"
+        "218bee78e2fc2faf5f6373b4a197af9b183711dad3fc2b4e62069948104225fc"
     );
 }
 

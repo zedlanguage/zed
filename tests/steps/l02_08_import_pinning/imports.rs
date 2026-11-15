@@ -131,6 +131,26 @@ fn the_address_keeps_each_parameter_name_a_call_may_write() {
     );
 }
 
+/// The names inside the function types of an export's signature are part of its address
+/// (DESIGN.md sec:units, "Imports pin hashes"; ADDR-nested-param-names): an importer may call
+/// `p(k: 1.0)(z: 2.0)` and is refused `(w: 2.0)`, and may pass `apply(f: h)` only for an `h`
+/// whose parameter is named `x`, so a rename of `z` or `x` breaks it.
+#[test]
+fn the_address_keeps_the_parameter_names_inside_an_exports_type() {
+    let p = pin_of("p(k: f64) {\n  g(z: f64) = z * k;\n  return g;\n}\n");
+    assert_ne!(
+        pin_of("p(k: f64) {\n  g(w: f64) = w * k;\n  return g;\n}\n"),
+        p,
+        "a returned function's parameter"
+    );
+    let a = pin_of("apply(f: (x: f64) -> f64) = f(x: 1.0);\n");
+    assert_ne!(
+        pin_of("apply(f: (y: f64) -> f64) = f(y: 1.0);\n"),
+        a,
+        "a function parameter's type"
+    );
+}
+
 /// The rename changes the address of the export it is a parameter of, and of no other: the
 /// export the re-pin report (step L2.8a) lists.
 #[test]

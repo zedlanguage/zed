@@ -58,10 +58,13 @@ use zedc_base::address::ContentAddress;
 /// address and the names of the parameters a call may write ([`export_address`],
 /// ADDR-param-names), with every normal form as version 9 left it; version 11 writes a string
 /// value in a definition's serialization as the rules of its text's canonical parse, each once
-/// in the definition, not its bytes (CANON-term-string-nodes). The test
+/// in the definition, not its bytes (CANON-term-string-nodes); version 12 adds to an export's
+/// address the names a call may write inside its type, as those of a function it returns or of
+/// a parameter's function type (ADDR-nested-param-names), with every normal form as version 11
+/// left it. The test
 /// `l01_32_canonical_zir::version_pins` records the normal forms of a fixed set of graphs and
 /// definitions under each version, and fails when they change and this number does not.
-pub const VERSION: u32 = 11;
+pub const VERSION: u32 = 12;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {
@@ -297,8 +300,17 @@ pub fn serialize(
 /// export's address does. The names are hashed here rather than as facets of the body's
 /// normal form so that a definition of the same unit that uses this one is addressed with the
 /// body's address (`pin::address`): its call has each argument already in its place, and its
-/// value does not change when a name does. O(p) for p parameters and the bytes of their names.
-pub fn export_address(body: ContentAddress, params: &[(u32, Arc<str>)]) -> ContentAddress {
+/// value does not change when a name does. Then `inside`, when the checker gives the definition
+/// a type: a 1 and the digest of the names a call may write inside that type
+/// (`zedc_types::ty::NameDigests`), as the parameter names of a function the definition returns
+/// or of a parameter's function type, which an importer writes in `p(k: 1.0)(z: 2.0)` or must
+/// match to pass `apply(f: h)` (ADDR-nested-param-names); else a 0. O(p) for p parameters and
+/// the bytes of their names.
+pub fn export_address(
+    body: ContentAddress,
+    params: &[(u32, Arc<str>)],
+    inside: Option<&[u8; 32]>,
+) -> ContentAddress {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-export\0");
     h.update(&VERSION.to_le_bytes());
@@ -309,6 +321,10 @@ pub fn export_address(body: ContentAddress, params: &[(u32, Arc<str>)]) -> Conte
         h.update(&(name.len() as u64).to_le_bytes());
         h.update(name.as_bytes());
     }
+    match inside {
+        Some(digest) => h.update(&[1]).update(digest),
+        None => h.update(&[0]),
+    };
     ContentAddress::hashed(&h)
 }
 

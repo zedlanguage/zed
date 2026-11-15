@@ -97,6 +97,56 @@ pub(super) fn wide_params(k: usize) -> Memory {
     wide_named(k, "q")
 }
 
+/// The unit `u` holding one function whose parameter's type nests `k` function types, the
+/// innermost parameter named `last`, as `f(a: (x1: (x0: f64) -> f64) -> f64) = 1.0;` for
+/// `k = 2` and `last = "x0"`, and `main` importing it: the address keeps the name of each
+/// (ADDR-nested-param-names).
+fn nested_named(k: usize, last: &str) -> Memory {
+    let mut t = "f64".to_string();
+    for i in 0..k {
+        let name = if i == 0 {
+            last.to_string()
+        } else {
+            format!("x{i}")
+        };
+        t = format!("({name}: {t}) -> f64");
+    }
+    memory(&[
+        ("u.zed".into(), format!("f(a: {t}) = 1.0;\n")),
+        (
+            "main.zed".into(),
+            "import u;\nmain(m: MainArgs) {}\n".into(),
+        ),
+    ])
+}
+
+/// [`nested_named`] with its innermost parameter named `x0`.
+pub(super) fn nested_fn_types(k: usize) -> Memory {
+    nested_named(k, "x0")
+}
+
+/// The unit `u` defining `d0(last: f64)` and `k` definitions `d{i} = (d{i-1}, d{i-1});`, each
+/// exported, and `main` importing it: the type of `d{i}` holds the signature of `d0` at `2^i`
+/// places, shared, and the address keeps its parameter's name (ADDR-nested-param-names).
+fn doubled_named(k: usize, last: &str) -> Memory {
+    let mut text = format!("d0({last}: f64) = {last};\n");
+    for i in 1..=k {
+        text += &format!("d{i} = (d{}, d{});\n", i - 1, i - 1);
+    }
+    memory(&[
+        ("u.zed".into(), text),
+        (
+            "main.zed".into(),
+            "import u;\nmain(m: MainArgs) {}\n".into(),
+        ),
+    ])
+}
+
+/// [`doubled_named`] with the parameter of `d0` named `x`.
+pub(super) fn doubled_types(k: usize) -> Memory {
+    doubled_named(k, "x")
+}
+
 /// The pins the build writes for the package `fs`, loaded from `main` with no mistake.
 fn written(fs: &Memory) -> usize {
     let p = load(&mut Db::new(), fs, &["main"]);
@@ -160,6 +210,26 @@ fn a_function_of_a_few_parameters_is_pinned_by_their_names() {
         let q = pin(&wide_params(k));
         assert_eq!(pin(&wide_named(k, "q")), q, "{k} parameters");
         assert_ne!(pin(&wide_named(k, "r")), q, "{k} parameters");
+    }
+}
+
+/// The packages of the benchmarks of nested and shared function types load with no mistake
+/// and write their one pin, which follows the name of the innermost parameter, at small sizes
+/// (ADDR-nested-param-names).
+#[test]
+fn function_types_inside_a_type_are_pinned_by_their_names() {
+    let pin = |fs: &Memory| {
+        let p = load(&mut Db::new(), fs, &["main"]);
+        assert_eq!(mistakes(&p), Vec::<String>::new());
+        super::pin_in(&p.pinned("main").expect("the import is pinned"), 0)
+    };
+    for k in [1, 2, 9] {
+        let nested = pin(&nested_fn_types(k));
+        assert_eq!(pin(&nested_named(k, "x0")), nested, "{k} nested");
+        assert_ne!(pin(&nested_named(k, "y")), nested, "{k} nested");
+        let doubled = pin(&doubled_types(k));
+        assert_eq!(pin(&doubled_named(k, "x")), doubled, "{k} doubled");
+        assert_ne!(pin(&doubled_named(k, "y")), doubled, "{k} doubled");
     }
 }
 

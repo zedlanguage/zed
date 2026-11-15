@@ -11,7 +11,8 @@ use zedc::query::Db;
 use zedc::unit::{Memory, load};
 
 use crate::scaling::{
-    importers_of_one, pin_edits, pin_file, pinned_fan, unpinned_fan, wide_params,
+    doubled_types, importers_of_one, nested_fn_types, pin_edits, pin_file, pinned_fan,
+    unpinned_fan, wide_params,
 };
 
 /// Checks that loading each package of `pkgs` from `main` is linear in its size, up to a
@@ -47,6 +48,32 @@ fn a_function_of_many_parameters_is_pinned_in_linear_time() {
         "pinning a function of many named parameters",
         300,
         wide_params,
+    );
+}
+
+/// The address keeps the names of the function types inside an export's type
+/// (ADDR-nested-param-names): hashing them is linear in the type's nodes, so pinning a unit
+/// whose one function's parameter nests many function types stays linear in them, its checking
+/// and elaboration included.
+#[test]
+fn a_parameter_of_many_nested_function_types_is_pinned_in_linear_time() {
+    linear(
+        "pinning a parameter of many nested function types",
+        40,
+        nested_fn_types,
+    );
+}
+
+/// The type of `d{n}` in `d{i} = (d{i-1}, d{i-1})` holds the signature of `d0` at `2^n`
+/// places, shared: each signature and row is hashed once for the whole unit, so pinning n such
+/// definitions is linear in n where hashing each path would take O(2^n)
+/// (ADDR-nested-param-names).
+#[test]
+fn a_type_shared_by_many_definitions_is_pinned_in_linear_time() {
+    linear(
+        "pinning definitions each holding the one before twice",
+        40,
+        doubled_types,
     );
 }
 
