@@ -5,8 +5,34 @@
 //! in the tests of `value.rs`; the deep value is digested at 12 and 64 levels by
 //! `a_deep_shared_value_is_digested_once_per_sequence`.
 
-use super::tests::{drawn_pairs, shared};
+use super::tests::{drawn_ints, drawn_pairs, neighbors, shared, under_tuples};
 use super::*;
+
+/// n neighbor pairs of 64-bit integers compared by `cmp` and by `==`, at the top level and
+/// beneath tuples whose first components tie: O(1) each, so O(n). The integers are drawn over
+/// the whole range, half from -2 to 2 so that equal pairs are met; the inputs are built
+/// before timing. The counts are checked at small sizes by
+/// `neighbors_are_counted_by_the_integers_order` in the tests of `value.rs`. A comparison
+/// allocates nothing, so the bytes are not held.
+#[test]
+fn comparing_integers_scales() {
+    let ints = crate::scaling::inputs(200_000, drawn_ints);
+    let tuples: HashMap<usize, Vec<Value>> =
+        ints.iter().map(|(&n, xs)| (n, under_tuples(xs))).collect();
+    for (what, inputs) in [
+        ("comparing n neighbor pairs of integers", &ints),
+        (
+            "comparing n neighbor pairs of integers beneath tuples",
+            &tuples,
+        ),
+    ] {
+        crate::scaling::check_instructions_only(what, 200_000, 1, |n| {
+            let (less, equal) = neighbors(&inputs[&n]);
+            assert!(less + equal < n);
+            std::hint::black_box((less, equal));
+        });
+    }
+}
 
 #[test]
 fn the_table_of_pairs_scales() {

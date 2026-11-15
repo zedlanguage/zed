@@ -861,8 +861,14 @@ pub(crate) fn number_eq(a: &Value, b: &Value) -> bool {
 }
 
 impl Ord for Value {
+    /// Two 64-bit integers, the commonest pair, are ordered at once; every other pair is walked
+    /// (`cmp`), which orders two such integers the same way (`number_cmp`).
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        cmp(self, other)
+        match (self, other) {
+            (Value::Int(x), Value::Int(y)) => x.cmp(y),
+            _ => cmp(self, other),
+        }
     }
 }
 
@@ -876,15 +882,27 @@ impl PartialEq for Value {
     /// Equal exactly when [`Ord::cmp`] says so. Two families are compared by their maps,
     /// which differ at once in size and skip the nodes they share, so the test of a lattice
     /// `fix` for its fixpoint does not read the whole iterate each round.
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        use Value::*;
         match (self, other) {
-            (Family(a), Family(b)) => a == b,
-            (Tuple(a), Tuple(b)) | (Path(a), Path(b)) => a == b,
-            (Atom(a), Atom(b)) => a == b,
-            _ if self.kind() == 2 && other.kind() == 2 => number_eq(self, other),
-            _ => self.scalar_cmp(other) == Ordering::Equal,
+            // As in `Ord::cmp`: two 64-bit integers, the commonest pair, at once.
+            (Value::Int(a), Value::Int(b)) => a == b,
+            _ => eq(self, other),
         }
+    }
+}
+
+/// `==` on two values other than two 64-bit integers, out of line so that the test for those
+/// two inlines into its callers; it gives two such integers the same answer (`number_eq`).
+#[inline(never)]
+fn eq(a: &Value, b: &Value) -> bool {
+    use Value::*;
+    match (a, b) {
+        (Family(x), Family(y)) => x == y,
+        (Tuple(x), Tuple(y)) | (Path(x), Path(y)) => x == y,
+        (Atom(x), Atom(y)) => x == y,
+        _ if a.kind() == 2 && b.kind() == 2 => number_eq(a, b),
+        _ => a.scalar_cmp(b) == Ordering::Equal,
     }
 }
 
@@ -1998,6 +2016,12 @@ fn min_max_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
 #[inline(always)]
 fn plain_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
     match (a, b, r) {
+        // Two 64-bit integers, the commonest pair, by their order under every relation; the
+        // arms below give them the same (`number_eq`, `number_cmp`), but after more tests.
+        (Value::Int(x), Value::Int(y), _) => match x.cmp(y) {
+            Ordering::Equal => Step::Same,
+            o => Step::Ends(Some(o)),
+        },
         (Value::Float(x), Value::Float(y), Relation::SurfaceEq) => match x.get() == y.get() {
             true => Step::Same,
             false => Step::Ends(None),
@@ -2236,6 +2260,7 @@ pub(crate) fn families_cmp(a: &Family, b: &Family) -> Ordering {
 }
 
 /// The total order on two values.
+#[inline(never)]
 pub(crate) fn cmp(a: &Value, b: &Value) -> Ordering {
     walk(step(a, b, Relation::Total)).expect("the total order orders every pair")
 }
@@ -3491,6 +3516,199 @@ mod tests {
 
         fn below(&mut self, n: u64) -> u64 {
             self.next() % n
+        }
+    }
+
+    /// `n` integers in the 64-bit range: half from -2 to 2, so that neighbors are often equal,
+    /// and the rest drawn over the whole range.
+    pub(super) fn drawn_ints(n: usize) -> Vec<Value> {
+        let mut d = Draw(crate::seed::seed("drawn_ints"));
+        let mut int = || match d.below(2) {
+            0 => d.below(5) as i64 - 2,
+            _ => d.next() as i64,
+        };
+        (0..n).map(|_| Value::Int(int())).collect()
+    }
+
+    /// The tuples `(7, x)` for each `x` of `xs`: pairs whose first components tie, so that
+    /// comparing two of them reads an integer beneath a tuple.
+    pub(super) fn under_tuples(xs: &[Value]) -> Vec<Value> {
+        xs.iter()
+            .map(|x| Value::tuple(vec![Value::Int(7), x.clone()]))
+            .collect()
+    }
+
+    /// How many neighbors of `vs` are ordered first before second by `cmp`, and how many are
+    /// equal by `==`.
+    pub(super) fn neighbors(vs: &[Value]) -> (usize, usize) {
+        let (mut less, mut equal) = (0, 0);
+        for w in vs.windows(2) {
+            less += usize::from(w[0].cmp(&w[1]) == Ordering::Less);
+            equal += usize::from(w[0] == w[1]);
+        }
+        (less, equal)
+    }
+
+    /// The input of the benchmark `comparing_integers_scales` in `bench.rs` at small sizes: the
+    /// counts `neighbors` gives, on integers and beneath tuples, are those of the integers'
+    /// own order.
+    #[test]
+    fn neighbors_are_counted_by_the_integers_order() {
+        for n in [0, 1, 2, 3, 100, 5_000] {
+            let xs = drawn_ints(n);
+            let ints: Vec<i64> = xs.iter().map(|x| x.as_int().expect("an int")).collect();
+            let less = ints.windows(2).filter(|w| w[0] < w[1]).count();
+            let equal = ints.windows(2).filter(|w| w[0] == w[1]).count();
+            assert_eq!(neighbors(&xs), (less, equal), "{n}");
+            assert_eq!(neighbors(&under_tuples(&xs)), (less, equal), "{n}");
+            if n == 5_000 {
+                assert!(equal > 100 && less > 1000, "{equal} equal, {less} less");
+            }
+        }
+    }
+
+    /// A value of any kind, from domains small enough that two drawn values often tie, or are
+    /// equal in value but of two kinds: integers near 0, at the ends of the 64-bit range and
+    /// drawn over it, wide integers just past it, rationals and floats that equal integers, both
+    /// zeros, NaN and the infinities, and tuples, keypaths, atoms and families of these.
+    fn any_value(d: &mut Draw, depth: u32) -> Value {
+        const ENDS: [i64; 9] = [
+            i64::MIN,
+            i64::MIN + 1,
+            -2,
+            -1,
+            0,
+            1,
+            2,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        const FLOATS: [f64; 10] = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            2.5,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            9_223_372_036_854_775_808.0,
+            -9_223_372_036_854_775_808.0,
+        ];
+        let list = |d: &mut Draw| -> Vec<Value> {
+            (0..d.below(3))
+                .map(|_| any_value(d, depth.saturating_sub(1)))
+                .collect()
+        };
+        match d.below(if depth == 0 { 10 } else { 14 }) {
+            0 => Value::Bool(d.below(2) == 1),
+            1..=3 => Value::Int(match d.below(3) {
+                0 => ENDS[d.below(ENDS.len() as u64) as usize],
+                1 => d.below(5) as i64 - 2,
+                _ => d.next() as i64,
+            }),
+            4 => {
+                let past = BigInt::from(d.below(3) + 1);
+                Value::int(match d.below(2) {
+                    0 => BigInt::from(i64::MAX) + past,
+                    _ => BigInt::from(i64::MIN) - past,
+                })
+            }
+            5 => {
+                let (num, den) = (d.below(7) as i64 - 3, d.below(3) as i64 + 1);
+                Value::rat(Rat::new(BigInt::from(num), BigInt::from(den)).expect("den > 0"))
+            }
+            6 => Value::float(FLOATS[d.below(FLOATS.len() as u64) as usize]),
+            7 => Value::float32(FLOATS[d.below(FLOATS.len() as u64) as usize] as f32),
+            8 => Value::str(["", "a", "ab", "b"][d.below(4) as usize]),
+            9 => Value::atom(["e", "f"][d.below(2) as usize]),
+            10 => Value::tuple(list(d)),
+            11 => Value::path(list(d)),
+            12 => Value::atom_with(["e", "f"][d.below(2) as usize], list(d)),
+            _ => {
+                let base = d.below(3) as i64;
+                let values = list(d);
+                Value::from(Family::of(
+                    values
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, v)| (Value::Int(base + i as i64), v)),
+                ))
+            }
+        }
+    }
+
+    /// Whether `v` holds no parts, so that its order against any value is `Value::scalar_cmp`.
+    fn holds_no_parts(v: &Value) -> bool {
+        !matches!(
+            v,
+            Value::Atom(_) | Value::Tuple(_) | Value::Path(_) | Value::Family(_)
+        )
+    }
+
+    /// The shortcut for two 64-bit integers in `cmp`, `==` and the walk agrees with the general
+    /// path, `Value::scalar_cmp` (which `number_cmp` and `number_eq` answer for numbers), on
+    /// 50,000 random pairs of every kind: at the top level, beneath a tuple, before a component
+    /// that differs, as a family's key and as its value; `==` holds exactly when `cmp` gives
+    /// `Equal`; and the order sorts a list of 400 values so that every earlier value is at most
+    /// every later one. The counts show that pairs of two integers, of an integer and another
+    /// number, and of equal integers were met.
+    #[test]
+    fn the_integer_shortcut_agrees_with_the_general_order() {
+        let mut d = Draw(crate::seed::seed(
+            "the_integer_shortcut_agrees_with_the_general_order",
+        ));
+        let (mut ints, mut equal_ints, mut int_number) = (0, 0, 0);
+        let under = |v: &Value| Value::tuple(vec![Value::Int(7), v.clone()]);
+        let before = |v: &Value, k: i64| Value::tuple(vec![v.clone(), Value::Int(k)]);
+        let value_of = |v: &Value| Value::from(Family::of([(Value::Int(0), v.clone())]));
+        let key_of = |v: &Value| Value::from(Family::of([(v.clone(), Value::Int(0))]));
+        for _ in 0..50_000 {
+            let (a, b) = (any_value(&mut d, 2), any_value(&mut d, 2));
+            let o = a.cmp(&b);
+            let pair = format!("{a:?} and {b:?}");
+            assert_eq!(b.cmp(&a), o.reverse(), "{pair}");
+            assert_eq!(a == b, o == Ordering::Equal, "{pair}");
+            if holds_no_parts(&a) || holds_no_parts(&b) {
+                assert_eq!(o, a.scalar_cmp(&b), "{pair}");
+            }
+            for wrap in [&under as &dyn Fn(&Value) -> Value, &value_of] {
+                let (x, y) = (wrap(&a), wrap(&b));
+                assert_eq!(x.cmp(&y), o, "{pair}, wrapped");
+                assert_eq!(x == y, o == Ordering::Equal, "{pair}, wrapped");
+            }
+            // Followed by 0 and by 1: the walk goes on past two equal values.
+            let (x, y) = (before(&a, 0), before(&b, 1));
+            assert_eq!(x.cmp(&y), o.then(Ordering::Less), "{pair}, then 0 and 1");
+            assert_ne!(x, y, "{pair}, then 0 and 1");
+            if holds_no_parts(&a) && holds_no_parts(&b) {
+                // A key is written with its zeros made positive (`Value::key`).
+                let (x, y) = (key_of(&a), key_of(&b));
+                let k = a.key().cmp(&b.key());
+                assert_eq!(x.cmp(&y), k, "{pair}, as keys");
+                assert_eq!(x == y, k == Ordering::Equal, "{pair}, as keys");
+            }
+            match (&a, &b) {
+                (Value::Int(x), Value::Int(y)) => {
+                    ints += 1;
+                    equal_ints += usize::from(x == y);
+                }
+                (Value::Int(_), _) | (_, Value::Int(_))
+                    if a.number_kind().is_some() && b.number_kind().is_some() =>
+                {
+                    int_number += 1;
+                }
+                _ => {}
+            }
+        }
+        eprintln!("{ints} pairs of integers, {equal_ints} equal; {int_number} integer and number");
+        assert!(ints > 2000 && equal_ints > 100 && int_number > 2000);
+        let mut sorted: Vec<Value> = (0..400).map(|_| any_value(&mut d, 2)).collect();
+        sorted.sort();
+        for (i, v) in sorted.iter().enumerate() {
+            for w in &sorted[i + 1..] {
+                assert_ne!(v.cmp(w), Ordering::Greater, "{v:?} sorted before {w:?}");
+            }
         }
     }
 
