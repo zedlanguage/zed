@@ -1467,6 +1467,43 @@ fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> Option<usize>
     }
 }
 
+/// Joins to the base of `p` each disjunction left with one disjunct, as [`drop_by_bounds`]
+/// does: that disjunct is the disjunction, so its constraints join the base's and its
+/// disjunctions the parts' own, after the others, which keep their order. The points of `p`
+/// are as they were. A projection reads each disjunction left with its own union of
+/// projections, and takes the meet of those unions ([`project`]), so a disjunct left alone
+/// in its disjunction would be met with the others' unions, not asked with each of their
+/// disjuncts: with `x + y == z + 2` left alone beside `y == z - 5 || y == z - 1 || y == z`,
+/// `x` was projected onto `[2..=7]`, where joined it is `{2, 3, 7}` (item
+/// FAIL-project-each-coarser-seed).
+// Complexity tradeoff: none; each disjunction, and each one a joined disjunct holds, is read
+// once, O(k) for `k` disjunctions, and a disjunct held nowhere else gives up its rows without a
+// copy.
+fn join_lone_disjuncts(p: &mut Parts) {
+    if !p.ors.iter().any(|o| o.len() == 1) {
+        return;
+    }
+    let mut ors = mem::take(&mut p.ors);
+    let mut i = 0;
+    while i < ors.len() {
+        if ors[i].len() == 1 {
+            match Rc::try_unwrap(ors[i].pop().expect("one disjunct")) {
+                Ok(mut d) => {
+                    p.cons.append(&mut d.cons);
+                    ors.append(&mut d.ors);
+                }
+                Err(d) => {
+                    p.cons.extend(d.cons.iter().cloned());
+                    ors.extend(d.ors.iter().cloned());
+                }
+            }
+        }
+        i += 1;
+    }
+    ors.retain(|o| !o.is_empty());
+    p.ors = ors;
+}
+
 /// The places in `ors` of the disjunctions with a disjunct that has constraints of its own, in
 /// breadth-first order over the parts, two parts (a row of `rows` or a disjunction) being
 /// neighbors when they share an atom, from a part that a first breadth-first search from the
@@ -17788,6 +17825,10 @@ impl Level {
         {
             return none(&syms);
         }
+        // A disjunction these removals leave with one disjunct joins the base
+        // ([`join_lone_disjuncts`]), so that the projections below ask it with every disjunct
+        // of the others.
+        join_lone_disjuncts(&mut p);
         // Whether [`probe`] changed the parts after that removal. It runs whether or not a
         // greedy search finds a point: when it ran only on a failed search, a disjunct with no
         // point stayed whenever the search found a point first, and widened the hulls by an
@@ -17803,6 +17844,24 @@ impl Level {
                 Ok(Some(r)) => (early, probed) = r,
             }
         }
+        // With two disjunctions or more, each disjunct that has no point with the base and the
+        // rows the other disjunctions imply is removed again ([`drop_jointly_empty`]), after the
+        // search, which [`probe`] may have changed the parts by, so that the implied rows read
+        // below for the hulls and for a point at each end are those of the disjuncts left, and a
+        // disjunction it leaves with one disjunct joins the base ([`join_lone_disjuncts`])
+        // before the base is solved. With `sets`, the parts are projected as they are. Without
+        // a probe, the parts are those the removal above left, which removes nothing more from
+        // them: its last pass asked every disjunct of these rows and removed none, so it is not
+        // run again (item PRES-each-settle-share). A second run could differ only on a question
+        // the solver refused in that pass and answers in the other order (see
+        // [`drop_jointly_empty`]); run beside the first in every test of the solver and the
+        // preimage steps, it removed nothing.
+        if !sets && probed && p.ors.len() > 1 && !old_path() {
+            if drop_jointly_empty(&p.cons, &mut p.ors).is_none() {
+                return none(&syms);
+            }
+            join_lone_disjuncts(&mut p);
+        }
         let model = match solve(&p.cons, true) {
             Err(r) => return Opened::Answer(Err(r)),
             Ok(None) => return none(&syms),
@@ -17815,27 +17874,8 @@ impl Level {
         // groups each disjunct touches, not the whole base for each disjunct and each symbol.
         // With two disjunctions or more, a hull with a finite end, the only end a tightening
         // moves, is tightened: at the top over the whole formula, below it over [`summarize`].
-        let mut ors = std::mem::take(&mut p.ors);
+        let ors = std::mem::take(&mut p.ors);
         let linked = Linked::of(std::mem::take(&mut p.cons));
-        // With two disjunctions or more, each disjunct that has no point with the base and the
-        // rows the other disjunctions imply is removed again ([`drop_jointly_empty`]), after the
-        // search, which [`probe`] may have changed the parts by, so that the implied rows read
-        // below for the hulls and for a point at each end are those of the disjuncts left. With
-        // `sets`, the parts are projected as they are. Without a probe, the parts are those the
-        // removal above left, which removes nothing more from them: its last pass asked every
-        // disjunct of these rows and removed none (`linked.cons` is `p.cons`, in its order), so
-        // it is not run again (item PRES-each-settle-share). A second run could differ only on a
-        // question the solver refused in that pass and answers in the other order (see
-        // [`drop_jointly_empty`]); run beside the first in every test of the solver and the
-        // preimage steps, it removed nothing.
-        if !sets
-            && probed
-            && ors.len() > 1
-            && !old_path()
-            && drop_jointly_empty(&linked.cons, &mut ors).is_none()
-        {
-            return none(&syms);
-        }
         let bases: HashMap<usize, Formula> = (0..linked.held.len())
             .filter(|r| !linked.held[*r].is_empty())
             .map(|r| {
@@ -25836,6 +25876,230 @@ mod by_halves_against_old {
             eq(s57.minus(&v(6).minus(&k(6)))),
         ]));
         fs
+    }
+
+    /// Case 3 of [`answers_are_those_of_the_old_path`] at seed 1987070934919392533 (item
+    /// FAIL-project-each-coarser-seed), written out, with each row in the sign [`group`] gives.
+    fn seed_1987_case_3() -> Formula {
+        let k = Lin::constant;
+        let mut fs: Vec<Formula> = Vec::new();
+        for i in 0..7 {
+            fs.push(ge(v(i)));
+            fs.push(ge(k(20).minus(&v(i))));
+        }
+        // `v[b] - v[a] - v[c] + k >= 0`.
+        let row = |b: usize, a: usize, c: Option<usize>| {
+            let l = v(b).minus(&v(a));
+            c.map_or(l.clone(), |c| l.minus(&v(c)))
+        };
+        fs.push(ge(row(1, 0, Some(2)).plus(&k(2))));
+        fs.push(ge(row(2, 1, None).plus(&k(1))));
+        fs.push(ge(row(3, 2, Some(4)).plus(&k(2))));
+        fs.push(ge(row(4, 3, None).plus(&k(1))));
+        fs.push(ge(row(5, 0, Some(4)).plus(&k(1))));
+        fs.push(ge(row(6, 5, None).plus(&k(1))));
+        let (f53, f21, f54, f10) = (
+            row(5, 3, Some(4)),
+            row(2, 1, Some(3)),
+            row(5, 4, None),
+            row(1, 0, Some(3)),
+        );
+        fs.push(Formula::or(vec![
+            eq(f53.minus(&k(6))),
+            eq(f53.minus(&k(-2))),
+        ]));
+        fs.push(Formula::or(vec![
+            eq(f21.minus(&k(-3))),
+            eq(f21.minus(&k(-2))),
+            ge(k(-1).minus(&f21)),
+        ]));
+        fs.push(Formula::or(vec![
+            eq(f54.minus(&k(5))),
+            eq(f54.minus(&k(1))),
+            eq(f54.clone()),
+        ]));
+        fs.push(Formula::or(vec![
+            ge(k(-2).minus(&f10)),
+            ge(k(6).minus(&f10)),
+        ]));
+        Formula::and(fs)
+    }
+
+    /// The values each symbol of [`seed_1987_case_3`] takes, by enumerating every point of its
+    /// box `0..=20` in each of the seven symbols, which its bound rows give, so no point lies
+    /// outside it; each row is tested as soon as its symbols are fixed. Each point found is
+    /// checked with [`Formula::holds`].
+    fn seed_1987_case_3_values(f: &Formula) -> Vec<BTreeSet<i64>> {
+        let mut out = vec![BTreeSet::new(); 7];
+        let r = 0..=20i64;
+        for v3 in r.clone() {
+            for v4 in r.clone() {
+                if v3 > v4 + 1 {
+                    continue;
+                }
+                for v5 in r.clone() {
+                    let a = v3 + v4 == v5 - 6 || v3 + v4 == v5 + 2;
+                    let c = v4 == v5 - 5 || v4 == v5 - 1 || v4 == v5;
+                    if !a || !c {
+                        continue;
+                    }
+                    for v2 in r.clone() {
+                        if v2 + v4 > v3 + 2 {
+                            continue;
+                        }
+                        for v1 in r.clone() {
+                            let b = v1 + v3 == v2 + 3 || v1 + v3 == v2 + 2 || v1 + v3 > v2;
+                            if v1 > v2 + 1 || !b {
+                                continue;
+                            }
+                            for v0 in r.clone() {
+                                let d = v0 + v3 >= v1 + 2 || v0 + v3 >= v1 - 6;
+                                if v0 + v2 > v1 + 2 || v0 + v4 > v5 + 1 || !d {
+                                    continue;
+                                }
+                                for v6 in r.clone().filter(|&v6| v5 <= v6 + 1) {
+                                    let p = [v0, v1, v2, v3, v4, v5, v6];
+                                    let m: Model = (0..7)
+                                        .map(|i| (Atom::Sym(format!("v{i}").into()), p[i].into()))
+                                        .collect();
+                                    assert!(f.holds(&m), "{p:?}");
+                                    for (s, &x) in out.iter_mut().zip(&p) {
+                                        s.insert(x);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// FAIL-project-each-coarser-seed: on case 3 of seed 1987070934919392533 the new path
+    /// projected `v3` onto `[2..=7]`, the old path onto `{2..=3, 7}`. Enumerating the points
+    /// shows `v3` takes 2, 3 and 7 only. Each path's set holds every value taken (sound), the
+    /// new path's lies within the old one's, and batch and single projections agree.
+    #[test]
+    fn seed_1987_case_3_is_within_the_old_path() {
+        let f = seed_1987_case_3();
+        assert_eq!(
+            f.to_string(),
+            "v0 >= 0 && v0 <= 20 && v1 >= 0 && v1 <= 20 && v2 >= 0 && v2 <= 20 && v3 >= 0 \
+             && v3 <= 20 && v4 >= 0 && v4 <= 20 && v5 >= 0 && v5 <= 20 && v6 >= 0 && v6 <= 20 \
+             && v0 + v2 <= v1 + 2 && v1 <= v2 + 1 && v2 + v4 <= v3 + 2 && v3 <= v4 + 1 \
+             && v0 + v4 <= v5 + 1 && v5 <= v6 + 1 && (v3 + v4 == v5 - 6 || v3 + v4 == v5 + 2) \
+             && (v1 + v3 == v2 + 3 || v1 + v3 == v2 + 2 || v1 + v3 >= v2 + 1) \
+             && (v4 == v5 - 5 || v4 == v5 - 1 || v4 == v5) \
+             && (v0 + v3 >= v1 + 2 || v0 + v3 >= v1 - 6)"
+        );
+        let syms: Vec<Atom> = (0..7).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        let values = seed_1987_case_3_values(&f);
+        assert_eq!(values[3], BTreeSet::from([2, 3, 7]));
+        let new = project_each(&f, &syms).expect("answered");
+        let old = old(|| project_each(&f, &syms)).expect("answered");
+        for (i, sym) in syms.iter().enumerate() {
+            let (x, y) = (
+                new.0[i].as_ref().expect("not refused"),
+                old.0[i].as_ref().expect("not refused"),
+            );
+            assert!(
+                values[i]
+                    .iter()
+                    .all(|&val| x.contains(val) && y.contains(val)),
+                "{sym}: new {x}, old {y}, values {:?}",
+                values[i]
+            );
+            assert!(x.is_subset(y), "{sym}: new {x} not in old {y}");
+            assert_eq!(
+                project(&f, sym).as_ref().ok(),
+                Some(x),
+                "batch and single, {sym}"
+            );
+        }
+        assert_eq!(
+            new.0[3].as_ref().ok().map(ToString::to_string).as_deref(),
+            Some("[2..=3, 7..=7]")
+        );
+    }
+
+    /// Case 11 of [`answers_are_those_of_the_old_path`] at seed 1580510372571229, the second
+    /// seed of item FAIL-project-each-coarser-seed, written out as [`group`] gives it: the new
+    /// path projected `v0` onto `[0..=7]`, the old path onto `{0..=3, 6..=7}`. Every point of
+    /// the box `0..=20` in each symbol, which the bound rows give, is enumerated with
+    /// [`Formula::holds`].
+    #[test]
+    fn seed_1580_case_11_is_within_the_old_path() {
+        let k = Lin::constant;
+        let mut fs: Vec<Formula> = Vec::new();
+        for i in 0..3 {
+            fs.push(ge(v(i)));
+            fs.push(ge(k(20).minus(&v(i))));
+        }
+        let (f10, f201) = (v(1).minus(&v(0)), v(2).minus(&v(0)).minus(&v(1)));
+        let f21 = v(2).minus(&v(1));
+        fs.push(ge(f10.plus(&k(1))));
+        fs.push(ge(f201.clone()));
+        fs.push(Formula::or(vec![
+            ge(f10.minus(&k(1))),
+            eq(f10.minus(&k(2))),
+        ]));
+        fs.push(Formula::or(vec![
+            ge(f201.minus(&k(8))),
+            ge(k(1).minus(&f201)),
+        ]));
+        fs.push(Formula::or(vec![
+            ge(k(3).minus(&f21)),
+            eq(f21.minus(&k(7))),
+        ]));
+        fs.push(Formula::or(vec![
+            ge(k(8).minus(&f21)),
+            ge(k(-1).minus(&f21)),
+        ]));
+        let f = Formula::and(fs);
+        assert_eq!(
+            f.to_string(),
+            "v0 >= 0 && v0 <= 20 && v1 >= 0 && v1 <= 20 && v2 >= 0 && v2 <= 20 && v0 <= v1 + 1 \
+             && v0 + v1 <= v2 && (v0 <= v1 - 1 || v0 == v1 - 2) \
+             && (v0 + v1 <= v2 - 8 || v0 + v1 >= v2 - 1) && (v1 >= v2 - 3 || v1 == v2 - 7) \
+             && (v1 >= v2 - 8 || v1 >= v2 + 1)"
+        );
+        let syms: Vec<Atom> = (0..3).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        let mut values = vec![BTreeSet::new(); 3];
+        for p in (0..21 * 21 * 21i64).map(|n| [n % 21, n / 21 % 21, n / 441]) {
+            let m: Model = (0..3).map(|i| (syms[i].clone(), p[i].into())).collect();
+            if f.holds(&m) {
+                for (s, &x) in values.iter_mut().zip(&p) {
+                    s.insert(x);
+                }
+            }
+        }
+        assert_eq!(values[0], BTreeSet::from([0, 1, 2, 3, 6, 7]));
+        let new = project_each(&f, &syms).expect("answered");
+        let old = old(|| project_each(&f, &syms)).expect("answered");
+        for (i, sym) in syms.iter().enumerate() {
+            let (x, y) = (
+                new.0[i].as_ref().expect("not refused"),
+                old.0[i].as_ref().expect("not refused"),
+            );
+            assert!(
+                values[i]
+                    .iter()
+                    .all(|&val| x.contains(val) && y.contains(val)),
+                "{sym}: new {x}, old {y}, values {:?}",
+                values[i]
+            );
+            assert!(x.is_subset(y), "{sym}: new {x} not in old {y}");
+            assert_eq!(
+                project(&f, sym).as_ref().ok(),
+                Some(x),
+                "batch and single, {sym}"
+            );
+        }
+        assert_eq!(
+            new.0[0].as_ref().ok().map(ToString::to_string).as_deref(),
+            Some("[0..=3, 6..=7]")
+        );
     }
 
     /// `n` stages, each `y[k]` in `{0, -2}` with `y[k] == -1 or z[k] >= 0` and `z[k] <= 5`,
