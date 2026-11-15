@@ -287,9 +287,11 @@ fn random_rows_of_two_unit_coefficients_with_a_point_are_decided() {
 }
 
 /// A chain `2·x[i] - 5 <= 3·x[i+1] <= 2·x[i] + 5` with Pugh's example on the link at the
-/// middle: empty, since that link is, and no shadow shows it. The first splinter of the chain's
-/// dark eliminations that is refused is the answer, [`Refusal::Shadows`]; searching on ran the
-/// test again once per bound.
+/// middle: empty, since that link is. Each end variable is held only by a pair of opposite rows
+/// wide enough for every value of its neighbor, so the solver eliminates the chain exactly from
+/// both ends down to Pugh's example and answers `Ok(false)`; before PRES-solver-equation-sign-free
+/// the eliminations were dark and the first splinter refused was the answer, `Shadows`. With a
+/// bound at each end the splinters are searched (`names::the_splinters_are_searched_a_batch_at_a_time`).
 pub(super) fn pugh_in_a_chain(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {
@@ -705,11 +707,7 @@ const DECIDED: [Decided; 11] = [
         Err(Refusal::Growth),
     ),
     ("random rows", random_unit_rows_four_each, Ok(true)),
-    (
-        "Pugh's example in a chain",
-        pugh_in_a_chain,
-        Err(Refusal::Shadows),
-    ),
+    ("Pugh's example in a chain", pugh_in_a_chain, Ok(false)),
     ("a hub in one row per block", hub_rows, Err(Refusal::Growth)),
     (
         "a crossing after the hub's blocks",

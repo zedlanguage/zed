@@ -520,8 +520,11 @@ fn every_order_and_naming_of_a_chain_of_equalities_gives_one_answer() {
 
 /// Pugh's example between `x[n / 2]` and `x[n / 2 + 1]` of a chain of `n` steps
 /// `3·x[i + 1] - 2·x[i] + 5 >= 0` and `2·x[i] - 3·x[i + 1] + 5 >= 0` over `n + 1` variables, as
-/// `scaling::pugh_in_a_chain` builds it: each elimination is dark, and the splinters are
-/// searched.
+/// `scaling::pugh_in_a_chain` builds it, with `x[0] >= -50` and `x[n] <= 50`: each elimination is
+/// dark, and the splinters are searched. Without the two bounds each end variable is held only by
+/// a pair of opposite rows wide enough for every value of its neighbor, which the solver
+/// eliminates exactly from both ends to Pugh's example, empty (PRES-solver-equation-sign-free),
+/// and no splinter is searched.
 fn pugh_chain(n: usize) -> Vec<Row> {
     let mut rows = Vec::new();
     let at = |pairs: &[(usize, i64)]| {
@@ -543,6 +546,8 @@ fn pugh_chain(n: usize) -> Vec<Row> {
             rows.push(ge(&at(&[(a, 2), (b, -3)]), 5));
         }
     }
+    rows.push(ge(&at(&[(0, 1)]), 50));
+    rows.push(ge(&at(&[(n, -1)]), 50));
     rows
 }
 
@@ -572,6 +577,11 @@ pub(super) fn splinters_answer_alike(rng: &mut Rng, six: usize, twelve: usize, s
             seen.len(),
             1,
             "seed {seed}, chain of {}: {seen:?}",
+            links + 1
+        );
+        assert!(
+            seen.contains_key("Err(Shadows)"),
+            "chain of {}: {seen:?}",
             links + 1
         );
     }

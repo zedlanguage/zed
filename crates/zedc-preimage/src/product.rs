@@ -6392,7 +6392,19 @@ impl Scope {
             }
         }
         self.reduce_with(false);
-        debug_assert!(fresh || !self.bottom, "settling a leaf emptied a scope");
+        // The lazy scope is bottom exactly when the eager one is ([`Scope::lazy`]) only while
+        // every projection is exact. After a refusal some projection is coarser than exact, so
+        // a narrowing may leave an empty scope unfound, and settling a leaf later finds it
+        // empty, which is sound: the scope has no point. Seen in `m0_12_refusal_census`
+        // `programs_4` once the solver read equations up to sign
+        // (PRES-solver-equation-sign-free): the else branch of `x >= 3` under guards that force
+        // `x >= 3`. Assumption, not proved: that without a refusal settling never empties a
+        // scope. Evidence: the proof at [`Scope::lazy`], and this check over the l01_39 and
+        // m0_12 tests.
+        debug_assert!(
+            fresh || !self.bottom || !self.refusals.is_empty(),
+            "settling a leaf emptied a scope with no refusal"
+        );
     }
 
     /// The product of `name` as the eager scope has it: [`Scope::get`] of the scope with the

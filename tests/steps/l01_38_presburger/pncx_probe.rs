@@ -276,3 +276,16 @@ pub(super) fn renamed_parameters_match(names: &[&str]) {
         }
     }
 }
+
+// PRES-solver-equation-sign-free: five formulas of family 3 of `t8_enum_suite` with rows
+// `x == m * q + r` (no common factor, no opposite pair), where the sign `signed` chooses for each
+// equation is the one change from the formula as written. With main's solver each was refused
+// for Shadows under that sign and answered as written: the solver read the sign.
+#[test]
+fn family_3_formulas_refused_only_for_the_sign_of_an_equation_are_answered() {
+    let refused: Vec<usize> = [191, 234, 260, 342, 363]
+        .into_iter()
+        .filter(|&i| std::panic::catch_unwind(|| t8_enum_suite(3, i..i + 1, 0)).is_err())
+        .collect();
+    assert!(refused.is_empty(), "refused: {refused:?}");
+}

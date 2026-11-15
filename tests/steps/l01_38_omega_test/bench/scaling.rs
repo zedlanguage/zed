@@ -93,12 +93,7 @@ fn random_rows_of_two_unit_coefficients_scale() {
 
 #[test]
 fn pughs_example_in_a_chain_scales() {
-    decides(
-        "Pugh's example in a chain",
-        530,
-        Err(Refusal::Shadows),
-        pugh_in_a_chain,
-    );
+    decides("Pugh's example in a chain", 530, Ok(false), pugh_in_a_chain);
 }
 
 #[test]
