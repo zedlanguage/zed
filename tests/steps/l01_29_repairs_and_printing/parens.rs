@@ -226,9 +226,40 @@ fn same(a: &Ty, b: &Ty) -> bool {
 /// reaching one shows.
 #[test]
 fn printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need() {
-    let mut rng = Rng(zed_tests::seed::seed(
+    read_back_round(zed_tests::seed::seed(
         "printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need",
     ));
+}
+
+/// The round trip and minimality test above on seeds that drew types whose subtype tests
+/// put the leaf part of one tuple length, then a tuple of another length, in one search; the
+/// search's index of the first was read for the second, and `candidates` in zed-kernel's
+/// `types::empty` indexed a column the index did not have (FAIL-kernel-candidates-key-past-columns).
+#[test]
+fn printed_types_read_back_on_seeds_that_met_one_index_for_two_tuple_lengths() {
+    for seed in [
+        15276803015084382426_u64,
+        17195149157679997797,
+        6869086033364754509,
+    ] {
+        read_back_round(seed);
+    }
+}
+
+/// The smallest pair seen for FAIL-kernel-candidates-key-past-columns: the printed type of
+/// seed 6869086033364754509 and one deletion the minimality check tries. The two are
+/// different types (the payload of `#pair` is the empty tuple in one, a pair in the other).
+#[test]
+fn a_payload_of_the_empty_tuple_and_one_of_a_pair_are_told_apart() {
+    let a = parse_type("#box((#pair(), 1,))").unwrap();
+    let b = parse_type("#box((#pair((), 1),))").unwrap();
+    assert!(!same(&a, &b), "{a} and {b}");
+}
+
+/// One round of [`printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need`]
+/// with the random generator seeded by `seed`.
+fn read_back_round(seed: u64) {
+    let mut rng = Rng(seed);
     let mut wrong = Vec::new();
     let mut read = 0;
     let mut seen = HashSet::new();

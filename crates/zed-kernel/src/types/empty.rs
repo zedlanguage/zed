@@ -1235,12 +1235,15 @@ struct Search {
     /// Per tuple part a tuple of plain values was tested against ([`makeable`]), its
     /// rows filed by the values they may hold ([`RowIndex`]), made at the first such test and
     /// kept with the part, so that its id names no other part. A list and an expression may
-    /// share an id, so each is keyed with whether it is an expression.
-    row_indexes: HashMap<(bool, u64), (Part<Row>, RowIndex)>,
+    /// share an id, so each is keyed with whether it is an expression; and a leaf's id is its
+    /// value whatever its length, so each is keyed with its length too, which a part with rows
+    /// fixes (FAIL-kernel-candidates-key-past-columns: the index of the empty part of one
+    /// length was read for a tuple of another, past its columns).
+    row_indexes: HashMap<(bool, u64, usize), (Part<Row>, RowIndex)>,
     /// Per tuple part a tuple with a component that is not plain was tested against, its rows
     /// filed by the keys their columns may hold ([`Columns`]), keyed and kept as `row_indexes`
     /// is.
-    columns: HashMap<(bool, u64), (Part<Row>, Columns)>,
+    columns: HashMap<(bool, u64, usize), (Part<Row>, Columns)>,
     /// The keys of the column types of `row_indexes` and `columns`, each type filed once per
     /// way of reading it.
     filer: Filer,
@@ -8890,7 +8893,7 @@ impl<'m> Searching<'m> {
         item: impl Fn(&Search, usize) -> usize,
         f: &Part<Row>,
     ) -> Option<bool> {
-        let key = (f.expr_id().is_some(), f.id());
+        let key = (f.expr_id().is_some(), f.id(), len);
         let keys: Vec<Option<Value>> = {
             let mut s = self.s();
             let plain: Option<Vec<Value>> = (0..len)

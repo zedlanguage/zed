@@ -929,3 +929,28 @@ fn a_value_in_a_listed_column_type_has_a_key_the_type_lists() {
         );
     }
 }
+
+/// The search keeps one row index and one `Columns` per tuple part it tests a tuple against,
+/// keyed by the part's id. A diagram leaf's id is its value, the same for every tuple length,
+/// so the empty part (leaf `false`) of length 1 and that of length 2 shared one entry here:
+/// `Columns` made for length 1 was read with the keys of a pair, and `candidates` indexed a
+/// column it did not have ("index out of bounds: the len is 1 but the index is 1"). The types
+/// are those of the smallest pair seen, `#box((#pair(), 1,))` and `#box((#pair((), 1),))`
+/// (seed 6869086033364754509 of the l01_29 round-trip test), built here without the reader
+/// (FAIL-kernel-candidates-key-past-columns).
+#[test]
+fn leaf_parts_of_different_tuple_lengths_keep_separate_indexes() {
+    let one = Type::lit(&Value::Int(1)).expect("an integer literal");
+    let unit = Type::tuple(Vec::new());
+    let boxed = |t: Type| Type::atom_with("box", &Type::tuple(vec![t]));
+    let a = boxed(Type::tuple(vec![
+        Type::atom_with("pair", &unit),
+        one.clone(),
+    ]));
+    let b = boxed(Type::tuple(vec![Type::atom_with(
+        "pair",
+        &Type::tuple(vec![unit.clone(), one.clone()]),
+    )]));
+    assert!(!a.subtype(&b), "{a} is not a subtype of {b}");
+    assert!(!b.subtype(&a), "{b} is not a subtype of {a}");
+}
