@@ -165,6 +165,30 @@ fn shape(name: &str, p: &Atom) -> Formula {
             two(le(0), and(vec![ge(3), pis(1)]), and(vec![ge(5), pis(2)])),
             two(ge(1), and(vec![le(-1), pis(3)]), and(vec![le(-3), pis(4)])),
         ]),
+        // No disjunct is live: the leaves of each lie outside `-6..=6` on both sides, so the
+        // join of an inner disjunction bounds `i` neither way and no bound found before the
+        // sweep removes it. `decide` answers it before the sweep: the walk of the cells without
+        // solving finds every disjunct dead (`cell_sweep_empty_tests` in the crate reaches the
+        // sweep's own answer).
+        "every_top_dead_both_sides" => or(vec![
+            two(le(0), and(vec![ge(10), pis(1)]), and(vec![le(-10), pis(2)])),
+            two(ge(1), and(vec![ge(11), pis(3)]), and(vec![le(-11), pis(4)])),
+        ]),
+        // Every disjunct and every leaf is live on `-6..=6`, but each leaf lies outside its
+        // parent's guard on both sides, so no path from a disjunct to a leaf keeps a cell. As
+        // above, `decide` answers it before the sweep.
+        "every_path_blocked_both_sides" => or(vec![
+            two(
+                and(vec![ge(-1), le(1)]),
+                and(vec![ge(3), pis(1)]),
+                and(vec![le(-3), pis(2)]),
+            ),
+            two(
+                and(vec![ge(2), le(4)]),
+                and(vec![ge(5), pis(3)]),
+                and(vec![le(1), pis(4)]),
+            ),
+        ]),
         _ => unreachable!("no shape {name}"),
     }
 }
@@ -267,4 +291,14 @@ fn two_sums_on_overlapping_guards() {
 fn no_live_disjunct() {
     check("every_top_dead_inside");
     check("every_leaf_blocked");
+}
+
+#[test]
+fn no_disjunct_live_when_its_leaves_lie_on_both_sides() {
+    check("every_top_dead_both_sides");
+}
+
+#[test]
+fn no_path_keeps_a_cell_when_the_leaves_lie_on_both_sides_of_their_guards() {
+    check("every_path_blocked_both_sides");
 }

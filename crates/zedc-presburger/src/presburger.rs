@@ -4010,6 +4010,7 @@ mod cell_sweep {
             })
             .collect();
         if live_top.is_empty() {
+            // Test: `cell_sweep_empty_tests::a_disjunction_whose_every_disjunct_is_dead_inside_holds_no_cell`.
             return Some(ResolvedOr::Empty);
         }
         let any_top_pay = live_top
@@ -4194,6 +4195,7 @@ mod cell_sweep {
                 }
             }
             if pieces.is_empty() {
+                // Test: `cell_sweep_empty_tests::a_disjunction_whose_leaves_lie_outside_their_guards_holds_no_cell`.
                 return Some(ResolvedOr::Empty);
             }
             if !any_top_pay {
@@ -28314,5 +28316,188 @@ mod r6_shared_window_tests {
                 assert_eq!(a.meet(b).runs(), cells_meet(&a.runs(), &b.runs()));
             }
         }
+    }
+}
+
+/// The two returns of [`cell_sweep`]'s `resolve_disj` that find a disjunction holds no cell of
+/// its atom (PRES-unreached-3-left). Through [`decide`] both shapes are answered before the
+/// sweep by [`by_cells`] without solving, whose walk finds the same disjunction dead; these
+/// tests call the sweep directly.
+#[cfg(test)]
+mod cell_sweep_empty_tests {
+    use super::*;
+
+    fn var(s: &str) -> Lin {
+        Lin::atom(Atom::Sym(s.into()))
+    }
+
+    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
+        let mut p = Parts::default();
+        p.cons.extend(cons);
+        p.ors.extend(ors);
+        Rc::new(p)
+    }
+
+    /// `-6 <= i <= 6 && (lo1 <= i <= hi1 && (A || B) || lo2 <= i <= hi2 && (C || D))`, where
+    /// each leaf `(lo, hi, v)` is `lo <= i <= hi && q == v`; `None` leaves the side open.
+    type Leaf = (Option<i128>, Option<i128>, i128);
+    fn guarded(guards: [(Option<i128>, Option<i128>); 2], leaves: [[Leaf; 2]; 2]) -> Parts {
+        let i = var("i");
+        let c = Lin::constant;
+        let bounds = |lo: Option<i128>, hi: Option<i128>| {
+            let mut v = Vec::new();
+            if let Some(lo) = lo {
+                v.push(Con::ge(&i, &c(lo)));
+            }
+            if let Some(hi) = hi {
+                v.push(Con::ge(&c(hi), &i));
+            }
+            v
+        };
+        let mut p = Parts::default();
+        p.cons = bounds(Some(-6), Some(6));
+        let tops = guards
+            .iter()
+            .zip(leaves.iter())
+            .map(|(&(lo, hi), pair)| {
+                let inner = pair
+                    .iter()
+                    .map(|&(llo, lhi, v)| {
+                        let mut cons = bounds(llo, lhi);
+                        cons.push(Con::eq(&var("q"), &c(v)));
+                        part(cons, Vec::new())
+                    })
+                    .collect();
+                part(bounds(lo, hi), vec![inner])
+            })
+            .collect();
+        p.ors.push(tops);
+        p
+    }
+
+    #[test]
+    fn a_disjunction_whose_every_disjunct_is_dead_inside_holds_no_cell() {
+        // Each leaf lies outside -6..=6, so each top disjunct is dead: the first return.
+        let p = guarded(
+            [(None, Some(0)), (Some(1), None)],
+            [
+                [(Some(10), None, 1), (None, Some(-10), 2)],
+                [(Some(11), None, 3), (None, Some(-11), 4)],
+            ],
+        );
+        assert_eq!(cell_sweep::decide_by_cells(&p), Some(Ok(false)));
+        assert_eq!(has_point(p), Ok(false));
+    }
+
+    #[test]
+    fn a_disjunction_whose_leaves_lie_outside_their_guards_holds_no_cell() {
+        // Each leaf meets -6..=6 but not the guard above it, so every top disjunct is live and
+        // no cell is harvested: the second return.
+        let p = guarded(
+            [(Some(-1), Some(1)), (Some(2), Some(4))],
+            [
+                [(Some(3), None, 1), (None, Some(-3), 2)],
+                [(Some(5), None, 3), (None, Some(1), 4)],
+            ],
+        );
+        assert_eq!(cell_sweep::decide_by_cells(&p), Some(Ok(false)));
+        assert_eq!(has_point(p), Ok(false));
+    }
+}
+
+/// `slack::sweep_row_unbounded` against the search it stands for (PRES-unreached-3-left): on
+/// random rows of 2 and 3 names, the arms it marks are those where `pick_by` finds a point with
+/// the arm forced and the row's other disjunctions read in order, fast and not. The fast pattern
+/// away from the greatest name is skipped where the other greatest name `gm` is not above the
+/// name `xl` that takes the rest (`gm <= xl`: every row of 2 names, and in rows of 3 `gm == 1` at
+/// `loc == 0` or `gm == 0` elsewhere); this checks that the other patterns find every point there.
+#[cfg(test)]
+mod sweep_against_pick_tests {
+    use super::*;
+
+    #[test]
+    fn the_unbounded_row_sweep_marks_the_arms_pick_by_finds() {
+        let mut seed: u64 = 0x5eed_1234;
+        let mut below = |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let mut skipped_hits = 0usize;
+        let mut wrong = Vec::new();
+        for _ in 0..1500 {
+            let k = 2 + below(2) as usize;
+            // Distinct names in a random order, so the greatest name falls anywhere in the row.
+            let mut names: Vec<usize> = (0..k).collect();
+            for i in (1..k).rev() {
+                names.swap(i, below(i as u64 + 1) as usize);
+            }
+            let ws: Vec<i128> = (0..k).map(|_| 1 + below(5) as i128).collect();
+            let highs: Vec<usize> = (0..k).map(|_| below(2) as usize).collect();
+            let atom = |i: usize| Atom::Sym(format!("a{}", names[i]).into());
+            let row = || -> Vec<DisjInfo> {
+                (0..k)
+                    .map(|i| DisjInfo {
+                        disj_idx: i,
+                        atom: atom(i),
+                        low_arm: 1 - highs[i],
+                        high_arm: highs[i],
+                        low_val: Int::ZERO,
+                        high_val: Int::from(ws[i]),
+                        weight: Int::from(ws[i]),
+                    })
+                    .collect()
+            };
+            let arm = |i: usize, a: usize| -> Rc<Parts> {
+                let v = if a == highs[i] { ws[i] } else { 0 };
+                let mut d = Parts::default();
+                d.cons.push(Con::eq(&Lin::atom(atom(i)), &Lin::constant(v)));
+                Rc::new(d)
+            };
+            let by_name = |skip: Option<usize>| {
+                (0..k)
+                    .filter(|&i| Some(i) != skip)
+                    .max_by_key(|&i| names[i])
+                    .expect("two names or more")
+            };
+            let gmax1 = by_name(None);
+            let gmax2 = by_name(Some(gmax1));
+            let sum = (0..k).fold(Lin::constant(0), |s, i| s.plus(&Lin::atom(atom(i))));
+            let total: i128 = ws.iter().sum();
+            for target in 0..=total {
+                let plan = sweep_row_unbounded(row(), Int::from(target), true);
+                for loc in 0..k {
+                    let gm = if loc == gmax1 { gmax2 } else { gmax1 };
+                    let skipped = gm <= usize::from(loc == 0);
+                    for a in 0..2 {
+                        let mut q = Parts::default();
+                        q.cons.push(Con::eq(&sum, &Lin::constant(target)));
+                        for i in (0..k).filter(|&i| i != loc) {
+                            q.ors.push(vec![arm(i, 0), arm(i, 1)]);
+                        }
+                        q.put(&arm(loc, a));
+                        let fast = pick_by(&q, true, true).is_ok();
+                        let slow = pick_by(&q, true, false).is_ok();
+                        let swept = !matches!(plan.hit_table[loc][a], HitKind::None);
+                        if swept != fast || swept != slow {
+                            wrong.push(format!(
+                                "names {names:?}, weights {ws:?}, high arms {highs:?}, target {target}, loc {loc}, arm {a}: sweep {swept}, fast {fast}, slow {slow}"
+                            ));
+                        }
+                        skipped_hits += usize::from(skipped && swept);
+                    }
+                }
+            }
+        }
+        // 10488 hits where the fast pattern is skipped on 2026-11-14, so the test does not
+        // silently stop reaching them.
+        assert!(skipped_hits > 0, "no hit where the fast pattern is skipped");
+        assert!(
+            wrong.is_empty(),
+            "{} differ:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
     }
 }

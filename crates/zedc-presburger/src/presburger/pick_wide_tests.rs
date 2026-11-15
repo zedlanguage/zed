@@ -120,6 +120,30 @@ fn a_disjunction_of_one_point_on_a_row_of_unbounded_names() {
     );
     assert_eq!(walk(&p), Some(false));
     assert!(has_point(&p, &["a", "b", "c"]));
+    // `pick_by` refuses it too, fast and not (PRES-unreached-3-left): the walk is its exact
+    // form here, and its general body, run once with the walk skipped, refused it at both
+    // `deep`. `decide` and `satisfiable` find the point, with `c`'s disjunction of one point or
+    // of two (one cut off by a bound): the passes before any search join the first into the
+    // conjunction, and 120 such formulas (each order of the names, targets 0 to 9) never had
+    // the walk refuse on 2026-11-14.
+    for deep in [false, true] {
+        assert!(pick_by(&p, deep, true).is_err());
+        assert!(pick_by(&p, deep, false).is_err());
+    }
+    let one_of =
+        |a: &str, vs: &[i128]| Formula::or(vs.iter().map(|&v| Formula::Con(is(a, v))).collect());
+    for cs in [vec![4], vec![4, 100]] {
+        let f = Formula::and(vec![
+            Formula::Con(sum_is(&["a", "b", "c"], 6)),
+            one_of("b", &[0, 3]),
+            one_of("c", &cs),
+            Formula::Con(Con::ge(&k(50), &y("c"))),
+            one_of("a", &[0, 2]),
+        ]);
+        assert_eq!(decide(&f), Ok(true));
+        let m = satisfiable(&f).expect("answered").expect("a point");
+        assert!(f.holds(&m), "{m:?}");
+    }
 }
 
 #[test]

@@ -1581,6 +1581,10 @@ pub(super) fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int, use_fast: b
                     }
                     continue;
                 }
+                // Skipped where `gm <= xl`: every row of 2 names, and in longer rows `gm == 1` at
+                // `loc == 0` or `gm == 0` elsewhere. On rows of 2 and 3 names the exact, at-`gmax`
+                // and slow patterns mark there the arms `pick_by` finds, fast and not (test
+                // `sweep_against_pick_tests` in the parent module).
                 if gm > xl {
                     let mut s = &arm0_psum[gm + 1] - &arm0_psum[xl + 1];
                     if xl < loc && loc <= gm {
