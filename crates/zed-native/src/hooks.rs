@@ -15,7 +15,7 @@ use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
-use zedc::zir::memory::{HeldPart, Mode, cell_var, held_family_term, held_term, port_var};
+use zedc::zir::memory::{HeldPart, Mode, held_family_term, held_term, port_var};
 
 use zed_rt::{FunObj, Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
@@ -1071,8 +1071,9 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                             HeldShape::Atom(n, f) => held_term(Some((n, f)), key, parts),
                             HeldShape::Family(f) => held_family_term(f, key, parts),
                         };
-                        lets.held.push((cell_var(key), made));
-                        HeldPart::held(key)
+                        let (x, part) = HeldPart::held(key);
+                        lets.held.push((x, made));
+                        part
                     }
                 };
                 let (clo, _) = stack.pop().expect("the closure finished");
@@ -1503,7 +1504,7 @@ mod tests {
     use zed_kernel::World;
     use zed_kernel::term::build::{app, if_, lam, lit, var};
     use zedc::zir::lower::lower;
-    use zedc::zir::memory::plan;
+    use zedc::zir::memory::{cell_var, plan};
 
     use super::*;
 
@@ -1581,6 +1582,43 @@ mod tests {
                 ))
             );
         }
+    }
+
+    /// `HeldPart::terms` gives the terms in the memory the parts were in: no second vector
+    /// (PERF-held-part-collect-alloc). The standard library's collect of a map over a vector's
+    /// own iterator reuses that memory for items of equal size and alignment, which it does
+    /// but does not promise; this fails if a new compiler stops doing it.
+    #[test]
+    fn the_terms_of_held_parts_are_made_in_the_parts_own_vector() {
+        let parts = vec![
+            HeldPart::data(Value::Int(1)),
+            HeldPart::held(7).1,
+            HeldPart::port("p"),
+        ];
+        let (at, room) = (parts.as_ptr() as usize, parts.capacity());
+        let terms = HeldPart::terms(parts);
+        assert_eq!((terms.as_ptr() as usize, terms.capacity()), (at, room));
+        assert_eq!(
+            terms,
+            [
+                Term::Lit(Value::Int(1)),
+                Term::Var(cell_var(7)),
+                Term::Var(port_var("p"))
+            ]
+        );
+    }
+
+    /// The part of a held value and the `let` that binds the value share one name, made once
+    /// (PERF-held-part-collect-alloc: two names cost two more allocations per held value).
+    #[test]
+    fn a_held_part_and_its_let_share_one_name() {
+        let (x, part) = HeldPart::held(7);
+        assert_eq!(&*x, &*cell_var(7));
+        let term = part.into_term();
+        let Term::Var(y) = &term else {
+            panic!("a held part is a variable")
+        };
+        assert!(Arc::ptr_eq(&x, y));
     }
 
     /// A run of `(a, b) -> (y) -> if y < 1 { a } else { b(y - 1) }`, and the index of its inner

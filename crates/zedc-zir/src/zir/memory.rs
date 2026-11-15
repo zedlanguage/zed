@@ -2183,8 +2183,9 @@ impl<'g> Machine<'g, '_> {
                                 HeldKind::Atom((n, f)) => held_term(Some((n, f)), key, terms),
                                 HeldKind::Family(f) => held_family_term(f, key, terms),
                             };
-                            lets.held.push((cell_var(key), made));
-                            HeldPart::held(key)
+                            let (x, part) = HeldPart::held(key);
+                            lets.held.push((x, made));
+                            part
                         }
                         _ => unreachable!("only closures and held values are entered"),
                     };
@@ -2720,9 +2721,17 @@ impl HeldPart {
     }
 
     /// 4. The variable ([`cell_var`]) of the held value with key `key`, made before the values
-    ///    that hold it.
-    pub fn held(key: u64) -> HeldPart {
-        HeldPart(Term::Var(cell_var(key)))
+    ///    that hold it. The variable is given too, for the `let` that binds the value: the two
+    ///    share one name.
+    // Complexity tradeoff: each call of `cell_var` formats the name and copies it into an
+    // `Arc`, two allocations; calling it once for the `let` and once for the part, as
+    // 714b348c1 did, cost two more allocations per held value made (counted with a counting
+    // `malloc` on executables of the l03_02 benchmarks: +2 for a program holding one value,
+    // +4 for one holding two, at every size; PERF-held-part-collect-alloc). Making it once and
+    // cloning the `Arc` costs one reference count. Nothing is refused.
+    pub fn held(key: u64) -> (Arc<str>, HeldPart) {
+        let x = cell_var(key);
+        (x.clone(), HeldPart(Term::Var(x)))
     }
 
     /// 5. The term of a closure: a lambda, as `raise_node` of a lambda node and `fun_term` give
@@ -2760,7 +2769,9 @@ impl HeldPart {
     // `Term`, so the standard library's collect of a map over a vector's own iterator reuses
     // the vector's memory and only moves each part out, O(parts) with no allocation (its
     // in-place collect, which it does for items of equal size and alignment but does not
-    // promise; without it the cost is the copy, O(parts)). Nothing is refused.
+    // promise; without it the cost is the copy, O(parts)). The zed-native test
+    // `hooks::tests::the_terms_of_held_parts_are_made_in_the_parts_own_vector` fails if a
+    // compiler stops reusing it (PERF-held-part-collect-alloc). Nothing is refused.
     pub fn terms(parts: Vec<HeldPart>) -> Vec<Term> {
         parts.into_iter().map(HeldPart::into_term).collect()
     }
