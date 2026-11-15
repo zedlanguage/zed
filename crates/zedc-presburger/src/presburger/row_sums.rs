@@ -483,10 +483,11 @@ pub(super) fn project(
         (each, Vec::new())
     };
     // Two atoms besides those an equation defines: the polygons' projections, whose cost does
-    // not grow with the ranges, where they are shown exact (`plane`); else the join. The test
-    // controls of the join's limit ask for the join itself, so they skip this.
+    // not grow with the widths of the ranges, where they are shown exact and number no more
+    // than the join's work (`plane::allowance`); else the join. The test controls of the
+    // join's limit ask for the join itself, so they skip this.
     let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
-    if !join_asked && let Some(sets) = plane::project(&rows, &want) {
+    if !join_asked && let Some(sets) = plane::project(&rows, &want, JOIN_LIMIT) {
         return Ok(each_of(sets));
     }
     let answer = join_run(&rows, &want, move |plan, rows, want, work| {
@@ -3979,5 +3980,233 @@ mod tests {
             }
         }
         assert!(found > 500 && none > 500, "{found} found, {none} none");
+    }
+
+    /// A row as its terms, its constant and whether it is an equation.
+    pub(super) type RowOf = (Vec<(usize, i128)>, i128, bool);
+
+    /// Rows over atoms `a0`, `a1`, ..: `x` and `y` first, then the atoms the equations define,
+    /// each with its ranges.
+    pub(super) fn rows_of(domains: Vec<Vec<(i128, i128)>>, rows: Vec<RowOf>) -> Rows {
+        Rows {
+            atoms: (0..domains.len())
+                .map(|i| Atom::Sym(format!("a{i}").into()))
+                .collect(),
+            domains,
+            rows: (rows.into_iter())
+                .map(|(terms, k, eq)| Row { terms, k, eq })
+                .collect(),
+            empty: false,
+        }
+    }
+
+    /// Each atom's set by the join with no limit, and the units it spent; `None` where it has
+    /// no plan.
+    pub(super) fn by_join(rows: Rows) -> Option<(Vec<IntervalSet>, u64)> {
+        let syms = rows.atoms.clone();
+        JOINED.with(|j| j.set(None));
+        ROW_SUMS_JOIN.with(|o| o.set(true));
+        let got = project(rows, &syms, || Err(Refusal::Work));
+        ROW_SUMS_JOIN.with(|o| o.set(false));
+        let (units, answered) = JOINED.with(Cell::get)?;
+        assert!(answered, "the join with no limit answers");
+        let sets = got.expect("the join's sets").0;
+        Some((sets.into_iter().map(|s| s.expect("a set")).collect(), units))
+    }
+
+    /// Each atom's set by the polygons with no allowance, and the nodes they visited; `None`
+    /// where they decline.
+    pub(super) fn by_polygons(rows: &Rows) -> Option<(Vec<IntervalSet>, u64)> {
+        let mut left = u64::MAX;
+        let sets = plane::polygons(rows, &vec![true; rows.atoms.len()], &mut left)?;
+        let sets = sets.into_iter().map(|s| s.expect("wanted")).collect();
+        Some((sets, u64::MAX - left))
+    }
+
+    /// `x` and `y` each over `r` ranges of `w` values, three apart, and the rows of one of
+    /// four families: `d == x + y`; that and `x - y >= 0`; `d == x + y` and `e == x + 3`,
+    /// which put `x` and `y` in groups of the join apart; or `d == x + y` with `d` over every
+    /// other value, so that each box meets about `w` of its ranges. Otherwise `d` and `e` take
+    /// one range wide enough for every sum.
+    pub(super) fn grid(family: usize, r: i128, w: i128) -> Rows {
+        let ranges: Vec<(i128, i128)> =
+            (0..r).map(|i| (i * (w + 3), i * (w + 3) + w - 1)).collect();
+        let wide = vec![(-4 * r * (w + 3), 4 * r * (w + 3))];
+        let sum = (vec![(0, -1), (1, -1), (2, 1)], 0, true);
+        match family {
+            0 => rows_of(vec![ranges.clone(), ranges, wide], vec![sum]),
+            3 => {
+                let every_other = (0..r * (w + 3)).map(|i| (2 * i, 2 * i)).collect();
+                rows_of(vec![ranges.clone(), ranges, every_other], vec![sum])
+            }
+            1 => rows_of(
+                vec![ranges.clone(), ranges, wide],
+                vec![sum, (vec![(0, 1), (1, -1)], 0, false)],
+            ),
+            _ => rows_of(
+                vec![ranges.clone(), ranges, wide.clone(), wide],
+                vec![sum, (vec![(0, -1), (3, 1)], -3, true)],
+            ),
+        }
+    }
+
+    /// The bound `plane::allowance` proves, checked on the families of [`grid`] on both sides
+    /// of it (PROOF-plane-route-bounds): wherever the join answers, it spends at least the
+    /// allowance; the polygons with no allowance and the join give the same sets; and where
+    /// `plane::project` answers, its sets are those, from no more nodes than the join spent.
+    /// Some of these the polygons alone would answer from more nodes than the join's units
+    /// (the claim the allowance replaces did not hold), and some the route takes.
+    #[test]
+    fn the_polygons_of_the_route_are_never_more_than_the_join_spends() {
+        let (mut taken, mut past) = (0, 0);
+        for family in 0..4 {
+            for r in [1, 2, 3, 4, 6, 8, 16, 64] {
+                for w in [1, 5, 40] {
+                    let what = format!("family {family}, r = {r}, w = {w}");
+                    let rows = grid(family, r, w);
+                    let allowed = plane::allowance(&rows);
+                    let want = vec![true; rows.atoms.len()];
+                    let routed = plane::project(&rows, &want, JOIN_LIMIT);
+                    let (all, nodes) = by_polygons(&rows).expect("shown exact");
+                    let (joined, units) = by_join(rows).expect("a plan");
+                    assert!(
+                        allowed <= units,
+                        "{what}: allowance {allowed}, join {units}"
+                    );
+                    assert_eq!(all, joined, "{what}");
+                    match routed {
+                        Some(sets) => {
+                            taken += 1;
+                            assert!(nodes <= units, "{what}: {nodes} nodes, join {units}");
+                            assert_eq!(sets, (all.into_iter().map(Some).collect::<Vec<_>>()));
+                        }
+                        None => assert!(nodes > allowed, "{what}: {nodes} nodes, {allowed}"),
+                    }
+                    past += usize::from(nodes > units);
+                }
+            }
+        }
+        assert!(taken > 0 && past > 0, "taken {taken}, past the join {past}");
+    }
+
+    /// Seeded random rows over `x` and `y` with two or three defined atoms, the ranges up to
+    /// 300 values wide for `x` and `y` and 1,500 for the defined atoms, too wide to try every
+    /// point: wherever both answer, the polygons with no allowance, the route and the join give
+    /// the same sets, and wherever the join answers it spends at least the allowance. The
+    /// counts of each are printed, not asserted, since they depend on the draws.
+    #[test]
+    fn the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms() {
+        let mut seed = 0x1F12_3BB5_5A47_9C2D_u64;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let ranges = |w: u64, next: &mut dyn FnMut(u64) -> u64| {
+            let mut at = -(w as i128) - next(w) as i128;
+            let mut out = Vec::new();
+            for _ in 0..1 + next(3) {
+                let hi = at + next(w) as i128;
+                out.push((at, hi));
+                at = hi + 2 + next(w / 4) as i128;
+            }
+            out
+        };
+        let (mut polygons, mut routed, mut joined, mut both) = (0, 0, 0, 0);
+        let draws = 400;
+        for case in 0..draws {
+            let n_def = 2 + (case % 2);
+            let mut domains = vec![ranges(300, &mut next), ranges(300, &mut next)];
+            for _ in 0..n_def {
+                domains.push(ranges(1500, &mut next));
+            }
+            let coef =
+                |n: u64, next: &mut dyn FnMut(u64) -> u64| next(2 * n + 1) as i128 - n as i128;
+            let mut rows = Vec::new();
+            for _ in 0..next(3) {
+                let terms = [(0, coef(3, &mut next)), (1, coef(3, &mut next))];
+                let terms: Vec<_> = terms.into_iter().filter(|t| t.1 != 0).collect();
+                if !terms.is_empty() {
+                    rows.push((terms, next(200) as i128 - 100, false));
+                }
+            }
+            for d in 0..n_def {
+                let mut terms: Vec<_> = [(0, coef(2, &mut next)), (1, coef(2, &mut next))]
+                    .into_iter()
+                    .filter(|t| t.1 != 0)
+                    .collect();
+                terms.push((2 + d, if next(2) == 0 { 1 } else { -1 }));
+                rows.push((terms, next(41) as i128 - 20, true));
+            }
+            let make = || rows_of(domains.clone(), rows.clone());
+            let want = vec![true; 2 + n_def];
+            let all = by_polygons(&make()).map(|(s, _)| s);
+            let route = plane::project(&make(), &want, JOIN_LIMIT);
+            let allowed = plane::allowance(&make());
+            let join = by_join(make());
+            polygons += usize::from(all.is_some());
+            routed += usize::from(route.is_some());
+            if let Some((joined_sets, units)) = join {
+                joined += 1;
+                assert!(
+                    allowed <= units,
+                    "case {case}: allowance {allowed}, join {units}"
+                );
+                if let Some(all) = &all {
+                    both += 1;
+                    assert_eq!(all, &joined_sets, "case {case}");
+                }
+                if let Some(route) = route {
+                    let route: Vec<_> = route.into_iter().map(|s| s.expect("wanted")).collect();
+                    assert_eq!(route, joined_sets, "case {case}");
+                }
+            } else if let (Some(all), Some(route)) = (&all, route) {
+                let route: Vec<_> = route.into_iter().map(|s| s.expect("wanted")).collect();
+                assert_eq!(&route, all, "case {case}");
+            }
+        }
+        eprintln!(
+            "{draws} draws: polygons answered {polygons}, route {routed}, join {joined}, \
+             polygons and join both {both}"
+        );
+    }
+
+    /// Both sides of the switch between the polygons and the join (`plane::allowance`, A96),
+    /// run by `tools/run_tests.sh --bench`.
+    mod bench {
+        use std::time::Instant;
+
+        use super::*;
+
+        /// The polygons with no allowance, the join with no limit and the default path timed
+        /// on families of [`grid`] where the route answers and where the join does, the
+        /// default's sets checked against the join's. The times are printed, not asserted:
+        /// the switch is set by the proved bound, not by them.
+        #[test]
+        fn the_route_and_the_join_on_both_sides_of_the_allowance() {
+            for (family, r, w) in [(0, 2, 1), (0, 64, 1), (3, 2, 1), (3, 64, 1), (2, 64, 5)] {
+                let what = format!("family {family}, r = {r}, w = {w}");
+                let rows = grid(family, r, w);
+                let syms = rows.atoms.clone();
+                let routed = plane::project(&rows, &vec![true; syms.len()], JOIN_LIMIT).is_some();
+                let t = Instant::now();
+                let (_, nodes) = by_polygons(&rows).expect("shown exact");
+                let polygons_ns = t.elapsed().as_nanos();
+                let t = Instant::now();
+                let (joined, units) = by_join(grid(family, r, w)).expect("a plan");
+                let join_ns = t.elapsed().as_nanos();
+                let t = Instant::now();
+                let got = project(rows, &syms, || Err(Refusal::Work)).expect("an answer");
+                let default_ns = t.elapsed().as_nanos();
+                let got: Vec<_> = got.0.into_iter().map(|s| s.expect("a set")).collect();
+                assert_eq!(got, joined, "{what}");
+                eprintln!(
+                    "switch: {what}: polygons {nodes} nodes in {polygons_ns} ns, join {units} \
+                     units in {join_ns} ns, default {default_ns} ns ({})",
+                    if routed { "the route" } else { "the join" }
+                );
+            }
+        }
     }
 }

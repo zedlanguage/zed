@@ -73,22 +73,81 @@ enum Role {
 }
 
 /// Each wanted atom's set of values over the points of the rows, as `Plan::project` gives it;
-/// `None` where the rows are not of the class the module note names, or a polygon's
-/// projection is not shown exact there, so that the join answers instead.
+/// `None` where the rows are not of the class the module note names, a polygon's projection
+/// is not shown exact there, or the polygons would pass [`allowance`] (or `limit`, the join's
+/// work limit, where it is the smaller), so that the join answers instead.
 // Complexity tradeoff: the join of row sums builds the table of the pairs of values of the two
 // atoms, O(m_x·m_y / 64) word steps for ranges of m_x and m_y values, and its work passed
 // `JOIN_LIMIT` (a refusal) at m = 512 (FAIL-join-pair-table); the `chain` family of l01_39
 // asked one such question per test, k^3 in all. Here: one polygon per range of `x`, range of
 // `y` and range of each defined atom that meets the form's values over the box of the first
-// two, so P polygons with P at most r_x·r_y·Π r_d for r ranges per atom, and each polygon of
-// h half-planes (4 for its box, 1 per inequality, 2 per equation or defined atom) costs
-// O(h^2) per wanted atom, the pairs of Fourier-Motzkin elimination; the union of the pieces
-// costs O(P log P). Nothing depends on the widths of the ranges. Not proved: that P is never
-// more than the join's work where an atom has many ranges; P counts only ranges that meet the
-// box, and the join's tables hold at least one key per value, so P passes the join's keys
-// only where defined atoms with many short ranges each meet the boxes of many pairs of ranges
-// of `x` and `y` (not met in the tests).
-pub(super) fn project(rows: &Rows, want: &[bool]) -> Option<Vec<Option<IntervalSet>>> {
+// two, and each polygon of h half-planes (4 for its box, 1 per inequality, 2 per equation or
+// defined atom) costs O(h^2) per wanted atom, the pairs of Fourier-Motzkin elimination; the
+// union of the pieces costs O(P log P) for P polygons. Nothing depends on the widths of the
+// ranges. The polygons alone can be more than the join's work: with `d == x + y`, `x` and `y`
+// each over 64 ranges of one value three apart and `d` over every other value, they visit
+// 20,480 nodes where the join spends 16,498 units (`grid(3, 64, 1)` in the tests of
+// `row_sums`, 2026-11-15). So the enumeration is counted and stops past the allowance; the
+// join, exact, answers then, as it did before this route (PROOF-plane-route-bounds). The
+// allowance is a weak lower bound on the join: on `grid(1, 64, 40)` the polygons answer from
+// 8,192 nodes, past the allowance of 132, and the join stops at its limit, so `project`
+// refuses where the route alone would answer; a stronger proved bound on the join is
+// PERF-plane-allowance-join-bound. The count covers every node of the
+// enumeration, each box and each range of a defined atom tried in it, so P is at most the
+// allowance, and the cost here O(A·(w·h^2 + log r)) for an allowance A and w wanted atoms;
+// the h^2 is PERF-plane-shadow-pairs.
+pub(super) fn project(rows: &Rows, want: &[bool], limit: u64) -> Option<Vec<Option<IntervalSet>>> {
+    let mut left = allowance(rows).min(limit);
+    polygons(rows, want, &mut left)
+}
+
+/// The nodes the enumeration of [`polygons`] may visit before the join answers instead: one
+/// more than its number of ranges for each atom of a row.
+///
+/// Proof that the polygons are then never more than the join's work (PROOF-plane-route-bounds,
+/// author P246), in units of `Work`, by the three ways the join can end:
+/// - It has a plan and answers. `Plan::build` puts each atom of a row in a group (an atom of
+///   no row is `free`), and `Plan::project` runs `Plan::forward` first, which, for each atom
+///   of each group, calls `Plan::add` and then charges one unit (`work.spend(1)` on the window).
+///   `add` charges each range of the atom at least one unit: a range of one value at offset 0
+///   by `work.spend(t.words() + 1)`, any other by `work.shift`, which spends `s.words() + 1`.
+///   So the join spends at least this allowance, and the polygons, at most the nodes, are no
+///   more.
+/// - It has a plan and stops at its limit: it spent the limit, and `project` takes the smaller
+///   of the allowance and the limit.
+/// - It has no plan (`Stop::NoPlan`, a key past 2^62): the join spends nothing and the solver
+///   answers. Then the bound is the formula's size: each range is an arm of a disjunction, or
+///   the bounds of an atom, that `Rows::of` read, and each row has an atom, so the allowance
+///   is at most twice the conjuncts and arms read, a cost every method pays.
+///
+/// What the proof leaves out: a node here costs the shadows of its polygon, O(w·h^2) above,
+/// where a unit of the join costs O(1); that factor is PERF-plane-shadow-pairs.
+pub(super) fn allowance(rows: &Rows) -> u64 {
+    let mut used = vec![false; rows.atoms.len()];
+    for row in &rows.rows {
+        for &(j, _) in &row.terms {
+            used[j] = true;
+        }
+    }
+    (rows.domains.iter().zip(used))
+        .filter(|(_, u)| *u)
+        .map(|(d, _)| d.len() as u64 + 1)
+        .sum()
+}
+
+/// One node of the enumeration taken from `left`; `None` where none is left.
+fn visit(left: &mut u64) -> Option<()> {
+    *left = left.checked_sub(1)?;
+    Some(())
+}
+
+/// [`project`] with `left` nodes of the enumeration allowed, the nodes visited taken from it:
+/// a box, or a range of a defined atom tried in a box.
+pub(super) fn polygons(
+    rows: &Rows,
+    want: &[bool],
+    left: &mut u64,
+) -> Option<Vec<Option<IntervalSet>>> {
     let n = rows.atoms.len();
     let mut uses = vec![0usize; n];
     for row in &rows.rows {
@@ -163,6 +222,7 @@ pub(super) fn project(rows: &Rows, want: &[bool]) -> Option<Vec<Option<IntervalS
     let mut any = false;
     for &bx in &rows.domains[ax] {
         for &by in &rows.domains[ay] {
+            visit(left)?;
             let mut polygon = halves.clone();
             polygon.extend([
                 Half {
@@ -186,7 +246,15 @@ pub(super) fn project(rows: &Rows, want: &[bool]) -> Option<Vec<Option<IntervalS
                     c: by.1,
                 },
             ]);
-            any |= cases(want, &roles, &ranged, (bx, by), &mut polygon, &mut pieces)?;
+            any |= cases(
+                want,
+                &roles,
+                &ranged,
+                (bx, by),
+                &mut polygon,
+                &mut pieces,
+                left,
+            )?;
         }
     }
     let mut sets = vec![None; n];
@@ -212,8 +280,9 @@ fn fin(v: i128) -> End {
 }
 
 /// The polygons of one box: for each defined atom in turn, one for each of its ranges that
-/// meets the form's values over the box. Adds each wanted atom's values to `pieces`; whether
-/// any polygon has a point, or `None` where a projection is not shown exact.
+/// meets the form's values over the box, each a node taken from `left`. Adds each wanted
+/// atom's values to `pieces`; whether any polygon has a point, or `None` where a projection
+/// is not shown exact or no node is left.
 fn cases(
     want: &[bool],
     roles: &[Role],
@@ -221,6 +290,7 @@ fn cases(
     bx: ((i128, i128), (i128, i128)),
     polygon: &mut Vec<Half>,
     pieces: &mut [Vec<(End, End)>],
+    left: &mut u64,
 ) -> Option<bool> {
     let Some(((g, ranges), rest)) = ranged.split_first() else {
         return polygon_pieces(want, roles, polygon, pieces);
@@ -230,6 +300,7 @@ fn cases(
     let from = ranges.partition_point(|r| r.1 < lo);
     let mut any = false;
     for &(l, h) in ranges[from..].iter().take_while(|r| r.0 <= hi) {
+        visit(left)?;
         let len = polygon.len();
         polygon.push(Half {
             a: g.a,
@@ -241,7 +312,7 @@ fn cases(
             b: g.b.checked_neg()?,
             c: h.checked_sub(g.c)?,
         });
-        let found = cases(want, roles, rest, bx, polygon, pieces);
+        let found = cases(want, roles, rest, bx, polygon, pieces, left);
         polygon.truncate(len);
         any |= found?;
     }
@@ -424,11 +495,14 @@ mod tests {
     }
 
     /// Random rows over two atoms `x` and `y`, with up to two atoms an equation defines and one
-    /// atom of no row, each atom over up to three ranges: wherever `project` answers, each set is
-    /// that of the points. It answers about half (2,962 of 6,000 at this seed), 1,666 of
-    /// those with no point and 349 with a defined atom and a point, and declines the rest (a
-    /// pair `2·y >= ..`, `-3·y >= ..`; a defined atom `2·x + 2·y`; an atom defined by an
-    /// equation over `x` alone).
+    /// atom of no row, each atom over up to three ranges: wherever the polygons answer, with no
+    /// allowance, each set is that of the points, and so wherever `project` answers, whose
+    /// answers are those within its allowance. The counts are printed, not asserted, since they
+    /// depend on the draws (PROOF-plane-route-bounds): at this seed the polygons answer 2,962
+    /// of 6,000, 1,666 of those with no point and 349 with a defined atom and a point, and
+    /// decline the rest (a pair `2·y >= ..`, `-3·y >= ..`; a defined atom `2·x + 2·y`; an
+    /// atom defined by an equation over `x` alone); `project` answers the share of those its
+    /// allowance holds, printed as `route`.
     #[test]
     fn projections_are_those_of_the_points() {
         let mut seed = 0x2545_F491_4F6C_DD1D_u64;
@@ -450,6 +524,7 @@ mod tests {
             out
         };
         let (mut answered, mut declined, mut empty, mut defined) = (0, 0, 0, 0);
+        let (mut route, mut route_defined) = (0, 0);
         for case in 0..6000 {
             let n_def = (case % 3) as usize;
             let alone = case % 5 == 0;
@@ -488,7 +563,8 @@ mod tests {
             };
             let want = vec![true; n];
             let points = by_points(&rows, rows.rows.len() - n_def, n_def);
-            match project(&rows, &want) {
+            let all = polygons(&rows, &want, &mut { u64::MAX });
+            match &all {
                 Some(sets) => {
                     answered += 1;
                     empty += usize::from(points[0].is_empty());
@@ -500,9 +576,18 @@ mod tests {
                 }
                 None => declined += 1,
             }
+            // Within the allowance, the answer is the one above or none.
+            if let Some(sets) = project(&rows, &want, u64::MAX) {
+                assert_eq!(Some(sets), all, "case {case}");
+                route += 1;
+                route_defined += usize::from(n_def > 0);
+            }
         }
-        assert!(answered > 2500 && declined > 50, "{answered} {declined}");
-        assert!(empty > 100 && defined > 300, "{empty} {defined}");
+        eprintln!(
+            "polygons answered {answered} of 6000 ({empty} with no point, {defined} with a \
+             defined atom and a point), declined {declined}; route {route} ({route_defined} \
+             with a defined atom)"
+        );
     }
 
     /// The question of each test of the `chain` family of l01_39 (`x + c·y >= 1` or
@@ -533,7 +618,7 @@ mod tests {
                     ],
                     empty: false,
                 };
-                let sets = project(&rows, &[true; 3]).expect("answered");
+                let sets = project(&rows, &[true; 3], u64::MAX).expect("answered");
                 assert!(
                     sets.iter()
                         .all(|s| s.as_ref().is_some_and(|s| s.len() <= 2))
