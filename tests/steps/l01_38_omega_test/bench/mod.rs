@@ -1,6 +1,7 @@
 //! The benchmarks of step L1.38's second binary (see l01_38_presburger/bench/mod.rs).
 
 mod disj_groups;
+mod exact_cover;
 mod extend;
 mod front_cost;
 mod live3;

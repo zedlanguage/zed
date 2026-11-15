@@ -16939,6 +16939,52 @@ mod tests {
             assert_eq!(as_or.exact, as_if.exact, "seed {seed} round {round}: {t:?}");
         }
     }
+
+    /// Two programs whose preimage of `true` is the box `x != 1`, exact as an `if`, and not
+    /// exact as `||` ([`Walk::or_if`]), whose box holds `x == 1`: both formulas hold at the same
+    /// points, so the `||` reading's projection is not the exact set (author P197: a projection
+    /// is the exact set on every path; PRES-switchover-not-race). The disjunct `b` of `g || b`
+    /// is projected to its hull, and the union of hulls keeps `x == 1`, where `b` does not
+    /// hold; the `if` reading's disjunct `!g && b` has no point and is removed.
+    /// - `1 != (x - y) + y || 2 * (x + y) == x`: the points of `x + 2 * y == 0` have even `x`.
+    /// - `x != 1 || min(-x, x - x) != -1`: the disjunct `m <= -2` holds no point with `x == 1`
+    ///   only through the case split of the `min` (`m = -x` where `-x <= 0`).
+    #[test]
+    fn or_if_projections_keep_the_gaps_the_if_reading_shows() {
+        use Prim::{Add, Eq, Min, Mul, Ne, Sub};
+        let v = |s: &str| Term::Var(s.into());
+        let i = |k: i64| Term::Lit(Value::Int(k));
+        let neg = Term::Prim(Mul, vec![i(-1), v("x")]);
+        let zero = Term::Prim(Sub, vec![v("x"), v("x")]);
+        let twice = Term::Prim(Mul, vec![i(2), Term::Prim(Add, vec![v("x"), v("y")])]);
+        // `(x - y) + y`, which the interval stage does not read as `x`.
+        let x_again = Term::Prim(Add, vec![Term::Prim(Sub, vec![v("x"), v("y")]), v("y")]);
+        let cases = [
+            (
+                Term::Prim(Ne, vec![i(1), x_again]),
+                Term::Prim(Eq, vec![twice, v("x")]),
+            ),
+            (
+                Term::Prim(Ne, vec![v("x"), i(1)]),
+                Term::Prim(Ne, vec![Term::Prim(Min, vec![neg, zero]), i(-1)]),
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (g, b) in cases {
+            let t = Term::If(
+                Shared::new(g),
+                Shared::new(Term::Lit(Value::Bool(true))),
+                Shared::new(b),
+            );
+            let (old, new) = both_readings(&t, true);
+            assert!(old.exact, "{old:?}: {t:?}");
+            assert_eq!(boxes(&old), "x [-6..=0, 2..=6] y [-6..=6]", "{t:?}");
+            if !new.exact || boxes(&new) != boxes(&old) {
+                wrong.push(format!("{}: {} {:?}", boxes(&new), new.exact, t));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
 }
 
 #[cfg(test)]

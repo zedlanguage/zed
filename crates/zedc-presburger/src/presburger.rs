@@ -102,6 +102,8 @@ use zedc_solvers::linear::{Q, Term};
 use zedc_solvers::{live3, twovar, utvpi};
 
 mod deep;
+#[doc(hidden)]
+pub mod exact;
 pub mod extend;
 mod forced;
 mod formula;
@@ -10295,6 +10297,17 @@ pub fn eliminated(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>
     }
 }
 
+/// [`eliminated`] by [`shadow_whole`]: every exact elimination is done however many rows it
+/// makes, for the cells of [`exact`], which charge the rows made to their counted work.
+pub(super) fn eliminated_whole(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Option<Vec<Con>> {
+    match shadow_whole(rows, keep) {
+        None => Some(vec![Con::ge(&Lin::constant(0), &Lin::constant(1))]),
+        Some(out) => (out.iter())
+            .all(|c| c.lin.terms.keys().all(keep))
+            .then_some(out),
+    }
+}
+
 /// An atom eliminated by [`shadow`] and its rows when it was: a point of the rows left gives
 /// the atom a value by them, the atoms eliminated after it having theirs ([`point_of`]).
 type Eliminated = (Atom, Vec<Con>);
@@ -18001,7 +18014,7 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // confined to finite unions of ranges, by the exact join of their sums (module `row_sums`),
     // refused where the join stops at its work limit.
     let conjuncts = f.conjunct_list();
-    let solver = || {
+    let solver_found = || {
         // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
         // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
         // already used by decide visits each part/term through its incidence queues, O(n)
@@ -18025,6 +18038,9 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
         }
         project_each_written(f, syms)
     };
+    // The solver's answer holds every value with a point and may hold more; the cover of
+    // module `exact` makes it the exact set.
+    let solver = || solver_found().map(|e| exact::exact_each(f, syms, e));
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
             return Ok((syms.iter().map(|a| Ok(b.project(a))).collect(), Vec::new()));
