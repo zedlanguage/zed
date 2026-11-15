@@ -134,3 +134,68 @@ fn different_strings_get_different_zir_addresses() {
         }
     }
 }
+
+/// Two `++` nodes over one argument and equal constants held in different trees, against the
+/// same two nodes over one constant: the lowering's common-subexpression step merges the nodes
+/// only when their keys (`zir::canon::node_key`) agree, so the two graphs share an address only
+/// when equal strings key alike there too (ZIR-string-cse-tree).
+#[test]
+fn equal_constants_in_different_trees_merge_as_one_constant_does() {
+    let [left, right, flat] = three_trees();
+    let pair = |a: &Text, b: &Text| {
+        lam(
+            &["x"],
+            prim(
+                Prim::Tuple,
+                vec![
+                    prim(Prim::Concat, vec![var("x"), lit(Value::Str(a.clone()))]),
+                    prim(Prim::Concat, vec![var("x"), lit(Value::Str(b.clone()))]),
+                ],
+            ),
+        )
+    };
+    let one = pair(&left, &left);
+    for (k, other) in [&right, &flat].into_iter().enumerate() {
+        assert_eq!(
+            kernel(&pair(&left, other)),
+            kernel(&one),
+            "kernel, tree {k}"
+        );
+        assert_eq!(zir(&pair(&left, other)), zir(&one), "ZIR, tree {k}");
+        assert_eq!(
+            zir(&pair(other, &left)),
+            zir(&one),
+            "ZIR mirrored, tree {k}"
+        );
+    }
+}
+
+/// Different constants of one length and tree shape are never merged: each keeps its own node,
+/// so the graph has two `++` nodes and is the graph of no pair of one constant.
+#[test]
+fn different_constants_in_one_shape_stay_two_nodes() {
+    let (a, b, c) = (run('a'), run('b'), run('c'));
+    let (s1, s2) = (join(&join(&a, &b), &c), join(&join(&a, &c), &b));
+    let pair = |p: &Text, q: &Text| {
+        lam(
+            &["x"],
+            prim(
+                Prim::Tuple,
+                vec![
+                    prim(Prim::Concat, vec![var("x"), lit(Value::Str(p.clone()))]),
+                    prim(Prim::Concat, vec![var("x"), lit(Value::Str(q.clone()))]),
+                ],
+            ),
+        )
+    };
+    let g = zedc::zir::lower::lower(&pair(&s1, &s2)).expect("lowered");
+    let body = &g.nodes[0].regions[0];
+    let concats = body
+        .nodes
+        .iter()
+        .filter(|n| matches!(n.op, zedc::zir::Op::Prim(Prim::Concat)))
+        .count();
+    assert_eq!(concats, 2, "{g:?}");
+    assert_ne!(zir(&pair(&s1, &s2)), zir(&pair(&s1, &s1)));
+    assert_ne!(zir(&pair(&s1, &s2)), zir(&pair(&s2, &s2)));
+}

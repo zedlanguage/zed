@@ -76,7 +76,7 @@ fn index<T: PartialEq>(all: &[T], x: &T) -> u8 {
 /// memory to build or write one of its exact numbers ([`Rat::built_parts`]), or to grow the
 /// bytes written.
 pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
-    let mut w = W(MAGIC.to_vec(), None, HashMap::new());
+    let mut w = W(MAGIC.to_vec(), None, HashMap::new(), None);
     w.0.extend_from_slice(&VERSION.to_le_bytes());
     w.region(root);
     match w.1 {
@@ -85,9 +85,45 @@ pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
     }
 }
 
+/// A string as [`encode_keyed`] writes it: its length in bytes, its [`Text::poly_hash`], and
+/// the text.
+pub type Held = (u64, u64, Text);
+
+/// The binary form of the graph rooted at `root` but for its strings, each written as its
+/// length and [`Text::poly_hash`], two words, so that equal strings held in different trees
+/// are written alike; and those strings in the order written. The bytes with the strings
+/// decide the graph; the bytes alone decide it up to the strings, whose hashes can collide.
+/// [`TooLarge`] as at [`encode`]. The canonicalizer's keys hash these bytes
+/// ([`super::canon::node_key`]), and its shapes compare them with the strings' numbers
+/// ([`super::canon::Strings`]).
+pub fn encode_keyed(root: &Region) -> Result<(Vec<u8>, Vec<Held>), TooLarge> {
+    let mut w = W(MAGIC.to_vec(), None, HashMap::new(), Some(Keyed::default()));
+    w.0.extend_from_slice(&VERSION.to_le_bytes());
+    w.region(root);
+    match (w.1, w.3) {
+        (None, Some(k)) => Ok((w.0, k.held)),
+        (Some(e), _) => Err(e),
+        (None, None) => unreachable!("made keyed above"),
+    }
+}
+
+/// The strings a keyed writer wrote, in order, and the length and hash of each text written,
+/// by its id, so that a text written twice is hashed once.
+#[derive(Default)]
+struct Keyed {
+    held: Vec<Held>,
+    memo: HashMap<usize, (u64, u64)>,
+}
+
 /// The bytes written, the first refusal of the memory for them, after which the bytes are
-/// not used, and the index of each node of a string's text written, by its id (`W::text`).
-struct W(Vec<u8>, Option<TooLarge>, HashMap<usize, u64>);
+/// not used, the index of each node of a string's text written, by its id (`W::text`), and in
+/// a keyed writer ([`encode_keyed`]) the strings written.
+struct W(
+    Vec<u8>,
+    Option<TooLarge>,
+    HashMap<usize, u64>,
+    Option<Keyed>,
+);
 
 impl W {
     /// `bytes` at the end, once the system gives the memory to grow the bytes written for them;
@@ -134,15 +170,24 @@ impl W {
     // once in the graph, O(m) words and hash lookups for m nodes, plus the bytes of the distinct
     // blocks; the reader shares them again, so a string used in several places is one text
     // there too, and equal by identity. Tradeoff: equal texts held in different trees are
-    // written differently, so two equal string constants can get two node keys, as two equal
-    // numbers kept in different forms can (`kept`); a normal form of the text would need its
-    // bytes, or its signature encoding (`zed_kernel::text::names::Names`), which is what this avoids.
-    // The content address pays the bytes: it holds each string as one block before writing
-    // (`canon::flat_strings`, ZIR-string-tree-address); node keys do not (ZIR-string-cse-tree).
-    // Nothing is refused but the memory for the bytes. Tests
+    // written differently. The content address pays the bytes: it holds each string as one
+    // block before writing (`canon::flat_strings`, ZIR-string-tree-address); the
+    // canonicalizer's keys and shapes write a string by its length and hash instead and number
+    // it exactly apart (`encode_keyed`, `canon::Strings`, ZIR-string-cse-tree). Nothing is
+    // refused but the memory for the bytes. Tests
     // `l01_31_zir::binary_forms::a_doubled_string_is_written_as_its_tree` and
     // `l01_31_zir::bench::shared_strings`.
     fn text(&mut self, t: &Text) {
+        if let Some(k) = &mut self.3 {
+            let (len, hash) = *k
+                .memo
+                .entry(t.node_id())
+                .or_insert_with(|| (t.len() as u64, t.poly_hash()));
+            k.held.push((len, hash, t.clone()));
+            self.n(len);
+            self.n(hash);
+            return;
+        }
         // Postorder: the nodes in the order they are written. A node is opened once, and every
         // part of it is written before it: a part not opened before is opened above it on the
         // stack, so written first; a part opened before but not yet written would still be on

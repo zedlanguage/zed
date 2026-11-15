@@ -25,14 +25,16 @@
 //! [`key`] hashes a node from the keys of its regions, so the lowering keys each new node
 //! without walking the regions below it again.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
 use zed_kernel::term::{Pattern, Term};
 use zed_kernel::text::Text;
+use zed_kernel::text::names::{Name, Names};
 use zed_kernel::value::{Atom, Family, Value};
 
+use super::binary::Held;
 use super::{Edge, Node, Op, Region, RegionKind, Src, binary};
 use crate::canon::binders::{level_name, level_of};
 use crate::canon::{self, Def, Facet, RULES};
@@ -156,9 +158,10 @@ fn rename_all(p: &mut Pattern, index: &mut usize) {
 }
 
 /// The bytes [`node_key`] hashes for `n` besides its regions' keys: the binary form of the
-/// one-node region holding `n`'s operation, inputs and outputs in normal form, or [`TooLarge`]
-/// when the system refuses the memory to write one of its exact numbers.
-fn shell_bytes(n: &Node) -> Result<Vec<u8>, TooLarge> {
+/// one-node region holding `n`'s operation, inputs and outputs in normal form, each string
+/// written as its length and hash ([`binary::encode_keyed`]), with those strings in order; or
+/// [`TooLarge`] when the system refuses the memory to write one of its exact numbers.
+fn shell_bytes(n: &Node) -> Result<(Vec<u8>, Vec<Held>), TooLarge> {
     let mut shell = Node {
         op: n.op.clone(),
         inputs: n.inputs.clone(),
@@ -166,7 +169,7 @@ fn shell_bytes(n: &Node) -> Result<Vec<u8>, TooLarge> {
         regions: Vec::new(),
     };
     normal_shell(&mut shell);
-    binary::encode(&Region {
+    binary::encode_keyed(&Region {
         kind: RegionKind::Function,
         args: Vec::new(),
         nodes: vec![shell],
@@ -175,8 +178,9 @@ fn shell_bytes(n: &Node) -> Result<Vec<u8>, TooLarge> {
 }
 
 /// The bytes [`region_key`] hashes for `r` besides its nodes' keys: the binary form of its
-/// kind, its arguments in normal form and its results, or [`TooLarge`] as at [`shell_bytes`].
-fn region_bytes(r: &Region) -> Result<Vec<u8>, TooLarge> {
+/// kind, its arguments in normal form and its results, written as at [`shell_bytes`], with the
+/// strings written; or [`TooLarge`] as there.
+fn region_bytes(r: &Region) -> Result<(Vec<u8>, Vec<Held>), TooLarge> {
     let mut shell = Region {
         kind: r.kind,
         args: r.args.clone(),
@@ -184,14 +188,15 @@ fn region_bytes(r: &Region) -> Result<Vec<u8>, TooLarge> {
         results: r.results.clone(),
     };
     shell.args.iter_mut().for_each(normal_edge);
-    binary::encode(&shell)
+    binary::encode_keyed(&shell)
 }
 
 /// The key of node `n` whose regions have the keys `regions`: equal keys mean equal normal
-/// forms of the one-node regions holding the nodes (up to the hash; [`Shape`] decides it
-/// without the hash), or [`TooLarge`] as at `shell_bytes`.
+/// forms of the one-node regions holding the nodes (up to the hashes, of the bytes and of the
+/// strings; [`Shape`] decides it without them), or [`TooLarge`] as at `shell_bytes`. A string
+/// counts by its text, not by the tree it is held in.
 pub fn node_key(n: &Node, regions: &[ContentAddress]) -> Result<ContentAddress, TooLarge> {
-    Ok(key_of(&shell_bytes(n)?, regions))
+    Ok(key_of(&shell_bytes(n)?.0, regions))
 }
 
 /// The key of a node whose [`shell_bytes`] are `shell` and whose regions have the keys
@@ -211,7 +216,7 @@ fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
 /// The key of region `r` whose nodes' regions have the keys `inner`, one list per node, or
 /// [`TooLarge`] as at `shell_bytes`.
 pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> Result<ContentAddress, TooLarge> {
-    let mut h = region_hasher(&region_bytes(r)?, r.nodes.len());
+    let mut h = region_hasher(&region_bytes(r)?.0, r.nodes.len());
     for (n, keys) in r.nodes.iter().zip(inner) {
         h.update(&node_key(n, keys)?.0);
     }
@@ -245,15 +250,105 @@ fn region_hasher(bytes: &[u8], nodes: usize) -> blake3::Hasher {
 // shared by its shape and by its region's contents, which needs them written after the
 // region's arguments are renumbered, before the node is entered.
 #[derive(Default)]
-pub struct Regions(HashMap<Contents, usize>);
+pub struct Regions {
+    contents: HashMap<Contents, usize>,
+    /// The strings of the regions and of the nodes' shapes.
+    strings: Strings,
+}
 
 /// What decides a region's normal form, given its regions' numbers: the bytes [`region_key`]
 /// hashes for it besides its nodes' keys, then for each node the bytes [`node_key`] hashes for
-/// it besides its regions' keys, with the numbers of its regions.
+/// it besides its regions' keys, with the numbers of its regions; and the numbers
+/// ([`Strings`]) of the strings those bytes write by their hashes, in order. The bytes give
+/// where each string stands, and the numbers which text it is.
 #[derive(PartialEq, Eq, Hash)]
 struct Contents {
     region: Vec<u8>,
     nodes: Vec<(Vec<u8>, Vec<usize>)>,
+    strings: Vec<u64>,
+}
+
+/// The strings of a lowering's keyed bytes ([`binary::encode_keyed`]), each distinct text
+/// numbered once in the order first met: two strings get one number exactly when their texts
+/// are equal, however each is held, so a [`Shape`] or a region's contents compared with the
+/// numbers decides equal normal forms exactly, as with the strings written out.
+///
+/// No two different texts share a number: a number is given once, to the first text of its
+/// length and hash, and given again to a text only when (1) it is that text's node, and a node
+/// never changes; (2) both are held as one block and their bytes are equal; or (3) its
+/// canonical name in `names` ([`Names`]) is the name of a text with that number. A name stands for
+/// one rule of the dictionary and a rule for one text, the rules a name's rule expands to being
+/// fixed when it is made, so equal names are equal texts. Texts of different lengths or hashes
+/// are different and get numbers apart. Equal texts have one length and hash, so they meet in
+/// one bucket; there they get one number by (1) or (2), or by (3) since equal texts get one
+/// canonical name (Mehlhorn, Sundar and Uhrig, "Maintaining dynamic sequences under equality
+/// tests in polylogarithmic time", Algorithmica 17, 1997). Were that to fail, two equal
+/// constants would be two nodes, a missed merge, never a wrong one.
+// Complexity tradeoff: the naive key writes each string's bytes, O(N) for N bytes, and a
+// string doubled k times is 2^k bytes in O(k) nodes, so a build holding a doubled string as a
+// constant writes 2^62 bytes (BUILD-doubling-60s); the form that replaced it wrote the tree,
+// O(m) for m nodes, but equal texts in different trees were then different constants and two
+// `++` nodes over them were never merged (ZIR-string-cse-tree). A byte comparison on equal
+// hashes is exact but O(N) on two equal texts built apart, so the doubled string again.
+// Here a string costs its `Text::poly_hash`, O(m) plus the bytes of its distinct blocks, and
+// one hash lookup; a second text of the same length and hash costs one node comparison, or
+// one byte comparison of two blocks whose bytes the hash has just read; only two texts held
+// in different trees, or a collision of the hash, are named, `Names::name`'s O(n log N) for n
+// nodes not named before plus a parse of their blocks' bytes, each node once per lowering.
+// Tradeoff: the names, with the texts they keep alive, are held until the lowering ends.
+// Nothing is refused. Tests `l01_32_canonical_zir::string_trees` and the scaling test
+// `l01_32_canonical_zir::bench::string_trees::equal_strings_in_doubled_trees_are_merged_in_linear_time`.
+#[derive(Default)]
+pub struct Strings {
+    /// The distinct texts of each length and hash.
+    buckets: HashMap<(u64, u64), Bucket>,
+    /// The canonical names of the texts compared by name.
+    names: Names,
+    /// The numbers given.
+    count: u64,
+}
+
+/// The texts of one length and hash: the first met and its number, and once a text that is
+/// neither its node nor a block equal to it is met, every text met by its canonical name.
+struct Bucket {
+    first: Text,
+    number: u64,
+    named: Option<HashMap<Name, u64>>,
+}
+
+impl Strings {
+    /// The number of the string `(len, hash, text)`, given now if no equal text has one.
+    pub fn number(&mut self, (len, hash, t): &Held) -> u64 {
+        let Strings {
+            buckets,
+            names,
+            count,
+        } = self;
+        let mut fresh = || {
+            *count += 1;
+            *count - 1
+        };
+        let b = match buckets.entry((*len, *hash)) {
+            hash_map::Entry::Vacant(e) => {
+                let number = fresh();
+                e.insert(Bucket {
+                    first: t.clone(),
+                    number,
+                    named: None,
+                });
+                return number;
+            }
+            hash_map::Entry::Occupied(e) => e.into_mut(),
+        };
+        let same_node = b.first.node_id() == t.node_id();
+        if same_node || (b.first.is_flat() && t.is_flat() && b.first == *t) {
+            return b.number;
+        }
+        let named = b
+            .named
+            .get_or_insert_with(|| HashMap::from([(names.name(&b.first), b.number)]));
+        *named.entry(names.name(t)).or_insert_with(fresh)
+    }
 }
 
 impl Regions {
@@ -266,26 +361,34 @@ impl Regions {
         keys: &[Vec<ContentAddress>],
         numbers: Vec<Vec<usize>>,
     ) -> Result<(ContentAddress, usize), TooLarge> {
-        let region = region_bytes(r)?;
+        let (region, held) = region_bytes(r)?;
+        let mut strings: Vec<u64> = held.iter().map(|s| self.strings.number(s)).collect();
         let mut h = region_hasher(&region, r.nodes.len());
         let mut nodes = Vec::new();
         nodes
             .try_reserve_exact(r.nodes.len())
             .map_err(|_| TooLarge::of_bytes(r.nodes.len() * size_of::<(Vec<u8>, Vec<usize>)>()))?;
         for ((n, keys), numbers) in r.nodes.iter().zip(keys).zip(numbers) {
-            let shell = shell_bytes(n)?;
+            let (shell, held) = shell_bytes(n)?;
+            strings.extend(held.iter().map(|s| self.strings.number(s)));
             h.update(&key_of(&shell, keys).0);
             nodes.push((shell, numbers));
         }
-        let next = self.0.len();
-        let number = *self.0.entry(Contents { region, nodes }).or_insert(next);
+        let next = self.contents.len();
+        let contents = Contents {
+            region,
+            nodes,
+            strings,
+        };
+        let number = *self.contents.entry(contents).or_insert(next);
         Ok((ContentAddress::hashed(&h), number))
     }
 }
 
 /// A node's normal form as an ordered key: the bytes [`node_key`] hashes for its operation,
 /// inputs and outputs, then the numbers of its regions among the regions the lowering has
-/// finished ([`Regions`]). Two shapes are equal exactly when the nodes have equal normal forms,
+/// finished ([`Regions`]), then the numbers of the strings those bytes write by their hashes
+/// ([`Strings`]). Two shapes are equal exactly when the nodes have equal normal forms,
 /// so equal shapes have equal keys, and a key never decides equality alone (DESIGN.md
 /// sec:theories, the trusted base; step L1.37a). The lowering keeps the nodes of one key in a
 /// map ordered by shape, so keys that collide cost `O(log k)` comparisons for `k` nodes of the
@@ -295,15 +398,18 @@ impl Regions {
 pub struct Shape {
     shell: Vec<u8>,
     regions: Vec<usize>,
+    strings: Vec<u64>,
 }
 
 impl Shape {
-    /// The shape of `n`, whose regions have the numbers `regions` in [`Regions`].
-    /// [`TooLarge`] as at `shell_bytes`.
-    pub fn of(n: &Node, regions: Vec<usize>) -> Result<Shape, TooLarge> {
+    /// The shape of `n`, whose regions have the numbers `regions` in `finished`, its strings
+    /// numbered there. [`TooLarge`] as at `shell_bytes`.
+    pub fn of(n: &Node, regions: Vec<usize>, finished: &mut Regions) -> Result<Shape, TooLarge> {
+        let (shell, held) = shell_bytes(n)?;
         Ok(Shape {
-            shell: shell_bytes(n)?,
+            shell,
             regions,
+            strings: held.iter().map(|s| finished.strings.number(s)).collect(),
         })
     }
 
@@ -374,7 +480,8 @@ pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
 // its text and costs less than its bytes is the canonical parse (`zed_kernel::text::names`),
 // whose cost and whose place under the address are open question A106; this item does not
 // decide it. The address stays linear in the bytes of the graph's strings, and only tests take
-// a ZIR address (the build keys nodes by `node_key`, which this leaves alone). A string held
+// a ZIR address (the build keys nodes by `node_key`, which writes a string by its length and
+// hash, and numbers it exactly in `Strings`, ZIR-string-cse-tree). A string held
 // as one block is not copied. Nothing is refused but the memory. Test
 // `l01_32_canonical_zir::string_trees`, and the scaling test
 // `l01_32_canonical_zir::bench::string_trees`.

@@ -520,9 +520,12 @@ impl<'t> Lower<'t> {
     // repair 1). Here a node's key is hashed from its shell and its regions' keys, each node
     // hashed when it is added and when its region closes, and the nodes of one key sit in a
     // `BTreeMap` ordered by `canon::Shape`, so an add costs one hash lookup and O(log k) shape
-    // comparisons. Tradeoffs: the key alone is never trusted, so a lookup that hits pays the
-    // comparisons of the shells' bytes as well as the hash; each shape is held until the
-    // lowering ends. Nothing is refused. Tests
+    // comparisons. A string in the shell is written as its length and hash and compared by its
+    // number, so equal strings held in different trees merge (`canon::Strings`, which states
+    // its cost; ZIR-string-cse-tree). Tradeoffs: the key alone is never trusted, so a lookup
+    // that hits pays the comparisons of the shells' bytes as well as the hash; each shape is
+    // held until the lowering ends. Nothing is refused. Tests
+    // `l01_32_canonical_zir::string_trees::equal_constants_in_different_trees_merge_as_one_constant_does`,
     // `l01_33_lowering::bench::scaling::lowering_a_deep_nest_scales`,
     // `l01_37a_short_addresses::collide`,
     // `l01_32_canonical_zir::fuzz::the_key_agrees_with_the_address` and
@@ -538,7 +541,10 @@ impl<'t> Lower<'t> {
             at: self.site,
             regions,
         });
-        let shape = match (&self.refused, canon::Shape::of(&node, numbers.clone())) {
+        let shape = match (
+            &self.refused,
+            canon::Shape::of(&node, numbers.clone(), &mut self.regions),
+        ) {
             (None, Ok(shape)) => shape,
             (refused, shape) => {
                 // A constant was refused: the graph is not returned, so the node is kept

@@ -37,4 +37,9 @@ whose own cases are listed by m0_07_canonicalization.
 | The address is pinned (VERSION) and printed as 64 hex digits | stability.rs `the_address_is_pinned`, `the_normal_form` | |
 | The bottom-up key agrees with the address, including on a change inside a region | fuzz.rs `the_key_agrees_with_the_address` | |
 | A graph too large for memory to encode (`TooLarge`) | none | An unusual size (P178); no small input reaches it |
+| **Strings in node keys (ZIR-string-cse-tree)** | | |
+| Equal string constants in the left-joined, right-joined and one-block trees: the two `++` nodes over them merge, in either order, as with one constant | string_trees.rs `equal_constants_in_different_trees_merge_as_one_constant_does` | |
+| Different constants of one length and tree shape stay two nodes | string_trees.rs `different_constants_in_one_shape_stay_two_nodes` | |
+| Equal strings of about 2^54 bytes in trees that share no node merge without reading their bytes | bench/string_trees.rs `equal_strings_in_doubled_trees_are_merged_in_linear_time` | |
+| Two different texts of one length and hash (a collision of `poly_hash`) get two numbers | none | No collision of the 61-bit hash is known for inputs small enough to test; the path is the one equal texts in different trees take (named, then compared by name), which the tests above reach |
 | **Size** | bench/ | Unusual sizes are benchmarks (P178) |
