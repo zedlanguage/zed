@@ -11326,6 +11326,30 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 good = at;
                 step *= 2;
             };
+            // Complexity tradeoff: a test with no point is often answered by `bounds_refute`
+            // alone, while a test with a point always settles the whole formula, a pass of
+            // O(n) for n atoms. Bisecting `(good, bad)` at once takes log(bad - good) tests, and
+            // when the answer is `good` itself, as on a chain of guards where `bounds_refute`
+            // proves every bound up to the answer, all of them have points: log n full passes
+            // per learned bound, O(n log n) in all. In `projecting_guards_beyond_the_inputs_scales`
+            // (16 and 128 guards) this search takes 1,684 M instructions at 128 for 1,908 M
+            // before (ratio 6.65 for 8.04; 253 M for 237 M at 16); at 88 and 704 guards both stay
+            // near 47 times for another cost, row PRES-growth-probe-guards (2026-11-15). A
+            // second doubling search from `good` takes about log d tests for an answer d past
+            // `good`, one when d = 0, and at most twice the bisection's otherwise; the bisection
+            // then runs inside the bracket it finds. Both record the same bound when the tests
+            // are monotone in `w`, which is not proved; each bound recorded is tested, so it
+            // stays proved either way.
+            let mut step = 1;
+            while good + step < bad {
+                let at = good + step;
+                if !none(&ws[at]) {
+                    bad = at;
+                    break;
+                }
+                good = at;
+                step *= 2;
+            }
             while bad - good > 1 {
                 let mid = good + (bad - good) / 2;
                 if none(&ws[mid]) {
