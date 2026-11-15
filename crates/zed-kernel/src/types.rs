@@ -2084,7 +2084,7 @@ impl Type {
 /// plain recursion would).
 ///
 /// Answers that change: [`Finiteness::meet_rows`] no longer meets two columns neither known
-/// finite (unless their meet has no tuple types and is finite), so a meet of two infinite types
+/// finite (unless their meet has no tuple types), so a meet of two infinite types
 /// whose meet is finite and holds tuples, found finite before when its unfolding ended, is now
 /// "not known finite". No test of the affected groups depends on one
 /// (not proved that no caller does).
@@ -2162,8 +2162,8 @@ impl<'m> Finiteness<'m> {
 
     /// A box holding the meet of rows `r` and `s`, for [`part_boxes`] to meet a box with the
     /// join of the other operand's boxes: [`meet_types`] column by column, except that two
-    /// columns neither known finite are met only when their meet has no tuple types and is
-    /// finite, and otherwise give the column of `r`, which holds their meet.
+    /// columns neither known finite are met only when their meet has no tuple types,
+    /// and otherwise give the column of `r`, which holds their meet.
     ///
     /// Why: meeting two columns neither known finite makes a new type whose boxes meet again,
     /// and when one of them is recursive each meet unfolds it once more, a new and larger type
@@ -2173,7 +2173,7 @@ impl<'m> Finiteness<'m> {
     /// 2240 types of 51 KB after 30 s. Such a meet is finite only when the two infinite types
     /// share finitely many values, which these rows do not decide; "not known finite" is the
     /// answer [`Type::finite`] allows when it cannot tell, as for a box read as written. A meet
-    /// with no tuple types has boxes with no columns, so asking it makes no type.
+    /// with no tuple types has boxes with no columns, so it unfolds nothing.
     ///
     /// Assumption, not proved: every type this makes is a meet with a known finite side or a
     /// meet without tuple types, and a meet's boxes meet the other side's columns only with
@@ -2189,7 +2189,7 @@ impl<'m> Finiteness<'m> {
     }
 
     /// One column of [`Finiteness::meet_rows`]: [`meet_types`], with the leaves met only when
-    /// one side is known finite or the meet is finite with no tuple types.
+    /// one side is known finite or the meet has no tuple types.
     async fn meet_columns(&'m self, x: &Type, y: &Type) -> Type {
         let top = Type::top();
         enum Step {
@@ -2210,13 +2210,12 @@ impl<'m> Finiteness<'m> {
                     }
                     _ => {
                         let meet = &x & &y;
-                        // A meet with no tuple types has boxes with no columns, so asking
-                        // whether it is finite makes no type and reads nothing below it.
+                        // A meet with no tuple types has boxes with no columns, so it unfolds
+                        // nothing and is kept with no question asked: the scalar leaves of
+                        // tuple types met column by column ask none.
                         let flat = matches!(&*meet.0, Node::Parts(p, _)
                             if p.tuples.lens.is_empty() && !p.tuples.rest);
-                        let keep = self.finite(&x).await
-                            || self.finite(&y).await
-                            || (flat && self.finite(&meet).await);
+                        let keep = flat || self.finite(&x).await || self.finite(&y).await;
                         done.push(if keep { meet } else { x });
                     }
                 },
