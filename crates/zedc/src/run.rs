@@ -16,6 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::sites::{Recorder, Sites};
@@ -218,6 +219,12 @@ impl Ports {
         if trace {
             ev = ev.with_provenance(vec![Value::Int(0)]);
         }
+        // A debug build stops the run at a panic when `ZEDC_TEST_BUG` is set, so that the
+        // tests reach the report of a bug in zedc on both engines (plan row EXE-panic-status).
+        #[cfg(debug_assertions)]
+        if std::env::var_os("ZEDC_TEST_BUG").is_some() {
+            ev.panic_on_run();
+        }
         let status = exit_status(&run(&mut ev)?)?;
         let mut writes = Vec::new();
         for name in &self.outputs {
@@ -246,6 +253,61 @@ impl Ports {
             ev.provenance(),
         ))
     }
+}
+
+/// The number of runs of `zedc run` or `zedc replay` in progress in this process, past the
+/// checks of the program, which [`running`] reads.
+static RUNS: AtomicUsize = AtomicUsize::new(0);
+
+/// A run in progress, counted in [`RUNS`] from its start until it is dropped, at the run's end
+/// or as a panic unwinds past it.
+struct Running;
+
+impl Running {
+    fn start() -> Running {
+        RUNS.fetch_add(1, Ordering::SeqCst);
+        Running
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Whether a run of a program is in progress in this process, past zedc's checks of it: a
+/// panic now is a bug of zedc in the run, which [`stop_at_bug`] reports as the executable
+/// `zedc build` makes reports one, and not a bug in zedc's checks.
+pub fn running() -> bool {
+    RUNS.load(Ordering::SeqCst) > 0
+}
+
+/// Reports the panic `info` as a bug of zedc that stopped the run
+/// ([`crate::rejection::run_bug`]) and ends the process with status 3, a fault of the run
+/// (DESIGN.md sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a `#bug`, a
+/// fault or a limit"): the panic hook of the
+/// executable `zedc build` makes, and of `zedc run` while [`running`] (plan row
+/// EXE-panic-status). It ends the process from the hook, before the panic unwinds: an unwinding
+/// panic in a runtime hook that machine code called, or out of the executable's C `main`,
+/// would abort the process with SIGABRT, which a memory limit's handler reports as passing the
+/// limit. The wave in progress commits nothing, since a wave's writes are committed only at its
+/// end; what an earlier wave committed is already flushed (`Options::finish`), and
+/// `std::process::exit` flushes standard output again.
+pub fn stop_at_bug(info: &std::panic::PanicHookInfo<'_>) -> ! {
+    let payload = info.payload();
+    let expected = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("something it does not describe");
+    let place = info.location().map(|l| (l.file(), l.line()));
+    let _ = writeln!(
+        std::io::stderr(),
+        "{}",
+        crate::rejection::run_bug(expected, place)
+    );
+    std::process::exit(3)
 }
 
 /// The exit status of a wave whose `main` gave `value` (DESIGN.md sec:ports, step L1.19): its
@@ -1184,6 +1246,10 @@ fn command_inner(
     let (on, rest) = crate::build::take(&rest).map_err(|why| (2, why))?;
     let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
     let program = load_file(file, &on, &mut suppress, stderr)?;
+    // The run starts here: the part an executable does too, from its limits to its writes, so
+    // a panic from here on is reported and ends the process as it does in one
+    // ([`stop_at_bug`]).
+    let _running = Running::start();
     // The limits hold from here, for the run and its input, not for the compiler before it.
     let limits = program.limits();
     if !limits.is_none()

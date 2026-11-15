@@ -330,3 +330,20 @@ pub fn bug(expected: &str, place: Option<(&str, u32)>) -> String {
          so that it can be repeated."
     )
 }
+
+/// What a run prints when it stops at a broken assumption of zedc's own (a panic) while it
+/// runs a program, under `zedc run` and in the executable `zedc build` makes alike (plan row
+/// EXE-panic-status): that this is a bug in zedc and not in the program, what zedc `expected`,
+/// the file and line of zedc where the run stopped, and how to report it. The run then exits
+/// with status 3, a fault of the run (DESIGN.md sec:ports).
+pub fn run_bug(expected: &str, place: Option<(&str, u32)>) -> String {
+    let place = place.map_or(String::new(), |(file, line)| {
+        format!(" ({file}, line {line})")
+    });
+    format!(
+        "the run stopped because of a bug in zedc, not in your program. zedc expected this to \
+         hold, and it did not: {expected}{place}.\n\
+         Please report it at {REPORT_TO}, with the program's source, the command line you ran \
+         and the files the run read, so that it can be repeated."
+    )
+}

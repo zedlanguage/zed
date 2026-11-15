@@ -505,6 +505,9 @@ pub struct Evaluator {
     sites: Option<Arc<Sites>>,
     /// The site of the node the last run stopped at with an error, if it has one.
     failed: Option<Span>,
+    /// Whether the next run stops at a panic ([`Evaluator::panic_on_run`]); debug builds only.
+    #[cfg(debug_assertions)]
+    panic_on_run: bool,
 }
 
 /// Evaluates a closed term with no ports and no fuel limit, expecting data.
@@ -525,7 +528,19 @@ impl Evaluator {
             trace: None,
             sites: None,
             failed: None,
+            #[cfg(debug_assertions)]
+            panic_on_run: false,
         }
+    }
+
+    /// Makes every later [`Evaluator::run`] panic, as a broken check of zedc's own code does:
+    /// a debug build's way for the tests to reach the report of a bug in zedc, which no
+    /// program reaches on purpose, on both engines (plan row EXE-panic-status). `zedc run`
+    /// panics at the run of `main`; an executable at the first node its code passes to the
+    /// kernel, inside a runtime hook that the machine code called.
+    #[cfg(debug_assertions)]
+    pub fn panic_on_run(&mut self) {
+        self.panic_on_run = true;
     }
 
     /// Places each error of a run at the site `sites` gives its node ([`Evaluator::failed_at`]).
@@ -575,6 +590,11 @@ impl Evaluator {
 
     /// Evaluates a closed term, expecting data.
     pub fn run(&mut self, term: &Term) -> Result<Value, KernelError> {
+        #[cfg(debug_assertions)]
+        assert!(
+            !self.panic_on_run,
+            "the run of the program does not stop here (a test stopped it, ZEDC_TEST_BUG)"
+        );
         self.run_from(term, None, None)
     }
 

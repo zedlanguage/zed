@@ -323,18 +323,10 @@ pub extern "C" fn zed_main(
 /// Runs the program in `data` on the command line `words`, the first word the executable's
 /// name, and gives the exit status.
 fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
-    // A panic is a broken check of zedc's own code: say so in the program's terms, not as
-    // Rust's panic text alone (DESIGN.md sec:diagnostics).
-    std::panic::set_hook(Box::new(|info| {
-        let _ = writeln!(
-            std::io::stderr(),
-            "{}",
-            zed_rt::bug(
-                "reached a state that zedc's own checks rule out",
-                &info.to_string()
-            )
-        );
-    }));
+    // A panic is a broken check of zedc's own code: reported as `zedc run` reports one in a
+    // run, and the process ends with status 3 from the hook, before the panic unwinds into a
+    // runtime hook or `zed_main`, where it would abort (plan row EXE-panic-status).
+    std::panic::set_hook(Box::new(|info| zedc::run::stop_at_bug(info)));
     let (mut stdin, mut stdout, mut stderr) =
         (std::io::stdin(), std::io::stdout(), std::io::stderr());
     let program = match Program::decode(data) {

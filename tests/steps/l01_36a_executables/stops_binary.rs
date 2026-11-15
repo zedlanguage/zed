@@ -78,9 +78,22 @@ type Ran = (Option<i32>, Vec<u8>, Vec<u8>);
 /// What `zedc run` and the executable each give with standard output given by `stdout` (made
 /// anew for each), and standard error and, where `stdout` is piped, standard output read apart.
 fn both(p: &Built, stdout: impl Fn() -> Stdio) -> [Ran; 2] {
-    let run = zedc(&["run", &p.file], stdout());
+    both_with(p, stdout, &[])
+}
+
+/// [`both`], with the variables `env` added to each engine's environment.
+fn both_with(p: &Built, stdout: impl Fn() -> Stdio, env: &[(&str, &str)]) -> [Ran; 2] {
+    let run = Command::new("timeout")
+        .arg("60")
+        .arg(env!("CARGO_BIN_EXE_zedc"))
+        .args(["run", &p.file])
+        .envs(env.iter().copied())
+        .stdout(stdout())
+        .output()
+        .unwrap();
     let native = Command::new("timeout")
         .args(["60", &p.exe])
+        .envs(env.iter().copied())
         .stdout(stdout())
         .output()
         .unwrap();
@@ -167,6 +180,41 @@ fn a_fault_after_a_write_writes_the_same_on_both_engines() {
         both(&p, Stdio::piped),
         (Some(3), "", "Number too large for memory: `b ^ k`"),
     );
+}
+
+#[test]
+fn a_bug_of_zedc_in_the_run_stops_both_engines_alike() {
+    // A bug of zedc, which no program reaches on purpose: a debug build's run stops at a panic
+    // where `ZEDC_TEST_BUG` is set (plan row EXE-panic-status). `zedc run` panics in its own
+    // code; the executable inside a runtime hook its machine code called, where an unwinding
+    // panic would abort the process (status 134), and under a memory limit the limit's
+    // SIGABRT handler would report a memory fault. Both are a fault of the run (DESIGN.md
+    // sec:ports: "a fault of the run exits with 3"; sec:ffi: "3 for a `#bug`, a fault or a
+    // limit"), with one report, and the wave commits nothing.
+    for (name, limit) in [
+        ("bug", ""),
+        ("bug_limited", "@limits(memory: 1073741824)\n"),
+    ] {
+        let rest = "    m.stderr <- String(m.args);\n";
+        let p = program(name, &format!("{limit}{}", writes_then(rest)));
+        agree(
+            name,
+            &p,
+            both_with(&p, Stdio::piped, &[("ZEDC_TEST_BUG", "1")]),
+            (
+                Some(3),
+                "",
+                "the run stopped because of a bug in zedc, not in your program",
+            ),
+        );
+        // Without the variable the same build runs to its end.
+        agree(
+            name,
+            &p,
+            both(&p, Stdio::piped),
+            (Some(0), "first line\n", "{}\n"),
+        );
+    }
 }
 
 #[test]
