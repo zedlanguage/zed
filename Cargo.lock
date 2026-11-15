@@ -1152,6 +1152,7 @@ version = "0.0.0"
 dependencies = [
  "imbl",
  "num-bigint",
+ "num-integer",
  "num-traits",
  "zed-kernel",
  "zedc-base",

@@ -7,6 +7,7 @@
 //! "Collision (T-Reindex)".
 
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
 use super::*;
@@ -26,6 +27,9 @@ pub(in crate::check) struct RemapF<'a> {
     src: Option<Vec<Ty>>,
     /// The type of each level's expression checked so far, in level order, `None` for `_`.
     tys: Vec<Option<Ty>>,
+    /// The key binders by binding id, each to its place in the pattern: one lookup per name
+    /// read in a key, where a scan of the binders would make a pattern of n levels O(n²).
+    keys: HashMap<usize, usize>,
 }
 
 /// An atom of a key expression's linear form: key binder `i`, whole or its component `j`.
@@ -59,6 +63,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             )
         };
         let levels = levels.as_deref().unwrap_or(&[]);
+        let n = binders.len().saturating_sub(1);
+        let keys = (binders[..n].iter().enumerate())
+            .filter_map(|(i, b)| match b {
+                Target::Name(name, span) => Some((self.id(*span, name), i)),
+                Target::Wild => None,
+            })
+            .collect();
         let s = RemapF {
             e,
             binders,
@@ -66,6 +77,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             sourced: false,
             src: None,
             tys: Vec::new(),
+            keys,
         };
         m.k(Frame::Remap(Box::new(s)));
         m.job(Job::Expr(of));
@@ -192,12 +204,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if ids.len() != 1 {
             return None;
         }
-        let id = ids[0];
-        let n = s.binders.len() - 1;
-        (s.binders[..n].iter()).position(|b| match b {
-            Target::Name(name, span) => self.id(*span, name) == id,
-            Target::Wild => false,
-        })
+        s.keys.get(&ids[0]).copied()
     }
 
     /// Whether `e` names the value binder of `s`.
@@ -621,10 +628,171 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         self.rejects_with(Row::Collision, s.e.span, msg, Vec::new());
     }
+
+    /// `x.flatMap(f)` (DESIGN.md sec:grouping, "Multiple emissions are typed, not repaired";
+    /// the bound table's `flatMap` row): on a family `K -> V0` whose function gives a family
+    /// for each entry, the family `K -> (R -> V)`, the emitted list adjoined as an inner rank level
+    /// under each key, possibly empty and never a missing key. The type is that of `x.map(f)`;
+    /// what `flatMap` adds is the demand that every entry's result be a list, a family whose
+    /// keys are `0..<n` (sec:grouping: "`flatMap` on `K -> V0` with body `V0 -> Seq(V)` yields
+    /// `K -> rank -> V`"; sec:verification's `R.flatMap(s -> choices.map(c -> step(s, c)))`
+    /// maps over a list). A family with other keys is rejected, `map` being the word that keeps
+    /// them.
+    // Complexity tradeoff: one pass over the result type of `map_end`, O(arrows); no second
+    // check of `f`.
+    pub(super) fn flat_map_end(&mut self, x: &Ty, f: Arg<'a>, span: Span) -> Ty {
+        let at = f.at.unwrap_or(span);
+        let t = self.map_end(x, f, span, false);
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        for p in t.pieces() {
+            let Piece::Fn(sig) = p else { continue };
+            if !sig.data {
+                continue;
+            }
+            let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result)).without(&misses);
+            let entries = all.without_loose();
+            // A dynamic entry, or one of a class not yet resolved, is checked where it is known.
+            let families = (entries.pieces().iter()).all(|q| {
+                matches!(q, Piece::Fn(s) if s.data && s.dense)
+                    || matches!(q, Piece::Dyn | Piece::Var(_))
+            });
+            if !families {
+                let shown = self.text(&entries);
+                self.error_offering(
+                    at,
+                    format!(
+                        "`flatMap` adjoins the list its function gives for each entry as a rank \
+                         level, and this function gives {shown}"
+                    ),
+                    [
+                        "repair: give a list for each entry, as `x -> [x, x + 1]`".to_string(),
+                        "repair: use `map`, which keeps one value per entry, or the keys of a family \
+                         it gives".to_string(),
+                    ],
+                );
+                return Ty::empty();
+            }
+        }
+        t
+    }
+
+    /// `x.group(f)` (DESIGN.md sec:grouping, the bound table's `group` row): on a family
+    /// `K -> V` of one level, the family `W ->? (K -> V)`, `W` the type of `f` applied to `V`;
+    /// each entry `k -> v` goes to `f(v) -> k -> v`, the remap `as (k -> v) into (f(v) -> k ->
+    /// v)`, one-to-one by tupling since the key `k` is kept. With `rekey`, `x.rekey(f)` claims
+    /// that `f` keeps the entries apart, and no witness of the catalog this step builds reads a
+    /// key made from a value alone, so it is rejected with the menu of the diagnostics row
+    /// "Collision (T-Reindex)": `group`, a witness, or the check.
+    // Complexity tradeoff: the type is built from the union of the family's arrows, O(arrows),
+    // as `map` does; the outer level's guarantee, the classes `f(m[k])` known statically, is
+    // not computed (empty), which the bound table allows ("else empty").
+    pub(super) fn group_end(
+        &mut self,
+        x: &Ty,
+        recv: Span,
+        f: Arg<'a>,
+        span: Span,
+        rekey: bool,
+    ) -> Ty {
+        let word = if rekey { "rekey" } else { "group" };
+        if rekey {
+            let (r, g) = (self.src_text(recv), self.src_text(f.at.unwrap_or(span)));
+            let call = format!("{r}.group({g})");
+            let line = |label: &str, text: &str| format!("\n  {label:<29}{text}");
+            let msg = format!(
+                "Cannot show that `{g}` keeps the entries of `{r}` apart: `{r}.rekey({g})`. Try \
+                 `{call}` instead.\n  two entries of `{r}` could give one key, and no witness \
+                 of the catalog reads a key made from a value alone.{}\n      keeps each \
+                 entry under its key in `{r}`, one level deeper{}{}",
+                line("use group:", &call),
+                line(
+                    "or supply a witness:",
+                    &format!(
+                        "prove `{g}` one-to-one; an `@injective` claim counts only at proof grade"
+                    ),
+                ),
+                line(
+                    "or write the check:",
+                    &format!(
+                        "`{call}`, then a fold that keeps each key's one value and gives \
+                         `#collision` where there are more"
+                    ),
+                ),
+            );
+            self.rejects_with(Row::Collision, span, msg, Vec::new());
+            return Ty::empty();
+        }
+        if x.dynamic && x.fns.is_empty() {
+            return Ty::dynamic();
+        }
+        let Some(fsig) = only_fn(&f.ty) else {
+            let t = self.text(&f.ty);
+            self.error_offering(
+                f.at.unwrap_or(span),
+                format!("`{word}` takes a function, and this value is {t}"),
+                ["repair: pass a function of one parameter, as `x -> x.lower`".to_string()],
+            );
+            return Ty::empty();
+        };
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let fams = x.fns.iter().filter(|g| g.data).collect::<Vec<_>>();
+        let rest = x.pieces().into_iter().any(|p| match p {
+            Piece::Fn(sig) => !sig.data,
+            Piece::Set(k) => !(&k - &misses).is_empty(),
+            _ => true,
+        });
+        if fams.is_empty() || rest {
+            let t = self.text(x);
+            self.error_offering(
+                span,
+                format!(
+                    "`group` works on the entries of a family, and `{}` is {t}",
+                    self.src_text(recv)
+                ),
+                [
+                    "repair: call `group` on a family, as `[\"a\", \"B\"].group(w -> w.lower)`"
+                        .to_string(),
+                ],
+            );
+            return Ty::empty();
+        }
+        let keys = Ty::union_all(
+            fams.iter()
+                .flat_map(|g| g.arrows.iter().map(|a| &a.params[0])),
+        );
+        let values = Ty::union_all(fams.iter().flat_map(|g| g.arrows.iter().map(|a| &a.result)))
+            .without(&misses);
+        if values.fns.iter().any(|g| g.data) {
+            // Plan row GROUP-nested: the kernel's reindex walks leaves, and `f` takes the whole
+            // inner family `m[k]`; that needs a reindex over keypaths that stop above the
+            // leaves, as REMAP-fewer-binders does.
+            self.error(
+                span,
+                not_yet("`group` on a family whose entries are families"),
+            );
+            return Ty::empty();
+        }
+        let what = Label::Text("the function given to `group`");
+        let w = self
+            .apply(
+                what,
+                &fsig,
+                vec![Some(Arg::of(values.clone()))],
+                false,
+                span,
+            )
+            .0;
+        family(w, family(keys, values))
+    }
 }
 
-/// A family `keys -> values`, every key not present, as a display builds.
+/// A family `keys ->? values` that guarantees no key: its one arrow's result holds
+/// `#notFound`, so a read of any key of `keys` may miss. A remap or `group` result holds only
+/// the keys its entries reach, which the key type over-approximates; the guarantee is the
+/// bound table's "else empty" (DESIGN.md sec:type_language), sound but not tight: a transpose
+/// of a full rectangle has every key, and that tighter guarantee is not computed.
 fn family(keys: Ty, values: Ty) -> Ty {
+    let values = values.union(&Ty::set(KType::atom("notFound")));
     let mut sig = Sig::one(super::super::positional(1), vec![keys], values);
     sig.data = true;
     sig.dense = false;
@@ -700,38 +868,57 @@ fn span_of(t: &Ty) -> Option<BigInt> {
 /// The atoms the rows determine: those whose unit vector is in the rows' span over the
 /// rationals, read off the reduced row echelon form as the rows with one nonzero entry. Each
 /// such atom is a rational combination of the key components, so the keypath recovers it.
+// Complexity tradeoff: the elimination is sparse. Each atom keeps the set of rows holding it,
+// so a pivot visits only the rows it must clear, and a pattern whose components each read their
+// own binder (the common case: literal keys, a transpose) costs O(n log n) for n components.
+// The dense form, which scanned every row for every atom, cost O(n²) on that case (measured:
+// T(8n)/T(n) = 13.4 at n = 100 levels). Fill-in still costs what dense elimination costs.
 fn recovered(mut rows: Vec<Lin>) -> BTreeSet<Atom> {
-    let atoms = rows
-        .iter()
-        .flat_map(|r| r.keys().copied())
-        .collect::<BTreeSet<_>>();
-    let mut done = 0;
+    let mut holders: BTreeMap<Atom, BTreeSet<usize>> = BTreeMap::new();
+    for (r, row) in rows.iter().enumerate() {
+        for a in row.keys() {
+            holders.entry(*a).or_default().insert(r);
+        }
+    }
+    let atoms = holders.keys().copied().collect::<Vec<_>>();
+    let mut pivots = vec![false; rows.len()];
     for a in &atoms {
-        let Some(p) = (done..rows.len()).find(|&r| rows[r].contains_key(a)) else {
+        let Some(p) = holders[a].iter().copied().find(|&r| !pivots[r]) else {
             continue;
         };
-        rows.swap(done, p);
-        let pivot = rows[done].clone();
+        pivots[p] = true;
+        let pivot = rows[p].clone();
         let pv = pivot[a].clone();
-        for (r, row) in rows.iter_mut().enumerate() {
-            let Some(v) = row.get(a).cloned() else {
-                continue;
-            };
-            if r == done {
-                continue;
-            }
+        let clear = holders[a].iter().copied().filter(|&r| r != p);
+        for r in clear.collect::<Vec<_>>() {
+            let v = rows[r][a].clone();
             // row := pv·row − v·pivot, which clears `a` and keeps every entry an integer.
-            let mut next = scale(std::mem::take(row), &pv);
+            let mut next = scale(std::mem::take(&mut rows[r]), &pv);
             for (b, w) in &pivot {
                 let x = next.remove(b).unwrap_or_default() - &v * w;
-                if !x.is_zero() {
+                let held = holders.entry(*b).or_default();
+                if x.is_zero() {
+                    held.remove(&r);
+                } else {
+                    held.insert(r);
                     next.insert(*b, x);
                 }
             }
-            *row = next;
+            // Divide by the entries' gcd: without it the cross-multiplication doubles the
+            // entries' bit length at each step on a row cleared by many pivots.
+            let g = next.values().fold(BigInt::zero(), |g, x| g.gcd(x));
+            if !g.is_zero() && !g.is_one() {
+                next.values_mut().for_each(|x| *x /= &g);
+            }
+            rows[r] = next;
         }
-        done += 1;
     }
+    // Not proved: that a row left with one nonzero entry is exactly an atom whose unit vector
+    // lies in the rows' span. It holds if the loop leaves the rows in reduced row echelon form
+    // (each pivot column cleared from every other row, the earlier pivot rows included, which
+    // `holders` reaches since a pivot's entry in an earlier pivot column is already zero); the
+    // argument is written here and tested on the catalog's cases and the benchmarks, not
+    // checked by a proof tool.
     rows.iter()
         .filter(|r| r.len() == 1)
         .flat_map(|r| r.keys().copied())

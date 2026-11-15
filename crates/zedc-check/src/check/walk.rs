@@ -456,6 +456,12 @@ pub(super) enum Frame<'a> {
     /// `x.map(f)`, or `x.where(f)` when the flag is set, waiting for `f`: the type of `x` and
     /// the call's span (step L3.2).
     MapFn(Ty, Span, bool),
+    /// `x.group(f)` or, with `true`, `x.rekey(f)`, `f` being checked: `x`'s type, the span of
+    /// `x`, and the call's span (step L4.1; `group_end`).
+    Group(Ty, Span, Span, bool),
+    /// `x.flatMap(f)`, `f` being checked: `x`'s type and the call's span (step L4.1;
+    /// `flat_map_end`).
+    FlatMap(Ty, Span),
     /// `m >< (op)`, waiting for `m`: the operator and the span of the reduction.
     Reduce(BinaryOp, Span),
     /// `k in m`, waiting for `k`: `m` and the span of the test.
@@ -924,6 +930,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::MapFn(x, span, filter) => {
                 let f = m.take_arg();
                 let t = self.map_end(&x, f, span, filter);
+                m.ty(t);
+            }
+            Frame::Group(x, recv, span, rekey) => {
+                let f = m.take_arg();
+                let t = self.group_end(&x, recv, f, span, rekey);
+                m.ty(t);
+            }
+            Frame::FlatMap(x, span) => {
+                let f = m.take_arg();
+                let t = self.flat_map_end(&x, f, span);
                 m.ty(t);
             }
             Frame::Reduce(op, span) => {
@@ -5500,6 +5516,41 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
                         m.k(Frame::MapFn(x.ty, span, name == "where"));
+                        m.job(Job::Arg(f, Want::default()));
+                    }
+                    _ => {
+                        self.error_offering(
+                            span,
+                            format!(
+                                "`{name}` takes one function, passed by position, as \
+                                 `xs.{name}(f)`"
+                            ),
+                            [format!("repair: write `xs.{name}(x -> …)`")],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
+                // `flatMap` (step L4.1, sec:grouping "Multiple emissions are typed"), built in as
+                // `map` is.
+                Some(_) if name == "flatMap" => match (positional, named, curry) {
+                    ([f], [], false) => {
+                        m.k(Frame::FlatMap(x.ty, span));
+                        m.job(Job::Arg(f, Want::default()));
+                    }
+                    _ => {
+                        self.error_offering(
+                            span,
+                            "`flatMap` takes one function, passed by position, as `xs.flatMap(f)`"
+                                .to_string(),
+                            ["repair: write `xs.flatMap(x -> [x, x + 1])`".to_string()],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
+                // `group` and `rekey` (step L4.1, sec:grouping), built in as `map` is.
+                Some(_) if name == "group" || name == "rekey" => match (positional, named, curry) {
+                    ([f], [], false) => {
+                        m.k(Frame::Group(x.ty, of.span, span, name == "rekey"));
                         m.job(Job::Arg(f, Want::default()));
                     }
                     _ => {

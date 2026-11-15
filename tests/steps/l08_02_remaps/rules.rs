@@ -2,7 +2,7 @@
 //! sec:remap_law, sec:grouping): truncation, the trailing key binder, folds, the witness
 //! catalog and the collision menu, the source's shape, and the pattern's own errors. The
 //! spec's examples that need forms of other steps (level names, refinements, declared types)
-//! are in `moves`, `collisions` and `names`; where such an example's rule can be written
+//! are in `moves`, `collisions` and `source`; where such an example's rule can be written
 //! without those forms, its variant is here.
 
 use crate::source::{rejected, same};
@@ -244,4 +244,158 @@ fn the_pattern_s_own_errors() {
         &with_m("x = m as (k1 -> k2 -> v) into (v);\n"),
         &["an `into` pattern keeps at least one key level before its leaf"],
     );
+}
+
+// ---- group and rekey (sec:grouping, step L4.1) ----
+
+#[test]
+fn group_declares_the_deeper_level() {
+    // sec:grouping: `byLower = words into (w.lower -> i -> w);` "the same program: the word
+    // `group` declares the same deeper type, Lower ->? (i -> w)".
+    let src = "words = [\"The\", \"cat\", \"the\"];\n\
+               a = words as (i -> w) into (w.lower -> i -> w);\n\
+               b = words.group(w -> w.lower);\n\
+               want = { \"cat\" -> { 1 -> \"cat\" }, \"the\" -> { 0 -> \"The\", 2 -> \"the\" } };\n";
+    same(src, "a", "want");
+    same(src, "b", "want");
+}
+
+#[test]
+fn group_on_a_map_by_an_integer_class() {
+    let src = "m = { \"a\" -> 1, \"b\" -> 4, \"c\" -> 7, \"d\" -> 2 };\nx = m.group(v -> v mod 3);\n\
+               want = { 1 -> { \"a\" -> 1, \"b\" -> 4, \"c\" -> 7 }, 2 -> { \"d\" -> 2 } };\n\
+               e = m.where(v -> v > 9).group(v -> v);\n";
+    same(src, "x", "want");
+    crate::source::prints(src, "e", "{}");
+}
+
+#[test]
+fn group_by_a_constant_gives_one_class() {
+    let src = "xs = [5, 6];\nx = xs.group(v -> 0);\nwant = { 0 -> { 0 -> 5, 1 -> 6 } };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn rekey_without_a_witness_is_rejected_with_its_menu() {
+    // sec:grouping: `m.rekey(f)` claims flatness: "compile error if no catalog witness
+    // applies ("this key derivation could collide — use `group`; prove `f` injective (an
+    // `@injective` claim counts only at proof grade); or write the check: `group(f)`, then a
+    // fold that keeps each key's one value and gives `#collision` where there are more")".
+    let src = "words = [\"The\", \"cat\", \"the\"];\nx = words.rekey(w -> w.lower);\n";
+    rejected(
+        src,
+        &[
+            "Cannot show that `w -> w.lower` keeps the entries of `words` apart: `words.rekey(w -> w.lower)`. Try `words.group(w -> w.lower)` instead.",
+            "use group:                   words.group(w -> w.lower)",
+            "@injective",
+            "#collision",
+        ],
+    );
+}
+
+#[test]
+fn group_s_own_errors() {
+    rejected(
+        "n = 3;\nx = n.group(v -> v);\n",
+        &["`group` works on the entries of a family, and `n` is"],
+    );
+    rejected(
+        "xs = [1];\nx = xs.group(5);\n",
+        &["`group` takes a function, and this value is"],
+    );
+    rejected(
+        "xs = [1];\nx = xs.group(v -> v, v -> v);\n",
+        &["`group` takes one function, passed by position"],
+    );
+    rejected(
+        "xs = [[1]];\nx = xs.group(v -> 0);\n",
+        &["`group` on a family whose entries are families"],
+    );
+}
+
+// ---- flatMap (sec:grouping, "Multiple emissions are typed, not repaired"; step L4.1) ----
+
+#[test]
+fn flat_map_adjoins_the_emitted_level() {
+    // sec:grouping: "`flatMap` on `K -> V0` with body `V0 -> Seq(V)` yields `K -> rank -> V`".
+    let src = "xs = [1, 2];\nx = xs.flatMap(v -> [v, v * 10]);\nwant = [[1, 10], [2, 20]];\n\
+               m = { \"a\" -> 3 };\ny = m.flatMap(v -> [v]);\nwantY = { \"a\" -> [3] };\n";
+    same(src, "x", "want");
+    same(src, "y", "wantY");
+}
+
+#[test]
+fn flat_map_keeps_an_empty_emission_as_an_empty_level() {
+    // The bound table's `flatMap` row: "inner level adjoined per entry, exact (`L = U`) with
+    // cardinality the emission count — possibly `0`: an *empty* inner level, never a missing
+    // key".
+    let src = "xs = [0, 2];\nx = xs.flatMap(v -> if v > 1 { [v, 1] } else { [] });\n";
+    crate::source::prints(src, "x", "{0 -> {}, 1 -> {0 -> 2, 1 -> 1}}");
+}
+
+#[test]
+fn flat_map_s_own_errors() {
+    rejected(
+        "xs = [1];\nx = xs.flatMap(v -> v + 1);\n",
+        &[
+            "`flatMap` adjoins the list its function gives for each entry as a rank level, and this function gives",
+        ],
+    );
+    rejected(
+        "xs = [1];\nx = xs.flatMap(v -> [v], v -> [v]);\n",
+        &["`flatMap` takes one function, passed by position"],
+    );
+    // A family with keys of its own is no list: sec:grouping gives `flatMap` a body
+    // `V0 -> Seq(V)` and the result `K -> rank -> V`; `map` keeps such keys.
+    rejected(
+        "xs = [1, 2];\nx = xs.flatMap(v -> xs.where(w -> w > v));\n",
+        &["`flatMap` adjoins the list its function gives for each entry as a rank level"],
+    );
+    rejected(
+        "n = 3;\nx = n.flatMap(v -> [v]);\n",
+        &["`map` works on each entry of a family"],
+    );
+}
+
+// ---- Result types guarantee no key (the bound table's "else empty") ----
+
+#[test]
+fn a_read_of_a_remap_or_group_result_may_miss() {
+    // A remap or `group` result holds only the keys its entries reach, so each level's read
+    // has `#notFound` in its type: a transpose of a ragged family misses `x[1]["b"]`, and a
+    // class `group` never formed misses.
+    use zed_tests::step_helpers::l01_16_elaboration::value;
+    use zed_tests::step_helpers::l01_26_type_resolution::sig;
+    let ragged = "m = { \"a\" -> { 1 -> 10 }, \"b\" -> { 2 -> 20 } };\n";
+    let words = "xs = [\"a\", \"B\"];\nx = xs.group(w -> w.lower);\n";
+    for (src, read, ty, val) in [
+        (
+            format!("{ragged}x = m as (i -> j -> v) into (j -> i -> v);\n"),
+            "x[1][\"b\"]",
+            "(u: int) -> 10 | 20 | #notFound",
+            "#notFound",
+        ),
+        (
+            format!("{ragged}x = m as (i -> j -> v) into (j -> i -> _);\n"),
+            "x[1]",
+            "(u: int) -> (\"a\" | \"b\" -> \"a\" | \"b\" | #notFound) | #notFound",
+            "{\"a\"}",
+        ),
+        (
+            words.to_string(),
+            "x[\"a\"][1]",
+            "(u: int) -> \"B\" | \"a\" | #notFound",
+            "#notFound",
+        ),
+        (
+            words.to_string(),
+            "x[\"zz\"]",
+            "(u: int) -> (0 | 1 -> \"B\" | \"a\" | #notFound) | #notFound",
+            "#notFound",
+        ),
+    ] {
+        let text = format!("{src}f(u: int) = {read};\ny = f(u: 0);\n");
+        assert_eq!(sig(&text, "f"), ty, "{text}");
+        assert_eq!(value(&text, "y"), val, "{text}");
+    }
 }

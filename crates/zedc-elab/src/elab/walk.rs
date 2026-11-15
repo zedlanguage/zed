@@ -187,6 +187,8 @@ enum Frame<'a> {
     /// `x.map(f)`, or `x.where(f)` when the flag is set, once `f` is elaborated: `x`'s term
     /// (step L3.2).
     MapFn(Term, bool),
+    /// `x.group(f)`, `f` being elaborated: the term of `x` (`group_term`).
+    Group(Term),
     /// `m >< (op)` once `m` is elaborated: the operator and the span of the fold.
     Fold(Prim, Span),
     /// A remap once its source and its levels' expressions are elaborated, in that order.
@@ -1730,6 +1732,36 @@ impl<'a> Elab<'a> {
         Some(t)
     }
 
+    /// `x.group(f)` on a family of one level (DESIGN.md sec:grouping): the widening
+    /// `reindex` that sends the entry `k -> v` to the keypath `(f(v), k)` and keeps `v`, one to
+    /// one by tupling, since `k` is kept.
+    // Complexity tradeoff: one `reindex` over the n leaves, O(n log n) into the ordered map,
+    // against a hash grouping's O(n) expected; the kernel's families are ordered maps, and the
+    // result is read in key order.
+    fn group_term(&mut self, x: Term, f: Term) -> Term {
+        let (g, p, v) = (self.temp(), self.temp(), self.temp());
+        let class = Term::App(
+            Shared::new(Term::Var(g.clone())),
+            vec![Term::Var(v.clone())],
+        );
+        let k = Term::Prim(
+            Prim::PathKey,
+            vec![Term::Var(p.clone()), Term::Lit(Value::Int(0))],
+        );
+        let kf = Term::Lam(
+            vec![p.clone(), v.clone()],
+            Shared::new(Term::Prim(Prim::Path, vec![class, k])),
+        );
+        let vf = Term::Lam(vec![p, v.clone()], Shared::new(Term::Var(v)));
+        let t = Term::Reindex {
+            family: Shared::new(x),
+            kf: Shared::new(kf),
+            vf: Shared::new(vf),
+            witness: zed_kernel::term::Witness::Residue,
+        };
+        Term::Let(g, Shared::new(f), Shared::new(t))
+    }
+
     fn member_call(&mut self, m: &mut M<'a>, mb: Member<'a>, x: Term) {
         let Member {
             name,
@@ -1771,10 +1803,28 @@ impl<'a> Elab<'a> {
                 }
                 // `map` and `where` are built in for now (author P221; plan row MAP-pure-zed);
                 // the checker rejects any other argument list.
-                Some(_) if name == "map" || name == "where" => match call.positional {
+                // `flatMap` (step L4.1) is the term of `map`: the family each entry's function
+                // gives is the inner level; the checker demands that it be a family.
+                Some(_) if name == "map" || name == "where" || name == "flatMap" => {
+                    match call.positional {
+                        [f] if call.named.is_empty() && !call.curry => {
+                            m.k(Frame::MemberEnd(wrap));
+                            m.k(Frame::MapFn(receiver, name == "where"));
+                            m.stack.push(Job::Expr(f));
+                            return;
+                        }
+                        _ => {
+                            m.give(None);
+                            return;
+                        }
+                    }
+                }
+                // `group` is built in as `map` is (step L4.1); the checker rejects every
+                // `rekey` and any other argument list.
+                Some(_) if name == "group" => match call.positional {
                     [f] if call.named.is_empty() && !call.curry => {
                         m.k(Frame::MemberEnd(wrap));
-                        m.k(Frame::MapFn(receiver, name == "where"));
+                        m.k(Frame::Group(receiver));
                         m.stack.push(Job::Expr(f));
                         return;
                     }
@@ -1925,6 +1975,10 @@ impl<'a> Elab<'a> {
                         zed_kernel::term::Grade::Axiom,
                     )]),
                 });
+                m.give(t);
+            }
+            Frame::Group(x) => {
+                let t = m.t().map(|f| self.group_term(x, f));
                 m.give(t);
             }
             Frame::Remap(e) => {
