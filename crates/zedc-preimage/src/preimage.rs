@@ -14356,12 +14356,6 @@ mod tests {
     /// [`holds_where_it_held_as_ifs`].
     #[test]
     fn or_ifs_hold_where_they_held_as_ifs() {
-        let mut g = Gen::new(
-            crate::seed::seed("or_ifs_hold_where_they_held_as_ifs"),
-            false,
-        );
-        g.and_ifs = true;
-        g.or_ifs = true;
         // A built `if` whose formula the new reading changes, whatever the draws:
         // `if x >= 1 { true } else { y <= 3 }` is now read as `x >= 1 || y <= 3`, and as any
         // other `if` it was `x >= 1 || (!(x >= 1) && y <= 3)`, a formula with one more part.
@@ -14376,6 +14370,24 @@ mod tests {
         let (c, _, how) = holds_where_it_held_as_ifs(&built, true);
         assert!(c, "built: the formula of {built:?} did not change");
         assert!(!how.contains(&"no longer exact"), "{built:?}");
+        or_if_rounds(crate::seed::seed("or_ifs_hold_where_they_held_as_ifs"));
+    }
+
+    /// The draws of [`or_ifs_hold_where_they_held_as_ifs`] on one fixed seed: the solver's
+    /// decisions and refusals over them are exact. A bound on refusals over a new seed each run
+    /// could fail on a rare seed with no fault (PROOF-test-count-thresholds), and no check of one
+    /// case gives a refusal's cause; a refusal that spread would change these counts.
+    #[test]
+    fn or_ifs_of_a_fixed_seed_are_decided_as_counted() {
+        assert_eq!(or_if_rounds(0x0f1f_5eed), (35, 152, 0));
+    }
+
+    /// Runs [`OR_IF_ROUNDS`] random programs of `seed` through [`holds_where_it_held_as_ifs`],
+    /// checks every draw stays exact, and gives (changed, decided, refused).
+    fn or_if_rounds(seed: u64) -> (usize, usize, usize) {
+        let mut g = Gen::new(seed, false);
+        g.and_ifs = true;
+        g.or_ifs = true;
         let (mut changed, mut decided, mut refused) = (0, 0, 0);
         let mut differ = std::collections::BTreeMap::<&str, usize>::new();
         for round in 0..OR_IF_ROUNDS {
@@ -14390,15 +14402,7 @@ mod tests {
             }
         }
         eprintln!("changed {changed}, decided {decided}, refused {refused}, preimages {differ:?}");
-        // The solver decides nearly every comparison. Over 4,000 rounds of one seed, about
-        // 1,000 pairs of preimages, the new shape gave 3 tighter domains and 1 looser, 2 fewer
-        // refusals and 1 more, and 1 preimage exact that was not. The bound below counts
-        // refusals of the solver over the draws; no check of one case gives its cause, so it
-        // stays a bound (PROOF-test-count-thresholds).
-        assert!(
-            refused * 50 < decided,
-            "decided {decided}, refused {refused}"
-        );
+        (changed, decided, refused)
     }
 
     /// Chains of `||` written as `if`s that test one name again, hold one `if` in two places,
