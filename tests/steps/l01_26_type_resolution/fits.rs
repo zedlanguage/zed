@@ -546,3 +546,194 @@ fn a_variable_of_one_element_tuples_fits_its_copy() {
         }
     }
 }
+
+#[test]
+fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
+    use std::collections::BTreeMap;
+    use zedc::check::ty::{Arrow, Carrier, EVERY, Facts, SParam, Sig, Ty, fits_sig};
+    let mk = |bound: Option<u8>, param: Ty| {
+        let own = ["X0", "X1"];
+        let mut s = Sig {
+            params: vec![SParam {
+                name: "x0".into(),
+                positional: false,
+                default: None,
+            }],
+            arrows: vec![Arrow {
+                params: vec![param],
+                result: Ty::carrier(Carrier::Int),
+            }],
+            bounds: own
+                .iter()
+                .filter_map(|v| bound.map(|m| ((*v).into(), m)))
+                .collect::<BTreeMap<_, _>>(),
+            data: false,
+            dense: false,
+            word: None,
+            needs: Vec::new(),
+            own: own.iter().map(|v| (*v).into()).collect(),
+            held: Default::default(),
+            named: 0,
+            facts: Facts::default(),
+        };
+        s.note_held();
+        s
+    };
+    let one = |t: &Ty| Ty::tuple(vec![t.clone()]);
+    let (x0, x1) = (Ty::var("X0".into()), Ty::var("X1".into()));
+    let joined = one(&x0.union(&x1));
+    let split = one(&x0).union(&one(&x1));
+    for bound in [None, Some(1u8), Some(EVERY)] {
+        // `q`'s parameter must be within `s`'s.
+        assert!(
+            fits_sig(&mk(bound, split.clone()), &mk(bound, joined.clone())),
+            "{bound:?}"
+        );
+        assert!(
+            fits_sig(&mk(bound, joined.clone()), &mk(bound, split.clone())),
+            "{bound:?}"
+        );
+    }
+}
+
+/// The signature `(x0: param) -> result` whose own variables are `{p}0` to `{p}{count - 1}`, each
+/// bounded by `bound` if given.
+pub(super) fn own_sig(
+    p: &str,
+    count: usize,
+    bound: Option<u8>,
+    param: zedc::check::ty::Ty,
+    result: zedc::check::ty::Ty,
+) -> zedc::check::ty::Sig {
+    use zedc::check::ty::{Arrow, Facts, SParam, Sig};
+    let names: Vec<String> = (0..count).map(|i| format!("{p}{i}")).collect();
+    let mut s = Sig {
+        params: vec![SParam {
+            name: "x0".into(),
+            positional: false,
+            default: None,
+        }],
+        arrows: vec![Arrow {
+            params: vec![param],
+            result,
+        }],
+        bounds: (names.iter())
+            .filter_map(|v| bound.map(|m| (v.as_str().into(), m)))
+            .collect(),
+        data: false,
+        dense: false,
+        word: None,
+        needs: Vec::new(),
+        own: names.iter().map(|v| v.as_str().into()).collect(),
+        held: Default::default(),
+        named: 0,
+        facts: Facts::default(),
+    };
+    s.note_held();
+    s
+}
+
+/// A tuple with a component of several pieces holds what the tuples with one piece each there
+/// hold, so the checker gives it the verdict it gives them written as a union: true where each
+/// is held, and refused where that union is refused (three or more shapes of variables bounded
+/// to several carriers, with nothing to tell them apart, row
+/// FAIL-types-bounded-shapes-renamed-refused). In one component, in one of two, and in both.
+#[test]
+fn a_joined_tuple_gets_the_verdict_of_its_split_union() {
+    use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig, why_unfit};
+    let int = Ty::carrier(Carrier::Int);
+    let (x, y) = (
+        |i: usize| Ty::var(format!("X{i}").into()),
+        |i: usize| Ty::var(format!("Y{i}").into()),
+    );
+    let tup = Ty::tuple;
+    let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
+    // The verdict, and whether a reason is given with it (a refusal, or a cover not tried).
+    let verdict = |s: Ty, q: Ty, bound| {
+        let (s, q) = (
+            own_sig("X", 8, bound, s, int.clone()),
+            own_sig("Y", 8, bound, q, int.clone()),
+        );
+        (fits_sig(&s, &q), why_unfit(&s, &q).is_some())
+    };
+    for bound in [None, Some(1u8), Some(EVERY)] {
+        for n in 2..6 {
+            let split = |v: &dyn Fn(usize) -> Ty| union((0..n).map(|i| tup(vec![v(i)])).collect());
+            let joined = tup(vec![union((0..n).map(y).collect())]);
+            let written = verdict(split(&x), split(&y), bound);
+            assert_eq!(verdict(split(&x), joined, bound), written, "{n} {bound:?}");
+            // Two shapes always fit: each bounded variable takes one.
+            assert!(n > 2 || written == (true, false), "{bound:?}");
+        }
+        // A second component that one shape holds whole.
+        let joined = tup(vec![y(0).union(&y(1)), int.clone()]);
+        let split = union(vec![
+            tup(vec![x(0), int.clone()]),
+            tup(vec![x(1), int.clone()]),
+        ]);
+        assert_eq!(verdict(split, joined, bound), (true, false), "{bound:?}");
+        // Two components of two pieces each: split at the first, then at the second.
+        let four = |v: &dyn Fn(usize) -> Ty| {
+            union(
+                [(0, 2), (0, 3), (1, 2), (1, 3)]
+                    .map(|(i, j)| tup(vec![v(i), v(j)]))
+                    .to_vec(),
+            )
+        };
+        let half = |v: &dyn Fn(usize) -> Ty| {
+            union((0..2).map(|i| tup(vec![v(i), v(2).union(&v(3))])).collect())
+        };
+        let joined = tup(vec![y(0).union(&y(1)), y(2).union(&y(3))]);
+        assert_eq!(
+            verdict(half(&x), joined.clone(), bound),
+            (true, false),
+            "{bound:?}"
+        );
+        let written = verdict(four(&x), four(&y), bound);
+        assert_eq!(verdict(four(&x), joined, bound), written, "{bound:?}");
+        assert_eq!(verdict(four(&x), half(&y), bound), written, "{bound:?}");
+    }
+}
+
+/// Split, each piece is still checked: `(Y0 | Y1, int)` is not in `(X0, String) | (X1,
+/// String)`; and the bindings the split pieces give are those the
+/// result is read with, so `(Y0 | Y1,)` returned where `(X0,) | (X1,)` is fits, and `(Y0,)`
+/// does not.
+#[test]
+fn a_joined_tuple_split_checks_each_piece_and_keeps_its_bindings() {
+    use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig};
+    let (int, string) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Str));
+    let (x, y) = (
+        |i: usize| Ty::var(format!("X{i}").into()),
+        |i: usize| Ty::var(format!("Y{i}").into()),
+    );
+    let one = |t: Ty| Ty::tuple(vec![t]);
+    for bound in [None, Some(EVERY)] {
+        let s = own_sig(
+            "X",
+            8,
+            bound,
+            Ty::tuple(vec![x(0), string.clone()]).union(&Ty::tuple(vec![x(1), string.clone()])),
+            int.clone(),
+        );
+        let q = own_sig(
+            "Y",
+            8,
+            bound,
+            Ty::tuple(vec![y(0).union(&y(1)), int.clone()]),
+            int.clone(),
+        );
+        assert!(!fits_sig(&s, &q), "{bound:?}");
+    }
+    let split = one(x(0)).union(&one(x(1)));
+    let s = own_sig("X", 8, Some(EVERY), split.clone(), split);
+    let joined = one(y(0).union(&y(1)));
+    assert!(fits_sig(
+        &s,
+        &own_sig("Y", 8, Some(EVERY), joined.clone(), joined.clone())
+    ));
+    assert!(!fits_sig(
+        &s,
+        &own_sig("Y", 8, Some(EVERY), joined, one(y(0)))
+    ));
+}

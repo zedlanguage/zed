@@ -13,6 +13,7 @@ mod deep_types;
 mod divisors;
 mod docs;
 mod exact_casts;
+mod fits;
 mod given;
 mod held_functions;
 mod is_chains;

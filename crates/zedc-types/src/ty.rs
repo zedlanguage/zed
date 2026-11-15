@@ -6639,11 +6639,48 @@ impl<'m, 's> Comparing<'m, 's> {
         true
     }
 
-    /// Whether the tuple piece `cs` of a type is in one of the tuple shapes of `t` of its
-    /// length: a shape equal to it that holds it binding nothing, else the first in written
-    /// order that holds it, binding `t`'s variables, of those [`Comparing::search`] tries;
-    /// `search` holds `t`'s shapes filed and the buckets the other tuple pieces of the type
-    /// searched.
+    /// Whether the tuple piece `cs` of a type is in the tuple shapes of `t` of its length: in
+    /// one of them ([`Comparing::row_in_one`]), else, where a component of `cs` has two or more
+    /// pieces ([`Ty::pieces`]), split there into one row for each piece, each row in turn held
+    /// in the same way, with the bindings the rows before it gave. `search` holds `t`'s shapes
+    /// filed and the buckets the other tuple pieces of the type searched.
+    ///
+    /// A tuple type is the set of its tuples, so `(A | B, C)` holds what `(A, C) | (B, C)`
+    /// holds, and the split rows are in `t` exactly when `cs` is. Before
+    /// (FAIL-types-joined-one-tuple-in-split-shapes), only one shape could hold `cs`:
+    /// `(x0: (X0 | X1,)) -> int` did not fit `(x0: (X0,) | (X1,)) -> int` with `X0` and `X1`
+    /// bounded to several carriers, where each stands for one carrier and so holds `X0'` or
+    /// `X1'` of the other side, not both; unbounded, `X0` was bound to `X0' | X1'`. Now the
+    /// joined row is read as the split rows, as if written so.
+    ///
+    /// The rows of one split are the members of one union, so they share a [`Searched`] of
+    /// their own, new for each split: the one the type's pieces share already holds the bucket
+    /// `cs` searched past its first shape, and the first split row to need a second shape of
+    /// that bucket would be refused. A row a split makes that no shape holds is split at its
+    /// next component of two or more pieces; one of a single piece at each component that no
+    /// shape holds makes the answer false, and a refusal ends the walk with the refusal's
+    /// answer. The bindings are kept only when every row is held, so a false leaves `binds`
+    /// as it was, as [`Comparing::search`] does.
+    ///
+    /// Complexity tradeoff: naive version, the product of the components' pieces as rows, each
+    /// searched, exponential in the width. Used: a split only where the row is held by no one
+    /// shape, at its first component of two or more pieces, the rows walked depth first from an
+    /// explicit stack, stopping at the first row of single pieces held by no shape. A split is
+    /// never undone to try another component, so each row is searched once: a row held by no
+    /// shape costs at most one search more for each component of two or more pieces on the way
+    /// to its first leaf, and one held whole costs nothing more.
+    /// Assumption, not proved: the rows searched are at most about twice the split rows that
+    /// shapes hold, and those at most about the shapes of `t` of the length, since a split row
+    /// is made only where its parent was held by no one shape, and a shape that holds two rows
+    /// differing at one component holds their union there too unless the bindings made between
+    /// them stand in the way. Where many rows are each held only after a split by few shapes,
+    /// the cost is the product of the pieces split. Evidence: the benchmark
+    /// `bench::fits::a_joined_component_split_across_shapes_scales` (n shapes against a
+    /// component of n pieces) and the tests after
+    /// `a_joined_one_element_tuple_fits_split_shapes_for_every_bound`. Prior work: the
+    /// distribution of a union over a product in semantic subtyping (Frisch, Castagna and
+    /// Benzaken, "Semantic subtyping", JACM 2008), which decomposes a product type into the
+    /// union of products and checks each; here only where one shape does not hold the row.
     async fn row_in(
         &'m self,
         cs: &Row,
@@ -6652,6 +6689,68 @@ impl<'m, 's> Comparing<'m, 's> {
         binds: &mut Binds,
     ) -> bool {
         let filed = self.filed(t, search);
+        if self
+            .row_in_one(cs, t, &filed, &mut search.searched, binds)
+            .await
+        {
+            return true;
+        }
+        // The rows of one split: each made from its parent at the first component of two or
+        // more pieces, in written order, none if there is no such component.
+        let split = |r: &Row| -> Option<Vec<Row>> {
+            let j = r.iter().position(|c| c.pieces().len() > 1)?;
+            let pieces = r[j].pieces();
+            Some(
+                (pieces.iter().rev())
+                    .map(|p| {
+                        let mut comps: Vec<Ty> = r.iter().cloned().collect();
+                        comps[j] = r[j].of_piece(p);
+                        r.replaced(comps)
+                    })
+                    .collect(),
+            )
+        };
+        if self.cx.borrow().unchosen.is_some() {
+            return false;
+        }
+        let Some(first) = split(cs) else {
+            return false;
+        };
+        let mut b = binds.clone();
+        // Each split's own [`Searched`], and the rows still to hold with the split each is of,
+        // the next on top.
+        let mut unions: Vec<Searched<usize, Row>> = vec![Searched::new()];
+        let mut todo: Vec<(Row, usize)> = first.into_iter().map(|r| (r, 0)).collect();
+        while let Some((r, u)) = todo.pop() {
+            if self.row_in_one(&r, t, &filed, &mut unions[u], &mut b).await {
+                continue;
+            }
+            if self.cx.borrow().unchosen.is_some() {
+                return false;
+            }
+            let Some(rows) = split(&r) else {
+                return false;
+            };
+            unions.push(Searched::new());
+            todo.extend(rows.into_iter().map(|r| (r, unions.len() - 1)));
+        }
+        *binds = b;
+        true
+    }
+
+    /// Whether the tuple piece `cs` of a type is in one of the tuple shapes of `t` of its
+    /// length: a shape equal to it that holds it binding nothing, else the first in written
+    /// order that holds it, binding `t`'s variables, of those [`Comparing::search`] tries;
+    /// `filed` holds `t`'s shapes filed and `searched` the buckets the other members of the
+    /// union `cs` is of searched.
+    async fn row_in_one(
+        &'m self,
+        cs: &Row,
+        t: &Ty,
+        filed: &Filed,
+        searched: &mut Searched<usize, Row>,
+        binds: &mut Binds,
+    ) -> bool {
         let Some(choices) = filed.rows.get(&cs.len()) else {
             return false;
         };
@@ -6672,7 +6771,7 @@ impl<'m, 's> Comparing<'m, 's> {
             choices,
             &xs,
             (cs.len(), cs),
-            &mut search.searched,
+            searched,
             |r: usize| t.tuples[r].iter().collect(),
             binds,
             fit,
