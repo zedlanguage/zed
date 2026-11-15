@@ -1237,7 +1237,7 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
     // (`Scope::forget_projections`), which never uses the potential.
     let (mut r, seed) = Rng::fresh("shortest paths block by block");
     let p = Premises::new();
-    let (mut moved, mut empty) = (0, 0);
+    let mut met = [0usize; 3];
     for case in 0..20 {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
@@ -1254,46 +1254,108 @@ fn shortest_paths_give_the_intervals_of_the_projection_block_by_block() {
             };
             tests.push((t, r.below(6) != 0, r.below(10) == 0));
         }
-        for reverse in [false, true] {
-            let mut order = tests.clone();
-            if reverse {
-                order.reverse();
-            }
-            let mut s = ints(&ns);
-            for (step, (t, holds, joined)) in order.iter().enumerate() {
-                let before = intervals(&s, &ns);
-                let next = |s: &Scope| {
-                    if *joined {
-                        let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
-                        j.reduce();
-                        j
-                    } else {
-                        s.assume(t, *holds, &p)
-                    }
-                };
-                let got = next(&s);
-                let mut fresh = s.clone();
-                fresh.forget_projections();
-                let mut want = next(&fresh);
-                want.forget_projections();
-                want.reduce();
-                assert_eq!(
-                    intervals(&got, &ns),
-                    intervals(&want, &ns),
-                    "seed {seed} case {case} reverse {reverse} step {step}: {order:?}"
-                );
-                moved += usize::from(intervals(&got, &ns) != before);
-                if got.bottom {
-                    empty += 1;
-                    break;
-                }
-                s = got;
-            }
+        let m = ladder_checked(&ns, &tests, &p, &format!("seed {seed} case {case}"));
+        for (n, x) in met.iter_mut().zip(m) {
+            *n += x;
         }
     }
-    // Over 10 seeds: moved 75 to 134, empty 12 to 26.
-    assert!(moved > 30, "seed {seed}: {moved} steps moved an interval");
-    assert!(empty > 4, "seed {seed}: {empty} ladders became empty");
+    // Over 10 seeds: moved 75 to 134, empty 12 to 26. A kind the 20 ladders missed is met by
+    // the ladder built for it, so no count of ladders is relied on
+    // (PROOF-test-coverage-constructive; until 2026-11-15 the counts were held above 30 and 4).
+    eprintln!("seed {seed}: moved, empty, holes {met:?}");
+    ladder_kinds_met(&met[..2]);
+}
+
+/// The kinds of step a run of ladders means to meet, in the order [`ladder_checked`] counts
+/// them: steps that moved an interval, ladders that became empty, steps that left a name with
+/// holes.
+const LADDER_KINDS: [&str; 3] = ["moved", "empty", "holes"];
+
+/// Checks the ladder `tests` over the names `ns`, in its order and reversed: each step's
+/// intervals are those the projection block by block finds from scratch
+/// (`Scope::forget_projections`), which never uses the potential. Each test is assumed as it
+/// holds or not, or with both of its arms joined. `at` names the ladder in a failure. Gives
+/// the counts of [`LADDER_KINDS`].
+fn ladder_checked(ns: &[Arc<str>], tests: &[Step], p: &Premises, at: &str) -> [usize; 3] {
+    let (mut moved, mut empty, mut holes) = (0, 0, 0);
+    for reverse in [false, true] {
+        let mut order = tests.to_vec();
+        if reverse {
+            order.reverse();
+        }
+        let mut s = ints(ns);
+        for (step, (t, holds, joined)) in order.iter().enumerate() {
+            let before = intervals(&s, ns);
+            let next = |s: &Scope| {
+                if *joined {
+                    let mut j = s.assume(t, true, p).join(&s.assume(t, false, p));
+                    j.reduce();
+                    j
+                } else {
+                    s.assume(t, *holds, p)
+                }
+            };
+            let got = next(&s);
+            let mut fresh = s.clone();
+            fresh.forget_projections();
+            let mut want = next(&fresh);
+            want.forget_projections();
+            want.reduce();
+            assert_eq!(
+                intervals(&got, ns),
+                intervals(&want, ns),
+                "{at} reverse {reverse} step {step}: {order:?}"
+            );
+            moved += usize::from(intervals(&got, ns) != before);
+            holes += usize::from(ns.iter().any(|n| got.get(n).ints().len() > 1));
+            if got.bottom {
+                empty += 1;
+                break;
+            }
+            s = got;
+        }
+    }
+    [moved, empty, holes]
+}
+
+/// A step of a ladder: the test, the outcome assumed, and whether the step joins the scopes
+/// of both outcomes instead.
+type Step = (Term, bool, bool);
+
+/// A ladder built to meet each of [`LADDER_KINDS`]: `x0 != 0` moves `x0` and leaves it a
+/// hole, `x1 - x0 >= 1` and `x0 >= 1` move it again, and `x0 <= 0` empties the scope; in the
+/// reverse order `x0 <= 0` moves `x0` and `x0 >= 1` empties the scope.
+fn built_ladder() -> (Vec<Arc<str>>, Vec<Step>) {
+    let tests = vec![
+        (prim(Prim::Ne, var("x0"), int(0)), true, false),
+        (ge("x1", "x0", 1), true, false),
+        (prim(Prim::Ge, var("x0"), int(1)), true, false),
+        (prim(Prim::Le, var("x0"), int(0)), true, false),
+    ];
+    (named(2, "x"), tests)
+}
+
+/// Each of [`LADDER_KINDS`] whose count in `met` is 0 is met by [`built_ladder`], which gives
+/// the projection from scratch at every step.
+fn ladder_kinds_met(met: &[usize]) {
+    for (i, kind) in LADDER_KINDS.iter().enumerate().take(met.len()) {
+        if met[i] == 0 {
+            let (ns, tests) = built_ladder();
+            let built = ladder_checked(&ns, &tests, &Premises::new(), "the built ladder");
+            assert!(built[i] > 0, "{kind} not met: {built:?}");
+            eprintln!("{kind} met only by the ladder built for it");
+        }
+    }
+}
+
+/// The ladder built for [`LADDER_KINDS`] meets each of them.
+#[test]
+fn the_ladder_built_for_each_kind_of_step_meets_it() {
+    let (ns, tests) = built_ladder();
+    let built = ladder_checked(&ns, &tests, &Premises::new(), "the built ladder");
+    for (kind, n) in LADDER_KINDS.iter().zip(built) {
+        assert!(n > 0, "{kind}: {built:?}");
+    }
 }
 
 #[test]
@@ -1305,17 +1367,17 @@ fn shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block
 /// As in the ladders above, with tests that leave a tree to the projection block by block
 /// between the difference constraints: `x != c`, which gives `x` a hole until a bound closes
 /// it, and `x + y >= c`, not a difference constraint. An edge that comes while its tree goes
-/// block by block is in the potential before any later edge is read (`Scope::repair`). At
-/// least 15 cases of `seed` are drawn, and more until steps that moved an interval, ladders
-/// that became empty and steps that left a name with holes are all met, as in
-/// [`holes_in_trees`]: over 15 cases the empty ladders vary from seed to seed, and 4 of 400
-/// runs met only 4 (FAIL-linked-sums-between-seed). Returns the number of cases drawn.
-fn sums_between(seed: u64) -> usize {
+/// block by block is in the potential before any later edge is read (`Scope::repair`). 15
+/// cases of `seed` are drawn; each of [`LADDER_KINDS`] they miss is met by the ladder built for
+/// it (PROOF-test-coverage-constructive; until 2026-11-15 cases were drawn until more than 60
+/// moved, 4 empty and 40 with holes were met, with no limit: over 15 cases the empty ladders
+/// vary from seed to seed, and 4 of 400 runs met only 4, FAIL-linked-sums-between-seed).
+/// Gives the counts of [`LADDER_KINDS`] over the 15 cases.
+fn sums_between(seed: u64) -> [usize; 3] {
     let mut r = Rng::new(seed);
     let p = Premises::new();
-    let (mut moved, mut empty, mut holes) = (0, 0, 0);
-    let mut case = 0;
-    while case < 15 || moved <= 60 || empty <= 4 || holes <= 40 {
+    let mut met = [0usize; 3];
+    for case in 0..15 {
         let k = 3 + r.below(6);
         let ns = named(k, "x");
         let mut tests: Vec<(Term, bool, bool)> = Vec::new();
@@ -1333,46 +1395,14 @@ fn sums_between(seed: u64) -> usize {
             };
             tests.push((t, r.below(6) != 0, r.below(10) == 0));
         }
-        for reverse in [false, true] {
-            let mut order = tests.clone();
-            if reverse {
-                order.reverse();
-            }
-            let mut s = ints(&ns);
-            for (step, (t, holds, joined)) in order.iter().enumerate() {
-                let before = intervals(&s, &ns);
-                let next = |s: &Scope| {
-                    if *joined {
-                        let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
-                        j.reduce();
-                        j
-                    } else {
-                        s.assume(t, *holds, &p)
-                    }
-                };
-                let got = next(&s);
-                let mut fresh = s.clone();
-                fresh.forget_projections();
-                let mut want = next(&fresh);
-                want.forget_projections();
-                want.reduce();
-                assert_eq!(
-                    intervals(&got, &ns),
-                    intervals(&want, &ns),
-                    "seed {seed} case {case} reverse {reverse} step {step}: {order:?}"
-                );
-                moved += usize::from(intervals(&got, &ns) != before);
-                holes += usize::from(ns.iter().any(|n| got.get(n).ints().len() > 1));
-                if got.bottom {
-                    empty += 1;
-                    break;
-                }
-                s = got;
-            }
+        let m = ladder_checked(&ns, &tests, &p, &format!("seed {seed} case {case}"));
+        for (n, x) in met.iter_mut().zip(m) {
+            *n += x;
         }
-        case += 1;
     }
-    case
+    eprintln!("seed {seed}: moved, empty, holes {met:?}");
+    ladder_kinds_met(&met);
+    met
 }
 
 /// The sums-between ladders of seed 4360659011783558506 give the projection from scratch: a
@@ -1389,22 +1419,23 @@ fn shortest_paths_with_holes_and_sums_between_of_seed_16499876031534905745() {
     sums_between(16499876031534905745);
 }
 
-/// Seed 8574908458420171230 empties only 4 ladders in 15 cases, and draws more.
+/// Seed 8574908458420171230 empties only 4 ladders in 15 cases, where more than 4 were asked
+/// for until 2026-11-15 (FAIL-linked-sums-between-seed).
 #[test]
 fn shortest_paths_with_holes_and_sums_between_of_seed_8574908458420171230() {
-    assert!(sums_between(8574908458420171230) > 15);
+    assert_eq!(sums_between(8574908458420171230)[1], 4);
 }
 
-/// Seed 16626066307386781116 empties only 4 ladders in 15 cases, and draws more.
+/// Seed 16626066307386781116 empties only 4 ladders in 15 cases, as seed 8574908458420171230.
 #[test]
 fn shortest_paths_with_holes_and_sums_between_of_seed_16626066307386781116() {
-    assert!(sums_between(16626066307386781116) > 15);
+    assert_eq!(sums_between(16626066307386781116)[1], 4);
 }
 
 /// Counts of [`holes_in_trees`]: tests that moved an interval, left a name with holes, left
 /// two names or more with holes, or made the scope empty; pairs of inequalities that made a
 /// cycle of weight 0; tests that joined both arms; trees drawn.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct HoleCounts {
     trees: usize,
     moved: usize,
@@ -1421,19 +1452,16 @@ struct HoleCounts {
 /// (`Scope::raise`); holes of two integers, cycles lighter than the sum of their names' gaps,
 /// and cycles of weight 0 from equalities and from two inequalities go block by block. With
 /// `pile`, the step's own test is the hole test half the time, so that holes pile up in many
-/// names of one tree. The trees of `seed` are checked and counted in turn until `enough` holds
-/// of the counts: the counts of a few trees vary widely from seed to seed (piled, over 4 trees
-/// of 300 seeds, 0 to 234), so a test asks for the cases it means to meet and draws trees
-/// until they are met, rather than asserting them of a fixed number of trees. A change that
-/// stops the trees from meeting them makes the test run past its time limit.
-fn holes_in_trees(seed: u64, pile: bool, enough: impl Fn(&HoleCounts) -> bool) -> HoleCounts {
+/// names of one tree. The first `trees` trees of `seed` are checked and counted. The counts
+/// vary widely from seed to seed (piled, over 4 trees of 300 seeds, 0 to 234), so a test that
+/// means to meet a case does so by [`hole_kinds_met`], with a tree built for each case its
+/// trees missed, never by drawing more (PROOF-test-coverage-constructive; until 2026-11-15
+/// trees were drawn until counts were met, with no limit).
+fn holes_in_trees(seed: u64, pile: bool, trees: usize) -> HoleCounts {
     let mut r = Rng::new(seed);
     let p = Premises::new();
     let mut out = HoleCounts::default();
-    for case in 0.. {
-        if enough(&out) {
-            break;
-        }
+    for case in 0..trees {
         out.trees += 1;
         let k = 3 + r.below(6);
         let ns = named(k, "x");
@@ -1467,23 +1495,9 @@ fn holes_in_trees(seed: u64, pile: bool, enough: impl Fn(&HoleCounts) -> bool) -
             let asked = [hole(&mut r), hole(&mut r), hole(&mut r)];
             let checks = asked.iter().flat_map(|h| [(h, true), (h, false)]);
             for (hole, holds) in checks {
-                let got = s.assume(hole, holds, &p);
-                let mut fresh = s.clone();
-                fresh.forget_projections();
-                let mut want = fresh.assume(hole, holds, &p);
-                want.forget_projections();
-                want.reduce();
-                assert_eq!(
-                    intervals(&got, &ns),
-                    intervals(&want, &ns),
-                    "seed {seed} case {case} step {step} {holds}: {hole:?} on {:?}",
-                    s.relation
-                );
-                let holed = ns.iter().filter(|n| got.get(n).ints().len() > 1).count();
-                out.moved += usize::from(intervals(&got, &ns) != intervals(&s, &ns));
-                out.holes += usize::from(holed > 0);
-                out.piled += usize::from(holed > 1);
-                out.empty += usize::from(got.bottom);
+                hole_checked(&s, hole, holds, &ns, &p, &mut out, || {
+                    format!("seed {seed} case {case} step {step}")
+                });
             }
             if pile && r.below(2) == 0 {
                 let next = s.assume(&asked[0], true, &p);
@@ -1528,73 +1542,161 @@ fn holes_in_trees(seed: u64, pile: bool, enough: impl Fn(&HoleCounts) -> bool) -
     out
 }
 
-/// [`holes_in_trees`] without piling, on trees of a new seed each run, at least 4 and until
-/// the counts are met. As one test of the 150 trees of seed 0x1e4e it took about 20 s alone at
-/// load 23 to 25, and as three tests of 50 trees about 5 s each (item SPLIT-l01_39-linked);
-/// those 150 trees counted moved 6096, holes 2330, empty 662, tied 77, joined 109. Each tree
-/// has about one tied pair and one joined `if`, too few in a few trees to ask for a count.
-/// 4 trees took 0.15 to 1.3 s alone at load 49 on 32 cores.
+/// The test `hole` asked of the scope `s`, holding or not (`holds`), gives the intervals of
+/// the projection from scratch; counted in `out`. `at` names the step in a failure. Gives the
+/// scope after the test.
+fn hole_checked(
+    s: &Scope,
+    hole: &Term,
+    holds: bool,
+    ns: &[Arc<str>],
+    p: &Premises,
+    out: &mut HoleCounts,
+    at: impl Fn() -> String,
+) -> Scope {
+    let got = s.assume(hole, holds, p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(hole, holds, p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(
+        intervals(&got, ns),
+        intervals(&want, ns),
+        "{} {holds}: {hole:?} on {:?}",
+        at(),
+        s.relation
+    );
+    let holed = ns.iter().filter(|n| got.get(n).ints().len() > 1).count();
+    out.moved += usize::from(intervals(&got, ns) != intervals(s, ns));
+    out.holes += usize::from(holed > 0);
+    out.piled += usize::from(holed > 1);
+    out.empty += usize::from(got.bottom);
+    got
+}
+
+/// The trees [`holes_in_trees`] draws in a random run: 4 took 0.15 to 1.3 s alone at load 49
+/// on 32 cores.
+const HOLE_TREES: usize = 4;
+
+/// The cases a run of trees means to meet, by their counts in [`HoleCounts`]: tests that moved
+/// an interval, left a name with holes, left two names or more with holes, made the scope
+/// empty. Each is met by the tree of [`built_hole_trees`] at its index.
+const HOLE_KINDS: [&str; 4] = ["moved", "holes", "piled", "empty"];
+
+/// The counts of [`HOLE_KINDS`] in `n`.
+fn hole_kinds(n: &HoleCounts) -> [usize; 4] {
+    [n.moved, n.holes, n.piled, n.empty]
+}
+
+/// A tree built for each of [`HOLE_KINDS`]: `x0` and `x1` in `[0..=4]` with `x1 - x0 >= 0`,
+/// then holes asked in turn, each checked as [`holes_in_trees`] checks one. `x0 != 2` moves
+/// `x0` and leaves it a hole; `x1 != 3` after it leaves both names holes; `x0 != 0` after
+/// `x0 <= 0` makes the scope empty. Gives the counts of each tree.
+fn built_hole_trees() -> [HoleCounts; 4] {
+    let p = Premises::new();
+    let ns = named(2, "x");
+    let ne = |n: &str, c: i64| prim(Prim::Ne, var(n), int(c));
+    let mut s = ints(&ns);
+    for n in &ns {
+        s = s.assume(&prim(Prim::Ge, var(n), int(0)), true, &p);
+        s = s.assume(&prim(Prim::Le, var(n), int(4)), true, &p);
+    }
+    let tree = s.assume(&ge("x1", "x0", 0), true, &p);
+    let run = |steps: &[Term]| {
+        let mut out = HoleCounts {
+            trees: 1,
+            ..HoleCounts::default()
+        };
+        let mut s = tree.clone();
+        for (i, t) in steps.iter().enumerate() {
+            s = hole_checked(&s, t, true, &ns, &p, &mut out, || format!("built step {i}"));
+        }
+        out
+    };
+    let one = run(&[ne("x0", 2)]);
+    let piled = run(&[ne("x0", 2), ne("x1", 3)]);
+    let empty = run(&[prim(Prim::Le, var("x0"), int(0)), ne("x0", 0)]);
+    [one.clone(), one, piled, empty]
+}
+
+/// Each of [`HOLE_KINDS`] that `n` missed (all but `piled` when `pile` is false) is met by its
+/// tree of [`built_hole_trees`], which gives the projection from scratch at every step.
+fn hole_kinds_met(n: &HoleCounts, pile: bool) {
+    let kinds = hole_kinds(n);
+    for (i, kind) in HOLE_KINDS.into_iter().enumerate() {
+        if kinds[i] == 0 && (pile || kind != "piled") {
+            let built = &built_hole_trees()[i];
+            assert!(hole_kinds(built)[i] > 0, "{kind} not met: {built:?}");
+            eprintln!("{kind} met only by the tree built for it");
+        }
+    }
+}
+
+/// [`holes_in_trees`] without piling, on [`HOLE_TREES`] trees of a new seed each run. As one
+/// test of the 150 trees of seed 0x1e4e it took about 20 s alone at load 23 to 25, and as three
+/// tests of 50 trees about 5 s each (item SPLIT-l01_39-linked); those 150 trees counted moved
+/// 6096, holes 2330, empty 662, tied 77, joined 109.
 #[test]
 fn holes_in_a_tree_of_differences_give_the_projection_from_scratch() {
     let (_, seed) = Rng::fresh("holes in a tree of differences");
     // Over 17 seeds, 4 trees each: moved 66 to 275, holes 15 to 137, empty 6 to 41.
-    holes_in_trees(seed, false, met_without_piling);
-}
-
-/// At least 4 trees, and more than 30 tests that moved an interval, 6 that left a hole and 2
-/// that made the scope empty.
-fn met_without_piling(n: &HoleCounts) -> bool {
-    n.trees >= 4 && n.moved > 30 && n.holes > 6 && n.empty > 2
+    let n = holes_in_trees(seed, false, HOLE_TREES);
+    eprintln!("{n:?}");
+    hole_kinds_met(&n, false);
 }
 
 /// As [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], with the holes piled
-/// up in many names of each tree, on trees of a new seed each run, at least 4 and until the
-/// counts are met (4 trees took 0.8 s at load 42). As one test of the 150 trees of seed 0x9a1e
-/// it took about 22 s alone at load 23 to 25 (item SPLIT-l01_39-linked); those trees counted
-/// moved 6773, holes 4803, piled 2296, empty 763, tied 45, joined 45.
+/// up in many names of each tree, on [`HOLE_TREES`] trees of a new seed each run (4 trees took
+/// 0.8 s at load 42). As one test of the 150 trees of seed 0x9a1e it took about 22 s alone at
+/// load 23 to 25 (item SPLIT-l01_39-linked); those trees counted moved 6773, holes 4803, piled
+/// 2296, empty 763, tied 45, joined 45. Over 4 trees of each of 300 seeds (1000 to 1299),
+/// piled ranged from 0 to 234 (item FAIL-linked-piled-holes-count).
 #[test]
 fn holes_piled_in_many_names_of_a_tree_give_the_projection_from_scratch() {
     let (_, seed) = Rng::fresh("holes piled in many names of a tree");
-    holes_in_trees(seed, true, met_with_piling);
+    let n = holes_in_trees(seed, true, HOLE_TREES);
+    eprintln!("{n:?}");
+    hole_kinds_met(&n, true);
 }
 
-/// At least 4 trees, and more than 60 tests that moved an interval, 45 that left a hole, 10
-/// that left holes in two names or more, and 3 that made the scope empty. Over 4 trees of each
-/// of 300 seeds (1000 to 1299), 11 seeds met fewer: piled 0 to 9 in those, and 0 to 234 over
-/// all, with holes 15 to 68 and moved 51 to 149 in the 11 (item FAIL-linked-piled-holes-count).
-fn met_with_piling(n: &HoleCounts) -> bool {
-    n.trees >= 4 && n.moved > 60 && n.holes > 45 && n.piled > 10 && n.empty > 3
+/// Each tree built for a kind of [`HOLE_KINDS`] meets it.
+#[test]
+fn each_tree_built_for_a_kind_of_hole_meets_it() {
+    for (i, (kind, built)) in HOLE_KINDS.into_iter().zip(built_hole_trees()).enumerate() {
+        assert!(hole_kinds(&built)[i] > 0, "{kind}: {built:?}");
+    }
 }
 
-/// The first 4 trees of `seed`, with piling, count `first` (moved, holes, piled, empty), short
-/// of [`met_with_piling`], so a test that asserted the counts of 4 trees failed on it
-/// (FAIL-linked-piled-holes-count); the trees after them meet the counts.
+/// The first 4 trees of `seed`, with piling, count `first` (moved, holes, piled, empty): seeds
+/// on which a test that asked for counts over 4 trees failed (FAIL-linked-piled-holes-count).
+/// Every step of them gives the projection from scratch.
 fn met_after_four_trees(seed: u64, first: [usize; 4]) {
-    let n = holes_in_trees(seed, true, |n| n.trees == 4);
-    assert_eq!([n.moved, n.holes, n.piled, n.empty], first, "{n:?}");
-    let n = holes_in_trees(seed, true, met_with_piling);
-    assert!(n.trees > 4 && met_with_piling(&n), "{n:?}");
+    let n = holes_in_trees(seed, true, HOLE_TREES);
+    assert_eq!(hole_kinds(&n), first, "{n:?}");
 }
 
-/// Piled 9, where more than 10 are asked for.
+/// Piled 9, where more than 10 were asked for until 2026-11-15.
 #[test]
 fn holes_piled_in_the_trees_of_seed_10423609239771793175() {
     met_after_four_trees(10423609239771793175, [130, 67, 9, 15]);
 }
 
-/// Empty 2, where more than 3 are asked for (found by FAIL-zir-text-reader-messages).
+/// Empty 2, where more than 3 were asked for until 2026-11-15 (found by
+/// FAIL-zir-text-reader-messages).
 #[test]
 fn holes_piled_in_the_trees_of_seed_12717323168360931590() {
     met_after_four_trees(12717323168360931590, [101, 62, 32, 2]);
 }
 
-/// Holes 42, where more than 45 are asked for (found by FAIL-bitword-arity-message).
+/// Holes 42, where more than 45 were asked for until 2026-11-15 (found by
+/// FAIL-bitword-arity-message).
 #[test]
 fn holes_piled_in_the_trees_of_seed_9834632220024286056() {
     met_after_four_trees(9834632220024286056, [112, 42, 13, 8]);
 }
 
-/// No holes piled at all, and holes 22, where more than 45 are asked for.
+/// No holes piled at all, and holes 22, where more than 45 were asked for until 2026-11-15.
 #[test]
 fn holes_piled_in_the_trees_of_seed_1226() {
     met_after_four_trees(1226, [86, 22, 0, 9]);
@@ -2350,7 +2452,7 @@ mod bench;
 /// (`holes::tie_cycles`; the projection from scratch kept the hulls).
 #[test]
 fn holes_in_the_tree_of_differences_of_seed_1597508919132665080() {
-    holes_in_trees(1597508919132665080, false, |n| n.trees == 4);
+    holes_in_trees(1597508919132665080, false, HOLE_TREES);
 }
 
 /// The piled trees of seed 7824212788089549554 give the projection from scratch: the join of
@@ -2359,21 +2461,21 @@ fn holes_in_the_tree_of_differences_of_seed_1597508919132665080() {
 /// projection as it was (FAIL-linked-held-wider-seed, `Order::unmark`).
 #[test]
 fn holes_piled_in_the_trees_of_seed_7824212788089549554_give_the_projection_from_scratch() {
-    holes_in_trees(7824212788089549554, true, met_with_piling);
+    holes_in_trees(7824212788089549554, true, HOLE_TREES);
 }
 
 /// The piled trees of seed 5509389503070729707 give the projection from scratch, as those of
 /// seed 7824212788089549554.
 #[test]
 fn holes_piled_in_the_trees_of_seed_5509389503070729707_give_the_projection_from_scratch() {
-    holes_in_trees(5509389503070729707, true, met_with_piling);
+    holes_in_trees(5509389503070729707, true, HOLE_TREES);
 }
 
 /// The trees of seed 14632382012997512814 give the projection from scratch, as those of
 /// seed 7824212788089549554.
 #[test]
 fn holes_in_the_trees_of_seed_14632382012997512814_give_the_projection_from_scratch() {
-    holes_in_trees(14632382012997512814, false, met_without_piling);
+    holes_in_trees(14632382012997512814, false, HOLE_TREES);
 }
 
 /// Seed 7824212788089549554 made minimal: after the join of the cases of
@@ -2412,7 +2514,7 @@ fn a_star_unmarked_by_a_join_is_projected_again_when_its_hub_moves() {
 /// The trees of seed 15479193071854034191 give the projection from scratch.
 #[test]
 fn holes_in_the_trees_of_seed_15479193071854034191_give_the_projection_from_scratch() {
-    holes_in_trees(15479193071854034191, false, met_without_piling);
+    holes_in_trees(15479193071854034191, false, HOLE_TREES);
 }
 
 /// The steps of `steps` and then `hole` assumed false give the projection from scratch.
@@ -2518,11 +2620,11 @@ fn a_hole_left_with_its_first_case_wakes_the_parts_of_its_groups() {
 /// The trees of seed 1217883182935025609 give the projection from scratch.
 #[test]
 fn holes_in_the_trees_of_seed_1217883182935025609_give_the_projection_from_scratch() {
-    holes_in_trees(1217883182935025609, false, met_without_piling);
+    holes_in_trees(1217883182935025609, false, HOLE_TREES);
 }
 
 /// The trees of seed 5815247056960035517 give the projection from scratch.
 #[test]
 fn holes_in_the_trees_of_seed_5815247056960035517_give_the_projection_from_scratch() {
-    holes_in_trees(5815247056960035517, false, met_without_piling);
+    holes_in_trees(5815247056960035517, false, HOLE_TREES);
 }

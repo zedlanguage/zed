@@ -289,47 +289,65 @@ fn agree_both(s: &Shape) -> Result<(usize, bool), String> {
 }
 
 /// Over random shapes, with a new seed each run (author P169; was 300 shapes of the one seed
-/// `0x1_39_33`, 19 s at load 30), until [`AGREE_ARMS`] arms are compared.
+/// `0x1_39_33`, 19 s at load 30), [`AGREE_SHAPES`] of them.
 #[test]
 fn the_closed_path_condition_and_the_scope_agree_on_emptiness() {
     let (mut rng, seed) = Rng::fresh("the_closed_path_condition_and_the_scope_agree_on_emptiness");
-    let shapes = agree_run(&mut rng, seed);
-    eprintln!("seed {seed}: {AGREE_ARMS} arms compared over {shapes} shapes");
+    let compared = agree_run(&mut rng, seed);
+    eprintln!("seed {seed}: {compared} arms compared over {AGREE_SHAPES} shapes");
 }
 
-/// [`agree_both`] on shapes drawn from `rng` until [`AGREE_ARMS`] arms are compared: the
-/// number of shapes drawn. Most arms are not compared, by DESIGN step L1.25: a test relating
-/// `x` and `y` (`x != y`, `y + x > -1`) has a box preimage marked necessary, and a path through
-/// an `or` has a scope that is a join; two shapes in three compare no arm. A fixed count of
-/// shapes therefore compares few arms on some seeds (10 shapes compared 2 or fewer on 4 seeds
-/// in 100), so the run draws until the count of arms is met.
+/// [`agree_both`] on [`AGREE_SHAPES`] shapes drawn from `rng`: the number of arms compared.
+/// Most arms are not compared, by DESIGN step L1.25: a test relating `x` and `y` (`x != y`,
+/// `y + x > -1`) has a box preimage marked necessary, and a path through an `or` has a scope
+/// that is a join; two shapes in three compare no arm, and on some seeds none of the shapes
+/// does. When none does, the shape [`built_compared_shape`] is compared in their place, so the
+/// comparison is never skipped and no count of arms is relied on
+/// (PROOF-test-coverage-constructive; until 2026-11-15 shapes were drawn until 20 arms were
+/// compared, at most 100 shapes).
 fn agree_run(rng: &mut Rng, seed: u64) -> usize {
-    let (mut shapes, mut compared) = (0, 0);
-    while compared < AGREE_ARMS {
-        assert!(
-            shapes < AGREE_SHAPES_MAX,
-            "seed {seed}: {shapes} shapes compared only {compared} arms"
-        );
+    let mut compared = 0;
+    for _ in 0..AGREE_SHAPES {
         let s = Shape::random(rng);
         compared += agree_both(&s)
             .unwrap_or_else(|e| panic!("seed {seed}, {s:?}: {e}"))
             .0;
-        shapes += 1;
     }
-    shapes
+    if compared == 0 {
+        let s = built_compared_shape();
+        compared = agree_both(&s)
+            .unwrap_or_else(|e| panic!("the built shape: {e}"))
+            .0;
+        assert!(compared > 0, "the built shape compares no arm");
+        eprintln!("seed {seed}: no arm compared; the built shape compared in their place");
+    }
+    compared
 }
 
-/// The arms [`agree_run`] compares in a run: over 300 seeds, 10 shapes compared 21 on average,
-/// about 2.1 a shape.
-const AGREE_ARMS: usize = 20;
+/// The shapes [`agree_run`] draws: over 300 seeds, 10 shapes compared 21 arms on average.
+const AGREE_SHAPES: usize = 10;
 
-/// The shapes [`agree_run`] may draw before it has compared [`AGREE_ARMS`] arms: 100, where
-/// about 210 arms are expected, fails only when exact arms grow ten times rarer than measured
-/// (by chance, when 93 or more of the 100 shapes compare none, estimated at 1 run in 10^9).
-const AGREE_SHAPES_MAX: usize = 100;
+/// A shape whose tests each read one name (`z = x`, `x >= 0`, `y >= 0`, `z > 0`), so that
+/// each preimage is a box and its arms are compared.
+fn built_compared_shape() -> Shape {
+    Shape {
+        z: var("x"),
+        outer: Term::Prim(Prim::Ge, vec![var("x"), lit(0)]),
+        inner: Term::Prim(Prim::Ge, vec![var("y"), lit(0)]),
+        c: 0,
+    }
+}
+
+/// The shape built for [`agree_run`] has arms compared, and they agree.
+#[test]
+fn the_shape_built_to_be_compared_has_arms_compared() {
+    let (compared, _) = agree_both(&built_compared_shape()).expect("agrees");
+    assert!(compared > 0, "no arm compared");
+}
 
 /// The seeds on which 10 shapes compared too few arms: 18222323747793033296 compared 2 and
-/// 1206774933959865883 compared 0, every test of their shapes relating `x` and `y`.
+/// 1206774933959865883 compared 0, every test of their shapes relating `x` and `y`. Seed
+/// 1206774933959865883 compares the built shape in place of its own.
 #[test]
 fn the_seeds_that_compared_too_few_arms_reach_the_count() {
     for seed in [18222323747793033296, 1206774933959865883] {
@@ -910,28 +928,27 @@ fn chains_of(test: &str, depth: usize, calls: bool) {
 const CHAIN_DRAWS: usize = 6;
 
 /// At each depth, among the chains of the seed `0x1_39_c0` plus the depth, an arm of `e > c` is
-/// cut and one is narrowed through every link within the first [`WITNESS_DRAWS`] draws: about
+/// cut and one is narrowed through every link among the first [`WITNESS_DRAWS`] draws: about
 /// one chain in five cuts an arm and one in two narrows one over the old 600 chains of each
-/// seed. The draws are fixed by the seed, so this does not vary between runs.
+/// seed. The draws are fixed by the seed, so these are fixed chains, the same in every run;
+/// all of them are traced (until 2026-11-15 the draws stopped at the first that did both).
 fn chains_cut_and_narrow(calls: bool) {
     let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
     for depth in 1..=3 {
         let mut rng = Rng::new(0x1_39_c0 + depth as u64);
         let mut n = ChainCounts::default();
-        let mut draws = 0;
-        while (n.cut == 0 || n.narrowed == 0) && draws < WITNESS_DRAWS {
+        for _ in 0..WITNESS_DRAWS {
             let body = chain(&mut rng, depth, calls);
             count_end(&zedc::store::product::arms(&body, &ints(&xy)), &mut n);
-            draws += 1;
         }
         assert!(
             n.cut > 0 && n.narrowed > 0,
-            "depth {depth}, calls {calls}: {n:?} over {draws} draws"
+            "depth {depth}, calls {calls}: {n:?} over {WITNESS_DRAWS} chains"
         );
     }
 }
 
-/// The draws [`chains_cut_and_narrow`] looks through at each depth.
+/// The chains of each fixed seed [`chains_cut_and_narrow`] traces at each depth.
 const WITNESS_DRAWS: usize = 20;
 
 #[test]
