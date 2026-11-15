@@ -608,6 +608,16 @@ fn a_weak_label_hash_is_flagged_and_names_stay_exact() {
     // names stay exact.
     let mut names = Names::canonical(|_| 0);
     let mut corpus = Corpus::default();
+    // A text built to reach the hash, so that the collision does not rest on the draws below
+    // (row FAIL-canon-collision-test-exact-labels). Its 256 bytes are all different, so no
+    // level of its parse holds a run (two neighbors stand for texts with no byte in common),
+    // and a rule standing for m bytes has a 9-bit code for each of them: for m ≥ 14 its code
+    // passes 125 bits and its label is hashed. Its name is a block of 2 to 6 symbols, so it
+    // and its largest part, of at least 43 bytes, are two different hashed rules.
+    let distinct: Vec<u8> = (0..=255).collect();
+    let whole = names.leaf(&distinct);
+    corpus.add(name_of(&whole), &distinct);
+    assert!(names.collided());
     let mut rng = Rng(crate::seed::seed("a_weak_label_hash_is_flagged_and_names_stay_exact") | 1);
     for _ in 0..60 {
         let n = rng.pick(&[5, 30, 300, 3000]);

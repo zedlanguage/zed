@@ -743,24 +743,63 @@ mod tests {
         }
     }
 
-    /// When every label is one value, the parse meets a collision at the first rule beside
-    /// another, and the definition is written with its strings as bytes, under tag 15.
+    /// The bytes of `s` written as a string of bytes: tag 15, its length, its bytes.
+    fn as_bytes(s: &[u8]) -> Vec<u8> {
+        let mut one = vec![15u8];
+        one.extend_from_slice(&(s.len() as u64).to_le_bytes());
+        one.extend_from_slice(s);
+        one
+    }
+
+    /// When every hashed label is one value, the parse meets a collision at the second rule
+    /// whose label is hashed, and the definition is written with its strings as bytes, under
+    /// tag 15.
+    ///
+    /// The text must have rules too long for an exact label (`Labels::exact` in zed-kernel's
+    /// text/names.rs), since only those read the hash. Its 94 bytes, `!` to `~`, are all
+    /// different, so two neighbors at any level of its parse stand for pieces of the text with
+    /// no byte in common, are different texts and so different symbols, and no level holds a
+    /// run: every rule is a block, and a rule standing for m bytes has every one of them in its
+    /// code, 9 bits each, so for m ≥ 14 its code passes 125 bits and its label is hashed. The
+    /// text's name is a block of 2 to 6 symbols (a level of one symbol ends the parse), so it
+    /// stands for 94 bytes and its largest part for at least 16: two different rules, both
+    /// hashed, whatever labels the parse read. (Row FAIL-canon-collision-test-exact-labels: the
+    /// test held `abcabcabd`, whose rules all have exact labels since canonicalization
+    /// VERSION 13, so its constant hash was never called.)
     #[test]
     fn a_collision_of_labels_writes_the_strings_as_bytes() {
-        let t = Text::from("abcabcabd");
-        let joined = Text::join(&Text::from("abcab"), &Text::from("cabd")).unwrap();
+        let s: Vec<u8> = (b'!'..=b'~').collect();
+        let text = std::str::from_utf8(&s).unwrap();
+        let t = Text::from(text);
+        let joined = Text::join(&Text::from(&text[..41]), &Text::from(&text[41..])).unwrap();
         let none = |_: &str| None;
         let a = def_with(&holding(&[t.clone(), joined.clone()]), &none, |_| 0).unwrap();
         let b = def_with(&holding(&[joined, t]), &none, |_| 0).unwrap();
         assert_eq!(a, b);
-        let s = b"abcabcabd";
-        let mut one = vec![15u8];
-        one.extend_from_slice(&(s.len() as u64).to_le_bytes());
-        one.extend_from_slice(s);
+        let one = as_bytes(&s);
         let found = a.windows(one.len()).filter(|w| *w == &one[..]).count();
         assert_eq!(found, 2, "both strings written as their bytes");
         // With BLAKE3 labels the same definition writes the strings as rules.
-        let c = def(&holding(&[Text::from("abcabcabd")]), &none).unwrap();
+        let c = def(&holding(&[Text::from(text)]), &none).unwrap();
         assert!(!c.windows(one.len()).any(|w| w == &one[..]));
+    }
+
+    /// A string whose rules all have exact labels never reads the label hash: under a hash that
+    /// panics when called it is written as rules, byte for byte as with BLAKE3 labels, whatever
+    /// its tree.
+    #[test]
+    fn a_string_of_exact_labels_reads_no_hash() {
+        fn never(_: &[u8]) -> u128 {
+            panic!("a rule with an exact label read the hash")
+        }
+        let t = Text::from("abcabcabd");
+        let joined = Text::join(&Text::from("abcab"), &Text::from("cabd")).unwrap();
+        let none = |_: &str| None;
+        let a = def_with(&holding(&[t.clone(), joined.clone()]), &none, never).unwrap();
+        let b = def_with(&holding(&[joined, t.clone()]), &none, never).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, def(&holding(&[t.clone(), t]), &none).unwrap());
+        let one = as_bytes(b"abcabcabd");
+        assert!(!a.windows(one.len()).any(|w| w == &one[..]));
     }
 }
