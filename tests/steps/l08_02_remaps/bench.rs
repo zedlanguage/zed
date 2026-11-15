@@ -274,3 +274,61 @@ fn n_calls_of_a_generic_sum_on_families_and_tuples_are_checked_in_linear_time() 
         run,
     );
 }
+
+/// The leaves `leaves` joined by a balanced tree of `if`s, the k-th `if` met on the way down
+/// testing its own parameter `ck`: every leaf is reachable, and the tree is about log n deep.
+fn if_tree(leaves: &[String], next: &mut usize) -> String {
+    match leaves {
+        [one] => one.clone(),
+        _ => {
+            let k = *next;
+            *next += 1;
+            let (l, r) = leaves.split_at(leaves.len() / 2);
+            let (l, r) = (if_tree(l, next), if_tree(r, next));
+            format!("if c{k} {{ {l} }} else {{ {r} }}")
+        }
+    }
+}
+
+/// A generic function `s` of n family parameters `x0` … and n conditions `c0` … whose body is
+/// `x0`, …, `x(n-1)` and `[1, 2]` joined by [`if_tree`] and then `tail`, and the call that
+/// passes `[i, 1]` as `xi` and `false` as each condition, which takes the last leaf, `[1, 2]`.
+fn joined_parameters(n: usize, tail: &str) -> String {
+    let mut leaves = (0..n).map(|i| format!("x{i}")).collect::<Vec<_>>();
+    leaves.push("[1, 2]".to_string());
+    let recv = if_tree(&leaves, &mut 0);
+    let params = (0..n)
+        .map(|i| format!("positional x{i}, positional c{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = (0..n)
+        .map(|i| format!("[{i}, 1], false"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("s({params}) = ({recv}){tail};\nt = s({args});\n")
+}
+
+#[test]
+fn a_fold_of_n_joined_parameters_is_checked_in_linear_time() {
+    // The receiver of `.sum` and of `>< (+)` is n type parameters joined with a family, and
+    // each parameter takes one need, met at the one call with n families (row
+    // TEST-generic-sum-branches). The `if`s form a balanced tree, each with its own condition:
+    // under one shared condition every inner `then` branch is known not to run and is
+    // dropped, and a chain of n `if`s over n parameters is checked in quadratic time before
+    // any fold (row FAIL-if-chain-params-quadratic).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        (
+            joined_parameters(n, ".sum"),
+            joined_parameters(n, " >< (+)"),
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n].0, "t"), "3");
+        assert_eq!(value(&srcs[&n].1, "t"), "3");
+    };
+    scaling::check(
+        "a `.sum` and a `><` of n type parameters joined with a family, one call each",
+        N_LEVELS,
+        run,
+    );
+}

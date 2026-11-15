@@ -3761,22 +3761,42 @@ impl<'t, 'a> Ck<'t, 'a> {
     // is no tuple, and takes the fold branch. (2) It has none: `sum`, the call `.sum` makes
     // on a concrete receiver with no data function, and `sum` accepts only tuples, atoms and
     // classes (met again by `NeedKind::Sum`, which `sum` checks, so tuples) and rejects `_`
-    // (`Ck::any`), so each accepted value is a tuple and takes the tuple branch.
+    // (`Ck::any`), so each accepted value is a tuple and takes the tuple branch. (3) It still
+    // holds variables, a need met inside another generic function: each variable's need
+    // moves to that function's class and is met again at its calls, and the rest takes (1)
+    // or (2), so at the call that fixes every class each value has been checked by (1) or
+    // (2). Values are what makes the tuple test agree, and the kernel's test also counts a
+    // keypath (`Value::Path`) as a tuple; no value a program's own terms read is one, as
+    // `Elab::generic_sum` proves, so no value checked by (1) takes the tuple branch.
+    // A type that is variables and atoms, as `if b { xs } else { ys }` gives with two, takes
+    // the use once per variable: reading only the first left `ys` unchecked, so a call
+    // passing a string there was accepted. A variable beside a tuple or a family does not
+    // reach here (`member_end` sends it to `sum` and `family_fold`), but a need met with such
+    // a type does, and its rest is summed as it stands.
+    // Complexity tradeoff: one need or one recursion per variable, as at `fold_level`.
     pub(super) fn sum_method(&mut self, x: &Ty, span: Span, site: Span) -> Ty {
-        if let Some(v) = sole_class_var(&x.without_loose()) {
-            let out = self.passing(x, "`.sum`", span, None);
-            let r = self.class_root(&v);
-            let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                Some((_, Some(t))) => self.sum_method(&t, span, site),
-                Some((r, None)) => self.need(r, NeedKind::SumMethod(site), true, span),
-                // As at `fold_level`: a variable with no class records no carrier, which
-                // `finish` rejects beside any identity.
-                None => {
-                    self.saw_fold(site, None, None);
-                    Ty::dynamic()
-                }
+        if !x.vars.is_empty() {
+            let mut rest = x.clone();
+            rest.vars = VarSet::new();
+            let mut out = match rest.without_loose().pieces().iter().all(|p| p.is_atoms()) {
+                true => self.passing(x, "`.sum`", span, None),
+                false => self.sum_method(&rest, span, site),
             };
-            return out.union(&t);
+            for v in x.vars.iter() {
+                let r = self.class_root(v);
+                let t = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                    Some((_, Some(t))) => self.sum_method(&t, span, site),
+                    Some((r, None)) => self.need(r, NeedKind::SumMethod(site), true, span),
+                    // As at `fold_level`: a variable with no class records no carrier, which
+                    // `finish` rejects beside any identity.
+                    None => {
+                        self.saw_fold(site, None, None);
+                        Ty::dynamic()
+                    }
+                };
+                out = out.union(&t);
+            }
+            return out;
         }
         if x.fns.iter().any(|s| s.data) {
             let out = self.passing(x, "`.sum`", span, None);
@@ -3836,16 +3856,55 @@ impl<'t, 'a> Ck<'t, 'a> {
             Piece::Var(_) => false,
             p => !p.is_atoms(),
         });
-        if let Some(v) = sole_class_var(x) {
-            let r = self.class_root(&v);
-            return match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
-                Some((r, None)) => self.need(r, NeedKind::Reduce(op, site), true, span),
-                None => {
-                    self.saw_fold(site, None, None);
-                    Ty::dynamic()
+        // Every variable of `x` takes the fold, and the rest of `x` is folded as it stands, as
+        // `group_of` does: a variable joined with a family, as `if b { xs } else { [1, 2] }`
+        // gives, is checked at each call as `xs` alone would be, so a call passing a tuple, a
+        // string or a scalar is rejected there as the concrete fold is, where reading only the
+        // family's entries let it reach the kernel's fold, which stops on a value that is no
+        // family (TEST-generic-sum-branches). Two variables, as `if b { xs } else { ys }`
+        // gives, each take the fold. Atoms beside the variables are not folded: the callers
+        // pass the loose ones out first, and a variable's atoms are met with its class.
+        // Complexity tradeoff: one need or one recursion per variable of `x`, plus one fold
+        // of the rest; a resolved class's type holds no class that resolves back to it (a
+        // class is resolved to a type built before it), so the recursion ends.
+        if !x.vars.is_empty() {
+            let mut rest = x.clone();
+            rest.vars = VarSet::new();
+            // A family with no entries beside the variables adds no entry, so it takes no
+            // carrier: recording none, as `[]` alone does, would refuse every call that
+            // gives the variables a carrier with an identity (`finish`), where the concrete
+            // `(if b { [3, 4] } else { [] }).sum` folds at `int` and gives `0`. Its empty
+            // level folds to the identity the variables' carrier has; `max` and `min` have
+            // none at `int` and `rat`, so for them it may give `#empty`, which the result
+            // then holds. At `f64`, where `max` has `-inf`, that `#empty` is more than the
+            // fold can give: sound, and looser than the concrete type.
+            let empty_family = !others
+                && rest.loose().is_empty()
+                && !rest.fns.is_empty()
+                && entries.lists_nothing();
+            let mut out = if rest.pieces().into_iter().all(|p| p.is_atoms()) {
+                Ty::empty()
+            } else if empty_family {
+                match op {
+                    Reducer::Max | Reducer::Min => Ty::set(KType::atom("empty")),
+                    _ => Ty::empty(),
                 }
+            } else {
+                self.fold_level(op, &rest, span, site, form)
             };
+            for v in x.vars.iter() {
+                let r = self.class_root(v);
+                let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                    Some((_, Some(t))) => self.fold_level(op, &t, span, site, form),
+                    Some((r, None)) => self.need(r, NeedKind::Reduce(op, site), true, span),
+                    None => {
+                        self.saw_fold(site, None, None);
+                        Ty::dynamic()
+                    }
+                };
+                out = out.union(&given);
+            }
+            return out;
         }
         // A family with no entries, as `[]`, has no carrier to take an identity from, and
         // folds to `#empty` (DESIGN.md sec:reduction).
@@ -6221,7 +6280,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(1)
                     if name == "sum"
                         && matches!((positional, named, curry), ([], [], false))
-                        && sole_class_var(&x.ty.without_loose()).is_some() =>
+                        && only_class_vars(&x.ty.without_loose()) =>
                 {
                     let t = self.sum_method(&x.ty, span, span);
                     self.info.generic_sums.insert(span);
@@ -17850,18 +17909,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 }
 
-/// The variable of `x` when `x` is a type parameter and nothing else but atoms: the receiver a
-/// fold of one level, and `.sum`, decide at each call of a generic function.
-fn sole_class_var(x: &Ty) -> Option<Arc<str>> {
-    let mut var = None;
-    for p in x.pieces() {
-        match p {
-            Piece::Var(v) => var = var.or(Some(v)),
-            p if p.is_atoms() => {}
-            _ => return None,
-        }
-    }
-    var.filter(|_| x.fns.is_empty())
+/// Whether `x` is type parameters, one or more, and nothing else but atoms: the receiver whose
+/// `.sum` is decided at each call of a generic function.
+fn only_class_vars(x: &Ty) -> bool {
+    !x.vars.is_empty()
+        && (x.pieces().into_iter()).all(|p| matches!(p, Piece::Var(_)) || p.is_atoms())
 }
 
 /// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed

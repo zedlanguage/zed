@@ -122,6 +122,22 @@ impl<'a> Elab<'a> {
     /// it, with the identity found at `span`. The checker accepts a tuple at a call only where
     /// `.sum` on that tuple is the word, and a family only where it is the fold, so the test
     /// picks the branch the call was checked by.
+    // The test `is` the tuple universe also holds a keypath (`Value::Path`, `Universe::of`),
+    // so a keypath checked as a family would take the tuple branch. No value a program's own
+    // terms read is a keypath (TEST-generic-sum-branches), by the places one is made:
+    // (a) the kernel's `reindex` passes one as the first argument of its key map and value
+    // map, and `discard` as the first argument of its selector. The only such maps are built
+    // by elaboration (`where_term`, `remap_term`, `group_term` in `walk.rs`), which bind that
+    // argument to a temporary (`Elab::temp`) that no name in the source resolves to, and
+    // read it only under `PathKey` and `PathLen`, which give one of its keys and its length.
+    // (b) `Prim::Path` is written only as the body of such a key map, and the kernel takes
+    // the key map's result apart into keys (`key_of`, `placed` in `eval.rs`). (c) The ZIR
+    // readers make one only where the text or binary form holds one, which the writers give
+    // only for a constant that was a keypath, and so by (a) and (b) only inside a key map.
+    // So a keypath's keys are the only parts of it a program's terms see; a key is no
+    // keypath, since a family's keys are the values its key maps and literals give, the
+    // keys of a keypath among them, and so, by induction on the run, none is one. Hence the
+    // receiver here, a value of the program's terms, is never a keypath.
     // Complexity tradeoff: the test `is` the tuple universe costs O(1) on a family (the
     // kernel's `Type::member` answers a family at its top) and O(k) on a tuple of k entries,
     // which `Prim::Sum` then reads in full, so the sum stays O(k) and the fold O(n). Naive, one

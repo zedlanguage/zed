@@ -476,7 +476,10 @@ fn a_parameter_joined_with_a_tuple_is_summed_as_a_tuple() {
     let src = "s(positional xs, positional b) = (if b { xs } else { (1, 2) }).sum;\n";
     prints(&format!("{src}t = s((3, 4), true);\n"), "t", "7");
     prints(&format!("{src}f = s((3, 4), false);\n"), "f", "3");
-    rejected(&format!("{src}t = s([3, 4], true);\n"), &["`sum` does not take"]);
+    rejected(
+        &format!("{src}t = s([3, 4], true);\n"),
+        &["`sum` does not take"],
+    );
     rejected(
         "f(positional b) = (if b { [3, 4] } else { (1, 2) }).sum;\nt = f(true);\n",
         &["`.sum` folds the entries of a family"],
@@ -493,4 +496,53 @@ fn a_family_made_by_a_reindex_takes_the_fold_branch() {
     let src = "s(positional xs) = xs.sum;\nm = [1, 2, 3, 4];\n\
                t = m.group(v -> v mod 2).map(g -> s(g));\n";
     prints(src, "t", "{0 -> 6, 1 -> 4}");
+}
+
+#[test]
+fn two_parameters_in_nested_branches_beside_a_family_each_take_the_fold() {
+    // `X0 | X1 | (int -> int)`: each parameter is checked at the call, as the concrete body is.
+    // `[5, 6]` in the inner branch gives `5 + 6`; a family keyed by another type gives its
+    // entry; a tuple or a string there is rejected as `(if b { [3, 4] } else { if c { (1, 2) }
+    // else { [1, 2] } }).sum` is.
+    let s = "s(positional x0, positional x1, positional b, positional c) = \
+             (if b { x0 } else { if c { x1 } else { [1, 2] } })";
+    prints(
+        &format!("{s}.sum;\nt = s([3, 4], [5, 6], false, true);\n"),
+        "t",
+        "11",
+    );
+    prints(
+        &format!("{s}.sum;\nt = s([3, 4], {{ 7 -> 1 }}, false, true);\n"),
+        "t",
+        "1",
+    );
+    for (fold, arg) in [
+        (".sum", "(1, 2)"),
+        (".sum", "\"ab\""),
+        (" >< (+)", "(1, 2)"),
+    ] {
+        rejected(
+            &format!("{s}{fold};\nt = s([3, 4], {arg}, false, false);\n"),
+            &["folds the entries of a family"],
+        );
+    }
+    rejected(
+        "f(positional b, positional c) = \
+         (if b { [3, 4] } else { if c { (1, 2) } else { [1, 2] } }).sum;\nt = f(false, true);\n",
+        &["folds the entries of a family"],
+    );
+    // Under one condition the inner `then` branch is known not to run and is dropped, in
+    // generic and in concrete code alike: both give `3`.
+    prints(
+        "s(positional x0, positional x1, positional b) = \
+         (if b { x0 } else { if b { x1 } else { [1, 2] } }).sum;\nt = s([3, 4], (1, 2), false);\n",
+        "t",
+        "3",
+    );
+    prints(
+        "f(positional b) = (if b { [3, 4] } else { if b { (1, 2) } else { [1, 2] } }).sum;\n\
+         t = f(false);\n",
+        "t",
+        "3",
+    );
 }
