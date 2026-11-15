@@ -93,31 +93,113 @@ fn a_damaged_record_is_rejected() {
     assert_eq!(
         Record::from_bytes(b"zed record 2\n"),
         Err(
-            "this file is not a record that `zedc run --record` writes: such a record starts \
+            "1: this file is not a record that `zedc run --record` writes: such a record starts \
              with the line `zed record 1`, and this file does not. Name the file `--record` \
              wrote, or make a record with `zedc run <file> --record <out>`."
                 .to_string()
         )
     );
-    // Each is refused at its one entry, which starts at byte 13, just after `zed record 1`.
-    for bad in [
-        &b"zed record 1\nlines 5 9\nstdinab\n\n"[..],
-        b"zed record 1\nlines 5 3\nstdinab\n",
-        b"zed record 1\nsocket 1\nx\n",
-        b"zed record 1\nmissing 2 1 4\nfsa\n",
+    let remake = "make it again with `zedc run <file> --record <out>`.";
+    let short = |line: usize| {
+        format!(
+            "{line}: the record is cut short: the file ends inside the entry that starts on this \
+             line, so the file was cut after it was written, or a length on this line has been \
+             changed. A replay reads only a whole record; {remake}"
+        )
+    };
+    let changed = |line: usize, why: &str| {
+        format!(
+            "{line}: the record has been changed: {why}. A replay reads a record only as `zedc \
+             run --record` wrote it; {remake}"
+        )
+    };
+    let begins = "this line should begin an entry, with a kind such as `lines` or `text` and \
+                  then the length in bytes of each of the entry's fields, and it does not";
+    // Each is refused at the line its bad entry starts on; a field may hold line ends, so the
+    // entry after one with a field `a\nb` starts on line 5.
+    for (bad, want) in [
+        (
+            &b"zed rec"[..],
+            format!(
+                "1: the record is cut short: it ends before the end of its first line, `zed record \
+             1`, so the file was cut after it was written. A replay reads only a whole record; \
+             {remake}"
+            ),
+        ),
+        (b"zed record 1\nlines", short(2)),
+        (b"zed record 1\nlines 5 9\nstdinab\n\n", short(2)),
+        (b"zed record 1\nlines 5 3\nstdinab", short(2)),
+        (b"zed record 1\nlines 5 3\nstdinab\n\nx", short(5)),
+        (
+            b"zed record 1\nlines 5 3\nstdina\nb\nsocket 1\nx\n",
+            changed(
+                5,
+                "`socket` is not a kind of entry that `zedc run --record` writes, which are `program`, `lines`, `text`, `missing`, `error` and `arg`",
+            ),
+        ),
+        (
+            b"zed record 1\nlines 5 1\nstdinab\n",
+            changed(
+                2,
+                "the entry that starts on this line does not end where the lengths on the line say: the byte after its fields is not a line end",
+            ),
+        ),
+        (b"zed record 1\nlines 5 x\nstdinab\n", changed(2, begins)),
+        (b"zed record 1\n\n", changed(2, begins)),
+        (b"zed record 1\nlines \xff\n", changed(2, begins)),
+        (
+            b"zed record 1\nmissing 2 1 4\nfsabcde\n",
+            changed(
+                2,
+                "an entry of the kind `missing` has 2 fields, and the one that starts on this line has 3",
+            ),
+        ),
+        // The name of a port is text; the bytes of a `Lines` input need not be.
+        (
+            b"zed record 1\nlines 5 1\nstdi\xffx\n",
+            changed(
+                2,
+                "a field of the `lines` entry that starts on this line, which holds a name or a text, is not UTF-8",
+            ),
+        ),
+        (
+            b"zed record 1\ntext 2 1\nfsa\n",
+            changed(
+                2,
+                "an entry of the kind `text` has 3 fields, and the one that starts on this line has 2",
+            ),
+        ),
+        (
+            b"zed record 1\nerror 2 1 1\nfsab\n",
+            changed(
+                2,
+                "an entry of the kind `error` has 2 fields or 4, and the one that starts on this line has 3",
+            ),
+        ),
+        (
+            b"zed record 1\narg 1 1\nab\n",
+            changed(
+                2,
+                "an entry of the kind `arg` has 1 field, and the one that starts on this line has 2",
+            ),
+        ),
+        (
+            b"zed record 1\nlines 5\nstdin\n",
+            changed(
+                2,
+                "an entry of the kind `lines` has 2 fields, and the one that starts on this line has 1",
+            ),
+        ),
     ] {
         assert_eq!(
             Record::from_bytes(bad),
-            Err(
-                "this record, which `zedc run --record` writes, cannot be read from byte 13 on: \
-                 the entry that starts there is cut short or has been changed. A record is read \
-                 only as it was written; make it again with `zedc run <file> --record <out>`."
-                    .to_string()
-            ),
+            Err(want),
             "{}",
             String::from_utf8_lossy(bad)
         );
     }
+    // A `missing` entry of 2 fields is whole, as is a bare `error`.
+    assert!(Record::from_bytes(b"zed record 1\nmissing 2 1\nfsa\nerror 2 1\nfsb\n").is_ok());
 }
 
 #[test]

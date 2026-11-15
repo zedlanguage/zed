@@ -179,35 +179,56 @@ fn a_program_entry_must_be_first_and_well_formed() {
         ..Record::default()
     };
     assert_eq!(Record::from_bytes(&record.to_bytes()), Ok(record));
-    // Each is refused at the byte where its bad entry starts: 13 is just after `zed record 1`.
-    let bad = |at: usize| {
+    // Each is refused at the line its bad entry starts on: line 2 is just after `zed record 1`.
+    let bad = |line: usize, why: &str| {
         Err(format!(
-            "this record, which `zedc run --record` writes, cannot be read from byte {at} on: the \
-             entry that starts there is cut short or has been changed. A record is read only as \
-             it was written; make it again with `zedc run <file> --record <out>`."
+            "{line}: the record has been changed: {why}. A replay reads a record only as `zedc \
+             run --record` wrote it; make it again with `zedc run <file> --record <out>`."
         ))
     };
-    for (text, at) in [
+    let after = "a `program` entry comes first, before every other entry, and the one on this \
+                 line comes after another";
+    let digits = "the program's address on the line after this one is not 64 hexadecimal digits";
+    for (text, line, why) in [
         // After another entry.
-        (format!("zed record 1\narg 1\nx\nprogram 64\n{hex}\n"), 21),
+        (
+            format!("zed record 1\narg 1\nx\nprogram 64\n{hex}\n"),
+            4,
+            after,
+        ),
         // Twice.
         (
             format!("zed record 1\nprogram 64\n{hex}\nprogram 64\n{hex}\n"),
-            89,
+            4,
+            after,
         ),
         // Not 64 hexadecimal digits.
-        (format!("zed record 1\nprogram 63\n{}\n", &hex[1..]), 13),
+        (
+            format!("zed record 1\nprogram 63\n{}\n", &hex[1..]),
+            2,
+            digits,
+        ),
         (
             format!(
                 "zed record 1\nprogram 64\n{}\n",
                 hex.replace(|c: char| c.is_ascii_digit(), "g")
             ),
-            13,
+            2,
+            digits,
         ),
         // Without its field.
-        ("zed record 1\nprogram\n\n".to_string(), 13),
+        (
+            "zed record 1\nprogram\n\n".to_string(),
+            2,
+            "an entry of the kind `program` has 1 field, and the one that starts on this line \
+             has 0",
+        ),
     ] {
-        assert_eq!(Record::from_bytes(text.as_bytes()), bad(at), "{text:?}");
+        assert_eq!(
+            Record::from_bytes(text.as_bytes()),
+            bad(line, why),
+            "{text:?}"
+        );
     }
     // Every address prints as 64 digits that parse back to it.
     for a in [ContentAddress([0; 32]), ContentAddress([255; 32]), a] {

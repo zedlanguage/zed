@@ -1,7 +1,9 @@
 //! The messages of a run that stops, as a user meets them (plan row MSG-kinds-e2e-tests,
 //! DESIGN.md sec:diagnostics): each kind of stop reached by a small program through `zedc run`
 //! and through the executable `zedc build` makes, each in a child process under `timeout 60`,
-//! and its message checked in full. Each stops with status 3, as every fault of a run does.
+//! and its message checked in full. Each stops with status 3, as every fault of a run does,
+//! except a replay that stops at a read its record lacks, which, as every record `zedc replay`
+//! cannot use, is a usage error with status 2 (DESIGN.md L1.19).
 //! The part of a message that depends on the machine, the memory it has and the memory the run
 //! holds when it stops, is masked ([`masked`]). `crates/zed-native/Cargo.toml` names this test,
 //! since only a test of that package can name the executable.
@@ -247,10 +249,11 @@ fn a_read_the_record_lacks_stops_the_replay() {
     let replayed = zedc(&["replay", &file, cut.to_str().unwrap()]);
     let at = input.display();
     let marks = "^".repeat(format!("fs[\"{at}\"]").len());
+    // The record is at fault, not the program or the machine: a usage error (DESIGN.md L1.19).
     assert_eq!(
         replayed,
         (
-            Some(1),
+            Some(2),
             String::new(),
             format!(
                 "{file}:3:17: the port `main::files` could not answer a read: the program reads \
@@ -264,6 +267,116 @@ fn a_read_the_record_lacks_stops_the_replay() {
                  |                 {marks}\n"
             )
         )
+    );
+}
+
+/// The text every message about a record `zedc replay` cannot read ends with.
+const REMAKE: &str = "make it again with `zedc run <file> --record <out>`.";
+
+#[test]
+fn a_record_zedc_replay_cannot_use_is_a_usage_error() {
+    // Each kind of damage the reader tells apart, made from a whole record of a program that
+    // reads standard input: each exits with status 2, writes nothing to standard output, and
+    // names the record's file and the line where the entry that cannot be read starts.
+    let d = dir();
+    let src = "main(m: MainArgs) {\n    m.stdout <- m.stdin[0] else \"none\";\n}\n";
+    let file = file("damaged", src);
+    let rec = d.join("damaged.rec").display().to_string();
+    let recorded = zedc(&["run", &file, "--record", &rec]);
+    assert_eq!(recorded, (Some(0), "none\n".into(), String::new()));
+    let whole = std::fs::read_to_string(&rec).unwrap();
+    let hex = whole.lines().nth(2).unwrap();
+    // Lines 1 to 3 are the first line and the program's address; the entry of standard
+    // input, the empty input, starts on line 4.
+    assert_eq!(
+        whole,
+        format!("zed record 1\nprogram 64\n{hex}\nlines 7 0\nm.stdin\n")
+    );
+    let replay = |name: &str, text: &str| {
+        let path = d.join(name).display().to_string();
+        std::fs::write(&path, text).unwrap();
+        let (code, out, err) = zedc(&["replay", &file, &path]);
+        assert_eq!((code, out.as_str()), (Some(2), ""), "{name}: {err}");
+        (path, err)
+    };
+    let head = format!("zed record 1\nprogram 64\n{hex}\n");
+    // Not a record.
+    let (path, err) = replay("header.rec", &whole.replace("record 1", "record 2"));
+    assert_eq!(
+        err,
+        format!(
+            "{path}:1: this file is not a record that `zedc run --record` writes: such a record \
+             starts with the line `zed record 1`, and this file does not. Name the file \
+             `--record` wrote, or make a record with `zedc run <file> --record <out>`.\n"
+        )
+    );
+    // Cut inside its first line.
+    let (path, err) = replay("first.rec", "zed rec");
+    assert_eq!(
+        err,
+        format!(
+            "{path}:1: the record is cut short: it ends before the end of its first line, `zed \
+             record 1`, so the file was cut after it was written. A replay reads only a whole \
+             record; {REMAKE}\n"
+        )
+    );
+    // Cut inside the entry of standard input.
+    let (path, err) = replay("short.rec", &format!("{head}lines 7 0\nm.st"));
+    assert_eq!(
+        err,
+        format!(
+            "{path}:4: the record is cut short: the file ends inside the entry that starts on \
+             this line, so the file was cut after it was written, or a length on this line has \
+             been changed. A replay reads only a whole record; {REMAKE}\n"
+        )
+    );
+    // A kind of entry `--record` does not write.
+    let (path, err) = replay("kind.rec", &format!("{head}socket 7 0\nm.stdin\n"));
+    assert_eq!(
+        err,
+        format!(
+            "{path}:4: the record has been changed: `socket` is not a kind of entry that `zedc \
+             run --record` writes, which are `program`, `lines`, `text`, `missing`, `error` and \
+             `arg`. A replay reads a record only as `zedc run --record` wrote it; {REMAKE}\n"
+        )
+    );
+    // A malformed line where an entry starts.
+    let (path, err) = replay("words.rec", &format!("{head}lines seven 0\nm.stdin\n"));
+    assert_eq!(
+        err,
+        format!(
+            "{path}:4: the record has been changed: this line should begin an entry, with a kind \
+             such as `lines` or `text` and then the length in bytes of each of the entry's \
+             fields, and it does not. A replay reads a record only as `zedc run --record` wrote \
+             it; {REMAKE}\n"
+        )
+    );
+    // Fields that do not end where their lengths say.
+    let (path, err) = replay("length.rec", &format!("{head}lines 6 0\nm.stdin\n"));
+    assert_eq!(
+        err,
+        format!(
+            "{path}:4: the record has been changed: the entry that starts on this line does not \
+             end where the lengths on the line say: the byte after its fields is not a line \
+             end. A replay reads a record only as `zedc run --record` wrote it; {REMAKE}\n"
+        )
+    );
+    // Cut cleanly after the address: whole entries, but no input for standard input.
+    let (path, err) = replay("no_input.rec", &head);
+    assert_eq!(
+        err,
+        format!(
+            "{path}: the record holds no input for the port `m.stdin`, which the program reads, \
+             so the replay cannot go on: a replay reads nothing from outside, only what the \
+             record holds. Every run records the input of each port it reads, so the record has \
+             been changed since it was written. Replay with the record as it was written, or \
+             make a new record with `zedc run <file> --record <out>`.\n"
+        )
+    );
+    // The whole record replays.
+    assert_eq!(
+        zedc(&["replay", &file, &rec]),
+        (Some(0), "none\n".into(), String::new())
     );
 }
 
