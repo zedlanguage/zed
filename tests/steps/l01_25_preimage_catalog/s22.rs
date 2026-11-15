@@ -1319,14 +1319,18 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     let ds = over(&[("i", IntervalSet::range(End::NegInf, End::of(12)))]);
     let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
     let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
-    assert!(now.exact && !then.exact);
+    // The cover of module `exact` (PRES-pugh-exact-projection-research) runs under both
+    // transfers, so the transfer before is now exact as well, with the same true set.
+    assert!(now.exact && then.exact);
     assert_eq!(now.domains["i"], pieces(&[(-10, -10), (1, 3), (10, 10)]));
-    assert_eq!(then.domains["i"], pieces(&[(-10, -10), (-2, 3), (10, 10)]));
+    assert_eq!(then.domains["i"], now.domains["i"]);
     assert!(!refuted(&t, &ds, &d, &then.domains, false));
     assert!(!refuted(&t, &ds, &d, &now.domains, true));
     let mut diffs = Diffs::default();
     diffs.preimage("the narrowed case", &t, &ds, &d);
-    assert_eq!((diffs.cases, diffs.exact, diffs.found.len()), (1, 1, 0));
+    // Both transfers are exact under the cover, so the case is no longer counted as one made
+    // exact.
+    assert_eq!((diffs.cases, diffs.exact, diffs.found.len()), (1, 0, 0));
 }
 /// Every kind of guard and arm the summary reads, and some it does not: `cases` cases of the
 /// sequence from `seed`, each compared with the transfer before and both boxes checked against
@@ -2176,7 +2180,8 @@ fn remainders_compared_every_way_are_read_exactly() {
 /// boxes is not a box). A stretch where one class keeps its points and another does not that
 /// spans many periods is answered by the split since S22e-wide: its box, the projection of the
 /// classes' relation, lists the first and last periods of the stretch, inside the box before,
-/// and is inexact, with that relation.
+/// and is inexact, with that relation. The cover of module `exact` now lists the stretch value by
+/// value and is exact.
 #[test]
 fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
     let i = || var("i");
@@ -2245,18 +2250,14 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
         preimage(&wide, &ds, &d),
         before::preimage(&wide, &ds, &old(&d)),
     );
-    assert!(!now.exact && !then.exact);
-    let listed = [
-        (10, 10),
-        (12, 12),
-        (14, 994),
-        (996, 996),
-        (998, 998),
-        (1000, 1000),
-    ];
-    assert_eq!(now.domains["i"], pieces(&listed));
-    assert_eq!(then.domains["i"], pieces(&[(10, 998), (1000, 1000)]));
-    assert!(split_relation_exact(&wide, &ds, &d, &now));
+    // The cover of module `exact` (PRES-pugh-exact-projection-research) lists every even
+    // value of `10..=1000`, the exact preimage: an odd `i` gives 0, outside the demand. The
+    // split listed the first and last periods and kept `14..=994` whole. The cover runs under
+    // the transfer before as well, which gives the same exact set.
+    assert!(now.exact && then.exact);
+    let evens: Vec<(i64, i64)> = (5..=500).map(|v| (2 * v, 2 * v)).collect();
+    assert_eq!(now.domains["i"], pieces(&evens));
+    assert_eq!(then.domains["i"], now.domains["i"]);
     check(&wide, &ds, &d, &now, (-60, 1060));
 }
 
