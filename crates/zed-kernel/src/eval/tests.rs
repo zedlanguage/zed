@@ -13,7 +13,7 @@ use num_bigint::BigInt;
 use super::{as_key, key_index, position};
 use crate::num::Rat;
 use crate::text::Text;
-use crate::value::{Family, Value};
+use crate::value::{Family, Id, Value};
 
 /// A tuple of `xs`, built fresh, so that its sequence is held once.
 fn tuple(xs: Vec<Value>) -> Value {
@@ -228,22 +228,44 @@ fn a_lookup_that_does_not_take_the_key_is_caught() {
 }
 
 /// A value hashed as `Value` hashes it, and also by the id of its outermost sequence: a hash
-/// that tells a shared tuple from an equal fresh one, which a hash on values must not.
-#[derive(PartialEq, Eq)]
+/// that tells a shared tuple from an equal fresh one, which a hash on values must not. Two are
+/// equal when their values are and they share that sequence, so the hash agrees with `==`.
+///
+/// Equality reads the sharing too, and not only the hash, so that a lookup of a fresh tuple
+/// misses for certain. With `==` on values alone, a lookup whose hash differs from the key's
+/// still finds the key when the map's 7-bit tag of the two hashes happens to agree, about one
+/// lookup in 128 with the domain's keys in one probe group; the 11 fresh sequences then gave
+/// fewer than 14 misses in 51 of 800 runs, by hash seed and by the ids a run draws.
+#[derive(Eq)]
 struct BySequence(Value);
 
-impl Hash for BySequence {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-        if let Value::Tuple(xs) | Value::Path(xs) = &self.0 {
-            xs.id().hash(state);
+impl BySequence {
+    /// The id of the outermost sequence, for a tuple or a path.
+    fn sequence(&self) -> Option<Id> {
+        match &self.0 {
+            Value::Tuple(xs) | Value::Path(xs) => Some(xs.id()),
+            _ => None,
         }
     }
 }
 
-/// Negative control: an index whose hash reads the sharing of a tuple misses each of the 14
-/// fresh tuples and paths equal to a key, and the check reports it; the domain's own keys, held
-/// twice and so sharing their sequences, are still found.
+impl PartialEq for BySequence {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && self.sequence() == other.sequence()
+    }
+}
+
+impl Hash for BySequence {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        self.sequence().hash(state);
+    }
+}
+
+/// Negative control: an index whose hash and equality read the sharing of a tuple misses each
+/// of the 14 fresh tuples and paths equal to a key, whatever the hash seed, and the check
+/// reports it; the domain's own keys, held twice and so sharing their sequences, are still
+/// found.
 #[test]
 fn an_index_whose_hash_reads_sharing_is_caught() {
     let domain = domain();
