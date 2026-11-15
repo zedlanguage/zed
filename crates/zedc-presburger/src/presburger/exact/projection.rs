@@ -33,9 +33,9 @@ pub enum Method {
     /// The cell as before this research: elimination where it is exact, else runs or a fixed
     /// stride atom.
     Old,
-    /// Pugh's exact projection of the implicant ([`pugh`]).
+    /// Pugh's exact projection of the implicant (`pugh`).
     Pugh,
-    /// The old cell and the recession rays of the implicant ([`rays`]).
+    /// The old cell and the recession rays of the implicant (`rays`).
     Rays,
 }
 

@@ -256,8 +256,11 @@ fn a_branch_with_no_point_does_not_widen_the_other() {
     assert_eq!(then_arm(2, 1), ["[3..]", "[0..]", "[1..]"]);
     // With `k = 1` and `z >= 0`, `a` and `b` occur alike, as do `y` and `z`: only a search
     // in an order chosen by name would show the second branch empty (NAME-ties, COMPLEXITY.md
-    // NAME-ties-or), so it is kept, and the then arm is no narrower than the scope.
-    assert_eq!(then_arm(1, 0), ["[..]", "[..]", "[..]"]);
+    // NAME-ties-or), so the solver keeps it; the cover of module `exact`
+    // (PRES-pugh-exact-projection-research) asks whether a value of each name outside the
+    // first branch has a point, a question with one answer whatever the order, finds none,
+    // and gives the first branch's arm.
+    assert_eq!(then_arm(1, 0), ["[3..]", "[0..]", "[0..]"]);
 }
 
 /// [`accounts_paired`] nested `d` deep, each level's choice on its own symbol `qi`, around

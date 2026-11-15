@@ -872,7 +872,8 @@ fn project_each_answers_a_repeated_and_an_absent_symbol() {
             Ok(range(2, 6))
         ]
     );
-    // An equation and the two inequalities it stands for project alike.
+    // An equation and the two inequalities it stands for project alike, to the even values
+    // of `0..=6`.
     let e = Formula::and(vec![
         eq(&[("x", 1), ("y", -2)], 0),
         ge(&[("y", 1)], 0),
@@ -885,7 +886,8 @@ fn project_each_answers_a_repeated_and_an_absent_symbol() {
         ge(&[("y", -1)], 3),
     ]);
     assert_eq!(project(&e, &sym("x")), project(&two, &sym("x")));
-    assert_eq!(project(&e, &sym("x")), Ok((range(0, 6), vec![])));
+    let evens = (0..=3).map(|v| (End::of(2 * v), End::of(2 * v))).collect();
+    assert_eq!(project(&e, &sym("x")), Ok((IntervalSet::from_pieces(evens), vec![])));
     // An unsatisfiable formula projects every symbol, mentioned or not, to the empty set.
     let none = Formula::and(vec![f, ge(&[("y", -1)], 1)]);
     let (each, _) = project_each(&none, &[sym("x"), sym("z")]).unwrap();

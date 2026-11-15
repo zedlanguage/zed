@@ -4,9 +4,9 @@
 
 use std::time::Instant;
 
+use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::exact::{EXACT_LIMIT, EXACT_QUESTIONS, EXACT_WORK};
 use zedc::store::presburger::{Atom, Con, Formula, Lin, member, project_each};
-use zedc::store::interval::IntervalSet;
 
 fn a(s: &str) -> Atom {
     Atom::Sym(s.into())
@@ -87,4 +87,25 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
     let most = worst * EXACT_LIMIT as f64 / 1e6;
     eprintln!("exact cover: worst {worst:.1} ns per unit; the limit takes at most {most:.0} ms");
     assert!(most <= 500.0, "{most:.0} ms at the limit");
+}
+
+/// The cover's work at sizes n and 8n (PRES-pugh-exact-projection-research): the multiples of
+/// 2 in `0..=n`, whose answer has n/2 + 1 pieces and a question for each gap, and the evens
+/// in `0..=20` with a padding chain of n conjuncts, which makes each question n long while
+/// their number stays the same. Each is of order n. The in-cell method is the one
+/// `ZED_EXACT_METHOD` names (Pugh's by default), so the comparison of methods runs this test
+/// once per method.
+#[test]
+fn the_cover_is_of_order_n_in_its_answer_and_in_its_questions() {
+    use zed_tests::scaling;
+    let evens = scaling::inputs(250, |n| multiples(&[2], n as i64, 0));
+    scaling::check_order("exact cover: evens in 0..=n", 250, 1, |n| {
+        let r = std::hint::black_box(project_each(&evens[&n], &[a("x")]));
+        assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
+    });
+    let padded = scaling::inputs(25, |n| multiples(&[2], 20, n));
+    scaling::check_order("exact cover: evens with n padding conjuncts", 25, 1, |n| {
+        let r = std::hint::black_box(project_each(&padded[&n], &[a("x")]));
+        assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
+    });
 }

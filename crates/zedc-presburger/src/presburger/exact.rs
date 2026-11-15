@@ -104,10 +104,11 @@ impl Work {
 
 /// The exact projection of `f` onto each of `syms`, from `found`, the solver's answer, each of
 /// its sets holding every value with a point (with any disjunction it left out, wider but
-/// still holding them). A symbol the solver refused keeps its refusal; a symbol whose cover
-/// is refused or passes the work limit is refused with that cause. The causes of the
-/// disjunctions left out are kept only where a symbol is still refused, since each set
-/// answered here is the exact one.
+/// still holding them). A symbol the solver refused keeps its refusal. A symbol whose cover
+/// has a question refused, a tail of holes without end (`projection::Tail`), or passes the
+/// work limit keeps the solver's set, narrowed by what the cover proved empty: never wider
+/// than the solver's answer (main's before the cover). The causes of the disjunctions left
+/// out are dropped only where every set answered here is the exact one.
 pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     if EXACT_OFF.get() || std::env::var_os("ZED_EXACT_OFF").is_some() {
         return found;
@@ -121,6 +122,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
     };
     let mut points: Vec<Model> = Vec::new();
     let mut out = Vec::with_capacity(each.len());
+    let mut all_exact = true;
     for (s, got) in syms.iter().zip(each) {
         let t0 = std::time::Instant::now();
         let q0 = EXACT_QUESTIONS.get();
@@ -128,18 +130,22 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
         if std::env::var_os("ZED_EXACT_TRACE").is_some() {
             eprintln!("ENTER s={s:?} h={got:?} f={f:?}");
         } // TMPDBG
-        out.push(got.and_then(|h| cover(f, s, &h, size, &factors, &mut points, &mut work)));
+        out.push(got.map(|h| {
+            let (r, exact) = cover(f, s, &h, size, &factors, &mut points, &mut work);
+            all_exact &= exact;
+            r
+        }));
         if std::env::var_os("ZED_EXACT_TRACE").is_some() {
             let ms = t0.elapsed().as_micros();
             eprintln!(
-                "TRACE {ms}us q={} size={size} s={s:?} h={:?} out={:?} f={f:?}",
+                "TRACE {ms}us q={} exact={all_exact} size={size} s={s:?} h={:?} out={:?} f={f:?}",
                 EXACT_QUESTIONS.get() - q0,
                 h0.as_ref().map(|h| h.pieces().count()),
                 out.last().map(|r| r.as_ref().map(|o| o.pieces().count()))
             );
         } // TMPDBG
     }
-    let skipped = if out.iter().any(Result::is_err) {
+    let skipped = if !all_exact || out.iter().any(Result::is_err) {
         skipped
     } else {
         Vec::new()
@@ -158,7 +164,7 @@ fn cover(
     factors: &HashSet<Atom>,
     points: &mut Vec<Model>,
     work: &mut Work,
-) -> Result<IntervalSet, Refusal> {
+) -> (IntervalSet, bool) {
     let mut found = IntervalSet::empty();
     let mut gap = h.clone();
     let within = h.hull();
@@ -168,143 +174,183 @@ fn cover(
     let mut open: Vec<Strided> = Vec::new();
     let mut tails: Vec<Tail> = Vec::new();
     let mut read = 0;
-    loop {
-        while read < points.len() && !gap.is_empty() {
-            let m = points[read].clone();
-            read += 1;
-            if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
-                work.charge(size)?;
-                let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
-                if !holed.is_empty() {
-                    // The parts with holes and no end of every cell so far, joined: where the
-                    // values found fill a tail up to an end, the values left of it are listed.
-                    open.extend(holed);
-                    let (filled, left) = projection::ranges(&open, work)?;
-                    c = c.join(&filled);
-                    let known = found.join(&c);
-                    tails = Vec::new();
-                    let mut listed = Vec::new();
-                    for t in left {
-                        for (l, u) in t.piece.minus(&known).pieces() {
-                            if let (End::Fin(l), End::Fin(u)) = (l, u) {
-                                let (l, u) = (Int::from(l), Int::from(u));
-                                projection::listed(&l, &u, &t.step, &t.have, work, &mut listed)?;
-                            } else {
-                                let piece = IntervalSet::range(l.clone(), u.clone());
-                                tails.push(Tail {
-                                    piece,
-                                    step: t.step.clone(),
-                                    have: t.have.clone(),
-                                });
+    // The pieces whose question was refused, kept unconfirmed.
+    let mut kept = IntervalSet::empty();
+    let r = (|| -> Result<IntervalSet, Refusal> {
+        loop {
+            while read < points.len() && !gap.is_empty() {
+                let m = points[read].clone();
+                read += 1;
+                if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
+                    work.charge(size)?;
+                    let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
+                    if !holed.is_empty() {
+                        // The parts with holes and no end of every cell so far, joined: where the
+                        // values found fill a tail up to an end, the values left of it are listed.
+                        open.extend(holed);
+                        let (filled, left) = projection::ranges(&open, work)?;
+                        c = c.join(&filled);
+                        let known = found.join(&c);
+                        tails = Vec::new();
+                        let mut listed = Vec::new();
+                        for t in left {
+                            for (l, u) in t.piece.minus(&known).pieces() {
+                                if let (End::Fin(l), End::Fin(u)) = (l, u) {
+                                    let (l, u) = (Int::from(l), Int::from(u));
+                                    projection::listed(
+                                        &l,
+                                        &u,
+                                        &t.step,
+                                        &t.have,
+                                        work,
+                                        &mut listed,
+                                    )?;
+                                } else {
+                                    let piece = IntervalSet::range(l.clone(), u.clone());
+                                    tails.push(Tail {
+                                        piece,
+                                        step: t.step.clone(),
+                                        have: t.have.clone(),
+                                    });
+                                }
                             }
                         }
+                        c = c.join(&IntervalSet::from_pieces(listed));
                     }
-                    c = c.join(&IntervalSet::from_pieces(listed));
+                    gap = gap.minus(&c);
+                    found = found.join(&c);
+                    strides.extend(more);
                 }
-                gap = gap.minus(&c);
-                found = found.join(&c);
-                strides.extend(more);
             }
-        }
-        if gap.is_empty() {
-            return Ok(found);
-        }
-        // The residue question of a piece with holes and no end: a point of `f` there in a
-        // residue no part found holds. Where there is none, the values of `s` there are those
-        // residues alone, holes without end, which ranges cannot hold: refused.
-        if let Some(tail) = tails.pop() {
-            if gap.meet(&tail.piece).is_empty() {
-                continue;
+            if gap.is_empty() {
+                return Ok(found.join(&kept));
             }
-            let other = IntervalSet::from_pieces(
-                (tail.have.iter().enumerate())
-                    .filter(|(_, b)| !**b)
-                    .map(|(r, _)| (End::from(r as i64), End::from(r as i64)))
+            // The residue question of a piece with holes and no end: a point of `f` there in a
+            // residue no part found holds. Where there is none, the values of `s` there are those
+            // residues alone, holes without end, which ranges cannot hold: refused.
+            if let Some(tail) = tails.pop() {
+                if gap.meet(&tail.piece).is_empty() {
+                    continue;
+                }
+                let other = IntervalSet::from_pieces(
+                    (tail.have.iter().enumerate())
+                        .filter(|(_, b)| !**b)
+                        .map(|(r, _)| (End::from(r as i64), End::from(r as i64)))
+                        .collect(),
+                );
+                work.charge(size + 4)?;
+                EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+                let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
+                let lin = Lin {
+                    terms: [
+                        (s.clone(), Int::from(1)),
+                        (t, -&tail.step),
+                        (j.clone(), Int::from(-1)),
+                    ]
+                    .into_iter()
                     .collect(),
-            );
-            work.charge(size + 4)?;
-            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-            let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
-            let lin = Lin {
-                terms: [
-                    (s.clone(), Int::from(1)),
-                    (t, -&tail.step),
-                    (j.clone(), Int::from(-1)),
-                ]
-                .into_iter()
-                .collect(),
-                constant: Int::from(0),
-            };
-            let q = Formula::and(vec![
-                f.clone(),
-                super::member(s, &tail.piece),
-                Formula::Con(Con { lin, rel: Rel::Eq }),
-                super::member(&j, &other),
-            ]);
-            match super::satisfiable(&q)? {
-                None => return Err(Refusal::Work),
-                Some(m) => points.push(m),
-            }
-            continue;
-        }
-        // The residue question of a progression: a point of `f` with `s` between its first and
-        // last values and in a residue class modulo its step that no value found there is in.
-        // Where there is none, every piece of the gap there shorter than the step, with no
-        // value in such a class, is dropped at once: the odd values between the even ones of a
-        // stride, which one question for each would cost as many questions as the answer has
-        // pieces.
-        if let Some(st) = strides.pop() {
-            let have = residues(&found, &st, work)?;
-            let all = IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1))));
-            let other = all.minus(&have);
-            if other.is_empty() {
+                    constant: Int::from(0),
+                };
+                let q = Formula::and(vec![
+                    f.clone(),
+                    super::member(s, &tail.piece),
+                    Formula::Con(Con { lin, rel: Rel::Eq }),
+                    super::member(&j, &other),
+                ]);
+                match super::satisfiable(&q) {
+                    Ok(Some(m)) => points.push(m),
+                    // Holes without end, which ranges cannot hold, or a refused question: the
+                    // piece is kept as the solver's set had it, unconfirmed.
+                    r @ (Ok(None) | Err(_)) => {
+                        if std::env::var_os("ZED_EXACT_TRACE").is_some() {
+                            eprintln!("KEPT tail {:?} {:?}", tail.piece, r.err());
+                        } // TMPDBG
+                        let here = gap.meet(&tail.piece);
+                        kept = kept.join(&here);
+                        gap = gap.minus(&here);
+                    }
+                }
                 continue;
             }
-            work.charge(size + 4)?;
-            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-            let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
-            let lin = Lin {
-                terms: [
-                    (s.clone(), Int::from(1)),
-                    (t, -&st.step),
-                    (j.clone(), Int::from(-1)),
-                ]
-                .into_iter()
-                .collect(),
-                constant: Int::from(0),
+            // The residue question of a progression: a point of `f` with `s` between its first and
+            // last values and in a residue class modulo its step that no value found there is in.
+            // Where there is none, every piece of the gap there shorter than the step, with no
+            // value in such a class, is dropped at once: the odd values between the even ones of a
+            // stride, which one question for each would cost as many questions as the answer has
+            // pieces.
+            if let Some(st) = strides.pop() {
+                let have = residues(&found, &st, work)?;
+                let all = IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1))));
+                let other = all.minus(&have);
+                if other.is_empty() {
+                    continue;
+                }
+                work.charge(size + 4)?;
+                EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+                let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
+                let lin = Lin {
+                    terms: [
+                        (s.clone(), Int::from(1)),
+                        (t, -&st.step),
+                        (j.clone(), Int::from(-1)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    constant: Int::from(0),
+                };
+                let span = IntervalSet::range(fin(&st.lo), fin(&st.hi));
+                let q = Formula::and(vec![
+                    f.clone(),
+                    super::member(s, &span),
+                    Formula::Con(Con { lin, rel: Rel::Eq }),
+                    super::member(&j, &other),
+                ]);
+                // A refusal of this question only leaves the gap to the questions by piece.
+                match super::satisfiable(&q) {
+                    Err(_) => {}
+                    Ok(None) => gap = gap.minus(&outside(&gap, &st, &have, work)?),
+                    Ok(Some(m)) => {
+                        points.push(m);
+                        strides.push(st);
+                    }
+                }
+                continue;
+            }
+            // One piece of the gap at a time, so that each question is `f` and two bounds: asked
+            // with the whole gap, a question after k cells carries the k holes they made, and k
+            // cells cost O(k^2) (the even values of `x == 2 * y` in a box, `exact::tests`).
+            let Some(piece) = gap.first().cloned() else {
+                return Ok(found.join(&kept));
             };
-            let span = IntervalSet::range(fin(&st.lo), fin(&st.hi));
-            let q = Formula::and(vec![
-                f.clone(),
-                super::member(s, &span),
-                Formula::Con(Con { lin, rel: Rel::Eq }),
-                super::member(&j, &other),
-            ]);
-            // A refusal of this question only leaves the gap to the questions by piece.
+            work.charge(size + 2)?;
+            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+            let piece = IntervalSet::range(piece.0, piece.1);
+            let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
             match super::satisfiable(&q) {
-                Err(_) => {}
-                Ok(None) => gap = gap.minus(&outside(&gap, &st, &have, work)?),
-                Ok(Some(m)) => {
-                    points.push(m);
-                    strides.push(st);
+                Ok(None) => gap = gap.minus(&piece),
+                Ok(Some(m)) => points.push(m),
+                // A refused question keeps its piece unconfirmed: the solver's set held it.
+                Err(e) => {
+                    if std::env::var_os("ZED_EXACT_TRACE").is_some() {
+                        eprintln!("KEPT piece {piece:?} {e:?}");
+                    } // TMPDBG
+                    kept = kept.join(&piece);
+                    gap = gap.minus(&piece);
                 }
             }
-            continue;
         }
-        // One piece of the gap at a time, so that each question is `f` and two bounds: asked
-        // with the whole gap, a question after k cells carries the k holes they made, and k
-        // cells cost O(k^2) (the even values of `x == 2 * y` in a box, `exact::tests`).
-        let Some(piece) = gap.first().cloned() else {
-            return Ok(found);
-        };
-        work.charge(size + 2)?;
-        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-        let piece = IntervalSet::range(piece.0, piece.1);
-        let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
-        match super::satisfiable(&q)? {
-            None => gap = gap.minus(&piece),
-            Some(m) => points.push(m),
-        }
+    })();
+    // A refusal past the work limit, or in a cell, keeps what is not yet confirmed: the answer
+    // is then the solver's set narrowed by the pieces proved empty, never wider than `h`
+    // (main's answer before the cover), never narrower than the projection.
+    match r {
+        Ok(x) => (x, kept.is_empty()),
+        Err(e) => {
+            if std::env::var_os("ZED_EXACT_TRACE").is_some() {
+                eprintln!("KEPT stop {e:?} gap={gap:?}");
+            }
+            (found.join(&kept).join(&gap), false)
+        } // TMPDBG
     }
 }
 
@@ -1223,8 +1269,9 @@ mod tests {
     }
 
     /// The work limit on both sides: allowed exactly the work the cover of [`evens`] takes, it
-    /// answers with the exact set (the even values); allowed one unit less, it refuses with
-    /// [`Refusal::Work`]. The work is counted, so both runs stop at the same point.
+    /// answers with the exact set (the even values); allowed one unit less, it keeps the
+    /// solver's set, which holds them and has values with no point. The work is counted, so
+    /// both runs stop at the same point.
     #[test]
     fn the_work_limit_is_met_alike_on_both_sides() {
         let f = evens(20);
@@ -1242,16 +1289,22 @@ mod tests {
             "the work is not the same on a second run"
         );
         EXACT_LIMIT_SET.set(Some(used - 1));
-        let r = project_each(&f, &[a("x")]).unwrap().0.remove(0);
+        let r = project_each(&f, &[a("x")]).unwrap().0.remove(0).unwrap();
         EXACT_LIMIT_SET.set(None);
-        assert_eq!(r, Err(Refusal::Work));
+        EXACT_OFF.set(true);
+        let solver = project(&f, "x");
+        EXACT_OFF.set(false);
+        assert!(
+            r.meet(&want) == want && solver.meet(&r) == r && r != want,
+            "{r}"
+        );
     }
 
     /// An unbounded set with holes, the even values of `x == 2 * y || x == 2 * z` with no
-    /// bound, is not a finite union of ranges, so no answer is exact: it is refused at the work
-    /// limit, here set low.
+    /// bound, is not a finite union of ranges, so no answer is exact: the cover's tail
+    /// question proves the holes, and the symbol keeps the solver's set (every value).
     #[test]
-    fn an_unbounded_set_with_holes_is_refused_at_the_work_limit() {
+    fn an_unbounded_set_with_holes_keeps_the_solver_s_set() {
         let f = Formula::or(vec![
             eq(&[("x", 1), ("y", -2)], 0),
             eq(&[("x", 1), ("z", -2)], 0),
@@ -1259,7 +1312,7 @@ mod tests {
         EXACT_LIMIT_SET.set(Some(10_000));
         let r = project_each(&f, &[a("x")]).unwrap().0.remove(0);
         EXACT_LIMIT_SET.set(None);
-        assert_eq!(r, Err(Refusal::Work));
+        assert_eq!(r, Ok(IntervalSet::top()));
     }
 
     /// The conjunction of a pendants part that ran forever (l01_39 `pendants`, rows 5 to 9):
@@ -1295,6 +1348,46 @@ mod tests {
             EXACT_QUESTIONS.get()
         );
     }
+    /// The part of l01_39 `pendants` (case 272 of seed 17) whose `b` the solver answers
+    /// `[-4, 15]` and the cover once refused (`Refusal::Growth` on one of its questions), so the
+    /// caller fell back to the box `[-4, 16]`: a refused question now keeps its piece, so `b`
+    /// keeps 15 and never gets 16, which has no point (`a + b + 2·c == z2 + 5` with `z2 <= 6`,
+    /// `a >= 2` gives `c <= -4`, and `a + 2·c >= -4` gives `c >= -3`). 15 has one: `a == 2,
+    /// c == -3, z2 == 6, z1 == -7`. Every `b` in `-4..=15` has one (all points of the box with
+    /// `c` in `-3..=8` listed, PRES-pugh-findings), so the answer is the exact set; but the
+    /// question of the piece `-4..=0` (or `-4..=-2`, by the in-cell method) is refused by the
+    /// solver (`Refusal::Growth`), so that piece is kept unconfirmed, not proved, with every
+    /// method.
+    #[test]
+    fn the_pendants_part_of_row_3_projects_b_to_at_most_15() {
+        let mem = |s: &str, l: Option<i64>, u: Option<i64>| {
+            let e = |v: Option<i64>, inf| v.map(End::of).unwrap_or(inf);
+            member(
+                &a(s),
+                &IntervalSet::from_pieces(vec![(e(l, End::NegInf), e(u, End::PosInf))]),
+            )
+        };
+        let f = Formula::and(vec![
+            mem("a", Some(2), Some(3)),
+            mem("b", Some(-4), None),
+            mem("c", None, Some(8)),
+            mem("z0", Some(-6), Some(-4)),
+            mem("z1", Some(-7), Some(13)),
+            mem("z2", Some(-10), Some(6)),
+            ge(&[("a", 1), ("c", 2)], 4),
+            Formula::or(vec![ge(&[("a", 2), ("b", 1)], -7), ge(&[("z2", -1)], 8)]),
+            ge(&[("a", 1), ("b", 2), ("c", 1), ("z1", 1)], -4),
+            ge(&[("a", 1), ("b", -1), ("z1", -1)], 6),
+            Formula::or(vec![ge(&[("b", 1), ("c", -1)], 11), ge(&[("z2", -1)], 4)]),
+            ge(&[("a", 1), ("b", 1), ("c", 1), ("z1", -1)], -2),
+            ge(&[("a", -1), ("z1", -1), ("b", 1), ("c", 1)], 9),
+            ge(&[("a", 1), ("c", 1), ("z0", -1)], 12),
+            eq(&[("a", 1), ("b", 1), ("c", 2), ("z2", -1)], -5),
+        ]);
+        let b = project(&f, "b");
+        assert_eq!(b, IntervalSet::of(-4, 15), "{b}");
+    }
+
     /// The questions of the cover on a stride, as the remainder reading writes one (`y == 2·q
     /// + r` with `r == 0`), and on remainders kept in a range (`x == 1024·q + r` with `r` in
     /// `0..=36`), each in a box: the even values of `y` (but -4 and -2, which a case leaves out) from one point, along the direction that
