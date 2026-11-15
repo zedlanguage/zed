@@ -63,8 +63,8 @@ fn a_float_sum_is_ieee_addition_on_the_canonical_tree_at_every_kind_of_value() {
 #[test]
 fn every_scan_entry_and_fold_is_the_canonical_tree_over_its_prefix() {
     // Values of magnitudes from 2^-60 to 2^70 and both signs, so that the grouping changes the
-    // rounding (a left-to-right sum fails this test at entry 2); the prefix lengths 1 to 300
-    // reach every stack of up to eight blocks.
+    // rounding (a left-to-right sum fails this test first at entry 31); the prefix lengths 1 to
+    // 300 reach every stack of up to eight blocks.
     let xs: Vec<f64> = (0..300)
         .map(|i: i32| {
             let x = f64::from((i * 7919) % 1009 + 1) * 2f64.powi((i * 37) % 121 - 60);
@@ -72,9 +72,9 @@ fn every_scan_entry_and_fold_is_the_canonical_tree_over_its_prefix() {
         })
         .collect();
     let mut scan = TreeSum::default();
-    for i in 0..xs.len() {
+    for (i, &x) in xs.iter().enumerate() {
         let want = tree(&xs[..=i]).to_bits();
-        assert_eq!(scan.add(xs[i]).to_bits(), want, "scan entry {i}");
+        assert_eq!(scan.add(x).to_bits(), want, "scan entry {i}");
         assert_eq!(scan.value().to_bits(), want, "value after entry {i}");
         assert_eq!(
             fsum(xs[..=i].iter().copied()).to_bits(),

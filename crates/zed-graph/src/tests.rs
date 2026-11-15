@@ -116,7 +116,7 @@ fn the_search_reads_only_what_the_roots_reach_and_skips_the_edges_left_out() {
 #[test]
 fn members_come_in_the_order_the_search_reached_them() {
     // 0 -> 1 -> 2 -> 0: reached 0, 1, 2, so the component is given as [0, 1, 2].
-    let edges = vec![vec![1], vec![2], vec![0]];
+    let edges = [vec![1], vec![2], vec![0]];
     let mut found = Vec::new();
     tarjan(
         3,

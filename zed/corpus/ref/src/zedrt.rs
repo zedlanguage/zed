@@ -120,7 +120,9 @@ impl TreeSum {
     pub fn add(&mut self, x: f64) -> f64 {
         let (mut size, mut sum) = (1, x);
         while let Some(left) = self.blocks.pop_if(|b| b.size == size) {
-            sum = left.sum + sum;
+            // left + right: IEEE addition is commutative, save for which NaN payload comes out,
+            // and DESIGN sec:reduction item 4 makes every NaN one value.
+            sum += left.sum;
             size *= 2;
         }
         let prefix = self.blocks.last().map_or(sum, |below| below.prefix + sum);
