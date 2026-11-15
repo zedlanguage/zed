@@ -368,3 +368,129 @@ fn sum_in_a_generic_function_rejects_what_is_neither_numbers_nor_a_family_of_the
         &["`sum` does not take"],
     );
 }
+
+// ---- A type parameter joined with a family or a tuple, and keypaths (row
+// TEST-generic-sum-branches). DESIGN.md's method register: "tot = xs.sum; // = xs >< (+)";
+// sec:kernel: "`m >< op` / `.reduce(op)` / `.sum` | `fold(m, op, ev)`"; layer 1: "`sum` of a
+// tuple ... is a type error on mixed number kinds"; sec:premise: "One operation behaves the
+// same in every context: ... in generic and in specific code", so a call of a generic
+// function is accepted or rejected as its body written at the call's types is. ----
+
+/// `xs` joined with the family `[1, 2]`: the receiver of the fold is `X | (int -> int)`.
+const JOINED: &str = "(if b { xs } else { [1, 2] })";
+
+#[test]
+fn a_parameter_joined_with_a_family_is_folded_at_each_call() {
+    // At `X` a family of `int`: the concrete `(if b { [3, 4] } else { [1, 2] }).sum` is `7`
+    // when `b` holds and `3` when it does not.
+    let src = format!(
+        "s(positional xs, positional b) = {JOINED}.sum;\nt = s([3, 4], true);\nf = s([3, 4], false);\n"
+    );
+    prints(&src, "t", "7");
+    prints(&src, "f", "3");
+    let src = format!("s(positional xs, positional b) = {JOINED} >< (+);\nt = s([3, 4], true);\n");
+    prints(&src, "t", "7");
+}
+
+#[test]
+fn a_parameter_joined_with_a_family_rejects_what_is_no_family_at_the_call() {
+    // `(if b { (3, 4) } else { [1, 2] }).sum` is rejected (a fold reads a family's entries),
+    // so the call that makes `xs` a tuple, a string or a number is rejected too. Before this
+    // row the checker read only `[1, 2]`'s entries, accepted each of these calls, and the run
+    // stopped in the kernel's fold on a value that is no family.
+    for (fold, arg) in [
+        (".sum", "(3, 4)"),
+        (".sum", "\"ab\""),
+        (".sum", "5"),
+        (" >< (+)", "(3, 4)"),
+        (".reduce((+))", "(3, 4)"),
+    ] {
+        rejected(
+            &format!("s(positional xs, positional b) = {JOINED}{fold};\nt = s({arg}, true);\n"),
+            &["folds the entries of a family"],
+        );
+    }
+}
+
+#[test]
+fn a_parameter_joined_with_a_family_of_another_carrier_is_not_compiled_yet() {
+    // At `X` a family of `f64` the fold runs at `int` and at `f64`, which have two identities,
+    // `0` and `-0.0` (sec:reduction, "Identity as data"); the concrete
+    // `(if b { [3.5, 4.0] } else { [1, 2] }).sum` is refused as not compiled yet too.
+    rejected(
+        &format!("s(positional xs, positional b) = {JOINED}.sum;\nt = s([3.5, 4.0], false);\n"),
+        &["does not compile it yet"],
+    );
+    rejected(
+        "f(positional b) = (if b { [3.5, 4.0] } else { [1, 2] }).sum;\nt = f(false);\n",
+        &["does not compile it yet"],
+    );
+}
+
+#[test]
+fn a_parameter_joined_with_the_empty_family_folds_at_the_parameters_carrier() {
+    // sec:reduction, "Identity as data": "`sum` gets its identity, `0` at `int`", and "`max`
+    // ... at `int`, which has no identity for it, is `T | #empty`". The concrete
+    // `(if b { [3, 4] } else { [] }).sum` gives `0` when `b` does not hold; before this row
+    // the generic body gave `#empty`.
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\n\
+               t = s([3, 4], true);\nf = s([3, 4], false);\n";
+    prints(src, "t", "7");
+    prints(src, "f", "0");
+    let src = "s(positional xs, positional b) = (if b { xs } else { [] }) >< max;\n\
+               t = s([3, 4], true);\nf = s([3, 4], false);\n";
+    prints(src, "t", "4");
+    prints(src, "f", "#empty");
+    rejected(
+        "s(positional xs, positional b) = (if b { xs } else { [] }).sum;\nt = s((3, 4), false);\n",
+        &["folds the entries of a family"],
+    );
+}
+
+#[test]
+fn two_parameters_joined_each_take_the_fold() {
+    // `if b { xs } else { ys }` is `X | Y`: each variable is checked at the call, not only the
+    // first. `.sum` at a tuple is the word of layer 1, `(1, 2)` gives `3`; a string is
+    // refused by it; `><` at a tuple is refused as `(1, 2) >< (+)` is.
+    let sum = "s(positional xs, positional ys, positional b) = (if b { xs } else { ys }).sum;\n";
+    let src = format!("{sum}t = s([3, 4], (1, 2), true);\nf = s([3, 4], (1, 2), false);\n");
+    prints(&src, "t", "7");
+    prints(&src, "f", "3");
+    rejected(
+        &format!("{sum}t = s([3, 4], \"ab\", false);\n"),
+        &["`sum` does not take"],
+    );
+    rejected(
+        "s(positional xs, positional ys, positional b) = (if b { xs } else { ys }) >< (+);\n\
+         t = s([3, 4], (1, 2), false);\n",
+        &["folds the entries of a family"],
+    );
+}
+
+#[test]
+fn a_parameter_joined_with_a_tuple_is_summed_as_a_tuple() {
+    // `X | (int, int)` takes `.sum` as the word of layer 1. At a tuple it adds; at a family
+    // it is rejected, as the concrete `(if b { [3, 4] } else { (1, 2) }).sum` is (the two
+    // messages differ, and whether rule 6 of sec:type_resolution accepts the union region by
+    // region is open: row FAIL-sum-word-family).
+    let src = "s(positional xs, positional b) = (if b { xs } else { (1, 2) }).sum;\n";
+    prints(&format!("{src}t = s((3, 4), true);\n"), "t", "7");
+    prints(&format!("{src}f = s((3, 4), false);\n"), "f", "3");
+    rejected(&format!("{src}t = s([3, 4], true);\n"), &["`sum` does not take"]);
+    rejected(
+        "f(positional b) = (if b { [3, 4] } else { (1, 2) }).sum;\nt = f(true);\n",
+        &["`.sum` folds the entries of a family"],
+    );
+}
+
+#[test]
+fn a_family_made_by_a_reindex_takes_the_fold_branch() {
+    // `group` builds its classes by the kernel's `reindex`, whose keypaths are the one value
+    // the run-time tuple test of a generic `.sum` would also take; none reaches a program's
+    // terms (the proof at `Elab::generic_sum`). sec:grouping: `group` keys each entry by its
+    // class, then its key, so the classes of `[1, 2, 3, 4]` by `v mod 2` are
+    // `{0 -> {1 -> 2, 3 -> 4}, 1 -> {0 -> 1, 2 -> 3}}`, and their sums `6` and `4`.
+    let src = "s(positional xs) = xs.sum;\nm = [1, 2, 3, 4];\n\
+               t = m.group(v -> v mod 2).map(g -> s(g));\n";
+    prints(src, "t", "{0 -> 6, 1 -> 4}");
+}
