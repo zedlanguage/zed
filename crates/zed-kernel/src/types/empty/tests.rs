@@ -716,3 +716,73 @@ fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
     }
     assert!(met > 0 && apart > 0, "{met} pairs met, {apart} apart");
 }
+
+/// The readers a rollback leaves (`Search::drop_reads_since`), read off the first read of
+/// each type, agree with a scan of the reads kept, the rule before FAIL-refusals-forked-pair-
+/// bench: on random reads of 12 types by 4, made at epochs that do not fall, with types read
+/// more than once, rolled back from random epochs, taken out in full and read again.
+#[test]
+fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
+    const TYPES: usize = 12;
+    const READERS: usize = 4;
+    let mut seed =
+        crate::seed::seed("a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept");
+    let mut next = |below: usize| {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % below
+    };
+    let mut s = Search::default();
+    for _ in 0..TYPES {
+        s.readers.push(BTreeSet::new());
+        s.reads.push(Vec::new());
+        s.first_reads.push(DigestMap::default());
+    }
+    // The reads of each reader as the scan keeps them, and the readers it leaves.
+    let mut scan: Vec<Vec<(usize, usize)>> = vec![Vec::new(); READERS];
+    let mut scan_readers: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); TYPES];
+    let (mut kept, mut dropped) = (0, 0);
+    let mut ep = 0;
+    for step in 0..20_000 {
+        ep += next(2);
+        let c = next(READERS);
+        match next(8) {
+            0 => {
+                let from = ep.saturating_sub(next(6));
+                let start = scan[c].partition_point(|&(_, e)| e < from);
+                let gone: Vec<usize> = scan[c].drain(start..).map(|(p, _)| p).collect();
+                let left: BTreeSet<usize> =
+                    scan[c].iter().map(|&(p, _)| unpack_read(p).0).collect();
+                for &p in &gone {
+                    let u = unpack_read(p).0;
+                    if left.contains(&u) {
+                        kept += 1;
+                    } else {
+                        scan_readers[u].remove(&c);
+                        dropped += 1;
+                    }
+                }
+                assert_eq!(s.drop_reads_since(c, from), gone, "step {step}");
+            }
+            1 => {
+                for (p, _) in std::mem::take(&mut scan[c]) {
+                    scan_readers[unpack_read(p).0].remove(&c);
+                }
+                for (p, _) in s.take_reads(c) {
+                    s.readers[unpack_read(p).0].remove(&c);
+                }
+            }
+            _ => {
+                let u = next(TYPES);
+                let p = pack_read(u, next(2) == 0);
+                scan[c].push((p, ep));
+                scan_readers[u].insert(c);
+                s.add_reader(u, c);
+                s.push_read(c, p, ep);
+            }
+        }
+        assert_eq!(s.readers, scan_readers, "step {step}");
+    }
+    assert!(kept > 0 && dropped > 0, "{kept} kept, {dropped} dropped");
+}

@@ -1239,6 +1239,9 @@ struct Search {
     /// For each type, the types it read (with the high bit set when the read did not establish
     /// emptiness), each with the search epoch when it was read.
     reads: Vec<Vec<(usize, usize)>>,
+    /// For each type, each type in its `reads` with the epoch of its first entry there
+    /// ([`Search::drop_reads_since`]).
+    first_reads: Vec<DigestMap<usize, usize>>,
     /// The types whose value is being built, and how many closures rest on one of them.
     building: ByType<Building>,
     resting: usize,
@@ -2379,22 +2382,41 @@ impl Search {
         self.readers[u].insert(c)
     }
 
+    /// Notes that `c` read `packed` ([`pack_read`]) at epoch `ep`, the epoch now or later than
+    /// that of every read of `c` before it.
+    fn push_read(&mut self, c: usize, packed: usize, ep: usize) {
+        self.reads[c].push((packed, ep));
+        self.first_reads[c]
+            .entry(unpack_read(packed).0)
+            .or_insert(ep);
+    }
+
+    /// The reads of `c` taken out in full, with its first reads.
+    fn take_reads(&mut self, c: usize) -> Vec<(usize, usize)> {
+        self.first_reads[c].clear();
+        std::mem::take(&mut self.reads[c])
+    }
+
     /// Takes out the reads `c` made from epoch `ep` on, packed ([`pack_read`]), and drops `c`
     /// from the readers of each type it no longer reads.
     // Complexity tradeoff (COMPLEXITY.md K102): the naive test scans the reads kept for each
-    // read dropped, O(D K); a set of the kept reads makes it O(D + K) expected.
+    // read dropped, O(D K); a set of the kept reads, built at each call, made it O(D + K)
+    // expected, but K is all that `c` read before the snapshot, so `n` rollbacks of one type
+    // that reads more at each cost O(n^2) in all: the pair type met with `n` forked
+    // differences, which `Type::empty_past_forks` searches one difference at a time, took
+    // 2.23e9 and 3.43e10 instructions at n 512 and 4096 (15.3 times; FAIL-refusals-forked-pair-
+    // bench). Used: the epoch of the first read of each type, kept as reads are pushed
+    // (`first_reads`). The epochs along `reads[c]` do not fall, so a type read before `ep`
+    // has its first read before `ep`, and one whose first read is at `ep` or later has none
+    // kept: O(D) expected for D reads dropped. Given up: one map entry per type read.
     fn drop_reads_since(&mut self, c: usize, ep: usize) -> Vec<usize> {
         let start = self.reads[c].partition_point(|&(_, e)| e < ep);
         let dropped: Vec<usize> = self.reads[c].drain(start..).map(|(p, _)| p).collect();
-        if dropped.is_empty() {
-            return dropped;
-        }
-        let kept: HashSet<usize> = (self.reads[c].iter())
-            .map(|&(v, _)| unpack_read(v).0)
-            .collect();
         for &packed in &dropped {
             let (u, _) = unpack_read(packed);
-            if !kept.contains(&u) {
+            let first = &mut self.first_reads[c];
+            if first.get(&u).is_some_and(|&e| e >= ep) {
+                first.remove(&u);
                 self.readers[u].remove(&c);
             }
         }
@@ -2474,6 +2496,7 @@ impl Search {
         }
         self.readers.truncate(mark);
         self.reads.truncate(mark);
+        self.first_reads.truncate(mark);
     }
 
     fn refusal_rank(r: Refusal) -> (u8, usize) {
@@ -2544,12 +2567,12 @@ impl Search {
                 let fresh = self.add_reader(i, c);
                 if fresh {
                     let ep = self.epoch;
-                    self.reads[c].push((pack_read(i, true), ep));
+                    self.push_read(c, pack_read(i, true), ep);
                 } else if self.canonical_blame {
                     let ep = self.epoch;
                     let packed = pack_read(i, true);
                     if self.reads[c].last() != Some(&(packed, ep)) {
-                        self.reads[c].push((packed, ep));
+                        self.push_read(c, packed, ep);
                     }
                 }
             }
@@ -2573,9 +2596,10 @@ impl Search {
         self.readers.push(BTreeSet::new());
         if let Some(c) = self.current {
             let ep = self.epoch;
-            self.reads[c].push((pack_read(i, true), ep));
+            self.push_read(c, pack_read(i, true), ep);
         }
         self.reads.push(Vec::new());
+        self.first_reads.push(DigestMap::default());
         self.deciding.insert(i);
         ControlFlow::Continue(i)
     }
@@ -3234,7 +3258,7 @@ impl<'m> Searching<'m> {
             }
             for (t, &r) in reset.iter().enumerate() {
                 if r {
-                    for (packed, _) in std::mem::take(&mut s.reads[t]) {
+                    for (packed, _) in s.take_reads(t) {
                         let (u, _) = unpack_read(packed);
                         s.readers[u].remove(&t);
                     }
@@ -3322,7 +3346,7 @@ impl<'m> Searching<'m> {
             if let Some(blame) = &mut s.blame {
                 blame.retain(|&(x, _, _)| x != t);
             }
-            for (packed, _) in std::mem::take(&mut s.reads[t]) {
+            for (packed, _) in s.take_reads(t) {
                 let (u, _) = unpack_read(packed);
                 s.readers[u].remove(&t);
             }
@@ -3647,7 +3671,7 @@ impl<'m> Searching<'m> {
             for packed in reads {
                 let (u, _) = unpack_read(packed);
                 s.add_reader(u, c);
-                s.reads[c].push((packed, ep));
+                s.push_read(c, packed, ep);
             }
         }
         if let Some(b) = &mut s.blame {
@@ -5066,11 +5090,11 @@ impl<'m> Searching<'m> {
             s.add_reader(i, c);
             if dead {
                 let ep = s.epoch;
-                s.reads[c].push((pack_read(i, true), ep));
+                s.push_read(c, pack_read(i, true), ep);
             } else if s.canonical_blame {
                 s.epoch += 1;
                 let ep = s.epoch;
-                s.reads[c].push((pack_read(i, false), ep));
+                s.push_read(c, pack_read(i, false), ep);
             }
         }
         dead
