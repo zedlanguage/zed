@@ -31,6 +31,8 @@ mod def;
 pub mod domain;
 
 mod serial;
+use std::collections::HashMap;
+
 use zed_kernel::num::TooLarge;
 use zed_kernel::term::Term;
 use zed_kernel::value::Value;
@@ -164,17 +166,54 @@ pub fn canonicalize(d: &Def) -> Def {
     // time, renaming one binder and walking the whole term per step, O(B · t · d), and
     // bubble-sorting the facets by the swap rule, O(F³) with the rank recomputed per step.
     // Here the binders are renamed in one walk, O(t log t), and the facets filtered, sorted
-    // and deduplicated once, O(F log F). The rules stay as the definition; the test
-    // `alpha::the_normal_form_is_the_rules_applied_one_step_at_a_time` checks that both agree.
-    let mut facets: Vec<Facet> = d.facets.iter().filter(|f| !f.hint).cloned().collect();
-    facets.sort();
-    facets.dedup();
+    // and deduplicated once, O(F log F) (`sorted_facets`). The rules stay as the definition;
+    // the test `alpha::the_normal_form_is_the_rules_applied_one_step_at_a_time` checks that
+    // both agree.
     Def {
         name: d.name.clone(),
         domain: d.domain.as_ref().map(Domain::normal),
-        facets,
+        facets: sorted_facets(&d.facets),
         body: binders::canonical(&d.body),
     }
+}
+
+/// The facets of `facets` that are not hints, in [`Facet`]'s order and without repeats: the
+/// normal form of the hint and facet rules. `O(F log F)` for `F` facets.
+// Complexity tradeoff (COMPLEXITY.md F5, FAIL-ratio-facet-sort): sorting the facets themselves
+// compares each pair by its hint, its kind's text (a string comparison through `memcmp`) and its
+// value, and moves whole facets; at 250 and 2000 facets the comparisons were half the
+// instructions, and the work grew 9.54 times at 8 times the facets. Used: each distinct kind is
+// ranked once (one hash lookup per facet, then the K distinct kinds sorted, O(K log K)), and the
+// sort orders (rank, facet) pairs by the rank, an integer, then the value; only the facets kept
+// are cloned. The order is the same: the hints are gone, so every pair has the same hint, and
+// the ranks are in the kinds' text order. The sort is stable and the repeats dropped after it are
+// the later ones, as before, so of two equal facets the first written is kept. Cost: a hash map
+// of the K kinds and a vector of F pairs.
+fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
+    let kept = || facets.iter().filter(|f| !f.hint);
+    // Each facet's kind as the index of the kind's first appearance, then each index mapped to
+    // the kind's rank in text order.
+    let mut first: HashMap<&str, u32> = HashMap::new();
+    let ids: Vec<u32> = kept()
+        .map(|f| {
+            let next = first.len() as u32;
+            *first.entry(&f.kind).or_insert(next)
+        })
+        .collect();
+    let mut kinds: Vec<(&str, u32)> = first.into_iter().collect();
+    kinds.sort_unstable();
+    let mut rank = vec![0; kinds.len()];
+    for (r, (_, id)) in kinds.into_iter().enumerate() {
+        rank[id as usize] = r as u32;
+    }
+    let mut keyed: Vec<(u32, &Facet)> = ids
+        .into_iter()
+        .map(|id| rank[id as usize])
+        .zip(kept())
+        .collect();
+    keyed.sort_by(|(r, f), (s, g)| r.cmp(s).then_with(|| f.value.cmp(&g.value)));
+    keyed.dedup_by(|(r, f), (s, g)| r == s && f.value == g.value);
+    keyed.into_iter().map(|(_, f)| f.clone()).collect()
 }
 
 /// The content address of `d`. A free variable that `refs` resolves names another

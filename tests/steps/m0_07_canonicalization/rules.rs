@@ -130,6 +130,47 @@ fn the_facet_rank_counts_the_pairs_out_of_order_and_the_facets() {
     assert_eq!(ranks(&d)[2], 2 + 3);
 }
 
+/// The canonicalizer sorts the facets by each kind's rank among the kinds present, not by the
+/// kinds' text (FAIL-ratio-facet-sort). Long lists of facets of kinds that are prefixes of one
+/// another and whose first appearance is not their text order, with values of every scalar
+/// kind and tuples, repeats and hints, end as the hint and facet rules applied one step at a
+/// time leave them.
+#[test]
+fn many_facets_of_many_kinds_end_as_the_rules_leave_them() {
+    let mut rng = Rng::new(zed_tests::seed::seed(
+        "many_facets_of_many_kinds_end_as_the_rules_leave_them",
+    ));
+    let kinds = ["units", "unit", "u", "doc", "monotone", "units2", ""];
+    let mut repeats = 0;
+    for _ in 0..RANDOM_INSTANCES / 4 {
+        let mut d = def("d", lit(0));
+        d.facets = (0..rng.below(40))
+            .map(|_| {
+                let i = rng.int(-2, 2);
+                Facet {
+                    hint: rng.below(4) == 0,
+                    kind: Arc::from(rng.pick(&kinds)),
+                    value: match rng.below(5) {
+                        0 => Value::Int(i),
+                        1 => Value::from(i > 0),
+                        2 => Value::from(["a", "ab", "b"][i.unsigned_abs() as usize % 3]),
+                        3 => Value::atom(["none", "inc"][i.unsigned_abs() as usize % 2]),
+                        _ => Value::tuple(vec![Value::Int(i), Value::from("a")]),
+                    },
+                }
+            })
+            .collect();
+        let normal = canonicalize(&d);
+        let mut stepped = d.clone();
+        while RULES.iter().any(|r| (r.apply)(&mut stepped)) {}
+        assert_eq!(normal.facets, stepped.facets, "{:?}", d.facets);
+        let kept = d.facets.iter().filter(|f| !f.hint).count();
+        repeats += usize::from(normal.facets.len() < kept);
+    }
+    // The lists met repeated facets, which the canonicalizer dropped.
+    assert!(repeats > RANDOM_INSTANCES / 16, "{repeats}");
+}
+
 #[test]
 fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
     let mut rng = Rng::new(zed_tests::seed::seed(
