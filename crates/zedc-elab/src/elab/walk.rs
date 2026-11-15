@@ -1342,7 +1342,7 @@ impl<'a> Elab<'a> {
             self.atom(m, name, call);
             return;
         }
-        // `sum(x)` is `x.sum` (DESIGN.md sec:operators, the row of `.`); where the checker took
+        // `sum(x)` is `x.sum` (DESIGN.md sec:lexical, the row of `.`); where the checker took
         // it as the method's check (`Ck::word_applied`), it is elaborated as the method is.
         if let ExprKind::Name(n) = &callee.kind
             && n == "sum"

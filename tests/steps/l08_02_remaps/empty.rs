@@ -879,7 +879,7 @@ fn a_generic_fold_at_two_carriers_through_a_function_value_is_not_compiled_yet()
 
 #[test]
 fn sum_called_as_a_function_folds_a_family() {
-    // DESIGN.md sec:operators, the row of `.`: "`x.f(a)` passes `x` as `f`'s first parameter",
+    // DESIGN.md sec:lexical, the row of `.`: "`x.f(a)` passes `x` as `f`'s first parameter",
     // so `sum(x)` and `x.sum` are one call; the method register's "tot = xs.sum; // = xs >< (+)"
     // makes both the fold on a family, and L1.18 the sum of the components on a tuple.
     prints("t = sum([1, 2]);\n", "t", "3");

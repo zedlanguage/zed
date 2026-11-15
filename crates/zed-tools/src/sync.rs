@@ -14,7 +14,9 @@
 //! - `zed/fences/messages.md`: their ```` ```text ```` fences, the messages and reports the spec
 //!   prints, each under a header naming its source line and section;
 //! - `zed/fences/rejections.txt`: the row names of the rejection table (step L1.29);
-//! - `zed/fences/kernel-rules.txt`: the names no message prints (sec:diagnostics).
+//! - `zed/fences/kernel-rules.txt`: the names no message prints (sec:diagnostics);
+//! - `zed/fences/canon-serial.md`: the tables of step M0.7's serialization, each node's tag and
+//!   its fields in order, which `m0_07_canonicalization::serial_text` serializes by.
 //!
 //! It then runs the checks that read the spec's prose, which this repository does not hold:
 //! the prelude laws against `docs/mathlib-study.md`, the build modes and the kinds of build
@@ -181,6 +183,27 @@ fn words(design: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// The header of each table of step M0.7's serialization ends with this text.
+pub const SERIAL_HEADER: &str = " | Tag | Fields in order |";
+
+/// The tables of step M0.7's serialization, each a table of DESIGN.md whose header ends with
+/// [`SERIAL_HEADER`]: its header and rows as written, without the line under the header, the
+/// tables one after another. O(size of `design`).
+pub fn serial_tables(design: &str) -> String {
+    let mut out = String::new();
+    let mut lines = design.lines();
+    while let Some(line) = lines.next() {
+        if !(line.starts_with("| ") && line.ends_with(SERIAL_HEADER)) {
+            continue;
+        }
+        writeln!(out, "{line}").expect("writing to a String");
+        for row in lines.by_ref().skip(1).take_while(|l| l.starts_with("| ")) {
+            writeln!(out, "{row}").expect("writing to a String");
+        }
+    }
+    out
+}
+
 /// The lines `lines`, each followed by a newline.
 fn lines_of(lines: &[String]) -> String {
     lines.iter().map(|l| format!("{l}\n")).collect()
@@ -229,6 +252,10 @@ pub fn sync_into(spec: &Spec, zed: &str, check: bool, out: &mut String) -> Outco
         (
             format!("{zed}/fences/kernel-rules.txt"),
             lines_of(&kernel_rules(&design)?),
+        ),
+        (
+            format!("{zed}/fences/canon-serial.md"),
+            serial_tables(&design),
         ),
     ];
     refresh(copies, check, out)

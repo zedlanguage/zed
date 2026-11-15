@@ -211,7 +211,8 @@ the grammars and the desugaring rules (`zedc-syntax` embeds `syntax.peg` with `i
 the backquoted words of the table of words (`words.md`), each fence with a one-line header
 giving its line, layer and section key (`design.md`, `examples.md`), the text fences that
 messages and reports are compared with (`messages.md`), the names of the rejection table's
-rows (`rejections.txt`) and the kernel's rule names (`kernel-rules.txt`). After a spec change,
+rows (`rejections.txt`), the kernel's rule names (`kernel-rules.txt`) and the tables of step
+M0.7's serialization, each node's tag and fields in order (`canon-serial.md`). After a spec change,
 run `sync` and commit what it writes with the tests it moves. `sync --check` writes nothing,
 names each copy that differs from the spec and exits nonzero; it also runs the checks that
 need the spec's prose (the prelude laws, the build-mode table, and that each `sec:` this

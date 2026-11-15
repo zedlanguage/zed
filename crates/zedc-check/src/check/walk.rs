@@ -5651,7 +5651,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// [`Self::word_end`] checked.
     fn word_applied(&mut self, w: &'a str, mut x: Arg<'a>, span: Span) -> Ty {
-        // `sum(x)` is `x.sum` (DESIGN.md sec:operators, the row of `.`: "`x.f(a)` passes `x` as
+        // `sum(x)` is `x.sum` (DESIGN.md sec:lexical, the row of `.`: "`x.f(a)` passes `x` as
         // `f`'s first parameter"): a family or a type parameter takes the method's check, and
         // elaboration the run-time choice of `Elab::generic_sum`, which agrees with it on
         // every value it accepts (the proof at `sum_method`). A tuple alone keeps `sum`, whose

@@ -10,12 +10,19 @@ use zed_tools::{fence_layers, spec_checks, sync};
 use super::{DOUBLE, design, fence, grammar, spec_dir};
 use zed_tests::step_helpers::m0_03_grammar_tools::{KERNEL, zed_dir};
 
+/// Two tables of step M0.7's serialization, the first ended by a paragraph, the second by a
+/// blank line, and between them a table whose header does not end as theirs do.
+const SERIAL: &str = "| Grade | Tag | Fields in order |\n|---|---|---|\n| Axiom | 0 | — |\n\
+                      | Proved | 2 | — |\nA note.\n\n| Kind | Code | Fields in order |\n|---|---|---|\n\
+                      | Other | 9 | — |\n\n| Value | Tag | Fields in order |\n|---|---|---|\n\
+                      | Boolean | 0 | `value: byte` |\n";
+
 /// `sync` writes every copy, `--check` then passes, and a copy edited by hand is out of date.
 /// A ```` ```text ```` fence inside a list item is copied with its indentation taken off.
 #[test]
 fn sync_writes_the_copies_and_check_finds_a_stale_one() {
     let body = format!(
-        "{}\n- A report:\n\n  ```text\n  trivial models of T\n    one line\n  ```\n\n{KERNEL}",
+        "{}\n- A report:\n\n  ```text\n  trivial models of T\n    one line\n  ```\n\n{SERIAL}\n{KERNEL}",
         fence(DOUBLE)
     );
     let dir = spec_dir("sync", &design(&body), &fence(DOUBLE));
@@ -49,6 +56,13 @@ fn sync_writes_the_copies_and_check_finds_a_stale_one() {
     assert_eq!(
         fs::read_to_string(zed.at("fences/kernel-rules.txt")).unwrap(),
         "Boom\nT-Discard\nT-Fam\nT-Fix\nT-Fold\nT-Gen\nT-Port\nT-Reindex\n"
+    );
+    assert_eq!(
+        fs::read_to_string(zed.at("fences/canon-serial.md")).unwrap(),
+        "| Grade | Tag | Fields in order |\n| Axiom | 0 | — |\n\
+         | Proved | 2 | — |\n| Value | Tag | Fields in order |\n| Boolean | 0 | `value: byte` |\n",
+        "the tables of M0.7's serialization, without the line under each header or the table \
+         of the same shape whose header names no tag"
     );
     let words = fs::read_to_string(zed.at("grammar/words.md")).unwrap();
     assert!(

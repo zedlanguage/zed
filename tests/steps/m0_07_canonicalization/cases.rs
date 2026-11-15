@@ -118,7 +118,7 @@ fn patterns(b: &str) -> Vec<Pattern> {
 /// from `n`: `n` itself is free, to be bound by a lambda around the term, and the term's own
 /// binders are `n` followed by a letter. So the catalogs of two names are α-equivalent term by
 /// term once each is put under `lambda n`.
-fn catalog(n: &str) -> Vec<Term> {
+pub(super) fn catalog(n: &str) -> Vec<Term> {
     let x = || var(n);
     let a = format!("{n}a");
     let b = format!("{n}b");

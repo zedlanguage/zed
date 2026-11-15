@@ -1,37 +1,208 @@
-//! Row SPEC-m07-string-serial: the address step M0.7's text defines, computed here by a
-//! serializer of its own that follows the paragraph word for word, against the
-//! implementation's address.
+//! Rows SPEC-m07-string-serial and SPEC-m07-tag-table: the address step M0.7 defines, computed
+//! here by a serializer of its own that writes each node as M0.7's tables say, against the
+//! implementation's address and bytes.
 //!
 //! M0.7: "The serialization gives every node a tag byte and its fields in order, lengths and
 //! integers as 64-bit little-endian words and strings as their length then UTF-8, [...] any
 //! other free variable by its name. A kernel term's address is BLAKE3-256 over `zed-canon` and
-//! a NUL byte, the 32-bit little-endian rule-set version, then the serialization."
+//! a NUL byte, the 32-bit little-endian rule-set version, then the serialization." The tables
+//! after that step give every node's tag, its fields in order and the kind each is written as;
+//! `sync` copies them to `zed/fences/canon-serial.md`, which [`m07`] reads. The tag, the order
+//! of the fields and how each is written all come from the tables, so a change to
+//! crates/zedc-zir/src/canon/serial.rs that the tables do not make, or the reverse, fails
+//! [`the_serialization_is_m07s_byte_for_byte`]. Only which row a node is (a lambda is the
+//! row Lambda) and the parts of each node are written here.
 //!
-//! DESIGN does not say which tag byte each node gets, nor the order of a definition's own
-//! fields (its name, domain and facets); [`m07`] takes both from the implementation
-//! (crates/zedc-zir/src/canon/serial.rs) and says so at each place. Everything else it writes
-//! as the paragraph says.
-//!
-//! The terms here hold no nonempty string, so the two must agree. Terms holding nonempty
+//! The terms compared hold no nonempty string, so the two must agree. Terms holding nonempty
 //! strings (short, long, repeated, all distinct, joined) are compared in the parked test
 //! /home/luke/Work/wt/failing-tests/SPEC-m07-string-serial.rs: since canonicalization
 //! VERSION 11 (CANON-term-string-nodes) the implementation writes a nonempty string as the
 //! rules of its canonical parse, not as its UTF-8, and the two differ (QUESTIONS A106).
 
+use std::collections::BTreeSet;
+
+use num_bigint::BigInt;
 use zed_kernel::term::Prim;
+use zed_kernel::term::build::{lam, var};
 use zed_kernel::value::Value;
 use zedc::address::ContentAddress;
+use zedc::canon::{Def, Domain};
+use zedc::store::interval::{End, IntervalSet, Num};
+use zedc::store::lattice::{Congruence, FiniteSet, Lattice};
 
-use super::{def, none};
+use super::{def, facet, none};
 
-/// Step M0.7's serialization and address, for definitions with no domain and no facets whose
-/// bodies are literals, free variables, applications and primitives over booleans, integers,
-/// strings and tuples.
+/// Step M0.7's serialization and address, by its tables.
 pub(super) mod m07 {
-    use zed_kernel::term::Term;
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::LazyLock;
+
+    use num_bigint::{BigInt, Sign};
+    use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
     use zed_kernel::value::Value;
     use zedc::address::ContentAddress;
-    use zedc::canon::Def;
+    use zedc::canon::binders::level_of;
+    use zedc::canon::{Def, Domain};
+    use zedc::store::interval::End;
+    use zedc::store::lattice::Congruence;
+
+    /// The copy `sync` makes of M0.7's tables.
+    pub const COPY: &str = include_str!("../../../zed/fences/canon-serial.md");
+
+    /// What a free variable naming another definition resolves to.
+    pub type Refs<'a> = &'a dyn Fn(&str) -> Option<ContentAddress>;
+
+    /// A row of a table: its tag, none for a part, and its fields, each a name and a kind.
+    #[derive(Clone, Debug)]
+    pub struct Row {
+        pub tag: Option<u8>,
+        pub fields: Vec<(String, String)>,
+    }
+
+    /// The tables, by the kind of node each lists, lowercase, and in each its rows by name,
+    /// lowercase.
+    pub type Tables = BTreeMap<String, BTreeMap<String, Row>>;
+
+    /// The tables of `text`, laid out as `sync` copies them: a header `| Kind | Tag | Fields
+    /// in order |` starts each table, and each row is `| Name | tag or — | `fields` or — |`,
+    /// the fields `name: kind` separated by `, `.
+    pub fn parse(text: &str) -> Tables {
+        let mut tables = Tables::new();
+        let mut current = None;
+        for line in text.lines() {
+            let cells: Vec<&str> = line
+                .strip_prefix("| ")
+                .and_then(|l| l.strip_suffix(" |"))
+                .unwrap_or_else(|| panic!("not a row of a table: {line}"))
+                .split(" | ")
+                .collect();
+            let [name, tag, fields] = cells[..] else {
+                panic!("a row of three cells: {line}")
+            };
+            if tag == "Tag" {
+                let kind = name.to_lowercase();
+                assert!(!tables.contains_key(&kind), "two tables of {kind}");
+                tables.insert(kind.clone(), BTreeMap::new());
+                current = Some(kind);
+                continue;
+            }
+            let table = current.as_ref().expect("a row after a header");
+            let tag = match tag {
+                "—" => None,
+                t => Some(t.parse().unwrap_or_else(|_| panic!("a tag byte: {line}"))),
+            };
+            let fields = match fields {
+                "—" => vec![],
+                f => f
+                    .trim_matches('`')
+                    .split(", ")
+                    .map(|f| {
+                        let (n, k) = f.split_once(": ").expect("a field `name: kind`");
+                        (n.to_string(), k.to_string())
+                    })
+                    .collect(),
+            };
+            let rows = tables.get_mut(table).expect("its table");
+            let old = rows.insert(name.to_lowercase(), Row { tag, fields });
+            assert!(old.is_none(), "two rows {name} in {table}");
+        }
+        tables
+    }
+
+    /// The tables of the copy.
+    pub fn tables() -> &'static Tables {
+        static TABLES: LazyLock<Tables> = LazyLock::new(|| parse(COPY));
+        &TABLES
+    }
+
+    /// A node or a field as the serializer has it: which row a node is and its parts by the
+    /// names the tables give them, before the tables say in which order and how they are
+    /// written.
+    #[derive(Debug)]
+    pub enum Piece {
+        Byte(u8),
+        Word(u64),
+        Str(String),
+        Utf8(Vec<u8>),
+        Address([u8; 32]),
+        List(Vec<Piece>),
+        Opt(Option<Box<Piece>>),
+        /// A row of a table with tags, by its name.
+        Node(&'static str, Vec<(&'static str, Piece)>),
+        /// A row of the table of parts, which has no tag.
+        Part(Vec<(&'static str, Piece)>),
+    }
+
+    use Piece::*;
+
+    /// Writes pieces as `tables` says, and records each row it writes.
+    pub struct Writer<'t> {
+        pub tables: &'t Tables,
+        pub out: Vec<u8>,
+        pub used: BTreeSet<(String, String)>,
+    }
+
+    impl Writer<'_> {
+        fn word(&mut self, n: u64) {
+            self.out.extend_from_slice(&n.to_le_bytes());
+        }
+
+        /// Writes `piece` as a field of kind `kind`.
+        pub fn write(&mut self, kind: &str, piece: Piece) {
+            match (kind, piece) {
+                ("byte", Byte(b)) => self.out.push(b),
+                ("word", Word(n)) => self.word(n),
+                ("string", Str(s)) => {
+                    self.word(s.len() as u64);
+                    self.out.extend_from_slice(s.as_bytes());
+                }
+                ("utf8", Utf8(b)) => self.out.extend_from_slice(&b),
+                ("address", Address(a)) => self.out.extend_from_slice(&a),
+                (k, List(items)) if k.starts_with("list of ") => {
+                    self.word(items.len() as u64);
+                    items.into_iter().for_each(|i| self.write(&k[8..], i));
+                }
+                (k, Opt(x)) if k.starts_with("option of ") => match x {
+                    None => self.out.push(0),
+                    Some(x) => {
+                        self.out.push(1);
+                        self.write(&k[10..], *x);
+                    }
+                },
+                (k, Node(row, parts)) if k != "part" && self.tables.contains_key(k) => {
+                    self.row(k, row, parts)
+                }
+                (k, Part(parts)) => self.row("part", k, parts),
+                (k, piece) => panic!("the tables write {k} where the serializer has {piece:?}"),
+            }
+        }
+
+        /// Writes the row `name` of the table `table`: its tag, then each field the row lists,
+        /// in its order, taken by name from `parts`, which must hold those fields and no other.
+        fn row(&mut self, table: &str, name: &str, mut parts: Vec<(&'static str, Piece)>) {
+            let row = self.tables[table]
+                .get(name)
+                .unwrap_or_else(|| panic!("the table {table} has no row {name}"))
+                .clone();
+            self.used.insert((table.to_string(), name.to_string()));
+            if let Some(t) = row.tag {
+                self.out.push(t);
+            }
+            for (field, kind) in &row.fields {
+                let i = parts
+                    .iter()
+                    .position(|(f, _)| f == field)
+                    .unwrap_or_else(|| panic!("{table} {name}: the serializer has no {field}"));
+                let (_, piece) = parts.remove(i);
+                self.write(kind, piece);
+            }
+            let rest: Vec<_> = parts.iter().map(|(f, _)| *f).collect();
+            assert!(
+                rest.is_empty(),
+                "{table} {name}: the table lists no field {rest:?}"
+            );
+        }
+    }
 
     /// The address of `d`, already in normal form, under rule-set version `version`:
     /// BLAKE3-256 over `zed-canon`, a NUL byte, the version as a 32-bit little-endian word,
@@ -46,84 +217,341 @@ pub(super) mod m07 {
         ContentAddress::hashed(&h)
     }
 
-    /// The serialization of `d`.
+    /// The serialization of `d`, no free variable naming a definition.
     pub fn serialize(d: &Def) -> Vec<u8> {
-        assert!(
-            d.domain.is_none() && d.facets.is_empty(),
-            "outside the subset"
-        );
-        let mut out = Vec::new();
-        // The definition's fields, in the implementation's order: its name, a tag 0 for no
-        // domain, the count of its facets.
-        string(&mut out, d.name.as_bytes());
-        out.push(0);
-        word(&mut out, 0);
-        term(&mut out, &d.body);
-        out
+        let mut w = Writer {
+            tables: tables(),
+            out: Vec::new(),
+            used: BTreeSet::new(),
+        };
+        w.write("definition", definition(d, &|_| None));
+        w.out
     }
 
-    /// A length or an integer: a 64-bit little-endian word.
-    fn word(out: &mut Vec<u8>, n: u64) {
-        out.extend_from_slice(&n.to_le_bytes());
+    /// The definition `d` as pieces.
+    pub fn definition(d: &Def, refs: Refs<'_>) -> Piece {
+        let facets = d.facets.iter().map(|f| {
+            Part(vec![
+                ("hint", Byte(u8::from(f.hint))),
+                ("kind", Str(f.kind.to_string())),
+                ("value", value(&f.value)),
+            ])
+        });
+        Part(vec![
+            ("name", Str(d.name.to_string())),
+            (
+                "domain",
+                Opt(d.domain.as_ref().map(|d| Box::new(domain(d)))),
+            ),
+            ("facets", List(facets.collect())),
+            ("body", term(&d.body, refs)),
+        ])
     }
 
-    /// A string: its length, then its UTF-8.
-    fn string(out: &mut Vec<u8>, utf8: &[u8]) {
-        word(out, utf8.len() as u64);
-        out.extend_from_slice(utf8);
+    fn integer(n: &BigInt) -> Piece {
+        Part(vec![
+            ("sign", Byte(u8::from(n.sign() == Sign::Minus))),
+            ("magnitude", magnitude(n)),
+        ])
     }
 
-    // The tag bytes below are the implementation's (serial.rs `term_head`, `value_head`).
-    fn term(out: &mut Vec<u8>, t: &Term) {
-        match t {
-            Term::Lit(v) => {
-                out.push(1);
-                value(out, v);
-            }
-            // A free variable no definition resolves, written by its name; a name with a
-            // leading NUL would be a bound variable, which no term here holds.
-            Term::Var(x) => {
-                assert!(!x.starts_with('\0'), "outside the subset");
-                out.push(4);
-                string(out, x.as_bytes());
-            }
-            Term::App(f, args) => {
-                out.push(6);
-                term(out, f);
-                word(out, args.len() as u64);
-                args.iter().for_each(|a| term(out, a));
-            }
-            Term::Prim(p, args) => {
-                out.push(7);
-                word(out, p.code());
-                word(out, args.len() as u64);
-                args.iter().for_each(|a| term(out, a));
-            }
-            _ => panic!("outside the subset"),
+    fn magnitude(n: &BigInt) -> Piece {
+        Part(vec![(
+            "limbs",
+            List(n.magnitude().iter_u64_digits().map(Word).collect()),
+        )])
+    }
+
+    fn end(e: &End) -> Piece {
+        match e {
+            End::NegInf => Node("below every integer", vec![]),
+            End::PosInf => Node("above every integer", vec![]),
+            End::Fin(v) => match v.to_i64() {
+                Some(v) => Node("integer in i64", vec![("value", Word(v as u64))]),
+                None => Node(
+                    "integer past i64",
+                    vec![("value", integer(&v.built().expect("memory")))],
+                ),
+            },
         }
     }
 
-    fn value(out: &mut Vec<u8>, v: &Value) {
+    fn domain(d: &Domain) -> Piece {
+        let pieces = d
+            .ints
+            .pieces()
+            .map(|(lo, hi)| Part(vec![("low", end(lo)), ("high", end(hi))]));
+        let class = match &d.class {
+            Congruence::Bottom => Node("no integer", vec![]),
+            Congruence::Class { modulus, residue } => match (modulus.to_i64(), residue.to_i64()) {
+                (Some(m), Some(r)) => Node(
+                    "class in i64",
+                    vec![("modulus", Word(m as u64)), ("residue", Word(r as u64))],
+                ),
+                _ => Node(
+                    "class past i64",
+                    vec![
+                        ("modulus", integer(&modulus.built().expect("memory"))),
+                        ("residue", integer(&residue.built().expect("memory"))),
+                    ],
+                ),
+            },
+        };
+        Part(vec![("pieces", List(pieces.collect())), ("class", class)])
+    }
+
+    fn values(vs: &[Value]) -> Piece {
+        List(vs.iter().map(value).collect())
+    }
+
+    pub fn value(v: &Value) -> Piece {
         match v {
-            Value::Bool(b) => {
-                out.push(0);
-                out.push(u8::from(*b));
-            }
-            Value::Int(n) => {
-                out.push(1);
-                word(out, *n as u64);
-            }
+            Value::Bool(b) => Node("boolean", vec![("value", Byte(u8::from(*b)))]),
+            Value::Int(n) => Node("integer", vec![("value", Word(*n as u64))]),
+            Value::Float(x) => Node("f64", vec![("bits", Word(x.get().to_bits()))]),
+            Value::Float32(x) => Node("f32", vec![("bits", Word(u64::from(x.get().to_bits())))]),
             Value::Str(s) => {
-                out.push(3);
-                word(out, s.len() as u64);
-                s.chunks().for_each(|c| out.extend_from_slice(c.as_bytes()));
+                let mut utf8 = Vec::new();
+                s.chunks()
+                    .for_each(|c| utf8.extend_from_slice(c.as_bytes()));
+                Node(
+                    "string",
+                    vec![("length", Word(s.len() as u64)), ("text", Utf8(utf8))],
+                )
             }
-            Value::Tuple(vs) => {
-                out.push(5);
-                word(out, vs.len() as u64);
-                vs.iter().for_each(|v| value(out, v));
+            Value::Atom(a) => {
+                let name = ("name", Str(a.name.to_string()));
+                if !a.is_bare() && a.args().is_empty() {
+                    Node("atom with empty payload", vec![name])
+                } else if a.fields.is_empty() {
+                    Node("atom", vec![name, ("payload", values(a.args()))])
+                } else {
+                    let fields = a.fields.iter().map(|f| Str(f.to_string())).collect();
+                    Node(
+                        "atom with fields",
+                        vec![
+                            name,
+                            ("fields", List(fields)),
+                            ("payload", values(a.args())),
+                        ],
+                    )
+                }
             }
-            _ => panic!("outside the subset"),
+            Value::Big(r) | Value::Rat(r) => {
+                let rational = matches!(v, Value::Rat(_));
+                let (num, den, pows) = r.kept();
+                let mut parts = vec![
+                    ("sign", Byte(u8::from(num.sign() == Sign::Minus))),
+                    ("numerator", magnitude(num)),
+                ];
+                if rational {
+                    parts.push(("denominator", magnitude(den)));
+                }
+                if pows.is_empty() {
+                    if rational {
+                        return Node("rational", parts);
+                    }
+                    return Node("integer past i64", vec![("value", integer(num))]);
+                }
+                let pows = pows
+                    .iter()
+                    .map(|(p, e)| Part(vec![("prime", Word(*p)), ("exponent", integer(e))]));
+                parts.push(("powers", List(pows.collect())));
+                let row = match rational {
+                    true => "rational with powers",
+                    false => "integer with powers",
+                };
+                Node(row, parts)
+            }
+            Value::Tuple(vs) => Node("tuple", vec![("items", values(vs))]),
+            Value::Path(vs) => Node("path", vec![("items", values(vs))]),
+            Value::Family(f) => {
+                let entries = f
+                    .iter()
+                    .map(|(k, v)| Part(vec![("key", value(k)), ("value", value(v))]));
+                Node("family", vec![("entries", List(entries.collect()))])
+            }
+        }
+    }
+
+    fn pattern(p: &Pattern) -> Piece {
+        let patterns = |ps: &[Pattern]| List(ps.iter().map(pattern).collect());
+        match p {
+            Pattern::Wild => Node("wildcard", vec![]),
+            Pattern::Bind(_) => Node("binder", vec![]),
+            Pattern::Lit(v) => Node("literal", vec![("value", value(v))]),
+            Pattern::Atom(name, ps) => Node(
+                "atom",
+                vec![("name", Str(name.to_string())), ("payload", patterns(ps))],
+            ),
+            Pattern::Tuple(ps) => Node("tuple", vec![("items", patterns(ps))]),
+            Pattern::AnyAtom => Node("any atom", vec![]),
+            Pattern::Fields(name, fs) => {
+                let fs = fs.iter().map(|(f, p)| {
+                    Part(vec![("field", Str(f.to_string())), ("pattern", pattern(p))])
+                });
+                Node(
+                    "atom with fields",
+                    vec![
+                        ("name", Str(name.to_string())),
+                        ("fields", List(fs.collect())),
+                    ],
+                )
+            }
+            Pattern::Is(t) => Node("type test", vec![("type", Str(t.to_string()))]),
+        }
+    }
+
+    fn evidence(ev: &Evidence) -> Piece {
+        let grade = |g: &Grade| match g {
+            Grade::Axiom => "axiom",
+            Grade::CheckedExhaustive => "checked exhaustive",
+            Grade::Proved => "proved",
+            Grade::Bounded => "bounded",
+            Grade::Obligated => "obligated",
+            Grade::Assumed => "assumed",
+        };
+        let properties = ev.iter().map(|(p, g)| {
+            Part(vec![
+                ("name", Str(p.to_string())),
+                ("grade", Node(grade(g), vec![])),
+            ])
+        });
+        Part(vec![("properties", List(properties.collect()))])
+    }
+
+    pub fn term(t: &Term, refs: Refs<'_>) -> Piece {
+        let term = |t: &Term| term(t, refs);
+        let terms = |ts: &[Term]| List(ts.iter().map(term).collect());
+        match t {
+            Term::Lit(v) => Node("literal", vec![("value", value(v))]),
+            Term::Var(x) => match (level_of(x), refs(x)) {
+                (Some(level), _) => Node("bound variable", vec![("level", Word(level as u64))]),
+                (None, Some(a)) => Node("definition", vec![("address", Address(a.0))]),
+                (None, None) => Node("free variable", vec![("name", Str(x.to_string()))]),
+            },
+            Term::Lam(params, body) => Node(
+                "lambda",
+                vec![
+                    ("parameters", Word(params.len() as u64)),
+                    ("body", term(body)),
+                ],
+            ),
+            Term::App(f, args) => Node(
+                "application",
+                vec![("function", term(f)), ("arguments", terms(args))],
+            ),
+            Term::Prim(p, args) => Node(
+                "primitive",
+                vec![("code", Word(p.code())), ("arguments", terms(args))],
+            ),
+            Term::PrimFn(p) => Node("primitive as a function", vec![("code", Word(p.code()))]),
+            Term::Let(_, e, body) => Node("let", vec![("value", term(e)), ("body", term(body))]),
+            Term::If(c, a, b) => Node(
+                "if",
+                vec![("condition", term(c)), ("then", term(a)), ("else", term(b))],
+            ),
+            Term::Match(e, arms) => {
+                let arms = arms
+                    .iter()
+                    .map(|(p, a)| Part(vec![("pattern", pattern(p)), ("body", term(a))]));
+                Node(
+                    "match",
+                    vec![("scrutinee", term(e)), ("arms", List(arms.collect()))],
+                )
+            }
+            Term::Fam { domain, body, .. } => {
+                Node("fam", vec![("domain", term(domain)), ("body", term(body))])
+            }
+            Term::Reindex {
+                family,
+                kf,
+                vf,
+                witness,
+            } => {
+                let witness = match witness {
+                    Witness::Residue => Node("residue", vec![]),
+                    Witness::Catalog(n) => Node("catalog", vec![("name", Str(n.to_string()))]),
+                };
+                Node(
+                    "reindex",
+                    vec![
+                        ("family", term(family)),
+                        ("kf", term(kf)),
+                        ("vf", term(vf)),
+                        ("witness", witness),
+                    ],
+                )
+            }
+            Term::Discard { family, sel } => Node(
+                "discard",
+                vec![("family", term(family)), ("sel", term(sel))],
+            ),
+            Term::Fold {
+                family,
+                op,
+                identity,
+                depth,
+                ev,
+            } => Node(
+                "fold",
+                vec![
+                    ("family", term(family)),
+                    ("op", term(op)),
+                    (
+                        "identity",
+                        Opt(identity.as_ref().map(|i| Box::new(term(i)))),
+                    ),
+                    ("depth", Word(*depth as u64)),
+                    ("ev", evidence(ev)),
+                ],
+            ),
+            Term::Fix {
+                init,
+                step,
+                kind,
+                ev,
+                ..
+            } => {
+                let kind = match kind {
+                    FixKind::Lattice { join } => Node("lattice", vec![("join", term(join))]),
+                    FixKind::Definedness => Node("definedness", vec![]),
+                };
+                Node(
+                    "fix",
+                    vec![
+                        ("init", term(init)),
+                        ("step", term(step)),
+                        ("kind", kind),
+                        ("ev", evidence(ev)),
+                    ],
+                )
+            }
+            Term::Gen {
+                init,
+                step,
+                guard,
+                pos,
+            } => {
+                let pos = match pos {
+                    GuardPos::Before => Node("before", vec![]),
+                    GuardPos::After => Node("after", vec![]),
+                };
+                Node(
+                    "gen",
+                    vec![
+                        ("init", term(init)),
+                        ("step", term(step)),
+                        ("guard", term(guard)),
+                        ("position", pos),
+                    ],
+                )
+            }
+            Term::Read(port) => Node("port read", vec![("port", Str(port.to_string()))]),
+            Term::Push(port, v) => Node(
+                "port push",
+                vec![("port", Str(port.to_string())), ("value", term(v))],
+            ),
         }
     }
 }
@@ -166,6 +594,66 @@ fn without_text() -> Vec<zedc::canon::Def> {
     ]
 }
 
+/// `index: <domain> = i` as a definition.
+fn index(ints: IntervalSet, class: Congruence) -> Def {
+    Def {
+        name: "index".into(),
+        domain: Some(Domain {
+            ints,
+            class,
+            finite: FiniteSet::Top,
+        }),
+        facets: vec![facet("unit", Value::str(""))],
+        body: var("i"),
+    }
+}
+
+/// One definition of every node of M0.7's tables, but a nonempty string: the definitions
+/// without text; one per term, value and pattern of the completeness cases (cases.rs), each
+/// under a lambda; domains with ends and classes in and past `i64`, and one admitting
+/// nothing; and a variable naming another definition (`other`), with what resolves it.
+fn every_node() -> Vec<Def> {
+    let past = BigInt::from(1) << 70;
+    let mut defs = without_text();
+    defs.extend(
+        super::cases::catalog("x")
+            .into_iter()
+            .filter(|t| !matches!(t, zed_kernel::Term::Lit(Value::Str(s)) if !s.is_empty()))
+            .map(|t| def("k", lam(&["x"], t))),
+    );
+    defs.extend([
+        index(IntervalSet::of(0, 10), Congruence::new(4, 1)),
+        index(IntervalSet::top(), Congruence::top()),
+        index(IntervalSet::of(2, 4), Congruence::new(4, 1)),
+        index(
+            IntervalSet::range(End::Fin(Num::from(&past)), End::PosInf),
+            Congruence::new(Num::from(&past + 1), 3),
+        ),
+        index(
+            IntervalSet::range(End::NegInf, End::Fin(Num::from(-&past))),
+            Congruence::top(),
+        ),
+        def("uses", var("other")),
+    ]);
+    defs
+}
+
+/// What resolves `other`, the one definition the cases name.
+fn refs(x: &str) -> Option<ContentAddress> {
+    (x == "other").then_some(ContentAddress([7; 32]))
+}
+
+/// The serialization of `d` by M0.7's tables `tables`, and the rows it wrote.
+fn by_tables(d: &Def, tables: &m07::Tables) -> (Vec<u8>, BTreeSet<(String, String)>) {
+    let mut w = m07::Writer {
+        tables,
+        out: Vec::new(),
+        used: BTreeSet::new(),
+    };
+    w.write("definition", m07::definition(d, &refs));
+    (w.out, w.used)
+}
+
 /// Where M0.7 states the serialization, the implementation's address is M0.7's: the header,
 /// the rule-set version, words, names and the empty string.
 #[test]
@@ -205,17 +693,56 @@ fn another_version_or_byte_gives_another_address() {
     }
 }
 
-/// [`m07::serialize`] is the implementation's serialization, byte for byte, on these
-/// definitions.
+/// The implementation's serialization is the one M0.7's tables give, byte for byte, on a
+/// definition of every node they list but a nonempty string; and every row of every table is
+/// written by some definition, so a row the implementation no longer writes fails too.
 #[test]
 fn the_serialization_is_m07s_byte_for_byte() {
-    for d in without_text() {
+    let tables = m07::tables();
+    let mut used = BTreeSet::new();
+    for d in every_node() {
         let normal = zedc::canon::canonicalize(&d);
+        let (bytes, rows) = by_tables(&normal, tables);
         assert_eq!(
-            zedc::canon::serialize(&normal, &none).expect("memory"),
-            m07::serialize(&normal),
-            "{}",
-            d.name
+            zedc::canon::serialize(&normal, &refs).expect("memory"),
+            bytes,
+            "{}: {}",
+            d.name,
+            normal.body
         );
+        used.extend(rows);
+    }
+    let all: BTreeSet<(String, String)> = tables
+        .iter()
+        .flat_map(|(t, rows)| rows.keys().map(|r| (t.clone(), r.clone())))
+        .collect();
+    let unused: Vec<_> = all.difference(&used).collect();
+    assert!(unused.is_empty(), "rows no definition writes: {unused:?}");
+}
+
+/// The serializer reads the tables: with the tag of Lambda changed, or two fields of
+/// Application swapped, in the copy, its bytes are no longer the implementation's.
+#[test]
+fn a_changed_table_gives_other_bytes() {
+    let d = zedc::canon::canonicalize(&def("k", lam(&["x"], var("x"))));
+    let ours = zedc::canon::serialize(&d, &refs).expect("memory");
+    let apply = zedc::canon::canonicalize(&def(
+        "k",
+        zed_kernel::term::build::app(var("f"), vec![var("y")]),
+    ));
+    let theirs = zedc::canon::serialize(&apply, &refs).expect("memory");
+    for (from, to, d, want) in [
+        ("| Lambda | 5 |", "| Lambda | 20 |", &d, &ours),
+        (
+            "`function: term, arguments: list of term`",
+            "`arguments: list of term, function: term`",
+            &apply,
+            &theirs,
+        ),
+    ] {
+        assert_eq!(&by_tables(d, m07::tables()).0, want, "{from}");
+        assert!(m07::COPY.contains(from), "{from}");
+        let changed = m07::parse(&m07::COPY.replace(from, to));
+        assert_ne!(&by_tables(d, &changed).0, want, "{to}");
     }
 }
