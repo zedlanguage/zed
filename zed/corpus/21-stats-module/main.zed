@@ -6,8 +6,8 @@
 // needs (my, dy). Wrong sharing computes dx twice; wrong pruning computes cov.
 // The printed numbers check the values; `zed build --explain-plan` checks
 // the pruning (no node for cov, my or dy).
-// Units: the package root is 21-stats-module/, so `stats` is
-// 21-stats-module/stats.zed.
+// Units: 21-stats-module/zed.manifest marks the package root, so `stats` is
+// stats.zed beside this file.
 // Input lines: "x y", decimal numbers.
 import stats.{stats};
 

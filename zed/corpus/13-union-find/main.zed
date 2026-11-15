@@ -4,7 +4,7 @@
 // monotone label-lowering fixpoint; the certified implementation behind it
 // (path compression, union by rank) must give the same labels. A wrong
 // certificate or a wrong fixpoint test gives a wrong yes/no or count below.
-// Units: the package root is 13-union-find/, so `uf` is 13-union-find/uf.zed.
+// Units: 13-union-find/zed.manifest marks the package root; `uf` is uf.zed.
 // Input lines: "a b" adds an edge; "? a b" asks whether a and b are connected
 // (queries are answered against all edges).
 import uf.{components, Edge};

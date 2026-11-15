@@ -13,8 +13,8 @@
 //     #unknown (a diagnostic);
 //  4. keys every diagnostic by its fact address in the checked program, (the
 //     declaration's line, the check's name), and prints them in that order.
-// Units: the package root is 31-typechecker/, so `ast` is
-// 31-typechecker/ast.zed and `check` is 31-typechecker/check.zed.
+// Units: 31-typechecker/zed.manifest marks the package root, so `ast` is
+// ast.zed and `check` is check.zed beside this file.
 import ast.{Decl, parseDecl};
 import check.{fv, infer, tyName};
 

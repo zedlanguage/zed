@@ -6,8 +6,8 @@
 // as the text its struct grammar serializes to (grammar-serialized boundary).
 // Below L24 the program runs in one process, and the split build must print
 // the same lines; a boundary that loses a field or reorders responses shows.
-// Units: the package root is 30-client-server/, so `api` is
-// 30-client-server/api.zed and `server` is 30-client-server/server.zed.
+// Units: 30-client-server/zed.manifest marks the package root, so `api` is
+// api.zed and `server` is server.zed beside this file.
 import api.{Request};
 import server.{answer};
 
