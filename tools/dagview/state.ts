@@ -35,26 +35,22 @@ export interface LedgerEntry {
   commit?: unknown;
   // A merge of several commits lists them all, in this repository or in the spec repository.
   commits?: unknown;
-  // As in an override: what an item outside the plan needs, and what needs it.
+  // The items it needs, and the items that need it; every line adds to the others. An edge between
+  // two plan rows belongs in the needs column of the plan row, so these hold the edges of an item with
+  // no plan row.
   needs?: string[];
   feeds?: string[];
-}
-
-export interface Override {
-  state?: "done" | "active" | "unstarted" | "waiting" | "blocked" | "dropped";
-  note?: string;
-  title?: string;
-  started?: string;
-  // Edges added to what the plan and the ledger say: the items it needs, and the items that need it.
-  needs?: string[];
-  feeds?: string[];
-  // Edges removed, whichever source gives them: the items it does not need.
-  notNeeds?: string[];
   // Not a step of Zed (the viewer, the test harness, an edit to the plan): no box is drawn and no
-  // edge names it, while its ledger and log lines stay as history.
+  // edge names it, while its ledger and log lines stay as history. The last of the item's own lines
+  // (its id, not a label such as "A:merge") that says true or false decides.
   outside?: boolean;
   // For an item outside the graph: the item that took over its work, which a feed into it goes to.
   replacedBy?: string;
+  // The title of an item with no plan row.
+  title?: string;
+  // Why a done item has no commit (a study, a review, a change outside git); board-check.sh counts
+  // it as evidence.
+  evidence?: string;
 }
 
 export interface Sub {
@@ -123,6 +119,14 @@ export function parsePlan(markdown: string): PlanRow[] {
   return rows;
 }
 
+// A label "A:impl#1" or "A:orchestrator": the item, then a role that starts with a small letter, then an
+// attempt. The log and the ledger read a label the same way, so "CD-xr:LAZY-hub-unsolved", whose part after
+// the colon is no role, is one item in both.
+const rolePattern = /^([^:#]+):([a-z][^#]*?)(?:#(.*))?$/;
+
+// A label that is one item's own id: no role and no list.
+export const ownLabel = (raw: string): boolean => !rolePattern.test(raw) && !/[,+]/.test(raw);
+
 export function parseLog(text: string): LogEntry[] {
   const out: LogEntry[] = [];
   for (const line of text.split("\n")) {
@@ -130,7 +134,7 @@ export function parseLog(text: string): LogEntry[] {
     if (!m) continue;
     // "A:impl#1", and "A:orchestrator" or "A:code-sweep" with no attempt: all three are lines of A.
     // "A, B:orchestrator", "A+B:merge#1" or "A, B" is a line of A and a line of B.
-    const label = /^([^:#]+):([a-z][^#]*?)(?:#(.*))?$/.exec(m[2]);
+    const label = rolePattern.exec(m[2]);
     for (const id of (label ? label[1] : m[2]).split(/\s*[,+]\s*/)) {
       out.push({
         at: Date.parse(m[1].replace(" ", "T")),
@@ -224,13 +228,6 @@ export class CommitList {
 // A line with state "note", or with no state, does not change the node's state.
 const stateless = (e: LedgerEntry) => typeof e.state !== "string" || e.state === "note";
 
-// An override's state is read from `state`; one written as `status` is ignored, and said so.
-export function overrideWarnings(overrides: Record<string, Override>): string[] {
-  return Object.entries(overrides)
-    .filter(([, ov]) => typeof ov === "object" && ov !== null && "status" in ov)
-    .map(([id]) => `override ${id} uses "status", which is ignored; write "state"`);
-}
-
 // "T2-eval-repair" is T2-eval, "lr2" is LR2, and the XV-* checks are parts of XE2.
 export function resolveId(raw: string, known: Map<string, string>): { id: string; sub: string } | null {
   if (raw === "orchestrator") return null;
@@ -245,8 +242,8 @@ export function resolveId(raw: string, known: Map<string, string>): { id: string
 
 // The items a ledger id names: "STRNAN-spec:merge" is STRNAN-spec, and "A+B" or "A, B" is A and B.
 export function ledgerItems(raw: string, known: Map<string, string>): string[] {
-  const ids = raw
-    .replace(/:.*$/s, "")
+  const label = rolePattern.exec(raw);
+  const ids = (label ? label[1] : raw)
     .split(/\s*[,+]\s*/)
     .map((part) => resolveId(part, known)?.id ?? "")
     .filter((id) => id !== "");
@@ -278,7 +275,6 @@ export interface Inputs {
   plan: PlanRow[];
   log: LogEntry[];
   ledger: LedgerEntry[];
-  overrides: Record<string, Override>;
   onOrigin: (commit: string) => boolean;
   now: number;
   // Item to the unanswered questions that hold it (parseQuestions).
@@ -289,7 +285,8 @@ export interface Inputs {
 export interface BoardState {
   nodes: ViewNode[];
   problems: string[];
-  dropped: string[]; // the dropped items the plan, ledger or overrides name, which are no nodes
+  dropped: string[]; // the dropped items the plan or the ledger names, which are no nodes
+  outside: string[]; // the items the ledger takes outside the graph, which are no nodes
 }
 
 // The items each unanswered author question holds, from the table under "## Which plan steps each
@@ -370,7 +367,7 @@ export function buildGraph(inp: Inputs): BoardState {
   // Only a ledger line whose id is the item's own makes the item a node; a line of a label such as
   // "A:merge" or "A+B" goes to each item it names.
   const ledger = new Map<string, LedgerEntry[]>();
-  const named = new Set<string>();
+  const ownLines = new Map<string, LedgerEntry[]>();
   for (const e of inp.ledger) {
     // A line without a string id (an agent wrote "item" for "id") names no item; report it, do not fail.
     if (typeof e.id !== "string") {
@@ -381,39 +378,40 @@ export function buildGraph(inp: Inputs): BoardState {
     for (const id of ids) {
       if (!ledger.has(id)) ledger.set(id, []);
       ledger.get(id)!.push(e);
-      if (!/[:,+]/.test(e.id)) named.add(id);
-      else if (!labelOf.has(id)) labelOf.set(id, e.id);
+      if (ownLabel(e.id)) {
+        if (!ownLines.has(id)) ownLines.set(id, []);
+        ownLines.get(id)!.push(e);
+      } else if (!labelOf.has(id)) labelOf.set(id, e.id);
     }
   }
+  // The last of the item's own lines that gives the field as the type asked for.
+  const lastOwn = <T,>(id: string, field: "outside" | "replacedBy" | "title", type: string): T | undefined =>
+    ownLines.get(id)?.findLast((e) => typeof e[field] === type)?.[field] as T | undefined;
 
-  const outside = (id: string) => inp.overrides[id]?.outside === true;
-  // A dropped item is no node, and a need on it counts as met: the ledger's last state or the override
-  // says dropped, or the plan row's title starts "Done: Dropped". An override's state wins over the ledger.
+  const outside = (id: string) => lastOwn<boolean>(id, "outside", "boolean") === true;
+  // A dropped item is no node, and a need on it counts as met: the ledger's last state says dropped, or
+  // the plan row's title starts "Done: Dropped".
   const droppedRows = new Set(inp.plan.filter((r) => /^Done: Dropped\b/.test(r.title)).map((r) => r.id));
-  const dropped = (id: string): boolean => {
-    const ov = inp.overrides[id]?.state;
-    return droppedRows.has(id) || (ov ?? ledger.get(id)?.findLast((e) => !stateless(e))?.state) === "dropped";
-  };
+  const dropped = (id: string): boolean =>
+    droppedRows.has(id) || ledger.get(id)?.findLast((e) => !stateless(e))?.state === "dropped";
   const gone = (id: string) => outside(id) || dropped(id);
   const rows = inp.plan.filter((r) => !gone(r.id));
   const planned = new Set(rows.map((r) => r.id));
-  // A label alone makes no node: an item needs a plan row, a ledger line or an override.
+  // A label alone makes no node: an item needs a plan row or a ledger line of its own.
   for (const id of new Set([...logs.keys(), ...ledger.keys()])) {
     if (planned.has(id) || gone(id)) continue;
-    if (named.has(id) || inp.overrides[id]) rows.push({ id, level: -1, title: inp.overrides[id]?.title ?? id, size: "", hard: false, needs: [] });
-    else if (labelOf.has(id)) problems.push(`LABEL WITH NO ITEM: ${id} (from "${labelOf.get(id)}"; give it a ledger line or an override)`);
+    if (ownLines.has(id)) rows.push({ id, level: -1, title: lastOwn<string>(id, "title", "string") ?? id, size: "", hard: false, needs: [] });
+    else if (labelOf.has(id)) problems.push(`LABEL WITH NO ITEM: ${id} (from "${labelOf.get(id)}"; give it a ledger line)`);
   }
   const nodeIds = new Set(rows.map((r) => r.id));
 
   const states = new Map<string, NodeState>();
   for (const r of rows) {
-    const ov = inp.overrides[r.id]?.state;
     const last = ledger.get(r.id)?.findLast((e) => !stateless(e));
     const ls = last?.state;
     const lines = logs.get(r.id) ?? [];
     let s: NodeState = "unstarted";
-    if (ov && ov !== "dropped") s = ov;
-    else if (r.title.startsWith("Done:")) s = "done";
+    if (r.title.startsWith("Done:")) s = "done";
     // Only a merge or the orchestrator finishes a node: an impl, repair, verify or probe agent's
     // "done" means its own attempt ended, and the item may still be rejected and repaired.
     else if ((ls === "fixed" || ls === "done") && !/:(impl|repair|verify|probe)#/.test(last!.by ?? last!.agent ?? "")) s = "done";
@@ -439,54 +437,45 @@ export function buildGraph(inp: Inputs): BoardState {
     states.set(r.id, s);
   }
 
-  // Edges come from the plan rows, the overrides and ledger lines, and every source adds to the others,
-  // so an agent adds an edge by appending. An override's notNeeds removes a wrong edge, whichever source
-  // gives it. A feed into an item outside the graph goes to the item its override names in replacedBy.
+  // Edges come from the plan rows and the ledger lines, and each source adds to the other. An edge
+  // between two plan rows is written in the plan row's needs column; the ledger holds the edges of an
+  // item with no plan row. A feed into an item outside the graph goes to the item its ledger line
+  // names in replacedBy.
   const replaced = (f: string): string | null => {
     const seen = new Set<string>();
     while (outside(f)) {
-      const next = inp.overrides[f]?.replacedBy;
-      if (typeof next !== "string" || seen.has(f)) return null;
+      const next = lastOwn<string>(f, "replacedBy", "string");
+      if (next === undefined || seen.has(f)) return null;
       seen.add(f);
       f = next;
     }
     return f;
   };
-  const edges: [string, { needs?: string[]; feeds?: string[] }][] = [
-    ...Object.entries(inp.overrides),
-    ...[...ledger].filter(([id]) => nodeIds.has(id)).flatMap(([id, es]) => es.map((e): [string, LedgerEntry] => [id, e])),
-  ];
   const own = new Map<string, string[]>();
   const fed = new Map<string, string[]>();
   // An agent may write a bare string; only a list of ids is read.
   const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
-  for (const [id, ov] of edges) {
-    if (!own.has(id)) own.set(id, []);
-    own.get(id)!.push(...list(ov.needs));
-    if (gone(id)) continue;
-    for (const f of list(ov.feeds)) {
-      const to = replaced(f);
-      if (to !== null && dropped(to)) continue;
-      if (to === null) {
-        problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f} (give ${f} a replacedBy override, or remove the feed)`);
-        continue;
+  for (const [id, es] of ledger) {
+    if (!nodeIds.has(id)) continue;
+    for (const e of es) {
+      if (!own.has(id)) own.set(id, []);
+      own.get(id)!.push(...list(e.needs));
+      for (const f of list(e.feeds)) {
+        const to = replaced(f);
+        if (to !== null && dropped(to)) continue;
+        if (to === null) {
+          problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f} (give ${f} a replacedBy in a ledger line of its own, or remove the feed)`);
+          continue;
+        }
+        if (!fed.has(to)) fed.set(to, []);
+        fed.get(to)!.push(id);
       }
-      if (!fed.has(to)) fed.set(to, []);
-      fed.get(to)!.push(id);
     }
   }
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const all = new Set([...r.needs, ...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])]);
-    const not = list(inp.overrides[r.id]?.notNeeds);
-    for (const n of not) {
-      if (!all.delete(n)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${r.id} notNeeds ${n}`);
-    }
     rows[i] = { ...r, needs: [...all].filter((n) => n !== r.id && !gone(n)) };
-  }
-  const rowIds = new Set(rows.map((r) => r.id));
-  for (const [id, ov] of Object.entries(inp.overrides)) {
-    if (!rowIds.has(id) && !gone(id)) for (const n of list(ov.notNeeds)) problems.push(`NOT-NEEDS MATCHES NO EDGE: ${id} notNeeds ${n} (${id} is no node)`);
   }
 
   const nodes = rows.map((r): ViewNode => {
@@ -498,7 +487,8 @@ export function buildGraph(inp: Inputs): BoardState {
     const day = lines[0]?.entry.time.slice(0, 10) ?? inp.log[0]?.time.slice(0, 10) ?? "";
     const times = [
       ...lines.map((l) => l.entry.at),
-      ...[...ledgerLines.flatMap((e) => [e.started, e.at, e.ts]), inp.overrides[r.id]?.started]
+      ...ledgerLines
+        .flatMap((e) => [e.started, e.at, e.ts])
         .map((t) => ledgerTime(t, day))
         .filter((t): t is number => t !== null),
     ];
@@ -521,7 +511,7 @@ export function buildGraph(inp: Inputs): BoardState {
     }
 
     const last = lines.at(-1)?.entry;
-    const note = inp.overrides[r.id]?.note ?? lastLedger?.note ?? (lastLedger && stateless(lastLedger) ? lastLedger.what : undefined) ?? "";
+    const note = lastLedger?.note ?? (lastLedger && stateless(lastLedger) ? lastLedger.what : undefined) ?? "";
     // A "done" line after the batch test names no commit; the merge's "fixed" line before it does.
     const commitLine = state === "done" ? ledgerLines.findLast((e) => ledgerCommits(e).length > 0) : undefined;
     const commits = commitLine ? ledgerCommits(commitLine) : [];
@@ -554,8 +544,9 @@ export function buildGraph(inp: Inputs): BoardState {
       questions: held.get(r.id) ?? [],
     };
   });
-  const droppedIds = [...new Set([...inp.plan.map((r) => r.id), ...ledger.keys(), ...Object.keys(inp.overrides)])].filter((id) => !outside(id) && dropped(id));
-  return { nodes, problems: [...new Set(problems)], dropped: droppedIds };
+  const listed = [...new Set([...inp.plan.map((r) => r.id), ...ledger.keys()])];
+  const droppedIds = listed.filter((id) => !outside(id) && dropped(id));
+  return { nodes, problems: [...new Set(problems)], dropped: droppedIds, outside: listed.filter(outside) };
 }
 
 // Problems in the shape of the graph: a cycle of needs, and a need that a

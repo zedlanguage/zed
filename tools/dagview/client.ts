@@ -15,7 +15,7 @@ interface Node {
 }
 interface LogLine { at: number; time: string; label: string; text: string }
 interface State {
-  now: number; nodes: Node[]; log: LogLine[]; warnings: string[];
+  now: number; nodes: Node[]; log: LogLine[];
   machine: { load: string; lock: string; origin: string | null; main: string | null; ahead: number };
 }
 interface Point { x: number; y: number }
@@ -367,9 +367,6 @@ function render(s: State): void {
   stat(counts, "blocked", String(blocked), blocked > 0 ? "bad" : "");
   stat(counts, "not pushed", String(s.nodes.filter((n) => n.awaitingBatch).length));
   stat(counts, "retries", String(s.nodes.reduce((a, n) => a + n.retries, 0)));
-  // An older server sends no warnings.
-  const warnings = s.warnings ?? [];
-  if (warnings.length > 0) stat(counts, "override warnings", String(warnings.length), "warn").title = warnings.join("\n");
   machine.replaceChildren();
   stat(machine, "load", s.machine.load);
   stat(machine, "merge lock", s.machine.lock || "free");

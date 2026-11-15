@@ -2,7 +2,7 @@
 // Run with `node server.ts`. Node strips the types; nothing is compiled.
 //
 // Reads, on each request for the state: docs/plan_dag.md, wt/running-log.md,
-// wt/ledger.jsonl, wt/dag-overrides.json, the author's open questions in
+// wt/ledger.jsonl, the author's open questions in
 // wt/zed0-review/pass2/QUESTIONS.md, wt/merge.lock/owner, /proc/loadavg and git
 // (five small commands, and one rev-list of new commits when origin/main moves). Lays the plan out when the page posts its graph to /api/layout (see
 // layout.ts). It watches those files and the main and origin/main refs, and
@@ -17,8 +17,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildGraph, CommitList, shapeProblems, overrideWarnings, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
-import type { Override } from "./state.ts";
+import { buildGraph, CommitList, shapeProblems, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
 import { Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph } from "./layout.ts";
 
@@ -80,11 +79,10 @@ function updateOrigin(): Promise<void> {
 }
 
 async function state() {
-  const [plan, logText, ledgerText, overridesText, questionsText, lock, loadavg, origin, main, ahead] = await Promise.all([
+  const [plan, logText, ledgerText, questionsText, lock, loadavg, origin, main, ahead] = await Promise.all([
     text(join(repo, "docs/plan_dag.md")),
     text(join(work, "running-log.md")),
     text(join(work, "ledger.jsonl")),
-    text(join(work, "dag-overrides.json")),
     text(questions),
     text(join(work, "merge.lock/owner")),
     text("/proc/loadavg"),
@@ -94,19 +92,12 @@ async function state() {
   ]);
   const log = parseLog(logText);
   const ledger = parseLedger(ledgerText);
-  let overrides: Record<string, Override> = {};
-  try {
-    overrides = JSON.parse(overridesText) as Record<string, Override>;
-  } catch {
-    // No file, or one being written: the next poll reads it.
-  }
   await updateOrigin();
   const now = Date.now();
-  const { nodes, problems, dropped } = buildGraph({
+  const { nodes, problems, dropped, outside } = buildGraph({
     plan: parsePlan(plan),
     log,
     ledger,
-    overrides,
     onOrigin: (c) => [...onOrigin.values()].some((l) => l.has(c)),
     now,
     held: parseQuestions(questionsText),
@@ -115,9 +106,9 @@ async function state() {
     now,
     nodes,
     log: log.slice(-60).reverse(),
-    warnings: overrideWarnings(overrides),
     problems: [...problems, ...shapeProblems(nodes)],
     dropped,
+    outside,
     machine: {
       load: loadavg.split(" ").slice(0, 3).join(" "),
       lock: lock.trim(),
@@ -158,7 +149,7 @@ function watchNames(dir: string, names: string[]): void {
   }
 }
 watchNames(join(repo, "docs"), ["plan_dag.md"]);
-watchNames(work, ["running-log.md", "ledger.jsonl", "dag-overrides.json", "merge.lock"]);
+watchNames(work, ["running-log.md", "ledger.jsonl", "merge.lock"]);
 watchNames(join(work, "merge.lock"), ["owner"]);
 watchNames(dirname(questions), [basename(questions)]);
 for (const dir of [repo, spec]) {
