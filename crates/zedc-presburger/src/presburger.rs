@@ -17341,6 +17341,11 @@ impl Omega {
         // alike) and one without a unit coefficient (`3·a + 2·b + 3·c + 2 == 0`), each step on
         // the second wrote a fresh variable into the tied pair, which met as a new equality,
         // and the steps went on without end (test `loose_pair_tests`).
+        // Assumption, not proved: keeping the rewritten pair loose never holds back a tie that
+        // a later step needs. The two rows still state the equality, so the set is unchanged;
+        // what could be lost is only an elimination by that equality. Evidence: the 2255
+        // pieces of zedc_presburger, zedc_preimage and l01_ (2026-11-14) gave the same
+        // verdicts as before, apart from two snapshots that already failed on main.
         for r in rows {
             let loose = self.sys.loose.contains(&lesser(&r.a));
             let r = resolve(&r, &defs, &at);
