@@ -378,7 +378,7 @@ fn a_read_of_a_remap_or_group_result_may_miss() {
         (
             format!("{ragged}x = m as (i -> j -> v) into (j -> i -> _);\n"),
             "x[1]",
-            "(u: int) -> (\"a\" | \"b\" -> \"a\" | \"b\" | #notFound) | #notFound",
+            "(u: int) -> ((\"a\" | \"b\") -> \"a\" | \"b\" | #notFound) | #notFound",
             "{\"a\"}",
         ),
         (
@@ -390,7 +390,7 @@ fn a_read_of_a_remap_or_group_result_may_miss() {
         (
             words.to_string(),
             "x[\"zz\"]",
-            "(u: int) -> (0 | 1 -> \"B\" | \"a\" | #notFound) | #notFound",
+            "(u: int) -> ((0 | 1) -> \"B\" | \"a\" | #notFound) | #notFound",
             "#notFound",
         ),
     ] {
