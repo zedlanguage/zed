@@ -22221,10 +22221,42 @@ fn forest_domains(
     let mut handled = vec![false; ors.len()];
     let mut doms: HashMap<Atom, IntervalSet> = HashMap::new();
     let n_base = linked.parent.len();
+    // Complexity tradeoff: the naive way (main to 6a223ba86) put every disjunction's atoms into
+    // the union-find, those of its disjuncts' nests too: Θ(size of the nest below) at each level
+    // of a nest, which [`project_parts`] opens one level at a time, so Θ(n²) on a nest of depth
+    // n (`nest_empty`: 3.1 times the work per doubling at depth 1024). Only a component whose
+    // disjunctions are all simple (difference rows and bounds, no disjunction inside) is ever
+    // computed, so here only simple disjunctions are united; a disjunction that is not simple
+    // only marks the simple components it touches. The components computed are the same: a
+    // path in the old union from a simple disjunction to one that is not simple has a first
+    // disjunction that is not simple, and the unit before it is in the simple disjunction's
+    // component of simple disjunctions and touched by it; conversely a component of simple
+    // disjunctions touched by one that is not simple lies in a component of the old union
+    // that holds it. A disjunction that is not simple is asked about the units of simple
+    // disjunctions from the smaller side ([`touches_simple`]): its atoms, `A` of them, or the
+    // atoms of those units, `W`, each looked up in its `D` disjuncts' sets, O(min(A, W·D)·log),
+    // never more than the walk of its atoms. Cost: `simple_or` reads each disjunct's own rows
+    // once, as the old way did.
+    let simple_or: Vec<bool> = ors
+        .iter()
+        .map(|ds| {
+            ds.iter()
+                .all(|d| d.ors.is_empty() && d.cons.iter().all(is_difference))
+        })
+        .collect();
+    if !simple_or.contains(&true) {
+        return (doms, handled, false);
+    }
     let mut free: Vec<&Atom> = Vec::new();
     let mut free_id: HashMap<&Atom, usize> = HashMap::new();
-    let mut units_of: Vec<Vec<usize>> = Vec::with_capacity(ors.len());
-    for ds in ors {
+    let mut units_of: Vec<Vec<usize>> = vec![Vec::new(); ors.len()];
+    for (ds, us_j) in ors
+        .iter()
+        .zip(&mut units_of)
+        .zip(&simple_or)
+        .filter(|(_, s)| **s)
+        .map(|(p, _)| p)
+    {
         let atoms: BTreeSet<&Atom> = ds.iter().flat_map(|d| d.atoms().iter()).collect();
         let us: Vec<usize> = atoms
             .iter()
@@ -22239,7 +22271,7 @@ fn forest_domains(
                 }
             })
             .collect();
-        units_of.push(us);
+        *us_j = us;
     }
     let n_units = n_base + free.len();
     let mut uf: Vec<usize> = (0..n_units).collect();
@@ -22258,9 +22290,37 @@ fn forest_domains(
             }
         }
     }
-    // Each component, by its least unit.
+    // The units of simple disjunctions, and the roots of those touched by one that is not.
+    let mut of_simple = vec![false; n_units];
+    for &u in units_of.iter().flatten() {
+        of_simple[u] = true;
+    }
+    let simple_units: Vec<usize> = (0..n_units).filter(|&u| of_simple[u]).collect();
+    let mut marked = vec![false; n_units];
+    let place = |a: &Atom| match linked.ids.get(a) {
+        Some(i) => Some(linked.root(*i)),
+        None => free_id.get(a).map(|k| n_base + k),
+    };
+    for ds in (ors.iter().zip(&simple_or))
+        .filter(|(_, s)| !**s)
+        .map(|(ds, _)| ds)
+    {
+        for u in touches_simple(
+            linked,
+            ds,
+            &simple_units,
+            &of_simple,
+            &free[..],
+            n_base,
+            &place,
+        ) {
+            let r = find(&mut uf, u);
+            marked[r] = true;
+        }
+    }
+    // Each component of simple disjunctions, by its least unit.
     let mut comps: BTreeMap<usize, ForestComponent> = BTreeMap::new();
-    for (j, ds) in ors.iter().enumerate() {
+    for j in 0..ors.len() {
         let Some(&u0) = units_of[j].first() else {
             continue;
         };
@@ -22269,11 +22329,8 @@ fn forest_domains(
             groups: BTreeSet::new(),
             free: Vec::new(),
             ors: Vec::new(),
-            simple: true,
+            simple: !marked[c],
         });
-        e.simple &= ds
-            .iter()
-            .all(|d| d.ors.is_empty() && d.cons.iter().all(is_difference));
         e.ors.push(j);
         for &u in &units_of[j] {
             if u < n_base {
@@ -22332,8 +22389,65 @@ fn forest_domains(
     (doms, handled, false)
 }
 
-/// One component for [`forest_domains`]: its groups of base rows, its atoms in no group, its
-/// disjunctions, and whether every disjunct holds only difference rows and bounds.
+/// The units of simple disjunctions in [`forest_domains`] (`simple_units`, sorted, and
+/// `of_simple` by unit: a group of base rows by its root, below `n_base`, or the free atom
+/// `free[u - n_base]`) that the disjunction `ds` touches, sorted, found from the smaller side.
+/// With `A` the atoms of its disjuncts' sets ([`Parts::atoms`], whose `len` is O(1)), `D` its
+/// disjuncts and `W` the atoms of those units counted in their rows: when `A <= W·D` each of
+/// its atoms is placed (`place`), O(A log); otherwise each atom of each unit is looked up in
+/// each disjunct's set, O(W·D·log). `W·D` is summed only until it passes `A`, so finding the
+/// side costs O(min(A, W·D)) too. Both sides give the same units: every atom of a group is a
+/// term of a row held at its root ([`Linked::add`] makes an atom's id only for a row it then
+/// holds there, and a union moves the rows), so a disjunct touches the group exactly when one
+/// of those terms is in its set.
+fn touches_simple(
+    linked: &Linked,
+    ds: &[Rc<Parts>],
+    simple_units: &[usize],
+    of_simple: &[bool],
+    free: &[&Atom],
+    n_base: usize,
+    place: &impl Fn(&Atom) -> Option<usize>,
+) -> Vec<usize> {
+    let a: usize = ds.iter().map(|d| d.atoms().len()).sum();
+    let per = ds.len().max(1);
+    let mut w = per * simple_units.iter().filter(|&&u| u >= n_base).count();
+    let rows = (simple_units.iter())
+        .filter(|&&u| u < n_base)
+        .flat_map(|&u| &linked.held[u]);
+    for i in rows {
+        if w > a {
+            break;
+        }
+        w += per * linked.cons[*i].lin.terms.len();
+    }
+    if a <= w {
+        let mut out: Vec<usize> = (ds.iter())
+            .flat_map(|d| d.atoms().iter())
+            .filter_map(place)
+            .filter(|&u| of_simple[u])
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        return out;
+    }
+    let held = |x: &Atom| ds.iter().any(|d| d.atoms().contains(x));
+    (simple_units.iter().copied())
+        .filter(|&u| {
+            if u >= n_base {
+                held(free[u - n_base])
+            } else {
+                (linked.held[u].iter())
+                    .flat_map(|i| linked.cons[*i].lin.terms.keys())
+                    .any(held)
+            }
+        })
+        .collect()
+}
+
+/// One component of simple disjunctions for [`forest_domains`]: its groups of base rows, its
+/// atoms in no group, its disjunctions, and whether no disjunction that is not simple touches
+/// it, so that every disjunct of the component holds only difference rows and bounds.
 struct ForestComponent<'a> {
     groups: BTreeSet<usize>,
     free: Vec<&'a Atom>,
