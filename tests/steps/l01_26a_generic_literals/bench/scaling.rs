@@ -601,7 +601,7 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_plus_one_when_
         let n = 5000;
         let texts = scaling::inputs(n, main_of_an_if_of_a_sum);
         scaling::check("zedc run of an `if` of 3^(200 n) + 1, rejected", n, |m| {
-            let out = run("l01_26a_power_scaling", &texts[&m], "", &[]);
+            let out = run("l01_26a_power_plus_one_scaling", &texts[&m], "", &[]);
             assert_eq!(out.status, 1);
             assert!(out.stderr.contains("(b: bool) -> 2 | "), "{}", out.stderr);
         });
