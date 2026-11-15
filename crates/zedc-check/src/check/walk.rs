@@ -232,77 +232,6 @@ impl Want {
     }
 }
 
-impl<'a> Args<'a> {
-    /// The arguments written in a call.
-    fn of(positional: &'a [Expr], named: &'a [(String, Expr)]) -> Rc<Args<'a>> {
-        Rc::new(Args {
-            positional: positional.iter().map(ArgSrc::Expr).collect(),
-            named: named
-                .iter()
-                .map(|(n, e)| (n.clone(), ArgSrc::Expr(e)))
-                .collect(),
-        })
-    }
-
-    fn all(&self) -> impl Iterator<Item = &ArgSrc<'a>> {
-        self.positional
-            .iter()
-            .chain(self.named.iter().map(|(_, a)| a))
-    }
-
-    /// The expressions among the arguments, in written order.
-    fn exprs(&self) -> Vec<&'a Expr> {
-        self.all()
-            .filter_map(|a| match a {
-                ArgSrc::Expr(e) => Some(*e),
-                ArgSrc::Got(_) => None,
-            })
-            .collect()
-    }
-
-    fn len(&self) -> usize {
-        self.positional.len() + self.named.len()
-    }
-
-    /// Argument `k`, counting the positional ones first.
-    fn nth(&self, k: usize) -> &ArgSrc<'a> {
-        match self.positional.get(k) {
-            Some(a) => a,
-            None => &self.named[k - self.positional.len()].1,
-        }
-    }
-
-    /// `x` added as argument `k` of `of` is: positional, or named as it is.
-    fn push_as(&mut self, of: &Args<'a>, k: usize, x: ArgSrc<'a>) {
-        match k.checked_sub(of.positional.len()) {
-            None => self.positional.push(x),
-            Some(i) => self.named.push((of.named[i].0.clone(), x)),
-        }
-    }
-
-    fn get(&self, at: At) -> &ArgSrc<'a> {
-        match at {
-            At::Pos(i) => &self.positional[i],
-            At::Named(i) => &self.named[i].1,
-        }
-    }
-
-    /// Where the argument at `at` is written, or `call` for one checked before the call.
-    fn span_at(&self, at: At, call: Span) -> Span {
-        match self.get(at) {
-            ArgSrc::Expr(e) => e.span,
-            ArgSrc::Got(_) => call,
-        }
-    }
-}
-
-/// Where a parameter's argument is among a call's arguments.
-#[derive(Clone, Copy)]
-pub(super) enum At {
-    Pos(usize),
-    Named(usize),
-}
-
 pub(super) enum Job<'a> {
     /// An expression's type, recorded for derivations.
     Expr(&'a Expr),
@@ -942,7 +871,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Tuple(s) => self.tuple_step(m, s),
             Frame::Display(s) => self.display_step(m, s),
-            Frame::Remap(s) => self.remap_step(m, s),
+            Frame::Remap(s) => {
+                let t = m.take_ty();
+                match self.remap_step(s, t, Self::reduce_end) {
+                    remap::RemapNext::Key(s, k) => {
+                        m.k(Frame::Remap(s));
+                        m.job(Job::Expr(k));
+                    }
+                    remap::RemapNext::Done(t) => m.ty(t),
+                }
+            }
             Frame::MapFn(x, span, filter) => {
                 let f = m.take_arg();
                 let t = self.map_end(&x, f, span, filter);
@@ -950,12 +888,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Group(x, recv, span, rekey) => {
                 let f = m.take_arg();
-                let t = self.group_end(&x, recv, f, span, rekey);
+                let t = self.group_end(&x, recv, f, span, rekey, Self::apply);
                 m.ty(t);
             }
             Frame::FlatMap(x, span) => {
                 let f = m.take_arg();
-                let t = self.flat_map_end(&x, f, span);
+                let at = f.at.unwrap_or(span);
+                let t = self.map_end(&x, f, span, false);
+                let t = self.flat_map_end(t, at);
                 m.ty(t);
             }
             Frame::FoldInit(x, f, span, right) => {
@@ -2894,7 +2834,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
             ExprKind::Section(_, lambda) => m.job(Job::Expr(lambda)),
-            ExprKind::Remap { .. } => self.remap_start(m, e),
+            ExprKind::Remap { .. } => {
+                let (s, of) = self.remap_start(e);
+                m.k(Frame::Remap(s));
+                m.job(Job::Expr(of));
+            }
             ExprKind::Array(items) | ExprKind::Set(items) => {
                 let kind = match &e.kind {
                     ExprKind::Array(_) => Display::Array,
@@ -9029,7 +8973,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::InDomain { .. } => Ty::empty(),
             NeedKind::Into { what, ty } => {
                 let from = self.call_frames.last().and_then(|f| f.named(&n.on));
-                self.into(&on, ty, what, from, span);
+                self.passes_into(&on, ty, what, from, span);
                 Ty::empty()
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
@@ -9237,7 +9181,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// from, with the name of the parameter that takes it: the `is` repair tests it, in the
     /// program's code, bound first to that name where it is not a name a test narrows
     /// ([`test_repair`], MSG-is-repair-v).
-    fn into(
+    fn passes_into(
         &mut self,
         on: &Ty,
         ty: &Ty,

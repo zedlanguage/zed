@@ -10,7 +10,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
-use super::*;
+use crate::check::*;
 use zedc_base::rejection::{Row, not_yet};
 use zedc_syntax::ast::{RemapLevel, Target};
 
@@ -46,9 +46,35 @@ struct Lost<'a> {
     culprit: Option<(&'a Expr, String)>,
 }
 
+/// What the walk in walk.rs does next for a remap: check the key expression of the next level
+/// with the remap kept on its stack, or take the remap's type.
+pub(in crate::check) enum RemapNext<'a> {
+    Key(Box<RemapF<'a>>, &'a Expr),
+    Done(Ty),
+}
+
+/// `Ck::reduce_end`, the fold of a family's level by an operator, passed in by walk.rs.
+// Tradeoff: walk.rs imports this file for `RemapF`, so this file names nothing of walk.rs:
+// a cycle between files is refused (DESIGN.md sec:units; the import graph of step S.1f), and
+// a Zed port makes each file a unit. walk.rs drives the walk machine (`M`, `Frame`, `Job`)
+// from `RemapNext` and passes its methods in as functions; moving `Frame` to a file of its
+// own would not help, since `Frame::Remap` holds a `RemapF`. The cost is one indirect call
+// per folded level or `group`. The graph also counts a call whose receiver it cannot type
+// (`binders.len()`, `"residue".into()`) as a call of every method of that name written in
+// walk.rs for a type of mod.rs; so the methods of `Args` are written with `Args` in mod.rs,
+// and the method of `Ck` that checks a value passed into a parameter is `passes_into`, not
+// `into`.
+pub(in crate::check) type ReduceEnd<'t, 'a> = fn(&mut Ck<'t, 'a>, Reducer, &Ty, Span) -> Ty;
+
+/// `Ck::apply`, the application of a signature to arguments, passed in by walk.rs as
+/// `ReduceEnd` is.
+pub(in crate::check) type Apply<'t, 'a> =
+    fn(&mut Ck<'t, 'a>, Label<'_>, &Sig, Vec<Option<Arg<'a>>>, bool, Span) -> (Ty, Vec<usize>);
+
 impl<'t, 'a> Ck<'t, 'a> {
-    /// Starts the check of the remap `e`.
-    pub(super) fn remap_start(&mut self, m: &mut M<'a>, e: &'a Expr) {
+    /// Starts the check of the remap `e`: the remap's state and its source, which walk.rs checks
+    /// first.
+    pub(super) fn remap_start(&mut self, e: &'a Expr) -> (Box<RemapF<'a>>, &'a Expr) {
         let ExprKind::Remap {
             of,
             binders,
@@ -79,13 +105,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             tys: Vec::new(),
             keys,
         };
-        m.k(Frame::Remap(Box::new(s)));
-        m.job(Job::Expr(of));
+        (Box::new(s), of)
     }
 
-    /// The next step of the remap `s`, the type of its source or of its last level in hand.
-    pub(super) fn remap_step(&mut self, m: &mut M<'a>, mut s: Box<RemapF<'a>>) {
-        let t = m.take_ty();
+    /// The next step of the remap `s`, `t` the type of its source or of its last level.
+    pub(super) fn remap_step(
+        &mut self,
+        mut s: Box<RemapF<'a>>,
+        t: Ty,
+        reduce: ReduceEnd<'t, 'a>,
+    ) -> RemapNext<'a> {
         if !s.sourced {
             s.sourced = true;
             s.src = self.remap_source(&s, &t);
@@ -98,7 +127,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // `as` alone is the identity remap, which only names the levels.
             if s.levels.is_empty() {
-                return m.ty(if s.src.is_some() { t } else { Ty::empty() });
+                return RemapNext::Done(if s.src.is_some() { t } else { Ty::empty() });
             }
         } else {
             let at = s.tys.len();
@@ -107,14 +136,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         while let Some(l) = s.levels.get(s.tys.len()) {
             match &l.key {
                 Some(k) => {
-                    m.k(Frame::Remap(s));
-                    return m.job(Job::Expr(k));
+                    return RemapNext::Key(s, k);
                 }
                 None => s.tys.push(None),
             }
         }
-        let t = self.remap_end(&s);
-        m.ty(t.unwrap_or_else(Ty::empty));
+        let t = self.remap_end(&s, reduce);
+        RemapNext::Done(t.unwrap_or_else(Ty::empty))
     }
 
     /// The source's key types, outermost first, then its value type, when `t`, the source's
@@ -217,7 +245,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The remap `s` with every level checked: its type, and its plan in [`Info::remaps`].
-    fn remap_end(&mut self, s: &RemapF<'a>) -> Option<Ty> {
+    fn remap_end(&mut self, s: &RemapF<'a>, reduce: ReduceEnd<'t, 'a>) -> Option<Ty> {
         let src = s.src.as_ref()?;
         let last = s.levels.len() - 1;
         let leaf = &s.levels[last];
@@ -284,7 +312,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => unreachable!("name resolution refuses a `><` by a function"),
             };
             folds.insert(j, op);
-            inner = self.reduce_end(Reducer::Op(op), &family(ty(j), inner), s.levels[j].span);
+            inner = reduce(
+                self,
+                Reducer::Op(op),
+                &family(ty(j), inner),
+                s.levels[j].span,
+            );
         }
         let outer = match truncate {
             true => &kept[..kept.len() - 1],
@@ -632,7 +665,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `x.flatMap(f)` (DESIGN.md sec:grouping, "Multiple emissions are typed, not repaired";
     /// the bound table's `flatMap` row): on a family `K -> V0` whose function gives a family
     /// for each entry, the family `K -> (R -> V)`, the emitted list adjoined as an inner rank level
-    /// under each key, possibly empty and never a missing key. The type is that of `x.map(f)`;
+    /// under each key, possibly empty and never a missing key. The type is `t`, that of
+    /// `x.map(f)`, which walk.rs gives, `at` the span of `f`;
     /// what `flatMap` adds is the demand that every entry's result be a list, a family whose
     /// keys are `0..<n` (sec:grouping: "`flatMap` on `K -> V0` with body `V0 -> Seq(V)` yields
     /// `K -> rank -> V`"; sec:verification's `R.flatMap(s -> choices.map(c -> step(s, c)))`
@@ -640,9 +674,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// them.
     // Complexity tradeoff: one pass over the result type of `map_end`, O(arrows); no second
     // check of `f`.
-    pub(super) fn flat_map_end(&mut self, x: &Ty, f: Arg<'a>, span: Span) -> Ty {
-        let at = f.at.unwrap_or(span);
-        let t = self.map_end(x, f, span, false);
+    pub(super) fn flat_map_end(&mut self, t: Ty, at: Span) -> Ty {
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
         for p in t.pieces() {
             let Piece::Fn(sig) = p else { continue };
@@ -693,6 +725,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         f: Arg<'a>,
         span: Span,
         rekey: bool,
+        apply: Apply<'t, 'a>,
     ) -> Ty {
         let word = if rekey { "rekey" } else { "group" };
         if rekey {
@@ -773,15 +806,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             return Ty::empty();
         }
         let what = Label::Text("the function given to `group`");
-        let w = self
-            .apply(
-                what,
-                &fsig,
-                vec![Some(Arg::of(values.clone()))],
-                false,
-                span,
-            )
-            .0;
+        let w = apply(
+            self,
+            what,
+            &fsig,
+            vec![Some(Arg::of(values.clone()))],
+            false,
+            span,
+        )
+        .0;
         family(w, family(keys, values))
     }
 }

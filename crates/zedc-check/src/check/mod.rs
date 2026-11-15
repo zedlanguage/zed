@@ -958,6 +958,77 @@ struct Args<'a> {
     named: Vec<(String, ArgSrc<'a>)>,
 }
 
+impl<'a> Args<'a> {
+    /// The arguments written in a call.
+    fn of(positional: &'a [Expr], named: &'a [(String, Expr)]) -> Rc<Args<'a>> {
+        Rc::new(Args {
+            positional: positional.iter().map(ArgSrc::Expr).collect(),
+            named: named
+                .iter()
+                .map(|(n, e)| (n.clone(), ArgSrc::Expr(e)))
+                .collect(),
+        })
+    }
+
+    fn all(&self) -> impl Iterator<Item = &ArgSrc<'a>> {
+        self.positional
+            .iter()
+            .chain(self.named.iter().map(|(_, a)| a))
+    }
+
+    /// The expressions among the arguments, in written order.
+    fn exprs(&self) -> Vec<&'a Expr> {
+        self.all()
+            .filter_map(|a| match a {
+                ArgSrc::Expr(e) => Some(*e),
+                ArgSrc::Got(_) => None,
+            })
+            .collect()
+    }
+
+    fn len(&self) -> usize {
+        self.positional.len() + self.named.len()
+    }
+
+    /// Argument `k`, counting the positional ones first.
+    fn nth(&self, k: usize) -> &ArgSrc<'a> {
+        match self.positional.get(k) {
+            Some(a) => a,
+            None => &self.named[k - self.positional.len()].1,
+        }
+    }
+
+    /// `x` added as argument `k` of `of` is: positional, or named as it is.
+    fn push_as(&mut self, of: &Args<'a>, k: usize, x: ArgSrc<'a>) {
+        match k.checked_sub(of.positional.len()) {
+            None => self.positional.push(x),
+            Some(i) => self.named.push((of.named[i].0.clone(), x)),
+        }
+    }
+
+    fn get(&self, at: At) -> &ArgSrc<'a> {
+        match at {
+            At::Pos(i) => &self.positional[i],
+            At::Named(i) => &self.named[i].1,
+        }
+    }
+
+    /// Where the argument at `at` is written, or `call` for one checked before the call.
+    fn span_at(&self, at: At, call: Span) -> Span {
+        match self.get(at) {
+            ArgSrc::Expr(e) => e.span,
+            ArgSrc::Got(_) => call,
+        }
+    }
+}
+
+/// Where a parameter's argument is among a call's arguments.
+#[derive(Clone, Copy)]
+enum At {
+    Pos(usize),
+    Named(usize),
+}
+
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
 type Facts = VecDeque<(usize, Ty, Span)>;
 
