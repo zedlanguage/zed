@@ -2464,7 +2464,9 @@ fn prints_as_syntax(t: &Type, what: &str) -> String {
         parse(text, &tokens, start, TOP).unwrap_or_else(|e| panic!("{what}: {text}: {e:?}"));
     };
     let is_name = |word: &str| {
-        word.len() > 1 && word.starts_with('T') && word[1..].bytes().all(|b| b.is_ascii_digit())
+        // A definition's name, `Part{k}` (QUESTIONS Q23: `T{k}` is a type variable).
+        word.strip_prefix("Part")
+            .is_some_and(|k| !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
     };
     accepts(&s.root, "Type");
     let defined: HashSet<&str> = s.defs.iter().map(|(name, _)| name.as_str()).collect();

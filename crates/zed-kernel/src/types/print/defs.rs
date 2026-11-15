@@ -751,7 +751,8 @@ pub fn lift_holding(
         .map(|t| t.as_str())
         .chain(reached.iter().map(|(_, b, _)| b.as_str()))
         .flat_map(|t| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
-        .filter(|w| w.starts_with('T'))
+        // Only a word a definition could be named, `Part{k}`, can clash ([`Names::Definitions`]).
+        .filter(|w| w.starts_with("Part"))
         .collect();
     let mut names: HashMap<usize, String> = HashMap::with_capacity(reached.len());
     let mut n = 0;

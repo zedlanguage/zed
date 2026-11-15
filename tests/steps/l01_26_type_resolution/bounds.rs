@@ -931,33 +931,33 @@ fn bounds_on_two_payloads_are_both_found() {
 /// after it a tuple of two of the one before, ending with the last: the signature is reached
 /// by `2^n` paths and read once.
 pub(super) fn shared_bounded_chain(n: usize) -> String {
-    let mut text = String::from("type T0 = ((x: T) -> T for T in int | f64,); ");
+    let mut text = String::from("type Part0 = ((x: T) -> T for T in int | f64,); ");
     for i in 1..=n {
-        text += &format!("type T{i} = (T{}, T{});\n", i - 1, i - 1);
+        text += &format!("type Part{i} = (Part{}, Part{});\n", i - 1, i - 1);
     }
-    text + &format!("T{n}")
+    text + &format!("Part{n}")
 }
 
 /// A printed type of `n` definitions, each a tuple of a bounded signature of its own and the
 /// definition before it, ending with the last: each `for` clause is read against the parts
 /// its definition names, which hold every definition before it.
 pub(super) fn bounded_chain(n: usize) -> String {
-    let mut text = String::from("type T0 = ((x: T) -> T for T in int | f64,);\n");
+    let mut text = String::from("type Part0 = ((x: T) -> T for T in int | f64,);\n");
     for i in 1..=n {
         text += &format!(
-            "type T{i} = ((x: T) -> T for T in int | f64, T{});\n",
+            "type Part{i} = ((x: T) -> T for T in int | f64, Part{});\n",
             i - 1
         );
     }
-    text + &format!("T{n}")
+    text + &format!("Part{n}")
 }
 
-/// `bounded_chain` with `T0` bounding `W` in place of `T`, so that of the definitions only the
+/// `bounded_chain` with `Part0` bounding `W` in place of `T`, so that of the definitions only the
 /// first, `n` deep, has a signature that names `W`.
 fn chain_bounding_w_first(n: usize) -> String {
     bounded_chain(n).replacen(
-        "type T0 = ((x: T) -> T for T in int | f64,);",
-        "type T0 = ((x: W) -> W for W in int | f64,);",
+        "type Part0 = ((x: T) -> T for T in int | f64,);",
+        "type Part0 = ((x: W) -> W for W in int | f64,);",
         1,
     )
 }
@@ -971,8 +971,8 @@ fn a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected() {
     assert!(parse_type(&chain).is_ok(), "{chain}");
     let ending = |clause: &str| {
         chain.replacen(
-            &format!("\nT{n}"),
-            &format!("\ntype B = (int, T{n}) {clause};\nB"),
+            &format!("\nPart{n}"),
+            &format!("\ntype B = (int, Part{n}) {clause};\nB"),
             1,
         )
     };
@@ -983,7 +983,7 @@ fn a_bound_deep_in_a_chain_is_found_and_a_bound_on_no_signature_is_rejected() {
         err.ends_with("the bound of `U` is on no signature that names it"),
         "{err}"
     );
-    // `W` is on the signature of `T0`, `n` deep, so the reading goes on, and the resolver
+    // `W` is on the signature of `Part0`, `n` deep, so the reading goes on, and the resolver
     // rejects the clause, since the type before `for` does not hold `W`.
     let err = parse_type(&ending("for W in int")).expect_err("a bound that holds nothing");
     assert!(
