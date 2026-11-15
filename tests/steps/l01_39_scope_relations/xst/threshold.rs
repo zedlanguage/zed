@@ -169,15 +169,23 @@ fn corpus(seed: u64, count: usize, hub: i64, ks: &[i64]) -> (usize, usize) {
     let (mut solved_n, mut empty) = (0, 0);
     for it in 0..count {
         let sys = random(&mut r, hub, ks);
-        let Some(got) = solved(&sys) else {
+        let Some(none) = component_checked(&sys, &format!("seed {seed}, component {it}")) else {
             continue;
         };
         solved_n += 1;
-        let want = enumerate(&sys);
-        empty += usize::from(want.is_none());
-        assert_eq!(got, want, "seed {seed}, component {it}: {sys:?}");
+        empty += usize::from(none);
     }
     (solved_n, empty)
+}
+
+/// Asserts that [`threshold::solve`]'s answer on `sys` is the enumerated one (`at` names the
+/// component in a failure): `None` when the component is left to S4-hub-mixed, else whether no
+/// value passes.
+fn component_checked(sys: &System, at: &str) -> Option<bool> {
+    let got = solved(sys)?;
+    let want = enumerate(sys);
+    assert_eq!(got, want, "{at}: {sys:?}");
+    Some(want.is_none())
 }
 
 /// A new seed for [`Rng`] ([`zed_tests::instances::Rng::fresh`], printed with `what`), below
@@ -197,7 +205,22 @@ fn components_of_unit_coefficients_equal_enumeration() {
     let seed = fresh("components of unit coefficients");
     let (n, empty) = corpus(seed, COUNT, 4, &[1]);
     assert_eq!(n, COUNT, "seed {seed}");
-    assert!(empty > 0 && empty < n, "seed {seed}: {empty} of {n} empty");
+    eprintln!("seed {seed}: {empty} of {n} empty");
+    // A component with no value and one with values are compared in every run, whatever the
+    // draws gave (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that both
+    // occurred among its 5,000). At the hub's one value 0, the part reads `x0 <= 0 || x1 >= 1`
+    // and the base `x0 >= 1`, so `x1 >= 1`; the base `x1 <= 0` then leaves no value, and
+    // without it `x0 = x1 = 1` passes.
+    let mut sys = System {
+        names: vec![IntervalSet::of(0, 1), IntervalSet::of(0, 1)],
+        hub: IntervalSet::of(0, 0),
+        parts: vec![(upper(0, 1, 0), lower(1, 1, 1))],
+        uppers: vec![upper(1, 1, 0)],
+        lowers: vec![lower(0, 1, 1)],
+    };
+    assert_eq!(component_checked(&sys, "built, x1 <= 0"), Some(true));
+    sys.uppers.clear();
+    assert_eq!(component_checked(&sys, "built"), Some(false));
 }
 
 /// Coefficients from 0 to 2: `k` and `m` of one sign, zero allowed.
@@ -354,46 +377,67 @@ fn the_greatest_value_of_a_query_name_is_reachability() {
         let queries: Vec<(usize, usize)> = (0..1 + r.below(3))
             .map(|_| (r.below(n as i64) as usize, r.below(n as i64) as usize))
             .collect();
-        let v = n + queries.len();
-        let mut best = vec![-1i64; queries.len()];
-        for bits in 0u32..1 << v {
-            let x = |i: usize| i64::from((bits >> i) & 1);
-            let ok = edges.iter().all(|&(a, b)| x(a) <= 0 || x(b) >= 1)
-                && queries.iter().enumerate().all(|(j, &(a, b))| {
-                    let q = x(n + j);
-                    (q <= 0 || x(a) >= 1) && (x(b) <= 0 || q <= 0)
-                });
-            if ok {
-                for (j, b) in best.iter_mut().enumerate() {
-                    *b = (*b).max(x(n + j));
-                }
+        let reached = queries_checked(n, &edges, &queries, &format!("seed {seed}"));
+        total += reached.len();
+        zeros += reached.iter().filter(|r| **r).count();
+    }
+    eprintln!("seed {seed}: {zeros} of {total} queries reached");
+    // A query that reaches and one that does not are compared in every run, whatever the
+    // draws gave (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that both
+    // occurred). Over the one edge `0 -> 1`: with `q` at 1 for the query `0 -> 1`, `x0` is 1,
+    // so the edge sets `x1` to 1, and then `x1 <= 0 || q <= 0` fails, so `q`'s greatest value
+    // is 0; for `1 -> 0`, `q = x1 = 1` and `x0 = 0` meet every test, so it is 1.
+    assert_eq!(
+        queries_checked(2, &[(0, 1)], &[(0, 1), (1, 0)], "built"),
+        [true, false]
+    );
+}
+
+/// Asserts that the greatest value of each query name of `queries` over the edges `edges` on
+/// `n` names, by enumeration, is 0 exactly when the query's start reaches its end (`at` names
+/// the case in a failure): for each query, whether it reaches.
+fn queries_checked(
+    n: usize,
+    edges: &[(usize, usize)],
+    queries: &[(usize, usize)],
+    at: &str,
+) -> Vec<bool> {
+    let mut out = Vec::new();
+    let v = n + queries.len();
+    let mut best = vec![-1i64; queries.len()];
+    for bits in 0u32..1 << v {
+        let x = |i: usize| i64::from((bits >> i) & 1);
+        let ok = edges.iter().all(|&(a, b)| x(a) <= 0 || x(b) >= 1)
+            && queries.iter().enumerate().all(|(j, &(a, b))| {
+                let q = x(n + j);
+                (q <= 0 || x(a) >= 1) && (x(b) <= 0 || q <= 0)
+            });
+        if ok {
+            for (j, b) in best.iter_mut().enumerate() {
+                *b = (*b).max(x(n + j));
             }
-        }
-        for (j, &(a, b)) in queries.iter().enumerate() {
-            let mut seen = vec![false; n];
-            let mut stack = vec![a];
-            seen[a] = true;
-            while let Some(u) = stack.pop() {
-                for &(s, t) in &edges {
-                    if s == u && !seen[t] {
-                        seen[t] = true;
-                        stack.push(t);
-                    }
-                }
-            }
-            total += 1;
-            zeros += usize::from(best[j] == 0);
-            assert_eq!(
-                best[j] == 0,
-                seen[b],
-                "seed {seed}, query {a} -> {b} over {edges:?}"
-            );
         }
     }
-    assert!(
-        zeros > 0 && zeros < total,
-        "seed {seed}: {zeros} of {total}"
-    );
+    for (j, &(a, b)) in queries.iter().enumerate() {
+        let mut seen = vec![false; n];
+        let mut stack = vec![a];
+        seen[a] = true;
+        while let Some(u) = stack.pop() {
+            for &(s, t) in edges {
+                if s == u && !seen[t] {
+                    seen[t] = true;
+                    stack.push(t);
+                }
+            }
+        }
+        out.push(seen[b]);
+        assert_eq!(
+            best[j] == 0,
+            seen[b],
+            "{at}, query {a} -> {b} over {edges:?}"
+        );
+    }
+    out
 }
 
 /// The walk of [`the_walk_is_exact`] over `n` names with the hub in `0..=w`.

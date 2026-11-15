@@ -246,18 +246,13 @@ fn one_pass_and_transfer_agree_on_random_blocks() {
         }
         unreached += one.0.iter().filter(|a| !a.reachable()).count();
     }
-    // The blocks hold literal-armed `if`s and reach arms of both kinds, so both of the
-    // shortcut's cases, an arm reached and an arm not, are compared.
+    // Both of the shortcut's cases, a literal-armed `if` with an arm reached and one with an arm
+    // no state reaches, are compared in every run by the blocks built for them in
+    // `one_pass_and_transfer_agree_where_an_outer_test_decides_the_inner_one`, whatever the
+    // draws gave (PROOF-test-count-thresholds; until 2026-11-15 this test asserted more than 40
+    // literal-armed `if`s and 10 unreachable arms over its 20 blocks).
     let shortcuts = g.shortcuts;
     eprintln!("seed {seed}: {shortcuts} literal-armed ifs, {unreached} unreachable arms");
-    assert!(
-        shortcuts > 2 * BLOCKS,
-        "seed {seed}: {shortcuts} literal-armed ifs in {BLOCKS} blocks"
-    );
-    assert!(
-        unreached > BLOCKS / 2,
-        "seed {seed}: {unreached} unreachable arms in {BLOCKS} blocks"
-    );
 }
 
 /// The random blocks [`one_pass_and_transfer_agree_on_random_blocks`] compares in a run.
@@ -393,42 +388,55 @@ fn the_change_flag_matches_a_comparison() {
     let mut changed = 0;
     for i in 0..PRODUCTS {
         let start = random_product(&mut rng);
-        // As the reduction does now: until no meet reports a change.
-        let mut flagged = start.clone();
-        let mut rounds = 0;
-        while flagged.reduce_domains_once() {
-            rounds += 1;
-            assert!(
-                rounds < 64,
-                "seed {seed}, product {i} did not settle: {start:?}"
-            );
-        }
-        // As it did before: until a round leaves the product equal to a copy taken before
-        // it, and each round's flag says whether the round changed it.
-        let mut compared = start.clone();
-        loop {
-            let before = compared.clone();
-            let flag = compared.reduce_domains_once();
-            let moved = compared != before;
-            assert_eq!(
-                flag, moved,
-                "seed {seed}, product {i}: the flag says {flag} where the round went from\n{before:?}\nto\n{compared:?}"
-            );
-            if !moved {
-                break;
-            }
-        }
-        assert_eq!(
-            flagged, compared,
-            "seed {seed}, product {i}, from {start:?}"
-        );
-        changed += usize::from(flagged != start);
+        changed += usize::from(flag_checked(&start, &format!("seed {seed}, product {i}")));
     }
     eprintln!("seed {seed}: {changed} of {PRODUCTS} products changed");
+    // The draws may change no product, so the product built below changes in every run
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that more than half of
+    // its 4,000 products changed). Its interval `[0..5]` holds the even 0, 2 and 4, which its
+    // class, the odd integers, rules out, so the reduction narrows the interval to `[1..5]`.
+    let mut built = Product::top();
+    built.ty.element = Type::int();
+    built.cell.ints.element =
+        Bounds::ints(IntervalSet::from_pieces(vec![(End::of(0), End::of(5))]));
+    built.cell.congruence.element = Congruence::new(2, 1);
+    built.cell.ints.premises = because(1);
+    built.cell.congruence.premises = because(2);
     assert!(
-        changed > PRODUCTS / 2,
-        "seed {seed}: {changed} products changed"
+        flag_checked(&built, "the built product"),
+        "the built product does not change: {built:?}"
     );
+}
+
+/// Reduces `start` until no meet reports a change, and as before, until a round leaves the
+/// product equal to a copy taken before it, each round's flag checked to say whether the round
+/// changed it, and the two results checked equal (`at` names the product in a failure):
+/// whether the reduction changed `start`.
+fn flag_checked(start: &Product, at: &str) -> bool {
+    // As the reduction does now: until no meet reports a change.
+    let mut flagged = start.clone();
+    let mut rounds = 0;
+    while flagged.reduce_domains_once() {
+        rounds += 1;
+        assert!(rounds < 64, "{at} did not settle: {start:?}");
+    }
+    // As it did before: until a round leaves the product equal to a copy taken before
+    // it, and each round's flag says whether the round changed it.
+    let mut compared = start.clone();
+    loop {
+        let before = compared.clone();
+        let flag = compared.reduce_domains_once();
+        let moved = compared != before;
+        assert_eq!(
+            flag, moved,
+            "{at}: the flag says {flag} where the round went from\n{before:?}\nto\n{compared:?}"
+        );
+        if !moved {
+            break;
+        }
+    }
+    assert_eq!(flagged, compared, "{at}, from {start:?}");
+    flagged != *start
 }
 
 /// The random products [`the_change_flag_matches_a_comparison`] reduces in a run.

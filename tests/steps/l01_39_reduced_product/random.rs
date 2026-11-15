@@ -144,35 +144,63 @@ fn check_on(s: &Shape, arms: &[Arm]) -> Result<usize, String> {
 #[test]
 fn every_value_that_reaches_an_arm_is_in_its_scope() {
     let (mut rng, seed) = Rng::fresh("every_value_that_reaches_an_arm_is_in_its_scope");
-    let (mut checked, mut unreachable, mut narrowed) = (0, 0, 0);
+    let mut met = [0; 3];
     for _ in 0..SHAPES {
         let s = Shape::random(&mut rng);
-        let arms = s.arms();
-        checked += check(&s, &arms).unwrap_or_else(|e| panic!("seed {seed}, {s:?}: {e}"));
-        unreachable += arms.iter().filter(|a| !a.reachable()).count();
-        narrowed += arms
-            .iter()
-            .filter(|a| {
-                a.reachable()
-                    && a.scope.get("x").ints().bounds().is_some_and(|(lo, hi)| {
-                        *lo != zedc::store::interval::End::NegInf
-                            || *hi != zedc::store::interval::End::PosInf
-                    })
-            })
-            .count();
+        let m = shape_kinds(&s).unwrap_or_else(|e| panic!("seed {seed}, {s:?}: {e}"));
+        for (n, k) in met.iter_mut().zip(m) {
+            *n += k;
+        }
     }
-    // The check ran, found arms unreachable, and found arms the tests narrowed.
-    eprintln!("seed {seed}: {checked} checks, {unreachable} unreachable, {narrowed} narrowed");
-    assert!(checked > 10_000, "seed {seed}: {checked} checks");
-    assert!(
-        unreachable > 10,
-        "seed {seed}: {unreachable} unreachable arms"
-    );
-    assert!(narrowed > 20, "seed {seed}: {narrowed} narrowed arms");
+    eprintln!("seed {seed}: checks, unreachable, narrowed {met:?}");
+    shape_kinds_met();
 }
 
 /// The random shapes [`every_value_that_reaches_an_arm_is_in_its_scope`] checks in a run.
 const SHAPES: usize = 40;
+
+/// What [`shape_kinds`] counts: (point, arm) pairs checked, arms found unreachable, and
+/// reachable arms whose scope narrows `x`.
+const SHAPE_KINDS: [&str; 3] = ["checked", "unreachable", "narrowed"];
+
+/// Checks the arms of `s` against the interpreter ([`check`]), and counts the kinds of
+/// [`SHAPE_KINDS`] among them.
+fn shape_kinds(s: &Shape) -> Result<[usize; 3], String> {
+    let arms = s.arms();
+    let checked = check(s, &arms)?;
+    let unreachable = arms.iter().filter(|a| !a.reachable()).count();
+    let narrowed = arms
+        .iter()
+        .filter(|a| {
+            a.reachable()
+                && a.scope.get("x").ints().bounds().is_some_and(|(lo, hi)| {
+                    *lo != zedc::store::interval::End::NegInf
+                        || *hi != zedc::store::interval::End::PosInf
+                })
+        })
+        .count();
+    Ok([checked, unreachable, narrowed])
+}
+
+/// The shape built to give each kind of [`SHAPE_KINDS`], run in every run whatever the drawn
+/// shapes gave, so that no count of the draws is relied on (PROOF-test-count-thresholds; until
+/// 2026-11-15 the test asserted more than 10,000 checks, 10 unreachable and 20 narrowed arms
+/// over its 40 shapes): `z = x; if x >= 0 { if x < 0 { 1 } else { 2 } } else { if z > 0 { 3 }
+/// else { 4 } }`. Every point of the window evaluates both tests it reaches, so pairs are
+/// checked; the arm `x < 0` inside `x >= 0` holds no integer, so it is unreachable; and the arm
+/// `x >= 0` holds `x` in `[0..]`, a finite lower end, so it is narrowed.
+fn shape_kinds_met() {
+    let s = Shape {
+        z: var("x"),
+        outer: Term::Prim(Prim::Ge, vec![var("x"), lit(0)]),
+        inner: Term::Prim(Prim::Lt, vec![var("x"), lit(0)]),
+        c: 0,
+    };
+    let met = shape_kinds(&s).unwrap_or_else(|e| panic!("the built shape: {e}"));
+    for (kind, n) in SHAPE_KINDS.iter().zip(met) {
+        assert!(n > 0, "the built shape gives no {kind}: {met:?}");
+    }
+}
 
 /// The same shape with `z`'s term as a function `h` of `x` and `y` that the last test calls,
 /// and that function:
@@ -626,22 +654,30 @@ fn bodies(rng: &mut Rng) -> [Term; 3] {
 /// `0x1_39`, `0x1_39_33` and 7, 17 to 18 s each at load 30).
 #[test]
 fn every_run_of_a_random_body_reaches_only_arms_that_hold_it() {
-    let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
     let (mut rng, seed) = Rng::fresh("every_run_of_a_random_body_reaches_only_arms_that_hold_it");
     let (mut checked, mut bodies_run) = (0, 0);
     for _ in 0..BODY_DRAWS {
         for body in bodies(&mut rng) {
-            let arms = zedc::store::product::arms(&body, &ints(&xy));
-            let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
-            let t = trace(&body, &xy, &arms, &holds)
-                .unwrap_or_else(|e| panic!("seed {seed}, {body}: {e}"));
-            checked += t.checked;
+            checked += traced(&body).unwrap_or_else(|e| panic!("seed {seed}, {body}: {e}"));
             bodies_run += 1;
         }
     }
     eprintln!("seed {seed}: {checked} checks");
     assert_eq!(bodies_run, 3 * BODY_DRAWS);
-    assert!(checked > 20_000, "seed {seed}: {checked} checks");
+    // The drawn bodies may reach no arm at all (each test can fail at every point), so the
+    // check is shown to run on the built body (PROOF-test-count-thresholds; until 2026-11-15
+    // the test asserted more than 20,000 checks over its draws).
+    let built = built_compared_shape().body();
+    let checked = traced(&built).unwrap_or_else(|e| panic!("the built body {built}: {e}"));
+    assert!(checked > 0, "the built body {built} reaches no arm");
+}
+
+/// The (arm, run) pairs [`trace`] checks on `body` over `x` and `y`, or its first failure.
+fn traced(body: &Term) -> Result<usize, String> {
+    let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    let arms = zedc::store::product::arms(body, &ints(&xy));
+    let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
+    trace(body, &xy, &arms, &holds).map(|t| t.checked)
 }
 
 /// The draws of three bodies [`every_run_of_a_random_body_reaches_only_arms_that_hold_it`]
@@ -658,36 +694,52 @@ const BODY_DRAWS: usize = 8;
 fn the_check_finds_a_domain_one_value_too_narrow() {
     let xy: Vec<Arc<str>> = vec!["x".into(), "y".into()];
     let (mut rng, seed) = Rng::fresh("the_check_finds_a_domain_one_value_too_narrow");
-    let (mut ends, mut found) = (0, 0);
+    let mut ends = 0;
     for _ in 0..NARROW_DRAWS {
         for body in bodies(&mut rng) {
-            let arms = zedc::store::product::arms(&body, &ints(&xy));
-            let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
-            let seen = trace(&body, &xy, &arms, &holds)
-                .unwrap_or_else(|e| panic!("seed {seed}, {body}: {e}"))
-                .seen;
-            for ((i, n), (least, most)) in seen {
-                let p = arms[i].scope.get(&n);
-                let Some((lo, hi)) = p.ints().bounds().map(|(l, h)| (l.to_i64(), h.to_i64()))
-                else {
-                    continue;
-                };
-                for end in [least, most] {
-                    if lo != Some(end) && hi != Some(end) {
-                        continue;
-                    }
-                    ends += 1;
-                    let narrower = |j: usize, v: &BTreeMap<Arc<str>, Value>| {
-                        holds(j, v) && !(j == i && v.get(&n) == Some(&Value::Int(end)))
-                    };
-                    found += usize::from(trace(&body, &xy, &arms, &narrower).is_err());
-                }
-            }
+            ends += ends_found(&body, &xy).unwrap_or_else(|e| panic!("seed {seed}, {body}: {e}"));
         }
     }
     eprintln!("seed {seed}: {ends} reached ends");
-    assert!(ends > 20, "seed {seed}: {ends} reached ends");
-    assert_eq!(found, ends, "seed {seed}: every end taken out is found");
+    // The drawn bodies may reach no finite end of a domain, so the built body, whose arm
+    // `x >= 0` holds `x` in `[0..]` and is reached at `x = 0`, has its end taken out in every
+    // run (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 20 ends
+    // over its draws).
+    let built = built_compared_shape().body();
+    let ends = ends_found(&built, &xy).unwrap_or_else(|e| panic!("the built body {built}: {e}"));
+    assert!(
+        ends > 0,
+        "the built body {built} reaches no end of a domain"
+    );
+}
+
+/// The finite ends of a domain that a run of `body` reaches, at each arm a run reached, each
+/// checked to be found when that one value is taken out of the arm's domain: their number, or
+/// the first failure of the check, or the first end taken out that the check did not find.
+fn ends_found(body: &Term, xy: &[Arc<str>]) -> Result<usize, String> {
+    let arms = zedc::store::product::arms(body, &ints(xy));
+    let holds = |i: usize, v: &BTreeMap<Arc<str>, Value>| arms[i].scope.contains(v);
+    let seen = trace(body, xy, &arms, &holds)?.seen;
+    let mut ends = 0;
+    for ((i, n), (least, most)) in seen {
+        let p = arms[i].scope.get(&n);
+        let Some((lo, hi)) = p.ints().bounds().map(|(l, h)| (l.to_i64(), h.to_i64())) else {
+            continue;
+        };
+        for end in [least, most] {
+            if lo != Some(end) && hi != Some(end) {
+                continue;
+            }
+            ends += 1;
+            let narrower = |j: usize, v: &BTreeMap<Arc<str>, Value>| {
+                holds(j, v) && !(j == i && v.get(&n) == Some(&Value::Int(end)))
+            };
+            if trace(body, xy, &arms, &narrower).is_ok() {
+                return Err(format!("arm {i} with {n} = {end} taken out is not found"));
+            }
+        }
+    }
+    Ok(ends)
 }
 
 /// The draws of three bodies [`the_check_finds_a_domain_one_value_too_narrow`] checks in a run.
@@ -921,7 +973,51 @@ fn chains_of(test: &str, depth: usize, calls: bool) {
     let n =
         chains_reach_only_arms_that_hold_them(test, Rng::fresh(test), (depth, calls), CHAIN_DRAWS);
     eprintln!("{n:?}");
-    assert!(n.checked > 1_000 * CHAIN_DRAWS, "{n:?}");
+    // The drawn chains may reach no arm (each test can fail at every point), so the built
+    // chain of the same depth and form is traced in every run and must reach one
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 1,000 checks
+    // a chain over its draws).
+    let built = built_chain(depth, calls);
+    assert_eq!(links_that_depend(&built), depth, "{built}");
+    let checked = traced(&built).unwrap_or_else(|e| panic!("the built chain {built}: {e}"));
+    assert!(checked > 0, "the built chain {built} reaches no arm");
+}
+
+/// A chain of `depth` links as [`chain`] draws them, each the link before it (the first `x`),
+/// with the tests `x >= 0`, `e >= 0` inside it and `e > 0`: `z1 = x; z2 = z1; ...;
+/// if x >= 0 { if zd >= 0 { 1 } else { 2 } } else { if zd > 0 { 3 } else { 4 } }`, or with
+/// functions `h1 = (x, y) -> x; h2 = (x, y) -> h1(x, y); ...`. Each link takes the value of `x`
+/// and no run fails, so every point reaches `x >= 0` or its `else`, and each link changes with
+/// the one before it (they are equal), as [`links_that_depend`] asks.
+fn built_chain(depth: usize, calls: bool) -> Term {
+    let name = |k: usize| -> Arc<str> { format!("{}{k}", if calls { 'h' } else { 'z' }).into() };
+    let link = |k: usize| {
+        if calls {
+            Term::App(Shared::new(var(&name(k))), vec![var("x"), var("y")])
+        } else {
+            var(&name(k))
+        }
+    };
+    let end = link(depth);
+    let mut body = if_(
+        Term::Prim(Prim::Ge, vec![var("x"), lit(0)]),
+        if_(
+            Term::Prim(Prim::Ge, vec![end.clone(), lit(0)]),
+            lit(1),
+            lit(2),
+        ),
+        if_(Term::Prim(Prim::Gt, vec![end, lit(0)]), lit(3), lit(4)),
+    );
+    for k in (1..=depth).rev() {
+        let t = if k == 1 { var("x") } else { link(k - 1) };
+        let v = if calls {
+            Term::Lam(vec!["x".into(), "y".into()], Shared::new(t))
+        } else {
+            t
+        };
+        body = Term::Let(name(k), Shared::new(v), Shared::new(body));
+    }
+    body
 }
 
 /// The chains [`chains_of`] draws and traces in a run.

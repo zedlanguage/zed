@@ -236,32 +236,53 @@ fn every_point_that_meets_a_nested_test_is_in_its_scope() {
         let depth = rnd.int(1, 4) as usize;
         let t = random_nest(&mut rnd, depth);
         let o = rnd.below(2) == 0;
-        let pts = meeting(&t, o, B);
         let r = base.assume(&t, o, &p);
-        for e in &pts {
-            assert!(
-                r.contains(e),
-                "seed {seed}: {t} is {o} at {e:?}, outside\n{r}"
-            );
-        }
-        checked += pts.len();
+        let (n, c) =
+            nest_points(&base, &t, o, B, &p).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        checked += n;
+        caught += usize::from(c);
         empty += usize::from(r.bottom);
-        // Negative control: the scope of the opposite outcome misses some point that
-        // meets the test, unless the test has one outcome over the whole cube.
-        let q = base.assume(&t, !o, &p);
-        caught += usize::from(pts.iter().any(|e| !q.contains(e)));
     }
     eprintln!(
         "seed {seed}: {checked} points, {caught} caught, {empty} empty, of {POINT_NESTS} nests"
     );
-    // Ten seeds at 40 nests gave 5,268 to 7,299 points and 26 to 34 caught.
-    assert!(checked > 3_000, "seed {seed}: {checked} points checked");
+    // The drawn nests may meet no point, or have one outcome over the whole cube so that the
+    // negative control catches nothing, so the test built below is checked in every run
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 3,000 points
+    // and more than 10 caught over its 40 nests). `x >= 1` holds at the 3 * 7 * 7 = 147 points
+    // of the cube with x in 1..=3, so points are checked; its opposite outcome `x < 1` gives
+    // x the upper end 0, so the point x = 1 meets the test and lies outside the opposite
+    // scope: the control catches it.
+    let built = prim(Prim::Ge, var("x"), int(1));
+    let (n, c) = nest_points(&base, &built, true, B, &p).unwrap_or_else(|e| panic!("{e}"));
+    assert!(n > 0, "the built test {built} meets no point");
     assert!(
-        caught > POINT_NESTS / 4,
-        "seed {seed}: the opposite outcome missed points in {caught} tests"
+        c,
+        "the opposite outcome of the built test {built} misses no point"
     );
     // Empty scopes, about 1 in 12 nests, are too rare for a floor at this count;
     // `a_random_nest_no_point_meets_gives_an_empty_scope` checks one.
+}
+
+/// The points of the cube `-b..=b` cubed at which `t` is `o`, each checked to lie in the scope
+/// `base` gives `t` with outcome `o`: their number, and whether the scope of the opposite
+/// outcome misses one of them (the negative control), or the first point outside the scope.
+fn nest_points(
+    base: &Scope,
+    t: &Term,
+    o: bool,
+    b: i64,
+    p: &Premises,
+) -> Result<(usize, bool), String> {
+    let pts = meeting(t, o, b);
+    let r = base.assume(t, o, p);
+    if let Some(e) = pts.iter().find(|e| !r.contains(e)) {
+        return Err(format!("{t} is {o} at {e:?}, outside\n{r}"));
+    }
+    // Negative control: the scope of the opposite outcome misses some point that meets the
+    // test, unless the test has one outcome over the whole cube.
+    let q = base.assume(t, !o, p);
+    Ok((pts.len(), pts.iter().any(|e| !q.contains(e))))
 }
 
 #[test]
@@ -418,9 +439,8 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
         ));
         cases.push((a, b));
     }
-    let mut narrowed = 0;
-    let mut same = 0;
-    for (a, b) in &cases {
+    // Whether `a && b` narrows the scope, and whether it narrows it as `a` then `b` do.
+    let kinds = |a: &Term, b: &Term, at: &str| {
         let both = s.assume(&and(a.clone(), b.clone()), true, &p);
         let apart = s.assume(a, true, &p).assume(b, true, &p);
         // Never wider; it may be narrower, since inside the conjunction a test such as `y != 3`
@@ -430,10 +450,16 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
             w.iter()
                 .zip(&n)
                 .all(|(w, n)| w.iter().all(|v| n.contains(v))),
-            "seed {seed}: {a} && {b}: {w:?} is wider than {n:?}"
+            "{at}: {a} && {b}: {w:?} is wider than {n:?}"
         );
-        same += usize::from(w == n);
-        narrowed += usize::from(shown(&both) != shown(&s));
+        (w != shown(&s), w == n)
+    };
+    let mut narrowed = 0;
+    let mut same = 0;
+    for (a, b) in &cases {
+        let (nw, sm) = kinds(a, b, &format!("seed {seed}"));
+        same += usize::from(sm);
+        narrowed += usize::from(nw);
     }
     assert!(
         cases[0..1]
@@ -444,16 +470,24 @@ fn a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_othe
         "seed {seed}: {narrowed} narrow, {same} the same, of {}",
         cases.len()
     );
-    // Ten seeds at 50 pairs gave 41 to 48 narrowed of 51, and all 51 the same.
-    assert!(
-        narrowed > CONJUNCTIONS / 2,
-        "seed {seed}: {narrowed} of {} narrow",
-        cases.len()
+    // The draws may give neither kind, so cases built for them are checked in every run
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 25 narrowed
+    // and 43 the same of its 51 pairs; ten seeds at 50 pairs gave 41 to 48 narrowed of 51, and
+    // all 51 the same). The first pair's `b` is `!(if u != u { u >= v } else { u == u })`,
+    // which is `!(u == u)`, false at every point, so `a && b` and `a` then `b` both leave no
+    // value: narrowed, and the same. `x >= 2 && u <= -1` reads `x` on one side and `u` on the
+    // other, so each side keeps `x` in `[2..6]` and `u` in `[-6..-1]` of the box `[-6..6]`,
+    // with or without the other: narrowed, and the same, with values left.
+    let built = (
+        prim(Prim::Ge, var("x"), int(2)),
+        prim(Prim::Le, var("u"), int(-1)),
     );
+    for (a, b) in [&cases[0], &built] {
+        assert_eq!(kinds(a, b, "a built pair"), (true, true), "{a} && {b}");
+    }
     assert!(
-        same > CONJUNCTIONS * 7 / 8,
-        "seed {seed}: {same} of {} are the same",
-        cases.len()
+        !s.assume(&and(built.0.clone(), built.1.clone()), true, &p)
+            .bottom
     );
 }
 

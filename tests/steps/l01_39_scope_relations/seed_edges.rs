@@ -292,7 +292,7 @@ fn a_hub_moved_by_a_star_moves_its_tree() {
 fn random_tests_around_a_hub_give_the_projection_from_scratch() {
     let p = Premises::new();
     let (mut r, seed) = Rng::fresh("random_tests_around_a_hub_give_the_projection_from_scratch");
-    let (mut moved, mut empty, mut joined) = (0, 0, 0);
+    let mut met = [0; 3];
     for case in 0..HUB_CASES {
         let k = 2 + r.below(6);
         let reads: Vec<String> = (0..k).map(|i| format!("a{i}")).collect();
@@ -333,37 +333,76 @@ fn random_tests_around_a_hub_give_the_projection_from_scratch() {
             let join = r.below(6) == 0;
             let holds = r.below(5) != 0;
             trace.push(format!("{t:?} holds {holds} join {join}"));
-            let before = intervals(&s, &ns);
-            let got = agrees(
-                &s,
-                &ns,
-                &format!("seed {seed}, case {case} step {step}: {trace:#?}"),
-                |s| {
-                    if join {
-                        let mut j = s.assume(&t, true, &p).join(&s.assume(&t, false, &p));
-                        j.reduce();
-                        j
-                    } else {
-                        s.assume(&t, holds, &p)
-                    }
-                },
-            );
-            joined += usize::from(join);
-            moved += usize::from(intervals(&got, &ns) != before);
+            let what = format!("seed {seed}, case {case} step {step}: {trace:#?}");
+            let (got, kinds) = hub_step(&s, &ns, (&t, holds, join), &p, &what);
+            for (n, k) in met.iter_mut().zip(kinds) {
+                *n += usize::from(k);
+            }
             if got.bottom {
                 // The step is dropped, and the sequence goes on from the scope before it.
-                empty += 1;
                 continue;
             }
             s = got;
         }
     }
-    eprintln!("seed {seed}: {moved} moved, {empty} empty, {joined} joined, of {HUB_CASES} cases");
-    // Floors about half the least of ten seeds (88 moved, 29 empty, 27 joined).
-    assert!(moved > 40, "seed {seed}: {moved} steps moved an interval");
-    assert!(empty > 10, "seed {seed}: {empty} steps left no state");
-    assert!(joined > 10, "seed {seed}: {joined} steps joined both arms");
+    eprintln!("seed {seed}: moved, empty, joined {met:?}, of {HUB_CASES} cases");
+    hub_kinds_met(&p);
 }
 
 /// The random sequences [`random_tests_around_a_hub_give_the_projection_from_scratch`] runs.
 const HUB_CASES: usize = 12;
+
+/// The kinds of step [`hub_step`] tells apart: one that moved an interval, one that left no
+/// state, and one that joined both arms of a test.
+const HUB_KINDS: [&str; 3] = ["moved", "empty", "joined"];
+
+/// The test `t` taken on `s` (both arms joined when `join`, else assumed to give `holds`),
+/// checked against the projection from scratch at every name of `ns` ([`agrees`]): the scope
+/// it gives and which kinds of [`HUB_KINDS`] the step is.
+fn hub_step(
+    s: &Scope,
+    ns: &[Arc<str>],
+    (t, holds, join): (&Term, bool, bool),
+    p: &Premises,
+    what: &str,
+) -> (Scope, [bool; 3]) {
+    let before = intervals(s, ns);
+    let got = agrees(s, ns, what, |s| {
+        if join {
+            let mut j = s.assume(t, true, p).join(&s.assume(t, false, p));
+            j.reduce();
+            j
+        } else {
+            s.assume(t, holds, p)
+        }
+    });
+    let kinds = [intervals(&got, ns) != before, got.bottom, join];
+    (got, kinds)
+}
+
+/// The sequence built to give each kind of [`HUB_KINDS`], run in every run whatever the drawn
+/// sequences gave, so that no count of the draws is relied on (PROOF-test-count-thresholds;
+/// until 2026-11-15 the test asserted more than 40 moved, 10 empty and 10 joined steps over its
+/// 12 sequences). On the hub `n` and the reading `a0`, both unbounded: `a0 >= 3` holding gives
+/// `a0` the lower end 3, so it moves an interval; joining both arms of `a0 - n == 0` is a join;
+/// and `a0 <= 1` holding, with `a0 >= 3` still in both arms of the join, holds no integer, so it
+/// leaves no state.
+fn hub_kinds_met(p: &Premises) {
+    let ns: Vec<Arc<str>> = vec!["n".into(), "a0".into()];
+    let steps = [
+        (ge("a0", 3), true, false),
+        (diff_eq("a0", "n", 0), true, true),
+        (le("a0", 1), true, false),
+    ];
+    let (mut s, mut met) = (ints(&ns), [false; 3]);
+    for (i, (t, holds, join)) in steps.iter().enumerate() {
+        let (got, kinds) = hub_step(&s, &ns, (t, *holds, *join), p, &format!("built step {i}"));
+        for (m, k) in met.iter_mut().zip(kinds) {
+            *m |= k;
+        }
+        s = got;
+    }
+    for (kind, m) in HUB_KINDS.iter().zip(met) {
+        assert!(m, "the built sequence gives no {kind} step: {met:?}");
+    }
+}

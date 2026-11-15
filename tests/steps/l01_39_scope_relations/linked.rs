@@ -393,13 +393,8 @@ fn blocks_by_definition(gs: &[Arc<Formula>]) -> Vec<BTreeSet<Arc<Formula>>> {
 #[test]
 fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
     let (mut r, seed) = Rng::fresh("blocks kept as conjuncts");
-    // How many states had a block of several conjuncts beside another block, so that the
-    // test is known to reach blocks that are neither one conjunct nor the whole relation.
-    let mut mixed = 0;
-    // How many states had a star of two hubs or more.
-    let mut starred = 0;
-    // How many states had a star of two hubs that a conjunct of no leaf relates.
-    let mut related = 0;
+    // How many states were of each kind of [`BLOCK_KINDS`].
+    let mut met = [0; 3];
     // The names marked as having holes or a class ([`Conjuncts::gapped`]), drawn apart so that
     // the other draws stay as they were. Over 30 cases a star of two conjuncts, a tree of
     // difference constraints and bounds of two conjuncts or more, and one held back by a name
@@ -479,83 +474,118 @@ fn the_blocks_kept_as_conjuncts_come_and_go_are_those_of_the_definition() {
                 log.push("false; from true again".into());
                 continue;
             }
-            let got = partition(&c);
-            mixed += usize::from(got.len() > 1 && got.iter().any(|b| b.len() > 1));
-            let stars = stars_by_definition(&c);
-            starred += usize::from(stars.values().any(|gs| {
-                gs.iter()
-                    .flat_map(|g| names(g))
-                    .collect::<BTreeSet<_>>()
-                    .len()
-                    > 2
-            }));
-            related += usize::from(stars.iter().any(|(x, gs)| {
-                let hubs: BTreeSet<Arc<str>> = gs
-                    .iter()
-                    .flat_map(|g| names(g))
-                    .filter(|n| n != x)
-                    .collect();
-                hubs.len() > 1
-                    && c.set().iter().any(|g| {
-                        let ns = names(g);
-                        ns.len() > 1 && ns.iter().all(|n| hubs.contains(n))
-                    })
-            }));
-            for (x, gs) in &stars {
-                let b = c
-                    .star(x)
-                    .unwrap_or_else(|| panic!("{x} is a star's leaf after {log:#?}"));
-                let got: BTreeSet<Arc<Formula>> = c.blocks().members(b).cloned().collect();
-                assert_eq!(
-                    &got, gs,
-                    "seed {seed} case {case}: the star of {x} after {log:#?}"
-                );
+            let at = format!("seed {seed} case {case}");
+            for (n, k) in met.iter_mut().zip(blocks_checked(&c, &gaps, &log, &at)) {
+                *n += usize::from(k);
             }
-            for x in c.names() {
-                assert_eq!(
-                    c.star(x).is_some(),
-                    stars.contains_key(x),
-                    "seed {seed} case {case}: {x} after {log:#?}"
-                );
-            }
-            assert_eq!(
-                got,
-                partition_by_definition(&c),
-                "seed {seed} case {case} after {log:#?}"
-            );
-            // The same conjuncts added afresh, in the reverse order, give the same blocks.
-            let mut fresh = Conjuncts::default();
-            for x in NAMES {
-                let x: Arc<str> = x.into();
-                fresh.pin(&x, c.pinned(&x));
-                fresh.bound(&x, c.bounded(&x, false), c.bounded(&x, true));
-            }
-            for g in c.set().iter().rev() {
-                fresh.and(Formula::clone(g));
-            }
-            assert_eq!(fresh.set(), c.set(), "seed {seed} case {case}");
-            assert_eq!(
-                partition(&fresh),
-                got,
-                "seed {seed} case {case} afresh after {log:#?}"
-            );
-            for g in c.set() {
-                assert!(names(g).iter().all(|n| c.mentioning(n).any(|h| h == g)));
-            }
-            differences_only_by_definition(&c, &gaps, &log, seed, case);
         }
     }
-    // Over 10 seeds: mixed 227 to 287, starred 44 to 71, related 15 to 35; seeds 48 and 60 gave
-    // related 3 and 4.
-    assert!(mixed > 100, "seed {seed}: {mixed} states with mixed blocks");
-    assert!(
-        starred > 20,
-        "seed {seed}: {starred} states with a star of two hubs"
-    );
-    assert!(
-        related > 0,
-        "seed {seed}: {related} states with a star of related hubs"
-    );
+    eprintln!("seed {seed}: mixed, starred, related {met:?}");
+    block_kinds_met();
+}
+
+/// What [`blocks_checked`] tells apart: a state with a block of several conjuncts beside
+/// another block, so that blocks are neither one conjunct nor the whole relation; one with a
+/// star of two hubs or more; and one with a star of two hubs that a conjunct of no leaf
+/// relates.
+const BLOCK_KINDS: [&str; 3] = ["mixed", "starred", "related"];
+
+/// Checks the blocks and stars of `c`, whose names of `gaps` have holes, against their
+/// definitions, and those of the same conjuncts added afresh in the reverse order (`at` and
+/// `log` name the state in a failure): which kinds of [`BLOCK_KINDS`] the state is.
+fn blocks_checked(c: &Conjuncts, gaps: &BTreeSet<Arc<str>>, log: &[String], at: &str) -> [bool; 3] {
+    let got = partition(c);
+    let mixed = got.len() > 1 && got.iter().any(|b| b.len() > 1);
+    let stars = stars_by_definition(c);
+    let starred = stars.values().any(|gs| {
+        gs.iter()
+            .flat_map(|g| names(g))
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 2
+    });
+    let related = stars.iter().any(|(x, gs)| {
+        let hubs: BTreeSet<Arc<str>> = gs
+            .iter()
+            .flat_map(|g| names(g))
+            .filter(|n| n != x)
+            .collect();
+        hubs.len() > 1
+            && c.set().iter().any(|g| {
+                let ns = names(g);
+                ns.len() > 1 && ns.iter().all(|n| hubs.contains(n))
+            })
+    });
+    for (x, gs) in &stars {
+        let b = c
+            .star(x)
+            .unwrap_or_else(|| panic!("{x} is a star's leaf after {log:#?}"));
+        let got: BTreeSet<Arc<Formula>> = c.blocks().members(b).cloned().collect();
+        assert_eq!(&got, gs, "{at}: the star of {x} after {log:#?}");
+    }
+    for x in c.names() {
+        assert_eq!(
+            c.star(x).is_some(),
+            stars.contains_key(x),
+            "{at}: {x} after {log:#?}"
+        );
+    }
+    assert_eq!(got, partition_by_definition(c), "{at} after {log:#?}");
+    // The same conjuncts added afresh, in the reverse order, give the same blocks.
+    let mut fresh = Conjuncts::default();
+    for x in NAMES {
+        let x: Arc<str> = x.into();
+        fresh.pin(&x, c.pinned(&x));
+        fresh.bound(&x, c.bounded(&x, false), c.bounded(&x, true));
+    }
+    for g in c.set().iter().rev() {
+        fresh.and(Formula::clone(g));
+    }
+    assert_eq!(fresh.set(), c.set(), "{at}");
+    assert_eq!(partition(&fresh), got, "{at} afresh after {log:#?}");
+    for g in c.set() {
+        assert!(names(g).iter().all(|n| c.mentioning(n).any(|h| h == g)));
+    }
+    differences_only_by_definition(c, gaps, log, at);
+    [mixed, starred, related]
+}
+
+/// The conjuncts built to give each kind of [`BLOCK_KINDS`], checked in every run whatever
+/// the drawn states gave, so that no count of the draws is relied on
+/// (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 100 mixed, 20
+/// starred and 1 related states over its 30 cases): `c - a - b >= 0`, `a >= 0`, `b >= 0`,
+/// `a - b >= 0`, `d - e >= 0` and `e - d + 3 >= 0`. The name `c` is a star's leaf with the
+/// hubs `a` and `b` ([`stars_by_definition`]): no constraint is written of it, its one
+/// conjunct is a constraint `>= 0` of names alone, with `c` of sign + and each hub of sign -,
+/// each hub has three conjuncts, more than its one, it is unbounded, and each other conjunct
+/// of a hub is of the hub alone or of the other hub. So the star has three names (starred),
+/// and `a - b >= 0`, the conjunct of no leaf, relates its two hubs (related). The two
+/// conjuncts of `d` and `e` are one block, since no single name separates them, and not a
+/// star, since each has `d` (and `e`) of both signs; beside it lie the other blocks (mixed).
+fn block_kinds_met() {
+    let sym = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let at_least = |l: Lin| Formula::Con(Con::ge(&l, &Lin::constant(0)));
+    let gs = [
+        at_least(sym("c").minus(&sym("a")).minus(&sym("b"))),
+        at_least(sym("a")),
+        at_least(sym("b")),
+        at_least(sym("a").minus(&sym("b"))),
+        at_least(sym("d").minus(&sym("e"))),
+        at_least(sym("e").minus(&sym("d")).plus(&Lin::constant(3))),
+    ];
+    let mut c = Conjuncts::default();
+    let mut log = Vec::new();
+    for g in gs {
+        log.push(format!("and {g}"));
+        c.and(g);
+    }
+    let met = blocks_checked(&c, &BTreeSet::new(), &log, "the built conjuncts");
+    for (kind, m) in BLOCK_KINDS.iter().zip(met) {
+        assert!(
+            m,
+            "the built conjuncts give no {kind} state: {met:?} after {log:#?}"
+        );
+    }
 }
 
 #[test]
@@ -634,19 +664,50 @@ fn the_counts_of_a_tree_of_differences_are_those_of_the_definition() {
                 log.push("false; from true again".into());
                 continue;
             }
-            let (a, h) = differences_only_by_definition(&c, &gaps, &log, seed, case);
+            let (a, h) = differences_only_by_definition(
+                &c,
+                &gaps,
+                &log,
+                &format!("seed {seed} case {case}"),
+            );
             alone += usize::from(a);
             held += usize::from(h);
         }
     }
-    // Over 10 seeds: alone 821 to 1002, held 352 to 460.
+    eprintln!("seed {seed}: {alone} states with a tree of differences alone, {held} held back");
+    differences_kinds_met();
+}
+
+/// The tree built to give each state [`differences_only_by_definition`] tells apart, checked
+/// in every run whatever the drawn states gave, so that no count of the draws is relied on
+/// (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 400 states with a
+/// tree of differences alone and 150 with one held back over its 150 cases): `a - b >= 0` and
+/// `b - a >= -3` are two difference constraints ([`edges`]) of one block, since no single name
+/// separates them, and in no star, since each of `a` and `b` has both signs in them; so they
+/// are one tree of two conjuncts outside every star. With no name marked as having holes the
+/// tree holds differences only (alone); once `a` is marked, the same tree of two difference
+/// constraints holds a name with holes (held). (A path `a - b >= 0`, `b - c >= 0` will not do:
+/// `a` and `c` are leaves of stars of the hub `b`, which leave their conjuncts apart.)
+fn differences_kinds_met() {
+    let mut c = Conjuncts::default();
+    let mut log = Vec::new();
+    for g in [diff("a", "b", 0), diff("b", "a", -3)] {
+        log.push(format!("and {g}"));
+        c.and(g);
+    }
+    let (alone, _) = differences_only_by_definition(&c, &BTreeSet::new(), &log, "the built tree");
     assert!(
-        alone > 400,
-        "seed {seed}: {alone} states with a tree of differences alone"
+        alone,
+        "the built tree of differences is not alone: {log:#?}"
     );
+    let a: Arc<str> = "a".into();
+    c.gapped(&a, true);
+    log.push("gap a true".into());
+    let gaps = BTreeSet::from([a]);
+    let (_, held) = differences_only_by_definition(&c, &gaps, &log, "the built tree, a gapped");
     assert!(
-        held > 150,
-        "seed {seed}: {held} states with a tree of differences and a name with holes"
+        held,
+        "the built tree of differences is not held back by a: {log:#?}"
     );
 }
 
@@ -658,12 +719,11 @@ fn differences_only_by_definition(
     c: &Conjuncts,
     gaps: &BTreeSet<Arc<str>>,
     log: &[String],
-    seed: u64,
-    case: usize,
+    at: &str,
 ) -> (bool, bool) {
     let blocks = c.blocks();
     if let Err(e) = blocks.well_formed() {
-        panic!("seed {seed} case {case}: the forest: {e} after {log:#?}");
+        panic!("{at}: the forest: {e} after {log:#?}");
     }
     let mut trees: BTreeMap<_, Vec<&Arc<Formula>>> = BTreeMap::new();
     for g in c.set() {
@@ -679,22 +739,14 @@ fn differences_only_by_definition(
         assert_eq!(
             blocks.differences_only(*t),
             want,
-            "seed {seed} case {case}: the tree of {gs:?} after {log:#?}"
+            "{at}: the tree of {gs:?} after {log:#?}"
         );
         // A name inside a product of names is no node of the forest; its conjunct links it
         // through the product (`Blocks::shared`).
         for a in gs.iter().flat_map(|g| g.atoms()) {
             let Atom::Sym(n) = a else { continue };
-            assert_eq!(
-                blocks.tree_of_name(&n),
-                Some(*t),
-                "seed {seed} case {case}: {n}"
-            );
-            assert_eq!(
-                c.differences_only_at(&n),
-                want,
-                "seed {seed} case {case}: {n}"
-            );
+            assert_eq!(blocks.tree_of_name(&n), Some(*t), "{at}: {n}");
+            assert_eq!(c.differences_only_at(&n), want, "{at}: {n}");
         }
         alone |= want && gs.len() > 1;
         held |= !want && gs.len() > 1 && gs.iter().all(|g| edges(g).is_some());
@@ -743,10 +795,28 @@ fn the_blocks_stay_those_of_the_definition_when_many_conjuncts_go_at_once() {
             );
         }
     }
-    // Over 10 seeds: 133 to 159.
-    assert!(
-        many > 60,
-        "seed {seed}: {many} removals of three conjuncts or more"
+    eprintln!("seed {seed}: {many} removals of three conjuncts or more");
+    // The draws may take out no three conjuncts at once, so the conjuncts built below lose
+    // three in one removal in every run (PROOF-test-count-thresholds; until 2026-11-15 the test
+    // asserted more than 60 such removals over its 100 cases). The cycle `a - b >= 0`,
+    // `b - c >= 0`, `c - d >= 0`, `d - a >= 0` is one block, since no single name separates
+    // its conjuncts; beside it `e - f >= 0`. The first three of the five, in the order of the
+    // set, go at once, and `a - b >= 1 || e - f >= 2` takes their place.
+    let mut c = Conjuncts::default();
+    for (x, y) in [("a", "b"), ("b", "c"), ("c", "d"), ("d", "a"), ("e", "f")] {
+        c.and(diff(x, y, 0));
+    }
+    let gone: Vec<Arc<Formula>> = c.set().iter().take(3).cloned().collect();
+    assert_eq!(gone.len(), 3, "the built conjuncts: {:?}", c.set());
+    c.swap(
+        &gone,
+        Formula::or(vec![diff("a", "b", 1), diff("e", "f", 2)]),
+    );
+    assert_eq!(
+        partition(&c),
+        partition_by_definition(&c),
+        "the built conjuncts after three of them went: {:?}",
+        c.set()
     );
 }
 
@@ -788,9 +858,8 @@ fn pair_conjunct(r: &mut Rng) -> Formula {
 #[test]
 fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_go() {
     let (mut r, seed) = Rng::fresh("constraints on two names come and go");
-    // States where one removal split a block in three pieces or more, or split a tree, and
-    // removals of several constraints on two names at once (196, 500 and 434 states).
-    let (mut pieces, mut trees, mut several) = (0, 0, 0);
+    // Removals of each kind of [`PAIR_KINDS`].
+    let mut met = [0; 3];
     for case in 0..40 {
         let mut b = Blocks::default();
         let mut set: BTreeSet<Arc<Formula>> = BTreeSet::new();
@@ -804,34 +873,9 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
                 } else {
                     vec![r.pick(&gs)]
                 };
-                let pair = |g: &Formula| {
-                    let a = g.atoms();
-                    a.len() == 2 && a.iter().all(|a| matches!(a, Atom::Sym(_)))
-                };
-                several += usize::from(gone.len() > 1 && gone.iter().all(|g| pair(g)));
-                let mates: Vec<Arc<Formula>> = match &gone[..] {
-                    [g] => b
-                        .members(b.of(g).expect("a block"))
-                        .filter(|h| *h != g)
-                        .cloned()
-                        .collect(),
-                    _ => Vec::new(),
-                };
-                let tree_count = |b: &Blocks, gs: &mut dyn Iterator<Item = &Arc<Formula>>| {
-                    gs.map(|g| b.tree(b.of(g).expect("a block")))
-                        .collect::<BTreeSet<_>>()
-                        .len()
-                };
-                let rest = || set.iter().filter(|g| !gone.contains(g));
-                let before = tree_count(&b, &mut rest());
-                log.push(format!("remove {gone:?}"));
-                b.remove(&gone);
-                let after = tree_count(&b, &mut rest());
-                let split: BTreeSet<_> = mates.iter().map(|h| b.of(h)).collect();
-                pieces += usize::from(split.len() > 2);
-                trees += usize::from(gone.len() == 1 && after > before);
-                for g in &gone {
-                    set.remove(g);
+                let kinds = pairs_removed(&mut b, &mut set, &gone, &mut log);
+                for (n, k) in met.iter_mut().zip(kinds) {
+                    *n += usize::from(k);
                 }
             } else {
                 let g = Arc::new(pair_conjunct(&mut r));
@@ -840,69 +884,129 @@ fn the_blocks_stay_those_of_the_definition_as_constraints_on_two_names_come_and_
                     b.add(&g);
                 }
             }
-            if let Err(e) = b.well_formed() {
-                panic!("seed {seed} case {case}: {e} after {log:#?}");
-            }
-            let gs: Vec<Arc<Formula>> = set.iter().cloned().collect();
-            let mut got: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
-            for g in &gs {
-                let id = b.of(g).unwrap_or_else(|| panic!("{g} has no block"));
-                got.entry(id).or_default().insert(g.clone());
-            }
-            for (id, ms) in &got {
-                let members: BTreeSet<Arc<Formula>> = b.members(*id).cloned().collect();
-                assert_eq!(
-                    &members, ms,
-                    "seed {seed} case {case}: block {id} after {log:#?}"
-                );
-            }
-            assert_eq!(
-                b.all().count(),
-                got.len(),
-                "seed {seed} case {case} after {log:#?}"
-            );
-            let want: BTreeSet<_> = blocks_by_definition(&gs).into_iter().collect();
-            let got: BTreeSet<_> = got.into_values().collect();
-            assert_eq!(got, want, "seed {seed} case {case} after {log:#?}");
-            // The trees: the conjuncts linked by any atom they share.
-            let mut comp: Vec<usize> = (0..gs.len()).collect();
-            let mut first: BTreeMap<Atom, usize> = BTreeMap::new();
-            for (i, g) in gs.iter().enumerate() {
-                for a in g.atoms() {
-                    let j = *first.entry(a).or_insert(i);
-                    let (x, y) = (find(&mut comp, i), find(&mut comp, j));
-                    comp[x] = y;
-                }
-            }
-            let (mut tree_of, mut comp_of) = (BTreeMap::new(), BTreeMap::new());
-            for (i, g) in gs.iter().enumerate() {
-                let (c, t) = (find(&mut comp, i), b.tree(b.of(g).expect("a block")));
-                assert_eq!(
-                    *tree_of.entry(c).or_insert(t),
-                    t,
-                    "seed {seed} case {case}: {g}"
-                );
-                assert_eq!(
-                    *comp_of.entry(t).or_insert(c),
-                    c,
-                    "seed {seed} case {case}: {g}"
-                );
-            }
+            pairs_checked(&b, &set, &log, &format!("seed {seed} case {case}"));
         }
     }
-    // Over 10 seeds: pieces 16 to 25, trees 34 to 57, several 37 to 52.
-    assert!(
-        pieces > 6,
-        "seed {seed}: {pieces} removals that split a block in three"
-    );
-    assert!(
-        trees > 15,
-        "seed {seed}: {trees} removals that split a tree"
-    );
-    assert!(
-        several > 15,
-        "seed {seed}: {several} removals of several pairs at once"
-    );
+    eprintln!("seed {seed}: pieces, trees, several {met:?}");
+    pair_kinds_met();
+}
+
+/// The removals [`pairs_removed`] tells apart: one removal that split a block in three pieces
+/// or more, one that split a tree, and a removal of several constraints on two names at once.
+const PAIR_KINDS: [&str; 3] = ["pieces", "trees", "several"];
+
+/// Takes `gone` out of the forest `b` and the set `set` of its conjuncts: which kinds of
+/// [`PAIR_KINDS`] the removal is.
+fn pairs_removed(
+    b: &mut Blocks,
+    set: &mut BTreeSet<Arc<Formula>>,
+    gone: &[Arc<Formula>],
+    log: &mut Vec<String>,
+) -> [bool; 3] {
+    let pair = |g: &Formula| {
+        let a = g.atoms();
+        a.len() == 2 && a.iter().all(|a| matches!(a, Atom::Sym(_)))
+    };
+    let several = gone.len() > 1 && gone.iter().all(|g| pair(g));
+    let mates: Vec<Arc<Formula>> = match gone {
+        [g] => b
+            .members(b.of(g).expect("a block"))
+            .filter(|h| *h != g)
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    let tree_count = |b: &Blocks, gs: &mut dyn Iterator<Item = &Arc<Formula>>| {
+        gs.map(|g| b.tree(b.of(g).expect("a block")))
+            .collect::<BTreeSet<_>>()
+            .len()
+    };
+    let rest = || set.iter().filter(|g| !gone.contains(g));
+    let before = tree_count(b, &mut rest());
+    log.push(format!("remove {gone:?}"));
+    b.remove(gone);
+    let after = tree_count(b, &mut rest());
+    let split: BTreeSet<_> = mates.iter().map(|h| b.of(h)).collect();
+    let pieces = split.len() > 2;
+    let trees = gone.len() == 1 && after > before;
+    for g in gone {
+        set.remove(g);
+    }
+    [pieces, trees, several]
+}
+
+/// Checks that the forest `b` of the conjuncts `set` is well formed, that its blocks are those
+/// of the definition, and that its trees are the conjuncts linked by any atom they share (`at`
+/// and `log` name the state in a failure).
+fn pairs_checked(b: &Blocks, set: &BTreeSet<Arc<Formula>>, log: &[String], at: &str) {
+    if let Err(e) = b.well_formed() {
+        panic!("{at}: {e} after {log:#?}");
+    }
+    let gs: Vec<Arc<Formula>> = set.iter().cloned().collect();
+    let mut got: BTreeMap<u64, BTreeSet<Arc<Formula>>> = BTreeMap::new();
+    for g in &gs {
+        let id = b.of(g).unwrap_or_else(|| panic!("{g} has no block"));
+        got.entry(id).or_default().insert(g.clone());
+    }
+    for (id, ms) in &got {
+        let members: BTreeSet<Arc<Formula>> = b.members(*id).cloned().collect();
+        assert_eq!(&members, ms, "{at}: block {id} after {log:#?}");
+    }
+    assert_eq!(b.all().count(), got.len(), "{at} after {log:#?}");
+    let want: BTreeSet<_> = blocks_by_definition(&gs).into_iter().collect();
+    let got: BTreeSet<_> = got.into_values().collect();
+    assert_eq!(got, want, "{at} after {log:#?}");
+    // The trees: the conjuncts linked by any atom they share.
+    let mut comp: Vec<usize> = (0..gs.len()).collect();
+    let mut first: BTreeMap<Atom, usize> = BTreeMap::new();
+    for (i, g) in gs.iter().enumerate() {
+        for a in g.atoms() {
+            let j = *first.entry(a).or_insert(i);
+            let (x, y) = (find(&mut comp, i), find(&mut comp, j));
+            comp[x] = y;
+        }
+    }
+    let (mut tree_of, mut comp_of) = (BTreeMap::new(), BTreeMap::new());
+    for (i, g) in gs.iter().enumerate() {
+        let (c, t) = (find(&mut comp, i), b.tree(b.of(g).expect("a block")));
+        assert_eq!(*tree_of.entry(c).or_insert(t), t, "{at}: {g}");
+        assert_eq!(*comp_of.entry(t).or_insert(c), c, "{at}: {g}");
+    }
+}
+
+/// The removals built to give each kind of [`PAIR_KINDS`], checked in every run whatever the
+/// drawn removals gave, so that no count of the draws is relied on
+/// (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 6, 15 and 15
+/// removals of the three kinds over its 40 cases). The cycle `a - b >= 0`, `b - c >= 0`,
+/// `c - d >= 0`, `d - a >= 0` is one block, since no single name separates two of its
+/// conjuncts. Taking out `a - b >= 0` leaves the path `b - c`, `c - d`, `d - a`, where `c`
+/// separates the first from the second and `d` the second from the third: three blocks
+/// (pieces). Taking out `c - d >= 0` then leaves `b - c` and `d - a`, which share no atom:
+/// two trees where there was one (trees). Taking out those two at once is a removal of
+/// several constraints on two names (several).
+fn pair_kinds_met() {
+    let (mut b, mut set, mut log) = (Blocks::default(), BTreeSet::new(), Vec::new());
+    for (x, y) in [("a", "b"), ("b", "c"), ("c", "d"), ("d", "a")] {
+        let g = at_least(x, y);
+        log.push(format!("add {g}"));
+        b.add(&g);
+        set.insert(g);
+    }
+    pairs_checked(&b, &set, &log, "the built cycle");
+    let removals = [
+        vec![at_least("a", "b")],
+        vec![at_least("c", "d")],
+        vec![at_least("b", "c"), at_least("d", "a")],
+    ];
+    for (i, gone) in removals.iter().enumerate() {
+        let kinds = pairs_removed(&mut b, &mut set, gone, &mut log);
+        pairs_checked(&b, &set, &log, &format!("the built removal {i}"));
+        assert!(
+            kinds[i],
+            "the built removal {i} is not of the kind {}: {kinds:?} after {log:#?}",
+            PAIR_KINDS[i]
+        );
+    }
 }
 
 /// Random constraints on two names come and go as in the test above, and after each removal
@@ -930,58 +1034,107 @@ fn the_blocks_an_earlier_block_went_to_and_the_names_of_a_block_are_those_of_its
                 } else {
                     vec![r.pick(&gs)]
                 };
-                let old = b.clone();
-                if let [g] = &gone[..] {
-                    let two = |h: &Formula| {
-                        let a = h.atoms();
-                        (a.len() == 2 && a.iter().all(|a| matches!(a, Atom::Sym(_))))
-                            .then(|| names(h))
-                    };
-                    if let Some(uv) = two(g) {
-                        let ob = old.of(g).expect("a block");
-                        if old
-                            .members(ob)
-                            .any(|h| h != g && two(h).as_ref() == Some(&uv))
-                        {
-                            twins += 1;
-                        } else {
-                            alone += 1;
-                        }
-                    }
-                }
-                b.remove(&gone);
-                for g in &gone {
-                    set.remove(g);
-                }
-                let lost: BTreeSet<u64> = gone.iter().filter_map(|g| old.of(g)).collect();
-                for ob in lost {
-                    let want: BTreeSet<u64> = old
-                        .members(ob)
-                        .filter(|h| set.contains(*h))
-                        .map(|h| b.of(h).expect("a block"))
-                        .collect();
-                    assert_eq!(
-                        b.now_of(&old, ob),
-                        want,
-                        "seed {seed} case {case} step {step}: block {ob}"
-                    );
-                }
+                let at = format!("seed {seed} case {case} step {step}");
+                let (twin, lone) = removed_with_twins(&mut b, &mut set, &gone, &at);
+                twins += usize::from(twin);
+                alone += usize::from(lone);
             } else {
                 let g = Arc::new(pair_conjunct(&mut r));
                 if set.insert(g.clone()) {
                     b.add(&g);
                 }
             }
-            for id in b.all() {
-                let want: BTreeSet<Arc<str>> = b.members(id).flat_map(|h| names(h)).collect();
-                let got: BTreeSet<Arc<str>> = b.names_of(id).cloned().collect();
-                assert_eq!(got, want, "seed {seed} case {case} step {step}: block {id}");
-            }
+            names_checked(&b, &format!("seed {seed} case {case} step {step}"));
         }
     }
-    // Over 10 seeds: twins 189 to 245, alone 1837 to 1940.
-    assert!(twins > 90, "seed {seed}: {twins} removals with a twin left");
-    assert!(alone > 900, "seed {seed}: {alone} removals without one");
+    eprintln!("seed {seed}: {twins} removals with a twin left, {alone} without one");
+    twin_kinds_met();
+}
+
+/// Takes `gone` out of the forest `b` and the set `set` of its conjuncts, and checks the
+/// blocks each earlier block of `gone` went to ([`Blocks::now_of`]) against the blocks of its
+/// conjuncts still here (`at` names the state in a failure): whether the removal is of one
+/// constraint on two names with a twin, a constraint on the same two names, left in its block,
+/// and whether it is of one with no twin.
+fn removed_with_twins(
+    b: &mut Blocks,
+    set: &mut BTreeSet<Arc<Formula>>,
+    gone: &[Arc<Formula>],
+    at: &str,
+) -> (bool, bool) {
+    let old = b.clone();
+    let (mut twin, mut alone) = (false, false);
+    if let [g] = gone {
+        let two = |h: &Formula| {
+            let a = h.atoms();
+            (a.len() == 2 && a.iter().all(|a| matches!(a, Atom::Sym(_)))).then(|| names(h))
+        };
+        if let Some(uv) = two(g) {
+            let ob = old.of(g).expect("a block");
+            twin = old
+                .members(ob)
+                .any(|h| h != g && two(h).as_ref() == Some(&uv));
+            alone = !twin;
+        }
+    }
+    b.remove(gone);
+    for g in gone {
+        set.remove(g);
+    }
+    let lost: BTreeSet<u64> = gone.iter().filter_map(|g| old.of(g)).collect();
+    for ob in lost {
+        let want: BTreeSet<u64> = old
+            .members(ob)
+            .filter(|h| set.contains(*h))
+            .map(|h| b.of(h).expect("a block"))
+            .collect();
+        assert_eq!(b.now_of(&old, ob), want, "{at}: block {ob}");
+    }
+    (twin, alone)
+}
+
+/// Checks that the names of each block of `b` ([`Blocks::names_of`]) are those its conjuncts
+/// mention (`at` names the state in a failure).
+fn names_checked(b: &Blocks, at: &str) {
+    for id in b.all() {
+        let want: BTreeSet<Arc<str>> = b.members(id).flat_map(|h| names(h)).collect();
+        let got: BTreeSet<Arc<str>> = b.names_of(id).cloned().collect();
+        assert_eq!(got, want, "{at}: block {id}");
+    }
+}
+
+/// The removals built to give a removal with a twin left and one without, checked in every
+/// run whatever the drawn removals gave, so that no count of the draws is relied on
+/// (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 90 and 900 such
+/// removals over its 200 cases). `x - y >= 0` and `x - y + 2 >= 0` are constraints on the same
+/// two names, so one block holds both. Taking out the first leaves the second, its twin, in
+/// that block; taking out the second then leaves no constraint on `x` and `y`.
+fn twin_kinds_met() {
+    let first = at_least("x", "y");
+    let sym = |n: &str| Lin::atom(Atom::Sym(n.into()));
+    let second = Arc::new(Formula::Con(Con::ge(
+        &sym("x").minus(&sym("y")).plus(&Lin::constant(2)),
+        &Lin::constant(0),
+    )));
+    let (mut b, mut set) = (Blocks::default(), BTreeSet::new());
+    for g in [&first, &second] {
+        b.add(g);
+        set.insert(g.clone());
+    }
+    names_checked(&b, "the built twins");
+    let got = removed_with_twins(&mut b, &mut set, &[first], "the built twins, first out");
+    assert_eq!(
+        got,
+        (true, false),
+        "the first built removal has no twin left"
+    );
+    names_checked(&b, "the built twins, first out");
+    let got = removed_with_twins(&mut b, &mut set, &[second], "the built twins, second out");
+    assert_eq!(
+        got,
+        (false, true),
+        "the second built removal has a twin left"
+    );
 }
 
 /// `x - y >= 0` as a conjunct.

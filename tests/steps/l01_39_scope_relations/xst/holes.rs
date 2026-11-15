@@ -259,29 +259,54 @@ fn random_systems_are_sound() {
     let (mut rng, seed) = Rng::fresh("random systems with holes, sound");
     let (mut cases, mut empty) = (0, 0);
     for inst in corpus(&mut rng, EACH) {
-        let want = inst.exact();
-        let order: Vec<usize> = (0..inst.tests().1.len()).collect();
-        for (how, s) in [
-            ("in order", inst.in_order(&order)),
-            ("at once", inst.at_once()),
-        ] {
-            let got = inst.values(&s);
-            for (i, (w, g)) in want.iter().zip(&got).enumerate() {
-                assert!(
-                    w.iter().all(|v| g.contains(v)),
-                    "seed {seed}, {how}: {} loses a value of {w:?}, keeps {g:?}: {inst:?}",
-                    nm(i)
-                );
-            }
-        }
         cases += 1;
-        empty += usize::from(want.iter().any(|w| w.is_empty()));
+        empty += usize::from(sound_checked(&inst, &format!("seed {seed}")));
     }
-    // Seeds 1 to 24 gave 13 to 26 empty of 75.
+    eprintln!("seed {seed}: {empty} of {cases} empty");
+    // Both kinds of system, with a solution and without, are checked in every run, whatever
+    // the draws gave (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than
+    // 5 empty and 5 not of its 75; seeds 1 to 24 gave 13 to 26 empty). The three holed names of
+    // `three_names_with_holes_on_a_cycle_leave_no_value` have no solution; with the hole of
+    // `x0` at 1 and the test `x1 - x0 <= 0` alone, `x0 = x1 = 0` is one.
+    let cycle = Inst {
+        range: vec![(0, 4); 3],
+        out: vec![vec![1, 2, 4], vec![0, 2, 3], vec![1, 3, 4]],
+        edges: vec![(1, 0, 0), (2, 1, 0), (0, 2, 1)],
+    };
+    let open = Inst {
+        range: vec![(0, 4); 2],
+        out: vec![vec![1], vec![]],
+        edges: vec![(0, 1, 0)],
+    };
     assert!(
-        empty > 5 && empty < cases - 5,
-        "seed {seed}: {empty} of {cases} empty"
+        sound_checked(&cycle, "the cycle of holed names"),
+        "{cycle:?} has a solution"
     );
+    assert!(
+        !sound_checked(&open, "two names"),
+        "{open:?} has no solution"
+    );
+}
+
+/// `inst`'s tests in order and as one conjunction keep every value some solution has (`at`
+/// names the system in a failure): whether some name has no value in its exact answer.
+fn sound_checked(inst: &Inst, at: &str) -> bool {
+    let want = inst.exact();
+    let order: Vec<usize> = (0..inst.tests().1.len()).collect();
+    for (how, s) in [
+        ("in order", inst.in_order(&order)),
+        ("at once", inst.at_once()),
+    ] {
+        let got = inst.values(&s);
+        for (i, (w, g)) in want.iter().zip(&got).enumerate() {
+            assert!(
+                w.iter().all(|v| g.contains(v)),
+                "{at}, {how}: {} loses a value of {w:?}, keeps {g:?}: {inst:?}",
+                nm(i)
+            );
+        }
+    }
+    want.iter().any(|w| w.is_empty())
 }
 
 /// Every system of [`corpus`]: the ends of every name are exact, its tests in order and as
@@ -535,11 +560,11 @@ fn unbounded_cases(seed: u64) {
         let want = exact_case(&dom, &edges, &format!("seed {seed}, case {t}"));
         nonempty += usize::from(want.iter().any(|r| !r.is_empty()));
     }
-    // Seeds 1 to 24 gave 56 to 80 of 150.
-    assert!(
-        nonempty > 30,
-        "seed {seed}: {nonempty} of {CASES} have a solution"
-    );
+    // A system with a solution is checked in every run by the two rays of
+    // `unbounded_names_keep_their_exact_values_and_rays`, whatever the draws gave
+    // (PROOF-test-count-thresholds; until 2026-11-15 this asserted more than 30 of 150; seeds 1
+    // to 24 gave 56 to 80).
+    eprintln!("seed {seed}: {nonempty} of {CASES} have a solution");
 }
 
 /// Codex round 3 (`unbounded.mjs`): 1,600 systems (here 150 from a new seed each run, by

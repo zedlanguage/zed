@@ -609,89 +609,119 @@ fn scc_composition_matches_enumeration() {
     let (_, seed) = Rng::fresh("the corpus of SCC composition");
     let (mut accepted, mut refused, mut hull_caught) = (0, 0, 0);
     for (name, sys) in &corpus(seed, EACH) {
-        let n = sys.domains.len();
-        let got = greatest(sys);
-        let backward = System {
-            domains: sys.domains.iter().rev().cloned().collect(),
-            edges: sys
-                .edges
-                .iter()
-                .rev()
-                .map(|&(u, v, w)| (n - 1 - u, n - 1 - v, w))
-                .collect(),
-        };
-        let other = greatest(&backward).map(|p| {
-            p.map(|mut p| {
-                p.reverse();
-                p
-            })
-        });
-        assert_eq!(got, other, "seed {seed}, names numbered backward: {sys:?}");
-        let Ok(got) = got else {
-            refused += 1;
-            continue;
-        };
-        accepted += 1;
-        let oracle = brute(sys);
-        assert_eq!(got, oracle.upper, "seed {seed}, greatest, {name}: {sys:?}");
-        assert_eq!(
-            least(sys).expect("the same shape"),
-            oracle.lower,
-            "seed {seed}, least, {name}: {sys:?}"
-        );
-        if *name == "cycle" {
-            for root in 0..n {
-                let domains: Vec<Domain> = sys
-                    .domains
-                    .iter()
-                    .cycle()
-                    .skip(root)
-                    .take(n)
-                    .cloned()
-                    .collect();
-                let weights: Vec<i64> = sys
-                    .edges
-                    .iter()
-                    .cycle()
-                    .skip(root)
-                    .take(n)
-                    .map(|e| e.2)
-                    .collect();
-                assert_eq!(
-                    cycle_marginal(&domains, &weights),
-                    oracle.projection[root],
-                    "seed {seed}, cycle_marginal, root {root}: {sys:?}"
-                );
+        match composition_checked(name, sys, &format!("seed {seed}")) {
+            None => refused += 1,
+            Some(caught) => {
+                accepted += 1;
+                hull_caught += usize::from(caught);
             }
-        }
-        hull_caught += usize::from(greatest(&hull(sys)).expect("the same shape") != oracle.upper);
-        if *name != "random" && *name != "cycle" {
-            let sets: Vec<Domain> = (0..n)
-                .map(|i| {
-                    domain(
-                        sys.domains[i]
-                            .iter()
-                            .flat_map(|&(l, h)| l..=h)
-                            .filter(|&t| {
-                                let mut fixed = sys.clone();
-                                fixed.domains[i] = vec![(t, t)];
-                                greatest(&fixed).expect("the same shape").is_some()
-                            }),
-                    )
-                })
-                .collect();
-            assert_eq!(sets, oracle.projection, "seed {seed}, sets, {name}");
         }
     }
     if let Some((_, heap)) = named().first() {
         assert_eq!(brute(heap).upper, Some(vec![4, 7, 6, 3]), "HeapInvariant");
     }
-    assert!(accepted > 1000, "seed {seed}: {accepted} accepted");
-    assert!(refused > 0, "seed {seed}, CONTROL: no system was refused");
-    assert!(
-        hull_caught > 0,
-        "seed {seed}, CONTROL: the hull was never wrong"
+    eprintln!(
+        "seed {seed}: {accepted} accepted, {refused} refused, the hull wrong on {hull_caught}"
     );
+    // Each kind, a system accepted, a system refused and a system on whose hull the model is
+    // wrong, is checked in every run on a system built for it, whatever the draws gave
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted more than 1,000
+    // accepted, and one refused and one caught by the hull, among the draws of its seed).
+    // The triangle `x1 <= x0`, `x2 <= x1`, `x0 <= x2` with the chord `x2 <= x0` is a component
+    // that is not one cycle, refused by its shape. In `x0 <= x1` with `x0` in `{0, 3}` and
+    // `x1` in `0..=1`, `x0` is at most 1, so 0, and the greatest solution is `(0, 1)`; the
+    // hull gives `x0` the run `0..=3`, where it reaches 1, and gives `(1, 1)`.
+    let chord = System {
+        domains: vec![vec![(0, 3)]; 3],
+        edges: vec![(0, 1, 0), (1, 2, 0), (2, 0, 0), (0, 2, 0)],
+    };
+    let holed = System {
+        domains: vec![vec![(0, 0), (3, 3)], vec![(0, 1)]],
+        edges: vec![(1, 0, 0)],
+    };
+    assert_eq!(composition_checked("random", &chord, "the chord"), None);
+    assert_eq!(
+        composition_checked("random", &holed, "the holed name"),
+        Some(true)
+    );
+}
+
+/// `sys` (drawn in mode `name` of [`corpus`]) checked as [`scc_composition_matches_enumeration`]
+/// checks each system (`at` names it in a failure): `None` when the model refuses it, else
+/// whether the model on its hull gives a wrong greatest solution.
+fn composition_checked(name: &str, sys: &System, at: &str) -> Option<bool> {
+    let n = sys.domains.len();
+    let got = greatest(sys);
+    let backward = System {
+        domains: sys.domains.iter().rev().cloned().collect(),
+        edges: sys
+            .edges
+            .iter()
+            .rev()
+            .map(|&(u, v, w)| (n - 1 - u, n - 1 - v, w))
+            .collect(),
+    };
+    let other = greatest(&backward).map(|p| {
+        p.map(|mut p| {
+            p.reverse();
+            p
+        })
+    });
+    assert_eq!(got, other, "{at}, names numbered backward: {sys:?}");
+    let Ok(got) = got else {
+        return None;
+    };
+    let oracle = brute(sys);
+    assert_eq!(got, oracle.upper, "{at}, greatest, {name}: {sys:?}");
+    assert_eq!(
+        least(sys).expect("the same shape"),
+        oracle.lower,
+        "{at}, least, {name}: {sys:?}"
+    );
+    if name == "cycle" {
+        for root in 0..n {
+            let domains: Vec<Domain> = sys
+                .domains
+                .iter()
+                .cycle()
+                .skip(root)
+                .take(n)
+                .cloned()
+                .collect();
+            let weights: Vec<i64> = sys
+                .edges
+                .iter()
+                .cycle()
+                .skip(root)
+                .take(n)
+                .map(|e| e.2)
+                .collect();
+            assert_eq!(
+                cycle_marginal(&domains, &weights),
+                oracle.projection[root],
+                "{at}, cycle_marginal, root {root}: {sys:?}"
+            );
+        }
+    }
+    let caught = greatest(&hull(sys)).expect("the same shape") != oracle.upper;
+    if name != "random" && name != "cycle" {
+        let sets: Vec<Domain> = (0..n)
+            .map(|i| {
+                domain(
+                    sys.domains[i]
+                        .iter()
+                        .flat_map(|&(l, h)| l..=h)
+                        .filter(|&t| {
+                            let mut fixed = sys.clone();
+                            fixed.domains[i] = vec![(t, t)];
+                            greatest(&fixed).expect("the same shape").is_some()
+                        }),
+                )
+            })
+            .collect();
+        assert_eq!(sets, oracle.projection, "{at}, sets, {name}");
+    }
+    Some(caught)
 }
 
 /// Codex round 4: a component that is not one cycle (a triangle with a chord) is refused by

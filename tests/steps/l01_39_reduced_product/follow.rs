@@ -681,7 +681,49 @@ fn random_sum(rng: &mut Rng, xs: &[Arc<str>], doms: &Domains) -> Option<LetPa> {
 /// than the tree's. Item PA-letpre-linear.
 #[test]
 fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
-    let (mut rng, seed) = Rng::fresh("random tests through term bounds");
+    let (rng, seed) = Rng::fresh("random tests through term bounds");
+    let [compared, narrowed, single, void, shadowed] = term_bounds_rounds(rng, seed);
+    eprintln!(
+        "seed {seed}: {compared} compared, {narrowed} narrowed, {single} over one input, {void} empty, \
+         {shadowed} read over another domain"
+    );
+}
+
+/// The kinds of step [`term_bounds_rounds`] counts: a step compared, a step that narrowed the
+/// domains, a step over a summary over one input, a step with an input of no value, and a step
+/// whose test reads an input over another domain than the scope's.
+const TERM_BOUNDS_KINDS: [&str; 5] = ["compared", "narrowed", "single", "void", "shadowed"];
+
+/// Each kind of step in [`TERM_BOUNDS_KINDS`] is compared in every run: the rounds of the seed
+/// 3 give each kind, and are pinned by their exact counts
+/// (PROOF-test-count-thresholds; until 2026-11-15
+/// [`random_tests_through_term_bounds_narrow_as_reading_every_input_does`] asserted more than
+/// 300 compared, 60 narrowed, 80 over one input, 20 empty and 80 read over another domain on
+/// its fresh seed; the 15 of seeds 1 to 24 that ran to the end gave 573 to 783 compared, 123
+/// to 229 narrowed, 184 to 305 over one input, 58 to 93 empty, 173 to 272 read over another
+/// domain). The kinds are drawn by the generator, not built, because each needs the summaries'
+/// trees and a sequence of narrowings; a seed pinned by exact counts cannot flake, and a change
+/// to the generator or to the narrowing that drops a kind changes its count here.
+#[test]
+fn the_rounds_of_a_pinned_seed_give_each_kind_of_step() {
+    let counts = term_bounds_rounds(Rng::new(PINNED_TERM_BOUNDS_SEED), PINNED_TERM_BOUNDS_SEED);
+    for (kind, n) in TERM_BOUNDS_KINDS.iter().zip(counts) {
+        assert!(
+            n > 0,
+            "seed {PINNED_TERM_BOUNDS_SEED}: no step {kind}: {counts:?}"
+        );
+    }
+    assert_eq!(counts, PINNED_TERM_BOUNDS_COUNTS, "{TERM_BOUNDS_KINDS:?}");
+}
+
+/// The seed [`the_rounds_of_a_pinned_seed_give_each_kind_of_step`] runs, and its counts.
+const PINNED_TERM_BOUNDS_SEED: u64 = 3;
+const PINNED_TERM_BOUNDS_COUNTS: [usize; 5] = [709, 179, 288, 72, 249];
+
+/// 400 rounds of random tests through term bounds from `rng` (`seed` names it in a failure),
+/// each step checked against reading every input: the counts of each kind of step in
+/// [`TERM_BOUNDS_KINDS`].
+fn term_bounds_rounds(mut rng: Rng, seed: u64) -> [usize; 5] {
     let mut compared = 0;
     let mut narrowed = 0;
     let (mut single, mut void, mut shadowed) = (0, 0, 0);
@@ -843,13 +885,7 @@ fn random_tests_through_term_bounds_narrow_as_reading_every_input_does() {
             }
         }
     }
-    // The 15 of seeds 1 to 24 that ran to the end gave 573 to 783 compared, 123 to 229 narrowed,
-    // 184 to 305 over one input, 58 to 93 empty, 173 to 272 read over another domain.
-    assert!(
-        compared > 300 && narrowed > 60 && single > 80 && void > 20 && shadowed > 80,
-        "seed {seed}: {compared} compared, {narrowed} narrowed, {single} over one input, {void} empty, \
-         {shadowed} read over another domain"
-    );
+    [compared, narrowed, single, void, shadowed]
 }
 
 mod bench;

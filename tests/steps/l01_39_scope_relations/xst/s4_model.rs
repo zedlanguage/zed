@@ -477,10 +477,29 @@ fn control_skipping_a_dead_part_breaks_monotonicity_and_order_independence() {
         f(Base::PromotionSkipDead, b)
     ));
     assert!(sub(f(Base::SubsumptionBox, b2), f(Base::SubsumptionBox, b)));
+    // The order dependence, shown in every run on Claude's fixed triples in the six part
+    // orders, which draw nothing: the triples whose fixpoint differs between two orders
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that the corpus of a new
+    // seed, one random schedule and one nested pair a triple, had an order-dependent triple and
+    // a monotonicity failure; the monotonicity failure is the named case above).
+    let dependent = triples()
+        .iter()
+        .filter(|ds| {
+            let outs: Vec<Bx> = PERMS
+                .iter()
+                .map(|p| gfp_sched(Pi::Exact, *ds, Base::PromotionSkipDead, p))
+                .collect();
+            outs.iter().any(|o| *o != outs[0])
+        })
+        .count();
+    // 144, as in Claude's run with 20 random schedules as well.
+    assert_eq!(
+        dependent, 144,
+        "order-dependent triples in the six part orders"
+    );
     let (_, seed) = Rng::fresh("schedules and nested boxes, a dead part skipped");
     let t = corpus(Pi::Exact, Base::PromotionSkipDead, 1, 1, seed);
-    assert!(t.order_dependent > 0, "seed {seed}: {t:?}");
-    assert!(t.monotonicity_failures > 0, "seed {seed}: {t:?}");
+    eprintln!("seed {seed}: {t:?}");
 }
 
 /// CONTROL (Claude round 4): promotion decided on arrival and never revisited depends on the
@@ -568,22 +587,22 @@ fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 3]; 4] {
 fn property_p_holds_for_the_box_only_implication_test() {
     const DRAWS: usize = 50_000;
     let (_, seed) = Rng::fresh("draws of property P");
-    property_p_on(seed, DRAWS);
+    let premises = property_p_on(seed, DRAWS);
+    eprintln!("seed {seed}: premises of one atom and of two atoms atom by atom: {premises:?}");
 }
 
 /// The assertions of [`property_p_holds_for_the_box_only_implication_test`] on `draws` draws
-/// from `seed`.
-fn property_p_on(seed: u64, draws: usize) {
+/// from `seed`: under each projection of [`PIS`], the draws on which the premises held with `o`
+/// one atom, and with `o` two atoms tested atom by atom. The draws may give no premise, so the
+/// seeds of [`property_p_holds_on_the_seeds_that_failed`] pin these counts
+/// (PROOF-test-count-thresholds; until 2026-11-15 this asserted more than 5,000 and 4,000 on
+/// each seed; seeds 1227236632955857713 and 1326223764648093085 gave 6,645 and 6,573 premises
+/// of one atom, 4,901 and 4,864 of two atoms atom by atom, under exact projection).
+fn property_p_on(seed: u64, draws: usize) -> Vec<[usize; 2]> {
+    let mut premises = Vec::new();
     for pi in PIS {
         let t = pcheck(pi, draws, seed);
-        // Seeds 1227236632955857713 and 1326223764648093085: 6,645 and 6,573 premises of
-        // one atom, 4,901 and 4,864 of two atoms atom by atom, under exact projection.
-        assert!(
-            t[0][0] > 5_000 && t[3][0] > 4_000,
-            "seed {seed}, {pi:?}: premises held on {} and {}",
-            t[0][0],
-            t[3][0]
-        );
+        premises.push([t[0][0], t[3][0]]);
         assert_eq!(t[0][1], 0, "seed {seed}, {pi:?}: box-only, one atom");
         assert_eq!(
             t[3][1], 0,
@@ -600,15 +619,26 @@ fn property_p_on(seed: u64, draws: usize) {
             "seed {seed}, {pi:?}: two atoms as a whole lose a point"
         );
     }
+    premises
 }
 
 /// The two seeds on which the test of two atoms as a whole broke property P under arc
 /// projection (row FAIL-xst-s4-box-only-seed); the assertions of
-/// [`property_p_holds_for_the_box_only_implication_test`] hold on them.
+/// [`property_p_holds_for_the_box_only_implication_test`] hold on them, with the premises
+/// held on the counts pinned here, under exact, arc and bounds projection.
 #[test]
 fn property_p_holds_on_the_seeds_that_failed() {
-    for seed in [1227236632955857713, 994944786207889674] {
-        property_p_on(seed, 50_000);
+    for (seed, want) in [
+        (
+            1227236632955857713,
+            [[6645, 4901], [6645, 4902], [6645, 4902]],
+        ),
+        (
+            994944786207889674,
+            [[6761, 5038], [6761, 5038], [6761, 5038]],
+        ),
+    ] {
+        assert_eq!(property_p_on(seed, 50_000), want, "seed {seed}");
     }
 }
 

@@ -181,24 +181,49 @@ fn projecting_by_blocks_keeps_what_projecting_whole_trees_keeps() {
     let mut empty = 0;
     for _ in 0..cases {
         let t = random_conjunction(&mut rnd);
-        let a = s.assume(&t, true, &Premises::new());
-        let (mut blocks, mut whole) = (a.clone(), a);
-        blocks.reduce();
-        whole.reduce_whole();
-        assert_eq!(blocks.bottom, whole.bottom, "seed {seed}: {t:?}");
-        if blocks.bottom {
-            empty += 1;
-            continue;
-        }
-        for x in &names {
-            assert_eq!(blocks.get(x), whole.get(x), "seed {seed}: {x} in {t:?}");
-        }
+        empty += usize::from(projected_alike(&s, &names, &t, &format!("seed {seed}")));
     }
-    // Both kinds of case occur.
-    assert!(
-        0 < empty && empty < cases,
-        "seed {seed}: {empty} of {cases} empty"
+    eprintln!("seed {seed}: {empty} of {cases} empty");
+    // Both kinds of case, empty and not, are compared in every run, whatever the draws gave
+    // (PROOF-test-count-thresholds; until 2026-11-15 the test asserted that both occurred among
+    // its 128 draws). `x1 < x2 && x2 < x1` asks `x1 < x1`, which no integer meets, so the scope
+    // is empty; `x1 <= x2 + 1 && x2 <= 3` holds at `x1 = x2 = 0`, so it is not.
+    let x = |i: u32| var(&format!("x{i}"));
+    let cycle = prim(
+        Prim::And,
+        prim(Prim::Lt, x(1), x(2)),
+        prim(Prim::Lt, x(2), x(1)),
     );
+    let chain = prim(
+        Prim::And,
+        prim(Prim::Le, x(1), prim(Prim::Add, x(2), int(1))),
+        prim(Prim::Le, x(2), int(3)),
+    );
+    assert!(
+        projected_alike(&s, &names, &cycle, "built"),
+        "{cycle:?} is not empty"
+    );
+    assert!(
+        !projected_alike(&s, &names, &chain, "built"),
+        "{chain:?} is empty"
+    );
+}
+
+/// `t` assumed over `s`, reduced by blocks and by whole trees, checked to keep the same values
+/// of each of `names` (`at` names the case in a failure): whether the scope is empty.
+fn projected_alike(s: &Scope, names: &[std::sync::Arc<str>], t: &Term, at: &str) -> bool {
+    let a = s.assume(t, true, &Premises::new());
+    let (mut blocks, mut whole) = (a.clone(), a);
+    blocks.reduce();
+    whole.reduce_whole();
+    assert_eq!(blocks.bottom, whole.bottom, "{at}: {t:?}");
+    if blocks.bottom {
+        return true;
+    }
+    for x in names {
+        assert_eq!(blocks.get(x), whole.get(x), "{at}: {x} in {t:?}");
+    }
+    false
 }
 
 #[test]
