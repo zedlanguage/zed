@@ -3,7 +3,7 @@
 //! sizes and whose deep tests make it on a 2 MiB stack.
 
 use zed_tests::deep::on_small_stack;
-use zed_tests::scaling::check_order;
+use zed_tests::scaling::{check_order, compare};
 use zedc::zir::validate::validate;
 use zedc::zir::{Op, Region, Src, binary, text};
 
@@ -51,15 +51,27 @@ fn writing_and_reading_a_deep_graph_in_binary_is_linear_in_its_depth() {
 #[test]
 fn writing_and_reading_a_deep_graph_as_text_is_linear_in_the_text() {
     on_small_stack(|| {
-        let (small, large) = (nested_ifs(250), nested_ifs(2_000));
-        // Power 2: the text grows as the square of the depth.
-        check_order("writing nested `if` regions as text", 250, 2, |k| {
-            text::print(if k == 250 { &small } else { &large });
-        });
-        let (small, large) = (text::print(&small), text::print(&large));
-        check_order("reading nested `if` regions as text", 250, 2, |k| {
-            text::parse(if k == 250 { &small } else { &large }).unwrap();
-        });
+        // Each line spells its whole path, so the text of depth d is Θ(d²) long (773,791 bytes
+        // at 250, 48,190,041 at 2,000), and a test at depths 250 and 2,000 held at power 2
+        // allowed 84 times the work (BENCH-l01-31-if-regions-text-ratio). The claim is linear
+        // in the text, so the larger depth is the one whose text is the longest at most 8 times
+        // that of depth 250, checked here, and the limit is that of power 1.
+        let (small, large) = (nested_ifs(250), nested_ifs(714));
+        let (small_text, large_text) = (text::print(&small), text::print(&large));
+        assert!(large_text.len() <= 8 * small_text.len());
+        assert!(text::print(&nested_ifs(715)).len() > 8 * small_text.len());
+        compare(
+            "writing nested `if` regions as text: depths 250 and 714, 8 times the text",
+            1,
+            || drop(text::print(&small)),
+            || drop(text::print(&large)),
+        );
+        compare(
+            "reading nested `if` regions as text: depths 250 and 714, 8 times the text",
+            1,
+            || drop(text::parse(&small_text).unwrap()),
+            || drop(text::parse(&large_text).unwrap()),
+        );
     });
 }
 
