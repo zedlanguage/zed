@@ -149,7 +149,7 @@ fn lex_from<'t>(
             .then(|| name::word(text, pos + 1))
             .flatten()
         {
-            pos = name_or_error(text, start, w)?;
+            pos = name::name_or_error(text, start, w)?;
             let word = text[start + 1..pos].to_string();
             Some(if c == '#' {
                 Tok::Atom(word)
@@ -157,7 +157,7 @@ fn lex_from<'t>(
                 Tok::Annot(word)
             })
         } else if let Some(w) = name::word(text, pos) {
-            let end = name_or_error(text, start, w)?;
+            let end = name::name_or_error(text, start, w)?;
             if let Some(k) = punct::keyword(text[start..end].trim_end_matches('\'')) {
                 pos = start + k.len();
                 Some(Tok::Keyword(k))
@@ -193,25 +193,6 @@ fn lex_from<'t>(
                 tok,
                 span: Span { start, end: pos },
             });
-        }
-    }
-}
-
-/// The end of the name `w` read from `start` of `text`, or the error for a word that is a name
-/// but for a character beyond ASCII, which offers an ASCII name for it.
-fn name_or_error(text: &str, start: usize, w: name::Word) -> Result<usize, Error> {
-    match w {
-        name::Word::Name(end) => Ok(end),
-        name::Word::Foreign(end) => {
-            let mut e = Error {
-                kind: ErrorKind::NonAsciiName {
-                    word: text[start..end].into(),
-                    repair: None,
-                },
-                span: Span { start, end },
-            };
-            e.avoid_names(text, &|_| false);
-            Err(e)
         }
     }
 }

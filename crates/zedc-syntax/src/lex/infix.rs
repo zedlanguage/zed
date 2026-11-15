@@ -9,8 +9,7 @@
 //! infix call is an error with its own text: a space inside (`~ f~`, `~f ~`), no closing `~`
 //! (`~f`), a lone `~`, or a reserved word between the tildes (`~div~`).
 
-use super::name::{self, Word};
-use super::name_or_error;
+use super::name::{self, Word, name_or_error};
 use super::punct::keyword;
 use super::token::{Error, ErrorKind, Span};
 

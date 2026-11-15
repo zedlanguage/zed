@@ -23,7 +23,7 @@ use unicode_script::{Script, UnicodeScript};
 use unicode_security::skeleton;
 
 use super::punct;
-use super::token::{Error, ErrorKind, is_blank};
+use super::token::{Error, ErrorKind, Span, is_blank};
 
 /// Whether `c` may start a name: the grammar's `[A-Za-z]`.
 pub fn is_name_start(c: char) -> bool {
@@ -117,6 +117,26 @@ pub(super) fn word(text: &str, pos: usize) -> Option<Word> {
     } else {
         Word::Foreign(end)
     })
+}
+
+/// The end of the name `w` read from `start` of `text`, or the error for a word that is a name
+/// but for a character beyond ASCII, which offers an ASCII name for it. Here, not in `mod.rs`,
+/// since both `mod.rs` and `infix.rs` call it and `mod.rs` imports `infix.rs` (S1F-lex-infix-cycle).
+pub(super) fn name_or_error(text: &str, start: usize, w: Word) -> Result<usize, Error> {
+    match w {
+        Word::Name(end) => Ok(end),
+        Word::Foreign(end) => {
+            let mut e = Error {
+                kind: ErrorKind::NonAsciiName {
+                    word: text[start..end].into(),
+                    repair: None,
+                },
+                span: Span { start, end },
+            };
+            e.avoid_names(text, &|_| false);
+            Err(e)
+        }
+    }
 }
 
 /// The ASCII name offered for `word`, a word the function `word` reads as foreign, with its `'`
