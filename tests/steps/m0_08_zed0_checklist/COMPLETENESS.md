@@ -12,7 +12,7 @@ is one case below.
 | The audit found that L6 completes what program 31 needs; Part A's layers are L1 to L6 | `the_completing_layer_is_the_highest_item_and_program_31_is_labeled_there` |
 | Program 31 is labeled at that layer | `the_completing_layer_is_the_highest_item_and_program_31_is_labeled_there` |
 | Grammar alternatives at L1, L2, L3 and L6 only | `cases::part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5` |
-| `loop`, `until`, boundary `with` (Loop#0, Until#0, Boundary#0) in row L6 | `cases::part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5` |
+| `loop`, `until`, the `initial` statement (Loop#0, Until#0, Initial#0) in row L6 | `cases::part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5` |
 | Defined words up to L5 | `cases::part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5` |
 | Each Part A entry has the form `Rule#i` and is listed once | `cases::part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5` |
 | Each Part A entry is needed by program 31, and each need is listed | None here: the `audit` tool decides it against the spec's grammar, run by hand (ZED0.md "The audit") |

@@ -53,7 +53,7 @@ fn steps_named(text: &str) -> Vec<&str> {
 #[test]
 fn part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5() {
     // DESIGN.md M0.8: "Program 31's units need grammar alternatives of L1, L2, L3 and L6
-    // (`loop`, `until`, boundary `with`) and defined words up to L5".
+    // (`loop`, `until`, the `initial` statement) and defined words up to L5".
     let rows = part_a();
     assert_eq!(
         rows.iter().map(|r| r.0).collect::<Vec<_>>(),
@@ -73,7 +73,7 @@ fn part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5() {
         .collect();
     assert_eq!(with_words.iter().max(), Some(&5), "{with_words:?}");
     let l6 = &rows.iter().find(|r| r.0 == 6).expect("a row L6").1;
-    for alt in ["Loop#0", "Until#0", "Boundary#0"] {
+    for alt in ["Loop#0", "Until#0", "Initial#0"] {
         assert!(l6.iter().any(|a| a == alt), "{alt} in row L6: {l6:?}");
     }
     // Each entry is a rule and its alternative index, `Rule#i`, and is listed once.
