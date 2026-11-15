@@ -872,8 +872,8 @@ fn a_tuple_key_written_by_a_name_has_no_parentheses() {
 #[test]
 fn an_intersection_of_functions_in_a_tuple_equals_its_print_read_back() {
     for text in [
-        "(((bool ->? String) .. (bool ->? String) | (rat,) -> int \\ 0),)",
-        "(((bool ->? String) -> int \\ 0) & ((rat,) | (bool ->? String) -> (int \\ 0) | #notFound),)",
+        "(((bool ->? String) .. ((bool ->? String) | (rat,)) -> int \\ 0),)",
+        "(((bool ->? String) -> int \\ 0) & (((rat,) | (bool ->? String)) -> (int \\ 0) | #notFound),)",
         "((int -> int) & (bool -> bool), int)",
         "#a((int -> int) & (bool -> bool) & (rat -> rat))",
     ] {
