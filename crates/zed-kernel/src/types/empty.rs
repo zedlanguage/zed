@@ -4950,6 +4950,9 @@ impl<'m> Searching<'m> {
                     }
                     return true;
                 }
+                if self.nested_cover(g, &f, &open).await {
+                    return true;
+                }
                 let mut all_empty = true;
                 let mut forks = Vec::new();
                 let mut blamed_false = Vec::new();
@@ -5374,6 +5377,172 @@ impl<'m> Searching<'m> {
         }
         let h = self.region(r, &f).await;
         self.tuples(h, f, may_cover).await.0
+    }
+
+    /// Whether narrowing alone proves `f` empty on each piece of the box `g` cut on one component
+    /// by its open cells (`nested_pieces`) and on the rest of that component, the component
+    /// with fewest open cells among those on which a tuple type of `open` is open; the box is
+    /// given back as it was.
+    ///
+    /// Complexity tradeoff: before the split of the box into its meet with each open tuple type
+    /// (K71), the component with fewest open cells is cut into the pieces its cells cut, and the
+    /// part is empty when narrowing alone proves it empty on every piece. This is the step "each
+    /// piece on which narrowing alone proves the part empty is taken out of the box" of DESIGN
+    /// (sec. L1.23), with the pieces of all the cells of one component taken at once, so it
+    /// decides no part that a split in more than one component at once is needed for: a piece
+    /// narrowing does not prove empty leaves the box to the split below, as before. Why: the
+    /// naive method, the split into the open tuple types, makes one piece per open tuple type,
+    /// `k` pieces each narrowing the whole part of `n` nodes again, order `k n`: `n` rows
+    /// `((#_, i) \ (#a, i), 1)` against `((#_, int), 1 | 2)` cost 44.2M, 1.72G and 101.5G
+    /// instructions at `n` = 16, 128 and 1,024 (38.8 and 59.2 times at 8 times `n`). The new
+    /// method makes at most `2 m + 1` pieces for `m` distinct open cells on the component, `m`
+    /// at most `k`, each narrowed once, order `m n`: here `m` is 2 (`1` and `1 | 2`) and the time
+    /// is linear in `n`. Finding the pieces costs one or two emptiness tests of single cells per
+    /// cell disjoint from the cells before it or holding them all, and two per piece so far for
+    /// any other cell, order `m²` at worst. A piece narrowing does not prove empty costs at most
+    /// the `2 m + 1` narrowings before the split below, so the order stays `k n`. Proof that the
+    /// answer is sound: the pieces and the rest are pairwise disjoint and cover the component
+    /// (`nested_pieces`), and each lies within or outside each open cell by a test that proved
+    /// it, so `close` records exactly whether each tuple type holds or misses the component
+    /// there, and narrowing is sound on each piece (`narrow_tuples`); a test not decided, or a
+    /// cell meeting two pieces in part, leaves the box to the split below. Test:
+    /// `l01_23_groups_and_refusals::judgments::bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`.
+    /// COMPLEXITY.md K118.
+    async fn nested_cover(&'m self, g: &mut Region, f: &Part<Row>, open: &[usize]) -> bool {
+        let Some(j) = (0..g.r.len())
+            .filter(|&j| open.iter().any(|&k| g.is_open(k, j)))
+            .min_by_key(|&j| g.open_cells(j, open).len())
+        else {
+            return false;
+        };
+        let open_cells = g.open_cells(j, open);
+        let split_snap = self.fork_snapshot();
+        let Some((mut all, union)) = self.nested_pieces(g, j, &open_cells).await else {
+            self.discard_since(split_snap);
+            return false;
+        };
+        let rest = &g.r[j] - &union;
+        match self.shown(&rest).await {
+            Some(true) => {}
+            Some(false) => all.push((rest, BTreeSet::new())),
+            None => {
+                self.discard_since(split_snap);
+                return false;
+            }
+        }
+        let mut forks = Vec::new();
+        for (c, held) in all {
+            let mark = g.log.len();
+            let holds_mark = g.forked_holds.len();
+            g.shrink(j, c);
+            for &cell in &open_cells {
+                g.close(j, cell, !held.contains(&cell));
+            }
+            let snap = self.fork_snapshot();
+            let hit = self.narrow_tuples(g, &mut f.clone()).await;
+            g.forked_holds.truncate(holds_mark);
+            g.restore(mark);
+            if !hit {
+                self.discard_since(split_snap);
+                return false;
+            }
+            if let Some(fork) = self.take_fork(snap, None) {
+                forks.push(fork);
+            }
+        }
+        for fork in forks {
+            self.restore_fork(fork);
+        }
+        true
+    }
+
+    /// The pieces of component `j` of the box `g` cut by its open cells `open_cells`, each with
+    /// the cells holding it (it misses the others), in the order of their types, and their
+    /// union; `None` when a cell meets two pieces cut so far in part, or a test is not decided.
+    /// Each distinct cell `t` is added to the pieces of the cells before it, of union `u`: when
+    /// `t & u` is empty, `t` is a piece; else when `u - t` is empty, every piece lies within
+    /// `t`; else each piece `p` lies outside `t`, within it, or is cut into `p & t` and `p - t`;
+    /// then `t - u`, unless empty, is a piece. So the pieces stay pairwise disjoint, cover `u`,
+    /// and each lies within or outside each cell added. Nested or disjoint cells never meet
+    /// two pieces in part, and since a cell cuts at most one piece and adds at most one, `m`
+    /// distinct cells give at most `2 m` pieces.
+    async fn nested_pieces(
+        &'m self,
+        g: &Region,
+        j: usize,
+        open_cells: &BTreeSet<usize>,
+    ) -> Option<(Vec<(Type, BTreeSet<usize>)>, Type)> {
+        let mut types: Vec<(Type, BTreeSet<usize>)> = Vec::new();
+        let mut seen: BTreeMap<Type, usize> = BTreeMap::new();
+        for &c in open_cells {
+            let t = &g.cells[j][c].ty & &g.r[j];
+            match seen.get(&t) {
+                Some(&i) => {
+                    types[i].1.insert(c);
+                }
+                None => {
+                    seen.insert(t.clone(), types.len());
+                    types.push((t, BTreeSet::from([c])));
+                }
+            }
+        }
+        let mut pieces: Vec<(Type, BTreeSet<usize>)> = Vec::new();
+        let mut union = Type::empty();
+        for (t, cs) in types {
+            if self.shown(&(&t & &union)).await == Some(true) {
+                union = &union | &t;
+                pieces.push((t, cs));
+                continue;
+            }
+            if self.shown(&(&union - &t)).await == Some(true) {
+                for (_, held) in &mut pieces {
+                    held.extend(&cs);
+                }
+            } else {
+                let mut cut = None;
+                for (i, (p, held)) in pieces.iter_mut().enumerate() {
+                    if self.shown(&(&*p & &t)).await? {
+                        continue;
+                    }
+                    if self.shown(&(&*p - &t)).await? {
+                        held.extend(&cs);
+                        continue;
+                    }
+                    if cut.replace(i).is_some() {
+                        return None;
+                    }
+                }
+                if let Some(i) = cut {
+                    let (p, held) = &pieces[i];
+                    let mut within = held.clone();
+                    within.extend(&cs);
+                    let inside = (p & &t, within);
+                    pieces[i].0 = &pieces[i].0 - &t;
+                    pieces.push(inside);
+                }
+            }
+            if !self.shown(&(&t - &union)).await? {
+                pieces.push((&t - &union, cs));
+            }
+            union = &union | &t;
+        }
+        pieces.sort_by(|a, b| a.0.cmp(&b.0));
+        Some((pieces, union))
+    }
+
+    /// Whether `t` is shown empty with no fork, `Some(true)`, or shown inhabited with no
+    /// refusal on the way, `Some(false)`; `None` otherwise. Only a proof of emptiness keeps
+    /// what it read.
+    async fn shown(&'m self, t: &Type) -> Option<bool> {
+        let snap = self.fork_snapshot();
+        let give_ups = self.s().give_ups;
+        let (empty, fork) = self.empty_fork(t).await;
+        if empty && fork.is_none() {
+            return Some(true);
+        }
+        let inhabited = !empty && self.s().give_ups == give_ups;
+        self.discard_since(snap);
+        inhabited.then_some(false)
     }
 
     /// Whether `m` admits no morphism: a key is promised and not permitted, or promised and no

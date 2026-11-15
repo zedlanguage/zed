@@ -1539,3 +1539,39 @@ fn nested_sets_against_a_first_component_cut_by_rows_are_decided() {
         assert_eq!(wider.subtype(&right), held, "{extra}");
     }
 }
+
+/// `n` rows `((#_, i) \ (#a, i), 1)`, each a set of every atom nested beside `1`, and the one
+/// shape `((#_, int), 1 | 2)`, whose second component is wider than the rows' `1`
+/// (PERF-types-nested-rows-wider-second).
+fn nested_rows_wider_second(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let rows: Vec<String> = (0..n)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), 1)"))
+        .collect();
+    (
+        parse_type(&rows.join(" | ")).unwrap(),
+        parse_type("((#_, int), 1 | 2)").unwrap(),
+    )
+}
+
+/// The small instance of `bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`.
+/// The rows are within the shape; the shape is not within the rows (`((#a, 0), 1)` and
+/// `((#b, 0), 2)` are in it and in no row); a row with `3` beside it, or with a string in its
+/// nested set, is not within the shape; `((#b, 2), 2)` is.
+#[test]
+fn nested_sets_against_a_wider_second_component_are_decided() {
+    use zedc::check::read::parse_type;
+    let (left, right) = nested_rows_wider_second(4);
+    assert!(left.subtype(&right));
+    assert!(!right.subtype(&left));
+    let rows = "((#_, 0) \\ (#a, 0), 1) | ((#_, 1) \\ (#a, 1), 1)";
+    for (extra, held) in [
+        ("((#b, 2), 2)", true),
+        ("((#b, 2), 3)", false),
+        ("((#_, \"s\"), 1)", false),
+        ("((#_, 5) \\ (#a, 5), 1 | 2)", true),
+    ] {
+        let wider = parse_type(&format!("{rows} | {extra}")).unwrap();
+        assert_eq!(wider.subtype(&right), held, "{extra}");
+    }
+}

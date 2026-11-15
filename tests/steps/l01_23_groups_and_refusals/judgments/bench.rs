@@ -331,3 +331,20 @@ fn n_nested_sets_against_a_small_first_component_are_decided_in_linear_time() {
         },
     );
 }
+
+/// `n` nested sets of every atom against the one shape `((#_, int), 1 | 2)`, whose second
+/// component is wider than the rows' `1` (PERF-types-nested-rows-wider-second): linear in `n`.
+/// Before, 38.8 and 59.2 times the instructions from n 16 to 128 and from 128 to 1024.
+#[test]
+fn nested_sets_against_a_wider_second_component_are_decided_in_linear_time() {
+    let n = 128;
+    let pairs = scaling::inputs(n, nested_rows_wider_second);
+    scaling::check(
+        "n nested sets against one shape with a wider second component",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}
