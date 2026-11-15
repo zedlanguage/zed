@@ -6675,8 +6675,9 @@ impl<'m, 's> Comparing<'m, 's> {
     /// differing at one component holds their union there too unless the bindings made between
     /// them stand in the way. Where many rows are each held only after a split by few shapes,
     /// the cost is the product of the pieces split. Evidence: the benchmark
-    /// `bench::fits::a_joined_component_split_across_shapes_scales` (n shapes against a
-    /// component of n pieces) and the tests after
+    /// `bench::fits::a_joined_component_split_across_shapes_scales` (n tuples, each with a
+    /// component of two variables split across two of 2n shapes, ratio 8.81 at 300 and 2400)
+    /// and the tests after
     /// `a_joined_one_element_tuple_fits_split_shapes_for_every_bound`. Prior work: the
     /// distribution of a union over a product in semantic subtyping (Frisch, Castagna and
     /// Benzaken, "Semantic subtyping", JACM 2008), which decomposes a product type into the
