@@ -559,12 +559,17 @@ pub const WORDS: &[(&str, u32)] = &[
     ("simplify", 22),
     ("substitute", 22),
     ("derivative", 22),
+    ("integral", 22),
     ("target", 24),
     ("verify", 25),
     ("explain", 25),
     ("obligations", 25),
     ("check", 25),
     ("recovery", 27),
+    ("jvp", 33),
+    ("vjp", 33),
+    ("gradient", 33),
+    ("hvp", 33),
 ];
 
 /// The layer of the prelude value word `name`, if it is one.
@@ -687,6 +692,7 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Instant", 7),
     ("Duration", 7),
     ("Ptr", 7),
+    ("Signal", 7),
     ("i8", 7),
     ("i16", 7),
     ("i32", 7),

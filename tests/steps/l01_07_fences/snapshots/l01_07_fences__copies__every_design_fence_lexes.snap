@@ -47,6 +47,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | x [ i «in» warm ..< n ] = anneal ( x [ i - 1₍10₎ ] ) ;
 == DESIGN.md [sec:failure] 1 L10
   1 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
+== DESIGN.md [sec:failure] 2 L7
+  1 | «type» Signal = #sigabrt | #sigalrm | #sigbus | #sigfpe | #sighup | #sigill | #sigint | #sigkill | #sigpipe | #sigprof | #sigquit | #sigsegv | #sigsys | #sigterm | #sigtrap | #sigusr1 | #sigusr2 | #sigvtalrm | #sigxcpu | #sigxfsz | #otherSignal ( n : int [ 1₍10₎ .. ] , name : Utf8String | #none ) ;
 == DESIGN.md [sec:ports] 1 L1
   2 | main ( m : MainArgs ) {
   3 | m . stdout <- str["Hello, world!"] ;
@@ -164,7 +166,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  18 | }
 == DESIGN.md [sec:codecs] 7 L20
   2 | @foreign «struct» Sample { t : u64 , value : f64 }
-  3 | @foreign ( str["sensor"] , str["sensor_free"] ) @nonblocking freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok ;
+  3 | @foreign ( str["sensor"] , str["sensor_free"] ) @nonblocking freeSamples : ( p : Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) ) -> #ok | #lost ;
   4 | @foreign ( str["sensor"] , str["sensor_read"] ) readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
   6 | main ( m : MainArgs ) {
   7 | fs = main :: files ;
@@ -213,6 +215,18 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | lines = ( sales , prices ) «into» ( region -> day -> sku -> ( line : ( quantitySold , price ) ) ) ;
 == DESIGN.md [sec:level_names] 9 L8
   1 | a12 = sales [ sku : str["A12"] ] ;
+== DESIGN.md [sec:domains] 1 L10
+  1 | count : int where count != 0₍10₎ = 5₍10₎ ;
+  2 | half ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) -> int = n «div» 2₍10₎ ;
+  3 | clampTo ( lo : int , hi : int where hi >= lo , x : int ) -> ( r : int where r >= lo && r <= hi ) = «if» x < lo { lo } «else» { «if» x > hi { hi } «else» { x } } ;
+  4 | «struct» Span { lo : int , hi : int where hi >= lo }
+  5 | «interface» Bounds ( «positional» T ) { lo : T , hi : T where hi != lo }
+  6 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;
+  7 | «type» Evens = Seq ( ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ) ;
+  8 | applyNonzero ( f : ( a : int where a != 0₍10₎ ) -> int , x : int where x != 0₍10₎ ) -> int = f ( x ) ;
+  9 | «type» Code = ( n : int where n >= 0₍10₎ && n < 256₍10₎ ) | #none ;
+ 10 | recip : ( ( x : rat where x != 0r ) -> rat ) & ( ( x : rat where x == 0r ) -> #divByZero ) = x -> 1r / x ;
+ 11 | evenSquares : ( k : int [ 0₍10₎ ..< 10₍10₎ ] where k «mod» 2₍10₎ == 0₍10₎ ) -> int = { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , 4₍10₎ -> 16₍10₎ , 6₍10₎ -> 36₍10₎ , 8₍10₎ -> 64₍10₎ } ;
 == DESIGN.md [sec:constraints] 1 L10
   1 | «type» Small = ( x : int where x * x < 100₍10₎ ) ;
   2 | «type» Even = ( n : int where n «mod» 2₍10₎ == 0₍10₎ ) ;
@@ -224,7 +238,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | reduce : ( e , s ) -> «if» s . of ( intervals ) . isPoint { «if» s . of ( intervals ) . lo «mod» 2₍10₎ == 0₍10₎ { #even } «else» { #odd } } «else» { e } ) ;
   3 | intervalsFromParity = Reduction ( of : intervals , reads : [ parity ] ,
   4 | reduce : ( e , s ) -> «if» s . of ( parity ) == #even { e . roundInwardToEven } «else» { e } ) ;
-== DESIGN.md [sec:constraints] 3 L10
+== DESIGN.md [sec:constraints] 3 L6
   1 | «type» Bound = int | Ast | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
@@ -245,7 +259,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | «import» geometry . shapes . { area , Rect } ;
 == DESIGN.md [sec:facets] 1 L20
   1 | «type» Nonzero = Utf8String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
-  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | digit | str["_"] ) * | str["°"] alpha * | str["%"] | str["′"] | str["″"] | str["'"] | str["\""] } ;
+  2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | digit | str["_"] ) * | str["°"] alpha * | str["%"] | str["℃"] | str["′"] | str["″"] | str["'"] | str["\""] } ;
   3 | «type» UnitKind = Utf8String «matching» «grammar» { str["#"] alpha ( alpha | digit | str["_"] ) * } ;
   4 | «type» UnitPower = Utf8String «matching» «grammar» { str["-"] ? digit + | str["("] str["-"] ? digit + str["/"] Nonzero str[")"] } ;
   5 | «type» UnitFactor = Utf8String «matching» «grammar» { UnitName ( str["^"] UnitPower ) ? } ;
@@ -261,27 +275,32 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | piPower : int = 0₍10₎ ,
   6 | offset : rat = 0r ,
   7 | ascii : UnitName | #none = #none ,
-  8 | prefixes : [ UnitName ] = [ ] ,
-  9 | «law» positive ( ) = factor > 0r ,
- 10 | «law» baseIsOne ( ) = ( unit == #base ) . implies ( factor == 1r && piPower == 0₍10₎ && offset == 0r ) ,
- 11 | «law» pointUnprefixed ( ) = ( offset != 0r ) . implies ( prefixes == [ ] ) ,
- 12 | }
- 13 | «struct» UnitSpelling { spelling : UnitName , means : UnitText }
- 15 | meter = UnitDef ( name : str["m"] , unit : #base , prefixes : [ str["f"] , str["p"] , str["n"] , str["μ"] , str["m"] , str["c"] , str["d"] , str["k"] ] ) ;
- 16 | kelvin = UnitDef ( name : str["K"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
- 17 | degreeKelvin = UnitDef ( name : str["°K"] , ascii : str["degK"] , unit : str["K"] ) ;
- 18 | radian = UnitDef ( name : str["rad"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
- 19 | joule = UnitDef ( name : str["J"] , unit : str["N m"] , prefixes : [ str["n"] , str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] ] ) ;
- 20 | becquerel = UnitDef ( name : str["Bq"] , unit : str["1/s #activity"] , prefixes : [ str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] ] ) ;
- 21 | hour = UnitDef ( name : str["h"] , unit : str["s"] , factor : 3600r ) ;
- 22 | percent = UnitDef ( name : str["%"] , unit : str["#ratio"] , factor : 1r / 100r ) ;
- 23 | parsec = UnitDef ( name : str["pc"] , unit : str["au"] , factor : 648000r , piPower : - 1₍10₎ , prefixes : [ str["k"] , str["M"] , str["G"] ] ) ;
- 24 | celsius = UnitDef ( name : str["°C"] , ascii : str["degC"] , unit : str["K"] , offset : 27315r / 100r ) ;
- 25 | ohm = UnitDef ( name : str["Ω"] , ascii : str["Ohm"] , unit : str["V/A"] , prefixes : [ str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] ] ) ;
- 26 | micron = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
- 27 | byte = UnitDef ( name : str["B"] , unit : #base , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] , str["Z"] , str["Y"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] , str["Pi"] , str["Ei"] ] ) ;
- 28 | bit = UnitDef ( name : str["bit"] , unit : str["B"] , factor : 1r / 8r , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] ] ) ;
- 29 | pixel = UnitDef ( name : str["px"] , unit : #base ) ;
+  8 | symbols : [ UnitName ] = [ ] ,
+  9 | words : [ UnitName ] = [ ] ,
+ 10 | prefixes : [ UnitName ] = [ ] ,
+ 11 | «law» positive ( ) = factor > 0r ,
+ 12 | «law» baseIsOne ( ) = ( unit == #base ) . implies ( factor == 1r && piPower == 0₍10₎ && offset == 0r ) ,
+ 13 | «law» pointUnprefixed ( ) = ( offset != 0r ) . implies ( prefixes == [ ] ) ,
+ 14 | }
+ 15 | «struct» UnitSpelling { spelling : UnitName , means : UnitText }
+ 17 | meterUnit = UnitDef ( name : str["m"] , unit : #base , words : [ str["metre"] , str["meter"] ] , prefixes : [ str["f"] , str["p"] , str["n"] , str["μ"] , str["m"] , str["c"] , str["d"] , str["k"] ] ) ;
+ 18 | kelvinUnit = UnitDef ( name : str["K"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
+ 19 | degreeKelvinUnit = UnitDef ( name : str["°K"] , ascii : str["degK"] , unit : str["K"] ) ;
+ 20 | radianUnit = UnitDef ( name : str["rad"] , unit : #base , prefixes : [ str["n"] , str["μ"] , str["m"] ] ) ;
+ 21 | jouleUnit = UnitDef ( name : str["J"] , unit : str["N m"] , prefixes : [ str["n"] , str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] ] ) ;
+ 22 | becquerelUnit = UnitDef ( name : str["Bq"] , unit : str["1/s #activity"] , prefixes : [ str["m"] , str["k"] , str["M"] , str["G"] , str["T"] , str["P"] ] ) ;
+ 23 | hourUnit = UnitDef ( name : str["h"] , unit : str["s"] , factor : 3600r ) ;
+ 24 | percentUnit = UnitDef ( name : str["%"] , unit : str["#ratio"] , factor : 1r / 100r ) ;
+ 25 | parsecUnit = UnitDef ( name : str["pc"] , unit : str["au"] , factor : 648000r , piPower : - 1₍10₎ , prefixes : [ str["k"] , str["M"] , str["G"] ] ) ;
+ 26 | celsiusUnit = UnitDef ( name : str["°C"] , ascii : str["degC"] , symbols : [ str["℃"] ] , words : [ str["celsius"] , str["Celsius"] ] , unit : str["K"] , offset : 27315r / 100r ) ;
+ 27 | ohmUnit = UnitDef ( name : str["Ω"] , ascii : str["Ohm"] , words : [ str["ohm"] , str["Ohm"] ] , unit : str["V/A"] , prefixes : [ str["μ"] , str["m"] , str["k"] , str["M"] , str["G"] ] ) ;
+ 28 | ampereUnit = UnitDef ( name : str["A"] , unit : #base , words : [ str["ampere"] , str["Ampere"] , str["ampère"] , str["Ampère"] ] , prefixes : [ str["f"] , str["p"] , str["n"] , str["μ"] , str["m"] , str["k"] , str["M"] ] ) ;
+ 29 | literUnit = UnitDef ( name : str["L"] , symbols : [ str["l"] , str["ℓ"] ] , words : [ str["litre"] , str["liter"] ] , unit : str["m^3"] , factor : 1r / 1000r , prefixes : [ str["n"] , str["μ"] , str["m"] , str["c"] , str["d"] ] ) ;
+ 30 | micronUnit = UnitSpelling ( spelling : str["micron"] , means : str["μm"] ) ;
+ 31 | kilohmUnit = UnitSpelling ( spelling : str["kilohm"] , means : str["kΩ"] ) ;
+ 32 | byteUnit = UnitDef ( name : str["B"] , unit : #base , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["P"] , str["E"] , str["Z"] , str["Y"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] , str["Pi"] , str["Ei"] ] ) ;
+ 33 | bitUnit = UnitDef ( name : str["bit"] , unit : str["B"] , factor : 1r / 8r , prefixes : [ str["k"] , str["M"] , str["G"] , str["T"] , str["Ki"] , str["Mi"] , str["Gi"] , str["Ti"] ] ) ;
+ 34 | pixelUnit = UnitDef ( name : str["px"] , unit : #base ) ;
 == DESIGN.md [sec:facets] 3 L18
   1 | @stack ( bytes : 1₍10₎ «with» units ( str["GiB"] ) ) deep ( n : int ) = n + 1₍10₎ ;
   2 | @stack ( 1₍10₎ «with» units ( str["Gbit"] ) ) wide ( n : int ) = n + 1₍10₎ ;
@@ -394,6 +413,11 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   1 | p = ( ( x : rat ) -> ( x + 1r ) ^ 2₍10₎ ) :: source ;
   2 | e = expand ( p ) ;
   3 | d = derivative ( p ) ;
+  4 | i = integral ( p ) ;
+== DESIGN.md [sec:symbolic] 2 L33
+  1 | loss = ( ( w : [ f64 ] ) -> w . map ( x -> x * x ) >< ( + ) ) :: source ;
+  2 | g = gradient ( loss ) ;
+  3 | h = hvp ( loss ) ;
 == DESIGN.md [sec:verification] 1 L15
   1 | «law» addComm ( a : int , b : int ) = a + b == b + a ;
   2 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
@@ -568,6 +592,24 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  29 | }
  31 | intRing : CommRing ( int ) = { mul : ( * ) , one : 1₍10₎ , add : ( + ) , zero : 0₍10₎ , neg : ( a -> - a ) } ;
 == DESIGN.md [sec:theories] 2 L22
+  1 | «interface» Field ( «positional» T ) {
+  2 | «import» CommRing ( T ) ,
+  3 | inv : ( ( a : T where a != zero ) -> T ) & ( ( a : T where a == zero ) -> #divByZero ) ,
+  4 | «law» oneNeZero ( ) = one != zero ,
+  5 | «law» mulInv ( a : T where a != zero ) = mul ( a , inv ( a ) ) == one ,
+  6 | }
+  8 | ratField : Field ( rat ) = { mul : ( * ) , one : 1r , add : ( + ) , zero : 0r , neg : ( a -> - a ) , inv : ( x -> 1r / x ) } ;
+  9 | ratio ( F : Field ( T ) , x : T , y : T ) = x * F . inv ( y ) ;
+ 10 | half = ratio ( F : ratField , x : 1r , y : 2r ) ;
+ 11 | bad = ratio ( F : ratField , x : 1r , y : 0r ) ;
+ 12 | ratioSafe ( F : Field ( T ) , x : T , y : T where y != F . zero ) = x * F . inv ( y ) ;
+ 13 | ratioDiv ( F : Field ( T ) , x : T , y : T ) = x / y ;
+== DESIGN.md [sec:theories] 3 L15
+  1 | junkField : Field ( rat ) = { mul : ( * ) , one : 1r , add : ( + ) , zero : 0r , neg : ( a -> - a ) , inv : ( x -> «if» x == 0r { 0r } «else» { 1r / x } ) } ;
+  2 | partField : Field ( rat ) = { mul : ( * ) , one : 1r , add : ( + ) , zero : 0r , neg : ( a -> - a ) , inv : ( ( x : rat where x != 0r ) -> 1r / x ) } ;
+  3 | oops ( F : Field ( T ) , x : T ) = x / 0₍10₎ ;
+  4 | «law» noPremise ( F : Field ( T ) , a : T ) = a * F . inv ( a ) == 1₍10₎ ;
+== DESIGN.md [sec:theories] 4 L22
   1 | «law» square ( ring : CommRing ( T ) , a : T , b : T ) = ( a + b ) * ( a + b ) == a * a + 2₍10₎ * a * b + b * b
   2 | «proof» {
   3 | ( a + b ) * ( a + b )
@@ -575,14 +617,14 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   5 | == a * a + b * a + ( a * b + b * b )
   6 | == a * a + 2₍10₎ * a * b + b * b
   7 | }
-== DESIGN.md [sec:theories] 3 L22
+== DESIGN.md [sec:theories] 5 L22
   1 | pow ( mon : Monoid ( T ) , x : T , n : int [ 0₍10₎ .. ] ) -> T = «if» n == 0₍10₎ { 1₍10₎ } «else» { pow ( mon : , x : , n : n - 1₍10₎ ) * x } ;
   3 | «law» powAdd ( mon : Monoid ( T ) , x : T , m : int [ 0₍10₎ .. ] , n : int [ 0₍10₎ .. ] ) =
   4 | pow ( mon : , x : , n : m + n ) == pow ( mon : , x : , n : m ) * pow ( mon : , x : , n : n )
   5 | «proof» { byInduction ( n ) }
-== DESIGN.md [sec:theories] 4 L22
+== DESIGN.md [sec:theories] 6 L22
   1 | additive ( ring : CommRing ( T ) ) -> Monoid ( T ) = { mul : ring . add , one : ring . zero } ;
-== DESIGN.md [sec:theories] 5 L22
+== DESIGN.md [sec:theories] 7 L22
   1 | «interface» MonoInt {
   2 | f : ( int ) -> int ,
   3 | «law» mono ( a : int , b : int ) = ( a <= b ) . implies ( f ( a ) <= f ( b ) ) ,
@@ -645,8 +687,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | canonname : Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) | #none ,
   7 | next : Ptr ( AddrInfo ) | #none ,
   8 | }
-  9 | @foreign ( str["c"] , str["freeaddrinfo"] ) @nonblocking freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok ;
- 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) ;
+  9 | @foreign ( str["c"] , str["freeaddrinfo"] ) @nonblocking freeAddrInfo : ( res : Ptr ( AddrInfo ) ) -> #ok | #lost ;
+ 10 | @foreign ( str["c"] , str["getaddrinfo"] ) getAddrInfo : ( node : [ u8 ] «with» terminated ( 0₍10₎ ) , service : [ u8 ] «with» terminated ( 0₍10₎ ) , hints : Ptr ( AddrInfo ) | #none ) -> ( i32 , Ptr ( AddrInfo ) | #none «with» release ( freeAddrInfo ) ) | #lost ;
 == DESIGN.md [sec:ffi] 2 L7
   1 | @foreign ( str["counter"] , str["counter_next"] ) next : ( ) -> i32 ;
   3 | f ( y : bool ) -> i32 | #none {
@@ -662,20 +704,20 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   6 | structType : i32 , next : Ptr ( Extension ) | #none , flags : u32 , size : u64 , usage : u32 ,
   7 | sharingMode : i32 , queueFamilyCount : u32 , queueFamilies : Ptr ( [ u32 ] «with» length ( queueFamilyCount ) ) | #none ,
   8 | }
-  9 | @foreign ( str["vulkan"] , str["vkDestroyBuffer"] ) @nonblocking destroyBuffer : ( device : Ptr ( Device ) , buffer : Ptr ( Buffer ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> #ok ;
- 10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) ;
+  9 | @foreign ( str["vulkan"] , str["vkDestroyBuffer"] ) @nonblocking destroyBuffer : ( device : Ptr ( Device ) , buffer : Ptr ( Buffer ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> #ok | #lost ;
+ 10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) | #lost ;
 == DESIGN.md [sec:ffi] 4 L7
   1 | @foreign «struct» Env { }
   2 | @foreign «struct» Txn { }
-  3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok ;
-  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) «with» keeps ( env ) «with» keeps ( parent ) ) ;
-  5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok | #lost ;
+  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) «with» keeps ( env ) «with» keeps ( parent ) ) | #lost ;
+  5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 | #lost ;
 == DESIGN.md [sec:ffi] 5 L7
   1 | @foreign «struct» Zip { }
   2 | @foreign «struct» Source { }
-  3 | @foreign ( str["zip"] , str["zip_source_free"] ) @nonblocking sourceFree : ( source : Ptr ( Source ) ) -> #ok ;
-  4 | @foreign ( str["zip"] , str["zip_source_file"] ) sourceFile : ( archive : Ptr ( Zip ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , start : u64 , length : i64 ) -> Ptr ( Source ) | #none «with» release ( sourceFree ) ;
-  5 | @foreign ( str["zip"] , str["zip_file_add"] ) fileAdd : ( archive : Ptr ( Zip ) , name : [ u8 ] «with» terminated ( 0₍10₎ ) , source : Ptr ( Source ) «with» consumes ( unless : - 1₍10₎ ) , flags : u32 ) -> i64 ;
+  3 | @foreign ( str["zip"] , str["zip_source_free"] ) @nonblocking sourceFree : ( source : Ptr ( Source ) ) -> #ok | #lost ;
+  4 | @foreign ( str["zip"] , str["zip_source_file"] ) sourceFile : ( archive : Ptr ( Zip ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , start : u64 , length : i64 ) -> Ptr ( Source ) | #none | #lost «with» release ( sourceFree ) ;
+  5 | @foreign ( str["zip"] , str["zip_file_add"] ) fileAdd : ( archive : Ptr ( Zip ) , name : [ u8 ] «with» terminated ( 0₍10₎ ) , source : Ptr ( Source ) «with» consumes ( unless : - 1₍10₎ ) , flags : u32 ) -> i64 | #lost ;
 == DESIGN.md [sec:ffi] 6 L2
   1 | «match» sourceFile ( archive : , path : , start : 0₍10₎ , length : - 1₍10₎ ) {
   2 | #none -> - 1₍10₎ ,
@@ -686,21 +728,21 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   7 | }
 == DESIGN.md [sec:ffi] 7 L7
   1 | @foreign «struct» File { }
-  2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
-  3 | @foreign ( str["c"] , str["fputs"] ) fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 ;
+  2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
+  3 | @foreign ( str["c"] , str["fputs"] ) fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 | #lost ;
   4 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
   5 | @foreign ( str["c"] , str["fopen"] ) openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
 == DESIGN.md [sec:ffi] 8 L7
   1 | @foreign «struct» Lock { }
-  2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok ;
+  2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok | #lost ;
   3 | @foreign ( str["locks"] , str["lock_acquire"] ) acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
 == DESIGN.md [sec:ffi] 9 L7
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
-  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 ;
-  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 ;
+  3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 | #lost ;
+  4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 | #lost ;
   7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #ok ; #ok } ) ) ;
-  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) ;
+  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) | #lost ;
  12 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 | #lost {
  13 | rc , opened = open ( path : ) ;
  14 | «match» opened {
@@ -722,8 +764,8 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   4 | ispeed : u32 , ospeed : u32 ,
   5 | }
   6 | @foreign ( str["c"] , str["tcgetattr"] ) tcgetattr : ( fd : i32 ) -> ( i32 , Termios «with» arg ( 1₍10₎ ) ) ;
-  7 | @foreign ( str["c"] , str["tcsetattr"] ) tcsetattr : ( fd : i32 , when : i32 , mode : Ptr ( Termios ) ) -> i32 ;
-  9 | @thread ( #keys ) @foreign ( str["c"] , str["getchar"] ) getKey : ( raw : Termios «with» notPassed ( duringStop : #release ) ) -> i32 «with» anyThread ( ) ;
+  7 | @foreign ( str["c"] , str["tcsetattr"] ) tcsetattr : ( fd : i32 , when : i32 , mode : Ptr ( Termios ) ) -> i32 | #lost ;
+  9 | @thread ( #keys ) @foreign ( str["c"] , str["getchar"] ) getKey : ( raw : Termios «with» notPassed ( duringStop : #release ) ) -> i32 | #lost «with» anyThread ( ) ;
  12 | makeRaw ( t : Termios ) -> Termios {
  13 | t «with» {
  14 | iflag = t . iflag . bitAnd ( bitNot ( 1515₍10₎ , width : 32₍10₎ ) ) ,
@@ -760,7 +802,7 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   3 | @foreign ( str["c"] , str["chdir"] ) chdir : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 ;
   4 | @foreign ( str["c"] , str["fchdir"] ) fchdir : ( fd : i32 ) -> i32 ;
   5 | @foreign ( str["c"] , str["close"] ) closeFd : ( fd : i32 ) -> i32 ;
-  7 | @foreign ( str["c"] , str["open"] ) openIn : ( dir : Dir «with» notPassed ( ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 ;
+  7 | @foreign ( str["c"] , str["open"] ) openIn : ( dir : Dir «with» notPassed ( ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 | #lost ;
  10 | leaveDir ( old : Dir ) -> #ok {
  11 | r = fchdir ( fd : old . fd ) ;
  12 | @after ( r ) _ = closeFd ( fd : old . fd ) ;
@@ -781,33 +823,33 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
   2 | «struct» CurlState { }
   3 | @foreign ( str["curl"] , str["curl_global_init"] ) globalInit : ( flags : i64 ) -> i32 ;
   4 | @foreign ( str["curl"] , str["curl_global_cleanup"] ) globalCleanup : ( ) -> #ok ;
-  5 | @foreign ( str["curl"] , str["curl_easy_cleanup"] ) easyCleanup : ( handle : Ptr ( Curl ) ) -> #ok ;
-  6 | @foreign ( str["curl"] , str["curl_easy_init"] ) easyInit : ( state : CurlState «with» notPassed ( ) ) -> Ptr ( Curl ) | #none «with» release ( easyCleanup ) «with» keeps ( state ) ;
+  5 | @foreign ( str["curl"] , str["curl_easy_cleanup"] ) easyCleanup : ( handle : Ptr ( Curl ) ) -> #ok | #lost ;
+  6 | @foreign ( str["curl"] , str["curl_easy_init"] ) easyInit : ( state : CurlState «with» notPassed ( ) ) -> Ptr ( Curl ) | #none | #lost «with» release ( easyCleanup ) «with» keeps ( state ) ;
   9 | startCurl ( ) -> CurlState | #none «with» release ( globalCleanup ) {
  10 | «return» «if» globalInit ( flags : 3₍10₎ ) != 0₍10₎ { #none } «else» { CurlState ( ) } ;
  11 | }
 == DESIGN.md [sec:ffi] 13 L7
   1 | @foreign «struct» File { }
-  2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 ;
+  2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
   3 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
-  5 | @foreign ( str["c"] , str["setvbuf"] ) setvbuf : ( file : Ptr ( File ) , buf : [ u8 ] «with» length ( 65536₍10₎ ) «with» held ( by : file ) , mode : i32 , size : u64 ) -> i32 ;
+  5 | @foreign ( str["c"] , str["setvbuf"] ) setvbuf : ( file : Ptr ( File ) , buf : [ u8 ] «with» length ( 65536₍10₎ ) «with» held ( by : file ) , mode : i32 , size : u64 ) -> i32 | #lost ;
   8 | @foreign «struct» Ring { }
   9 | @foreign «struct» Page { bytes : [ u8 ] «with» length ( 4096₍10₎ ) }
- 10 | @foreign ( str["uringshim"] , str["ring_exit"] ) ringExit : ( ring : Ptr ( Ring ) «with» consumes ( ) ) -> #ok ;
- 11 | @foreign ( str["uringshim"] , str["ring_cancel_all"] ) cancelAll : ( ring : Ptr ( Ring ) ) -> i32 ;
+ 10 | @foreign ( str["uringshim"] , str["ring_exit"] ) ringExit : ( ring : Ptr ( Ring ) «with» consumes ( ) ) -> #ok | #lost ;
+ 11 | @foreign ( str["uringshim"] , str["ring_cancel_all"] ) cancelAll : ( ring : Ptr ( Ring ) ) -> i32 | #lost ;
  12 | @foreign ( str["uringshim"] , str["ring_init"] ) ringInit : ( entries : u32 ) -> Ptr ( Ring ) | #none «with» release ( ring -> { n = cancelAll ( ring ) «else» 0₍10₎ ; @after ( n ) _ = ringExit ( ring ) «else» #ok ; #ok } ) ;
- 13 | @foreign ( str["uringshim"] , str["submit_read"] ) submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 ;
- 14 | @foreign ( str["uringshim"] , str["wait_read"] ) waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) ;
- 16 | @foreign ( str["uringshim"] , str["unregister_pages"] ) unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 ;
+ 13 | @foreign ( str["uringshim"] , str["submit_read"] ) submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 | #lost ;
+ 14 | @foreign ( str["uringshim"] , str["wait_read"] ) waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) | #lost ;
+ 16 | @foreign ( str["uringshim"] , str["unregister_pages"] ) unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 | #lost ;
 == DESIGN.md [sec:ffi] 14 L7
   1 | «struct» Glfw { }
   2 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwInit"] ) glfwInit : ( ) -> i32 ;
   3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) terminate : ( ) -> #ok ;
-  4 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) pollEvents : ( glfw : Glfw «with» notPassed ( ) ) -> #ok ;
+  4 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwPollEvents"] ) pollEvents : ( glfw : Glfw «with» notPassed ( ) ) -> #ok | #lost ;
   5 | @foreign «struct» Window { }
   6 | «struct» Current { }
-  7 | @thread ( #render ) @foreign ( str["current"] , str["glfwMakeContextCurrent"] ) makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) | #none ) -> #ok «with» anyThread ( ) ;
-  8 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) clear : ( current : Current «with» notPassed ( ) , mask : u32 ) -> #ok ;
+  7 | @thread ( #render ) @foreign ( str["current"] , str["glfwMakeContextCurrent"] ) makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) | #none ) -> #ok | #lost «with» anyThread ( ) ;
+  8 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) clear : ( current : Current «with» notPassed ( ) , mask : u32 ) -> #ok | #lost ;
   9 | @thread ( #render ) drawFrame ( current : Current ) -> #ok {
  10 | r = clear ( current : , mask : 16384₍10₎ ) «else» #ok ;
  11 | r
@@ -822,6 +864,17 @@ expression: "tokens_by_key(&fences::of(\"design.md\"))"
  25 | startGlfw ( ) -> Glfw | #none «with» release ( terminate ) {
  26 | «return» «if» glfwInit ( ) != 1₍10₎ { #none } «else» { Glfw ( ) } ;
  27 | }
+== DESIGN.md [sec:ffi] 15 L7
+  1 | «struct» Plugin { }
+  2 | @foreign ( str["plugin"] , str["plugin_step"] , isolate : «true» ) pluginStep : ( plugin : Plugin «with» notPassed ( ) , x : f64 ) -> f64 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
+  6 | startPlugin ( ) -> Plugin | #ioError ( op : Utf8String , path : Utf8String , why : Utf8String ) «with» release ( plugin -> #ok ) {
+  7 | «return» Plugin ( ) ;
+  8 | }
+ 10 | main ( m : MainArgs ) {
+ 11 | plugin = startPlugin ( ) ;
+ 12 | ys = m . stdin . map ( l -> pluginStep ( plugin : , x : f64 ( l ) «else» 0.0f ) «with» timeout ( 2r ) «else» 0.0f ) ;
+ 13 | m . stdout <- ys . map ( y -> str[${y}] ) ;
+ 14 | }
 == DESIGN.md [sec:tour_basics] 1 L10
   2 | x = 42₍10₎ ;
   3 | port : int [ 1₍10₎ ..= 65535₍10₎ ] = 8080₍10₎ ;

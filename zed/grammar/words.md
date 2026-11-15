@@ -4,11 +4,11 @@
 |---|---|---|---|
 | L1 | — | — | `main`, `MainArgs`, `files`, `Never`, `U8String`, `Utf8String`, `Utf16String`, `Utf32String`, `Files`, `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shl`, `shr`, `popCount`, `leadingZeros`, `trailingZeros`, `rotl`, `rotr`, `f64Bits`, `f32Bits`, `f16Bits`, `bf16Bits`, `f16`, `bf16`, `mulHi`, `bitReverse`, `byteSwap`, `pdep`, `pext`, `funnelShl`, `funnelShr`, `char8`, `char16`, `char32`, `utf8`, `fromUtf8`, `CommandLine` |
 | L2 | `@hash`, `@nonblocking` | — | `build` |
-| L3 | — | — | `main::args`, `map`, `where`, `foldl`, `foldr`, `reduce`, `any`, `all`, `find`, `split`, `lines`, `concat`, `split`, `concat`, `fam`, `discard`, `fold`, `reindex`, `gen` |
+| L3 | — | — | `main::args`, `map`, `where`, `foldl`, `foldr`, `reduce`, `any`, `all`, `find`, `split`, `lines`, `concat`, `fam`, `discard`, `fold`, `reindex`, `gen` |
 | L4 | — | — | `rekey`, `group`, `flatMap`, `tag`, `#collision` |
 | L5 | — | — | `sort`, `orderedValues`, `scan`, `Seq`, `zip`, `patch`, `join`, `diff`, `first`, `last`, `minBy`, `maxBy`, `slice`, `take`, `drop`, `takeWhile`, `chunkBy`, `upTo`, `from`, `#assertEmpty` |
 | L6 | — | — | `fix`, `.fold`, `::frames`, `Ast`, `Facet`, `Lattice`, `Reduction`, `Store`, `Rejection`, `Interval`, `Congruence`, `Bound` |
-| L7 | `@foreign`, `@export`, `@borrowed`, `@stateless`, `@log`, `@after`, `@thread` | `commutes`, `reducer`, `bound`, `timeout`, `failure`, `order`, `finite`, `bits`, `endian`, `at`, `length`, `terminated`, `tagged`, `arg`, `release`, `keeps`, `consumes`, `transfer`, `held`, `notPassed`, `anyThread`, `handedBack`, `dropsHeld`, `concurrency`, `period`, `priority`, `coalesce`, `cancel`, `kill`, `limits`, `handles`, `names` | `Stream`, `window`, `merge`, `latest`, `Instant`, `Duration`, `now`, `clock`, `randomBytes`, `spawn`, `run`, `Process`, `connect`, `listen`, `Ptr`, `#lost`, `#sigint`, `#sigterm`, `#sighup`, `handles`, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`, `log`, `::keypath`, `::bytes`, `via`, `then(…)`, `LossyCodec`, `DecodeFailure`, `#badEncoding`, `utf8Text`, `utf16Text`, `utf32Text`, `utf16Units`, `normalize`, `lines`, `rawLines`, `textLines`, `Line`, `RawLine`, `escaped`, `each`, `delimited`, `lengthPrefixed`, `fixedSize` |
+| L7 | `@foreign`, `@export`, `@borrowed`, `@stateless`, `@log`, `@after`, `@thread` | `commutes`, `reducer`, `bound`, `timeout`, `failure`, `order`, `finite`, `bits`, `endian`, `at`, `length`, `terminated`, `tagged`, `arg`, `release`, `keeps`, `consumes`, `transfer`, `held`, `notPassed`, `anyThread`, `handedBack`, `dropsHeld`, `concurrency`, `period`, `priority`, `coalesce`, `cancel`, `kill`, `limits`, `handles`, `names` | `Stream`, `window`, `merge`, `latest`, `Instant`, `Duration`, `now`, `clock`, `randomBytes`, `spawn`, `run`, `Process`, `connect`, `listen`, `Ptr`, `#lost`, `Signal`, `#sigint`, `#sigterm`, `#sighup`, `handles`, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`, `log`, `::keypath`, `::bytes`, `via`, `then(…)`, `LossyCodec`, `DecodeFailure`, `#badEncoding`, `utf8Text`, `utf16Text`, `utf32Text`, `utf16Units`, `normalize`, `lines`, `rawLines`, `textLines`, `Line`, `RawLine`, `escaped`, `each`, `delimited`, `lengthPrefixed`, `fixedSize` |
 | L10 | `@checked`, `@fpwarn`, `@fpsafe`, `@approx` | — | `refine`, `Codec`, `CanonicalCodec` |
 | L11 | — | — | `f::ast`, `Ast`, `::source`, `::ast`, `::shape`, `::names`, `::fields`, `::members`, `::values`, `::name`, `FloatClass`, `Constraints`, `::constraints`, `::min`, `::max`, `::range`, `::residue`, `::minLen`, `::maxLen`, `meet`, `entails` |
 | L12 | — | `units`, `countedIn`, `parity`, `latency`, `dist` | `UnitText`, `Nonzero`, `UnitName`, `UnitKind`, `UnitPower`, `UnitFactor`, `UnitProduct`, `::units`, `UnitDef`, `UnitSpelling`, `to(…)` |
@@ -21,10 +21,11 @@
 | L19 | — | — | `compile`, `mix` |
 | L20 | — | `bitorder` | `records`, `json`, `csv` |
 | L21 | — | `store`, `retry`, `hedge`, `breaker`, `rate`, `peers` | `#unavailable` |
-| L22 | `@decides` | — | `ofNat`, `Semigroup`, `Monoid`, `NonCommRing`, `CommRing`, `Ring`, `additive`, `dual`, `byStrongInduction`, `byCollectionInduction`, `CommRing`, `evalPoly`, `normalForm`, `expand`, `simplify`, `substitute`, `derivative` |
+| L22 | `@decides` | — | `ofNat`, `Semigroup`, `Monoid`, `NonCommRing`, `CommRing`, `Ring`, `additive`, `dual`, `byStrongInduction`, `byCollectionInduction`, `evalPoly`, `normalForm`, `expand`, `simplify`, `substitute`, `derivative`, `integral`, `#noClosedForm`, `#notInCarrier`, `#outsideFragment` |
 | L24 | `@require` | `target` | `#cpu`, `#contractMismatch` |
 | L25 | — | — | `verify`, `explain`, `obligations`, `check` |
 | L26 | — | — | `#wasm` |
 | L27 | — | `recovery` | `#gpu`, `#cluster`, `nodes:`, `target(…)`, `@require` |
 | L31 | — | — | `#mcu` |
+| L33 | — | — | `jvp`, `vjp`, `gradient`, `hvp`, `#notDifferentiable`, `#notElementary`, `#noClosedForm` |
 | L34 | — | — | `Picture`, `Pointer`, `Keys`, `Midi`, `Camera`, `Audio`, `Sensors`, `#late` |

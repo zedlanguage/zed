@@ -250,7 +250,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
   6 | dist ( «positional» a : Point , «positional» b : Point ) = ( ( a . x - b . x ) ^ 2₍10₎ + ( a . y - b . y ) ^ 2₍10₎ ) . sqrt ;
   7 | «struct» Circle { c : Point , r : f64 }
   8 | «struct» Round { «import» Rect , r : f64 }
-== EXAMPLES.md [10. Structs and updates] 2 L10
+== EXAMPLES.md [10. Structs and updates] 2 L2
   2 | «struct» Span { lo : int , hi : int [ lo .. ] }
   3 | s = Span ( lo : 2₍10₎ , hi : 5₍10₎ ) ;
   4 | w = s . hi - s . lo ;
@@ -714,7 +714,7 @@ expression: "tokens_by_key(&fences::of(\"examples.md\"))"
 == EXAMPLES.md [25. Algorithms] 6 L5
   2 | lowerBound ( «positional» xs : [ int ] , «positional» t : int ) = ( 0₍10₎ ..< xs :: len ) . where ( i -> xs [ i ] >= t ) . first ;
   3 | find ( xs : [ int ] , t : int ) = «match» lowerBound ( xs , t ) { #none -> #none , i -> «if» xs [ i ] == t { i } «else» { #none } } ;
-== EXAMPLES.md [25. Algorithms] 7 L10
+== EXAMPLES.md [25. Algorithms] 7 L8
   2 | «type» Mat ( n , m ) = int [ 0₍10₎ ..< n ] -> int [ 0₍10₎ ..< m ] -> f64 ;
   3 | ab = ( a , b ) «into» ( r -> k -> c >< ( + ) -> a [ r ] [ c ] * b [ c ] [ k ] ) ;
   4 | at = a «as» ( r -> c -> v ) «into» ( c -> r -> v ) ;

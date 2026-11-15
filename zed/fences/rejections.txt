@@ -55,6 +55,7 @@ Two members of one name with different declarations in a struct or interface bod
 File read at the compile-time stage by a path that leaves the package root
 Pinned file whose content no longer matches its pin
 Import cycle
+Import of a path that names no unit
 Order read on a level with no natural order — origin keys outside their `Seq`
 Two declared orders meet in one key type
 Emission-disjointness
@@ -77,6 +78,11 @@ Hold that Zed cannot end
 Call on a holder with nothing ordering it with a call that changes its holds
 Stateful library on two threads
 Callback that calls a library bound to another thread
+One foreign library declared isolated and not isolated
+Isolated foreign library without one token
+Foreign memory of an isolated library read in the program
+Foreign library not isolated in a strict build
+Failure of a foreign call not written in the result type
 One C symbol exported twice
 Misaligned foreign pointer in a run
 Rebinding in the same scope
@@ -89,6 +95,7 @@ Match binder unused in its guard and arm
 Type variable
 Capitalized name, not of a type variable's form, that names no type in scope
 Name of a type variable's form, or of that form followed by `'`, declared as a type, `struct`, interface, field, function, parameter, value or module
+Type parameter of a `struct`, `type` or `interface` whose name is not of a type variable's form
 Type variable in a `struct` field that is not one of the struct's declared type parameters
 Type parameter that no field of its `struct`, or the body of its `type`, uses
 `struct` type parameter with the name of a field
@@ -177,3 +184,7 @@ Codec of a map type with an unnamed level
 String read with no view
 View a string's type does not have
 `countedIn` written where it does not attach, or twice
+Model field that does not fit an arrow of its type
+Fact needed about an opaque predicate
+`integral` with no closed form, or of a lambda of more than one parameter
+Differentiating a function outside the numeric programs

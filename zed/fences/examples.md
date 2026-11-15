@@ -396,7 +396,7 @@ struct Circle { c: Point, r: f64 }
 struct Round  { import Rect, r: f64 }   // field embedding: Rect's fields, plus r
 ```
 
-<!-- EXAMPLES.md:433 layer L10: ring L10, word none, label none; section [10. Structs and updates] 2 -->
+<!-- EXAMPLES.md:433 layer L2: ring L2, word none, label none; section [10. Structs and updates] 2 -->
 ```zed
 // [d4] sec:domains — a field's refinement may name another field
 struct Span { lo: int, hi: int[lo..] }
@@ -697,7 +697,7 @@ reach = loop {
 };
 ```
 
-<!-- EXAMPLES.md:727 layer L16: ring L10, word L16 (@idempotent), label none; section [15. Trees and graphs] 4 -->
+<!-- EXAMPLES.md:727 layer L16: ring L6, word L16 (@idempotent), label none; section [15. Trees and graphs] 4 -->
 ```zed
 // [d4*] sec:generations, sec:corner_cases, sec:kernel — shortest paths: a fixpoint that lowers distances, on a carrier with a bottom.
 //   Dist has the explicit bottom #inf, so every step is total on the carrier (T-Fix): an unreached
@@ -918,7 +918,7 @@ input    = mouse.tag(#mouse).merge(keys.tag(#key));     // arrival order; the ta
 perMinute = events.window(width: 60r with units("s")).map(w -> w.count);
 ```
 
-<!-- EXAMPLES.md:943 layer L18: ring L10, word L18 (@memoized), label none; section [20. Testing, properties, and proofs] 1 -->
+<!-- EXAMPLES.md:943 layer L18: ring L2, word L18 (@memoized), label none; section [20. Testing, properties, and proofs] 1 -->
 ```zed
 // [d4] sec:tooling, sec:power, sec:property_tracking
 double(positional x) = x * 2 test { 0 -> 0, 2 -> 4, -3 -> -6 }
@@ -940,7 +940,7 @@ mean     = m.sum / rat(m.n);                                                    
 variance = m.sumSq / rat(m.n) - mean * mean;                                    // both operands fail together with the same atom, so the merge is #divByZero again (sec:failure)
 ```
 
-<!-- EXAMPLES.md:965 layer L15: ring L10, word L15 (@ensure), label none; section [20. Testing, properties, and proofs] 3 -->
+<!-- EXAMPLES.md:965 layer L15: ring L2, word L15 (@ensure), label none; section [20. Testing, properties, and proofs] 3 -->
 ```zed
 // [d4] sec:domains, sec:kernel (law 16) — `@ensure`: the refinement is deleted by the preimage or the build fails; never a hidden run-time check
 @ensure scaledOdd(x: int[0..=100]) = (x * 2 + 1).refine(v -> v < 100);   // ✗ Undischargeable `@ensure`: int[0..=100] does not entail the preimage; the menu prints `x: int[0..=49]`
@@ -1181,7 +1181,7 @@ lowerBound(positional xs: [int], positional t: int) = (0..<xs::len).where(i -> x
 find(xs: [int], t: int) = match lowerBound(xs, t) { #none -> #none, i -> if xs[i] == t { i } else { #none } };   // i : int[0..<n], so the lookup cannot miss
 ```
 
-<!-- EXAMPLES.md:1203 layer L10: ring L10, word none, label none; section [25. Algorithms] 7 -->
+<!-- EXAMPLES.md:1203 layer L8: ring L8, word none, label none; section [25. Algorithms] 7 -->
 ```zed
 // [d4] sec:tour_joins, sec:remap_law — matrices are two-level morphisms
 type Mat(n, m) = int[0..<n] -> int[0..<m] -> f64;

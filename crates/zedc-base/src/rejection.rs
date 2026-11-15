@@ -107,15 +107,18 @@ rows! {
         "File read at the compile-time stage by a path that leaves the package root",
     StalePin => "Pinned file whose content no longer matches its pin",
     ImportCycle => "Import cycle",
+    // No diagnostic uses this row yet: plan row L2.12 emits it.
+    ImportPathNamesNoUnit => "Import of a path that names no unit",
     OrderWithNone =>
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these nineteen rows yet: plan rows L7.4 (the first, the third to the
-    // sixth, the eighth, and the nineteenth), IMPL-consume-unless (the
+    // No diagnostic uses these twenty-four rows yet: plan rows L7.4 (the first, the third to the
+    // sixth, the eighth, the twenty-second and the twenty-fourth), IMPL-consume-unless (the
     // seventh), FFI-release-failure (the ninth), FFI-release-zed (the tenth), FFI-token-check (the
     // eleventh and twelfth), FFI-held (the thirteenth to fifteenth), FFI-thread (the sixteenth
-    // and seventeenth), TERM-1 and EXPORT-unique emit them.
+    // and seventeenth), FFI-isolate (the eighteenth to twentieth), STRICT-build (the
+    // twenty-first), TERM-1 and EXPORT-unique emit them.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
@@ -137,6 +140,11 @@ rows! {
         "Call on a holder with nothing ordering it with a call that changes its holds",
     StatefulLibraryOnTwoThreads => "Stateful library on two threads",
     CallbackCrossesThread => "Callback that calls a library bound to another thread",
+    IsolatedAndNot => "One foreign library declared isolated and not isolated",
+    IsolatedWithoutOneToken => "Isolated foreign library without one token",
+    IsolatedMemoryRead => "Foreign memory of an isolated library read in the program",
+    NotIsolatedInStrictBuild => "Foreign library not isolated in a strict build",
+    ForeignFailureNotInResult => "Failure of a foreign call not written in the result type",
     SymbolExportedTwice => "One C symbol exported twice",
     MisalignedForeignPointer => "Misaligned foreign pointer in a run",
     Rebinding => "Rebinding in the same scope",
@@ -153,6 +161,9 @@ rows! {
     TypeVariableOnce => "Type variable",
     UnknownTypeName => "Capitalized name, not of a type variable's form, that names no type in scope",
     TypeVariableFormDeclared => "Name of a type variable's form, or of that form followed by `'`, declared as a type, `struct`, interface, field, function, parameter, value or module",
+    // No diagnostic uses this row yet: plan row L2.12 emits it.
+    TypeParameterNotTypeVariableForm =>
+        "Type parameter of a `struct`, `type` or `interface` whose name is not of a type variable's form",
     StructFieldTypeVariable =>
         "Type variable in a `struct` field that is not one of the struct's declared type parameters",
     UnusedTypeParameter =>
@@ -266,6 +277,13 @@ rows! {
     StringWithNoView => "String read with no view",
     ViewNotOfType => "View a string's type does not have",
     CountedInMisplaced => "`countedIn` written where it does not attach, or twice",
+    // No diagnostic uses the next four rows yet: plan rows THEORY-partial (the first two), L22.9a
+    // and AD-forward emit them.
+    ModelFieldMisfit => "Model field that does not fit an arrow of its type",
+    OpaquePredicateFact => "Fact needed about an opaque predicate",
+    IntegralWithNoClosedForm =>
+        "`integral` with no closed form, or of a lambda of more than one parameter",
+    NotDifferentiable => "Differentiating a function outside the numeric programs",
 }
 
 impl Row {
