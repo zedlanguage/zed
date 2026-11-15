@@ -36,15 +36,16 @@ fn meets_of_k_inhabited_members_scale() {
 /// Both the verdict and emptiness are checked in the size of the constraints. Small instance
 /// `the_product_of_a_few_parity_lists_has_a_singleton`.
 ///
-/// Size (TEST-bench-move-l0123, author P169): n 4 before, now 4096; 1x 155 ms at load
-/// 21.54.
+/// Size (TEST-bench-move-l0123, author P169): n 4 before, now 4096; 1x 873 ms at load 42, each
+/// run on an instance of its own ([`Fresh`]; 155 ms at load 21.54 when the runs after the first
+/// reused one).
 #[test]
 fn the_product_of_k_parity_lists_has_a_checked_singleton() {
     let n = 4096;
-    let meets = scaling::inputs(n, parity_meet);
+    let meets = scaling::inputs(n, |k| Fresh::new(parity_meet_group(k), 2 * k + 2));
     scaling::check("emptiness of the product of k parity lists", n, |k| {
         Type::forget_emptiness();
-        assert!(!meets[&k].is_empty());
+        assert!(!meets[&k].member().is_empty());
     });
 }
 
@@ -68,42 +69,51 @@ fn canonical_blame_settlement_scales() {
     );
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 216 ms at load
-/// 22.90.
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 1.07 s at load 42, each
+/// run on an instance of its own ([`Fresh`]; 216 ms at load 22.90 when the runs after the first
+/// reused one).
 #[test]
 fn parity_verdicts_scale_with_the_number_of_constraints() {
     let n = 4096;
-    let inputs = scaling::inputs(n, |k| parity_variant(k, 0, Some("Scale_"), false));
+    let inputs = scaling::inputs(n, |k| {
+        let (group, meet) = parity_variant_group(k, 0, Some("Scale_"), false);
+        Fresh::new(group, meet)
+    });
     scaling::check_order("parity verdict with a checked singleton", n, 1, |k| {
         Type::forget_emptiness();
-        assert_eq!(inputs[&k].verdict(), Verdict::Inhabited);
+        assert_eq!(inputs[&k].member().verdict(), Verdict::Inhabited);
     });
 }
 
 /// Bounded parity of `k` with bound `2k`, with `k` excluded when `exclude`, at `n` and `8n`.
 /// One test for each.
 fn bounded_parity_verdicts(n: usize, exclude: bool) {
-    let inputs = scaling::inputs(n, |k| bounded_parity(k, 2 * k, exclude.then_some(k)));
+    let inputs = scaling::inputs(n, |k| {
+        let group = bounded_parity_group(k, 2 * k, exclude.then_some(k), None);
+        Fresh::new(group, 2 * k + 3)
+    });
     scaling::check_order(
         "bounded parity with a further integer constraint",
         n,
         1,
         |k| {
             Type::forget_emptiness();
-            assert_eq!(inputs[&k].verdict(), Verdict::Inhabited);
+            assert_eq!(inputs[&k].member().verdict(), Verdict::Inhabited);
         },
     );
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 252 ms at load
-/// 23.94.
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 1.20 s at load 42, each
+/// run on an instance of its own ([`Fresh`]; 252 ms at load 23.94 when the runs after the first
+/// reused one).
 #[test]
 fn bounded_parity_verdicts_scale() {
     bounded_parity_verdicts(4096, false);
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 253 ms at load
-/// 23.94.
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 1.21 s at load 42, each
+/// run on an instance of its own ([`Fresh`]; 253 ms at load 23.94 when the runs after the first
+/// reused one).
 #[test]
 fn bounded_parity_verdicts_with_an_excluded_integer_scale() {
     bounded_parity_verdicts(4096, true);
@@ -162,8 +172,9 @@ fn bounded_empty_parity_is_decided_in_the_size_of_the_constraints() {
     });
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 206 ms at load
-/// 23.70.
+/// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 1.05 s at load 42, each
+/// run on an instance of its own ([`Fresh`]; 206 ms at load 23.70 when the runs after the first
+/// reused one).
 #[test]
 fn bounded_parity_with_a_repeated_scalar_field_scales() {
     repeated_integer_field_scale(4096);
@@ -171,7 +182,10 @@ fn bounded_parity_with_a_repeated_scalar_field_scales() {
 
 /// Size (TEST-bench-move-l0123, author P169): n 64 before, now 262144; 1x 14 ms at load
 /// 21.54. The 1x stays under 0.5 s because building the inputs takes most of the
-/// wall time: at 2097152 the test passed the 25 s limit before its first run.
+/// wall time: at 2097152 the test passed the 25 s limit before its first run. The sets of
+/// literals are built with `Type::union_all` (FAIL-setop-parity-bench-time): the evens at 8n
+/// are joined in 1.46 s, where folding them with `|` took 7.66 s (load 33); the whole test now
+/// takes 7 to 10 s at load 40.
 #[test]
 fn shared_integer_columns_scale_with_their_written_dag() {
     shared_integer_columns_check(262144, false);

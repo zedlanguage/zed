@@ -495,3 +495,37 @@ fn union_all_of_atom_types_is_the_union_joined_one_at_a_time() {
         );
     }
 }
+
+/// `union_all` joins the types of finitely many booleans, numbers and strings alone into the
+/// sets of the largest before the pairs; the union must be the one a fold of `|` gives, for every
+/// subset, in both orders, of literals of each kind, a set of several, a value repeated, a
+/// complement (cofinite, so joined in pairs), the empty type, and literals beside other kinds.
+#[test]
+fn union_all_of_literal_types_is_the_union_joined_one_at_a_time() {
+    let lit = |v: Value| Type::lit(&v).unwrap();
+    let ts = [
+        lit(Value::Int(1)),
+        (0..5).fold(Type::empty(), |u, i| &u | &lit(Value::Int(i))),
+        lit(Value::Int(1)),
+        lit(Value::Bool(true)),
+        lit(Value::float(0.5)),
+        lit(Value::str("s")),
+        !&lit(Value::Int(7)),
+        Type::empty(),
+        &lit(Value::Int(9)) | &Type::atom("a"),
+        Type::tuple(vec![Type::int()]),
+    ];
+    for mask in 0..1u32 << ts.len() {
+        let chosen: Vec<Type> = (0..ts.len())
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| ts[i].clone())
+            .collect();
+        let fold = chosen.iter().fold(Type::empty(), |u, t| &u | t);
+        assert_eq!(Type::union_all(chosen.clone()), fold, "mask {mask:#b}");
+        assert_eq!(
+            Type::union_all(chosen.into_iter().rev()),
+            fold,
+            "mask {mask:#b}"
+        );
+    }
+}

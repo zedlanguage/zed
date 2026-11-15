@@ -141,9 +141,47 @@ fn lit(i: usize) -> Type {
     Type::lit(&Value::Int(i as i64)).unwrap()
 }
 
+/// A group built before timing, and the index of the member a scaling check decides. Each run
+/// makes its own instance ([`Fresh::member`]): an instance keeps its members' unfoldings and
+/// its group's judgment while it lives (`Env::members`, `Env::judged`), so on one instance kept
+/// in the inputs every run after the first did about half the work of the first (parity
+/// verdicts at 8n: 28.4 G instructions on the first run, 13.3 G after), and the check, which
+/// compares the first run at 8n with the second at n, found the ratio over and ran 8n again on
+/// every check: about 18 times the time at n where 10 passes (FAIL-setop-parity-bench-time).
+/// A fresh instance on each run's thread (instances are kept per thread) does the whole work
+/// each time, so the runs compared are alike and the first runs are those the check holds.
+/// Assumed, not proved: the work a run does on a fresh instance (unfolding the members, judging
+/// the group and the search) is the work these benchmarks mean to measure, the verdict on the
+/// written definitions, and not a cost of the test. Evidence: each part grows with the number
+/// of constraints, 8.2 to 8.3 times the instructions from 4096 to 32768 in all five checks.
+struct Fresh {
+    group: Group,
+    member: usize,
+}
+
+impl Fresh {
+    /// Makes one instance and drops it, so that the group's canonical form, built at its first
+    /// instance and kept by the group, is built here, before timing, as it was when the inputs
+    /// were instances.
+    fn new(group: Group, member: usize) -> Fresh {
+        drop(group.instance(vec![]));
+        Fresh { group, member }
+    }
+
+    /// The member, in an instance made on this thread.
+    fn member(&self) -> Type {
+        self.group.instance(vec![]).swap_remove(self.member)
+    }
+}
+
 /// The lists of integers of odd length holding an even count of each of `0..k`, as the meet of
 /// `k + 1` two-state lists in one group: their product has `2^(k+1)` states.
 fn parity_meet(k: usize) -> Type {
+    parity_meet_group(k).instance(vec![]).pop().unwrap()
+}
+
+/// The group of [`parity_meet`], whose last member is the meet.
+fn parity_meet_group(k: usize) -> Group {
     let mut defs = Vec::new();
     for j in 0..k {
         let (even, odd) = (2 * j, 2 * j + 1);
@@ -166,7 +204,7 @@ fn parity_meet(k: usize) -> Type {
     let mut parts: Vec<Expr> = (0..k).map(|j| r(2 * j)).collect();
     parts.push(r(odd_len));
     defs.push(def("M", Expr::And(parts)));
-    Group::new(defs).unwrap().instance(vec![]).pop().unwrap()
+    Group::new(defs).unwrap()
 }
 
 /// The meet of `k` parity lists and the odd-length lists, written in form `form`: bit 0
@@ -178,6 +216,17 @@ fn parity_form(k: usize, form: usize) -> Type {
 }
 
 fn parity_variant(k: usize, form: usize, prefix: Option<&str>, reverse_unions: bool) -> Type {
+    let (group, meet) = parity_variant_group(k, form, prefix, reverse_unions);
+    group.instance(vec![]).swap_remove(meet)
+}
+
+/// The group of [`parity_variant`] and the index of its meet.
+fn parity_variant_group(
+    k: usize,
+    form: usize,
+    prefix: Option<&str>,
+    reverse_unions: bool,
+) -> (Group, usize) {
     let at = |i: usize| {
         if form & 2 != 0 && i < 2 * k + 2 {
             2 * k + 1 - i
@@ -237,7 +286,7 @@ fn parity_variant(k: usize, form: usize, prefix: Option<&str>, reverse_unions: b
     }
     defs.push((2 * k + 2, def(&name("M".into()), Expr::And(parts))));
     defs.sort_by_key(|(i, _)| at(*i));
-    let types = Group::new(
+    let group = Group::new(
         defs.into_iter()
             .map(|(_, mut d)| {
                 if reverse_unions && let Expr::Union(kids) = &mut d.body {
@@ -247,9 +296,8 @@ fn parity_variant(k: usize, form: usize, prefix: Option<&str>, reverse_unions: b
             })
             .collect(),
     )
-    .unwrap()
-    .instance(vec![]);
-    types[at(2 * k + 2)].clone()
+    .unwrap();
+    (group, at(2 * k + 2))
 }
 
 fn canonical_blame_chain(m: usize) -> Vec<Type> {
@@ -450,11 +498,20 @@ fn bounded_parity_variant(
     exclude: Option<usize>,
     repeated: Option<usize>,
 ) -> Type {
-    Group::new(bounded_parity_definitions(k, hi, exclude, repeated))
-        .unwrap()
+    bounded_parity_group(k, hi, exclude, repeated)
         .instance(vec![])
         .pop()
         .unwrap()
+}
+
+/// The group of [`bounded_parity_variant`], whose last member is the meet.
+fn bounded_parity_group(
+    k: usize,
+    hi: usize,
+    exclude: Option<usize>,
+    repeated: Option<usize>,
+) -> Group {
+    Group::new(bounded_parity_definitions(k, hi, exclude, repeated)).unwrap()
 }
 
 fn bounded_parity_definitions(
@@ -482,7 +539,7 @@ fn bounded_parity_definitions(
         "EvenLen",
         Expr::Union(vec![nil(), cons(Type::int(), r(odd_len))]),
     ));
-    let mut elem = (1..=hi).fold(lit(0), |u, i| &u | &lit(i));
+    let mut elem = Type::union_all((0..=hi).map(lit));
     if let Some(i) = exclude {
         elem = &elem - &lit(i);
     }
@@ -687,18 +744,20 @@ fn a_mandatory_integer_field_is_classified_before_its_alternative_rows() {
 }
 
 fn repeated_integer_field_scale(n: usize) {
-    let inputs = scaling::inputs(n, |k| bounded_parity_variant(k, k, None, Some(4)));
+    let inputs = scaling::inputs(n, |k| {
+        Fresh::new(bounded_parity_group(k, k, None, Some(4)), 2 * k + 3)
+    });
     scaling::check_order("bounded parity with a repeated scalar field", n, 1, |k| {
         Type::forget_emptiness();
-        assert_eq!(inputs[&k].verdict(), Verdict::Inhabited);
+        assert_eq!(inputs[&k].member().verdict(), Verdict::Inhabited);
     });
 }
 
 /// Two literal sets and two rows are shared by all columns. Written DAG size
 /// is linear in k; a checked witness has k integer fields, not k squared.
 fn shared_integer_columns(k: usize, distinct: bool) -> Type {
-    let evens = (0..k).fold(Type::empty(), |t, j| &t | &lit(2 * j));
-    let odds = (0..k).fold(Type::empty(), |t, j| &t | &lit(2 * j + 1));
+    let evens = Type::union_all((0..k).map(|j| lit(2 * j)));
+    let odds = Type::union_all((0..k).map(|j| lit(2 * j + 1)));
     let a = &Type::int() - &evens;
     let b = &Type::int() - &odds;
     let right = if distinct {

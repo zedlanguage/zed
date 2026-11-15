@@ -1557,10 +1557,53 @@ impl Type {
     // `l01_27_absences::scaling::the_repairs_for_a_family_of_many_atoms_scale`: 9.06 times the
     // instructions from 1000 to 8000 atoms joined in pairs, 8.67 now, with 17% and 20% fewer
     // instructions at the two sizes.
+    // The types of finitely many booleans, numbers and strings alone are joined the same way,
+    // into the sets of the one with the most literals (FAIL-setop-parity-bench-time): in pairs,
+    // a union of `k` literals copied a path of each set `log k` times per literal, and folded
+    // one at a time with `|`, as tests built such sets, each step copies the path of a set
+    // shared with the operand before. Measured on the 2,097,152 even integers below 2^22 made
+    // as literal types (`shared_integer_columns`), in one process at load 33: joined here,
+    // 1.46 s; folded with `|`, 7.66 s (262,144: 0.26 s and 0.78 s); making the literal types
+    // takes 2.69 s more either way.
     pub fn union_all(ts: impl IntoIterator<Item = Type>) -> Type {
-        let (atoms, mut rest): (Vec<Type>, Vec<Type>) = ts
-            .into_iter()
-            .partition(|t| t.atoms_only() && !t.p().atoms.cofinite);
+        // The literal types are joined as they come, each dropped once joined, so that `k` of
+        // them are never all held at once; the smaller set is added to the larger.
+        let (mut first_lits, mut lits): (Option<Type>, Option<Parts>) = (None, None);
+        let (mut atoms, mut rest) = (Vec::new(), Vec::new());
+        for t in ts {
+            if t.finite_literals_only() {
+                match (&first_lits, &mut lits) {
+                    (None, _) => first_lits = Some(t),
+                    (Some(first), None) => {
+                        let (p, q) = (first.p(), t.p());
+                        let (mut big, small) = match p.literal_count() < q.literal_count() {
+                            true => (q.clone(), p),
+                            false => (p.clone(), q),
+                        };
+                        big.join_literals(&small);
+                        lits = Some(big);
+                    }
+                    (Some(_), Some(joined)) => {
+                        let q = t.p();
+                        if joined.literal_count() < q.literal_count() {
+                            let mut big = q.clone();
+                            big.join_literals(&*joined);
+                            *joined = big;
+                        } else {
+                            joined.join_literals(&q);
+                        }
+                    }
+                }
+            } else if t.atoms_only() && !t.p().atoms.cofinite {
+                atoms.push(t);
+            } else {
+                rest.push(t);
+            }
+        }
+        match lits {
+            Some(joined) => rest.push(Type::new(joined)),
+            None => rest.extend(first_lits),
+        }
         if atoms.len() < 2 {
             rest.extend(atoms);
         } else {
@@ -2257,6 +2300,55 @@ fn clear_compound_types() {
 }
 
 impl Parts {
+    /// Whether it lists finitely many booleans, numbers and strings and nothing else.
+    fn finite_literals_only(&self) -> bool {
+        [
+            &self.ints,
+            &self.rats,
+            &self.floats,
+            &self.f32s,
+            &self.strings,
+        ]
+        .iter()
+        .all(|l| !l.cofinite)
+            && self.atoms.is_default()
+            && self.tuples.is_default()
+            && !self.structs
+            && self.morphisms.is_leaf() == Some(false)
+    }
+
+    /// How many numbers and strings it lists.
+    fn literal_count(&self) -> usize {
+        [
+            &self.ints,
+            &self.rats,
+            &self.floats,
+            &self.f32s,
+            &self.strings,
+        ]
+        .iter()
+        .map(|l| l.values.len())
+        .sum()
+    }
+
+    /// Adds the booleans, numbers and strings of `other`, both of
+    /// [`Parts::finite_literals_only`], one literal at a time.
+    fn join_literals(&mut self, other: &Parts) {
+        debug_assert!(self.finite_literals_only() && other.finite_literals_only());
+        self.bools |= other.bools;
+        for (mine, theirs) in [
+            (&mut self.ints, &other.ints),
+            (&mut self.rats, &other.rats),
+            (&mut self.floats, &other.floats),
+            (&mut self.f32s, &other.f32s),
+            (&mut self.strings, &other.strings),
+        ] {
+            for v in &theirs.values {
+                mine.insert(v);
+            }
+        }
+    }
+
     fn scalars_only(&self) -> bool {
         self.atoms.is_default()
             && self.tuples.is_default()
@@ -2376,6 +2468,12 @@ impl Type {
     /// which may still hold no value of it: ask [`Type::subtype`] then.
     pub fn atoms_only(&self) -> bool {
         matches!(&*self.0, Node::Parts(p, _) if p.atoms_only())
+    }
+
+    /// Whether its parts list finitely many booleans, numbers and strings and nothing else; read
+    /// in O(1). False for a recursive node.
+    fn finite_literals_only(&self) -> bool {
+        matches!(&*self.0, Node::Parts(p, _) if p.finite_literals_only())
     }
 
     /// The names of its atoms, each with whether it holds the bare atom `#name`, read from its
