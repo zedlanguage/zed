@@ -549,7 +549,48 @@ pub(super) fn bounded_sum(n: usize) -> Formula {
     Formula::and(rows)
 }
 
+/// `Σ ((n + 2)·y[i] - p[i]) - 100·n(n + 1)/2 - 1 >= 0` with `p[i] >= (i + 2)·y[i]` and
+/// `1 <= y[i] <= 100`, size O(n): each `p[i]` has one row on each side, the long row and its
+/// own, with a color of its own from its coefficient; once it is eliminated `y[i]` is pulled to
+/// 100 by the long row. The long row is at most -1 there, so there is no point: an entailment
+/// proved, as in the negated goal of `ladder::open_side_chain`.
+pub(super) fn linked_sum(n: usize) -> Formula {
+    let ys: Vec<String> = (0..n).map(|i| format!("y{i:06}")).collect();
+    let ps: Vec<String> = (0..n).map(|i| format!("p{i:06}")).collect();
+    let mut sum: Vec<(&str, i128)> = Vec::new();
+    for (y, p) in ys.iter().zip(&ps) {
+        sum.push((y.as_str(), n as i128 + 2));
+        sum.push((p.as_str(), -1));
+    }
+    let mut rows = vec![ge(&sum, -100 * (n * (n + 1) / 2) as i128 - 1)];
+    for (i, (y, p)) in ys.iter().zip(&ps).enumerate() {
+        rows.push(ge(&[(p.as_str(), 1), (y.as_str(), -(i as i128 + 2))], 0));
+        rows.push(ge(&[(y.as_str(), 1)], -1));
+        rows.push(ge(&[(y.as_str(), -1)], 100));
+    }
+    Formula::and(rows)
+}
+
 /// The names of `fed_sum`: `a` sorts first, so that it is the first variable on a tie.
+/// `Σ -(i + 2)·z[i] + 7·Σ (i + 2) - 1 >= 0` with `z[i] + w[i] >= 10` and `z[i] - w[i] >= 4`,
+/// size O(n): eliminating `w[i]`, whose color is its own, leaves `z[i] >= 7`, and the long row
+/// then pulls `z[i]` to 7. The long row is -1 there, so there is no point: an entailment
+/// proved, as in the second linear reading of `ladder::open_side_chain`.
+pub(super) fn fixed_sum(n: usize) -> Formula {
+    let zs: Vec<String> = (0..n).map(|i| format!("z{i:06}")).collect();
+    let ws: Vec<String> = (0..n).map(|i| format!("w{i:06}")).collect();
+    let sum: Vec<(&str, i128)> = (zs.iter().enumerate())
+        .map(|(i, z)| (z.as_str(), -(i as i128 + 2)))
+        .collect();
+    let top: i128 = (0..n).map(|i| 7 * (i as i128 + 2)).sum();
+    let mut rows = vec![ge(&sum, top - 1)];
+    for (z, w) in zs.iter().zip(&ws) {
+        rows.push(ge(&[(z.as_str(), 1), (w.as_str(), 1)], -10));
+        rows.push(ge(&[(z.as_str(), 1), (w.as_str(), -1)], -4));
+    }
+    Formula::and(rows)
+}
+
 fn fed_names(n: usize) -> (Vec<String>, Vec<String>) {
     let names = |p: &str| (0..n).map(|i| format!("{p}{i:06}")).collect();
     (names("b"), names("c"))

@@ -14763,6 +14763,102 @@ impl System {
         }
     }
 
+    /// The place of the row of `x[p]` other than the row at `l`, when `x[p]` has exactly
+    /// these two rows, one on each side, its coefficient in the other is a unit, and neither
+    /// row has an opposite held (an equality kept as two rows is left to the loop).
+    fn own_row(&self, p: usize, l: usize) -> Option<usize> {
+        let v = &self.vars[p];
+        if v.sides.lo != 1 || v.sides.hi != 1 || !v.rows.contains(&l) {
+            return None;
+        }
+        let r = *v.rows.iter().find(|id| **id != l)?;
+        let a = self.ids[r].as_ref().expect("a row held");
+        let unit = a[a.binary_search_by_key(&p, |t| t.0).ok()?].1.is_unit();
+        (unit && !self.opposites.contains_key(&r) && !self.opposites.contains_key(&l)).then_some(r)
+    }
+
+    /// The variables eliminated together with `x[j]`, each with the definition its
+    /// elimination amounts to, when `x[j]` has one row on each side and a unit coefficient in
+    /// one of them, its own row, and the other, the shared row `l`, holds another such
+    /// variable: every variable `x[p]` of `l` whose only other row `r[p]` is on the other side
+    /// with a unit coefficient and holds no other of them. `None` when `x[j]` is not one or
+    /// is the only one.
+    ///
+    /// The row `r[p]: s·x[p] + q[p] >= 0`, `s = ±1`, bounds `x[p]` on one side, and `l`, its
+    /// only other row, pulls it to that side, so a point with `x[p]` elsewhere stays a point
+    /// when it moves to `x[p] = -s·q[p]`; writing that into `l` gives the row the exact
+    /// elimination of `x[p]` writes, `l` plus `|c|·r[p]` for `x[p]`'s coefficient `c` in `l`.
+    /// No `r[p]` holds another of the variables, so each definition holds none of them, and
+    /// written together into `l` ([`Omega::flush`]) they give the rows their eliminations one
+    /// after another give in any order, up to the rounding of constants on the way, which
+    /// keeps the same integer points: the set is chosen by the structure of the rows, not by
+    /// the names. When `x[j]` has a unit coefficient in both rows, `l` is the longer, and of
+    /// two of one length, the upper.
+    ///
+    /// Complexity tradeoff: one at a time, as [`System::least`] gives them, which is by color
+    /// first, the variables of a shared row of m terms each rewrite it, O(m log m) in
+    /// [`System::count`] and the key of [`System::rows`], and the fixes they leave rewrite it
+    /// again: O(m^2 log m) for m such variables (`products_whose_factors_keep_open_sides_scale`,
+    /// 19.2 times the instructions from 128 to 1,024 links). Here one pass over `l` and the
+    /// rows `r[p]`, `O((m + Σ |r[p]|) log m)`, finds them all, and `l` is written once for them.
+    /// A pass that finds `x[j]` alone costs O(m), less than the elimination it precedes.
+    /// Test: `l01_38_omega_test::bench::omega::eliminations_that_each_rewrite_one_long_row_scale`.
+    fn pendants(&self, j: usize) -> Option<Vec<(usize, Row)>> {
+        let rows: Vec<usize> = self.vars[j].rows.iter().copied().collect();
+        let [a, b] = rows[..] else {
+            return None;
+        };
+        let len = |id: usize| self.ids[id].as_ref().expect("a row held").len();
+        let upper = |id: usize| {
+            let a = self.ids[id].as_ref().expect("a row held");
+            a[a.binary_search_by_key(&j, |t| t.0).expect("a row of x[j]")]
+                .1
+                .is_negative()
+        };
+        let l = match (self.own_row(j, a), self.own_row(j, b)) {
+            (Some(_), Some(_)) => {
+                if (len(a), upper(a)) > (len(b), upper(b)) {
+                    a
+                } else {
+                    b
+                }
+            }
+            (Some(_), None) => a,
+            (None, Some(_)) => b,
+            (None, None) => return None,
+        };
+        let la = self.ids[l].as_ref().expect("a row held");
+        let found: Vec<(usize, usize)> = la
+            .iter()
+            .filter_map(|(p, _)| Some((*p, self.own_row(*p, l)?)))
+            .collect();
+        if found.len() < 2 {
+            return None;
+        }
+        let set: HashSet<usize> = found.iter().map(|(p, _)| *p).collect();
+        let mut defs = Vec::with_capacity(found.len());
+        for (p, r) in found {
+            let ra = self.ids[r].as_ref().expect("a row held");
+            if ra.iter().any(|(q, _)| *q != p && set.contains(q)) {
+                continue;
+            }
+            let k = &self.rows[ra].k;
+            let positive = ra[ra.binary_search_by_key(&p, |t| t.0).expect("its own row")]
+                .1
+                .is_positive();
+            let flip = |c: &Int| if positive { -c } else { c.clone() };
+            let def = Row {
+                a: (ra.iter())
+                    .filter(|(q, _)| *q != p)
+                    .map(|(q, c)| (*q, flip(c)))
+                    .collect(),
+                k: flip(k),
+            };
+            defs.push((p, def));
+        }
+        (defs.len() >= 2 && defs.iter().any(|(p, _)| *p == j)).then_some(defs)
+    }
+
     /// Eliminates `x[j]` by its real shadow, or its dark one when `dark`; returns its rows.
     fn eliminate(&mut self, j: usize, dark: bool) -> Vec<Row> {
         let with = self.take(j);
@@ -15386,6 +15482,12 @@ struct Omega {
     /// The definitions not yet written into the inequalities: each inequality is rewritten once
     /// for all of them, however many of its variables they define.
     pending: Vec<(usize, Row)>,
+    /// The variables of `pending` read so far by [`Omega::deferred`]; for each row that holds
+    /// one, how many of its variables are among them; and whether the definitions must be
+    /// written before the next step. All three are cleared by [`Omega::flush`].
+    pending_vars: HashSet<usize>,
+    pending_rows: HashMap<usize, usize>,
+    write_first: bool,
     /// Whether a model is wanted.
     want: bool,
     /// Whether the real shadow was tested, at the first inexact elimination.
@@ -15509,6 +15611,9 @@ impl Omega {
                     es,
                     steps,
                     pending: Vec::new(),
+                    pending_vars: HashSet::new(),
+                    pending_rows: HashMap::new(),
+                    write_first: false,
                     want,
                     tested: false,
                     gray: Vec::new(),
@@ -15531,6 +15636,9 @@ impl Omega {
             es,
             steps,
             pending: Vec::new(),
+            pending_vars: HashSet::new(),
+            pending_rows: HashMap::new(),
+            write_first: false,
             want,
             tested: false,
             gray: Vec::new(),
@@ -15597,7 +15705,16 @@ impl Omega {
                 None => {}
             }
             if !self.pending.is_empty() {
-                self.flush();
+                // Eliminations that neither read nor write a pending variable go first, so a
+                // long row is rewritten once for the values they leave (`Omega::deferred`).
+                if let Some(js) = self.deferred() {
+                    for j in js {
+                        let rows = self.sys.eliminate(j, false);
+                        self.steps.push(Step::Chosen(j, rows));
+                    }
+                } else {
+                    self.flush();
+                }
                 continue;
             }
             let meets = self.sys.meetings();
@@ -15635,6 +15752,18 @@ impl Omega {
             match self.untie(least, |fill| fill <= 0) {
                 Some((fill, _)) if fill > 0 => {}
                 Some((_, Ok(js))) => {
+                    // The variables of a row that each have one other row, of a unit
+                    // coefficient, go together with `x[j]`, the row written once
+                    // (`System::pendants`).
+                    if let [j] = js[..]
+                        && let Some(defs) = self.sys.pendants(j)
+                    {
+                        for (p, def) in defs {
+                            self.steps.push(Step::Defined(p, def.clone()));
+                            self.pending.push((p, def));
+                        }
+                        continue;
+                    }
                     for j in js {
                         let rows = self.sys.eliminate(j, false);
                         self.steps.push(Step::Chosen(j, rows));
@@ -16421,9 +16550,99 @@ impl Omega {
         }
     }
 
+    /// The variables of the next exact elimination that adds no terms, when the pending
+    /// definitions are all values and no row of those variables holds a pending variable:
+    /// they are then eliminated before the definitions are written. Their rows, and the rows
+    /// their elimination writes, are the same as after the writing, since a value written
+    /// into a row changes the terms of no other variable. The variables a value fixes leave
+    /// the ranks [`System::least`] reads until the writing takes their rows, and the variables
+    /// then fixable are fixed first ([`Omega::fix`]): a value changes no coefficient of
+    /// another variable, so a row that pulls a variable one way still does once it is
+    /// written. A definition that holds a variable is written first, as is every case where
+    /// the rows of the variables reach a pending one, and a tie of [`System::least`]. So is
+    /// a row with one variable not pending ([`Omega::read_pending`]): written, it is a bound
+    /// on that variable, which can make it fixable, and the fixes it starts can run along a
+    /// chain of such rows; eliminated first instead, the variables of the chain pass their
+    /// rows on, 2, 4, ..., 2n of them (`products_whose_factor_bounds_wait_on_each_other_scale`:
+    /// 39 times the instructions from 160 to 1,280 links). A row whose variables are all
+    /// pending becomes a constant, which can wait.
+    ///
+    /// Complexity tradeoff: written at once, the values rewrite their rows before the next
+    /// step, so where each elimination leaves one variable of a long row of m terms at a bound,
+    /// the row is rewritten after each, O(m^2 log m) for m such eliminations (the second
+    /// linear reading of `products_whose_factors_keep_open_sides_scale`: 11.9 times the
+    /// instructions from 128 to 1,024 links with only `System::pendants`, 51.7 times from 200
+    /// to 1,600 in the test below). Deferred, the long row is rewritten once for all of them.
+    /// The check costs O(p log m) over the run for the p definitions read, plus one count for
+    /// each row of a pending variable (each row is counted once per pending variable it
+    /// holds, as its writing reads that term anyway), plus the terms of the rows of the
+    /// variables, which their elimination reads anyway. The order of the steps changes (an
+    /// elimination or a fix may come before a meeting it would have followed), and with it
+    /// the model and the place of a refusal, never whether a point exists.
+    /// Test: `l01_38_omega_test::bench::omega::bounds_that_each_fix_one_term_of_a_long_row_scale`.
+    fn deferred(&mut self) -> Option<Vec<usize>> {
+        self.read_pending();
+        if self.write_first || !self.cycled {
+            return None;
+        }
+        // A variable already defined keeps its rows until they are written, and may be
+        // fixable among them; it is not defined again.
+        let pending = &self.pending_vars;
+        self.sys.fixable.retain(|j| !pending.contains(j));
+        if !self.sys.fixable.is_empty() {
+            self.fix();
+            self.read_pending();
+            if self.write_first {
+                return None;
+            }
+        }
+        let Some((fill, Ok(js))) = self.sys.least(&[&self.sys.exact]) else {
+            return None;
+        };
+        let clear = |j: &usize| {
+            !self.pending_vars.contains(j)
+                && self.sys.vars[*j].rows.iter().all(|id| {
+                    let a = self.sys.ids[*id].as_ref().expect("a row held");
+                    a.iter().all(|t| !self.pending_vars.contains(&t.0))
+                })
+        };
+        (fill <= 0 && js.iter().all(clear)).then_some(js)
+    }
+
+    /// Reads the definitions added to `pending` since the last call, and takes each defined
+    /// variable out of the ranks; [`System::count`] puts it back if its rows change before
+    /// [`Omega::flush`] takes them. Notes that the definitions must be written first when one
+    /// holds a variable, or when a row is left with one variable not pending. A row that
+    /// holds a pending variable is not changed until the writing, since a deferred
+    /// elimination reads no such row, so its count of pending variables stays true; the
+    /// counts are read once all the new definitions are counted, so that two variables of a
+    /// row fixed at once are both counted.
+    fn read_pending(&mut self) {
+        let mut counted = Vec::new();
+        for (j, def) in &self.pending[self.pending_vars.len()..] {
+            self.pending_vars.insert(*j);
+            self.write_first |= !def.a.is_empty();
+            let v = &self.sys.vars[*j];
+            let rank = v.sides.rank(v.key, *j);
+            self.sys.exact.remove(&rank);
+            self.sys.inexact.remove(&rank);
+            for id in &v.rows {
+                *self.pending_rows.entry(*id).or_insert(0) += 1;
+                counted.push(*id);
+            }
+        }
+        for id in counted {
+            let terms = self.sys.ids[id].as_ref().expect("a row held").len();
+            self.write_first |= terms - self.pending_rows[&id] == 1;
+        }
+    }
+
     /// Writes the pending definitions into the inequalities, each row once. A definition holds
     /// only variables defined after it, or none, so each is resolved from the last back.
     fn flush(&mut self) {
+        self.pending_vars.clear();
+        self.pending_rows.clear();
+        self.write_first = false;
         let defs = std::mem::take(&mut self.pending);
         let at: HashMap<usize, usize> =
             defs.iter().enumerate().map(|(p, (j, _))| (*j, p)).collect();

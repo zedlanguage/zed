@@ -74,6 +74,36 @@ fn the_box_of_refused_rows_scales() {
 }
 
 #[test]
+fn eliminations_that_each_rewrite_one_long_row_scale() {
+    // Each p[i] has one row on each side, one of them the long row, and once it is eliminated
+    // y[i] is fixed into the long row (FAIL-open-sides-bench-ratio: the products of
+    // `products_whose_factors_keep_open_sides_scale` in the long row of the negated goal).
+    let n = 200;
+    let (small, large) = (linked_sum(n), linked_sum(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        assert_eq!(satisfiable(f), Ok(None));
+    }
+    scaling::check_order("eliminations that each rewrite one long row", n, 1, |m| {
+        drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}
+
+#[test]
+fn bounds_that_each_fix_one_term_of_a_long_row_scale() {
+    // Each elimination of a w[i] leaves z[i] at one bound, which the long row pulls it to
+    // (FAIL-open-sides-bench-ratio: the factors of the second linear reading of
+    // `products_whose_factors_keep_open_sides_scale`).
+    let n = 200;
+    let (small, large) = (fixed_sum(n), fixed_sum(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        assert_eq!(satisfiable(f), Ok(None));
+    }
+    scaling::check_order("bounds that each fix one term of a long row", n, 1, |m| {
+        drop(satisfiable(if m == n { &small } else { &large }));
+    });
+}
+
+#[test]
 fn a_value_between_a_long_sum_and_many_bounds_is_not_eliminated_first() {
     // Every b[j] and c[i] is pulled to its bound; `a` then has two bounds of its own, and its
     // elimination, n rows of n terms, is never taken.
