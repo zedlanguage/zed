@@ -231,9 +231,8 @@ thread_local! {
     /// because their group's decider left them open ([`Type::members_searched`]).
     static SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Whether `Searching::nested_cover` is skipped, so that a box goes from the split into
-    /// disjoint parts straight to the split into the open tuple types, as before
-    /// PERF-types-nested-rows-wider-second: set only by [`Type::without_nested_cover`], for the
-    /// test that compares the two paths.
+    /// disjoint parts to `Searching::take_out_piece` and the split into the open tuple types:
+    /// set only by [`Type::without_nested_cover`], for the test that compares the two paths.
     static NO_NESTED_COVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -4968,8 +4967,15 @@ impl<'m> Searching<'m> {
                     }
                     return true;
                 }
-                if self.nested_cover(g, &f, &open).await {
-                    return true;
+                // DESIGN.md L1.23 takes out each piece on which narrowing alone proves the part
+                // empty before it splits the box into the open tuple types, and narrows the box
+                // left again (TEST-may-cover-piece-removal): the split's piece of a tuple type
+                // that holds the box once a piece is out is that whole box, which its branch
+                // cannot split again, so a split first refuses boxes the taking out settles
+                // (`l01_23_groups_and_refusals::nested_cover::a_piece_taken_out_before_the_split_leaves_a_box_the_split_settles`).
+                if self.nested_cover(g, &f, &open).await || self.take_out_piece(g, &f, &open).await
+                {
+                    continue;
                 }
                 let mut all_empty = true;
                 let mut forks = Vec::new();
@@ -5012,63 +5018,7 @@ impl<'m> Searching<'m> {
                 }
                 return true;
             }
-            let mut narrowed = false;
-            let mut forked_cut = None;
-            for j in 0..g.r.len() {
-                let mut tried = BTreeSet::new();
-                // A cell closed on the component misses or holds it, so its pieces are the
-                // component and nothing, and narrow nothing.
-                for cell in g.open_cells(j, &open) {
-                    if !g.cells[j][cell].open {
-                        continue;
-                    }
-                    let a = g.cells[j][cell].ty.clone();
-                    for (c, missed) in [(&a & &g.r[j], false), (&g.r[j] - &a, true)] {
-                        if tried.contains(&c) {
-                            continue;
-                        }
-                        let cut_snap = self.fork_snapshot();
-                        if self.empty_fork(&c).await.0 || self.empty_fork(&(&g.r[j] - &c)).await.0 {
-                            self.discard_since(cut_snap);
-                            continue;
-                        }
-                        tried.insert(c.clone());
-                        let mark = g.log.len();
-                        let holds_mark = g.forked_holds.len();
-                        g.shrink(j, c.clone());
-                        g.close(j, cell, missed);
-                        let snap = self.fork_snapshot();
-                        let hit = self.narrow_tuples(g, &mut f.clone()).await;
-                        g.forked_holds.truncate(holds_mark);
-                        g.restore(mark);
-                        if hit {
-                            match self.take_fork(snap, None) {
-                                None => {
-                                    let t = &g.r[j] - &c;
-                                    g.shrink(j, t);
-                                    g.close(j, cell, !missed);
-                                    narrowed = true;
-                                    break;
-                                }
-                                Some(fork) => {
-                                    self.discard_since(cut_snap);
-                                    forked_cut.get_or_insert((j, c, cell, missed, fork));
-                                }
-                            }
-                        } else {
-                            self.discard_since(cut_snap);
-                        }
-                    }
-                }
-            }
-            if !narrowed && let Some((j, c, cell, missed, fork)) = forked_cut {
-                self.restore_fork(fork);
-                let t = &g.r[j] - &c;
-                g.shrink(j, t);
-                g.close(j, cell, !missed);
-                narrowed = true;
-            }
-            if narrowed {
+            if self.take_out_piece(g, &f, &open).await {
                 continue;
             }
             if !g.forked_holds.is_empty() {
@@ -5388,6 +5338,89 @@ impl<'m> Searching<'m> {
         Some(l)
     }
 
+    /// Takes out of the box `g` the pieces of one component, each cut by an open cell of the
+    /// tuple types `open` (its meet with the component or what the component holds outside it),
+    /// on which narrowing alone proves `f` empty (DESIGN.md L1.23), and whether it took one out.
+    /// A piece whose proof rests on a fork is taken out only when no piece's proof is fork-free.
+    ///
+    /// Complexity tradeoff: the components are tried in the order of their open cells, fewest
+    /// first, and after the first component a piece was taken out of the caller narrows the box
+    /// left again. Why: a box whose few-celled component holds the piece to take out, beside a
+    /// component of `n` cells, is decided by a narrowing of the part of `n` nodes per piece of
+    /// the few-celled component, order `n`. Trying the components in their written order,
+    /// the `n`-celled one first, also stayed linear on the bench below but cost 2.3 times the
+    /// instructions (148M and 1.18G at `n` 128 and 1,024, against 64M and 505M), measured
+    /// once as a negative control and not kept. A pass that takes nothing
+    /// out narrows the part twice per open cell of the box, as before, order `C n` for `C` open
+    /// cells, the order of the split into the open tuple types it comes before. Test:
+    /// `l01_23_groups_and_refusals::judgments::bench::crossing_sets_against_a_wider_second_component_are_decided_in_linear_time`.
+    /// COMPLEXITY.md K118.
+    async fn take_out_piece(&'m self, g: &mut Region, f: &Part<Row>, open: &[usize]) -> bool {
+        let mut order: Vec<(usize, BTreeSet<usize>)> =
+            (0..g.r.len()).map(|j| (j, g.open_cells(j, open))).collect();
+        order.sort_by_key(|(j, cells)| (cells.len(), *j));
+        let mut forked_cut = None;
+        for (j, cells) in order {
+            let mut tried = BTreeSet::new();
+            let mut taken = false;
+            // A cell closed on the component misses or holds it, so its pieces are the
+            // component and nothing, and narrow nothing.
+            for cell in cells {
+                if !g.cells[j][cell].open {
+                    continue;
+                }
+                let a = g.cells[j][cell].ty.clone();
+                for (c, missed) in [(&a & &g.r[j], false), (&g.r[j] - &a, true)] {
+                    if tried.contains(&c) {
+                        continue;
+                    }
+                    let cut_snap = self.fork_snapshot();
+                    if self.empty_fork(&c).await.0 || self.empty_fork(&(&g.r[j] - &c)).await.0 {
+                        self.discard_since(cut_snap);
+                        continue;
+                    }
+                    tried.insert(c.clone());
+                    let mark = g.log.len();
+                    let holds_mark = g.forked_holds.len();
+                    g.shrink(j, c.clone());
+                    g.close(j, cell, missed);
+                    let snap = self.fork_snapshot();
+                    let hit = self.narrow_tuples(g, &mut f.clone()).await;
+                    g.forked_holds.truncate(holds_mark);
+                    g.restore(mark);
+                    if hit {
+                        match self.take_fork(snap, None) {
+                            None => {
+                                let t = &g.r[j] - &c;
+                                g.shrink(j, t);
+                                g.close(j, cell, !missed);
+                                taken = true;
+                                break;
+                            }
+                            Some(fork) => {
+                                self.discard_since(cut_snap);
+                                forked_cut.get_or_insert((j, c, cell, missed, fork));
+                            }
+                        }
+                    } else {
+                        self.discard_since(cut_snap);
+                    }
+                }
+            }
+            if taken {
+                return true;
+            }
+        }
+        let Some((j, c, cell, missed, fork)) = forked_cut else {
+            return false;
+        };
+        self.restore_fork(fork);
+        let t = &g.r[j] - &c;
+        g.shrink(j, t);
+        g.close(j, cell, !missed);
+        true
+    }
+
     /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
     async fn piece(&'m self, r: Vec<Type>, f: Part<Row>, may_cover: bool) -> bool {
         if f.is_leaf() == Some(false) {
@@ -5397,33 +5430,71 @@ impl<'m> Searching<'m> {
         self.tuples(h, f, may_cover).await.0
     }
 
-    /// Whether narrowing alone proves `f` empty on each piece of the box `g` cut on one component
-    /// by its open cells (`nested_pieces`) and on the rest of that component, the component
-    /// with fewest open cells among those on which a tuple type of `open` is open; the box is
-    /// given back as it was.
+    /// Takes out of the box `g`, one after another and innermost first, the pieces of one
+    /// component cut by its open cells (`nested_pieces`) on which narrowing alone proves `f`
+    /// empty, the component with fewest open cells among those on which a tuple type of `open`
+    /// is open, and whether it took one out. It stops at the first piece narrowing does not
+    /// prove empty, or proves empty only on a fork, and keeps the pieces taken out before it;
+    /// the caller narrows the box left, which is the rest of the component once every piece is
+    /// out.
+    ///
+    /// Each piece taken out is the step "each piece on which narrowing alone proves the part
+    /// empty is taken out of the box" of DESIGN.md L1.23, on the box as it stands, and the
+    /// narrowing run on it is on the very box that step names (TEST-nested-cover-verdict-change,
+    /// PROOF-narrow-tuples-monotone). Proof: the cells holding a piece all meet in it, and the
+    /// cells are pairwise nested or disjoint, so they are nested, a chain with an innermost
+    /// cell `c`. Another piece within `c` is held by `c` and by every cell around `c`, so by
+    /// more cells than this piece, and was taken first. The pieces within `c` cover its meet
+    /// with the component (`nested_pieces`), so when this piece is reached the meet of `c`
+    /// with the box as it stands is this piece: a piece cut by an open tuple type. The
+    /// narrowing runs on the box with the component set to the piece and each open cell closed
+    /// by whether it holds the piece, each by a test that proved it. The box is the stopped box
+    /// less the pieces taken out, and taking out the last piece of a cell closes that cell as
+    /// missing the component, whose meet with it is then empty.
+    ///
+    /// So no answer of `narrow_tuples` on one box is used for another; whether `narrow_tuples`
+    /// as written is monotone, with emptiness tests that may decide a type on a box and not on
+    /// a smaller one, is not claimed. That the order DESIGN takes the pieces out in, or
+    /// narrowing again between them, does not change what DESIGN settles follows from its
+    /// narrowing being monotone, in which each tuple type holds, misses or is open on the box
+    /// exactly: if narrowing proves the part empty from a box `X`, it proves it from any box
+    /// `Y` within `X`. Proof: let `X = X0, X1, …, Xn` be the boxes `X`'s narrowing passes
+    /// through, the part false on what `Xn` knows or `Xn` empty, and keep `Yi` within `Xi`. A
+    /// tuple type that holds or misses `Xi` does the same on `Yi`, so `Yi` knows what `Xi`
+    /// knows, and the three-valued evaluation, monotone in what is known, is false on `Yi`
+    /// where it is false on `Xi`. A tuple type `T` in every value of the part at `Xi` (the
+    /// part false with `T` false) is in every value at `Yi`: if `T` misses `Yi` the part is
+    /// false there, else `Yi` narrowed to `T` is within `Xi` narrowed to `T`. A tuple type `T`
+    /// in no value at `Xi` holds `Xi` on every component but one, `l`, so it holds `Yi` on
+    /// every component but at most `l`: if it holds `Yi` the part is false there, if it misses
+    /// `Yi` then `Yi` is within `Xi` less `T`, else `Yi` less `T` on `l` is within `Xi` less
+    /// `T` on `l`. At `n` the part is false on `Yn` or `Yn` is empty. Narrowing from `Y` in
+    /// its own order stops at a box `Z` within `Y` on which no step changes anything; by the
+    /// same cases each step from `X` shows the part false on `Z` or leaves `Z` within the next
+    /// box, so the part is false on `Z`. Hence a piece narrowing proves empty on the stopped
+    /// box is proved empty on every smaller box the steps reach, and taking pieces out never
+    /// undoes another's proof.
     ///
     /// Complexity tradeoff: before the split of the box into its meet with each open tuple type
-    /// (K71), the component with fewest open cells is cut into the pieces its cells cut, and the
-    /// part is empty when narrowing alone proves it empty on every piece. This is the step "each
-    /// piece on which narrowing alone proves the part empty is taken out of the box" of
-    /// DESIGN.md L1.23, with the pieces of all the cells of one component taken at once, so it
-    /// decides no part that a split in more than one component at once is needed for: a piece
-    /// narrowing does not prove empty leaves the box to the split below, as before. Why: the
-    /// naive method, the split into the open tuple types, makes one piece per open tuple type,
-    /// `k` pieces each narrowing the whole part of `n` nodes again, order `k n`: `n` rows
-    /// `((#_, i) \ (#a, i), 1)` against `((#_, int), 1 | 2)` cost 44.2M, 1.72G and 101.5G
-    /// instructions at `n` = 16, 128 and 1,024 (38.8 and 59.2 times at 8 times `n`). The new
-    /// method makes at most `2 m + 1` pieces for `m` distinct open cells on the component, `m`
-    /// at most `k`, each narrowed once, order `m n`: here `m` is 2 (`1` and `1 | 2`) and the time
-    /// is linear in `n`. Finding the pieces costs one or two emptiness tests of single cells per
-    /// cell disjoint from the cells before it or holding them all, and two per piece so far for
-    /// any other cell, order `m²` at worst. A piece narrowing does not prove empty costs at most
-    /// the `2 m + 1` narrowings before the split below, so the order stays `k n`. Proof that the
-    /// answer is sound: the pieces and the rest are pairwise disjoint and cover the component
-    /// (`nested_pieces`), and each lies within or outside each open cell by a test that proved
-    /// it, so `close` records exactly whether each tuple type holds or misses the component
-    /// there, and narrowing is sound on each piece (`narrow_tuples`); a test not decided, or a
-    /// cell meeting two pieces in part, leaves the box to the split below. Test:
+    /// (K71), the component with fewest open cells is cut into the pieces its cells cut, each
+    /// narrowed once. It decides no part that a split in more than one component at once is
+    /// needed for: a piece narrowing does not prove empty leaves the box to `take_out_piece`
+    /// and the split below. Why: the naive method, the split into the open tuple types, makes
+    /// one piece per open tuple type, `k` pieces each narrowing the whole part of `n` nodes
+    /// again, order `k n`: `n` rows `((#_, i) \ (#a, i), 1)` against `((#_, int), 1 | 2)` cost
+    /// 44.2M, 1.72G and 101.5G instructions at `n` = 16, 128 and 1,024 (38.8 and 59.2 times at
+    /// 8 times `n`). The new method makes at most `2 m` pieces for `m` distinct open cells on
+    /// the component, `m` at most `k`, each narrowed once, and the caller narrows the rest
+    /// once, order `m n`: here `m` is 2 (`1` and `1 | 2`) and the time is linear in `n`.
+    /// Finding the pieces costs one or two emptiness tests of single cells per cell disjoint
+    /// from the cells before it or holding them all, and two per piece so far for any other
+    /// cell, order `m²` at worst. A piece narrowing does not prove empty costs at most the `2 m`
+    /// narrowings before the steps below, and each piece taken out closes a cell, so the order
+    /// stays `k n`. Soundness: the pieces are pairwise disjoint and cover the cells' meet with
+    /// the component (`nested_pieces`), and each lies within or outside each open cell by a
+    /// test that proved it, so `close` records exactly whether each tuple type holds or misses
+    /// the component there, and narrowing is sound on each piece (`narrow_tuples`); a test not
+    /// decided, or a cell meeting two pieces in part, leaves the box to the steps below. Test:
     /// `l01_23_groups_and_refusals::judgments::bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`.
     /// COMPLEXITY.md K118.
     async fn nested_cover(&'m self, g: &mut Region, f: &Part<Row>, open: &[usize]) -> bool {
@@ -5438,49 +5509,69 @@ impl<'m> Searching<'m> {
         };
         let open_cells = g.open_cells(j, open);
         let split_snap = self.fork_snapshot();
-        let Some((mut all, union)) = self.nested_pieces(g, j, &open_cells).await else {
+        let Some(pieces) = self.nested_pieces(g, j, &open_cells).await else {
             self.discard_since(split_snap);
             return false;
         };
-        let rest = &g.r[j] - &union;
-        match self.shown(&rest).await {
-            Some(true) => {}
-            Some(false) => all.push((rest, BTreeSet::new())),
-            None => {
-                self.discard_since(split_snap);
-                return false;
+        // One piece for each set of cells holding it, innermost first: a piece held by more
+        // cells lies within the cell of each piece held by fewer that it meets.
+        let mut by_held: BTreeMap<BTreeSet<usize>, Type> = BTreeMap::new();
+        let mut left: BTreeMap<usize, usize> = BTreeMap::new();
+        for (p, held) in pieces {
+            if let Some(t) = by_held.get_mut(&held) {
+                *t = &*t | &p;
+                continue;
             }
+            for &c in &held {
+                *left.entry(c).or_default() += 1;
+            }
+            by_held.insert(held, p);
         }
-        let mut forks = Vec::new();
-        for (c, held) in all {
+        let mut order: Vec<(BTreeSet<usize>, Type)> = by_held.into_iter().collect();
+        order.sort_by_key(|(held, _)| std::cmp::Reverse(held.len()));
+        let mut taken = false;
+        for (held, p) in order {
             let mark = g.log.len();
             let holds_mark = g.forked_holds.len();
-            g.shrink(j, c);
+            g.shrink(j, p.clone());
             for &cell in &open_cells {
-                g.close(j, cell, !held.contains(&cell));
+                if g.cells[j][cell].open {
+                    g.close(j, cell, !held.contains(&cell));
+                }
             }
             let snap = self.fork_snapshot();
             let hit = self.narrow_tuples(g, &mut f.clone()).await;
             g.forked_holds.truncate(holds_mark);
             g.restore(mark);
-            if !hit {
-                self.discard_since(split_snap);
-                return false;
+            // A proof resting on a fork is left to `take_out_piece`, which takes such a piece
+            // out only when no piece's proof is fork-free.
+            if !hit || self.take_fork(snap, None).is_some() {
+                self.discard_since(snap);
+                break;
             }
-            if let Some(fork) = self.take_fork(snap, None) {
-                forks.push(fork);
+            let t = &g.r[j] - &p;
+            g.shrink(j, t);
+            for &cell in &held {
+                let n = left
+                    .get_mut(&cell)
+                    .expect("a cell holding a piece is counted");
+                *n -= 1;
+                if *n == 0 {
+                    g.close(j, cell, true);
+                }
             }
+            taken = true;
         }
-        for fork in forks {
-            self.restore_fork(fork);
+        if !taken {
+            self.discard_since(split_snap);
         }
-        true
+        taken
     }
 
     /// The pieces of component `j` of the box `g` cut by its open cells `open_cells`, each with
-    /// the cells holding it (it misses the others), in the order of their types, and their
-    /// union; `None` when two cells cross (neither is within the other and they meet), a cell
-    /// meets two pieces cut so far in part, or a test is not decided.
+    /// the cells holding it (it misses the others), in the order of their types; `None` when
+    /// two cells cross (neither is within the other and they meet), a cell meets two pieces
+    /// cut so far in part, or a test is not decided.
     /// Each distinct cell `t` is added to the pieces of the cells before it, of union `u`: when
     /// `t & u` is empty, `t` is a piece; else when `u - t` is empty, every piece lies within
     /// `t`; else each piece `p` lies outside `t`, within it, or is cut into `p & t` and `p - t`;
@@ -5493,7 +5584,7 @@ impl<'m> Searching<'m> {
         g: &Region,
         j: usize,
         open_cells: &BTreeSet<usize>,
-    ) -> Option<(Vec<(Type, BTreeSet<usize>)>, Type)> {
+    ) -> Option<Vec<(Type, BTreeSet<usize>)>> {
         let mut types: Vec<(Type, BTreeSet<usize>)> = Vec::new();
         let mut seen: BTreeMap<Type, usize> = BTreeMap::new();
         for &c in open_cells {
@@ -5513,18 +5604,11 @@ impl<'m> Searching<'m> {
         // empty", a piece being the meet of the component with one open tuple type's cell, so
         // a piece inside two crossing cells (`0 | 1` and `1 | 2` give `1`) is no such piece,
         // and a box only such pieces settle is one DESIGN counts as inhabited unless a later
-        // step settles it. Proof that what is decided here is what that step decides: in a
-        // family of cells pairwise nested or disjoint, each piece cut below is a cell less the
-        // cells inside it, or the rest. Taking out the pieces of the innermost cells first,
-        // each a cell's meet with the component, leaves each cell around them met with the box
-        // equal to its own piece, which is then a step's piece in turn; the rest is the box
-        // left at the end. On each, the same cells hold or miss as on the piece here, so
-        // narrowing gives the same answer, and narrowing on a smaller box with more tuple types
-        // decided is false where it was false before (the part is evaluated in three-valued
-        // logic, which is monotone in what is known), so the order the pieces are taken out in
-        // does not matter. Not proved: that `narrow_tuples` as written, with its kept cuts, is
-        // monotone in this way; the three-valued evaluation of the part is. Crossing cells, or a test not decided, leave the box to the split
-        // below. Whether a cell crosses one before it is read off the pieces, each within or
+        // step settles it. In a family of cells pairwise nested or disjoint, each piece cut
+        // below is a cell less the cells inside it, and `nested_cover` takes them out innermost
+        // first, so each is a cell's meet with the box as it stands when it is taken out (the
+        // proof is at `nested_cover`). Crossing cells, or a test not decided, leave the box to
+        // the steps below. Whether a cell crosses one before it is read off the pieces, each within or
         // outside each earlier cell, so it takes no emptiness test beyond those of the cut
         // and costs set operations on the cells the pieces hold.
         let mut pieces: Vec<(Type, BTreeSet<usize>)> = Vec::new();
@@ -5592,7 +5676,7 @@ impl<'m> Searching<'m> {
             union = &union | &t;
         }
         pieces.sort_by(|a, b| a.0.cmp(&b.0));
-        Some((pieces, union))
+        Some(pieces)
     }
 
     /// Whether `t` is shown empty with no fork, `Some(true)`, or shown inhabited with no

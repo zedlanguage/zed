@@ -348,3 +348,22 @@ fn nested_sets_against_a_wider_second_component_are_decided_in_linear_time() {
         },
     );
 }
+
+/// `n` nested sets of every atom against the two shapes `((#_, int), 1 | 2)` and
+/// `((#_, int), 2 | 3)`, which cross on the second component (TEST-may-cover-piece-removal):
+/// the pieces of the second component are taken out one at a time (`take_out_piece`) and the
+/// box left is narrowed, linear in `n`. The split into the meet with each open tuple type,
+/// which crossing cells left such a box to before, makes a piece per row.
+#[test]
+fn crossing_sets_against_a_wider_second_component_are_decided_in_linear_time() {
+    let n = 128;
+    let pairs = scaling::inputs(n, crossing_rows_wider_second);
+    scaling::check(
+        "n nested sets against two shapes crossing on the second component",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+}

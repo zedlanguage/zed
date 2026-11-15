@@ -2,10 +2,11 @@
 //! DESIGN.md sec. L1.23 (emptiness of a box) takes out of the box each piece of a component cut
 //! by one open tuple type on which narrowing proves the part empty, then splits the box into
 //! its meet with each open tuple type, and counts a box none of its steps settles as
-//! inhabited. `nested_cover` decides a box at once from the disjoint pieces its cells cut, and
-//! cuts only cells pairwise nested or disjoint, whose disjoint pieces DESIGN's taking out
-//! reaches one after another. So a verdict may change only from a refusal to `Empty` on such
-//! a box, and every verdict either path gives must agree with enumerating the values.
+//! inhabited. `nested_cover` cuts only cells pairwise nested or disjoint and takes their
+//! pieces out one after another, innermost first, each on the box as it stands, as DESIGN's
+//! taking out does; without it, `take_out_piece` takes out one cell's piece at a time
+//! (TEST-may-cover-piece-removal). So a verdict may change only from a refusal to `Empty` on
+//! such a box, and every verdict either path gives must agree with enumerating the values.
 
 use zed_kernel::Value;
 use zed_kernel::types::{Refusal, Type, Verdict};
@@ -254,5 +255,94 @@ fn nested_cells_are_decided_and_the_box_cover_refused_on_both_paths() {
         let refused = Verdict::Refused(Refusal::TupleSplit);
         assert_eq!(both(&f.ty()), (refused, refused));
         assert!(!inhabited(&f, 3));
+    });
+}
+
+/// A cell within `m`: each of its literals kept or dropped, and `top` kept or made its literals.
+fn sub_cell(g: &mut Rng, m: u8) -> u8 {
+    let lits = if m == TOP { LITERALS } else { m };
+    let kept = (0..VALUES as u8)
+        .filter(|&v| lits & (1 << v) != 0 && g.below(3) != 0)
+        .fold(0, |s, v| s | (1 << v));
+    if m == TOP && g.below(2) == 0 {
+        TOP
+    } else if kept == 0 {
+        lits.isolate_lowest_one()
+    } else {
+        kept
+    }
+}
+
+/// Random parts met with a box and with a box within it, each cell of the second within the
+/// cell of the first (PROOF-narrow-tuples-monotone). Each decided verdict, on both paths,
+/// agrees with enumeration. The proof at `Searching::nested_cover` does not rest on the
+/// verdict of a box settling that of a box within it, so that is not asserted; the count of
+/// draws where the box is decided `Empty` and the box within it is refused is printed.
+#[test]
+fn a_box_and_a_box_within_it_agree_with_enumeration() {
+    zed_tests::deep::on_small_stack(|| {
+        let (mut g, _) = Rng::fresh("a box and a box within it");
+        let mut refused_within_empty = 0;
+        let mut draws = 0;
+        for width in 2..=3 {
+            for _ in 0..600 {
+                let part = random(&mut g, width, 4);
+                let outer: Vec<u8> = (0..width).map(|_| cell(&mut g)).collect();
+                let inner: Vec<u8> = outer.iter().map(|&m| sub_cell(&mut g, m)).collect();
+                let mut verdicts = Vec::new();
+                for b in [&outer, &inner] {
+                    let f = F::And(Box::new(F::Row(b.clone())), Box::new(part.clone()));
+                    let truth = inhabited(&f, width);
+                    let (old, new) = both(&f.ty());
+                    for v in [old, new] {
+                        if class(v) < 2 {
+                            assert_eq!(class(v) == 1, truth, "{f:?}: old {old:?}, new {new:?}");
+                        }
+                    }
+                    verdicts.push(new);
+                }
+                draws += 1;
+                if verdicts[0] == Verdict::Empty && matches!(verdicts[1], Verdict::Refused(_)) {
+                    refused_within_empty += 1;
+                }
+            }
+        }
+        println!(
+            "{refused_within_empty} of {draws} draws: the box Empty, the box within it refused"
+        );
+    });
+}
+
+/// The three crossing cells of `crossing_cells_are_left_to_the_split` on component 0, beside
+/// `K = (_, 0 | 1)` on component 1, and a part `J` that narrowing alone shows empty wherever
+/// component 1 is `2`. The box `(_, 0 | 1 | 2)` is settled by DESIGN.md L1.23 in two steps:
+/// the piece `2` of component 1 (outside `K`) is taken out, since narrowing alone proves the
+/// part empty there (`K` misses it, and `J` holds `(_, 2)` but not `(_, 1 | 2)`); on what is
+/// left `K` holds the box, and the part is the odd count of the crossing cells, which no piece
+/// settles and the split into the meet with each open tuple type does. Splitting the whole box
+/// at once instead gives the piece of `K`, which is that box and cannot be split again on its
+/// branch.
+#[test]
+fn a_piece_taken_out_before_the_split_leaves_a_box_the_split_settles() {
+    zed_tests::deep::on_small_stack(|| {
+        let xor = |x: F, y: F| F::Or(Box::new(x.clone().less(y.clone())), Box::new(y.less(x)));
+        let odd = xor(
+            xor(F::Row(vec![3, TOP]), F::Row(vec![6, TOP])),
+            F::Row(vec![5, TOP]),
+        );
+        let j = F::And(
+            Box::new(F::Row(vec![3, TOP])),
+            Box::new(F::Row(vec![TOP, 4])),
+        )
+        .less(F::Row(vec![TOP, 6]));
+        let f = F::And(
+            Box::new(F::Row(vec![TOP, LITERALS])),
+            Box::new(F::Or(
+                Box::new(F::And(Box::new(F::Row(vec![TOP, 3])), Box::new(odd))),
+                Box::new(j),
+            )),
+        );
+        assert!(!inhabited(&f, 2));
+        assert_eq!(both(&f.ty()), (Verdict::Empty, Verdict::Empty), "{f:?}");
     });
 }

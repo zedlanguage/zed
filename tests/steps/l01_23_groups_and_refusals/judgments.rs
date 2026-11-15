@@ -1554,6 +1554,44 @@ fn nested_rows_wider_second(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::
     )
 }
 
+/// `n` rows `((#_, i) \ (#a, i), 1)` against `((#_, int), 1 | 2) | ((#_, int), 2 | 3)`, whose
+/// two shapes cross on the second component (`1 | 2` and `2 | 3` meet in `2`), so their pieces
+/// are not cut at once there; DESIGN.md L1.23 takes out the piece `3` of the second component
+/// (outside the rows' `1`) and then the piece `2`, and the rows' `1` is left
+/// (TEST-may-cover-piece-removal).
+fn crossing_rows_wider_second(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use zedc::check::read::parse_type;
+    let rows: Vec<String> = (0..n)
+        .map(|i| format!("((#_, {i}) \\ (#a, {i}), 1)"))
+        .collect();
+    (
+        parse_type(&rows.join(" | ")).unwrap(),
+        parse_type("((#_, int), 1 | 2) | ((#_, int), 2 | 3)").unwrap(),
+    )
+}
+
+/// The small instance of `bench::crossing_sets_against_a_wider_second_component_are_decided_in_linear_time`.
+/// The rows are within the two shapes; the shapes are not within the rows (`((#a, 0), 1)` and
+/// `((#b, 0), 3)` are in them and in no row); a row with `4` beside it, or with a string in its
+/// nested set, is not within them; `((#b, 2), 3)` is.
+#[test]
+fn crossing_sets_against_a_wider_second_component_are_decided() {
+    use zedc::check::read::parse_type;
+    let (left, right) = crossing_rows_wider_second(4);
+    assert!(left.subtype(&right));
+    assert!(!right.subtype(&left));
+    let rows = "((#_, 0) \\ (#a, 0), 1) | ((#_, 1) \\ (#a, 1), 1)";
+    for (extra, held) in [
+        ("((#b, 2), 3)", true),
+        ("((#b, 2), 4)", false),
+        ("((#_, \"s\"), 1)", false),
+        ("((#_, 5) \\ (#a, 5), 1 | 3)", true),
+    ] {
+        let wider = parse_type(&format!("{rows} | {extra}")).unwrap();
+        assert_eq!(wider.subtype(&right), held, "{extra}");
+    }
+}
+
 /// The small instance of `bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`.
 /// The rows are within the shape; the shape is not within the rows (`((#a, 0), 1)` and
 /// `((#b, 0), 2)` are in it and in no row); a row with `3` beside it, or with a string in its
