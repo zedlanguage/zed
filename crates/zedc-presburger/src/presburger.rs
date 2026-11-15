@@ -1865,14 +1865,18 @@ enum Signs {
 /// signs, as `how` asks ([`equation`]); and in each conjunction, `t >= 0` beside `-t >= 0`,
 /// after the division, as `t == 0`, so that an equation written with either sign, with a
 /// common factor, twice with opposite signs, or as two inequalities is one constraint, and
-/// [`Formula::and`] holds it once. Each later step reads the signs of the rows (the colors of
-/// [`stable_colors`] and the order of [`canonical`] among them), and a question that one
-/// writing answered another refused with [`Refusal::Growth`]. In time O(n log n) in the size
-/// of `f`; a node that is written so already is kept, with its id.
+/// [`Formula::and`] holds it once. The solver reads the scale of each row and the sign of each
+/// inequality (the colors of [`stable_colors`] and the order of [`canonical`] among them), so
+/// without this step a question that one writing answered another could refuse with
+/// [`Refusal::Growth`]. It reads no sign of an equation (PRES-solver-equation-sign-free:
+/// [`stable_colors`] colors an equation's two sides alike, and [`System::covered`] eliminates a
+/// variable held only by an equation's two rows as exactly as one held by the equation), so the
+/// sign chosen here, by the names where only they could choose it, changes the writing and not
+/// the answer (l01_38 `equation_sign` and `names`). In time O(n log n) in the size of `f`; a
+/// node that is written so already is kept, with its id.
 ///
-/// No writing answers every question another does: the solver refuses some systems with one
-/// sign of an equation and answers them with the other, and [`project_each`] asks with the
-/// second writing only where the first is refused, and with the third only where both are.
+/// [`project_each`] still asks with the second writing (`Signs::Both`) where the first is
+/// refused, and with the third (`Signs::Opposite`) only where both are.
 fn signed(f: &Formula, how: Signs) -> Formula {
     // Each node's writing, or `None` where it is written so already: an unchanged node is kept
     // as it is, with its id, so that what later steps keep by id still finds it.
@@ -2000,17 +2004,21 @@ fn equation(c: &Con, negated: bool, how: Signs) -> Option<Formula> {
 /// Whether the equation `t == 0` is written `-t == 0`: the sign whose coefficients, sorted, are
 /// the greater list; where `t` and `-t` have the same coefficients, the one with the positive
 /// constant; and only where the constant is zero too, the sign whose first coefficient, in the
-/// order of the names, is positive. The first two read the equation, not the names, so that a
-/// formula renamed is written with the same signs wherever they decide: the sign changes the
-/// order in which the solver eliminates (the colors of [`stable_colors`] read it), and so which
-/// systems it refuses with [`Refusal::Growth`]. FAIL-product-refused-box-renamed: with the sign
-/// of the first name, `2a + b + c == z2 - 4` and `a + b == c + z0 - 5` within boxes refused
-/// `z2` as written and projected it to [6, 7] with the names reversed; the coefficients settle
-/// the first and the constant the second. O(k log k) for the k terms of `t`.
-// Complexity tradeoff: an equation with opposite coefficients and no constant, as
-// `a - b == 0`, keeps the sign of the first name, so a renaming can still change its sign.
-// Why: the name-free orders tried each cost a family of l01_38 more than 10.5 times the work at
-// 8 times the size, where the names cost at most 9.7 (instructions at sizes 16 and 128, of
+/// order of the names, is positive. The sign once changed the order in which the solver
+/// eliminates, and so which systems it refused with [`Refusal::Growth`] or
+/// [`Refusal::Shadows`] (FAIL-product-refused-box-renamed: with the sign of the first name,
+/// `2a + b + c == z2 - 4` and `a + b == c + z0 - 5` within boxes refused `z2` as written and
+/// projected it to [6, 7] with the names reversed). Since PRES-solver-equation-sign-free the
+/// solver reads no sign of an equation ([`stable_colors`] colors `t == 0` and `-t == 0` alike),
+/// so the sign chosen here only fixes one writing, which [`signed`] needs to join `t >= 0`
+/// and `-t >= 0` and to hold an equation once; the names choosing it changes no answer
+/// (l01_38 `names::a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer`).
+/// O(k log k) for the k terms of `t`.
+// Complexity tradeoff (historical, kept for the measurements): an equation with opposite
+// coefficients and no constant, as `a - b == 0`, keeps the sign of the first name. Before
+// PRES-solver-equation-sign-free that sign reached the elimination order, and the name-free
+// orders tried each cost a family of l01_38 more than 10.5 times the work at 8 times the size,
+// where the names cost at most 9.7 (instructions at sizes 16 and 128, of
 // `projecting_guards_beyond_the_inputs_scales`, `shared_sums_project_each` and
 // `a_linked_nest_projects_in_time_linear_in_its_depth`):
 // - the first name (this rule): 8.1, 9.7 and 9.7 times;
@@ -11337,6 +11345,29 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 good = at;
                 step *= 2;
             };
+            // Complexity tradeoff: a test with no point is often answered by `bounds_refute`
+            // alone, while a test with a point always settles the whole formula, a pass of
+            // O(n) for n atoms. Bisecting `(good, bad)` at once takes log(bad - good) tests, and
+            // when the answer is `good` itself, as on a chain of guards where `bounds_refute`
+            // proves every bound up to the answer, all of them have points: log n full passes
+            // per learned bound, O(n log n) in all (6 tests of 389 solves each at 256 guards in
+            // `projecting_guards_beyond_the_inputs_scales`, 11.1 times the instructions from 32 to
+            // 256 guards; 9.3 times with this search, and 8.7 at the benchmark's 16 and 128). A
+            // second doubling search from `good` takes about log d tests for an answer d past
+            // `good`, one when d = 0, and at most twice the bisection's otherwise; the bisection
+            // then runs inside the bracket it finds. Both record the same bound when the tests
+            // are monotone in `w`, which is not proved; each bound recorded is tested, so it
+            // stays proved either way.
+            let mut step = 1;
+            while good + step < bad {
+                let at = good + step;
+                if !none(&ws[at]) {
+                    bad = at;
+                    break;
+                }
+                good = at;
+                step *= 2;
+            }
             while bad - good > 1 {
                 let mid = good + (bad - good) / 2;
                 if none(&ws[mid]) {
