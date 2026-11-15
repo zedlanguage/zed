@@ -17335,11 +17335,28 @@ impl Omega {
         for (j, _) in &defs {
             rows.extend(self.sys.take(*j));
         }
+        // A pair of rows kept for a tied equality (`loosen`) stays kept as rewritten: the two
+        // rows rewrite to opposite rows again, which would otherwise meet in the equality and
+        // be tied again. With two equalities, one tied (`a + 3·b + c + 1 == 0`, `a` and `c`
+        // alike) and one without a unit coefficient (`3·a + 2·b + 3·c + 2 == 0`), each step on
+        // the second wrote a fresh variable into the tied pair, which met as a new equality,
+        // and the steps went on without end (test `loose_pair_tests`).
         for r in rows {
+            let loose = self.sys.loose.contains(&lesser(&r.a));
             let r = resolve(&r, &defs, &at);
+            if loose && !r.a.is_empty() {
+                self.sys.loose.insert(lesser(&r.a));
+            }
             self.sys.add(r);
         }
     }
+}
+
+/// The lesser of the coefficients `a` and their opposite, as `System::loose` and
+/// `System::meets` key a pair of opposite rows.
+fn lesser(a: &Coefs) -> Coefs {
+    let opp: Coefs = opposite(a).into();
+    if *a < opp { a.clone() } else { opp }
 }
 
 /// `r` with each variable that `defs` defines replaced by its definition, and the variables
@@ -30176,5 +30193,48 @@ mod sweep_against_pick_tests {
             wrong.len(),
             wrong.join("\n")
         );
+    }
+}
+
+#[cfg(test)]
+mod loose_pair_tests {
+    use super::*;
+
+    fn c(terms: &[(&str, i64)], k: i64, rel: Rel) -> Con {
+        Con {
+            lin: Lin {
+                terms: (terms.iter())
+                    .map(|(s, c)| (Atom::Sym((*s).into()), Int::from(*c)))
+                    .collect(),
+                constant: Int::from(k),
+            },
+            rel,
+        }
+    }
+
+    /// `a + 3·b + c + 1 == 0` and `3·a + 2·b + 3·c + 2 == 0` in the box `-4..=4`: the first is
+    /// tied (`a` and `c` alike) and kept as two opposite rows; each step on the second, which
+    /// has no unit coefficient, rewrites that pair, and the rewritten pair once met as a new
+    /// equality, tied again, so the steps never ended (found by
+    /// `exact::tests::random_formulas_project_to_the_values_of_their_points`). Three times the
+    /// first minus the second is `7·b + 1 == 0`, so there is no point; without the box the
+    /// solver found that at once, and with it ran for minutes.
+    #[test]
+    fn a_tied_equality_rewritten_is_not_met_again() {
+        let mut cons = vec![
+            c(&[("a", 1), ("b", 3), ("c", 1)], 1, Rel::Eq),
+            c(&[("a", 3), ("b", 2), ("c", 3)], 2, Rel::Eq),
+        ];
+        assert_eq!(solve(&cons, true), Ok(None));
+        for n in ["a", "b", "c"] {
+            cons.push(c(&[(n, 1)], 4, Rel::Ge));
+            cons.push(c(&[(n, -1)], 4, Rel::Ge));
+        }
+        assert_eq!(solve(&cons, true), Ok(None));
+        assert_eq!(solve(&cons, false), Ok(None));
+        // With the second equation moved to have points: `b == -1`, `a + c == 2`.
+        cons[1] = c(&[("a", 3), ("b", 2), ("c", 3)], -4, Rel::Eq);
+        let m = solve(&cons, true).unwrap().expect("a point");
+        assert!(cons.iter().all(|k| k.holds(&m)), "{m:?}");
     }
 }
