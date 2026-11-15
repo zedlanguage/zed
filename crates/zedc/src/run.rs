@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::sites::{Recorder, Sites};
-use zed_kernel::{Evaluator, Family, Lookup, Provenance, Shared, Term, Value, World};
+use zed_kernel::{Evaluator, Family, KernelError, Lookup, Provenance, Shared, Term, Value, World};
 
 use crate::address::ContentAddress;
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
@@ -755,7 +755,7 @@ impl Program {
         if let Some(why) = self.lacks_input(record) {
             return Err(why);
         }
-        self.replay_noting(record, &Arc::new(OnceLock::new()))
+        self.replay_noting(record).map_err(|(_, why)| why)
     }
 
     /// Why `record` cannot give this program's `Lines` inputs: the first port it holds no
@@ -775,20 +775,48 @@ impl Program {
         ))
     }
 
-    /// Runs the wave `record` holds, as [`Program::replay`] does after its checks, and sets
-    /// `missed` to the text of the first read the record holds no answer for, so that the
-    /// caller can tell a stop the record caused from one the program did (DESIGN.md L1.19).
-    fn replay_noting(
-        &self,
-        record: &Record,
-        missed: &Arc<OnceLock<String>>,
-    ) -> Result<Wave, String> {
-        self.run_args(&record.lines, &record.args, |name| {
+    /// Runs the wave `record` holds, as [`Program::replay`] does after its checks, and on a
+    /// stop gives, with its message, whether the stop is a read the record holds no answer
+    /// for, so that the caller can tell a stop the record caused from one the program did
+    /// (DESIGN.md L1.19).
+    ///
+    /// The stop is told by its kind, not by its text: it is the record's when the error the
+    /// evaluator ended with is the port error whose reason is the one [`Recorded`] gave for
+    /// its first miss (PROOF-replay-missing-read-status). Every miss also ends the run: the
+    /// lookup's error becomes `KernelError::Port`, a `Stop::Error`, and no frame of the
+    /// evaluator turns a `Stop::Error` into a value. The one catch, of an entry of a
+    /// definedness fix, takes only `Stop::Undefined`, and a port is never asked inside a fix
+    /// anyway: a `fix` begins a pure region before its entries run, and every ask of a port
+    /// first stops the run in a pure region (`check_impure`). So the first miss is the stop
+    /// (test `m0_09_kernel_evaluator::a_read_the_port_cannot_answer_stops_the_run`).
+    /// The one step that changes the error is the evaluator's report of a test of two
+    /// numbers refused its memory, which takes the place of any stop after it, since the stop
+    /// may follow from the answer the test was given; a miss after a refused test is then
+    /// reported as the refusal, not as the record's, which is right, since whether the system
+    /// refuses the memory can differ from the recorded run to the replay.
+    // Complexity tradeoff: naive, a search for the miss's text in the stop's message, O(w·m)
+    // for a message of w bytes and a miss of m bytes, and wrong when the program's own stop
+    // quotes that text; used, the error's kind and one comparison of its reason, O(m), once
+    // per stop, with the error kept as a value until then (COMPLEXITY.md
+    // PROOF-replay-missing-read-status).
+    fn replay_noting(&self, record: &Record) -> Result<Wave, (bool, String)> {
+        let missed = Arc::new(OnceLock::new());
+        let by_miss = std::cell::Cell::new(false);
+        let files = |name: &str| -> Arc<dyn Lookup> {
             Arc::new(Recorded(
                 record.files.get(name).cloned().unwrap_or_default(),
-                Arc::clone(missed),
+                Arc::clone(&missed),
             ))
-        })
+        };
+        let map = |t: &Term, ev: &mut Evaluator| {
+            ev.run(t).map_err(|e| {
+                let miss = missed.get();
+                by_miss.set(matches!(&e, KernelError::Port(_, why) if Some(why) == miss));
+                e.to_string()
+            })
+        };
+        self.run_through(&record.lines, &record.args, files, &map)
+            .map_err(|why| (by_miss.get(), why))
     }
 }
 
@@ -1403,18 +1431,13 @@ fn command_inner(
             if let Some(why) = program.lacks_input(&record) {
                 return Err((2, format!("{path}: {why}")));
             }
-            let missed = Arc::new(OnceLock::new());
-            work::stage(Stage::Run, Some("main"), || {
-                program.replay_noting(&record, &missed)
-            })
-            // A stop at a read the record holds no answer for is the record's fault: its
-            // message holds the text the lookup gave. Matching the text, and not only that
-            // a read missed, keeps a stop that has some other cause from being called the
-            // record's, should a miss ever not stop the run.
-            .map_err(|e| match missed.get() {
-                Some(m) if e.contains(m.as_str()) => (2, e),
-                _ => stopped(env, e),
-            })?
+            work::stage(Stage::Run, Some("main"), || program.replay_noting(&record))
+                // A stop at a read the record holds no answer for is the record's fault, a
+                // usage error, told by the kind of the stop ([`Program::replay_noting`]).
+                .map_err(|(by_miss, e)| match by_miss {
+                    true => (2, e),
+                    false => stopped(env, e),
+                })?
         }
         None => {
             let lines = options.read_lines(program.ports(), stdin)?;

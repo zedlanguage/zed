@@ -1029,6 +1029,54 @@ fn a_called_port_keeps_minus_zero_apart_and_keys_functions() {
     );
 }
 
+/// A lookup port that holds no answer, as a replay's record that lacks a read does, and
+/// counts the times it is asked.
+#[derive(Debug, Default)]
+struct NoAnswer(AtomicUsize);
+
+impl Lookup for NoAnswer {
+    fn get(&self, key: &Value) -> Result<Value, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(format!("no answer at {key}"))
+    }
+}
+
+/// A read a lookup port cannot answer stops the run with that port's error, and `zedc replay`
+/// tells a record that lacks a read by this stop (plan row PROOF-replay-missing-read-status).
+/// The one place the evaluator catches a stop is an entry of a definedness fix that reads an
+/// entry not yet defined; a fix is a pure region, so a port read there stops the run before
+/// the port is asked, and a port's error never reaches that catch. Here entries 0 to 2 each
+/// read the next and wait on it, and entry 3 reads the port, under each schedule; then the
+/// read alone, outside any fix.
+#[test]
+fn a_read_the_port_cannot_answer_stops_the_run() {
+    let read = || get(Term::Read("p".into()), lit(Value::str("gone.txt")));
+    let domain = lit(Family::set((0..=3).map(Value::Int)));
+    let next = get(var("this"), prim(Prim::Add, vec![var("i"), lit(1)]));
+    let body = if_(prim(Prim::Lt, vec![var("i"), lit(3)]), next, read());
+    let fix = definedness(domain, body);
+    for schedule in [Schedule::Rounds, Schedule::Pull] {
+        let port = Arc::new(NoAnswer::default());
+        let out = Evaluator::new(World::new().source("p", port.clone()))
+            .with_schedule(schedule)
+            .run(&fix);
+        match out {
+            Err(KernelError::Type(m)) => assert!(m.contains("port `p` used inside a pure region")),
+            other => panic!("{schedule:?}: the run went on past the read: {other:?}"),
+        }
+        assert_eq!(port.0.load(Ordering::SeqCst), 0, "{schedule:?}");
+    }
+    let port = Arc::new(NoAnswer::default());
+    let out = Evaluator::new(World::new().source("p", port.clone())).run(&read());
+    match out {
+        Err(KernelError::Port(p, why)) => {
+            assert_eq!((&*p, &*why), ("p", "no answer at \"gone.txt\""));
+        }
+        other => panic!("the run went on past the read: {other:?}"),
+    }
+    assert_eq!(port.0.load(Ordering::SeqCst), 1);
+}
+
 /// A power does not depend on how it is written: `x ^ e` gives what `x ^ a * x ^ b` gives
 /// for `a + b = e`, at sizes far past any machine word, and each square of a power is below the next.
 #[test]
