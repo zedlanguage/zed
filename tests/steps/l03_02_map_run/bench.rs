@@ -14,7 +14,7 @@ use zed_tests::kernel::*;
 use zed_tests::scaling::{self, FACTOR, Meter, hold_linear};
 
 use super::program;
-use zed_tests::step_helpers::l01_36a_executables::interpreter;
+use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
 /// Entries of a kernel run.
 const N_KERNEL: usize = 20_000;
@@ -202,4 +202,91 @@ fn a_sum_over_a_range_runs_in_linear_time() {
         assert_eq!(ran.stdout, format!("{}\n", (k * (k - 1)) / 2));
     };
     scaling::check("`zedc run` of `(0 ..< n) >< (+)`", N_KERNEL, run);
+}
+
+/// The terms of `xs.map(x -> (y -> y + x)).map(f -> f(1)) >< (+)` over `xs = {0 -> 0, …}`:
+/// the first `map` makes a held family of n functions ([`zed_kernel::HeldFamily`], row
+/// FAIL-family-function-entry), the second reads each entry and applies it. The sum is
+/// n + n (n - 1) / 2.
+fn function_entries_term(n: usize) -> Term {
+    let make = Term::Fam {
+        domain: rc(var("xs")),
+        var: "k".into(),
+        body: rc(lam(&["y"], add(var("y"), get(var("xs"), var("k"))))),
+    };
+    let apply = Term::Fam {
+        domain: rc(var("g")),
+        var: "k".into(),
+        body: rc(Term::App(rc(get(var("g"), var("k"))), vec![lit(1)])),
+    };
+    let sum = Term::Fold {
+        family: rc(apply),
+        op: rc(Term::PrimFn(Prim::Add)),
+        identity: Some(rc(lit(0))),
+        depth: 1,
+        ev: Default::default(),
+    };
+    let_("xs", entries(n), let_("g", make, sum))
+}
+
+#[test]
+fn a_family_of_functions_is_made_read_and_applied_in_linear_time() {
+    let terms = scaling::inputs(N_KERNEL, function_entries_term);
+    let run = |k: usize| {
+        let want = k as i64 + (k as i64) * (k as i64 - 1) / 2;
+        assert_eq!(eval(&terms[&k]).unwrap(), Value::Int(want));
+    };
+    scaling::check(
+        "the kernel run of a family of n functions made by `map`, read and applied",
+        N_KERNEL,
+        run,
+    );
+    under_nine(
+        "the kernel run of a family of n functions, instructions",
+        N_KERNEL,
+        run,
+    );
+}
+
+/// `zedc run` of a program and the executable `zedc build` makes of it, whose display holds
+/// n functions `(y -> y + i)`, each read and applied to 1 by `map`: n + n (n - 1) / 2. The
+/// executable reads the held family on the native path (zed-native `hooks.rs`,
+/// `family_at`), and runs the `map` in the kernel on a term that makes the family once
+/// (`Lets::held`; before, once per entry: 0.25 s at 500 entries, 14 s at 4000).
+#[test]
+fn a_display_of_functions_read_and_applied_runs_in_linear_time() {
+    let n = N_PROGRAM / 2;
+    let srcs: HashMap<usize, _> = scaling::inputs(n, |k| {
+        let fs: Vec<String> = (0..k).map(|i| format!("{i} -> (y -> y + {i})")).collect();
+        let d = dir(&format!("l03_02_map_run/function_display_{k}"));
+        let src = d.join("f.zed");
+        let text = format!(
+            "main(m: MainArgs) {{\n    b = {{ {} }};\n    r = b.map(f -> f(1)) >< (+);\n    \
+             m.stdout <- \"${{r}}\";\n}}\n",
+            fs.join(", ")
+        );
+        std::fs::write(&src, text).unwrap();
+        let exe = d.join("f");
+        built(&src, &exe);
+        (src, exe)
+    });
+    let want = |k: usize| format!("{}\n", k + k * (k - 1) / 2);
+    let run = |k: usize| {
+        let ran = interpreter(&srcs[&k].0, &[], &[]);
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        "`zedc run` of a display of n functions, each read and applied",
+        n,
+        run,
+    );
+    let run = |k: usize| {
+        let ran = executable(&srcs[&k].1, &[], &[]);
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        "an executable over a display of n functions, each read and applied",
+        n,
+        run,
+    );
 }

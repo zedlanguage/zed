@@ -56,7 +56,7 @@ use std::sync::Arc;
 
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::{Pattern, Prim, Shared, Term};
-use zed_kernel::value::{Fields, SharedParts, Value};
+use zed_kernel::value::{Fields, HeldEntry, HeldFamily, SharedParts, Value};
 use zed_kernel::{Evaluator, KernelError};
 
 use super::legalize::{Expansion, Expansions};
@@ -1902,7 +1902,10 @@ impl<'g> Machine<'g, '_> {
                     let (m, terms) = stack.pop().expect("an entered value");
                     let t = match &m {
                         Mv::Clo(c) => raise_with(self.alone(c.node, c.id), &terms)?,
-                        Mv::Held(h) => held_term(h.atom.as_ref(), h.cell as u64, terms),
+                        Mv::Held(h) => {
+                            let atom = h.atom.as_ref().map(|(n, f)| (n, f));
+                            held_term(atom, h.cell as u64, terms)
+                        }
                         _ => unreachable!("only closures and held values are entered"),
                     };
                     lets.built.insert(m.cell().expect("a cell"), t.clone());
@@ -2299,7 +2302,7 @@ fn enter_term<'g>(
 /// `parts`: the tuple primitive, or the atom primitive on its name and its field names in the
 /// order of its parts, in a `let` named by `key`, which no other held value of the term has.
 /// The native runtime builds its held values' terms with it too.
-pub fn held_term(atom: Option<&AtomName>, key: u64, parts: Vec<Term>) -> Term {
+pub fn held_term(atom: Option<(&Arc<str>, &Fields)>, key: u64, parts: Vec<Term>) -> Term {
     let made = match atom {
         None => Term::Prim(Prim::Tuple, parts),
         Some((name, fields)) => {
@@ -2309,7 +2312,27 @@ pub fn held_term(atom: Option<&AtomName>, key: u64, parts: Vec<Term>) -> Term {
             Term::Prim(Prim::Atom, args)
         }
     };
-    // A `let` of the value, so a copy of the term, one per holder, shares its parts.
+    held_let(key, made)
+}
+
+/// The term that makes the held family `f` again from its parts' terms `parts`: the display
+/// primitive on its entries in key order, each data entry a literal and part `i` the term
+/// `parts[i]`, in a `let` named by `key`, as [`held_term`]. The native runtime's.
+pub fn held_family_term(f: &HeldFamily, key: u64, parts: Vec<Term>) -> Term {
+    let mut parts: Vec<Option<Term>> = parts.into_iter().map(Some).collect();
+    let mut args = Vec::with_capacity(2 * f.len());
+    for (k, e) in f.iter() {
+        args.push(Term::Lit(k.clone()));
+        args.push(match e {
+            HeldEntry::Data(v) => Term::Lit(v.clone()),
+            HeldEntry::Part(i) => parts[i].take().expect("each part once"),
+        });
+    }
+    held_let(key, Term::Prim(Prim::Entries, args))
+}
+
+/// A `let` of the value `made`, so a copy of the term, one per holder, shares its parts.
+fn held_let(key: u64, made: Term) -> Term {
     let x: Arc<str> = format!("\0held {key}").into();
     Term::Let(x.clone(), Shared::new(made), Shared::new(Term::Var(x)))
 }

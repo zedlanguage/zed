@@ -29,7 +29,9 @@ use crate::exact::{CanonicalTree, TreeStep};
 use crate::num::{Test, TooLarge, refused};
 use crate::sites::{Sites, Span};
 use crate::value::KernelError;
-use crate::value::{Atom, Family, Fields, Keypath, all_leaves, ieee_min_max};
+use crate::value::{
+    Atom, Family, Fields, HeldEntry, HeldFamily, Keypath, all_leaves, ieee_min_max,
+};
 use std::sync::Arc;
 
 use num_bigint::BigInt;
@@ -83,12 +85,34 @@ enum V<'t> {
 // [`Held::stand_in`]. Tests: `l01_17_value_representation::function_in_tuple` and
 // `function_in_payload_run`.
 struct Held<'t> {
-    /// `None` for a tuple; for an atom, its name and its field names, sorted as
-    /// [`Value::atom_named`] sorts them, empty for a payload by position.
-    atom: Option<(Arc<str>, Fields)>,
-    /// The components of a tuple, or the payload of an atom in the order of its field names.
+    shape: Shape,
+    /// The components of a tuple, the payload of an atom in the order of its field names, or
+    /// the entries of a family that are no data, by their numbers.
     parts: Vec<V<'t>>,
     drops: Rc<Drops<'t>>,
+}
+
+/// What a [`Held`] is.
+enum Shape {
+    Tuple,
+    /// An atom: its name and its field names, sorted as [`Value::atom_named`] sorts them, empty
+    /// for a payload by position.
+    Atom(Arc<str>, Fields),
+    /// A family, with a part that is no data (step FAIL-family-function-entry).
+    Family(HeldFamily),
+}
+
+impl Held<'_> {
+    fn atom(&self) -> Option<(&Arc<str>, &Fields)> {
+        match &self.shape {
+            Shape::Atom(n, f) => Some((n, f)),
+            _ => None,
+        }
+    }
+
+    fn is_tuple(&self) -> bool {
+        matches!(self.shape, Shape::Tuple)
+    }
 }
 
 impl Drop for Held<'_> {
@@ -114,13 +138,20 @@ impl Held<'_> {
                 Some(_) => done.push(Value::Family(Family::default())),
                 None => {
                     let (h, done) = stack.pop().expect("the top read above");
-                    let v = match &h.atom {
-                        None => Value::tuple(done),
-                        Some((name, fields)) => Value::Atom(Atom {
+                    let v = match &h.shape {
+                        Shape::Tuple => Value::tuple(done),
+                        Shape::Atom(name, fields) => Value::Atom(Atom {
                             name: name.clone(),
                             fields: fields.clone(),
                             payload: Some(done.into()),
                         }),
+                        // Each entry goes beneath its own key, and the keys are the distinct
+                        // top-level keys of one family, so no two entries collide and none has
+                        // an empty keypath: `with_parts` cannot fail.
+                        Shape::Family(f) => Value::Family(
+                            f.with_parts(done)
+                                .expect("the keys of a held family made a family"),
+                        ),
                     };
                     match stack.last_mut() {
                         Some((_, up)) => up.push(v),
@@ -875,7 +906,10 @@ struct Fam<'t> {
     /// The body's position.
     at: At,
     env: Env<'t>,
-    out: Vec<(Keypath, Value)>,
+    /// Each entry made, key then value, `None` for the next of `parts`.
+    out: Vec<(Value, Option<Value>)>,
+    /// The entries made that are no data, functions or values that hold one, in key order.
+    parts: Vec<V<'t>>,
 }
 
 /// A `reindex` running: the leaves left, the leaf being moved and its new key.
@@ -1439,6 +1473,13 @@ impl<'t> Machine<'_, 't> {
                 }
         );
         match i {
+            // `map` reads a family whose entries may be functions (DESIGN.md
+            // sec:values_morphisms); it reads its domain's keys only.
+            0 if matches!(region, Term::Fam { .. })
+                && matches!(&v, V::Held(h) if matches!(h.shape, Shape::Family(_))) =>
+            {
+                Ok(v)
+            }
             0 if holds_data => Ok(V::Data(Value::Family(family(data(v)?)?))),
             0 => Ok(V::Data(data(v)?)),
             2 if matches!(region, Term::Fold { .. }) => Ok(V::Data(data(v)?)),
@@ -1459,22 +1500,18 @@ impl<'t> Machine<'_, 't> {
     ) -> R<Step<'t>> {
         let mut operands = operands.into_iter();
         let mut next = || operands.next().expect("the operands of a region");
-        let first = data(next())?;
+        let first = next();
+        if let (Term::Fam { var, body, .. }, V::Held(h)) = (region, &first)
+            && let Shape::Family(f) = &h.shape
+        {
+            let keys: Vec<Value> = f.keys().cloned().collect();
+            return self.begin_fam(var, body, at, env, keys);
+        }
+        let first = data(first)?;
         match region {
             Term::Fam { var, body, .. } => {
-                self.begin_pure();
                 let keys: Vec<Value> = family(first)?.keys().cloned().collect();
-                let out = Vec::with_capacity(keys.len());
-                let at = self.ev.child(at, 1);
-                self.fam(Box::new(Fam {
-                    keys: keys.into_iter(),
-                    key: None,
-                    var,
-                    body,
-                    at,
-                    env,
-                    out,
-                }))
+                self.begin_fam(var, body, at, env, keys)
             }
             Term::Reindex { .. } => {
                 let kf = (next(), Some(self.ev.child(at, 1)));
@@ -1642,7 +1679,13 @@ impl<'t> Machine<'_, 't> {
             Wait::Fam(mut st) => {
                 self.ev.leave(1);
                 let k = st.key.take().expect("a `fam` has a key in hand");
-                st.out.push((vec![k], data(v)?));
+                match v {
+                    V::Data(v) => st.out.push((k, Some(v))),
+                    v => {
+                        st.parts.push(v);
+                        st.out.push((k, None));
+                    }
+                }
                 self.fam(st)
             }
             Wait::ReindexKey(mut st) if st.short => {
@@ -1777,16 +1820,21 @@ impl<'t> Machine<'_, 't> {
                 with_tuple.extend(args);
                 self.prim(Prim::TupleGet, with_tuple)
             }
-            V::Held(h) if h.atom.is_none() && args.len() == 1 => {
-                let mut with_tuple = Vec::with_capacity(2);
-                with_tuple.push(f.clone());
-                with_tuple.extend(args);
-                self.prim(Prim::TupleGet, with_tuple)
+            // A held tuple or family applied to one key reads it, as a data one does.
+            V::Held(h) if h.atom().is_none() && args.len() == 1 => {
+                let p = match h.shape {
+                    Shape::Family(_) => Prim::Get,
+                    _ => Prim::TupleGet,
+                };
+                let mut with_held = Vec::with_capacity(2);
+                with_held.push(f.clone());
+                with_held.extend(args);
+                self.prim(p, with_held)
             }
             V::Partial(_) | V::Source(_) => type_err("a family is read with `[]`, not called"),
             V::Data(Value::Atom(a)) => Ok(Step::Give(V::Data(Value::Atom(a.clone())))),
-            V::Held(h) if h.atom.is_some() => Ok(Step::Give(f.clone())),
-            V::Held(_) => type_err("a tuple is read at one key"),
+            V::Held(h) if h.atom().is_some() => Ok(Step::Give(f.clone())),
+            V::Held(_) => type_err("a tuple or a family is read at one key"),
             V::Data(other) => type_err(format!(
                 "a value of type `{}` is not a function",
                 other.kind_type()
@@ -1845,19 +1893,52 @@ impl<'t> Machine<'_, 't> {
         self.apply(f, vec![V::Data(a), V::Data(b)])
     }
 
-    /// Primitive `p` on `args`, one of which holds a function or, for a tuple or an atom, is
-    /// one: a tuple or an atom is made as a [`Held`], a tuple is read at a key, and an atom
-    /// that holds a function passes through every other primitive as any failure does.
+    /// Primitive `p` on `args`, one of which holds a function or, for a tuple, an atom or a
+    /// family display, is one: a tuple, an atom or a family is made as a [`Held`], a tuple or a
+    /// family is read at a key, and an atom that holds a function passes through every other
+    /// primitive as any failure does.
     fn held(&mut self, p: Prim, mut args: Vec<V<'t>>) -> R<Step<'t>> {
-        let held = |parts, atom| {
+        let drops = self.drops.clone();
+        let held = |parts, shape| {
             V::Held(Rc::new(Held {
-                atom,
+                shape,
                 parts,
-                drops: self.drops.clone(),
+                drops,
             }))
         };
+        if let Some(i) = family_operand(p)
+            && let Some(V::Held(h)) = args.get(i)
+            && matches!(h.shape, Shape::Family(_))
+        {
+            let h = h.clone();
+            return self.held_family(p, h, &args);
+        }
         match p {
-            Prim::Tuple => return Ok(Step::Give(held(args, None))),
+            Prim::Tuple => return Ok(Step::Give(held(args, Shape::Tuple))),
+            // A display with an entry that is no data (DESIGN.md sec:values_morphisms: a family
+            // is a morphism, and a function may be its value): its keys, data, by the rules of
+            // a data display ([`HeldFamily::new`]), and each such entry a part.
+            Prim::Entries => {
+                let mut entries = Vec::with_capacity(args.len() / 2);
+                let mut parts = Vec::new();
+                let mut it = args.into_iter();
+                while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                    let V::Data(k) = k else {
+                        return type_err(format!("{} applied to a function", p.named(None)));
+                    };
+                    match v {
+                        V::Data(v) => entries.push((k, Some(v))),
+                        v => {
+                            parts.push(v);
+                            entries.push((k, None));
+                        }
+                    }
+                }
+                return match HeldFamily::new(entries)? {
+                    Some(f) => Ok(Step::Give(held(parts, Shape::Family(f)))),
+                    None => unreachable!("an entry that is no data led here"),
+                };
+            }
             // The atom is made from marks, its payload's positions, by the rules every atom
             // follows ([`prim_data`]: its name, its field names in order, none repeated), and
             // each part is put where its mark landed.
@@ -1887,10 +1968,13 @@ impl<'t> Machine<'_, 't> {
                     };
                     ordered.push(parts[*i as usize].take().expect("each mark once"));
                 }
-                return Ok(Step::Give(held(ordered, Some((shape.name, shape.fields)))));
+                return Ok(Step::Give(held(
+                    ordered,
+                    Shape::Atom(shape.name, shape.fields),
+                )));
             }
             // A tuple's keys are its positions; any other key misses, as for data (`prim_data`).
-            Prim::TupleGet | Prim::At if matches!(&args[0], V::Held(h) if h.atom.is_none()) => {
+            Prim::TupleGet | Prim::At if matches!(&args[0], V::Held(h) if h.is_tuple()) => {
                 let V::Held(h) = &args[0] else {
                     unreachable!("matched above")
                 };
@@ -1942,6 +2026,97 @@ impl<'t> Machine<'_, 't> {
         ))
     }
 
+    /// Primitive `p` reading the held family `h`, its operand [`family_operand`] among `args`,
+    /// as [`prim_on`] reads a data family: an entry is a part or data, a key that is an atom
+    /// passes through, a key it lacks is `#notFound` (`#outOfBounds` for `At`), and an entry
+    /// step gives the tuple `(k, v)`, held when `v` is a part.
+    // Complexity tradeoff: each read is one lookup in the family's keys, O(log n), as for
+    // data ([`HeldFamily`]); `first` and `last` descend one level per step, O(depth · log n).
+    fn held_family(&mut self, p: Prim, h: Rc<Held<'t>>, args: &[V<'t>]) -> R<Step<'t>> {
+        let Shape::Family(f) = &h.shape else {
+            unreachable!("called on a held family")
+        };
+        let entry = |e: HeldEntry<'_>| match e {
+            HeldEntry::Data(v) => V::Data(v.clone()),
+            HeldEntry::Part(i) => h.parts[i].clone(),
+        };
+        let drops = self.drops.clone();
+        let pair = |k: &Value, e: HeldEntry<'_>| match e {
+            HeldEntry::Data(v) => V::Data(Value::tuple(vec![k.clone(), v.clone()])),
+            HeldEntry::Part(i) => V::Held(Rc::new(Held {
+                shape: Shape::Tuple,
+                parts: vec![V::Data(k.clone()), h.parts[i].clone()],
+                drops,
+            })),
+        };
+        let none = || give(Value::tuple(Vec::new()));
+        match p {
+            Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
+                let k = &args[usize::from(p != Prim::Has)];
+                match k {
+                    V::Data(k @ Value::Atom(_)) => give(k.clone()),
+                    V::Data(k) => match (p, f.get(k)) {
+                        (Prim::Has, e) => give(Value::Bool(e.is_some())),
+                        (_, Some(e)) => Ok(Step::Give(entry(e))),
+                        (Prim::At, None) => give(Value::atom("outOfBounds")),
+                        (_, None) => give(Value::atom("notFound")),
+                    },
+                    k if held_atom(k) => Ok(Step::Give(k.clone())),
+                    _ => type_err(format!("{} at a function", p.named(None))),
+                }
+            }
+            Prim::Count => give(Value::Int(f.len() as i64)),
+            Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
+                Some((k, e)) => Ok(Step::Give(pair(k, e))),
+                None => none(),
+            },
+            Prim::EntryAfter | Prim::EntryBefore => {
+                // The entry tuple given is one an entry step made: data, or held when its
+                // value is a part.
+                let k = match &args[1] {
+                    V::Data(Value::Tuple(e)) if e.len() == 2 => &e[0],
+                    V::Held(e) if e.is_tuple() && e.parts.len() == 2 => match &e.parts[0] {
+                        V::Data(k) => k,
+                        _ => return type_err(format!("{} at a function", p.named(None))),
+                    },
+                    _ => {
+                        return type_err(format!(
+                            "{} given something other than an entry",
+                            p.named(None)
+                        ));
+                    }
+                };
+                match f.beside(k, p == Prim::EntryAfter) {
+                    Some((k, e)) => Ok(Step::Give(pair(k, e))),
+                    None => none(),
+                }
+            }
+            Prim::First | Prim::Last => {
+                let last = p == Prim::Last;
+                // A part that is a held family is a level beneath its key: descend into it.
+                let mut at = h.clone();
+                loop {
+                    let Shape::Family(f) = &at.shape else {
+                        unreachable!("only held families are entered")
+                    };
+                    let next = match f.end(last) {
+                        None => return give(Value::atom("none")),
+                        Some((_, HeldEntry::Data(Value::Family(inner)))) => {
+                            return give(leaf_at_end(inner, last));
+                        }
+                        Some((_, HeldEntry::Data(v))) => return give(v.clone()),
+                        Some((_, HeldEntry::Part(i))) => match &at.parts[i] {
+                            V::Held(n) if matches!(n.shape, Shape::Family(_)) => n.clone(),
+                            v => return Ok(Step::Give(v.clone())),
+                        },
+                    };
+                    at = next;
+                }
+            }
+            _ => unreachable!("`family_operand` names these primitives only"),
+        }
+    }
+
     fn prim(&mut self, p: Prim, args: Vec<V<'t>>) -> R<Step<'t>> {
         if let Some(n) = p.arity()
             && args.len() != n
@@ -1956,10 +2131,10 @@ impl<'t> Machine<'_, 't> {
                 ),
             ));
         }
-        // A tuple or an atom made with a part that is no data, or a value that holds a
-        // function given to any primitive (DESIGN.md step L1.17).
+        // A tuple, an atom or a family display made with a part that is no data, or a value
+        // that holds a function given to any primitive (DESIGN.md step L1.17).
         if args.iter().any(|a| matches!(a, V::Held(_)))
-            || (matches!(p, Prim::Tuple | Prim::Atom)
+            || (matches!(p, Prim::Tuple | Prim::Atom | Prim::Entries)
                 && args.iter().any(|a| !matches!(a, V::Data(_))))
         {
             return self.held(p, args);
@@ -2119,10 +2294,46 @@ impl<'t> Machine<'_, 't> {
         }
     }
 
-    /// Evaluates the entry at the next key, or makes the family.
+    /// Begins a `fam` over `keys`: binds `var` to each and evaluates `body` (child 1 at `at`).
+    fn begin_fam(
+        &mut self,
+        var: &'t str,
+        body: &'t Term,
+        at: At,
+        env: Env<'t>,
+        keys: Vec<Value>,
+    ) -> R<Step<'t>> {
+        self.begin_pure();
+        let out = Vec::with_capacity(keys.len());
+        let at = self.ev.child(at, 1);
+        self.fam(Box::new(Fam {
+            keys: keys.into_iter(),
+            key: None,
+            var,
+            body,
+            at,
+            env,
+            out,
+            parts: Vec::new(),
+        }))
+    }
+
+    /// Evaluates the entry at the next key, or makes the family: data when every entry is,
+    /// and held ([`HeldFamily`]) when one is a function or holds one.
     fn fam(&mut self, mut st: Box<Fam<'t>>) -> R<Step<'t>> {
         let Some(k) = st.keys.next() else {
-            return give(Value::Family(Family::from_leaves(st.out)?));
+            if st.parts.is_empty() {
+                let leaves = st.out.into_iter();
+                let leaves = leaves.map(|(k, v)| (vec![k], v.expect("every entry is data")));
+                let leaves: Vec<_> = leaves.collect();
+                return give(Value::Family(Family::from_leaves(leaves)?));
+            }
+            let f = HeldFamily::new(st.out)?.expect("an entry that is no data was made");
+            return Ok(Step::Give(V::Held(Rc::new(Held {
+                shape: Shape::Family(f),
+                parts: st.parts,
+                drops: self.drops.clone(),
+            }))));
         };
         self.ev.enter(std::slice::from_ref(&k));
         let env = bind(st.env.clone(), st.var, V::Data(k.clone()), None);
@@ -2768,7 +2979,26 @@ impl SplitMix {
 
 /// Whether `v` is an atom that holds a function.
 fn held_atom(v: &V<'_>) -> bool {
-    matches!(v, V::Held(h) if h.atom.is_some())
+    matches!(v, V::Held(h) if h.atom().is_some())
+}
+
+/// The operand of primitive `p` that is a family it reads, which [`Machine::held_family`]
+/// reads when it is held; `None` for a primitive that reads none.
+fn family_operand(p: Prim) -> Option<usize> {
+    match p {
+        Prim::Get
+        | Prim::TupleGet
+        | Prim::At
+        | Prim::Count
+        | Prim::FirstEntry
+        | Prim::LastEntry
+        | Prim::EntryAfter
+        | Prim::EntryBefore
+        | Prim::First
+        | Prim::Last => Some(0),
+        Prim::Has => Some(1),
+        _ => None,
+    }
 }
 
 /// Whether `v`, data, a function or a value that holds one, matches `pat`, binding its
@@ -2788,10 +3018,10 @@ fn matches_any<'t>(pat: &'t Pattern, v: &V<'t>, env: &mut Env<'t>, fact: Option<
             }
             (Pattern::Is(t), V::Held(h)) => t.contains(&h.stand_in()),
             (Pattern::Is(t), _) => t.functions(),
-            (Pattern::AnyAtom, V::Held(h)) => h.atom.is_some(),
+            (Pattern::AnyAtom, V::Held(h)) => h.atom().is_some(),
             (Pattern::Atom(name, ps), V::Held(h)) => {
                 // A held atom has a payload, with a function in it, so it is never bare.
-                let hit = matches!(&h.atom, Some((n, f)) if n == name && f.is_empty())
+                let hit = matches!(h.atom(), Some((n, f)) if n == name && f.is_empty())
                     && !ps.is_empty()
                     && ps.len() == h.parts.len();
                 if hit {
@@ -2799,7 +3029,7 @@ fn matches_any<'t>(pat: &'t Pattern, v: &V<'t>, env: &mut Env<'t>, fact: Option<
                 }
                 hit
             }
-            (Pattern::Fields(name, fs), V::Held(h)) => match &h.atom {
+            (Pattern::Fields(name, fs), V::Held(h)) => match h.atom() {
                 Some((n, f)) if n == name && !f.is_empty() => {
                     fs.iter().rev().all(|(x, p)| match f.binary_search(x) {
                         Ok(i) => {
@@ -2812,7 +3042,7 @@ fn matches_any<'t>(pat: &'t Pattern, v: &V<'t>, env: &mut Env<'t>, fact: Option<
                 _ => false,
             },
             (Pattern::Tuple(ps), V::Held(h)) => {
-                let hit = h.atom.is_none() && ps.len() == h.parts.len();
+                let hit = h.is_tuple() && ps.len() == h.parts.len();
                 if hit {
                     left.extend(ps.iter().zip(&h.parts).rev());
                 }
@@ -3092,7 +3322,7 @@ fn entry_tuple(e: Option<&(Value, Value)>) -> Value {
 // Complexity tradeoff: the naive version lists the leaves (`Family::leaves`) and takes the
 // least keypath, O(n log n) for n leaves. Used: the least (greatest) entry of each level the
 // descent passes, O(log n) per level, O(d log n) for d levels. Tradeoff: none.
-fn leaf_at_end(f: &Family, last: bool) -> Value {
+pub fn leaf_at_end(f: &Family, last: bool) -> Value {
     let mut level = f;
     loop {
         let e = match last {

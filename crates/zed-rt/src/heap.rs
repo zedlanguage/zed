@@ -30,7 +30,7 @@ use std::{mem, slice};
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::Pattern;
 use zed_kernel::types::{Type, Universe};
-use zed_kernel::value::{Atom, Family, Fields, Items, SharedParts, Value};
+use zed_kernel::value::{Atom, Family, Fields, HeldFamily, Items, SharedParts, Value};
 
 use zed_kernel::Text;
 
@@ -192,11 +192,46 @@ pub enum Obj {
 // `l01_36_cranelift::held_values` and `bench::held_values` (COMPLEXITY.md row HELD-cells).
 #[derive(Clone, Debug)]
 pub struct HeldObj {
-    /// `None` for a tuple; for an atom, its name and its field names, sorted, empty for a
-    /// payload by position.
-    pub atom: Option<(Arc<str>, Fields)>,
-    /// The components of a tuple, or the payload of an atom in the order of its field names.
+    /// What it is: a tuple, an atom or a family.
+    pub shape: HeldShape,
+    /// The components of a tuple, the payload of an atom in the order of its field names, or
+    /// the entries of a family that are no data, numbered as its [`HeldFamily`] numbers them.
     pub parts: Box<[Word]>,
+}
+
+/// What an [`HeldObj`] is, as the kernel's `Shape` of a held value.
+#[derive(Clone, Debug)]
+pub enum HeldShape {
+    /// A tuple.
+    Tuple,
+    /// An atom: its name and its field names, sorted, empty for a payload by position.
+    Atom(Arc<str>, Fields),
+    /// A family with an entry that is no data (DESIGN.md sec:values_morphisms): its keys and
+    /// its data entries; each other entry is a part.
+    Family(Box<HeldFamily>),
+}
+
+impl HeldObj {
+    /// Its name and field names, when it is an atom.
+    pub fn atom(&self) -> Option<(&Arc<str>, &Fields)> {
+        match &self.shape {
+            HeldShape::Atom(n, f) => Some((n, f)),
+            _ => None,
+        }
+    }
+
+    /// Whether it is a tuple.
+    pub fn is_tuple(&self) -> bool {
+        matches!(self.shape, HeldShape::Tuple)
+    }
+
+    /// Its keys and data entries, when it is a family.
+    pub fn family(&self) -> Option<&HeldFamily> {
+        match &self.shape {
+            HeldShape::Family(f) => Some(f),
+            _ => None,
+        }
+    }
 }
 
 impl Obj {
@@ -215,8 +250,11 @@ impl Obj {
                 _ => "kernel value",
             },
             Obj::Clo { .. } => "closure",
-            Obj::Held(h) if h.atom.is_none() => "tuple",
-            Obj::Held(_) => "atom",
+            Obj::Held(h) => match h.shape {
+                HeldShape::Tuple => "tuple",
+                HeldShape::Atom(..) => "atom",
+                HeldShape::Family(_) => "family",
+            },
         }
     }
 
@@ -811,7 +849,7 @@ impl Heap {
 
     /// Whether `w` is an atom that holds a function.
     pub fn is_held_atom(&self, w: Word) -> Result<bool, String> {
-        Ok(self.held(w)?.is_some_and(|h| h.atom.is_some()))
+        Ok(self.held(w)?.is_some_and(|h| h.atom().is_some()))
     }
 
     /// Whether data word `w` is an atom, a failure.
@@ -1072,9 +1110,10 @@ impl Heap {
                     Some(Obj::Atom { name, fields, args }) => {
                         (Some((&**name, &**fields)), false, args.len(), holder)
                     }
-                    // A held atom has a payload, with a function in it, so it is never bare.
-                    Some(Obj::Held(h)) => {
-                        let atom = h.atom.as_ref().map(|(n, f)| (&**n, &**f));
+                    // A held atom has a payload, with a function in it, so it is never bare. A
+                    // family is no tuple or atom, as a data family is not.
+                    Some(Obj::Held(h)) if h.family().is_none() => {
+                        let atom = h.atom().map(|(n, f)| (&**n, &**f));
                         (atom, false, h.parts.len(), holder)
                     }
                     _ => return Ok(None),
@@ -1122,7 +1161,7 @@ impl Heap {
         match h {
             Holder::Cell(c) => match &self.cells[c].obj {
                 Some(Obj::Atom { fields, .. }) => fields,
-                Some(Obj::Held(h)) => h.atom.as_ref().map_or(&[], |(_, f)| f),
+                Some(Obj::Held(h)) => h.atom().map_or(&[], |(_, f)| f),
                 _ => &[],
             },
             Holder::Table { entry, .. } => match &self.vals[entry].value {
@@ -1237,13 +1276,18 @@ impl Heap {
                 }
                 None => {
                     let (top, done) = stack.pop().expect("the top read above");
-                    let v = match &self.held(top)?.expect("a held value").atom {
-                        None => Value::tuple(done),
-                        Some((name, fields)) => Value::Atom(Atom {
+                    let v = match &self.held(top)?.expect("a held value").shape {
+                        HeldShape::Tuple => Value::tuple(done),
+                        HeldShape::Atom(name, fields) => Value::Atom(Atom {
                             name: name.clone(),
                             fields: fields.clone(),
                             payload: Some(done.into()),
                         }),
+                        // Distinct top-level keys, each part beneath its own: no collision.
+                        HeldShape::Family(f) => Value::Family(
+                            f.with_parts(done)
+                                .expect("parts beneath distinct keys do not collide"),
+                        ),
                     };
                     match stack.last_mut() {
                         Some((_, up)) => up.push(v),

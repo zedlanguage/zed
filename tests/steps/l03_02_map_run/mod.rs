@@ -12,6 +12,7 @@
 #![cfg(target_os = "linux")]
 
 mod bench;
+mod functions;
 mod pushes;
 mod runs;
 mod types;

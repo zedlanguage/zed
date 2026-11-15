@@ -1485,6 +1485,130 @@ impl Family {
     }
 }
 
+/// The keys of a family with an entry that is no data, a function or a value that holds one
+/// (DESIGN.md sec:values_morphisms, "Application is indexing"; step L1.17): the evaluator, the
+/// counting machine and the native runtime each keep the entries that are no data as parts of
+/// their own, numbered from 0 in the order they were given, and this the rest.
+// Complexity tradeoff: a [`Value`] holds no function (see `V` in eval.rs), so the naive form,
+// a family of the evaluator's values, would be a second ordered map with its own key rules
+// and its own collisions, which must agree with [`Family::from_leaves`] entry for entry. Used:
+// one data family `all` built by `from_leaves` from the entries with each part written as a
+// mark, the integer of its number, so every key rule, every collision and its keypath, and
+// the merging of levels are those of a data display, O(n log n) for n entries; and a second
+// family `parts` from each part's key to its number, O(p log p) for p parts. A read is one
+// lookup in each, O(log n). Tradeoff: two maps where one would do; the mark of a part is an
+// integer, so `all` alone cannot tell a part from an integer entry, which `parts` does.
+#[derive(Clone, Debug)]
+pub struct HeldFamily {
+    /// Every entry, with each part as its mark, `Value::Int` of its number.
+    all: Family,
+    /// The key of each part, mapped to its number.
+    parts: Family,
+}
+
+/// An entry of a [`HeldFamily`]: data, or the number of a part.
+#[derive(Clone, Copy, Debug)]
+pub enum HeldEntry<'a> {
+    /// A data entry.
+    Data(&'a Value),
+    /// The part with this number.
+    Part(usize),
+}
+
+impl HeldFamily {
+    /// The family of `entries`, key then value, `None` for the next part, as a display gives
+    /// them: a key given twice is a collision, a family is a level beneath its key, and an
+    /// error is the one [`Family::from_leaves`] gives for the same entries with each part a
+    /// leaf of its own. `None` when no entry is a part.
+    pub fn new(
+        entries: impl IntoIterator<Item = (Value, Option<Value>)>,
+    ) -> Result<Option<Self>, KernelError> {
+        let mut parts = Vec::new();
+        let mut leaves = Vec::new();
+        for (k, v) in entries {
+            let k = k.key();
+            let v = v.unwrap_or_else(|| {
+                let mark = Value::Int(parts.len() as i64);
+                parts.push((vec![k.clone()], mark.clone()));
+                mark
+            });
+            leaves.push((vec![k], v));
+        }
+        if parts.is_empty() {
+            return Ok(None);
+        }
+        // `parts` has no key twice: a key given twice is a collision in `all`, found first.
+        let all = Family::from_leaves(leaves)?;
+        let parts = Family::from_leaves(parts)?;
+        Ok(Some(HeldFamily { all, parts }))
+    }
+
+    /// The entry at a top-level key `k`, or `None` when `k` is not a key.
+    pub fn get(&self, k: &Value) -> Option<HeldEntry<'_>> {
+        let v = self.all.get(k)?;
+        Some(self.entry(k, v))
+    }
+
+    fn entry<'a>(&'a self, k: &Value, v: &'a Value) -> HeldEntry<'a> {
+        match self.parts.get(k) {
+            Some(Value::Int(i)) => HeldEntry::Part(*i as usize),
+            _ => HeldEntry::Data(v),
+        }
+    }
+
+    /// The number of top-level entries.
+    pub fn len(&self) -> usize {
+        self.all.len()
+    }
+
+    /// Whether the family has no entries; never, since one entry at least is a part.
+    pub fn is_empty(&self) -> bool {
+        self.all.is_empty()
+    }
+
+    /// The top-level entries in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&Value, HeldEntry<'_>)> {
+        self.all.iter().map(|(k, v)| (k, self.entry(k, v)))
+    }
+
+    /// The top-level keys in order.
+    pub fn keys(&self) -> impl Iterator<Item = &Value> {
+        self.all.keys()
+    }
+
+    /// The entry of the least top-level key, or the greatest when `last`.
+    pub fn end(&self, last: bool) -> Option<(&Value, HeldEntry<'_>)> {
+        let e = match last {
+            false => self.all.0.get_min(),
+            true => self.all.0.get_max(),
+        };
+        e.map(|(k, v)| (k, self.entry(k, v)))
+    }
+
+    /// The entry of the least top-level key above `k`, or the greatest below it when not
+    /// `after`; `k` need not be a key.
+    pub fn beside(&self, k: &Value, after: bool) -> Option<(&Value, HeldEntry<'_>)> {
+        let e = match k.is_key() {
+            true => self.all.0.beside(k, after),
+            false => self.all.0.beside(&k.key(), after),
+        };
+        e.map(|(k, v)| (k, self.entry(k, v)))
+    }
+
+    /// The data family with the entries of `self`, each part `i` replaced by `stand_ins[i]`.
+    pub fn with_parts(&self, stand_ins: Vec<Value>) -> Result<Family, KernelError> {
+        let mut stand_ins: Vec<Option<Value>> = stand_ins.into_iter().map(Some).collect();
+        let leaves = self.iter().map(|(k, e)| {
+            let v = match e {
+                HeldEntry::Data(v) => v.clone(),
+                HeldEntry::Part(i) => stand_ins[i].take().expect("each part once"),
+            };
+            (vec![k.clone()], v)
+        });
+        Family::from_leaves(leaves.collect::<Vec<_>>())
+    }
+}
+
 /// One level of a union in progress: the larger family, the smaller family's entries yet to
 /// add, and the entries so far.
 struct Merging<'a> {

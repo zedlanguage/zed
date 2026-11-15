@@ -10,12 +10,14 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use zed_kernel::eval::leaf_at_end;
+use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
-use zedc::zir::memory::{Mode, held_term};
+use zedc::zir::memory::{Mode, held_family_term, held_term};
 
-use zed_rt::{Heap, HeldObj, Obj, Paths, Word};
+use zed_rt::{Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
 use crate::tables::{NodeInfo, Tables};
 
@@ -466,10 +468,29 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         // its cell as a data tuple's are, as the machine makes it (`Mv::Held`).
         Op::Prim(Prim::Tuple) if any_holds_function(s, ins)? => {
             Ok(s.heap.alloc(Obj::Held(Box::new(HeldObj {
-                atom: None,
+                shape: HeldShape::Tuple,
                 parts: ins.into(),
             }))))
         }
+        // A display with an entry that is no data is a held family; a key that is no data, or
+        // entries the kernel refuses, are the kernel's error.
+        Op::Prim(Prim::Entries) if any_holds_function(s, ins)? => match held_entries(s, ins)? {
+            Some(h) => {
+                let w = s.heap.alloc(Obj::Held(Box::new(h)));
+                consume(s, ni, ins)?;
+                Ok(w)
+            }
+            None => slow(t, s, ni, ins),
+        },
+        // A held family read: the entry, owned, or what the kernel gives where it is not
+        // this one's to make.
+        Op::Prim(p) if family_at(s, *p, ins)?.is_some() => match family_read(s, *p, ins)? {
+            Some(w) => {
+                consume(s, ni, ins)?;
+                Ok(w)
+            }
+            None => slow(t, s, ni, ins),
+        },
         Op::Prim(Prim::Atom)
             if ins.len() > 2 && all_data(s, &ins[..2])? && any_holds_function(s, &ins[2..])? =>
         {
@@ -477,13 +498,13 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
                 None => slow(t, s, ni, ins),
                 Some(sh) => Ok(s.heap.alloc(Obj::Held(Box::new(HeldObj {
                     parts: sh.order.iter().map(|&i| ins[2 + i]).collect(),
-                    atom: Some((sh.name, sh.fields)),
+                    shape: HeldShape::Atom(sh.name, sh.fields),
                 })))),
             }
         }
         // A held tuple read at a key: the part, or what the kernel gives for a key outside it.
         Op::Prim(Prim::TupleGet | Prim::At)
-            if ins.len() == 2 && s.heap.held(ins[0])?.is_some_and(|h| h.atom.is_none()) =>
+            if ins.len() == 2 && s.heap.held(ins[0])?.is_some_and(|h| h.is_tuple()) =>
         {
             match read_held(s, ins[0], ins[1])? {
                 Some(w) => give(s, ni, ins, w),
@@ -496,6 +517,18 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
             Some(w) => give(s, ni, ins, w),
             None => slow(t, s, ni, ins),
         },
+        // A held family applied to a key is read at it, as the kernel applies it; a primitive
+        // called on one reads it as the primitive's node does.
+        Op::Apply if !ins.is_empty() && family_called(t, s, ins)?.is_some() => {
+            let (p, args) = family_called(t, s, ins)?.expect("checked above");
+            match family_read(s, p, &ins[args..])? {
+                Some(w) => {
+                    consume(s, ni, ins)?;
+                    Ok(w)
+                }
+                None => slow(t, s, ni, ins),
+            }
+        }
         // A call that is not a closure's, of a held value or on one.
         Op::Apply if any_held(s, ins)? => match called(t, s, ins)? {
             Some(w) => give(s, ni, ins, w),
@@ -631,6 +664,194 @@ fn read_held(s: &Run, h: Word, k: Word) -> Result<Option<Word>, String> {
     Ok(s.heap.is_held_atom(k)?.then_some(k))
 }
 
+/// The entries of display `ins`, key then value, as a held family with each value that holds
+/// a function a part, each part given a reference of its own; `None` when a key holds a
+/// function or the kernel refuses the entries, which is then the kernel's error to give.
+// Complexity tradeoff: the naive display hands every entry to the kernel, which cannot give a
+// value that holds a function back (`Evaluator::run` gives data). Here the keys and data
+// entries are read out of their words, as the kernel's term for them would be, and the
+// family built by the kernel's own rules ([`HeldFamily::new`]): O(n log n) for n entries, the
+// cost of a data display. Tradeoff: the data entries are copied out of their words, as the
+// display of data copies them for the kernel.
+fn held_entries(s: &mut Run, ins: &[Word]) -> Result<Option<HeldObj>, String> {
+    let mut entries = Vec::with_capacity(ins.len() / 2);
+    let mut parts = Vec::new();
+    for kv in ins.chunks(2) {
+        let &[k, v] = kv else { return Ok(None) };
+        if s.heap.holds_function(k)? {
+            return Ok(None);
+        }
+        let k = s.heap.value(k)?;
+        if s.heap.holds_function(v)? {
+            parts.push(v);
+            entries.push((k, None));
+        } else {
+            entries.push((k, Some(s.heap.value(v)?)));
+        }
+    }
+    let Ok(Some(f)) = HeldFamily::new(entries) else {
+        return Ok(None);
+    };
+    for &p in &parts {
+        s.heap.inc(p)?;
+    }
+    Ok(Some(HeldObj {
+        shape: HeldShape::Family(Box::new(f)),
+        parts: parts.into(),
+    }))
+}
+
+/// The position in `ins` of the held family primitive `p` reads, when it reads one.
+fn family_at(s: &Run, p: Prim, ins: &[Word]) -> Result<Option<usize>, String> {
+    let (at, n) = match p {
+        Prim::Get | Prim::TupleGet | Prim::At | Prim::EntryAfter | Prim::EntryBefore => (0, 2),
+        Prim::Has => (1, 2),
+        Prim::Count | Prim::FirstEntry | Prim::LastEntry | Prim::First | Prim::Last => (0, 1),
+        _ => return Ok(None),
+    };
+    if ins.len() != n {
+        return Ok(None);
+    }
+    let held = s.heap.held(ins[at])?.is_some_and(|h| h.family().is_some());
+    Ok(held.then_some(at))
+}
+
+/// The primitive a call `ins[0](ins[1..])` reads a held family with, and where its operands
+/// start in `ins`: `Get` for the family applied to one key, or the primitive called.
+fn family_called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<(Prim, usize)>, String> {
+    if ins.len() == 2 && family_at(s, Prim::Get, ins)?.is_some() {
+        return Ok(Some((Prim::Get, 0)));
+    }
+    if ins[0].tag != Word::PRIM {
+        return Ok(None);
+    }
+    let p = t.prims[ins[0].bits as usize];
+    Ok(family_at(s, p, &ins[1..])?.map(|_| (p, 1)))
+}
+
+/// What primitive `p` gives on `ins`, which hold a held family where [`family_at`] says, as
+/// the kernel's `Machine::held_family` gives it, as an owned word; `None` where the kernel
+/// gives an error, which is then the kernel's to give.
+// Complexity tradeoff: the naive read hands the family to the kernel, O(n) per read to build
+// its term, so a loop of n reads is O(n²), and an entry that is a function cannot come back.
+// Here each read is one lookup in the family's keys, O(log n), and `first` and `last` descend
+// one level per step, O(depth · log n). Tradeoff: the kernel's rules for these reads are
+// written a second time and must agree with it; tests in `completeness` check that they do.
+fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, String> {
+    enum Got {
+        Part(Word),
+        Data(Value),
+        Pair(Value, Word),
+    }
+    let at = family_at(s, p, ins)?.expect("a held family operand");
+    let fam = ins[at];
+    // The key read, or the entry tuple stepped from.
+    let other = match ins.len() {
+        2 => Some(ins[1 - at]),
+        _ => None,
+    };
+    let key = match (p, other) {
+        (_, None) => None,
+        (Prim::EntryAfter | Prim::EntryBefore, Some(e)) => {
+            if let Some(h) = s.heap.held(e)? {
+                match (h.is_tuple(), &h.parts[..]) {
+                    (true, &[k, _]) if !s.heap.holds_function(k)? => Some(s.heap.value(k)?),
+                    _ => return Ok(None),
+                }
+            } else if s.heap.holds_function(e)? {
+                return Ok(None);
+            } else {
+                match s.heap.value(e)? {
+                    Value::Tuple(e) if e.len() == 2 => Some(e[0].clone()),
+                    _ => return Ok(None),
+                }
+            }
+        }
+        (_, Some(k)) => {
+            // A key that is a failure passes through.
+            if s.heap.is_held_atom(k)? {
+                s.heap.inc(k)?;
+                return Ok(Some(k));
+            }
+            if s.heap.holds_function(k)? {
+                return Ok(None);
+            }
+            match s.heap.value(k)? {
+                k @ Value::Atom(_) => return s.heap.fresh(&k).map(Some),
+                k => Some(k),
+            }
+        }
+    };
+    let h = s.heap.held(fam)?.expect("a held family");
+    let f = h.family().expect("a held family");
+    let entry = |e: HeldEntry<'_>| match e {
+        HeldEntry::Data(v) => Got::Data(v.clone()),
+        HeldEntry::Part(i) => Got::Part(h.parts[i]),
+    };
+    let pair = |k: &Value, e: HeldEntry<'_>| match e {
+        HeldEntry::Data(v) => Got::Data(Value::tuple(vec![k.clone(), v.clone()])),
+        HeldEntry::Part(i) => Got::Pair(k.clone(), h.parts[i]),
+    };
+    let none = || Got::Data(Value::tuple(Vec::new()));
+    let got = match p {
+        Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
+            let k = key.expect("a key");
+            match (p, f.get(&k)) {
+                (Prim::Has, e) => Got::Data(Value::Bool(e.is_some())),
+                (_, Some(e)) => entry(e),
+                (Prim::At, None) => Got::Data(Value::atom("outOfBounds")),
+                (_, None) => Got::Data(Value::atom("notFound")),
+            }
+        }
+        Prim::Count => Got::Data(Value::Int(f.len() as i64)),
+        Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
+            Some((k, e)) => pair(k, e),
+            None => none(),
+        },
+        Prim::EntryAfter | Prim::EntryBefore => {
+            match f.beside(&key.expect("a key"), p == Prim::EntryAfter) {
+                Some((k, e)) => pair(k, e),
+                None => none(),
+            }
+        }
+        Prim::First | Prim::Last => {
+            // A part that is a held family is a level beneath its key: descend into it.
+            let last = p == Prim::Last;
+            let mut at = h;
+            loop {
+                let f = at.family().expect("only held families are entered");
+                match f.end(last) {
+                    None => break Got::Data(Value::atom("none")),
+                    Some((_, HeldEntry::Data(Value::Family(inner)))) => {
+                        break Got::Data(leaf_at_end(inner, last));
+                    }
+                    Some((_, HeldEntry::Data(v))) => break Got::Data(v.clone()),
+                    Some((_, HeldEntry::Part(i))) => match s.heap.held(at.parts[i])? {
+                        Some(n) if n.family().is_some() => at = n,
+                        _ => break Got::Part(at.parts[i]),
+                    },
+                }
+            }
+        }
+        _ => unreachable!("`family_at` names these primitives only"),
+    };
+    Ok(Some(match got {
+        Got::Data(v) => s.heap.fresh(&v)?,
+        Got::Part(w) => {
+            s.heap.inc(w)?;
+            w
+        }
+        Got::Pair(k, w) => {
+            let k = s.heap.fresh(&k)?;
+            s.heap.inc(w)?;
+            s.heap.alloc(Obj::Held(Box::new(HeldObj {
+                shape: HeldShape::Tuple,
+                parts: vec![k, w].into(),
+            })))
+        }
+    }))
+}
+
 /// The input that primitive `p` gives back on `ins`, one of which is a held value, when `p`
 /// passes an atom that holds a function through as a failure does. As the machine's `passed`
 /// and the kernel's `Machine::held`.
@@ -660,7 +881,7 @@ fn passed(s: &Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, String> {
 /// kernel calls it. As the machine's `called`.
 fn called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<Word>, String> {
     let held_tuple =
-        |w: Word| -> Result<bool, String> { Ok(s.heap.held(w)?.is_some_and(|h| h.atom.is_none())) };
+        |w: Word| -> Result<bool, String> { Ok(s.heap.held(w)?.is_some_and(|h| h.is_tuple())) };
     if ins.len() == 2 && held_tuple(ins[0])? {
         return read_held(s, ins[0], ins[1]);
     }
@@ -712,8 +933,9 @@ fn run(s: &mut Run, q: &Term) -> Result<Value, String> {
 }
 
 /// The kernel term for word `w`; a lookup port is read once, by a `let` in `lets`, and each
-/// closure's and held value's term is built once, in `lets.closures`. A held value is the
-/// tuple or atom primitive on its parts' terms, as the machine builds it (`held_term`).
+/// closure's and held value's term is built once, in `lets.closures`. A held value is a
+/// variable bound in `lets.held` to the tuple, atom or display primitive on its parts' terms,
+/// as the machine builds it (`held_term`), so the term is good only inside [`wrap`].
 fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, String> {
     // Closures capture closures, and held values hold them, as deep as a program builds them,
     // so the values in progress are on a stack, each with the terms of its parts so far.
@@ -739,7 +961,15 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                     }
                     None => {
                         let h = s.heap.held(*clo)?.expect("a held value");
-                        held_term(h.atom.as_ref(), clo.bits as u64, std::mem::take(terms))
+                        let (key, parts) = (clo.bits as u64, std::mem::take(terms));
+                        let made = match &h.shape {
+                            HeldShape::Tuple => held_term(None, key, parts),
+                            HeldShape::Atom(n, f) => held_term(Some((n, f)), key, parts),
+                            HeldShape::Family(f) => held_family_term(f, key, parts),
+                        };
+                        let x: Arc<str> = format!("\0cell {key}").into();
+                        lets.held.push((x.clone(), made));
+                        Term::Var(x)
                     }
                 };
                 let (clo, _) = stack.pop().expect("the closure finished");
@@ -784,9 +1014,13 @@ fn port_var(p: &str) -> Arc<str> {
     format!("\0port {p}").into()
 }
 
-/// `t` with each lookup port in `ports` read first.
-fn wrap(ports: Lets, t: Term) -> Term {
-    ports.order.into_iter().rev().fold(t, |b, p| {
+/// `t` with each held value in `lets` made first, each before the ones that hold it, and each
+/// lookup port read before them all.
+fn wrap(lets: Lets, t: Term) -> Term {
+    let t = (lets.held.into_iter().rev()).fold(t, |b, (x, made)| {
+        Term::Let(x, Shared::new(made), Shared::new(b))
+    });
+    lets.order.into_iter().rev().fold(t, |b, p| {
         Term::Let(port_var(&p), Shared::new(Term::Read(p)), Shared::new(b))
     })
 }
@@ -801,7 +1035,7 @@ struct Lets {
     /// captured on many paths is built once, so the term is a graph the size of the closures,
     /// not a tree of every path (COMPLEXITY.md R9). No cell is freed while a term is built, so
     /// each word names one value. A closure's term is a lambda whose body is shared, so a copy
-    /// costs its parameter names; a held value's is a `let`, as cheap to copy.
+    /// costs its parameter names; a held value's is the variable `held` binds it to.
     // Complexity tradeoff: the naive build walks a closure once per path to it, 2^d for d
     // levels each capturing the level below twice (R9: 4 times per 2 levels, 17.6 s at 20).
     // Here each closure's term is built once per kernel call and kept by its cell word (index
@@ -809,6 +1043,21 @@ struct Lets {
     // copy sharing the body: O(closures + captures). Tradeoff: one map entry per closure for
     // the call. Nothing is refused. Tests `l01_36_cranelift::shared_closures`.
     closures: HashMap<i64, Term>,
+    /// Each held value met, a variable and the term that makes it, in the order finished, so
+    /// a value's parts come before it; [`wrap`] binds each once, outside the node's term.
+    // Complexity tradeoff: the naive term puts the making of a held value where the node uses
+    // it, and the node's term may run that place once per entry: a `map` over a held family of
+    // n functions made the family again for each entry, O(n²) (row FAIL-family-function-entry,
+    // 0.25 s at 500 entries, 14 s at 4000). Here each is made once per kernel call, O(parts),
+    // and each use reads a variable. Tradeoff: a held value on a path the node does not take
+    // is made anyway, O(its parts), no more than building its term cost. Making it early
+    // cannot fail or change the result: it is made again from a value that exists, so its
+    // atom's fields and its display's keys were accepted once (no collision, no refusal), and
+    // making it reads no port and runs no function. A part is made before the value holding it,
+    // since `term` finishes the part first, and `wrap` binds earlier entries outside later
+    // ones. Test `l03_02_map_run::bench::a_display_of_functions_read_and_applied_runs_in_
+    // linear_time`.
+    held: Vec<(Arc<str>, Term)>,
 }
 
 /// An `if` or `match` whose decision is failure value `v`: the owned inputs are dropped and

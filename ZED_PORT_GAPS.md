@@ -869,6 +869,14 @@ matches in that function. Paths are relative to `crates/` with `src/` dropped.
 | The kernel run on marks (`Int i` in each payload place) to learn an atom's field order and its refusals | `Machine::held_shape`, `hooks::node` (held `Atom`) | None | The same call of the kernel's atom rule, on a payload of keys |
 | A held tuple built by applying a primitive value, `apply((,), …)`, falls to the kernel and stops, since no prelude word is bound to `Prim::Tuple` or `Prim::Atom` and no program can write it | `Machine::slow`, `hooks::called` | None (unreachable from source) | The held arms reached from `Apply` as from `Prim`, if such a word is added |
 
+## Entries from FAIL-family-function-entry (`zed-kernel/src/value.rs`, `eval.rs`, `zed-rt/src/heap.rs`, `zed-native/src/hooks.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A family whose function entries are replaced by marks `Int(j)`, with a second family from key to part number, beside the parts | `HeldFamily`, `HeldShape::Family` | None | A record of the two data families and the parts |
+| `Option<Value>` per entry to say "a part goes here" while the family is built | `HeldFamily::new`, `held_entries` | None | A union `V \| #part` per entry |
+| A third arm in a `match` over a borrowed held value's shape, `HeldShape::{Tuple, Atom, Family}` | `hooks::term`, `Heap::held` users | None | A union member per shape |
+
 ## Entries from T2-eval-repair (`zed-kernel/src/deep.rs`, `value.rs`, `family.rs`, `types.rs`)
 
 | Rust construct | Sites | Gap | At the port |
