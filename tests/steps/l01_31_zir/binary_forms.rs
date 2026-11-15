@@ -2,7 +2,9 @@
 //! offset where it was found (DESIGN L1.31: the binary form gives back the same graph, and a
 //! decoding error names the byte offset).
 
-use zedc::zir::{binary, text};
+use zed_kernel::text::Text;
+use zed_kernel::value::Value;
+use zedc::zir::{Region, Src, binary, text};
 
 /// The binary form of the graph `src`.
 fn bytes(src: &str) -> Vec<u8> {
@@ -205,6 +207,100 @@ fn a_port_named_main_and_a_field_is_refused() {
         binary::decode(&bad),
         Err(format!(
             "byte {name}: `main::a.c` is not a port's name: `main::` takes one name"
+        ))
+    );
+}
+
+/// `"ab"` doubled `k` times: `2^(k + 1)` bytes, each join sharing both halves.
+fn doubled(k: u32) -> Text {
+    (0..k).fold(Text::from("ab"), |t, _| {
+        Text::join(&t, &t).expect("2^(k + 1) bytes fit a length for k up to 62")
+    })
+}
+
+/// A graph whose one result is the string constant `t`.
+pub(crate) fn holding(t: Text) -> Region {
+    let mut g = text::parse("zir 1\nr region function ()\nr results (\"\")\n").unwrap();
+    g.results[0] = Src::Const(Value::Str(t));
+    g
+}
+
+#[test]
+fn a_doubled_string_is_written_as_its_tree() {
+    // 2^63 bytes in shared nodes, which the form that wrote a string's bytes wrote until the
+    // memory ran out (BUILD-doubling-60s): here a few words a node, and read back shared.
+    let t = doubled(62);
+    let data = binary::encode(&holding(t.clone())).expect("memory for the bytes");
+    assert!(data.len() < 1 << 20, "{} bytes", data.len());
+    let back = binary::decode(&data).unwrap();
+    let Src::Const(Value::Str(u)) = &back.results[0] else {
+        panic!("a string constant")
+    };
+    assert_eq!(
+        (u.len(), u.char_count(), u.poly_hash()),
+        (t.len(), t.char_count(), t.poly_hash())
+    );
+    // Used twice, the string is written once and read back as one text.
+    let mut twice = holding(t.clone());
+    twice.results.push(twice.results[0].clone());
+    let data2 = binary::encode(&twice).expect("memory for the bytes");
+    assert!(
+        data2.len() < data.len() + 32,
+        "{} and {} bytes",
+        data.len(),
+        data2.len()
+    );
+    let back = binary::decode(&data2).unwrap();
+    let [Src::Const(Value::Str(a)), Src::Const(Value::Str(b))] = &back.results[..] else {
+        panic!("two string constants")
+    };
+    assert_eq!(a.node_id(), b.node_id());
+    // Short enough to compare by their bytes: a block, joins, multi-byte characters, the
+    // empty string, and a block shared by two parents.
+    let e = Text::from("é€𝄞");
+    let shared = Text::join(&Text::join(&e, &doubled(9)).unwrap(), &e).unwrap();
+    for t in [doubled(0), doubled(1), doubled(12), Text::from(""), shared] {
+        let g = holding(t);
+        let data = binary::encode(&g).expect("memory for the bytes");
+        assert_eq!(binary::decode(&data).as_ref(), Ok(&g));
+    }
+}
+
+#[test]
+fn a_damaged_string_tree_is_refused() {
+    let good = constant("\"ab\"");
+    // Tag 5, then one node: tag 0, a block, and its two bytes; then the text, node 0.
+    let p = at(
+        &good,
+        &[&[5u8, 1, 0, 0, 0, 0, 0, 0, 0, 0][..], &word(2), b"ab"].concat(),
+    );
+    let end = p + 1 + 8 + 1 + 8 + 2;
+    let with = |node: &[u8]| [&good[..p + 9], node, &good[end..]].concat();
+    // A join that names itself, not yet read.
+    assert_eq!(
+        binary::decode(&with(&[&[1u8][..], &word(1), &word(0)].concat())),
+        Err(format!(
+            "byte {}: node 0 of a string is not yet read",
+            p + 18
+        ))
+    );
+    // An empty block, which no text holds.
+    assert_eq!(
+        binary::decode(&with(&[&[0u8][..], &word(0)].concat())),
+        Err(format!("byte {}: an empty block of a string", p + 10))
+    );
+    // A text that names a node not yet read.
+    let bad = [&good[..end], &word(1), &good[end + 8..]].concat();
+    assert_eq!(
+        binary::decode(&bad),
+        Err(format!("byte {end}: node 1 of a string is not yet read"))
+    );
+    // A node tag past the last.
+    assert_eq!(
+        binary::decode(&with(&[2u8])),
+        Err(format!(
+            "byte {}: 2 is not a tag of a node of a string",
+            p + 9
         ))
     );
 }

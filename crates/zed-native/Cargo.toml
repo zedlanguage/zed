@@ -50,6 +50,12 @@ path = "../../tests/steps/l01_36a_executables/limits_binary.rs"
 name = "stops_binary"
 path = "../../tests/steps/l01_36a_executables/stops_binary.rs"
 
+# A program doubling a string 62 and 63 times, built and run as a user does
+# (BUILD-doubling-60s).
+[[test]]
+name = "doubling_binary"
+path = "../../tests/steps/l01_36a_executables/doubling.rs"
+
 # `zedc --report` run as a user runs it (TIME-report).
 [[test]]
 name = "report_binary"

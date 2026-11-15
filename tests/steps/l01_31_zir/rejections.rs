@@ -196,12 +196,12 @@ fn damaged_binary_data() {
         (
             "truncated",
             &good[..good.len() - 3],
-            "byte 142: the data ends, and 8 more bytes were expected",
+            "byte 159: the data ends, and 8 more bytes were expected",
         ),
         (
             "trailing",
             &trailing,
-            "byte 150: 1 byte follows the graph, which ends here",
+            "byte 167: 1 byte follows the graph, which ends here",
         ),
     ];
     for (what, bytes, want) in cases {

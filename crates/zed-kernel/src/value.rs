@@ -946,7 +946,10 @@ fn leaf_digest(v: &Value) -> u64 {
         Value::Rat(r) => (3, r.residues()).hash(&mut h),
         Value::Float(x) => (4, x.get().to_bits()).hash(&mut h),
         Value::Float32(x) => (10, x.get().to_bits()).hash(&mut h),
-        Value::Str(s) => (5, s).hash(&mut h),
+        // By the text's hash from its tree, each distinct node once ([`Text::poly_hash`]), equal
+        // for equal bytes however joined, and not by its bytes: a string doubled 62 times, a few
+        // thousand nodes, would feed 2^62 bytes (item BUILD-doubling-60s).
+        Value::Str(s) => (5, s.poly_hash()).hash(&mut h),
         Value::Family(f) => (6, f.len()).hash(&mut h),
         Value::Atom(_) | Value::Tuple(_) | Value::Path(_) => {
             unreachable!("a value with a sequence")

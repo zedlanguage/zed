@@ -2,25 +2,29 @@
 //!
 //! It begins with the four bytes `ZIR\0` and the version as a 32-bit little-endian word; the
 //! root region follows. Every count, index and integer is a 64-bit little-endian word, every
-//! string a count of bytes and then its UTF-8 bytes, and every choice a one-byte tag. A name
-//! (of an atom, a field, a port or an evidence key) is read by the rule the text form reads one
-//! by, and a pattern binder may also be one the compiler makes (`text::not_a_binder`); a
-//! catalog entry and a string value are not names. A value is written by its structure, a
-//! number outside the 64-bit range and a rational by their sign and the 64-bit limbs of their
-//! numerator and denominator in lowest terms (not their decimal digits, whose conversion costs
-//! more than linear time), a number kept with prime powers, such as `2^2^100`, by the form it is
-//! kept in, its numerator, denominator and powers, with no digits built ([`Rat::kept`]), and a
-//! float by its bits, so every value comes back bit for bit. An
+//! string a count of bytes and then its UTF-8 bytes (a string value as the nodes of the tree its
+//! text is held in, each node once in the graph, `W::text`), and every choice a one-byte tag.
+//! A name (of an atom, a field, a port or an evidence key) is read by the rule the text form
+//! reads one by, and a pattern binder may also be one the compiler makes
+//! (`text::not_a_binder`); a catalog entry and a string value are not names. A value is
+//! written by its structure, a number outside the 64-bit range and a rational by their sign
+//! and the 64-bit limbs of their numerator and denominator in lowest terms (not their decimal
+//! digits, whose conversion costs more than linear time), a number kept with prime powers,
+//! such as `2^2^100`, by the form it is kept in, its numerator, denominator and powers, with
+//! no digits built ([`Rat::kept`]), and a float by its bits, so every value comes back bit for
+//! bit. An
 //! edge is written as its text form ([`super::text::edge`]): a type's representation is
 //! private to the kernel, and its printed form is its exact, canonical description; reading
 //! that text checks the names in it (a state edge's port, a facet's kind). A primitive is its
 //! index in [`PRIMS`]. A decoding error names the byte offset at which it was found.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use num_bigint::{BigInt, BigUint, Sign};
 use zed_kernel::num::{Rat, TooLarge};
 use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Witness};
+use zed_kernel::text::{Piece, Text};
 use zed_kernel::value::{Atom, Value};
 
 use super::text::{self, PRIMS, VERSION};
@@ -72,7 +76,7 @@ fn index<T: PartialEq>(all: &[T], x: &T) -> u8 {
 /// memory to build or write one of its exact numbers ([`Rat::built_parts`]), or to grow the
 /// bytes written.
 pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
-    let mut w = W(MAGIC.to_vec(), None);
+    let mut w = W(MAGIC.to_vec(), None, HashMap::new());
     w.0.extend_from_slice(&VERSION.to_le_bytes());
     w.region(root);
     match w.1 {
@@ -81,9 +85,9 @@ pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
     }
 }
 
-/// The bytes written, and the first refusal of the memory for them, after which the bytes are
-/// not used.
-struct W(Vec<u8>, Option<TooLarge>);
+/// The bytes written, the first refusal of the memory for them, after which the bytes are
+/// not used, and the index of each node of a string's text written, by its id (`W::text`).
+struct W(Vec<u8>, Option<TooLarge>, HashMap<usize, u64>);
 
 impl W {
     /// `bytes` at the end, once the system gives the memory to grow the bytes written for them;
@@ -115,6 +119,66 @@ impl W {
     fn s(&mut self, s: &str) {
         self.n(s.len() as u64);
         self.put(s.as_bytes());
+    }
+
+    /// A string value's text, as the tree it is held in: the count of its nodes not yet
+    /// written in this graph, then each after the nodes it joins, a block as tag 0 and the
+    /// block, a join as tag 1 and the indices of its parts in order, then the index of the text.
+    /// The nodes of all strings of the graph are numbered from 0 in the order written, so a node
+    /// that several parents or several strings share is written once.
+    // Complexity tradeoff: the form this replaced wrote the text's bytes, O(N) for N bytes, and
+    // `++` shares both parts, so a string doubled k times is 2^k bytes held in O(k) nodes;
+    // staging cannot fold `s ++ s` past 2^63 bytes (its length is refused), so the build wrote
+    // a 2^62-byte operand out until the memory ran out, past 60 s, where `zedc run` stops at
+    // once with the length error (item BUILD-doubling-60s). Here each distinct node is written
+    // once in the graph, O(m) words and hash lookups for m nodes, plus the bytes of the distinct
+    // blocks; the reader shares them again, so a string used in several places is one text
+    // there too, and equal by identity. Tradeoff: equal texts held in different trees are
+    // written differently, so two equal string constants can get two node keys, as two equal
+    // numbers kept in different forms can (`kept`); a normal form of the text would need its
+    // bytes, or its signature encoding (`zed_kernel::text::Names`), which is what this avoids.
+    // Nothing is refused but the memory for the bytes. Tests
+    // `l01_31_zir::binary_forms::a_doubled_string_is_written_as_its_tree` and
+    // `l01_31_zir::bench::shared_strings`.
+    fn text(&mut self, t: &Text) {
+        // Postorder: the nodes in the order they are written. A node is opened once, and every
+        // part of it is written before it: a part not opened before is opened above it on the
+        // stack, so written first; a part opened before but not yet written would still be on
+        // the stack below, an ancestor of its own parent, and nodes and their parts form no
+        // cycle: a node is built from parts that exist before it, and never changed. A node's
+        // id is its address, unique while the graph being written holds it.
+        let mut order: Vec<&Text> = Vec::new();
+        let mut opened: HashSet<usize> = HashSet::new();
+        let mut todo: Vec<(&Text, bool)> = vec![(t, false)];
+        while let Some((u, done)) = todo.pop() {
+            if done {
+                order.push(u);
+            } else if !self.2.contains_key(&u.node_id()) && opened.insert(u.node_id()) {
+                todo.push((u, true));
+                if let Piece::Parts(parts) = u.piece() {
+                    todo.extend(parts.into_iter().rev().map(|p| (p, false)));
+                }
+            }
+        }
+        self.n(order.len() as u64);
+        for u in order {
+            match u.piece() {
+                Piece::Block(b) => {
+                    self.tag(0);
+                    self.s(b);
+                }
+                Piece::Parts(parts) => {
+                    self.tag(1);
+                    self.n(parts.len() as u64);
+                    for p in parts {
+                        self.n(self.2[&p.node_id()]);
+                    }
+                }
+            }
+            let next = self.2.len() as u64;
+            self.2.insert(u.node_id(), next);
+        }
+        self.n(self.2[&t.node_id()]);
     }
 
     /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
@@ -303,10 +367,7 @@ impl W {
             }
             Value::Str(s) => {
                 self.tag(5);
-                // The text is written block by block, as `s` writes one block, each block once
-                // the system gives the memory for it.
-                self.n(s.len() as u64);
-                s.chunks().for_each(|c| self.put(c.as_bytes()));
+                self.text(s);
             }
             // `#e()`, apart from the bare `#e` (tag 6 with no parts).
             Value::Atom(a) if !a.is_bare() && a.args().is_empty() => {
@@ -457,7 +518,11 @@ impl W {
 
 /// The graph encoded in `bytes`, which [`super::validate::validate`] has not yet checked.
 pub fn decode(bytes: &[u8]) -> Result<Region, String> {
-    let mut r = R { b: bytes, i: 0 };
+    let mut r = R {
+        b: bytes,
+        i: 0,
+        nodes: Vec::new(),
+    };
     if r.take(4)? != MAGIC {
         return Err("byte 0: the data does not start `ZIR\\0`".into());
     }
@@ -490,6 +555,8 @@ enum Open {
 struct R<'a> {
     b: &'a [u8],
     i: usize,
+    /// The nodes of the strings' texts read, in order (`R::text`).
+    nodes: Vec<Text>,
 }
 
 impl<'a> R<'a> {
@@ -548,6 +615,53 @@ impl<'a> R<'a> {
         match std::str::from_utf8(self.take(n)?) {
             Ok(s) => Ok(s.into()),
             Err(_) => self.err(at, "a string is not UTF-8"),
+        }
+    }
+
+    /// A string value's text, as [`W::text`] writes it: each new node joined from the nodes
+    /// read before it in the graph, so a node that several parents or strings share is read
+    /// once and shared again, O(m log m) for m nodes (a join of two trees builds O(log m)
+    /// nodes) plus the bytes of the blocks; then the text, one of the nodes.
+    fn text(&mut self) -> Result<Text, String> {
+        let count = self.len()?;
+        for _ in 0..count {
+            let node = match self.tag(1, "a node of a string")? {
+                0 => {
+                    let at = self.i;
+                    let b = self.s()?;
+                    if b.is_empty() {
+                        return self.err(at, "an empty block of a string");
+                    }
+                    Text::from(b)
+                }
+                _ => {
+                    let parts = self.len()?;
+                    let mut t = Text::from("");
+                    for _ in 0..parts {
+                        let p = self.node()?;
+                        t = match Text::join(&t, &p) {
+                            Ok(t) => t,
+                            Err(_) => {
+                                let at = self.i - 8;
+                                return self.err(at, "a string longer than a length can hold");
+                            }
+                        };
+                    }
+                    t
+                }
+            };
+            self.nodes.push(node);
+        }
+        self.node()
+    }
+
+    /// The index of a node of a string's text, read before.
+    fn node(&mut self) -> Result<Text, String> {
+        let at = self.i;
+        let i = self.idx()?;
+        match self.nodes.get(i) {
+            Some(t) => Ok(t.clone()),
+            None => self.err(at, format!("node {i} of a string is not yet read")),
         }
     }
 
@@ -745,7 +859,7 @@ impl<'a> R<'a> {
                 Ok(bits) => Value::float32(f32::from_bits(bits)),
                 Err(_) => return self.err(at, "an f32 word wider than 32 bits"),
             },
-            5 => Value::str(&self.s()?),
+            5 => Value::Str(self.text()?),
             6 => {
                 let name = self.name()?;
                 let fields: Vec<String> = self.many(Self::name)?;

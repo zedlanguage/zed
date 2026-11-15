@@ -128,11 +128,10 @@ fn scalar(v: &Value) -> u64 {
     };
     match v {
         Value::Int(i) => mix(1, *i as u64),
-        Value::Str(s) => mix(
-            2,
-            s.chunks()
-                .fold(bytes(b""), |h, c| more_bytes(h, c.as_bytes())),
-        ),
+        // The text's hash from its tree, each distinct node once ([`Text::poly_hash`]), so a
+        // string doubled 62 times, a few thousand nodes, takes that many steps and not 2^62
+        // (item BUILD-doubling-60s).
+        Value::Str(s) => mix(2, s.poly_hash()),
         Value::Big(r) => exact(4, r),
         Value::Rat(r) => exact(5, r),
         other => mix(3, bytes(other.to_string().as_bytes())),

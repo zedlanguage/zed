@@ -51,10 +51,12 @@ use zedc_base::address::ContentAddress;
 /// FAIL-zir-canon-misplaced-level-binder, which left the number at 6; raised by
 /// FAIL-zir-canon-version-not-bumped); version 8 does the same for a kernel binder spelled as a
 /// level other than its own, such as `\05` in `\05. \05`, which version 7 kept, and renames a
-/// step's scope without capture (FAIL-kernel-canon-misplaced-level). The test
+/// step's scope without capture (FAIL-kernel-canon-misplaced-level); version 9 writes a string
+/// value in the ZIR binary form as the nodes of its text's tree, each once in the graph, not
+/// its bytes (BUILD-doubling-60s). The test
 /// `l01_32_canonical_zir::version_pins` records the normal forms of a fixed set of graphs and
 /// definitions under each version, and fails when they change and this number does not.
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {

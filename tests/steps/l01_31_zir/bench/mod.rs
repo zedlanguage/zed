@@ -5,3 +5,4 @@
 mod deep;
 mod names;
 mod scaling;
+mod shared_strings;

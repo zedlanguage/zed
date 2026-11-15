@@ -29,6 +29,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::{self, Write as _};
 use std::hash::{Hash, Hasher};
 use std::ops::Add;
@@ -152,6 +153,86 @@ impl Text {
     /// walks no tree: a join, of any length, is held in parts and never written out.
     pub fn is_flat(&self) -> bool {
         matches!(*self.0, Tree::Empty | Tree::Block { .. })
+    }
+
+    /// What the node at the root of the text's tree holds: its one block, or the texts it
+    /// joins in order, so that a writer can walk the tree and write a node that several
+    /// parents share once ([`Text::node_id`]). Joining the parts in order with [`Text::join`]
+    /// gives the text again.
+    pub fn piece(&self) -> Piece<'_> {
+        match &*self.0 {
+            Tree::Empty => Piece::Parts(Vec::new()),
+            Tree::Block { block, .. } => Piece::Block(block),
+            Tree::Node { parts, .. } => Piece::Parts(parts.iter().flatten().collect()),
+            Tree::Deep {
+                front,
+                middle,
+                back,
+                ..
+            } => Piece::Parts(
+                front
+                    .iter()
+                    .flatten()
+                    .chain(std::iter::once(middle))
+                    .chain(back.iter().flatten())
+                    .collect(),
+            ),
+        }
+    }
+
+    /// A hash of the text's bytes, the same for equal texts however they are held: the
+    /// polynomial hash of Karp and Rabin ("Efficient randomized pattern-matching algorithms",
+    /// IBM J. Res. Dev. 31(2), 1987), the sum of `(b_i + 1) · B^(n − 1 − i)` modulo the prime
+    /// `2^61 − 1` over the `n` bytes `b_i`. The hash of a join is the hash of its first part
+    /// times `B` to the length of the second, plus the hash of the second, so each distinct
+    /// node of the tree is hashed once from its parts.
+    // Complexity tradeoff: a hash that reads the bytes in order (FNV-1a, `Hash for Text`) costs
+    // O(N) for N bytes, and a string doubled k times is 2^k bytes held in O(k) nodes, so a
+    // type that holds such a string as a literal read 2^62 bytes when the build made it (item
+    // BUILD-doubling-60s). Here each distinct node is hashed once, from the hashes and powers
+    // of its parts, with one hash lookup: O(m) for m distinct nodes plus the bytes of the
+    // distinct blocks, and a text held as one block reads its bytes with no lookup. Tradeoff:
+    // the hash is not keyed, so texts chosen to collide collide, as with the value digest it
+    // feeds, which is not keyed either; it orders and decides nothing, as no hash here does.
+    // Nothing is refused. Tests `text::tests::the_poly_hash_of_a_text_is_its_bytes_hash`,
+    // `l01_31_zir::bench::shared_strings` and `l01_36a_executables/doubling.rs`.
+    pub fn poly_hash(&self) -> u64 {
+        if let Some(s) = self.as_flat() {
+            return poly_bytes(s.as_bytes()).0;
+        }
+        // Postorder over the distinct nodes, each hashed after its parts, as in the binary
+        // form's writer: nodes and their parts form no cycle, since a node is built from parts
+        // that exist before it and never changed.
+        let mut done: HashMap<usize, (u64, u64)> = HashMap::new();
+        let mut todo: Vec<(&Text, bool)> = vec![(self, false)];
+        while let Some((t, ready)) = todo.pop() {
+            let id = t.node_id();
+            if !ready {
+                if !done.contains_key(&id) {
+                    todo.push((t, true));
+                    if let Piece::Parts(parts) = t.piece() {
+                        todo.extend(parts.into_iter().rev().map(|p| (p, false)));
+                    }
+                }
+                continue;
+            }
+            let hp = match t.piece() {
+                Piece::Block(b) => poly_bytes(b.as_bytes()),
+                Piece::Parts(parts) => parts.iter().fold((0, 1), |(h, p), part| {
+                    let (h2, p2) = done[&part.node_id()];
+                    (poly_add(poly_mul(h, p2), h2), poly_mul(p, p2))
+                }),
+            };
+            done.insert(id, hp);
+        }
+        done[&self.node_id()].0
+    }
+
+    /// A number for the node at the root of the text's tree, while the text lives: texts with
+    /// one number share that node, and so are equal. For identity only, never for order; equal
+    /// texts held in different nodes have different numbers.
+    pub fn node_id(&self) -> usize {
+        Arc::as_ptr(&self.0).addr()
     }
 
     /// The blocks of the text from left to right, none empty. A text held as one block is read
@@ -504,6 +585,45 @@ fn nodes(mut parts: &[Text]) -> Vec<Text> {
     out
 }
 
+/// The prime modulus of [`Text::poly_hash`], `2^61 − 1`.
+const POLY_P: u64 = (1 << 61) - 1;
+/// The base of [`Text::poly_hash`], below [`POLY_P`].
+const POLY_B: u64 = 0x0f3d_5b79_a2c4_e681;
+
+/// `a · b` modulo [`POLY_P`], for `a` and `b` below it: the product is below `2^122`, and
+/// `x = hi · 2^61 + lo` is `hi + lo` modulo `2^61 − 1`, twice.
+fn poly_mul(a: u64, b: u64) -> u64 {
+    let x = u128::from(a) * u128::from(b);
+    let r = (x as u64 & POLY_P) + (x >> 61) as u64;
+    let r = (r & POLY_P) + (r >> 61);
+    if r >= POLY_P { r - POLY_P } else { r }
+}
+
+/// `a + b` modulo [`POLY_P`], for `a` and `b` below it.
+fn poly_add(a: u64, b: u64) -> u64 {
+    let r = a + b;
+    if r >= POLY_P { r - POLY_P } else { r }
+}
+
+/// The hash of `bytes` ([`Text::poly_hash`]) and `B` to their length, modulo [`POLY_P`].
+fn poly_bytes(bytes: &[u8]) -> (u64, u64) {
+    bytes.iter().fold((0, 1), |(h, p), &b| {
+        (
+            poly_add(poly_mul(h, POLY_B), u64::from(b) + 1),
+            poly_mul(p, POLY_B),
+        )
+    })
+}
+
+/// What one node of a text's tree holds ([`Text::piece`]).
+pub enum Piece<'a> {
+    /// One block of text, not empty.
+    Block(&'a str),
+    /// The texts the node joins, in order: none for the empty text, two or three for a node,
+    /// and for a deep tree its front parts, its middle and its back parts.
+    Parts(Vec<&'a Text>),
+}
+
 /// The blocks of a text from left to right ([`Text::chunks`]).
 pub struct Chunks<'a>(Walk<'a>);
 
@@ -550,11 +670,87 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 /// The order of the bytes of `a` and `b`, read block by block until the first that differ.
-/// Two texts each held as one block compare as two `str`s, with no walk.
+/// Two texts each held as one block compare as two `str`s, with no walk. A node that both
+/// texts hold at the same place is skipped without reading it.
+// Complexity tradeoff: the walk this replaced read both texts block by block, O(p) for a
+// common prefix of p bytes, and `++` shares both parts, so `s` doubled 61 times against `s`
+// doubled 62 times, each a few thousand nodes, read 2^62 bytes before the shorter ended: the
+// executable `zedc build` made of a program doubling a string 63 times read for minutes to
+// put its constants in order, where `zedc run` stops at once (item BUILD-doubling-60s). Here
+// the two walks go down the trees a node at a time while neither is inside a block; when the
+// next node on both sides is the same node it is skipped whole, and otherwise the longer of
+// the two is opened, so a part the shorter is, or begins with, comes up on the other side. Each
+// node is opened at most once on each side and each block read at most once, so the work is
+// never more than the old walk's blocks and nodes, and a prefix shared by node is O(d) nodes
+// opened for each shared node skipped, d the depth (at most 63). Tradeoff: one pointer test
+// per node opened; equal texts held in different nodes are still read to the end, as their
+// bytes alone decide. Nothing is refused. Tests `text::tests::compare_skips_shared_nodes`,
+// `doubled_texts_compare_by_their_bytes` and `l01_36a_executables/doubling.rs`.
 fn compare(a: &Text, b: &Text) -> Ordering {
     if let (Some(x), Some(y)) = (a.as_flat(), b.as_flat()) {
         return x.as_bytes().cmp(y.as_bytes());
     }
+    if a.is_flat() || b.is_flat() {
+        return compare_chunks(a, b);
+    }
+    let mut xs = Vec::with_capacity(6 * a.depth() + 9);
+    let mut ys = Vec::with_capacity(6 * b.depth() + 9);
+    xs.push(a);
+    ys.push(b);
+    let (mut x, mut y): (&[u8], &[u8]) = (&[], &[]);
+    loop {
+        if x.is_empty() && y.is_empty() {
+            // Both walks stand between blocks, at the same byte of the two texts.
+            drop_empty(&mut xs);
+            drop_empty(&mut ys);
+            match (xs.last(), ys.last()) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(p), Some(q)) if Arc::ptr_eq(&p.0, &q.0) => {
+                    xs.pop();
+                    ys.pop();
+                    continue;
+                }
+                (Some(p), Some(q)) => {
+                    let (p, q) = (*p, *q);
+                    let (pb, qb) = (p.is_flat(), q.is_flat());
+                    if !(pb && qb) {
+                        // Open the longer, or the one that is not a block.
+                        if !pb && (qb || p.len() >= q.len()) {
+                            open(&mut xs);
+                        } else {
+                            open(&mut ys);
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+        if x.is_empty() {
+            match next_block(&mut xs) {
+                Some(s) => x = s.as_bytes(),
+                None => return Ordering::Less,
+            }
+        }
+        if y.is_empty() {
+            match next_block(&mut ys) {
+                Some(s) => y = s.as_bytes(),
+                None => return Ordering::Greater,
+            }
+        }
+        let k = x.len().min(y.len());
+        match x[..k].cmp(&y[..k]) {
+            Ordering::Equal => (x, y) = (&x[k..], &y[k..]),
+            other => return other,
+        }
+    }
+}
+
+/// The order of the bytes of `a` and `b` when one is held as one block: the two read block
+/// by block, the block with no stack. A block shared at the start would save one block's read,
+/// so none is looked for.
+fn compare_chunks(a: &Text, b: &Text) -> Ordering {
     let (mut xs, mut ys) = (a.chunks(), b.chunks());
     let (mut x, mut y): (&[u8], &[u8]) = (&[], &[]);
     loop {
@@ -577,6 +773,49 @@ fn compare(a: &Text, b: &Text) -> Ordering {
             other => return other,
         }
     }
+}
+
+/// The texts on top of `todo` that are empty, dropped.
+fn drop_empty(todo: &mut Vec<&Text>) {
+    while todo.last().is_some_and(|t| t.is_empty()) {
+        todo.pop();
+    }
+}
+
+/// The text on top of `todo`, not a block, replaced by its parts, the first on top.
+fn open(todo: &mut Vec<&Text>) {
+    let t = todo.pop().expect("a text to open");
+    match &*t.0 {
+        Tree::Empty | Tree::Block { .. } => unreachable!("only a node or a deep tree is opened"),
+        Tree::Node { parts, .. } => todo.extend(parts.iter().rev().flatten()),
+        Tree::Deep {
+            front,
+            middle,
+            back,
+            ..
+        } => {
+            todo.extend(back.iter().rev().flatten());
+            todo.push(middle);
+            todo.extend(front.iter().rev().flatten());
+        }
+    }
+}
+
+/// The next block of the texts on `todo`, read as [`Chunks`] reads them.
+fn next_block<'a>(todo: &mut Vec<&'a Text>) -> Option<&'a str> {
+    while let Some(t) = todo.last() {
+        match &*t.0 {
+            Tree::Empty => {
+                todo.pop();
+            }
+            Tree::Block { block, .. } => {
+                todo.pop();
+                return Some(block);
+            }
+            Tree::Node { .. } | Tree::Deep { .. } => open(todo),
+        }
+    }
+    None
 }
 
 impl From<Arc<str>> for Text {
@@ -1336,5 +1575,88 @@ mod tests {
         assert_eq!(block.cmp(&tree), Ordering::Equal);
         let stack = (6 * tree.depth() + 9) * size_of::<&Text>();
         assert_eq!(zed_alloc_count::allocated() - before, stack as u64);
+    }
+
+    /// `s` joined to itself `k` times: `2^k` copies.
+    fn self_joined(s: &Text, k: usize) -> Text {
+        (0..k).fold(s.clone(), |t, _| join(&t, &t))
+    }
+
+    #[test]
+    fn the_poly_hash_of_a_text_is_its_bytes_hash() {
+        // A text's hash from its tree equals the hash of its bytes held as one block, however
+        // the tree is built: chains joined at either end, doubled texts, and joins of those.
+        for n in [0, 1, 2, 5, 40] {
+            for left in [true, false] {
+                let (t, s) = chain(n, left);
+                assert_eq!(
+                    t.poly_hash(),
+                    Text::from(s.as_str()).poly_hash(),
+                    "{n} {left}"
+                );
+            }
+        }
+        let (c, _) = chain(7, true);
+        for k in 0..8 {
+            let d = self_joined(&c, k);
+            assert_eq!(
+                d.poly_hash(),
+                Text::from(&*d.flat()).poly_hash(),
+                "doubled {k}"
+            );
+            let (e, _) = chain(3, false);
+            let (de, ed) = (join(&d, &e), join(&e, &d));
+            assert_eq!(de.poly_hash(), Text::from(&*de.flat()).poly_hash());
+            assert_eq!(ed.poly_hash(), Text::from(&*ed.flat()).poly_hash());
+        }
+        // Texts that differ hash apart here; one byte changed or moved.
+        let (a, b) = (Text::from("ab"), Text::from("ba"));
+        assert_ne!(a.poly_hash(), b.poly_hash());
+        assert_ne!(join(&c, &a).poly_hash(), join(&c, &b).poly_hash());
+        assert_ne!(Text::from("").poly_hash(), Text::from("\0").poly_hash());
+    }
+
+    #[test]
+    fn doubled_texts_compare_by_their_bytes() {
+        // Doubled texts, with and without a last block that differs, compare as their bytes;
+        // the trees share nodes at every depth, so the shared-node skip is crossed many times.
+        let (c, _) = chain(3, true);
+        let ends = [Text::from(""), Text::from("a"), Text::from("b"), long('a')];
+        let mut texts = Vec::new();
+        for k in 0..7 {
+            let d = self_joined(&c, k);
+            for e in &ends {
+                texts.push(join(&d, e));
+                texts.push(join(e, &d));
+            }
+        }
+        texts.push(Text::from(&*self_joined(&c, 3).flat()));
+        for x in &texts {
+            for y in &texts {
+                let (fx, fy) = (x.flat(), y.flat());
+                assert_eq!(
+                    x.cmp(y),
+                    fx.as_bytes().cmp(fy.as_bytes()),
+                    "{} {}",
+                    fx.len(),
+                    fy.len()
+                );
+                assert_eq!(x == y, fx == fy);
+            }
+        }
+    }
+
+    #[test]
+    fn compare_skips_shared_nodes() {
+        // `s` doubled 62 times holds 2^62 copies in a few thousand nodes; reading its bytes
+        // would not end in a lifetime. The compare skips the nodes the two sides share.
+        let s = Text::from("ab");
+        let d61 = self_joined(&s, 61);
+        let d62 = join(&d61, &d61);
+        assert!(d61 < d62 && d62 > d61);
+        let (x, y) = (join(&d62, &Text::from("a")), join(&d62, &Text::from("b")));
+        assert!(x < y && x != y);
+        assert_eq!(join(&d61, &d61).cmp(&d62), Ordering::Equal);
+        assert!(join(&d61, &Text::from("b")) > d62);
     }
 }

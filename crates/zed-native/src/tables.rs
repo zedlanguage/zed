@@ -6,7 +6,7 @@
 //! costs a reference count however much lies below it. Where a node is (`r.3/0.1`) is worked
 //! out for a message, from the links up, and is not kept: a path is as long as its depth.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -104,7 +104,15 @@ pub(crate) struct Tables {
     /// Each lookup port's index among the ports.
     pub port_at: HashMap<Arc<str>, usize>,
     /// Each constant's index among the constants.
-    const_at: BTreeMap<Value, usize>,
+    // Complexity tradeoff: this was a `BTreeMap`, each insert O(log c) byte compares, and two
+    // string constants that agree on a long prefix compare in time of that prefix: the
+    // constants of a program doubling a string 63 times, `s61` and `s62`, took minutes to put
+    // in order when the executable started (item BUILD-doubling-60s). A hash map costs one
+    // digest of each constant, a string's from its tree's distinct nodes (`Value`'s `Hash`),
+    // and a compare only of constants of equal digest, which are equal or collide. Order was
+    // never read; `consts` keeps the order of first use. Test
+    // `l01_36a_executables/doubling.rs`.
+    const_at: HashMap<Value, usize>,
     /// Whether a `match` fuses its release.
     pub fuse: bool,
     /// The nodes legalization swapped, by number.
@@ -135,7 +143,7 @@ impl Tables {
             prims: Vec::new(),
             ports: Vec::new(),
             port_at: HashMap::new(),
-            const_at: BTreeMap::new(),
+            const_at: HashMap::new(),
             fuse: plan.fuse,
             swapped: g.swapped().clone(),
         };

@@ -31,6 +31,8 @@ use super::graph;
 /// crates/zedc-zir/src/zir/canon.rs reverted, the only change to a normal form since version 6.
 /// Version 8 renames a kernel binder spelled as another level (`other_level` and `swapped`
 /// below), FAIL-kernel-canon-misplaced-level.
+/// Version 9 writes a string value by the nodes of its text (BUILD-doubling-60s), and adds a
+/// graph with two string constants to the set.
 const HISTORY: &[(u32, &str)] = &[
     (
         6,
@@ -43,6 +45,10 @@ const HISTORY: &[(u32, &str)] = &[
     (
         8,
         "c85680ebe00c9fec4892ad04282208321ad49b3692b6fa1c4e49abdfcd6f8d18",
+    ),
+    (
+        9,
+        "188a450908788f16778a4a114a6ce47e4226048131afe23336fd176abf472408",
     ),
 ];
 
@@ -94,6 +100,8 @@ fn graphs() -> Vec<String> {
     ] {
         out.push(arg(e));
     }
+    // Two string constants.
+    out.push("zir 1\nr region function ()\nr results (\"ab\", \"abab\")\n".into());
     out
 }
 
