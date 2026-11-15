@@ -6389,7 +6389,8 @@ impl<'m, 's> Comparing<'m, 's> {
         let mut forms = Forms::default();
         let left = Forms::fns(t, true, &mut forms.fields)?;
         forms.fields.extend(whole.fields.iter().cloned());
-        if forms.tied(&left, &whole.fns).is_some() {
+        let starred = left.starred(fns, &whole.fns);
+        if forms.tied(&left, &whole.fns, &starred).is_some() {
             return Some(Verdict::Inhabited);
         }
         for f in left.all() {
@@ -6422,17 +6423,35 @@ impl<'m, 's> Comparing<'m, 's> {
         // skipped pairs are the product of the functions at the spot, `n^2` comparisons of
         // functions for a union of `n` shapes on each side, each with its own function there.
         // Structure: two or more functions on each side at one place, one of `t`'s equal to
-        // one of `other`'s, and the verdict false only for want of a skipped pair. Tests:
-        // `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
-        // `functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired`,
+        // one of `other`'s, the pairs of tuples that meet there forming no stars
+        // ([`PlaceFns::starred`]), and the verdict false only for want of a skipped pair.
+        // Tests: `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
+        // `functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true`,
         // `equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no`,
         // `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`. Naive
         // version: every pair at the spot compared, O(n^2) comparisons of functions; used: the
         // pairs as many as the functions, and a second kernel verdict, on forms of the same
         // size, when the first is false and a pair was skipped. A complete solution would
         // order the functions at a place, as for [`Forms::tied`].
+        //
+        // Since FAIL-types-loose-pairing-decided, a spot where both sides have two or more
+        // functions and the pairs of nodes that may share a value form stars
+        // ([`PlaceFns::starred`]) has those pairs compared, as many as the functions, and none
+        // skipped, so it is decided there: `(f, 1) | (h, 2) <: (g, 1) | (f, 2) | (h, 3)`, with
+        // `f` fitting `g` and `h` fitting `f`, was refused.
         let mut skipped = Merged::default();
         for (spot, fs) in left.spots(&whole.fns) {
+            if let Some(pairs) = starred.get(&spot) {
+                for (f, g) in pairs {
+                    let fit =
+                        f == g || (self.fits(f.clone(), Env::new(), g.clone(), Env::new())).await;
+                    if fit {
+                        let i = forms.id(f);
+                        forms.hold(g, i);
+                    }
+                }
+                continue;
+            }
             let Some(gs) = fns.get(&spot) else { continue };
             let all = whole.fns.get(&spot).unwrap_or(gs);
             let every = fs.len() == 1 || gs.len() == 1;
@@ -6455,11 +6474,8 @@ impl<'m, 's> Comparing<'m, 's> {
                         fit.push(forms.id(&f));
                     }
                 }
-                let kept = forms.fits.entry(g.clone()).or_default();
                 for i in fit {
-                    if !kept.contains(&i) {
-                        kept.push(i);
-                    }
+                    forms.hold(g, i);
                 }
             }
         }
@@ -7415,9 +7431,165 @@ struct PlaceFns {
     at: HashMap<(usize, Place), HashSet<Arc<Sig>>>,
     any: HashMap<Place, HashSet<Arc<Sig>>>,
     shared: HashSet<Place>,
+    /// The rows met with functions at each `Place::Row`, as [`Met`]s ([`PlaceFns::starred`]).
+    rows: HashMap<Place, Vec<Met<Row>>>,
+    /// The payload shapes met with functions at each `Place::Payload`, as [`Met`]s.
+    shapes: HashMap<Place, Vec<Met<Shape>>>,
+}
+
+/// A row or payload shape met by [`Forms::fns`] with functions at a place: its depth, none
+/// when met at two, and the functions of its component there. A node met at two depths is
+/// listed twice, once with each.
+struct Met<P> {
+    depth: Option<usize>,
+    node: P,
+    fns: Vec<Arc<Sig>>,
+}
+
+/// The node of a [`Met`] by address, so that a node listed twice is read once.
+trait Addressed {
+    fn address(&self) -> *const ();
+}
+
+impl Addressed for Row {
+    fn address(&self) -> *const () {
+        Arc::as_ptr(&self.0).cast()
+    }
+}
+
+impl Addressed for Shape {
+    fn address(&self) -> *const () {
+        self.as_ptr().cast()
+    }
+}
+
+/// The nodes of `met` at `spot`, each once, with their functions there.
+fn met_at<'a, P: Addressed>(
+    met: Option<&'a Vec<Met<P>>>,
+    spot: &Spot,
+) -> Vec<(&'a P, &'a [Arc<Sig>])> {
+    let met = met.map_or(&[][..], Vec::as_slice);
+    match spot {
+        Spot::At(d, _) => (met.iter())
+            .filter(|m| m.depth == Some(*d))
+            .map(|m| (&m.node, &m.fns[..]))
+            .collect(),
+        Spot::Any(_) => {
+            let mut seen = HashSet::new();
+            (met.iter())
+                .filter(|m| seen.insert(m.node.address()))
+                .map(|m| (&m.node, &m.fns[..]))
+                .collect()
+        }
+    }
+}
+
+/// The pairs of functions, one of a node of `left` and one of a node of `right` that may share
+/// a value with it ([`Near`]), each pair once, when those pairs form stars: in each pair, the
+/// function of one side meets no other function of the other side there. None otherwise.
+///
+/// Why the pairs of nodes that may share a value are enough, at a spot where they are found:
+/// a function `g` of the expected side holds the mark of a function `f` of the side compared
+/// in the form so that a value with that mark at `g`'s place is held there. Such a value of the
+/// form compared has the mark at that place through a node holding `f` there; it is held by
+/// `g`'s node only if the two nodes share a value, and [`Near`] lists every node that may.
+/// So the forms made with only those pairs compared hold the form compared exactly when the
+/// forms made with every pair compared do: fewer marks are held only at places no value of the
+/// side compared reaches with them. Assumption, not proved: this holds at every kind of spot,
+/// for nodes nested in rows and payloads, where a node of one side met at a depth may be held
+/// by nodes of the other side under parents that share no value with its parent (more pairs
+/// are then compared, never fewer), and where a component of the side compared is `_` (no
+/// function there; the kernel then needs `_` of the other side there, whatever the marks).
+/// Evidence: `random_unions_of_tuples_with_functions_agree_with_pairing_every_function` (3000
+/// cases a run, against pairing every function; its types hold functions at the top of a
+/// tuple only), and the tests of `l01_22`, `l01_23` and `l01_26`.
+///
+/// Complexity tradeoff (COMPLEXITY.md F124): the pairs are as many as the functions at the
+/// spot at most, since in each pair one function is in that pair only, so they are counted as
+/// they are found, and more of them than the functions of the two sides proves the stars
+/// absent, with no more read. What is given up: where they do not form stars, as where each of
+/// two functions of one side meets each of two of the other, the spot is paired as before
+/// ([`Forms::tied`], [`Comparing::form_verdict`]). Why: pairing every function that meets
+/// every function of the other side, `(f_i, int)` against `(g_j, int)`, compares `n^2` pairs,
+/// and deciding whether each `f_i` fits some `g_j` is a containment join, which takes about
+/// `n^2` unless the Hitting Set conjecture fails (as for [`every_arrow_fits`]). Naive version:
+/// every pair at the spot compared, O(n^2); used: the nodes filed by their keys ([`Near`],
+/// expected O((l·G + r·H)·w) for groups `G`, `H` of widths `w`, a few in a written union) and at
+/// most as many pairs read as functions, O(n) comparisons of functions.
+fn star_pairs<P: Placed>(
+    left: &[(&P, &[Arc<Sig>])],
+    right: &[(&P, &[Arc<Sig>])],
+) -> Option<Vec<(Arc<Sig>, Arc<Sig>)>> {
+    let most: usize = (left.iter().chain(right)).map(|(_, fs)| fs.len()).sum();
+    let groups = Groups::new(left.iter().map(|(p, _)| *p), right.iter().map(|(p, _)| *p));
+    let mut near = Near::new(&groups);
+    // The number of functions of the other side each node's functions meet.
+    let (mut met_l, mut met_r) = (vec![0; left.len()], vec![0; right.len()]);
+    let (mut edges, mut pairs) = (Vec::new(), 0);
+    for (l, (_, fs)) in left.iter().enumerate() {
+        for r in near.of(l) {
+            let gs = right[r].1;
+            pairs += fs.len() * gs.len();
+            if pairs > most {
+                return None;
+            }
+            met_l[l] += gs.len();
+            met_r[r] += fs.len();
+            edges.push((l, r));
+        }
+    }
+    if (edges.iter()).any(|&(l, r)| met_l[l] != 1 && met_r[r] != 1) {
+        return None;
+    }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for (l, r) in edges {
+        for f in left[l].1 {
+            for g in right[r].1 {
+                if seen.insert((f.clone(), g.clone())) {
+                    out.push((f.clone(), g.clone()));
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 impl PlaceFns {
+    /// For each spot where the side compared, `self`, and `whole`, the type compared with,
+    /// both have two or more functions, the pairs [`star_pairs`] finds between the nodes of
+    /// `self` there and those of `near`, `whole` or the part of it [`Comparing::near_form`]
+    /// reads, where they form stars. Such a spot is decided by comparing those pairs; at the
+    /// others with two or more functions a side, [`Forms::tied`] and the skipping of
+    /// [`Comparing::form_verdict`] apply.
+    fn starred(
+        &self,
+        near: &PlaceFns,
+        whole: &PlaceFns,
+    ) -> HashMap<Spot, Vec<(Arc<Sig>, Arc<Sig>)>> {
+        let mut out = HashMap::new();
+        for (spot, fs) in self.spots(whole) {
+            if fs.len() < 2 || whole.get(&spot).is_none_or(|gs| gs.len() < 2) {
+                continue;
+            }
+            let (Spot::At(_, place) | Spot::Any(place)) = &spot;
+            let pairs = match place {
+                Place::Row(..) => star_pairs(
+                    &met_at(self.rows.get(place), &spot),
+                    &met_at(near.rows.get(place), &spot),
+                ),
+                Place::Payload(..) => star_pairs(
+                    &met_at(self.shapes.get(place), &spot),
+                    &met_at(near.shapes.get(place), &spot),
+                ),
+            };
+            if let Some(pairs) = pairs {
+                out.insert(spot, pairs);
+            }
+        }
+        out
+    }
+
     /// The functions at `spot`.
     fn get(&self, spot: &Spot) -> Option<&HashSet<Arc<Sig>>> {
         match spot {
@@ -7573,6 +7745,8 @@ struct Forms {
     /// The functions of the side compared that each function of the other side holds, by
     /// number, of those it was compared with: a function fits another wherever the two are.
     fits: HashMap<Arc<Sig>, Vec<usize>>,
+    /// Each pair of `fits`, so that a number is put in a list once ([`Forms::hold`]).
+    held: HashSet<(Arc<Sig>, usize)>,
     /// The form of each node of the rows and shapes met, by [`Node::key`], an address. A
     /// `Forms` lives within one call ([`Comparing::form_verdict`], [`Forms::tie`]) whose two
     /// borrowed types hold every node met, so no key names a freed node; the map is only read
@@ -7635,6 +7809,18 @@ impl Forms {
         *self.ids.entry(f.clone()).or_insert(next)
     }
 
+    /// Puts the function numbered `i` among those `g` holds, once.
+    ///
+    /// Complexity tradeoff: before (FAIL-types-loose-pairing-decided), each number was looked
+    /// for in `g`'s list, O(k) for a list of `k`, so a function of the other side holding `n`
+    /// functions cost `n^2`; used: a set of the pairs, O(1) expected each, at the cost of a
+    /// hash of the signature.
+    fn hold(&mut self, g: &Arc<Sig>, i: usize) {
+        if self.held.insert((g.clone(), i)) {
+            self.fits.entry(g.clone()).or_default().push(i);
+        }
+    }
+
     /// The functions at each place of the rows and payloads of `t` and of `other`, or none
     /// when either holds a variable outside functions.
     fn places(&mut self, t: &Ty, other: &Ty) -> Option<(PlaceFns, PlaceFns)> {
@@ -7683,6 +7869,21 @@ impl Forms {
                             out.shared.insert(place.clone());
                         }
                     }
+                    let fns = c.fns.iter().cloned().collect();
+                    match n {
+                        Node::Row(r) => (out.rows.entry(place.clone()).or_default()).push(Met {
+                            depth: d,
+                            node: r.clone(),
+                            fns,
+                        }),
+                        Node::Shape(_, s) => {
+                            (out.shapes.entry(place.clone()).or_default()).push(Met {
+                                depth: d,
+                                node: s.clone(),
+                                fns,
+                            })
+                        }
+                    }
                     (out.any.entry(place))
                         .or_default()
                         .extend(c.fns.iter().cloned());
@@ -7708,13 +7909,22 @@ impl Forms {
     /// so that those a function fits are found by a search in that order, not by trying each.
     /// Naive version: every pair of functions at the place compared, O(n^2) comparisons; used: the
     /// comparison refused at that place, with no function compared there.
-    fn tied(&self, left: &PlaceFns, right: &PlaceFns) -> Option<Spot> {
+    ///
+    /// Since FAIL-types-loose-pairing-decided, a spot whose pairs of nodes that may share a
+    /// value form stars ([`PlaceFns::starred`], `starred`) is not tied: those pairs are
+    /// compared, as many as the functions.
+    fn tied(
+        &self,
+        left: &PlaceFns,
+        right: &PlaceFns,
+        starred: &HashMap<Spot, Vec<(Arc<Sig>, Arc<Sig>)>>,
+    ) -> Option<Spot> {
         // The spots of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
         left.spots(right).find_map(|(spot, fs)| {
             let gs = right.get(&spot)?;
             let unlike = fs.iter().filter(|f| !gs.contains(*f)).count();
-            (unlike >= 2 && gs.len() >= 2).then_some(spot)
+            (unlike >= 2 && gs.len() >= 2 && !starred.contains_key(&spot)).then_some(spot)
         })
     }
 
@@ -7735,9 +7945,11 @@ impl Forms {
     /// Complexity tradeoff (COMPLEXITY.md F124): one kernel comparison of the two forms, in the
     /// size of the two sides, and no function compared. What is given up: where those forms
     /// give true, the comparison is still refused, though one pairing may make it true, as
-    /// `(f, 1) | (h, 2) <: (g, 1) | (k, 2)` with `f` fitting `g` and `h` fitting `k`; deciding
-    /// it compares each function at the spot with each of the other side's there, O(n^2) for
-    /// `n` shapes a side. Naive version: those pairs compared,
+    /// `(f, 1) | (h, 1 | 2) <: (g, 1 | 2) | (k, 1 | 2)` with `f` fitting `g` and `h` fitting
+    /// `k`; deciding it compares each function at the spot with each of the other side's
+    /// there, O(n^2) for `n` shapes a side. (`(f, 1) | (h, 2) <: (g, 1) | (k, 2)`, whose tuples
+    /// meet one by one, is not of the class since FAIL-types-loose-pairing-decided: its pairs
+    /// form stars, [`PlaceFns::starred`].) Naive version: those pairs compared,
     /// O(n^2) comparisons of functions; used: one comparison of forms, O(size).
     fn tie(t: &Ty, other: &Ty) -> Option<&'static str> {
         if other.dynamic || !other.vars.is_empty() {
@@ -7745,7 +7957,7 @@ impl Forms {
         }
         let mut forms = Forms::default();
         let (left, right) = forms.places(t, other)?;
-        forms.tied(&left, &right)?;
+        forms.tied(&left, &right, &left.starred(&right, &right))?;
         // One mark for every function of `t`, which every function of `other` holds: a
         // component of `t` meets only the components of `other` at its place, so this is the
         // form in which each function at a spot fits each of the other side's there, made

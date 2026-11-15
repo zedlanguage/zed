@@ -145,7 +145,12 @@ fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
 /// `n` rows of functions equal on both sides at one place, none compared there, decided in time
 /// linear in `n` when the forms are built a second time with the skipped pairs merged
 /// (FAIL-types-equal-functions-subset-no, COMPLEXITY.md F124): with a tag the right side lacks
-/// the answer is a definite no, and without it a refusal. Small instances:
+/// the answer is a definite no, and without it a refusal. Each row `(h_i, #b_i)` meets both
+/// right rows of its `i`, and `(h_i, #a_i | #b_i)` both left rows, so the pairs of rows that
+/// meet form no stars and the equal functions are skipped ([`PlaceFns::starred`] in
+/// `crates/zedc-types/src/ty.rs`); until FAIL-types-loose-pairing-decided the right side was
+/// `(h_i, #a_i) | (f_i, #b_i) | (h_i, #b_i)`, whose rows meet one by one and are now paired,
+/// `functions_at_one_place_meeting_one_by_one_are_paired_in_linear_time`. Small instances:
 /// `equal_functions_on_the_right_all_held_on_the_left_are_no_definite_no` and
 /// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`.
 #[test]
@@ -167,9 +172,8 @@ fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
             .flat_map(|i| {
                 let (f, h) = (f(i), h(i));
                 [
-                    format!("({h}, #a{i})"),
-                    format!("({f}, #b{i})"),
-                    format!("({h}, #b{i})"),
+                    format!("({h}, #a{i} | #b{i})"),
+                    format!("({f}, #b{i} | #c{i})"),
                 ]
             })
             .collect();
@@ -187,6 +191,48 @@ fn functions_equal_at_one_place_are_decided_a_second_time_in_linear_time() {
             assert!(!a.subtype(b) && a.refused(b).is_empty());
             let (a, b): &(Ty, Ty) = &refused[&m];
             assert!(!a.refused(b).is_empty());
+        },
+    );
+}
+
+/// `n` rows of functions at one place whose rows meet one by one or in stars, decided in time
+/// linear in `n` by comparing exactly the pairs of functions whose rows meet
+/// (FAIL-types-loose-pairing-decided, COMPLEXITY.md F124): the left row `(h_i, #b_i)` meets the
+/// right rows `(f_i, #b_i)` and `(h_i, #b_i)`, and `(f_i, #a_i)` meets only `(h_i, #a_i)`, so
+/// each `i` is a star and the answer is a definite yes. Small instance:
+/// `functions_at_one_place_are_decided_by_their_pairing`.
+#[test]
+fn functions_at_one_place_meeting_one_by_one_are_paired_in_linear_time() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let sides = |m: usize| {
+        let f = |i: usize| format!("((x{i}: int | #z) -> int)");
+        let h = |i: usize| format!("((x{i}: int) -> int | #z)");
+        let left: Vec<String> = (0..m)
+            .flat_map(|i| [format!("({}, #a{i})", f(i)), format!("({}, #b{i})", h(i))])
+            .collect();
+        let right: Vec<String> = (0..m)
+            .flat_map(|i| {
+                let (f, h) = (f(i), h(i));
+                [
+                    format!("({h}, #a{i})"),
+                    format!("({f}, #b{i})"),
+                    format!("({h}, #b{i})"),
+                ]
+            })
+            .collect();
+        let parse = |rows: Vec<String>| parse_type(&rows.join(" | ")).expect("a union of tuples");
+        (parse(left), parse(right))
+    };
+    // n 1024: 1x about 0.33 s by `ns` (0.083 s at n 256, load 53).
+    let n = 1024;
+    let yes = scaling::inputs(n, sides);
+    scaling::check(
+        "n rows of functions at one place meeting one by one, paired",
+        n,
+        |m| {
+            let (a, b): &(Ty, Ty) = &yes[&m];
+            assert!(a.subtype(b) && a.refused(b).is_empty());
         },
     );
 }

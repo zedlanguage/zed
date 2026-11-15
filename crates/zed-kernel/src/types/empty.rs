@@ -1029,8 +1029,9 @@ impl Type {
 /// each choice of a row that needs it is struck once: a row with no choice left fails its node.
 /// So the work after the pairs are made is linear in what they need, as in Horn satisfiability.
 /// The pairs met are at most the product of the types, and only those reached are made: a row
-/// is compared with the rows of `b` that share its first column, when any do, so unions keyed
-/// by a scalar cost one row each.
+/// is compared with the rows of `b` that share its first column, so unions keyed by a scalar
+/// cost one row each, or with the rows whose atom names in one column may hold its own, where
+/// those are fewer or none share it ([`ByName`]).
 // Complexity tradeoff (COMPLEXITY.md K37): the naive version recomputes the relation until no
 // pair changes, each round rereading every pair, O(pairs × rounds); the version before T6 made
 // 4n² pairs, 0.5 s at n = 128, for the union of `nth_from_end(1..=n)` against itself plus one.
@@ -1165,13 +1166,28 @@ impl Simulation {
                 }
             }
             let whole: BTreeSet<&Row> = ys.iter().collect();
+            let mut by_name = None;
             for x in &xs {
                 // A row of `b` equal to `x` holds it, whatever the other rows need.
                 if whole.contains(x) {
                     continue;
                 }
+                // The rows sharing the first column, a choice that may leave out a row that holds
+                // `x`, or the rows that may hold `x` by the atom names of one column
+                // ([`ByName`]), whichever are fewer; every row when neither applies.
                 let near = (*len > 0).then(|| first.get(&x[0])).flatten();
-                let tried = near.map_or_else(|| ys.iter().collect(), |r| r.clone());
+                let tried = match near {
+                    Some(r) if r.len() < 2 => r.clone(),
+                    _ => {
+                        let named = by_name.get_or_insert_with(|| ByName::new(&ys, *len));
+                        match (near, named.rows(x)) {
+                            (Some(r), Some(n)) if r.len() <= n.len() => r.clone(),
+                            (_, Some(n)) => n,
+                            (Some(r), None) => r.clone(),
+                            (None, None) => ys.iter().collect(),
+                        }
+                    }
+                };
                 let alts = tried
                     .into_iter()
                     .map(|y| (0..*len).map(|j| self.pair(&x[j], &y[j])).collect())
@@ -1180,6 +1196,70 @@ impl Simulation {
             }
         }
         Some(needs)
+    }
+}
+
+/// The rows of the right side of a [`Simulation`] pair filed by the atom names of each column,
+/// so that a row of the left side is compared only with rows that may hold it.
+///
+/// Why the rows left out cannot hold the row: [`Simulation::rows`] fails a pair whose left side
+/// lists an atom name that the right side neither lists nor holds as one of every name it does
+/// not list. So a row whose column `j` lists the name `n` lies only under rows whose column `j`
+/// lists `n` or holds every unlisted name, and leaving the others out strikes no choice that
+/// could hold. The rows sharing the first column, which [`Simulation::rows`] took alone before,
+/// are a choice that may leave out a row that holds; where the rows found here are fewer they
+/// are taken instead, a superset of the rows that hold, so the proof finds no less.
+///
+/// Complexity tradeoff: before (FAIL-types-loose-pairing-decided), a row whose first column
+/// equals that of no row was compared with every row, and one whose first column many rows
+/// share with each of them: `n` rows `(#m_i, #a_i)` against `n` rows `(#m_i | #k_i, #a_i)` made
+/// `n^2` pairs (the forms of `(f_i, #a_i) | (h_i, #b_i)` against `(h_i, #a_i) | (f_i, #b_i) |
+/// (h_i, #b_i)`, whose function `h_i` holds the marks of `f_i` and `h_i`), and so did `n` rows
+/// `(#m, #a_i)` against `n` rows `(#m, #a_i | #b_i)`, as when every skipped function is one mark
+/// (`Merged` in `zedc-types`). Naive version: every row tried, O(|xs|·|ys|) pairs; used: each
+/// column of each row filed by each name it lists, O(Σ names) to file, made once per tuple
+/// length and only when some row is not settled by one row sharing its first column; then, for
+/// each row, the column of its with the fewest rows under its first name, O(len) lookups. What
+/// is given up: columns that each list many names, shared or not, cost those names to file; a
+/// row with no column listing a name is still compared with every row (or those sharing its
+/// first column); and rows that each share a name with many rows in every column still meet
+/// them all.
+struct ByName<'a> {
+    named: HashMap<(usize, &'a str), Vec<&'a Row>>,
+    /// Per column, the rows whose component there holds the atoms of every name it does not
+    /// list.
+    open: Vec<Vec<&'a Row>>,
+}
+
+impl<'a> ByName<'a> {
+    fn new(ys: &'a [Row], len: usize) -> Self {
+        let mut named = HashMap::<(usize, &str), Vec<&Row>>::new();
+        let mut open = vec![Vec::new(); len];
+        for y in ys {
+            for (j, open) in open.iter_mut().enumerate() {
+                match y[j].atom_names() {
+                    Some(names) => {
+                        for (n, _) in names {
+                            named.entry((j, n)).or_default().push(y);
+                        }
+                    }
+                    None => open.push(y),
+                }
+            }
+        }
+        ByName { named, open }
+    }
+
+    /// The rows that may hold `x` by the column of `x` whose first atom name the fewest rows
+    /// may hold, or none when no column of `x` lists a name and holds no unlisted one.
+    fn rows(&self, x: &Row) -> Option<Vec<&'a Row>> {
+        let lists = (0..self.open.len()).filter_map(|j| {
+            let (n, _) = x[j].atom_names()?.next()?;
+            let named = self.named.get(&(j, n)).map_or(&[][..], Vec::as_slice);
+            Some((named, &self.open[j]))
+        });
+        let (named, open) = lists.min_by_key(|(named, open)| named.len() + open.len())?;
+        Some(named.iter().chain(open).copied().collect())
     }
 }
 

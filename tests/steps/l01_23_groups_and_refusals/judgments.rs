@@ -763,10 +763,12 @@ fn tuples_equal_part_by_part_are_subtypes_both_ways() {
 }
 
 /// Where two or more functions of each side meet at one place, one equal to one of the other
-/// side's, that one is compared with no other function there, and a comparison that fails
-/// there is refused, not answered no (COMPLEXITY.md F124).
+/// side's, and each tuple of one side meets one tuple of the other there, the functions of the
+/// tuples that meet are compared and the comparison is decided (COMPLEXITY.md F124). Before
+/// (FAIL-types-loose-pairing-decided), the equal one was compared with no other function there,
+/// and this comparison, which fails at `2`, was refused.
 #[test]
-fn functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired() {
+fn functions_equal_on_both_sides_at_one_place_meeting_one_by_one_are_decided() {
     use zedc::check::read::parse_type;
     let f = "(_ -> int) & (_ -> int | #a)";
     let a = parse_type(&format!("({f}, 1) | (String -> String, 2)")).unwrap();
@@ -774,7 +776,7 @@ fn functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired() {
     assert!(!a.subtype(&b));
     let why = a.refused(&b);
     assert!(
-        why.contains("the checker does not try every way of pairing them"),
+        !why.contains("the checker does not try every way of pairing them"),
         "{why}"
     );
     // The same with one function at the place on the side compared is decided.
@@ -785,8 +787,11 @@ fn functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired() {
 /// Where both sides have two or more functions at one place, not all equal, the comparison is
 /// refused only when some pairing of those functions could make it true: when even every
 /// function of the type expected fitting every function of the side compared leaves a value
-/// out, it is decided false, with no clause (FAIL-types-loose-over-refusal). Where a pairing
-/// does make it true, it is still refused (COMPLEXITY.md F124).
+/// out, it is decided false, with no clause (FAIL-types-loose-over-refusal). Where the tuples
+/// of the two sides that meet there pair each function of one side with one of the other's,
+/// or with functions that meet no other, those pairs are compared and it is decided
+/// (FAIL-types-loose-pairing-decided). Elsewhere, where a pairing does make it true, it is
+/// still refused (COMPLEXITY.md F124).
 #[test]
 fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() {
     use zedc::check::read::parse_type;
@@ -828,24 +833,33 @@ fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() 
             false,
         ),
         // `f` fits `g` and `h` fits `f`, so `(f, 1)` is in `(g, 1)` and `(h, 2)` in `(f, 2)`:
-        // true, but finding it compares functions the checker does not pair; refused.
+        // each tuple compared meets one expected, so those pairs are compared; true.
         (
             format!("({f}, 1) | ({h}, 2)"),
             format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
-            false,
             true,
+            false,
         ),
         // Three a side, the same way.
         (
             format!("({f}, 1) | ({h}, 2) | ({s}, 4)"),
             format!("({g}, 1) | ({f}, 2) | ({h}, 3) | ({s}, 4)"),
-            false,
             true,
+            false,
         ),
-        // `s` fits no function at `2`: false, and some pairing could have held, so refused.
+        // `s` fits `f`, the one function at `2`, not: a definite no.
         (
             format!("({f}, 1) | ({s}, 2)"),
             format!("({g}, 1) | ({f}, 2) | ({s}, 3)"),
+            false,
+            false,
+        ),
+        // Each of `(f, 1)` and `(h, 1 | 2)` meets both `(g, 1 | 2)` and `(f, 1 | 2)`, so the
+        // pairs do not form stars: `h` fits `f`, so true, but it is refused, the equal
+        // functions skipped as before.
+        (
+            format!("({f}, 1) | ({h}, 1 | 2)"),
+            format!("({g}, 1 | 2) | ({f}, 1 | 2) | ({h}, 3)"),
             false,
             true,
         ),
@@ -970,4 +984,44 @@ fn random_unions_of_tuples_with_functions_agree_with_pairing_every_function() {
         }
     }
     eprintln!("ZED_TEST_SEED={seed}: {yes} yes, {no} no, {refused} refused");
+}
+
+/// Where two or more functions of each side meet at one place, each pair of functions whose
+/// tuples may share a value is compared, so the comparison is decided as the subtype relation
+/// decides it (FAIL-types-loose-pairing-decided).
+#[test]
+fn functions_at_one_place_are_decided_by_their_pairing() {
+    use zedc::check::read::parse_type;
+    let pairing = "the checker does not try every way of pairing them";
+    let (f, g, h) = (
+        "(int -> int)",
+        "(int -> int | #a)",
+        "((int | String) -> int)",
+    );
+    let s = "(String -> String)";
+    // (side compared, type expected, true)
+    let cases = [
+        // `f` fits `g` and `h` fits `f`: `(f, 1)` is in `(g, 1)` and `(h, 2)` in `(f, 2)`.
+        (
+            format!("({f}, 1) | ({h}, 2)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            true,
+        ),
+        (
+            format!("({f}, 1) | ({h}, 2) | ({s}, 4)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3) | ({s}, 4)"),
+            true,
+        ),
+        // `s` fits no function the expected type pairs with `2`.
+        (
+            format!("({f}, 1) | ({s}, 2)"),
+            format!("({g}, 1) | ({f}, 2) | ({s}, 3)"),
+            false,
+        ),
+    ];
+    for (a, b, holds) in &cases {
+        let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
+        assert!(!x.refused(&y).contains(pairing), "{a} <: {b} is refused");
+        assert_eq!(x.subtype(&y), *holds, "{a} <: {b}");
+    }
 }
