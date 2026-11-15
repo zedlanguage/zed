@@ -120,6 +120,12 @@ pub(super) fn project(rows: &Rows, want: &[bool], limit: u64) -> Option<Vec<Opti
 ///   the bounds of an atom, that `Rows::of` read, and each row has an atom, so the allowance
 ///   is at most twice the conjuncts and arms read, a cost every method pays.
 ///
+/// The two facts of the first case, each atom of a row in a group and each atom charged its
+/// ranges plus one before the join can stop early, are checked by debug assertions in
+/// `Plan::build` (`Plan::covers`) and `Plan::forward` in every test that runs a join, and on a
+/// case of each kind by `every_plan_meets_the_facts_the_allowance_rests_on`
+/// (TEST-plane-allowance-invariants).
+///
 /// What the proof leaves out: a node here costs the shadows of its polygon, O(w·h^2) above,
 /// where a unit of the join costs O(1); that factor is PERF-plane-shadow-pairs.
 pub(super) fn allowance(rows: &Rows) -> u64 {

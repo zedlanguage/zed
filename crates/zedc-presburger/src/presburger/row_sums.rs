@@ -2871,11 +2871,35 @@ impl Plan {
             joins.fused.push(f);
             joins.at[i + 1].fuse = Some(Fuse::Second);
         }
-        Some(Plan {
+        let plan = Plan {
             groups,
             joins,
             free,
-        })
+        };
+        // The first of the two facts the proof of `plane::allowance` rests on, checked
+        // wherever the tests plan a join (TEST-plane-allowance-invariants).
+        debug_assert!(plan.covers(rows), "an atom of a row in no group, or in two");
+        Some(plan)
+    }
+
+    /// Whether each atom of a row lies in exactly one group, and each other atom is `free`:
+    /// the first fact the proof of `plane::allowance` rests on, read from the rows' terms, not
+    /// from the signatures the groups are made from.
+    // Complexity tradeoff: O(a + t) for a atoms and t terms, no more than `build` itself.
+    fn covers(&self, rows: &Rows) -> bool {
+        let mut used = vec![false; rows.atoms.len()];
+        for row in &rows.rows {
+            for &(j, _) in &row.terms {
+                used[j] = true;
+            }
+        }
+        let mut seen = vec![0usize; rows.atoms.len()];
+        for &a in &self.groups.atoms {
+            seen[a] += 1;
+        }
+        (seen.iter().zip(&used)).all(|(&s, &u)| s == usize::from(u))
+            && self.free.iter().all(|&a| !used[a])
+            && self.free.len() + self.groups.atoms.len() == rows.atoms.len()
     }
 }
 
@@ -3257,9 +3281,22 @@ impl Plan {
             debug_assert_eq!(prefix.len(), self.table(i));
             prefix.push(Set::one(0));
             for k in 0..g.atoms.len() {
+                let charged = work.left;
                 let mut next = self.add(prefix.last()?, g.ranges(rows, k), g.delta(k), work)?;
                 let (lo, hi) = g.window(k + 1);
                 work.spend(1)?;
+                // The second fact the proof of `plane::allowance` rests on, checked wherever
+                // the tests run a join (TEST-plane-allowance-invariants): each atom of a group
+                // is charged at least one unit per range and one more before the pass can stop
+                // early (an empty layer, below), its share of the allowance; with the first
+                // fact ([`Plan::covers`]) the shares sum to the allowance.
+                debug_assert!(
+                    charged - work.left > rows.domains[g.atoms[k]].len() as u64,
+                    "atom {} charged {} units for {} ranges",
+                    g.atoms[k],
+                    charged - work.left,
+                    rows.domains[g.atoms[k]].len()
+                );
                 if (next.min())
                     .zip(next.max())
                     .is_some_and(|(a, b)| a < lo || b > hi)
@@ -4170,6 +4207,122 @@ mod tests {
             "{draws} draws: polygons answered {polygons}, route {routed}, join {joined}, \
              polygons and join both {both}"
         );
+    }
+
+    /// `rows`' plan meets the two facts the proof of `plane::allowance` rests on: each atom of
+    /// a row in one group ([`Plan::covers`]), and the forward pass charging at least the
+    /// allowance in all. The debug assertions in `Plan::build` and `Plan::forward` check the
+    /// first and, atom by atom, the second, in every test that runs a join.
+    fn meets_the_allowance_facts(rows: &Rows, what: &str) {
+        let want = vec![true; rows.atoms.len()];
+        let Some(plan) = Plan::of(rows, &want) else {
+            return;
+        };
+        assert!(plan.covers(rows), "{what}: an atom of a row in no group");
+        let mut work = Work::new(u64::MAX);
+        assert!(plan.forward(rows, &mut work).is_some(), "{what}: no limit");
+        let (spent, allowed) = (u64::MAX - work.left, plane::allowance(rows));
+        assert!(
+            spent >= allowed,
+            "{what}: spent {spent}, allowance {allowed}"
+        );
+    }
+
+    /// The two facts the proof of `plane::allowance` rests on (TEST-plane-allowance-invariants),
+    /// on a case of each kind the proof names (an atom of one value, charged as a copy of the
+    /// table; an atom of no row, `free`; two atoms of one group; groups split into fused
+    /// pairs; the families of [`grid`]) and on seeded random rows. The test profile keeps debug
+    /// assertions (`profile.dev`), so the checks inside `Plan::build` and `Plan::forward` run
+    /// as well; only they check the second fact atom by atom, which the total here can miss
+    /// where another atom is charged more than its share.
+    #[test]
+    fn every_plan_meets_the_facts_the_allowance_rests_on() {
+        let shapes = [
+            // `x` of one value, `x + y - 6 >= 0`.
+            rows_of(
+                vec![vec![(5, 5)], vec![(0, 3)]],
+                vec![(vec![(0, 1), (1, 1)], -6, false)],
+            ),
+            // `a2` in no row.
+            rows_of(
+                vec![vec![(0, 4)], vec![(0, 4)], vec![(1, 2)]],
+                vec![(vec![(0, 1), (1, -1)], 0, false)],
+            ),
+            // `x` and `y` of one signature, in one group, over two ranges each.
+            rows_of(
+                vec![vec![(0, 2), (7, 9)], vec![(1, 1), (4, 6)]],
+                vec![(vec![(0, 2), (1, -1)], 1, true)],
+            ),
+        ];
+        for (i, rows) in shapes.iter().enumerate() {
+            meets_the_allowance_facts(rows, &format!("shape {i}"));
+        }
+        // `a0 - a1 - a2 == 0` opened by `a0`'s group, `a1 + 2·a2 + a3 - 3 >= 0` opening at the
+        // group of `a1` and `a2`, whose ratios 1 and 2 split it into a fused pair, and closing
+        // at `a3`'s group after it.
+        let pair = rows_of(
+            vec![vec![(0, 10)], vec![(0, 3)], vec![(0, 3)], vec![(-2, 2)]],
+            vec![
+                (vec![(0, 1), (1, -1), (2, -1)], 0, true),
+                (vec![(1, 1), (2, 2), (3, 1)], -3, false),
+            ],
+        );
+        let plan = Plan::of(&pair, &[true; 4]).expect("a plan");
+        assert!(!plan.joins.fused.is_empty(), "a fused pair");
+        meets_the_allowance_facts(&pair, "fused pair");
+        for family in 0..4 {
+            for (r, w) in [(1, 1), (3, 5), (16, 1), (64, 40)] {
+                let what = format!("grid({family}, {r}, {w})");
+                meets_the_allowance_facts(&grid(family, r, w), &what);
+            }
+        }
+        let mut seed = 0x007E_57A1_101A_4CE5_u64;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let (mut planned, mut fused, draws) = (0, 0, 500);
+        for case in 0..draws {
+            let n = 2 + next(4) as usize;
+            let domains: Vec<Vec<(i128, i128)>> = (0..n)
+                .map(|_| {
+                    let mut at = next(7) as i128 - 3;
+                    let mut out = Vec::new();
+                    for _ in 0..1 + next(3) {
+                        let hi = at + next(5) as i128;
+                        out.push((at, hi));
+                        at = hi + 2 + next(3) as i128;
+                    }
+                    out
+                })
+                .collect();
+            let mut rs = Vec::new();
+            for _ in 0..1 + next(3) {
+                let mut terms: Vec<(usize, i128)> = Vec::new();
+                for j in 0..n {
+                    if next(2) == 0 {
+                        let c = 1 + next(3) as i128;
+                        terms.push((j, if next(2) == 0 { c } else { -c }));
+                    }
+                }
+                if !terms.is_empty() {
+                    rs.push((terms, next(11) as i128 - 5, next(3) == 0));
+                }
+            }
+            if rs.is_empty() {
+                continue;
+            }
+            let rows = rows_of(domains, rs);
+            let want = vec![true; n];
+            if let Some(plan) = Plan::of(&rows, &want) {
+                planned += 1;
+                fused += usize::from(!plan.joins.fused.is_empty());
+            }
+            meets_the_allowance_facts(&rows, &format!("case {case}"));
+        }
+        eprintln!("{draws} draws: planned {planned}, with fused pairs {fused}");
     }
 
     /// Both sides of the switch between the polygons and the join (`plane::allowance`, A96),
