@@ -1033,8 +1033,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return;
                     }
                 };
-                // The meet keeps the functions of `v` whole; the difference compares them with
-                // those of `t`, reading the classes solved inside them ([`Ck::stale`]).
+                // The meet gives each function of `v` the arrows of those of `t` with its
+                // parameters ([`Ty::meet`]); the difference compares them with those of `t`,
+                // reading the classes solved inside them ([`Ck::stale`]).
                 // The reduced product reads no `is`: its scope is the one it is checked in.
                 let yes = v.meet(&t);
                 let no = self.narrowed(&v, &Narrow::Not(t), e.span);

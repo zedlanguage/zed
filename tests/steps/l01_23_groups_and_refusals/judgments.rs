@@ -656,3 +656,128 @@ fn a_key_type_only_a_search_proves_empty_gives_a_closure() {
 }
 
 mod bench;
+
+// FAIL-types-meet-function-union: found by the kernel printer's round trip (l01_29 parens.rs).
+/// A meet one of whose sides is a union holding a function keeps both sides: it is the union
+/// of the meets of the other side with each member.
+#[test]
+fn a_meet_with_a_union_of_functions_keeps_both_sides() {
+    use zedc::check::read::parse_type;
+    let both = |a: &str, b: &str| {
+        let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
+        (x.subtype(&y), y.subtype(&x))
+    };
+    assert_eq!(
+        both(
+            "(rat -> #b) & ((bool -> ()) | String)",
+            "(rat -> #b) & (bool -> ())"
+        ),
+        (true, true)
+    );
+    assert_eq!(
+        both(
+            "((f64 ->? int) | (int ->? bool)) & (String ->? #b)",
+            "(String ->? #b) & ((f64 ->? int) | (int ->? bool))"
+        ),
+        (true, true)
+    );
+    assert_eq!(
+        both(
+            "((f64 ->? int) & (String ->? #b)) | ((int ->? bool) & (String ->? #b))",
+            "((f64 ->? int) | (int ->? bool)) & (String ->? #b)"
+        ),
+        (true, true)
+    );
+    // Control (passes today): a meet of two arrows, in either order.
+    assert_eq!(
+        both("(rat -> #b) & (bool -> ())", "(bool -> ()) & (rat -> #b)"),
+        (true, true)
+    );
+}
+
+// FAIL-types-tuple-subtype: found by the kernel printer's round trip (l01_29 parens.rs).
+/// Two tuple types equal part by part, or two unions of the same tuples in another order, are
+/// each a subtype of the other.
+#[test]
+fn tuples_equal_part_by_part_are_subtypes_both_ways() {
+    use zedc::check::read::parse_type;
+    let both = |a: &str, b: &str| {
+        let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
+        (x.subtype(&y), y.subtype(&x))
+    };
+    assert_eq!(
+        both(
+            "((_ -> int) & (_ -> int | #a), (_ -> int, int))",
+            "(_ -> int, (_ -> int, int))"
+        ),
+        (true, true)
+    );
+    assert_eq!(
+        both(
+            "(#a -> f64,) | (_,) | (String,)",
+            "(String,) | (_,) | (#a -> f64,)"
+        ),
+        (true, true)
+    );
+    assert_eq!(
+        both(
+            "(_ .. (_ | rat) -> String, (rat .. (rat | _) -> bool, int))",
+            "(_ -> String, (rat .. _ -> bool, int))"
+        ),
+        (true, true)
+    );
+    // A function equal to one of the other side at its place, and fitting another there, with
+    // one function on one side of that place.
+    let f = "(_ -> int) & (_ -> int | #a)";
+    let sub = |a: &str, b: &str| parse_type(a).unwrap().subtype(&parse_type(b).unwrap());
+    assert!(sub(
+        &format!("({f}, 1)"),
+        &format!("(_ -> int, 1) | ({f}, 2)")
+    ));
+    assert!(sub(
+        &format!("({f}, 1) | ({f}, 2)"),
+        &format!("(_ -> int, 1) | ({f}, 2)")
+    ));
+    assert!(sub("(_ -> int, 1)", &format!("({f}, 1) | (_ -> int, 2)")));
+    // Controls (passed before the fix): the parts alone, and the same tuple without the nested
+    // pair.
+    assert_eq!(
+        both("(_ -> int) & (_ -> int | #a)", "_ -> int"),
+        (true, true)
+    );
+    assert_eq!(
+        both(
+            "((_ -> int) & (_ -> int | #a), _ -> int)",
+            "(_ -> int, _ -> int)"
+        ),
+        (true, true)
+    );
+    assert_eq!(
+        both("(#a -> f64,) | (_,) | (String,)", "(_,)"),
+        (true, true)
+    );
+    assert_eq!(
+        both("(String,) | (_,) | (#a -> f64,)", "(_,)"),
+        (true, true)
+    );
+}
+
+/// Where two or more functions of each side meet at one place, one equal to one of the other
+/// side's, that one is compared with no other function there, and a comparison that fails
+/// there is refused, not answered no (COMPLEXITY.md F124).
+#[test]
+fn functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired() {
+    use zedc::check::read::parse_type;
+    let f = "(_ -> int) & (_ -> int | #a)";
+    let a = parse_type(&format!("({f}, 1) | (String -> String, 2)")).unwrap();
+    let b = parse_type(&format!("(_ -> int, 1) | ({f}, 2) | (String -> String, 3)")).unwrap();
+    assert!(!a.subtype(&b));
+    let why = a.refused(&b);
+    assert!(
+        why.contains("the checker does not try every way of pairing them"),
+        "{why}"
+    );
+    // The same with one function at the place on the side compared is decided.
+    let one = parse_type(&format!("({f}, 1)")).unwrap();
+    assert!(one.subtype(&b));
+}

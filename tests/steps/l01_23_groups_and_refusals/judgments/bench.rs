@@ -91,3 +91,53 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them_seeds_100_to_149() {
 fn subtype_answers_do_not_depend_on_the_queries_before_them_seeds_150_to_199() {
     order_free_sweep(150);
 }
+
+/// A union of `n` functions met with a union of `n` others, each of the one side taking the
+/// parameters of one of the other, is `n` functions, made in time linear in `n`: each is paired
+/// only with the functions that take its parameters (FAIL-types-meet-function-union, COMPLEXITY.md
+/// F200). Small instance: `a_meet_with_a_union_of_functions_keeps_both_sides`.
+#[test]
+fn a_meet_of_unions_of_functions_scales() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let union = |m: usize, result: &str| {
+        let text = (0..m)
+            .map(|i| format!("((x{i}: int) -> {result})"))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        parse_type(&text).expect("a union of functions")
+    };
+    let n = 16384;
+    let sides = scaling::inputs(n, |m| (union(m, "int | #a"), union(m, "int | #b")));
+    scaling::check("the meet of two unions of n functions", n, |m| {
+        let (a, b): &(Ty, Ty) = &sides[&m];
+        assert_eq!(a.meet(b).fns.len(), m);
+    });
+}
+
+/// A tuple nested `n` deep with a function at each depth is a subtype of the same tuple with
+/// another function of the same type at each depth, decided in time linear in `n`: each
+/// function is compared with the one at its depth (FAIL-types-tuple-subtype, COMPLEXITY.md
+/// F201). Small instance: `tuples_equal_part_by_part_are_subtypes_both_ways`.
+#[test]
+fn a_nest_of_tuples_holding_functions_is_compared_depth_by_depth() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::Ty;
+    let nest = |m: usize, f: &str| {
+        let text = (0..m).fold("int".to_string(), |inner, _| format!("({f}, {inner})"));
+        parse_type(&text).expect("a nest of tuples")
+    };
+    let n = 2048;
+    let sides = scaling::inputs(n, |m| {
+        let a = nest(m, "(_ -> int) & (_ -> int | #a)");
+        (a, nest(m, "_ -> int"))
+    });
+    scaling::check(
+        "comparing two nests of n tuples, each holding a function",
+        n,
+        |m| {
+            let (a, b): &(Ty, Ty) = &sides[&m];
+            assert!(a.subtype(b) && b.subtype(a));
+        },
+    );
+}

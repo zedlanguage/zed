@@ -470,35 +470,25 @@ fn misprinted(printed: &str, want: &Ty) -> Vec<String> {
 }
 
 /// A kernel type built by [`kernel_generated`], with the text it is built from, each operand
-/// in parentheses, whether it holds a function at any depth, whether it holds nothing
-/// else, and whether it is a union.
+/// in parentheses.
 struct Built {
     t: KType,
     text: String,
-    some_fn: bool,
-    all_fn: bool,
-    union: bool,
 }
 
 /// A kernel type built at random, `depth` levels deep at most, from one-token leaves (a leaf
 /// written twice is then never named by a definition) and every constructor the printer has a
-/// form for. Four readings of the reader stand apart from the printer, and the types that
-/// meet them are not built:
+/// form for. Two readings of the reader stand apart from the printer, and the types that meet
+/// them are not built:
 /// - a part that comes out empty (`int & String`) is replaced by a leaf, since the kernel
 ///   simplifies an arrow or tuple over an empty part (`Never -> V`) where the reader keeps it;
 /// - no complement or difference: the reader takes `_` as the unknown type, so `_ \ X` reads
 ///   as `_`, and a difference the kernel keeps is one from `_`; the place of `\` is checked
-///   against the grammar by the first test of this file;
-/// - a meet only of two types that hold no function or of two arrows, neither a union, since
-///   the reader reads `(rat -> #b) & ((bool -> ()) | String)` as `rat -> #b` and
-///   `((f64 ->? int) | (int ->? bool)) & (String ->? #b)` as another type than the same meet
-///   with its sides swapped (row FAIL-types-meet-function-union);
-/// - no union of a type with a part of it, in a union or in the upper bound of `L .. U`: the
-///   reader finds `(String,) | (_,) | (#a -> f64,)` no subtype of
-///   `(#a -> f64,) | (_,) | (String,)` though each is equal to `(_,)`, and
-///   `(_ -> int, (_ -> int, int))` no subtype of `((_ -> int) & (_ -> int | #a), (_ -> int, int))`
-///   though `_ -> int` is a subtype of each side of the meet, as `_ .. (_ | rat) -> V` reads
-///   (row FAIL-types-tuple-subtype); such a union is written as its larger side.
+///   against the grammar by the first test of this file.
+///
+/// Meets of any two types, unions of a type with a part of it, and upper bounds `L | U` that
+/// hold `L` are built, as they are since rows FAIL-types-meet-function-union and
+/// FAIL-types-tuple-subtype were fixed.
 fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
     let leaf = |rng: &mut Rng| {
         let (t, text) = [
@@ -515,15 +505,8 @@ fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
         .into_iter()
         .nth(rng.below(9))
         .expect("a leaf");
-        let some_fn = text == "_";
         let text = text.to_string();
-        Built {
-            t,
-            text,
-            some_fn,
-            all_fn: false,
-            union: false,
-        }
+        Built { t, text }
     };
     if depth == 0 || rng.below(4) == 0 {
         return leaf(rng);
@@ -537,96 +520,56 @@ fn kernel_generated(rng: &mut Rng, depth: usize) -> Built {
     };
     let (a, b, v) = (sub(), sub(), sub());
     let (at, bt, vt) = (&a.text, &b.text, &v.text);
-    let some_fn = a.some_fn || b.some_fn;
-    let data = |t: KType, text: String, some_fn: bool| Built {
-        t,
-        text,
-        some_fn,
-        all_fn: false,
-        union: false,
-    };
-    let arrow = |t: KType, text: String| Built {
-        t,
-        text,
-        some_fn: true,
-        all_fn: true,
-        union: false,
-    };
-    let built = match rng.below(10) {
-        0 if b.t.subtype(&a.t) => a,
-        0 if a.t.subtype(&b.t) => b,
-        0 => Built {
-            t: &a.t | &b.t,
-            text: format!("{at} | {bt}"),
-            some_fn,
-            all_fn: a.all_fn && b.all_fn,
-            union: true,
-        },
-        // Data types met mostly come out empty or as one side, so most meets are of arrows.
-        1 if (a.all_fn && b.all_fn && !a.union && !b.union) || !some_fn => Built {
-            t: &a.t & &b.t,
-            text: format!("{at} & {bt}"),
-            some_fn,
-            all_fn: a.all_fn && b.all_fn,
-            union: false,
-        },
-        1 => arrow(
-            &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(v.t.clone(), b.t.clone()),
-            format!("({at} -> {bt}) & ({vt} ->? {bt})"),
-        ),
-        2 => data(
+    let built = |t: KType, text: String| Built { t, text };
+    let out = match rng.below(11) {
+        0 => built(&a.t | &b.t, format!("{at} | {bt}")),
+        1 => built(&a.t & &b.t, format!("{at} & {bt}")),
+        2 => built(
             KType::tuple(vec![a.t.clone(), b.t.clone(), v.t.clone()]),
             format!("({at}, {bt}, {vt})"),
-            some_fn || v.some_fn,
         ),
-        3 => data(
+        3 => built(
             KType::tuple(vec![a.t.clone(), b.t.clone()]),
             format!("({at}, {bt})"),
-            some_fn,
         ),
-        4 => data(
-            KType::tuple(vec![a.t.clone()]),
-            format!("({at},)"),
-            a.some_fn,
-        ),
-        5 => data(
+        4 => built(KType::tuple(vec![a.t.clone()]), format!("({at},)")),
+        5 => built(
             KType::atom_with("box", &KType::tuple(vec![a.t.clone()])),
             format!("#box({at})"),
-            a.some_fn,
         ),
-        6 => data(
+        6 => built(
             KType::atom_with("pair", &KType::tuple(vec![a.t.clone(), b.t.clone()])),
             format!("#pair({at}, {bt})"),
-            some_fn,
         ),
-        7 => arrow(
+        7 => built(
             KType::exact(a.t.clone(), b.t.clone()),
             format!("{at} -> {bt}"),
         ),
-        8 => arrow(
+        8 => built(
             KType::partial(a.t.clone(), b.t.clone()),
             format!("{at} ->? {bt}"),
         ),
-        // A bound pair `L .. U` needs `L` within `U`. The upper bound is the union of `L` with
-        // another type, written as the larger side when one holds the other, as a union is.
-        _ => {
-            let (upper, text) = if b.t.subtype(&a.t) {
-                (a.t.clone(), format!("{at} .. {at} -> {vt}"))
-            } else if a.t.subtype(&b.t) {
-                (b.t.clone(), format!("{at} .. {bt} -> {vt}"))
-            } else {
-                (&a.t | &b.t, format!("{at} .. ({at} | {bt}) -> {vt}"))
-            };
-            arrow(KType::morphism(a.t.clone(), upper, v.t.clone()), text)
-        }
+        // Data types met mostly come out empty or as one side, so arrows are met here too.
+        9 => built(
+            &KType::exact(a.t.clone(), b.t.clone()) & &KType::partial(v.t.clone(), b.t.clone()),
+            format!("({at} -> {bt}) & ({vt} ->? {bt})"),
+        ),
+        // A bound pair `L .. U` needs `L` within `U`: the upper bound is the union of `L` with
+        // another type.
+        _ => built(
+            KType::morphism(a.t.clone(), &a.t | &b.t, v.t.clone()),
+            format!("{at} .. ({at} | {bt}) -> {vt}"),
+        ),
     };
-    if built.t.is_empty() { leaf(rng) } else { built }
+    if out.t.is_empty() { leaf(rng) } else { out }
 }
 
 /// The kernel's surface printer (crates/zed-kernel/src/types/print.rs) over kernel types built
 /// at random: each printed text reads back as the type (round trip), and no grouping pair of
 /// its parentheses can go (minimality). Negative controls: a text with a pair too many and one
 /// with a pair too few are each caught, and a tuple's or payload's pair is not taken for one.
+/// A round trip the checker refuses for unpaired functions (COMPLEXITY.md F124) is counted, not
+/// compared, and kept to one in twenty.
 #[test]
 fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need() {
     let want = parse_type("(int -> int) | bool").unwrap();
@@ -644,10 +587,10 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
     let mut rng = Rng(zed_tests::seed::seed(
         "the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
     ));
-    let (mut wrong, mut read, mut seen) = (Vec::new(), 0, HashSet::new());
+    let (mut wrong, mut read, mut seen, mut unpaired) = (Vec::new(), 0, HashSet::new(), 0);
     let mut forms = [" -> ", " ->? ", " .. ", " | ", " & ", "#box(", ",)"].map(|f| (f, 0usize));
     for _ in 0..3000 {
-        let Built { t: k, text, .. } = kernel_generated(&mut rng, 3);
+        let Built { t: k, text } = kernel_generated(&mut rng, 3);
         let printed = k.surface();
         if !printed.exact || !printed.defs.is_empty() || !seen.insert(printed.root.clone()) {
             continue;
@@ -663,6 +606,23 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
                 continue;
             }
         };
+        // Two or more functions of each side at one place, each unlike those of the other side
+        // there, are not paired, and the comparison is refused (COMPLEXITY.md F124): as with
+        // `(rat .. (rat | _) -> f64) | (_ .. (_ | int) -> bool)` in a tuple, printed
+        // `(_ -> bool) | (rat .. _ -> f64)`. A refusal is no misprint; such texts are counted.
+        let refused = |x: &Ty, y: &Ty| {
+            x.subtype(y)
+                || x.refused(y)
+                    .contains("does not try every way of pairing them")
+        };
+        if let Ok(back) = parse_type(&printed.root)
+            && !(back.subtype(&want) && want.subtype(&back))
+            && refused(&back, &want)
+            && refused(&want, &back)
+        {
+            unpaired += 1;
+            continue;
+        }
         for w in misprinted(&printed.root, &want) {
             wrong.push(format!("`{text}`: {w}"));
         }
@@ -675,6 +635,10 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
     );
     assert!(read >= 300, "only {read} distinct types read: {forms:?}");
     assert!(
+        unpaired * 20 <= read,
+        "{unpaired} of {read} comparisons refused for unpaired functions"
+    );
+    assert!(
         forms.iter().all(|(_, n)| *n > 0),
         "a form never printed: {forms:?}"
     );
@@ -682,11 +646,11 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
 
 /// A body expression of a recursive group built at random, `depth` levels deep at most, from
 /// one-token leaves and the definition `U` itself, with the text it is built from, each
-/// operand in parentheses and `U` written `#u`, and whether it holds a function at any depth
-/// and whether it holds nothing else. Left out for the reader's sake, as in
-/// [`kernel_generated`]: a complement, `_`, a difference from a type that may hold a function,
-/// and a meet of a type holding a function with one holding something else.
-fn body_generated(rng: &mut Rng, depth: usize) -> (Expr, String, bool, bool) {
+/// operand in parentheses and `U` written `#u`. Left out for the reader's sake, as in
+/// [`kernel_generated`]: a complement, `_`, and a difference from a type that may hold a
+/// function. Meets of any two types are built, as they are since row
+/// FAIL-types-meet-function-union was fixed.
+fn body_generated(rng: &mut Rng, depth: usize) -> (Expr, String) {
     if depth == 0 || rng.below(4) == 0 {
         let (e, text) = [
             (Expr::Type(KType::int()), "int"),
@@ -701,30 +665,33 @@ fn body_generated(rng: &mut Rng, depth: usize) -> (Expr, String, bool, bool) {
         .into_iter()
         .nth(rng.below(8))
         .expect("a leaf");
-        return (e, text.to_string(), false, false);
+        return (e, text.to_string());
     }
     let mut sub = || {
-        let (e, text, some_fn, all_fn) = body_generated(rng, depth - 1);
-        (e, format!("({text})"), some_fn, all_fn)
+        let (e, text) = body_generated(rng, depth - 1);
+        (e, format!("({text})"))
     };
-    let ((a, at, a_some, a_all), (b, bt, b_some, b_all), (v, vt, ..)) = (sub(), sub(), sub());
-    let some_fn = a_some || b_some;
-    let all_fn = a_all && b_all;
-    let arrow = |e: Expr, text: String| (e, text, true, true);
-    match rng.below(9) {
-        0 => (
-            Expr::Union(vec![a, b]),
-            format!("{at} | {bt}"),
-            some_fn,
-            all_fn,
+    let ((a, at), (b, bt), (v, vt)) = (sub(), sub(), sub());
+    match rng.below(10) {
+        0 => (Expr::Union(vec![a, b]), format!("{at} | {bt}")),
+        1 => (Expr::And(vec![a, b]), format!("{at} & {bt}")),
+        2 => (
+            Expr::Diff(Box::new(Expr::Type(KType::rat())), Box::new(b)),
+            format!("rat \\ {bt}"),
         ),
-        1 if all_fn || !some_fn => (
-            Expr::And(vec![a, b]),
-            format!("{at} & {bt}"),
-            some_fn,
-            all_fn,
+        3 => (Expr::Tuple(vec![a, b]), format!("({at}, {bt})")),
+        4 => (Expr::Tuple(vec![a]), format!("({at},)")),
+        5 => (Expr::Atom("box".into(), vec![a]), format!("#box({at})")),
+        6 => (Expr::exact(a, b), format!("{at} -> {bt}")),
+        7 => (
+            Expr::Morphism(
+                Box::new(Expr::Type(KType::empty())),
+                Box::new(a),
+                Box::new(b),
+            ),
+            format!("{at} ->? {bt}"),
         ),
-        1 => arrow(
+        8 => (
             Expr::And(vec![
                 Expr::exact(a, b.clone()),
                 Expr::Morphism(
@@ -735,36 +702,8 @@ fn body_generated(rng: &mut Rng, depth: usize) -> (Expr, String, bool, bool) {
             ]),
             format!("({at} -> {bt}) & ({vt} ->? {bt})"),
         ),
-        2 => (
-            Expr::Diff(Box::new(Expr::Type(KType::rat())), Box::new(b)),
-            format!("rat \\ {bt}"),
-            false,
-            false,
-        ),
-        3 => (
-            Expr::Tuple(vec![a, b]),
-            format!("({at}, {bt})"),
-            some_fn,
-            false,
-        ),
-        4 => (Expr::Tuple(vec![a]), format!("({at},)"), a_some, false),
-        5 => (
-            Expr::Atom("box".into(), vec![a]),
-            format!("#box({at})"),
-            a_some,
-            false,
-        ),
-        6 => arrow(Expr::exact(a, b), format!("{at} -> {bt}")),
-        7 => arrow(
-            Expr::Morphism(
-                Box::new(Expr::Type(KType::empty())),
-                Box::new(a),
-                Box::new(b),
-            ),
-            format!("{at} ->? {bt}"),
-        ),
         // A bound pair `L .. U` with `L` within `U`.
-        _ => arrow(
+        _ => (
             Expr::Morphism(
                 Box::new(a.clone()),
                 Box::new(Expr::Union(vec![a, b])),
@@ -828,7 +767,7 @@ fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_ne
     let mut forms =
         [" -> ", " ->? ", " .. ", " | ", " & ", " \\ ", "#box(", ",)"].map(|f| (f, 0usize));
     for _ in 0..3000 {
-        let (e, text, ..) = body_generated(&mut rng, 3);
+        let (e, text) = body_generated(&mut rng, 3);
         let Some(printed) = shown(e) else { continue };
         if !seen.insert(printed.clone()) {
             continue;

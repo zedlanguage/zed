@@ -11123,12 +11123,7 @@ fn and(ts: Vec<Ty>, overload: bool) -> Ty {
     {
         let mut sig = (**first).clone();
         for s in rest {
-            sig.arrows.extend(s.arrows.iter().cloned());
-            sig.bounds
-                .extend(s.bounds.iter().map(|(v, m)| (v.clone(), *m)));
-            sig.own.extend(s.own.iter().cloned());
-            sig.held.extend(s.held.iter().cloned());
-            sig.needs.extend(s.needs.iter().cloned());
+            sig.add_arrows_of(s);
         }
         return Ty::func(Arc::new(sig));
     }

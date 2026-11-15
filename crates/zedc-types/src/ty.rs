@@ -1421,6 +1421,10 @@ impl Drop for Sig {
     }
 }
 
+/// A parameter list as [`Sig::param_list`] gives it: for each parameter, whether it is passed
+/// by position, and its name where it is not.
+pub type ParamList = Vec<(bool, Option<Arc<str>>)>;
+
 impl Sig {
     /// Moves the types and signatures it holds to `tys` and `sigs`, for [`drop_types`]: the
     /// types of its arrows and needs, and the signature it was settled into.
@@ -5537,29 +5541,43 @@ impl<'m, 's> Comparing<'m, 's> {
         if forms.tied(&left, &whole.fns).is_some() {
             return Some(Verdict::Inhabited);
         }
-        for f in left.values().flatten() {
+        for f in left.all() {
             forms.id(f);
         }
         forms.number_marks();
-        // Each function of `t` not on the same place of `other` is compared with each of
-        // `other` there: by [`Forms::tied`], one side has at most one, so the pairs are as many
-        // as the functions.
-        for (place, gs) in fns {
-            let Some(fs) = left.get(place) else { continue };
-            let all = whole.fns.get(place).unwrap_or(gs);
-            let unlike: Vec<&Arc<Sig>> = fs.iter().filter(|f| !all.contains(*f)).collect();
+        // At a spot where either side has one function, each function of `t` is compared with
+        // each of `other`. Elsewhere each function of `t` not among those of `other` there is
+        // compared with each of `other`: by [`Forms::tied`], one side has at most one. Either
+        // way the pairs are as many as the functions. A function of `other` met at several
+        // spots holds the functions of `t` it fits at any of them.
+        //
+        // Before (FAIL-types-tuple-subtype), a function of `t` equal to one of `other` at a
+        // spot was compared with no other function there, so `(f, 1) <: (g, 1) | (f, 2)`, with
+        // `f` fitting `g`, was false; where both sides have two or more functions it still is
+        // not compared, and a false verdict there is a refusal ([`Forms::loose`]).
+        for (spot, fs) in left.spots(&whole.fns) {
+            let Some(gs) = fns.get(&spot) else { continue };
+            let all = whole.fns.get(&spot).unwrap_or(gs);
+            let every = fs.len() == 1 || gs.len() == 1;
+            let compared: Vec<&Arc<Sig>> =
+                fs.iter().filter(|f| every || !all.contains(*f)).collect();
             for g in gs {
                 let mut fit = Vec::new();
                 if fs.contains(g) {
                     fit.push(forms.id(g));
                 }
-                for f in &unlike {
+                for f in compared.iter().filter(|f| **f != g) {
                     let (f, g) = ((*f).clone(), g.clone());
                     if self.fits(f.clone(), Env::new(), g, Env::new()).await {
                         fit.push(forms.id(&f));
                     }
                 }
-                forms.fits.insert((place.clone(), g.clone()), fit);
+                let kept = forms.fits.entry(g.clone()).or_default();
+                for i in fit {
+                    if !kept.contains(&i) {
+                        kept.push(i);
+                    }
+                }
             }
         }
         let a = forms.form(t, true);
@@ -6126,8 +6144,64 @@ enum Place {
     Payload(Arc<str>, usize, u64, usize),
 }
 
-/// The functions met at each place, each once.
-type PlaceFns = HashMap<Place, HashSet<Arc<Sig>>>;
+/// Where the functions of the two sides are paired ([`PlaceFns::spots`]): a place at one depth
+/// of nesting, or a place at every depth.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Spot {
+    At(usize, Place),
+    Any(Place),
+}
+
+/// The functions met at each place of a type's rows and payloads, each once: at each depth of
+/// nesting, the rows and payloads of the type itself at depth 0, and at every depth together.
+/// A row or payload met at two depths, which a shared node may be, is at no one depth: its
+/// places are `shared`, and their functions are under `any` only.
+///
+/// Before (FAIL-types-tuple-subtype), a place was its length and index alone, so the functions
+/// of `(f, (g, int))` at `Place::Row(2, 0)` were `f` and `g`: compared with `(f2, (g2, int))`,
+/// two functions of one side, unlike two of the other, met at one place and the comparison
+/// was refused ([`Forms::tied`]), and in `(f2, (f, int))` the inner `f` stood beside the
+/// outer `f2`, so the `f` of the other side was taken as equal to a function there and not
+/// compared with `f2` ([`Comparing::form_verdict`]).
+#[derive(Default)]
+struct PlaceFns {
+    at: HashMap<(usize, Place), HashSet<Arc<Sig>>>,
+    any: HashMap<Place, HashSet<Arc<Sig>>>,
+    shared: HashSet<Place>,
+}
+
+impl PlaceFns {
+    /// The functions at `spot`.
+    fn get(&self, spot: &Spot) -> Option<&HashSet<Arc<Sig>>> {
+        match spot {
+            Spot::At(d, p) => self.at.get(&(*d, p.clone())),
+            Spot::Any(p) => self.any.get(p),
+        }
+    }
+
+    /// Each function of the type, once for each place it is at.
+    fn all(&self) -> impl Iterator<Item = &Arc<Sig>> {
+        self.any.values().flatten()
+    }
+
+    /// The spots at which the functions of `self`, the side compared, are paired with those of
+    /// `other`, each with those functions: each place at each depth, or at every depth where
+    /// either side meets a place at two depths. Read from the whole type compared with, so
+    /// that a part of it pairs as the whole does ([`Comparing::near_form`]).
+    fn spots<'a>(
+        &'a self,
+        other: &'a PlaceFns,
+    ) -> impl Iterator<Item = (Spot, &'a HashSet<Arc<Sig>>)> + 'a {
+        let shared = |p: &Place| self.shared.contains(p) || other.shared.contains(p);
+        let at = (self.at.iter())
+            .filter(move |((_, p), _)| !shared(p))
+            .map(|((d, p), fs)| (Spot::At(*d, p.clone()), fs));
+        let any = (self.any.iter())
+            .filter(move |(p, _)| shared(p))
+            .map(|(p, fs)| (Spot::Any(p.clone()), fs));
+        at.chain(any)
+    }
+}
 
 /// Whether the kernel's verdict on a difference says the one side is in the other, or nothing
 /// when it refused.
@@ -6147,7 +6221,7 @@ struct Right {
 }
 
 impl Right {
-    /// None when `t` holds a variable, or the unknown, outside functions ([`Forms::fns`]).
+    /// None when `t` holds a variable outside functions ([`Forms::fns`]).
     fn of(t: &Ty) -> Option<Right> {
         let mut fields = HashSet::new();
         let fns = Forms::fns(t, false, &mut fields)?;
@@ -6249,9 +6323,9 @@ impl<'a> Node<'a> {
 struct Forms {
     /// The number of each function of the side compared, by equality.
     ids: HashMap<Arc<Sig>, usize>,
-    /// The functions of the side compared that each function of the other side holds, at
-    /// each place, by number.
-    fits: HashMap<(Place, Arc<Sig>), Vec<usize>>,
+    /// The functions of the side compared that each function of the other side holds, by
+    /// number, of those it was compared with: a function fits another wherever the two are.
+    fits: HashMap<Arc<Sig>, Vec<usize>>,
     /// The form of each node of the rows and shapes met, by [`Node::key`], an address. A
     /// `Forms` lives within one call ([`Comparing::form_verdict`], [`Forms::tie`]) whose two
     /// borrowed types hold every node met, so no key names a freed node; the map is only read
@@ -6274,44 +6348,65 @@ impl Forms {
     }
 
     /// The functions at each place of the rows and payloads of `t` and of `other`, or none
-    /// when either holds a variable, or `other` the unknown, outside functions.
+    /// when either holds a variable outside functions.
     fn places(&mut self, t: &Ty, other: &Ty) -> Option<(PlaceFns, PlaceFns)> {
         let left = Forms::fns(t, true, &mut self.fields)?;
         Some((left, Forms::fns(other, false, &mut self.fields)?))
     }
 
-    /// The functions at each place of the rows and payloads of `t`, met once each over a
-    /// visited set, since rows and shapes are shared: none when it holds a variable outside
-    /// functions, or the unknown and is not `left`. The names of the marks of the field names
-    /// of its payloads go to `fields`.
+    /// The functions at each place of the rows and payloads of `t`, at each depth of nesting
+    /// ([`PlaceFns`]): none when it holds a variable outside functions. The names of the marks
+    /// of the field names of its payloads go to `fields`.
+    ///
+    /// Complexity tradeoff (COMPLEXITY.md F201): a row or payload is met at its depth once, and
+    /// once more if it is met at a second depth, after which it and every node below it are met
+    /// at every depth and not again: O(size) node visits, as with one visit a node. The naive refinement, each
+    /// node met once for each depth it is at, costs a shared node its subtree at each depth,
+    /// O(size · depth) for `(e, (e, (e, …)))`; what is given up is the depth of a place where a
+    /// shared node is, whose functions are then paired at every depth, as all were before.
     fn fns(t: &Ty, left: bool, fields: &mut HashSet<String>) -> Option<PlaceFns> {
-        let mut out = PlaceFns::new();
-        let mut seen = HashSet::new();
-        let mut stack: Vec<Node> = Node::below(t).collect();
-        while let Some(n) = stack.pop() {
-            if !seen.insert(n.key(left)) {
-                continue;
-            }
+        let mut out = PlaceFns::default();
+        // Each node met, with its depth, or none once met at two.
+        let mut depth_of: HashMap<_, Option<usize>> = HashMap::new();
+        let mut stack: Vec<(Node, Option<usize>)> = Node::below(t).map(|n| (n, Some(0))).collect();
+        while let Some((n, d)) = stack.pop() {
+            let key = n.key(left);
+            let d = match (depth_of.get(&key), d) {
+                (None, d) => d,
+                (Some(None), _) => continue,
+                (Some(Some(was)), Some(d)) if *was == d => continue,
+                (Some(Some(_)), _) => None,
+            };
+            depth_of.insert(key, d);
             if let Node::Shape(_, s) = n
                 && !s.fields.is_empty()
             {
                 fields.insert(fields_mark(&s.fields));
             }
             for (place, c) in n.comps() {
-                if !c.vars.is_empty() || (!left && c.dynamic) {
+                if !c.vars.is_empty() {
                     return None;
                 }
                 if !c.fns.is_empty() {
-                    out.entry(place).or_default().extend(c.fns.iter().cloned());
+                    match d {
+                        Some(d) => (out.at.entry((d, place.clone())).or_default())
+                            .extend(c.fns.iter().cloned()),
+                        None => {
+                            out.shared.insert(place.clone());
+                        }
+                    }
+                    (out.any.entry(place))
+                        .or_default()
+                        .extend(c.fns.iter().cloned());
                 }
-                stack.extend(Node::below(c));
+                stack.extend(Node::below(c).map(|n| (n, d.map(|d| d + 1))));
             }
         }
         Some(out)
     }
 
-    /// A place where two or more functions of the side compared, equal to none of the other
-    /// side's there, meet two or more of the other side's.
+    /// A spot ([`PlaceFns::spots`]) where two or more functions of the side compared, equal to
+    /// none of the other side's there, meet two or more of the other side's.
     ///
     /// Complexity tradeoff: which of those fits which is not tried. What is given up: such a
     /// comparison is refused with its own clause ([`Ty::refused`]), though each pair could be
@@ -6325,27 +6420,52 @@ impl Forms {
     /// so that those a function fits are found by a search in that order, not by trying each.
     /// Naive version: every pair of functions at the place compared, O(n^2) comparisons; used: the
     /// comparison refused at that place, with no function compared there.
-    fn tied(&self, left: &PlaceFns, right: &PlaceFns) -> Option<Place> {
-        // The places of the side compared are looked up, since the other side may be a whole
+    fn tied(&self, left: &PlaceFns, right: &PlaceFns) -> Option<Spot> {
+        // The spots of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
-        left.iter().find_map(|(place, fs)| {
-            let gs = right.get(place)?;
+        left.spots(right).find_map(|(spot, fs)| {
+            let gs = right.get(&spot)?;
             let unlike = fs.iter().filter(|f| !gs.contains(*f)).count();
-            (unlike >= 2 && gs.len() >= 2).then(|| place.clone())
+            (unlike >= 2 && gs.len() >= 2).then_some(spot)
         })
     }
 
-    /// Why `t <: other` was refused, if it was for the class [`Forms::tied`] names.
+    /// A spot where two or more functions of the side compared meet two or more of the other
+    /// side's, one of them equal to one of the other side's and another of the other side's
+    /// equal to none of them: the equal one is compared with no other there
+    /// ([`Comparing::form_verdict`]), so a false verdict is a refusal ([`Forms::tie`]).
+    ///
+    /// Complexity tradeoff: as for [`Forms::tied`], whose class this widens. Structure:
+    /// `(f, 1) | (h, 2) <: (g, 1) | (f, 2) | (h, 3)`, with `f` fitting `g`. Test:
+    /// `tests/steps/l01_23_groups_and_refusals/judgments.rs`,
+    /// `functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired`; COMPLEXITY.md
+    /// F124. Naive version: each equal function compared with every other at the spot,
+    /// O(n^2) comparisons; used: those pairs not made, and a false verdict refused.
+    fn loose(left: &PlaceFns, right: &PlaceFns) -> Option<Spot> {
+        left.spots(right).find_map(|(spot, fs)| {
+            let gs = right.get(&spot)?;
+            let some_equal = fs.iter().any(|f| gs.contains(f));
+            let other = gs.iter().any(|g| !fs.contains(g));
+            (fs.len() >= 2 && gs.len() >= 2 && some_equal && other).then_some(spot)
+        })
+    }
+
+    /// Why `t <: other`, found false, was refused, if it was for the class [`Forms::tied`] or
+    /// [`Forms::loose`] names.
     fn tie(t: &Ty, other: &Ty) -> Option<&'static str> {
         if other.dynamic || !other.vars.is_empty() {
             return None;
         }
         let mut forms = Forms::default();
         let (left, right) = forms.places(t, other)?;
-        forms.tied(&left, &right).map(|_| {
-            "two or more functions at one place of a tuple or an atom's payload are each unlike \
-             two or more functions at that place of the type expected, and the checker does not \
-             try every way of pairing them; give the functions at that place one function type"
+        let spot = forms
+            .tied(&left, &right)
+            .or_else(|| Forms::loose(&left, &right));
+        spot.map(|_| {
+            "two or more functions at one place of a tuple or an atom's payload meet two or more \
+             functions at that place of the type expected, not all equal, and the checker does \
+             not try every way of pairing them; give the functions at that place one function \
+             type"
         })
     }
 
@@ -6367,7 +6487,7 @@ impl Forms {
                 continue;
             }
             let ks: Vec<KType> = (n.comps().into_iter())
-                .map(|(place, c)| self.comp(c, &place, left))
+                .map(|(_, c)| self.comp(c, left))
                 .collect();
             // A component of no value, as a function of the other side that no function fits,
             // leaves the tuple or payload no value: built as empty, not as a row the kernel
@@ -6429,15 +6549,17 @@ impl Forms {
             .clone()
     }
 
-    /// The form of the component `c` at `place`.
-    fn comp(&self, c: &Ty, place: &Place, left: bool) -> KType {
+    /// The form of the component `c`.
+    fn comp(&self, c: &Ty, left: bool) -> KType {
+        // The unknown of the other side holds any value ([`Ty::sub`]): every mark too.
+        if c.dynamic && !left {
+            return KType::top();
+        }
         let mut ks = vec![self.data(c, left)];
         for f in &c.fns {
             let ids = match left {
                 true => std::slice::from_ref(&self.ids[f]),
-                false => {
-                    (self.fits.get(&(place.clone(), f.clone()))).map_or(&[][..], Vec::as_slice)
-                }
+                false => self.fits.get(f).map_or(&[][..], Vec::as_slice),
             };
             ks.extend(ids.iter().map(|i| mark(&format!("\u{0}fn {i}"))));
         }
@@ -7186,12 +7308,48 @@ impl Ty {
                 .zip(first)
                 .filter_map(|(cs, f)| f.then_some(cs)),
         );
-        if !t.fns.is_empty() {
-            out.fns = self.fns.clone();
-        }
+        out.fns = self.fns_met(t);
         out.prune_payloads();
         if self.dynamic || !self.vars.is_empty() {
             out = out.union(t);
+        }
+        out
+    }
+
+    /// The functions of its meet with `t`: for each of its functions and each of `t`'s that
+    /// takes the same parameters, the function with the arrows of both ([`Sig::add_arrows_of`]),
+    /// or the one function where the two are equal. A function of one parameter list and a
+    /// function of another share no value ([`fits_sig`]), so such a pair gives nothing.
+    /// Before (FAIL-types-meet-function-union), its own functions were kept whenever `t` had
+    /// any, and `(rat -> #b) & ((bool -> ()) | String)` was read as `rat -> #b`.
+    // Complexity tradeoff (COMPLEXITY.md F200): `t`'s functions are filed by parameter list in
+    // a hash map, O(m) expected for m functions, and each of the n functions of `self` is paired
+    // with those of its list only, so the cost is O(n + m) plus the pairs made, which are the
+    // meet itself. The naive method compares each of the n·m pairs, O(n·m) also where no two
+    // functions take the same parameters and the meet has no function.
+    fn fns_met(&self, t: &Ty) -> Vec<Arc<Sig>> {
+        if self.fns.is_empty() || t.fns.is_empty() {
+            return Vec::new();
+        }
+        let mut by_params: HashMap<ParamList, Vec<&Arc<Sig>>> = HashMap::new();
+        for q in &t.fns {
+            by_params.entry(q.param_list()).or_default().push(q);
+        }
+        let mut have = HashSet::new();
+        let mut out = Vec::new();
+        for s in &self.fns {
+            for q in by_params.get(&s.param_list()).into_iter().flatten() {
+                let m = if s == *q {
+                    s.clone()
+                } else {
+                    let mut m = Sig::clone(s);
+                    m.add_arrows_of(q);
+                    Arc::new(m)
+                };
+                if have.insert(m.clone()) {
+                    out.push(m);
+                }
+            }
         }
         out
     }
@@ -9741,6 +9899,26 @@ impl Sig {
             named: 0,
             facts: Default::default(),
         }
+    }
+
+    /// Its parameter list as a comparison of signatures sees it: for each parameter, whether
+    /// it is passed by position, and its name where it is not. A function is a function of
+    /// another signature only where the two lists are equal ([`fits_sig`]).
+    pub fn param_list(&self) -> ParamList {
+        (self.params.iter())
+            .map(|p| (p.positional, (!p.positional).then(|| p.name.clone())))
+            .collect()
+    }
+
+    /// Adds the arrows of `q` after its own, and `q`'s bounded and own variables and needs:
+    /// it becomes the intersection of the two function types, as `s & q` is read when the two
+    /// take the same parameters.
+    pub fn add_arrows_of(&mut self, q: &Sig) {
+        self.arrows.extend(q.arrows.iter().cloned());
+        (self.bounds).extend(q.bounds.iter().map(|(v, m)| (v.clone(), *m)));
+        self.own.extend(q.own.iter().cloned());
+        self.held.extend(q.held.iter().cloned());
+        self.needs.extend(q.needs.iter().cloned());
     }
 
     /// It with its variables replaced by `binds` at every depth; a bounded variable replaced
