@@ -298,7 +298,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         1,
         concat!(
             "line 1: the mark names the row \"Collision\", and the diagnostic is in no row of the rejection table: ",
-            zed_tests::not_yet!("the reduction `as (region -> day -> sku -> r)`")
+            zed_tests::not_yet!("the remap `as (region -> day -> sku -> r)`")
         ),
     ),
     (
@@ -306,7 +306,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         4,
         concat!(
             "line 1: ",
-            zed_tests::not_yet!("the reduction `with units(\"g\")`")
+            zed_tests::not_yet!("the facet attachment `with units(\"g\")`")
         ),
     ),
     ("README.md [Numbers] 1", 7, "pass"),
@@ -325,7 +325,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         4,
         concat!(
             "line 1: ",
-            zed_tests::not_yet!("the reduction `as (r -> c -> v)`")
+            zed_tests::not_yet!("the remap `as (r -> c -> v)`")
         ),
     ),
     (
@@ -333,7 +333,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         6,
         concat!(
             "line 2: ",
-            zed_tests::not_yet!("the reduction `as (region -> year -> sku -> amount)`")
+            zed_tests::not_yet!("the remap `as (region -> year -> sku -> amount)`")
         ),
     ),
     (
@@ -356,7 +356,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         4,
         concat!(
             "line 1: ",
-            zed_tests::not_yet!("the reduction `with units(\"m/s\")`")
+            zed_tests::not_yet!("the facet attachment `with units(\"m/s\")`")
         ),
     ),
     (
@@ -364,7 +364,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
         9,
         concat!(
             "line 1: ",
-            zed_tests::not_yet!("the reduction `with units(\"m/s\")`")
+            zed_tests::not_yet!("the facet attachment `with units(\"m/s\")`")
         ),
     ),
 ];

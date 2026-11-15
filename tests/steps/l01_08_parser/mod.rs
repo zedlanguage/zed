@@ -13,6 +13,7 @@ mod grammar_scaling;
 mod grammar_shape;
 mod head_cases;
 mod heads;
+mod later_names;
 mod left_recursion;
 mod lr4_assoc;
 mod plain_names;

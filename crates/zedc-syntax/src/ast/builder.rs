@@ -926,8 +926,8 @@ impl<'a, 's> Builder<'a, 's> {
 /// this zedc does not compile yet; `the form` for a rule with no plainer name.
 fn kind_of(rule: &str) -> &'static str {
     match rule {
-        "ReduceTail" => "the reduction",
         "ReducePolicy" => "the reduction order",
+        "SliceKey" => "the named slice",
         "TypeSuffix" => "the refinement",
         "Result" => "the declared result type",
         "Law" => "the law",

@@ -557,7 +557,19 @@ impl<'a, 's> Builder<'a, 's> {
             }
             // `unordered`, of layer L9.
             (3, &[_, unordered]) => return Err(self.later(unordered)),
-            _ => return Err(self.later(t)),
+            // Only `><` reduces: `as` and `into` are a remap (sec:remap_law), `with f(…)` and
+            // `without f(…)` attach and drop a facet (sec:facets).
+            _ => {
+                let kind = match self.word(self.tree.nodes[t].start) {
+                    "as" | "into" => "the remap",
+                    "with" => "the facet attachment",
+                    "without" => "the facet removal",
+                    w => unreachable!(
+                        "ReduceTail begins with `><`, `as`, `into`, `with` or `without`, not `{w}`"
+                    ),
+                };
+                return Err(self.later_as(t, kind));
+            }
         }
         let mut updates = Vec::new();
         let mut paths: HashMap<Vec<&str>, Span> = HashMap::new();

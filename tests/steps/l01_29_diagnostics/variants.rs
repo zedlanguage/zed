@@ -79,7 +79,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "point-unit-in-quotient",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"°C\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"°C\")`")
             ),
         ),
         ("taint-through-concatenation", none(44)),
@@ -87,7 +87,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "two-point-readings-added",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"°C\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"°C\")`")
             ),
         ),
         (
@@ -103,7 +103,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "units-differ-by-kind",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"N\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"N\")`")
             ),
         ),
         (
@@ -118,35 +118,35 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "log-unit-product",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"m\")`")
             ),
         ),
         (
             "log-unit-compared-with-number",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"m\")`")
             ),
         ),
         (
             "exponential-base-differs",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"m\")`")
             ),
         ),
         (
             "removed-fact-not-carried",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"m\")`")
             ),
         ),
         (
             "removed-fact-not-removable",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"m\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"m\")`")
             ),
         ),
         // The assumed units and the argument conversion of sec:facets (plan rows
@@ -155,28 +155,28 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "argument-unit-not-convertible",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
         (
             "text-length-in-bytes",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
         (
             "byte-length-against-kilobytes",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
         (
             "key-in-bytes-for-codepoints",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
         // `char` is not a unit; `char16` and `codepoint` are offered (UNITS-char16).
@@ -185,7 +185,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "char-is-not-a-unit",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
         // The comparisons across units of sec:facets (plan row UNITS-compare).
@@ -193,14 +193,14 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
             "unit-comparison-sum-still-strict",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
         (
             "point-reading-against-kelvin",
             format!(
                 "2: {}",
-                zed_tests::not_yet!("the reduction `with units(\"GiB\")`")
+                zed_tests::not_yet!("the facet attachment `with units(\"GiB\")`")
             ),
         ),
     ];
