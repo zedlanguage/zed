@@ -454,3 +454,36 @@ fn a_chain_put_in_against_the_order_reads_only_what_it_moves() {
         tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
     });
 }
+
+/// The bounded chain, then for each link `x_i != 2*10^9 && x_i - x_{i+1} >= 2` assumed false:
+/// the case `x_i == 2*10^9` is empty, so each test leaves one case, `x_i - x_{i+1} <= 1`, which
+/// stays, and its blocks are projected again outside the cases with the groups read
+/// (`Scope::join_kept`, item FAIL-linked-case-group-wake). Each case pins `x_(i+1)` to
+/// `x_i - 1`, so it ties a new name to the class of those before it: the potential is repaired
+/// by raising `x_(i+1)` alone, not by lowering the class (`put_in`, item
+/// FAIL-one-case-hole-chain-scaling). 8.5 times the instructions and 8.3 times the bytes at
+/// 280 and 2240 (2026-11-14); with the search from `v` alone, 0.68, 2.43 and 8.53 s at 280, 560
+/// and 1120, and past the time limit at 280 and 2240.
+#[test]
+fn holes_that_leave_one_case_on_a_chain_take_time_near_their_number() {
+    let p = Premises::new();
+    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [280, 2240]
+        .into_iter()
+        .map(|k| {
+            let (s, chain) = shape("bounded chain", k);
+            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+            let n = named(k + 1, "x");
+            let tests = (0..k)
+                .map(|i| {
+                    let off = prim(Prim::Ne, var(&n[i]), int(2_000_000_000));
+                    prim(Prim::And, off, ge(&n[i], &n[i + 1], 2))
+                })
+                .collect();
+            (k, (s, tests))
+        })
+        .collect();
+    scaling::check_order("holes that leave one case on a chain", 280, 1, |k| {
+        let (s, tests) = &built[&k];
+        tests.iter().fold(s.clone(), |s, t| s.assume(t, false, &p));
+    });
+}

@@ -3175,56 +3175,40 @@ fn put_in(
             if gamma >= zero {
                 break 'round;
             }
-            // Each name of the component whose potential falls falls by the least reduced
-            // distance from `v` below zero; the new values are kept apart until the search
-            // ends, so that the old ones check the edges read. Each name reached keeps the
-            // edge it was last reached by, so that a cycle found can be followed back. An edge
-            // to another component is only checked to go to a higher rank: every cycle through
-            // the new edge lies in its component.
-            let mut fall: BTreeMap<Arc<str>, (Int, i64)> =
-                BTreeMap::from([(v.clone(), gamma.clone())]);
-            let mut via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)> = BTreeMap::new();
-            let mut heap = BinaryHeap::from([Reverse((gamma, v.clone()))]);
-            let mut new: BTreeMap<Arc<str>, (Int, i64)> = BTreeMap::new();
-            while let Some(Reverse((gs, s))) = heap.pop() {
-                if new.contains_key(&s) || fall.get(&s) != Some(&gs) {
-                    continue;
-                }
-                let ps = pot.at.get(&s).ok_or(Fall::Potential)?;
-                let to_s = pair_plus(ps, &gs);
-                for (h, hb, f) in tree_edges(relation, t, &s) {
-                    let (Some(from), Some(x)) = (&f.from, &f.to) else {
-                        continue;
-                    };
-                    if *from != s || new.contains_key(x) || waiting.contains(&(h.clone(), hb)) {
-                        continue;
-                    }
-                    let cx = pot.comp_of(x)?;
-                    if cx != cu {
-                        if pot.rank(cx) < pot.rank(cu) {
-                            return Err(Fall::Potential);
-                        }
-                        continue;
-                    }
-                    let px = pot.at.get(x).ok_or(Fall::Potential)?;
-                    let fw = pair_weight(&pot.tied, &pot.gap, &h, hb, &f);
-                    if pair_minus(&pair_plus(ps, &fw), px) < zero {
-                        return Err(Fall::Potential);
-                    }
-                    let gx = pair_minus(&pair_plus(&to_s, &fw), px);
-                    if gx >= zero {
-                        continue;
-                    }
-                    if x == u {
+            // The potential is repaired by lowering the names `v` reaches or by raising those
+            // that reach `u` ([`Repair`]); both searches run in step, one name each in turn,
+            // and the first to end gives the new values. A cycle either finds is the edge's.
+            // Complexity tradeoff: naive version, the search forward from `v` alone, which on
+            // a class of names tied by equalities lowers the whole class when the edge is the
+            // one that ties a new name to it: O(i log n) for the `i`th equality of a chain
+            // (`x_i - x_(i+1) <= 1` after the chain `x_i - x_(i+1) >= 1`), O(k² log n) for k of
+            // them: 39,901 reads of a name's edges at k = 280, 10,151 at k = 140 (item
+            // FAIL-one-case-hole-chain-scaling). Used: the two sides in step, as [`reorder`]
+            // runs its searches (Pearce and Kelly), O(m log n) for the `m` edges at the names
+            // the side that ends first reads, the other reading at most one name more; here the
+            // side from `u` reads `x_(i+1)` alone. 8.5 times the instructions and 8.3 times the
+            // bytes from k = 280 to 2240 (2026-11-14), where the search from `v` alone ran past
+            // the test's time limit. Tradeoff: the potential differs with the side taken, and
+            // only orders the searches of shortest paths; a cycle of weight 0 may be found by
+            // either side, through other edges, which are then tied. COMPLEXITY.md row
+            // FAIL-one-case-hole-chain-scaling.
+            let mut sides = [
+                Repair::new(true, v, u, gamma.clone()),
+                Repair::new(false, u, v, gamma),
+            ];
+            let mut turn = 0;
+            let ended = loop {
+                match sides[turn].step(relation, t, &waiting, pot, cu)? {
+                    Step::Going => turn = 1 - turn,
+                    Step::Ended => break turn,
+                    Step::Cycle(s, h, gx) => {
+                        let side = &sides[turn];
                         if gx.0 < Int::ZERO {
                             // The cycle's weight without the gaps: each of its names
                             // lowered the edge into it by its gap.
-                            let mut weight = &gx.0 + &pot.gap_of(u);
-                            let mut at = s.clone();
-                            weight = &weight + &pot.gap_of(&at);
-                            while let Some((before, _, _)) = via.get(&at) {
-                                at = before.clone();
-                                weight = &weight + &pot.gap_of(&at);
+                            let mut weight = &gx.0 + &pot.gap_of(&side.end);
+                            for at in side.path(&s) {
+                                weight = &weight + &pot.gap_of(&at.0);
                             }
                             return if weight < Int::ZERO {
                                 Ok(Some(u.clone()))
@@ -3232,26 +3216,18 @@ fn put_in(
                                 Err(Fall::Potential)
                             };
                         }
-                        // A cycle of weight 0: the edge, the one into `u`, and those
-                        // back to `v`.
-                        pot.tied.insert((g.clone(), *back));
-                        pot.tied.insert((h, hb));
-                        let mut at = s.clone();
-                        while let Some((before, k, kb)) = via.get(&at) {
-                            pot.tied.insert((k.clone(), *kb));
-                            at = before.clone();
+                        // A cycle of weight 0: the edge, the one that closed it, and those
+                        // the search came by.
+                        let mut tie = vec![(g.clone(), *back), h];
+                        tie.extend(side.path(&s).filter_map(|(_, k)| k));
+                        for k in tie {
+                            pot.tied.insert(k);
                         }
                         continue 'round;
                     }
-                    if fall.get(x).is_none_or(|c| gx < *c) {
-                        fall.insert(x.clone(), gx.clone());
-                        via.insert(x.clone(), (s.clone(), h.clone(), hb));
-                        heap.push(Reverse((gx, x.clone())));
-                    }
                 }
-                new.insert(s, to_s);
-            }
-            for (s, ps) in new {
+            };
+            for (s, ps) in std::mem::take(&mut sides[ended].new) {
                 pot.at.insert(s, ps);
             }
             break 'round;
@@ -3259,6 +3235,154 @@ fn put_in(
         pot.link(u, v);
     }
     Ok(None)
+}
+
+/// One side of the search of [`put_in`] within a component, after an edge from `u` to `v` of
+/// reduced weight `gamma` below zero. Forward, from `v`: each name `v` reaches falls by the
+/// least reduced distance from `v` below zero, as the edge then has reduced weight 0 and every
+/// edge out of a name that fell is checked. Backward, from `u`: each name that reaches `u`
+/// rises by the least reduced distance to `u` below zero, every edge into a name that rose
+/// checked. Either side ended gives a potential at which every edge of the component holds;
+/// the new values are kept apart until then, so that the old ones check the edges read. Each
+/// name reached keeps the edge it was last reached by, so that a cycle found can be followed
+/// back. An edge to another component is only checked to go up the order, forward to a higher
+/// rank and backward from a lower one: every cycle through the new edge lies in its component.
+struct Repair {
+    /// Lowering the names reached from `v`, or raising those that reach `u`.
+    forward: bool,
+    /// The edge's end the search does not start from: reaching it closes a cycle.
+    end: Arc<str>,
+    /// How far each name reached moves, below zero, the least found so far.
+    moves: BTreeMap<Arc<str>, (Int, i64)>,
+    /// The name and edge each name reached was last reached by.
+    via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)>,
+    /// The names reached, least move first.
+    heap: BinaryHeap<Reverse<(Pair, Arc<str>)>>,
+    /// The new value of each name the search is done with.
+    new: BTreeMap<Arc<str>, (Int, i64)>,
+}
+
+/// A value of the potential ([`Potential`]).
+type Pair = (Int, i64);
+
+/// What one turn of a [`Repair`] found.
+enum Step {
+    /// Nothing that ends it.
+    Going,
+    /// The search ended: its new values hold.
+    Ended,
+    /// An edge from or to the name, as given, reaching the search's end, closing a cycle of
+    /// reduced weight below zero with what the search came by.
+    Cycle(Arc<str>, (Arc<Formula>, bool), (Int, i64)),
+}
+
+impl Repair {
+    fn new(forward: bool, start: &Arc<str>, end: &Arc<str>, gamma: (Int, i64)) -> Repair {
+        Repair {
+            forward,
+            end: end.clone(),
+            moves: BTreeMap::from([(start.clone(), gamma.clone())]),
+            via: BTreeMap::new(),
+            heap: BinaryHeap::from([Reverse((gamma, start.clone()))]),
+            new: BTreeMap::new(),
+        }
+    }
+
+    /// Takes the next name from the heap and reads its edges in the search's direction.
+    fn step(
+        &mut self,
+        relation: &Conjuncts,
+        t: BlockId,
+        waiting: &BTreeSet<(Arc<Formula>, bool)>,
+        pot: &Potential,
+        cu: u64,
+    ) -> Result<Step, Fall> {
+        let zero = (Int::ZERO, 0i64);
+        let Some(Reverse((gs, s))) = self.heap.pop() else {
+            return Ok(Step::Ended);
+        };
+        if self.new.contains_key(&s) || self.moves.get(&s) != Some(&gs) {
+            return Ok(Step::Going);
+        }
+        let ps = pot.at.get(&s).ok_or(Fall::Potential)?;
+        let to_s = if self.forward {
+            pair_plus(ps, &gs)
+        } else {
+            pair_minus(ps, &gs)
+        };
+        for (h, hb, f) in tree_edges(relation, t, &s) {
+            let (Some(from), Some(to)) = (&f.from, &f.to) else {
+                continue;
+            };
+            let (near, x) = if self.forward { (from, to) } else { (to, from) };
+            if *near != s || self.new.contains_key(x) || waiting.contains(&(h.clone(), hb)) {
+                continue;
+            }
+            let cx = pot.comp_of(x)?;
+            if cx != cu {
+                let against = if self.forward {
+                    pot.rank(cx) < pot.rank(cu)
+                } else {
+                    pot.rank(cx) > pot.rank(cu)
+                };
+                if against {
+                    return Err(Fall::Potential);
+                }
+                continue;
+            }
+            let px = pot.at.get(x).ok_or(Fall::Potential)?;
+            let fw = pair_weight(&pot.tied, &pot.gap, &h, hb, &f);
+            // The edge's reduced weight before `s` moves, and after.
+            let (before, after) = if self.forward {
+                (
+                    pair_minus(&pair_plus(ps, &fw), px),
+                    pair_minus(&pair_plus(&to_s, &fw), px),
+                )
+            } else {
+                (
+                    pair_minus(&pair_plus(px, &fw), ps),
+                    pair_minus(&pair_plus(px, &fw), &to_s),
+                )
+            };
+            if before < zero {
+                return Err(Fall::Potential);
+            }
+            if after >= zero {
+                continue;
+            }
+            if *x == self.end {
+                return Ok(Step::Cycle(s, (h, hb), after));
+            }
+            if self.moves.get(x).is_none_or(|c| after < *c) {
+                self.moves.insert(x.clone(), after.clone());
+                self.via.insert(x.clone(), (s.clone(), h.clone(), hb));
+                self.heap.push(Reverse((after, x.clone())));
+            }
+        }
+        self.new.insert(s, to_s);
+        Ok(Step::Going)
+    }
+
+    /// The names from `s` back to where the search started, `s` first, each with the edge it
+    /// was reached by (none for the start).
+    fn path<'a>(
+        &'a self,
+        s: &Arc<str>,
+    ) -> impl Iterator<Item = (Arc<str>, Option<(Arc<Formula>, bool)>)> + 'a {
+        std::iter::successors(
+            Some((
+                s.clone(),
+                self.via.get(s).map(|(_, k, kb)| (k.clone(), *kb)),
+            )),
+            |(at, _)| {
+                let (before, _, _) = self.via.get(at)?;
+                Some((
+                    before.clone(),
+                    self.via.get(before).map(|(_, k, kb)| (k.clone(), *kb)),
+                ))
+            },
+        )
+    }
 }
 
 /// Restores the order of the components of the potential `pot` of tree `t` of the forest
