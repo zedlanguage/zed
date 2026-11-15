@@ -137,6 +137,8 @@ impl W {
     // written differently, so two equal string constants can get two node keys, as two equal
     // numbers kept in different forms can (`kept`); a normal form of the text would need its
     // bytes, or its signature encoding (`zed_kernel::text::names::Names`), which is what this avoids.
+    // The content address pays the bytes: it holds each string as one block before writing
+    // (`canon::flat_strings`, ZIR-string-tree-address); node keys do not (ZIR-string-cse-tree).
     // Nothing is refused but the memory for the bytes. Tests
     // `l01_31_zir::binary_forms::a_doubled_string_is_written_as_its_tree` and
     // `l01_31_zir::bench::shared_strings`.

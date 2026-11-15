@@ -5,4 +5,5 @@
 mod deep;
 mod scaling;
 mod string_nodes;
+mod string_trees;
 mod wide_constants;

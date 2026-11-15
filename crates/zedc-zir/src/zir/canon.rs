@@ -13,8 +13,9 @@
 //! decreases lexicographically at every step, as it does on kernel terms.
 //!
 //! The address is the BLAKE3-256 hash of `zed-zir\0`, [`crate::canon::VERSION`], and the
-//! binary form ([`super::binary`]) of the normal form. Two graphs that differ only in binder
-//! names, hints, facet order or repeats, or the spelling of one set of integers, share it.
+//! binary form ([`super::binary`]) of the normal form, each string held as one block. Two graphs
+//! that differ only in binder names, hints, facet order or repeats, the spelling of one set of
+//! integers, or the trees that hold equal strings, share it.
 //!
 //! Every rule acts on one edge, or on one pattern, alone, and the binder rule's hint is
 //! removed by the hints rule. So [`canonicalize`] normalizes each edge and each pattern in one
@@ -29,9 +30,10 @@ use std::sync::Arc;
 
 use zed_kernel::num::TooLarge;
 use zed_kernel::term::{Pattern, Term};
-use zed_kernel::value::Value;
+use zed_kernel::text::Text;
+use zed_kernel::value::{Atom, Family, Value};
 
-use super::{Edge, Node, Op, Region, RegionKind, binary};
+use super::{Edge, Node, Op, Region, RegionKind, Src, binary};
 use crate::canon::binders::{level_name, level_of};
 use crate::canon::{self, Def, Facet, RULES};
 use zedc_base::address::ContentAddress;
@@ -340,13 +342,166 @@ pub fn key(g: &Region) -> Result<ContentAddress, TooLarge> {
     }
 }
 
-/// The content address of `g`, or [`TooLarge`] as at `shell_bytes`.
+/// The content address of `g`: the hash of the binary form of its normal form, each string
+/// held as one block (`flat_strings`). [`TooLarge`] as at `shell_bytes`, or when the system
+/// refuses the memory to write a string held in parts into one block.
 pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
+    let mut normal = canonicalize(g);
+    flat_strings(&mut normal)?;
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir\0");
     h.update(&canon::VERSION.to_le_bytes());
-    h.update(&binary::encode(&canonicalize(g))?);
+    h.update(&binary::encode(&normal)?);
     Ok(ContentAddress::hashed(&h))
+}
+
+/// Holds each string of `g`'s constants and matched literals as one block, its text unchanged,
+/// so that equal strings are written alike by the binary form, which writes a string as the
+/// tree it is held in (`binary::W::text`). Folding `++` of constants joins two texts and keeps
+/// both parts (`Text::join`), so `("a"*300 ++ "b"*300) ++ "c"*300`, its mirror and the literal
+/// of the same 900 bytes are one string in three trees (item ZIR-string-tree-address, test
+/// `l01_32_canonical_zir::string_trees`). Edges need nothing: the binary form writes an edge
+/// as its text form, which prints a string's text. `canon::VERSION` is unchanged: a graph whose
+/// strings are each one block keeps its address, and any other graph now gets the address the
+/// equal graph with its strings held as blocks always had, so no address stands for two normal
+/// forms across this change (`version_pins` hashes graphs read from text, whose strings are
+/// blocks, and keeps its hash).
+// Complexity tradeoff: the binary form writes each distinct node of a string's tree once, so a
+// string doubled k times, 2^k bytes in k nodes, costs O(k) to write (BUILD-doubling-60s). Here
+// the address writes a string held in parts as one block, O(N) time and memory for N bytes,
+// so that doubled string costs 2^k, and is refused as [`TooLarge`] once the system refuses the
+// memory, where before it was addressed in O(k). Why: a form of a string that depends only on
+// its text and costs less than its bytes is the canonical parse (`zed_kernel::text::names`),
+// whose cost and whose place under the address are open question A106; this item does not
+// decide it. The address stays linear in the bytes of the graph's strings, and only tests take
+// a ZIR address (the build keys nodes by `node_key`, which this leaves alone). A string held
+// as one block is not copied. Nothing is refused but the memory. Test
+// `l01_32_canonical_zir::string_trees`, and the scaling test
+// `l01_32_canonical_zir::bench::string_trees`.
+fn flat_strings(g: &mut Region) -> Result<(), TooLarge> {
+    let mut todo = vec![g];
+    while let Some(r) = todo.pop() {
+        r.results.iter_mut().try_for_each(flat_src)?;
+        for n in &mut r.nodes {
+            n.inputs.iter_mut().try_for_each(flat_src)?;
+            if let Op::Match(ps) = &mut n.op {
+                ps.iter_mut().try_for_each(flat_pattern)?;
+            }
+            todo.extend(n.regions.iter_mut().map(Arc::make_mut));
+        }
+    }
+    Ok(())
+}
+
+/// A constant source with its strings held as one block ([`flat_strings`]).
+fn flat_src(s: &mut Src) -> Result<(), TooLarge> {
+    if let Src::Const(v) = s
+        && let Some(flat) = flat_value(v)?
+    {
+        *v = flat;
+    }
+    Ok(())
+}
+
+/// A pattern whose literals hold their strings as one block, from a stack of the patterns left
+/// to do: patterns nest as deep as the program (step T2-mid).
+fn flat_pattern(p: &mut Pattern) -> Result<(), TooLarge> {
+    let mut todo = vec![p];
+    while let Some(p) = todo.pop() {
+        match p {
+            Pattern::Lit(v) => {
+                if let Some(flat) = flat_value(v)? {
+                    *v = flat;
+                }
+            }
+            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut()),
+            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().map(|(_, q)| q)),
+            Pattern::Wild | Pattern::Bind(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Whether some string inside `v` is held in parts, not as one block.
+fn has_joined(v: &Value) -> bool {
+    let mut todo = vec![v];
+    while let Some(v) = todo.pop() {
+        match v {
+            Value::Str(t) if !t.is_flat() => return true,
+            Value::Tuple(xs) | Value::Path(xs) => todo.extend(xs.iter()),
+            Value::Atom(a) => todo.extend(a.args().iter()),
+            Value::Family(f) => todo.extend(f.iter().flat_map(|(k, x)| [k, x])),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `v` with each string inside it held as one block, or `None` when each already is, built
+/// from the bottom up with a stack, as values nest as deep as the program (step T2-mid). A
+/// tuple, path, atom or family is rebuilt from its parts in order, and equals `v`: only the
+/// way its strings are held changes. [`TooLarge`] when the system refuses the memory for a
+/// block ([`Text::try_shared`]).
+fn flat_value(v: &Value) -> Result<Option<Value>, TooLarge> {
+    if !has_joined(v) {
+        return Ok(None);
+    }
+    // Each value to enter, or to close once its parts, entered after it, are on `done`.
+    let mut todo: Vec<(&Value, bool)> = vec![(v, false)];
+    let mut done: Vec<Value> = Vec::new();
+    while let Some((v, close)) = todo.pop() {
+        if !close {
+            match v {
+                Value::Str(t) if !t.is_flat() => done.push(Value::Str(Text::from(t.try_shared()?))),
+                Value::Tuple(xs) | Value::Path(xs) => {
+                    todo.push((v, true));
+                    todo.extend(xs.iter().rev().map(|x| (x, false)));
+                }
+                Value::Atom(a) => {
+                    todo.push((v, true));
+                    todo.extend(a.args().iter().rev().map(|x| (x, false)));
+                }
+                Value::Family(f) => {
+                    todo.push((v, true));
+                    let entries: Vec<_> = f.iter().collect();
+                    for (k, x) in entries.into_iter().rev() {
+                        todo.push((x, false));
+                        todo.push((k, false));
+                    }
+                }
+                _ => done.push(v.clone()),
+            }
+            continue;
+        }
+        let parts = |n: usize, done: &mut Vec<Value>| done.split_off(done.len() - n);
+        let rebuilt = match v {
+            Value::Tuple(xs) => Value::tuple(parts(xs.len(), &mut done)),
+            Value::Path(xs) => Value::path(parts(xs.len(), &mut done)),
+            Value::Atom(a) => {
+                let args = parts(a.args().len(), &mut done);
+                Value::Atom(Atom {
+                    name: a.name.clone(),
+                    fields: a.fields.clone(),
+                    payload: a.payload.as_ref().map(|_| args.into()),
+                })
+            }
+            Value::Family(f) => {
+                let flat = parts(2 * f.len(), &mut done);
+                let mut it = flat.into_iter();
+                let mut leaves = Vec::with_capacity(f.len());
+                while let (Some(k), Some(x)) = (it.next(), it.next()) {
+                    leaves.push((vec![k], x));
+                }
+                // The keys are `f`'s, distinct, each equal to the one it replaces, so in the
+                // same order and none repeated; `from_leaves` fails only on an empty keypath or
+                // on two keypaths that collide (`Levels::insert`), and each here is one key.
+                Value::Family(Family::from_leaves(leaves).expect("the keys of a family"))
+            }
+            _ => unreachable!("only a tuple, path, atom or family is closed"),
+        };
+        done.push(rebuilt);
+    }
+    Ok(done.pop())
 }
 
 /// An edge's facts as the M0.7 rules see a definition: no name and no body.

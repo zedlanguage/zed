@@ -11,6 +11,7 @@ mod fuzz;
 mod scaling;
 mod stability;
 mod string_nodes;
+mod string_trees;
 mod version_pins;
 mod wide_constants;
 
