@@ -1037,6 +1037,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-meter-settings",
 ]
 
 [[package]]
@@ -1054,6 +1055,14 @@ dependencies = [
  "stacker",
  "zed-alloc-count",
  "zed-graph",
+ "zed-meter-settings",
+]
+
+[[package]]
+name = "zed-meter-settings"
+version = "0.0.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -1090,6 +1099,7 @@ dependencies = [
  "stacker",
  "zed-alloc-count",
  "zed-kernel",
+ "zed-meter-settings",
  "zed-rt",
 ]
 
@@ -1112,6 +1122,7 @@ dependencies = [
  "zed-corpus-ref",
  "zed-graph",
  "zed-kernel",
+ "zed-meter-settings",
  "zed-native",
  "zed-rt",
  "zed-tools",
@@ -1234,6 +1245,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-graph",
  "zed-kernel",
+ "zed-meter-settings",
  "zedc-int",
  "zedc-lattice",
  "zedc-preimage",
@@ -1256,6 +1268,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-graph",
  "zed-kernel",
+ "zed-meter-settings",
  "zedc-int",
  "zedc-lattice",
  "zedc-presburger",

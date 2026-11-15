@@ -48,6 +48,7 @@ zedc-preimage = { path = ".", features = ["counts", "preimage-ref"] }
 # The scaling test of the rule of low complexity (tests/src/scaling.rs), which preimage's tests use.
 rustix.workspace = true
 zed-alloc-count.workspace = true
+zed-meter-settings.workspace = true
 stacker.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

@@ -24,14 +24,23 @@
 //!
 //! The count has three limits. Work in the kernel is not counted. A `rep movsb` or `rep stosb`
 //! counts as one instruction or few, whatever its length, and glibc's memcpy and memset use
-//! them on a CPU with erms or fsrm, so `tools/run_tests.sh` keeps glibc from them, and
+//! them on a CPU with erms or fsrm, so the meter keeps glibc from them, and
 //! `copies_and_fills_count_by_their_length` fails on a machine where they are hidden. The
 //! instructions glibc's malloc spends depend on what earlier threads left in the arena a new
 //! thread takes over and on the order the hash seed frees blocks in: one check of the same
 //! program took 0.26 billion instructions (0.9%) more in some runs than in others, all of it in
 //! malloc, and a difference of two such counts, of about 0.5 billion, came out 1.5 times its
-//! size. So `tools/run_tests.sh` turns off malloc's cache per thread, and
-//! `malloc_keeps_no_state_from_earlier_threads` fails where it does not.//!
+//! size. So the meter turns off malloc's cache per thread, and
+//! `malloc_keeps_no_state_from_earlier_threads` fails where it does not.
+//!
+//! Both are glibc tunables, which glibc reads only as a process starts. The crate
+//! `zed-meter-settings` holds them (`GLIBC_TUNABLES`) and starts a test binary that was started
+//! without them again with them, before `main`, and [`Meter::new`] stops where they are still
+//! not in effect. So a test gives the same verdict run directly by `cargo test` as under
+//! `tools/run_tests.sh`, which exports the same settings (TEST-scaling-direct-run-verdict: a
+//! Θ(k²) cost took 11.29 times the instructions at 8n run directly, and 10.41 with the
+//! settings, which add instructions to each allocation).
+//!
 //! Where the hardware has no counter, as in most virtual machines, [`Meter`] falls back on the
 //! kernel's task clock: the processor time of this thread and the threads it starts, without the
 //! tests running beside it in the process. It changes with load, so it needs more runs: each size
@@ -255,6 +264,7 @@ impl Meter {
     /// work, so it stops; see `no_counter`.
     #[cfg(target_os = "linux")]
     pub fn new() -> Self {
+        stop_unless_the_settings_are_in_effect();
         Self::open(Hardware::INSTRUCTIONS, "instructions", true)
             .or_else(|| Self::open(Software::TASK_CLOCK, "ns of processor time", false))
             .unwrap_or_else(|| no_counter())
@@ -304,6 +314,7 @@ impl Meter {
     /// A meter of processor time, whatever the hardware offers.
     #[cfg(target_os = "linux")]
     pub fn of_cpu_time() -> Self {
+        stop_unless_the_settings_are_in_effect();
         Self::open(Software::TASK_CLOCK, "ns of processor time", false)
             .unwrap_or_else(|| no_counter())
     }
@@ -467,6 +478,26 @@ pub(crate) enum Measures {
     /// The work only, for a test whose bytes are known to grow faster: see
     /// [`check_instructions_only`].
     WorkOnly,
+}
+
+/// Stops a test whose process did not start with the C library settings the work is counted
+/// under (`zed_meter_settings::GLIBC_TUNABLES`), which would otherwise give a verdict other than
+/// the one `tools/run_tests.sh` gives. A binary started without them starts itself again with
+/// them before `main` (crate `zed-meter-settings`), so this stops only where that could not
+/// happen: a setuid binary, an `execve` that failed, or `GLIBC_TUNABLES` changed by hand.
+#[cfg(target_os = "linux")]
+fn stop_unless_the_settings_are_in_effect() {
+    if !zed_meter_settings::in_effect() {
+        let args: Vec<String> = std::env::args().collect();
+        panic!(
+            "this scaling test counts work under the C library settings of \
+             tools/run_tests.sh, and this process did not start with them, so its verdict could \
+             differ from that of tools/run_tests.sh (TEST-scaling-direct-run-verdict). Run it as \
+             GLIBC_TUNABLES='{}' {}",
+            zed_meter_settings::GLIBC_TUNABLES,
+            args.join(" ")
+        );
+    }
 }
 
 /// Stops a test that cannot measure work, which would otherwise pass unmeasured.

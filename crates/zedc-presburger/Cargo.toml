@@ -51,6 +51,9 @@ workspace = true
 [dev-dependencies.zed-alloc-count]
 workspace = true
 
+[dev-dependencies.zed-meter-settings]
+workspace = true
+
 [dev-dependencies.stacker]
 workspace = true
 

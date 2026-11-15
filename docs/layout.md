@@ -32,6 +32,8 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
                       whose source is in zedc/src/main.rs, is a target of this crate
   zed-cert/           the independent certificate checker; depends on zed-kernel only
   zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
+  zed-meter-settings/ the C library settings the scaling tests count under; a test binary
+                      started without them starts itself again with them
   zed-tools/          the commands: sync, check, cases, fences, fuzz, layer, ring, audit,
                       progress, catalog; each takes the spec directory, and shares `zedc::parse`;
                       conflicts writes the conflict lists of docs/plan_dag.md

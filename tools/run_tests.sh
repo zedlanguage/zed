@@ -58,8 +58,8 @@
 # (author P214).
 # --cov <dir> is a coverage run (TEST-cov-run-settings): the build goes to build/cov, apart from
 # build/cargo, with `-C instrument-coverage` added to RUSTFLAGS, and each piece runs as in any
-# other run, with the settings it gives every run (GLIBC_TUNABLES above all: a test binary run
-# directly lacks it, and its malloc-state and bytes checks fail or vary), writing its profiles
+# other run, with the settings it gives every run (GLIBC_TUNABLES above all, which a test binary
+# run directly gives itself by starting again, crate zed-meter-settings), writing its profiles
 # to <dir>/<piece>-<pid>.profraw; build scripts and the links made before the timed pieces write
 # <dir>/other-<pid>.profraw. Merge them with `llvm-profdata merge -sparse <dir>/*.profraw -o
 # <file>` and read them with `llvm-cov report` or `llvm-cov show` and the binaries the run built.
@@ -865,21 +865,14 @@ slots=${ZED_TEST_SLOTS:-12}
 [ "$run_kind" = test ] || slots=12
 slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
 mkdir -p "$slot_dir"
-# glibc's memcpy and memset use rep movsb and rep stosb on a CPU with erms or fsrm, and the hardware
-# counter sees either as one instruction or few, so a quadratic copy would pass a scaling test. A
-# setting glibc does not know is ignored; this glibc leaves the stosb threshold alone without erms.
-# The instructions malloc spends depend on what earlier threads left in the arena a new thread takes
-# over, and on the order the hash seed frees blocks in. One check of the same program, on a new
-# thread each time in one process, took 30.39 billion instructions or, in some runs, 30.65 billion,
-# all of the extra in _int_malloc and unlink_chunk (callgrind); the difference of two such checks
-# that l01_29's casts tests take came out 1.5 times its size in 3 of 30 runs. With no per-thread
-# cache, the same 30 runs in 15 processes of random seeds repeat to within 0.04%, the first run of
-# each process apart (SCALE-casts-spread). The mmap and trim thresholds are left alone: a fixed
-# threshold of 128 KiB makes a 64,000-deep l01_26 test 6 times slower, and one of 32 MiB moves the
-# sizes at which the memory limits of l01_17 and l01_36 refuse.
-never=0xffffffffffffffff
-malloc=glibc.malloc.tcache_count=0
-export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=$never:glibc.cpu.x86_rep_stosb_threshold=$never:$malloc
+# The C library settings the scaling tests count work under: no rep movsb or rep stosb in memcpy
+# and memset (the hardware counter sees either as one instruction or few, so a quadratic copy
+# would pass), and no per-thread cache in malloc (with one, the instructions malloc spends depend
+# on earlier threads, SCALE-casts-spread). crates/zed-meter-settings/src/lib.rs holds the same
+# text, with the reasons and measurements, and a test binary started without it starts itself
+# again with it; this export saves that second start and gives the settings to the programs the
+# tests run. Test run_tests_exports_the_settings_of_the_meter checks the two are equal.
+export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=0xffffffffffffffff:glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff:glibc.malloc.tcache_count=0
 cores=$(nproc)
 export root out slots slot_dir cores run_kind cov
 take_slot() {

@@ -1,0 +1,19 @@
+[package]
+name = "zed-meter-settings"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc = "0.2.191"
+
+# The workspace forbids `unsafe`; a function in `.init_array` and the call of `execve` that starts
+# the process again are unsafe, and are the only unsafe code here.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -308,6 +308,7 @@ zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"
 zed-corpus-ref.workspace = true
 zed-tools.workspace = true
 zed-alloc-count.workspace = true
+zed-meter-settings.workspace = true
 zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-native = { workspace = true, features = ["counts"] }

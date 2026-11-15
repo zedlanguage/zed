@@ -31,6 +31,7 @@ zed-graph.workspace = true
 [dev-dependencies]
 rustix.workspace = true
 zed-alloc-count.workspace = true
+zed-meter-settings.workspace = true
 stacker.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

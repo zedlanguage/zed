@@ -276,6 +276,20 @@ fn malloc_keeps_no_state_from_earlier_threads() {
     );
 }
 
+/// `tools/run_tests.sh` exports the settings the meter counts under, the same text as
+/// `zed_meter_settings::GLIBC_TUNABLES`, so a binary it runs need not start itself again and the
+/// programs the tests start run under them too.
+#[test]
+fn run_tests_exports_the_settings_of_the_meter() {
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../tools/run_tests.sh");
+    let text = std::fs::read_to_string(script).expect("tools/run_tests.sh");
+    let exports: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("export GLIBC_TUNABLES="))
+        .collect();
+    assert_eq!(exports, [zed_meter_settings::GLIBC_TUNABLES]);
+}
+
 #[test]
 fn a_meter_counts_the_work_of_a_run_and_not_the_time_it_sleeps() {
     let mut meter = Meter::new();
