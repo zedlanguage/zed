@@ -999,9 +999,17 @@ fn no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is
     // written, are in `bench::one_scope` (0.8 s at load 25). Of 160 chains of 40 seeds, the
     // least had 12 answers of the whole (2026-11-14); one of them took 8 to 16 s alone at load
     // 30 to 45, a case of PERF-negated-chain-unsolved, so a fresh seed may meet such a chain.
-    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains with negations");
+    // No count of answers of the whole is reached at every seed, so none is asserted on the
+    // fresh chains; the first two chains of seed 0x5eed1 (the first of them had the refusal
+    // before the fix) have their count exact.
+    let mut rng = zed_tests::instances::Rng::new(0x5eed1);
     let decided = random_negated_chains_decided(&mut rng, 2);
-    assert!(decided >= 12, "{decided} answers of the whole");
+    assert_eq!(
+        decided, 84,
+        "answers of the whole of chains 0 and 1 of seed 0x5eed1"
+    );
+    let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains with negations");
+    random_negated_chains_decided(&mut rng, 2);
 }
 
 /// The answers of the whole decided over `count` chains of [`random_negated_chain`], each
@@ -2977,9 +2985,10 @@ fn each_answer_of_a_random_chain_moving_holes_is_the_answer_of_the_relation_whol
         "the 16th chain of seed 0x401e5 has a `p9`\n{src}"
     );
     assert!(answers_with_faces_are_those_without(&src) > 0, "{src}");
+    // The 16th chain above has answers of the whole; no count of them over the fresh chains is
+    // reached at every seed, so none is asserted.
     let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains moving holes");
-    let decided = random_hole_chains_decided(&mut rng, 3);
-    assert!(decided >= 12, "{decided} answers of the whole");
+    random_hole_chains_decided(&mut rng, 3);
 }
 
 /// The 12th chain of seed 0x401e5, checked as the test above checks its chains: holes in `q`
@@ -3256,9 +3265,10 @@ fn each_answer_of_a_chain_of_remainders_is_the_answer_of_the_relation_whole() {
         let decided = answers_with_faces_are_those_without(&src);
         assert!(decided > 0, "no answer of the whole in\n{src}");
     }
+    // Each bounded chain above has answers of the whole; no count of them over the fresh chains
+    // is reached at every seed, so none is asserted.
     let (mut rng, _) = zed_tests::instances::Rng::fresh("random chains of remainders");
-    let decided = random_remainder_chains_decided(&mut rng, 4);
-    assert!(decided >= 8, "{decided} answers of the whole");
+    random_remainder_chains_decided(&mut rng, 4);
     // The chains of the scaling test, unbounded below: the answers written over quotients
     // and remainders are those reading the bodies again, and those of the whole where decided.
     for chain in [mod3_chain, mod5_chain, mod7_chain, kept_residue_chain] {
@@ -4045,12 +4055,16 @@ fn one_variable_modular_formulas_match_enumeration() {
     // PNCX-modular: 800 random one-variable modular formulas of a fresh seed, checked as
     // [`modular_formulas_match`] checks them. The 5,000 of seed 0x70de_c1de, as first written,
     // with their counts of refusals and of empty answers, are in `bench::one_scope` (1.5 s at
-    // load 25).
+    // load 25). No count of answers is reached at every seed, so none is asserted on the fresh
+    // formulas; the first 800 of seed 0x70de_c1de have their counts exact, so that answers with
+    // a point, with none, and empty answers the general path agreed with each occur.
     let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable modular formulas");
-    let counts = modular_formulas_match(&mut rng, 0, 800);
-    assert!(
-        counts.sat >= 80 && counts.unsat >= 40 && counts.empty_agreed >= 40,
-        "{counts:?}"
+    modular_formulas_match(&mut rng, 0, 800);
+    let c = modular_formulas_match(&mut zed_tests::instances::Rng::new(0x70de_c1de), 0, 800);
+    assert_eq!(
+        (c.sat, c.unsat, c.refused, c.empty_agreed, c.empty_refused),
+        (679, 120, 1, 126, 4),
+        "the first 800 formulas of seed 0x70de_c1de: {c:?}"
     );
 }
 
