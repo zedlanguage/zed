@@ -838,40 +838,90 @@ fn a_fold_in_a_function_declared_in_a_block_takes_the_identity_of_each_call() {
 }
 
 #[test]
-fn a_function_declared_in_a_block_and_named_as_a_value_at_two_carriers_is_not_compiled_yet() {
-    // `p = h` is one value: its calls at `int` and at `f64` would need two bodies of it.
+fn a_function_declared_in_a_block_and_named_as_a_value_at_two_carriers_runs_at_each() {
+    // DESIGN.md sec:reduction, "Identity as data": each call folds an empty level to the
+    // identity of its own carrier, `#empty` at `int` and `-inf` at `f64`, whether it calls
+    // `h` by name, through a name bound to it, or through a parameter `h` is passed to
+    // (REDUCE-generic-identity-values).
     for body in [
+        // A name bound to `h` stands for it.
         "a = { h(positional q) = top(q); p = h; (h(mi[\"a\"]), p(m[\"a\"])) };\n",
         "a = { h(positional q) = top(q); k(positional z) = h(z); p = k; \
          (k(mi[\"a\"]), p(m[\"a\"])) };\n",
+        // Passed to a call that runs it before it returns, at the types the call fixes.
         "ap(positional f, positional x) = f(x);\n\
          a = { h(positional q) = top(q); (ap(h, mi[\"a\"]), ap(h, m[\"a\"])) };\n",
     ] {
-        rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
+        prints(&format!("{TOP}{F}{I}{body}"), "a", "(#empty, -inf)");
     }
 }
 
 #[test]
-fn a_generic_fold_at_two_carriers_through_a_function_value_is_not_compiled_yet() {
-    // A call through a value or a lambda has no body of its own for each identity yet:
-    // refused, never run at the wrong identity (ZED_PORT_GAPS; row
-    // REDUCE-generic-identity-values, whose expected values
-    // /home/luke/Work/wt/failing-tests/REDUCE-generic-identity-values.rs holds).
+fn a_generic_fold_at_two_carriers_through_a_function_value_runs_at_each() {
+    // As above, through a lambda bound to a name, a name bound to `top`, `top` passed as an
+    // argument, and where two calls deciding one fold are in force at one use: each use takes
+    // the identity of the call that checked it (REDUCE-generic-identity-values).
     for body in [
         "a = { f = x -> top(x); (f(mi[\"a\"]), f(m[\"a\"])) };\n",
         "a = { f = top; (f(mi[\"a\"]), f(m[\"a\"])) };\n",
         "f = top;\na = (f(mi[\"a\"]), f(m[\"a\"]));\n",
+        // A name bound to a name bound to `top`.
+        "f = top;\ng = f;\na = (g(mi[\"a\"]), g(m[\"a\"]));\n",
+        "a = { f = top; g = f; (g(mi[\"a\"]), f(m[\"a\"])) };\n",
         "ap(positional f, positional x) = f(x);\na = (ap(top, mi[\"a\"]), ap(top, m[\"a\"]));\n",
-        "a = mi.map(r -> { f = x -> top(x); (top(r), f(m[\"a\"])) });\n",
-        "h3(positional f, positional y) = (f(y), f);\n\
-         a = { p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](mi[\"a\"])) };\n",
-        // Two identities in force at one read: the `int` of `q`'s map and the `f64` of `r`'s.
-        "a = mi.map(q -> (top(q), m.map(r -> (top(r), top(q)))));\n",
-        // `g`'s call decides `int`, and the `.map` inside it `f64`, for one fold.
-        "g(positional ys) = (top(ys), m.map(r -> top(r)));\na = g(mi[\"a\"]);\n",
     ] {
-        rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
+        prints(&format!("{TOP}{F}{I}{body}"), "a", "(#empty, -inf)");
     }
+    prints(
+        &format!("{TOP}{F}{I}a = mi.map(r -> {{ f = x -> top(x); (top(r), f(m[\"a\"])) }});\n"),
+        "a",
+        "{\"a\" -> (#empty, -inf), \"b\" -> (5, -inf)}",
+    );
+    // Two identities in force at `top(q)`: the `int` of `q`'s map, which checked it, and the
+    // `f64` of `r`'s.
+    prints(
+        &format!("{TOP}{F}{I}a = mi.map(q -> (top(q), m.map(r -> (top(r), top(q)))));\n"),
+        "a",
+        "{\"a\" -> (#empty, {\"a\" -> (-inf, #empty), \"b\" -> (5.0, #empty)}), \
+         \"b\" -> (5, {\"a\" -> (-inf, 5), \"b\" -> (5.0, 5)})}",
+    );
+    // Three `.map` calls nested, at `int`, `f64` and `int`, each level reading `top` of its
+    // own row and of the row around: three calls deciding one fold in force at the innermost
+    // reads, each read taking the one that checked it.
+    prints(
+        &format!(
+            "{TOP}ni = {{ \"a\" -> [5] }}.map(r -> r.where(v -> v > 3));\n\
+             nf = {{ \"a\" -> [1.0] }}.map(r -> r.where(v -> v > 3.0));\n\
+             a = ni.map(q0 -> (top(q0), 0, nf.map(q1 -> (top(q1), top(q0), \
+             ni.map(q2 -> (top(q2), top(q1), 0))))));\n"
+        ),
+        "a",
+        "{\"a\" -> (5, 0, {\"a\" -> (-inf, 5, {\"a\" -> (5, -inf, 0)})})}",
+    );
+    // `g`'s call decides `int`, and the `.map` inside it `f64`, for one fold.
+    prints(
+        &format!(
+            "{TOP}{F}{I}g(positional ys) = (top(ys), m.map(r -> top(r)));\na = g(mi[\"a\"]);\n"
+        ),
+        "a",
+        "(#empty, {\"a\" -> -inf, \"b\" -> 5.0})",
+    );
+}
+
+#[test]
+fn a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet() {
+    // `h3` returns the lambda it is passed, and `p[1]` runs it at `int` after the call ran it
+    // at `f64`: one value at two identities, which needs the identity passed when the program
+    // runs. Refused, never run at the wrong identity (row REDUCE-identity-escaping-values,
+    // whose expected value /home/luke/Work/wt/failing-tests/REDUCE-identity-escaping-values.rs
+    // holds).
+    rejected(
+        &format!(
+            "{TOP}{F}{I}h3(positional f, positional y) = (f(y), f);\n\
+             a = {{ p = h3(x -> top(x), m[\"a\"]); (p[0], p[1](mi[\"a\"])) }};\n"
+        ),
+        &["does not compile it yet"],
+    );
 }
 
 // ---- `sum(x)` is `x.sum`, and a receiver that may be a family or a tuple is summed region by

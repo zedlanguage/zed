@@ -5,14 +5,16 @@
 //! DESIGN.md lets a program refer to a function is written here once:
 //!
 //! - those that name the written body, which is then kept and its fold, which no call
-//!   decides, refused: a value bound to a name, an alias of that name, an argument, a tuple's
-//!   member, an `if`'s branch, a map's or array's entry, a block's result, a lambda that
-//!   captures it, a function whose body is it, a function whose body names it and that is
-//!   itself named, a parameter's default, a port push in `main`, and a value never used;
+//!   decides, refused: a tuple's member, an `if`'s branch, a map's or array's entry, a
+//!   block's result, a lambda that returns it, a function whose body is it, a function whose
+//!   body names it and that is itself named as a value, and a parameter's default;
 //! - those that run a body made at each call's identity and leave the written body
 //!   dropped, which give their values: a call, UFCS, indexing, a call of the name in
 //!   parentheses, currying with `...`, a bracket section, `~f~` infix, a default that calls
-//!   it, a lambda a built-in runs in place, a call from a generic function's block;
+//!   it, a lambda a built-in runs in place, a call from a generic function's block, and,
+//!   since REDUCE-generic-identity-values, a name bound to it (with its alias, called or
+//!   never used), an argument a call runs while it runs, a lambda that calls it, and a port
+//!   push in `main`;
 //! - those refused before the written body could be dropped: `::source`, `><` by a
 //!   function, a law, a test table in a block, a string or `==` of a function.
 //!
@@ -57,59 +59,109 @@ fn written_body_kept(body: &str) {
 #[test]
 fn a_block_function_named_as_a_value_keeps_its_written_body() {
     for body in [
-        // Bound to a name, and that name's alias.
-        format!("a = {{ {H} p = h; (h(mi[\"a\"]), p(m[\"a\"])) }};\n"),
-        format!("a = {{ {H} p = h; q = p; (h(mi[\"a\"]), q(m[\"a\"])) }};\n"),
-        // Bound to a name never used: the term is kept all the same.
-        format!("a = {{ {H} p = h; (h(mi[\"a\"]), h(m[\"a\"])) }};\n"),
-        // Passed as an argument.
-        format!(
-            "ap(positional f, positional x) = f(x);\n\
-             a = {{ {H} (h(mi[\"a\"]), ap(h, m[\"a\"])) }};\n"
-        ),
         // A tuple's member, an `if`'s branches, a map's and an array's entry.
         format!("a = {{ {H} (h(mi[\"a\"]), (h, 1)[0](m[\"a\"])) }};\n"),
         format!("a = {{ {H} p = if true {{ h }} else {{ h }}; (h(mi[\"a\"]), p(m[\"a\"])) }};\n"),
         format!("a = {{ {H} p = {{ \"f\" -> h }}; (h(mi[\"a\"]), h(m[\"a\"]), p) }};\n"),
         format!("a = {{ {H} p = [h][0]; (h(mi[\"a\"]), h(m[\"a\"]), p) }};\n"),
-        // A block's result, and a value an inner block names.
+        // A block's result.
         format!("a = {{ {H} x = (h(mi[\"a\"]), h(m[\"a\"])); h }};\nb = a(m[\"a\"]);\n"),
-        format!("a = {{ {H} x = {{ p = h; p(m[\"a\"]) }}; (h(mi[\"a\"]), x) }};\n"),
-        // Captured by a lambda, called at one type and at two; returned by one.
-        format!("a = {{ {H} p = x -> h(x); (h(mi[\"a\"]), p(m[\"a\"])) }};\n"),
-        format!("a = {{ {H} p = x -> h(x); (p(mi[\"a\"]), p(m[\"a\"])) }};\n"),
+        // Returned by a lambda, and the body of a function declared after it: run if that
+        // one is.
         format!("a = {{ {H} p = () -> h; (h(mi[\"a\"]), p()(m[\"a\"])) }};\n"),
-        // The body of a function declared after it, and named in one's body: run if that one
-        // is, whether called by name or itself named as a value.
         format!("a = {{ {H} k() = h; (h(mi[\"a\"]), k()(m[\"a\"])) }};\n"),
-        format!(
-            "a = {{ {H} k(positional z) = {{ p = h; p(z) }}; (h(mi[\"a\"]), k(m[\"a\"])) }};\n"
-        ),
-        format!(
-            "a = {{ {H} k(positional z) = {{ p = h; (p(z), h(mi[\"a\"])) }}; \
-             (k(m[\"a\"]), k(mi[\"b\"])) }};\n"
-        ),
+        // The body of a function named in one's body, itself named as a value.
         format!("a = {{ {H} k(positional z) = h(z); p = k; (h(mi[\"a\"]), h(m[\"a\"]), p) }};\n"),
-        format!("a = {{ {H} k(positional z) = h(z); p = k; (h(mi[\"a\"]), h(m[\"a\"])) }};\n"),
         // A parameter's default.
         format!(
             "a = {{ {H} k(positional z, f = h) = (z, f); (h(mi[\"a\"]), h(m[\"a\"]), k(1)) }};\n"
         ),
-        // In a generic function's block and in a lambda a built-in runs in place.
-        format!(
-            "g(positional ys) = {{ {H} p = h; (h(ys), p(m[\"a\"])) }};\n\
-             a = (g(mi[\"a\"]), g(m[\"a\"]));\n"
-        ),
-        format!("a = mi.map(r -> {{ {H} p = h; (h(r), p(m[\"a\"])) }});\n"),
-        // Pushed to a port in `main`.
-        format!(
-            "main(io: MainArgs) {{ {H} p = h; \
-             io.stdout <- (String(h(mi[\"a\"])) ++ String(p(m[\"a\"]))) else \"\"; }}\n\
-             a = 1;\n"
-        ),
     ] {
         written_body_kept(&body);
     }
+}
+
+#[test]
+fn a_block_function_named_as_a_value_where_it_is_called_runs_the_body_of_each_call() {
+    // A name bound to `h` or to a lambda, an alias of it, and an argument a call runs while it
+    // runs each take the body made at the identities of the call they reach
+    // (REDUCE-generic-identity-values); an alias never called makes nothing.
+    for (body, want) in [
+        // Bound to a name, that name's alias, and a name never used.
+        (
+            format!("a = {{ {H} p = h; (h(mi[\"a\"]), p(m[\"a\"])) }};\n"),
+            "(#empty, -inf)",
+        ),
+        (
+            format!("a = {{ {H} p = h; q = p; (h(mi[\"a\"]), q(m[\"a\"])) }};\n"),
+            "(#empty, -inf)",
+        ),
+        (
+            format!("a = {{ {H} p = h; (h(mi[\"a\"]), h(m[\"a\"])) }};\n"),
+            "(#empty, -inf)",
+        ),
+        (
+            format!("a = {{ {H} k(positional z) = h(z); p = k; (h(mi[\"a\"]), h(m[\"a\"])) }};\n"),
+            "(#empty, -inf)",
+        ),
+        // Passed as an argument.
+        (
+            format!(
+                "ap(positional f, positional x) = f(x);\n\
+                 a = {{ {H} (h(mi[\"a\"]), ap(h, m[\"a\"])) }};\n"
+            ),
+            "(#empty, -inf)",
+        ),
+        // A value an inner block names.
+        (
+            format!("a = {{ {H} x = {{ p = h; p(m[\"a\"]) }}; (h(mi[\"a\"]), x) }};\n"),
+            "(#empty, -inf)",
+        ),
+        // Captured by a lambda bound to a name, called at one type and at two.
+        (
+            format!("a = {{ {H} p = x -> h(x); (h(mi[\"a\"]), p(m[\"a\"])) }};\n"),
+            "(#empty, -inf)",
+        ),
+        (
+            format!("a = {{ {H} p = x -> h(x); (p(mi[\"a\"]), p(m[\"a\"])) }};\n"),
+            "(#empty, -inf)",
+        ),
+        // Named in the body of a function declared after it.
+        (
+            format!(
+                "a = {{ {H} k(positional z) = {{ p = h; p(z) }}; (h(mi[\"a\"]), k(m[\"a\"])) }};\n"
+            ),
+            "(#empty, -inf)",
+        ),
+        (
+            format!(
+                "a = {{ {H} k(positional z) = {{ p = h; (p(z), h(mi[\"a\"])) }}; \
+                 (k(m[\"a\"]), k(mi[\"b\"])) }};\n"
+            ),
+            "((-inf, #empty), (5, #empty))",
+        ),
+        // In a generic function's block and in a lambda a built-in runs in place.
+        (
+            format!(
+                "g(positional ys) = {{ {H} p = h; (h(ys), p(m[\"a\"])) }};\n\
+                 a = (g(mi[\"a\"]), g(m[\"a\"]));\n"
+            ),
+            "((#empty, -inf), (-inf, -inf))",
+        ),
+        (
+            format!("a = mi.map(r -> {{ {H} p = h; (h(r), p(m[\"a\"])) }});\n"),
+            "{\"a\" -> (#empty, -inf), \"b\" -> (5, -inf)}",
+        ),
+    ] {
+        prints(&at(&body), "a", want);
+    }
+    // Pushed to a port in `main`.
+    let src = at(&format!(
+        "main(io: MainArgs) {{ {H} p = h; \
+         io.stdout <- (String(h(mi[\"a\"])) ++ String(p(m[\"a\"]))) else \"\"; }}\n\
+         a = 1;\n"
+    ));
+    assert!(elab(&src).is_ok(), "{src}: {:?}", all_errors(&src));
 }
 
 #[test]

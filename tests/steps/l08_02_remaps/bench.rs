@@ -646,3 +646,135 @@ fn n_blocks_that_each_drop_a_written_body_run_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn n_function_values_called_at_two_carriers_run_in_linear_time() {
+    // Each `t{i}` is an alias of `top`, called at `int` and `f64`, and each `e{i}` passes `top`
+    // to `ap`, so each call through a value runs the body made at its own identity (row
+    // REDUCE-generic-identity-values, form 1).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let uses = (0..n)
+            .map(|i| {
+                format!(
+                    "t{i} = top;\nd{i} = (t{i}(mi[\"a\"]), t{i}(m[\"a\"]));\n\
+                     e{i} = (ap(top, mi[\"a\"]), ap(top, m[\"a\"]));\n"
+                )
+            })
+            .collect::<String>();
+        format!(
+            "top(positional xs) = xs >< max;\n{EMPTY_LEVELS}\
+             ap(positional f, positional x) = f(x);\n{uses}"
+        )
+    });
+    let run = |n: usize| {
+        let src = &srcs[&n];
+        assert_eq!(value(src, &format!("d{}", n - 1)), "(#empty, -inf)");
+        assert_eq!(value(src, &format!("e{}", n - 1)), "(#empty, -inf)");
+    };
+    scaling::check(
+        "n aliases of a generic `max` fold and n passings of it to a function, each called at \
+         `int` and `f64`, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
+fn n_folds_read_under_two_identities_run_in_linear_time() {
+    // Each `x{i}` reads `top(q)` of the outer `.map`'s `int` row inside the inner `.map` at
+    // `f64`, so one read is in force under both identities (row
+    // REDUCE-generic-identity-values, form 2), and the repeated `top(q)` is one need of one
+    // class (`Ck::same_use`).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let uses = (0..n)
+            .map(|i| format!("x{i} = mi.map(q -> (top(q), m.map(r -> (top(r), top(q)))));\n"))
+            .collect::<String>();
+        format!("top(positional xs) = xs >< max;\n{EMPTY_LEVELS}{uses}")
+    });
+    let run = |n: usize| {
+        assert_eq!(
+            value(&srcs[&n], &format!("x{}", n - 1)),
+            "{\"a\" -> (#empty, {\"a\" -> (-inf, #empty), \"b\" -> (5.0, #empty)}), \
+             \"b\" -> (5, {\"a\" -> (-inf, 5), \"b\" -> (5.0, 5)})}"
+        );
+    };
+    scaling::check(
+        "n `.map` calls at `int`, each reading a `max` fold of its row inside a `.map` at \
+         `f64`, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+/// Levels of a nest of `.map` calls: at 50 and 400 a search of the calls in force at each
+/// read measured 10.6x, against 8.7x at 25 and 200.
+const N_NEST: usize = 50;
+
+#[test]
+fn a_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time() {
+    // `.map` calls nested n deep, alternately over a one-entry `int` and `f64` family, each
+    // lambda reading `top` of its own row and of the row of the `.map` around it: at depth i,
+    // i calls that decide `top`'s fold are in force (`Instancing::pushed`), and each read takes
+    // the identity of the one that checked it (row REDUCE-generic-identity-values, form 2).
+    let srcs = scaling::inputs(N_NEST, |n| {
+        let mut body = String::from("0");
+        for i in (0..n).rev() {
+            let (fam, outer) = match (i % 2, i) {
+                (0, 0) => ("ni", "0".to_string()),
+                (0, _) => ("ni", format!("top(q{})", i - 1)),
+                (_, _) => ("nf", format!("top(q{})", i - 1)),
+            };
+            body = format!("{fam}.map(q{i} -> (top(q{i}), {outer}, {body}))");
+        }
+        format!(
+            "top(positional xs) = xs >< max;\n\
+             ni = {{ \"a\" -> [5] }}.map(r -> r.where(v -> v > 3));\n\
+             nf = {{ \"a\" -> [1.0] }}.map(r -> r.where(v -> v > 3.0));\n\
+             x = {body};\n"
+        )
+    });
+    let run = |n: usize| {
+        let x = value(&srcs[&n], "x");
+        // Level 0 reads `int`'s 5 and gives `0` for the row around; each odd level reads
+        // `f64`'s `-inf` of its row and 5 of the `int` row around, each even one the reverse.
+        assert!(x.starts_with("{\"a\" -> (5, 0, "), "{x}");
+        assert_eq!(x.matches("(-inf, 5, ").count(), n / 2, "{x}");
+        assert_eq!(x.matches("(5, -inf, ").count(), (n - 1) / 2, "{x}");
+    };
+    scaling::check(
+        "`.map` calls nested n deep over one-entry `int` and `f64` families, each reading a \
+         `max` fold of its row and of the row around, whole path",
+        N_NEST,
+        run,
+    );
+}
+
+#[test]
+fn n_generic_functions_with_a_fold_in_a_tuple_member_run_in_linear_time() {
+    // Each `g{i}` returns a tuple whose second member is a `.map` of a fold at `f64` while its
+    // first is a fold at the call's carrier, so `split_needs` searches the tuple's members
+    // (row REDUCE-generic-identity-values, form 3).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let uses = (0..n)
+            .map(|i| {
+                format!(
+                    "g{i}(positional ys) = (top(ys), m.map(r -> top(r)));\n\
+                     x{i} = g{i}(mi[\"a\"]);\n"
+                )
+            })
+            .collect::<String>();
+        format!("top(positional xs) = xs >< max;\n{EMPTY_LEVELS}{uses}")
+    });
+    let run = |n: usize| {
+        assert_eq!(
+            value(&srcs[&n], &format!("x{}", n - 1)),
+            "(#empty, {\"a\" -> -inf, \"b\" -> 5.0})"
+        );
+    };
+    scaling::check(
+        "n generic functions, each returning a `max` fold and a `.map` of one in a tuple, \
+         called at `int`, whole path",
+        N_LEVELS,
+        run,
+    );
+}
