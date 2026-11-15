@@ -674,6 +674,16 @@ impl PartialEq for Row {
 
 impl Eq for Row {}
 
+impl std::hash::Hash for Row {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        // Equal rows have equal presentation hashes, as for [`Type`]. Assumption, not proved:
+        // no hashed map of rows is used while `hash::blind` runs, where rows equal but for
+        // definition names compare equal and may hash apart. Evidence: `blind` wraps only the
+        // linear searches of `Ids` in `empty.rs`, as for the hash of `Type`.
+        self.name_digest().hash(h);
+    }
+}
+
 thread_local! {
     static TUPLES: RefCell<Tables<Row>> = const { RefCell::new(Tables::new()) };
     static MORPHISMS: RefCell<Tables<Morphism>> = const { RefCell::new(Tables::new()) };
@@ -3952,7 +3962,8 @@ fn scalars(p: &Parts) -> Vec<Value> {
 
 /// What a column's type names of the values it may hold, at any depth of first components: a
 /// value's component at depth 0 is the value, and at depth `d + 1` the first component of its
-/// component at depth `d`.
+/// component at depth `d`; with [`Reading::Payloads`], the first component of an atom with a
+/// tuple payload is the first of its arguments, as if the atom were the tuple of them.
 #[derive(Clone)]
 struct Filed {
     /// The scalars and bare atoms the types at some depth list, and the empty tuple where they
@@ -3960,7 +3971,10 @@ struct Filed {
     /// only as its kinds decide ([`kind_status`]). A type whose keys are all those of one type
     /// below it shares that type's set ([`Filer`]).
     keys: Rc<Vec<Value>>,
-    /// Whether every value of the type has a component that is a key.
+    /// Whether every value of the type has a component that is a key. Read by tuple types or
+    /// boxes, this holds of the plain values only ([`makeable`]), which have no atom with a
+    /// payload; read with [`Reading::Payloads`], of every value with a key (`Columns` in
+    /// `empty.rs`).
     listed: bool,
 }
 
@@ -3997,14 +4011,28 @@ fn firsts(t: &Type, by_boxes: bool, keys: &mut Vec<Value>, mut push: impl FnMut(
     listed
 }
 
+/// How [`Filer::file`] reads the types below a column type.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// The first columns of its tuple types ([`firsts`]).
+    Tuples,
+    /// The first columns of its boxes, when they hold all its tuples ([`firsts`]).
+    Boxes,
+    /// The first columns of its tuple types and the payload types of its atom names, for the
+    /// emptiness search, whose values include atoms with payloads (`Columns` in `empty.rs`): a
+    /// value's key is then read along first components and atoms' payloads alike, the payload
+    /// being a tuple of the atom's arguments.
+    Payloads,
+}
+
 /// The keys of column types ([`Filed`]) for one [`Type::each_value`] call, each type filed
-/// once for the whole call, by each way of reading its first components (`by_boxes`,
-/// [`firsts`]). A key is not tied to its depth: a component equal to a key at another depth
-/// only makes its tuple type read.
+/// once for the whole call, by each way of reading the types below it ([`Reading`]). A key is
+/// not tied to its depth: a component equal to a key at another depth only makes its tuple
+/// type read.
 #[derive(Default)]
 struct Filer {
-    /// Per way of reading first components, without and with boxes, the types filed.
-    filed: [HashMap<Type, Filed>; 2],
+    /// Per way of reading ([`Reading`], in order), the types filed.
+    filed: [HashMap<Type, Filed>; 3],
 }
 
 /// A type that [`Filer::file`] is filing.
@@ -4023,8 +4051,9 @@ struct Visit {
 }
 
 impl Visit {
-    /// The type `ty`, numbered `number` in its walk, with its own keys and first columns.
-    fn new(ty: Type, by_boxes: bool, number: usize) -> Visit {
+    /// The type `ty`, numbered `number` in its walk, with its own keys and first columns, and
+    /// with [`Reading::Payloads`] the payload types of its atom names.
+    fn new(ty: Type, reading: Reading, number: usize) -> Visit {
         let (mut keys, mut listed, mut next) = (Vec::new(), true, Vec::new());
         let p = ty.p();
         for b in [false, true] {
@@ -4046,6 +4075,17 @@ impl Visit {
                 .map(|(name, _)| Value::atom(name)),
         );
         listed &= !atoms.cofinite;
+        // An atom with a tuple payload is in the type when its name is listed and the tuple of
+        // its arguments is in the name's payload type, so its key is one of that type's.
+        if reading == Reading::Payloads {
+            next.extend(
+                atoms
+                    .payloads
+                    .iter()
+                    .map(|name| atoms.names[name].payload.clone()),
+            );
+        }
+        let by_boxes = reading == Reading::Boxes;
         listed &= firsts(&ty, by_boxes, &mut keys, |c| next.push(c.clone()));
         Visit {
             ty,
@@ -4075,14 +4115,14 @@ impl Filer {
     // in O(k log k) for the k keys it reads; a row reading the type copies those k keys into
     // its index anyway ([`Keyed::add`]). The cost is a map of every type filed, each with a
     // shared set, held until the makers are built.
-    fn file(&mut self, t: &Type, by_boxes: bool) -> Filed {
-        let filed = &mut self.filed[usize::from(by_boxes)];
+    fn file(&mut self, t: &Type, reading: Reading) -> Filed {
+        let filed = &mut self.filed[reading as usize];
         if let Some(f) = filed.get(t) {
             return f.clone();
         }
         // Each type of this walk by its number, the position of its visit.
         let mut numbers: HashMap<Type, usize> = HashMap::from([(t.clone(), 0)]);
-        let mut visits = vec![Visit::new(t.clone(), by_boxes, 0)];
+        let mut visits = vec![Visit::new(t.clone(), reading, 0)];
         // The types walked and not yet filed, in the order of their numbers, and the types
         // from `t` to the one being read.
         let (mut open, mut path) = (vec![0], vec![0]);
@@ -4096,7 +4136,7 @@ impl Filer {
                 } else {
                     let w = visits.len();
                     numbers.insert(c.clone(), w);
-                    visits.push(Visit::new(c, by_boxes, w));
+                    visits.push(Visit::new(c, reading, w));
                     open.push(w);
                     path.push(w);
                 }
@@ -4323,11 +4363,11 @@ fn file_row(row: &Row, filer: &mut Filer) -> (Vec<Filed>, Option<usize>) {
     let filed: Vec<Filed> = row
         .iter()
         .map(|t| {
-            let f = filer.file(t, false);
+            let f = filer.file(t, Reading::Tuples);
             if f.listed {
                 return f;
             }
-            let g = filer.file(t, true);
+            let g = filer.file(t, Reading::Boxes);
             if g.listed { g } else { f }
         })
         .collect();

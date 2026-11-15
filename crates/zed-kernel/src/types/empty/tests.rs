@@ -840,3 +840,92 @@ fn a_union_of_tuple_differences_with_payloads_is_disjoint_from_the_tuples_taken_
         assert!((&open & &unlisted).is_empty(), "n = {n}");
     }
 }
+
+/// Small instances of `the_emptiness_of_a_meet_of_tuple_differences_with_payload_keys_scales`:
+/// a witness tuple whose first component is an atom with a payload and none a scalar
+/// (FAIL-kernel-empty-payload-key-tuple).
+#[test]
+fn a_union_of_tuple_differences_with_payload_keys_is_disjoint_from_the_tuples_taken_away() {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let k = |i: usize| {
+        let lit = Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+        Type::atom_with("k", &Type::tuple(vec![lit]))
+    };
+    for n in [1, 2, 5] {
+        let (part, paid) = super::bench::tuple_diff_union_payload_key_pair(n);
+        assert!((&part & &paid).is_empty(), "n = {n}");
+        assert!(!part.subtype(&paid), "n = {n}");
+        assert!(!paid.subtype(&part), "n = {n}");
+        let one_int = a(Type::tuple(vec![k(n - 1), Type::int()]));
+        assert!(one_int.subtype(&part), "n = {n}");
+        assert!(!(&part & &one_int).is_empty(), "n = {n}");
+        let one_true = a(Type::tuple(vec![k(0), Type::bool()]));
+        assert!((&part & &one_true).is_empty(), "n = {n}");
+        assert!(one_true.subtype(&paid), "n = {n}");
+        // A first component no row lists.
+        let unlisted = a(Type::tuple(vec![k(n + 3), Type::int()]));
+        assert!((&part & &unlisted).is_empty(), "n = {n}");
+        // Another atom name, and the same name with another payload shape.
+        let other = a(Type::tuple(vec![Type::atom("j"), Type::int()]));
+        assert!((&part & &other).is_empty(), "n = {n}");
+        // A row whose first column is every `#k` with an integer payload.
+        let wide = Type::atom_with("k", &Type::tuple(vec![Type::int()]));
+        let open = &part | &a(Type::tuple(vec![wide, Type::string()]));
+        let any_str = a(Type::tuple(vec![k(n + 3), Type::string()]));
+        assert!(!(&open & &any_str).is_empty(), "n = {n}");
+        assert!(any_str.subtype(&open), "n = {n}");
+        assert!((&open & &unlisted).is_empty(), "n = {n}");
+    }
+}
+
+/// The keys `Columns` files a column type under ([`Reading::Payloads`]) are sound: a value in
+/// a listed type has a key ([`leaf`]) that the type lists, read along first components and the
+/// tuple payloads of atoms at any depth; a type with an atom name whose payload is not listed,
+/// or with names not listed, is not listed (FAIL-kernel-empty-payload-key-tuple).
+#[test]
+fn a_value_in_a_listed_column_type_has_a_key_the_type_lists() {
+    let int = |i: i64| Value::Int(i);
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let k = |p: Type| Type::atom_with("k", &Type::tuple(vec![p]));
+    let j = |p: Type, q: Type| Type::atom_with("j", &Type::tuple(vec![p, q]));
+    let kv = |v: Value| Value::atom_with("k", vec![v]);
+    let jv = |v: Value, w: Value| Value::atom_with("j", vec![v, w]);
+    let listed = [
+        (k(&lit(1) | &lit(2)), vec![kv(int(1)), kv(int(2))]),
+        (
+            k(j(lit(3), Type::string())),
+            vec![kv(jv(int(3), Value::str("s")))],
+        ),
+        (
+            Type::tuple(vec![k(lit(4)), Type::int()]),
+            vec![Value::tuple(vec![kv(int(4)), int(9)])],
+        ),
+        (
+            &Type::atom("b") | &k(Type::tuple(vec![lit(5), Type::bool()])),
+            vec![
+                Value::atom("b"),
+                kv(Value::tuple(vec![int(5), Value::Bool(true)])),
+            ],
+        ),
+        (
+            k(Type::tuple(Vec::new())),
+            vec![kv(Value::tuple(Vec::new()))],
+        ),
+    ];
+    let mut filer = Filer::default();
+    for (t, values) in &listed {
+        let filed = filer.file(t, Reading::Payloads);
+        assert!(filed.listed, "{t} is listed");
+        for x in values {
+            assert!(t.contains(x), "{x} is in {t}");
+            let key = leaf(x).expect("a value of these types has a key");
+            assert!(filed.keys.contains(&key), "{t} lists the key {key} of {x}");
+        }
+    }
+    for t in [k(Type::int()), &j(lit(1), Type::int()) | &k(Type::string())] {
+        assert!(
+            !filer.file(&t, Reading::Payloads).listed,
+            "{t} is not listed"
+        );
+    }
+}

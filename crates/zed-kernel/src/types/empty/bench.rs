@@ -103,3 +103,41 @@ fn the_emptiness_of_a_meet_of_tuple_differences_with_payloads_scales() {
         },
     );
 }
+
+/// [`tuple_diff_union_pair`] with the first component an atom with a payload, `#k((i))`, so no
+/// component of a witness tuple is a scalar: `#a(∪ i<n: (#k((i)), int | bool) \ (#k((i)),
+/// bool))` and `#a(∪ i<n: (#k((i)), bool))`. Disjoint, and the first not a subtype of the second.
+/// FAIL-kernel-empty-payload-key-tuple.
+pub(super) fn tuple_diff_union_payload_key_pair(n: usize) -> (Type, Type) {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let k = |i: usize| {
+        let lit = Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+        Type::atom_with("k", &Type::tuple(vec![lit]))
+    };
+    let ib = &Type::int() | &Type::bool();
+    let part = a(Type::union_all((0..n).map(|i| {
+        &Type::tuple(vec![k(i), ib.clone()]) - &Type::tuple(vec![k(i), Type::bool()])
+    })));
+    let paid = a(Type::union_all(
+        (0..n).map(|i| Type::tuple(vec![k(i), Type::bool()])),
+    ));
+    (part, paid)
+}
+
+/// As [`the_emptiness_of_a_meet_of_tuple_differences_scales`], on
+/// [`tuple_diff_union_payload_key_pair`]: a witness tuple with no scalar component and a
+/// component that is an atom with a payload, cost order n log n. Small instance:
+/// `a_union_of_tuple_differences_with_payload_keys_is_disjoint_from_the_tuples_taken_away`.
+#[test]
+fn the_emptiness_of_a_meet_of_tuple_differences_with_payload_keys_scales() {
+    let inputs = crate::scaling::inputs(256, tuple_diff_union_payload_key_pair);
+    crate::scaling::check(
+        "whether #a(∪ (#k((i)), int | bool) \\ (#k((i)), bool)) & #a(∪ (#k((i)), bool)) is empty, and the subtype test",
+        256,
+        |n| {
+            let (part, paid) = &inputs[&n];
+            assert!((part & paid).is_empty());
+            assert!(!part.subtype(paid));
+        },
+    );
+}

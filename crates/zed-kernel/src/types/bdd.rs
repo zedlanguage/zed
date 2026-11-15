@@ -1885,12 +1885,37 @@ impl<A: Literal> Part<A> {
 
     /// Each distinct atom once, in the order first met. One atom can stand on several nodes,
     /// and a caller that tests or splits on each atom must meet it once.
+    // Complexity tradeoff: the atoms met are filed by digest, each digest with the first atom
+    // that has it and each atom with the next of its digest, so an atom is compared only with
+    // those of its digest: O(1) expected per atom. Naive version: a sorted set of the atoms,
+    // O(log n) comparisons per atom, each comparing digests, the log factor that took
+    // `the_emptiness_of_a_meet_of_tuple_differences_scales` over 9 (PERF-kernel-payload-shape-
+    // under9). Cost: two words per distinct atom.
     pub(super) fn distinct_atoms(&self) -> Vec<A> {
-        let (mut seen, mut atoms) = (BTreeSet::new(), Vec::new());
+        let mut first: DigestMap<u64, usize> = DigestMap::default();
+        let (mut next, mut atoms) = (Vec::<Option<usize>>::new(), Vec::new());
         self.atoms(&mut |a| {
-            if seen.insert(a.clone()) {
-                atoms.push(a.clone());
+            let mut at = match first.entry(a.digest()) {
+                Entry::Vacant(e) => {
+                    e.insert(atoms.len());
+                    next.push(None);
+                    atoms.push(a.clone());
+                    return true;
+                }
+                Entry::Occupied(e) => *e.get(),
+            };
+            loop {
+                if atoms[at] == *a {
+                    return true;
+                }
+                match next[at] {
+                    Some(n) => at = n,
+                    None => break,
+                }
             }
+            next[at] = Some(atoms.len());
+            next.push(None);
+            atoms.push(a.clone());
             true
         });
         atoms
