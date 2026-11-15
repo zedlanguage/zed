@@ -11,6 +11,7 @@ mod misplaced_level;
 mod prim_codes;
 mod rules;
 mod scaling;
+mod serial_text;
 
 use std::sync::Arc;
 
