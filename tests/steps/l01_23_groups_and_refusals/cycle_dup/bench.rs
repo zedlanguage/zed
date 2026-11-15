@@ -7,11 +7,19 @@ use super::*;
 /// The verdicts of a ring of `n` and `8n` closures, each returning the next; small instance
 /// `a_small_group_of_closures_is_witnessed`.
 ///
-/// Size (TEST-bench-move-l0123, author P169): n 64 before, now 65536; 1x 245 ms at load
-/// 13.74.
+/// Size (TEST-bench-move-l0123, author P169): n 64 before, then 65536; 1x 245 ms at load
+/// 13.74. Halved to 32768 by PERF-l01-23-bench-over-20s: at 65536 the piece took 20.4 s at
+/// load 24.9, over its 20 s, though its runs are short. Timed at load 40 to 65 (2026-11-15):
+/// building the inputs took 6 to 7.6 s (`Group::new` 3.1 to 4.5 s and `instance` 1.5 to 2.4 s
+/// at 8n), and the check four runs, the warm-up at n, n, and 8n twice (0.8, 0.5, 9.2 and 4.8
+/// s): the first run of a size fills each member's judgment, which its input keeps and
+/// `Type::forget_emptiness` does not clear, so the cold first run at 8n is over the limit
+/// against the second run at n, whose judgments the warm-up filled, and is run again
+/// (`Meter::again_when_over`); the first runs are held apart, warm-up against first 8n. Every part is linear in n,
+/// so the size sets the time.
 #[test]
 fn a_group_of_closures_is_witnessed_in_its_written_size() {
-    let n = 65536;
+    let n = 32768;
     let inputs = scaling::inputs(n, |k| {
         Group::new(
             (0..k)

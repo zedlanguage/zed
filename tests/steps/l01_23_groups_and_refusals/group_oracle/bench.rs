@@ -76,8 +76,14 @@ fn the_verdicts_of_every_member_of_a_chain_group_scale() {
 
 /// The verdicts of every member of one X14 group, as in [`verdicts_of_random_groups_scale`].
 ///
-/// Size (TEST-bench-move-l0123, author P169): n 128 before, now 16384; 1x 104 ms at load
-/// 16.99.
+/// Size (TEST-bench-move-l0123, author P169): n 128 before, then 16384; 1x 104 ms at load
+/// 16.99. Halved to 8192 by PERF-l01-23-bench-over-20s: at 16384 the piece took 19.3 s at load
+/// 57 and 32 s at load 66, over its 20 s. Timed (2026-11-15): building the inputs took 4.6
+/// to 8.7 s, nearly all of it `kernel` at 8n (4.2 to 7.7 s), and the check four runs, the
+/// warm-up at n, n, and 8n twice (0.77, 0.27, 7.6 and 1.4 s): the cold first run at 8n fills
+/// judgments its input keeps, so it is over the limit against the second run at n and is run
+/// again (`Meter::again_when_over`). Every part is near linear in n, so the size sets the
+/// time.
 #[test]
 fn the_verdicts_of_every_member_of_one_x14_group_scale() {
     let one = |n: usize| -> Vec<Type> {
@@ -86,7 +92,7 @@ fn the_verdicts_of_every_member_of_one_x14_group_scale() {
             .map(|t| t.expect("every definition of the X14 family is admitted"))
             .collect()
     };
-    let n = 16384;
+    let n = 8192;
     let ones = scaling::inputs(n, one);
     scaling::check(
         "the verdicts of every member of one X14 group of n",
