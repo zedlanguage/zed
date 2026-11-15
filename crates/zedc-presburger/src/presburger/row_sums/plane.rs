@@ -28,7 +28,7 @@
 
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::Rows;
+use super::rows::{Rows, gcd};
 
 /// `a·x + b·y + c >= 0`.
 #[derive(Clone, Copy, Debug)]
@@ -272,7 +272,7 @@ fn polygon_pieces(
                 } else {
                     // A form with a common factor above 1 takes every g-th value: left to the
                     // join (module note).
-                    if super::gcd(g.a.unsigned_abs(), g.b.unsigned_abs()) != 1 {
+                    if gcd(g.a.unsigned_abs(), g.b.unsigned_abs()) != 1 {
                         return None;
                     }
                     let (l, h) = shadow(polygon, g.a, g.b)??;
@@ -368,7 +368,8 @@ fn div_ceil(n: i128, d: i128) -> Option<i128> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Atom, Row};
+    use super::super::super::formula::Atom;
+    use super::super::rows::Row;
     use super::*;
 
     /// Each atom's values over the points of `rows`, by trying every value of atoms 0 and 1:

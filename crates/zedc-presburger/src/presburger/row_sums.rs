@@ -165,23 +165,10 @@ use super::refusal::{Each, Refusal};
 use super::row_domains::{self, Settled, range};
 
 mod plane;
+mod rows;
 
-/// A row `Σ c·y + k`, `== 0` or `>= 0`, over the atoms' indices.
-struct Row {
-    terms: Vec<(usize, i128)>,
-    k: i128,
-    eq: bool,
-}
-
-/// A formula of the class the module note names, read into numbers.
-pub(super) struct Rows {
-    atoms: Vec<Atom>,
-    /// Each atom's values: sorted ranges, disjoint and not adjacent.
-    domains: Vec<Vec<(i128, i128)>>,
-    rows: Vec<Row>,
-    /// Some conjunct has no point.
-    empty: bool,
-}
+pub(super) use rows::Rows;
+use rows::{Row, gcd};
 
 impl Rows {
     /// The formula given as its top-level conjuncts (`Formula::conjunct_list`), when it is of
@@ -608,14 +595,6 @@ fn bits(n: u64) -> u64 {
 /// The units charged for sorting `n` keys: `n · (1 + bits(n))`, saturating.
 fn sorted(n: u64) -> u64 {
     n.saturating_mul(1 + bits(n))
-}
-
-/// The greatest common divisor of `a` and `b` (Euclid), `a` where `b` is 0.
-fn gcd(mut a: u128, mut b: u128) -> u128 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
 }
 
 /// The keys of a set lie below this: 2^62, so that a key plus a shift stays in `i64`.
