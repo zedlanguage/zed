@@ -81,7 +81,8 @@ const HEADER: usize = 64;
 /// The address space of the reservation, 64 TiB, half of what x86-64 gives a process. Spans are
 /// never given out twice, so this bounds the address space all metered runs of a process take
 /// (spans, not bytes live); a request beyond it is refused as the system refuses one. Not proved
-/// to be enough; measured: see COMPLEXITY.md row TEST-meter-allocator-bias.
+/// to be enough for a process that runs any number of metered runs: COMPLEXITY.md row
+/// TEST-meter-allocator-bias bounds one run's share (about 370 runs of the largest bench).
 const RESERVED: usize = 1 << 46;
 
 /// The size classes of requests aligned to 16 bytes or less: 4 up to 64 bytes, then 4 for each

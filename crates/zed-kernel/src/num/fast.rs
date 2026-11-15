@@ -3750,9 +3750,15 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
 // on 2^16 to 2^22 nines, within the 48 that `read_decimal` asks for. Measured again with the
 // leaf read eight digits a step (EXP-swar-digits, 2026-11-12, leaves 128 to 4096 at 3,000 to
 // 10^6 digits): 1024 and 2048 are again the fewest, within 1% of each other, so a cheaper leaf
-// does not move the crossover. To be measured again at the Zed port, where both sides of the
-// crossover change.
-pub(super) const LEAF_DIGITS: usize = 1024;
+// does not move the crossover. Measured again by `crossover leaf-digits` with the meter's own
+// heap (TEST-meter-allocator-bias, 2026-11-15; leaves 128 to 16384 at 700 to 10^6 digits): the
+// per-size counts are as above (2048 costs 0.1% to 0.9% more from 3,000 digits, 20% less at
+// 1,500), and summed over the sizes as `crossover` sums them 2048 does 1.0274 times less work
+// than 1024, outside the spread of repeated runs, now 1.0000 (it was 1.0340, which held 1024).
+// On the C library's heap with its per-thread cache the same benchmark gives 1.0296 against a
+// spread of 1.0106, so both heaps put the leaf at 2048. To be measured again at the Zed port,
+// where both sides of the crossover change.
+pub(super) const LEAF_DIGITS: usize = 2048;
 
 /// [`super::read_digits`] with texts of at most `leaf` digits read whole; `leaf` is at least 1.
 ///

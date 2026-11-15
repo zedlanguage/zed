@@ -87,7 +87,8 @@ impl<'m> Stack<'m> {
     /// allocates nothing here.
     // Complexity tradeoff: boxing the root as a frame like the others costs one box and one
     // `Rc` cell per run. `Type::boxes` runs once per type a listing reads, most of them with
-    // no deep call, and with malloc's per-thread cache off (as `tools/run_tests.sh` runs) that
+    // no deep call, and with malloc's per-thread cache off (as `tools/run_tests.sh` ran until
+    // TEST-meter-allocator-bias; a metered run now allocates from a heap of its own) that
     // box of a few KiB took 21% more instructions at 32,768 tuple types than at 4,096 times 8
     // (`listing_tuples_off_their_first_components_the_second_one_literal_scales`, ratio 9.69
     // against 8.18 before `Type::boxes` ran on a stack). The root's own state machine is one

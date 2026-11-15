@@ -4004,3 +4004,15 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | `Iterator::take` then `any`, stopping at the first variable absent from the other type | `Ty::var_outside` | Early exit (gap 12) | the quantifiers of step L3.15a over the first m + 1 variables |
 | `if let Some((names, _)) = &mut self.seen.projection { *names = before.clone(); }`, a write through a mutable borrow into an `Option` field | `Scope::reduce_with` | Mutation (gap 11) | the scope returned with the record's names replaced, a persistent map shared, not copied |
 | A lazy iterator advanced by hand with two `next()` calls to tell one piece from more | `Ck::class_of_ty`, `Ck::class_beside_atoms` (`Ty::pieces_lazily`) | Laziness | a lazy stream of the pieces, matched on its first two cells |
+
+## Entries from TEST-meter-allocator-bias (`zed-alloc-count/src/meter.rs`, `lib.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| `#[unsafe(no_mangle)] pub unsafe extern "C" fn malloc` and the other C allocation functions, defined by a macro in each test binary that meters and forwarding to `__libc_malloc` and the rest outside a run | `meter_entry_points!`, `meter::malloc`, `calloc`, `free`, `realloc`, `reallocarray`, `memalign`, `posix_memalign`, `valloc`, `pvalloc`, `malloc_usable_size` | Foreign library | Test harness only (TOOLS-port): the Zed runtime allocates through its own allocator, which can give each measured task a heap of its own without replacing the C library's functions |
+| `libc::dlsym` of the C library's `malloc_usable_size`, kept in an `AtomicUsize` and called through `transmute` to a function pointer | `meter::malloc_usable_size` | Foreign library | None needed with the row above |
+| `thread_local!` `Cell<*mut Heap>`, the heap of this thread's run, set and cleared around the run by a guard's `Drop` | `meter::HEAP`, `with_heap` | Mutation (gap 11); no destructors | A heap value passed to the task that runs the measured code, ended when the task's scope ends |
+| One `mmap` of 64 TiB with no access, cut into spans by `fetch_add` on an `AtomicUsize` and mapped by `mmap` with `MAP_FIXED`; a span given back is mapped again with no access | `meter::ready`, `BASE`, `NEXT`, `Heap::take`, `release` | System calls | libzed's OS layer makes the `mmap` calls, as for R10-stack's stacks |
+| Raw pointers to `Span` headers found by rounding a block's address down to `SPAN`, with an intrusive free list written into the freed blocks | `span_of`, `Heap::alloc`, `Heap::take`, `Heap::free`, `owner` | Identity by address (gap 1); no raw memory | The runtime's allocator, in the runtime's own code; a Zed program has no addresses |
+| `AtomicI64` count of the blocks a span is owed, lowered by other threads' frees and raised once when the heap ends; the operation that takes it to 0 unmaps the span | `Span::owed`, `Heap::free`, `Heap::end` | Shared tables across pure calls (gap 2) | A count kept by the runtime per span |
+| `std::sync::Once` for the reservation and for the check that `malloc` is this crate's | `meter::ready` | Lazy once-only cells (gap 3) | Done once by the harness at its start |

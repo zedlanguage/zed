@@ -173,8 +173,10 @@ fn the_verdicts_of_the_largest_undecided_x14_group_scale() {
 /// about half the nodes here). Small instance `largest_component_agrees_with_walks`.
 ///
 /// Size (TEST-largest-group-scc): n = 2^20, 1x 0.54 s, ratio 8.0 by instructions and bytes
-/// at load 34; 6.3 by instructions under `tools/run_tests.sh`, whose
-/// `glibc.malloc.tcache_count=0` adds work at 1x (1.21e9 against 0.69e9 instructions). At
+/// at load 34; 6.3 by instructions under `tools/run_tests.sh` of that time, whose
+/// `glibc.malloc.tcache_count=0` added work at 1x (1.21e9 against 0.69e9 instructions). On the
+/// meter's own heap (TEST-meter-allocator-bias, 2026-11-15) 8.49 by instructions (0.367e9 and
+/// 3.118e9) and 8.00 by bytes, at load 31. At
 /// 2^21 the 1x took 1.07 s but the test 15 s, too close to the 20 s limit. The walk from each
 /// node that this replaced took 62 times the instructions and 63 times the bytes at 1024 and
 /// 8192.
