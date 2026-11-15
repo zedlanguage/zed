@@ -480,6 +480,10 @@ pub(super) enum Frame<'a> {
     InKey(&'a Expr, Span),
     /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
     InSet(Ty, Span),
+    /// `a ..< b` or `a ..= b`, waiting for `a`: `a`, `b` and the span of the range.
+    RangeLo(&'a Expr, &'a Expr, Span),
+    /// The same, waiting for `b`: `a`, the type of `a`, and the span of the range.
+    RangeHi(&'a Expr, Ty, Span),
 }
 
 /// Which display a [`DisplayF`] checks.
@@ -989,6 +993,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.in_end(&k, &x, span);
                 m.ty(t);
             }
+            Frame::RangeLo(lo, hi, span) => {
+                let a = m.take_ty();
+                m.k(Frame::RangeHi(lo, a, span));
+                m.job(Job::Expr(hi));
+            }
+            Frame::RangeHi(lo, a, span) => {
+                let b = m.take_ty();
+                let t = self.range_end(lo, &a, &b, span);
+                m.ty(t);
+            }
             Frame::Else1(e) => {
                 let v = m.take_ty();
                 let ExprKind::Else {
@@ -1345,7 +1359,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     _ => false,
                 };
                 if param || self.lines_out.contains(port) {
-                    self.pushed(&t, port, value.span);
+                    self.pushed(&t, port, value.span, self.main_pushes.contains(&s.span));
                 }
             }
             Frame::InferGiven(s) => self.infer_given(m, s),
@@ -2866,9 +2880,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                     "name resolution rejects every record, with, this and match before the checker reads the program"
                 )
             }
-            ExprKind::Range(..) | ExprKind::Read { .. } | ExprKind::For { .. } => unreachable!(
-                "name resolution rejects every range, read and for before the checker reads the program"
+            ExprKind::Read { .. } | ExprKind::For { .. } => unreachable!(
+                "name resolution rejects every read and for before the checker reads the program"
             ),
+            // `a ..< b` and `a ..= b`; resolution rejects the range with no upper end.
+            ExprKind::Range(from, to) => {
+                let hi = to
+                    .bound()
+                    .expect("resolution rejects a range with no upper end");
+                m.k(Frame::RangeLo(from, hi, e.span));
+                m.job(Job::Expr(from));
+            }
             // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
             ExprKind::Section(_, lambda) => m.job(Job::Expr(lambda)),
             ExprKind::Remap { .. } => self.remap_start(m, e),
@@ -3633,6 +3655,52 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ty::carrier(Carrier::Bool)
             .union(&k.loose_ty())
             .union(&x.loose_ty())
+    }
+
+    /// The type of the range `a ..< b` or `a ..= b` whose ends have the types `a` and `b`
+    /// (DESIGN.md sec:grammar, rule Range): the set of the integers between them, each key
+    /// mapping to itself, with the loose atoms of either end, which pass through as they do
+    /// through any primitive. An end that may be other than an integer is rejected. The keys are
+    /// the ranks `0`, `1`, … (`Sig::dense`) when `lo`, the low end, is the literal `0`.
+    fn range_end(&mut self, lo: &'a Expr, a: &Ty, b: &Ty, span: Span) -> Ty {
+        for (end, t) in [("low", a), ("high", b)] {
+            for p in t.without_loose().pieces() {
+                match p {
+                    Piece::Set(s) if s.subtype(&KType::int()) => {}
+                    Piece::Dyn => self.any("a range", span),
+                    Piece::Var(_) => self.tried_at(span, None),
+                    p => {
+                        let t = self.text(&p.ty());
+                        self.error_offering(
+                            span,
+                            format!(
+                                "a range runs over integers, and its {end} end may be {t}, \
+                                 which is not an integer"
+                            ),
+                            ["repair: give both ends as integers, as `0 ..< n`".to_string()],
+                        );
+                    }
+                }
+            }
+        }
+        // The keys are typed `int`, since the checker's types hold no integer interval, so the
+        // family is `int ->? int`: a read answers `#notFound` (or `#outOfBounds`, below) for a
+        // key outside the range, as for a `Lines` input.
+        let int = Ty::carrier(Carrier::Int);
+        let found = int.union(&Ty::set(KType::atom("notFound")));
+        let mut sig = Sig::one(super::positional(1), vec![int], found);
+        sig.data = true;
+        // Only a low end of the literal `0` makes the keys the ranks. A range from another
+        // low end is not `dense`, so a read of it that misses gives `#notFound` where DESIGN.md
+        // (sec:type_language, the `m[k]` row) gives `#outOfBounds` at a level whose keys are one
+        // integer interval; `dense` also means the keys are `0 ..< n` to the directional folds
+        // (`fold_dir_end`), which read the entries at `0`, `1`, … in turn (plan row
+        // RANGE-read-out-of-bounds).
+        sig.dense = self.known(lo).value == Some(Value::Int(0));
+        sig.note_held();
+        Ty::func(Arc::new(sig))
+            .union(&a.loose_ty())
+            .union(&b.loose_ty())
     }
 
     /// A condition's type and the facts it makes when it holds and when it does not.

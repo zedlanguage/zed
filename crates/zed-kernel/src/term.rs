@@ -177,6 +177,10 @@ pub enum Prim {
     Entries,
     /// `k in f`: whether the family `f` holds the top-level key `k` (step L3.2).
     Has,
+    /// `range(a, b)`: the set of the integers `a`, `a + 1`, …, `b - 1`, each key mapping to
+    /// itself, empty when `b <= a`; `a ..< b` is `range(a, b)` and `a ..= b` is
+    /// `range(a, b + 1)` (DESIGN.md sec:grammar, rule Range, and step L3.2).
+    Range,
 }
 
 impl Prim {
@@ -270,6 +274,7 @@ impl Prim {
             Fma => 65,
             Entries => 66,
             Has => 67,
+            Range => 68,
         }
     }
 }

@@ -2853,9 +2853,13 @@ impl Resolver<'_> {
             }
             // The forms below are compiled from a later step, and their parts are resolved here
             // as `match`'s are, so a name in them is recorded or reported. Step L3.2 compiles
-            // the displays, `in` and `><`; a range is that step's too, and is not built yet.
+            // the displays, `in`, `><` and the bounded ranges. A range with no upper end is
+            // read only by a generator that stops (DESIGN.md sec:grammar, rule Range), and
+            // generators are not built.
             ExprKind::Range(from, to) => {
-                self.later(e.span, "a range");
+                if to.bound().is_none() {
+                    self.later(e.span, "a range with no upper end, `a ..`,");
+                }
                 todo.extend(to.bound().map(|b| Task::Expr(b)));
                 todo.push(Task::Expr(from));
             }

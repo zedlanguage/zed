@@ -16,16 +16,14 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
     assert_eq!(cat(b"only"), "only\n");
     // An empty input has no lines, so nothing is written.
     assert_eq!(cat(b""), "");
-    // A line that is not UTF-8 is `#ioError`, so a program cannot push the family of its
-    // input's lines as they are: the push would fail the wave (sec:failure).
+    // A line that is not UTF-8 is `#ioError`, which bubbles out of the push and so out of
+    // `main` (MAP-stdin-ioerror; tests/steps/l03_02_map_run/pushes.rs runs that input), so a
+    // program may push the family of its input's lines as they are.
     let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin;\n}\n";
-    let out = run("cat", src, "first\n", &[]);
-    assert_eq!(out.status, 1);
-    assert!(
-        out.stderr.contains(
-            "A `Lines` port takes a `String` or a family of strings: `m.stdout <- m.stdin : int -> String | \
-             #ioError(op: String, path: String, why: String) | #notFound`."
-        ),
+    let out = run("cat", src, "first\nsecond\n", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "first\nsecond\n"),
         "{}",
         out.stderr
     );

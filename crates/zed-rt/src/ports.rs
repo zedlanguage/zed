@@ -53,6 +53,16 @@ pub fn write(port: &str, v: &Value) -> Result<Vec<u8>, String> {
     };
     let mut out = Vec::new();
     for line in lines {
+        // A loose atom bubbles out of the push, and so out of `main` (zedc-check `pushed`):
+        // the run fails with exit status 1 and writes nothing. The interpreter's `join_lines`
+        // (zedc run.rs) gives the same text, so the two runs compare.
+        if matches!(line, Value::Atom(_)) {
+            return Err(format!(
+                "the program pushed {line} to `{port}`, a failure, which ends the run of `main`: \
+                 nothing is written, and the exit status is 1. Repair: handle each atom of the \
+                 value before the push, with `else` or `match`"
+            ));
+        }
         match line {
             Value::Str(s) => {
                 s.chunks().for_each(|c| out.extend_from_slice(c.as_bytes()));

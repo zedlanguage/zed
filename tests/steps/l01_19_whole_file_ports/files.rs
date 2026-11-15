@@ -216,8 +216,13 @@ fn a_bare_io_error_pattern_narrows_the_payload_away() {
                m.stdout <- (fs[\"app.conf\"] else #ioError -> \"unreadable\") \
                else #notFound -> \"missing\";\n}\n";
     assert!(load(src.as_bytes()).is_ok());
+    // With `#notFound` handled, the `#ioError` left bubbles out of `main` (MAP-stdin-ioerror),
+    // so the push is taken; with nothing handled, the `#notFound` left is refused, and the
+    // message prints the `#ioError` with its payload type.
     let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                m.stdout <- fs[\"app.conf\"] else #notFound -> \"missing\";\n}\n";
+    assert!(load(src.as_bytes()).is_ok());
+    let src = "main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"app.conf\"];\n}\n";
     let e = load(src.as_bytes()).err().unwrap();
     assert!(
         e.contains("#ioError(op: String, path: String, why: String)"),

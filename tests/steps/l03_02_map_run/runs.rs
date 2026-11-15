@@ -338,7 +338,60 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
                 foldl(r, lit(0), func(|[a, b]| add(a, b)))
             }),
         ),
+        // `a ..< b` is the set of the integers from `a` up to `b`, `b` left out, and `a ..= b`
+        // takes `b` in (DESIGN.md sec:syntax_tour); the model writes that set out, apart from
+        // the kernel's `range`.
+        ("a_range_from_0", "${0 ..< 4}", range(0, 4)),
+        ("a_range_through_its_end", "${1 ..= 3}", range(1, 4)),
+        ("a_range_from_a_negative_end", "${-2 ..< 1}", range(-2, 1)),
+        ("an_empty_range", "${5 ..< 3}", range(5, 3)),
+        (
+            "a_range_with_computed_ends",
+            "${2 - 1 ..< 2 + 1}",
+            range(1, 3),
+        ),
+        (
+            "a_range_at_the_ends_of_i64",
+            "${9223372036854775806 ..= 9223372036854775807}",
+            lit(Value::Family(Family::set([i64::MAX - 1, i64::MAX]))),
+        ),
+        ("in_a_range", "${2 in 0 ..< 5}", lit(true)),
+        ("past_a_range", "${5 in 0 ..< 5}", lit(false)),
+        (
+            "a_range_mapped",
+            "${(2 ..< 5).map(x -> x * x)}",
+            map(range(2, 5), |v| mul(v.clone(), v)),
+        ),
+        (
+            "a_range_reduced",
+            "${(1 ..< 5) >< (*)}",
+            reduce(range(1, 5), Prim::Mul, Some(i(1))),
+        ),
+        (
+            "a_range_from_0_folded_left",
+            "${(0 ..< 4).foldl(0, (a, x) -> a * 10 + x)}",
+            foldl(range(0, 4), lit(0), func(|[a, x]| add(mul(a, lit(10)), x))),
+        ),
+        (
+            "a_range_filtered",
+            "${(0 ..< 6).where(x -> x mod 2 == 0)}",
+            where_(range(0, 6), |v| {
+                bin(Prim::Eq, bin(Prim::Mod, v, lit(2)), lit(0))
+            }),
+        ),
+        // A range is `int ->? int`: a read may miss, with `#outOfBounds` from a low end of `0`.
+        ("a_read_in_a_range", "${(0 ..< 3)[1] else -1}", lit(1)),
+        (
+            "a_read_past_a_range_from_0",
+            "${(0 ..< 3)[3] is #outOfBounds}",
+            lit(true),
+        ),
     ]
+}
+
+/// `a ..< b`: the set of the integers `k` with `a <= k < b`.
+fn range(a: i64, b: i64) -> Term {
+    lit(Value::Family(Family::set(a..b)))
 }
 
 /// `[x0, x1, …]` of floats.

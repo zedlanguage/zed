@@ -3006,6 +3006,31 @@ fn entries(vals: Vec<Value>) -> Result<Value, KernelError> {
     Ok(Value::Family(Family::from_leaves(leaves)?))
 }
 
+/// `range(a, b)`, the set of the integers from `a` up to `b - 1`, each key mapping to itself,
+/// and empty when `b <= a` (DESIGN.md sec:grammar, rule Range).
+// Complexity tradeoff: the naive version is a union of one-entry sets, one per integer, which
+// copies the set built so far on each union, O(n^2) for n keys, or a display `{a, …, b - 1}`
+// put through `from_leaves`, O(n log n). Used: the keys made in ascending order and collected
+// into the ordered map at once, which builds it from the sorted run in O(n). Tradeoff: none; an
+// end past `i64` builds each key with `+`, O(n) big-integer additions.
+fn range(a: &Value, b: &Value) -> Result<Value, KernelError> {
+    if let (Value::Int(x), Value::Int(y)) = (a, b) {
+        return Ok(Value::Family(Family::set(*x..*y)));
+    }
+    // An end past `i64`: the count `b - a`, and each key `a + i`. A count past `i64` never
+    // ends before memory runs out, as any family of that many entries.
+    let count = match int_binary(Prim::Sub, b, a)?.expect("an integer difference") {
+        Value::Int(c) => c,
+        n if n.as_integer().is_some_and(|n| n.is_negative()) => 0,
+        _ => i64::MAX,
+    };
+    let keys = (0..count).map(|i| int_binary(Prim::Add, a, &Value::Int(i)));
+    let keys: Vec<Value> = keys
+        .map(|k| k.map(|k| k.expect("an integer sum")))
+        .collect::<Result<_, _>>()?;
+    Ok(Value::Family(Family::set(keys)))
+}
+
 /// [`prim_data`] for a primitive other than `Tuple` and `Path`, which keeps none of `vals`.
 fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
     use Value::{Bool, Float, Float32, Int, Str};
@@ -3193,6 +3218,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         }
         (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),
         (Prim::Has, [k, Value::Family(f)]) => Bool(f.get(k).is_some()),
+        (Prim::Range, [a, b]) if a.number_kind() == Some(0) && b.number_kind() == Some(0) => {
+            range(a, b)?
+        }
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
             Value::atom_with(atom_name(name)?, args.to_vec())

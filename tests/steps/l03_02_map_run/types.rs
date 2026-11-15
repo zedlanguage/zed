@@ -117,13 +117,34 @@ fn foldl_and_foldr_take_a_start_value_and_a_function_of_two_parameters() {
 }
 
 #[test]
+fn a_range_runs_over_integers() {
+    for (name, body, end, t) in [
+        ("range_float_low", "${0.5 ..< 3}", "low", "0.5"),
+        ("range_bool_high", "${0 ..< true}", "high", "true"),
+        ("range_string_high", "${0 ..= \"9\"}", "high", "\"9\""),
+    ] {
+        let e = refused(name, body);
+        let want = format!("a range runs over integers, and its {end} end may be {t}");
+        assert!(e.contains(&want), "{name}: {e}");
+        assert!(e.contains("as `0 ..< n`"), "{name}: {e}");
+    }
+    // A read of a range may miss, and its type says so: the miss is handled before a push
+    // (pushes.rs).
+}
+
+#[test]
 fn the_forms_not_built_are_refused_as_not_built() {
     // The messages name no step: the program's words only. The steps are named at the
-    // refusals: ranges and metadata reads in zedc-resolve (steps L3.2 and L3.2a), a fold by a
+    // refusals: a range with no upper end and metadata reads in zedc-resolve (steps L3.2 and
+    // L3.2a), a fold by a
     // function that owes a proof of associativity and a directional fold over a keyed level
     // in the checker (plan rows REDUCE-by-function and FOLD-keyed).
     for (name, body, what) in [
-        ("range", "${0 ..< 3}", "a range is part of the Zed language"),
+        (
+            "range_with_no_upper_end",
+            "${0 ..}",
+            "a range with no upper end, `a ..`, is part of the Zed language",
+        ),
         (
             "read",
             "${[1]::len}",

@@ -1365,6 +1365,9 @@ struct Ck<'t, 'a> {
     roots: coprime::Roots,
     /// The expressions whose value is the result of `main`, its exit status ([`Ck::main_tails`]).
     main_tails: HashSet<Span>,
+    /// The pushes that are statements of the body of `main`, by the statement's span: a loose
+    /// atom of the value pushed bubbles out of `main` ([`Ck::pushed`]).
+    main_pushes: HashSet<Span>,
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
     /// a bit word or an exponent reads the name.
     facts: HashMap<usize, &'a Expr>,
@@ -1726,6 +1729,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             roots: coprime::Roots::default(),
             facts: HashMap::new(),
             main_tails: HashSet::new(),
+            main_pushes: HashSet::new(),
             whence: HashMap::new(),
             narrowings: 0,
             narrowed_at: HashMap::new(),
@@ -4374,9 +4378,17 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Records the expressions whose value is the result of `main`, the body `body`: the
     /// export of a block, and the branches of an `if`, a `match` and an `else`, each read for
-    /// the exit status where the walk reaches it ([`Ck::status_in_range`]). Each expression
+    /// the exit status where the walk reaches it ([`Ck::status_in_range`]), and the pushes
+    /// that are statements of the body ([`Ck::main_pushes`]). Each expression
     /// is visited once, on an explicit stack, so the cost is linear in the body's branches.
     pub(super) fn main_tails(&mut self, body: &Expr) {
+        if let ExprKind::Block(stmts) = &body.kind {
+            (self.main_pushes).extend(
+                (stmts.iter())
+                    .filter(|s| matches!(s.kind, StmtKind::Push { .. }))
+                    .map(|s| s.span),
+            );
+        }
         let mut stack = vec![body];
         while let Some(e) = stack.pop() {
             match &e.kind {
@@ -4412,7 +4424,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// carrier (a family is one) holds a number whatever carrier it ends with, so the push is
     /// rejected now, as a value of those carriers would be, and not at run time. A class that
     /// may still take a string is left to the run time as before.
-    fn pushed(&mut self, t: &Ty, port: &str, span: Span) {
+    ///
+    /// A failure of the outside world, `#ioError` loose at the top of the value or as a value
+    /// of the family, bubbles when the rest is strings (DESIGN.md sec:failure, "atoms bubble
+    /// out of an argument", and the stacks' failures, "a loose atom that bubbles as `#ioError`
+    /// does"): the push fails, and where it is a statement of the body of `main` (`bubbles`),
+    /// the failure ends the run of `main`, which exits with 1 having written nothing
+    /// (sec:ports). So `m.stdout <- m.stdin.map(l -> l.upper);` (EXAMPLES.md "[1. Programs
+    /// and ports] 2"), whose lines may be `#ioError`, is taken. The atoms the program makes
+    /// itself, a missed read's `#notFound` or `#outOfBounds` or a cast's `#invalid`, stay
+    /// errors: the program can handle them where it makes them, and every failure the checker
+    /// can catch is caught (the author's standing rule of 2026-11-11, explicit, no surprises).
+    /// A push elsewhere, in a function that takes a port or in a block inside the body, would
+    /// make its failure part of that function's or block's value, which is not built, and is
+    /// refused by name (plan row PUSH-bubble-nested). A family atom is data, and does not
+    /// bubble.
+    fn pushed(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool) {
         // Complexity tradeoff: one find per class variable at the top of `t`, O(log N) in a
         // union of N classes, and one rebuild of `t` where each is a class of numbers, O(|t|);
         // no scan of a class's literals or uses (test `domain_repairs::a_pushed_chain_…`,
@@ -4442,14 +4469,31 @@ impl<'t, 'a> Ck<'t, 'a> {
         let strings = |t: &KType| t.subtype(&KType::string());
         let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
         let not_found = KType::atom("notFound");
-        let ok = strings(&t.set)
-            && plain(t)
-            && t.fns.iter().all(|s| {
-                s.data
-                    && s.arrows
-                        .iter()
-                        .all(|a| plain(&a.result) && strings(&(&a.result.set - &not_found)))
-            });
+        // Whether a value of `t` is strings, or a family of strings, once each part's set has
+        // lost what `lose` gives of that part.
+        let takes = |lose: &dyn Fn(&Ty) -> KType| {
+            strings(&(&t.set - &lose(t)))
+                && plain(t)
+                && t.fns.iter().all(|s| {
+                    s.data
+                        && s.arrows.iter().all(|a| {
+                            plain(&a.result)
+                                && strings(&(&(&a.result.set - &not_found) - &lose(&a.result)))
+                        })
+                })
+        };
+        let ok = takes(&|_| KType::empty());
+        // Only `#ioError`, with or without its fields, is lost; every other atom, loose or of a
+        // named family, stays an error below.
+        let io = any_payload("ioError");
+        if !ok && !t.dynamic && t.vars.is_empty() && takes(&|_| io.clone()) {
+            if !bubbles {
+                let what = "a push of a value that may be the atom `#ioError`, other than as a \
+                            statement of the body of `main`,";
+                self.error(span, zedc_base::rejection::not_yet(what));
+            }
+            return;
+        }
         if !ok && !t.dynamic && t.vars.is_empty() {
             // Each repair is written with the value's code, where the checker has it on one line:
             // an `else` with no pattern writes an empty line for every atom, whichever atoms

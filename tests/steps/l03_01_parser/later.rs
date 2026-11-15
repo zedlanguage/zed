@@ -21,8 +21,11 @@ fn check(cases: &[(&str, &[&str])]) {
 fn each_form_names_the_step_that_compiles_it() {
     check(&[
         (
-            "f(x) = 0..<x;",
-            &[concat!(zed_tests::not_yet!("a range"), " [0..<x]")],
+            "f(x) = x..;",
+            &[concat!(
+                zed_tests::not_yet!("a range with no upper end, `a ..`,"),
+                " [x..]"
+            )],
         ),
         (
             "f(x) = x::len;",

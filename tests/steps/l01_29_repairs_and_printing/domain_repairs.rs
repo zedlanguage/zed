@@ -335,10 +335,11 @@ fn a_lines_port_repair_writes_the_programs_value() {
         checks(&fixed);
     }
     // The control for the catch-all: an `else` for one atom of several leaves the others, and
-    // the port still refuses the value.
+    // the port still refuses the value: `#outOfBounds` is left (an `#ioError` left alone
+    // would bubble out of `main`, MAP-stdin-ioerror).
     let out = rejected(
         &pushing("t = m.stdin[0];")
-            .replace("m.stdout <- t;", "m.stdout <- t else #outOfBounds -> \"\";"),
+            .replace("m.stdout <- t;", "m.stdout <- t else #ioError -> \"\";"),
     );
     assert!(out.contains("A `Lines` port takes"), "{out}");
 }

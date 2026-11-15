@@ -392,7 +392,7 @@ fn main_is_in_scope_but_neither_a_value_nor_called() {
 
 #[test]
 fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
-    let cases: [(&str, String); 11] = [
+    let cases: [(&str, String); 9] = [
         (
             "f(x) { while x < 3; }",
             zed_tests::not_yet("a `while` guard") + " [while x < 3;]",
@@ -426,16 +426,8 @@ fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
             zed_tests::not_yet("the primed name `y'`") + " [y']",
         ),
         (
-            "f(x) = 0 ..< x;",
-            zed_tests::not_yet("a range") + " [0 ..< x]",
-        ),
-        (
-            "f(m, g) = m >< g;",
-            zed_tests::not_yet("a reduction `><` by a function") + " [m >< g]",
-        ),
-        (
-            "x = (+);",
-            zed_tests::not_yet("an operator section") + " [(+)]",
+            "f(x) = x ..;",
+            zed_tests::not_yet("a range with no upper end, `a ..`,") + " [x ..]",
         ),
     ];
     for (text, want) in cases {

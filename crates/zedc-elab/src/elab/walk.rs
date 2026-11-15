@@ -22,8 +22,8 @@ use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, prelude_layer};
 use zedc_stage::defs::Test;
 use zedc_syntax::ast::{
-    BinaryOp, Error, Expr, ExprKind, Function, Note, Pattern, PortName, Stmt, StmtKind, StrPart,
-    Target, TestPorts, UnaryOp,
+    BinaryOp, Error, Expr, ExprKind, Function, Note, Pattern, PortName, RangeEnd, Stmt, StmtKind,
+    StrPart, Target, TestPorts, UnaryOp,
 };
 use zedc_syntax::lex::{Span, unread_literal};
 
@@ -198,6 +198,9 @@ enum Frame<'a> {
     Remap(&'a Expr),
     /// `k in m` once both are elaborated: whether it is `not in`.
     In(bool),
+    /// `a ..< b` or `a ..= b` once both ends are elaborated: whether the high end is
+    /// inclusive.
+    Range(bool),
     /// An expression done, by its span: its term's nodes that have no site take this one
     /// (plan row RT-sites).
     Site(Span),
@@ -744,8 +747,18 @@ impl<'a> Elab<'a> {
             | ExprKind::Match { .. } => {
                 unreachable!("resolve rejects the forms of layer L2")
             }
-            ExprKind::Range(..) | ExprKind::Read { .. } | ExprKind::For { .. } => {
+            ExprKind::Read { .. } | ExprKind::For { .. } => {
                 unreachable!("resolve rejects the forms of layer L3 not built yet")
+            }
+            ExprKind::Range(from, to) => {
+                let (hi, through) = match to {
+                    RangeEnd::Below(b) => (b, false),
+                    RangeEnd::Through(b) => (b, true),
+                    RangeEnd::Open => unreachable!("resolve rejects a range with no upper end"),
+                };
+                m.k(Frame::Range(through));
+                m.seq(vec![&**from, &**hi], false);
+                return;
             }
             // A section outside `><` is the lambda it stands for (`ExprKind::Section`).
             ExprKind::Section(_, lambda) => {
@@ -2098,6 +2111,17 @@ impl<'a> Elab<'a> {
                         true => Term::Prim(Prim::Not, vec![has]),
                         false => has,
                     }
+                });
+                m.give(t);
+            }
+            // `a ..= b` is `range(a, b + 1)`; `+` builds a wider integer past `i64`.
+            Frame::Range(through) => {
+                let t = all(m.got()).map(|mut ts| {
+                    if through {
+                        let b = ts.pop().expect("a high end");
+                        ts.push(Term::Prim(Prim::Add, vec![b, Term::Lit(Value::Int(1))]));
+                    }
+                    Term::Prim(Prim::Range, ts)
                 });
                 m.give(t);
             }
