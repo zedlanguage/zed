@@ -82,21 +82,37 @@ impl<'m> Stack<'m> {
         }
     }
 
-    /// Runs `root` and the calls it makes to the end, each suspended caller on a `Vec`.
+    /// Runs `root` and the calls it makes to the end, each suspended caller on a `Vec`. The
+    /// root stays on the thread's stack, so a run that makes no call on a frame of its own
+    /// allocates nothing here.
+    // Complexity tradeoff: boxing the root as a frame like the others costs one box and one
+    // `Rc` cell per run. `Type::boxes` runs once per type a listing reads, most of them with
+    // no deep call, and with malloc's per-thread cache off (as `tools/run_tests.sh` runs) that
+    // box of a few KiB took 21% more instructions at 32,768 tuple types than at 4,096 times 8
+    // (`listing_tuples_off_their_first_components_the_second_one_literal_scales`, ratio 9.69
+    // against 8.18 before `Type::boxes` ran on a stack). The root's own state machine is one
+    // frame on the thread's stack, as the plain call was.
     pub fn run<V: 'm>(&'m self, root: impl Future<Output = V> + 'm) -> V {
-        let out = Rc::new(Cell::new(None));
-        let mut frames = vec![frame(|| root, &out)];
+        let mut root = std::pin::pin!(root);
+        let mut frames: Vec<Frame<'m>> = Vec::new();
         let mut cx = Context::from_waker(Waker::noop());
-        while let Some(top) = frames.last_mut() {
-            match top.as_mut().poll(&mut cx) {
-                Poll::Ready(()) => drop(frames.pop()),
-                Poll::Pending => {
-                    let next = ManuallyDrop::into_inner(self.next.take());
-                    frames.push(next.expect("a frame suspends only in a Deep, which sets the next"))
+        loop {
+            match frames.last_mut() {
+                Some(top) => {
+                    if top.as_mut().poll(&mut cx).is_ready() {
+                        drop(frames.pop());
+                        continue;
+                    }
+                }
+                None => {
+                    if let Poll::Ready(v) = root.as_mut().poll(&mut cx) {
+                        return v;
+                    }
                 }
             }
+            let next = ManuallyDrop::into_inner(self.next.take());
+            frames.push(next.expect("a frame suspends only in a Deep, which sets the next"));
         }
-        out.take().expect("the root frame ran to its end")
     }
 }
 
