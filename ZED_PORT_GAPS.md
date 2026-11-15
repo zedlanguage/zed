@@ -4008,6 +4008,16 @@ Each table below is a memo table whose life is one scope: a struct made for one 
 | A `cfg(test)` `thread_local!` flag that switches `written_named` off in zedc-elab's unit tests, so the refusal of a dropped body a kept term names can be run | `MISS_WRITTEN_NAMED`, `Instancing::written_named` | Mutation, global state (test only) | a test argument of the elaborator, or a test that writes the unit's terms by hand |
 | `mem::replace(&mut l.used, true)` as the visited test of a worklist over the edges between written bodies | `Elab::place_locals` | Mutation (gap 11) | a set of the functions reached, built by a fold over the worklist |
 
+## Entries from REDUCE-generic-identity-values (`crates/zedc-check/src/check/mod.rs`, `walk.rs`; `crates/zedc-elab/src/elab/instances.rs`, `identities.rs`, `state.rs`, `walk.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A stack `need_chain: Vec<Span>` of the needs being checked, pushed and popped around `Ck::meet`, and the sets `fold_uses`, `escapes` and the list `same_use` filled while checking and taken with `mem::take` in `finish` | `Ck::meet`, `Ck::saw_uses`, `Ck::need`, `Ck::finish` | Mutation (gap 11) | the chain passed down the check as a list value; the uses, escaping calls and repeated uses returned with each check's result and joined |
+| `HashSet<*const Ty>` of the tuple rows visited, by address, in the search of tuple members | `type_holds_needs`, the `split_needs` search in `Ck::finish` | Identity by address | number each type where it is made (author decision on node ids), and keep a set of those numbers |
+| `InForce`: a `HashMap<Span, Option<Value>>` of the calls in force and a `HashMap<Option<Value>, Vec<Span>>` of those not yet taken, by identity, changed in place on entering and leaving a call and drained by `take` | `InForce::enter`, `leave`, `take`, `Elab::enter_expr`, `leave_expr`, `env_identity` | Mutation (gap 11); a map keyed by a `Value` through `impl Hash for Value` | a family `Span ->? Option(Value)` passed down the walk, and the calls taken returned from each use and joined; a key by the value's canonical form |
+| `HashMap<(Span, Span), Vec<Span>>` from (fold, use) to the calls that checked the use, built once from `Info::fold_reads` | `Instancing::new`, `Elab::env_identity` | Mutation (gap 11) while built | a family `(Span, Span) ->? Span[]` built by a fold over the set, read only |
+| `HashMap<usize, usize>` of aliases (`g = f`), each resolved to the final function when inserted, and `HashMap<Span, Span>` maps `value_at`, `callee_at` from a name passed to a call or called to that call | `Instancing::alias`, `value_at`, `callee_at`, `Elab::stmt`, `enter_expr`, `call`, `named`, `target` | Mutation (gap 11) | families returned with the block's term (aliases) or passed down the walk (the call a name is passed to) |
+
 ## Entries from FAIL-if-chain-params-quadratic (`crates/zedc-types/src/ty.rs`, `crates/zedc-preimage/src/product.rs`, `crates/zedc-check/src/check/mod.rs`)
 
 | Rust construct | Sites | Gap | At the port |
