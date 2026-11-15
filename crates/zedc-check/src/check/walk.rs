@@ -3346,13 +3346,52 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the class is put in that place and the remap checked again from here, so the remap is
     /// checked as the same remap on the concrete rows is. Classes below the levels the
     /// pattern names are the value's and are not waited for.
-    // Termination, not proved: each check of a need below a key level replaces the class by a
-    // type that flowed into it; the chain of needs it starts ends when that type holds no
-    // class at a key level, and each need is made once per class and source type
-    // ([`Self::need`] keeps them in `known`). A chain without end needs a class that a type
-    // holding itself flows into, at a key level, again and again: an infinite type, which a
-    // program with no recursion cannot build, and the checker refuses recursion before it
-    // checks (2026-11-15: `f(g, n) = … f(g: [g], n: n - 1)` is refused as recursion).
+    // Termination, proved (PROOF-remap-chain-termination), with no appeal to the checker
+    // refusing recursion, which ends at step L6.4. A chain is a sequence of remap needs N0,
+    // N1, ..., each made by `remap_of` inside a check of the one before: a check by
+    // `check_on` (a type flowed into the class, or the class's type at its function's end),
+    // or by `meet` from `replay` (a signature's need at a call). Claim: every chain is finite.
+    // 1. Each need holds `rank`, `remap_rank` of its source when `remap_need` makes it: the
+    //    first level L, of the levels `remap_rank` walks (the outer one, 0, and the key levels
+    //    below it), holding a variable of a class not yet resolved, and the count C of such
+    //    variable names there; (W, 0) if none, W the number of levels walked. "Further"
+    //    (`remap_further`) is L larger, or L equal and C smaller: the order of (W - L, C)
+    //    read lexicographically from the left, decreasing, on pairs of natural numbers, which
+    //    is well founded, so no sequence of ranks each further than the one before is endless.
+    // 2. A check by `check_on` of a remap need N on T goes on only if the source S, N's source
+    //    with T in N's variable `$r`, ranks further than N's rank (`remap_goes_on`); otherwise
+    //    it is refused with an error naming the remap and makes no need.
+    // 3. If it goes on, `remap_of` on S makes at most one need N' of the chain past the outer
+    //    level's. (a) Outer-level needs, of source `$r` alone and rank (0, 1), are made only
+    //    for classes at level 0 of S with no type; their names would give S rank (0, c),
+    //    c >= 1. A need of rank level 0 is such an outer need (the pending branch strips the
+    //    outer level's variables first, so it finds level 1 or deeper), of rank (0, 1); and
+    //    (0, c) with c >= 1 is not further than (0, 1). So by step 2 S has rank level >= 1 and
+    //    no outer-level need is made. (b) The pending need N' has as its source S with the
+    //    outer level's resolved classes replaced by their types, which leaves every level's
+    //    names as `remap_rank` follows them, and the names of one class renamed to one name
+    //    `$r'`, which drops names and adds none of another class: rank(N') is S's rank or
+    //    further. Nothing runs between `remap_goes_on` and `remap_need` that resolves or
+    //    merges a class, so both ranks are of one state of the classes.
+    // 4. By steps 2 and 3, along consecutive `check_on` links the stored ranks are each
+    //    further than the one before, which step 1 makes finite. The rank is stored, not
+    //    recomputed, so a class merged or resolved between two links does not matter.
+    // 5. A `replay` link checks a signature's need at a call through `meet`, unguarded. The
+    //    `open` stack of `replay` holds each need span it is inside: met again inside its own
+    //    check, a need gives the first result on the same shape or is refused on another. So
+    //    a nested path of checks holds at most one replay of each need span of the program,
+    //    finitely many, and between two of them a run of `check_on` links, finite by step 4.
+    // What this does not prove: that checks reached later, outside the nesting of the check
+    // that made the need (a type that flows into N's class after N is made), are finitely
+    // many in all. Those are `check_on` links, so step 4 bounds each chain they extend; the
+    // number of replays of one span over the whole run is the number of calls walked, which
+    // step L6.4 must keep finite where it walks a recursive body more than once.
+    // Today no program reaches the refusal of step 2: every type `check_on` is given has no
+    // variable at its outer level (a tuple or function piece that flowed in, or a class's
+    // resolved type, which `Ck::resolve` makes a carrier, the class's own variable, a union
+    // of literal types or the unknown), so S loses `$r` at N's rank level and gains no name
+    // there. The refusal is the bound by construction for what step L6.4 may add (test
+    // a_remap_need_that_meets_its_class_again_at_its_level_is_refused, walk.rs).
     // Complexity tradeoff: the classes are visited once each, with a visited set; the key
     // expressions are checked once per check of the need, as each use of a generic function's
     // parameter is, instead of once in the body: a remap of a parameter of a function called
@@ -3412,7 +3451,72 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// class's root variable `$r` in the place of the class.
     fn remap_need(&mut self, e: &'a Expr, r: usize, src: Ty) -> Ty {
         self.remap_exprs.insert(e.span, e);
-        self.need(r, NeedKind::Remap { at: e.span, src }, true, e.span)
+        let rank = self.remap_rank(e, &src);
+        let kind = NeedKind::Remap {
+            at: e.span,
+            src,
+            rank,
+        };
+        self.need(r, kind, true, e.span)
+    }
+
+    /// The source type of the remap need `n`, whose source type is `src`, checked on `on`:
+    /// `src` holds the need's own type, `n.on`, in the place of the value: the class's
+    /// variable, or, where a signature took the need, what it was renamed to, renamed in
+    /// `src` alike (`Need::map_tys`). A variable is bound to `on` for the replacement and
+    /// unbound after it, so `binds` are as they were.
+    fn remap_src(&mut self, n: &Need, src: &Ty, on: &Ty, binds: &mut Binds) -> Ty {
+        match n.on.as_var().cloned() {
+            Some(v) => {
+                let was = binds.insert(v.clone(), on.clone());
+                let src = self.bound(src, binds);
+                match was {
+                    Some(w) => binds.insert(v, w),
+                    None => binds.remove(&v),
+                };
+                src
+            }
+            None => self.bound(src, binds),
+        }
+    }
+
+    /// Whether the check of the need `n` on `t`, a type that flowed into its class or that
+    /// the class takes, goes on: yes for every need but a remap's, and for a remap's where `t`
+    /// in the place of the class makes the source further along than the need's own
+    /// ([`Self::remap_further`]). Otherwise the check is refused, naming the remap: checking
+    /// it there could make the same need again at a larger source, without end (the proof is
+    /// at [`Self::remap_of`]).
+    // Complexity tradeoff: the source with `t` in its place and its rank are found here and
+    // the source again in `meet`; O(the size of the source + its key levels) once more per
+    // check of a remap need, the cost of the walk `remap_pending` makes on it anyway.
+    fn remap_goes_on(&mut self, n: &Need, t: &Ty) -> bool {
+        let NeedKind::Remap { at, src, rank } = &n.kind else {
+            return true;
+        };
+        // A remap need is recorded only by `remap_need`, which first records its remap.
+        let e = *(self.remap_exprs.get(at))
+            .expect("a remap need is made only by `remap_need`, which records its remap");
+        let on = self.bound(t, &mut Binds::new());
+        let src = self.remap_src(n, src, &on, &mut Binds::new());
+        if Self::remap_further(self.remap_rank(e, &src), *rank) {
+            return true;
+        }
+        let remap = (self.code(Some(*at)))
+            .filter(|c| !c.contains('\n'))
+            .map_or("this remap".to_string(), |c| format!("the remap `{c}`"));
+        let message = format!(
+            "{remap} is checked again at each type that flows into a value of unknown type its \
+             source holds at a key level, but the type that flows in here holds such values \
+             again, at the same key level or an outer one and no fewer of them, so its check \
+             could make the same check again, without end: the checker stops here"
+        );
+        let menu = [
+            "repair: declare the type of the remap's source, so that its key types are \
+                     known where the remap is written"
+                .to_string(),
+        ];
+        self.error_offering(*at, message, menu);
+        false
     }
 
     /// The remap written at `at` checked as a need, with `src` the type of its source: the
@@ -9150,6 +9254,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// result. A rejection of a value that flowed in names where it comes from and each merge
     /// that brought it to the use (MSG-flow-origin).
     fn check_on(&mut self, n: &Need, t: &Ty, span: Span, came: Option<&Inflow>) {
+        if !self.remap_goes_on(n, t) {
+            return;
+        }
         let from = self.errors.len();
         let start = self.need_passed.len();
         self.call_frames.push(CallFrame::default());
@@ -9353,23 +9460,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = Arg::of(self.bound(f, binds));
                 self.group_of(&on, *recv, f, span, false)
             }
-            NeedKind::Remap { at, src } => {
-                // `src` holds the need's own type, `n.on`, in the place of the value: the
-                // class's variable, or, where a signature took the need, what it was renamed
-                // to, renamed in `src` alike (`Need::map_tys`). A variable is bound to `on`
-                // for the replacement and unbound after it, so `binds` are as they were.
-                let src = match n.on.as_var().cloned() {
-                    Some(v) => {
-                        let was = binds.insert(v.clone(), on.clone());
-                        let src = self.bound(src, binds);
-                        match was {
-                            Some(w) => binds.insert(v, w),
-                            None => binds.remove(&v),
-                        };
-                        src
-                    }
-                    None => self.bound(src, binds),
-                };
+            NeedKind::Remap { at, src, .. } => {
+                let src = self.remap_src(n, src, &on, binds);
                 self.remap_met(*at, &src)
             }
             NeedKind::Reduce(op, site) => self.reduce_end(*op, &on, span, *site),
@@ -20211,6 +20303,98 @@ fn params_apart(sig: &Sig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The remap `s as (a -> k -> v) into (k -> a -> v)`, two key levels, as an expression.
+    fn two_level_remap() -> Expr {
+        let text = "s as (a -> k -> v) into (k -> a -> v)";
+        let tokens = zedc_syntax::lex::lex(text).expect("lexing a remap");
+        let tree = zedc_syntax::parse::parse(text, &tokens, "Expr", zedc_syntax::parse::TOP)
+            .expect("parsing a remap");
+        zedc_syntax::ast::build(text, &tokens, &tree).expect("reading a remap")
+    }
+
+    /// The family `int ->? values`.
+    fn int_family(values: Ty) -> Ty {
+        let mut sig = Sig::one(
+            crate::check::positional(1),
+            vec![Ty::carrier(Carrier::Int)],
+            values,
+        );
+        sig.data = true;
+        sig.note_held();
+        Ty::func(Arc::new(sig))
+    }
+
+    /// Whether `ck` refused a remap check as one that could need itself without end.
+    fn refused_without_end(ck: &Ck) -> bool {
+        (ck.errors.iter()).any(|e| e.m.text.contains("could make the same check again"))
+    }
+
+    /// A remap need made by a class whose type holds the class again at the level the need
+    /// waits on is refused, naming the remap, and the chain of checks ends
+    /// (PROOF-remap-chain-termination; the proof is at [`Ck::remap_of`]). The class `k` is
+    /// below the first key level of the source `int ->? $k`; the type that flows into it,
+    /// `(int ->? $k) | $k`, holds `k` again at its outer level, which is the source's first
+    /// key level. No program builds such a type today (every type a check is given has no
+    /// variable at its outer level); step L6.4's recursion is what could. Without the rank
+    /// check in `Ck::check_on`, each check puts the type in the place of `$k` and makes a
+    /// need of a larger source, `int ->? ((int ->? $k) | $k)`, then one larger again, without
+    /// end: the run overflows its stack.
+    #[test]
+    fn a_remap_need_that_meets_its_class_again_at_its_level_is_refused() {
+        let e = two_level_remap();
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let k = ck.class();
+        let var = Ty::var(format!("${k}").into());
+        let at = Span { start: 1, end: 2 };
+        ck.classes[k].flowed.push(Inflow {
+            ty: int_family(var.clone()).union(&var),
+            at,
+            from: at,
+            class: k,
+        });
+        ck.remap_need(&e, k, int_family(var));
+        assert!(refused_without_end(&ck));
+    }
+
+    /// The negative control of the test above, on the same need: where the type the class
+    /// takes holds no class at the source's key levels, `int ->? int` into `k` of
+    /// `int ->? $k`, the source is further along, rank (2, 0) past (1, 1), and the check goes
+    /// on; the type of the test above is refused. (The check itself is not run here: it reads
+    /// the binders of a program, which this unit of no items has not.)
+    #[test]
+    fn a_remap_need_whose_class_takes_a_type_with_no_class_goes_on() {
+        let e = two_level_remap();
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let k = ck.class();
+        let var = Ty::var(format!("${k}").into());
+        let int = Ty::carrier(Carrier::Int);
+        let src = int_family(var.clone());
+        assert_eq!(ck.remap_rank(&e, &src), (1, 1));
+        assert_eq!(
+            ck.remap_rank(&e, &int_family(int_family(int.clone()))),
+            (2, 0)
+        );
+        ck.remap_exprs.insert(e.span, &e);
+        let need = Need {
+            on: var.clone(),
+            kind: NeedKind::Remap {
+                at: e.span,
+                src,
+                rank: (1, 1),
+            },
+            result: None,
+            span: e.span,
+        };
+        assert!(ck.remap_goes_on(&need, &int_family(int)));
+        assert!(!refused_without_end(&ck));
+        assert!(!ck.remap_goes_on(&need, &int_family(var.clone()).union(&var)));
+        assert!(refused_without_end(&ck));
+    }
 
     /// A trial that enters a row is undone with the memos of the rows it entered: the data
     /// check of `($k, 1)` in a trial gives class `k` its data need and enters the row in

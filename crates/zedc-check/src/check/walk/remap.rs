@@ -320,6 +320,69 @@ impl<'t, 'a> Ck<'t, 'a> {
         None
     }
 
+    /// How far the key types of `t`, the source of the remap `e`, are in hand: the first key
+    /// level, outermost first and counted from 0 as [`Self::remap_pending`] walks them (the
+    /// outer level, 0, always), that holds a class not yet resolved, with the number of
+    /// variables that name such classes there; past the last level walked, with none, if no
+    /// level holds one. A check of a
+    /// [`NeedKind::Remap`] need goes on only where the source it makes is further along than
+    /// the need's own ([`Self::remap_further`]); the proof that this ends every chain of
+    /// checks is at [`Self::remap_of`].
+    // Complexity tradeoff: the walk of `remap_pending`, plus one visit of each variable name
+    // at the level found, with a visited set: O(the size of the levels walked + the classes
+    // reached), as `remap_pending`'s walk, once per need made and once per check of one.
+    pub(in crate::check) fn remap_rank(&self, e: &Expr, t: &Ty) -> (usize, usize) {
+        // The outer level is walked whatever the pattern: `remap_of` makes a need for each
+        // class there with no type yet, of any remap, and the source with a type in its
+        // place must rank further than that need.
+        let levels = match &e.kind {
+            ExprKind::Remap {
+                binders: Some(binders),
+                ..
+            } => binders.len().saturating_sub(1).max(1),
+            _ => 1,
+        };
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let mut cur = t.clone();
+        for level in 0..levels {
+            // The variables that name classes not yet resolved at this level, by name, each
+            // resolved class followed through the variables its type holds, as
+            // `remap_level` follows them by root. Counted by name, not by root: a check puts a
+            // type in the place of one name, the need's own `$r`, and the source loses that
+            // name whatever classes its other names have been merged into since.
+            let mut todo: Vec<Arc<str>> = cur.vars.iter().cloned().collect();
+            let mut seen: HashSet<Arc<str>> = HashSet::new();
+            let mut open = 0;
+            while let Some(v) = todo.pop() {
+                if !seen.insert(v.clone()) {
+                    continue;
+                }
+                match self.class_root(&v).map(|r| &self.classes[r].resolved) {
+                    Some(Some(t)) => todo.extend(t.vars.iter().cloned()),
+                    Some(None) => open += 1,
+                    None => {}
+                }
+            }
+            if open > 0 {
+                return (level, open);
+            }
+            let (opened, _) = self.remap_level(&cur);
+            let next = (opened.fns.iter().filter(|g| g.data))
+                .flat_map(|g| g.arrows.iter().map(|a| &a.result));
+            cur = Ty::union_all(next).without(&misses);
+        }
+        (levels, 0)
+    }
+
+    /// Whether a source of rank `child` ([`Self::remap_rank`]) is further along than one of
+    /// rank `parent`: a later key level holds its first class not yet resolved, or the same
+    /// level holds fewer variables naming such classes. The order is well founded: the level
+    /// is at most the number of levels `remap_rank` walks, and at one level the count is a
+    /// natural number.
+    pub(in crate::check) fn remap_further(child: (usize, usize), parent: (usize, usize)) -> bool {
+        child.0 > parent.0 || (child.0 == parent.0 && child.1 < parent.1)
+    }
+
     /// The source text at `span`, or nothing where the checker has no text.
     fn src_text(&self, span: Span) -> String {
         self.t

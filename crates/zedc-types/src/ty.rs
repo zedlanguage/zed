@@ -1499,7 +1499,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(recv),
             Dbg::Text(" }"),
         ]),
-        NeedKind::Remap { at, src } => parts.extend([
+        NeedKind::Remap { at, src, .. } => parts.extend([
             Dbg::Text("Remap { at: "),
             Dbg::Leaf(at),
             Dbg::Text(", src: "),
@@ -3359,6 +3359,12 @@ pub enum NeedKind {
         at: Span,
         /// The type of the remap's source, which holds the value's variable.
         src: Ty,
+        /// How far the source's key types are in hand when the need is made: the first key
+        /// level of `src` that holds a class not yet resolved, and the number of variables
+        /// that name such classes there. A check of the need goes on only at a type that
+        /// makes the source further along, a later level or fewer such variables at this one,
+        /// so a chain of checks ends (the proof is at `remap_of`, crates/zedc-check).
+        rank: (usize, usize),
     },
     /// `v >< (op)` at the fold written at the span: the value is a family whose entries `op`
     /// folds, and the use gives the fold (step L3.2; DESIGN.md sec:reduction). The span is the
@@ -3579,9 +3585,10 @@ impl Need {
                     f: f(g),
                     recv: *recv,
                 },
-                NeedKind::Remap { at, src } => NeedKind::Remap {
+                NeedKind::Remap { at, src, rank } => NeedKind::Remap {
                     at: *at,
                     src: f(src),
+                    rank: *rank,
                 },
                 NeedKind::Reduce(op, site) => NeedKind::Reduce(*op, *site),
                 NeedKind::Fold { tys, right } => NeedKind::Fold {
