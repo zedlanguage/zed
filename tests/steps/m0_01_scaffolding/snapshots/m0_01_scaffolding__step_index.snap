@@ -63,6 +63,7 @@ l02_08_import_pinning
 l02_08d_build_constant
 l02_12_diagnostics
 l03_01_parser
+l03_02_map_run
 l03_09_egraph
 l06_01_parser
 l07_03_unit_log_off

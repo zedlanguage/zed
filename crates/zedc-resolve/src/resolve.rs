@@ -2852,20 +2852,25 @@ impl Resolver<'_> {
                 todo.push(Task::Expr(of));
             }
             // The forms below are compiled from a later step, and their parts are resolved here
-            // as `match`'s are, so a name in them is recorded or reported.
+            // as `match`'s are, so a name in them is recorded or reported. Step L3.2 compiles
+            // the displays, `in` and `><`; a range is that step's too, and is not built yet.
             ExprKind::Range(from, to) => {
                 self.later(e.span, "a range");
                 todo.extend(to.bound().map(|b| Task::Expr(b)));
                 todo.push(Task::Expr(from));
             }
             ExprKind::In { of, set, .. } => {
-                self.later(e.span, "an `in` test");
                 todo.push(Task::Expr(set));
                 todo.push(Task::Expr(of));
             }
+            // An operator section as the operator of `><` is the operator itself, which names
+            // nothing; elsewhere a section is not built yet (step L3.2). A fold by a function,
+            // `m >< g`, is step L3.2's too, and is not built yet.
             ExprKind::Reduce { of, op } => {
-                self.later(e.span, "a reduction `><`");
-                todo.push(Task::Expr(op));
+                if !matches!(op.kind, ExprKind::Section(_)) {
+                    self.later(e.span, "a reduction `><` by a function");
+                    todo.push(Task::Expr(op));
+                }
                 todo.push(Task::Expr(of));
             }
             // The `as` binders name the source's levels and its value in the keys of the `into`
@@ -2908,6 +2913,7 @@ impl Resolver<'_> {
                 );
                 todo.push(Task::Expr(of));
             }
+            // A metadata read, `xs::len`, is not built yet (steps L3.2, L3.2a).
             ExprKind::Read { of, .. } => {
                 self.later(e.span, "a metadata read `::`");
                 // `main::args` reads the entry point, which is no use of `main` as a value.
@@ -2918,15 +2924,12 @@ impl Resolver<'_> {
             }
             ExprKind::Section(_) => self.later(e.span, "an operator section"),
             ExprKind::Array(items) => {
-                self.later(e.span, "an array display");
                 todo.extend(items.iter().rev().map(Task::Expr));
             }
             ExprKind::Set(items) => {
-                self.later(e.span, "a set display");
                 todo.extend(items.iter().rev().map(Task::Expr));
             }
             ExprKind::Map(entries) => {
-                self.later(e.span, "a map display");
                 for (k, v) in entries.iter().rev() {
                     todo.push(Task::Expr(v));
                     todo.push(Task::Expr(k));

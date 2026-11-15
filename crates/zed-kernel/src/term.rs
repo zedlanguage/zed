@@ -171,6 +171,12 @@ pub enum Prim {
     /// `fma(a, b, c)` of three `f64` or three `f32`: the exact `a * b + c` rounded once to the
     /// operands' format, IEEE 754 `fusedMultiplyAdd` (DESIGN.md step L1.18a).
     Fma,
+    /// `{k0 -> v0, k1 -> v1, …}`: the family of the entries its arguments give in pairs, key
+    /// then value, the map and array displays of step L3.2. A value that is a family is a level
+    /// beneath its key; two entries with one key are a collision.
+    Entries,
+    /// `k in f`: whether the family `f` holds the top-level key `k` (step L3.2).
+    Has,
 }
 
 impl Prim {
@@ -183,7 +189,7 @@ impl Prim {
             | FromUtf8 | Sqrt => Some(1),
             Rotl | Rotr | MulHi | Fma => Some(3),
             FunnelShl | FunnelShr => Some(4),
-            Path | Tuple | Atom => None,
+            Path | Tuple | Atom | Entries => None,
             _ => Some(2),
         }
     }
@@ -262,6 +268,8 @@ impl Prim {
             CastF32 => 63,
             Sqrt => 64,
             Fma => 65,
+            Entries => 66,
+            Has => 67,
         }
     }
 }

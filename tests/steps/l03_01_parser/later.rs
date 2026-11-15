@@ -1,4 +1,5 @@
-//! Name resolution refuses each form of layer L3, naming the step that compiles it; the parser
+//! Name resolution refuses each form of layer L3 that zedc does not compile yet (the displays,
+//! `in`, `not in` and `><` by an operator are built, plan row MAP-run); the parser
 //! refuses the parts of a `for` and a reduction that belong to later layers.
 
 use super::{check as check_sx, refused};
@@ -23,16 +24,9 @@ fn each_form_names_the_step_that_compiles_it() {
             &[concat!(zed_tests::not_yet!("a range"), " [0..<x]")],
         ),
         (
-            "f(x, s) = x not in s;",
-            &[concat!(
-                zed_tests::not_yet!("an `in` test"),
-                " [x not in s]"
-            )],
-        ),
-        (
             "f(m, g) = m >< g;",
             &[concat!(
-                zed_tests::not_yet!("a reduction `><`"),
+                zed_tests::not_yet!("a reduction `><` by a function"),
                 " [m >< g]"
             )],
         ),
@@ -48,25 +42,6 @@ fn each_form_names_the_step_that_compiles_it() {
             &[concat!(
                 zed_tests::not_yet!("an operator section"),
                 " [(+)]"
-            )],
-        ),
-        (
-            "f(x) = [x];",
-            &[concat!(zed_tests::not_yet!("an array display"), " [[x]]")],
-        ),
-        (
-            "f(x) = { x };",
-            &[concat!(zed_tests::not_yet!("a set display"), " [{ x }]")],
-        ),
-        (
-            "f(x) = {};",
-            &[concat!(zed_tests::not_yet!("a map display"), " [{}]")],
-        ),
-        (
-            "f(x) = { x -> 1 };",
-            &[concat!(
-                zed_tests::not_yet!("a map display"),
-                " [{ x -> 1 }]"
             )],
         ),
         (
@@ -96,10 +71,10 @@ fn each_form_names_the_step_that_compiles_it() {
         ),
         (
             "f(x: [int]) = [x];",
-            &[
-                concat!(zed_tests::not_yet!("a family type `[T]`"), " [[int]]"),
-                concat!(zed_tests::not_yet!("an array display"), " [[x]]"),
-            ],
+            &[concat!(
+                zed_tests::not_yet!("a family type `[T]`"),
+                " [[int]]"
+            )],
         ),
     ]);
 }

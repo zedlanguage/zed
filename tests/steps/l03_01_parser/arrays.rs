@@ -100,13 +100,11 @@ fn arrays_format_to_themselves() {
 fn resolution_names_the_array_forms() {
     assert_eq!(
         refused("grid(m: [[int]]) = [m];"),
-        [
-            concat!(zed_tests::not_yet!("a family type `[T]`"), " [[[int]]]"),
-            concat!(zed_tests::not_yet!("an array display"), " [[m]]"),
-        ]
+        [concat!(
+            zed_tests::not_yet!("a family type `[T]`"),
+            " [[[int]]]"
+        ),]
     );
-    assert_eq!(
-        refused("none(x) = [];"),
-        [concat!(zed_tests::not_yet!("an array display"), " [[]]")]
-    );
+    // The array display is built (plan row MAP-run); the family type is not.
+    assert!(refused("none(x) = [];").is_empty());
 }

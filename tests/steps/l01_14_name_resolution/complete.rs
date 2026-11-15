@@ -426,16 +426,16 @@ fn each_form_of_a_later_step_is_named_as_not_yet_compiled() {
             zed_tests::not_yet("the primed name `y'`") + " [y']",
         ),
         (
-            "f(x) = { x -> x };",
-            zed_tests::not_yet("a map display") + " [{ x -> x }]",
+            "f(x) = 0 ..< x;",
+            zed_tests::not_yet("a range") + " [0 ..< x]",
         ),
         (
-            "x = [1, 2]; y = x[0];",
-            zed_tests::not_yet("an array display") + " [[1, 2]]",
+            "f(m, g) = m >< g;",
+            zed_tests::not_yet("a reduction `><` by a function") + " [m >< g]",
         ),
         (
-            "x = { 1, 2 };",
-            zed_tests::not_yet("a set display") + " [{ 1, 2 }]",
+            "x = (+);",
+            zed_tests::not_yet("an operator section") + " [(+)]",
         ),
     ];
     for (text, want) in cases {

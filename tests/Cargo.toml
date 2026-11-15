@@ -196,6 +196,9 @@ path = "steps/l02_12_diagnostics/mod.rs"
 name = "l03_01_parser"
 path = "steps/l03_01_parser/mod.rs"
 [[test]]
+name = "l03_02_map_run"
+path = "steps/l03_02_map_run/mod.rs"
+[[test]]
 name = "l03_09_egraph"
 path = "steps/l03_09_egraph/mod.rs"
 [[test]]

@@ -203,6 +203,8 @@ fn name(p: Prim) -> &'static str {
         FunnelShl => "funnelShl",
         FunnelShr => "funnelShr",
         At => "at",
+        Entries => "entries",
+        Has => "has",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),
@@ -232,6 +234,8 @@ impl Prim {
             Prim::At => "[k]",
             Prim::Count => ".count",
             Prim::Union => ".union",
+            Prim::Entries => "{..}",
+            Prim::Has => "in",
             Prim::Atom => "#_(..)",
             p => name(p),
         }

@@ -3,7 +3,7 @@
 //! display of `n` entries, a match of `n` range-pattern arms, a section nested `n` deep, and an
 //! array display of `n` elements or nested `n` deep.
 //! Each input is lexed and parsed before timing, so the work measured is this step's. The
-//! benchmarks in `bench.rs` hold each linear; here each is built, formatted and refused at small
+//! benchmarks in `bench.rs` hold each linear; here each is built, formatted and resolved at small
 //! sizes.
 
 use zedc::ast::unit;
@@ -25,12 +25,13 @@ pub(super) fn parsed(text: String) -> Parsed {
     Parsed { text, tokens, tree }
 }
 
-/// Builds, formats and resolves the unit `p`, and drops what it built. Resolution refuses
-/// every form of this step; the refusals are part of the work.
+/// Builds, formats and resolves the unit `p`, and drops what it built. Resolution refuses the
+/// ranges, metadata reads and `match` arms of these units, and resolves the displays and
+/// reductions by an operator (plan row MAP-run); either way the resolution is part of the work.
 pub(super) fn pass(p: &Parsed) {
     let stmts = unit(&p.text, &p.tokens, &p.tree).unwrap();
     std::hint::black_box(format(&p.text, &p.tokens, &stmts));
-    assert!(resolve(&stmts).is_err());
+    std::hint::black_box(resolve(&stmts).is_err());
 }
 
 /// `f(x) = { 0 -> [0..<1, x::len], 1 -> [1..<2, x::len], … };`, a map display of `n` entries.
@@ -75,10 +76,9 @@ pub(super) fn nested(n: usize) -> String {
     format!("f(x) = {}x{};\n", "[".repeat(n), "]".repeat(n))
 }
 
-/// Every input of the benchmarks in `bench.rs` is built, formatted and refused in name
-/// resolution at small sizes.
+/// Every input of the benchmarks in `bench.rs` is built, formatted and name-resolved at small sizes.
 #[test]
-fn each_form_is_built_formatted_and_refused_at_small_sizes() {
+fn each_form_is_built_formatted_and_resolved_at_small_sizes() {
     for make in [display, arms, deep, array, nested] {
         for n in [1, 2, 9] {
             pass(&parsed(make(n)));

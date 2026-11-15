@@ -497,6 +497,9 @@ pub struct Info {
     /// sec:type_language, the `m[k]` row). A read checked more than once is such a read only
     /// if it is one each time.
     pub dense: HashMap<Span, bool>,
+    /// Each fold `m >< (op)`, by its span: the identity of `op` at the carrier of the
+    /// entries, the result of folding an empty level (step L3.2, DESIGN.md sec:reduction).
+    pub reduce: HashMap<Span, Value>,
     /// The type errors.
     pub errors: Vec<Error>,
     /// The sites of the literals that the errors of rows `UnfixedDecimal` and `LiteralCarrier`

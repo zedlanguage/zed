@@ -14,7 +14,7 @@ use super::deep::every_variant;
 /// printer writes it: an operator between its operands in parentheses, `-` and `!` before
 /// one, an entry or component as an index, an atom with no literal name as `#_(..)`, and
 /// every other primitive as its prelude word called.
-const WRITTEN: [(Prim, &str); 66] = [
+const WRITTEN: [(Prim, &str); 68] = [
     (Prim::Add, "(a + b)"),
     (Prim::Sub, "(a - b)"),
     (Prim::Mul, "(a * b)"),
@@ -81,6 +81,8 @@ const WRITTEN: [(Prim, &str); 66] = [
     (Prim::CastF32, "f32(a)"),
     (Prim::Sqrt, "sqrt(a)"),
     (Prim::Fma, "fma(a, b, c)"),
+    (Prim::Entries, "entries(a, b)"),
+    (Prim::Has, "has(a, b)"),
 ];
 
 #[test]

@@ -48,7 +48,7 @@ use zedc_syntax::lex;
 pub const VERSION: u32 = 1;
 
 /// Every primitive, in the order the binary form numbers them.
-pub const PRIMS: [Prim; 66] = {
+pub const PRIMS: [Prim; 68] = {
     use Prim::*;
     [
         Add,
@@ -117,6 +117,8 @@ pub const PRIMS: [Prim; 66] = {
         CastF32,
         Sqrt,
         Fma,
+        Entries,
+        Has,
     ]
 };
 

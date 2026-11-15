@@ -1484,6 +1484,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Text(" }"),
         ]),
         NeedKind::Index(t) => parts.extend([Dbg::Text("Index("), Dbg::Ty(t), Dbg::Text(")")]),
+        NeedKind::Map { f, filter } => parts.extend([
+            Dbg::Text("Map { f: "),
+            Dbg::Ty(f),
+            Dbg::Text(", filter: "),
+            Dbg::Leaf(filter),
+            Dbg::Text(" }"),
+        ]),
         NeedKind::Call {
             what,
             positional,
@@ -1538,6 +1545,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
         | NeedKind::Sum
+        | NeedKind::Reduce(_)
         | NeedKind::InDomain { .. }) => parts.push(Dbg::Leaf(k)),
     }
     parts.push(Dbg::Text(", result: "));
@@ -3248,6 +3256,17 @@ pub enum NeedKind {
     Power(Arc<PowerUse>),
     /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
     Sum,
+    /// `v.map(f)`, or `v.where(f)` when `filter` is set, with `f` of type `f`: the value is a
+    /// family, and the use gives the family `map` or `where` makes of it (step L3.2).
+    Map {
+        /// The function's type.
+        f: Ty,
+        /// Whether the use is `where`.
+        filter: bool,
+    },
+    /// `v >< (op)`: the value is a family whose entries `op` folds, and the use gives the fold
+    /// (step L3.2; DESIGN.md sec:reduction).
+    Reduce(zedc_syntax::ast::BinaryOp),
     /// A use that takes an int in its domain, of the value of the parameter at position
     /// `param` of the function whose signature holds it: each call shows the ints of its
     /// argument in the domain, or passes on a parameter of its own, whose calls then show them
@@ -3445,6 +3464,11 @@ impl Need {
                     key: key.clone(),
                 },
                 NeedKind::Index(k) => NeedKind::Index(f(k)),
+                NeedKind::Map { f: g, filter } => NeedKind::Map {
+                    f: f(g),
+                    filter: *filter,
+                },
+                NeedKind::Reduce(op) => NeedKind::Reduce(*op),
                 NeedKind::Destructure { i, n } => NeedKind::Destructure { i: *i, n: *n },
                 NeedKind::Call {
                     what,
@@ -3514,9 +3538,12 @@ impl Need {
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Into { .. }
+            | NeedKind::Reduce(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(_) => (None, &[], &[]),
-            NeedKind::Index(k) | NeedKind::Order { other: k, .. } => (Some(k), &[], &[]),
+            NeedKind::Index(k) | NeedKind::Order { other: k, .. } | NeedKind::Map { f: k, .. } => {
+                (Some(k), &[], &[])
+            }
             NeedKind::Call {
                 positional, named, ..
             } => (None, positional, named),
@@ -3537,10 +3564,12 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::Reduce(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
+            | NeedKind::Map { f: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
@@ -3566,10 +3595,12 @@ impl Need {
             | NeedKind::Power(_)
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
+            | NeedKind::Reduce(_)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
             | NeedKind::Index(t)
+            | NeedKind::Map { f: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],

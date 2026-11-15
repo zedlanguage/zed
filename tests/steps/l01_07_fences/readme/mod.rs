@@ -313,7 +313,9 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md [Everything is a map] 1",
         7,
-        concat!("line 1: ", zed_tests::not_yet!("an array display")),
+        // The sort key `desc` on line 12 is not compiled yet, so the checker, which would
+        // refuse the read of line 7, does not run.
+        "line 7: the line is marked ✗ and has no diagnostic",
     ),
     (
         "README.md [Grouping] 1",

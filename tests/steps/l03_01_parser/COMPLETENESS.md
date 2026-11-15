@@ -22,4 +22,4 @@ Coverage: shared with the other groups of this row (`ast/mod.rs` 94.4% to 94.5%,
 | Range patterns and family types | `forms::range_patterns_and_family_types_build` |
 | Formatting, parentheses the grammar needs, a statement that opens with a display | `formatting::*` (3 tests) |
 | Later forms and parts name their step | `later::*` (2 tests) |
-| Large inputs | Benchmarks `bench::*`; `scaling::each_form_is_built_formatted_and_refused_at_small_sizes` |
+| Large inputs | Benchmarks `bench::*`; `scaling::each_form_is_built_formatted_and_resolved_at_small_sizes` |

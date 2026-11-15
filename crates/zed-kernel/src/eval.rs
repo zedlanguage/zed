@@ -1989,7 +1989,7 @@ impl<'t> Machine<'_, 't> {
         // its room is allocated once a run; `Tuple` and `Path` keep theirs and take a new `Vec`,
         // as before. An early return on an error drops the spare room, which the next step
         // allocates again. Both are O(arguments) a step.
-        let keeps = matches!(p, Prim::Tuple | Prim::Path);
+        let keeps = matches!(p, Prim::Tuple | Prim::Path | Prim::Entries);
         let mut vals = if keeps {
             Vec::with_capacity(args.len())
         } else {
@@ -2019,7 +2019,7 @@ impl<'t> Machine<'_, 't> {
         // keys a keypath above an empty level binds from where its own `unbound` atom lands.
         if !matches!(
             p,
-            Prim::Tuple | Prim::Path | Prim::Atom | Prim::Eq | Prim::Ne
+            Prim::Tuple | Prim::Path | Prim::Entries | Prim::Atom | Prim::Eq | Prim::Ne
         ) && vals.iter().any(|v| matches!(v, Value::Atom(_)))
         {
             let atoms = vals.iter().filter(|v| matches!(v, Value::Atom(_)));
@@ -2989,8 +2989,29 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
     match p {
         Prim::Tuple => Ok(Value::tuple(vals)),
         Prim::Path => Ok(Value::path(vals)),
+        Prim::Entries => entries(vals),
         _ => prim_on(p, &vals),
     }
+}
+
+/// The family of a display's entries, given in pairs, key then value (step L3.2): each key
+/// written as a key (`-0.0` as `0.0`), a value that is a family a level beneath its key, and
+/// two entries at one key a collision, as [`Family::from_leaves`] makes them.
+// Complexity tradeoff: the naive version is a union of one-entry families, one per entry, which
+// copies the map built so far on each union, O(n^2) for n entries. Used: the n leaves given to
+// `from_leaves` at once, which inserts each into one map, O(n log n), the values moved in.
+// Tradeoff: none beyond the pairing.
+fn entries(vals: Vec<Value>) -> Result<Value, KernelError> {
+    debug_assert!(
+        vals.len().is_multiple_of(2),
+        "a display's entries come in pairs"
+    );
+    let mut it = vals.into_iter();
+    let mut leaves = Vec::with_capacity(it.len() / 2);
+    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+        leaves.push((vec![k.key()], v));
+    }
+    Ok(Value::Family(Family::from_leaves(leaves)?))
 }
 
 /// [`prim_data`] for a primitive other than `Tuple` and `Path`, which keeps none of `vals`.
@@ -3179,6 +3200,7 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
             f.get(k).cloned().unwrap_or_else(|| Value::atom("notFound"))
         }
         (Prim::Count, [Value::Family(f)]) => Int(f.len() as i64),
+        (Prim::Has, [k, Value::Family(f)]) => Bool(f.get(k).is_some()),
         (Prim::Union, [Value::Family(a), Value::Family(b)]) => Value::Family(a.union(b)?),
         (Prim::Atom, [Str(name), Value::Tuple(names), args @ ..]) if names.is_empty() => {
             Value::atom_with(atom_name(name)?, args.to_vec())

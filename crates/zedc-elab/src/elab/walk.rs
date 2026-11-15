@@ -181,9 +181,27 @@ enum Frame<'a> {
     FitBody(Box<FitF<'a>>),
     FitExtras(Box<FitF<'a>>, Term),
     Lambda(Vec<Arc<str>>),
+    /// A display's parts elaborated: an array's elements, a set's, or a map's keys and
+    /// values in turn (step L3.2).
+    Display(Display),
+    /// `x.map(f)`, or `x.where(f)` when the flag is set, once `f` is elaborated: `x`'s term
+    /// (step L3.2).
+    MapFn(Term, bool),
+    /// `m >< (op)` once `m` is elaborated: the operator and the span of the fold.
+    Fold(Prim, Span),
+    /// `k in m` once both are elaborated: whether it is `not in`.
+    In(bool),
     /// An expression done, by its span: its term's nodes that have no site take this one
     /// (plan row RT-sites).
     Site(Span),
+}
+
+/// Which display a [`Frame::Display`] builds.
+#[derive(Clone, Copy)]
+enum Display {
+    Array,
+    Set,
+    Map,
 }
 
 /// A call that passes atoms ([`Elab::passes`]): its arguments that do, each bound to a
@@ -720,16 +738,47 @@ impl<'a> Elab<'a> {
                 unreachable!("resolve rejects the forms of layer L2")
             }
             ExprKind::Range(..)
-            | ExprKind::In { .. }
-            | ExprKind::Reduce { .. }
             | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
-            | ExprKind::Array(_)
-            | ExprKind::Set(_)
-            | ExprKind::Map(_)
             | ExprKind::For { .. } => {
-                unreachable!("resolve rejects the forms of layer L3 and remaps (L8)")
+                unreachable!("resolve rejects the forms of layer L3 not built yet, and remaps (L8)")
+            }
+            ExprKind::Array(items) => {
+                m.k(Frame::Display(Display::Array));
+                m.seq(items.iter().collect(), false);
+                return;
+            }
+            ExprKind::Set(items) => {
+                m.k(Frame::Display(Display::Set));
+                m.seq(items.iter().collect(), false);
+                return;
+            }
+            ExprKind::Map(entries) => {
+                m.k(Frame::Display(Display::Map));
+                m.seq(entries.iter().flat_map(|(k, v)| [k, v]).collect(), false);
+                return;
+            }
+            ExprKind::Reduce { of, op } => {
+                let p = match op.kind {
+                    ExprKind::Section(BinaryOp::Add) => Prim::Add,
+                    ExprKind::Section(BinaryOp::Mul) => Prim::Mul,
+                    ExprKind::Section(BinaryOp::And) => Prim::And,
+                    ExprKind::Section(BinaryOp::Or) => Prim::Or,
+                    // The checker rejects a fold by any other operator, at its error.
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                };
+                m.k(Frame::Fold(p, e.span));
+                m.stack.push(Job::Expr(of));
+                return;
+            }
+            ExprKind::In { of, set, negated } => {
+                m.k(Frame::In(*negated));
+                m.seq(vec![&**of, &**set], false);
+                return;
             }
             ExprKind::SortKey { .. } => unreachable!("resolve rejects the forms of layer L5"),
             ExprKind::Loop { .. } | ExprKind::Break(_) | ExprKind::Spread { .. } => {
@@ -1438,6 +1487,109 @@ impl<'a> Elab<'a> {
     }
 
     /// The call of [`Elab::member`], its receiver `x` elaborated.
+    /// The family a display builds from its parts' terms `ts` (step L3.2): the entries in
+    /// pairs, key then value, to [`Prim::Entries`]. An array's keys are its positions; a set
+    /// keys each element by itself, each element bound once so that it is evaluated once.
+    fn display(&mut self, d: Display, ts: Vec<Term>) -> Term {
+        match d {
+            Display::Map => Term::Prim(Prim::Entries, ts),
+            Display::Array => {
+                let mut args = Vec::with_capacity(2 * ts.len());
+                for (i, t) in ts.into_iter().enumerate() {
+                    args.push(Term::Lit(Value::Int(i as i64)));
+                    args.push(t);
+                }
+                Term::Prim(Prim::Entries, args)
+            }
+            Display::Set => {
+                let names: Vec<Arc<str>> = ts.iter().map(|_| self.temp()).collect();
+                let args = (names.iter())
+                    .flat_map(|n| [Term::Var(n.clone()), Term::Var(n.clone())])
+                    .collect();
+                let body = Term::Prim(Prim::Entries, args);
+                // The bindings, innermost last: O(n) for n elements.
+                (names.into_iter().zip(ts).rev()).fold(body, |b, (n, t)| {
+                    Term::Let(n, Shared::new(t), Shared::new(b))
+                })
+            }
+        }
+    }
+
+    /// `x.map(f)` with `x` and `f` elaborated (step L3.2, DESIGN.md sec:keypaths): the
+    /// identity-keypath `reindex` of `map`, one level, as `fam` over `x`'s keys whose entry at
+    /// `k` is `f(x[k])`; a nested value is passed to `f` whole. A loose atom `x` passes
+    /// through.
+    // Complexity tradeoff: `fam` over the top-level keys does one `get` per key, O(n log n)
+    // for n entries over the ordered map; the general `reindex` (step L4.2) walks every leaf
+    // keypath and suits a keypath map, which `map` does not need.
+    fn map_term(&mut self, x: Term, f: Term) -> Term {
+        let (xs, g, k) = (self.temp(), self.temp(), self.temp());
+        let entry = Term::Prim(Prim::Get, vec![Term::Var(xs.clone()), Term::Var(k.clone())]);
+        let fam = Term::Fam {
+            domain: Shared::new(Term::Var(xs.clone())),
+            var: k,
+            body: Shared::new(Term::App(Shared::new(Term::Var(g.clone())), vec![entry])),
+        };
+        let body = Term::Match(
+            Shared::new(Term::Var(xs.clone())),
+            vec![
+                (KPattern::AnyAtom, Term::Var(xs.clone())),
+                (KPattern::Wild, fam),
+            ],
+        );
+        Term::Let(
+            xs,
+            Shared::new(x),
+            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
+        )
+    }
+
+    /// `x.where(f)`: the kernel's `discard(x, sel)` (DESIGN.md sec:kernel), with `sel` testing
+    /// `f` on the entries of `x`'s top level only. `discard` descends into a kept sub-family
+    /// and asks `sel` again at each of its entries, so `sel` keeps every entry below the top
+    /// level unasked. A loose atom `x` passes through, as at `map`.
+    // Complexity tradeoff: `discard` rebuilds each kept sub-family entry by entry, O(leaves of
+    // x) where a top-level filter needs only O(top-level entries); a kernel filter of one level
+    // would remove that walk. Kept, since `discard` is the kernel's one filtering form.
+    fn where_term(&mut self, x: Term, f: Term) -> Term {
+        let (xs, g, p, v) = (self.temp(), self.temp(), self.temp(), self.temp());
+        let top = Term::Prim(
+            Prim::Eq,
+            vec![
+                Term::Prim(Prim::PathLen, vec![Term::Var(p.clone())]),
+                Term::Lit(Value::Int(1)),
+            ],
+        );
+        let ask = Term::App(
+            Shared::new(Term::Var(g.clone())),
+            vec![Term::Var(v.clone())],
+        );
+        let sel = Term::Lam(
+            vec![p, v],
+            Shared::new(Term::If(
+                Shared::new(top),
+                Shared::new(ask),
+                Shared::new(Term::Lit(Value::Bool(true))),
+            )),
+        );
+        let kept = Term::Discard {
+            family: Shared::new(Term::Var(xs.clone())),
+            sel: Shared::new(sel),
+        };
+        let body = Term::Match(
+            Shared::new(Term::Var(xs.clone())),
+            vec![
+                (KPattern::AnyAtom, Term::Var(xs.clone())),
+                (KPattern::Wild, kept),
+            ],
+        );
+        Term::Let(
+            xs,
+            Shared::new(x),
+            Shared::new(Term::Let(g, Shared::new(f), Shared::new(body))),
+        )
+    }
+
     fn member_call(&mut self, m: &mut M<'a>, mb: Member<'a>, x: Term) {
         let Member {
             name,
@@ -1477,6 +1629,20 @@ impl<'a> Elab<'a> {
                     self.call_value(m, f, Some(receiver), call);
                     return;
                 }
+                // `map` and `where` are built in for now (author P221; plan row MAP-pure-zed);
+                // the checker rejects any other argument list.
+                Some(_) if name == "map" || name == "where" => match call.positional {
+                    [f] if call.named.is_empty() && !call.curry => {
+                        m.k(Frame::MemberEnd(wrap));
+                        m.k(Frame::MapFn(receiver, name == "where"));
+                        m.stack.push(Job::Expr(f));
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
                 Some(_) => not_yet(&format!("the prelude word `{name}`")),
                 // A literal has no fields, so `.name` can only call a function `name`, and
                 // none is in scope: the resolver's short headline, the rule in a note
@@ -1592,6 +1758,43 @@ impl<'a> Elab<'a> {
             }
             Frame::Tuple => {
                 let t = all(m.got()).map(|ts| Term::Prim(Prim::Tuple, ts));
+                m.give(t);
+            }
+            Frame::Display(d) => {
+                let t = all(m.got()).map(|ts| self.display(d, ts));
+                m.give(t);
+            }
+            Frame::MapFn(x, filter) => {
+                let t = m.t().map(|f| match filter {
+                    true => self.where_term(x, f),
+                    false => self.map_term(x, f),
+                });
+                m.give(t);
+            }
+            Frame::Fold(p, span) => {
+                // The identity the checker found for the entries' carrier; none for a
+                // fold in a lambda's body over its parameter, which folds empty to `#empty`.
+                let identity = self.info.reduce.get(&span).cloned();
+                let t = m.t().map(|family| Term::Fold {
+                    family: Shared::new(family),
+                    op: Shared::new(Term::PrimFn(p)),
+                    identity: identity.map(|v| Shared::new(Term::Lit(v))),
+                    depth: 1,
+                    ev: zed_kernel::term::Evidence::from([(
+                        "assoc".into(),
+                        zed_kernel::term::Grade::Axiom,
+                    )]),
+                });
+                m.give(t);
+            }
+            Frame::In(negated) => {
+                let t = all(m.got()).map(|ts| {
+                    let has = Term::Prim(Prim::Has, ts);
+                    match negated {
+                        true => Term::Prim(Prim::Not, vec![has]),
+                        false => has,
+                    }
+                });
                 m.give(t);
             }
             Frame::Is(e) => {

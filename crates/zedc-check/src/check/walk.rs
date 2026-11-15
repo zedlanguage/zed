@@ -447,6 +447,47 @@ pub(super) enum Frame<'a> {
         order: Vec<Option<usize>>,
         extra: Vec<usize>,
     },
+    /// A display's parts, each key then its value for a map (step L3.2).
+    Display(Box<DisplayF<'a>>),
+    /// `x.map(f)`, or `x.where(f)` when the flag is set, waiting for `f`: the type of `x` and
+    /// the call's span (step L3.2).
+    MapFn(Ty, Span, bool),
+    /// `m >< (op)`, waiting for `m`: the operator and the span of the reduction.
+    Reduce(BinaryOp, Span),
+    /// `k in m`, waiting for `k`: `m` and the span of the test.
+    InKey(&'a Expr, Span),
+    /// `k in m`, waiting for `m`: the type of `k` and the span of the test.
+    InSet(Ty, Span),
+}
+
+/// Which display a [`DisplayF`] checks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Display {
+    /// `[a, b]`, keyed `0`, `1`, … by position.
+    Array,
+    /// `{a, b}`, each element keyed by itself.
+    Set,
+    /// `{k -> v, …}`, its parts each key then its value.
+    Map,
+}
+
+pub(super) struct DisplayF<'a> {
+    kind: Display,
+    es: Vec<&'a Expr>,
+    /// How many have been started; one more than `out` holds while one is checked.
+    started: usize,
+    out: Vec<Ty>,
+}
+
+impl<'a> DisplayF<'a> {
+    fn new(kind: Display, es: Vec<&'a Expr>) -> DisplayF<'a> {
+        DisplayF {
+            kind,
+            out: Vec::with_capacity(es.len()),
+            es,
+            started: 0,
+        }
+    }
 }
 
 pub(super) struct StrF<'a> {
@@ -874,6 +915,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.ty(t);
             }
             Frame::Tuple(s) => self.tuple_step(m, s),
+            Frame::Display(s) => self.display_step(m, s),
+            Frame::MapFn(x, span, filter) => {
+                let f = m.take_arg();
+                let t = self.map_end(&x, f, span, filter);
+                m.ty(t);
+            }
+            Frame::Reduce(op, span) => {
+                let x = m.take_ty();
+                let t = self.reduce_end(op, &x, span);
+                m.ty(t);
+            }
+            Frame::InKey(set, span) => {
+                let k = m.take_ty();
+                m.k(Frame::InSet(k, span));
+                m.job(Job::Expr(set));
+            }
+            Frame::InSet(k, span) => {
+                let x = m.take_ty();
+                let t = self.in_end(&k, &x, span);
+                m.ty(t);
+            }
             Frame::Else1(e) => {
                 let v = m.take_ty();
                 let ExprKind::Else {
@@ -2749,17 +2811,35 @@ impl<'t, 'a> Ck<'t, 'a> {
                 )
             }
             ExprKind::Range(..)
-            | ExprKind::In { .. }
-            | ExprKind::Reduce { .. }
             | ExprKind::Remap { .. }
             | ExprKind::Read { .. }
             | ExprKind::Section(_)
-            | ExprKind::Array(_)
-            | ExprKind::Set(_)
-            | ExprKind::Map(_)
             | ExprKind::For { .. } => unreachable!(
-                "name resolution rejects every range, in, reduction, remap, read, section, array, set, map and for before the checker reads the program"
+                "name resolution rejects every range, remap, read, section outside `><`, and for before the checker reads the program"
             ),
+            ExprKind::Array(items) | ExprKind::Set(items) => {
+                let kind = match &e.kind {
+                    ExprKind::Array(_) => Display::Array,
+                    _ => Display::Set,
+                };
+                let es = items.iter().collect();
+                self.display_step(m, Box::new(DisplayF::new(kind, es)));
+            }
+            ExprKind::Map(entries) => {
+                let es = entries.iter().flat_map(|(k, v)| [k, v]).collect();
+                self.display_step(m, Box::new(DisplayF::new(Display::Map, es)));
+            }
+            ExprKind::Reduce { of, op } => {
+                let ExprKind::Section(op) = op.kind else {
+                    unreachable!("name resolution rejects a reduction by no operator section")
+                };
+                m.k(Frame::Reduce(op, e.span));
+                m.job(Job::Expr(of));
+            }
+            ExprKind::In { of, set, .. } => {
+                m.k(Frame::InKey(set, e.span));
+                m.job(Job::Expr(of));
+            }
             ExprKind::SortKey { .. } => unreachable!(
                 "name resolution rejects every sort key before the checker reads the program"
             ),
@@ -2929,6 +3009,310 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let cs = std::mem::take(&mut s.out);
         m.ty(Ty::of_row(ty::Row::new(cs)));
+    }
+
+    /// A display's parts, each in turn, then its type: the family of its entries (step
+    /// L3.2), whose keys are exactly the keys written, so its guarantee and its permission
+    /// are one type and it is the one arrow `(K) -> V`. An array's keys are `0..<n`, one
+    /// interval with every key present, so a read of it misses with `#outOfBounds`.
+    // Complexity tradeoff: the key and value types are each one union of the parts' types,
+    // `Ty::union_all`, O(n) unions for n parts, each costing the size of the union so far,
+    // which for literal keys is a few intervals; the naive alternative, a type per entry kept
+    // as its own arrow, would make every lookup and every `map` O(n) in the arrows.
+    fn display_step(&mut self, m: &mut M<'a>, mut s: Box<DisplayF<'a>>) {
+        if s.started > s.out.len() {
+            let t = m.take_ty();
+            s.out.push(t);
+        }
+        if let Some(&e) = s.es.get(s.started) {
+            s.started += 1;
+            m.k(Frame::Display(s));
+            return m.job(Job::Expr(e));
+        }
+        let (keys, values) = match s.kind {
+            Display::Array => {
+                let n = s.out.len() as i64;
+                let keys = (0..n).map(|i| Ty::lit(&Value::Int(i))).collect::<Vec<_>>();
+                (Ty::union_all(&keys), Ty::union_all(&s.out))
+            }
+            Display::Set => {
+                let all = Ty::union_all(&s.out);
+                (all.clone(), all)
+            }
+            Display::Map => (
+                Ty::union_all(s.out.iter().step_by(2)),
+                Ty::union_all(s.out.iter().skip(1).step_by(2)),
+            ),
+        };
+        let mut sig = Sig::one(super::positional(1), vec![keys], values);
+        sig.data = true;
+        sig.dense = s.kind == Display::Array;
+        sig.note_held();
+        m.ty(Ty::func(Arc::new(sig)));
+    }
+
+    /// `x.map(f)`, with `x` of type `x` and `f` checked: each family `x` may be, with the
+    /// same keys, and each entry `f` applied to it (step L3.2, DESIGN.md sec:type_language,
+    /// the `map` row: "the guarantee and the permission ride through unchanged"). Each arrow
+    /// keeps its key type, so a family `L .. U -> V`, the arrows `(L) -> V` and
+    /// `(U) -> V | #notFound`, becomes `(L) -> W` and `(U) -> W | #notFound`, `W` the type of
+    /// `f` applied to `V`. A loose atom `x` may be passes through, as at a call.
+    ///
+    /// With `filter`, `x.where(f)`: `f` must give a `bool` for each entry, and the result has
+    /// each family's keys and entries, any key of which may now be missing, so each arrow's
+    /// result gains `#notFound` and the family is no longer dense (DESIGN.md sec:type_language,
+    /// the `where` row: the guarantee becomes empty, the permission rides through).
+    fn map_end(&mut self, x: &Ty, f: Arg<'a>, span: Span, filter: bool) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let (name, word) = match filter {
+            true => ("where", "`where`"),
+            false => ("map", "`map`"),
+        };
+        let mut out = self.passing(x, word, span, None);
+        let fsig = match only_fn(&f.ty) {
+            Some(sig) => sig,
+            None => {
+                let t = self.text(&f.ty);
+                let example = if filter { "x -> x > 0" } else { "x -> x + 1" };
+                self.error_offering(
+                    f.at.unwrap_or(span),
+                    format!("{word} takes a function, and this value is {t}"),
+                    [format!(
+                        "repair: pass a function of one parameter, as `{example}`"
+                    )],
+                );
+                return Ty::empty();
+            }
+        };
+        for p in x.pieces() {
+            match p {
+                Piece::Fn(sig) if sig.data => {
+                    // Not proved: an entry is never itself `#notFound` or `#outOfBounds`; a
+                    // family that holds one as a value has it read here as a miss, and the
+                    // result's arrows keep it as a miss, not as an entry `f` maps.
+                    let all = Ty::union_all(sig.arrows.iter().map(|a| &a.result)).without(&misses);
+                    // An entry that is a loose atom passes through `f` as through any call
+                    // (rule 6 of sec:type_resolution), so `f` is given the rest. `where` would
+                    // ask its test of such an entry, which gives the atom and no verdict; what
+                    // it keeps then is not settled, so that is not built.
+                    let loose = all.loose_ty();
+                    let entries = all.without_loose();
+                    if filter && !loose.lists_nothing() {
+                        let t = self.text(&loose);
+                        let what = format!("`where` over entries that may be the atoms {t}");
+                        self.error(span, zedc_base::rejection::not_yet(&what));
+                        return Ty::empty();
+                    }
+                    let w = match entries.lists_nothing() {
+                        true => Ty::empty(),
+                        false => {
+                            let arg = Arg::of(entries);
+                            let what = Label::Text(match filter {
+                                true => "the function given to `where`",
+                                false => "the function given to `map`",
+                            });
+                            self.apply(what, &fsig, vec![Some(arg)], false, span).0
+                        }
+                    };
+                    let bool_ty = Ty::carrier(Carrier::Bool);
+                    if filter && !w.lists_nothing() && !self.subtype(&w, &bool_ty) {
+                        let t = self.text(&w);
+                        self.error_offering(
+                            f.at.unwrap_or(span),
+                            format!(
+                                "`where` keeps the entries its function gives `true` for, and \
+                                 this function gives {t}"
+                            ),
+                            [
+                                "repair: give a `bool` for each entry, as `x -> x > 0`".to_string(),
+                                "repair: handle the values that are not `bool` with `else`, as \
+                                 `x -> f(x) else false`"
+                                    .to_string(),
+                            ],
+                        );
+                    }
+                    let mut out_sig = (*sig).clone();
+                    let not_found = Ty::set(KType::atom("notFound"));
+                    for a in &mut out_sig.arrows {
+                        let missed = Ty::set(&a.result.atoms() & &misses);
+                        a.result = match filter {
+                            true => a.result.union(&not_found),
+                            false => w.union(&loose).union(&missed),
+                        };
+                    }
+                    if filter {
+                        out_sig.dense = false;
+                    }
+                    out_sig.word = None;
+                    out_sig.needs = Vec::new();
+                    out_sig.note_held();
+                    out = out.union(&Ty::func(Arc::new(out_sig)));
+                }
+                Piece::Dyn => self.any(word, span),
+                // A class takes the use as a need, checked on each value that flows into it
+                // and at each call of a generic function, as `sum` does (CHK-need-bound).
+                Piece::Var(v) => {
+                    let r = self.class_root(&v);
+                    let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                        Some((_, Some(t))) => self.map_end(&t, f.clone(), span, filter),
+                        Some((r, None)) => {
+                            let kind = NeedKind::Map {
+                                f: f.ty.clone(),
+                                filter,
+                            };
+                            self.need(r, kind, true, span)
+                        }
+                        None => Ty::dynamic(),
+                    };
+                    out = out.union(&given);
+                }
+                p if p.is_atoms() => {}
+                p => {
+                    let t = self.text(&p.ty());
+                    self.error_offering(
+                        span,
+                        format!(
+                            "{word} works on each entry of a family, and this value is {t}, \
+                             which has no entries"
+                        ),
+                        [format!(
+                            "repair: call {word} on a family, as `{{0 -> 1}}.{name}(f)`"
+                        )],
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    /// `x >< (op)`, `x` of type `x` (step L3.2; DESIGN.md sec:reduction): the operator folded
+    /// over the one level of each family `x` may be. The operators taken are those whose
+    /// associativity and identity are built in, `+` and `*` on `int` and on `rat`, `&&` and
+    /// `||` on `bool`, so an empty level folds to the identity and the result has no `#empty`.
+    /// Records the identity at the values' carrier for elaboration ([`Info::reduce`]).
+    // Complexity tradeoff: the result is the operator's carrier, not the interval a sum of
+    // `card` values in `[lo, hi]` lies in; that transfer is step L3.6's. A naive interval sum
+    // here would need the level's cardinality, which this step does not track.
+    fn reduce_end(&mut self, op: BinaryOp, x: &Ty, span: Span) -> Ty {
+        let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        let entries = Ty::union_all(
+            (x.fns.iter())
+                .filter(|s| s.data)
+                .flat_map(|s| s.arrows.iter().map(|a| &a.result)),
+        )
+        .without(&misses);
+        let written = op.as_str();
+        // A class takes the fold as a need, checked at each call of the generic function,
+        // as `sum` does (CHK-need-bound); `meet` calls back here with `replaying` set.
+        let var = x.pieces().into_iter().find_map(|p| match p {
+            Piece::Var(v) => Some(v),
+            _ => None,
+        });
+        let others = x.pieces().into_iter().any(|p| match p {
+            Piece::Fn(sig) => !sig.data,
+            Piece::Var(_) => false,
+            p => !p.is_atoms(),
+        });
+        if let Some(v) = var
+            && !others
+            && x.fns.is_empty()
+        {
+            let r = self.class_root(&v);
+            return match r.map(|r| (r, self.classes[r].resolved.clone())) {
+                Some((_, Some(t))) => self.reduce_end(op, &t, span),
+                Some((r, None)) => self.need(r, NeedKind::Reduce(op), true, span),
+                None => Ty::dynamic(),
+            };
+        }
+        // A family with no entries, as `[]`, has no carrier to take an identity from, and
+        // folds to `#empty` (DESIGN.md sec:reduction).
+        if !others && x.loose().is_empty() && !x.fns.is_empty() && entries.lists_nothing() {
+            return Ty::set(KType::atom("empty"));
+        }
+        if others || !x.loose().is_empty() {
+            let t = self.text(x);
+            self.error_offering(
+                span,
+                format!("`><` folds the entries of a family, and this value is {t}"),
+                [format!(
+                    "repair: fold a family, as `{{0 -> 1, 1 -> 2}} >< ({written})`"
+                )],
+            );
+            return Ty::empty();
+        }
+        let identity = match op {
+            BinaryOp::Add | BinaryOp::Mul => match entries.numeric_carrier() {
+                Some(c @ (Carrier::Int | Carrier::Rat))
+                    if self.subtype(&entries, &Ty::carrier(c)) =>
+                {
+                    let one = op == BinaryOp::Mul;
+                    let v = match c {
+                        Carrier::Int => Value::Int(one as i64),
+                        _ => Value::rat(Rat::int((one as i64).into())),
+                    };
+                    Some((v, Ty::carrier(c)))
+                }
+                _ => None,
+            },
+            BinaryOp::And | BinaryOp::Or if self.subtype(&entries, &Ty::carrier(Carrier::Bool)) => {
+                Some((Value::Bool(op == BinaryOp::And), Ty::carrier(Carrier::Bool)))
+            }
+            _ => None,
+        };
+        // A float fold is not built: bare `><` on floats folds on the canonical balanced tree
+        // of sec:reduction (item 1), and the kernel `fold` is serial, so it would give other
+        // bits. Operators with no built-in identity wait for the operator table of step L3.2.
+        let Some((v, t)) = identity else {
+            let shown = self.text(&entries);
+            let what = format!("a fold `><` by `({written})` of entries of type {shown}");
+            self.error(span, zedc_base::rejection::not_yet(&what));
+            return Ty::empty();
+        };
+        if self.replaying == 0 {
+            self.info.reduce.insert(span, v);
+            return t;
+        }
+        // A need met at a call of a generic function: the one fold the body elaborates to
+        // serves every call, whose carriers differ, so it takes no identity and an empty
+        // family folds to `#empty`. A family with a key always present, an arrow whose result
+        // holds no miss, is not empty, and its fold never gives `#empty`.
+        let nonempty = (x.fns.iter()).filter(|s| s.data).all(|s| {
+            (s.arrows.iter()).any(|a| {
+                a.params.first().is_some_and(|k| !k.lists_nothing())
+                    && (&a.result.atoms() & &misses) == KType::empty()
+            })
+        });
+        match nonempty {
+            true => t,
+            false => t.union(&Ty::set(KType::atom("empty"))),
+        }
+    }
+
+    /// `k in x`, `k` of type `k`, `x` of type `x` (step L3.2): `x` must be a family, and the
+    /// test is a `bool`, or a loose atom `k` or `x` may be, passed through.
+    fn in_end(&mut self, k: &Ty, x: &Ty, span: Span) -> Ty {
+        for p in x.pieces() {
+            match p {
+                Piece::Fn(sig) if sig.data => {}
+                Piece::Dyn => self.any("`in`", span),
+                Piece::Var(_) => self.tried_at(span, None),
+                p if p.is_atoms() => {}
+                p => {
+                    let t = self.text(&p.ty());
+                    self.error_offering(
+                        span,
+                        format!(
+                            "`in` tests whether a family has a key, and this value is {t}, which \
+                             has no keys"
+                        ),
+                        ["repair: test a key of a family, as `k in {0 -> 1}`".to_string()],
+                    );
+                }
+            }
+        }
+        Ty::carrier(Carrier::Bool)
+            .union(&k.loose_ty())
+            .union(&x.loose_ty())
     }
 
     /// A condition's type and the facts it makes when it holds and when it does not.
@@ -5106,6 +5490,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                     self.prelude_call(m, &f, call);
                 }
+                // `map` and `where` are built in for now (author P221): a prelude definition in
+                // Zed needs what plan row MAP-pure-zed records.
+                Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
+                    ([f], [], false) => {
+                        m.k(Frame::MapFn(x.ty, span, name == "where"));
+                        m.job(Job::Arg(f, Want::default()));
+                    }
+                    _ => {
+                        self.error_offering(
+                            span,
+                            format!(
+                                "`{name}` takes one function, passed by position, as \
+                                 `xs.{name}(f)`"
+                            ),
+                            [format!("repair: write `xs.{name}(x -> …)`")],
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
                 // Elaboration rejects the rest: a prelude word of a later layer, a field read,
                 // or a call of a function in no scope. Never, the type of no value, keeps the
                 // uses of the result from reporting that error again as their own.
@@ -8152,6 +8555,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty::empty()
             }
             NeedKind::Sum => self.sum(Arg::of(on.clone()), span),
+            NeedKind::Map { f, filter } => {
+                let f = Arg::of(self.bound(f, binds));
+                self.map_end(&on, f, span, *filter)
+            }
+            NeedKind::Reduce(op) => self.reduce_end(*op, &on, span),
             NeedKind::NoInt(d) => {
                 self.no_int(&on, d, span);
                 Ty::empty()
@@ -12538,15 +12946,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                         out = out.union(&r);
                         continue;
                     }
-                    let r = self
-                        .apply(
-                            Label::Text("this function"),
-                            &sig,
-                            vec![Some(x.clone())],
-                            false,
-                            span,
-                        )
-                        .0;
+                    let r = match self.key_overlaps(&sig, &x.ty) {
+                        Some(r) => r,
+                        None => {
+                            self.apply(
+                                Label::Text("this function"),
+                                &sig,
+                                vec![Some(x.clone())],
+                                false,
+                                span,
+                            )
+                            .0
+                        }
+                    };
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
                     out = out.union(&r);
                 }
@@ -17804,6 +18216,30 @@ impl<'a> Ck<'_, 'a> {
 /// `r`, the entry type of a read of a family whose keys are one integer interval, every key
 /// present, with its miss `#notFound` written `#outOfBounds` (DESIGN.md sec:type_language, the
 /// `m[k]` row). A `#notFound` the key `key` brings is passed by, not a miss, so it stays.
+impl<'t, 'a> Ck<'t, 'a> {
+    /// The read `v[k]` of a family `sig` whose keys the key type `k` meets but does not lie
+    /// inside (author decision R11, DESIGN.md sec:type_language): the entries of each arrow
+    /// whose keys `k` meets, or `#notFound`. `None` when `sig` is no family or `k` lies inside
+    /// its keys, which [`Self::apply`] reads; a key that meets none is refused before, by
+    /// [`Self::key_outside`].
+    // Complexity tradeoff: one pass over the arrows, O(a) for a arrows; applying the family
+    // to the key narrowed to each arrow's keys would ask for an intersection of types the
+    // checker does not form, for the same result.
+    fn key_overlaps(&mut self, sig: &Sig, k: &Ty) -> Option<Ty> {
+        if !sig.data || sig.params.len() != 1 || k.lists_nothing() {
+            return None;
+        }
+        let keys = Ty::union_all(sig.arrows.iter().map(|a| &a.params[0]));
+        if self.subtype(k, &keys) {
+            return None;
+        }
+        let met = (sig.arrows.iter())
+            .filter(|a| k.meets(&a.params[0]))
+            .map(|a| &a.result);
+        Some(Ty::union_all(met).union(&Ty::set(KType::atom("notFound"))))
+    }
+}
+
 fn out_of_bounds(r: Ty, key: &Ty) -> Ty {
     let not_found = KType::atom("notFound");
     if (&r.atoms() & &not_found).is_empty() {
