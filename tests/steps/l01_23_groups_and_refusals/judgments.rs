@@ -781,3 +781,88 @@ fn functions_equal_on_both_sides_at_one_place_are_refused_where_unpaired() {
     let one = parse_type(&format!("({f}, 1)")).unwrap();
     assert!(one.subtype(&b));
 }
+
+/// Where both sides have two or more functions at one place, not all equal, the comparison is
+/// refused only when some pairing of those functions could make it true: when even every
+/// function of the type expected fitting every function of the side compared leaves a value
+/// out, it is decided false, with no clause (FAIL-types-loose-over-refusal). Where a pairing
+/// does make it true, it is still refused (COMPLEXITY.md F124).
+#[test]
+fn functions_at_one_place_are_refused_only_where_a_pairing_could_make_it_true() {
+    use zedc::check::read::parse_type;
+    let pairing = "the checker does not try every way of pairing them";
+    let (f, g, h) = (
+        "(int -> int)",
+        "(int -> int | #a)",
+        "((int | String) -> int)",
+    );
+    let s = "(String -> String)";
+    // (side compared, type expected, true, refused when false)
+    let cases = [
+        // Two functions a side, one equal: a `9` no tuple expected holds.
+        (
+            format!("({f}, 1) | ({h}, 9)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            false,
+            false,
+        ),
+        // Two a side, both equal: a `9`.
+        (
+            format!("({f}, 9) | ({h}, 2)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            false,
+            false,
+        ),
+        // Three a side, with one unlike: a `"x"`.
+        (
+            format!("({f}, 1) | ({h}, 2) | ({s}, \"x\")"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3) | ({s}, 4)"),
+            false,
+            false,
+        ),
+        // Unlike on both sides (the class `Forms::tied` names): a `true`.
+        (
+            "((int | String) -> int, 1) | ((int | rat) -> int, true)".to_string(),
+            "((int) -> int, int) | ((String) -> int, int)".to_string(),
+            false,
+            false,
+        ),
+        // `f` fits `g` and `h` fits `f`, so `(f, 1)` is in `(g, 1)` and `(h, 2)` in `(f, 2)`:
+        // true, but finding it compares functions the checker does not pair; refused.
+        (
+            format!("({f}, 1) | ({h}, 2)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            false,
+            true,
+        ),
+        // Three a side, the same way.
+        (
+            format!("({f}, 1) | ({h}, 2) | ({s}, 4)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3) | ({s}, 4)"),
+            false,
+            true,
+        ),
+        // `s` fits no function at `2`: false, and some pairing could have held, so refused.
+        (
+            format!("({f}, 1) | ({s}, 2)"),
+            format!("({g}, 1) | ({f}, 2) | ({s}, 3)"),
+            false,
+            true,
+        ),
+        // Every function equal to one at its place is matched by equality: true.
+        (
+            format!("({f}, 2) | ({h}, 3)"),
+            format!("({g}, 1) | ({f}, 2) | ({h}, 3)"),
+            true,
+            false,
+        ),
+    ];
+    for (a, b, holds, refused) in &cases {
+        let (x, y) = (parse_type(a).unwrap(), parse_type(b).unwrap());
+        assert_eq!(x.subtype(&y), *holds, "{a} <: {b}");
+        if !holds {
+            let why = x.refused(&y);
+            assert_eq!(why.contains(pairing), *refused, "{a} <: {b}: {why:?}");
+        }
+    }
+}

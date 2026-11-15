@@ -1843,10 +1843,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // value, or an item of a tuple display bound to names one by one. A repair of a power
         // on that class is carried to the uses of the name ([`Self::powers_bound`]).
         let mut alone: Vec<(&Ty, Span)> = vec![(v, span)];
-        if let [row] = &v.tuples[..]
+        if let Some(row) = v.tuples.only()
             && row.len() == display.len()
             && (Ty {
-                tuples: Vec::new(),
+                tuples: Default::default(),
                 ..v.clone()
             })
             .lists_nothing()
@@ -8511,13 +8511,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             for a in &q.arrows {
                 let args = a.params.iter().map(|t| Some(Arg::of(t.clone()))).collect();
                 let (r, _) = self.apply(Label::Text(&named), &s, args, false, span);
-                match &a.result.fns[..] {
-                    [rq] if !r.fns.is_empty() => {
+                match a.result.fns.only() {
+                    Some(rq) if !r.fns.is_empty() => {
                         // The functions the call returns are checked by their own calls; the
                         // rest of its result, where `s` has needs, as a type. Without needs,
                         // `s` and the functions it returns fit as types already.
                         let mut rest = r.clone();
-                        rest.fns = Vec::new();
+                        rest.fns = Default::default();
                         if !s.needs.is_empty() {
                             ok &= self.subtype(&rest, &a.result);
                         }
@@ -11166,7 +11166,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 stack.extend(r.iter());
             }
             let rest = Ty {
-                tuples: Vec::new(),
+                tuples: Default::default(),
                 ..t.without_atoms()
             };
             if rest.is_empty() {
@@ -11212,7 +11212,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Rest(usize, Box<(Ty, Ty)>),
         }
         let rest = |t: &Ty| Ty {
-            tuples: Vec::new(),
+            tuples: Default::default(),
             ..t.without_atoms()
         };
         let mut seen = HashSet::from([(a.clone(), b.clone())]);
@@ -11413,8 +11413,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return None;
             }
             let rows = (up.iter().map(|&i| &met[i].ty[s]))
-                .map(|t| match &t.tuples[..] {
-                    [row] if t.pieces().len() == 1 => Some(row.len()),
+                .map(|t| match t.tuples.only() {
+                    Some(row) if t.pieces().len() == 1 => Some(row.len()),
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()?;
@@ -11479,8 +11479,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         for s in 0..2 {
             let other = &ty[1 - s];
-            let row = match &ty[s].tuples[..] {
-                [row] if ty[s].pieces().len() == 1 && other.tuples.is_empty() => row,
+            let row = match ty[s].tuples.only() {
+                Some(row) if ty[s].pieces().len() == 1 && other.tuples.is_empty() => row,
                 _ => continue,
             };
             let Some(at) = code(s, path) else {
@@ -11655,7 +11655,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let atoms = &a.atoms() | &b.atoms();
             let rest = |t: &Ty, open: bool| {
                 Ty {
-                    tuples: Vec::new(),
+                    tuples: Default::default(),
                     vars: if open {
                         Default::default()
                     } else {
@@ -11781,7 +11781,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     false => (t, Ty::empty()),
                 };
                 let numbers = Ty {
-                    tuples: Vec::new(),
+                    tuples: Default::default(),
                     ..other.without_atoms()
                 };
                 if !numbers.is_empty() {
@@ -12178,7 +12178,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) -> Ty {
         // A call that did not apply gives no function, and its error is reported.
-        let [s] = t.fns.as_slice() else { return t };
+        let Some(s) = t.fns.only() else { return t };
         let Some(j) = s.params.iter().position(|q| &*q.name == "width") else {
             return t;
         };
@@ -17834,8 +17834,8 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
                     out.push(n.clone());
                     continue;
                 }
-                match (&e.kind, &t.tuples[..]) {
-                    (ExprKind::Tuple(es), [row]) => {
+                match (&e.kind, t.tuples.only()) {
+                    (ExprKind::Tuple(es), Some(row)) => {
                         let cs = row.to_vec();
                         if cs.len() != es.len() {
                             out.push(t);
@@ -18822,11 +18822,9 @@ fn without_needs(s: &Sig) -> Sig {
             let mut b = g.clone();
             b.needs = Vec::new();
             for a in &mut b.arrows {
-                for f in &mut a.result.fns {
-                    if let Some(new) = &done[&Arc::as_ptr(f)] {
-                        *f = new.clone();
-                    }
-                }
+                a.result.fns = (a.result.fns.iter())
+                    .map(|f| done[&Arc::as_ptr(f)].as_ref().unwrap_or(f).clone())
+                    .collect();
             }
             Arc::new(b)
         });

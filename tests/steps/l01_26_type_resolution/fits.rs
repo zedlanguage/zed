@@ -467,3 +467,82 @@ fn a_refused_cover_names_the_expected_types_variables() {
         ]
     );
 }
+
+/// A signature built from parts, as the checker builds one: one named parameter `x0` of type
+/// `param`, returning `result`, owning the variables `own`.
+fn sig_of(
+    own: &[zedc::check::ty::Ty],
+    param: zedc::check::ty::Ty,
+    result: zedc::check::ty::Ty,
+) -> zedc::check::ty::Sig {
+    use zedc::check::ty::{Arrow, Facts, SParam, Sig};
+    let mut s = Sig {
+        params: vec![SParam {
+            name: "x0".into(),
+            positional: false,
+            default: None,
+        }],
+        arrows: vec![Arrow {
+            params: vec![param],
+            result,
+        }],
+        bounds: Default::default(),
+        data: false,
+        dense: false,
+        word: None,
+        needs: Vec::new(),
+        own: own.iter().filter_map(|v| v.vars.first().cloned()).collect(),
+        held: Default::default(),
+        named: 0,
+        facts: Facts::default(),
+    };
+    s.note_held();
+    s
+}
+
+/// `(x0: (T,)) -> (T,)` fits a copy of itself in which `T` is a union of one-element tuples,
+/// `(x0: ((X0,),) | ((X1,),)) -> ((X0,) | (X1,),)`, as it does where `T` is a union of
+/// values: `T` takes `(X0,) | (X1,)`, and the result `((X0,) | (X1,),)` is the copy's
+/// (DESIGN sec:type_resolution: a type variable stands for every type, and a tuple type for
+/// its set of tuples). A copy whose result leaves out the last member does not fit.
+/// Before (FAIL-types-singleton-tuple-union-match), the result's `(X1,)` was taken by the
+/// shape `(X0,)`, the first in written order, by binding `X0` to `X1`, so the result was held
+/// only by binding a variable, and the copy did not fit for two members or more.
+#[test]
+fn a_variable_of_one_element_tuples_fits_its_copy() {
+    use zedc::check::ty::{Ty, fits_sig};
+    let one = |t: &Ty| Ty::tuple(vec![t.clone()]);
+    let t = Ty::var("T".into());
+    let s = sig_of(std::slice::from_ref(&t), one(&t), one(&t));
+    let lits = (0..3).map(|i| Ty::lit(&zed_kernel::Value::int((i as i64).into())));
+    let vars = (0..3).map(|i| Ty::var(format!("X{i}").into()));
+    for (label, leaves) in [
+        ("values", lits.collect::<Vec<_>>()),
+        ("variables", vars.collect()),
+    ] {
+        for n in 1..=3 {
+            for owned in [false, true] {
+                for wrap in [false, true] {
+                    let xs = &leaves[..n];
+                    let member = |x: &Ty| if wrap { one(x) } else { x.clone() };
+                    let param =
+                        Ty::union_all(&xs.iter().map(|x| one(&member(x))).collect::<Vec<_>>());
+                    let own = if owned && label == "variables" {
+                        xs
+                    } else {
+                        &[][..]
+                    };
+                    let all = Ty::union_all(&xs.iter().map(member).collect::<Vec<_>>());
+                    let q = sig_of(own, param.clone(), one(&all));
+                    let case = format!("{label}, {n} members, owned {owned}, one-element {wrap}");
+                    assert!(fits_sig(&s, &q), "{case}");
+                    if n >= 2 {
+                        let less =
+                            Ty::union_all(&xs[..n - 1].iter().map(member).collect::<Vec<_>>());
+                        assert!(!fits_sig(&s, &sig_of(own, param, one(&less))), "{case}");
+                    }
+                }
+            }
+        }
+    }
+}

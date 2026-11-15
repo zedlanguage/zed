@@ -5483,10 +5483,10 @@ fn handled_shape(sig: &Sig) -> bool {
 /// The one function `t` is, when it is nothing else.
 fn only_fn(t: &Ty) -> Option<Arc<Sig>> {
     match (
-        &t.fns[..],
+        t.fns.only(),
         t.set.is_empty() && t.tuples.is_empty() && t.vars.is_empty() && !t.dynamic,
     ) {
-        ([s], true) => Some(s.clone()),
+        (Some(s), true) => Some(s.clone()),
         _ => None,
     }
 }
@@ -5833,8 +5833,8 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
 /// The components of `t` when it is exactly one tuple of length `n` and nothing else.
 fn only_tuple(t: &Ty, n: usize) -> Option<&[Ty]> {
     let one = t.set.is_empty() && t.fns.is_empty() && t.vars.is_empty() && !t.dynamic;
-    match t.tuples.as_slice() {
-        [cs] if one && cs.len() == n => Some(cs),
+    match t.tuples.only() {
+        Some(cs) if one && cs.len() == n => Some(cs),
         _ => None,
     }
 }

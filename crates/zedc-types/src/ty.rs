@@ -33,9 +33,9 @@ pub struct Ty {
     /// from values is in `tuples`, and a function in `fns`.
     pub set: KType,
     /// The tuple shapes, each with its components.
-    pub tuples: Vec<Row>,
+    pub tuples: Members<Row>,
     /// The functions.
-    pub fns: Vec<Arc<Sig>>,
+    pub fns: Members<Arc<Sig>>,
     /// The type variables.
     pub vars: VarSet,
     /// Whether the type holds the unknown `_`.
@@ -190,6 +190,294 @@ impl<'a> IntoIterator for &'a VarSet {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+/// The tuple shapes or the functions of a type, in the order they were added: a persistent
+/// list, which copies share, with the sum of the hashes of its members and, once asked for, a
+/// persistent set of its members, kept as it grows.
+///
+/// Complexity tradeoff (COMPLEXITY.md F202): naive version, a `Vec`,
+/// copied whole with the type, hashed member by member, and searched through a hash set built
+/// from all of it at each union. A variable bound to one more piece is bound to the union of
+/// what it was bound to and that piece ([`Binds::unite`]): one variable taking `n` distinct
+/// tuple shapes cost `1 + 2 + … + n` in copies, set entries and hashes, O(n^2) (32.3x
+/// instructions at 8n). Used: one shared node holding an `imbl::Vector` (a tree whose nodes
+/// copies share), copied in O(1) and pushed onto in O(log n), copying the nodes on its path;
+/// the wrapping sum of the members' hashes, kept as members are added, so a type is hashed in
+/// O(1) for its shapes and two lists of different sums or lengths compare unequal in O(1);
+/// and an `imbl::HashSet` of the members, made the first time a union asks whether a member
+/// is there (O(n) once) and then kept as members are pushed and shared with the copies, so a
+/// union of one more shape costs O(log n). Given up: a constant factor on each read through
+/// the tree (nodes of 64 members), one hash per member pushed, and no slice of the members (a
+/// caller that needs one copies them out, O(n)). An empty list is no node, so a type with no
+/// shapes, the common case, costs one word and no allocation, as an empty `Vec` cost three.
+/// A removal drops the set, and the next union that asks makes it again.
+pub struct Members<T: Clone + std::hash::Hash + Eq>(Option<Arc<MembersData<T>>>);
+
+/// The node of a nonempty [`Members`].
+#[derive(Clone)]
+struct MembersData<T: Clone + std::hash::Hash + Eq> {
+    list: imbl::Vector<T>,
+    /// The sum, wrapping, of [`member_digest`] of each member.
+    digest: u64,
+    /// The members, once a union has asked whether one is there.
+    set: std::sync::OnceLock<imbl::HashSet<T>>,
+}
+
+/// The hash of a member of a [`Members`], a term of its digest: a row and a signature hash the
+/// digest they keep, so O(1).
+fn member_digest<T: std::hash::Hash>(x: &T) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    BuildHasherDefault::<DefaultHasher>::default().hash_one(x)
+}
+
+impl<T: Clone + std::hash::Hash + Eq> Members<T> {
+    /// No member.
+    pub fn new() -> Members<T> {
+        Members(None)
+    }
+
+    /// The number of members.
+    pub fn len(&self) -> usize {
+        self.0.as_ref().map_or(0, |d| d.list.len())
+    }
+
+    /// Whether it holds no member.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// Whether another copy holds the same list, so that a member may be met through either:
+    /// what each member's own count said when every copy kept its own list ([`Same`]).
+    fn shared(&self) -> bool {
+        self.0.as_ref().is_some_and(|d| Arc::strong_count(d) > 1)
+    }
+
+    /// The members, in order.
+    pub fn iter(&self) -> MembersIter<'_, T> {
+        MembersIter(self.0.as_ref().map(|d| d.list.iter()))
+    }
+
+    /// The member at `i`, in O(log n).
+    pub fn get(&self, i: usize) -> Option<&T> {
+        self.0.as_ref()?.list.get(i)
+    }
+
+    /// The first member.
+    pub fn first(&self) -> Option<&T> {
+        self.0.as_ref()?.list.front()
+    }
+
+    /// The last member.
+    pub fn last(&self) -> Option<&T> {
+        self.0.as_ref()?.list.back()
+    }
+
+    /// The only member, if it holds one only.
+    pub fn only(&self) -> Option<&T> {
+        (self.len() == 1).then(|| self.first()).flatten()
+    }
+
+    /// The members, copied out, for a caller that needs a slice: O(n).
+    pub fn to_vec(&self) -> Vec<T> {
+        self.iter().cloned().collect()
+    }
+
+    /// The node, made unique and present: a shared node is copied, in O(1) for its tree.
+    fn data(&mut self) -> &mut MembersData<T> {
+        Arc::make_mut(self.0.get_or_insert_with(|| {
+            Arc::new(MembersData {
+                list: imbl::Vector::new(),
+                digest: 0,
+                set: std::sync::OnceLock::new(),
+            })
+        }))
+    }
+
+    /// Adds `x` at the end.
+    pub fn push(&mut self, x: T) {
+        let d = self.data();
+        d.digest = d.digest.wrapping_add(member_digest(&x));
+        if let Some(set) = d.set.get_mut() {
+            set.insert(x.clone());
+        }
+        d.list.push_back(x);
+    }
+
+    /// Adds `x` at the end if it is not a member, giving whether it was not: the set of the
+    /// members is made now if it was not, O(n) once, and kept after, so O(log n).
+    pub fn insert_new(&mut self, x: T) -> bool {
+        if self.contains(&x) {
+            return false;
+        }
+        self.push(x);
+        true
+    }
+
+    /// Whether `x` is a member: the set of the members is made now if it was not.
+    pub fn contains(&self, x: &T) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|d| (d.set.get_or_init(|| d.list.iter().cloned().collect())).contains(x))
+    }
+
+    /// Removes the last member and gives it.
+    pub fn pop(&mut self) -> Option<T> {
+        let d = self.data();
+        let x = d.list.pop_back();
+        let empty = d.list.is_empty();
+        if let Some(x) = &x {
+            d.digest = d.digest.wrapping_sub(member_digest(x));
+            d.set = std::sync::OnceLock::new();
+        }
+        if empty {
+            self.0 = None;
+        }
+        x
+    }
+
+    /// Keeps the members `f` keeps, in order: O(n), a new list.
+    pub fn retain(&mut self, mut f: impl FnMut(&T) -> bool) {
+        if self.iter().all(&mut f) {
+            return;
+        }
+        *self = self.iter().filter(|x| f(x)).cloned().collect();
+    }
+
+    /// The members, moved out where the node is not shared: its set is dropped first, so each
+    /// member is held by the list only, and a caller taking a type apart member by member
+    /// (`drop_types`) holds the only reference to it.
+    pub fn into_vec(self) -> Vec<T> {
+        let Some(d) = self.0 else { return Vec::new() };
+        match Arc::try_unwrap(d) {
+            Ok(MembersData { list, set, .. }) => {
+                drop(set);
+                list.into_iter().collect()
+            }
+            Err(d) => d.list.iter().cloned().collect(),
+        }
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> Clone for Members<T> {
+    fn clone(&self) -> Members<T> {
+        Members(self.0.clone())
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> Default for Members<T> {
+    fn default() -> Members<T> {
+        Members(None)
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> std::ops::Index<usize> for Members<T> {
+    type Output = T;
+
+    fn index(&self, i: usize) -> &T {
+        self.get(i).expect("an index within the list")
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> PartialEq for Members<T> {
+    /// Member by member, in order; lists of different lengths or sums of hashes in O(1).
+    fn eq(&self, other: &Members<T>) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                Arc::ptr_eq(a, b)
+                    || (a.digest == b.digest
+                        && a.list.len() == b.list.len()
+                        && a.list.iter().zip(&b.list).all(|(x, y)| x == y))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> Eq for Members<T> {}
+
+impl<T: Clone + std::hash::Hash + Eq> std::hash::Hash for Members<T> {
+    /// Hashes the length and the sum of the members' hashes, in O(1).
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.len().hash(h);
+        self.0.as_ref().map_or(0, |d| d.digest).hash(h);
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq + fmt::Debug> fmt::Debug for Members<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> Extend<T> for Members<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        iter.into_iter().for_each(|x| self.push(x));
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> FromIterator<T> for Members<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Members<T> {
+        let mut out = Members::new();
+        out.extend(iter);
+        out
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> From<Vec<T>> for Members<T> {
+    fn from(v: Vec<T>) -> Members<T> {
+        v.into_iter().collect()
+    }
+}
+
+impl<'a, T: Clone + std::hash::Hash + Eq> IntoIterator for &'a Members<T> {
+    type Item = &'a T;
+    type IntoIter = MembersIter<'a, T>;
+
+    fn into_iter(self) -> MembersIter<'a, T> {
+        self.iter()
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> IntoIterator for Members<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> std::vec::IntoIter<T> {
+        self.into_vec().into_iter()
+    }
+}
+
+/// The members of a [`Members`], in order.
+pub struct MembersIter<'a, T>(
+    Option<imbl::vector::Iter<'a, T, imbl::shared_ptr::DefaultSharedPtr>>,
+);
+
+impl<'a, T> Iterator for MembersIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<&'a T> {
+        self.0.as_mut()?.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.as_ref().map_or((0, Some(0)), |i| i.size_hint())
+    }
+}
+
+impl<T> DoubleEndedIterator for MembersIter<'_, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.as_mut()?.next_back()
+    }
+}
+
+impl<T> ExactSizeIterator for MembersIter<'_, T> {}
+
+impl<T: Clone> Clone for MembersIter<'_, T> {
+    fn clone(&self) -> Self {
+        MembersIter(self.0.clone())
     }
 }
 
@@ -556,7 +844,13 @@ impl Ty {
 /// `==` borrows, so none is freed, and no address is reused, while the comparison runs.
 ///
 /// A pair of nodes neither of which is shared (one owner each, `Arc::strong_count` 1) is not
-/// recorded, so a comparison of types built once and never shared allocates no table. The cost
+/// recorded, so a comparison of types built once and never shared allocates no table. A row or
+/// function in a list of a type's members ([`Members`]) that copies of the type share counts
+/// as shared, though the list is its one owner: a copy of a type shares the list, not each
+/// member, and `(t, t)` holds `t`'s rows through one list twice. Before
+/// (FAIL-types-binding-tuple-shapes-copied), each copy kept its own list, so the members' own
+/// counts said it; read from them alone, two types of 40 doubled levels built apart did not
+/// compare in two minutes. The cost
 /// stays linear: an unshared node is reached only through its one owner, so it is compared once
 /// each time the nearest recorded node above it is; each recorded node is compared again only
 /// when its pair joins two classes, and the joins form a forest over the recorded nodes, so each
@@ -726,9 +1020,10 @@ impl<'a> Same<'a> {
 
     /// Whether the rows `x` and `y`, two nodes found alike, are already in one class, or equal
     /// in each component.
-    fn alike_rows(&mut self, x: &'a Row, y: &'a Row) -> bool {
+    fn alike_rows(&mut self, x: &'a Row, y: &'a Row, listed: bool) -> bool {
         let (x, y) = (&x.0, &y.0);
-        (Self::shared(x, y) && self.assumed(Arc::as_ptr(x).cast(), Arc::as_ptr(y).cast()))
+        ((listed || Self::shared(x, y))
+            && self.assumed(Arc::as_ptr(x).cast(), Arc::as_ptr(y).cast()))
             || match x.held.is_some() {
                 // A row that holds no function, the common case, keeps none.
                 false => self.descend(x.cs.iter().zip(&y.cs)),
@@ -792,12 +1087,14 @@ impl<'a> Same<'a> {
 
 /// How [`outer`] compares the rows, payload shapes and functions two types hold.
 trait Nodes<'a> {
-    /// Whether the rows `x` and `y` are equal, or, where the comparison is put off, may be.
-    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool;
+    /// Whether the rows `x` and `y` are equal, or, where the comparison is put off, may be;
+    /// `listed` when the list of either is shared ([`Members::shared`]), so either row may be
+    /// met again though it has one owner.
+    fn row(&mut self, x: &'a Row, y: &'a Row, listed: bool) -> bool;
     /// Whether the payload shapes `x` and `y` are equal, or may be.
     fn shape(&mut self, x: &'a Shape, y: &'a Shape) -> bool;
-    /// Whether the functions `x` and `y` are equal, or may be.
-    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool;
+    /// Whether the functions `x` and `y` are equal, or may be; `listed` as for rows.
+    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>, listed: bool) -> bool;
 }
 
 /// Whether `a` and `b` are equal at their outer level, field by field in the order the derived
@@ -815,9 +1112,15 @@ fn outer<'a>(n: &mut impl Nodes<'a>, a: &'a Ty, b: &'a Ty) -> bool {
     } = a;
     *set == b.set
         && tuples.len() == b.tuples.len()
-        && (tuples.iter().zip(&b.tuples)).all(|(x, y)| n.row(x, y))
+        && {
+            let listed = tuples.shared() || b.tuples.shared();
+            (tuples.iter().zip(&b.tuples)).all(|(x, y)| n.row(x, y, listed))
+        }
         && fns.len() == b.fns.len()
-        && (fns.iter().zip(&b.fns)).all(|(x, y)| n.func(x, y))
+        && {
+            let listed = fns.shared() || b.fns.shared();
+            (fns.iter().zip(&b.fns)).all(|(x, y)| n.func(x, y, listed))
+        }
         && *vars == b.vars
         && *dynamic == b.dynamic
         && *family == b.family
@@ -864,8 +1167,8 @@ impl<'a> Nodes<'a> for Lazy<'a> {
     // Inlined into a caller in another crate, with `Ty`'s `==`: the checks that settle the
     // common pairs, one node or two that differ, take no call.
     #[inline]
-    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool {
-        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.same().alike_rows(x, y))
+    fn row(&mut self, x: &'a Row, y: &'a Row, listed: bool) -> bool {
+        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.same().alike_rows(x, y, listed))
     }
 
     #[inline]
@@ -874,15 +1177,15 @@ impl<'a> Nodes<'a> for Lazy<'a> {
     }
 
     #[inline]
-    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool {
-        Arc::ptr_eq(x, y) || self.same().func(x, y)
+    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>, listed: bool) -> bool {
+        Arc::ptr_eq(x, y) || self.same().func(x, y, listed)
     }
 }
 
 impl<'a> Nodes<'a> for Same<'a> {
     /// One node, already in one class, or alike and equal in each component.
-    fn row(&mut self, x: &'a Row, y: &'a Row) -> bool {
-        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.alike_rows(x, y))
+    fn row(&mut self, x: &'a Row, y: &'a Row, listed: bool) -> bool {
+        Arc::ptr_eq(&x.0, &y.0) || (x.0.alike(&y.0) && self.alike_rows(x, y, listed))
     }
 
     /// One node, already in one class, or alike and equal in each component and field.
@@ -891,9 +1194,9 @@ impl<'a> Nodes<'a> for Same<'a> {
     }
 
     /// One node, already in one class, or equal as signatures ([`Same::sig`]).
-    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>) -> bool {
+    fn func(&mut self, x: &'a Arc<Sig>, y: &'a Arc<Sig>, listed: bool) -> bool {
         Arc::ptr_eq(x, y)
-            || (self.shared_sigs(x, y)
+            || ((listed || self.shared_sigs(x, y))
                 && self.assumed(Arc::as_ptr(x).cast(), Arc::as_ptr(y).cast()))
             || self.sig(x, y)
     }
@@ -1395,7 +1698,7 @@ fn drop_types(mut tys: Vec<Ty>, sigs: impl IntoIterator<Item = Arc<Sig>>) {
                 sigs.extend([d.held.take(), d.unchecked.take()].into_iter().flatten());
             }
         }
-        sigs.append(&mut t.fns);
+        sigs.extend(std::mem::take(&mut t.fns).into_vec());
         for s in std::mem::take(&mut t.payloads)
             .into_values()
             .flatten()
@@ -1540,8 +1843,8 @@ impl Shape {
         for t in &self.items {
             between(parts, &mut first, ", ");
             // The family of an `#errs` is written bare, `#errs(#a | #b ->? #a | #b)`.
-            match &t.fns[..] {
-                [s] if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
+            match t.fns.only() {
+                Some(s) if name == "errs" && s.is_family() && *t == Ty::func(s.clone()) => {
                     parts.push(Print::Family(s));
                 }
                 _ => parts.push(Print::Ty(t, PrintAt::Any)),
@@ -1821,8 +2124,8 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                 let set = w.made_set(set);
                 let mut made = Ty {
                     set,
-                    tuples,
-                    fns,
+                    tuples: tuples.into(),
+                    fns: fns.into(),
                     vars: VarSet::new(),
                     dynamic: t.dynamic,
                     family,
@@ -3491,7 +3794,7 @@ pub fn errs_members(t: &Ty) -> Option<Ty> {
     let mut keys = Ty::empty();
     for s in shapes {
         let [f] = &s.items[..] else { return None };
-        let [sig] = &f.fns[..] else { return None };
+        let Some(sig) = f.fns.only() else { return None };
         let only_fn = f.set.is_empty() && f.tuples.is_empty() && f.vars.is_empty() && !f.dynamic;
         let [arrow] = &sig.arrows[..] else {
             return None;
@@ -4126,8 +4429,8 @@ impl Cx<'_> {
         };
         let mut out = Ty {
             set: t.set.clone(),
-            tuples,
-            fns: Vec::new(),
+            tuples: tuples.into(),
+            fns: Members::new(),
             vars: VarSet::new(),
             dynamic: t.dynamic,
             family: t.family.clone(),
@@ -4624,6 +4927,11 @@ fn shape_group(s: &Shape) -> ShapeGroup {
 struct Filed {
     rows: HashMap<usize, Choices>,
     payloads: HashMap<Arc<str>, HashMap<ShapeGroup, Choices>>,
+    /// The number of the first tuple of the type, in written order, equal to each of its
+    /// tuples, made once a tuple piece is looked up ([`Filed::equal`]).
+    equal: std::sync::OnceLock<HashMap<Row, usize>>,
+    /// The same for its payload shapes, by atom name ([`Filed::equal_shapes`]).
+    equal_shapes: std::sync::OnceLock<HashMap<Arc<str>, HashMap<Shape, usize>>>,
 }
 
 impl Filed {
@@ -4656,7 +4964,40 @@ impl Filed {
                 .map(|(n, s)| (n, Choices::new(s)))
                 .collect(),
             payloads,
+            equal: std::sync::OnceLock::new(),
+            equal_shapes: std::sync::OnceLock::new(),
         }
+    }
+
+    /// The number of the first tuple of `t`, the type filed, equal to each tuple of it, by the
+    /// row: a tuple piece equal to a shape finds it in `O(1)` expected, by the digest the row
+    /// keeps ([`Comparing::row_in`]). Made at the first lookup, in O(k) for `k` tuples.
+    fn equal(&self, t: &Ty) -> &HashMap<Row, usize> {
+        self.equal.get_or_init(|| {
+            let mut first = HashMap::with_capacity(t.tuples.len());
+            for (i, r) in t.tuples.iter().enumerate() {
+                first.entry(r.clone()).or_insert(i);
+            }
+            first
+        })
+    }
+
+    /// [`Filed::equal`] for the payload shapes of each atom `t` lists, by the atom's name.
+    fn equal_shapes(&self, t: &Ty) -> &HashMap<Arc<str>, HashMap<Shape, usize>> {
+        self.equal_shapes.get_or_init(|| {
+            let lists = t
+                .payloads
+                .iter()
+                .filter_map(|(n, rs)| Some((n, rs.as_ref()?)));
+            (lists.map(|(n, rs)| {
+                let mut first = HashMap::with_capacity(rs.len());
+                for (i, r) in rs.iter().enumerate() {
+                    first.entry(r.clone()).or_insert(i);
+                }
+                (n.clone(), first)
+            }))
+            .collect()
+        })
     }
 }
 
@@ -4777,9 +5118,11 @@ impl<P: Placed> Placed for &P {
 
 /// The tuples of `rows`, each with the keys of its components, by length and [`Kind`] at each
 /// place, each list in written order.
-fn by_pattern<P: Placed>(rows: &[P]) -> FMap<Pattern<'_>, Keyed<'_>> {
-    let mut out: FMap<Pattern<'_>, Keyed<'_>> = FMap::default();
-    for (i, r) in rows.iter().enumerate() {
+fn by_pattern<'r, P: Placed + 'r>(
+    rows: impl IntoIterator<Item = &'r P>,
+) -> FMap<Pattern<'r>, Keyed<'r>> {
+    let mut out: FMap<Pattern<'r>, Keyed<'r>> = FMap::default();
+    for (i, r) in rows.into_iter().enumerate() {
         let Keys { comps, kinds, .. } = r.keys();
         let kinds = Cow::Borrowed(&kinds[..]);
         // With every place open every tuple of a length is one group, no key is read
@@ -4799,7 +5142,12 @@ fn by_pattern<P: Placed>(rows: &[P]) -> FMap<Pattern<'_>, Keyed<'_>> {
 /// value with the tuple of `left`: their meet is empty ([`Ty::meet`] gives an empty component
 /// at the place), and the union of `right` holds the tuple exactly when the union of the tuples
 /// given holds it.
-fn near_pairs<P: Placed>(left: &[P], right: &[P]) -> Vec<Vec<usize>> {
+fn near_pairs<'r, P: Placed + 'r>(
+    left: impl IntoIterator<Item = &'r P, IntoIter: ExactSizeIterator>,
+    right: impl IntoIterator<Item = &'r P>,
+) -> Vec<Vec<usize>> {
+    let left = left.into_iter();
+    let n = left.len();
     let groups = Groups::new(left, right);
     let mut near = Near::new(&groups);
     let mut sorted = |l| {
@@ -4807,7 +5155,7 @@ fn near_pairs<P: Placed>(left: &[P], right: &[P]) -> Vec<Vec<usize>> {
         is.sort_unstable();
         is
     };
-    (0..left.len()).map(&mut sorted).collect()
+    (0..n).map(&mut sorted).collect()
 }
 
 /// The tuples of two lists `left` and `right` grouped for [`Near`]: by length and [`Kind`] at
@@ -4823,13 +5171,17 @@ struct Groups<'r> {
 }
 
 impl<'r> Groups<'r> {
-    fn new<P: Placed>(left: &'r [P], right: &'r [P]) -> Groups<'r> {
+    fn new<P: Placed + 'r>(
+        left: impl IntoIterator<Item = &'r P, IntoIter: ExactSizeIterator>,
+        right: impl IntoIterator<Item = &'r P>,
+    ) -> Groups<'r> {
+        let (left, mut right) = (left.into_iter(), right.into_iter().peekable());
         let mut groups = Groups {
             right: FMap::default(),
             left: Vec::new(),
             of: vec![None; left.len()],
         };
-        if left.is_empty() || right.is_empty() {
+        if left.len() == 0 || right.peek().is_none() {
             return groups;
         }
         for ((len, kinds), rows) in by_pattern(right) {
@@ -6073,6 +6425,36 @@ impl<'m, 's> Comparing<'m, 's> {
         Ok(false)
     }
 
+    /// Whether the shape `r`, the one equal to the member compared if there is one, holds the
+    /// member by `fit` binding nothing: the search for its shape ([`Comparing::search`]) then
+    /// need not run. `(X1,)` in `(X0,) | (X1,)` is in `(X1,)` as it is, where the first shape
+    /// in written order holds it by binding `X0` to `X1`. Before
+    /// (FAIL-types-singleton-tuple-union-match), the search took `(X0,)`, so
+    /// `(X0,) | (X1,) <: (X0,) | (X1,)` bound `X0`, and `(x0: (T,)) -> (T,)` did not fit
+    /// `(x0: ((X0,),) | ((X1,),)) -> ((X0,) | (X1,),)`, whose result must hold `T`'s binding
+    /// with nothing bound ([`result_within`]); payload shapes the same. A refusal inside the
+    /// attempt is dropped, as the search then decides.
+    ///
+    /// Complexity tradeoff (COMPLEXITY.md F203): naive version, every shape tried for one that
+    /// binds nothing before the first that binds, O(k) comparisons a member for `k` shapes.
+    /// Used: the equal shape found by a hash lookup on the digest each row and shape keeps
+    /// ([`Filed::equal`], [`Filed::equal_shapes`]), one comparison more a member at most, the
+    /// table made once for the type in O(k). What is given up: a shape that holds the member
+    /// binding nothing but is not equal to it, such as `(X1 | int,)` for `(X1,)`, is still
+    /// passed over for an earlier shape that binds.
+    async fn held_as_is(
+        &'m self,
+        r: Option<usize>,
+        binds: &Binds,
+        fit: impl Fn(usize, Binds) -> Deep<'m, (bool, Binds)>,
+    ) -> bool {
+        let Some(r) = r else { return false };
+        let before = self.begin_alone();
+        let (ok, b) = fit(r, binds.clone()).await;
+        self.end_alone(before);
+        ok && b == *binds
+    }
+
     /// Whether the payloads `of` gives the atoms of `s` are in those `t` gives them, where the
     /// normal forms were not made ([`Comparing::by_form`]): a payload not known is in a payload
     /// not known only, and each payload shape is in one of `t`'s shapes of the same length and
@@ -6109,6 +6491,10 @@ impl<'m, 's> Comparing<'m, 's> {
                     return false;
                 };
                 let fit = |r: usize, b| self.shape_in(l.clone(), rs[r].clone(), b);
+                let equal = filed.equal_shapes(t).get(n).and_then(|e| e.get(l)).copied();
+                if self.held_as_is(equal, binds, &fit).await {
+                    continue;
+                }
                 let xs = comps(l);
                 let shapes = |r: usize| comps(&rs[r]);
                 let found = self.search(choices, &xs, (g, l), &mut searched, shapes, binds, fit);
@@ -6146,9 +6532,10 @@ impl<'m, 's> Comparing<'m, 's> {
     }
 
     /// Whether the tuple piece `cs` of a type is in one of the tuple shapes of `t` of its
-    /// length, the first in written order that holds it, binding `t`'s variables, of those
-    /// [`Comparing::search`] tries; `search` holds `t`'s shapes filed and the buckets the
-    /// other tuple pieces of the type searched.
+    /// length: a shape equal to it that holds it binding nothing, else the first in written
+    /// order that holds it, binding `t`'s variables, of those [`Comparing::search`] tries;
+    /// `search` holds `t`'s shapes filed and the buckets the other tuple pieces of the type
+    /// searched.
     async fn row_in(
         &'m self,
         cs: &Row,
@@ -6160,8 +6547,14 @@ impl<'m, 's> Comparing<'m, 's> {
         let Some(choices) = filed.rows.get(&cs.len()) else {
             return false;
         };
-        let xs: Vec<&Ty> = cs.iter().collect();
         let fit = |r: usize, b| self.rows(cs.clone(), t.tuples[r].clone(), b);
+        if self
+            .held_as_is(filed.equal(t).get(cs).copied(), binds, &fit)
+            .await
+        {
+            return true;
+        }
+        let xs: Vec<&Ty> = cs.iter().collect();
         let found = self.search(
             choices,
             &xs,
@@ -6171,7 +6564,8 @@ impl<'m, 's> Comparing<'m, 's> {
             binds,
             fit,
         );
-        match found.await {
+        let found = found.await;
+        match found {
             Ok(ok) => ok,
             Err((first, k, id)) => {
                 self.refuse(|| {
@@ -6258,7 +6652,7 @@ impl<'m, 's> Comparing<'m, 's> {
         let whole = Whole::of(&within);
         let filed = Arc::new(Filed::new(&within));
         let bare = Ty {
-            tuples: Vec::new(),
+            tuples: Members::new(),
             ..within.clone()
         };
         let mut rest = Vec::new();
@@ -6353,7 +6747,7 @@ impl<'m, 's> Comparing<'m, 's> {
             }
             let mut left = Vec::with_capacity(ts.len());
             let mut changed = false;
-            for (s, near) in ts.iter().zip(near_pairs(ts, us)) {
+            for (s, near) in ts.iter().zip(near_pairs(ts.iter(), us.iter())) {
                 if !near.is_empty() {
                     *self.cx.borrow_mut() = Cx {
                         solve,
@@ -6390,7 +6784,7 @@ impl<'m, 's> Comparing<'m, 's> {
             out.family = &out.family - &gone;
         }
         *self.cx.borrow_mut() = open;
-        out.tuples = kept;
+        out.tuples = kept.into();
         out.set = KType::union_all(std::iter::once(out.set).chain(rest));
         out
     }
@@ -6715,22 +7109,46 @@ impl Forms {
     }
 
     /// Why `t <: other`, found false, was refused, if it was for the class [`Forms::tied`] or
-    /// [`Forms::loose`] names.
+    /// [`Forms::loose`] names and some pairing of the functions could make it true.
+    ///
+    /// The forms are made with each function of `other` holding the mark of every function of
+    /// `t`, as if each fit each. A mark more only widens the form of `other`, so when even
+    /// those forms give false, every pairing gives false: the comparison is
+    /// decided, and false, with no pair tried. Before (FAIL-types-loose-over-refusal), every
+    /// comparison of the class was refused, as `(f, 1) | (h, 9) <: (g, 1) | (f, 2) | (h, 3)`,
+    /// which no pairing makes true, since no tuple of the type expected holds a `9`.
+    ///
+    /// Complexity tradeoff (COMPLEXITY.md F124): one kernel comparison of the two forms, in the
+    /// size of the two sides, and no function compared. What is given up: where those forms
+    /// give true, the comparison is still refused, though one pairing may make it true, as
+    /// `(f, 1) | (h, 2) <: (g, 1) | (f, 2) | (h, 3)` with `f` fitting `g` and `h` fitting `f`;
+    /// deciding it compares each function equal to one of the other side with each other
+    /// function at the spot, O(n^2) for `n` shapes a side. Naive version: those pairs compared,
+    /// O(n^2) comparisons of functions; used: one comparison of forms, O(size).
     fn tie(t: &Ty, other: &Ty) -> Option<&'static str> {
         if other.dynamic || !other.vars.is_empty() {
             return None;
         }
         let mut forms = Forms::default();
         let (left, right) = forms.places(t, other)?;
-        let spot = forms
+        forms
             .tied(&left, &right)
-            .or_else(|| Forms::loose(&left, &right));
-        spot.map(|_| {
+            .or_else(|| Forms::loose(&left, &right))?;
+        // One mark for every function of `t`, which every function of `other` holds: a
+        // component of `t` meets only the components of `other` at its place, so this is the
+        // form in which each function at a spot fits each of the other side's there, made
+        // with one mark in place of the product of the two sides' functions.
+        forms.ids = left.all().map(|f| (f.clone(), 0)).collect();
+        forms.number_marks();
+        forms.fits = right.all().map(|g| (g.clone(), vec![0])).collect();
+        let a = forms.form(t, true);
+        let b = forms.form(other, false);
+        (held(a.subtype_verdict(&b)) != Some(false)).then_some(
             "two or more functions at one place of a tuple or an atom's payload meet two or more \
              functions at that place of the type expected, not all equal, and the checker does \
              not try every way of pairing them; give the functions at that place one function \
-             type"
-        })
+             type",
+        )
     }
 
     /// The normal form of the scalars, atoms with their payloads, kind-wide part and tuples of
@@ -6861,8 +7279,8 @@ impl Ty {
     pub fn empty() -> Ty {
         Ty {
             set: KType::empty(),
-            tuples: Vec::new(),
-            fns: Vec::new(),
+            tuples: Members::new(),
+            fns: Members::new(),
             vars: VarSet::new(),
             dynamic: false,
             family: KType::empty(),
@@ -6908,7 +7326,7 @@ impl Ty {
             return Ty::empty();
         }
         Ty {
-            tuples: vec![row],
+            tuples: Members::from(vec![row]),
             ..Ty::empty()
         }
     }
@@ -6927,7 +7345,7 @@ impl Ty {
     /// The function `s`.
     pub fn func(s: Arc<Sig>) -> Ty {
         Ty {
-            fns: vec![s],
+            fns: Members::from(vec![s]),
             ..Ty::empty()
         }
     }
@@ -6975,16 +7393,17 @@ impl Ty {
 
     /// The union.
     // Complexity tradeoff (COMPLEXITY.md F17): the naive union searches the list built so far
-    // for each tuple and function by deep equality, O(T²) for T shapes; hash sets make it
-    // O(T) expected, at one set entry per shape of `self`, made only where `other` holds
-    // tuples or functions, so a union with a scalar or a variable costs no walk of `self`'s.
-    // The variables are a persistent set ([`VarSet`]): the smaller set's names go into a copy
-    // of the larger, O(m log n) (FAIL-types-binding-union-copied). Kept: an `if`/`else if`
-    // chain of n branches of distinct tuple types still builds types of total size Θ(n²),
-    // since each `if` holds the union of the branches below it; the cost is the size of the
-    // types. A variable bound to n distinct tuple shapes or functions, one at a time, still
-    // copies the list of shapes at each, O(n^2): the lists are not shared between copies (row
-    // FAIL-types-binding-tuple-shapes-copied).
+    // for each tuple and function by deep equality, O(T²) for T shapes. The lists are
+    // persistent ([`Members`]): `self`'s is shared by the copy, and each shape of `other` is
+    // looked up in the set of members `self`'s list keeps, made once for the list and shared
+    // with its copies, and pushed if new, O(m log n) for `m` shapes of `other`, so a union with
+    // a scalar or a variable costs no walk of `self`'s, and a variable bound to n distinct
+    // tuple shapes or functions one at a time costs O(n log n), not O(n^2)
+    // (FAIL-types-binding-tuple-shapes-copied). The variables are a persistent set
+    // ([`VarSet`]): the smaller set's names go into a copy of the larger, O(m log n)
+    // (FAIL-types-binding-union-copied). Kept: an `if`/`else if` chain of n branches of
+    // distinct tuple types still builds types of total size Θ(n²), since each `if` holds the
+    // union of the branches below it; the cost is the size of the types.
     pub fn union(&self, other: &Ty) -> Ty {
         let mut out = self.clone();
         out.set = &out.set | &other.set;
@@ -6992,19 +7411,11 @@ impl Ty {
         if !self.payloads.is_empty() || !other.payloads.is_empty() {
             out.payloads = join_payloads(&[self, other]);
         }
-        if !other.tuples.is_empty() {
-            let have: HashSet<&Row> = self.tuples.iter().collect();
-            let new: Vec<&Row> = other.tuples.iter().filter(|t| !have.contains(t)).collect();
-            let mut added = HashSet::new();
-            out.tuples
-                .extend(new.into_iter().filter(|t| added.insert(*t)).cloned());
+        for t in &other.tuples {
+            out.tuples.insert_new(t.clone());
         }
-        if !other.fns.is_empty() {
-            let have: HashSet<&Arc<Sig>> = self.fns.iter().collect();
-            let new: Vec<&Arc<Sig>> = other.fns.iter().filter(|f| !have.contains(f)).collect();
-            let mut added = HashSet::new();
-            out.fns
-                .extend(new.into_iter().filter(|f| added.insert(*f)).cloned());
+        for f in &other.fns {
+            out.fns.insert_new(f.clone());
         }
         out.vars.add_all(&other.vars);
         out.dynamic |= other.dynamic;
@@ -7014,25 +7425,25 @@ impl Ty {
     /// The union of `ts`, built once: joining them one at a time copied the union so far each
     /// time, `O(n²)` in the tuple shapes.
     // Complexity tradeoff (COMPLEXITY.md F22): the naive fold of `union` copies the union so
-    // far at each member, O(n²) in the shapes; here the shapes are collected once through one
-    // hash set, O(n) expected, and the kernel sets are joined in pairs by
-    // `KType::union_all`, whose diagrams would be rebuilt n times one at a time. Memory: the
-    // hash sets of the shapes seen.
+    // far at each member, O(n²) in the shapes; here the shapes are collected once into lists
+    // that keep a set of their members ([`Members::insert_new`]), O(n log n), and the kernel
+    // sets are joined in pairs by `KType::union_all`, whose diagrams would be rebuilt n times
+    // one at a time. Memory: the sets of the shapes, kept with the lists.
     pub fn union_all<'t>(ts: impl IntoIterator<Item = &'t Ty>) -> Ty {
         let ts: Vec<&Ty> = ts.into_iter().collect();
         let mut out = Ty::empty();
         out.set = KType::union_all(ts.iter().map(|t| t.set.clone()));
         out.family = KType::union_all(ts.iter().map(|t| t.family.clone()));
-        let mut tuples = HashSet::new();
-        let mut fns = HashSet::new();
         if ts.iter().any(|t| !t.payloads.is_empty()) {
             out.payloads = join_payloads(&ts);
         }
         for t in ts {
-            out.tuples
-                .extend(t.tuples.iter().filter(|c| tuples.insert(*c)).cloned());
-            out.fns
-                .extend(t.fns.iter().filter(|f| fns.insert(*f)).cloned());
+            for c in &t.tuples {
+                out.tuples.insert_new(c.clone());
+            }
+            for f in &t.fns {
+                out.fns.insert_new(f.clone());
+            }
             out.vars.add_all(&t.vars);
             out.dynamic |= t.dynamic;
         }
@@ -7220,11 +7631,11 @@ impl Ty {
         if self.dynamic || !self.vars.is_empty() || !self.fns.is_empty() {
             return false;
         }
-        match &self.tuples[..] {
-            [r] => {
+        match (self.tuples.len(), self.tuples.first()) {
+            (1, Some(r)) => {
                 self.set.is_empty() && self.payloads.is_empty() && self.family.is_empty() && r.0.one
             }
-            [] => self.point().is_some() || self.is_one_atom(),
+            (0, _) => self.point().is_some() || self.is_one_atom(),
             _ => false,
         }
     }
@@ -7257,9 +7668,9 @@ impl Ty {
         {
             return None;
         }
-        match (self.set.is_empty(), &self.tuples[..]) {
-            (false, []) => self.set.scalar(),
-            (true, [r]) => r.0.point.clone(),
+        match (self.set.is_empty(), self.tuples.len(), self.tuples.first()) {
+            (false, 0, _) => self.set.scalar(),
+            (true, 1, Some(r)) => r.0.point.clone(),
             _ => None,
         }
     }
@@ -7572,7 +7983,7 @@ impl Ty {
                 .zip(first)
                 .filter_map(|(cs, f)| f.then_some(cs)),
         );
-        out.fns = self.fns_met(t);
+        out.fns = self.fns_met(t).into();
         out.prune_payloads();
         if self.dynamic || !self.vars.is_empty() {
             out = out.union(t);
@@ -11516,6 +11927,93 @@ mod tests {
 
     mod bench;
 
+    /// A list of members shared by a copy is changed in the copy only; a push keeps the set
+    /// of members a union reads, a removal drops it, and equal lists hash alike whatever
+    /// operations built them (FAIL-types-binding-tuple-shapes-copied).
+    #[test]
+    fn a_list_of_members_is_shared_by_copies_and_kept_by_each() {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let hash = |m: &Members<u32>| BuildHasherDefault::<DefaultHasher>::default().hash_one(m);
+        let mut a: Members<u32> = Members::new();
+        assert!(a.is_empty() && a.first().is_none() && a.only().is_none());
+        assert!(a.insert_new(1) && a.insert_new(2) && !a.insert_new(1));
+        assert_eq!(a.to_vec(), [1, 2]);
+        let mut b = a.clone();
+        assert!(b.insert_new(3) && !b.insert_new(2));
+        assert_eq!((a.to_vec(), b.to_vec()), (vec![1, 2], vec![1, 2, 3]));
+        assert!(!a.contains(&3) && b.contains(&3));
+        // A list of the same members in the same order is equal and hashes alike, however it
+        // was built; in another order it is not equal.
+        let c: Members<u32> = vec![1, 2, 3].into();
+        assert!(b == c && hash(&b) == hash(&c));
+        let d: Members<u32> = vec![2, 1, 3].into();
+        assert!(b != d);
+        // A removal drops the set; the next lookup makes it again from what is left.
+        assert_eq!(b.pop(), Some(3));
+        assert!(!b.contains(&3) && b == a && hash(&b) == hash(&a));
+        assert!(b.insert_new(3));
+        b.retain(|&x| x != 1);
+        assert_eq!(b.to_vec(), [2, 3]);
+        assert!(!b.contains(&1) && b.insert_new(1));
+        assert_eq!((b.len(), b[2], b.last()), (3, 1, Some(&1)));
+        assert_eq!(b.iter().rev().copied().collect::<Vec<_>>(), [1, 3, 2]);
+        while b.pop().is_some() {}
+        assert!(b.is_empty() && b == Members::new() && hash(&b) == hash(&Members::new()));
+        assert_eq!(a.clone().into_vec(), [1, 2]);
+        // A list that is a duplicate of a member at two places keeps both.
+        let mut e: Members<u32> = vec![4, 4].into();
+        assert_eq!(e.len(), 2);
+        assert!(!e.insert_new(4));
+        e.push(4);
+        assert_eq!(e.to_vec(), [4, 4, 4]);
+    }
+
+    /// Two types of 60 levels `t(k + 1) = (t(k), t(k))`, and the same through functions, built
+    /// apart, compare in the size of their graphs, not their 2^60 paths: a row or function
+    /// held through a list two copies share is recorded as shared ([`Same`]), though the list
+    /// is its one owner (FAIL-types-binding-tuple-shapes-copied).
+    #[test]
+    fn types_doubled_through_a_shared_list_compare_once_a_node() {
+        let int = Ty::carrier(Carrier::Int);
+        let doubled = || (0..60).fold(int.clone(), |t, _| Ty::tuple(vec![t.clone(), t]));
+        assert!(doubled() == doubled());
+        // Each level a function `() -> (t, t)`, held in the list of its type's functions.
+        let pair = |t: Ty| Ty::tuple(vec![t.clone(), t]);
+        let fns = || {
+            (0..60).fold(int.clone(), |t, _| {
+                Ty::func(Arc::new(Sig::one(Vec::new(), Vec::new(), pair(t))))
+            })
+        };
+        assert!(fns() == fns());
+    }
+
+    /// A union of tuple shapes, or of payload shapes, of free variables is within itself with
+    /// nothing bound: each member is held by the shape equal to it, not by the first in
+    /// written order, which holds it only by binding a variable (`(X1,)` in `(X0,)` binds `X0`
+    /// to `X1`) (FAIL-types-singleton-tuple-union-match).
+    #[test]
+    fn shapes_of_free_variables_are_within_themselves_binding_nothing() {
+        let xs: Vec<Ty> = (0..3).map(|i| Ty::var(format!("X{i}").into())).collect();
+        for n in 1..=3 {
+            let rows = Ty::union_all(
+                &xs[..n]
+                    .iter()
+                    .map(|x| Ty::tuple(vec![x.clone()]))
+                    .collect::<Vec<_>>(),
+            );
+            assert!(rows.subtype(&rows), "{n} tuple shapes");
+            let last = &xs[n - 1];
+            let pairs = xs[..n]
+                .iter()
+                .map(|x| Ty::tuple(vec![x.clone(), last.clone()]));
+            let pairs = Ty::union_all(&pairs.collect::<Vec<_>>());
+            assert!(pairs.subtype(&pairs), "{n} pairs");
+            let shapes = (xs[..n].iter()).map(|x| Shape::new(vec![x.clone()], BTreeMap::new()));
+            let payloads = payload_ty("a", shapes.collect());
+            assert!(payloads.subtype(&payloads), "{n} payload shapes");
+        }
+    }
+
     /// The carrier masks: `NUMBER_BITS` holds exactly the numbers, `f32` among them; each
     /// carrier has its own bit below [`OTHER`] and its own base, and the five carriers that came
     /// before `f32` keep the bits they had (FLOAT-f32).
@@ -14202,11 +14700,18 @@ mod tests {
         for i in 0..5_000 {
             let s = near_union(&mut rng, i % 3 == 0, &fns);
             let t = near_union(&mut rng, i % 2 == 0, &fns);
-            let want = near(&s.tuples, &t.tuples, 0);
-            assert_eq!(near(&s.tuples, &t.tuples, 1 + i), want, "({s}) near ({t})");
+            let want = near(&s.tuples.to_vec(), &t.tuples.to_vec(), 0);
+            assert_eq!(
+                near(&s.tuples.to_vec(), &t.tuples.to_vec(), 1 + i),
+                want,
+                "({s}) near ({t})"
+            );
             let back: Vec<Row> = t.tuples.iter().rev().cloned().collect();
             let last = t.tuples.len().saturating_sub(1);
-            for (got, want) in near(&s.tuples, &back, 7 + i).into_iter().zip(&want) {
+            for (got, want) in near(&s.tuples.to_vec(), &back, 7 + i)
+                .into_iter()
+                .zip(&want)
+            {
                 let got = sorted(got.into_iter().map(|j| last - j).collect());
                 assert_eq!(&got, &sorted(want.clone()), "({s}) near ({t}) in reverse");
             }

@@ -741,6 +741,30 @@ fn n_shapes_of_variables_one_pinned_one_variable_takes_the_rest_in_linear_time()
     );
 }
 
+/// One variable takes n distinct tuple shapes: `(x0: (T,)) -> (T,)` against
+/// `(x0: ((0,),) | … | ((n-1,),)) -> ((0,) | … | (n-1,),)`.
+#[test]
+fn one_variable_takes_n_tuple_shapes_in_linear_time() {
+    let sigs = scaling::inputs(1000, |m| {
+        let one = shapes_of_variables("T", 1, &[], |vs| Ty::tuple(vec![vs[0].clone()]), false);
+        let more: Vec<Ty> = (0..m)
+            .map(|i| Ty::tuple(vec![Ty::lit(&zed_kernel::Value::int((i as i64).into()))]))
+            .collect();
+        let q = shapes_of_variables(
+            "Y",
+            0,
+            &more,
+            |_| Ty::tuple(vec![Ty::union_all(&more)]),
+            true,
+        );
+        (one, q)
+    });
+    scaling::check("one variable taking n tuple shapes", 1000, |m| {
+        let (s, q) = &sigs[&m];
+        assert!(zedc::check::ty::fits_sig(s, q));
+    });
+}
+
 // 1x measured 955 ms (ns=955400456) at load 52 on 2026-11-14; 8.62 times the instructions at 8n.
 #[test]
 fn n_shapes_of_variables_pinned_by_the_result_fit_themselves_renamed_in_linear_time() {

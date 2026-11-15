@@ -484,7 +484,9 @@ fn a_shared_pair_met_again_under_other_bindings_keeps_them() {
 /// the memo of rows (`Cx::compared`): `search` then answers false at once, so that answer is the
 /// refusal's and not the rows'. Here the first shape of `g`'s parameter, `(B, bool)`, is
 /// refused, as `B`'s bucket cannot choose between `(int, int)` and `(int, int, int)`, and the
-/// second, `(A, bool)`, is then tried with the refusal in force; the verdict is the refusal.
+/// second, `(A | ((bool,),), bool)`, is then tried with the refusal in force; the verdict is the
+/// refusal. A second shape equal to `(A, bool)` holds it at once, binding nothing, before any
+/// shape is tried in written order (`Comparing::held_as_is`), so there the parameter fits.
 #[test]
 fn rows_compared_after_a_refusal_give_the_refusal() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
@@ -497,11 +499,18 @@ fn rows_compared_after_a_refusal_give_the_refusal() {
     };
     let refusal = "the tuples ((int, int),) and ((int, int, int),) may each be held by one of the \
                    shapes";
-    for g in [format!("({b}, bool)"), format!("({b}, bool) | ({a}, bool)")] {
+    for g in [
+        format!("({b}, bool)"),
+        format!("({b}, bool) | ({a} | ((bool,),), bool)"),
+    ] {
         let errs = type_errors(&program(&g));
         assert_eq!(errs.len(), 1, "{g}: {errs:?}");
         assert!(errs[0].contains(refusal), "{g}: {errs:?}");
     }
+    assert_eq!(
+        type_errors(&program(&format!("({b}, bool) | ({a}, bool)"))),
+        Vec::<String>::new()
+    );
     // The control: with no shape refused, the parameter fits (`(U, int)`, which holds no
     // value of `p`'s parameter, gives the bound its variable).
     assert_eq!(

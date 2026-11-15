@@ -10,7 +10,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::types::defs;
 use zed_kernel::{Rat, Value};
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Carrier, EVERY, OTHER, Shape, Ty, Vars, mask_text, printed};
+use zedc::check::ty::{Carrier, EVERY, OTHER, Shape, Sig, Ty, Vars, mask_text, printed};
 
 /// Each program the check reads: its place and text.
 fn programs() -> Vec<(String, String)> {
@@ -62,58 +62,61 @@ pub(super) fn stated(t: &Ty) -> Ty {
 /// [`stated`] of `t` inside signatures that bound the variables `scope` by carriers.
 fn stated_in(t: &Ty, scope: Arc<HashSet<Arc<str>>>) -> Ty {
     let mut t = t.clone();
-    // Each part to read, with the variables the signatures around it bound by carriers.
-    let mut stack = vec![(&mut t, scope)];
-    while let Some((t, scope)) = stack.pop() {
-        t.family = KType::empty();
-        let free = t.vars.iter().any(|v| !scope.contains(v));
-        t.vars.retain(|v| scope.contains(v));
-        t.dynamic |= free;
-        // A payload shape and a row are shared and keep a hash of what they hold, so they are
-        // made again.
-        for s in t.payloads.values_mut().flatten().flatten() {
-            *s = Shape::new(
-                s.items
-                    .iter()
-                    .map(|c| stated_in(c, scope.clone()))
-                    .collect(),
-                (s.fields.iter())
-                    .map(|(n, c)| (n.clone(), stated_in(c, scope.clone())))
-                    .collect(),
-            );
-        }
-        for cs in t.tuples.iter_mut() {
-            *cs = cs.iter().map(|c| stated_in(c, scope.clone())).collect();
-        }
-        for s in t.fns.iter_mut() {
-            let s = Arc::make_mut(s);
-            s.bounds.retain(|_, m| *m & OTHER == 0);
-            // Its own variables bounded by carriers are written by name; its other own ones are `_`.
-            let scope = if s.bounds.is_empty() && s.own.iter().all(|v| !scope.contains(v)) {
-                scope.clone()
-            } else {
-                let mut inner = (*scope).clone();
-                inner.retain(|v| !s.own.contains(v));
-                inner.extend(s.bounds.keys().cloned());
-                Arc::new(inner)
-            };
-            for p in s.params.iter_mut() {
-                if p.positional {
-                    p.name = "".into();
-                }
-                p.default = None;
-            }
-            s.needs.clear();
-            s.own.clear();
-            s.data = false;
-            s.dense = false;
-            for a in s.arrows.iter_mut() {
-                stack.extend(a.params.iter_mut().map(|t| (t, scope.clone())));
-                stack.push((&mut a.result, scope.clone()));
-            }
-        }
+    t.family = KType::empty();
+    let free = t.vars.iter().any(|v| !scope.contains(v));
+    t.vars.retain(|v| scope.contains(v));
+    t.dynamic |= free;
+    // A payload shape and a row are shared and keep a hash of what they hold, so they are
+    // made again; so is a signature, as the list of functions keeps the hashes of its members.
+    for s in t.payloads.values_mut().flatten().flatten() {
+        *s = Shape::new(
+            s.items
+                .iter()
+                .map(|c| stated_in(c, scope.clone()))
+                .collect(),
+            (s.fields.iter())
+                .map(|(n, c)| (n.clone(), stated_in(c, scope.clone())))
+                .collect(),
+        );
     }
+    t.tuples = (t.tuples.iter())
+        .map(|cs| cs.iter().map(|c| stated_in(c, scope.clone())).collect())
+        .collect();
+    t.fns = t.fns.iter().map(|s| stated_sig(s, &scope)).collect();
     t
+}
+
+/// [`stated`] of the signature `s` inside signatures that bound the variables `scope` by
+/// carriers: its parts by [`stated_in`].
+fn stated_sig(s: &Sig, scope: &Arc<HashSet<Arc<str>>>) -> Arc<Sig> {
+    let mut s = s.clone();
+    s.bounds.retain(|_, m| *m & OTHER == 0);
+    // Its own variables bounded by carriers are written by name; its other own ones are `_`.
+    let scope = if s.bounds.is_empty() && s.own.iter().all(|v| !scope.contains(v)) {
+        scope.clone()
+    } else {
+        let mut inner = (**scope).clone();
+        inner.retain(|v| !s.own.contains(v));
+        inner.extend(s.bounds.keys().cloned());
+        Arc::new(inner)
+    };
+    for p in s.params.iter_mut() {
+        if p.positional {
+            p.name = "".into();
+        }
+        p.default = None;
+    }
+    s.needs.clear();
+    s.own.clear();
+    s.data = false;
+    s.dense = false;
+    for a in s.arrows.iter_mut() {
+        for p in a.params.iter_mut() {
+            *p = stated_in(p, scope.clone());
+        }
+        a.result = stated_in(&a.result, scope.clone());
+    }
+    Arc::new(s)
 }
 
 /// Whether `t` holds a class variable of the solver, `$k`: a text printed with one is a

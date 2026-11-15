@@ -71,7 +71,7 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
     assert_ne!(a, b);
     assert_eq!(
         s.arrows[0].result.tuples,
-        [Row::new(vec![a.clone(), b.clone()])]
+        zedc::check::ty::Members::from(vec![Row::new(vec![a.clone(), b.clone()])])
     );
     let s = sig_of("g(r) = r else 0;\n", "g");
     assert_eq!(s.to_string(), "(r: T) -> 0 | T");
