@@ -174,6 +174,17 @@ impl<K, V> Node<K, V> {
             }
         }
     }
+
+    /// The greatest entry beneath this node, which holds at least one.
+    fn last(&self) -> &(K, V) {
+        let mut node = self;
+        loop {
+            match node {
+                Node::Leaf(s) => return &s[s.len() - 1],
+                Node::Inner(bs) => node = &bs[bs.len() - 1].child,
+            }
+        }
+    }
 }
 
 /// What an insertion beneath a node did.
@@ -234,6 +245,11 @@ impl<K, V> Map<K, V> {
     /// The least entry.
     pub(crate) fn get_min(&self) -> Option<&(K, V)> {
         self.root.as_ref().map(Node::first)
+    }
+
+    /// The greatest entry.
+    pub(crate) fn get_max(&self) -> Option<&(K, V)> {
+        self.root.as_ref().map(Node::last)
     }
 
     /// The entries in key order, from either end.
@@ -358,6 +374,53 @@ impl<K: Ord, V> Map<K, V> {
                 Node::Inner(bs) => match find(bs, k) {
                     Ok(i) => return Some(&entry(&bs[i]).1),
                     Err(i) => node = &bs[i].child,
+                },
+            }
+        }
+    }
+
+    /// The entry with the least key greater than `k` (`after`), or with the greatest key less
+    /// than `k` (`!after`); `k` need not be held.
+    // Complexity tradeoff: the naive search reads the entries in order up to `k`, O(n). Used:
+    // the descent of `get`, O(log n), keeping the nearest entry on the far side of `k` that
+    // each inner node passes over. Proof: in an inner node the entries split the keys beneath
+    // it into the children's ranges, in order; a key strictly between entry i - 1 and entry i
+    // lies beneath child i, so the nearest entry past `k` is either beneath that child or, if
+    // the child holds none, the entry beside it on the far side, which is nearer than any
+    // entry kept from a level above, since that entry bounds the whole node. When `k` is the
+    // entry itself, the nearest is the least (greatest) entry of the child on the far side,
+    // which every child holds, a child of an inner node holding at least one entry.
+    pub(crate) fn beside(&self, k: &K, after: bool) -> Option<&(K, V)> {
+        let mut node = self.root.as_ref()?;
+        let mut best: Option<&(K, V)> = None;
+        loop {
+            match node {
+                Node::Leaf(s) => {
+                    let i = match (s.binary_search_by(|e| e.0.cmp(k)), after) {
+                        (Ok(i), true) => i + 1,
+                        (Err(i), true) => i,
+                        (Ok(i) | Err(i), false) => match i.checked_sub(1) {
+                            Some(j) => j,
+                            None => return best,
+                        },
+                    };
+                    return s.get(i).or(best);
+                }
+                Node::Inner(bs) => match (find(bs, k), after) {
+                    (Ok(i), true) => return Some(bs[i + 1].child.first()),
+                    (Ok(i), false) => return Some(bs[i].child.last()),
+                    (Err(i), true) => {
+                        if let Some(e) = &bs[i].next {
+                            best = Some(e);
+                        }
+                        node = &bs[i].child;
+                    }
+                    (Err(i), false) => {
+                        if let Some(j) = i.checked_sub(1) {
+                            best = Some(entry(&bs[j]));
+                        }
+                        node = &bs[i].child;
+                    }
                 },
             }
         }

@@ -99,8 +99,23 @@ fn agrees(m: &M, model: &BTreeMap<u64, u64>) {
         m.get_min().copied(),
         model.first_key_value().map(|(&k, &v)| (k, v))
     );
+    assert_eq!(
+        m.get_max().copied(),
+        model.last_key_value().map(|(&k, &v)| (k, v))
+    );
+    beside_agrees(m, model, model.keys().copied());
     for (&k, &v) in model {
         assert_eq!(m.get(&k), Some(&v));
+    }
+}
+
+/// `beside` at each key of `at`, held or not, agrees with the model's range search.
+fn beside_agrees(m: &M, model: &BTreeMap<u64, u64>, at: impl Iterator<Item = u64>) {
+    for k in at {
+        let after = model.range(k + 1..).next().map(|(&k, &v)| (k, v));
+        let before = model.range(..k).next_back().map(|(&k, &v)| (k, v));
+        assert_eq!(m.beside(&k, true).copied(), after, "the entry after {k}");
+        assert_eq!(m.beside(&k, false).copied(), before, "the entry before {k}");
     }
 }
 
@@ -367,4 +382,16 @@ fn shared_subtrees_are_passed_over() {
     let mc: BTreeMap<u64, u64> = c.iter().map(|(&k, &v)| (k, v)).collect();
     let ma: BTreeMap<u64, u64> = a.iter().map(|(&k, &v)| (k, v)).collect();
     compare(&a, &c, &ma, &mc);
+}
+
+#[test]
+fn the_entries_beside_a_key_held_or_not() {
+    // Even keys only, so every odd key falls between two entries, at every size up to past
+    // two levels; keys below the least and above the greatest have no entry on that side.
+    let edge = (MAX + 1) * (MAX + 1);
+    for n in (0..edge + 40).chain([edge * (MAX + 1) - 1, edge * (MAX + 1)]) {
+        let model: BTreeMap<u64, u64> = (1..=n as u64).map(|k| (2 * k, k)).collect();
+        let m: M = model.iter().map(|(&k, &v)| (k, v)).collect();
+        beside_agrees(&m, &model, 0..2 * n as u64 + 3);
+    }
 }
