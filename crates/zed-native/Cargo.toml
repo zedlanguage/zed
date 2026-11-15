@@ -44,6 +44,12 @@ path = "../../tests/steps/l01_36a_executables/binary.rs"
 name = "limits_binary"
 path = "../../tests/steps/l01_36a_executables/limits_binary.rs"
 
+# What a run writes before it stops, under `zedc run` and an executable, byte for byte
+# (EXE-stdout-before-error).
+[[test]]
+name = "stops_binary"
+path = "../../tests/steps/l01_36a_executables/stops_binary.rs"
+
 # `zedc --report` run as a user runs it (TIME-report).
 [[test]]
 name = "report_binary"
@@ -75,6 +81,8 @@ zedc.workspace = true
 # library names neither, so the static library above links neither, and a program `zedc build`
 # makes keeps the system allocator.
 zed-alloc-count.workspace = true
+# SIGPIPE ignored by the executable's start, as Rust's own `main` ignores it (EXE-stdout-before-error).
+libc = "0.2.191"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 perf-event2.workspace = true
@@ -98,7 +106,6 @@ all = { level = "warn", priority = -1 }
 blake3 = "1"
 
 [dev-dependencies]
-libc = "0.2.191"
 # Strips a copy of zedc in the build_binary test (NATIVE-build-id).
 object = { workspace = true, features = ["build"] }
 # Sets the stack limit the zedc_binary test's child inherits.

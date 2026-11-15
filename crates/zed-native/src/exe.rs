@@ -304,6 +304,16 @@ pub extern "C" fn zed_main(
             .collect();
         (words, std::slice::from_raw_parts(data, len))
     };
+    // A write to a pipe whose reader has closed it is a failed write of the port, which the
+    // run reports with status 1 as `zedc run` does (DESIGN.md sec:ports: the first `#ioError`
+    // aborts the wave), and not a stop by SIGPIPE with no message. Rust's own `main`, which
+    // `zedc` has, ignores SIGPIPE before it runs; this `main` is C's, so the start does it. A
+    // child the program starts gets SIGPIPE back at its default, as Rust's `Command` resets it.
+    // SAFETY: `signal` with `SIG_IGN` installs no handler and touches no memory of Rust's.
+    #[expect(unsafe_code, reason = "signal is a libc call")]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
     let status = start(&words, data, root);
     // Rust flushes standard output when its own `main` returns; this `main` is C's.
     let _ = std::io::stdout().flush();

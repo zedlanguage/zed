@@ -1403,10 +1403,22 @@ impl<'a> Options<'a> {
             })?;
         }
         let mut failed = None;
+        // Each port's bytes are flushed before its write is acknowledged, so `#ok` means they
+        // left this process: a stop after it loses none of them (a limit of `main` ends the
+        // process with `_exit`, which flushes no buffer of Rust's, and an executable's `main` is
+        // C's, whose return flushes none either), the streams are seen in the order written,
+        // `m.stdout` before `m.stderr`, and a failure the stream reports only when flushed is
+        // that write's failure, not lost.
         commit(&wave.writes, |port, bytes| {
             let (stream, written) = match field(port) {
-                "stdout" => ("stdout", stdout.write_all(bytes)),
-                _ => ("stderr", stderr.write_all(bytes)),
+                "stdout" => (
+                    "stdout",
+                    stdout.write_all(bytes).and_then(|()| stdout.flush()),
+                ),
+                _ => (
+                    "stderr",
+                    stderr.write_all(bytes).and_then(|()| stderr.flush()),
+                ),
             };
             written.map_err(|e| {
                 let why = io_reason(&e);
