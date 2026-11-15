@@ -3978,6 +3978,16 @@ struct Cx<'s> {
     // binding, a hash of the type bound, which the change already cost. Not done: a binding
     // that differs on a variable neither node holds still misses; restricting the key to the
     // variables the two nodes hold would need their variables at hand as a set.
+    // Assumption, not proved (ASSUME-documented): an answer kept here equals what the
+    // comparison would give if run again on the same nodes, binds, bounds and ceilings. It
+    // needs node ids that are never reused (a global counter, so true within one run), every
+    // input the comparison reads to be part of the `Compared` key, and no refusal behind a
+    // kept answer. `recall` checks only `unchosen`; whether that covers every refusal state is
+    // open in row TYPES-compared-recall-refused. Evidence:
+    // `a_shared_pair_met_again_under_other_bindings_keeps_them`,
+    // `rows_compared_after_a_refusal_give_the_refusal`, and
+    // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`; benchmarks 8.15x,
+    // 8.01x and 8.02x. If false, a stale `true` accepts a type that does not fit: unsound.
     compared: HashMap<Compared, (bool, Binds)>,
 }
 
@@ -5560,6 +5570,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// this costs a second entry for each answer true, O(1) to make (a persistent map is
     /// copied by its root).
     fn keep(&self, key: Compared, ok: bool, b: &Binds) {
+        // Assumption, not proved (ASSUME-documented): the comparison `key` met again under `b`, the
+        // binding its true answer gave, gives `(true, b)` again, so the second entry may be read with
+        // no comparison. The argument in the doc above covers pieces bound through `accepts` at
+        // `Site::In`. It is not shown for the `Site::Other` fallback, which binds the first bindable
+        // variable without calling `admits`, so under `b` that variable may hold a piece its bound
+        // or ceiling would refuse. Evidence:
+        // `deep_ops::shared_payloads_with_a_variable_a_level_bind_each_once` (n from 1 to 6),
+        // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`, benchmark 8.00x. If
+        // false, a recalled `true` stands where the comparison would give false: unsound.
         let mut cx = self.cx.borrow_mut();
         if cx.unchosen.is_none() {
             if ok {
@@ -5704,6 +5723,13 @@ impl<'m, 's> Comparing<'m, 's> {
         // spot was compared with no other function there, so `(f, 1) <: (g, 1) | (f, 2)`, with
         // `f` fitting `g`, was false; where both sides have two or more functions it still is
         // not compared, and a false verdict there is a refusal ([`Forms::loose`]).
+        //
+        // Known false (ASSUME-documented, 2026-11-14): `loose` fires only when some function
+        // of `other` at the spot equals none of `t`'s. Where those of `other` are all among
+        // `t`'s, two or more on each side, the false verdict stands as a definite no:
+        // `(f, #a) | (g, #b) <: (g, #a) | (f, #b) | (g, #b)`, with `f` fitting `g`, is answered
+        // no with no refusal, though it holds. Plan row FAIL-types-equal-functions-subset-no,
+        // test in wt/failing-tests/FAIL-types-equal-functions-subset-no.rs.
         for (spot, fs) in left.spots(&whole.fns) {
             let Some(gs) = fns.get(&spot) else { continue };
             let all = whole.fns.get(&spot).unwrap_or(gs);
@@ -5761,6 +5787,14 @@ impl<'m, 's> Comparing<'m, 's> {
         cut: &[Shape],
         solve: Option<Solve<'s>>,
     ) -> Vec<Shape> {
+        // Assumption, not proved (ASSUME-documented): the cost in the doc above, O(w) item
+        // operations and at most w shapes left, is shown for one shape of `cut` meeting `s`.
+        // Each further shape of `cut` maps every shape in `left` to up to w shapes, so k shapes
+        // of `cut` that each split `s` can leave up to w^k shapes. The code assumes `near_pairs`
+        // gives few shapes of `cut` that each split `s`. Evidence:
+        // `kinds::bench::the_difference_of_many_payloads_held_in_part_scales` (8.61x), whose
+        // shapes meet one or two shapes of `cut`, and 201 random seeds passing. If false, time
+        // and the number of shapes grow as w^k; every answer stays exact.
         let mut left = vec![s.items.clone()];
         for c in cut {
             let mut next = Vec::with_capacity(left.len());
@@ -8244,6 +8278,16 @@ async fn accepts<'m>(
     // search of the bounds of the signature ([`Binds::bound`]) and a check of the piece alone
     // ([`var_mask`], O(log n) and O(1) expected), as what the variable is bound to was checked
     // when bound; so the binding keeps the cost of a union.
+    // Assumption, not proved (ASSUME-documented): `admits` never refuses a piece that
+    // `bounds_hold` would accept for the same variable once the search ends, so the early
+    // refusal only skips bindings that would fail later. It needs each variable's mask
+    // (`var_mask`, from `cx.rigid` or `cx.own_bounds`) to be known when `admits` runs: a
+    // `Var(w)` with no mask goes to `piece_within`, which asks for `OTHER`, while `bounds_hold`
+    // with the mask known tests `mq & !m == 0`. The masks are set at `Cx::open`, before any
+    // parameter is compared. Evidence: the ty.rs tests,
+    // `a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds` (n from 2 to 5),
+    // and 1,326 test pieces passing. If false, a fit is missed and a correct program is
+    // rejected: precision only.
     let cx = c.cx.borrow();
     let admits = |v: &Arc<str>| {
         // A piece outside the variable's ceiling is not bound to it either: bound so, the result
@@ -8355,6 +8399,16 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     // signature as a whole is still taken here first. Cost: the
     // digests, kept with each signature, and where they agree a walk of both as written, which
     // the comparison would have cost.
+    // Assumption, not proved (ASSUME-documented): a signature equal to `q` (same digest, and
+    // `==` by `Same::sig`) and read alike in `se` and `qe` fits `q`, so `true` is returned with
+    // no comparison. This needs fit to be reflexive for every signature, overloads, bounded
+    // variables and class variables included, and needs `read_alike` to catch every way the two
+    // environments could read the same text differently. Evidence: `a_signature_fits_itself`,
+    // `signatures_with_a_variable_bound_in_a_tuple_fit_themselves_and_their_overloads`, and the
+    // ty.rs tests for outer variables, function types and class variables. With this line off,
+    // `a_bounded_variable_is_bound_only_to_what_its_bound_holds` and others fail, so the full
+    // comparison is not itself reflexive in every case. If false, a function that does not fit
+    // is accepted: unsound.
     if s.digest() == q.digest() && s == q && read_alike(s, se, qe) {
         return true;
     }
@@ -8650,6 +8704,13 @@ async fn every_arrow_fits<'m>(
 /// variable of `s` in `sa` is bound so within its bound ([`bounds_hold`]): the variable of `q`
 /// is bounded within it, as when `q` is `s`.
 fn equal_fits(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
+    // Assumption, not proved (ASSUME-documented): binding each variable of `s` to the variable
+    // of the same name in `q` is a valid fit whenever `bounds_hold` accepts that binding, so an
+    // arrow equal to the one of `q` needs no comparison. It needs `Cx::open` to have renamed
+    // every own variable of `s` whose name `q` also holds, so that a name shared by the two
+    // sides means one variable only where it should. Used by `every_arrow_fits` and the test
+    // search `reference`. Evidence: the tests named at the equal-signature line of `fits_in`.
+    // If false, an arrow that does not fit is accepted: unsound.
     if s.bounds.is_empty() {
         return true;
     }
@@ -9600,6 +9661,14 @@ impl std::hash::Hash for Sig {
 /// pair of names ([`Comparing::fits_read`]), so the second attempt reads its verdict, and the
 /// attempts do not multiply with the depth.
 async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
+    // Assumption, not proved (ASSUME-documented): the ceilings only remove fits that would fail
+    // anyway, and the retry with `Binds::of_arrow(s, sa, None, ..)` finds every fit that the
+    // comparison with no ceiling finds, even though the first attempt leaves `fitted`, the
+    // `compared` entries keyed with ceilings, and the pins behind it. The ceilings do reject
+    // pieces by design; what is assumed is only the final verdict. Evidence: the l01_26 groups
+    // and the others affected, 323 to 325 pieces with 0 failures; benchmark 8.61x. If false, a
+    // function that fits is found not to fit and a correct program is rejected: precision,
+    // unless a caller reads a false here as proof that the function does not fit.
     let mut b = Binds::of_arrow(s, sa, Some(&qa.result), &c.cx.borrow());
     // Why the attempt within the ceilings was refused, if it was: then it may have found a fit
     // the attempt with no ceiling does not, so where that one fails too, the comparison is

@@ -560,6 +560,14 @@ fn without_primes_of(c: &BigUint, a: &BigUint) -> BigUint {
 /// O(M(N) log^3 N) for the base, the elements of each level of the halves at most `N` bits in
 /// all. Each root's list is the union of its elements' lists in the merge, which are disjoint,
 /// O(t) for `t` primes over all roots a level.
+// Proof of the bit bound above (ASSUME-documented): every element of a base `merged` makes
+// divides the product `P` of the roots below it (a rest divides its `a`, a gcd divides `a`,
+// and by induction each `a` divides `P`), and the elements are pairwise coprime, so their
+// product divides `P`. Each element is at least 2, so its bits are at most twice its log2,
+// and the elements of one level of the halves, over disjoint roots, total at most 2N bits.
+// In one level of the descent in `merged`, the divisors held for one `a` divide `a` and
+// products of disjoint parts of `q`, which are coprime, so they also total at most twice
+// the bits of `a`. So the bound holds with 2N for N, and the cost above stands.
 fn coprime_base(roots: &[&BigUint]) -> (Vec<BigUint>, Vec<Vec<u32>>) {
     match roots {
         [] => (Vec::new(), Vec::new()),

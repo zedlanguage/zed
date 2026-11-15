@@ -626,6 +626,15 @@ impl Type {
             // with components after it, so a fork met before the search reached an empty
             // component left `self` inhabited alone and empty after a query that kept that
             // component empty.
+            // Assumption, not proved (ASSUME-documented): that `is_empty` is now a function of
+            // the type alone, whatever earlier queries left in `MEMO`. The search above is not
+            // `strict`, so it reads `MEMO`; a kept answer can let it finish where a fresh search
+            // would meet a fork, and the answer then comes from `MEMO`, not from the strict
+            // `empty_past_forks`. Evidence: `order_free` over seeds 0 to 199 in
+            // `l01_23_groups_and_refusals::judgments::bench` and the pinned seed
+            // 10511391382961984112 in `judgments.rs`. If false, a subtype answer depends on the
+            // queries asked before it: no answer is wrong (a type not proved empty counts as
+            // inhabited, and every empty answer is a proof), but checking is not deterministic.
             return s.refused == Some(Refusal::Fork) && self.empty_past_forks();
         }
         MEMO.with(|m| {

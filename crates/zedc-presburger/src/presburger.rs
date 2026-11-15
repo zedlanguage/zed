@@ -993,6 +993,17 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
 /// from 0 were refused where one copy was decided). Only where a group is refused and none is
 /// empty is the whole asked as before ([`settle_tied`], then [`twins_merged`]). The groups
 /// are made from the conjuncts' atoms and are the same under every naming.
+// Assumption, not proved (ASSUME-documented): that the groups found here share no atom
+// anywhere, inside products and nested constraints too, so that each group can be decided
+// alone and the answers combined exactly ([`decide_named`]: empty when one group is; a point
+// of the whole is the points of the groups joined, [`satisfiable_named`]). The combination is
+// exact when the atom sets are disjoint; what is not proved is that every atom a group's
+// answer depends on is collected below (by `cons()`, which walks nested constraints), and
+// that a group's model names only atoms of that group, so `Model::extend` never overwrites
+// one group's value with another's. Evidence: the tests of FAIL-or-if-tie-refusal and a
+// census of 1,000 random four-variable systems (716 decided against 682 before, no answer
+// depending on names). If false, a formula could be called non-empty, or given a model
+// that is no point of it, where the whole-formula path refused: unsound.
 // Complexity tradeoff: union and find over the conjuncts, joined at each atom to the first
 // conjunct that holds it, with path halving: O(n log n) for the n terms of `f`, where joining
 // every pair of conjuncts that share an atom would be O(c^2) for c conjuncts. The groups are
@@ -1584,6 +1595,19 @@ fn drop_jointly_empty(rows: &[Con], ors: &mut [Vec<Rc<Parts>>]) -> Option<usize>
 /// disjuncts: with `x + y == z + 2` left alone beside `y == z - 5 || y == z - 1 || y == z`,
 /// `x` was projected onto `[2..=7]`, where joined it is `{2, 3, 7}` (item
 /// FAIL-project-each-coarser-seed).
+// Assumption, not proved (ASSUME-documented): that this join never makes any projection
+// coarser. The points of `p` are unchanged (the lone disjunct is the disjunction), so every
+// answer stays sound; what is not proved is that a projection read from the joined parts is
+// always as fine as one read from the parts before, for every atom and not only the one the
+// item was about. The callers need it because a join is applied to every projection, not only
+// those it narrows. Evidence (FAIL-project-each-coarser-seed): seeds 1 to 300 and the reported
+// seed, 5 answers coarser before and none after; seeds 7000001 to 7000500, none; in
+// `l01_25_preimage_catalog::ref_memo` the answers narrower than the old path's went from 28 to
+// 27 and the exact ones from 24 to 25 (one moved to exact, none coarser); this function ran
+// in `disj_groups::row_sums` "never coarser" tests (20 times) and the `ref_memo` "kept or
+// made finer" tests (63 times), counted once with a temporary counter on 2026-11-14. If false,
+// a projection, and so a preimage or a refusal, is wider than it was: a loss of precision, not
+// of soundness.
 // Complexity tradeoff: none; each disjunction, and each one a joined disjunct holds, is read
 // once, O(k) for `k` disjunctions, and a disjunct held nowhere else gives up its rows without a
 // copy.
@@ -2482,6 +2506,15 @@ impl Numbered {
     /// Whether, for each list of `ties`, every permutation of its atoms maps the formula onto
     /// itself: whether each swap of two atoms next to each other in it does, since those swaps
     /// make every permutation.
+    //
+    // Checking only the swaps of atoms next to each other is enough: those swaps generate
+    // every permutation of the list (a standard fact), and a composition of maps that each
+    // send the formula onto itself does too, so this part is proved. Not proved
+    // (ASSUME-documented): that `swaps_onto_itself` never says yes to a swap that does not
+    // map the formula onto itself; its doc gives the argument, and
+    // `l01_38_omega_test::names::a_tie_that_every_swap_maps_onto_itself_is_renamed` and
+    // `decide_on_tied_disjunctions_scales` test it. If it did, tied atoms would be renamed as
+    // interchangeable when they are not, and the answer could depend on the names chosen.
     fn ties_are_symmetries(&self, ties: &[Vec<Atom>]) -> bool {
         (ties.iter()).all(|t| t.windows(2).all(|w| self.swaps_onto_itself(&w[0], &w[1])))
     }
@@ -3857,6 +3890,16 @@ fn by_chain_hulls(p: &Parts) -> Option<bool> {
 // `two_reflection_centers_with_a_point_are_answered_at_odd_lengths`,
 // `every_target_of_six_overlapping_steps_is_answered` (PRES-hull-odd-refusal); COMPLEXITY.md
 // row PRES-hull-witness; the chains left are plan row PRES-hull-random-refusals.
+// Assumption, not proved (ASSUME-documented): `by_chain_hulls` and `has_point` return a
+// `true` from here as a point, so every walk that passes `meets(&prefix[0], &y)` must be a
+// real point of `p`. The walk inverts each chosen map exactly and the last test uses the
+// identity hull, which is exact, so the hulls only steer it. It rests on: with
+// `chain.complete`, `GuardedChain::of` and `stages` keep every constraint of `p`; each map
+// active in the cell has its guard true at every `g` of the cell; and each input in `a..=b`
+// has an `other` that puts `g` in the cell. Evidence: the two tests above, the
+// overlapping-chain oracles, and 1,067 random guarded chains (wt/failing-tests/
+// PRES-hull-random-refusals.rs), 0 wrong. If false, `has_point` answers true for a set with
+// no point: unsound.
 fn chain_witness(
     chain: &GuardedChain,
     stages: &[HullStage],
@@ -4850,6 +4893,16 @@ mod cell_sweep {
         // changing `seg` (`single_eq` is false). Pass 2 for that leaf's group adds the same blocks
         // and prunes the same nodes until its first harvest, so it harvests that leaf's cells or
         // an earlier leaf's.
+        // Assumption, not proved (ASSUME-documented): the argument above rests on the
+        // pruning before pass 1 and on pass 2 pruning the same nodes. The return of
+        // `ResolvedOr::Empty` for empty `pieces` here was removed as dead
+        // (TEST-presburger-unreached-paths part 3). Evidence: the 11 tests of
+        // `l01_38_presburger::cell_sweep_nested` and the crate tests never make it empty. If
+        // false, an `OverlapDef` with no piece reaches the callers, which then give its item no
+        // span at all (no hull span in `eq_hull_spans`, no entry in the canonical key or in
+        // `target_pieces`); whether the sweep then reads the disjunction as holding nowhere
+        // (`false`, exact) or as no constraint (a wrong `true`, unsound) was not traced. For an
+        // empty list the exact answer is `ResolvedOr::Empty`.
         Some(ResolvedOr::OverlapDef {
             eqs,
             pieces,
@@ -5500,6 +5553,12 @@ mod cell_sweep {
         // A constant target on one atom, `q == val` or a disjunction of such (`(i <= 0 && q ==
         // 5) || (i >= 1 && q == 6)`, FAIL-pres-overlap-every-level-refused), waits in the second
         // tier: taken first it would steal `q` from the chain definition and leave that as the
+        // Assumption, not proved (ASSUME-documented): that sending every target whose
+        // equations each have one atom to `unit_cons_q` never delays a definition that an
+        // earlier step of the chain needs. Evidence: the tests in
+        // `l01_38_presburger::cell_sweep`, checked against enumeration for chains of 1 to 5
+        // levels and the target shapes listed there. If false, `try_orient` leaves more than
+        // one item over and the sweep gives up: a refusal, precision only.
         // target.
         let is_unit_cons =
             |idx: usize| -> bool { items[idx].eqs.iter().all(|c| c.lin.terms.len() == 1) };
@@ -6062,6 +6121,13 @@ mod cell_sweep {
                     // A bound on a defined atom (a target `t_n >= v`, or a hull row on `t_j`)
                     // is bounded too. An atom that every equation of some item holds with a
                     // unit coefficient is one that item can define, so it is no parameter.
+                    // Assumption, not proved (ASSUME-documented): an atom some item can define
+                    // is never the real parameter `k`. Evidence: the tests in
+                    // `l01_38_presburger::cell_sweep`, chains of 1 to 5 levels against
+                    // enumeration. If false, the real `k` is dropped from `k_cands`; with no
+                    // candidate left the sweep gives up (a refusal, precision only), and with one
+                    // other atom left `try_orient` runs with it as `k`, whose soundness is not
+                    // shown here.
                     for it in &items {
                         for a in definable(it, x) {
                             k_cands.remove(&a);
@@ -16074,6 +16140,22 @@ impl Omega {
             if !self.pending.is_empty() {
                 // Eliminations that neither read nor write a pending variable go first, so a
                 // long row is rewritten once for the values they leave (`Omega::deferred`).
+                // Assumption, not proved (ASSUME-documented): running these eliminations
+                // before the pending values are written, and the write-first rule of
+                // [`Omega::read_pending`] that decides when not to, change only the order of the
+                // steps, so the model and the place of a refusal can change but never whether a
+                // point exists. The argument (doc of [`Omega::deferred`]): the eliminations
+                // taken are exact, add no terms, and no row of theirs holds a pending variable,
+                // so writing a value changes none of their rows. No proof covers the whole
+                // loop. Evidence (counted once with a temporary counter, 2026-11-14): this branch
+                // was taken in tests checked against an independent answer, among them
+                // `l01_38_presburger::oracle::rows_of_three_terms_tight_at_a_corner_match_enumeration`
+                // (67 times with its seed test),
+                // `l01_25_preimage_catalog::random::exact_test_preimages_are_the_projection_of_the_points_that_meet_the_demand`
+                // (42) and `l01_39_reduced_product::random::the_closed_path_condition_and_the_scope_agree_on_emptiness`
+                // (44); FAIL-open-sides-bench-ratio gives the scaling with it (8.99 against 51.6
+                // with the deferral off). If false, the Omega test can answer "no point" where
+                // one exists or the reverse: unsound.
                 if let Some(js) = self.deferred() {
                     for j in js {
                         let rows = self.sys.eliminate(j, false);
@@ -16122,6 +16204,23 @@ impl Omega {
                     // The variables of a row that each have one other row, of a unit
                     // coefficient, go together with `x[j]`, the row written once
                     // (`System::pendants`).
+                    // Assumption, not proved (ASSUME-documented): writing the definitions of
+                    // `System::pendants` together into `l` gives the same set of integer points
+                    // as eliminating its variables one at a time, so only the order of steps
+                    // changes, never whether a point exists. The argument is in the doc of
+                    // `System::pendants` (each `x[p]` can move to its bound `-s·q[p]` and stay a
+                    // point; no `r[p]` holds another of them, so the definitions commute); it
+                    // also needs `pending` to be empty here, as the `continue` above makes it,
+                    // so that [`Omega::flush`] finds each definition free of the others. No
+                    // proof covers the whole loop. Evidence (counted once with a temporary
+                    // counter, 2026-11-14): this branch was taken 526 times in
+                    // `zedc_presburger::difference_rows::solve_never_refuses_rows_of_two_unit_terms`,
+                    // checked against Bellman-Ford, and in
+                    // `l01_38_omega_test::scaling::random_rows_of_two_unit_coefficients_with_a_point_are_decided`
+                    // and `model_keys`, which check the model; the enumeration tests
+                    // `forest_answers_match_enumeration` and `random_unit_rows_agree_with_enumeration`
+                    // never reach it. If false, the Omega test can answer "no point" where one
+                    // exists or the reverse, or give a model that is no point: unsound.
                     if let [j] = js[..]
                         && let Some(defs) = self.sys.pendants(j)
                     {
@@ -16827,6 +16926,16 @@ impl Omega {
     /// onto each other. Tests: `l01_38_omega_test::names::a_tie_that_a_swap_maps_onto_itself_is_decided`,
     /// `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`. COMPLEXITY.md row
     /// NAME-ties.
+    // Assumption, not proved (ASSUME-documented): the argument above needs every step of the
+    // loop after the tie to read only the rows and the flags that hold no variable, and each
+    // step to be the same under a renaming of the variables (the invariant [`solve`] states).
+    // No proof covers every step, and a step added later that reads a variable's index would
+    // break it. Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
+    // (200 random symmetric systems against enumeration, under both namings) and
+    // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
+    // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an
+    // answer under one naming, a refusal under another). Each run is still an exact
+    // elimination order, so no answer is wrong: determinism and precision only.
     fn untie(&mut self, least: Option<Least>, taken: impl Fn(isize) -> bool) -> Option<Least> {
         let Some((fill, Err(t))) = least else {
             return least;
@@ -16984,6 +17093,14 @@ impl Omega {
     /// elimination reads no such row, so its count of pending variables stays true; the
     /// counts are read once all the new definitions are counted, so that two variables of a
     /// row fixed at once are both counted.
+    // Assumption, not proved (ASSUME-documented): the two `write_first` rules below choose
+    // only whether the pending definitions are written before the next elimination. The
+    // first (a definition that holds a variable) is what the argument for deferring needs,
+    // since writing such a definition changes the rows of the variables it holds; the second
+    // (a row left with one variable not pending) is for speed alone (39 times the
+    // instructions from 160 to 1,280 links without it). That either choice reaches the same
+    // set of points is argued, not proved; the evidence is at the call of
+    // [`Omega::deferred`] in the loop. If false, the answer could change with it: unsound.
     fn read_pending(&mut self) {
         let mut counted = Vec::new();
         for (j, def) in &self.pending[self.pending_vars.len()..] {
@@ -18593,6 +18710,15 @@ impl Level {
                         match hulls.remove(s) {
                             Some(Ok(h)) => Ok(h),
                             // A refusal on the projection, whose rows are written apart
+                            // Assumption, not proved (ASSUME-documented): that batch and single
+                            // projection now give each symbol the same hull. The leaf rows that
+                            // `by_halves` gives a symbol depend on the other symbols asked with
+                            // it, so `hull_from` can refuse on the rows of a batch and not on
+                            // those of the symbol asked alone; this fallback then asks the whole
+                            // group, which may refuse too. Evidence: 40 random seeds and
+                            // `batch_and_single_hulls_are_exact_on_a_chain_of_sums`. If false,
+                            // batch gives a refusal where single gives a range: precision only,
+                            // and the answer then depends on which symbols were asked.
                             // from the group's, is asked again of the whole group.
                             _ => hull_from(g.base_of(r), s, &model),
                         }

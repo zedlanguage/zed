@@ -893,6 +893,16 @@ impl Eq for Value {}
 /// Hashes the value's digest (`digest`): two values equal under `==` hash alike, so a value
 /// can key a hash map. For a boolean, number or string, `==` is `Value::scalar_cmp` giving
 /// `Equal`. Unlike the order, the hash of a value of many parts costs its size.
+// Assumption, not proved (ASSUME-documented): `digest` gives values equal under `==` one
+// hash in every form: `-0.0` and `0.0` differ under both, every NaN is the canonical one
+// (`F64::new`), a `Big` is never in the 64-bit range, a `Rat` hashes by `Rat::residues`,
+// a string by its text however joined, a sequence by its content whether shared or not.
+// The argument is case by case, in the docs of `leaf_digest`, `digest` and `Rat::residues`.
+// Evidence: `eval/tests.rs` (TEST-kernel-hash-keys), `equal_keys_hash_alike_in_every_form`
+// and `an_index_whose_hash_reads_sharing_is_caught`, with negative controls. Every
+// `HashMap<Value, _>` needs it, among them a definedness fix's `index` (`position`).
+// If false, a lookup misses an equal key, and a read of a key in the domain gives
+// `#notFound`: a wrong answer, so unsound, not a refusal.
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(digest(self));

@@ -7069,6 +7069,17 @@ impl<'a> Ck<'_, 'a> {
                                 let printed: Vec<String> =
                                     args.iter().map(|a| a.to_string()).collect();
                                 let key = format!("{}({})", f.name, printed.join(", "));
+                                // Assumption, not proved (ASSUME-documented): one
+                                // implicit name per call, bound once at the root by
+                                // `self.implicit`, stands for every call of `f.name` whose
+                                // `args` are equal `Term`s. Equal printed keys never merge
+                                // different calls, since `args` are compared too and carry
+                                // binder ids. What is not shown: that `args` reading a
+                                // name bound inside an arm or a lambda still mean the same
+                                // value at the root. Evidence: the 6 tests of
+                                // `l01_39_reduced_product/arm_test_through_call.rs`, all
+                                // with arguments from the enclosing scope. If false, a
+                                // fact about the wrong value narrows a test: unsound.
                                 let found = (self.arms.implicit_calls.get(&key))
                                     .and_then(|v| v.iter().find(|(a, _)| *a == args))
                                     .map(|&(_, b)| b);
@@ -7462,6 +7473,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// restricted to other values, since a call would then refuse the bound in the signature
     /// in place of the use's own message. Complexity: one test of the mask, O(1).
     fn carriers_only(&self, p: &Piece) -> bool {
+        // Assumption, not proved (ASSUME-documented): every use that needs a tuple, a family or
+        // a function refuses a class of carriers alone, here or by its own mask test, so no such
+        // need is recorded on a class that can never meet it. Traced on main: `component`,
+        // `at_index` and `at_key` use this test; `call_value_step` tests `OTHER` itself; an
+        // ordering need calls `restrict` to `OTHER`; a payload need comes only from an `else`
+        // pattern, a test no carrier passes; the other need kinds take carriers. A class that
+        // loses `OTHER` after its need is recorded relies on each call replaying the need on the
+        // bound argument (`a, b = p; return p + 1;` is accepted and cannot be called). Evidence:
+        // the three tests in `l01_26_type_resolution/soundness.rs` added with this test, and
+        // 476 of 481 random seeds (the 5 others fail from an unrelated fault in the test).
+        // If false, a program that takes apart, indexes or calls a number is accepted: unsound.
         self.class_of(p)
             .is_some_and(|k| self.classes[self.find(k)].mask & OTHER == 0)
     }

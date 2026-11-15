@@ -717,6 +717,15 @@ impl Printer<'_> {
     // Every unfolded type on a cycle is named, not a least set of them that cuts every cycle
     // (a least feedback vertex set, NP-hard), so a cycle through two of them names both, as
     // the printer without names would.
+    // Assumption, not proved (ASSUME-documented): every cycle of the texts passes through a
+    // recursive type that is either named in `forced` or pushed on `unfolded` by
+    // [`Printer::ty`], so naming the unfolded ones on a cycle leaves no cycle for
+    // [`Printer::heights`]. A part written out in full in an atom's payload (`ctx` set) takes
+    // the same branch of `ty`, but no test reaches it: `Expr` cannot build that system, since
+    // an atom's payload is always a tuple. Evidence: `a_cycle_of_parts_written_by_name_is_defined`,
+    // `groups_whose_printing_met_a_cycle_without_a_recursive_type_build_and_print`, and a sweep
+    // of 240,000 `gen_cells` seeds (480,000 systems) with no panic. If false, `heights` panics
+    // on user input ("every cycle passes through a recursive type with a definition").
     fn force_cycles(&mut self) {
         if self.unfolded.is_empty() {
             return;

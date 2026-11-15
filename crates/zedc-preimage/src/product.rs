@@ -3192,6 +3192,14 @@ fn put_in(
             // only orders the searches of shortest paths; a cycle of weight 0 may be found by
             // either side, through other edges, which are then tied. COMPLEXITY.md row
             // FAIL-one-case-hole-chain-scaling.
+            // Assumption, not proved (ASSUME-documented): that the side that ends first never
+            // changes an answer. The two sides leave different potentials, and where a cycle of
+            // weight 0 is found they may tie different edges in `pot.tied`, which `pair_weight`
+            // reads. The argument is that the potential only orders the searches of shortest
+            // paths and that every edge tied lies on a cycle of weight 0 either way. Evidence:
+            // the tests of the preimage groups pass; no test runs both sides on one input
+            // and compares the answers. If false, an answer depends on the side that ended
+            // first: a wrong bound would be unsound, a coarser one precision only.
             let mut sides = [
                 Repair::new(true, v, u, gamma.clone()),
                 Repair::new(false, u, v, gamma),
@@ -11657,6 +11665,16 @@ impl Scope {
                 // persistent-map clone (O(1)) per part projected, and the comparison.
                 // Measured (persist, k = 2 / 16): 65.5M / 551.3M instructions before,
                 // 62.4M / 494.5M after (perf stat, the whole test).
+                // Assumption, not proved (ASSUME-documented): the skip treats `project_part` as
+                // exact whenever it records no refusal, so that projecting `all` again with the
+                // names it left moves nothing. That holds for an exact projection (the argument
+                // above), but a projection can give a hull without a refusal: the whole part of
+                // seed 12035647242373093243 part 52 gives z3 [1, 5], not {1, 3, 5}
+                // (FAIL-projection-not-exact.rs, PRES-switchover-not-race), and the pendants
+                // route may leave a name at its box. Evidence: in the correctness tests the skip
+                // was taken in 1 of 89 again-projections; the persist benchmark takes it often.
+                // If false, a name keeps a wider box than the second projection would give:
+                // precision only, never unsound, since each projection only narrows soundly.
                 let repeat = aggregated.is_empty()
                     && self.refusals.ptr_eq(&refusals_before)
                     && distinct_conjuncts(&all) == distinct_conjuncts(&projected_now);

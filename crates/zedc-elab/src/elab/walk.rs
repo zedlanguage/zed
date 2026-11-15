@@ -2484,6 +2484,15 @@ fn carried(p: Prim, own: [Option<Carrier>; 2], args: &[Term]) -> (bool, Option<C
 // these literals a value at another carrier in the last arm, as it gives `1.0` in `x == 1 / 2`;
 // there the witness may be an `int` (`==` takes any two values), here it cannot, so the arm is
 // dropped rather than given a value no run reaches.
+// Assumption, not proved (ASSUME-documented): the checker accepts no program in which an
+// `int` value of the witness reaches the last arm rewritten here, since a decimal or a `/`
+// among the literals removes `int` from the witness's class (L1.26a). The rewrite needs it:
+// the new last arm takes each operand's value at `c`, so an `int` reaching it would get a
+// value at `c` (`1.0 / 2.0`) where the old arm stopped (`1 / 2` has no arrow at `int`).
+// Evidence: `l01_26a_generic_literals::operations` (`FOLDED`, each body's value against a
+// declared carrier) and `l25_08_mutate::examples`, red before STAGE-generic-fold-int-arm, and
+// a coverage run reaching every line but three defensive `return own` exits. If false, a
+// program would get a value at the wrong carrier where it stopped before: unsound.
 fn without_int(p: Prim, own: [Option<Carrier>; 2], args: &mut [Term]) -> [Option<Carrier>; 2] {
     use Carrier::{F64, Int};
     if !matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Div) {

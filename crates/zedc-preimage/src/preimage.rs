@@ -5928,6 +5928,18 @@ impl<'m, 't> Walk<'m, 't> {
                 }));
             }
             let m = &mut tx.run.memo;
+            // Assumption, not proved (ASSUME-documented): an entry whose read stopped nowhere
+            // below `base` (the second kind of [`Entry`]) is kept with `high = usize::MAX`, so
+            // `cached` reuses it on every stack, higher ones too, even when its read entered a
+            // lambda. On a higher stack that holds such a lambda, reading the term again would
+            // stop at its call (`StopKind::Recursion`) where the entry did not; only the first
+            // kind gets the height test (FAIL-preimage-stop-entry-seed). The random programs of
+            // `entries_made_below_a_stop_give_what_reading_the_term_again_gives` pass, but
+            // `tests::recheck` reads such an entry again on the empty stack, not on the stack
+            // it is reused on, so they do not test this. If false: a Recursion stop goes
+            // unreported and the answer is finer than reading again gives, so the stops depend
+            // on reading order; the value stays that of reading the call through (inferred:
+            // precision and determinism, not a wrong value).
             if cut >= base {
                 table(m).insert(k, (v.clone(), usize::MAX, usize::MAX));
             } else if none_held() {
@@ -6941,6 +6953,14 @@ impl<'m, 't> Walk<'m, 't> {
     // `a_term_scanned_within_a_call_it_makes_is_scanned_again_below_it`,
     // `a_summary_scanned_below_a_stop_is_scanned_again_without_it`,
     // `l01_25_preimage_catalog::bench::stops::scans_below_a_stop_are_linear`.
+    // Assumption, not proved (ASSUME-documented): the tradeoff above takes a scan entry that
+    // holds everywhere as enough on a higher stack. [`Entry`] does not state this limit; it
+    // says that kind "holds wherever it is reached". A scan has no value, so the only loss is
+    // a `StopKind::Recursion` stop that a scan again on the higher stack would report at the
+    // call of a lambda the first scan entered; the stops inside that lambda were reported by
+    // the first scan. The three tests above check scans on a lower stack only. If false: a
+    // Recursion stop goes unreported and the stops reported depend on reading order (a
+    // missing report, not a wrong preimage). See the comment in `Walk::made`.
     fn scan(&'m self, t: Tid, env: Eid) -> Deep<'m, ()> {
         self.cached(|m| &mut m.scan, (t, env), move || self.scan_at(t, env))
     }
