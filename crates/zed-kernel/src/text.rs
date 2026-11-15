@@ -41,10 +41,13 @@ use crate::num::{TooLarge, room};
 
 #[cfg(test)]
 mod bench;
-mod names;
+// `names` is public and its items are named through it (`text::names::Names`), not re-exported
+// here: `names.rs` imports `tree.rs`, whose type `Text` has its methods in this file, so a
+// re-export would make this file and `names.rs` import each other (row
+// S1F-kernel-text-names-cycle), a cycle Zed forbids between units (sec:units).
+pub mod names;
 mod tree;
 
-pub use names::{Name, Names, Part, Parts};
 pub use tree::Text;
 use tree::{Digit, Size, Tree};
 
@@ -74,7 +77,7 @@ pub struct TooLong {
 // the same. Set from 128 to 256 on 2026-11-12 (CROSSOVER-bench, `crossover text-leaf`, test
 // profile, load 41 to 48): over joins of 1-, 8- and 64-byte pieces, summed each one's work over
 // the least at that piece size, 256 does the least (3.04), 128 1.034 times as much and 512
-// 1.003. Staging keys a call at a string by the string's name ([`Names`]), which does not
+// 1.003. Staging keys a call at a string by the string's name ([`names::Names`]), which does not
 // depend on how the text is held, so it does not switch at `LEAF` (items STAGE-joined-eq and
 // STAGE-joined-eq-build). Trigger: a join whose parts'
 // adjacent blocks are short. Test:

@@ -391,7 +391,7 @@ pub trait Lookup: std::fmt::Debug + Send + Sync {
     /// Whether the port keeps its own answers, each key answered once, so the world does not
     /// keep them in [`World::reads`]. A port whose keys may hold values it compares more
     /// cheaply than by their bytes, such as joined strings named by
-    /// [`crate::text::Names`], keeps its answers itself: a map of the world compares keys by
+    /// [`crate::text::names::Names`], keeps its answers itself: a map of the world compares keys by
     /// [`Value`]'s order, which reads a long join byte by byte. By default the world keeps
     /// them.
     fn keeps_answers(&self) -> bool {

@@ -2014,7 +2014,7 @@ fn compared(v: &Value) -> bool {
 }
 
 /// A value as a key of the stage's maps: the value, and its canonical form, by which keys are
-/// equal and ordered. The canonical form names each string by its bytes ([`text::Names`]) and
+/// equal and ordered. The canonical form names each string by its bytes ([`text::names::Names`]) and
 /// each tuple or keypath by its kind and the forms of its parts ([`Namer`]), so two keys are
 /// equal exactly when their values are. The order is that of names, not of bytes, and no
 /// result reads it: each map is only looked up, and the run log is read in the order of the
@@ -2023,7 +2023,7 @@ fn compared(v: &Value) -> bool {
 // comparison, and a join doubled k times is 2^k bytes in O(k) nodes, so staging gave up
 // keying calls at joins (item STAGE-joined-eq). Here a key's strings are named once, when the
 // key is made, in O(n log N) dictionary steps for n nodes not named before and N bytes
-// ([`text::Names`]); each tuple is named by the forms of its parts in O(p log T) for p parts
+// ([`text::names::Names`]); each tuple is named by the forms of its parts in O(p log T) for p parts
 // and T tuples named, a shared tuple once by its id; and a comparison reads no byte and no
 // part. Tradeoff: each
 // node and tuple named is kept, with its summary, while the mix lives. Nothing is refused.
@@ -2042,7 +2042,7 @@ struct Key {
 enum Canon {
     /// A number, boolean, atom or family, compared as before.
     Other(Value),
-    Str(text::Name),
+    Str(text::names::Name),
     /// A tuple or keypath, by its number in [`Namer::seqs`].
     Seq(u64),
 }
@@ -2050,7 +2050,7 @@ enum Canon {
 /// The names of the strings and the numbers of the tuples and keypaths of the keys of one mix.
 #[derive(Debug, Default)]
 struct Namer {
-    text: text::Names,
+    text: text::names::Names,
     /// The number of each tuple (`false`) or keypath (`true`), by the forms of its parts.
     seqs: BTreeMap<(bool, Vec<Canon>), u64>,
     /// The number of each shared tuple met, by its id ([`Value::shared_parts`]). A sequence is

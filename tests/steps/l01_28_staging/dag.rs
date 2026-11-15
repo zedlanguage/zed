@@ -478,7 +478,7 @@ fn a_call_at_minus_zero_is_answered_apart_from_zero() {
 
 /// A call at a string of `2^62` bytes that joins made is answered by each function's stub:
 /// `"a"` doubled 62 times is 56 nodes, and the stub's table keys the string by its name
-/// (`text::Names`, the signature encoding of docs/joined-strings-study.md), which costs
+/// (`text::names::Names`, the signature encoding of docs/joined-strings-study.md), which costs
 /// `O(log N)` dictionary steps per node, not a read of every byte. Two functions that both
 /// answer 1 there share the part, as at a literal of 200 bytes.
 #[test]
@@ -529,7 +529,7 @@ pub(super) fn mixed_nodes_of(arg: Term) -> usize {
 /// functions that answer alike, at a join of 100 bytes, at a join of 200 bytes, and at a
 /// literal of 200 bytes (the empty string joined to a literal gives the literal), is mixed
 /// once and shared by both arms each time. The stub's table keys a string by its name
-/// (`text::Names`), so two strings are one key exactly when their bytes are equal. Before
+/// (`text::names::Names`), so two strings are one key exactly when their bytes are equal. Before
 /// STAGE-joined-eq-build a join of any length was run as written and mixed once under each
 /// function, and before STAGE-joined-eq a join longer than 128 bytes was.
 #[test]

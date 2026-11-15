@@ -18,7 +18,7 @@
 //! The dictionary gives each new rule the next free number, so a name is a function of the
 //! text alone: equal texts get one name, and different texts different names, since a name's
 //! rule reads back to its text. That holds whatever the constants below; the constants decide
-//! only whether the join of two summaries ([`Names::join`]) gives the name of the whole text,
+//! only whether the join of two summaries (`Names::join`) gives the name of the whole text,
 //! and the tests check it against byte comparison.
 //!
 //! Locality: whether a block starts at position `i` reads only the symbols `i − 8 ..= i + 4`
@@ -55,9 +55,9 @@
 //! read the whole window, not `i − 8 ..= i + 4`, and a join could name one text twice. The
 //! test `a_weak_label_hash_is_flagged_and_names_stay_exact` found exactly that.)
 //!
-//! A text is held as a summary ([`Sum`]): at each level, the part of the sequence that does not
+//! A text is held as a summary (`Sum`): at each level, the part of the sequence that does not
 //! depend on what is joined to either side (the middle), as run-length entries, kept whole when
-//! short and as its first and last [`K`] entries when long, and the number of entries between
+//! short and as its first and last `K` entries when long, and the number of entries between
 //! the middle and the true parse's next block start on each side (the skips). The join of two
 //! summaries parses again, at each level, only the windows where an end meets the middle.
 

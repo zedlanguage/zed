@@ -17,7 +17,8 @@
 use num_bigint::{BigUint, Sign};
 use zed_kernel::num::{Rat, TooLarge};
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
-use zed_kernel::text::{Name, Names, Part, Text};
+use zed_kernel::text::Text;
+use zed_kernel::text::names::{Name, Names, Part};
 use zed_kernel::value::Value;
 
 use super::binders::level_of;

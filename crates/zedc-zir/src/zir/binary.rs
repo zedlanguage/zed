@@ -136,7 +136,7 @@ impl W {
     // there too, and equal by identity. Tradeoff: equal texts held in different trees are
     // written differently, so two equal string constants can get two node keys, as two equal
     // numbers kept in different forms can (`kept`); a normal form of the text would need its
-    // bytes, or its signature encoding (`zed_kernel::text::Names`), which is what this avoids.
+    // bytes, or its signature encoding (`zed_kernel::text::names::Names`), which is what this avoids.
     // Nothing is refused but the memory for the bytes. Tests
     // `l01_31_zir::binary_forms::a_doubled_string_is_written_as_its_tree` and
     // `l01_31_zir::bench::shared_strings`.
