@@ -15,6 +15,7 @@
 
 mod bench;
 mod cases;
+mod decided;
 mod kinds;
 mod programs;
 
