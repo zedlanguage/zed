@@ -25803,51 +25803,99 @@ pub(super) mod tests {
 
     #[test]
     fn the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point() {
-        // Systems of 2 to 5 rows over four variables in [-4, 4], coefficients up to 7
-        // and constants up to 20 (the oracle's 0x38_0a family). Wherever the box test says
-        // empty, Fourier–Motzkin finds no rational point in the box it was given; the answer
-        // is the same under all 24 namings of the variables, which reorder the rows; and some
-        // systems are shown empty only by two rows whose bounds on a variable cross. Systems are
-        // drawn, from a new seed each run, until two are (about one in 200); 3000 systems
-        // short of that fail the test.
+        // 400 systems of 2 to 5 rows over four variables in [-4, 4], coefficients up to 7
+        // and constants up to 20 (the oracle's 0x38_0a family), from a new seed each run, each
+        // checked by [`box_answer`]. Some systems are shown empty only by two rows whose bounds
+        // on a variable cross (about one in 200); for each way of being empty the systems did
+        // not give, the system of [`BOX_EMPTY`] built for it is checked, and no number of
+        // systems is relied on (PROOF-test-coverage-constructive).
         let mut g = Draw(
             crate::seed::seed(
                 "the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point",
             ) | 1,
         );
         let all = perms4();
-        let (mut empty, mut crossed) = (0, 0);
-        for _ in 0..3000 {
-            if crossed >= 2 && empty > crossed {
-                break;
-            }
+        let mut ways = [0usize; 2];
+        for _ in 0..400 {
             let rows: Vec<(Vec<i128>, i128)> = (0..g.int(2, 5))
                 .map(|_| ((0..4).map(|_| g.int(-7, 7)).collect(), g.int(-20, 20)))
                 .collect();
-            let mut answers = Vec::new();
-            for p in &all {
-                let sys = boxed_system(&rows, p, 4);
-                if sys.empty {
-                    answers.push(None);
-                    continue;
-                }
-                let Some((lo, hi)) = bounds(&sys) else {
-                    answers.push(None);
-                    continue;
-                };
-                let e = box_empty_in(&sys, &lo, &hi);
-                if p == &all[0] {
-                    if e {
-                        assert!(rationally_empty(4, &dense(&sys, 4), &lo, &hi), "{rows:?}");
-                    }
-                    empty += usize::from(e);
-                    crossed += usize::from(e && !a_row_below_zero(&sys, &lo, &hi));
-                }
-                answers.push(Some(e));
+            if let Some(crossed) = box_answer(&rows, &all) {
+                ways[usize::from(crossed)] += 1;
             }
-            assert!(answers.windows(2).all(|w| w[0] == w[1]), "{rows:?}");
         }
-        assert!(empty > crossed && crossed > 0, "{empty} {crossed}");
+        eprintln!(
+            "empty by a row below zero {}, by crossing bounds {}",
+            ways[0], ways[1]
+        );
+        for (i, (way, rows)) in BOX_EMPTY.into_iter().enumerate() {
+            if ways[i] == 0 {
+                let rows = rows();
+                assert_eq!(
+                    box_answer(&rows, &all),
+                    Some(i == 1),
+                    "{way} is not shown: {rows:?}"
+                );
+                eprintln!("{way} shown only by the system built for it");
+            }
+        }
+    }
+
+    /// The ways the box test shows a system empty, in the order of [`box_answer`]'s
+    /// `crossed`, each with a system `Σ c·x + k >= 0` built to be empty that way (checked alone
+    /// by [`each_system_built_for_a_way_of_being_empty_is_empty_that_way`]): `-x1 - 2·x3 >= 12`
+    /// holds in [-4, 4] only at `x1 = x3 = -4`, and on that box `-2·x0 + 6·x1 + 7·x2 + 2·x3 >= 19`
+    /// is at most -15, below zero at every point (found by shrinking a drawn system row by row;
+    /// a row below zero in the first box is found empty when the system is built);
+    /// `2·x0 - 2·x3 >= 8` and `-6·x0 - 4·x2 + 2·x3 >= 13`, neither below zero at every point of
+    /// the box, give a variable bounds that cross (found the same way; two-variable rows whose
+    /// bounds cross by hand, such as `x0 + x1 >= 7` and `x1 - x0 >= 3`, are found empty when
+    /// the system is built).
+    const BOX_EMPTY: [(&str, fn() -> Vec<(Vec<i128>, i128)>); 2] = [
+        ("empty by a row below zero", || {
+            vec![(vec![0, -1, 0, -2], -12), (vec![-2, 6, 7, 2], -19)]
+        }),
+        ("empty by crossing bounds", || {
+            vec![(vec![2, 0, 0, -2], -8), (vec![-6, 0, -4, 2], -13)]
+        }),
+    ];
+
+    /// The box test on the rows `rows` over four variables in [-4, 4] under each naming in
+    /// `all`: wherever it says empty, Fourier–Motzkin finds no rational point in the box it
+    /// was given, and the answer is the same under every naming, which reorders the rows. Gives,
+    /// when the first naming is shown empty, whether only two rows whose bounds on a variable
+    /// cross show it (no row is below zero at every point of the box).
+    fn box_answer(rows: &[(Vec<i128>, i128)], all: &[Vec<usize>]) -> Option<bool> {
+        let mut answers = Vec::new();
+        let mut crossed = None;
+        for p in all {
+            let sys = boxed_system(rows, p, 4);
+            if sys.empty {
+                answers.push(None);
+                continue;
+            }
+            let Some((lo, hi)) = bounds(&sys) else {
+                answers.push(None);
+                continue;
+            };
+            let e = box_empty_in(&sys, &lo, &hi);
+            if p == &all[0] && e {
+                assert!(rationally_empty(4, &dense(&sys, 4), &lo, &hi), "{rows:?}");
+                crossed = Some(!a_row_below_zero(&sys, &lo, &hi));
+            }
+            answers.push(Some(e));
+        }
+        assert!(answers.windows(2).all(|w| w[0] == w[1]), "{rows:?}");
+        crossed
+    }
+
+    #[test]
+    fn each_system_built_for_a_way_of_being_empty_is_empty_that_way() {
+        let all = perms4();
+        for (i, (way, rows)) in BOX_EMPTY.into_iter().enumerate() {
+            let rows = rows();
+            assert_eq!(box_answer(&rows, &all), Some(i == 1), "{way}: {rows:?}");
+        }
     }
 
     #[test]
@@ -28297,42 +28345,90 @@ mod forced_against_solver {
 
     #[test]
     fn propagation_agrees_with_the_solver_on_chains_of_definitions() {
+        // 100 chains from a new seed each run, each checked by [`agrees`]; then the formula of
+        // [`ANSWERS`] for each of answers 0, 1 and 3 the chains did not give (the rarest, 1,
+        // is 7% of them). Class 2 no longer occurs, since a formula true before the trial now
+        // gives its point (class 1).
         let mut rng = Rng(crate::seed::seed(
             "propagation_agrees_with_the_solver_on_chains_of_definitions",
         ) | 1);
         let mut seen = [0usize; 9];
-        // Cases are drawn until each answer has been tested five times (about 70 cases; the
-        // rarest, 1, is 7% of them); 3000 cases short of that fail the test. Class 2 no longer
-        // occurs, since a formula true before the trial now gives its point (class 1).
-        let tested = |seen: &[usize; 9]| [0, 1, 3].iter().all(|&c| seen[c] >= 5);
-        for _ in 0..3000 {
+        for _ in 0..100 {
             seen[agrees(&chain(&mut rng, false))] += 1;
-            if tested(&seen) {
-                break;
-            }
         }
-        assert!(tested(&seen), "answers {seen:?}");
+        eprintln!("answers {seen:?}");
+        answers_built(&seen, &[0, 1, 3]);
     }
 
     #[test]
     fn propagation_agrees_with_the_solver_on_bounded_inputs() {
+        // 100 chains with bounded inputs from a new seed each run, each checked by [`agrees`];
+        // then the formula of [`ANSWERS`] for each of answers 0, 1, 3 and 6 the chains did not
+        // give (the rarest, 6, is 9% of them). A formula that holds with a variable free is
+        // rare here (the inputs are mostly bounded), and the chains of the test above give it
+        // often. A point at the bounds other than the solver's (6) is common
+        // (PRES-small-point).
         let mut rng =
             Rng(crate::seed::seed("propagation_agrees_with_the_solver_on_bounded_inputs") | 1);
         let mut seen = [0usize; 9];
-        // Cases are drawn until each answer that bounds give has been tested five times (about
-        // 60 cases; the rarest, 6, is 9% of them); 3000 cases short of that fail the test. A
-        // formula that holds with a variable free is rare here (the inputs are mostly
-        // bounded), and the chains of the test above give it often. A point at the bounds
-        // other than the solver's (6) is common (PRES-small-point).
-        let tested = |seen: &[usize; 9]| [0, 1, 3, 6].iter().all(|&c| seen[c] >= 5);
-        for _ in 0..3000 {
+        for _ in 0..100 {
             seen[agrees(&chain(&mut rng, true))] += 1;
-            if tested(&seen) {
-                break;
-            }
         }
         eprintln!("answers {seen:?}");
-        assert!(tested(&seen), "answers {seen:?}");
+        answers_built(&seen, &[0, 1, 3, 6]);
+    }
+
+    /// Answers of [`agrees`] the random tests must meet, each with a formula built to give it,
+    /// taken from [`corner_cases_agree_with_the_solver`] and [`bounds_agree_with_the_solver`]
+    /// (checked alone by [`each_formula_built_for_an_answer_gives_it`]): two values for one
+    /// variable (0); a product fixed by an equation (1); a disjunction with two live operands
+    /// (3); `z` forced to 1 at the bounds of `x`, a point other than the solver's (6). An
+    /// answer the random formulas did not give is given by its built formula, and no number of
+    /// formulas is relied on (PROOF-test-coverage-constructive).
+    const ANSWERS: [(usize, fn() -> Formula); 4] = [
+        (0, || {
+            Formula::and(vec![eq(&sym("x"), &k(1)), eq(&sym("x").times(2), &k(4))])
+        }),
+        (1, || {
+            let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
+            Formula::and(vec![eq(&p, &k(6)), eq(&sym("x"), &k(2))])
+        }),
+        (3, || {
+            Formula::and(vec![
+                Formula::or(vec![eq(&sym("x"), &k(1)), eq(&sym("x"), &k(2))]),
+                ge(&sym("y"), &k(0)),
+            ])
+        }),
+        (6, || {
+            let x = sym("x");
+            Formula::and(vec![
+                ge(&x, &k(6)),
+                ge(&k(7), &x),
+                Formula::or(vec![ge(&x, &k(7)), eq(&q(0), &k(1))]),
+                eq(&sym("y"), &k(0)),
+            ])
+        }),
+    ];
+
+    /// For each answer in `want` that `seen` has not counted, checks that the formula of
+    /// [`ANSWERS`] built for it gives it.
+    fn answers_built(seen: &[usize; 9], want: &[usize]) {
+        for &c in want {
+            if seen[c] == 0 {
+                let (_, f) = ANSWERS.into_iter().find(|(a, _)| *a == c).expect("built");
+                let f = f();
+                assert_eq!(agrees(&f), c, "answer {c} is not given: {f}");
+                eprintln!("answer {c} given only by the formula built for it");
+            }
+        }
+    }
+
+    #[test]
+    fn each_formula_built_for_an_answer_gives_it() {
+        for (c, f) in ANSWERS {
+            let f = f();
+            assert_eq!(agrees(&f), c, "{f}");
+        }
     }
 
     #[test]
@@ -28633,23 +28729,37 @@ mod forced_against_solver {
     #[test]
     fn the_point_at_the_bounds_does_not_depend_on_names_or_order() {
         // Propagation, and the point it tries at the bounds when it leaves the formula
-        // undecided, give the same answer, and the same point renamed.
+        // undecided, give the same answer, and the same point renamed. 120 chains from a new
+        // seed each run; the trial at the bounds alone answers about 4% of them, and when none
+        // did, the formula of [`ANSWERS`] answered at the bounds (6) is checked the same way,
+        // so no number of chains is relied on (PROOF-test-coverage-constructive).
         let seed = crate::seed::seed("the_point_at_the_bounds_does_not_depend_on_names_or_order");
         let mut rng = Rng(seed | 1);
         let mut order = Rng(seed.rotate_left(32) | 1);
-        // Cases are drawn until the trial at the bounds alone has answered five times (about
-        // 120 cases; it answers 4% of them); 4000 cases short of that fail the test.
         let mut at_bounds = 0;
-        for case in 0..4000 {
+        for case in 0..120 {
             let f = chain(&mut rng, case % 2 == 0);
-            if alike_rewritten(&f, &mut order) == "holds" && matches!(agrees(&f), 6 | 7) {
-                at_bounds += 1;
-                if at_bounds == 5 {
-                    break;
-                }
-            }
+            at_bounds += usize::from(at_the_bounds_alike(&f, &mut order));
         }
-        assert!(at_bounds >= 5, "{at_bounds} answered at the bounds alone");
+        eprintln!("{at_bounds} answered at the bounds alone");
+        if at_bounds == 0 {
+            let f = ANSWERS[3].1();
+            assert!(
+                at_the_bounds_alike(&f, &mut order),
+                "not answered at the bounds: {f}"
+            );
+        }
+    }
+
+    /// [`alike_rewritten`] of `f`; gives whether the trial at the bounds alone answered it.
+    fn at_the_bounds_alike(f: &Formula, order: &mut Rng) -> bool {
+        alike_rewritten(f, order) == "holds" && matches!(agrees(f), 6 | 7)
+    }
+
+    #[test]
+    fn the_formula_built_to_be_answered_at_the_bounds_is() {
+        let f = ANSWERS[3].1();
+        assert!(at_the_bounds_alike(&f, &mut Rng(1)), "{f}");
     }
 
     /// A ladder that the rounds at the bounds climb one step a round: `x` bounded, then each
@@ -28694,34 +28804,87 @@ mod forced_against_solver {
     fn rounds_at_the_bounds_do_not_depend_on_names_or_order() {
         // Ladders that need several rounds, some ending in a contradiction in a later round:
         // each is answered alike whatever the names and order, and agrees with the solver.
+        // 50 ladders from a new seed each run (the rarest kind, a contradiction in a later
+        // round, is 10% of them); then the ladder of [`LADDERS`] for each kind they did not
+        // give, so no number of ladders is relied on (PROOF-test-coverage-constructive).
         let seed = crate::seed::seed("rounds_at_the_bounds_do_not_depend_on_names_or_order");
         let mut rng = Rng(seed | 1);
         let mut order = Rng(seed.rotate_left(32) | 1);
-        // Cases are drawn until each kind of ladder has been tested five times (about 50
-        // cases; the rarest, a contradiction in a later round, is 10% of them); 3000 cases
-        // short of that fail the test.
-        let (mut several, mut later_empty, mut three) = (0, 0, 0);
-        for _ in 0..3000 {
-            if several >= 5 && later_empty >= 5 && three >= 5 {
-                break;
-            }
+        let mut kinds = [0usize; 3];
+        for _ in 0..50 {
             let f = ladder(&mut rng);
-            alike_rewritten(&f, &mut order);
-            agrees(&f);
-            match forced::rounds(&f) {
-                Some((Some(true), r)) if r >= 2 => several += 1,
-                Some((Some(false), r)) if r >= 2 => later_empty += 1,
-                _ => {}
-            }
-            if forced::rounds(&f).is_some_and(|(_, r)| r >= 3) {
-                three += 1;
+            for (n, met) in kinds.iter_mut().zip(ladder_kinds(&f, &mut order)) {
+                *n += usize::from(met);
             }
         }
-        assert!(
-            several >= 5 && later_empty >= 5 && three >= 5,
-            "{several} decided in round 2 or later, {later_empty} contradicted there, {three} \
-             with three rounds or more"
-        );
+        eprintln!("ladders of each kind {kinds:?}");
+        for (i, (kind, f)) in LADDERS.into_iter().enumerate() {
+            if kinds[i] == 0 {
+                let f = f();
+                assert!(ladder_kinds(&f, &mut order)[i], "{kind} is not made: {f}");
+                eprintln!("{kind} made only by the ladder built for it");
+            }
+        }
+    }
+
+    /// The kinds of ladder [`rounds_at_the_bounds_do_not_depend_on_names_or_order`] must meet,
+    /// in the order of [`ladder_kinds`], each with a ladder built to make it (checked alone by
+    /// [`each_ladder_built_for_a_kind_makes_it`]): the two ladders of
+    /// [`bounds_agree_with_the_solver`] whose `z` is bounded only after the first round, the
+    /// second ending in a contradiction there (`z` and `w` named `q0` and `q1`, since
+    /// [`swapped`] renames only `x`, `y` and the `qi`); and a ladder of `x == 6` and three
+    /// steps `qi >= prev + 1`, each forced once the step before has its value, decided in
+    /// round 3 (with two steps, in round 2).
+    const LADDERS: [(&str, fn() -> Formula); 3] = [
+        ("decided in round 2 or later", || {
+            Formula::and(vec![
+                ge(&sym("x"), &k(6)),
+                ge(&k(7), &sym("x")),
+                Formula::or(vec![ge(&sym("x"), &k(7)), ge(&q(0), &k(1))]),
+                eq(&sym("y"), &k(0)),
+            ])
+        }),
+        ("contradicted in round 2 or later", || {
+            Formula::and(vec![
+                ge(&sym("x"), &k(6)),
+                ge(&k(7), &sym("x")),
+                Formula::or(vec![ge(&sym("x"), &k(7)), ge(&q(0), &k(1))]),
+                Formula::or(vec![ge(&q(0), &k(2)), ge(&q(1), &k(1))]),
+                ge(&k(1), &q(0).plus(&q(1))),
+                eq(&sym("y"), &k(0)),
+            ])
+        }),
+        ("three rounds or more", || {
+            Formula::and(vec![
+                ge(&sym("x"), &k(6)),
+                ge(&k(6), &sym("x")),
+                Formula::or(vec![ge(&sym("x"), &k(7)), ge(&q(0), &sym("x").plus(&k(1)))]),
+                Formula::or(vec![ge(&q(0), &k(8)), ge(&q(1), &q(0).plus(&k(1)))]),
+                Formula::or(vec![ge(&q(1), &k(9)), ge(&q(2), &q(1).plus(&k(1)))]),
+            ])
+        }),
+    ];
+
+    /// Checks the ladder `f` with [`alike_rewritten`] and [`agrees`]; gives whether it was
+    /// decided in round 2 or later, contradicted in round 2 or later, and took three rounds or
+    /// more, in the order of [`LADDERS`].
+    fn ladder_kinds(f: &Formula, order: &mut Rng) -> [bool; 3] {
+        alike_rewritten(f, order);
+        agrees(f);
+        let rounds = forced::rounds(f);
+        [
+            matches!(rounds, Some((Some(true), r)) if r >= 2),
+            matches!(rounds, Some((Some(false), r)) if r >= 2),
+            rounds.is_some_and(|(_, r)| r >= 3),
+        ]
+    }
+
+    #[test]
+    fn each_ladder_built_for_a_kind_makes_it() {
+        for (i, (kind, f)) in LADDERS.into_iter().enumerate() {
+            let f = f();
+            assert!(ladder_kinds(&f, &mut Rng(1))[i], "{kind}: {f}");
+        }
     }
 
     #[test]
