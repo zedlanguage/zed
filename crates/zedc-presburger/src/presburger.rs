@@ -27772,6 +27772,84 @@ mod by_halves_against_old {
         }
     }
 
+    /// Case 7 of [`answers_are_those_of_the_old_path`] at seed 14461253816647718467 (item
+    /// FAIL-by-halves-seed-1446): eleven atoms in `0..=20`, ten rows of two or three atoms and
+    /// one disjunction on `v1 - v0 - v5`. No row and no disjunct can be left out with the hulls
+    /// of `v0` still differing between batch and single projection.
+    fn seed_1446_case_7() -> Formula {
+        let k = Lin::constant;
+        let mut fs: Vec<Formula> = Vec::new();
+        for i in 0..11 {
+            fs.push(ge(v(i)));
+            fs.push(ge(k(20).minus(&v(i))));
+        }
+        // v[b] - v[a] - v[c] + k >= 0 for each (b, a, c, k); `c` None for a row of two atoms.
+        for (b, a, c, kk) in [
+            (1, 0, None, 2),
+            (2, 1, Some(10), 0),
+            (3, 2, Some(7), 0),
+            (4, 3, Some(8), 2),
+            (5, 1, Some(4), 2),
+            (6, 5, Some(7), 2),
+            (7, 2, Some(6), 2),
+            (8, 4, Some(7), 0),
+            (9, 5, Some(8), 0),
+            (10, 6, Some(9), 1),
+        ] {
+            let l = v(b).minus(&v(a)).plus(&k(kk));
+            fs.push(ge(c.map_or(l.clone(), |c| l.minus(&v(c)))));
+        }
+        let f0 = v(1).minus(&v(0)).minus(&v(5));
+        fs.push(Formula::or(vec![
+            eq(f0.minus(&k(-4))),
+            ge(k(-3).minus(&f0)),
+            eq(f0.minus(&k(6))),
+        ]));
+        Formula::and(fs)
+    }
+
+    /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`, and batch and single projection
+    /// both give it. The exact set, checked with no projection: each of 1 to 4 has the point
+    /// listed below (`holds` evaluates the formula), and no point has `v0` at 0 or above 4. By
+    /// hand: rows 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
+    /// `v2 + 2·v7 <= 2`; then `v1 <= v2 - v10 <= 2` and `v0 <= v1 + 2 <= 4`. At `v0 = 0` the
+    /// disjunction reads `v5 == v1 + 4`, `v5 >= v1 + 3` or `v1 == v5 + 6`; the last needs
+    /// `v1 >= 6`, so `v5 >= v1 + 3 >= 3`. Rows 2, 10, 9 and 8 give
+    /// `v2 >= v1 + v10 >= v1 + v6 + v9 - 1 >= v1 + v6 + v5 + v4 + v7 - 1`, and with
+    /// `v2 <= 2 - 2·v7` that is `v1 + v4 + v5 + v6 + 3·v7 <= 3`: `v5 = 3` and the others 0. Row 6,
+    /// `v6 >= v5 + v7 - 2`, then needs `v6 >= 1`, which is false.
+    /// At e051752ad single projection gives `[0, 4]`: its question "is there a point with
+    /// `v0 <= 1`" over the disjunct `v0 + v5 >= v1 + 3`, asked of the kernel of that disjunct
+    /// for `v0` alone, is refused for `Refusal::Growth`, and the hull keeps the 0 it cannot rule
+    /// out. Batch projection of all eleven symbols, or of `v0` and `v10`, gives `[1, 4]`.
+    /// `project_each(&f, &[v0])` reports the cause, `[Growth]`, of the disjunction it left out;
+    /// [`project`] drops it. Batch of all eleven reports `[Growth]` too and is exact; batch of
+    /// `v0` and `v10` reports none.
+    #[test]
+    fn seed_1446_case_7_batch_and_single_hulls_are_exact() {
+        let f = seed_1446_case_7();
+        let syms: Vec<Atom> = (0..11).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        for p in [
+            [1, 0, 1, 1, 0, 2, 0, 0, 0, 2, 1],
+            [2, 0, 1, 1, 0, 2, 0, 0, 0, 2, 1],
+            [3, 1, 2, 2, 0, 2, 0, 0, 0, 2, 1],
+            [4, 2, 2, 2, 0, 1, 0, 0, 0, 1, 0],
+        ] {
+            let m: Model = (syms.iter().cloned())
+                .zip(p.iter().map(|&x| Int::from(x)))
+                .collect();
+            assert!(f.holds(&m), "no point at {p:?}");
+        }
+        let exact = IntervalSet::range(End::Fin(Num::from(1)), End::Fin(Num::from(4)));
+        let (all, _) = project_each(&f, &syms).expect("batch of all answers");
+        assert_eq!(all[0].as_ref().ok(), Some(&exact), "batch of all symbols");
+        let (two, _) = project_each(&f, &[syms[0].clone(), syms[10].clone()])
+            .expect("batch of v0 and v10 answers");
+        assert_eq!(two[0].as_ref().ok(), Some(&exact), "batch of v0 and v10");
+        let one = project(&f, &syms[0]);
+        assert_eq!(one.as_ref().ok(), Some(&exact), "single");
+    }
+
     /// `n` copies of the rows of [`chain_of_sums`], copy `c` over `v(9c)` to `v(9c + 8)`, each
     /// linked to the one before it by `v(9c - 1) >= v(9c)`, and its `9n` symbols (item
     /// FAIL-batch-linked-copies-growth).
