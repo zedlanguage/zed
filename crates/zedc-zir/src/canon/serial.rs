@@ -53,6 +53,19 @@ struct Out<'a> {
 /// rules, each costing a byte or more of the output.
 const NOT_WRITTEN: u64 = u64::MAX;
 
+/// `n` in unsigned LEB128 at the start of `buf`, and how many bytes that is: 7 bits a byte, low
+/// first, the top bit set on all bytes but the last. A 64-bit number takes at most 10.
+fn leb128(mut n: u64, buf: &mut [u8]) -> usize {
+    let mut len = 0;
+    while n >= 0x80 {
+        buf[len] = n as u8 | 0x80;
+        n >>= 7;
+        len += 1;
+    }
+    buf[len] = n as u8;
+    len + 1
+}
+
 /// A rule's label in the canonical parse: the first 128 bits of the BLAKE3 hash of its kind,
 /// count or length and its parts' labels ([`Names::canonical`]).
 fn label(data: &[u8]) -> u128 {
@@ -94,12 +107,10 @@ impl Out<'_> {
 
     /// A number in unsigned LEB128: 7 bits a byte, low first, the top bit set on all bytes
     /// but the last.
-    fn var(&mut self, mut n: u64) {
-        while n >= 0x80 {
-            self.tag(n as u8 | 0x80);
-            n >>= 7;
-        }
-        self.tag(n as u8);
+    fn var(&mut self, n: u64) {
+        let mut buf = [0u8; 10];
+        let len = leb128(n, &mut buf);
+        self.put(&buf[..len]);
     }
 
     /// The reference to `n`, a byte or a rule already written: a byte is its value, the rule
@@ -159,13 +170,15 @@ impl Out<'_> {
     // decoder's tree, as `zir::binary` does, costs its nodes, but two trees of one string
     // would then have two addresses. Here the canonical parse: O(m log L) to name a text of
     // m nodes ([`Names`], COMPLEXITY.md row STAGE-joined-eq-build), plus O(r) for the r rules
-    // under its name, each hashed once (one BLAKE3 call of at most 98 bytes) and written
-    // once in the definition. For a doubled string r is O(log L); for a string with no
-    // repeats r is about L/3 (348,644 rules for 1 MiB of random letters), so a flat literal
-    // costs a parse and a hash a rule where it cost a copy: 586 times the instructions of
-    // a copy and a BLAKE3 hash of its bytes, down from 1,314, where row
-    // PERF-canon-flat-strings asks for 50; the r BLAKE3 calls alone are 91 times (COMPLEXITY.md
-    // Z32). `canon::VERSION` 10 to 11. Tests
+    // under its name, each labeled once (by its code when that fits in 125 bits, else one
+    // BLAKE3 call of at most 98 bytes) and written once in the definition. For a doubled
+    // string r is O(log L); for a string with no repeats r is about L/3 (350,233 rules for
+    // 1 MiB of random letters, 115,510 of them hashed), so a flat literal costs a parse and
+    // a label a rule where it cost a copy: in the test profile 368 times the instructions of
+    // a copy and a BLAKE3 hash of its bytes (262 in release), down from 586 (402) before row
+    // PERF-canon-flat-strings, which asks for 50; the hashed labels alone are about 25 times
+    // (COMPLEXITY.md Z32). `canon::VERSION` 10 to 11, and 12 to 13 for the exact labels.
+    // Tests
     // `l01_32_canonical_zir::string_nodes` and
     // `l01_32_canonical_zir::bench::string_nodes`.
     fn text(&mut self, t: &Text) {
@@ -177,20 +190,25 @@ impl Out<'_> {
             }
             match (self.names.part(n), ready) {
                 (Part::Empty | Part::Byte(_), _) => {}
+                // Each rule is put in one piece: a tag, at most 6 symbols and a count or a
+                // length, each at most 10 bytes.
                 (Part::Run(x, count), true) => {
-                    self.tag(0);
+                    let mut buf = [0u8; 1 + 2 * 10];
                     let x = self.sym(x);
-                    self.var(x);
-                    self.var(count);
+                    let mut len = 1 + leb128(x, &mut buf[1..]);
+                    len += leb128(count, &mut buf[len..]);
+                    self.put(&buf[..len]);
                     self.mark_written(n);
                 }
                 (Part::Block(xs), true) => {
-                    self.tag(1);
-                    self.tag(xs.len() as u8);
+                    let mut buf = [0u8; 2 + 6 * 10];
+                    buf[..2].copy_from_slice(&[1, xs.len() as u8]);
+                    let mut len = 2;
                     for &x in xs.iter() {
                         let x = self.sym(x);
-                        self.var(x);
+                        len += leb128(x, &mut buf[len..]);
                     }
+                    self.put(&buf[..len]);
                     self.mark_written(n);
                 }
                 (Part::Run(x, _), false) => todo.extend([(n, true), (x, false)]),

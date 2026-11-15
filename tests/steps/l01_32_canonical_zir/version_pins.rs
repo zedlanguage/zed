@@ -41,6 +41,8 @@ use super::graph;
 /// Version 12 adds the names a call may write inside an export's type, as those of a function
 /// it returns or of a parameter's function type (ADDR-nested-param-names), and changes no
 /// normal form, so its hash is version 11's.
+/// Version 13 labels each rule of a string's canonical parse whose code fits in 125 bits by
+/// that code, not by a hash (PERF-canon-flat-strings), which changes the parse of `strings`.
 const HISTORY: &[(u32, &str)] = &[
     (
         6,
@@ -69,6 +71,10 @@ const HISTORY: &[(u32, &str)] = &[
     (
         12,
         "4363dd06fe402ce1532288c6e232775a85de5e5756988aad0b379eb2cd98ec17",
+    ),
+    (
+        13,
+        "d37088327563158038f703dca59de37e19edc7c884be80345e7a343ccbc11d16",
     ),
 ];
 

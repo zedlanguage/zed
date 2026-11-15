@@ -339,6 +339,69 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
     }
 }
 
+/// The block starts as the module's comment states them, one round or pass at a time over the
+/// whole list: the form [`decide`] had before it ran the rounds in one pass and the passes in
+/// another (row PERF-canon-flat-strings).
+fn plain_decide(ids: &[u128], ts: bool, te: bool) -> Vec<bool> {
+    let n = ids.len();
+    let toss = |x: u128, left: Option<u128>| -> u128 {
+        let p = left.map_or(0, |l| (x ^ l).trailing_zeros());
+        u128::from(2 * p) + ((x >> p) & 1)
+    };
+    let mut lab: Vec<u128> = ids.to_vec();
+    for _ in 0..4 {
+        lab = (0..n)
+            .map(|i| toss(lab[i], i.checked_sub(1).map(|j| lab[j])))
+            .collect();
+    }
+    for c in [5, 4, 3] {
+        for i in 0..n {
+            if lab[i] == c {
+                let left = i.checked_sub(1).map(|j| lab[j]);
+                let right = lab.get(i + 1).copied();
+                lab[i] = (0..3)
+                    .find(|&v| Some(v) != left && Some(v) != right)
+                    .expect("three labels, two neighbors");
+            }
+        }
+    }
+    let mut st: Vec<bool> = (0..n)
+        .map(|i| {
+            let left = i.checked_sub(1).map(|j| lab[j]);
+            let right = lab.get(i + 1).copied();
+            left.is_none_or(|l| lab[i] > l) && right.is_none_or(|r| lab[i] > r)
+        })
+        .collect();
+    if ts {
+        st[0] = true;
+        if n > 1 {
+            st[1] = false;
+        }
+    }
+    if te && n > 1 {
+        st[n - 1] = false;
+    }
+    st
+}
+
+/// [`decide`] gives the starts of the plain rounds and passes, on lists of every length from 1
+/// to 60, wide and narrow labels, at each choice of true start and end.
+#[test]
+fn decide_gives_the_starts_of_the_plain_rounds() {
+    let mut rng = Rng(crate::seed::seed("decide_gives_the_starts_of_the_plain_rounds") | 1);
+    for _ in 0..20_000 {
+        let n = rng.int(1, 60);
+        let ids = proper_ids(&mut rng, n);
+        for (ts, te) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert_eq!(
+                decide_of(&ids, ts, te),
+                plain_decide(&ids, ts, te),
+                "{ids:?} {ts} {te}"
+            );
+        }
+    }
+}
+
 /// Inner blocks hold 2 to 4 symbols, but the forced start and end can make a block at the
 /// true end hold 5 (round 1 of the cross-review of item STAGE-joined-eq-build), within
 /// [`MAX_BLOCK`].
@@ -457,10 +520,92 @@ fn canonical_parts_are_a_function_of_the_text() {
     assert!(!x.collided() && !y.collided());
 }
 
+/// The next `k` bits of an exact label's code, most significant first.
+struct Bits {
+    code: u128,
+    left: u32,
+}
+
+impl Bits {
+    fn take(&mut self, k: u32) -> u128 {
+        self.left -= k;
+        (self.code >> self.left) & ((1u128 << k) - 1)
+    }
+
+    /// The form ([`form`]'s first half) of the symbol whose code comes next.
+    fn symbol(&mut self) -> String {
+        if self.take(1) == 0 {
+            format!("{}", self.take(8))
+        } else {
+            self.rule()
+        }
+    }
+
+    /// The form of the rule whose code comes next.
+    fn rule(&mut self) -> String {
+        if self.take(1) == 0 {
+            let s = self.symbol();
+            let mut zeros = 0;
+            while self.take(1) == 0 {
+                zeros += 1;
+            }
+            format!("R{}({s})", 1u128 << zeros | self.take(zeros))
+        } else {
+            let k = self.take(3) + 1;
+            let s: Vec<String> = (0..k).map(|_| self.symbol()).collect();
+            format!("B({})", s.join(","))
+        }
+    }
+}
+
+#[test]
+fn an_exact_label_reads_back_to_its_rule() {
+    // PERF-canon-flat-strings: a rule whose code fits in 125 bits is labeled by the code, not
+    // a hash. Read each such label back, from its bits alone, to the rule's tree, and check
+    // that no two rules share a label of any kind.
+    let mut rng = Rng(crate::seed::seed("an_exact_label_reads_back_to_its_rule") | 1);
+    let mut names = Names::canonical(fnv128);
+    for _ in 0..60 {
+        let n = rng.pick(&[5, 30, 300, 3000]);
+        let data = adversarial(&mut rng, n);
+        let _ = build(&mut names, &data, &mut rng, 50);
+    }
+    // Long runs, whose counts take long gamma codes, of a byte and of a rule.
+    let _ = names.leaf(&[b'a'; 100_000]);
+    let _ = names.leaf(&b"ab".repeat(50_000));
+    let of = &names.labels.as_ref().expect("a canonical dictionary").of;
+    let mut memo = HashMap::new();
+    let mut exact = 0;
+    for (i, &label) in of.iter().enumerate() {
+        if label >> 126 != 1 {
+            assert!(
+                label >> 127 == 1,
+                "a label is exact or hashed, with no collision"
+            );
+            continue;
+        }
+        exact += 1;
+        let rest = label & !(3 << 126);
+        let len = 127 - rest.leading_zeros();
+        let mut bits = Bits {
+            code: rest & ((1 << len) - 1),
+            left: len,
+        };
+        let read = bits.rule();
+        assert_eq!(bits.left, 0, "the code is read to its end");
+        let n = Name(FIRST_RULE + i as u64);
+        assert_eq!(read, form(&names, n, &mut memo).0);
+    }
+    let distinct: std::collections::HashSet<u128> = of.iter().copied().collect();
+    assert_eq!(distinct.len(), of.len());
+    assert!(exact > 0 && exact < of.len(), "{exact} of {}", of.len());
+}
+
 #[test]
 fn a_weak_label_hash_is_flagged_and_names_stay_exact() {
-    // Every rule's label is one value, so neighbors' labels agree wherever two rules meet: the
-    // dictionary says so, and parses by its numbers there, so names stay exact.
+    // Every hashed label is one value, so neighbors' labels agree wherever two rules too long
+    // for an exact label meet: the dictionary says so, and parses by its numbers there, so
+    // names stay exact.
     let mut names = Names::canonical(|_| 0);
     let mut corpus = Corpus::default();
     let mut rng = Rng(crate::seed::seed("a_weak_label_hash_is_flagged_and_names_stay_exact") | 1);

@@ -61,10 +61,12 @@ use zedc_base::address::ContentAddress;
 /// in the definition, not its bytes (CANON-term-string-nodes); version 12 adds to an export's
 /// address the names a call may write inside its type, as those of a function it returns or of
 /// a parameter's function type (ADDR-nested-param-names), with every normal form as version 11
-/// left it. The test
+/// left it; version 13 labels each rule of a string's canonical parse whose code fits in 125
+/// bits by that code, not by its hash (`Names::canonical`, PERF-canon-flat-strings), which
+/// changes the parse, and so the rules written, of a string of more than a few bytes. The test
 /// `l01_32_canonical_zir::version_pins` records the normal forms of a fixed set of graphs and
 /// definitions under each version, and fails when they change and this number does not.
-pub const VERSION: u32 = 12;
+pub const VERSION: u32 = 13;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {

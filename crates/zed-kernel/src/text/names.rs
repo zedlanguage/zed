@@ -31,16 +31,24 @@
 //! The parse reads the numbers the dictionary gave, so in a dictionary made by [`Names::new`]
 //! the blocks of a text, though not its being equal to another, depend on what the dictionary
 //! met before. A dictionary made by [`Names::canonical`] (item CANON-term-string-nodes) gives
-//! the coin tossing a label in place of each number: a byte's label is the byte, and a rule's
-//! the given hash of its kind, its count or length and its parts' labels, with the top bit set.
-//! A label is then a function of the bytes the symbol stands for, so the blocks, and the rules
-//! that hold a text's parse ([`Names::part`]), are a function of the text alone, whatever
-//! texts, trees and order the dictionary met. The proofs above read of the numbers only that
-//! they are fixed for each symbol and that two different symbols have different ones. A label
-//! is fixed for each symbol when its rule is made; a rule whose label another rule already
-//! holds (two rules whose hashes agree in 128 bits) gets its number as its label instead,
-//! which no other symbol holds (a number is at least 256, so no byte's, and below 2^64, so no
-//! hashed label's), and [`Names::collided`] says so. The labels are therefore different for
+//! the coin tossing a label in place of each number: a byte's label is the byte; a rule's is
+//! its exact code when that fits in 125 bits (`Labels::exact`: bit 126 set, the top bit
+//! clear, and a prefix-free code of its kind, count or length and its parts' codes, which
+//! reads back to the rule), and otherwise the given hash of its kind, its count or length and
+//! its parts' labels, with the top bit set. About two thirds of the rules of a text of random
+//! letters have an exact label (232,098 of 348,644 for 1 MiB), and so cost no hash (row
+//! PERF-canon-flat-strings, canonicalization VERSION 13; test
+//! `an_exact_label_reads_back_to_its_rule`). Two exact labels differ for different rules, as
+//! their codes do; an exact label is no byte's or number's (bit 126) and no hashed label's
+//! (the top bit). A label is then a function of the bytes the symbol stands for, so the
+//! blocks, and the rules that hold a text's parse ([`Names::part`]), are a function of the
+//! text alone, whatever texts, trees and order the dictionary met. The proofs above read of
+//! the numbers only that they are fixed for each symbol and that two different symbols have
+//! different ones. A label is fixed for each symbol when its rule is made; a rule whose hashed
+//! label another rule already holds (two rules whose hashes agree in 128 bits) gets its number
+//! as its label instead, which no other symbol holds (a number is at least 256, so no byte's,
+//! and below 2^64, so no exact or hashed label's), and [`Names::collided`] says so. A rule
+//! with a numbered part is not given an exact label, since a number is not a code. The labels are therefore different for
 //! different symbols in every case, the proofs hold as written, and the names stay exact; only
 //! the claim that the parse is the text's alone is lost on a collision. (A label chosen per
 //! window, by whether two neighbors in it collide, would not do: a block start would then
@@ -218,10 +226,75 @@ impl Labels {
         }
     }
 
+    /// The code of a symbol inside an exact label, MSB first, and its length in bits: a byte
+    /// is a 0 bit and its 8 bits, a rule with an exact label a 1 bit and its rule's code. None
+    /// for a rule with a hashed or numbered label.
+    fn code(&self, sym: u64) -> Option<(u128, u32)> {
+        let Some(i) = sym.checked_sub(FIRST_RULE) else {
+            return Some((u128::from(sym), 9));
+        };
+        let label = self.of[i as usize];
+        if label >> 126 != 1 {
+            return None;
+        }
+        // The label below bit 126 is a 1 bit and the rule's code: the symbol's code, one longer.
+        let rest = label & !(3 << 126);
+        Some((rest, 128 - rest.leading_zeros()))
+    }
+
+    /// The exact label of a rule whose code fits: bit 126 set, the top bit clear, and below
+    /// them a 1 bit at place `len` and the rule's code of `len ≤ 125` bits. The code is a
+    /// kind bit (0 a run, 1 a block), then for a run its symbol's code and its count in Elias
+    /// gamma code (⌊log₂ c⌋ zeros, then c in binary), for a block its length less one in 3
+    /// bits and its symbols' codes. Each code reads back to one tree, the length marker fixes
+    /// where the code starts, so two different rules never share an exact label; bit 126
+    /// keeps them from bytes (below 2^8) and numbers (below 2^64), the clear top bit from
+    /// hashed labels.
+    ///
+    /// Complexity tradeoff: every rule hashed (canonicalization VERSION 11 and 12) costs one
+    /// BLAKE3 call of up to 98 bytes per rule, about 600 instructions; this code costs O(1)
+    /// shifts per part, and needs no entry in `held`, since it cannot collide. Whether a rule
+    /// gets one reads only its own parts' labels, so it is fixed by the bytes; no length
+    /// switch is involved. Measured on 1 MiB of random letters in release: 232,098 of 348,644
+    /// rules exact, the address from 869M to 706M instructions (row PERF-canon-flat-strings).
+    fn exact(&self, r: &Rule) -> Option<u128> {
+        let mut code: u128 = 0;
+        let mut len: u32 = 0;
+        let mut push = |c: u128, l: u32| -> Option<()> {
+            if len + l > 125 {
+                return None;
+            }
+            code = code << l | c;
+            len += l;
+            Some(())
+        };
+        match r {
+            Rule::Run(sym, count) => {
+                push(0, 1)?;
+                let (c, l) = self.code(*sym)?;
+                push(c, l)?;
+                let n = 63 - count.leading_zeros();
+                push(u128::from(*count), 2 * n + 1)?;
+            }
+            Rule::Block(k, syms) => {
+                push(1, 1)?;
+                push(u128::from(k - 1), 3)?;
+                for &s in &syms[..usize::from(*k)] {
+                    let (c, l) = self.code(s)?;
+                    push(c, l)?;
+                }
+            }
+        }
+        Some(1 << 126 | 1 << len | code)
+    }
+
     /// The label of a new rule: the hash of its kind (0 a run, 1 a block), its count or length,
     /// and its parts' labels, little-endian, with the top bit set, so that it is never a
     /// byte's. Its parts were numbered before it, so their labels are known.
     fn of_rule(&self, r: &Rule) -> u128 {
+        if let Some(label) = self.exact(r) {
+            return label;
+        }
         let mut buf = [0u8; 2 + 8 + 16 * MAX_BLOCK];
         let n = match r {
             Rule::Run(sym, count) => {
@@ -397,7 +470,8 @@ impl Names {
         let n = FIRST_RULE + place as u64;
         if let Some(l) = &mut self.labels {
             let hashed = l.of_rule(&rule);
-            let label = if l.held.insert(hashed) {
+            // An exact label is no other symbol's (`Labels::exact`); a hashed one is checked.
+            let label = if hashed >> 127 == 0 || l.held.insert(hashed) {
                 hashed
             } else {
                 l.collided = true;
@@ -406,6 +480,17 @@ impl Names {
             l.of.push(label);
         }
         n
+    }
+
+    /// Room for `more` new rules in each table that holds one entry per rule.
+    fn reserve(&mut self, more: usize) {
+        let rules = &self.rules;
+        self.find
+            .reserve(more, |&i| FxBuildHasher.hash_one(rules[i]));
+        self.rules.reserve(more);
+        if let Some(l) = &mut self.labels {
+            l.of.reserve(more);
+        }
     }
 
     /// [`decide`] for the symbols `ids`, reading as labels the numbers themselves in a
@@ -463,17 +548,22 @@ impl Names {
         if data.is_empty() {
             return None;
         }
-        let mut ents: Vec<Ent> = Vec::with_capacity(data.len());
-        for &b in data {
-            match ents.last_mut() {
-                Some(e) if e.sym == u64::from(b) => e.count += 1,
-                _ => ents.push(Ent {
-                    sym: u64::from(b),
-                    count: 1,
-                }),
+        self.reserve(data.len() / 2);
+        let ids: Vec<u64> = byte_runs(data).map(|e| self.id(e)).collect();
+        let m = ids.len();
+        let mid = if m <= 2 * K {
+            Mid::Full(byte_runs(data).collect())
+        } else {
+            let mut tail: Vec<Ent> = byte_runs_back(data).take(K).collect();
+            tail.reverse();
+            Mid::Long {
+                head: byte_runs(data).take(K).collect(),
+                tail,
+                count: m,
             }
-        }
-        Some(Arc::new(self.levels(vec![Some(Seg::Ents(ents))])))
+        };
+        let step = self.step_ids(&ids, 0, m);
+        Some(Arc::new(self.climb(Some(mid), step)))
     }
 
     /// The summary of `x` followed by `y`: `O(K)` dictionary steps at each level of the result.
@@ -485,13 +575,16 @@ impl Names {
     }
 
     /// The levels of a text whose level 0 is the middle `segs`, with nothing before or after it.
-    fn levels(&mut self, mut segs: Vec<Option<Seg>>) -> Sum {
-        let (mut p, mut q) = (Vec::new(), Vec::new());
+    fn levels(&mut self, segs: Vec<Option<Seg>>) -> Sum {
+        let s = norm(segs);
+        let step = self.step(&[], &s, &[]);
+        self.climb(store(&s), step)
+    }
+
+    /// The levels of a text from one whose middle is `mid` and whose parse gave `step`.
+    fn climb(&mut self, mut mid: Option<Mid>, mut step: Step) -> Sum {
         let mut levels = Vec::new();
         loop {
-            let s = norm(segs);
-            let step = self.step(&p, &s, &q);
-            let mid = store(&s);
             match step {
                 Step::Name(name) => {
                     levels.push(Level {
@@ -504,12 +597,14 @@ impl Names {
                 Step::Next {
                     lskip,
                     rskip,
-                    p: p2,
-                    segs: segs2,
-                    q: q2,
+                    p,
+                    segs,
+                    q,
                 } => {
                     levels.push(Level { mid, lskip, rskip });
-                    (p, segs, q) = (p2, segs2, q2);
+                    let s = norm(segs);
+                    step = self.step(&p, &s, &q);
+                    mid = store(&s);
                 }
             }
         }
@@ -599,14 +694,25 @@ impl Names {
             [s] => ents(s),
             _ => unreachable!("norm joins neighboring entries into one piece"),
         };
-        let (w, st0) = cat(&[p, mid, q]);
-        let ids = self.ids(&w);
+        // A middle with nothing on either side is read in place, not copied.
+        let (ids, pos0) = if p.is_empty() && q.is_empty() {
+            (self.ids(mid), 0)
+        } else {
+            let (w, st0) = cat(&[p, mid, q]);
+            (self.ids(&w), st0[1])
+        };
+        self.step_ids(&ids, pos0, mid.len())
+    }
+
+    /// [`Names::step_whole`] for the symbols `ids` of a level held whole, whose middle is the
+    /// `mid_len` entries from `pos0` on.
+    fn step_ids(&mut self, ids: &[u64], pos0: usize, mid_len: usize) -> Step {
         if let [name] = ids[..] {
             return Step::Name(name);
         }
         assert!(!ids.is_empty(), "a level of a nonempty text has a symbol");
-        let st = self.decide(&ids, true, true);
-        let (syms, bstart) = self.blocks(&ids, &st, 0, w.len());
+        let st = self.decide(ids, true, true);
+        let (syms, bstart) = self.blocks(ids, &st, 0, ids.len());
         let whole = |syms: &[u64]| Step::Next {
             lskip: None,
             rskip: None,
@@ -614,12 +720,11 @@ impl Names {
             segs: Vec::new(),
             q: Vec::new(),
         };
-        if mid.is_empty() {
+        if mid_len == 0 {
             return whole(&syms);
         }
-        let pos0 = st0[1];
-        let e_last = pos0 + mid.len() - 1;
-        let s = (pos0 + CL + 1..w.len()).find(|&i| st[i]);
+        let e_last = pos0 + mid_len - 1;
+        let s = (pos0 + CL + 1..ids.len()).find(|&i| st[i]);
         let t = s.and_then(|s| (s + 1..e_last.saturating_sub(CR)).rev().find(|&i| st[i]));
         let (Some(s), Some(t)) = (s, t) else {
             return whole(&syms);
@@ -768,6 +873,22 @@ fn store(segs: &[Seg]) -> Option<Mid> {
     })
 }
 
+/// The run-length entries of the bytes `data`, from the first.
+fn byte_runs(data: &[u8]) -> impl Iterator<Item = Ent> + '_ {
+    data.chunk_by(|a, b| a == b).map(|r| Ent {
+        sym: u64::from(r[0]),
+        count: r.len() as u64,
+    })
+}
+
+/// The run-length entries of the bytes `data`, from the last.
+fn byte_runs_back(data: &[u8]) -> impl Iterator<Item = Ent> + '_ {
+    data.chunk_by(|a, b| a == b).rev().map(|r| Ent {
+        sym: u64::from(r[0]),
+        count: r.len() as u64,
+    })
+}
+
 /// The run-length entries of `syms`.
 fn rle(syms: &[u64]) -> Vec<Ent> {
     let mut out: Vec<Ent> = Vec::with_capacity(syms.len());
@@ -812,53 +933,106 @@ fn cat(parts: &[&[Ent]]) -> (Vec<Ent>, Vec<usize>) {
 // round reads the labels in place and writes one byte a position, and the later rounds rewrite
 // those bytes in place: O(n) time as before, n bytes and n flags allocated. The labels and the
 // starts are the same, so no address changed.
+//
+// The four rounds then ran as four passes over the list, each tossing through an `Option`, and
+// the three passes and the maxima as four more, each finding its value through an iterator:
+// about 125 instructions a position, a fifth of a flat string's address (row
+// PERF-canon-flat-strings, the second time). Here one pass from the left runs all four rounds,
+// keeping the left neighbor's label of each round in a register, and one pass runs the three
+// passes and the maxima, each a few positions behind the one before (below). The values are the
+// same, so no address changed; the test `decide_gives_the_starts_of_the_plain_rounds` checks
+// this one against the plain rounds.
 fn decide(n: usize, label: impl Fn(usize) -> u128, ts: bool, te: bool) -> Vec<bool> {
     // Four rounds of coin tossing: labels below 2^128, then 2^8, 16, 8 and 6 (a label below
     // 2^b differs from its neighbor first at a bit p < b, and becomes 2p + bit p < 2b). A
     // number below 2^64, widened, gives the same first differing bit and the same bit there,
     // so a dictionary made by `Names::new` parses exactly as when its numbers were read as
     // u64: below 2^64, then 2^7, 14, 8 and 6. After the first round a label is below 2^8, so
-    // a byte holds it.
-    let toss = |x: u128, left: Option<u128>| -> u8 {
-        let p = left.map_or(0, |l| {
-            debug_assert!(x != l, "neighbors' labels differ");
-            (x ^ l).trailing_zeros()
-        });
-        (2 * p + ((x >> p) & 1) as u32) as u8
+    // a byte holds it. Position 0 has no left neighbor and tosses with p = 0: its low bit.
+    let toss = |x: u8, l: u8| -> u8 {
+        debug_assert!(x != l, "neighbors' labels differ");
+        let p = (x ^ l).trailing_zeros();
+        (2 * p) as u8 + ((x >> p) & 1)
     };
     let mut lab: Vec<u8> = Vec::with_capacity(n);
-    let mut left = None;
-    for i in 0..n {
-        let x = label(i);
-        lab.push(toss(x, left));
-        left = Some(x);
-    }
-    // The other three rounds in place, from the right, so that the left neighbor still holds
-    // the last round's label when a position is tossed.
-    for _ in 1..4 {
-        for i in (0..n).rev() {
-            let l = i.checked_sub(1).map(|j| u128::from(lab[j]));
-            lab[i] = toss(u128::from(lab[i]), l);
+    if n > 0 {
+        let mut x = label(0);
+        let first = (x & 1) as u8;
+        lab.push(first);
+        // The labels of position i − 1 after rounds 1, 2 and 3: round r + 1 at i tosses round
+        // r's label at i against round r's at i − 1.
+        let (mut l1, mut l2, mut l3) = (first, first, first);
+        for i in 1..n {
+            let y = label(i);
+            debug_assert!(x != y, "neighbors' labels differ");
+            let p = (x ^ y).trailing_zeros();
+            let r1 = (2 * p) as u8 + ((y >> p) & 1) as u8;
+            let r2 = toss(r1, l1);
+            let r3 = toss(r2, l2);
+            lab.push(toss(r3, l3));
+            (x, l1, l2, l3) = (y, r1, r2, r3);
         }
     }
-    for c in [5, 4, 3] {
-        for i in 0..n {
-            if lab[i] == c {
-                let left = i.checked_sub(1).map(|j| lab[j]);
-                let right = lab.get(i + 1).copied();
-                lab[i] = (0..3)
-                    .find(|&v| Some(v) != left && Some(v) != right)
-                    .expect("three labels, two neighbors");
+    // The three passes, for c = 5, 4, 3, each giving a position labeled c the least of 0, 1, 2
+    // that neither neighbor holds, reading the left neighbor after this pass and the right one
+    // before it. Pass c at position i reads pass c + 1 at i + 1, so in place, at step j, pass 5
+    // runs at j, then pass 4 at j − 1, then pass 3 at j − 2: each reads at i − 1 its own
+    // pass's value (written at the step before, and not yet overwritten, since the later pass
+    // runs after it at each step) and at i + 1 the value the pass before wrote this step. The
+    // maxima at j − 3 then read three values pass 3 has written. `NONE` stands for a missing
+    // neighbor: no label equals it, and a maximum needs no neighbor's label below it.
+    const NONE: u8 = u8::MAX;
+    let at = |lab: &[u8], i: usize| -> u8 { lab.get(i).copied().unwrap_or(NONE) };
+    let fix = |lab: &mut [u8], i: usize, c: u8| {
+        if lab[i] == c {
+            let left = i.checked_sub(1).map_or(NONE, |j| lab[j]);
+            let right = at(lab, i + 1);
+            lab[i] = if left != 0 && right != 0 {
+                0
+            } else if left != 1 && right != 1 {
+                1
+            } else {
+                2
+            };
+        }
+    };
+    let mut st: Vec<bool> = Vec::with_capacity(n);
+    let run = |lab: &mut [u8], st: &mut Vec<bool>, j: usize| {
+        for (lag, c) in [(0, 5), (1, 4), (2, 3)] {
+            if let Some(i) = j.checked_sub(lag).filter(|&i| i < n) {
+                fix(lab, i, c);
             }
         }
+        if let Some(i) = j.checked_sub(3).filter(|&i| i < n) {
+            let left = i.checked_sub(1).map_or(NONE, |k| lab[k]);
+            let right = at(lab, i + 1);
+            st.push((left == NONE || lab[i] > left) && (right == NONE || lab[i] > right));
+        }
+    };
+    // The steps whose positions all have both neighbors, 4 ≤ j < n − 1, without the checks.
+    let inner = 4..n.saturating_sub(1).max(4);
+    for j in 0..inner.start.min(n + 3) {
+        run(&mut lab, &mut st, j);
     }
-    let mut st: Vec<bool> = (0..n)
-        .map(|i| {
-            let left = i.checked_sub(1).map(|j| lab[j]);
-            let right = lab.get(i + 1).copied();
-            left.is_none_or(|l| lab[i] > l) && right.is_none_or(|r| lab[i] > r)
-        })
-        .collect();
+    for j in inner.clone() {
+        for (i, c) in [(j, 5), (j - 1, 4), (j - 2, 3)] {
+            if lab[i] == c {
+                let (l, r) = (lab[i - 1], lab[i + 1]);
+                lab[i] = if l != 0 && r != 0 {
+                    0
+                } else if l != 1 && r != 1 {
+                    1
+                } else {
+                    2
+                };
+            }
+        }
+        let i = j - 3;
+        st.push(lab[i] > lab[i - 1] && lab[i] > lab[i + 1]);
+    }
+    for j in inner.end.max(inner.start.min(n + 3))..n + 3 {
+        run(&mut lab, &mut st, j);
+    }
     if ts {
         st[0] = true;
         if n > 1 {

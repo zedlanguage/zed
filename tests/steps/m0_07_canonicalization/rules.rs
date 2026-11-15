@@ -227,16 +227,16 @@ fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
 #[test]
 fn the_version_tag_separates_rule_sets() {
     let d = balance("deposits", "withdrawals");
-    assert_eq!(VERSION, 12);
+    assert_eq!(VERSION, 13);
     assert_ne!(
         address_at(VERSION, &d, &none).expect("memory for the bytes"),
         address_at(VERSION + 1, &d, &none).expect("memory for the bytes")
     );
-    // The address of this definition under version 12 (ADDR-nested-param-names). A change to a
+    // The address of this definition under version 13 (PERF-canon-flat-strings). A change to a
     // rule or to the serialization changes it: increment VERSION, and pin the new address here.
     assert_eq!(
         addr(&d).to_string(),
-        "2c909f67d8cc11990b93f6db13a4a82605652b7c369ca72d6cf87f62def1a0f1"
+        "1c0f84d47904047a69fe01394d15cbdf02f72500b2f5eded9f118efceffa7cba"
     );
 }
 
