@@ -2,6 +2,7 @@
 
 use crate::disj_groups::*;
 use zed_tests::scaling;
+use zedc::store::presburger::project_each;
 
 #[test]
 fn the_middle_of_a_difference_chain_whose_disjuncts_hold_is_projected_in_n_log_n() {
@@ -358,5 +359,39 @@ mod switchover {
                 "switchover: {name} project: default {default_ns} ns, joined {joined}, {units} units"
             );
         }
+    }
+}
+
+/// One question of [`two_wide_atoms`] for each of its rows, at boxes of half-width 64 and 512:
+/// the work of the projection is held to the scaling limit as the ranges widen with no new
+/// atom or row (FAIL-scope-chain-scales-bytes, FAIL-join-pair-table). The join of row sums
+/// builds a table of every pair of values of `x` and `y`, of order m^2, and stops at its
+/// limit at m = 512; the `chain` family of l01_39 asks such a question once per test, so its
+/// work grew as k^3.
+#[test]
+fn two_wide_atoms_are_projected_in_work_that_does_not_grow_with_their_ranges() {
+    let m = 64;
+    for row in TWO_WIDE_ROWS {
+        let (small, ns) = two_wide_atoms(m, row);
+        let (large, nl) = two_wide_atoms(scaling::FACTOR as i128 * m, row);
+        for (f, n) in [(&small, &ns), (&large, &nl)] {
+            let (each, skipped) = project_each(f, n).expect("a projection");
+            assert!(
+                skipped.is_empty() && each.iter().all(Result::is_ok),
+                "{row:?}"
+            );
+        }
+        scaling::check_order(
+            &format!("two wide atoms {row:?} projected"),
+            m as usize,
+            1,
+            |k| {
+                drop(if k == m as usize {
+                    project_each(&small, &ns)
+                } else {
+                    project_each(&large, &nl)
+                });
+            },
+        );
     }
 }

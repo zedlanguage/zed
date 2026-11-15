@@ -4,6 +4,7 @@
 //! whole group.
 
 use zed_tests::scaling;
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{self, Atom, Con, Formula, Lin, decide, project_each};
 
 fn x(i: usize) -> Lin {
@@ -1245,6 +1246,9 @@ pub(super) mod row_sums {
         let ask = || project_each(f, atoms).map(|e| e.0);
         let (u, each) = units_of(ask);
         assert!(each.is_ok(), "{name}");
+        // With no control set, a formula over two atoms besides defined ones is projected by
+        // polygons (`row_sums::plane`) and not by the join: the sets are the join's.
+        assert_eq!(ask(), each, "{name}: project by default");
         assert_eq!(at_limit(u, ask), (each, true), "{name}: project at {u}");
         assert_eq!(
             at_limit(u - 1, ask),
@@ -1357,6 +1361,74 @@ pub(super) mod row_sums {
         for (what, f) in solver_cases() {
             let ((_, with), (_, without)) = both_and_alone(&f, projected);
             assert_eq!(with, without, "{what}");
+        }
+    }
+}
+
+/// The two rows over `x` and `y` of the questions [`two_wide_atoms`] asks, `a·x + b·y + k >= 0`:
+/// the two kinds the `chain` family of l01_39 asks, `y - x - j >= 0` and `x + c·y - 1 >= 0`.
+pub const TWO_WIDE_ROWS: [(i128, i128, i128); 2] = [(-1, 1, 2), (1, 7, -1)];
+
+/// The question `Scope::project_by_pendants` asks for each test of the `chain` family of
+/// l01_39 `families` (FAIL-scope-chain-scales-bytes): `-m <= x <= m`, `y` in `[-m, -m/8]` or
+/// `[m/8, m]`, `a·x + b·y + k >= 0`, and `w == x + y` with `-2m <= w <= 2m`, projected onto
+/// `w`, `x` and `y`. The atoms `x` and `y` share both rows with coefficients not proportional,
+/// so the join of row sums keys their group by two digits and builds a table of every pair:
+/// work of order m^2 for one question, where the solver's bounds do not grow with m.
+pub fn two_wide_atoms(m: i128, (a, b, k): (i128, i128, i128)) -> (Formula, Vec<Atom>) {
+    let (w, x, y) = (named("w"), named("x"), named("y"));
+    let c = Lin::constant;
+    let fin = |v: i128| End::Fin(Num::from(v));
+    let ys = IntervalSet::from_pieces(vec![(fin(-m), fin(-m / 8)), (fin(m / 8), fin(m))]);
+    let f = Formula::and(vec![
+        ge(x.plus(&c(m))),
+        ge(c(m).minus(&x)),
+        presburger::member(&Atom::Sym("y".into()), &ys),
+        ge(x.times(a).plus(&y.times(b)).plus(&c(k))),
+        eq(w.minus(&x).minus(&y)),
+        ge(w.plus(&c(2 * m))),
+        ge(c(2 * m).minus(&w)),
+    ]);
+    let names = ["w", "x", "y"].map(|n| Atom::Sym(n.into())).to_vec();
+    (f, names)
+}
+
+/// The values of `w`, `x` and `y` over the points of [`two_wide_atoms`], by trying every pair.
+fn two_wide_atoms_by_points(m: i128, (a, b, k): (i128, i128, i128)) -> [Vec<i128>; 3] {
+    let mut each: [std::collections::BTreeSet<i128>; 3] = Default::default();
+    for x in -m..=m {
+        for y in (-m..=-m / 8).chain(m / 8..=m) {
+            if a * x + b * y + k >= 0 {
+                for (s, v) in each.iter_mut().zip([x + y, x, y]) {
+                    s.insert(v);
+                }
+            }
+        }
+    }
+    each.map(|s| s.into_iter().collect())
+}
+
+/// [`two_wide_atoms`] at small sizes: each projection holds exactly the values of the points.
+#[test]
+fn two_wide_atoms_are_projected_exactly_at_small_sizes() {
+    for row in TWO_WIDE_ROWS {
+        for m in [8, 16, 40, 200] {
+            let (f, names) = two_wide_atoms(m, row);
+            let (each, skipped) = project_each(&f, &names).expect("a projection");
+            assert!(skipped.is_empty(), "m = {m}: {skipped:?}");
+            let points = two_wide_atoms_by_points(m, row);
+            for ((name, got), want) in names.iter().zip(each).zip(points) {
+                let got = got.expect("a set");
+                let lo = want[0] - 2;
+                let hi = want[want.len() - 1] + 2;
+                for v in lo..=hi {
+                    assert_eq!(
+                        got.contains(v as i64),
+                        want.binary_search(&v).is_ok(),
+                        "{row:?}, m = {m}, {name:?} at {v}: {got:?}"
+                    );
+                }
+            }
         }
     }
 }
