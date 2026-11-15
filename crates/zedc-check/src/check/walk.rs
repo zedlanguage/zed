@@ -37,6 +37,9 @@ pub fn check_text(unit: &[Stmt], res: &Resolution, text: Option<&str>) -> Info {
 
 /// Checks a unit whose binder tables are `t`, as [`check`] does with tables it builds.
 pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
+    // The projections the check of the unit asks, each answered once for the unit
+    // (`ProjectionMemo`, PERF-census-resettle-repeats).
+    let _projections = zedc_presburger::presburger::ProjectionMemo::open();
     // Complexity tradeoff (COMPLEXITY.md F32): emptiness results kept for the whole thread let
     // a unit checked after an equal one look up keys equal to its types but built apart, each
     // compared in full, O(n²) for a unit of size n. Dropping them here shares results within
@@ -96,6 +99,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
 /// (`Ty::named`), which no source form gives until `type` declarations do (step L2.5).
 #[doc(hidden)]
 pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> Info {
+    let _projections = zedc_presburger::presburger::ProjectionMemo::open();
     let t = Tables::with_text(unit, res, Some(text));
     KType::forget_emptiness();
     let _defs = defs::collect();

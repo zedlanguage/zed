@@ -396,3 +396,30 @@ fn many_refusals_each_warned() {
         refusals(&unit("scale", &format!("{n}.zed"), &many_refusals(n)), n);
     }
 }
+
+/// The systems the checker asks the solver about while it checks [`star`] with `n` reads of
+/// `a` in its branch, and the warnings it gives.
+fn solved_for_reads(n: usize) -> (u64, usize) {
+    let reads = vec!["100 div a"; n].join(" + ");
+    let text = program(&star("f", &format!("    {reads}\n")));
+    zedc::store::presburger::systems_solved();
+    let (info, _) = zed_tests::step_helpers::l01_26_type_resolution::info(&text);
+    (
+        zedc::store::presburger::systems_solved(),
+        info.warnings.len(),
+    )
+}
+
+#[test]
+fn the_reads_of_one_scope_ask_the_solver_each_question_once() {
+    // Each read of `a` settles the branch's scope on a copy of it, and so asks the projections
+    // of the scope again (PERF-census-resettle-repeats). Within the check of one unit each
+    // projection is asked of the solver once (`presburger::ProjectionMemo`), so eight reads ask
+    // about the same systems as one. Measured 2026-11-14: 33 systems for one read and for eight;
+    // without the memo 53 and 347.
+    let (one, w1) = solved_for_reads(1);
+    let (eight, w8) = solved_for_reads(8);
+    assert_eq!(eight, one, "systems solved for 8 reads against 1 read");
+    // An answer looked up still gives its warning at each read: one at the test and one per read.
+    assert_eq!((w1, w8), (2, 9));
+}

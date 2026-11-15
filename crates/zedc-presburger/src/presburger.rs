@@ -13296,6 +13296,17 @@ fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
     Ok(answer)
 }
 
+thread_local! {
+    /// The calls of [`solve`] on this thread since [`systems_solved`] was last called.
+    static SOLVES: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The number of systems of constraints the solver has been asked about on this thread since
+/// the last call, which resets it. A test reads it to count the questions a check asks.
+pub fn systems_solved() -> u64 {
+    SOLVES.replace(0)
+}
+
 /// Whether a conjunction of constraints holds somewhere, and, when `want`, where; without
 /// `want` a point is answered by an empty model, and none is built.
 ///
@@ -13306,6 +13317,7 @@ fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
 /// no row are taken together, which no order can change. So the answer, refusals included, is
 /// the same under every naming of the variables and every order of the constraints.
 fn solve<C: std::borrow::Borrow<Con>>(cons: &[C], want: bool) -> Result<Option<Model>, Refusal> {
+    SOLVES.with(|c| c.set(c.get() + 1));
     let raw_cons: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
     let reduced_buf: Vec<Con>;
     let cons: Vec<&Con> = if raw_cons
@@ -17464,6 +17476,92 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
 ///
 /// Whatever way an equal formula is written, the answer is the same: `f` is asked written one
 /// way (`signed`), and where that is refused, with each equation held with both signs.
+///
+/// While a [`ProjectionMemo`] is open, as for the check of a unit, a question asked before
+/// (the same formula and the same symbols) is answered as it was answered then.
+// Complexity tradeoff (PERF-census-resettle-repeats): naive version, every question asked of
+// the solver anew. The checker reads each operand in a copy of the scope of its node and
+// settles the stars the read needs on that copy, which is then dropped, so every read of a
+// node asks the same projections again: in the census unit `programs_4_unit_7` 3200 reads
+// asked 8980 projections, 12 of them distinct, 47382 calls of [`solve`] for 16 systems. Used:
+// the answers kept by formula and symbols for as long as the memo is open, one lookup per
+// question, O(1) expected beside the hash of the formula, which each node keeps once found
+// ([`Formula`]), and the symbols. Tradeoffs: memory for each distinct question and its answer
+// until the memo closes (the end of the unit's check); the counters of work done
+// ([`hull_sides_asked`], [`parts_tested`], [`systems_solved`]) count a question once.
+// Assumption, not proved: that the answer of [`project_each_asked`] depends on nothing but the
+// formula, the symbols and the flags [`memo_off`] reads (the solver reads no names, orders or
+// ids it does not get from the formula; ids of shared parts change no answer, [`Formula`]),
+// so that an answer kept is the answer asked again. Evidence: with every hit asked again and
+// compared (a temporary check, not kept), on 2026-11-14, no answer differed over the 2019
+// test pieces of the groups m0_12 (the refusal census), l01_23 to l01_29, l01_38, l01_39 and
+// l02; those pieces also passed and failed alike with the memo and without it. If false, a
+// verdict could depend on which questions came first in a unit; the memo does not change
+// soundness when each answer is sound. Test:
+// `l01_29_repairs_and_printing::refused_warning::the_reads_of_one_scope_ask_the_solver_each_question_once`;
+// COMPLEXITY.md row PERF-census-resettle-repeats.
+pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+    if memo_off() || PROJECTIONS.with(|m| m.borrow().is_none()) {
+        return project_each_asked(f, syms);
+    }
+    let key = (f.clone(), syms.to_vec());
+    if let Some(answer) = PROJECTIONS.with(|m| m.borrow().as_ref()?.get(&key).cloned()) {
+        return answer;
+    }
+    let answer = project_each_asked(f, syms);
+    PROJECTIONS.with(|m| {
+        if let Some(m) = m.borrow_mut().as_mut() {
+            m.insert(key, answer.clone());
+        }
+    });
+    answer
+}
+
+/// The answers of [`project_each`], by formula and symbols.
+type Projections = FxHashMap<(Formula, Vec<Atom>), Result<Each, Refusal>>;
+
+thread_local! {
+    /// The answers of [`project_each`] while a [`ProjectionMemo`] is open.
+    static PROJECTIONS: RefCell<Option<Projections>> = const { RefCell::new(None) };
+}
+
+/// Keeps the answers of [`project_each`] from its opening to its drop; one opened inside
+/// another keeps the outer one's. The checker opens one for the check of each unit.
+pub struct ProjectionMemo(bool);
+
+impl ProjectionMemo {
+    /// Opens the memo, unless one is open already.
+    pub fn open() -> ProjectionMemo {
+        ProjectionMemo(PROJECTIONS.with(|m| {
+            let mut m = m.borrow_mut();
+            m.is_none() && m.replace(FxHashMap::default()).is_none()
+        }))
+    }
+}
+
+impl Drop for ProjectionMemo {
+    fn drop(&mut self) {
+        if self.0 {
+            PROJECTIONS.with(|m| m.borrow_mut().take());
+        }
+    }
+}
+
+/// Whether a flag of this thread that changes the path a question takes is set (the old path,
+/// the reversed order, the check of the modular solver, and the test controls), so that
+/// [`project_each`] neither reads nor keeps an answer: those answers are asked as the flags
+/// say.
+fn memo_off() -> bool {
+    old_path()
+        || REVERSED.with(Cell::get)
+        || MODULAR_CHECK.with(|c| c.borrow().is_some())
+        || UNFACTORED.with(Cell::get)
+        || UNIT_RESCAN.with(Cell::get)
+        || HULL_BISECT.with(Cell::get)
+        || ROW_ORDER_SCAN.with(Cell::get)
+}
+
+/// [`project_each`] asked of the solver, with no memo.
 // Complexity tradeoff: a question refused in the first writing costs a second question of the
 // same size. Why: the solver chooses its order of elimination by the signs of the rows, so
 // which systems it refuses depends on them, and no check before the question tells which
@@ -17471,7 +17569,7 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<IntervalSet, Refusal> {
 // the solver refuses with each equation in the sign of [`equation`]. Test:
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
-pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
+fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
     // confined to finite unions of ranges, by the exact join of their sums (module `row_sums`),
