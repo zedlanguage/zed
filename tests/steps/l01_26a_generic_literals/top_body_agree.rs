@@ -609,3 +609,23 @@ fn a_literal_base_takes_no_f32_through_f32_power_int() {
         assert_eq!(out.stdout, format!("{want}\n"), "{src}");
     }
 }
+
+/// A top-level binding of `n` nested powers of integer literals, which an `f64` form rewrites
+/// all of, beside a divisor no exact `f64`, which it leaves:
+/// `y = 1^(1^(…^(1+1)…)) / 3 + 1 / 9007199254740993;`, rejected with the `rat` form alone.
+pub(super) fn nested_powers_by_an_inexact_divisor(n: usize) -> String {
+    let powers = format!("{}1+1{}", "1^(".repeat(n), ")".repeat(n));
+    format!("y = {powers} / 3 + 1 / 9007199254740993;\n")
+}
+
+#[test]
+fn nested_powers_by_an_inexact_divisor_offer_no_f64_form() {
+    // The menu leaves out the `f64` forms, since the divisor `9007199254740993` is left to take
+    // `f64` and is no exact `f64` (plan row LIT-f32-inexact-exponent). Benchmark:
+    // `bench::top_body_agree::nested_powers_by_an_inexact_divisor_are_rejected_in_linear_time`.
+    let errs = type_errors(&nested_powers_by_an_inexact_divisor(3));
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    let fix = "y = 1r^(1^(1^(1+1))) / 3 + 1 / 9007199254740993;";
+    assert!(errs[0].contains(fix), "{}", errs[0]);
+    assert!(!errs[0].contains("f64"), "{}", errs[0]);
+}

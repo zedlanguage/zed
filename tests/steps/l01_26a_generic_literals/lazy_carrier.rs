@@ -199,7 +199,9 @@ fn a_menu_writes_the_exponent_of_a_power_that_its_carrier_does_not_reach() {
 /// literals alone is an `int` as one integer literal is (DESIGN.md sec:lexical; plan row
 /// LIT-rat-int-op-exponent), so `^` keeps `rat` and the `rat` fix is offered beside `f64`. An
 /// exponent whose value is no exact `f64`, as `2 ^ 100 - 1`, removes `f64` as that value
-/// written as one literal does, and the exact `rat` fix alone is offered.
+/// written as one literal does, and `f32` too, since a literal base takes no `f32` through
+/// `f32 ^ int` (DESIGN.md L1.17; plan row LIT-f32-inexact-exponent): `rat` alone is named,
+/// and the exact `rat` fix alone is offered.
 #[test]
 fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
     for (body, carriers, fix) in [
@@ -208,12 +210,12 @@ fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
         ("2 ^ 2 ^ 100 / 3", "f32 | f64 | rat", "2.0f64 ^ 2 ^ 100 / 3"),
         (
             "2 ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
-            "f32 | rat",
+            "rat",
             "2r ^ 2 ^ 100 / 2 ^ (2 ^ 100 - 1)",
         ),
         (
             "2 ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375",
-            "f32 | rat",
+            "rat",
             "2r ^ 2 ^ 100 / 2 ^ 1267650600228229401496703205375",
         ),
     ] {

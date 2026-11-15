@@ -16946,8 +16946,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Self::apply`] of a signature of several arrows, each over one carrier or a tuple:
     /// an operator, a prelude word, or a section of one. The classes of the arguments merge,
     /// since every arrow but `f32 ^ int` takes one carrier for all its parameters, and its
-    /// literals join them; a literal, or a class of literals alone, takes no float format
-    /// through an arrow of two carriers (DESIGN.md L1.17); without a class, each literal adopts the carrier of its parameter on the
+    /// literals join them; a literal, or a class of literals alone, takes no `f32`
+    /// through `f32 ^ int`, an arrow of two carriers (DESIGN.md L1.17); without a class, each literal adopts the carrier of its parameter on the
     /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
     /// the arrows still alive and the carriers they allow where the class stands
     /// ([`ClassAt`]): a state per such pair, not per combination of pieces.
@@ -17057,12 +17057,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         None => (alive.clone(), *dyn_),
                         // A class may still take any value its mask allows, so it keeps
                         // every arrow; the restriction after the arguments narrows it.
-                        // A literal, or a class of literals alone, takes no float format
-                        // through an arrow of two carriers, `f32 ^ int`, which is for a base
-                        // that is already an `f32` (DESIGN.md L1.17): in `2 ^ (2^100 - 1)`
-                        // the base keeps `f32` only through `f32 ^ f32`, whose exponent the
-                        // literal one does not fit, and so takes no `f32` (plan row
-                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`.
+                        // A literal, or a class of literals alone, takes no `f32` through an
+                        // arrow of two carriers, `f32 ^ int`, which is for a base that is
+                        // already an `f32` (DESIGN.md L1.17): in `2 ^ (2^100 - 1)` the base
+                        // keeps `f32` only through `f32 ^ f32`, whose exponent the literal one
+                        // does not fit, and so takes no `f32` (plan row
+                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`. L1.17
+                        // names `f32` alone: a decimal base with an `int` exponent takes `f64`,
+                        // through the arrow `f64 ^ int` plan row POW-domains adds.
                         Some(p) if let Some(k) = self.class_of(p) => {
                             let literal = (a.as_ref())
                                 .is_some_and(|a| a.lit.is_some() || a.branches.is_some())
@@ -17072,7 +17074,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 let ps = &sig.arrows[j].params;
                                 let mut b = mask_of(&ps[i]);
                                 if literal && ps.iter().any(|q| q != &ps[i]) {
-                                    b &= !(Carrier::F32.bit() | Carrier::F64.bit());
+                                    b &= !Carrier::F32.bit();
                                 }
                                 m[j] &= b;
                             }
