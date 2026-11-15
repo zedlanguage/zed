@@ -415,17 +415,26 @@ fn a_parameter_joined_with_a_family_is_folded_at_each_call() {
 
 #[test]
 fn a_parameter_joined_with_a_family_rejects_what_is_no_family_at_the_call() {
-    // `(if b { (3, 4) } else { [1, 2] }).sum` is rejected (a fold reads a family's entries),
-    // so the call that makes `xs` a tuple, a string or a number is rejected too. Before this
-    // row the checker read only `[1, 2]`'s entries, accepted each of these calls, and the run
-    // stopped in the kernel's fold on a value that is no family.
-    for (fold, arg) in [
-        (".sum", "(3, 4)"),
-        (".sum", "\"ab\""),
-        (".sum", "5"),
-        (" >< (+)", "(3, 4)"),
-        (".reduce((+))", "(3, 4)"),
-    ] {
+    // `><` and `.reduce` have one arrow, from a family (sec:reduction), so
+    // `(if b { (3, 4) } else { [1, 2] }) >< (+)` is rejected, and the call that makes `xs` a
+    // tuple is rejected too. Before row TEST-generic-sum-branches the checker read only
+    // `[1, 2]`'s entries, accepted the call, and the run stopped in the kernel's fold on a
+    // value that is no family. `.sum` has a second arrow, from a tuple (step L1.18), and takes
+    // the union region by region (sec:type_resolution, rule 6: "over each region of the
+    // argument type, the codomains of all arrows covering that region intersect; across
+    // regions, results union"), so at `(3, 4)` it gives `3 + 4` (row FAIL-sum-word-family);
+    // a string or a number is in the region of neither arrow ("If no arrow applies, that is
+    // the error").
+    let src = format!("s(positional xs, positional b) = {JOINED}.sum;\n");
+    prints(&format!("{src}t = s((3, 4), true);\n"), "t", "7");
+    prints(&format!("{src}t = s((3, 4), false);\n"), "t", "3");
+    for arg in ["\"ab\"", "5"] {
+        rejected(
+            &format!("{src}t = s({arg}, true);\n"),
+            &["`sum` does not take"],
+        );
+    }
+    for (fold, arg) in [(" >< (+)", "(3, 4)"), (".reduce((+))", "(3, 4)")] {
         rejected(
             &format!("s(positional xs, positional b) = {JOINED}{fold};\nt = s({arg}, true);\n"),
             &["folds the entries of a family"],
@@ -490,20 +499,19 @@ fn two_parameters_joined_each_take_the_fold() {
 
 #[test]
 fn a_parameter_joined_with_a_tuple_is_summed_as_a_tuple() {
-    // `X | (int, int)` takes `.sum` as the word of layer 1. At a tuple it adds; at a family
-    // it is rejected, as the concrete `(if b { [3, 4] } else { (1, 2) }).sum` is (the two
-    // messages differ, and whether rule 6 of sec:type_resolution accepts the union region by
-    // region is open: row FAIL-sum-word-family).
+    // `X | (int, int)`: at a tuple `.sum` is the word of layer 1 and adds. At a family it is
+    // the fold, region by region, as the concrete `(if b { [3, 4] } else { (1, 2) }).sum` is
+    // (sec:type_resolution, rule 6: "over each region of the argument type, the codomains of
+    // all arrows covering that region intersect; across regions, results union"; row
+    // FAIL-sum-word-family). A string is in the region of neither arrow.
     let src = "s(positional xs, positional b) = (if b { xs } else { (1, 2) }).sum;\n";
     prints(&format!("{src}t = s((3, 4), true);\n"), "t", "7");
     prints(&format!("{src}f = s((3, 4), false);\n"), "f", "3");
+    prints(&format!("{src}t = s([3, 4], true);\n"), "t", "7");
+    prints(&format!("{src}f = s([3, 4], false);\n"), "f", "3");
     rejected(
-        &format!("{src}t = s([3, 4], true);\n"),
+        &format!("{src}t = s(\"ab\", true);\n"),
         &["`sum` does not take"],
-    );
-    rejected(
-        "f(positional b) = (if b { [3, 4] } else { (1, 2) }).sum;\nt = f(true);\n",
-        &["`.sum` folds the entries of a family"],
     );
 }
 
@@ -523,8 +531,10 @@ fn a_family_made_by_a_reindex_takes_the_fold_branch() {
 fn two_parameters_in_nested_branches_beside_a_family_each_take_the_fold() {
     // `X0 | X1 | (int -> int)`: each parameter is checked at the call, as the concrete body is.
     // `[5, 6]` in the inner branch gives `5 + 6`; a family keyed by another type gives its
-    // entry; a tuple or a string there is rejected as `(if b { [3, 4] } else { if c { (1, 2) }
-    // else { [1, 2] } }).sum` is.
+    // entry. A tuple there takes `.sum`'s tuple arrow, region by region, as the concrete
+    // `(if b { [3, 4] } else { if c { (1, 2) } else { [1, 2] } }).sum` does (sec:type_resolution,
+    // rule 6; row FAIL-sum-word-family): `(1, 2)` gives `3`. A string there, or a tuple folded
+    // by `><`, which has the family arrow alone, is rejected.
     let s = "s(positional x0, positional x1, positional b, positional c) = \
              (if b { x0 } else { if c { x1 } else { [1, 2] } })";
     prints(
@@ -537,19 +547,23 @@ fn two_parameters_in_nested_branches_beside_a_family_each_take_the_fold() {
         "t",
         "1",
     );
-    for (fold, arg) in [
-        (".sum", "(1, 2)"),
-        (".sum", "\"ab\""),
-        (" >< (+)", "(1, 2)"),
-    ] {
-        rejected(
-            &format!("{s}{fold};\nt = s([3, 4], {arg}, false, false);\n"),
-            &["folds the entries of a family"],
-        );
-    }
-    rejected(
+    prints(
+        &format!("{s}.sum;\nt = s([3, 4], (1, 2), false, true);\n"),
+        "t",
+        "3",
+    );
+    prints(
         "f(positional b, positional c) = \
          (if b { [3, 4] } else { if c { (1, 2) } else { [1, 2] } }).sum;\nt = f(false, true);\n",
+        "t",
+        "3",
+    );
+    rejected(
+        &format!("{s}.sum;\nt = s([3, 4], \"ab\", false, false);\n"),
+        &["`sum` does not take"],
+    );
+    rejected(
+        &format!("{s} >< (+);\nt = s([3, 4], (1, 2), false, false);\n"),
         &["folds the entries of a family"],
     );
     // Under one condition the inner `then` branch is known not to run and is dropped, in
@@ -776,4 +790,58 @@ fn a_generic_fold_at_two_carriers_through_a_function_value_is_not_compiled_yet()
     ] {
         rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
     }
+}
+
+// ---- `sum(x)` is `x.sum`, and a receiver that may be a family or a tuple is summed region by
+// region (row FAIL-sum-word-family) ----
+
+#[test]
+fn sum_called_as_a_function_folds_a_family() {
+    // DESIGN.md sec:operators, the row of `.`: "`x.f(a)` passes `x` as `f`'s first parameter",
+    // so `sum(x)` and `x.sum` are one call; the method register's "tot = xs.sum; // = xs >< (+)"
+    // makes both the fold on a family, and L1.18 the sum of the components on a tuple.
+    prints("t = sum([1, 2]);\n", "t", "3");
+    prints("t = [1, 2].sum;\n", "t", "3");
+    prints("t = sum((3, 4));\n", "t", "7");
+    same("t = sum([]);\nu = [].sum;\n", "t", "u");
+    same(
+        "t = sum([1.5f64, 2.5f64]);\nu = [1.5f64, 2.5f64].sum;\n",
+        "t",
+        "u",
+    );
+    // In a generic function, at a call passing a family and at one passing a tuple.
+    let src = "s(positional xs) = sum(xs);\nt = s([1, 2]);\nu = s((3, 4));\n";
+    prints(src, "t", "3");
+    prints(src, "u", "7");
+}
+
+#[test]
+fn sum_of_a_family_or_a_tuple_is_taken_region_by_region() {
+    // DESIGN.md sec:type_resolution, rule 6: "over each region of the argument type, the
+    // codomains of all arrows covering that region intersect; across regions, results
+    // union". `sum` takes a family by the fold and a tuple by adding its components, so a
+    // value that is `[3, 4]` or `(1, 2)` is summed by whichever it is: 7 and 3.
+    for call in [
+        "(if b { [3, 4] } else { (1, 2) }).sum",
+        "sum(if b { [3, 4] } else { (1, 2) })",
+    ] {
+        let src = format!("f(positional b) = {call};\nt = f(true);\nu = f(false);\n");
+        prints(&src, "t", "7");
+        prints(&src, "u", "3");
+    }
+    // The same with the family a type parameter: the fold at the call that passes a family.
+    let src = "s(positional xs, positional b) = (if b { xs } else { (1, 2) }).sum;\n\
+               t = s([3, 4], true);\nu = s([3, 4], false);\nv = s((5, 6), true);\n";
+    prints(src, "t", "7");
+    prints(src, "u", "3");
+    prints(src, "v", "11");
+    // A family with no entries beside a tuple: `[]` has no carrier to take an identity from
+    // and folds to `#empty` (sec:reduction), the tuple adds.
+    let src = "f(positional b) = (if b { (3, 4) } else { [] }).sum;\nt = f(true);\nu = f(false);\n";
+    prints(src, "t", "7");
+    prints(src, "u", "#empty");
+    // The call form through a generic function on a family alone, and on a tuple alone.
+    let src = "s(positional xs) = sum(xs);\nt = s({ 7 -> 1, 9 -> 2 });\nu = s((1, 2, 3));\n";
+    prints(src, "t", "3");
+    prints(src, "u", "6");
 }

@@ -3754,7 +3754,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.fold_level(op, x, span, site, FoldForm::Infix)
     }
 
-    /// `x.sum` written at `site` where `x`'s type was a type parameter: a family is folded by
+    /// `x.sum` or `sum(x)` written at `site` where `x`'s type held a type parameter or a family
+    /// (beside a tuple, or alone for `sum(x)`): a family is folded by
     /// `(+)` as `x >< (+)` is ([`Self::fold_level`], the method register's `sum` row), and any
     /// other value is summed as a tuple by the prelude word of layer 1 ([`Self::sum`]), which
     /// rejects what is no tuple of numbers. A class still open takes the use as a need, met
@@ -3764,7 +3765,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     // (the loose atoms aside, which pass on both sides): (1) it has a data function: the
     // fold, the test the concrete `.sum` arm of `member_end` applies, and `fold_level`
     // rejects it unless every other piece is atoms, so each accepted value is a family, which
-    // is no tuple, and takes the fold branch. (2) It has none: `sum`, the call `.sum` makes
+    // is no tuple, and takes the fold branch; or it has tuples too, and then the families are
+    // folded and the tuples summed by `sum`, each value checked by the arrow of its region
+    // (rule 6 of sec:type_resolution), and the run-time test sends each to that branch. (2) It has none: `sum`, the call `.sum` makes
     // on a concrete receiver with no data function, and `sum` accepts only tuples, atoms and
     // classes (met again by `NeedKind::Sum`, which `sum` checks, so tuples) and rejects `_`
     // (`Ck::any`), so each accepted value is a tuple and takes the tuple branch. (3) It still
@@ -3776,9 +3779,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `Elab::generic_sum` proves, so no value checked by (1) takes the tuple branch.
     // A type that is variables and atoms, as `if b { xs } else { ys }` gives with two, takes
     // the use once per variable: reading only the first left `ys` unchecked, so a call
-    // passing a string there was accepted. A variable beside a tuple or a family does not
-    // reach here (`member_end` sends it to `sum` and `family_fold`), but a need met with such
-    // a type does, and its rest is summed as it stands.
+    // passing a string there was accepted. A variable beside a tuple or a family reaches here
+    // too (`sum_by_region`), and the rest beside the variables is summed as it stands.
+    // `sum(x)` written as a call reaches here as `x.sum` does (`word_applied`).
     // Complexity tradeoff: one need or one recursion per variable, as at `fold_level`, and it
     // ends as there: `rest` and each resolved `t` hold no variable (the invariant at
     // `Class::resolved`), so the inner call goes to `fold_level` or `sum` on a type with none.
@@ -3809,7 +3812,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         if x.fns.iter().any(|s| s.data) {
             let out = self.passing(x, "`.sum`", span, None);
             let add = Reducer::Op(BinaryOp::Add);
-            let t = self.fold_level(add, &x.without_loose(), span, site, FoldForm::Sum);
+            let x = x.without_loose();
+            // A family beside a tuple: each region by its own arrow, the families folded and
+            // the tuples added, results joined (`sum_by_region`). Any other piece beside the
+            // families is the fold's to reject, as it was before tuples were taken here.
+            let mut tuples = x.clone();
+            tuples.fns = (x.fns.iter()).filter(|s| !s.data).cloned().collect();
+            if (tuples.pieces().iter()).any(|p| matches!(p, Piece::Tuple(_))) {
+                let families = Ty {
+                    fns: (x.fns.iter()).filter(|s| s.data).cloned().collect(),
+                    ..Ty::empty()
+                };
+                let t = self.fold_level(add, &families, span, site, FoldForm::Sum);
+                let s = self.sum(Arg::of(tuples), span);
+                return out.union(&t).union(&s);
+            }
+            let t = self.fold_level(add, &x, span, site, FoldForm::Sum);
             return out.union(&t);
         }
         self.saw_unfolded(site);
@@ -5563,7 +5581,21 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// [`Self::word_end`] checked.
     fn word_applied(&mut self, w: &'a str, mut x: Arg<'a>, span: Span) -> Ty {
+        // `sum(x)` is `x.sum` (DESIGN.md sec:operators, the row of `.`: "`x.f(a)` passes `x` as
+        // `f`'s first parameter"): a family or a type parameter takes the method's check, and
+        // elaboration the run-time choice of `Elab::generic_sum`, which agrees with it on
+        // every value it accepts (the proof at `sum_method`). A tuple alone keeps `sum`, whose
+        // messages name each component as written.
         if w == "sum" {
+            if sum_by_region(&x.ty) {
+                self.info.generic_sums.insert(span);
+                return self.sum_method(&x.ty, span, span);
+            }
+            if x.ty.fns.iter().any(|s| s.data) {
+                self.info.family_sums.insert(span);
+                let add = Reducer::Op(BinaryOp::Add);
+                return self.family_fold(add, &x.ty, span, FoldForm::Sum);
+            }
             return self.sum(x, span);
         }
         // A decimal with no suffix as the operand of a cast at the top level, as in
@@ -6283,6 +6315,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(Ref::Bound(_)) => m.ty(Ty::empty()),
             _ => match zedc_resolve::resolve::prelude_layer(name) {
+                // `.sum` on a type parameter, or on a value that may be a family or a tuple,
+                // is decided by the value: by the type at each call of a generic function, by
+                // a test at run time (`Elab::generic_sum`) in the code.
+                Some(1)
+                    if name == "sum"
+                        && matches!((positional, named, curry), ([], [], false))
+                        && sum_by_region(&x.ty) =>
+                {
+                    let t = self.sum_method(&x.ty, span, span);
+                    self.info.generic_sums.insert(span);
+                    m.ty(t);
+                }
                 // `.sum` on a family is `x >< (+)` (DESIGN.md, the method register's `sum` row,
                 // `fold(m, +, ev)`); on a tuple it is the prelude word of layer 1.
                 Some(1) if name == "sum" && x.ty.fns.iter().any(|s| s.data) => {
@@ -6302,17 +6346,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                             m.ty(Ty::empty());
                         }
                     }
-                }
-                // `.sum` on a type parameter is a fold at a call that passes a family and the
-                // word of layer 1 at one that passes a tuple, so it is decided at each call.
-                Some(1)
-                    if name == "sum"
-                        && matches!((positional, named, curry), ([], [], false))
-                        && only_class_vars(&x.ty.without_loose()) =>
-                {
-                    let t = self.sum_method(&x.ty, span, span);
-                    self.info.generic_sums.insert(span);
-                    m.ty(t);
                 }
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
@@ -17937,11 +17970,36 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 }
 
-/// Whether `x` is type parameters, one or more, and nothing else but atoms: the receiver whose
-/// `.sum` is decided at each call of a generic function.
-fn only_class_vars(x: &Ty) -> bool {
-    !x.vars.is_empty()
-        && (x.pieces().into_iter()).all(|p| matches!(p, Piece::Var(_)) || p.is_atoms())
+/// Whether the `sum` of `x` is chosen by the value, region by region (DESIGN.md
+/// sec:type_resolution, rule 6: "over each region of the argument type, the codomains of all
+/// arrows covering that region intersect; across regions, results union"): `x` holds a type
+/// parameter, which may be a family at one call and a tuple at another, or both a family and a
+/// tuple. `sum` takes a family by the fold of the method register (`xs.sum // = xs >< (+)`)
+/// and a tuple by adding its components (step L1.18).
+/// The one exception is type parameters beside a family with no entries, as
+/// `if b { xs } else { [] }` gives: the empty level folds to the identity at the parameters'
+/// carrier (`Ck::fold_level`), which a call passing a tuple does not give, so that receiver
+/// keeps the fold of `family_fold` and a call passing a tuple is rejected (not proved to agree
+/// with rule 6, which the concrete `(if b { (3, 4) } else { [] }).sum` follows, giving
+/// `#empty`; row FAIL-sum-empty-family-beside-parameter).
+fn sum_by_region(x: &Ty) -> bool {
+    let x = x.without_loose();
+    let pieces = x.pieces();
+    let tuple = pieces.iter().any(|p| matches!(p, Piece::Tuple(_)));
+    let family = x.fns.iter().any(|s| s.data);
+    if x.vars.is_empty() {
+        return tuple && family;
+    }
+    let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+    let empty_family = family
+        && pieces.iter().all(|p| match p {
+            Piece::Fn(s) => {
+                s.data && (s.arrows.iter()).all(|a| a.result.without(&misses).lists_nothing())
+            }
+            Piece::Var(_) => true,
+            p => p.is_atoms(),
+        });
+    !empty_family
 }
 
 /// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed

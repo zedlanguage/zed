@@ -1163,6 +1163,23 @@ impl<'a> Elab<'a> {
             self.atom(m, name, call);
             return;
         }
+        // `sum(x)` is `x.sum` (DESIGN.md sec:operators, the row of `.`); where the checker took
+        // it as the method's check (`Ck::word_applied`), it is elaborated as the method is.
+        if let ExprKind::Name(n) = &callee.kind
+            && n == "sum"
+            && let [x] = call.positional
+            && call.named.is_empty()
+            && !call.curry
+            && (self.info.generic_sums.contains(&call.span)
+                || self.info.family_sums.contains(&call.span))
+        {
+            let call = Call {
+                positional: &[],
+                ..call
+            };
+            self.member(m, x, n, false, callee.span, call);
+            return;
+        }
         if let Some(id) = self.declared(callee) {
             let f = self.t.funcs[&id];
             self.call_with(m, Callee::Declared(id, f), None, call);

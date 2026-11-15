@@ -275,6 +275,30 @@ fn n_calls_of_a_generic_sum_on_families_and_tuples_are_checked_in_linear_time() 
     );
 }
 
+#[test]
+fn n_calls_of_a_generic_sum_written_as_a_call_on_a_union_are_checked_in_linear_time() {
+    // `sum(x)` with `x` a parameter beside a tuple: each call is summed region by region, the
+    // family by the fold and the tuple by adding (row FAIL-sum-word-family).
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let calls = (0..n)
+            .map(|i| match i % 2 {
+                0 => format!("x{i} = s({{ {i} -> 1 }}, true);\n"),
+                _ => format!("x{i} = s(({i}, 1), false);\n"),
+            })
+            .collect::<String>();
+        format!("s(positional xs, positional b) = sum(if b {{ xs }} else {{ (1, 2) }});\n{calls}")
+    });
+    let run = |n: usize| {
+        let u = elab(&srcs[&n]).unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(u.get(&format!("x{}", n - 1)).is_some());
+    };
+    scaling::check(
+        "n calls of a generic function whose `sum(x)` takes a parameter beside a tuple",
+        N_LEVELS,
+        run,
+    );
+}
+
 /// The leaves `leaves` joined by a balanced tree of `if`s, the k-th `if` met on the way down
 /// testing its own parameter `ck`: every leaf is reachable, and the tree is about log n deep.
 fn if_tree(leaves: &[String], next: &mut usize) -> String {
