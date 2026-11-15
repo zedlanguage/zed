@@ -31,6 +31,8 @@ use zedc_resolve::resolve::tables::Tables;
 use zedc_syntax::ast::{Error, Stmt, StmtKind, Target};
 
 mod bodies;
+#[cfg(test)]
+mod dropped_tests;
 mod identities;
 mod instances;
 pub mod mark;
