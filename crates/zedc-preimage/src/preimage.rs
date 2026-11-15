@@ -14489,27 +14489,55 @@ mod tests {
         (pn, now.cut != usize::MAX, met, false)
     }
 
-    /// The rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`],
-    /// about 0.5 s (TEST-bench-move-crates: 1,000 rounds of one fixed seed in eight tests
+    /// The rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] at
+    /// least, about 0.5 s (TEST-bench-move-crates: 1,000 rounds of one fixed seed in eight tests
     /// before, 17 ms a round).
     const ENTRY_ROUNDS: usize = 30;
 
+    /// The most rounds [`entries_rounds`] draws while some kind of read, stop or check has not
+    /// occurred, before its coverage asserts fail. It bounds only a run whose program no longer
+    /// makes some kind at all, about 5 s at 17 ms a round; a run that meets every kind stops
+    /// drawing as soon as it has, at [`ENTRY_ROUNDS`] or later, so the bound changes no
+    /// passing run. Assumption, not proved: every seed meets every kind well within this many
+    /// rounds while the code makes each kind. Evidence (FAIL-preimage-entries-seed-coverage,
+    /// 2026-11-15): of 4,400 seeds, the first round by which every kind had occurred was 1 for
+    /// 1,087, 3 at the median, over 30 for one (40), and the count past each round falls by
+    /// about 0.78 a round in the tail, which puts the chance of needing more than 300 rounds
+    /// near 10^-32.
+    const ENTRY_ROUNDS_MOST: usize = 300;
+
     /// An entry made below a stop is read where the lambdas being read when it began are still
     /// being read, and it gives there what the memo before ST-formula-k2-rec gave, which
-    /// read the term again at each place ([`check`]), on [`ENTRY_ROUNDS`] random programs from
-    /// a new seed each run (printed; `ZED_TEST_SEED` repeats a run) of functions that call
-    /// themselves and each other ([`Gen::group`]), nested, with shared tests and calls whose
-    /// arguments read the inputs, so that entries are read within other summaries and on
-    /// higher stacks.
+    /// read the term again at each place ([`check`]), on random programs from a new seed each
+    /// run (printed; `ZED_TEST_SEED` repeats a run) of functions that call themselves and each
+    /// other ([`Gen::group`]), nested, with shared tests and calls whose arguments read the
+    /// inputs, so that entries are read within other summaries and on higher stacks
+    /// ([`entries_rounds`]).
     #[test]
     fn entries_made_below_a_stop_give_what_reading_the_term_again_gives() {
         let seed =
             crate::seed::seed("entries_made_below_a_stop_give_what_reading_the_term_again_gives");
+        entries_rounds(seed);
+    }
+
+    /// The rounds of [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`] from
+    /// `seed`: at least [`ENTRY_ROUNDS`], and more until every kind of read, stop and check has
+    /// occurred, at most [`ENTRY_ROUNDS_MOST`]. Thirty rounds met no held read under other
+    /// inputs under about 1 seed in 4,400 (FAIL-preimage-entries-seed-coverage). Gives the
+    /// number of rounds.
+    fn entries_rounds(seed: u64) -> usize {
         let mut g = Gen::new(seed, true);
         READS.set([0; 3]);
         CHECKED.set([0; 5]);
-        let (mut met, mut endless, mut stopped) = (0, 0, 0);
-        for round in 0..ENTRY_ROUNDS {
+        let (mut met, mut endless, mut stopped, mut round) = (0, 0, 0, 0);
+        let every_kind = |stopped: usize, met: usize| {
+            let (r, c) = (READS.get(), CHECKED.get());
+            stopped > 0
+                && met > 0
+                && r.iter().all(|&n| n > 0)
+                && [c[0], c[2], c[3], c[4]].iter().all(|&n| n > 0)
+        };
+        while round < ENTRY_ROUNDS || (round < ENTRY_ROUNDS_MOST && !every_kind(stopped, met)) {
             g.pool.clear();
             let t = match g.rng.below(3) {
                 0 => g.group(4),
@@ -14527,14 +14555,15 @@ mod tests {
             stopped += usize::from(s);
             met += m;
             endless += usize::from(e);
+            round += 1;
         }
         let [reads, higher, other] = READS.get();
         let [checked, unchecked, raised, inside, everywhere] = CHECKED.get();
         eprintln!(
-            "held reads {reads}, on a higher stack {higher}, under other inputs {other}; read \
-             again {checked}, of kinds not compared {unchecked}, on a higher stack {raised}, \
-             under other inputs {inside}, entries that hold anywhere {everywhere}; stopped \
-             {stopped}, points met {met}, rounds out of fuel {endless}"
+            "rounds {round}, held reads {reads}, on a higher stack {higher}, under other inputs \
+             {other}; read again {checked}, of kinds not compared {unchecked}, on a higher stack \
+             {raised}, under other inputs {inside}, entries that hold anywhere {everywhere}; \
+             stopped {stopped}, points met {met}, rounds out of fuel {endless}"
         );
         // Every kind of read, stop and check occurs.
         assert!(stopped > 0 && met > 0, "{stopped} {met}");
@@ -14547,6 +14576,16 @@ mod tests {
             "{checked} {raised} {inside}"
         );
         assert!(everywhere > 0);
+        round
+    }
+
+    /// Seed 649647126551038262 of
+    /// [`entries_made_below_a_stop_give_what_reading_the_term_again_gives`]: its first thirty
+    /// rounds make no held read under other inputs, so it draws more
+    /// (FAIL-preimage-entries-seed-coverage).
+    #[test]
+    fn entries_made_below_a_stop_give_what_reading_the_term_again_gives_seed_649647126551038262() {
+        assert!(entries_rounds(649647126551038262) > ENTRY_ROUNDS);
     }
 
     /// The rounds of [`summaries_read_again_give_what_reading_the_term_again_gives`], about
