@@ -624,7 +624,7 @@ fn a_heat_stencil_prints_the_first_three_rows_and_the_last() {
 /// Reference 07 echoes a JSON document of one number in `depth` nested lists.
 fn json_nests(depth: usize) {
     let nested = format!("{}1{}\n", "[".repeat(depth), "]".repeat(depth));
-    assert_eq!(on_text("07", "json_deep", &nested), (nested, Ok(())));
+    assert_eq!(on_text("07", &format!("json_deep_{depth}"), &nested), (nested, Ok(())));
 }
 
 /// Reference 15 takes a sheet whose cell `c{i}` reads `c{i-1}`, `n` cells, the cell read first
@@ -635,7 +635,7 @@ fn sheet_chain(n: usize) {
         .map(|i| format!("c{i} = c{}+1\n", i - 1))
         .collect();
     input.push_str("c0 = 1\n");
-    let (out, result) = on_text("15", "sheet_chain", &input);
+    let (out, result) = on_text("15", &format!("sheet_chain_{n}"), &input);
     assert_eq!(result, Ok(()));
     let last = out.lines().last().expect("a line per edit");
     let cell = format!("c{}={n}", n - 1);
@@ -650,7 +650,7 @@ fn type_chain(n: usize) {
         .map(|i| format!("d{i} = d{} 1 +\n", i - 1))
         .collect();
     input.push_str("d0 = 1\n");
-    let (out, result) = on_text("31", "type_chain", &input);
+    let (out, result) = on_text("31", &format!("type_chain_{n}"), &input);
     assert_eq!(result, Ok(()));
     assert_eq!(out.lines().count(), n);
     assert!(out.lines().all(|l| l.ends_with(": int")));
