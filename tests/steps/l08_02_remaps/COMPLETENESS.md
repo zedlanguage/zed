@@ -1,4 +1,4 @@
-# Completeness of the l08_remaps tests
+# Completeness of the l08_02_remaps tests
 
 Each case of DESIGN.md sec:remap_law, sec:grouping, sec:push_pull, sec:level_names and the
 bounds table that the remap steps (L8.1, L8.2, L8.2a, L8.2b, L8.2c, EMPTY-level-swap) must
