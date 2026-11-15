@@ -433,6 +433,33 @@ fn free_and_bounded_variables_fit_themselves_under_other_names() {
     }
 }
 
+/// The variables a signature holds ([`Sig::facts`]), of `bounded_in_a_payload` at small sizes:
+/// each variable is met five times by the walk that finds them (in the payload, in the result,
+/// as an own variable, by its bound, as held), which keeps each name once, in the names, not
+/// the classes (FAIL-ratio-payload-renamed).
+#[test]
+fn the_variables_of_a_payload_of_bounded_variables_are_each_held_once() {
+    use std::collections::BTreeSet;
+    for n in 1..=4 {
+        let (s, q) = bounded_in_a_payload(n, "int");
+        for text in [s, q] {
+            let t = parse_type(&text).unwrap_or_else(|e| panic!("{e}"));
+            let sig = &t.fns[0];
+            let met = (sig.vars_order().iter())
+                .chain(&sig.own)
+                .chain(sig.bounds.keys())
+                .chain(&sig.held);
+            let want: BTreeSet<&str> = met.map(|v| &**v).collect();
+            let facts = sig.facts();
+            let got: BTreeSet<&str> = facts.names.iter().map(|v| &**v).collect();
+            assert_eq!(got, want, "{text}");
+            assert_eq!(facts.names.len(), n, "{text}");
+            assert!(facts.classes.is_empty(), "{text}");
+            assert!(want.iter().all(|v| facts.holds(v)), "{text}");
+        }
+    }
+}
+
 #[test]
 fn the_checker_reads_a_one_tuple_and_a_morphism_type() {
     let one = "f(p: (int,)) = p;\n";

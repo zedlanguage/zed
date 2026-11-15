@@ -1253,7 +1253,8 @@ impl Above {
     }
 }
 
-/// The hasher of [`Same`]'s table of nodes by address: one folded multiply of the address.
+/// The hasher of [`Same`]'s table of nodes by address: one folded multiply of the address;
+/// of [`Added`]'s names, one per byte.
 #[derive(Default)]
 struct AddressHasher(u64);
 
@@ -2905,9 +2906,10 @@ impl VarFacts {
     /// held in a type, which may still change.
     pub fn of(s: &Sig) -> VarFacts {
         let mut g = VarFacts::default();
-        g.tys(sig_tys(s));
+        let mut added = Added::default();
+        g.tys(sig_tys(s), &mut added);
         let extra = s.bounds.keys().chain(&s.own).chain(&s.held);
-        extra.for_each(|v| add(&mut g.names, v));
+        extra.for_each(|v| g.add_to(false, v, &mut added));
         g.free = g.free.max(s.named);
         while g.names.contains(&*var_name(g.free)) {
             g.free += 1;
@@ -2920,15 +2922,12 @@ impl VarFacts {
     /// ([`VarBits`]) entered once. A row keeps no set of its own, which for each node of a
     /// shared DAG would be its transitive closure (question A8), so the cost is that of the
     /// rows and shapes that hold variables, as at the first walk of them.
-    fn tys<'a>(&mut self, roots: impl IntoIterator<Item = &'a Ty>) {
+    fn tys<'a>(&mut self, roots: impl IntoIterator<Item = &'a Ty>, added: &mut Added<'a>) {
         let mut seen = HashSet::new();
         let mut stack: Vec<&Ty> = roots.into_iter().collect();
         while let Some(t) = stack.pop() {
             for v in &t.vars {
-                match class_id(v) {
-                    Some(_) => add(&mut self.classes, v),
-                    None => add(&mut self.names, v),
-                }
+                self.add_to(class_id(v).is_some(), v, added);
             }
             for s in &t.fns {
                 self.held(s.facts());
@@ -2954,7 +2953,34 @@ impl VarFacts {
         merge(&mut self.names, &f.names);
         self.free = self.free.max(f.free);
     }
+
+    /// Adds the variable `v` to its classes (`class`) or to its names, unless this walk has
+    /// added it to that set already (`added`).
+    // Complexity tradeoff (FAIL-ratio-payload-renamed): naive version, each occurrence of a
+    // name looked up in the persistent ordered set ([`add`]), O(log n) string comparisons per
+    // occurrence. A variable of a signature is met several times over (in the arrows, as an own
+    // variable, by its bound, as held): `n` bounded variables in a payload and its result made
+    // 5n lookups, 92M of the 146M instructions of the facts of 16000 (callgrind), the first
+    // fit of a signature paying them. Used: a hash set of the names this walk added, one O(1)
+    // hash per occurrence and one ordered lookup per distinct name (115M with SipHash, whose
+    // 43M is the hashing; [`AddressHasher`]'s folded multiply per byte is a few instructions
+    // per byte). Given up: the hash set's memory, one entry per distinct name, for the walk
+    // only, and a hash with a fixed key, which names chosen to collide could slow to a linear
+    // probe per name; the result is the same. A name added by a held function's facts
+    // ([`Self::held`]) is not in `added`, so [`add`] still looks for it.
+    fn add_to<'a>(&mut self, class: bool, v: &'a Arc<str>, added: &mut Added<'a>) {
+        if !added.insert((class, &**v)) {
+            return;
+        }
+        match class {
+            true => add(&mut self.classes, v),
+            false => add(&mut self.names, v),
+        }
+    }
 }
+
+/// The variables a walk of [`VarFacts`] has added, each with whether it went to the classes.
+type Added<'a> = HashSet<(bool, &'a str), std::hash::BuildHasherDefault<AddressHasher>>;
 
 /// What a row or payload shape keeps of the variables it holds at any depth, inside functions
 /// and payloads too, in place of their set (CK-data-memo, question A8): the smallest and the
@@ -8378,7 +8404,7 @@ impl Ty {
     /// that hold one, each entered once, since each function keeps its own.
     pub fn var_facts(&self) -> VarFacts {
         let mut f = VarFacts::default();
-        f.tys([self]);
+        f.tys([self], &mut Added::default());
         f
     }
 
