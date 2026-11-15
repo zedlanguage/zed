@@ -54,6 +54,12 @@ fn entries_that_are_functions_are_read_and_applied() {
             "2",
         ),
         ("r = b.map(f -> f(2));", "{\"a\" -> 3, \"b\" -> 4}"),
+        // `where` and a remap keep the functions (row FAIL-held-family-operators).
+        ("r = b.where(f -> true).count;", "2"),
+        ("c = b.where(f -> true);\n    r = c[ka](2);", "3"),
+        ("r = b.where(f -> f(3) > 5).count;", "1"),
+        ("c = b.where(f -> f(3) > 5);\n    r = c[kb](3);", "6"),
+        ("c = b as (k -> v) into (k -> v);\n    r = c[ka](2);", "3"),
     ];
     let body: String = (cases.iter().enumerate())
         .map(|(i, (c, _))| {
@@ -110,20 +116,23 @@ fn two_function_entries_at_one_key_collide() {
     }
 }
 
-/// A `map` that makes functions, run by `zedc run`: 2 + 1, and f(1) + 100 at "b".
+/// A `map` that makes functions: 2 + 1, and f(1) + 100 at "b" (row
+/// FAIL-native-fam-result-holds-function: the executable runs the `map` in the kernel, which
+/// gives the family of functions back as a held value).
 #[test]
-fn a_map_that_makes_functions_runs_in_the_interpreter() {
+fn a_map_that_makes_functions_runs_in_both() {
     let body = "    c = { ka -> 1 }.map(r -> (y -> y + r));\n    r = c[ka](2);\n    \
                 d = b.map(f -> (y -> f(y) + 100));\n    s = d[kb](1);\n    \
                 m.stdout <- \"${r} ${s}\";\n";
-    let d = dir("l03_02_map_run/made");
-    let src = d.join("made.zed");
-    std::fs::write(&src, format!("main(m: MainArgs) {{\n{B}{body}}}\n")).unwrap();
-    let ran = interpreter(&src, &[], &[]);
-    assert_eq!(
-        (ran.status, ran.stdout.as_str()),
-        (0, "3 102\n"),
-        "{}",
-        ran.stderr
-    );
+    for (how, ran) in ["zedc run", "executable"]
+        .iter()
+        .zip(both("made_both", "", body))
+    {
+        assert_eq!(
+            (ran.status, ran.stdout.as_str()),
+            (0, "3 102\n"),
+            "{how}: {}",
+            ran.stderr
+        );
+    }
 }

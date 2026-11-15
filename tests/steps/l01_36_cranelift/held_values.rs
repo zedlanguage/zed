@@ -426,3 +426,23 @@ fn a_type_test_on_held_atoms_nested_held_tuples_and_primitives() {
         );
     }
 }
+
+/// `t = { "a" -> f, "b" -> z }; t["a"](t["b"])`: a family that holds a function is a held
+/// value in the counting machine too (row FAIL-machine-held-family), read at its keys, with
+/// native code's counts equal to the machine's.
+#[test]
+fn a_held_family_is_read_at_its_keys_and_applied() {
+    let fam = prim(
+        Prim::Entries,
+        vec![lit(Value::str("a")), var("f"), lit(Value::str("b")), var("z")],
+    );
+    let m = let_(
+        "t",
+        fam,
+        app(
+            app(var("t"), vec![lit(Value::str("a"))]),
+            vec![app(var("t"), vec![lit(Value::str("b"))])],
+        ),
+    );
+    assert_eq!(agree(&calls(3, m)), Ok(ints(3)));
+}

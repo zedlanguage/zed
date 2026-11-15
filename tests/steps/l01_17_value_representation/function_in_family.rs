@@ -131,3 +131,15 @@ fn two_function_entries_at_one_key_collide() {
     );
     assert!(!got.contains("a bug in zedc"), "{src}\n{got}");
 }
+
+/// `where` and a remap need no entry to be data (L1.17: only showing and `==` do), so they
+/// keep the functions (row FAIL-held-family-operators). `b["a"](3)` is 4 and `b["b"](3)` is 6,
+/// so `f(3) > 5` keeps "b" alone.
+#[test]
+fn where_and_a_remap_over_a_family_of_functions() {
+    assert_eq!(a("a = b.where(f -> true).count;\n"), "2");
+    assert_eq!(a("c = b.where(f -> true);\na = c[\"a\"](2);\n"), "3");
+    assert_eq!(a("a = b.where(f -> f(3) > 5).count;\n"), "1");
+    assert_eq!(a("c = b.where(f -> f(3) > 5);\na = c[\"b\"](3);\n"), "6");
+    assert_eq!(a("c = b as (k -> v) into (k -> v);\na = c[\"a\"](2);\n"), "3");
+}
