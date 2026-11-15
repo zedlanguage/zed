@@ -391,6 +391,55 @@ struct Diffs {
     renamed: usize,
     unlisted: usize,
     reference_finer: usize,
+    related: usize,
+}
+
+/// Whether the relation of `p` is exact on its box, as the interpreter finds at the members of
+/// the classes `cs` within (-60, 60), the inputs ranging over `ds`: each point that meets `d`
+/// under `t` lies in the box and meets the relation, and no other point of the box meets the
+/// relation, nor lies in it when it is marked exact. A point where the solver refuses the
+/// relation's question is a refutation. Item FAIL-s22-exact-min-square-relation: the transfer
+/// splits a comparison of an `if` with a translated term into its arms and decides an arm's
+/// comparison by its range over the box (`Walk::compare_untranslated`), and so can state a
+/// relation where the transfer before states none.
+fn relation_exact(t: &Term, ds: &Domains, cs: &Classes, d: &Demand, p: &Preimage) -> bool {
+    let Some(rel) = &p.relation else {
+        return false;
+    };
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    let member = |n: &Arc<str>, v: i64| {
+        cs.get(n)
+            .is_none_or(|c| !reduce_congruence(&IntervalSet::of(v, v), c).0.is_empty())
+    };
+    super::points(ds, &names, (-60, 60)).iter().all(|pt| {
+        !names.iter().zip(pt).all(|(n, &v)| member(n, v)) || {
+            let meets = super::meets(t, &names, pt, d);
+            let inside = names
+                .iter()
+                .zip(pt)
+                .all(|(n, &v)| p.domains.get(n).is_none_or(|s| s.contains(v)));
+            relation_holds(rel, &names, pt)
+                .is_some_and(|held| (inside && held) == meets && !(p.exact && inside && !meets))
+        }
+    })
+}
+
+/// Whether the preimage `now` differs from `then`, the transfer before's, only in stating a
+/// relation where `then` states none, and that relation is exact on the box
+/// ([`relation_exact`]): the same box, exactness, listing and stops, and a refusal of the same
+/// kind. A macro, since the two preimages are of two types.
+macro_rules! only_a_new_relation {
+    ($t:expr, $ds:expr, $cs:expr, $d:expr, $now:expr, $then:expr) => {{
+        let kind = |r: &Option<Refusal>| r.as_ref().map(std::mem::discriminant);
+        let (now, then) = ($now, $then);
+        then.relation.is_none()
+            && now.domains == then.domains
+            && now.exact == then.exact
+            && now.enumerated == then.enumerated
+            && format!("{:?}", now.stops) == format!("{:?}", then.stops)
+            && kind(&now.refusal) == kind(&then.refusal)
+            && relation_exact($t, $ds, $cs, $d, now)
+    }};
 }
 
 /// Whether `p`, not exact, holds the relation of a split by remainders over many periods
@@ -521,6 +570,11 @@ impl Diffs {
                 "{what}: {t} over {ds:?}, demand {d:?}\n  the interpreter refutes the box \
                  {which}: {shown}"
             ));
+            return;
+        }
+        if new != old && only_a_new_relation!(t, ds, &Classes::new(), d, &now, &then) {
+            self.cases += 1;
+            self.related += 1;
             return;
         }
         // Item PERF-ref-memo-quadratic: the transfer before reads guarded chains of remainders,
@@ -744,6 +798,11 @@ impl Diffs {
             self.renamed += 1;
             return;
         }
+        if only_a_new_relation!(t, ds, cs, d, &now, &then) {
+            self.cases += 1;
+            self.related += 1;
+            return;
+        }
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
         self.note(what, t, ds, d, new, old);
     }
@@ -818,6 +877,10 @@ impl Diffs {
         assert_eq!(
             self.reference_finer, 0,
             "a box before is narrower than the box now"
+        );
+        assert_eq!(
+            self.related, 0,
+            "a relation is stated where the transfer before states none"
         );
     }
 }
@@ -3564,6 +3627,15 @@ fn random_terms_of_seed_16398544689257074035_keep_their_preimages() {
     random_terms(16398544689257074035, 24);
 }
 
+/// [`random_terms`] of seed 11714205704670991641: the test
+/// `if (y < x) { min(0, -5) } else { x ^ 2 } >= -4` under `false`, an `if` with a square's arm
+/// compared with a constant, which had no relation where the transfer before had one
+/// (FAIL-s22-exact-min-square-relation).
+#[test]
+fn random_terms_of_seed_11714205704670991641_keep_their_preimages() {
+    random_terms(11714205704670991641, 24);
+}
+
 /// The comparison of two relations' sets behind the renamed-relation allowances
 /// ([`same_relation_set`], item TEST-renamed-relation-same-set): `2 <= x <= 5` stated through
 /// an auxiliary variable equal to `x` is the same set with that variable numbered anew, and
@@ -3601,4 +3673,205 @@ fn a_renamed_relation_counts_as_the_same_only_with_the_same_set() {
     // The point 6 lies outside the box 0..=5, so there the two sets agree.
     let box5: Domains = [(x.clone(), IntervalSet::of(0, 5))].into_iter().collect();
     assert!(same(&was, &through(3, 2, 6), &box5));
+}
+
+/// FAIL-s22-exact-min-square-relation: `if (y != x) { min(y, -4) } else { x * x } < -1` over
+/// `x` in [-1, 7] and `y` in [-12, 1], under `true`, with no class on `x` and with each class
+/// mod 2, 3 and 4. The transfer before has had a relation here since 31b60eac9 gave it the
+/// route through the coordinate `y - x` (`preimage_ref::correlated`; with that one call
+/// dropped, the two agree on this case and on seed 11714205704670991641). The transfer had
+/// none: the comparison's left operand does not translate, its arm `x * x` being a product.
+/// It now splits the comparison into its arms, the square's arm decided `false` by its range
+/// (`Walk::compare_untranslated`). [`random_terms_keep_their_preimages`] met it about once in
+/// 40 runs, its seed new each run and the case one of thousands of draws.
+#[test]
+fn an_exact_case_of_min_beside_a_square_keeps_the_relation_before() {
+    let t = prim(
+        Prim::Lt,
+        Term::If(
+            Shared::new(prim(Prim::Ne, var("y"), var("x"))),
+            Shared::new(prim(Prim::Min, var("y"), int(-4))),
+            Shared::new(prim(Prim::Mul, var("x"), var("x"))),
+        ),
+        int(-1),
+    );
+    let ds: Domains = [
+        ("x".into(), IntervalSet::range(End::of(-1), End::of(7))),
+        ("y".into(), IntervalSet::range(End::of(-12), End::of(1))),
+    ]
+    .into();
+    let mut all = vec![Classes::new()];
+    for m in 2..=4i64 {
+        for r in 0..m {
+            let mut cs = Classes::new();
+            cs.insert("x".into(), Congruence::new(m as u64, r));
+            all.push(cs);
+        }
+    }
+    let mut diffs = Diffs::default();
+    for cs in &all {
+        diffs.exact("exact", &t, &ds, cs, &Demand::Bool(true));
+    }
+    diffs.explained(all.len());
+}
+
+/// `if y == x { min(y, -4) } else if y == x - 1 { x * x + 1 } else if y == x - 2 { min(y, -6) }
+/// else … { x * x } < -1`, a chain of `k` `if`s, the `j`th testing `y == x - j % 16`, whose
+/// arms are a `min` at even `j` and a square plus `j` at odd `j`, the last arm a square. Each
+/// guard can hold in [`min_square_box`], so no range decides the chain's tail. The linear
+/// stage translates no square: the comparison is split into the chain's arms, and each
+/// square's arm is decided by its range (`Walk::compare_untranslated`;
+/// FAIL-s22-exact-min-square-relation). The test is `true` exactly where the first `j < k`
+/// with `y == x - j % 16` is even.
+pub(super) fn min_square_chain(k: usize) -> Term {
+    let eq = |j: usize| {
+        let at = prim(Prim::Sub, var("x"), int((j % 16) as i64));
+        prim(Prim::Eq, var("y"), at)
+    };
+    let square = || prim(Prim::Mul, var("x"), var("x"));
+    let arm = |j: usize| match j % 2 {
+        0 => prim(Prim::Min, var("y"), int(-4 - j as i64)),
+        _ => prim(Prim::Add, square(), int(j as i64)),
+    };
+    let chain = (0..k).rev().fold(square(), |inner, j| {
+        Term::If(Shared::new(eq(j)), Shared::new(arm(j)), Shared::new(inner))
+    });
+    prim(Prim::Lt, chain, int(-1))
+}
+
+/// The box of [`an_exact_case_of_min_beside_a_square_keeps_the_relation_before`].
+pub(super) fn min_square_box() -> Domains {
+    [
+        ("x".into(), IntervalSet::range(End::of(-1), End::of(7))),
+        ("y".into(), IntervalSet::range(End::of(-12), End::of(1))),
+    ]
+    .into()
+}
+
+/// `if y < x { x * x } else if y < x - 1 { x * x + 1 } else … { min(y, -4) } < -1`, a chain of
+/// `k` `if`s, the `j`th testing `y < x - j` with the arm `x * x + j`, the last arm a `min`,
+/// over `x` in [-1, 7] and `y` in [-12 - k, 1], where every guard can hold. Every guard
+/// implies the first, so the test is `true` exactly where `y >= x`. The linear stage
+/// translates no square: the comparison is split at each `if` of the chain
+/// (`Walk::compare_untranslated`), each square's arm decided `false` by its range, and the
+/// formula of the split is `k` guards and one `min`, so its size and the work grow as `k`
+/// (FAIL-s22-exact-min-square-relation).
+pub(super) fn square_lt_chain(k: usize) -> (Term, Domains) {
+    let last = prim(Prim::Min, var("y"), int(-4));
+    let chain = (0..k).rev().fold(last, |inner, j| {
+        let g = prim(Prim::Lt, var("y"), prim(Prim::Sub, var("x"), int(j as i64)));
+        let arm = prim(
+            Prim::Add,
+            prim(Prim::Mul, var("x"), var("x")),
+            int(j as i64),
+        );
+        Term::If(Shared::new(g), Shared::new(arm), Shared::new(inner))
+    });
+    let ds = [
+        ("x".into(), IntervalSet::range(End::of(-1), End::of(7))),
+        (
+            "y".into(),
+            IntervalSet::range(End::of(-12 - k as i64), End::of(1)),
+        ),
+    ]
+    .into();
+    (prim(Prim::Lt, chain, int(-1)), ds)
+}
+
+/// `if y0 < x0 { x0 * x0 } else if y1 < x1 { x1 * x1 + 1 } else … { min(y0, -4) } < -1`, a
+/// chain of `k` `if`s over `k` pairs of inputs, the `j`th testing `y{j} < x{j}`, each `x{j}` in
+/// [-1, 7] and each `y{j}` in [-12, 1]. No guard bounds another's inputs, so no range decides
+/// a tail of the chain, and the comparison is split at every `if`
+/// (`Walk::compare_untranslated`); the test is `true` exactly where `y{j} >= x{j}` for every
+/// `j` (FAIL-s22-exact-min-square-relation).
+pub(super) fn square_pairs_chain(k: usize) -> (Term, Domains) {
+    let last = prim(Prim::Min, var("y0"), int(-4));
+    let chain = (0..k).rev().fold(last, |inner, j| {
+        let (x, y) = (format!("x{j}"), format!("y{j}"));
+        let g = prim(Prim::Lt, var(&y), var(&x));
+        let arm = prim(Prim::Add, prim(Prim::Mul, var(&x), var(&x)), int(j as i64));
+        Term::If(Shared::new(g), Shared::new(arm), Shared::new(inner))
+    });
+    let mut ds = Domains::new();
+    for j in 0..k.max(1) {
+        ds.insert(
+            format!("x{j}").into(),
+            IntervalSet::range(End::of(-1), End::of(7)),
+        );
+        ds.insert(
+            format!("y{j}").into(),
+            IntervalSet::range(End::of(-12), End::of(1)),
+        );
+    }
+    (prim(Prim::Lt, chain, int(-1)), ds)
+}
+
+/// The preimage of `true` under [`square_pairs_chain`] has a relation that holds at a point of
+/// the box exactly where `y{j} >= x{j}` for every `j`, at every point for one and two pairs.
+#[test]
+fn a_chain_of_squares_over_pairs_holds_where_each_y_is_at_least_its_x() {
+    for k in [1, 2] {
+        let (t, ds) = square_pairs_chain(k);
+        let p = preimage(&t, &ds, &Demand::Bool(true));
+        let rel = (p.relation.as_ref()).unwrap_or_else(|| panic!("k = {k}: {p:?}"));
+        let names: Vec<Arc<str>> = (0..k)
+            .flat_map(|j| [format!("x{j}").into(), format!("y{j}").into()])
+            .collect();
+        let mut pt = vec![0i64; 2 * k];
+        let points = (9 * 14usize).pow(k as u32);
+        for mut i in 0..points {
+            for j in 0..k {
+                pt[2 * j] = -1 + (i % 9) as i64;
+                i /= 9;
+                pt[2 * j + 1] = -12 + (i % 14) as i64;
+                i /= 14;
+            }
+            let inside = (names.iter().zip(&pt)).all(|(n, &v)| p.domains[n].contains(v));
+            let held = inside && relation_holds(rel, &names, &pt) == Some(true);
+            let want = (0..k).all(|j| pt[2 * j + 1] >= pt[2 * j]);
+            assert_eq!(held, want, "k = {k}, at {pt:?}: {p:?}");
+        }
+    }
+}
+
+/// The preimage of `true` under [`square_lt_chain`] has a relation that holds at a point of
+/// the box exactly where `y >= x`.
+#[test]
+fn a_chain_of_squares_beside_a_min_holds_where_y_is_at_least_x() {
+    let names: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    for k in [1, 2, 3, 8, 20] {
+        let (t, ds) = square_lt_chain(k);
+        let p = preimage(&t, &ds, &Demand::Bool(true));
+        let rel = (p.relation.as_ref()).unwrap_or_else(|| panic!("k = {k}: {p:?}"));
+        for x in -1..=7i64 {
+            for y in (-12 - k as i64)..=1 {
+                let inside = p.domains["x"].contains(x) && p.domains["y"].contains(y);
+                let held = inside && relation_holds(rel, &names, &[x, y]) == Some(true);
+                assert_eq!(held, y >= x, "k = {k}, x = {x}, y = {y}: {p:?}");
+            }
+        }
+    }
+}
+
+/// The preimage of `true` under [`min_square_chain`] has a relation, and holds exactly the
+/// points of the box where the test is `true`: where the first guard that holds is an even
+/// `j`'s, whose arm is `min(y, -4 - j) < -1`; every other arm is a square, at least 0.
+#[test]
+fn a_chain_of_ifs_beside_a_square_has_a_relation() {
+    let ds = min_square_box();
+    let names: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    for k in [1, 2, 3, 4, 5, 6, 19] {
+        let t = min_square_chain(k);
+        let p = preimage(&t, &ds, &Demand::Bool(true));
+        let rel = (p.relation.as_ref()).unwrap_or_else(|| panic!("k = {k}: {p:?}"));
+        for x in -1..=7i64 {
+            for y in -12..=1i64 {
+                let first = (0..k as i64).find(|j| y == x - j % 16);
+                let want = first.is_some_and(|j| j % 2 == 0);
+                let inside = p.domains["x"].contains(x) && p.domains["y"].contains(y);
+                let held = inside && relation_holds(rel, &names, &[x, y]) == Some(true);
+                assert_eq!(held, want, "k = {k}, x = {x}, y = {y}");
+            }
+        }
+    }
 }

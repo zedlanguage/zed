@@ -642,3 +642,31 @@ fn the_box_of_a_chain_over_holes_is_tested_in_linear_work(n: usize) {
         );
     });
 }
+
+/// COMPLEXITY.md FAIL-s22-exact-min-square-relation: the preimage of [`square_pairs_chain`], a
+/// comparison of a chain of `k` `if`s whose arms are squares with a constant, splits the
+/// comparison at each of the `k` `if`s (`Walk::compare_untranslated`), work of order `k`.
+/// Measured at 64 and 512: 8.6 times the instructions and 9.8 times the bytes. At 512 and
+/// 4096 the family fails the limit (17.4 times the bytes), and so does the same chain with
+/// each arm's comparison written out by hand, which never splits (18.8 times the bytes on the
+/// base 4a1af90a2): the growth is the linear stage's on `k` guards over `2k` inputs, row
+/// FAIL-relational-if-chain-growth; the split's own share, the difference between the two,
+/// is 8.0 times at both steps.
+#[test]
+fn a_chain_of_ifs_beside_a_square_compares_in_linear_time() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let inputs = scaling::inputs(64, square_pairs_chain);
+        for (t, ds) in inputs.values() {
+            assert!(preimage(t, ds, &d).relation.is_some(), "a relation");
+        }
+        scaling::check(
+            "the preimage of a chain of `if`s beside a square, compared with a constant",
+            64,
+            |k| {
+                let (t, ds) = &inputs[&k];
+                preimage(t, ds, &d);
+            },
+        );
+    });
+}

@@ -3000,6 +3000,9 @@ enum Made {
     Var(Name),
     Call(Tid, std::mem::Discriminant<Prim>),
     Diff(Tid),
+    /// The comparison of one arm of an `if` an operand of the comparison is: the comparison,
+    /// the arm, and whether the `if` is its second operand ([`Terms::arm`]).
+    Arm(Tid, Tid, bool),
 }
 
 /// The form of a term: its kind, its constant or name, and the forms of its parts, so that
@@ -3267,6 +3270,19 @@ impl<'t> Terms<'t> {
     /// `a - b` for the comparison `cmp` of `a` and `b`.
     fn diff(&mut self, cmp: Tid, args: Span) -> Tid {
         self.made(Made::Diff(cmp), Node::Prim(Prim::Sub, args))
+    }
+
+    /// The comparison `p` of `arm` and `other` for the comparison `cmp`, one of whose operands
+    /// is an `if` with the arm `arm`: `arm p other`, or `other p arm` where `second`.
+    fn arm(&mut self, cmp: Tid, p: Prim, arm: Tid, other: Tid, second: bool) -> Tid {
+        let key = Made::Arm(cmp, arm, second);
+        if let Some(&t) = self.made.get(&key) {
+            return t;
+        }
+        let at = self.kids.len();
+        self.kids
+            .extend(if second { [other, arm] } else { [arm, other] });
+        self.made(key, Node::Prim(p, Span::new(at, 2)))
     }
 }
 
@@ -9360,6 +9376,7 @@ impl<'m, 't> Walk<'m, 't> {
                         let mark = self.tr(|tr| tr.defs.len());
                         let logged = self.with(|tx| tx.run.memo.log.len());
                         let (la, lb) = (self.lin(a, env).await, self.lin(b, env).await);
+                        let translated = (la.is_some(), lb.is_some());
                         if let (Some(la), Some(lb)) = (la, lb) {
                             let one = Lin::constant(1);
                             let c = match p {
@@ -9378,23 +9395,116 @@ impl<'m, 't> Walk<'m, 't> {
                         }
                         self.tr(|tr| tr.truncate(mark));
                         self.with(|tx| tx.forget(logged));
-                        if !matches!(p, Eq | Ne) {
-                            return None;
+                        if matches!(p, Eq | Ne) {
+                            // Two tests are equal where both hold or neither does.
+                            if let (Some(fa), Some(fb)) =
+                                (self.formula(a, env).await, self.formula(b, env).await)
+                            {
+                                let same = Formula::or(vec![
+                                    Formula::and(vec![fa.clone(), fb.clone()]),
+                                    Formula::and(vec![Formula::negate(fa), Formula::negate(fb)]),
+                                ]);
+                                let same = self.exactly_equal(same, a, b, env).await?;
+                                return Some(if p == Ne { Formula::negate(same) } else { same });
+                            }
+                            self.tr(|tr| tr.truncate(mark));
+                            self.with(|tx| tx.forget(logged));
                         }
-                        // Two tests are equal where both hold or neither does.
-                        let (fa, fb) = (self.formula(a, env).await?, self.formula(b, env).await?);
-                        let same = Formula::or(vec![
-                            Formula::and(vec![fa.clone(), fb.clone()]),
-                            Formula::and(vec![Formula::negate(fa), Formula::negate(fb)]),
-                        ]);
-                        let same = self.exactly_equal(same, a, b, env).await?;
-                        Some(if p == Ne { Formula::negate(same) } else { same })
+                        self.compare_untranslated(t, p, (a, b), translated, env)
+                            .await
                     }
                     _ => None,
                 }
             }
             _ => None,
         }
+    }
+
+    /// The formula of the comparison `t`, `a p b`, whose operands do not both translate to
+    /// linear terms (`translated` says which do), or `None`.
+    ///
+    /// Where the operand that does not translate is an `if` and the other operand does
+    /// translate, `if g { x } else { y } p b` is `(g && (x p b)) || (!g && (y p b))`, each
+    /// arm's comparison a term of its own ([`Terms::arm`]). The `if` reads its guard where the
+    /// comparison reads it, and each arm only where the guard picks it, so the two agree at
+    /// every point, failures included: where `g` fails, both the `if` and the formula of `g`
+    /// fail (FAIL-s22-exact-min-square-relation).
+    ///
+    /// Each arm's comparison is first decided by its values over the run's box
+    /// ([`Walk::fwd`]): where it is `true` at every point and never a failure or a value of
+    /// another kind, its formula is `true`, and where it is `false` at every such point,
+    /// `false`; otherwise it is read as any other term. So `x * x < -1`, the arm of
+    /// `if (y != x) { min(y, -4) } else { x * x } < -1` that does not translate, is `false`.
+    /// Proof that this is the arm's relation: [`Walk::fwd`] holds every value the term takes at
+    /// a point of the box the run began over ([`Tx::start`]), or of the context of the summary
+    /// being read ([`Tx::open`]), every input it adds being one no term outside the summary
+    /// reads; the inputs [`Walk::canonical_env`] adds are over every integer, so what holds
+    /// there holds at every instance of the call. Every relation of a run is read only within
+    /// its box: [`linear`] meets it with the box, and [`Scoped`] reads its bodies over atoms
+    /// whose domains are every integer. So at each point the relation is read at, the arm's
+    /// comparison is the constant its formula is, and the formula is exact there; no point
+    /// where the comparison fails is claimed, since the decision requires that it never does.
+    ///
+    /// Complexity tradeoff: an `if` is split only where the other operand translates, so a
+    /// chain of `k` `if`s compared with a translated term makes `k` comparisons, each read
+    /// once by the memo, `O(k)` terms and a formula of `O(k)` parts, the size of the chain.
+    /// Splitting both operands where neither translates would make `k * m` comparisons for
+    /// chains of `k` and `m` arms; that is given up, and such a comparison has no formula, as
+    /// before. The range decision is one [`Walk::fwd`] per arm, memoized per term, so `O(1)`
+    /// beyond the walks of the arm's parts. Deciding every comparison that does not translate
+    /// by its range, not only an arm's, was tried and given up: it walks the range of each
+    /// such comparison, products included, whose bounds grow with their factors, and
+    /// `bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors` rose from 10.3
+    /// to 11.5 times the bytes (1.46 times the instructions) on `i * i * j * … <= 1` at 512
+    /// and 4096, past the limit of 10.5. Tests:
+    /// `l01_25_preimage_catalog::s22::an_exact_case_of_min_beside_a_square_keeps_the_relation_before`,
+    /// `s22::a_chain_of_ifs_beside_a_square_has_a_relation` and two other chains, and
+    /// `bench::s22::a_chain_of_ifs_beside_a_square_compares_in_linear_time` (8.6 times the
+    /// instructions, 9.8 the bytes, at 64 and 512); COMPLEXITY.md row
+    /// FAIL-s22-exact-min-square-relation.
+    async fn compare_untranslated(
+        &'m self,
+        t: Tid,
+        p: Prim,
+        (a, b): (Tid, Tid),
+        translated: (bool, bool),
+        env: Eid,
+    ) -> Option<Formula> {
+        let (side, other, second) = match translated {
+            (false, true) => (a, b, false),
+            (true, false) => (b, a, true),
+            _ => return None,
+        };
+        let Node::If(g, x, y) = self.node(side) else {
+            return None;
+        };
+        let (cx, cy) = self.with(|tx| {
+            (
+                tx.terms.arm(t, p, x, other, second),
+                tx.terms.arm(t, p, y, other, second),
+            )
+        });
+        let fg = self.formula(g, env).await?;
+        let mut arms = Vec::with_capacity(2);
+        for c in [cx, cy] {
+            let f = self.fwd(c, env).await;
+            let decided = match f.bools {
+                _ if f.fails || f.other || !f.ints.set().is_empty() => None,
+                (true, false) => Some(Formula::top()),
+                (false, true) => Some(Formula::bottom()),
+                _ => None,
+            };
+            arms.push(match decided {
+                Some(d) => d,
+                None => self.formula(c, env).await?,
+            });
+        }
+        let fy = arms.pop()?;
+        let fx = arms.pop()?;
+        Some(Formula::or(vec![
+            Formula::and(vec![fg.clone(), fx]),
+            Formula::and(vec![Formula::negate(fg), fy]),
+        ]))
     }
 
     /// The condition of the chain of `&&` (`p` is `And`) or `||` that the `if` `head` heads,
