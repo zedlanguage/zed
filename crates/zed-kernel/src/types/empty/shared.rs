@@ -238,52 +238,19 @@ impl TwoSat {
                 next[from] += 1;
             }
         }
-        const NONE: usize = usize::MAX;
-        let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
-        let (mut found, mut comps) = (0, 0);
-        let mut on: Vec<usize> = Vec::new();
-        // The walk: each literal entered and the position of its next edge.
-        let mut walk: Vec<(usize, usize)> = Vec::new();
-        for root in 0..n {
-            if index[root] != NONE {
-                continue;
-            }
-            index[root] = found;
-            low[root] = found;
-            found += 1;
-            on.push(root);
-            walk.push((root, start[root]));
-            while let Some(&(v, e)) = walk.last() {
-                if e < start[v + 1] {
-                    let w = to[e];
-                    let top = walk.len() - 1;
-                    walk[top].1 += 1;
-                    if index[w] == NONE {
-                        index[w] = found;
-                        low[w] = found;
-                        found += 1;
-                        on.push(w);
-                        walk.push((w, start[w]));
-                    } else if comp[w] == NONE {
-                        low[v] = low[v].min(index[w]);
-                    }
-                    continue;
+        let (mut comp, mut comps) = (vec![usize::MAX; n], 0);
+        zed_graph::tarjan(
+            n,
+            0..n,
+            |v| &to[start[v]..start[v + 1]],
+            |&w| Some(w),
+            |members| {
+                for &w in members.iter() {
+                    comp[w] = comps;
                 }
-                walk.pop();
-                if let Some(&(u, _)) = walk.last() {
-                    low[u] = low[u].min(low[v]);
-                }
-                if low[v] == index[v] {
-                    while let Some(w) = on.pop() {
-                        comp[w] = comps;
-                        if w == v {
-                            break;
-                        }
-                    }
-                    comps += 1;
-                }
-            }
-        }
+                comps += 1;
+            },
+        );
         (0..self.vars)
             .map(|v| (comp[2 * v] != comp[2 * v + 1]).then(|| comp[2 * v] < comp[2 * v + 1]))
             .collect()

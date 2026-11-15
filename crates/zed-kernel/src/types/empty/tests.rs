@@ -795,7 +795,7 @@ fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
 #[test]
 fn a_union_of_tuple_differences_is_disjoint_from_the_tuples_taken_away() {
     for n in [1, 2, 5] {
-        let (part, paid) = super::bench::tuple_diff_union_pair(n);
+        let (part, paid) = tuple_diff_union_pair(n);
         assert!((&part & &paid).is_empty(), "n = {n}");
         assert!(!part.subtype(&paid), "n = {n}");
         assert!(!paid.subtype(&part), "n = {n}");
@@ -819,7 +819,7 @@ fn a_union_of_tuple_differences_with_payloads_is_disjoint_from_the_tuples_taken_
     let a = |p: Type| Type::atom_with("a", &p);
     let b = |p: Type| Type::atom_with("b", &Type::tuple(vec![p]));
     for n in [1, 2, 5] {
-        let (part, paid) = super::bench::tuple_diff_union_payload_pair(n);
+        let (part, paid) = tuple_diff_union_payload_pair(n);
         assert!((&part & &paid).is_empty(), "n = {n}");
         assert!(!part.subtype(&paid), "n = {n}");
         assert!(!paid.subtype(&part), "n = {n}");
@@ -852,7 +852,7 @@ fn a_union_of_tuple_differences_with_payload_keys_is_disjoint_from_the_tuples_ta
         Type::atom_with("k", &Type::tuple(vec![lit]))
     };
     for n in [1, 2, 5] {
-        let (part, paid) = super::bench::tuple_diff_union_payload_key_pair(n);
+        let (part, paid) = tuple_diff_union_payload_key_pair(n);
         assert!((&part & &paid).is_empty(), "n = {n}");
         assert!(!part.subtype(&paid), "n = {n}");
         assert!(!paid.subtype(&part), "n = {n}");
@@ -953,4 +953,57 @@ fn leaf_parts_of_different_tuple_lengths_keep_separate_indexes() {
     )]));
     assert!(!a.subtype(&b), "{a} is not a subtype of {b}");
     assert!(!b.subtype(&a), "{b} is not a subtype of {a}");
+}
+
+/// The atom of a union of n tuple differences, `#a(∪ i<n: (i, int | bool) \ (i, bool))`, and the
+/// atom of the union of the n tuples taken away, `#a(∪ i<n: (i, bool))`. They are disjoint, and
+/// the first is not a subtype of the second. FAIL-kernel-empty-tuple-diff-union.
+pub(super) fn tuple_diff_union_pair(n: usize) -> (Type, Type) {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+    let ib = &Type::int() | &Type::bool();
+    let part = a(Type::union_all((0..n).map(|i| {
+        &Type::tuple(vec![lit(i), ib.clone()]) - &Type::tuple(vec![lit(i), Type::bool()])
+    })));
+    let paid = a(Type::union_all(
+        (0..n).map(|i| Type::tuple(vec![lit(i), Type::bool()])),
+    ));
+    (part, paid)
+}
+
+/// [`tuple_diff_union_pair`] with the second component an atom with a payload, which is not a
+/// plain value: `#a(∪ i<n: (i, #b((int | bool))) \ (i, #b((bool))))` and
+/// `#a(∪ i<n: (i, #b((bool))))`. Disjoint, and the first not a subtype of the second.
+pub(super) fn tuple_diff_union_payload_pair(n: usize) -> (Type, Type) {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let b = |p: Type| Type::atom_with("b", &Type::tuple(vec![p]));
+    let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+    let ib = &Type::int() | &Type::bool();
+    let part = a(Type::union_all((0..n).map(|i| {
+        &Type::tuple(vec![lit(i), b(ib.clone())]) - &Type::tuple(vec![lit(i), b(Type::bool())])
+    })));
+    let paid = a(Type::union_all(
+        (0..n).map(|i| Type::tuple(vec![lit(i), b(Type::bool())])),
+    ));
+    (part, paid)
+}
+
+/// [`tuple_diff_union_pair`] with the first component an atom with a payload, `#k((i))`, so no
+/// component of a witness tuple is a scalar: `#a(∪ i<n: (#k((i)), int | bool) \ (#k((i)),
+/// bool))` and `#a(∪ i<n: (#k((i)), bool))`. Disjoint, and the first not a subtype of the second.
+/// FAIL-kernel-empty-payload-key-tuple.
+pub(super) fn tuple_diff_union_payload_key_pair(n: usize) -> (Type, Type) {
+    let a = |p: Type| Type::atom_with("a", &p);
+    let k = |i: usize| {
+        let lit = Type::lit(&Value::Int(i as i64)).expect("an integer literal");
+        Type::atom_with("k", &Type::tuple(vec![lit]))
+    };
+    let ib = &Type::int() | &Type::bool();
+    let part = a(Type::union_all((0..n).map(|i| {
+        &Type::tuple(vec![k(i), ib.clone()]) - &Type::tuple(vec![k(i), Type::bool()])
+    })));
+    let paid = a(Type::union_all(
+        (0..n).map(|i| Type::tuple(vec![k(i), Type::bool()])),
+    ));
+    (part, paid)
 }

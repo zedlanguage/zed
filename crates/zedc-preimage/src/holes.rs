@@ -404,58 +404,21 @@ fn greatest(
     Ok(run.u)
 }
 
-/// Tarjan's strongly connected components, sources first, without recursion.
+/// The strongly connected components of `out` ([`zed_graph::tarjan`]), sources first, the
+/// members of each in the order the search completed them, its first node last.
 fn components(out: &[Vec<(usize, Int)>]) -> Vec<Vec<usize>> {
     let n = out.len();
-    let mut index = vec![usize::MAX; n];
-    let mut low = vec![0; n];
-    let mut on = vec![false; n];
-    let mut stack = Vec::new();
     let mut comps = Vec::new();
-    let mut next = 0;
-    for s in 0..n {
-        if index[s] != usize::MAX {
-            continue;
-        }
-        let mut call: Vec<(usize, usize)> = vec![(s, 0)];
-        index[s] = next;
-        low[s] = next;
-        next += 1;
-        stack.push(s);
-        on[s] = true;
-        while let Some(&mut (v, ref mut i)) = call.last_mut() {
-            if *i < out[v].len() {
-                let z = out[v][*i].0;
-                *i += 1;
-                if index[z] == usize::MAX {
-                    index[z] = next;
-                    low[z] = next;
-                    next += 1;
-                    stack.push(z);
-                    on[z] = true;
-                    call.push((z, 0));
-                } else if on[z] {
-                    low[v] = low[v].min(index[z]);
-                }
-            } else {
-                call.pop();
-                if let Some(&(p, _)) = call.last() {
-                    low[p] = low[p].min(low[v]);
-                }
-                if low[v] == index[v] {
-                    let mut c = Vec::new();
-                    while let Some(z) = stack.pop() {
-                        on[z] = false;
-                        c.push(z);
-                        if z == v {
-                            break;
-                        }
-                    }
-                    comps.push(c);
-                }
-            }
-        }
-    }
+    zed_graph::tarjan(
+        n,
+        0..n,
+        |v| &out[v],
+        |(z, _)| Some(*z),
+        |c| {
+            c.reverse();
+            comps.push(c.to_vec());
+        },
+    );
     comps.reverse();
     comps
 }

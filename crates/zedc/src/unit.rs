@@ -1057,7 +1057,7 @@ fn too_large(span: Span, path: &str, too: &zed_kernel::num::TooLarge) -> Error {
 /// graph `edges`, and reports each import cycle in `pkg.problems`; returns each unit's
 /// component, the components numbered in the order they are put.
 ///
-/// The components are found by Tarjan's algorithm on an explicit stack, each unit and import
+/// The components are found by [`zed_graph::tarjan`], each unit and import
 /// met once. The search starts from the units in order of their paths and takes each unit's
 /// imports in the order of its text, so the order of the components, each after the
 /// components it imports, depends on the graph and the paths alone, never on the order of the
@@ -1082,65 +1082,36 @@ pub fn order(
     let mut starts: Vec<usize> = (0..n).collect();
     starts.sort_unstable_by(|&a, &b| pkg.units[a].path.cmp(&pkg.units[b].path));
     starts.splice(0..0, prelude);
-    // When each unit was met, and the earliest-met unit still on `stack` that it reaches.
-    let (mut met, mut low) = (vec![UNSEEN; n], vec![0; n]);
     let mut comp = vec![UNSEEN; n];
-    // The units met whose component is not yet found, and where each stands on it.
-    let (mut stack, mut at): (Vec<usize>, Vec<usize>) = (Vec::new(), vec![0; n]);
-    // The search's path: each unit on it and how many of its imports are taken.
-    let mut path: Vec<(usize, usize)> = Vec::new();
     let mut search = Search {
         queue: Vec::new(),
         met: vec![UNSEEN; n],
         by: vec![(0, NOWHERE); n],
         lines: (0..n).map(|_| None).collect(),
     };
-    let (mut count, mut comps) = (0, 0);
-    for &s in &starts {
-        if met[s] != UNSEEN {
-            continue;
-        }
-        (met[s], low[s], at[s]) = (count, count, stack.len());
-        count += 1;
-        stack.push(s);
-        path.push((s, 0));
-        while let Some(&(u, e)) = path.last() {
-            if let Some(&(v, _)) = edges[u].get(e) {
-                path.last_mut().expect("the unit read").1 = e + 1;
-                if met[v] == UNSEEN {
-                    (met[v], low[v], at[v]) = (count, count, stack.len());
-                    count += 1;
-                    stack.push(v);
-                    path.push((v, 0));
-                } else if comp[v] == UNSEEN {
-                    low[u] = low[u].min(met[v]);
-                }
-                continue;
+    let mut comps = 0;
+    zed_graph::tarjan(
+        n,
+        starts,
+        |u| &edges[u],
+        |&(v, _)| Some(v),
+        |members| {
+            members.sort_unstable_by(|&a, &b| pkg.units[a].path.cmp(&pkg.units[b].path));
+            for &x in members.iter() {
+                comp[x] = comps;
             }
-            path.pop();
-            if let Some(&(p, _)) = path.last() {
-                low[p] = low[p].min(low[u]);
-            }
-            if low[u] == met[u] {
-                let members = &mut stack[at[u]..];
-                members.sort_unstable_by(|&a, &b| pkg.units[a].path.cmp(&pkg.units[b].path));
-                for &x in members.iter() {
-                    comp[x] = comps;
-                }
-                pkg.order.extend_from_slice(members);
-                report(
-                    &pkg.units,
-                    &mut pkg.problems,
-                    edges,
-                    (&comp, comps),
-                    members,
-                    &mut search,
-                );
-                stack.truncate(at[u]);
-                comps += 1;
-            }
-        }
-    }
+            pkg.order.extend_from_slice(members);
+            report(
+                &pkg.units,
+                &mut pkg.problems,
+                edges,
+                (&comp, comps),
+                members,
+                &mut search,
+            );
+            comps += 1;
+        },
+    );
     comp
 }
 

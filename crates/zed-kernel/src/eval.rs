@@ -39,7 +39,8 @@ use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
 use crate::value::Value;
 
 mod env;
-use env::Env;
+/// The names in scope (see [`mod@env`]), each bound to a [`Binding`].
+type Env<'t> = env::Env<'t, Binding<'t>>;
 
 #[cfg(test)]
 mod tests;

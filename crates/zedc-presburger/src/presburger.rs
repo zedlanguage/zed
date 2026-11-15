@@ -17241,7 +17241,7 @@ impl Omega {
     /// variables of a cycle of rows `x - y >= 0` are thus all equal, and so are two rows
     /// `x - y >= 0` and `y - x >= 0`. The edges are chosen by the rows alone, so no name plays
     /// a part. O(m log m + n) for m rows over n variables, by Tarjan's algorithm
-    /// ([`utvpi::components`]).
+    /// ([`zed_graph::components`]).
     ///
     /// Complexity tradeoff: two kinds of implied equality are not found here. A cycle whose
     /// weights have both signs and sum to zero (`x - y + 1 >= 0`, `y - z - 1 >= 0`,
@@ -17278,7 +17278,7 @@ impl Omega {
             out[from].push(to);
             edges.push((from, to, held.id, held.k.is_zero()));
         }
-        let comp = utvpi::components(&out, |v| *v);
+        let comp = zed_graph::components(&out, |v| *v);
         let mut tight: Vec<usize> = Vec::new();
         for (from, to, id, zero) in edges {
             if comp[from] != comp[to] {
@@ -18306,7 +18306,7 @@ fn twins_merged(
     // An atom whose definition reaches itself is its own number, and waited for by none: the
     // atoms of a strongly connected component of two atoms or more, and of a conjunct that
     // defines two atoms or more.
-    let comp = zedc_solvers::utvpi::components(&waits_for, |&w| w);
+    let comp = zed_graph::components(&waits_for, |&w| w);
     let mut size: HashMap<usize, usize> = HashMap::new();
     for &c in &comp {
         *size.entry(c).or_default() += 1;

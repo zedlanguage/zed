@@ -1,0 +1,23 @@
+[package]
+name = "zed-graph"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Graph algorithms every crate shares, zed-kernel included, so it depends on no other crate of
+# the workspace. Also a dylib, as zed-kernel is: each test binary links one shared copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dev-dependencies]
+rustix.workspace = true
+zed-alloc-count.workspace = true
+stacker.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2.workspace = true
+
+[lints]
+workspace = true

@@ -876,60 +876,6 @@ pub struct Report {
     pub before: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// The strongly connected component of each node of `edges`, by Tarjan's algorithm with an
-/// explicit stack in place of recursion.
-fn components(edges: &[Vec<usize>]) -> Vec<usize> {
-    let n = edges.len();
-    let mut index = vec![usize::MAX; n];
-    let mut low = vec![0; n];
-    let mut on = vec![false; n];
-    let mut comp = vec![usize::MAX; n];
-    let mut stack = Vec::new();
-    let (mut next, mut comps) = (0, 0);
-    for root in 0..n {
-        if index[root] != usize::MAX {
-            continue;
-        }
-        let mut call = vec![(root, 0usize)];
-        index[root] = next;
-        low[root] = next;
-        next += 1;
-        stack.push(root);
-        on[root] = true;
-        while let Some(&mut (v, ref mut k)) = call.last_mut() {
-            if let Some(&w) = edges[v].get(*k) {
-                *k += 1;
-                if index[w] == usize::MAX {
-                    index[w] = next;
-                    low[w] = next;
-                    next += 1;
-                    stack.push(w);
-                    on[w] = true;
-                    call.push((w, 0));
-                } else if on[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            call.pop();
-            if let Some(&(u, _)) = call.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == index[v] {
-                while let Some(w) = stack.pop() {
-                    on[w] = false;
-                    comp[w] = comps;
-                    if w == v {
-                        break;
-                    }
-                }
-                comps += 1;
-            }
-        }
-    }
-    comp
-}
-
 /// The groups of nonterminals that can each start with another of the group (left recursion).
 fn left_groups(cfg: &Cfg, sets: &Sets) -> Vec<Vec<String>> {
     let n = cfg.nts.len();
@@ -947,7 +893,7 @@ fn left_groups(cfg: &Cfg, sets: &Sets) -> Vec<Vec<String>> {
             }
         }
     }
-    let comp = components(&edges);
+    let comp = zed_graph::components(&edges, |&w| w);
     let mut groups: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     for v in 0..n {
         if edges[v].iter().any(|&w| comp[w] == comp[v]) {
@@ -1098,7 +1044,7 @@ pub fn check(g: &Grammar, unit: &str, rules: &[Retag]) -> Result<Report, String>
             kept.map(|&(j, _)| j).collect()
         })
         .collect();
-    let comp = components(&grow);
+    let comp = zed_graph::components(&grow, |&w| w);
     let mut unbounded = vec![false; cores.len()];
     let mut work = Vec::new();
     let mut shown: HashSet<usize> = HashSet::new();

@@ -10154,7 +10154,7 @@ impl Handled {
 /// nothing for `b`: a binding passes atoms from its name to its value, not back.
 ///
 /// The `B` binders and `R` regions are the nodes of a graph whose `E` edges run from each
-/// node to the nodes whose atoms it takes. Tarjan's algorithm, with an explicit stack, finds
+/// node to the nodes whose atoms it takes. Tarjan's algorithm ([`zed_graph::tarjan`]) finds
 /// its strongly connected components with every component a node takes from finished
 /// first, and gives each component the union of its own handlers and what it takes, so
 /// the whole is `O(B + R + E)` unions; a cycle, such as a name bound to a value that uses
@@ -10168,7 +10168,6 @@ impl Handled {
 // unions per binder (inferred); used: one pass of Tarjan's algorithm, O(B + R + E) unions in all
 // (COMPLEXITY.md rows F117 and F74, whose union-find this replaced).
 fn handled(res: &Resolution) -> Handled {
-    const NONE: usize = usize::MAX;
     let (b, total) = (res.binders.len(), res.binders.len() + res.regions.len());
     // The edges in compressed rows: `to[from[v]..from[v + 1]]` are the nodes `v` takes from.
     let mut edges: Vec<(usize, usize)> = Vec::with_capacity(res.flows.len() + res.regions.len());
@@ -10214,64 +10213,25 @@ fn handled(res: &Resolution) -> Handled {
         (None, Some(y)) => Some(y.clone()),
     };
     let mut value: Vec<Option<KType>> = vec![None; total];
-    let (mut index, mut low, mut on) = (vec![NONE; total], vec![0usize; total], vec![false; total]);
-    let (mut next, mut open, mut members) = (0usize, Vec::new(), Vec::new());
-    // The nodes being visited, each with the next of its edges to follow.
-    let mut call: Vec<(usize, usize)> = Vec::new();
-    for s in 0..total {
-        if index[s] != NONE {
-            continue;
-        }
-        index[s] = next;
-        low[s] = next;
-        next += 1;
-        open.push(s);
-        on[s] = true;
-        call.push((s, from[s]));
-        while let Some(&mut (v, ref mut i)) = call.last_mut() {
-            if *i < from[v + 1] {
-                let w = to[*i];
-                *i += 1;
-                if index[w] == NONE {
-                    index[w] = next;
-                    low[w] = next;
-                    next += 1;
-                    open.push(w);
-                    on[w] = true;
-                    call.push((w, from[w]));
-                } else if on[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            call.pop();
-            if let Some(&(u, _)) = call.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] != index[v] {
-                continue;
-            }
-            members.clear();
-            while let Some(w) = open.pop() {
-                on[w] = false;
-                members.push(w);
-                if w == v {
-                    break;
-                }
-            }
+    zed_graph::tarjan(
+        total,
+        0..total,
+        |v| &to[from[v]..from[v + 1]],
+        |&w| Some(w),
+        |members| {
             // The component's own nodes have no value yet, so only finished ones join.
             let mut acc = None;
-            for &w in &members {
+            for &w in members.iter().rev() {
                 acc = join(acc, own(w).as_ref());
                 for &d in &to[from[w]..from[w + 1]] {
                     acc = join(acc, value[d].as_ref());
                 }
             }
-            for &w in &members {
+            for &w in members.iter() {
                 value[w].clone_from(&acc);
             }
-        }
-    }
+        },
+    );
     value.truncate(b);
     Handled { atoms: value }
 }

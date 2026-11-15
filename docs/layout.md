@@ -8,6 +8,7 @@ kinds of places.
 ```
 Cargo.toml            the Rust workspace
 crates/               the Rust-hosted toolchain, kept permanently as the bootstrap root
+  zed-graph/          graph algorithms every crate shares: strongly connected components
   zed-kernel/         kernel terms, the ZIR node inventory, the M0.9 reference evaluator
   zedc/               the compiler's top crate: the incremental queries, the run of a program,
                       the `zedc` command's code, and each zedc-* crate's modules re-exported at

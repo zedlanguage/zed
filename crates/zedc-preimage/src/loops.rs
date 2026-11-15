@@ -469,7 +469,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     for (e, &(u, _, _)) in g.edges.iter().enumerate() {
         out[u].push(e);
     }
-    let comp = tarjan(n, &g.edges, &out);
+    let comp = zed_graph::components(&out, |&e| g.edges[e].1);
     // The cases of each part that write each bound.
     let mut writers: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
     for a in atoms.iter().filter(|a| a.part != BASE && live(a)) {
@@ -665,62 +665,6 @@ enum Fail {
     Two(usize, usize, bool),
     /// (iii): part `.0` writes bound `.1` from its cases `.2` and `.3`, in a cyclic component.
     Twice(usize, usize, usize, usize),
-}
-
-/// The strongly connected component of each node, by Tarjan's algorithm without recursion.
-/// O(nodes + edges).
-fn tarjan(n: usize, edges: &[(usize, usize, usize)], out: &[Vec<usize>]) -> Vec<usize> {
-    const NONE: usize = usize::MAX;
-    let mut idx = vec![NONE; n];
-    let mut low = vec![0; n];
-    let mut on = vec![false; n];
-    let mut stack = Vec::new();
-    let mut comp = vec![NONE; n];
-    let mut next = 0;
-    let mut nc = 0;
-    for s in 0..n {
-        if idx[s] != NONE {
-            continue;
-        }
-        let mut call: Vec<(usize, usize)> = vec![(s, 0)];
-        idx[s] = next;
-        low[s] = next;
-        next += 1;
-        stack.push(s);
-        on[s] = true;
-        while let Some(&mut (v, ref mut i)) = call.last_mut() {
-            if *i < out[v].len() {
-                let w = edges[out[v][*i]].1;
-                *i += 1;
-                if idx[w] == NONE {
-                    idx[w] = next;
-                    low[w] = next;
-                    next += 1;
-                    stack.push(w);
-                    on[w] = true;
-                    call.push((w, 0));
-                } else if on[w] {
-                    low[v] = low[v].min(idx[w]);
-                }
-                continue;
-            }
-            call.pop();
-            if let Some(&(u, _)) = call.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == idx[v] {
-                while let Some(w) = stack.pop() {
-                    on[w] = false;
-                    comp[w] = nc;
-                    if w == v {
-                        break;
-                    }
-                }
-                nc += 1;
-            }
-        }
-    }
-    comp
 }
 
 /// Whether a component, its base atoms `base` and its parts `parts` (each case's atoms), is a

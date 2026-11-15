@@ -142,11 +142,20 @@ impl Graph {
     /// The strongly connected components of two files or more, each sorted, in the order of
     /// their first files.
     pub fn cycles(&self) -> Vec<Vec<usize>> {
-        let mut found = tarjan(&self.imports);
-        found.retain(|c| c.len() > 1);
-        for c in &mut found {
-            c.sort_unstable();
-        }
+        let n = self.imports.len();
+        let mut found = Vec::new();
+        zed_graph::tarjan(
+            n,
+            0..n,
+            |v| &self.imports[v],
+            |&(w, _)| Some(w),
+            |c| {
+                if c.len() > 1 {
+                    c.sort_unstable();
+                    found.push(c.to_vec());
+                }
+            },
+        );
         found.sort_unstable();
         found
     }
@@ -276,62 +285,6 @@ fn cite_of(graph: &Graph, f: usize, g: usize) -> Option<&Cite> {
         .binary_search_by_key(&g, |&(h, _)| h)
         .ok()
         .map(|i| &imports[i].1)
-}
-
-/// The strongly connected components of the graph `next`, by Tarjan's algorithm with an
-/// explicit stack, so a long chain of files cannot overflow the call stack. O(n + e).
-fn tarjan<T>(next: &[Vec<(usize, T)>]) -> Vec<Vec<usize>> {
-    const UNSEEN: usize = usize::MAX;
-    let n = next.len();
-    let (mut index, mut low) = (vec![UNSEEN; n], vec![0; n]);
-    let mut on_stack = vec![false; n];
-    let (mut stack, mut found) = (Vec::new(), Vec::new());
-    let mut count = 0;
-    // Each frame is a file and the position of the next import of it to follow.
-    let mut frames: Vec<(usize, usize)> = Vec::new();
-    for root in 0..n {
-        if index[root] != UNSEEN {
-            continue;
-        }
-        frames.push((root, 0));
-        while let Some(frame) = frames.last_mut() {
-            let (v, i) = *frame;
-            if i == 0 {
-                index[v] = count;
-                low[v] = count;
-                count += 1;
-                stack.push(v);
-                on_stack[v] = true;
-            }
-            if let Some(&(w, _)) = next[v].get(i) {
-                frame.1 = i + 1;
-                if index[w] == UNSEEN {
-                    frames.push((w, 0));
-                } else if on_stack[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            // `v` is finished: its frame goes, and its low link passes to the file that
-            // followed an import to it.
-            frames.pop();
-            if let Some(&(u, _)) = frames.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == index[v] {
-                let mut component = Vec::new();
-                while let Some(w) = stack.pop() {
-                    on_stack[w] = false;
-                    component.push(w);
-                    if w == v {
-                        break;
-                    }
-                }
-                found.push(component);
-            }
-        }
-    }
-    found
 }
 
 /// The keywords that begin an item whose name follows them.

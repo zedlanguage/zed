@@ -11,6 +11,7 @@ publish.workspace = true
 # features, so a build with others would overwrite the one the tests link to (see
 # crates/zed-native/Cargo.toml).
 zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }
+zed-graph.workspace = true
 
 [dev-dependencies]
 # zedc-presburger is a dylib too, with the feature `two-at-a-time` that the tests of zedc and its

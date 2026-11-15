@@ -8,8 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use super::{At, Def, Env, Key, Node, Shape, same};
-use crate::types::print::Class;
-use crate::types::{self, Piece, Rope, TextPlace as Place, Type};
+use crate::types::{self, Piece, Rope, TextClass as Class, TextPlace as Place, Type};
 
 /// The units begun, over all threads.
 static UNITS: AtomicU64 = AtomicU64::new(0);

@@ -227,60 +227,23 @@ fn ref_edges(sys: &[E]) -> Vec<Vec<usize>> {
 /// Calls `each` on every strongly connected component of the graph `edges`, its members in
 /// increasing order, each component after every component it reaches.
 ///
-/// Tarjan's algorithm (R. Tarjan, "Depth-first search and linear graph algorithms", SIAM
-/// Journal on Computing 1(2), 1972) on an explicit stack of frames, so a long chain does not
+/// [`zed_graph::tarjan`] (R. Tarjan, "Depth-first search and linear graph algorithms", SIAM
+/// Journal on Computing 1(2), 1972), on an explicit stack, so a long chain does not
 /// overflow the thread's stack: O(V + E) for the search, and O(c log c) to sort a component of
 /// c, where a search from each definition costs O(V (V + E)) and a pass per component
 /// O(V^2 (V + E)). The sort is there so a group's definitions keep their order in the source.
 fn components(edges: &[Vec<usize>], mut each: impl FnMut(&[usize])) {
     let n = edges.len();
-    let (mut index, mut low) = (vec![usize::MAX; n], vec![0; n]);
-    let (mut on_stack, mut stack) = (vec![false; n], Vec::new());
-    let mut next = 0;
-    for root in 0..n {
-        if index[root] != usize::MAX {
-            continue;
-        }
-        // Each frame is a definition and the number of its references followed so far.
-        let mut frames = vec![(root, 0)];
-        (index[root], low[root], next) = (next, next, next + 1);
-        stack.push(root);
-        on_stack[root] = true;
-        while let Some(&(v, i)) = frames.last() {
-            if let Some(&w) = edges[v].get(i) {
-                let top = frames.len() - 1;
-                frames[top].1 += 1;
-                if index[w] == usize::MAX {
-                    (index[w], low[w], next) = (next, next, next + 1);
-                    stack.push(w);
-                    on_stack[w] = true;
-                    frames.push((w, 0));
-                } else if on_stack[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            frames.pop();
-            if let Some(&(u, _)) = frames.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] != index[v] {
-                continue;
-            }
-            // The component is `v` and everything pushed after it, so this search from the
-            // top costs the component's size.
-            let at = stack
-                .iter()
-                .rposition(|&x| x == v)
-                .expect("v is on the stack");
-            let mut comp = stack.split_off(at);
+    zed_graph::tarjan(
+        n,
+        0..n,
+        |v| &edges[v],
+        |&w| Some(w),
+        |comp| {
             comp.sort_unstable();
-            for &d in &comp {
-                on_stack[d] = false;
-            }
-            each(&comp);
-        }
-    }
+            each(comp);
+        },
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

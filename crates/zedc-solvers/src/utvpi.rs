@@ -38,6 +38,7 @@
 
 use super::linear::Term;
 use super::negsssp;
+use zed_graph::components;
 use zedc_int::int::Int;
 
 /// Which search finds the potential.
@@ -619,57 +620,6 @@ impl<'a> GoldbergRadzik<'a> {
         }
         None
     }
-}
-
-/// The strongly connected component of each node (Tarjan), with an explicit stack.
-pub fn components<E>(out: &[Vec<E>], head: impl Fn(&E) -> usize) -> Vec<usize> {
-    const NONE: usize = usize::MAX;
-    let n = out.len();
-    let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0; n], vec![NONE; n]);
-    let (mut next, mut comps) = (0, 0);
-    let mut held: Vec<usize> = Vec::new();
-    // Each frame is a node and the place of the next edge to follow.
-    let mut frames: Vec<(usize, usize)> = Vec::new();
-    for root in 0..n {
-        if index[root] != NONE {
-            continue;
-        }
-        frames.push((root, 0));
-        index[root] = next;
-        low[root] = next;
-        next += 1;
-        held.push(root);
-        while let Some(&mut (v, ref mut e)) = frames.last_mut() {
-            if let Some(w) = out[v].get(*e).map(&head) {
-                *e += 1;
-                if index[w] == NONE {
-                    index[w] = next;
-                    low[w] = next;
-                    next += 1;
-                    held.push(w);
-                    frames.push((w, 0));
-                } else if comp[w] == NONE {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            frames.pop();
-            if let Some(&(u, _)) = frames.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == index[v] {
-                loop {
-                    let w = held.pop().expect("held");
-                    comp[w] = comps;
-                    if w == v {
-                        break;
-                    }
-                }
-                comps += 1;
-            }
-        }
-    }
-    comp
 }
 
 #[cfg(test)]

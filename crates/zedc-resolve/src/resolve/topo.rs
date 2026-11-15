@@ -71,66 +71,27 @@ pub fn topo_around_cycles(deps: &[Vec<usize>], items: usize) -> (Vec<usize>, Vec
 
 /// The strongly connected components of the nodes not `done` that hold a cycle, each as its
 /// items, those below `items`, in increasing order, the components in order of their least
-/// item. Tarjan's algorithm (R. Tarjan, "Depth-First Search and Linear Graph Algorithms",
-/// SIAM Journal on Computing 1(2), 146-160, 1972) with an explicit stack of (node, next
-/// dependency to read): each node and edge is visited once, then the components are sorted,
-/// `O(n + e + c log c)`.
+/// item, by [`zed_graph::tarjan`] (R. Tarjan, "Depth-First Search and Linear Graph
+/// Algorithms", SIAM Journal on Computing 1(2), 146-160, 1972): each node and edge is visited
+/// once, then the components are sorted, `O(n + e + c log c)`.
 fn cycles(deps: &[Vec<usize>], items: usize, done: &[bool]) -> Vec<Vec<usize>> {
-    const UNSEEN: usize = usize::MAX;
     let n = deps.len();
-    let (mut index, mut low) = (vec![UNSEEN; n], vec![0; n]);
-    let mut on_stack = vec![false; n];
-    let (mut stack, mut work): (Vec<usize>, Vec<(usize, usize)>) = (Vec::new(), Vec::new());
     let mut out: Vec<Vec<usize>> = Vec::new();
-    let mut next = 0;
-    for root in 0..n {
-        if done[root] || index[root] != UNSEEN {
-            continue;
-        }
-        work.push((root, 0));
-        while let Some(&(v, k)) = work.last() {
-            if k == 0 {
-                index[v] = next;
-                low[v] = next;
-                next += 1;
-                stack.push(v);
-                on_stack[v] = true;
+    zed_graph::tarjan(
+        n,
+        (0..n).filter(|&v| !done[v]),
+        |v| &deps[v],
+        |&w| (!done[w]).then_some(w),
+        |component| {
+            let v = component[0];
+            if component.len() > 1 || deps[v].contains(&v) {
+                let mut its: Vec<usize> =
+                    (component.iter().copied()).filter(|&x| x < items).collect();
+                its.sort_unstable();
+                out.push(its);
             }
-            if let Some(&w) = deps[v].get(k) {
-                work.last_mut().expect("the node read").1 = k + 1;
-                if done[w] {
-                    continue;
-                }
-                if index[w] == UNSEEN {
-                    work.push((w, 0));
-                } else if on_stack[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            work.pop();
-            if let Some(&(u, _)) = work.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == index[v] {
-                let at = stack.len()
-                    - 1
-                    - (stack.iter().rev())
-                        .position(|&x| x == v)
-                        .expect("a component's root is on the stack");
-                let component = stack.split_off(at);
-                for &x in &component {
-                    on_stack[x] = false;
-                }
-                if component.len() > 1 || deps[v].contains(&v) {
-                    let mut its: Vec<usize> =
-                        (component.into_iter()).filter(|&x| x < items).collect();
-                    its.sort_unstable();
-                    out.push(its);
-                }
-            }
-        }
-    }
+        },
+    );
     // A join waits only on items, so every cycle passes an item.
     out.sort_unstable_by_key(|c| c[0]);
     out

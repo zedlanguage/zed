@@ -11344,7 +11344,7 @@ impl Scope {
             }
             // The components of every edge, numbered with each after those it reaches, so a
             // rank that falls with the number goes up along each edge between them.
-            let parts = zedc_solvers::utvpi::components(&all, |j| *j);
+            let parts = zed_graph::components(&all, |j| *j);
             let count = parts.iter().map(|c| c + 1).max().unwrap_or(0);
             for n in &names {
                 self.potential.leave(n);
@@ -11381,7 +11381,7 @@ impl Scope {
             }
             self.potential.next += count as u64;
             // Numbered with each component after those it reaches.
-            let comp = zedc_solvers::utvpi::components(&out, |j| *j);
+            let comp = zed_graph::components(&out, |j| *j);
             tight.sort_unstable_by_key(|(i, _, _, _)| comp[*i]);
             let mut height: Vec<i64> = vec![0; main.len()];
             for (i, j, g, b) in tight {

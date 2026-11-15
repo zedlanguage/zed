@@ -3,7 +3,8 @@
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-use super::Binding;
+// Generic over the binding type `B`, so this file imports nothing of `eval.rs` (import graph,
+// step S.1f); `eval.rs` instantiates it at its `Binding`, and monomorphization gives the same code.
 
 /// The names in scope, in a persistent ordered map: binding a name and looking one up cost
 /// `O(log n)` in the names in scope, and a closure's copy of its environment costs `O(1)`.
@@ -24,29 +25,29 @@ use super::Binding;
 // bounds are those of the B+ tree, O(log n) a binding or lookup and O(1) a copy; the constant
 // is smaller for the small environments a run makes, and an environment of many names
 // allocates more, smaller nodes per binding (log2 n against log16 n).
-pub(super) type Env<'t> = Option<Rc<Node<'t>>>;
+pub(super) type Env<'t, B> = Option<Rc<Node<'t, B>>>;
 
 /// A node of an [`Env`]: one binding, the names before it to the left and after it to the
 /// right, and the height of the tree it roots.
 #[derive(Clone)]
-pub(super) struct Node<'t> {
+pub(super) struct Node<'t, B> {
     name: &'t str,
-    binding: Binding<'t>,
+    binding: B,
     height: u8,
-    left: Env<'t>,
-    right: Env<'t>,
+    left: Env<'t, B>,
+    right: Env<'t, B>,
 }
 
-fn height(env: &Env<'_>) -> u8 {
+fn height<B>(env: &Env<'_, B>) -> u8 {
     env.as_ref().map_or(0, |n| n.height)
 }
 
 /// `env` with `name` bound to `binding`, replacing a binding of the same name.
-pub(super) fn insert<'t>(env: Env<'t>, name: &'t str, binding: Binding<'t>) -> Env<'t> {
+pub(super) fn insert<'t, B: Clone>(env: Env<'t, B>, name: &'t str, binding: B) -> Env<'t, B> {
     Some(insert_node(env, name, binding))
 }
 
-fn insert_node<'t>(env: Env<'t>, name: &'t str, binding: Binding<'t>) -> Rc<Node<'t>> {
+fn insert_node<'t, B: Clone>(env: Env<'t, B>, name: &'t str, binding: B) -> Rc<Node<'t, B>> {
     let Some(mut rc) = env else {
         return Rc::new(Node {
             name,
@@ -70,7 +71,7 @@ fn insert_node<'t>(env: Env<'t>, name: &'t str, binding: Binding<'t>) -> Rc<Node
 
 /// Sets the height of `rc`, whose subtrees are balanced and differ in height by at most 2, and
 /// rotates it so that they differ by at most 1.
-fn balance(mut rc: Rc<Node<'_>>) -> Rc<Node<'_>> {
+fn balance<B: Clone>(mut rc: Rc<Node<'_, B>>) -> Rc<Node<'_, B>> {
     let node = Rc::make_mut(&mut rc);
     let (l, r) = (height(&node.left), height(&node.right));
     if l > r + 1 {
@@ -99,7 +100,7 @@ fn balance(mut rc: Rc<Node<'_>>) -> Rc<Node<'_>> {
     rc
 }
 
-impl<'t> Node<'t> {
+impl<'t, B: Clone> Node<'t, B> {
     fn fix_height(&mut self) {
         self.height = height(&self.left).max(height(&self.right)) + 1;
     }
@@ -140,7 +141,7 @@ impl<'t> Node<'t> {
 }
 
 /// The binding of `name` in `env`.
-pub(super) fn get<'e, 't>(env: &'e Env<'t>, name: &str) -> Option<&'e Binding<'t>> {
+pub(super) fn get<'e, 't, B>(env: &'e Env<'t, B>, name: &str) -> Option<&'e B> {
     let mut at = env.as_deref();
     while let Some(node) = at {
         at = match name.cmp(node.name) {
@@ -154,30 +155,26 @@ pub(super) fn get<'e, 't>(env: &'e Env<'t>, name: &str) -> Option<&'e Binding<'t
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Slot, V};
     use super::*;
-    use crate::term::Prim;
 
-    fn b(fact: usize) -> Binding<'static> {
-        Binding {
-            value: Slot::Is(V::Prim(Prim::Add)),
-            fact: Some(fact),
-        }
+    /// A test binding: the fact number alone.
+    fn b(fact: usize) -> usize {
+        fact
     }
 
     /// The names of `env` in order, checking on the way that every node is ordered, balanced
     /// and of the height it records.
-    fn walk(env: &Env<'static>, out: &mut Vec<(&'static str, usize)>) -> u8 {
+    fn walk(env: &Env<'static, usize>, out: &mut Vec<(&'static str, usize)>) -> u8 {
         let Some(n) = env else { return 0 };
         let l = walk(&n.left, out);
-        out.push((n.name, n.binding.fact.expect("a test binding has a fact")));
+        out.push((n.name, n.binding));
         let r = walk(&n.right, out);
         assert!(l.abs_diff(r) <= 1, "unbalanced at {}", n.name);
         assert_eq!(n.height, l.max(r) + 1, "height at {}", n.name);
         n.height
     }
 
-    fn contents(env: &Env<'static>) -> Vec<(&'static str, usize)> {
+    fn contents(env: &Env<'static, usize>) -> Vec<(&'static str, usize)> {
         let mut out = Vec::new();
         walk(env, &mut out);
         assert!(out.windows(2).all(|w| w[0].0 < w[1].0), "out of order");
@@ -195,34 +192,34 @@ mod tests {
             vec![5, 2, 8, 0, 11, 3, 7, 1, 10, 4, 9, 6],
         ];
         for order in orders {
-            let mut env = None;
+            let mut env: Env<'_, usize> = None;
             for &i in &order {
                 env = insert(env, NAMES[i], b(i));
             }
             let want: Vec<_> = (0..12).map(|i| (NAMES[i], i)).collect();
             assert_eq!(contents(&env), want);
             for (i, name) in NAMES.iter().enumerate() {
-                assert_eq!(get(&env, name).and_then(|b| b.fact), Some(i));
+                assert_eq!(get(&env, name).copied(), Some(i));
             }
             assert!(get(&env, "zz").is_none() && get(&env, "").is_none());
             // 12 names fit in an AVL tree of height 4 or 5.
             assert!(height(&env) <= 5);
         }
-        assert!(get(&None, "a").is_none());
+        assert!(get::<usize>(&None, "a").is_none());
     }
 
     #[test]
     fn a_binding_replaces_one_of_its_name_and_leaves_shared_environments_as_they_were() {
-        let mut env = None;
+        let mut env: Env<'_, usize> = None;
         for (i, name) in NAMES.iter().enumerate() {
             env = insert(env, name, b(i));
         }
         let before = env.clone();
         let shadowed = insert(env.clone(), "e", b(100));
         let grown = insert(env, "ee", b(200));
-        assert_eq!(get(&shadowed, "e").and_then(|b| b.fact), Some(100));
+        assert_eq!(get(&shadowed, "e").copied(), Some(100));
         assert_eq!(contents(&shadowed).len(), 12);
-        assert_eq!(get(&grown, "ee").and_then(|b| b.fact), Some(200));
+        assert_eq!(get(&grown, "ee").copied(), Some(200));
         assert_eq!(contents(&grown).len(), 13);
         // The shared environment is unchanged by either.
         let want: Vec<_> = (0..12).map(|i| (NAMES[i], i)).collect();
@@ -233,13 +230,13 @@ mod tests {
     fn many_bindings_stay_logarithmic() {
         let names: Vec<String> = (0..4096).map(|i| format!("x{i:05}")).collect();
         let names: &'static [String] = Box::leak(names.into_boxed_slice());
-        let mut env = None;
+        let mut env: Env<'_, usize> = None;
         for (i, name) in names.iter().enumerate() {
             env = insert(env, name, b(i));
         }
         // An AVL tree of n nodes has height below 1.4405 log2(n + 2).
         assert!(height(&env) <= 17, "height {}", height(&env));
-        assert_eq!(get(&env, "x02048").and_then(|b| b.fact), Some(2048));
+        assert_eq!(get(&env, "x02048").copied(), Some(2048));
         assert_eq!(contents(&env).len(), 4096);
     }
 }

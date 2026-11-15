@@ -6215,6 +6215,39 @@ pub enum TextPlace {
     Is,
 }
 
+/// How a text binds, for parenthesizing it as an operand.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum TextClass {
+    Arrow,
+    Union,
+    Diff,
+    And,
+    /// `(A, B)`: a primary, except as an arrow's key, where it would read as parameters.
+    Tuple,
+    Prim,
+    /// The class of the one node the text is.
+    Of(usize),
+}
+
+impl TextPlace {
+    pub(crate) fn admits(self, c: TextClass) -> bool {
+        use TextClass as C;
+        match self {
+            TextPlace::Any => true,
+            TextPlace::Union => matches!(c, C::Union | C::And | C::Tuple | C::Prim),
+            TextPlace::And => matches!(c, C::And | C::Tuple | C::Prim),
+            TextPlace::DiffLeft => matches!(c, C::Diff | C::Tuple | C::Prim),
+            TextPlace::Prim => matches!(c, C::Tuple | C::Prim),
+            // `Arrow` takes a `TypeNot` as its key, and `|`, `&` and `\` bind tighter than `->`
+            // (DESIGN.md sec:grammar, author P222), so a connective key is parenthesized,
+            // `(int | #a) -> int`; so is a tuple, which would read as the parameters.
+            TextPlace::Key => c == C::Prim,
+            TextPlace::Bound => matches!(c, C::Tuple | C::Prim),
+            TextPlace::Is => c != C::Arrow,
+        }
+    }
+}
+
 impl fmt::Display for Surface {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (name, body) in &self.defs {

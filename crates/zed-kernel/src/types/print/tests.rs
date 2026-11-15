@@ -1,0 +1,462 @@
+//! The text of a type does not depend on the order of its atoms (step BDD-atom-order).
+//! The order follows the digests, which differ between the full build and the
+//! short-addresses build; the test hook `SALT` changes every digest of a thread, so a type
+//! built on a thread of its own with a salt has its atoms in another order.
+
+use super::super::bdd::Part;
+use super::super::{Op, Row, SALT, Type};
+use super::defs::{collect, lift, plain};
+use crate::value::Value;
+
+fn next(seed: &mut u64) -> u64 {
+    *seed = seed
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    *seed >> 33
+}
+
+pub(super) fn lit(i: u64) -> Type {
+    Type::lit(&Value::Int(i as i64)).expect("an integer literal type")
+}
+
+fn leaf(seed: &mut u64, depth: u32) -> Type {
+    let k = next(seed);
+    match k % 7 {
+        0 => Type::top(),
+        1 | 2 => lit(k / 7 % 4),
+        3 => Type::atom(&format!("a{}", k / 7 % 3)),
+        4 if depth > 0 => ty(seed, depth - 1),
+        5 => Type::exact(lit(k / 7 % 3), Type::int()),
+        _ => Type::int(),
+    }
+}
+
+/// A random type of unions, intersections, differences and complements of tuple types,
+/// some of them an atom's payload.
+fn ty(seed: &mut u64, depth: u32) -> Type {
+    let k = next(seed);
+    if depth == 0 || k.is_multiple_of(7) {
+        let n = 1 + (k / 7 % 2) as usize;
+        let t = Type::tuple(
+            (0..n)
+                .map(|_| leaf(seed, depth.saturating_sub(2)))
+                .collect(),
+        );
+        return match k / 14 % 5 {
+            0 => Type::atom_with("p", &t),
+            _ => t,
+        };
+    }
+    let a = ty(seed, depth - 1);
+    match k % 4 {
+        0 => &a | &ty(seed, depth - 1),
+        1 => &a & &ty(seed, depth - 1),
+        2 => &a - &ty(seed, depth - 1),
+        _ => !&a,
+    }
+}
+
+/// The parts of `t` kept as expressions.
+fn exprs(t: &Type) -> usize {
+    let p = t.p();
+    p.tuples.lens.values().filter(|q| q.view().is_err()).count()
+        + usize::from(p.morphisms.view().is_err())
+}
+
+/// On a thread with `salt`: the texts of `n` random types drawn from `base` in both
+/// printers, the number of their parts kept as expressions, and how 64 pairs of tuple types
+/// are ordered.
+fn texts(salt: u64, base: u64, n: u64) -> (Vec<(String, String)>, usize, Vec<bool>) {
+    std::thread::spawn(move || {
+        SALT.set(salt);
+        let mut kept = 0;
+        let texts = (0..n)
+            .map(|i| {
+                let mut seed = base.wrapping_add(i * 7919);
+                let t = ty(&mut seed, 5);
+                kept += exprs(&t);
+                (t.to_string(), t.surface().to_string())
+            })
+            .collect();
+        let order = (0..64)
+            .map(|i| Row::new(vec![lit(i)]) < Row::new(vec![lit(i + 1)]))
+            .collect();
+        (texts, kept, order)
+    })
+    .join()
+    .expect("the thread prints without panicking")
+}
+
+#[test]
+fn random_types_print_alike_in_every_order_of_their_atoms() {
+    let n = 600;
+    let base = crate::seed::seed("random_types_print_alike_in_every_order_of_their_atoms");
+    let (want, kept, order) = texts(0, base, n);
+    // 30 runs of 600 types: 22 to 41 parts kept as expressions.
+    assert!(kept > 10, "the types keep parts as expressions: {kept}");
+    for salt in [0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
+        let (got, _, other) = texts(salt, base, n);
+        assert_ne!(order, other, "salt {salt:#x} orders the atoms otherwise");
+        let differ: Vec<_> = (0..n as usize).filter(|&i| want[i] != got[i]).collect();
+        assert!(
+            differ.is_empty(),
+            "salt {salt:#x}: {} of {n} types print otherwise, first {:?} and {:?}",
+            differ.len(),
+            want[differ[0]],
+            got[differ[0]],
+        );
+    }
+}
+
+#[test]
+fn a_union_of_tuple_types_less_another_prints_alike_in_every_order() {
+    // The case of L1.37a repair#1: the two builds printed `((0, #a0) | (1, #a1)) \ (1, _)`
+    // and `(0, #a0) & ((_, _) \ (1, _)) | ((1, #a1) \ (1, _) \ (0, #a0))`.
+    for salt in [0, 0x5555_aaaa_1234_9876, 0x0123_4567_89ab_cdef, u64::MAX] {
+        let (display, surface) = std::thread::spawn(move || {
+            SALT.set(salt);
+            let a = Type::tuple(vec![lit(0), Type::atom("a0")]);
+            let b = Type::tuple(vec![lit(1), Type::atom("a1")]);
+            let t = &(&a | &b) - &Type::tuple(vec![lit(1), Type::top()]);
+            (t.to_string(), t.surface().to_string())
+        })
+        .join()
+        .expect("the thread prints without panicking");
+        assert_eq!(surface, "((0, #a0) | (1, #a1)) \\ (1, _)", "salt {salt:#x}");
+        assert_eq!(
+            display, "(| (& (tuple 0 #a0) (! (tuple 1 _))) (& (tuple 1 #a1) (! (tuple 1 _))))",
+            "salt {salt:#x}"
+        );
+    }
+}
+
+/// `((x0 | x1) \ x2 \ x3 | x4 | x5) \ x6 …` on `m` atoms: blocks of two literals, values
+/// alternating, each new literal first in the order, so the diagram is one node per atom.
+pub(super) fn decision_list(m: usize) -> Type {
+    let mut xs: Vec<Row> = (0..m as u64).map(|i| Row::new(vec![lit(i)])).collect();
+    xs.sort();
+    let mut f = Part::literal(xs[m - 1].clone());
+    for (i, x) in xs[..m - 1].iter().rev().enumerate() {
+        f = match i / 2 % 2 {
+            0 => f.zip(&Part::literal(x.clone()).not(), Op::And),
+            _ => f.zip(&Part::literal(x.clone()), Op::Or),
+        };
+    }
+    Type::with(|p| {
+        p.tuples.lens.insert(1, f);
+    })
+}
+
+/// The text of [`decision_list`]`(m)` has no definition and one connective between each
+/// two literals; the benchmark `the_text_of_a_long_decision_list_scales` in `bench.rs`
+/// checks the same at 1,024 and 8,192 atoms.
+#[test]
+fn the_text_of_a_decision_list_has_a_connective_between_each_two_literals() {
+    for m in [1, 2, 3, 4, 5, 9, 64] {
+        let s = decision_list(m).surface();
+        assert!(s.defs.is_empty(), "{m}");
+        assert_eq!(
+            s.root.matches(" \\ ").count() + s.root.matches(" | ").count(),
+            m - 1,
+            "{m}: {}",
+            s.root
+        );
+    }
+}
+
+/// `R1 = R0 \ Never` with `R0 = (#a0, #a0 | (#a1, #a1 | … (#a{k-1}, #a{k-1} | R0)))`.
+/// Written by name, `R1` unfolds once, and so does each part `#ai | …` kept unevaluated,
+/// whose unfolding holds the next and the last of which holds the first again: a cycle of
+/// `k` parts, none of them a member with a name of its own.
+pub(super) fn part_cycle(k: usize) -> Type {
+    use super::super::rec::{Def, Expr, Group};
+    let one = |name: &str, body| {
+        let def = Def {
+            name: name.into(),
+            params: vec![],
+            body,
+        };
+        Group::new(vec![def])
+            .expect("accepted")
+            .instance(vec![])
+            .remove(0)
+    };
+    let mut body = Expr::Ref(0, vec![]);
+    for i in (0..k).rev() {
+        let a = || Expr::Type(Type::atom(&format!("a{i}")));
+        body = Expr::Tuple(vec![a(), Expr::Union(vec![a(), body])]);
+    }
+    let r0 = Expr::Type(one("R0", body));
+    one(
+        "R1",
+        Expr::Diff(Box::new(r0), Box::new(Expr::Type(Type::empty()))),
+    )
+}
+
+/// `R = R0 \ Never` with `Ri = (#ai, #ai | R{i+1})` for `i < k`, `Rk` being `R0`: written by
+/// name, `R` unfolds once, and so does each part `#ai | R{i+1}`, whose unfolding holds the
+/// next part, the last the first: a cycle of `k` parts, each name a few words long.
+pub(super) fn part_ring(k: usize) -> Type {
+    use super::super::rec::{Def, Expr, Group};
+    let defs = (0..k)
+        .map(|i| {
+            let a = || Expr::Type(Type::atom(&format!("a{i}")));
+            let next = Expr::Ref((i + 1) % k, vec![]);
+            Def {
+                name: format!("R{i}"),
+                params: vec![],
+                body: Expr::Tuple(vec![a(), Expr::Union(vec![a(), next])]),
+            }
+        })
+        .collect();
+    let r0 = Group::new(defs)
+        .expect("accepted")
+        .instance(vec![])
+        .remove(0);
+    let def = Def {
+        name: "R".into(),
+        params: vec![],
+        body: Expr::Diff(
+            Box::new(Expr::Type(r0)),
+            Box::new(Expr::Type(Type::empty())),
+        ),
+    };
+    Group::new(vec![def])
+        .expect("accepted")
+        .instance(vec![])
+        .remove(0)
+}
+
+/// Item FAIL-print-height-cycle-seed: [`part_cycle`] and [`part_ring`] written by name end,
+/// each part on the cycle defined; before, the printer stopped in `heights`, which found a
+/// cycle with no recursive type with a definition on it. The benchmark
+/// `a_long_cycle_of_parts_written_by_name_scales` in `bench.rs` checks the same on a ring of
+/// more parts.
+#[test]
+fn a_cycle_of_parts_written_by_name_is_defined() {
+    // `type Part1 = Part2 | #a0; type Part2 = (#a0, Part1);` and `Part2` for one part, of either family.
+    for (k, t) in [1, 2, 3, 5]
+        .into_iter()
+        .flat_map(|k| [(k, part_cycle(k)), (k, part_ring(k))])
+    {
+        let s = t.surface_by_name(super::At::Any);
+        assert_eq!(s.defs.len(), k + 1, "{k}: {s}");
+        assert!(s.defs.iter().any(|(name, _)| *name == s.root), "{k}: {s}");
+        for i in 0..k {
+            let atom = format!("#a{i}");
+            let uses: usize = s.defs.iter().map(|(_, b)| b.matches(&atom).count()).sum();
+            assert_eq!(uses, 2, "{k}: {atom} in {s}");
+        }
+    }
+}
+
+/// `0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r | …`: `m` literals of each of int, f64 and rat, which
+/// the fixed order interleaves by value (DESIGN.md sec:diagnostics, decision A92).
+pub(super) fn three_carriers(m: usize) -> Type {
+    Type::with(|p| {
+        for i in 0..m as i64 {
+            p.ints.insert(&Value::Int(i));
+            p.floats.insert(&Value::float(i as f64 + 0.5));
+            let r = crate::num::Rat::new((3 * i + 2).into(), 3.into()).expect("a ratio");
+            p.rats.insert(&Value::rat(r));
+        }
+    })
+}
+
+/// The literals of [`three_carriers`] print ascending, one `|` between each two; the
+/// benchmark `a_union_of_many_numeric_literals_prints_ascending_in_m_log_m` in `bench.rs`
+/// checks the count at 1,024 and 8,192 literals of each carrier.
+#[test]
+fn a_union_of_numeric_literals_of_three_carriers_prints_ascending() {
+    assert_eq!(
+        three_carriers(1).surface().root.to_string(),
+        "0 | 0.5 | 2r/3r"
+    );
+    assert_eq!(
+        three_carriers(2).surface().root.to_string(),
+        "0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r"
+    );
+    for m in [3, 7, 64] {
+        let s = three_carriers(m).surface();
+        assert_eq!(s.root.matches(" | ").count(), 3 * m - 1, "{m}");
+    }
+}
+
+fn defs_abc() -> Type {
+    Type::atom("a") | Type::atom("b") | Type::atom("c")
+}
+
+#[test]
+fn a_shared_part_is_a_reference_while_collecting_and_reads_alone_as_before() {
+    let t = Type::tuple(vec![defs_abc(), defs_abc(), defs_abc()]);
+    let alone = t.surface().to_string();
+    assert_eq!(alone, "type Part1 = #a | #b | #c;\n(Part1, Part1, Part1)");
+    let _on = collect();
+    let s = t.surface();
+    assert!(s.defs.is_empty());
+    assert_ne!(s.root, alone, "the root holds a reference");
+    assert_eq!(plain(&s.root), alone);
+    // A union used once is a reference too, since a later step of the message may use it
+    // twice (MSG-derive-print-union-names); the message writes it in full until then.
+    let once = defs_abc().surface().root;
+    assert_ne!(once, "#a | #b | #c");
+    assert_eq!(plain(&once), "#a | #b | #c");
+}
+
+#[test]
+fn one_message_has_one_numbering_and_each_definition_once() {
+    let _on = collect();
+    let x = Type::tuple(vec![defs_abc(), defs_abc()]).surface().root;
+    let y = Type::tuple(vec![defs_abc(), defs_abc(), defs_abc()])
+        .surface()
+        .root;
+    let ab = Type::atom("a") | Type::atom("b");
+    let z = Type::tuple(vec![ab.clone(), ab]).surface().root;
+    let mut message = format!("`f` does not take ({x}, {y})");
+    let mut note = format!("`f` takes {z}");
+    let defs = lift(&mut [&mut message, &mut note], &|_| false);
+    assert_eq!(
+        message,
+        "`f` does not take ((Part1, Part1), (Part1, Part1, Part1))"
+    );
+    assert_eq!(note, "`f` takes (Part2, Part2)");
+    assert_eq!(
+        defs,
+        [
+            ("Part1".to_string(), "#a | #b | #c".to_string()),
+            ("Part2".to_string(), "#a | #b".to_string())
+        ]
+    );
+}
+
+/// Each type printed in one table after the others, as the messages of one checked unit
+/// are, and lifted as a message of its own.
+fn printed_in_turn(ts: &[Type]) -> Vec<(String, Vec<(String, String)>)> {
+    let _on = collect();
+    let roots: Vec<String> = ts.iter().map(|t| t.surface().root).collect();
+    roots
+        .into_iter()
+        .map(|mut root| {
+            let defs = lift(&mut [&mut root], &|_| false);
+            (root, defs)
+        })
+        .collect()
+}
+
+#[test]
+fn a_part_printed_before_is_taken_again_only_where_it_names_the_union_it_holds_alike() {
+    // Step MSG-derive-print-unions. `u = 1 | 2`, `a = (u, 0)`, `c = (a, 0)`: in `a` and
+    // `c` the union is written once and not named. `(c, 0)` takes `c` again as printed.
+    // In `(a, u)` and `(c, u)` the union is written twice and named, so the part printed
+    // before, which writes it out, is not taken again: each prints as in a table of its own.
+    let u = lit(1) | lit(2);
+    let a = Type::tuple(vec![u.clone(), lit(0)]);
+    let c = Type::tuple(vec![a.clone(), lit(0)]);
+    let ts = [
+        a.clone(),
+        c.clone(),
+        Type::tuple(vec![c.clone(), lit(0)]),
+        Type::tuple(vec![a, u.clone()]),
+        Type::tuple(vec![c, u]),
+    ];
+    let alone: Vec<_> = ts
+        .iter()
+        .map(|t| printed_in_turn(std::slice::from_ref(t))[0].clone())
+        .collect();
+    let t1 = || vec![("Part1".to_string(), "1 | 2".to_string())];
+    assert_eq!(
+        alone,
+        [
+            ("(1 | 2, 0)".to_string(), vec![]),
+            ("((1 | 2, 0), 0)".to_string(), vec![]),
+            ("(((1 | 2, 0), 0), 0)".to_string(), vec![]),
+            ("((Part1, 0), Part1)".to_string(), t1()),
+            ("(((Part1, 0), 0), Part1)".to_string(), t1()),
+        ]
+    );
+    assert_eq!(printed_in_turn(&ts), alone);
+}
+
+#[test]
+fn a_name_the_message_or_the_program_holds_is_skipped() {
+    let _on = collect();
+    let x = Type::tuple(vec![defs_abc(), defs_abc()]).surface().root;
+    let mut message = format!("`Part1` does not take {x}");
+    let defs = lift(&mut [&mut message], &|w| w == "Part2");
+    assert_eq!(message, "`Part1` does not take (Part3, Part3)");
+    assert_eq!(defs[0].0, "Part3");
+}
+
+#[test]
+fn a_difference_of_differences_prints_as_written() {
+    // `A \ (B \ C)` is `A & ((all \ B) | C)`, which needs the top type `_` of L10 to write;
+    // it prints as written, in the forms of L1 (READ-atom-meet).
+    let a = Type::exact(Type::atom("a"), Type::int());
+    let b = Type::partial(Type::atom("b"), Type::bool());
+    let c = Type::exact(Type::int(), Type::empty());
+    let t = &a - &(&b - &c);
+    assert_eq!(
+        t.surface().to_string(),
+        "(#a -> int) \\ ((#b ->? bool) \\ (int -> Never))"
+    );
+    let d = Type::exact(Type::string(), Type::string());
+    let t = &(&a - &d) - &(&b - &c);
+    assert_eq!(
+        t.surface().to_string(),
+        "(#a -> int) \\ ((String -> String) | ((#b ->? bool) \\ (int -> Never)))"
+    );
+    // Tuples of one length the same.
+    let row = |x: Type, y: Type| Type::tuple(vec![x, y]);
+    let t = &row(a.clone(), a.clone()) - &(&row(b.clone(), a.clone()) - &row(b.clone(), c.clone()));
+    assert_eq!(
+        t.surface().to_string(),
+        "type Part1 = #a -> int;\ntype Part2 = #b ->? bool;\n(Part1, Part1) \\ ((Part2, Part1) \\ (Part2, int -> Never))"
+    );
+    // Every morphism but some is no type of L1, and keeps `_`.
+    let t = &Type::universe(super::super::Universe::Morphism) - &a;
+    assert_eq!(t.surface().to_string(), "(_ ->? _) \\ (#a -> int)");
+}
+
+/// A random part of 1-tuples over six rows, from literals, their complements, meets,
+/// unions and complements.
+fn random_part(seed: &mut u64, depth: u32) -> Part<Row> {
+    let k = next(seed);
+    if depth == 0 || k.is_multiple_of(5) {
+        let l = Part::literal(Row::new(vec![lit(k / 5 % 6)]));
+        return if (k / 30).is_multiple_of(2) {
+            l
+        } else {
+            l.not()
+        };
+    }
+    let a = random_part(seed, depth - 1);
+    match k % 3 {
+        0 => a.zip(&random_part(seed, depth - 1), Op::And),
+        1 => a.zip(&random_part(seed, depth - 1), Op::Or),
+        _ => a.not(),
+    }
+}
+
+#[test]
+fn only_a_part_holding_values_outside_every_atom_prints_the_top_type() {
+    // Item PRINT-kept-meet-all: a part prints `_` exactly when it holds the values outside
+    // every atom it names, which no other text can write; a kept meet or complement whose
+    // operand holds them, and that does not hold them itself, is written without `_`.
+    let mut kept = 0;
+    let base =
+        crate::seed::seed("only_a_part_holding_values_outside_every_atom_prints_the_top_type");
+    for i in 0..4000u64 {
+        let mut seed = base.wrapping_add(i * 7919);
+        let p = random_part(&mut seed, 6);
+        let outside = p.eval3(&|_| Some(false)).expect("every atom is known");
+        kept += usize::from(p.view().is_err());
+        let t = Type::with(|q| {
+            q.tuples.lens.insert(1, p.clone());
+        });
+        let s = t.surface().to_string();
+        assert_eq!(s.contains('_'), outside, "{s}");
+    }
+    // About a quarter of the parts are kept expressions, not lists: 1,070 to 1,178 of 4,000
+    // in 30 runs.
+    assert!(kept > 800, "{kept}");
+}

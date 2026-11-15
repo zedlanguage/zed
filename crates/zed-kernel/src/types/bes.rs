@@ -267,78 +267,38 @@ impl Stamp {
     }
 }
 
-/// The strongly connected components of `sub` along `edges`, children first, by Tarjan's
-/// algorithm with an explicit stack.
+/// The strongly connected components of `sub` along `edges`, children first
+/// ([`zed_graph::tarjan`]), the members of each in the order the search completed them.
+// Memory: the shared search keeps its arrays per node in usize, where this module's own copy
+// before DEDUP-tarjan kept u32 and bool: 24 bytes per node of `sub` in place of 9, beside the
+// graph; the time is the same O(nodes + edges of `sub`).
 fn components(g: &Bes, sub: &[u32], edges: Edges, local: &mut [u32]) -> Vec<Vec<u32>> {
-    let k = sub.len();
     for (i, &v) in sub.iter().enumerate() {
         local[v as usize] = i as u32;
     }
-    let mut index = vec![0u32; k];
-    let mut low = vec![0u32; k];
-    let mut on = vec![false; k];
-    let mut t = 1u32;
-    let mut stack: Vec<usize> = Vec::with_capacity(k);
-    let mut calls: Vec<(usize, usize)> = Vec::with_capacity(k);
-    let mut out: Vec<Vec<u32>> = Vec::new();
     let follows = |u: u32| match edges {
         Edges::All => true,
         Edges::Tuple => g.kind(u) != Kind::Mor,
         Edges::OrOr => g.kind(u) == Kind::Or,
     };
-    for r in 0..k {
-        if index[r] != 0 {
-            continue;
-        }
-        index[r] = t;
-        low[r] = t;
-        t += 1;
-        stack.push(r);
-        on[r] = true;
-        calls.push((r, 0));
-        while let Some(&mut (u_loc, ref mut i)) = calls.last_mut() {
-            let u = sub[u_loc];
-            let succ: &[u32] = if follows(u) { g.children(u) } else { &[] };
-            if *i < succ.len() {
-                let w = succ[*i];
-                *i += 1;
-                if edges == Edges::OrOr && g.kind(w) != Kind::Or {
-                    continue;
-                }
-                let w_loc = local[w as usize];
-                if w_loc == u32::MAX {
-                    continue;
-                }
-                let w_loc = w_loc as usize;
-                if index[w_loc] == 0 {
-                    index[w_loc] = t;
-                    low[w_loc] = t;
-                    t += 1;
-                    stack.push(w_loc);
-                    on[w_loc] = true;
-                    calls.push((w_loc, 0));
-                } else if on[w_loc] {
-                    low[u_loc] = low[u_loc].min(index[w_loc]);
-                }
-            } else {
-                calls.pop();
-                if let Some(&(p_loc, _)) = calls.last() {
-                    low[p_loc] = low[p_loc].min(low[u_loc]);
-                }
-                if low[u_loc] == index[u_loc] {
-                    let mut comp = Vec::new();
-                    while let Some(w_loc) = stack.pop() {
-                        on[w_loc] = false;
-                        comp.push(sub[w_loc]);
-                        if w_loc == u_loc {
-                            break;
-                        }
-                    }
-                    out.push(comp);
-                }
+    let mut out: Vec<Vec<u32>> = Vec::new();
+    let place: &[u32] = local;
+    zed_graph::tarjan(
+        sub.len(),
+        0..sub.len(),
+        |u| {
+            let u = sub[u];
+            if follows(u) { g.children(u) } else { &[] }
+        },
+        |&w| {
+            if edges == Edges::OrOr && g.kind(w) != Kind::Or {
+                return None;
             }
-        }
-    }
+            let w = place[w as usize];
+            (w != u32::MAX).then_some(w as usize)
+        },
+        |c| out.push(c.iter().rev().map(|&w| sub[w]).collect()),
+    );
     for &v in sub {
         local[v as usize] = u32::MAX;
     }

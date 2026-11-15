@@ -1028,6 +1028,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed-graph"
+version = "0.0.0"
+dependencies = [
+ "perf-event2",
+ "rustix",
+ "stacker",
+ "zed-alloc-count",
+]
+
+[[package]]
 name = "zed-kernel"
 version = "0.0.0"
 dependencies = [
@@ -1039,6 +1049,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-graph",
 ]
 
 [[package]]
@@ -1095,6 +1106,7 @@ dependencies = [
  "unicode-normalization",
  "zed-alloc-count",
  "zed-corpus-ref",
+ "zed-graph",
  "zed-kernel",
  "zed-native",
  "zed-rt",
@@ -1107,6 +1119,7 @@ dependencies = [
 name = "zed-tools"
 version = "0.0.0"
 dependencies = [
+ "zed-graph",
  "zedc",
  "zedc-presburger",
 ]
@@ -1119,6 +1132,7 @@ dependencies = [
  "rustix",
  "unicode-width",
  "zed-alloc-count",
+ "zed-graph",
  "zed-kernel",
  "zedc",
  "zedc-base",
@@ -1154,6 +1168,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "zed-graph",
  "zed-kernel",
  "zedc-base",
  "zedc-check",
@@ -1213,6 +1228,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-graph",
  "zed-kernel",
  "zedc-int",
  "zedc-lattice",
@@ -1234,6 +1250,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-graph",
  "zed-kernel",
  "zedc-int",
  "zedc-lattice",
@@ -1246,6 +1263,7 @@ name = "zedc-resolve"
 version = "0.0.0"
 dependencies = [
  "imbl",
+ "zed-graph",
  "zedc-base",
  "zedc-syntax",
 ]
@@ -1254,6 +1272,7 @@ dependencies = [
 name = "zedc-solvers"
 version = "0.0.0"
 dependencies = [
+ "zed-graph",
  "zedc-int",
  "zedc-solvers",
 ]

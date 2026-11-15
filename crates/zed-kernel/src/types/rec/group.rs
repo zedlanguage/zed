@@ -11,6 +11,7 @@ use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
 use crate::digest::Digest;
 use crate::types::{Type, bytes, defs, mix};
+use zed_graph::on_cycle;
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
 /// ([`digest`]). `Def` equality picks the entry, so a digest only narrows the search: equal
@@ -700,58 +701,6 @@ fn shrinks(e: &Node, under: bool) -> bool {
 /// The lowest vertex of `edges` on a cycle, if one is.
 fn first_on_cycle(edges: &[Vec<usize>]) -> Option<usize> {
     on_cycle(edges).iter().position(|&c| c)
-}
-
-/// Whether each vertex of `edges` is on a cycle: Tarjan's strongly connected components, each
-/// edge read once, with an explicit stack. A search from each vertex in turn read the graph once
-/// per vertex.
-pub(in crate::types) fn on_cycle(edges: &[Vec<usize>]) -> Vec<bool> {
-    const NEW: usize = usize::MAX;
-    let n = edges.len();
-    let (mut index, mut low, mut on) = (vec![NEW; n], vec![0; n], vec![false; n]);
-    let (mut stack, mut next, mut cyclic) = (Vec::new(), 0, vec![false; n]);
-    for s in 0..n {
-        if index[s] != NEW {
-            continue;
-        }
-        let mut calls = vec![(s, 0)];
-        (index[s], low[s], on[s], next) = (next, next, true, next + 1);
-        stack.push(s);
-        while let Some((v, k)) = calls.last_mut() {
-            let v = *v;
-            if let Some(&w) = edges[v].get(*k) {
-                *k += 1;
-                if index[w] == NEW {
-                    (index[w], low[w], on[w], next) = (next, next, true, next + 1);
-                    stack.push(w);
-                    calls.push((w, 0));
-                } else if on[w] {
-                    low[v] = low[v].min(index[w]);
-                }
-                continue;
-            }
-            calls.pop();
-            if let Some(&(u, _)) = calls.last() {
-                low[u] = low[u].min(low[v]);
-            }
-            if low[v] == index[v] {
-                let mut component = Vec::new();
-                while let Some(w) = stack.pop() {
-                    on[w] = false;
-                    component.push(w);
-                    if w == v {
-                        break;
-                    }
-                }
-                if component.len() > 1 || edges[v].contains(&v) {
-                    for w in component {
-                        cyclic[w] = true;
-                    }
-                }
-            }
-        }
-    }
-    cyclic
 }
 
 /// Whether each of `defs` is plain: on no cycle and naming only plain definitions; the plain
