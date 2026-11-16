@@ -2287,6 +2287,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut params: Vec<SParam> = Vec::with_capacity(f.params.len());
         for (i, (p, &id)) in f.params.iter().zip(&ids).enumerate() {
             let range = self.param_range(p, id);
+            self.param_keys(p, id);
             params.push(SParam {
                 name: p.name.as_str().into(),
                 positional: p.positional,
@@ -11548,6 +11549,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         what: "`^` on an int takes an exponent in int[0..]".into(),
                         below_two_pow: None,
                         written: None,
+                        key: None,
                         name: "exponent".into(),
                     };
                     let need = Need {
@@ -12067,6 +12069,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return;
         }
+        // A need on the keys of a partial map passed on (RANGE-keys) nests in no other need
+        // either; each distinct one is kept once, found by a hash set in O(1).
+        if let NeedKind::InDomain {
+            domain: IntDomain { key: Some(k), .. },
+            ..
+        } = &n.kind
+        {
+            if self.keyed_seen.insert((id, k.clone())) {
+                self.ranged_floors.entry(id).or_default().push(n);
+            }
+            return;
+        }
         let width = |n: &Need| match &n.kind {
             NeedKind::InDomain { domain, .. } => domain.below_two_pow.clone(),
             _ => None,
@@ -12258,9 +12272,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(r) = &domain.written {
                         self.ranged_seen.remove(&(*id, r.clone()));
                     }
+                    if let Some(k) = &domain.key {
+                        self.keyed_seen.remove(&(*id, k.clone()));
+                    }
                     *param = j;
                 }
                 needs.push(n);
+            }
+            // A parameter declared a partial map takes only maps whose keys lie in the
+            // ranges on its key, and only a family where a remap reads it (RANGE-keys).
+            if let Some(k) = self.param_keys.remove(id).and_then(|k| k.need()) {
+                let name = sig
+                    .params
+                    .get(j)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                let at = self.t.res.binders[*id].span;
+                needs.push(Need {
+                    on: Ty::empty(),
+                    kind: NeedKind::InDomain {
+                        domain: IntDomain {
+                            what: format!("`{name}` is declared here").into(),
+                            name,
+                            below_two_pow: None,
+                            written: None,
+                            key: Some(Arc::new(k)),
+                        },
+                        param: j,
+                        via: None,
+                        bits: None,
+                    },
+                    result: None,
+                    span: at,
+                });
             }
             // A parameter declared with a range takes only the ints in it: each call shows
             // its argument's ints there (DESIGN.md L1.39), as a use's need is checked.
@@ -12276,6 +12320,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             name,
                             below_two_pow: None,
                             written: Some(r),
+                            key: None,
                         },
                         param: j,
                         via: None,
@@ -12340,11 +12385,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .map(|p| p.name.clone())
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| domain.name.clone());
+            if let Some(k) = &domain.key {
+                let a = args.get(*param).and_then(Option::as_ref);
+                let defaulted = sig.params.get(*param).is_some_and(|p| p.default.is_some());
+                let use_at = (n.span, via.clone());
+                self.keys_at(what, &p, domain, k, a, defaulted, use_at, span);
+                continue;
+            }
             let takes = format!("{what} takes `{p}` in {}", domain_text(domain));
             let passed = IntDomain {
                 what: takes.as_str().into(),
                 below_two_pow: domain.below_two_pow.clone(),
                 written: domain.written.clone(),
+                key: None,
                 name: (*p).into(),
             };
             // The calls that passed the value on, down to the use: O(calls), so made only for an
@@ -12501,6 +12554,232 @@ impl<'t, 'a> Ck<'t, 'a> {
             notes.extend(repairs);
             let piece = self.annotated(span, at, shown);
             self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
+        }
+    }
+
+    /// Checks the [`KeyUse`] need `k` of the parameter `p` declared a partial map, of the
+    /// function called as `what` at `span`, on its argument `a` (RANGE-keys): every key the
+    /// argument's type lists lies in each range on the parameter's key, and where a remap
+    /// reads the parameter the argument is a family. An argument that is itself a parameter
+    /// declared a partial map, of the function the call is in, passes when its own ranges lie
+    /// within these, and takes on the need for a family; a parameter of no declared type takes
+    /// the whole need, with the link of this call. `use_at` is the use the need comes from and
+    /// the calls that passed it on; `defaulted` whether a parameter left out has a default.
+    ///
+    /// Proof that a key accepted here lies in the ranges, which the remap's witness assumes:
+    /// the argument's value has its type, so each key of the family is a key of one of its
+    /// arrows, whose key type lists it, and each listed int was checked to lie in the range;
+    /// a parameter passed on has keys inside its own ranges by the same check at its own
+    /// calls, and those ranges lie inside these. A type that lists no ints, `int`, a variable
+    /// or the unknown, is refused, not assumed.
+    // Complexity tradeoff: one pass over the argument's arrows and the ints their key types
+    // list, O(arrows · listed keys · ranges) per call, the size of the types already built; a
+    // passed-on parameter costs O(ranges²) for the containment of written ranges (a handful).
+    // The naive form, no check, lets a key outside the range reach a remap whose witness
+    // reads the range, so two keys could collide.
+    #[allow(clippy::too_many_arguments)]
+    fn keys_at(
+        &mut self,
+        what: &str,
+        p: &str,
+        domain: &IntDomain,
+        k: &Arc<KeyUse>,
+        a: Option<&Arg<'a>>,
+        defaulted: bool,
+        use_at: (Span, Option<Arc<Via>>),
+        span: Span,
+    ) {
+        let ranges = || {
+            let shown: Vec<String> = (k.ranges.iter())
+                .map(|(part, r)| match part {
+                    None => format!("keys in {}", r.text),
+                    Some(i) => format!("key component {i} in {}", r.text),
+                })
+                .collect();
+            shown.join(" and ")
+        };
+        let takes = match (k.ranges.is_empty(), k.family) {
+            (true, _) => format!("{what} takes `{p}` as a family, which a remap reads"),
+            (false, false) => format!("{what} takes `{p}` with {}", ranges()),
+            (false, true) => format!(
+                "{what} takes `{p}` as a family, which a remap reads, with {}",
+                ranges()
+            ),
+        };
+        let chain = || {
+            let mut chain = Vec::new();
+            let mut v = use_at.1.as_deref();
+            while let Some(l) = v {
+                chain.push(Note {
+                    span: l.at,
+                    text: l.text.to_string(),
+                });
+                v = l.next.as_deref();
+            }
+            chain.push(Note {
+                span: use_at.0,
+                text: domain.what.to_string(),
+            });
+            chain
+        };
+        let Some(a) = a else {
+            if defaulted {
+                let mut notes = chain();
+                notes.push(Note {
+                    span,
+                    text: format!("repair: pass `{p}` in this call"),
+                });
+                let m = format!(
+                    "{takes}: this call leaves out `{p}`, which takes its default, whose keys the \
+                     checker cannot show"
+                );
+                self.error_with(span, m, notes);
+            }
+            return;
+        };
+        if let Some(e) = a.expr
+            && let Some(id) = self.keyed_param(e)
+        {
+            let own = self.param_keys.get_mut(&id).expect("a keyed parameter");
+            own.remapped |= k.family;
+            let wider: Vec<String> = (k.ranges.iter())
+                .filter(|(part, r)| {
+                    !(own.ranges.iter())
+                        .any(|(q, m)| q == part && written_ints(m).is_subset(&written_ints(r)))
+                })
+                .map(|(part, r)| match part {
+                    None => format!("its keys may lie outside {}", r.text),
+                    Some(i) => format!("component {i} of its keys may lie outside {}", r.text),
+                })
+                .collect();
+            if wider.is_empty() {
+                return;
+            }
+            let code = self
+                .code(Some(e.span))
+                .unwrap_or("this argument")
+                .to_string();
+            let mut notes = chain();
+            notes.push(Note {
+                span: self.t.res.binders[id].span,
+                text: format!("`{code}` is declared here, and {}", wider.join(", and ")),
+            });
+            let m = format!("{takes}, and `{code}` is declared with keys that may lie outside");
+            self.error_with(a.at.unwrap_or(e.span), m, notes);
+            return;
+        }
+        if let Some(e) = a.expr
+            && let Some(id) = self.open_param(e)
+        {
+            if !self.trying {
+                let name = self.code(Some(e.span)).unwrap_or("this value").to_string();
+                let link = Via {
+                    at: a.at.unwrap_or(e.span),
+                    text: format!("`{name}` is passed on as `{p}` of {what} here").into(),
+                    next: use_at.1.clone(),
+                };
+                let need = Need {
+                    on: Ty::empty(),
+                    kind: NeedKind::InDomain {
+                        domain: domain.clone(),
+                        param: 0,
+                        via: Some(Arc::new(link)),
+                        bits: None,
+                    },
+                    result: None,
+                    span: use_at.0,
+                };
+                self.floor_on(id, need);
+            }
+            return;
+        }
+        let at = a.at.or(a.expr.map(|e| e.span)).unwrap_or(span);
+        let t = &a.ty;
+        let mut why = None;
+        if t.dynamic || !t.vars.is_empty() {
+            why = Some(format!(
+                "its type is {}, whose keys the checker cannot show",
+                self.text(t)
+            ));
+        }
+        let int = KType::int();
+        for s in &t.fns {
+            if why.is_some() {
+                break;
+            }
+            if k.family && !s.data {
+                why = Some(format!(
+                    "it is {}, a function, which has no entries to rearrange",
+                    self.text(t)
+                ));
+                break;
+            }
+            for arrow in &s.arrows {
+                let Some(key) = arrow.params.first() else {
+                    continue;
+                };
+                for (part, r) in &k.ranges {
+                    let comp = match part {
+                        None => key.clone(),
+                        Some(i) => {
+                            let parts = key.pieces().into_iter().filter_map(|p| match p {
+                                Piece::Tuple(row) => row.get(*i).cloned(),
+                                _ => None,
+                            });
+                            Ty::union_all(&parts.collect::<Vec<_>>())
+                        }
+                    };
+                    let ints = &comp.set & &int;
+                    let listed = (comp.vars.is_empty() && !comp.dynamic)
+                        .then(|| ints.ints_listed())
+                        .flatten();
+                    if !listed.is_some_and(|vs| vs.iter().all(|v| r.holds(v))) {
+                        let whose = match part {
+                            None => "its keys are".to_string(),
+                            Some(i) => format!("component {i} of its keys is"),
+                        };
+                        why = Some(format!(
+                            "{whose} {}, which the checker cannot show lie in {}",
+                            self.text(&comp),
+                            r.text
+                        ));
+                        break;
+                    }
+                }
+                if why.is_some() {
+                    break;
+                }
+            }
+        }
+        let Some(why) = why else { return };
+        let code = self.code(Some(at)).unwrap_or("this argument").to_string();
+        let mut notes = chain();
+        notes.push(Note {
+            span: at,
+            text: format!("`{code}` reaches {what} as `{p}`, and {why}"),
+        });
+        notes.push(Note {
+            span: at,
+            text: match k.ranges.is_empty() {
+                true => format!("repair: pass a family as `{p}`"),
+                false if k.family => format!("repair: pass a family with {}", ranges()),
+                false => format!("repair: pass a map with {}", ranges()),
+            },
+        });
+        self.error_with(at, format!("{takes}: `{code}` may not be one"), notes);
+    }
+
+    /// The binder of the parameter declared a partial map ([`Ck::param_keys`]) of a function
+    /// being checked that the name `e` reads.
+    pub(super) fn keyed_param(&self, e: &Expr) -> Option<usize> {
+        let ExprKind::Name(_) = &e.kind else {
+            return None;
+        };
+        match self.t.res.uses.get(&e.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 && self.param_keys.contains_key(&ids[0]) => {
+                Some(ids[0])
+            }
+            _ => None,
         }
     }
 
@@ -13708,6 +13987,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     what: format!("`{w}` takes `{name}` in int[0..]").into(),
                     below_two_pow: None,
                     written: None,
+                    key: None,
                     name: (*name).into(),
                 };
                 self.floor(&a.ty, e, d, span);
@@ -13779,6 +14059,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     what: format!("`{w}` takes `{name}` in int[0..<2^width]").into(),
                     below_two_pow: Some(Width(s.clone())),
                     written: None,
+                    key: None,
                     name: name.into(),
                 };
                 self.floor(&a.ty, e, d, span);
@@ -13912,6 +14193,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     name: "width".into(),
                     below_two_pow: None,
                     written: None,
+                    key: None,
                 },
                 param: j,
                 via: None,

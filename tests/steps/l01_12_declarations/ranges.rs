@@ -151,6 +151,29 @@ fn a_range_anywhere_but_a_declared_parameter_over_int_is_a_later_form() {
             "1:9: ",
             "a range on a lambda's parameter",
         ),
+        // A partial map's key takes a range on the whole key or on each component of a tuple
+        // key (RANGE-keys); a range deeper in, on an exact arrow, or on a key of two levels,
+        // waits.
+        (
+            "f(m: (((int[0..<2], int), int)) ->? int) = 0;",
+            "1:9: ",
+            "a range type in any place but the whole type of a parameter",
+        ),
+        (
+            "f(m: int[0..<2] -> int) = 0;",
+            "1:6: ",
+            "a range type in any place but the whole type of a parameter",
+        ),
+        (
+            "f(m: (int[0..<2], int) ->? int) = 0;",
+            "1:7: ",
+            "a range type in any place but the whole type of a parameter",
+        ),
+        (
+            "f(m: rat[0..<2] ->? int) = 0;",
+            "1:6: ",
+            "a range over a type other than `int`",
+        ),
     ] {
         let out = rejected(&program(src));
         let first = out.lines().next().unwrap_or("");

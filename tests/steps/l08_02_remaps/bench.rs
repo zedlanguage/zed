@@ -817,3 +817,39 @@ fn n_generic_functions_with_a_fold_in_a_tuple_member_run_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn n_partial_map_parameters_with_a_ranged_key_passed_on_take_linear_time() {
+    // `pass0` remaps its `m: int[0..<n] ->? int` by `k mod n`, which the modulo witness accepts
+    // from the range; `pass1` … `pass{n-1}` each pass their own `m` on, and one call passes a family
+    // of n keys (row RANGE-keys): n containments of a written range in another and one check of
+    // n listed keys, and the run of the remap over n entries.
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        let mut src = format!(
+            "pass0(positional m: int[0..<{n}] ->? int) = m as (k -> v) into (k mod {n} -> v);\n"
+        );
+        for i in 1..n {
+            src += &format!(
+                "pass{i}(positional m: int[0..<{n}] ->? int) = pass{}(m);\n",
+                i - 1
+            );
+        }
+        // Each value differs from its key, or the display would print as a set.
+        let entries = (0..n)
+            .map(|k| format!("{k} -> {}", k + 1))
+            .collect::<Vec<_>>();
+        src += &format!("x = pass{}({{ {} }});\n", n - 1, entries.join(", "));
+        src
+    });
+    let run = |n: usize| {
+        let x = value(&srcs[&n], "x");
+        assert!(x.starts_with("{0 -> 1, 1 -> 2, "), "{x}");
+        assert!(x.ends_with(&format!("{} -> {n}}}", n - 1)), "{x}");
+    };
+    scaling::check(
+        "n functions passing on a partial map whose key has a range, the first remapping it \
+         by `k mod n`, called once with n keys, whole path",
+        N_LEVELS,
+        run,
+    );
+}

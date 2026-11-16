@@ -198,6 +198,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+        // A parameter declared a partial map, `m: int[5..<10] ->? int`, is read as a family
+        // at its outer level (RANGE-keys): its type admits a function too, so the remap marks
+        // it, and each call of the function must then pass a family ([`KeyUse`]'s `family`,
+        // checked by `keys_at`). Any other value of such a type has no call to check.
+        let keyed = self.keyed_param(of);
+        let declared_map = |sig: &Sig| {
+            keyed.is_some()
+                && sig.arrows.iter().all(|a| a.partial && a.params.len() == 1)
+                && matches!(&sig.params[..], [p] if p.positional)
+        };
         let mut out = Vec::with_capacity(n + 1);
         let mut cur = t.clone();
         for depth in 0..n {
@@ -207,11 +217,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return Some(out);
             }
             let rest = cur.pieces().into_iter().any(|p| match p {
-                Piece::Fn(sig) => !sig.data,
+                Piece::Fn(sig) => !sig.data && !(depth == 0 && declared_map(&sig)),
                 Piece::Set(k) => !(&k - &misses).is_empty(),
                 _ => true,
             });
-            let fams = cur.fns.iter().filter(|g| g.data).collect::<Vec<_>>();
+            let fams = (cur.fns.iter())
+                .filter(|g| g.data || (depth == 0 && declared_map(g)))
+                .collect::<Vec<_>>();
             if fams.is_empty() || rest {
                 let shown = self.text(t);
                 let msg = match depth {
@@ -229,6 +241,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 self.error(of.span, msg);
                 return None;
+            }
+            if let Some(id) = keyed
+                && fams.iter().any(|g| !g.data)
+                && let Some(k) = self.param_keys.get_mut(&id)
+            {
+                k.remapped = true;
             }
             let keys = fams
                 .iter()
@@ -589,7 +607,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             {
                 match op {
                     BinaryOp::Mod => {
-                        if span_of(&src[i]).is_some_and(|w| w < p) {
+                        if self.key_span(s, (i, None), &src[i]).is_some_and(|w| w < p) {
                             rows.push(Lin::from([((i, None), BigInt::one())]));
                             note(&mut entries, "modulo");
                         }
@@ -610,7 +628,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 true => note(&mut entries, "tupling"),
                 false => note(&mut entries, "affine"),
             }
-            if lin.len() > 1 && self.packs(&lin, src) {
+            if lin.len() > 1 && self.packs(s, &lin, src) {
                 rows.extend(lin.keys().map(|&a| Lin::from([(a, BigInt::one())])));
                 note(&mut entries, "packing");
             }
@@ -709,14 +727,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Whether the linear form `lin` packs its atoms by affine packing (sec:grouping): each an
     /// integer whose type lists its values, and, in order of their strides' magnitudes, each
     /// stride above the sum of the spans of the atoms beneath it, each span times its stride.
-    fn packs(&self, lin: &Lin, src: &[Ty]) -> bool {
+    fn packs(&self, s: &RemapF<'a>, lin: &Lin, src: &[Ty]) -> bool {
         let mut strides = Vec::with_capacity(lin.len());
         for (a, v) in lin {
             let t = atom_type(&src[a.0], a.1);
             if !self.subtype(&t, &Ty::carrier(Carrier::Int)) {
                 return false;
             }
-            let Some(w) = span_of(&t) else { return false };
+            let Some(w) = self.key_span(s, *a, &t) else {
+                return false;
+            };
             strides.push((v.abs(), w));
         }
         strides.sort();
@@ -728,6 +748,34 @@ impl<'t, 'a> Ck<'t, 'a> {
             beneath += stride * w;
         }
         true
+    }
+
+    /// The range written on the key atom `a` of the source of `s`, where the source is a
+    /// parameter declared a partial map with a range on that key or component, as
+    /// `m: int[5..<10] ->? int` (RANGE-keys): only the outer key level, `a.0 == 0`, is the
+    /// declared map's key.
+    fn key_range(&self, s: &RemapF<'a>, a: Atom) -> Option<&WrittenRange> {
+        let ExprKind::Remap { of, .. } = &s.e.kind else {
+            return None;
+        };
+        let k = self
+            .param_keys
+            .get(&self.keyed_param(of).filter(|_| a.0 == 0)?)?;
+        (k.ranges.iter()).find(|(p, _)| *p == a.1).map(|(_, r)| r)
+    }
+
+    /// The largest minus the least int a key atom `a` of type `t` of the source of `s` may
+    /// be, which `k mod p` and affine packing read (DESIGN.md sec:grouping): the range on the
+    /// declared key ([`Self::key_range`]), else the ints `t` lists. Each call of the function
+    /// shows the keys lie in the range (`keys_at`), so the range bounds every key the remap
+    /// meets; the key type is then `int`, which lists none.
+    fn key_span(&self, s: &RemapF<'a>, a: Atom, t: &Ty) -> Option<BigInt> {
+        let ExprKind::Remap { of, .. } = &s.e.kind else {
+            return span_of(t);
+        };
+        let ranged = (self.keyed_param(of).filter(|_| a.0 == 0))
+            .and_then(|id| self.param_keys.get(&id)?.span(a.1));
+        ranged.or_else(|| span_of(t))
     }
 
     /// Whether the expression `e` reads the key binder `i` of `s`.
@@ -748,7 +796,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             && let Some(i) = self.key_binder(s, x)
         {
             let (k, p) = (self.src_text(x.span), self.src_text(p.span));
-            let shown = self.text(&src[i]);
+            let shown = match self.key_range(s, (i, None)) {
+                Some(r) => r.text.to_string(),
+                None => self.text(&src[i]),
+            };
             return match op {
                 BinaryOp::Mod => format!(
                     "the nearest entry of the witness catalog, `k mod p` on at most `p` \

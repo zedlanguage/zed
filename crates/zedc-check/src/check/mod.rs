@@ -84,10 +84,10 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, Carrier, DataUse, EVERY, FoldForm, IntDomain, Names, Narrow, Need, NeedKind,
-    NodeId, OTHER, Piece, PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts,
-    VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs, fresh_name,
-    mask_text,
+    Arrow, Binds, Carrier, DataUse, EVERY, FoldForm, IntDomain, KeyUse, Names, Narrow, Need,
+    NeedKind, NodeId, OTHER, Piece, PowerUse, Reducer, Renamings, SParam, Shape, Sig, Slot, Ty,
+    VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs,
+    fresh_name, mask_text,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -1713,6 +1713,13 @@ struct Ck<'t, 'a> {
     /// The ints of each parameter declared with a range, `x: int[1..]`, by binder: its cell
     /// starts from them (DESIGN.md L1.39). With the span of the range as written.
     param_ints: HashMap<usize, (IntervalSet, Span)>,
+    /// Each parameter declared a partial map `K ->? V`, by binder: the ranges written on its
+    /// key, each with its span, and whether a remap reads it (RANGE-keys). The signature
+    /// takes a [`KeyUse`] need on it where it has a range or a remap reads it.
+    param_keys: HashMap<usize, ParamKeys>,
+    /// The needs of the parameters of no declared type passed on as a parameter declared a
+    /// partial map, kept in [`Self::ranged_floors`]: each binder and [`KeyUse`] once.
+    keyed_seen: HashSet<(usize, Arc<KeyUse>)>,
     /// Each bit word curried with `...`, by the span of the call: the word, its primitive and
     /// the operands the call gave, at their parameters, the width left out. The function the
     /// call gives carries a need with that span ([`NeedKind::InDomain`]'s `bits`), and each of
@@ -1994,6 +2001,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             ranged_floors: HashMap::new(),
             ranged_seen: HashSet::new(),
             param_ints: HashMap::new(),
+            param_keys: HashMap::new(),
+            keyed_seen: HashSet::new(),
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
@@ -10071,6 +10080,40 @@ pub fn written_ints(r: &WrittenRange) -> IntervalSet {
     IntervalSet::range(end(&r.low, NegInf), end(&r.high, PosInf))
 }
 
+/// A parameter declared a partial map of one key `K ->? V` (RANGE-keys), as
+/// [`Ck::param_keys`] reads it.
+#[derive(Clone, Debug)]
+pub(super) struct ParamKeys {
+    /// The ranges written on its key: on the whole key (`None`) or on its tuple component at
+    /// the index.
+    pub ranges: Vec<(Option<usize>, WrittenRange)>,
+    /// Whether a remap reads it, so that each call must pass a family.
+    pub remapped: bool,
+}
+
+impl ParamKeys {
+    /// The need each call of its function meets, if it has a range or a remap reads it.
+    pub fn need(&self) -> Option<KeyUse> {
+        (!self.ranges.is_empty() || self.remapped).then(|| KeyUse {
+            ranges: self.ranges.clone(),
+            family: self.remapped,
+        })
+    }
+
+    /// The largest minus the least int of the range on the key component `part`, where both
+    /// ends are bounded: what the witness catalog's `k mod p` and affine packing read
+    /// (DESIGN.md sec:grouping) in place of the listed ints of the key type.
+    pub fn span(&self, part: Option<usize>) -> Option<num_bigint::BigInt> {
+        let (_, r) = self.ranges.iter().find(|(p, _)| *p == part)?;
+        let int = |v: &Option<Value>| match v {
+            Some(Value::Int(n)) => Some(num_bigint::BigInt::from(*n)),
+            Some(Value::Big(n)) => n.to_integer().ok(),
+            _ => None,
+        };
+        Some(int(&r.high)? - int(&r.low)?)
+    }
+}
+
 /// The ints of the domain `d` that an interval can state: the range a parameter is declared
 /// with, else the ints at least 0, the bound `2 ^ w` left out.
 fn domain_ints(d: &IntDomain) -> IntervalSet {
@@ -10305,45 +10348,7 @@ impl<'a> Ck<'_, 'a> {
         let TypeKind::Range { low, high, .. } = &t.kind else {
             return None;
         };
-        let mut fixed = true;
-        let mut bound = |ck: &mut Self, e: &'a Expr| -> Option<Num> {
-            match ck.known(e).value {
-                Some(Value::Int(n)) => Some(Num::from(n)),
-                Some(Value::Big(n)) => Some(Num::from(&*n)),
-                _ => {
-                    let code = ck.code(Some(e.span)).unwrap_or("this bound").to_string();
-                    ck.error(
-                        e.span,
-                        format!(
-                            "the bound `{code}` of the range of `{}` is not an int the program's \
-                             text fixes. A bound must be an int literal, or a name bound to one, \
-                             as `n = 10;`. To repair it, write the bound as an int",
-                            p.name
-                        ),
-                    );
-                    fixed = false;
-                    None
-                }
-            }
-        };
-        let lo = match low.as_deref() {
-            Some(e) => bound(self, e).map(Fin),
-            None => Some(NegInf),
-        };
-        let hi = match high {
-            RangeEnd::Below(Some(e)) => bound(self, e).map(|n| Fin(n).pred()),
-            RangeEnd::Through(Some(e)) => bound(self, e).map(Fin),
-            RangeEnd::Below(None) | RangeEnd::Through(None) | RangeEnd::Open => Some(PosInf),
-        };
-        let (Some(lo), Some(hi)) = (lo, hi) else {
-            debug_assert!(!fixed);
-            return None;
-        };
-        let value = |e: &End| match e {
-            Fin(n) => Some(Value::from(n)),
-            _ => None,
-        };
-        let r = WrittenRange::new(value(&lo), value(&hi));
+        let (r, lo, hi) = self.written_range(&p.name, low, high)?;
         let ints = IntervalSet::range(lo.clone(), hi.clone());
         if ints.is_empty() {
             let code = self.code(Some(t.span)).unwrap_or("this range").to_string();
@@ -10385,6 +10390,93 @@ impl<'a> Ck<'_, 'a> {
         }
         self.param_ints.insert(id, (ints, t.span));
         Some(r)
+    }
+
+    /// The ranges written on the key of the parameter `p`, binder `id`, declared a partial
+    /// map of one key, `m: int[5..<10] ->? int` or `m: (int[0..<2], int[0..<3]) ->? int`
+    /// (RANGE-keys): the whole key's, or each component's of a tuple key, read as
+    /// [`Ck::param_range`] reads a parameter's. The parameter goes to `param_keys`, ranged or
+    /// not, so that a remap may read it. Unlike a parameter's, a key's range that holds no int
+    /// is no error: it admits the empty map alone. O(the key's components) beyond reading the
+    /// bounds.
+    pub(super) fn param_keys(&mut self, p: &'a Param, id: usize) {
+        let Some(TypeKind::Arrow {
+            params,
+            partial: true,
+            ..
+        }) = p.ty.as_ref().map(|t| &t.kind)
+        else {
+            return;
+        };
+        let [key] = &params[..] else { return };
+        let parts: Vec<(Option<usize>, &Type)> = match &key.ty.kind {
+            TypeKind::Tuple(ts) => ts.iter().enumerate().map(|(i, t)| (Some(i), t)).collect(),
+            _ => vec![(None, &key.ty)],
+        };
+        let mut ranges = Vec::new();
+        for (part, t) in parts {
+            if let TypeKind::Range { low, high, .. } = &t.kind
+                && let Some((r, _, _)) = self.written_range(&p.name, low, high)
+            {
+                ranges.push((part, r));
+            }
+        }
+        self.param_keys.insert(
+            id,
+            ParamKeys {
+                ranges,
+                remapped: false,
+            },
+        );
+    }
+
+    /// The range `int[low..high]` written on the parameter `name`, with its least and greatest
+    /// int; none, with an error, where a bound is not an int the text fixes.
+    fn written_range(
+        &mut self,
+        name: &str,
+        low: &'a Option<Box<Expr>>,
+        high: &'a RangeEnd<Option<Box<Expr>>>,
+    ) -> Option<(WrittenRange, End, End)> {
+        let mut fixed = true;
+        let mut bound = |ck: &mut Self, e: &'a Expr| -> Option<Num> {
+            match ck.known(e).value {
+                Some(Value::Int(n)) => Some(Num::from(n)),
+                Some(Value::Big(n)) => Some(Num::from(&*n)),
+                _ => {
+                    let code = ck.code(Some(e.span)).unwrap_or("this bound").to_string();
+                    ck.error(
+                        e.span,
+                        format!(
+                            "the bound `{code}` of the range of `{}` is not an int the program's \
+                             text fixes. A bound must be an int literal, or a name bound to one, \
+                             as `n = 10;`. To repair it, write the bound as an int",
+                            name
+                        ),
+                    );
+                    fixed = false;
+                    None
+                }
+            }
+        };
+        let lo = match low.as_deref() {
+            Some(e) => bound(self, e).map(Fin),
+            None => Some(NegInf),
+        };
+        let hi = match high {
+            RangeEnd::Below(Some(e)) => bound(self, e).map(|n| Fin(n).pred()),
+            RangeEnd::Through(Some(e)) => bound(self, e).map(Fin),
+            RangeEnd::Below(None) | RangeEnd::Through(None) | RangeEnd::Open => Some(PosInf),
+        };
+        let (Some(lo), Some(hi)) = (lo, hi) else {
+            debug_assert!(!fixed);
+            return None;
+        };
+        let value = |e: &End| match e {
+            Fin(n) => Some(Value::from(n)),
+            _ => None,
+        };
+        Some((WrittenRange::new(value(&lo), value(&hi)), lo, hi))
     }
 
     /// What the text of `e` shows of its `int` value (see [`Known`]), from its literals, the

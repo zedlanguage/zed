@@ -3719,6 +3719,25 @@ pub struct IntDomain {
     /// The range a parameter is declared with, which is then the whole domain: the ints from
     /// 0 are not asked for, and `below_two_pow` is none.
     pub written: Option<WrittenRange>,
+    /// For a parameter declared a partial map `K ->? V`, what its key domain takes
+    /// ([`KeyUse`]); then `written` and `below_two_pow` are none and the need is on the keys
+    /// of the map passed, not on an int.
+    pub key: Option<Arc<KeyUse>>,
+}
+
+/// What a parameter declared a partial map `K ->? V` takes of the map a call passes it
+/// (RANGE-keys): its keys inside the ranges written on its key, `m: int[5..<10] ->? int` or
+/// `m: (int[0..<2], int[0..<3]) ->? int`, and, where a remap reads it, a family. A remap
+/// rearranges the entries of a family, and its witness that no two keys collide reads the
+/// ranges (DESIGN.md sec:grouping, the witness catalog); a function of the type has no
+/// entries, and a key outside a range could collide.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct KeyUse {
+    /// Each range written on the key: on the whole key (`None`), or on its tuple component
+    /// at the index, in the order written.
+    pub ranges: Vec<(Option<usize>, WrittenRange)>,
+    /// Whether a remap reads the map, which must then be a family.
+    pub family: bool,
 }
 
 /// A range written as the type of a parameter of type `int`, as `x: int[1..=9]` (DESIGN.md

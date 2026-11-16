@@ -1754,6 +1754,33 @@ impl Resolver<'_> {
                         }
                         self.range(of, low, high, &mut todo)
                     }
+                    // The key of a partial map `K ->? V` of one key, `m: int[5..<10] ->? int`,
+                    // may be ranged too, and so may each component of a tuple key: the
+                    // checker reads the range into the parameter's key domain (RANGE-keys).
+                    TypeKind::Arrow {
+                        params,
+                        partial: true,
+                        result,
+                    } if params.len() == 1 => {
+                        self.arrows.push(t.span);
+                        todo.push(Task::ArrowEnd);
+                        todo.push(Task::Ty(result));
+                        todo.push(Task::KeyTy(&params[0].ty, true));
+                    }
+                    _ => self.ty(t, &mut todo),
+                },
+                Task::KeyTy(t, whole) => match &t.kind {
+                    TypeKind::Range { of, low, high } => {
+                        if !matches!(&of.kind, TypeKind::Name(n) if n == "int") {
+                            self.later(t.span, "a range over a type other than `int`");
+                        }
+                        self.range(of, low, high, &mut todo)
+                    }
+                    // One level of tuple: a range in a nested tuple, `((int[0..<2],), int)`,
+                    // is refused as anywhere else.
+                    TypeKind::Tuple(ts) if whole => {
+                        todo.extend(ts.iter().rev().map(|c| Task::KeyTy(c, false)))
+                    }
                     _ => self.ty(t, &mut todo),
                 },
                 Task::TypeName(n, span) => self.type_name(n, span),
@@ -3314,14 +3341,16 @@ impl Resolver<'_> {
             }
             TypeKind::Array(_) => self.later(t.span, "a family type `[T]`"),
             // This version checks a range only as the whole type of a parameter
-            // ([`Task::ParamTy`]): there the checker meets it into the parameter's cell and
-            // checks each call against it. Elsewhere, in a tuple, a function type, an `is` test
-            // or a field, it would need a kernel type with a range, which this version lacks;
-            // reading it as its base type would make `x is int[0..=9]` hold for 100.
+            // ([`Task::ParamTy`]), or as the key of a parameter's partial map or a component
+            // of that key ([`Task::KeyTy`]): there the checker reads it apart and checks each
+            // call against it. Elsewhere, in another tuple, function type, `is` test or field,
+            // it would need a kernel type with a range, which this version lacks; reading it
+            // as its base type would make `x is int[0..=9]` hold for 100.
             TypeKind::Range { of, low, high } => {
                 self.later(
                     t.span,
-                    "a range type in any place but the whole type of a parameter",
+                    "a range type in any place but the whole type of a parameter or the key \
+                     of a parameter's partial map `K ->? V`",
                 );
                 self.range(of, low, high, todo);
             }
@@ -3889,6 +3918,10 @@ enum Task<'a> {
     RangeBound(&'a Expr),
     /// The written type of a parameter, the one place a range type is checked at this layer.
     ParamTy(&'a Type),
+    /// The key type of a parameter's partial map `K ->? V`, or a component of a tuple key,
+    /// where a range over `int` is read as the key's domain (RANGE-keys); whether it is the
+    /// whole key, whose tuple components may be ranged too.
+    KeyTy(&'a Type, bool),
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.

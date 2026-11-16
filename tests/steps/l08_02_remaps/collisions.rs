@@ -194,3 +194,126 @@ fn a_binder_naming_a_type_in_a_pattern() {
     let src = "m = { \"a\" -> 1 };\nx = m as (int -> v) into (v -> int);\n";
     rejected(src, &["int"]);
 }
+
+// ---- Catalog entries on a key domain a range type bounds (RANGE-keys) ----
+
+#[test]
+fn witness_modulo_at_the_width_of_the_modulus() {
+    // "`k mod p` where the domain is at most `p` contiguous integers".
+    let src = "f(positional m: int[5..<10] ->? int) = m as (k -> v) into (k mod 5 -> v);\n\
+               x = f({ 5 -> 50, 6 -> 60, 9 -> 90 });\nwant = { 0 -> 50, 1 -> 60, 4 -> 90 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_modulo_one_wider_is_rejected() {
+    // "the side condition is essential, and one integer wider it fails".
+    let src = "f(positional m: int[5..=10] ->? int) = m as (k -> v) into (k mod 5 -> v);\n";
+    rejected(src, &["k mod 5", "into (k mod 5 -> k -> v)"]);
+}
+
+#[test]
+fn witness_affine_packing() {
+    // "`(k1, k2) ↦ k1·s + k2` on `k2 : int[0..<s]`". The key is one level holding a tuple,
+    // `((A, B)) ->? C`; `(A, B) ->? C` would be two levels (DESIGN.md sec:grammar).
+    let src = "f(positional m: ((int[0..<2], int[0..<3])) ->? int) = m as (t -> v) into (t[0] * 3 + t[1] -> v);\n\
+               x = f({ (0, 2) -> 2, (1, 0) -> 10 });\nwant = { 2 -> 2, 3 -> 10 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_affine_packing_one_short_is_rejected() {
+    // "Each stride must dominate the span of the keys beneath it ... one integer short and the
+    // packing collides".
+    let src = "f(positional m: ((int[0..<2], int[0..<3])) ->? int) = m as (t -> v) into (t[0] * 2 + t[1] -> v);\n";
+    rejected(src, &["t[0] * 2 + t[1]"]);
+}
+
+#[test]
+fn witness_unpacking_by_euclidean_div_and_mod() {
+    // "the quotient/remainder pair `k ↦ (k div s, k mod s)` as its two-sided inverse — under
+    // the Euclidean `div`/`mod`", on negative keys too.
+    let src = "f(positional m: int[-3..<3] ->? int) = m as (k -> v) into ((k div 3, k mod 3) -> v);\n\
+               x = f({ -3 -> 1, -1 -> 2, 2 -> 3 });\nwant = { (-1, 0) -> 1, (-1, 2) -> 2, (0, 2) -> 3 };\n";
+    same(src, "x", "want");
+}
+
+// ---- Calls of a function whose partial-map parameter has a range on its key (RANGE-keys) ----
+// The witness above reads the range, so each call must show the keys it passes lie in it.
+
+/// The function of the modulo witness: a remap of `m` by `k mod 5` on keys in 5 to 9.
+const MOD5: &str = "f(positional m: int[5..<10] ->? int) = m as (k -> v) into (k mod 5 -> v);\n";
+
+#[test]
+fn a_key_outside_the_range_is_rejected_at_the_call() {
+    // 3 and 8 would both give the key 3.
+    let src = format!("{MOD5}x = f({{ 3 -> 1, 8 -> 2 }});\n");
+    rejected(
+        &src,
+        &[
+            "`f` takes `m` as a family, which a remap reads, with keys in int[5..=9]: `{ 3 -> 1, 8 -> 2 }` may not be one",
+        ],
+    );
+}
+
+#[test]
+fn a_function_is_rejected_where_a_remap_reads_the_parameter() {
+    // The remap rearranges entries at run time, and a function has none. (A lambda's
+    // parameter takes no range yet, so its key is `int`; the family is checked first.)
+    let src = format!("{MOD5}x = f((k: int) -> k);\n");
+    rejected(&src, &["`f` takes `m` as a family, which a remap reads"]);
+}
+
+#[test]
+fn a_function_of_every_int_is_rejected_where_the_key_is_ranged() {
+    // No remap reads `m` here, but the keys of a map of every int do not lie in 5 to 9.
+    let src = "f(positional m: int[5..<10] ->? int) = m(6) else 0;\nx = f((k: int) -> k);\n";
+    rejected(
+        src,
+        &["`f` takes `m` with keys in int[5..=9]: `(k: int) -> k` may not be one"],
+    );
+}
+
+#[test]
+fn a_parameter_with_a_range_inside_passes_its_keys_on() {
+    let src = format!(
+        "{MOD5}g(positional m: int[6..<9] ->? int) = f(m);\nx = g({{ 7 -> 1 }});\nwant = {{ 2 -> 1 }};\n"
+    );
+    same(&src, "x", "want");
+}
+
+#[test]
+fn a_parameter_with_a_wider_range_is_rejected() {
+    let src = format!("{MOD5}g(positional m: int[0..<9] ->? int) = f(m);\n");
+    rejected(
+        &src,
+        &[
+            "`f` takes `m` as a family, which a remap reads, with keys in int[5..=9], and `m` is declared with keys that may lie outside",
+        ],
+    );
+}
+
+#[test]
+fn a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls() {
+    let pass =
+        format!("{MOD5}g(positional m) = f(m);\nx = g({{ 7 -> 1 }});\nwant = {{ 2 -> 1 }};\n");
+    same(&pass, "x", "want");
+    let fail = format!("{MOD5}g(positional m) = f(m);\nx = g({{ 3 -> 1, 8 -> 2 }});\n");
+    rejected(
+        &fail,
+        &["with keys in int[5..=9]: `{ 3 -> 1, 8 -> 2 }` may not be one"],
+    );
+}
+
+#[test]
+fn a_tuple_key_component_outside_its_range_is_rejected() {
+    // (0, 3) and (1, 0) would both give the key 3.
+    let src = "f(positional m: ((int[0..<2], int[0..<3])) ->? int) = m as (t -> v) into (t[0] * 3 + t[1] -> v);\n\
+               x = f({ (0, 3) -> 1, (1, 0) -> 2 });\n";
+    rejected(
+        src,
+        &[
+            "key component 0 in int[0..=1] and key component 1 in int[0..=2]: `{ (0, 3) -> 1, (1, 0) -> 2 }` may not be one",
+        ],
+    );
+}

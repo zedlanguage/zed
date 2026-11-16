@@ -41,8 +41,10 @@ fn a_range_below_an_end_and_one_through_the_end_before_it_are_one_type() {
         ints("int[0..<18446744073709551617]"),
         ints("int[0..=18446744073709551616]")
     );
-    // The result's type is `int`: a printed type holds no range (the interval of the body is
-    // the cell's, read by the tests of step L1.39).
+    // The result's type prints as `int`, though DESIGN.md L1.25 gives the body's hull,
+    // `int[0..=9]` here: a signature has no place for a result interval yet (row
+    // RANGE-result-hull). The interval of the body is the cell's, read by the tests of step
+    // L1.39.
     assert_eq!(
         sig_of("n = 10;\nf(x: int[0..<n]) = x;\n", "f").to_string(),
         "(x: int[0..=9]) -> int"
