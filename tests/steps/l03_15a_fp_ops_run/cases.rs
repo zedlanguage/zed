@@ -660,7 +660,12 @@ fn a_misshapen_string_call_is_repaired_with_the_programs_operands() {
 fn split_and_concat_on_a_line_of_standard_input_run() {
     let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> concat(l.split(\",\")));\n}\n";
     let out = run("fp_ops/strings_generic_run", src, "a,b\nc\n", &[]);
-    assert_eq!((out.status, out.stdout.as_str()), (0, "ab\nc\n"), "{}", out.stderr);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "ab\nc\n"),
+        "{}",
+        out.stderr
+    );
 }
 
 /// `program` run by `zedc run` must be rejected, its error output holding each of `texts`.
@@ -687,7 +692,9 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     // Two calls, of two separators; a generic function calling another.
     let src = format!(
         "{p}p2(positional s) = p(s, \",\");\n{}",
-        main("${p(\"a,b\", \",\") == [\"a\", \"b\"]} ${p(\"x y z\", \" \").count} ${p2(\"a,b,c\").count}")
+        main(
+            "${p(\"a,b\", \",\") == [\"a\", \"b\"]} ${p(\"x y z\", \" \").count} ${p2(\"a,b,c\").count}"
+        )
     );
     assert_eq!(ran("strings_generic_split", &src), (0, "true 3 3\n".into()));
     // `lines`, and `concat` of generic pieces, of a generic separator and of generic entries.
@@ -695,7 +702,9 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
         "ls(positional s) = s.lines.count;\nj(positional xs) = concat(xs, sep: \"-\");\n\
          k(positional s) = concat([\"a\", \"b\"], sep: s);\n\
          two(positional x) = concat([x, x], sep: \",\");\n{}",
-        main("${ls(\"a\\nb\")} ${j([\"a\", \"b\"])} ${j(\"x;y\".split(\";\"))} ${k(\"+\")} ${two(\"a\")}")
+        main(
+            "${ls(\"a\\nb\")} ${j([\"a\", \"b\"])} ${j(\"x;y\".split(\";\"))} ${k(\"+\")} ${two(\"a\")}"
+        )
     );
     assert_eq!(
         ran("strings_generic_others", &src),
@@ -707,7 +716,10 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
         "g(x: T, y: T) = concat([x, y], sep: \"/\");\n{}",
         main("${g(x: \"a\", y: \"b\")}")
     );
-    assert_eq!(ran("strings_generic_type_variable", &src), (0, "a/b\n".into()));
+    assert_eq!(
+        ran("strings_generic_type_variable", &src),
+        (0, "a/b\n".into())
+    );
     // A separator that may be `""` at the call gives `#emptySeparator` there, and the atom is
     // in the type of the call.
     let q = format!("{p}q(d: String) = p(\"a,b\", d);\n");
@@ -715,9 +727,16 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
         "{q}{}",
         main("${q(d: \"\") == #emptySeparator} ${q(d: \",\") == [\"a\", \"b\"]}")
     );
-    assert_eq!(ran("strings_generic_maybe_empty", &src), (0, "true true\n".into()));
+    assert_eq!(
+        ran("strings_generic_maybe_empty", &src),
+        (0, "true true\n".into())
+    );
     let src = format!("{q}main(m: MainArgs) {{\n  m.stdout <- concat(q(d: \",\"));\n}}\n");
-    rejected_saying("strings_generic_maybe_empty_type", &src, &["#emptySeparator"]);
+    rejected_saying(
+        "strings_generic_maybe_empty_type",
+        &src,
+        &["#emptySeparator"],
+    );
     // A call whose separator is always `""` always fails, and one that passes no string is
     // rejected, each in the word's own message, at the call.
     // Its repairs name no `s`, which is not in scope at the call.
@@ -767,7 +786,10 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     );
     let (status, err) = ran("strings_generic_definition", &src);
     let said = err.matches("an entry of this family is 1").count();
-    assert!(status != 0 && said == 1, "status {status}, said {said} times\n{err}");
+    assert!(
+        status != 0 && said == 1,
+        "status {status}, said {said} times\n{err}"
+    );
     let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> concat(l.split(\"\")));\n}\n";
     rejected_saying(
         "strings_generic_line_empty",
