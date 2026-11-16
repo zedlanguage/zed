@@ -16684,7 +16684,7 @@ enum Leaf {
 }
 
 /// The units of the cover's work limit (`exact::EXACT_LIMIT`) charged for each row that
-/// `live3::decide` reads, before `exact::charge` multiplies by `SOLVER_UNIT`.
+/// `live3::decide` reads, before `exact::charge` multiplies by `SOLVER_STEP`.
 /// This is an empirical weight, not a bound for arbitrary coefficient sizes.
 const LIVE3_ROW: u64 = 64;
 
@@ -17420,7 +17420,7 @@ impl Omega {
         // linear programs and up to 199 slices over the rows, each O(m). Not proved, measured
         // (PRES-pugh-work-budget): 1,814 calls on six rows took 0.11 to 7.3 ms, median 1.3 ms,
         // of wall time in a debug build (load not recorded). Six rows charge 38,400
-        // units after SOLVER_UNIT, or 3.072 ms at 80 ns/unit, not 384 units/31 µs.
+        // units after SOLVER_STEP (100), or 3.072 ms at 80 ns/unit, not 384 units/31 µs.
         // The worst wall measurement is about 2.4 times that prediction; wall and
         // thread CPU measurements must be separated before refitting. The fit is
         // on whole covers,

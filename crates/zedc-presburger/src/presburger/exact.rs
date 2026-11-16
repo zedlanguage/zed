@@ -125,12 +125,17 @@ impl Work {
         Ok(())
     }
 
-    /// Charges `rows` constraints or rows read whole (a question's formula, the formula read
-    /// at a point, an implicant's rows), [`SOLVER_UNIT`] each: a question costs about 4 µs
-    /// for each constraint of its formula before the solver's own steps (the checks the
-    /// solver makes first), where a value the cover lists costs tens of nanoseconds.
+    /// Charges `rows` constraints or rows read whole (the formula read at a point, an
+    /// implicant's rows), [`SOLVER_UNIT`] each, where a value the cover lists costs tens of
+    /// nanoseconds; a question's formula is charged by [`Work::question`].
     fn read(&mut self, rows: u64) -> Result<(), Refusal> {
         self.charge(rows.saturating_mul(SOLVER_UNIT))
+    }
+
+    /// Charges the `rows` constraints of a question's formula, [`QUESTION_ROW`] each, before
+    /// the question is asked: the checks the solver makes before its own steps read them.
+    fn question(&mut self, rows: u64) -> Result<(), Refusal> {
+        self.charge(rows.saturating_mul(QUESTION_ROW))
     }
 
     /// [`super::satisfiable`] of `q`, its work counted by the solver's meter ([`charge`]) and
@@ -205,13 +210,46 @@ thread_local! {
 /// lists (PRES-pugh-work-budget).
 pub const SOLVER_UNIT: u64 = 100;
 
+/// The units of [`EXACT_LIMIT`] one step of the solver counts for ([`charge`]), and the units
+/// one constraint of a question's formula counts for ([`Work::question`]): 100 each, the
+/// charges of PRES-pugh-work-budget. Seat Opus of PRES-pugh-xr round 3 fit 45 and 150 on the
+/// thread CPU time of whole covers (13,248 covers over 2 ms, loads 54 to 94: none over the
+/// prediction 2 ms + 80 ns a unit, least ratio 1.028, median 1.95), on a tree without that
+/// round's counted shadows (`Work::eliminate`). With those shadows also charged, 45 and 150
+/// refused `omega::twin_definitions_merge_in_time_near_linear`, which 100 and 100 answer, so
+/// the fit no longer described the charges in force and was not merged: the refit on the
+/// merged charges, per site, is open (PRES-work-charge-fit).
+// Complexity tradeoff: one factor for all solver steps and one for question rows is the
+// naive charge; a factor per site fit by a linear program held on the data it was fit on
+// and not on held-out data (round 3, least ratio 0.42 on the benchmarks), so a per-site fit
+// needs per-site timings (a batch of one site's steps between two reads of
+// `CLOCK_THREAD_CPUTIME_ID`, which reads to 1 ns at about 0.6 µs a read).
+pub(super) const SOLVER_STEP: u64 = 100;
+/// See [`SOLVER_STEP`].
+pub(super) const QUESTION_ROW: u64 = 100;
+
 /// The units a piece read by [`residues`] or [`outside`] is charged: its ends converted, two
 /// residues taken and a set joined or met, measured at 0.6 to 0.8 µs a piece where a unit
 /// of a cover costs at most 56 ns (s22 `remainder_splits_at_their_corners_keep_their_preimages`,
-/// PRES-pugh-work-budget), so 16, not the 1 a listed value costs.
+/// PRES-pugh-work-budget), so 16, not the [`LISTED`] a listed value costs.
 const PIECE: u64 = 16;
 
-/// Charges `units` of the solver's work, `SOLVER_UNIT` each, to the meter of the question
+/// The units a value the cover lists is charged ([`projection::listed`]): the value made and
+/// pushed, about 150 ns, and its share of the sets built from the values listed after it (the
+/// list sorted into a set and joined to the cell, and the gap and the values found cut and
+/// joined by it), about 370 ns more, measured on a cover that lists 1,958,315 values at loads
+/// of 75 to 90 on 32 cores (s22 `split_pieces_reach_each_kind_of_touched`, PRES-pugh-xr
+/// round 3, F): 526 ns, so 7 units of 80 ns. With the round-3 fit of [`SOLVER_STEP`] (45) 7 was the least
+/// whole charge with no cover over its prediction: at 6 that cover took 1.006 times its prediction.
+/// With [`SOLVER_STEP`] at 100 that check is not repeated (PRES-work-charge-fit).
+// Complexity tradeoff: before, a listed value was charged 1 unit, which left the sets built
+// from the list uncounted, and that cover was refused at the limit after 1.5 s of CPU time,
+// six times the 250 ms the limit stands for (QUESTIONS A99). Naive alternative: charge each
+// set operation by the pieces it reads, one more charge at each of four sites for the same
+// count. Used: the count is the values listed, so each is charged its share where it is made.
+pub(super) const LISTED: u64 = 7;
+
+/// Charges `units` of the solver's work, [`SOLVER_STEP`] each, to the meter of the question
 /// running, and refuses with
 /// [`Refusal::Questions`] once it is past its limit; with no question running, as for every
 /// question but the cover's, it does nothing. A unit is one constraint, term or disjunct read
@@ -221,7 +259,7 @@ pub(super) fn charge(units: u64) -> Result<(), Refusal> {
     match METER.get() {
         None => Ok(()),
         Some(Meter { used, limit }) => {
-            let used = used.saturating_add(units.saturating_mul(SOLVER_UNIT));
+            let used = used.saturating_add(units.saturating_mul(SOLVER_STEP));
             METER.set(Some(Meter { used, limit }));
             if used > limit {
                 Err(Refusal::Questions)
@@ -660,6 +698,16 @@ fn cover(
                     tails = Vec::new();
                     let mut listed = Vec::new();
                     for t in left {
+                        // The difference below reads each piece of `known` inside the tail's
+                        // piece and builds a set of the holes between them, about 1 µs a piece
+                        // (482 ms for 489,580 pieces in the cover above `LISTED`), before any
+                        // value is listed or charged: charged first, [`PIECE`] units each, the
+                        // count read in O(log p) from the two piece iterators' lengths.
+                        if let Some((lo, hi)) = t.piece.bounds() {
+                            let inside = known.pieces_from(lo).len()
+                                - known.pieces_after(|p| p.0 <= *hi).len();
+                            work.charge(PIECE.saturating_mul(inside as u64))?;
+                        }
                         for (l, u) in t.piece.minus(&known).pieces() {
                             if let (End::Fin(l), End::Fin(u)) = (l, u) {
                                 let (l, u) = (Int::from(l), Int::from(u));
@@ -697,7 +745,7 @@ fn cover(
                     .map(|(r, _)| (End::from(r as i64), End::from(r as i64)))
                     .collect(),
             );
-            work.read(size + 4)?;
+            work.question(size + 4)?;
             EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
             let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
             let lin = Lin {
@@ -742,7 +790,7 @@ fn cover(
             if other.is_empty() {
                 continue;
             }
-            work.read(size + 4)?;
+            work.question(size + 4)?;
             EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
             let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
             let lin = Lin {
@@ -781,7 +829,7 @@ fn cover(
         let Some(piece) = gap.first().cloned() else {
             return Ok(ended(h, found, &kept));
         };
-        work.read(size + 2)?;
+        work.question(size + 2)?;
         EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
         let piece = IntervalSet::range(piece.0, piece.1);
         let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
@@ -2833,7 +2881,7 @@ mod tests {
             ));
         }
         let read_only = (rows.len() as u64) * SOLVER_UNIT;
-        let pair_work = ((p * p) as u64) * SOLVER_UNIT;
+        let pair_work = ((p * p) as u64) * SOLVER_STEP;
 
         let mut full = Work {
             used: 0,
@@ -2899,15 +2947,15 @@ mod tests {
             cons.push(Con::ge(&lin(&[(&x, -1)], 10), &Lin::constant(0)));
             cons.push(Con::ge(&lin(&[(&y, -1)], 10), &Lin::constant(0)));
         }
-        // `solve` charges `cons.len() + terms` = `320 + 480 = 800` solver units on entry, and
-        // `canonical` charges `n + cons.len() + terms` = `160 + 320 + 480 = 960` solver units.
-        let entry_charge = (320 + 480) * SOLVER_UNIT;
-        let canon_charge = (160 + 320 + 480) * SOLVER_UNIT;
+        // `solve` charges `cons.len() + terms` = `320 + 480 = 800` solver steps on entry, and
+        // `canonical` charges `n + cons.len() + terms` = `160 + 320 + 480 = 960` solver steps.
+        let entry_charge = (320 + 480) * SOLVER_STEP;
+        let canon_charge = (160 + 320 + 480) * SOLVER_STEP;
 
         // Failing in `canonical` must stop before any `System::add` runs.
         let mut w_canon = Work {
             used: 0,
-            limit: entry_charge + SOLVER_UNIT,
+            limit: entry_charge + SOLVER_STEP,
         };
         let r_canon = w_canon.metered(|| super::super::solve(&cons, true));
         assert_eq!(r_canon, Err(Refusal::Questions));
@@ -2918,8 +2966,8 @@ mod tests {
         );
 
         // Failing in the first component's `System::add` must stop without charging the other 79
-        // components (`320` rows would add `> 80_000` more units if ignored).
-        let step_limit = entry_charge + canon_charge + 4 * SOLVER_UNIT;
+        // components (`320` rows would add `> 320 * SOLVER_STEP` more units if ignored).
+        let step_limit = entry_charge + canon_charge + 4 * SOLVER_STEP;
         let mut w_add = Work {
             used: 0,
             limit: step_limit,
@@ -2927,7 +2975,7 @@ mod tests {
         let r_add = w_add.metered(|| super::super::solve(&cons, true));
         assert_eq!(r_add, Err(Refusal::Questions));
         assert!(
-            w_add.used <= step_limit + 4 * SOLVER_UNIT,
+            w_add.used <= step_limit + 4 * SOLVER_STEP,
             "System::add kept running across remaining rows/components: used={} vs limit={}",
             w_add.used,
             step_limit

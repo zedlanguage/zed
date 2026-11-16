@@ -25,7 +25,7 @@ use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet};
 
 use super::super::{Atom, Con, Formula, Lin, Refusal, Rel};
-use super::{EXACT_QUESTIONS, Work, bounded, fin};
+use super::{EXACT_QUESTIONS, LISTED, Work, bounded, fin};
 
 /// The in-cell step for the values an implicant has without end.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -40,21 +40,15 @@ pub enum Method {
 }
 
 thread_local! {
-    /// Test control: the in-cell method, in place of the one `ZED_EXACT_METHOD` names (`old`,
-    /// `pugh` or `rays`; [`Method::Pugh`] where it names none).
+    /// Test control: the in-cell method, in place of [`Method::Pugh`]. Set by the tests that
+    /// compare the methods; read from no environment variable (PRES-pugh-xr round 3: the rules
+    /// allow no debug switch read from the environment in delivered code).
     pub static METHOD: Cell<Option<Method>> = const { Cell::new(None) };
 }
 
-/// The method in force: [`METHOD`] where set, else `ZED_EXACT_METHOD`, else Pugh's.
+/// The method in force: [`METHOD`] where set, else Pugh's.
 pub fn method() -> Method {
-    if let Some(m) = METHOD.get() {
-        return m;
-    }
-    match std::env::var("ZED_EXACT_METHOD").as_deref() {
-        Ok("old") => Method::Old,
-        Ok("rays") => Method::Rays,
-        _ => Method::Pugh,
-    }
+    METHOD.get().unwrap_or(Method::Pugh)
 }
 
 /// `{v : lo <= v <= hi, v == res mod step}`, an absent end infinite, `step >= 1`,
@@ -564,7 +558,7 @@ pub(super) fn ranges(
 }
 
 /// The values from `l` to `u` whose residue modulo `step` is marked in `have`, added to
-/// `pieces`, each charged one unit of `work`, and the table one unit for each 64 residues.
+/// `pieces`, each charged [`LISTED`] units of `work`, and the table one unit for each 64 residues.
 pub(super) fn listed(
     l: &Int,
     u: &Int,
@@ -580,7 +574,7 @@ pub(super) fn listed(
         // The first value at or above `l` with residue `r`.
         let mut v = l + &(&r - l).mod_floor(step);
         while &v <= u {
-            work.charge(1)?;
+            work.charge(LISTED)?;
             pieces.push((fin(&v), fin(&v)));
             v = &v + step;
         }

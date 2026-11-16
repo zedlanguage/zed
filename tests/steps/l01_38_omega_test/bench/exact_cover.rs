@@ -92,9 +92,8 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
 /// The cover's work at sizes n and 8n (PRES-pugh-exact-projection-research): the multiples of
 /// 2 in `0..=n`, whose answer has n/2 + 1 pieces and a question for each gap, and the evens
 /// in `0..=20` with a padding chain of n conjuncts, which makes each question n long while
-/// their number stays the same. Each is of order n. The in-cell method is the one
-/// `ZED_EXACT_METHOD` names (Pugh's by default), so the comparison of methods runs this test
-/// once per method.
+/// their number stays the same. Each is of order n. The in-cell method is Pugh's
+/// (`METHOD` unset; its environment switch was removed in PRES-pugh-xr round 3).
 #[test]
 fn the_cover_is_of_order_n_in_its_answer_and_in_its_questions() {
     use zed_tests::scaling;
