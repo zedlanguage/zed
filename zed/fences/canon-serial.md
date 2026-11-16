@@ -144,6 +144,7 @@
 | `split` | 75 |
 | `lines` | 76 |
 | `concat` | 77 |
+| `a ..`, the integers from `a` with no upper end | 78 |
 | Witness | Tag | Fields in order |
 | Residue | 0 | — |
 | Catalog | 1 | `name: string` |

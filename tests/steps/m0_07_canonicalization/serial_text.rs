@@ -249,6 +249,7 @@ pub(super) mod m07 {
             Split => "`split`",
             Lines => "`lines`",
             Join => "`concat`",
+            RangeFrom => "`a ..`, the integers from `a` with no upper end",
         }
     }
 
