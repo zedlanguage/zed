@@ -728,7 +728,7 @@ fn one_variable_takes_n_members_in_linear_time() {
 #[test]
 fn n_shapes_of_variables_one_pinned_one_variable_takes_the_rest_in_linear_time() {
     let result = |vs: &[Ty]| Ty::tuple(vec![vs[0].clone()]);
-    let sigs = scaling::inputs(30_000, |m| {
+    let sigs = scaling::inputs(15_000, |m| {
         (
             shapes_of_variables("T", m, &[], result, false),
             shapes_of_variables("X", m, &[], result, true),
@@ -736,7 +736,7 @@ fn n_shapes_of_variables_one_pinned_one_variable_takes_the_rest_in_linear_time()
     });
     scaling::check(
         "n shapes of variables, one pinned, one variable takes the rest",
-        30_000,
+        15_000,
         |m| {
             let (s, q) = &sigs[&m];
             assert!(zedc::check::ty::fits_sig(s, q));

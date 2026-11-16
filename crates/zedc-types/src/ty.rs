@@ -12238,6 +12238,32 @@ async fn permitted<'m>(
     pass: Pass,
     c: &'m Comparing<'m, '_>,
 ) -> bool {
+    // The pass after the cover takes only arrows of several least instances, or of none that
+    // [`instances`] gives. Where no bound of `s` has two least instances, there is no such
+    // arrow, and the pass is skipped before the hash set and index of `q` and a walk of each
+    // arrow of `s`.
+    //
+    // Proof. [`instances`] lists the least instances of each variable it binds: the carriers
+    // of its bound (`Carrier::of_mask`), and `Never` where that list is empty or the bound
+    // has [`OTHER`]; an unbounded variable has `Never` alone. It gives two instances or more,
+    // or `None`, only at a variable whose list has two entries or more, so only at a bound
+    // with two carriers or more, or with one carrier and `OTHER`: `several_least` below, the
+    // same count. Without such a bound every arrow that holds a bindable variable gets one
+    // instance, and every other arrow is taken alone, so `several` is false for each arrow,
+    // none is wanted in this pass, and the loop below returns `true`: the answer is the same.
+    //
+    // Complexity tradeoff: before, this pass built the hash set of `q`'s parameters, the
+    // widened copy of `q`, and an instance of each arrow of `s` on every comparison, to want
+    // none of them: 1.4G of 7.5G instructions at 1x in
+    // `n_shapes_of_variables_one_pinned_one_variable_takes_the_rest_in_linear_time`
+    // (PERF-shapes-one-pinned-time). Now one look at each bound of `s`, O(bounds).
+    let several_least = |m: u8| {
+        let carriers = Carrier::of_mask(m).count();
+        carriers > 1 || (carriers == 1 && m & OTHER != 0)
+    };
+    if pass == Pass::Witnessed && !s.bounds.values().any(|&m| several_least(m)) {
+        return true;
+    }
     let equal: HashSet<&[Ty]> = qas.iter().map(|a| &a.params[..]).collect();
     // The parameters of `q` read with its own variables widened ([`Cx::wide`]); a copy only
     // where `q` has such a variable.
