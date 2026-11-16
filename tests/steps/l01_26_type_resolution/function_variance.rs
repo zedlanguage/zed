@@ -736,33 +736,131 @@ fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
 }
 
 /// Row PROOF-generic-body-values-from-args, the cases of the proof where a value of a type
-/// variable does not come from a place in one argument that the call shows: a default (of the
-/// argument or of a function written in the program), an entry of a family, a value with an
-/// `else`, a generic function called through a parameter, a lambda inside `map`, and the
-/// result of calling a parameter. Each is refused rather than run without a test of the
-/// domain; before the fix of FAIL-partial-slot-generic-pass these ran `small` on 2.5.
+/// variable does not come from a place in one argument that the call shows: a default that is
+/// a function written in the program, an entry of a family (alone, or with an `else` of the
+/// bare name met before or after it), a lambda inside `map`, and the result of calling a
+/// parameter. Each is refused rather than run without a test of the domain; before the fix of
+/// FAIL-partial-slot-generic-pass these ran `small` on 2.5. Row
+/// MSG-partial-slot-no-place-repair-code: the headline is code, and ends with the repair as
+/// code where a declaration this zedc compiles repairs it ([`the_repairs_the_no_place_refusal_offers_run`]);
+/// `y: _ -> (x: int) -> int`, for `y(x)`, writes `_`, so none is offered there.
 #[test]
 fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
     let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
+    let passes = "passes `(x: int) -> int` as `(x: int | f64) ->? int`, from no argument of the call \
+                  where its domain can be tested.";
+    let entry = "apply(f: { 1 -> x }[1] else x)";
+    let try_x = " Try `x: (x: int) -> int` instead.";
     let cases = [
-        "pass(x, y = x) = apply(f: y);\na = pass(x: small);\n",
-        "pass(x, y = small) = apply(f: y);\na = pass(x: 1);\n",
-        "pass(x) = apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
-        "pass(x) = apply(f: x else x);\na = pass(x: small);\n",
-        "pass(x) = apply(f: x);\nrun(g, v) = g(x: v);\na = run(g: pass, v: small);\n",
-        "pass(x) = apply(f: x);\ntwice(g) = g(x: small);\na = twice(g: pass);\n",
-        "pass(x) = apply(f: x);\na = [small].map(g -> pass(x: g))[0];\n",
-        "pass(x, y) = apply(f: y(x));\na = pass(x: 1, y: n -> small);\n",
+        (
+            "pass(x, y = small) = apply(f: y);\na = pass(x: 1);\n",
+            "apply(f: y)",
+            "",
+        ),
+        (
+            "pass(x) = apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
+            entry,
+            try_x,
+        ),
+        (
+            "pass(x) = apply(f: x else x) + apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
+            "apply(f: x else x)",
+            try_x,
+        ),
+        (
+            "pass(x) = apply(f: { 1 -> x }[1] else x) + apply(f: x else x);\na = pass(x: small);\n",
+            entry,
+            try_x,
+        ),
+        (
+            "pass(x) = apply(f: x);\na = [small].map(g -> pass(x: g))[0];\n",
+            "pass(x: g)",
+            " Try `g: (x: int) -> int` instead.",
+        ),
+        (
+            "pass(x, y) = apply(f: y(x));\na = pass(x: 1, y: n -> small);\n",
+            "apply(f: y(x))",
+            "",
+        ),
     ];
-    for rest in cases {
+    for (rest, code, repair) in cases {
         let src = format!("{head}{rest}");
         let errors = type_errors(&src);
-        assert!(
-            errors.iter().any(|e| e.contains("must give `#notFound`")
-                && e.contains("is not one argument of this call, or a component of one")),
-            "{src}: {errors:?}"
-        );
+        let want = format!("`{code}` {passes}{repair} [{code}]");
+        assert!(errors.contains(&want), "{src}: {want}\n{errors:#?}");
     }
+}
+
+/// Row MSG-partial-slot-no-place-repair-code: the repairs the refusal above offers, and the
+/// declaration of the default the parameter left out, written into the program, make it run:
+/// each function is then of a declared type where the body passes it on, so the slot rebuilds
+/// it there, and it misses outside its domain.
+#[test]
+fn the_repairs_the_no_place_refusal_offers_run() {
+    let head = |k: &str| {
+        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+    };
+    let cases = [
+        "pass(x: (x: int) -> int) = apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
+        "pass(x) = apply(f: x);\na = [small].map((g: (x: int) -> int) -> pass(x: g))[0];\n",
+        "pass(x, y: (x: int) -> int = small) = apply(f: y);\na = pass(x: 1);\n",
+    ];
+    for rest in cases {
+        runs_to(&format!("{}{rest}", head("2.5")), "a", "6");
+        runs_to(&format!("{}{rest}", head("3")), "a", "4");
+    }
+}
+
+/// Row FAIL-partial-slot-generic-needless-refusals: a value the generic body passes on from an
+/// argument by a route `CallFrame::place` did not follow at first is rebuilt at that argument
+/// too, so it misses outside the function's domain and calls it inside, where before it was
+/// refused, soundly but needlessly: a default that reads another parameter, `x else x` where
+/// `x` holds no atom, the generic function passed as a value and called there with an
+/// argument of the outer call or one written in its body (once or twice, and through two
+/// calls of one function value). The fifth case of the row, the generic function called from a
+/// lambda inside `map`, stays refused ([`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`]):
+/// the lambda's parameter is checked once for every type the lambda meets, so no one test can
+/// be put at it; row FAIL-partial-slot-generic-lambda-map holds it.
+#[test]
+fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() {
+    let head = |k: &str| {
+        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+    };
+    let cases = [
+        ("pass(x, y = x) = apply(f: y);\na = pass(x: small);\n", 1),
+        ("pass(x) = apply(f: x else x);\na = pass(x: small);\n", 1),
+        (
+            "pass(x) = apply(f: x);\nrun(g, v) = g(x: v);\na = run(g: pass, v: small);\n",
+            1,
+        ),
+        (
+            "pass(x) = apply(f: x);\ntwice(g) = g(x: small);\na = twice(g: pass);\n",
+            1,
+        ),
+        (
+            "pass(x) = apply(f: x);\nrun(g, v) = g(x: v) + g(x: v);\na = run(g: pass, v: small);\n",
+            2,
+        ),
+    ];
+    for (rest, n) in cases {
+        runs_to(&format!("{}{rest}", head("2.5")), "a", &(6 * n).to_string());
+        runs_to(&format!("{}{rest}", head("3")), "a", &(4 * n).to_string());
+    }
+}
+
+/// A call through a parameter that names its arguments is built once for every function the
+/// parameter takes (`Ck::record_call`); a second function there that takes another number of
+/// parameters, one of them with a default, is refused at the call that passes it.
+#[test]
+fn a_named_call_through_a_parameter_of_two_differing_functions_is_refused() {
+    let src = "one(x: int) = x;\ntwo(x: int, y: int = 1) = x + y;\nrun(g) = g(x: 1);\na = run(g: one) + run(g: two);\n";
+    let errors = type_errors(src);
+    assert!(
+        errors.iter().any(|e| e
+            .contains("and at an earlier call one of type `(x: int) -> int`")
+            && e.contains("which take different numbers of parameters")),
+        "{src}: {errors:#?}"
+    );
 }
 
 /// Row PROOF-generic-body-values-from-args, the cases of the proof that this zedc does not
@@ -840,17 +938,18 @@ fn a_function_rebuilt_in_two_ways_at_one_call_gets_both() {
 
 /// A function the generic body takes out of a family argument has no place in the argument
 /// where the call can put a test of its domain, so the pass to the partial slot is refused,
-/// where before the fix the run called `small` with 2.5.
+/// where before the fix the run called `small` with 2.5. Row
+/// MSG-partial-slot-no-place-repair-code: the headline is code. It offers no repair: the
+/// declaration that would place the function, `m: 1 -> (x: int) -> int`, writes the literal
+/// type `1`, which this zedc does not compile, and `m: int -> (x: int) -> int` or
+/// `m: int ->? (x: int) -> int` is refused at the call or at `m[1]`.
 #[test]
 fn a_function_taken_from_a_family_argument_is_refused_for_a_partial_slot() {
     let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(m) = apply(f: m[1]);\na = pass(m: { 1 -> small });\n";
     let errors = type_errors(src);
-    assert_eq!(errors.len(), 1, "{src}: {errors:?}");
-    assert!(
-        errors[0].contains("must give `#notFound`")
-            && errors[0].contains("is not one argument of this call, or a component of one"),
-        "{src}: {errors:?}"
-    );
+    let want = "`apply(f: m[1])` passes `(x: int) -> int` as `(x: int | f64) ->? int`, from no \
+                argument of the call where its domain can be tested. [apply(f: m[1])]";
+    assert_eq!(errors, [want], "{src}");
 }
 
 /// A family passed to a partial slot is not rebuilt as a function: its lookup of a key it
@@ -992,5 +1091,152 @@ fn a_reordered_function_the_generic_body_uses_in_another_order_is_refused() {
         let errors = type_errors(&src);
         assert_eq!(errors.len(), 1, "{src}: {errors:?}");
         assert!(errors[0].contains(why), "{src}: {errors:?}");
+    }
+}
+
+/// Row TEST-partial-slot-port-pe-routes, the second part: the cases the proof at
+/// `Ck::coerce_at` names for the "rebuilt here already" refusal, which is a debug assertion
+/// now, each run to its values. A lambda passed to a generic function that calls it at two
+/// function types, `small` on `int` and `small4` on `f64`, passes each on with its own test
+/// (8 at 2.5: `#notFound` then 2; 10 at 3: 4 then `#notFound`); a lambda with a default, or
+/// with its parameters in another order, at a slot whose domain is a variable, and a declared
+/// function in another order there, keep their fits beside the test of the domain.
+#[test]
+fn arguments_the_rebuilt_here_proof_names_run_to_their_values() {
+    let head = |k: &str| {
+        format!(
+            "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\npass(x) = apply(f: x);\npassT(t) = apply(f: t[0]);\n"
+        )
+    };
+    let twice = "twice(f) = f(small) + f(small4);\n";
+    let cases = [
+        (format!("{twice}a = twice(f: g -> pass(x: g));\n"), "8", "10"),
+        (format!("{twice}a = twice(f: g -> passT(t: (g, 1)));\n"), "8", "10"),
+        (format!("{twice}a = twice(f: g -> pass(x: (g, 1)[0]));\n"), "8", "10"),
+        (
+            "twice(f) = f((small, 1)) + f((small4, 1));\na = twice(f: p -> passT(t: p));\n".into(),
+            "8",
+            "10",
+        ),
+        ("h(g) = passT(t: (g, 1));\na = h(g: small) + h(g: small4);\n".into(), "8", "10"),
+        (
+            "q(g: (x: V) -> int for V in int) = apply(f: g);\na = q(g: (x: int, z: int = 0) -> x + 1 + z);\n".into(),
+            "6",
+            "4",
+        ),
+        (
+            "apply2(f: (x: int | f64, y: int) ->? int) = f(x: 1, y: 2) else 6;\nq(g: (x: V, y: int) -> int for V in int) = apply2(f: g) + g(x: 3, y: 4);\na = q(g: (y: int, x: int) -> x + 10 * y);\n".into(),
+            "64",
+            "64",
+        ),
+        (
+            "sm(y: int, x: int) = x + 10 * y;\napply2(f: (x: int | f64, y: int) ->? int) = f(x: 1, y: 2) else 6;\nq(g: (x: V, y: int) -> int for V in int) = apply2(f: g) + g(x: 3, y: 4);\na = q(g: sm);\n".into(),
+            "64",
+            "64",
+        ),
+    ];
+    for (rest, miss, hit) in cases {
+        runs_to(&format!("{}{rest}", head("2.5")), "a", miss);
+        runs_to(&format!("{}{rest}", head("3")), "a", hit);
+    }
+}
+
+/// Row TEST-partial-slot-port-pe-routes, the port-read case of the proof at
+/// `Ck::coerce_forwarded`, run by `zedc run`: a key read from a port reaches the function a
+/// generic body passes on, which misses outside its domain and is called inside it, whichever
+/// line the port gives; a function chosen by a value read from a port is rebuilt the same way.
+/// The `Lines` port itself, passed through a generic body, is of its declared type
+/// `int ->? String | #ioError(…)`, so the slot `(int | f64) ->? String` refuses it by its
+/// values, as the proof says, before any rebuilding.
+#[test]
+fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
+    use zed_tests::step_helpers::l01_19_whole_file_ports::run;
+    let key = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int, v: int | f64) = f(x: v) else 6;\npass(x, v: int | f64) = apply(f: x, v: v);\nmain(m: MainArgs) {\n  v = int(m.stdin[0] else \"\") else f64(0);\n  m.stdout <- \"${pass(x: small, v: v)}\";\n}\n";
+    // A line that is no `int` gives the key `f64(0)`, outside `small`'s domain.
+    for (stdin, want) in [("a\nb\n", "6\n"), ("3\n", "4\n")] {
+        let o = run(&format!("port_key_{}", stdin.len()), key, stdin, &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str()),
+            (0, want),
+            "{stdin:?}: {}",
+            o.stderr
+        );
+    }
+    let chosen = |k: &str| {
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\npass(x) = apply(f: x);\nmain(m: MainArgs) {{\n  n = int(m.stdin[0] else \"\") else 0;\n  m.stdout <- \"${{pass(x: if n > 0 {{ small }} else {{ small }})}}\";\n}}\n"
+        )
+    };
+    for (k, want) in [("2.5", "6\n"), ("3", "4\n")] {
+        for stdin in ["1\n", "0\n"] {
+            let o = run(
+                &format!("port_chosen_{}_{}", k.len(), stdin.len()),
+                &chosen(k),
+                stdin,
+                &[],
+            );
+            assert_eq!(
+                (o.status, o.stdout.as_str()),
+                (0, want),
+                "{k} {stdin:?}: {}",
+                o.stderr
+            );
+        }
+    }
+    let lines = "apply(f: (int | f64) ->? String) = f(2.5) else \"none\";\napply1(f: (int | f64) ->? String) = f(1) else \"none\";\npass(x) = apply(f: x) ++ \"|\" ++ apply1(f: x);\nmain(m: MainArgs) {\n  m.stdout <- pass(x: m.stdin);\n}\n";
+    let o = run("port_lines", lines, "a\n", &[]);
+    assert_eq!(o.status, 1, "{}", o.stderr);
+    assert!(
+        o.stderr.contains("does not take int ->? String | #ioError(op: String, path: String, why: String), only (int | f64) ->? String."),
+        "{}",
+        o.stderr
+    );
+}
+
+/// Row TEST-partial-slot-port-pe-routes, the partial-evaluation case of the proof at
+/// `Ck::coerce_forwarded`: a function a generic body passes on, by a call staging meets (a
+/// call of a generic identity in the body or at the argument, a build-stage definition that
+/// names it, an `if` on a build-stage condition, a literal argument beside it), keeps the test
+/// of its domain in the staged program, and `zedc run`, which runs the staged program, misses
+/// outside the domain and calls it inside. In this zedc staging folds none of these calls: it
+/// leaves `pass(…)` to run, since the test's form does not show that it ends, and a
+/// build-stage definition whose value is a function is left to run too; so the staged `a` is
+/// still the call with the test, and a fold, if staging learns one, must give the value.
+#[test]
+fn a_function_a_generic_body_passes_on_keeps_its_test_through_staging() {
+    use zed_tests::step_helpers::l01_19_whole_file_ports::run;
+    let head = |k: &str| {
+        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+    };
+    let main = "main(m: MainArgs) {\n  m.stdout <- \"${a}\";\n}\n";
+    let cases = [
+        "id(v) = v;\npass(x) = apply(f: id(v: x));\na = pass(x: small);\n",
+        "id(v) = v;\npass(x) = apply(f: x);\na = pass(x: id(v: small));\n",
+        "id(v) = v;\ng = id(v: small);\npass(x) = apply(f: x);\na = pass(x: g);\n",
+        "pick(k: int) = if k > 1 { small } else { small };\ng = pick(k: 2);\npass(x) = apply(f: x);\na = pass(x: g);\n",
+        "k = 2;\npass(x) = apply(f: if k > 1 { x } else { small });\na = pass(x: small);\n",
+        "pass(x, k) = apply(f: if k > 1 { x } else { x });\na = pass(x: small, k: 2);\n",
+    ];
+    for (i, rest) in cases.iter().enumerate() {
+        for (k, want) in [("2.5", "6"), ("3", "4")] {
+            let src = format!("{}{rest}{main}", head(k));
+            let p = zedc::run::load(src.as_bytes()).unwrap_or_else(|e| panic!("{src}: {e}"));
+            let staged = p.stage().0;
+            let a = staged
+                .unit()
+                .defs
+                .iter()
+                .find(|d| d.name == "a")
+                .map(|d| d.term.to_string());
+            let a = a.unwrap_or_else(|| panic!("{src}: no `a` staged"));
+            assert!(a == want || a.contains("#notFound"), "{src}: a = {a}");
+            let o = run(&format!("staged_{i}_{}", k.len()), &src, "", &[]);
+            assert_eq!(
+                (o.status, o.stdout.as_str()),
+                (0, format!("{want}\n").as_str()),
+                "{src}: {}",
+                o.stderr
+            );
+        }
     }
 }

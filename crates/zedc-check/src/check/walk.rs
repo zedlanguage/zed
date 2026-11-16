@@ -1327,9 +1327,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Else2(e, v) => {
                 let d = m.take_ty();
-                let ExprKind::Else { pattern, .. } = &e.kind else {
+                let ExprKind::Else { of, pattern, .. } = &e.kind else {
                     unreachable!("an `else`")
                 };
+                if let (ExprKind::Name(_), Some(Ref::Bound(ids))) =
+                    (&of.kind, self.t.res.uses.get(&of.span))
+                    && ids.len() == 1
+                {
+                    self.narrow_names.insert(e.span);
+                }
                 let t = match pattern {
                     None => self.narrowed(&v, &Narrow::Loose, e.span).union(&d),
                     Some(Pattern::Atom {
@@ -3176,6 +3182,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.default_ints.insert((binder, index), ints);
     }
 
+    /// Records in [`Ck::default_reads`] the parameter that the default `d` of the parameter
+    /// `s.i` is, where `d` is the bare name of another parameter of `s`, as `x` of
+    /// `pass(x, y = x)`. O(p) for p parameters, once per such default.
+    fn note_default_reads(&mut self, s: &InferF<'a>, d: &'a Expr) {
+        let Some((binder, index, _)) = s.params[s.i].default else {
+            return;
+        };
+        let b = match (&d.kind, self.t.res.uses.get(&d.span)) {
+            (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.len() == 1 => ids[0],
+            _ => return,
+        };
+        if let Some(j) = s.ids.iter().position(|&id| id == b)
+            && j != s.i
+        {
+            self.default_reads.insert((binder, index), j);
+        }
+    }
+
     /// A default that reads the other parameters, at its parameter's type, each in turn;
     /// then the body.
     fn infer_defaults(&mut self, m: &mut M<'a>, mut s: Box<InferF<'a>>) {
@@ -3206,6 +3230,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => dt,
             };
             self.note_default_ints(&s.params[s.i], d, &dt);
+            self.note_default_reads(&s, d);
             match class {
                 Some(k) => {
                     self.defaults.insert(d.span, p.name.as_str().into());
@@ -3296,6 +3321,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 expr: Some(e),
                 parts: None,
                 branches: None,
+                via: None,
             });
             return;
         }
@@ -7103,6 +7129,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let written: Vec<(&Ty, Option<Span>)> =
                         written.iter().map(|(t, at)| (t, *at)).collect();
                     self.note_widened(&kind, &written);
+                    self.call_spans = Some(written.iter().map(|(_, at)| *at).collect());
                     let r = self.need(k, kind, true, span);
                     s.out = s.out.union(&r);
                 }
@@ -10963,6 +10990,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// already gives what it gave then, since what a use gives depends only on the type it is
     /// made of; so a call met twice checks its needs once.
     fn need(&mut self, k: usize, kind: NeedKind, gives: bool, span: Span) -> Ty {
+        let spans = self.call_spans.take();
         let r = self.find(k);
         let data = matches!(kind, NeedKind::Data(..));
         if data && self.classes[r].data {
@@ -10971,7 +10999,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         let key = (kind, gives);
         #[cfg(any(test, feature = "forward-probe"))]
         self.probe_need(r, &key, span);
+        // The arguments this use writes, kept under the span of the use the need keeps, the
+        // first of equal uses, with those of each equal use met after it: a function each
+        // passes on is rebuilt where each writes it ([`Self::need_arg_via`]). One written by a
+        // need copied from another body is `None`, which leaves its arguments unplaced. A
+        // use met while trying keeps no arguments either, since the types of a try may not be
+        // those the check keeps, and the map is not undone with it: a need it made or met is
+        // refused rather than rebuilt by spans whose values may be of other types.
+        // Complexity tradeoff: O(a) per call use for a arguments, one hash insert; the naive
+        // way, a walk of the generic body's text at each call for the uses, costs O(b) per
+        // call for a body of size b.
+        if matches!(key.0, NeedKind::Call { .. }) {
+            let first = self.classes[r].known.get(&key).map_or(span, |&(_, f)| f);
+            let spans = spans.filter(|_| !self.trying);
+            self.call_written
+                .entry(first)
+                .or_default()
+                .push((span, spans));
+        }
         if let Some((result, first)) = self.classes[r].known.get(&key) {
+            // An equal narrowing of a value other than a bare name leaves the result unplaced.
+            if matches!(key.0, NeedKind::Narrow(_)) && !self.narrow_names.contains(&span) {
+                self.narrow_names.remove(first);
+            }
             if !self.trying && *first != span {
                 self.same_use.push((span, *first));
             }
@@ -11261,19 +11311,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 curry,
                 site,
             } => {
+                let mut arg = |ck: &mut Self, p: usize, t: &Ty| {
+                    let via = ck.need_arg_via(n, p, t);
+                    ArgSrc::Got(Box::new(Arg {
+                        via,
+                        ..Arg::of(ck.bound(t, binds))
+                    }))
+                };
                 let args = Args {
-                    positional: positional
-                        .iter()
-                        .map(|t| ArgSrc::Got(Box::new(Arg::of(self.bound(t, binds)))))
+                    positional: (positional.iter().enumerate())
+                        .map(|(p, t)| arg(self, p, t))
                         .collect(),
-                    named: named
-                        .iter()
-                        .map(|(m, t)| {
-                            (
-                                m.to_string(),
-                                ArgSrc::Got(Box::new(Arg::of(self.bound(t, binds)))),
-                            )
-                        })
+                    named: (named.iter().enumerate())
+                        .map(|(j, (m, t))| (m.to_string(), arg(self, positional.len() + j, t)))
                         .collect(),
                 };
                 self.call_found(&on, what, args, *curry, *site, span)
@@ -11353,7 +11403,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Ty::empty()
             }
             NeedKind::Payload { atom, slot } => self.payload(&on, atom, slot, span),
-            NeedKind::Narrow(narrow) => self.narrowed(&on, narrow, span),
+            NeedKind::Narrow(narrow) => {
+                // A narrowing gives the value itself, its type cut down (`x else x` where `x`
+                // holds no loose atom), so its result lies where the value does: placed for a
+                // bare name only ([`Ck::narrow_names`]).
+                if let (Some(r), true) = (&n.result, self.narrow_names.contains(&n.span))
+                    && let Some(frame) = self.call_frames.last_mut()
+                {
+                    frame.same(&n.on, r);
+                }
+                self.narrowed(&on, narrow, span)
+            }
             NeedKind::Order {
                 what,
                 word,
@@ -17110,7 +17170,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// it: an exact use, which passes only keys of the domain, gets what the argument gives.
     ///
     /// Where the need's value is not found in an argument the call shows (a variable that two
-    /// parameters hold, an entry of a family, a default, the result of calling a parameter),
+    /// parameters hold, an entry of a family, a default of its own value, the result of
+    /// calling a parameter),
     /// the program is refused, since the run would call the function outside its domain.
     /// Two rebuildings of one place are joined ([`rebuilt_too`]), since the elaborator
     /// rebuilds a place once (one fit per span: `info.fits.get(&e.span)` in the elaborator's
@@ -17138,11 +17199,26 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   that `map` calls on a family of the argument passes on the argument, which the
     ///   family holds as given.
     /// - `if` and `else`: `if` gives one arm, each of its own variable, each need checked on
-    ///   its own; `x else x` gives a value of no bare variable and is refused.
+    ///   its own. A test that fails, as `x else d` where `x` is no loose atom or `x is t`
+    ///   where it is false, gives the value itself, its type cut down ([`Narrow`], "what a
+    ///   test leaves of a value"), as a need whose result is a new variable; [`Self::meet`]
+    ///   places that variable where the value lies ([`CallFrame::same`]), so `x else x`
+    ///   is rebuilt at `x`'s argument, each of its two variables placed there. It does so
+    ///   only for a test whose operand is a bare name ([`Ck::narrow_names`]): the test of a
+    ///   family entry, `{ 1 -> x }[1] else x`, cuts down a value read from no argument, so
+    ///   its need finds no place and is refused, even where `x else x` stands beside it and
+    ///   the two needs are one.
     /// - A tuple built and a component read, a destructuring: the component read is the value
     ///   put there ([`CallFrame::component`] records the path).
     /// - A default: filled at the call from the declaring function's text, not from an
-    ///   argument the call shows, so `pass(x, y = x) = apply(f: y)` is refused.
+    ///   argument the call shows, so `pass(x, y = small) = apply(f: y)` is refused. The one
+    ///   exception is a default that is the bare name of another parameter the call passes,
+    ///   `pass(x, y = x)` called as `pass(x: small)` ([`Ck::default_reads`]): its value is
+    ///   that argument, so [`CallFrame::new`] places the parameter's variables there. The
+    ///   elaborator binds such a default after the arguments, each fitted
+    ///   (`decl_default`, zedc-elab/src/elab/walk.rs), so it reads the rebuilt argument; a
+    ///   call through a value fills only a default that reads no name (`value_default`
+    ///   there), so it never takes such a function.
     /// - A closure, a local function, a lambda's parameter: a function declared in another
     ///   reads the outer function's classes as they are (the same paragraph), so a captured
     ///   `x` keeps the outer `$v` and is found in the outer call's frame; a lambda called on
@@ -17154,15 +17230,37 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   checked first, a result of the bare `$v` is a value it was given. The induction is
     ///   on the call graph, which has no cycle: recursion is refused before this check
     ///   (zedc-resolve/src/resolve/tables.rs, "which is recursion").
+    /// - The generic function passed as a value and called in another body, as `pass` in
+    ///   `run(g, v) = g(x: v)` or `twice(g) = g(x: small)`: the call of `g` is a need met at
+    ///   the outer call, whose arguments have no span there, so [`Self::need_arg_via`] gives
+    ///   each the arguments written in the program whose value it is ([`CallFrame::via`]).
+    ///   An argument of a bare variable of the outer body that its frame places at a whole
+    ///   argument is that argument (`v` is `small` of `run(g: pass, v: small)`), by this proof
+    ///   applied to the outer body. An argument of a type of no variable is the same value at
+    ///   every run of the outer body, so it is rebuilt where each use the need stands for
+    ///   writes it ([`Ck::call_written`]): every such use, since equal uses share one need
+    ///   and each is recorded; a use met while trying, or a need copied from another body,
+    ///   records no span, and the need is refused. Every function rebuilt there is called
+    ///   through a test of its own domain, which changes no call inside it, so a use that
+    ///   needs no test gets the function's own values. Any other argument gets no place.
+    ///   A use that names its arguments takes the parameter order and defaults of the
+    ///   function the need meets ([`Self::record_call`]), and two functions that take the
+    ///   arguments in different places at one use are refused ([`unaligned`]), so no
+    ///   argument is passed to another parameter than the one it names.
     /// - The result of calling a parameter (`y(x)`): a variable that no parameter holds, so
     ///   `place` finds nothing and the program is refused.
     /// - A port read: its value has the port's declared type (DESIGN.md sec:ports), never a
-    ///   variable of the body.
+    ///   variable of the body. A key read from a port reaches the rebuilt function as any
+    ///   other key, and the `Lines` port passed on is refused by its values
+    ///   (`a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads`).
     /// - Introspection (`x::names`, DESIGN.md sec:introspection): strings and types, read at
     ///   build, never a value of `$v`.
     /// - Partial evaluation (DESIGN.md sec:staging): it runs on the elaborated program, after
     ///   this rebuilding, and keeps the program's meaning, so it gives no value the program
-    ///   does not.
+    ///   does not. In this zedc it folds none of the calls that pass a function on to a
+    ///   partial slot: the test's form does not show that it ends, and a build-stage value
+    ///   that is a function is left to run
+    ///   (`a_function_a_generic_body_passes_on_keeps_its_test_through_staging`).
     /// - Not compiled by this zedc, refused before the check reaches the call
     ///   (zedc-base/src/rejection.rs, "does not compile it yet"): `loop` with `initial`
     ///   (DESIGN.md sec:generations; `initial` outside a loop is refused as such), `@memoized`
@@ -17203,23 +17301,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let found = self.call_frames.last().and_then(|f| {
             let (i, path) = f.place(&n.on)?;
-            Some((f.args[i]?.at, path, f.names.get(i).cloned()))
+            Some((f.written(i)?, path, f.names.get(i).cloned()))
         });
-        let Some((at, path, name)) = found else {
-            let (t, wt) = (self.text(on), self.text(w));
-            let code = self.code(Some(n.span)).unwrap_or("the value");
-            return self.error_offering(
-                n.span,
-                format!(
-                    "`{code}` is `{t}` at this call, passed as `{wt}`: a call through `{wt}` \
-                     may pass a key outside its domain, which must give `#notFound`, and the \
-                     function is not one argument of this call, or a component of one, where a \
-                     test of its domain can be put"
-                ),
-                [format!(
-                    "repair: declare the type of the parameter that `{code}` comes from"
-                )],
-            );
+        let Some((ats, path, name)) = found else {
+            return self.no_place(n, on, w);
         };
         let mut steps = Vec::new();
         let mut up = path;
@@ -17227,16 +17312,108 @@ impl<'t, 'a> Ck<'t, 'a> {
             steps.push((t.i, t.len));
             up = t.up.clone();
         }
+        for &at in ats.iter() {
+            self.coerce_at(at, &steps, c.clone(), name.clone(), on, w);
+        }
+    }
+
+    /// Refuses the need `n`, a value of `on` passed at a parameter of the partial function
+    /// type `w`, whose value [`CallFrame::place`] finds in no argument of the call being
+    /// checked ([`Self::coerce_forwarded`]). The headline shows the use and the value's type
+    /// and ends with the repair as code (MSG-partial-slot-no-place-repair-code): the parameter
+    /// the value comes from, declared with the type it has at this call, so the body passes
+    /// on a value of a type of no variable, which the use rebuilds itself.
+    fn no_place(&mut self, n: &Need, on: &Ty, w: &Ty) {
+        let (t, wt) = (self.text(on), self.text(w));
+        let code = self.code(Some(n.span)).unwrap_or("the value");
+        let repair = self.call_frames.last().and_then(|f| {
+            // The parameter that alone holds the value's variables, at its argument's type;
+            // else the one argument whose type holds the value's, as `x` of
+            // `pass(x) = apply(f: { 1 -> x }[1] else x)`. The test of the second is on the
+            // printed types: it names a parameter only. A type that writes a literal or `_`
+            // is offered as no repair ([`writable`]): `m: 1 -> (x: int) -> int` for `m[1]`
+            // of `pass(m: { 1 -> small })`, or `y: _ -> (x: int) -> int` for `y(x)`, is a
+            // type this zedc does not compile, and `int ->` or `int ->?` in its place is
+            // refused at the call or at `m[1]`.
+            let (i, ty) = match f.slot(&n.on) {
+                Some(i) => (i, f.tys.get(i).cloned().flatten()?),
+                None => {
+                    let mut holds = (f.tys.iter().enumerate()).filter_map(|(i, a)| {
+                        let a = a.as_ref()?;
+                        self.text(a).contains(&t).then(|| (i, a.clone()))
+                    });
+                    match (holds.next(), holds.next()) {
+                        (Some(one), None) => one,
+                        _ => return None,
+                    }
+                }
+            };
+            let (name, ty) = (f.names.get(i)?, self.text(&ty));
+            writable(&ty).then(|| format!("{name}: {ty}"))
+        });
+        let headline = format!(
+            "`{code}` passes `{t}` as `{wt}`, from no argument of the call where its domain can \
+             be tested."
+        );
+        let headline = match &repair {
+            Some(r) => format!("{headline} Try `{r}` instead."),
+            None => headline,
+        };
+        let why = format!(
+            "a call through `{wt}` may pass a key outside the domain of `{t}`, which must give \
+             `#notFound`, so the function is called through a test of its domain, put where the \
+             call writes the argument it comes from; this one is not one argument of this call, \
+             or a component of one"
+        );
+        let repair = match repair {
+            Some(r) => format!("repair: `{r}`"),
+            None => format!("repair: declare the type of the parameter that `{code}` comes from"),
+        };
+        self.error_offering(n.span, headline, [why, repair]);
+    }
+
+    /// Puts the rebuilding `c` of the component `steps` of the argument at `at`, joined with
+    /// one put there already ([`Self::coerce_forwarded`]); `name` is the argument's parameter,
+    /// `on` its type and `w` the type wanted, for a refusal.
+    fn coerce_at(
+        &mut self,
+        at: Span,
+        steps: &[(usize, usize)],
+        c: Coercion,
+        name: Option<Arc<str>>,
+        on: &Ty,
+        w: &Ty,
+    ) {
         let merged = match self.info.fits.get(&at) {
             None => Some(wrapped(&steps, c)),
             Some(Fit::Coerce(d)) => rebuilt_too(d.clone(), &steps, c),
             Some(_) => None,
         };
-        // No program reaches this refusal (MSG-partial-slot-rebuild-kind-reason): the join of
-        // two rebuildings of one place fails for no two coercions of one type
-        // ([`join_coercions`]),
-        // and the argument at `at` holds no fit of another kind, by the proof above. It stays
-        // for a case the proof does not cover, with its reason and a repair as code.
+        // No program reaches the refusal below (MSG-partial-slot-rebuild-kind-reason, row
+        // TEST-partial-slot-port-pe-routes), so a debug build stops on it as a fault of this
+        // proof:
+        // - `merged` is `None` only where the fit at `at` is not `Fit::Coerce`, or where
+        //   `rebuilt_too` meets two shapes or two domain tests at one place.
+        // - The fit at `at`, the span of an argument the call writes, is `Fit::Coerce` or none,
+        //   by the paragraph after the cases of the proof at `Self::coerce_forwarded`.
+        // - Every `Fit::Coerce` at `at` is a `Ck::coercion` of the type of the argument at
+        //   `at` in this check of the call: a span is checked again, at another type, only
+        //   inside a body checked once for each type it meets (a lambda's). An argument there
+        //   that reads such a lambda's parameter is placed at the argument of a call of the
+        //   lambda written in a generic body (`twice(f: g -> pass(x: g))` with `twice(f) =
+        //   f(small) + f(small4)` runs to its values) or is refused by `no_place` (the lambda
+        //   of `map`); one that reads no such parameter has one type in every check. Two
+        //   coercions of one type join ([`join_coercions`]).
+        // Probes of each kind (a reordered declared function and a lambda with a default at a
+        // slot whose domain is a variable, a lambda passed to a generic function and called
+        // there at two function types, one argument passed on to two slots that test it in two
+        // ways) all ran or were refused by other rules. The refusal stays in a release build,
+        // since a coercion dropped here would call a function outside its domain.
+        debug_assert!(
+            merged.is_some(),
+            "a second rebuilding at {at:?} that does not join with the first: the proof at \
+             `Ck::coerce_at` does not cover this program"
+        );
         let Some(fit) = merged else {
             let code = self.code(Some(at)).unwrap_or("the value");
             let (t, wt) = (self.text(on), self.text(w));
@@ -17267,6 +17444,31 @@ impl<'t, 'a> Ck<'t, 'a> {
         // write is on the call being checked, not on the body the needs came from.
         let undo = self.set(Undo::Fit(at, Some(Fit::Coerce(fit))));
         self.log.push(undo);
+    }
+
+    /// The arguments written in the program whose value is argument `p` (receiver, positional,
+    /// then named) of the call need `n`, of type `t` in the body `n` came from, where the
+    /// call [`Self::meet`] checks for `n` writes none: for `t` a variable that the frame of
+    /// the call being checked places at a whole argument ([`CallFrame::place`]), as `v` of
+    /// `run(g, v) = g(x: v)`, that argument as the call writes it; for `t` of no variable, as
+    /// `small` of `twice(g) = g(x: small)`, the argument each use the need stands for writes
+    /// ([`Ck::call_written`]), whose value no type the body is checked for changes. Else
+    /// `None`, and a function the argument passes to a partial slot is refused.
+    fn need_arg_via(&self, n: &Need, p: usize, t: &Ty) -> Option<Rc<[Span]>> {
+        if t.as_var().is_some() {
+            let frame = self.call_frames.last()?;
+            return match frame.place(t)? {
+                (i, None) => frame.written(i),
+                (_, Some(_)) => None,
+            };
+        }
+        if t.holds_vars() {
+            return None;
+        }
+        let uses = self.call_written.get(&n.span)?;
+        (uses.iter())
+            .map(|(_, w)| w.as_ref().and_then(|w| w.get(p).copied().flatten()))
+            .collect()
     }
 
     /// Refuses the value at `span`, passed where a partial function type is expected, whose
@@ -20574,8 +20776,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
             })
             .collect();
+        let via = (args
+            .iter()
+            .take(if sig.needs.is_empty() { 0 } else { args.len() }))
+        .map(|a| a.as_ref().and_then(|a| a.via.clone()))
+        .collect();
+        // A parameter left out whose default names another parameter the call passes, as `y`
+        // of `pass(x, y = x)` called as `pass(x: small)`: the elaborator binds the default
+        // after the arguments, fitted, so it reads the argument as the call rebuilt it
+        // (`decl_default` in zedc-elab/src/elab/walk.rs), and a call through a value, which
+        // fills closed defaults alone, does not take such a function.
+        let reads: Vec<Option<usize>> = (sig.params.iter().enumerate())
+            .map(|(j, p)| {
+                let i = *self
+                    .default_reads
+                    .get(&p.default.map(|(b, x, _)| (b, x))?)?;
+                let given = |k: usize| args.get(k).is_some_and(Option::is_some);
+                (!given(j) && given(i)).then_some(i)
+            })
+            .collect();
         let names = sig.params.iter().map(|p| p.name.clone()).collect();
-        let mut frame = CallFrame::new(span, &arrow.params, forwarded, names);
+        let mut frame = CallFrame::new(span, &arrow.params, forwarded, via, names, &reads);
+        // Kept only for a call with needs, which alone can refuse one, as `forwarded` is.
+        frame.tys = (args.iter().take(frame.args.len()))
+            .map(|a| a.as_ref().map(|a| a.ty.clone()))
+            .collect();
         self.note_fn_uses(&mut frame, sig, &arrow.result);
         self.call_frames.push(frame);
         #[cfg(any(test, feature = "forward-probe"))]
@@ -23957,6 +24182,18 @@ fn one_tuple(t: &Ty) -> Option<usize> {
         && t.vars.is_empty()
         && !t.dynamic;
     t.tuples.only().filter(|_| alone).map(|r| r.len())
+}
+
+/// Whether the printed type `text` writes no literal and no `_`, which a declared type in a
+/// repair of this zedc may not hold yet ("the literal type `1` ... does not compile it yet"):
+/// no word that starts with a digit or a quote, and no `_` alone. A word is a run of
+/// letters, digits, `_` and `'`; `f64` and `int32` start with a letter. The test is on the
+/// text, which is what the repair writes. O(n) for n characters.
+fn writable(text: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '\'';
+    !text.contains('"')
+        && (text.split(|c: char| !word(c)))
+            .all(|w| w != "_" && !w.starts_with(|c: char| c.is_ascii_digit() || c == '\''))
 }
 
 /// Whether `t` holds, at some place a value of it may stand (its functions, their results,

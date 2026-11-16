@@ -148,6 +148,45 @@ fn named_calls_of_generic_parameters_scale() {
     });
 }
 
+/// n functions passed to a partial slot through a generic body by each route of
+/// FAIL-partial-slot-generic-needless-refusals: a default that reads another parameter, `x else
+/// x`, a generic function passed as a value with the function as the other argument, and a
+/// generic function passed as a value called on a function its caller's body writes. Each call
+/// replays the callee's needs once; a default is recorded once per default, a written call use
+/// once per use (`Ck::call_written`), and a named call through a parameter records its
+/// signature once per call (`Ck::record_call`), so checking and elaborating the whole is linear.
+/// Besides its ratio: the program elaborates at each size. Small instances:
+/// `function_variance::values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain`.
+#[test]
+fn functions_passed_by_defaults_else_and_generic_values_to_partial_slots_scale() {
+    let what = "n functions passed by a default, `x else x`, and generic functions as values";
+    let make = |n: usize| {
+        let mut src = String::from(
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\npass(x) = apply(f: x);\n\
+             pd(x, y = x) = apply(f: y);\npe(x) = apply(f: x else x);\nrun(g, v) = g(x: v);\n",
+        );
+        for i in 0..n {
+            src.push_str(&format!(
+                "s{i}(x: int) = x + {i};\nd{i} = pd(x: s{i});\ne{i} = pe(x: s{i});\n\
+                 r{i} = run(g: pass, v: s{i});\nt{i}(g) = g(x: s{i});\nw{i} = t{i}(g: pass);\n"
+            ));
+        }
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        let last = m - 1;
+        assert!(
+            ["d", "e", "r", "w"]
+                .iter()
+                .all(|k| u.get(&format!("{k}{last}")).is_some()),
+            "{what} at {m}"
+        );
+    });
+}
+
 /// n functions, each with a parameter declared with a range and each passed to an exact slot
 /// whose parameter type is wider (MSG-fn-domain-wider-repair, part 2): each is refused once,
 /// with the narrower-domain message, after one trial of the fit without its range needs, so

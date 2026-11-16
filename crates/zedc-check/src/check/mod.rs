@@ -814,6 +814,13 @@ struct Arg<'a> {
     /// keeps its value there, as `if c { 2 } else { 1 }` or `if c { 2 + 1 } else { 1 }`:
     /// each is fixed where the argument is used as it would be alone (L1.26a).
     branches: Option<Rc<[Branch<'a>]>>,
+    /// For an argument of a need checked at a call ([`Ck::meet`]), which has no span of its
+    /// own: the arguments written in the program whose value it is, each whole, where a
+    /// function it passes to a partial slot is rebuilt ([`Ck::coerce_forwarded`]). Those are
+    /// the argument of the call around that the outer call's frame places it at, as `small`
+    /// of `run(g: pass, v: small)` for `run(g, v) = g(x: v)`, or each argument written at the
+    /// use in the body, as `small` of `twice(g) = g(x: small)`.
+    via: Option<Rc<[Span]>>,
 }
 
 /// A branch of an `if` of [`Arg::branches`].
@@ -852,6 +859,7 @@ impl<'a> Arg<'a> {
             expr: None,
             parts: None,
             branches: None,
+            via: None,
         }
     }
 }
@@ -1483,6 +1491,10 @@ struct FoldChecks {
     empty: Vec<Span>,
 }
 
+/// The uses a program writes of one call need ([`Ck::call_written`]): the span of each use
+/// and the spans of the arguments it writes.
+type WrittenUses = Vec<(Span, Option<Rc<[Option<Span>]>>)>;
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1635,6 +1647,30 @@ struct Ck<'t, 'a> {
     /// call that leaves the parameter out takes one of them, so the call meets a range need
     /// of the parameter when they lie in the range (plan row RANGE-default-in-range).
     pub(super) default_ints: HashMap<(usize, usize), IntervalSet>,
+    /// For each default that is the bare name of another parameter of its function, as `x`
+    /// of `pass(x, y = x)`, by the function's binder and the parameter's index
+    /// ([`SParam::default`]): that parameter's index. A call that leaves the parameter out
+    /// passes the other's value there, so [`CallFrame::new`] places its values at the other's
+    /// argument (FAIL-partial-slot-generic-needless-refusals).
+    default_reads: HashMap<(usize, usize), usize>,
+    /// For each use `g(…)` of a class `g` recorded as a call need, by the span of the use that
+    /// the need keeps (the first of equal uses, [`Self::need`]): the span of each such use and
+    /// the arguments it writes, receiver, positional, then named, each `None` where a use has
+    /// no span of its own, and no list for a use met while trying or one copied from another
+    /// body's need.
+    /// [`Self::meet`] reads it for an argument of a type of no variable, whose value is the
+    /// same at every run of the body, so a function it passes to a partial slot is rebuilt
+    /// where the use writes it.
+    call_written: HashMap<Span, WrittenUses>,
+    /// The spans of the `else` expressions whose left side is the bare name of a variable, as
+    /// `x else x`, kept for a narrowing need only while every equal use of it is one
+    /// ([`Self::need`]). [`Self::meet`] places the result of such a narrowing where the
+    /// variable lies ([`CallFrame::same`]); a narrowing of another value, as the entry
+    /// `{ 1 -> x }[1] else x`, is not placed, so a function it passes to a partial slot is
+    /// refused (FAIL-partial-slot-generic-needless-refusals keeps that refusal).
+    narrow_names: HashSet<Span>,
+    /// The arguments of the call use [`Self::need`] records next, set just before it.
+    call_spans: Option<Rc<[Option<Span>]>>,
     /// The [`Found::id`] the next error gets.
     next_found: usize,
     /// Whether the repair being tried ([`Ck::tried`]) makes an operation on literals alone
@@ -1916,6 +1952,12 @@ type NeedPass = (Arc<str>, Vec<Arc<str>>, KType);
 #[derive(Default)]
 struct CallFrame<'a> {
     args: Vec<Option<Forwarded<'a>>>,
+    /// For each argument the call does not write, as one of a call checked for a need: the
+    /// arguments written in the program whose value it is ([`Arg::via`]).
+    via: Vec<Option<Rc<[Span]>>>,
+    /// The type of each argument the call passes, for the repair of a refusal that declares
+    /// the parameter at it ([`Ck::no_place`]).
+    tys: Vec<Option<Ty>>,
     names: Vec<Arc<str>>,
     /// For each variable of a parameter, the parameter's position, or `None` where two or
     /// more parameters hold it.
@@ -1937,17 +1979,22 @@ struct CallFrame<'a> {
 }
 
 impl<'a> CallFrame<'a> {
-    /// The frame of the call at `call` with the arguments `args` at the parameters `params`,
-    /// named `names`.
+    /// The frame of the call at `call` with the arguments `args` (written, else as `via`
+    /// gives them) at the parameters `params`, named `names`. A parameter left out whose
+    /// default is the bare name of another, as `y` of `pass(x, y = x)`, is at `reads` that
+    /// parameter's index: its value is that argument's, so its variables are placed there.
     fn new(
         call: Span,
         params: &[Ty],
         args: Vec<Option<Forwarded<'a>>>,
+        via: Vec<Option<Rc<[Span]>>>,
         names: Vec<Arc<str>>,
+        reads: &[Option<usize>],
     ) -> Self {
         let mut by_var = HashMap::new();
         let mut whole = HashSet::new();
-        for (i, p) in params.iter().enumerate().take(args.len()) {
+        for (j, p) in params.iter().enumerate().take(args.len()) {
+            let i = reads.get(j).copied().flatten().unwrap_or(j);
             whole.extend(p.as_var().cloned());
             for v in &p.vars {
                 by_var
@@ -1962,12 +2009,31 @@ impl<'a> CallFrame<'a> {
         }
         Self {
             args,
+            via,
+            tys: Vec::new(),
             names,
             by_var,
             whole,
             parts: HashMap::new(),
             fn_uses: HashMap::new(),
             call: Some(call),
+        }
+    }
+
+    /// The arguments written in the program whose value argument `i` is: the argument the
+    /// call writes, else those [`Self::via`] holds for it.
+    fn written(&self, i: usize) -> Option<Rc<[Span]>> {
+        match self.args.get(i).copied().flatten() {
+            Some(a) => Some(Rc::from([a.at])),
+            None => self.via.get(i).cloned().flatten(),
+        }
+    }
+
+    /// Records that the result `to` of a narrowing of a value of `of` is that value itself
+    /// ([`NeedKind::Narrow`]), so where [`Self::place`] finds `of`, it finds `to`.
+    fn same(&mut self, of: &Ty, to: &Ty) {
+        if let (Some(place), Some(v)) = (self.place(of), to.as_var()) {
+            self.parts.insert(v.clone(), place);
         }
     }
 
@@ -2113,6 +2179,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             next_fix: 0,
             defaults: HashMap::new(),
             default_ints: HashMap::new(),
+            default_reads: HashMap::new(),
+            call_written: HashMap::new(),
+            narrow_names: HashSet::new(),
+            call_spans: None,
             next_found: 0,
             opened: false,
             failed: HashSet::new(),
