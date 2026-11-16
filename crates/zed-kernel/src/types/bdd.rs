@@ -49,6 +49,7 @@ use super::hash::digests_cmp;
 use super::mix;
 
 mod set;
+mod settings;
 
 use crate::digest::Digest;
 use list::Cell;
@@ -1787,99 +1788,161 @@ impl<A: Literal> Part<A> {
     /// One pass finds, for each expression and diagram, the settings of one atom, every other
     /// atom unknown, that make it `false` and those that make it `true`: an `or` is `false`
     /// under a setting that makes both sides `false`, an `and` under one that makes either side
-    /// `false`, and a diagram under an atom taken or refused on every path to `true`. The sets
-    /// are persistent and a union adds the smaller to the larger, so the time is `O(n log n)`
-    /// in the nodes when the sets stay small, and at most the nodes times the atoms.
+    /// `false`, and a diagram under an atom taken or refused on every path to `true`. An `and`
+    /// whose operands are `and`s used nowhere else is read as one `and` of all their other
+    /// operands, and the same of `or`s, so a set is made only once for such a nest. The sets
+    /// are persistent: the sets of a nest are gathered, sorted and made one set, then joined to
+    /// the largest by split and join, so the time is `O(n log n)` in the nodes when the sets
+    /// stay small, and at most the nodes times the atoms.
     // Complexity tradeoff (COMPLEXITY.md K32): the naive version evaluates the part once per
     // atom, O(atoms × nodes) (11.5 s on the choice chain with a choice swapped at d = 46). Used:
     // one post-order pass with persistent sets, O(N log N) in the nodes while the sets stay
-    // small; since subexpressions are shared, the smaller-into-larger argument does not bound
-    // the total, so the worst case is still the nodes times the atoms, each set taking memory
-    // up to the atoms below its node. Nothing refused, the answer exact.
+    // small; since subexpressions are shared, no merging argument bounds the total, so the
+    // worst case is still the nodes times the atoms, each set taking memory up to the atoms
+    // below its node. Nothing refused, the answer exact. PERF-forced-balanced-union: the sets
+    // were `imbl::OrdSet`s, the smaller added to the larger a setting at a time, `O(k log n)`
+    // for `k` into `n`, so a balanced conjunction of `n` literals cost `O(n log² n)` (9.47
+    // times the instructions at 8n). Now a nest of `and`s (or of `or`s) used nowhere else is
+    // one set: its operands' settings are sorted once, `O(n log n)` comparisons with no node
+    // made at each level (`settings::union_all`), and the largest operand's set is not copied
+    // but joined to, `O(k log(n/k + 1))` (treaps, split and join), so a chain adding one
+    // literal at a time to a shared expression stays `O(log n)` per link. Union by split and
+    // join alone, level by level, was `O(n)` node copies per level, `O(n log n)` copies in all
+    // (9.08 times, 301M instructions at 8192 against imbl's 160M); with the nests, 8.13 times
+    // and 148M. The root's settings are read once into a map by the atom's digest, so each
+    // atom's two questions cost `O(1)` expected, not `O(log n)` comparisons of rows.
     pub(super) fn forced(&self) -> (Vec<A>, Vec<A>) {
         // Settings `(atom, value)`; `None` is every setting.
-        type Set<A> = Option<imbl::OrdSet<(A, bool)>>;
-        fn union<A: Literal>(x: &Set<A>, y: &Set<A>) -> Set<A> {
-            let (x, y) = (x.as_ref()?, y.as_ref()?);
-            let (big, small) = if x.len() >= y.len() { (x, y) } else { (y, x) };
-            let mut out = big.clone();
-            for s in small {
-                out.insert(s.clone());
-            }
-            Some(out)
+        type Set<A> = Option<settings::Tree<A>>;
+        fn union<A: Literal>(xs: &[&Set<A>]) -> Set<A> {
+            let sets: Vec<&settings::Tree<A>> =
+                xs.iter().map(|x| x.as_ref()).collect::<Option<_>>()?;
+            Some(settings::union_all(&sets))
         }
-        fn meet<A: Literal>(x: &Set<A>, y: &Set<A>) -> Set<A> {
-            match (x, y) {
-                (None, z) | (z, None) => z.clone(),
-                (Some(x), Some(y)) => {
-                    let (big, small) = if x.len() >= y.len() { (x, y) } else { (y, x) };
-                    Some(small.iter().filter(|&s| big.contains(s)).cloned().collect())
-                }
-            }
+        fn meet<A: Literal>(xs: &[&Set<A>]) -> Set<A> {
+            let sets: Vec<&settings::Tree<A>> = xs.iter().filter_map(|x| x.as_ref()).collect();
+            (!sets.is_empty()).then(|| settings::meet_all(&sets))
         }
         // The settings that make `b` `false`, and those that make it `true`.
         fn of_bdd<A: Literal>(b: &Bdd<A>) -> (Set<A>, Set<A>) {
-            let settings = |(taken, refused): (Vec<A>, Vec<A>)| {
+            let to_set = |(taken, refused): (Vec<A>, Vec<A>)| {
                 let off = taken.into_iter().map(|a| (a, false));
-                Some(off.chain(refused.into_iter().map(|a| (a, true))).collect())
+                Some(settings::from_keys(
+                    off.chain(refused.into_iter().map(|a| (a, true))).collect(),
+                ))
             };
             match b {
-                Bdd::Leaf(false) => (None, Some(imbl::OrdSet::new())),
-                Bdd::Leaf(true) => (Some(imbl::OrdSet::new()), None),
-                Bdd::List(..) => (settings(b.forced_to(true)), settings(b.forced_to(false))),
+                Bdd::Leaf(false) => (None, Some(None)),
+                Bdd::Leaf(true) => (Some(None), None),
+                Bdd::List(..) => (to_set(b.forced_to(true)), to_set(b.forced_to(false))),
             }
         }
         let root = match self {
             Part::Bdd(b) => return b.forced(),
             Part::Expr(e) => e,
         };
-        let mut exprs: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
-        let mut nodes: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
-        let mut stack = vec![(root.clone(), false)];
-        while let Some((e, expanded)) = stack.pop() {
-            if exprs.contains_key(&e.id) {
-                continue;
-            }
-            let operands: Vec<&Part<A>> = match e.form() {
+        fn operands<A: Literal>(e: &Expr<A>) -> Vec<&Part<A>> {
+            match e.form() {
                 Form::Not(a) => vec![a],
                 Form::Or(a, b) | Form::And(a, b) => vec![a, b],
-            };
-            if !expanded {
-                stack.push((e.clone(), true));
-                for q in operands {
+            }
+        }
+        // The uses of each expression below the root, one per operand that is it.
+        let mut uses: DigestMap<u64, usize> = DigestMap::default();
+        let mut stack = vec![root.clone()];
+        while let Some(e) = stack.pop() {
+            for q in operands(&e) {
+                if let Part::Expr(x) = q {
+                    let n = uses.entry(x.id).or_insert(0);
+                    *n += 1;
+                    if *n == 1 {
+                        stack.push(x.clone());
+                    }
+                }
+            }
+        }
+        // A cluster: an `and` with the `and`s below it used by nothing else, read as one `and`
+        // of all their other operands, and the same of `or`s; any other expression is a cluster
+        // of its own. Each expression is in one cluster, so the clusters' operands are found in
+        // one walk of the expressions, and a set is made only for a cluster.
+        let same = |e: &Expr<A>, x: &Expr<A>| {
+            uses[&x.id] == 1
+                && matches!(
+                    (e.form(), x.form()),
+                    (Form::And(..), Form::And(..)) | (Form::Or(..), Form::Or(..))
+                )
+        };
+        let cluster = |e: &Arc<Expr<A>>| {
+            let mut out: Vec<Part<A>> = Vec::new();
+            let mut members = vec![e.clone()];
+            while let Some(m) = members.pop() {
+                for q in operands(&m).into_iter().rev() {
                     match q {
-                        Part::Expr(x) => stack.push((x.clone(), false)),
+                        Part::Expr(x) if same(e, x) => members.push(x.clone()),
+                        _ => out.push(q.clone()),
+                    }
+                }
+            }
+            out
+        };
+        let mut exprs: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
+        let mut nodes: DigestMap<u64, (Set<A>, Set<A>)> = DigestMap::default();
+        let mut stack: Vec<(Arc<Expr<A>>, Option<Vec<Part<A>>>)> = vec![(root.clone(), None)];
+        while let Some((e, ops)) = stack.pop() {
+            let Some(ops) = ops else {
+                if exprs.contains_key(&e.id) {
+                    continue;
+                }
+                let ops = cluster(&e);
+                let mut below = Vec::new();
+                for q in &ops {
+                    match q {
+                        Part::Expr(x) if !exprs.contains_key(&x.id) => below.push(x.clone()),
                         Part::Bdd(b @ Bdd::List(..)) => {
                             nodes.entry(b.id()).or_insert_with(|| of_bdd(b));
                         }
-                        Part::Bdd(Bdd::Leaf(_)) => {}
+                        _ => {}
                     }
                 }
+                stack.push((e, Some(ops)));
+                stack.extend(below.into_iter().map(|x| (x, None)));
+                continue;
+            };
+            if exprs.contains_key(&e.id) {
                 continue;
             }
-            let get = |q: &Part<A>| match q {
-                Part::Expr(x) => exprs[&x.id].clone(),
-                Part::Bdd(b @ Bdd::List(..)) => nodes[&b.id()].clone(),
-                Part::Bdd(b) => of_bdd(b),
+            let sets: Vec<(Set<A>, Set<A>)> = ops
+                .iter()
+                .map(|q| match q {
+                    Part::Expr(x) => exprs[&x.id].clone(),
+                    Part::Bdd(b @ Bdd::List(..)) => nodes[&b.id()].clone(),
+                    Part::Bdd(b) => of_bdd(b),
+                })
+                .collect();
+            let offs: Vec<&Set<A>> = sets.iter().map(|s| &s.0).collect();
+            let ons: Vec<&Set<A>> = sets.iter().map(|s| &s.1).collect();
+            let found = match e.form() {
+                Form::Not(_) => (ons[0].clone(), offs[0].clone()),
+                Form::Or(..) => (meet(&offs), union(&ons)),
+                Form::And(..) => (union(&offs), meet(&ons)),
             };
-            let sets = match e.form() {
-                Form::Not(a) => {
-                    let (off, on) = get(a);
-                    (on, off)
-                }
-                Form::Or(a, b) => {
-                    let ((fa, ta), (fb, tb)) = (get(a), get(b));
-                    (meet(&fa, &fb), union(&ta, &tb))
-                }
-                Form::And(a, b) => {
-                    let ((fa, ta), (fb, tb)) = (get(a), get(b));
-                    (union(&fa, &fb), meet(&ta, &tb))
-                }
-            };
-            exprs.insert(e.id, sets);
+            exprs.insert(e.id, found);
         }
-        let off = &exprs[&root.id].0;
-        let makes_false = |a: &A, v: bool| off.as_ref().is_none_or(|s| s.contains(&(a.clone(), v)));
+        // The settings that make the root `false`, each atom's found by its digest.
+        let mut off: Option<DigestMap<u64, Vec<(A, bool)>>> = None;
+        if let Some(s) = &exprs[&root.id].0 {
+            let mut by_digest: DigestMap<u64, Vec<(A, bool)>> = DigestMap::default();
+            for k in settings::keys(s) {
+                by_digest.entry(k.0.digest()).or_default().push(k);
+            }
+            off = Some(by_digest);
+        }
+        let makes_false = |a: &A, v: bool| {
+            off.as_ref().is_none_or(|m| {
+                m.get(&a.digest())
+                    .is_some_and(|ks| ks.iter().any(|(b, w)| *w == v && b == a))
+            })
+        };
         let (mut taken, mut refused) = (Vec::new(), Vec::new());
         for a in self.distinct_atoms() {
             if makes_false(&a, false) {

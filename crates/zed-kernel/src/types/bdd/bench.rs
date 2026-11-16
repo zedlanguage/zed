@@ -56,6 +56,27 @@ fn forced_atoms_of_a_long_conjunction_scale() {
 }
 
 #[test]
+fn forced_atoms_of_a_balanced_conjunction_scale() {
+    // The balanced conjunction alone: each level of the balance joins sets of settings of
+    // equal size. Adding the smaller set to the larger a setting at a time made this
+    // `O(n log² n)`, 9.47 times the instructions at 8n (PERF-forced-balanced-union); a union
+    // by split and join is `O(n)` per level. Small instances:
+    // `a_conjunction_forces_each_of_its_literals`.
+    let n = 1 << 13;
+    let built: BTreeMap<usize, Part<Row>> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, conjunction(m, true)))
+        .collect();
+    scaling::check(
+        "the forced atoms of a balanced conjunction, by its literals",
+        n,
+        |m| {
+            std::hint::black_box(built[&m].forced());
+        },
+    );
+}
+
+#[test]
 fn comparing_equal_expressions_built_apart_scales() {
     // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
     // below, so comparing operand by operand met the bottom `2^depth` times. Small

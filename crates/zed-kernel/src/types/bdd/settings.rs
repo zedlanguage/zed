@@ -1,0 +1,468 @@
+//! Persistent ordered sets of settings, each an atom and a value, for [`Part::forced`]: treaps
+//! whose union and intersection split one set at the other's root and join the halves, so `k`
+//! settings meet `n` in `O(k log(n/k + 1))` expected time (Blelloch, Ferizovic and Sun, "Just
+//! join for parallel ordered sets", SPAA 2016), where adding the smaller set's settings to the
+//! larger one at a time takes `O(k log n)`.
+//!
+//! Unlike the sets of module `set`, these nodes are kept in no table: [`Part::forced`] never asks
+//! whether two sets are one node, so a table lookup per node made would be cost with no use
+//! (PERF-forced-balanced-union measured the shared treaps at 3.4 times these instructions).
+//! A node's priority is a hash of its setting, ties broken by the setting's order, so one set
+//! has one shape whatever order its settings came in. Every walk keeps a stack of its own and a
+//! set is dropped in a loop, so the stack needed does not depend on a set's height.
+//!
+//! [`Part::forced`]: super::Part::forced
+
+use std::cmp::Ordering;
+use std::sync::Arc;
+
+use super::set::Atom;
+use crate::types::hash::mix;
+
+/// A setting: an atom and its value.
+pub(super) type Key<A> = (A, bool);
+
+/// A node: its setting, and the sets of the settings before and after it.
+pub(super) struct Node<A: Atom> {
+    key: Key<A>,
+    prio: u64,
+    len: usize,
+    left: Tree<A>,
+    right: Tree<A>,
+}
+
+/// A set: its root, or `None` when empty.
+pub(super) type Tree<A> = Option<Arc<Node<A>>>;
+
+/// A set is freed in a loop, a node whose last handle goes handing its children on, so a set of
+/// any height is dropped on a small stack.
+impl<A: Atom> Drop for Node<A> {
+    fn drop(&mut self) {
+        // Only children whose last handle this is are walked; the stack allocates nothing
+        // until one is, and a node popped from it has no children left when it drops.
+        let mut stack: Vec<Node<A>> = Vec::new();
+        let free = |c: Tree<A>, stack: &mut Vec<Node<A>>| {
+            if let Some(c) = c
+                && let Ok(n) = Arc::try_unwrap(c)
+            {
+                stack.push(n);
+            }
+        };
+        free(self.left.take(), &mut stack);
+        free(self.right.take(), &mut stack);
+        while let Some(mut n) = stack.pop() {
+            free(n.left.take(), &mut stack);
+            free(n.right.take(), &mut stack);
+        }
+    }
+}
+
+fn priority<A: Atom>(key: &Key<A>) -> u64 {
+    mix(mix(17, key.0.digest()), u64::from(key.1))
+}
+
+/// Whether node `a` stands above node `b`: the higher priority, ties broken by the setting.
+fn above<A: Atom>(a: &Node<A>, b: &Node<A>) -> bool {
+    (a.prio, &a.key) > (b.prio, &b.key)
+}
+
+fn node<A: Atom>(key: Key<A>, left: Tree<A>, right: Tree<A>) -> Arc<Node<A>> {
+    Arc::new(Node {
+        prio: priority(&key),
+        len: 1 + len(&left) + len(&right),
+        key,
+        left,
+        right,
+    })
+}
+
+/// The node `n` with the children `left` and `right`, `n` itself when they are its own.
+fn remake<A: Atom>(n: &Arc<Node<A>>, left: Tree<A>, right: Tree<A>) -> Arc<Node<A>> {
+    if same(&left, &n.left) && same(&right, &n.right) {
+        return n.clone();
+    }
+    node(n.key.clone(), left, right)
+}
+
+/// Whether two sets are one node (or both empty); a shortcut only, never an order.
+fn same<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> bool {
+    match (x, y) {
+        (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// The number of settings.
+pub(super) fn len<A: Atom>(t: &Tree<A>) -> usize {
+    t.as_ref().map_or(0, |n| n.len)
+}
+
+/// Whether `key` is in the set.
+#[cfg(test)]
+fn contains<A: Atom>(t: &Tree<A>, key: &Key<A>) -> bool {
+    let mut cur = t.as_ref();
+    while let Some(n) = cur {
+        cur = match key.cmp(&n.key) {
+            Ordering::Less => n.left.as_ref(),
+            Ordering::Greater => n.right.as_ref(),
+            Ordering::Equal => return true,
+        };
+    }
+    false
+}
+
+/// The settings in order, by one walk with a stack of its own, `O(k)`.
+pub(super) fn keys<A: Atom>(t: &Tree<A>) -> Vec<Key<A>> {
+    let mut out = Vec::with_capacity(len(t));
+    let mut stack: Vec<&Node<A>> = Vec::new();
+    let mut cur = t.as_deref();
+    loop {
+        while let Some(n) = cur {
+            stack.push(n);
+            cur = n.left.as_deref();
+        }
+        let Some(n) = stack.pop() else { break };
+        out.push(n.key.clone());
+        cur = n.right.as_deref();
+    }
+    out
+}
+
+/// The set of `keys`, in any order, each once: sorted, then its shape found over their indices
+/// as a Cartesian tree by priority made with one stack (Vuillemin, "A unifying look at data
+/// structures", CACM 23(4), 1980), and each node made once over its children, `O(k log k)` for
+/// the sort and `O(k)` after it.
+pub(super) fn from_keys<A: Atom>(mut keys: Vec<Key<A>>) -> Tree<A> {
+    keys.sort_unstable();
+    keys.dedup();
+    const NONE: usize = usize::MAX;
+    let n = keys.len();
+    let prios: Vec<u64> = keys.iter().map(priority).collect();
+    let (mut left, mut right) = (vec![NONE; n], vec![NONE; n]);
+    // The right spine of the tree of the keys so far, root first.
+    let mut spine: Vec<usize> = Vec::new();
+    for i in 0..n {
+        let mut passed = NONE;
+        while let Some(&top) = spine.last() {
+            if (prios[top], &keys[top]) < (prios[i], &keys[i]) {
+                passed = top;
+                spine.pop();
+            } else {
+                break;
+            }
+        }
+        left[i] = passed;
+        if let Some(&top) = spine.last() {
+            right[top] = i;
+        }
+        spine.push(i);
+    }
+    let root = *spine.first()?;
+    let mut keys: Vec<Option<Key<A>>> = keys.into_iter().map(Some).collect();
+    let mut made: Vec<Tree<A>> = vec![None; n];
+    let mut todo = vec![(root, false)];
+    while let Some((i, ready)) = todo.pop() {
+        if ready {
+            let l = (left[i] != NONE).then(|| made[left[i]].take()).flatten();
+            let r = (right[i] != NONE).then(|| made[right[i]].take()).flatten();
+            let key = keys[i].take().expect("each key made once");
+            made[i] = Some(node(key, l, r));
+            continue;
+        }
+        todo.push((i, true));
+        for c in [right[i], left[i]] {
+            if c != NONE {
+                todo.push((c, false));
+            }
+        }
+    }
+    made[root].take()
+}
+
+/// The settings of `t` before `key` and those after it, and whether `key` is in `t`: one walk
+/// down from the root, the nodes passed made again on each side, `O(height)`.
+fn split<A: Atom>(t: &Tree<A>, key: &Key<A>) -> (Tree<A>, bool, Tree<A>) {
+    let (mut lefts, mut rights) = (Vec::new(), Vec::new());
+    let mut cur = t.as_ref();
+    let (mut l, mut found, mut r) = (None, false, None);
+    while let Some(n) = cur {
+        match n.key.cmp(key) {
+            Ordering::Less => {
+                lefts.push(n);
+                cur = n.right.as_ref();
+            }
+            Ordering::Greater => {
+                rights.push(n);
+                cur = n.left.as_ref();
+            }
+            Ordering::Equal => {
+                (l, found, r) = (n.left.clone(), true, n.right.clone());
+                break;
+            }
+        }
+    }
+    for n in lefts.into_iter().rev() {
+        l = Some(node(n.key.clone(), n.left.clone(), l));
+    }
+    for n in rights.into_iter().rev() {
+        r = Some(node(n.key.clone(), r, n.right.clone()));
+    }
+    (l, found, r)
+}
+
+/// The settings of `a` and of `b`, every one of `a` before every one of `b`: the two merged
+/// down one spine, the higher root first, `O(height)`.
+fn join<A: Atom>(a: Tree<A>, b: Tree<A>) -> Tree<A> {
+    let mut spine: Vec<(Arc<Node<A>>, bool)> = Vec::new();
+    let (mut a, mut b) = (a, b);
+    let mut bottom = loop {
+        match (a, b) {
+            (None, x) | (x, None) => break x,
+            (Some(x), Some(y)) => {
+                if above(&x, &y) {
+                    a = x.right.clone();
+                    b = Some(y);
+                    spine.push((x, false));
+                } else {
+                    b = y.left.clone();
+                    a = Some(x);
+                    spine.push((y, true));
+                }
+            }
+        }
+    };
+    for (n, left) in spine.into_iter().rev() {
+        bottom = Some(if left {
+            node(n.key.clone(), bottom, n.right.clone())
+        } else {
+            node(n.key.clone(), n.left.clone(), bottom)
+        });
+    }
+    bottom
+}
+
+/// Whether [`combine`] keeps the settings in either set or only those in both.
+#[derive(Clone, Copy)]
+enum Op {
+    Union,
+    Meet,
+}
+
+/// The union or the intersection of two sets: from the roots down, the higher root kept and the
+/// other set split at its setting, the two sides combined past it, and for an intersection the
+/// root kept only when the other set had it. Two subtrees that are one node are their own
+/// union and intersection. For `k` settings into `n`, `O(k log(n/k + 1))` expected time
+/// (Blelloch, Ferizovic and Sun, SPAA 2016, theorem 4.1, splits and joins included).
+fn combine<A: Atom>(x: &Tree<A>, y: &Tree<A>, op: Op) -> Tree<A> {
+    /// A pair of subtrees to combine, or a node to make over the two combined last: with its
+    /// setting kept, or (for an intersection whose other set lacked it) the two joined.
+    enum Step<A: Atom> {
+        Combine(Tree<A>, Tree<A>),
+        Make(Arc<Node<A>>, bool),
+    }
+    let mut todo = vec![Step::Combine(x.clone(), y.clone())];
+    let mut done: Vec<Tree<A>> = Vec::new();
+    while let Some(step) = todo.pop() {
+        let (x, y) = match step {
+            Step::Make(n, kept) => {
+                let r = done.pop().expect("the right side is combined");
+                let l = done.pop().expect("the left side is combined");
+                done.push(if kept {
+                    Some(remake(&n, l, r))
+                } else {
+                    join(l, r)
+                });
+                continue;
+            }
+            Step::Combine(None, t) | Step::Combine(t, None) => {
+                done.push(match op {
+                    Op::Union => t,
+                    Op::Meet => None,
+                });
+                continue;
+            }
+            Step::Combine(Some(x), Some(y)) if Arc::ptr_eq(&x, &y) => {
+                done.push(Some(x));
+                continue;
+            }
+            Step::Combine(Some(x), Some(y)) => (x, y),
+        };
+        let (hi, lo) = if above(&x, &y) { (x, y) } else { (y, x) };
+        let (l, found, r) = split(&Some(lo), &hi.key);
+        let kept = match op {
+            Op::Union => true,
+            Op::Meet => found,
+        };
+        let (hl, hr) = (hi.left.clone(), hi.right.clone());
+        todo.push(Step::Make(hi, kept));
+        todo.push(Step::Combine(hr, r));
+        todo.push(Step::Combine(hl, l));
+    }
+    done.pop().expect("the two sets are combined")
+}
+
+/// The settings in either set.
+pub(super) fn union<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
+    combine(x, y, Op::Union)
+}
+
+/// The settings in both sets.
+pub(super) fn meet<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
+    combine(x, y, Op::Meet)
+}
+
+/// The settings in any of `sets`: the settings of all but the largest gathered, sorted and
+/// made into one set ([`from_keys`]), which is then joined to the largest ([`union`]). For `R`
+/// settings outside the largest set of `L`, `O(R log R + R log(L/R + 1))`.
+// Complexity tradeoff (COMPLEXITY.md K32, PERF-forced-balanced-union): the naive union of `m`
+// sets folds [`union`] over them, two at a time; on a balanced tree of `m` single settings
+// each level of the tree joins sets of equal size, `O(m)` node copies per level and
+// `O(m log m)` copies in all, where this sorts the `m` settings once (`O(m log m)` comparisons,
+// no node made) and makes `m` nodes. A set much larger than the rest is never copied: it is
+// the one the rest are joined to, so a chain adding one setting at a time to a shared set
+// stays `O(log L)` per link.
+pub(super) fn union_all<A: Atom>(sets: &[&Tree<A>]) -> Tree<A> {
+    let Some(big) = (0..sets.len()).max_by_key(|&i| (len(sets[i]), std::cmp::Reverse(i))) else {
+        return None;
+    };
+    let mut rest = Vec::new();
+    for (i, t) in sets.iter().enumerate() {
+        if i != big {
+            rest.extend(keys(t));
+        }
+    }
+    if rest.is_empty() {
+        return sets[big].clone();
+    }
+    union(sets[big], &from_keys(rest))
+}
+
+/// The settings in every one of `sets` (at least one): the smallest met with each of the rest
+/// in turn, stopping when nothing is left. Each step keeps at most the settings of the one
+/// before, so for `m` sets the smallest of which is `s`, `O(m s log(L/s + 1))`, `L` the largest.
+pub(super) fn meet_all<A: Atom>(sets: &[&Tree<A>]) -> Tree<A> {
+    let small = (0..sets.len())
+        .min_by_key(|&i| len(sets[i]))
+        .expect("a meet of one set at least");
+    let mut out = sets[small].clone();
+    for (i, t) in sets.iter().enumerate() {
+        if out.is_none() {
+            break;
+        }
+        if i != small {
+            out = meet(&out, t);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Row;
+    use crate::types::bdd::tests::atom;
+    use std::collections::BTreeSet;
+
+    /// Every node above its children and its settings in order, and its length right.
+    fn well_formed(t: &Tree<Row>) {
+        let mut stack: Vec<&Node<Row>> = t.as_deref().into_iter().collect();
+        while let Some(n) = stack.pop() {
+            assert_eq!(n.len, 1 + len(&n.left) + len(&n.right));
+            for c in [n.left.as_deref(), n.right.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                assert!(above(n, c));
+                stack.push(c);
+            }
+        }
+        let k = keys(t);
+        assert!(k.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    /// Settings drawn from a fixed rule over `0..span`, so the sets overlap in part.
+    fn sample(seed: u64, count: u64, span: u64) -> Vec<Key<Row>> {
+        (0..count)
+            .map(|i| {
+                let h = mix(seed, i) % (2 * span);
+                (atom(h / 2), h % 2 == 1)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn union_and_meet_agree_with_ordered_sets() {
+        for (seed, (a, b, span)) in [(0, 0, 4), (1, 5, 4), (7, 7, 10), (40, 3, 30), (64, 64, 50)]
+            .into_iter()
+            .enumerate()
+        {
+            let (xs, ys) = (
+                sample(2 * seed as u64, a, span),
+                sample(2 * seed as u64 + 1, b, span),
+            );
+            let (x, y) = (from_keys(xs.clone()), from_keys(ys.clone()));
+            let (bx, by): (BTreeSet<_>, BTreeSet<_>) =
+                (xs.into_iter().collect(), ys.into_iter().collect());
+            let u = union(&x, &y);
+            let m = meet(&x, &y);
+            for t in [&x, &y, &u, &m] {
+                well_formed(t);
+            }
+            assert_eq!(
+                keys(&u),
+                bx.union(&by).cloned().collect::<Vec<_>>(),
+                "{seed}"
+            );
+            assert_eq!(
+                keys(&m),
+                bx.intersection(&by).cloned().collect::<Vec<_>>(),
+                "{seed}"
+            );
+            for k in bx.union(&by) {
+                assert!(contains(&u, k));
+                assert_eq!(contains(&m, k), bx.contains(k) && by.contains(k));
+            }
+            // One set has one shape: the union built from the settings at once is the same tree.
+            let whole = from_keys(keys(&u));
+            assert_eq!(shape(&whole), shape(&u), "{seed}");
+            assert!(same(&union(&x, &x), &x) && same(&meet(&x, &x), &x));
+            // Three or more at once agree with the two at a time, whatever the largest.
+            let z = from_keys(sample(100 + seed as u64, 2 * a + 1, span));
+            let bz: BTreeSet<_> = keys(&z).into_iter().collect();
+            let all = union_all(&[&x, &y, &z]);
+            well_formed(&all);
+            let want: BTreeSet<_> = bx.union(&by).cloned().collect();
+            assert_eq!(
+                keys(&all),
+                want.union(&bz).cloned().collect::<Vec<_>>(),
+                "{seed}"
+            );
+            assert_eq!(shape(&all), shape(&union(&u, &z)), "{seed}");
+            let both = meet_all(&[&z, &x, &y]);
+            well_formed(&both);
+            let want: BTreeSet<_> = bx.intersection(&by).cloned().collect();
+            assert_eq!(
+                keys(&both),
+                want.intersection(&bz).cloned().collect::<Vec<_>>()
+            );
+            assert!(same(&union_all(&[&x]), &x) && same(&meet_all(&[&x]), &x));
+        }
+    }
+
+    fn shape(t: &Tree<Row>) -> String {
+        let mut out = String::new();
+        let mut stack = vec![t.as_deref()];
+        while let Some(n) = stack.pop() {
+            match n {
+                None => out.push('.'),
+                Some(n) => {
+                    out += &format!("({:?},{})", n.key.0, n.key.1);
+                    stack.push(n.right.as_deref());
+                    stack.push(n.left.as_deref());
+                }
+            }
+        }
+        out
+    }
+}
