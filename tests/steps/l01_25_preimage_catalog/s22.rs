@@ -1256,7 +1256,12 @@ fn steep_summaries_of_two_inputs_keep_the_holes_of_their_demand() {
         });
         let ds = over(&[("b", holed(&mut rng)), ("z", holed(&mut rng))]);
         let d = Demand::Ints(holed(&mut rng));
-        diffs.preimage(&format!("case {case}"), &t, &ds, &d);
+        // The transfer against the one before, the solver alone (under the cover, which runs
+        // under both transfers, no box counts as narrower: 0 and 0 against 2 and 2); the cover,
+        // checked by the interpreter over every point of the domains, `-12..=21`
+        // ([`alone_and_covered`]).
+        solver_alone(|| diffs.preimage(&format!("case {case}"), &t, &ds, &d));
+        alone_and_covered(&t, &ds, &d, &[(-12, 21)]);
     }
     // 17 results differ from the ones before only in the names of their relations' variables
     // (S22-transfer-rem), which `explained` allows.
