@@ -971,6 +971,67 @@ fn a_lookup_port_is_read_by_key() {
     assert_eq!(keys, [&Value::tuple(vec![Value::float(0.0), s("usd")])]);
 }
 
+/// A read of a port inside a pure region gives the value the wave holds, as outside one
+/// (FAIL-port-read-in-mapped-function): a `fam` reading a lookup port at a key each entry
+/// computes, the same key from every entry, asked once in all; a `fold` reading an input port;
+/// and a definedness `fix` whose entries read the lookup port. A push inside a `fam` is still
+/// a type error and writes nothing.
+#[test]
+fn a_read_inside_a_pure_region_gives_the_waves_value() {
+    let rate = |k: Term| get(Term::Read("rates".into()), k);
+    let keys = lit(Family::set((0..3).map(Value::Int)));
+    let port = Arc::new(Rates::default());
+    let mut run = Evaluator::new(World::new().source("rates", port.clone()));
+    let by_key = fam(keys.clone(), "k", rate(var("k")));
+    assert_eq!(
+        run.run(&by_key).unwrap().to_string(),
+        r#"{0 -> "rate at 0", 1 -> "rate at 1", 2 -> "rate at 2"}"#
+    );
+    assert_eq!(port.0.load(Ordering::SeqCst), 3);
+    let same = fam(keys.clone(), "k", rate(lit(7)));
+    assert_eq!(
+        run.run(&same).unwrap().to_string(),
+        r#"{0 -> "rate at 7", 1 -> "rate at 7", 2 -> "rate at 7"}"#
+    );
+    assert_eq!(port.0.load(Ordering::SeqCst), 4);
+    let joined = fold(
+        fam(keys.clone(), "k", lit("")),
+        lam(
+            &["a", "b"],
+            prim(
+                Prim::Concat,
+                vec![
+                    var("a"),
+                    prim(Prim::Concat, vec![var("b"), Term::Read("stdin".into())]),
+                ],
+            ),
+        ),
+        None,
+    );
+    let mut ev = Evaluator::new(World::new().input("stdin", "ab"));
+    assert_eq!(ev.run(&joined).unwrap(), s("abab"));
+    for schedule in [Schedule::Rounds, Schedule::Pull] {
+        let port = Arc::new(Rates::default());
+        let out = Evaluator::new(World::new().source("rates", port.clone()))
+            .with_schedule(schedule)
+            .run(&definedness(keys.clone(), rate(lit(1))))
+            .unwrap();
+        assert_eq!(
+            out.to_string(),
+            r#"{0 -> "rate at 1", 1 -> "rate at 1", 2 -> "rate at 1"}"#,
+            "{schedule:?}"
+        );
+        assert_eq!(port.0.load(Ordering::SeqCst), 1, "{schedule:?}");
+    }
+    let leak = fam(keys, "k", push("stdout", var("k")));
+    let mut ev = Evaluator::new(World::new().output("stdout"));
+    assert_eq!(
+        ev.run(&leak).unwrap_err(),
+        KernelError::Type("port `stdout` used inside a pure region".into())
+    );
+    assert!(ev.world.log("stdout").is_empty());
+}
+
 /// A called port: answers with the text of its key, counts the times it is asked, and takes
 /// a function argument only when its body is the variable `z`, at the atom `#z`.
 #[derive(Debug, Default)]
@@ -1044,8 +1105,9 @@ impl Lookup for NoAnswer {
 /// A read a lookup port cannot answer stops the run with that port's error, and `zedc replay`
 /// tells a record that lacks a read by this stop (plan row PROOF-replay-missing-read-status).
 /// The one place the evaluator catches a stop is an entry of a definedness fix that reads an
-/// entry not yet defined; a fix is a pure region, so a port read there stops the run before
-/// the port is asked, and a port's error never reaches that catch. Here entries 0 to 2 each
+/// entry not yet defined; a fix is a pure region, where a read is allowed
+/// (FAIL-port-read-in-mapped-function), and that catch takes only a read of an undefined
+/// entry, so the port's error passes through it and stops the run. Here entries 0 to 2 each
 /// read the next and wait on it, and entry 3 reads the port, under each schedule; then the
 /// read alone, outside any fix.
 #[test]
@@ -1061,10 +1123,16 @@ fn a_read_the_port_cannot_answer_stops_the_run() {
             .with_schedule(schedule)
             .run(&fix);
         match out {
-            Err(KernelError::Type(m)) => assert!(m.contains("port `p` used inside a pure region")),
+            Err(KernelError::Port(p, why)) => {
+                assert_eq!(
+                    (&*p, &*why),
+                    ("p", "no answer at \"gone.txt\""),
+                    "{schedule:?}"
+                );
+            }
             other => panic!("{schedule:?}: the run went on past the read: {other:?}"),
         }
-        assert_eq!(port.0.load(Ordering::SeqCst), 0, "{schedule:?}");
+        assert_eq!(port.0.load(Ordering::SeqCst), 1, "{schedule:?}");
     }
     let port = Arc::new(NoAnswer::default());
     let out = Evaluator::new(World::new().source("p", port.clone())).run(&read());

@@ -325,3 +325,95 @@ pub(super) fn loads_the_helpers(src: &str) {
 fn reads_of_main_files_before_and_after_main_load() {
     loads_the_helpers(&helpers(2));
 }
+
+/// A function that reads `main::files`, passed to `map`, reads each file: the read is not
+/// refused for running inside the map.
+#[test]
+fn a_function_given_to_map_reads_main_files() {
+    let d = dir("mapped_read");
+    let (a, b) = (d.join("a.txt"), d.join("b.txt"));
+    std::fs::write(&a, "A").unwrap();
+    std::fs::write(&b, "B").unwrap();
+    let src = format!(
+        "text(p: String) = main::files[p] else \"-\";\n\
+         main(m: MainArgs) {{\n  names = [\"{a}\", \"{b}\", \"{c}\"];\n  \
+         m.stdout <- \"${{names.map(text)}}\";\n}}\n",
+        a = a.display(),
+        b = b.display(),
+        c = d.join("absent.txt").display()
+    );
+    let out = run("mapped_read", &src, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "{0 -> \"A\", 1 -> \"B\", 2 -> \"-\"}\n", "")
+    );
+}
+
+/// A function that reads `main::files` is read the same way under each higher-order form that
+/// calls it per entry: `where`, `foldl`, a `map` inside a `map`, a lambda written in `main`,
+/// and a chain of two functions (DESIGN.md sec:ports: "from any function at any depth of
+/// calls").
+#[test]
+fn a_function_reading_main_files_runs_under_every_higher_order_form() {
+    let d = dir("mapped_forms");
+    let (a, b) = (d.join("a.txt"), d.join("b.txt"));
+    std::fs::write(&a, "A").unwrap();
+    std::fs::write(&b, "B").unwrap();
+    let names = format!(
+        "[\"{}\", \"{}\", \"{}\"]",
+        a.display(),
+        b.display(),
+        d.join("absent.txt").display()
+    );
+    for (name, expr, expected) in [
+        (
+            "where",
+            "names.where(p -> text(p) != \"-\").map(text)",
+            "{0 -> \"A\", 1 -> \"B\"}",
+        ),
+        (
+            "foldl",
+            "names.foldl(\"\", (acc, p) -> acc ++ text(p))",
+            "AB-",
+        ),
+        (
+            "nested_map",
+            "[names, names].map(ns -> ns.map(text))",
+            "{0 -> {0 -> \"A\", 1 -> \"B\", 2 -> \"-\"}, 1 -> {0 -> \"A\", 1 -> \"B\", 2 -> \"-\"}}",
+        ),
+        (
+            "lambda",
+            "names.map(p -> main::files[p] else \"?\")",
+            "{0 -> \"A\", 1 -> \"B\", 2 -> \"?\"}",
+        ),
+        (
+            "chain",
+            "names.map(loud)",
+            "{0 -> \"A!\", 1 -> \"B!\", 2 -> \"-!\"}",
+        ),
+    ] {
+        let src = format!(
+            "text(positional p: String) = main::files[p] else \"-\";\n\
+             loud(positional p: String) = text(p) ++ \"!\";\n\
+             main(m: MainArgs) {{\n  names = {names};\n  m.stdout <- \"${{{expr}}}\";\n}}\n"
+        );
+        let out = run(&format!("mapped_forms_{name}"), &src, "", &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str(), out.stderr.as_str()),
+            (0, format!("{expected}\n").as_str(), ""),
+            "{name}"
+        );
+    }
+}
+
+/// Standard input read by a lambda given to `map` is read inside the map as it is outside.
+#[test]
+fn standard_input_is_read_inside_a_map() {
+    let src =
+        "main(m: MainArgs) {\n  m.stdout <- \"${[0, 1, 2].map(i -> m.stdin[i] else \"-\")}\";\n}\n";
+    let out = run("mapped_stdin", src, "x\ny\n", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "{0 -> \"x\", 1 -> \"y\", 2 -> \"-\"}\n", "")
+    );
+}

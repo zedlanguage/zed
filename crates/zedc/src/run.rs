@@ -785,9 +785,9 @@ impl Program {
     /// its first miss (PROOF-replay-missing-read-status). Every miss also ends the run: the
     /// lookup's error becomes `KernelError::Port`, a `Stop::Error`, and no frame of the
     /// evaluator turns a `Stop::Error` into a value. The one catch, of an entry of a
-    /// definedness fix, takes only `Stop::Undefined`, and a port is never asked inside a fix
-    /// anyway: a `fix` begins a pure region before its entries run, and every ask of a port
-    /// first stops the run in a pure region (`check_impure`). So the first miss is the stop
+    /// definedness fix, takes only `Stop::Undefined`, so a port read inside a fix (a pure
+    /// region, where a read is allowed: FAIL-port-read-in-mapped-function) that misses stops
+    /// the run as one outside it does. So the first miss is the stop
     /// (test `m0_09_kernel_evaluator::a_read_the_port_cannot_answer_stops_the_run`).
     /// The one step that changes the error is the evaluator's report of a test of two
     /// numbers refused its memory, which takes the place of any stop after it, since the stop

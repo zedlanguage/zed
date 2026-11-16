@@ -529,7 +529,8 @@ pub struct Evaluator {
     /// arise.
     fuel: Option<u64>,
     /// Above zero while evaluating the closure of a pure region (`fam`, `reindex`,
-    /// `discard`, `fold`, `fix`), where a port operation is a type error.
+    /// `discard`, `fold`, `fix`), where a push and a call of a called lookup port are type
+    /// errors and a read of a port is not ([`Evaluator::check_impure`]).
     pure: usize,
     schedule: Schedule,
     /// The number of definedness `fix` evaluations begun, which names each one's family.
@@ -822,6 +823,35 @@ impl Evaluator {
         }
     }
 
+    /// Stops with a type error when a push to `port`, or a call of the called lookup port
+    /// `port`, is made inside a pure region.
+    ///
+    /// A read of a port is allowed there (FAIL-port-read-in-mapped-function: DESIGN.md
+    /// sec:ports reads `main::files` "from any function at any depth of calls", and `map`
+    /// elaborates to a `fam`, so a function given to `map` that reads a file reads it inside
+    /// one). Proof that the read keeps the region pure, that is, that its value does not depend
+    /// on the order of the region's steps or on how many times a step runs: an input port's
+    /// value is fixed for the whole wave before the run starts (`World::inputs`), and a lookup
+    /// port is asked at most once per key, its answer kept for the rest of the run, in
+    /// `World::reads` or, for a port that `keeps_answers`, by the port itself (`ask_port`). So
+    /// a read gives the same value at a key wherever and however often it is evaluated. Two
+    /// sub-cases stay refused, since the proof does not cover them: a push, which appends to a
+    /// log whose order is observable; and a call of a called lookup port, which only the stager
+    /// makes (its stubs, zedc-stage `Port`), whose answer runs a further evaluation, and which
+    /// the stager counts on stopping inside a pure region so that such a call is run as
+    /// written (zedc-stage `error_as_written`, `Mixer::eval`). A
+    /// failed read stops the run with its port error as outside a region: the one frame that
+    /// catches a stop, a definedness `fix` entry, takes only `Stop::Undefined`
+    /// (`entry_ended`).
+    // Alternatives weighed: (1) elaborate a `map`, `where`, fold or nested map whose function
+    // may read a port to a non-pure form, such as a `gen` over the keys; this needs the
+    // checker's reads-a-port fact at every higher-order form, a second elaboration of each,
+    // and a call through a function value the checker cannot see counted as reading, and it
+    // loses the region's freedom of order for no gain in meaning, since the read is order-free
+    // as shown above. (2) Read every port value before the region; impossible for a lookup
+    // port, whose keys are computed inside it. Used: the check moved to the two operations
+    // that are order-dependent. Cost: unchanged, one comparison of a counter per push or
+    // called-port call, none per read.
     fn check_impure(&self, port: &str) -> R<()> {
         if self.pure > 0 {
             return type_err(format!("port `{port}` used inside a pure region"));
@@ -1409,16 +1439,14 @@ impl<'t> Machine<'_, 't> {
             | Term::Discard { .. }
             | Term::Fold { .. }
             | Term::Gen { .. } => self.operand(term, at, Vec::new(), None, env),
-            Term::Read(port) => {
-                self.ev.check_impure(port)?;
-                match self.ev.world.inputs.get(&**port) {
-                    Some(v) => give(v.clone()),
-                    None if self.ev.world.sources.contains_key(&**port) => {
-                        Ok(Step::Give(V::Source(port.clone())))
-                    }
-                    None => Err(KernelError::UnknownPort(port.to_string()).into()),
+            // A read is allowed inside a pure region ([`Evaluator::check_impure`]).
+            Term::Read(port) => match self.ev.world.inputs.get(&**port) {
+                Some(v) => give(v.clone()),
+                None if self.ev.world.sources.contains_key(&**port) => {
+                    Ok(Step::Give(V::Source(port.clone())))
                 }
-            }
+                None => Err(KernelError::UnknownPort(port.to_string()).into()),
+            },
             Term::Push(port, value) => {
                 self.wait(Wait::Push(port));
                 Ok(Step::Eval(value, self.ev.child(at, 0), env))
@@ -2255,7 +2283,7 @@ impl<'t> Machine<'_, 't> {
             let Ok([V::Source(port), k]) = <[V<'t>; 2]>::try_from(args) else {
                 unreachable!("`Get` and `TupleGet` take two arguments, the first matched above")
             };
-            self.ev.check_impure(&port)?;
+            // A read, allowed inside a pure region ([`Evaluator::check_impure`]).
             let V::Data(k) = k else {
                 return type_err("a key must be data");
             };
