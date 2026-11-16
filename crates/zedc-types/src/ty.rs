@@ -726,6 +726,29 @@ impl Row {
     pub fn to_vec(&self) -> Vec<Ty> {
         self.0.cs.clone()
     }
+
+    /// Whether a text written at `at` is parenthesized: a tuple alone as an arrow's key,
+    /// `((int, int)) ->? V`, since `(int, int) ->? V` has two parameters; `(int,) ->? V` has
+    /// one.
+    fn wraps(&self, at: PrintAt) -> bool {
+        at == PrintAt::Key && self.len() != 1
+    }
+
+    /// Pushes the parts of its text, standing at `at`, to `parts`, in order.
+    fn parts<'a>(&'a self, at: PrintAt, parts: &mut Vec<Print<'a>>) {
+        let wrap = self.wraps(at);
+        parts.push(Print::Text(if wrap { "((" } else { "(" }));
+        let mut one = true;
+        for c in self.iter() {
+            between(parts, &mut one, ", ");
+            parts.push(Print::Ty(c, PrintAt::Any));
+        }
+        parts.push(Print::Text(match (self.len() == 1, wrap) {
+            (true, _) => ",)",
+            (false, true) => "))",
+            (false, false) => ")",
+        }));
+    }
 }
 
 /// The number of a row or payload shape, given when it is made from one count for the whole
@@ -14177,20 +14200,7 @@ impl Ty {
                 parts.push(Print::Set(k.clone(), place, false));
                 continue;
             }
-            // A tuple alone as an arrow's key is parenthesized, `((int, int)) ->? V`, since
-            // `(int, int) ->? V` has two parameters; `(int,) ->? V` has one.
-            let wrap = at == PrintAt::Key && cs.len() != 1;
-            parts.push(Print::Text(if wrap { "((" } else { "(" }));
-            let mut one = true;
-            for c in cs.iter() {
-                between(parts, &mut one, ", ");
-                parts.push(Print::Ty(c, PrintAt::Any));
-            }
-            parts.push(Print::Text(match (cs.len() == 1, wrap) {
-                (true, _) => ",)",
-                (false, true) => "))",
-                (false, false) => ")",
-            }));
+            parts.push(Print::Row(cs, at));
         }
         if let Some(g) = &groups {
             hole(parts, &g.morphisms);
@@ -14577,6 +14587,8 @@ enum Print<'a> {
     Text(&'a str),
     Ty(&'a Ty, PrintAt),
     Sig(&'a Sig, PrintAt),
+    /// A tuple shape of a type ([`Row::parts`]).
+    Row(&'a Row, PrintAt),
     /// The value type of a morphism type, which stands as a result: a type without its atom
     /// `#notFound`.
     Found(&'a Ty),
@@ -14699,6 +14711,9 @@ impl<'a> Morphism<'a> {
 /// another part, as [`defs::lift`] gives, gets a definition `type Tk = …;`, declared on a line
 /// of its own before the whole text ([`defs::declare`]), so the text stays linear in the sets'
 /// graph. In a message the message finishes it.
+///
+/// A function or a tuple the type holds in two places or more, which holds no type variable,
+/// is written once, as a part of the table ([`Shared`]), and referred to where it stands.
 fn write_parts<'a>(
     start: Print<'a>,
     out: &mut String,
@@ -14710,9 +14725,236 @@ fn write_parts<'a>(
     // (MSG-derive-type-size).
     let alone = defs::local();
     let base = out.len();
+    let shared = Shared::of(&start, spell);
+    let (marked, sets) = write_text(start, out, scope, spell, &shared);
+    // Inside a message the marks and references stay, and the message names them with its own
+    // words, so that a variable is never named as another type of the message is.
+    if alone.is_some() && (marked || sets || defs::holds_reference(&out[base..])) {
+        let mut text = out.split_off(base);
+        let lifted = defs::lift(&mut [&mut text], &|w| scope.bound.contains(w));
+        for (name, body) in &lifted {
+            defs::declare(out, name, body).expect("a String takes any text");
+        }
+        out.push_str(&text);
+    }
+}
+
+/// The functions and tuples a text holds in two places or more and that hold no type variable,
+/// each with the reference to its body in the table of definitions ([`defs::add_soft`]): a text
+/// writes such a part by reference, and the message names it by the rule [`defs::lift`] gives
+/// a part that holds others, or writes it in full.
+///
+/// A part with no type variable reads the same wherever it stands, so its body is written once,
+/// alone, with a scope of its own. A function or a tuple with variables is still written in
+/// full each time: its variables are named by the whole text ([`Walk`]).
+///
+/// A part none of whose places is below another row or function (other than the start) is not
+/// placed: [`defs::lift`] names a soft part only when a use of it lies in another part's body,
+/// so such a part would be written in full at each place anyway, and placing it would count
+/// the unions in its body once where the text writes them at each place, so that a union the
+/// text writes twice would not be named (`f(m: (int .. (int | String) -> bool, int)) = m`
+/// must read `type Part1 = int | String;`). Such a part stands only where the start's own
+/// parameters, result, components or payloads hold it, so it is written as often as the start writes
+/// it, and the shared parts below it are placed as any others.
+// Complexity tradeoff (FAIL-nested-display-headline-type-growth): naive, the text written as a
+// tree, each shared part in full at each place it stands, O(2^d) for a part held twice at each
+// of d levels, as a set display nested d deep types each level `{f, (inner)}` with the inner
+// set's function twice (2,165,352 message bytes at depth 16 against 325 at 2). Used: one walk
+// over the type's graph, each row, function and payload shape entered once by address, counts
+// the places of each, and each shared closed part's body is written once, innermost first,
+// with the parts inside it by reference: O(n) in the size n of the graph, with a hash lookup
+// per part. A part shared only through a family's key, which [`Sig::family_parts`] writes
+// twice, is not counted twice; such a key holds no function or tuple ([`Sig::is_family`]).
+// Tradeoff: one more walk and two hash maps per print, and the parts are placed as soft
+// parts, not counted ones as the kernel places its unions: a short part such as `int -> int`
+// is still written in full where it stands, as the tuples the kernel places are.
+#[derive(Default)]
+struct Shared {
+    /// Each shared function, by address, with its reference.
+    sigs: HashMap<*const Sig, String>,
+    /// Each shared tuple, by its number, with its reference.
+    rows: HashMap<NodeId, String>,
+}
+
+impl Shared {
+    /// The shared closed parts of the text from `start`, their bodies placed in the table, and
+    /// those an earlier print for the table placed ([`Settled`]).
+    fn of(start: &Print<'_>, spell: Option<Spell<'_>>) -> Shared {
+        #[derive(Clone, Copy)]
+        enum Node<'a> {
+            Ty(&'a Ty),
+            Row(&'a Row),
+            // With its `Arc` where the type holds it by one, so that it can be kept.
+            Sig(&'a Sig, Option<&'a Arc<Sig>>),
+            Shape(&'a Shape),
+        }
+        let mut shared = Shared::default();
+        let first = match *start {
+            Print::Ty(t, _) | Print::Found(t) => Node::Ty(t),
+            Print::Sig(s, _) | Print::Family(s) => Node::Sig(s, None),
+            Print::Row(r, _) => Node::Row(r),
+            _ => return shared,
+        };
+        let spelled = spell.is_some();
+        // By address: every node is borrowed from `start` for the whole walk, so no key names
+        // a freed node. The places of each row and function, and the rows and functions in
+        // the order left, each after those inside it. A node is on top when no row or
+        // function holds it in this text; a part on top is entered even if settled, so a type
+        // written on its own is written as before, not as one reference. A node is below a
+        // part when a row or function holds it, at any depth; a part none of whose places is
+        // below another is not placed (`placed` below).
+        let (mut rows, mut sigs, mut shapes) = (HashMap::new(), HashMap::new(), HashSet::new());
+        let mut order: Vec<Node<'_>> = Vec::new();
+        // Each node with whether it is left, on top and below a part.
+        let mut stack: Vec<(Node<'_>, bool, bool, bool)> = vec![(first, false, true, false)];
+        // The start is written in full, never by reference, so what it holds is not below a
+        // part by it.
+        let mut at_start = true;
+        defs::with_kept_of(|settled: &mut Settled| {
+            while let Some((node, left, top, below)) = stack.pop() {
+                if left {
+                    order.push(node);
+                    continue;
+                }
+                let inside = !std::mem::take(&mut at_start);
+                // A row or a function is left, below the nodes it holds on the stack, after
+                // them; the order among those is not read.
+                match node {
+                    Node::Ty(t) => {
+                        let rows = t
+                            .tuples
+                            .iter()
+                            .filter(|r| r.0.kernel.is_none() || r.0.listed);
+                        stack.extend(rows.map(|r| (Node::Row(r), false, top, below)));
+                        let fns =
+                            (t.fns.iter()).map(|s| (Node::Sig(s, Some(s)), false, top, below));
+                        stack.extend(fns);
+                        let shapes = t.payload_shapes();
+                        stack.extend(shapes.map(|s| (Node::Shape(s), false, false, below)));
+                    }
+                    Node::Row(r) => {
+                        let found = settled.rows.get(&(r.node(), spelled)).filter(|_| !top);
+                        if let Some(name) = found {
+                            shared.rows.insert(r.node(), name.clone());
+                            continue;
+                        }
+                        let (places, held) = rows.entry(r.node()).or_insert((0usize, false));
+                        *places += 1;
+                        *held |= below;
+                        if *places == 1 {
+                            stack.push((node, true, top, below));
+                            stack.extend(r.iter().map(|t| (Node::Ty(t), false, false, inside)));
+                        }
+                    }
+                    Node::Sig(s, _) => {
+                        let key = (s as *const Sig, spelled);
+                        if let Some((_, name)) = settled.sigs.get(&key).filter(|_| !top) {
+                            shared.sigs.insert(key.0, name.clone());
+                            continue;
+                        }
+                        let (places, held) = sigs.entry(key.0).or_insert((0usize, false));
+                        *places += 1;
+                        *held |= below;
+                        if *places == 1 {
+                            stack.push((node, true, top, below));
+                            let tys = s
+                                .arrows
+                                .iter()
+                                .flat_map(|a| a.params.iter().chain([&a.result]));
+                            stack.extend(tys.map(|t| (Node::Ty(t), false, false, inside)));
+                        }
+                    }
+                    Node::Shape(s) => {
+                        if shapes.insert(Arc::as_ptr(&s.0)) {
+                            let tys = s.items.iter().chain(s.fields.values());
+                            stack.extend(tys.map(|t| (Node::Ty(t), false, false, below)));
+                        }
+                    }
+                }
+            }
+        })
+        .expect("a printed text has a table of definitions (defs::local)");
+        // Each body is written with the parts inside it placed already, by reference.
+        let place = |start: Print<'_>, shared: &Shared| {
+            let mut body = String::new();
+            write_text(start, &mut body, &mut Scope::default(), spell, shared);
+            defs::soft_reference(defs::add_soft(body))
+        };
+        let mut placed: Vec<(Node<'_>, String)> = Vec::new();
+        for node in order {
+            match node {
+                Node::Row(r) if matches!(rows[&r.node()], (2.., true)) && !r.holds_vars() => {
+                    let name = place(Print::Row(r, PrintAt::Any), &shared);
+                    shared.rows.insert(r.node(), name.clone());
+                    placed.push((node, name));
+                }
+                Node::Sig(s, _)
+                    if matches!(sigs[&(s as *const Sig)], (2.., true)) && s.closed() =>
+                {
+                    let name = place(Print::Sig(s, PrintAt::Any), &shared);
+                    shared.sigs.insert(s as *const Sig, name.clone());
+                    placed.push((node, name));
+                }
+                _ => {}
+            }
+        }
+        defs::with_kept_of(|settled: &mut Settled| {
+            for (node, name) in placed {
+                match node {
+                    Node::Row(r) => {
+                        settled.rows.insert((r.node(), spelled), name);
+                    }
+                    // A function the type holds by no `Arc` is the text's start, on top, which
+                    // is never read from here.
+                    Node::Sig(s, Some(arc)) => {
+                        let key = (s as *const Sig, spelled);
+                        settled.sigs.insert(key, (Arc::clone(arc), name));
+                    }
+                    _ => {}
+                }
+            }
+        });
+        shared
+    }
+}
+
+/// The parts [`Shared::of`] placed in the table of definitions, kept with the table
+/// ([`defs::with_kept_of`]) for each later print, by the row's number or the function's address
+/// and whether the program's spellings were used. A later text holding such a part inside a row
+/// or a function writes its reference without entering it, so the steps of a message that each
+/// print the next of a chain `t2 = (t1, t1); t3 = (t2, t2); …` print each part once.
+///
+/// A function is kept alive here with its reference, so its address names no other function
+/// while the table lives. A part's body was written for the text that placed it: a part inside
+/// it written once there is in full in the body, even where a later text holds that part
+/// elsewhere too and would have placed it. The message is still linear in what it writes.
+// Complexity tradeoff (FAIL-nested-display-headline-type-growth): naive, each print walks its
+// type's whole graph, O(m) for m parts, so a message of n steps that each print the next of
+// such a chain costs O(n²) (measured: 50 and 400 levels, 28.4 times the instructions). Used:
+// each part placed once per table, O(1) expected per later use, so the message is O(m) in the
+// parts it prints in all. Tradeoff: a part's text may depend on the first type that placed it,
+// as the kernel's tuples do not (`Printer::remember` in zed-kernel's print.rs), since a
+// function or tuple here is placed only when shared, not always as the kernel places tuples.
+#[derive(Default)]
+struct Settled {
+    rows: HashMap<(NodeId, bool), String>,
+    sigs: HashMap<(*const Sig, bool), (Arc<Sig>, String)>,
+}
+
+/// Writes the text from `start` to `out`, as [`write_parts`] describes, each part of `shared`
+/// but `start` by reference; gives whether it marked its variables to be named and whether it
+/// holds a kernel set.
+fn write_text<'a>(
+    start: Print<'a>,
+    out: &mut String,
+    scope: &mut Scope,
+    spell: Option<Spell<'_>>,
+    shared: &Shared,
+) -> (bool, bool) {
+    let base = out.len();
     let (fresh, opened) = (scope.fresh, scope.same.len());
     let mut walk = Walk::default();
-    let mut kernel = walk_parts(start.clone(), out, scope, &mut walk);
+    let mut kernel = walk_parts(start.clone(), out, scope, &mut walk, shared);
     let mut marked = false;
     if let Some(plan) = walk.plan(scope) {
         out.truncate(base);
@@ -14723,7 +14965,7 @@ fn write_parts<'a>(
             out.push(defs::VARS);
         }
         walk.plan = Some(plan);
-        kernel = walk_parts(start, out, scope, &mut walk);
+        kernel = walk_parts(start, out, scope, &mut walk, shared);
         if marked {
             out.push(defs::VARS_END);
         }
@@ -14760,31 +15002,46 @@ fn write_parts<'a>(
         }
         out.push_str(&rest[from..]);
     }
-    // Inside a message the marks and references stay, and the message names them with its own
-    // words, so that a variable is never named as another type of the message is.
-    if alone.is_some() && (marked || !kernel.sets.is_empty()) {
-        let mut text = out.split_off(base);
-        let lifted = defs::lift(&mut [&mut text], &|w| scope.bound.contains(w));
-        for (name, body) in &lifted {
-            defs::declare(out, name, body).expect("a String takes any text");
-        }
-        out.push_str(&text);
-    }
+    (marked, !kernel.sets.is_empty())
 }
 
 /// One walk of [`write_parts`] from `start`, which writes the text to `out` with its kernel
-/// sets left out, and gives them with their places.
+/// sets left out, and gives them with their places. Each part of `shared` but `start` is
+/// written by its reference.
 fn walk_parts<'a>(
     start: Print<'a>,
     out: &mut String,
     scope: &mut Scope,
     walk: &mut Walk,
+    shared: &Shared,
 ) -> Kernel {
     let mut kernel = Kernel::default();
     let mut stack = vec![start];
+    let mut first = true;
     while let Some(part) = stack.pop() {
         let from = stack.len();
+        let root = std::mem::take(&mut first);
         match part {
+            Print::Row(r, at) => match shared.rows.get(&r.node()).filter(|_| !root) {
+                Some(name) if r.wraps(at) => out.push_str(&defs::wrapped(name)),
+                Some(name) => out.push_str(name),
+                None => r.parts(at, &mut stack),
+            },
+            Print::Sig(s, at) => match shared.sigs.get(&(s as *const Sig)).filter(|_| !root) {
+                // As [`Sig::parts`] writes it, with no variables to open: a closed part has
+                // no bounds clause, and one left to the end of its union is empty.
+                Some(name) => {
+                    let several = s.hoists();
+                    if at == PrintAt::Member && several {
+                        scope.hoisted.push(Vec::new());
+                    }
+                    match Sig::wraps(at, several, false) {
+                        true => out.push_str(&defs::wrapped(name)),
+                        false => out.push_str(name),
+                    }
+                }
+                None => s.parts(scope, &mut stack, at),
+            },
             Print::Text(text) => out.push_str(text),
             Print::Ty(t, at) => {
                 if walk.enter(out, scope) {
@@ -14800,7 +15057,6 @@ fn walk_parts<'a>(
                     t.parts(&mut stack, true, PrintAt::Result);
                 }
             }
-            Print::Sig(s, at) => s.parts(scope, &mut stack, at),
             Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, string) => t.write_vars(string, out, scope, walk, &mut kernel),
             Print::End(t, others, inside) => {
@@ -14915,15 +15171,7 @@ impl Sig {
         let several = morphism.is_none() && self.arrows.len() != 1;
         let hoisted = at == PrintAt::Member && several;
         let bounds = scope.open(self, hoisted);
-        let wrap = match at {
-            PrintAt::Any => false,
-            PrintAt::Result => !bounds.is_empty(),
-            // A key or a bound is a `TypeNot`, so an intersection of arrows is parenthesized
-            // there as one arrow is (author P222).
-            PrintAt::Key | PrintAt::Bound => true,
-            PrintAt::Member if several => false,
-            PrintAt::Union | PrintAt::Member => !bounds.is_empty() || !several,
-        };
+        let wrap = Sig::wraps(at, several, !bounds.is_empty());
         if wrap {
             parts.push(Print::Text("("));
         }
@@ -15000,6 +15248,26 @@ impl Sig {
             Some(h) if a.result == Ty::carrier(Carrier::Int) => Print::Text(&h.text),
             _ => Print::Ty(&a.result, PrintAt::Result),
         }
+    }
+
+    /// Whether a signature's text written at `at` is parenthesized, given whether it is an
+    /// intersection of several arrows and whether it writes a bounds clause there.
+    fn wraps(at: PrintAt, several: bool, bounded: bool) -> bool {
+        match at {
+            PrintAt::Any => false,
+            PrintAt::Result => bounded,
+            // A key or a bound is a `TypeNot`, so an intersection of arrows is parenthesized
+            // there as one arrow is (author P222).
+            PrintAt::Key | PrintAt::Bound => true,
+            PrintAt::Member if several => false,
+            PrintAt::Union | PrintAt::Member => bounded || !several,
+        }
+    }
+
+    /// Whether its text reads the same wherever it stands, but for parentheses: it binds no
+    /// variable and holds none ([`Shared`]).
+    fn closed(&self) -> bool {
+        self.bounds.is_empty() && self.own.is_empty() && self.holds_no_variable()
     }
 
     /// Whether, as a member of a union that stands where a whole `Type` stands, it leaves its

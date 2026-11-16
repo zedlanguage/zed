@@ -384,3 +384,55 @@ fn a_chain_of_functions_returning_the_one_before_is_checked_in_linear_time() {
         assert!(info.errors.is_empty(), "{what} at {n}");
     });
 }
+
+/// A type that holds one part twice at each of `d` levels, `t{i} = (t{i-1}, t{i-1})`, or
+/// `u{i} = {u{i-1}}` (a function from `u{i-1}`'s type to itself), is `2^d` long written as a
+/// tree. One error on `t{d} + 1` names it; each part written more than once is declared once
+/// as `type Part<k> = …` under the message and named where it stands (`Shared` in
+/// crates/zedc-types/src/ty.rs), so the message is `O(d)` bytes and the check `O(d)` work:
+/// `T(8d)/T(d)` under the scaling limit in instructions and in bytes allocated, and under 9 in
+/// bytes of message text, a count linear by construction ([`scaling::hold_linear`]). Before,
+/// each part was written in full at each place, `2^d` times for the innermost
+/// (FAIL-nested-display-headline-type-growth: a set display nested 16 deep gave messages of
+/// 2165352 bytes).
+#[test]
+fn a_part_held_twice_at_each_level_gives_a_message_of_linear_length() {
+    let tuples = |d: usize| {
+        let mut text = "scale(positional x) = x * int(2);\nt1 = (scale, scale);\n".to_string();
+        text.extend((2..=d).map(|i| format!("t{i} = (t{0}, t{0});\n", i - 1)));
+        text + &format!("z = t{d} + 1;\n")
+    };
+    let sets = |d: usize| {
+        let mut text = "u1 = {1};\n".to_string();
+        text.extend((2..=d).map(|i| format!("u{i} = {{u{}}};\n", i - 1)));
+        text + &format!("z = u{d} + 1;\n")
+    };
+    for (what, make) in [
+        (
+            "n tuples, each holding the one before twice",
+            &tuples as &dyn Fn(usize) -> String,
+        ),
+        (
+            "n sets, each holding the one before as key and value",
+            &sets,
+        ),
+    ] {
+        let units: BTreeMap<usize, Resolved> = [50, scaling::FACTOR * 50]
+            .into_iter()
+            .map(|n| (n, Resolved::new(&make(n))))
+            .collect();
+        let bytes = |n: usize| -> usize {
+            let info = units[&n].check();
+            assert_eq!(info.errors.len(), 1, "{what} at {n}");
+            info.errors
+                .iter()
+                .map(|e| e.message.len() + e.menu.len())
+                .sum()
+        };
+        let (small, large) = (bytes(50), bytes(scaling::FACTOR * 50));
+        scaling::hold_linear(what, "message bytes", small as u64, large as u64);
+        scaling::check_order(what, 50, 1, |n| {
+            bytes(n);
+        });
+    }
+}

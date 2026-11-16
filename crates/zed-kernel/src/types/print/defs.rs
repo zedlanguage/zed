@@ -36,7 +36,7 @@
 //! which a printed type marks with the noncharacters U+FDD9 to U+FDDE ([`VARS`]), so that no name
 //! it takes is a word the message writes elsewhere ([`name_vars`]).
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Write as _};
@@ -174,6 +174,9 @@ struct Table {
     /// What the printer keeps of the parts it printed for this table ([`with_kept`]); this
     /// module never reads it.
     kept: Option<Box<dyn Any>>,
+    /// What another printer keeps of the parts it printed for this table, by the type it keeps
+    /// ([`with_kept_of`]); this module never reads it either.
+    kept_of: HashMap<TypeId, Box<dyn Any>>,
 }
 
 thread_local! {
@@ -213,7 +216,7 @@ pub(super) fn reference(k: usize) -> String {
 }
 
 /// The reference to definition `k` placed by [`add_soft`].
-pub(super) fn soft_reference(k: usize) -> String {
+pub fn soft_reference(k: usize) -> String {
     format!("{SOFT}{k}{END}")
 }
 
@@ -222,10 +225,10 @@ pub(super) fn counted_reference(k: usize) -> String {
     format!("{COUNT}{k}{END}")
 }
 
-/// `name`, a reference by [`counted_reference`] or [`soft_reference`], at a place where the
+/// `name`, a reference by `counted_reference` or [`soft_reference`], at a place where the
 /// part written in full is parenthesized, as `(1 | 2)[]` or `((A, B)) -> V`; written by a name
 /// it is not.
-pub(super) fn wrapped(name: &str) -> String {
+pub fn wrapped(name: &str) -> String {
     match name.strip_prefix(SOFT) {
         Some(rest) => format!("{SOFT_WRAP}{rest}"),
         None => name.replacen(COUNT, &WRAP.to_string(), 1),
@@ -271,9 +274,9 @@ pub(super) fn add(body: String) -> usize {
     place(body, Kind::Hard)
 }
 
-/// As [`add`], for a part that [`lift`] names only if one of its uses is inside another part,
+/// As `add`, for a part that [`lift`] names only if one of its uses is inside another part,
 /// by the rule [`lift`] gives; it is written in full wherever else it stands.
-pub(super) fn add_soft(body: String) -> usize {
+pub fn add_soft(body: String) -> usize {
     place(body, Kind::Soft)
 }
 
@@ -337,12 +340,28 @@ pub(super) fn with_kept<R>(f: impl FnOnce(&mut Option<Box<dyn Any>>) -> R) -> Op
     TABLE.with_borrow_mut(|t| t.as_mut().map(|t| f(&mut t.kept)))
 }
 
+/// As `with_kept`, for a printer outside this module, which keeps a `T`: runs `f` on it,
+/// made empty the first time; `None` when no table is on. It ends with the table, and
+/// [`forget_printed`] empties it.
+pub fn with_kept_of<T: Default + Any, R>(f: impl FnOnce(&mut T) -> R) -> Option<R> {
+    TABLE.with_borrow_mut(|t| {
+        t.as_mut().map(|t| {
+            let kept = t
+                .kept_of
+                .entry(TypeId::of::<T>())
+                .or_insert_with(|| Box::new(T::default()));
+            f(kept.downcast_mut::<T>().expect("kept by its type"))
+        })
+    })
+}
+
 /// Forgets the printed parts kept for reuse: a checker calls it when the spellings of its
 /// program's literals change, since a part kept spells them as they were.
 pub fn forget_printed() {
     TABLE.with_borrow_mut(|t| {
         if let Some(t) = t.as_mut() {
             t.kept = None;
+            t.kept_of.clear();
         }
     });
 }
@@ -538,10 +557,40 @@ fn body_uses<'m>(t: &Table, root: usize, memo: &'m mut HashMap<usize, Uses>) -> 
 /// sharing no subtree and k keys, and the definitions used twice or more are found walking each
 /// trie node once over all the texts ([`Uses::each_new_many`]). This is option (1) of
 /// COMPLEXITY.md row K110, which the author chose (2026-11-13).
+///
+/// A part placed only by [`add_soft`] that no body reached refers to is never named by
+/// [`lift_holding`] (it is inside no other part), so it is written in full at each of its
+/// references: a printed type that refers to it twice or more writes each part named by count
+/// that its body refers to twice or more, and that part is named from that step. So `(Part1 ->
+/// 1, Part1 -> 1)` names `type Part1 = int | String;` when the function is placed. A part
+/// named by count inside such a body is written once, in its declaration, as it is used twice
+/// itself, so the parts its own body uses are counted as before. A soft part that a body refers
+/// to is counted as before too, its body once, though the length rule may still write it in
+/// full at each place (not handled: whether it is named depends on the names this function
+/// gives).
+// Complexity tradeoff (FAIL-nested-display-headline-type-growth): naive, each such part's body
+// walked with the bodies it reaches as a tree, as the text would be written with no part named,
+// O(2^d) for parts held twice at each of d levels. Used: only the references in its own body
+// are read, once per printed type that writes it twice or more, a cost no greater than the
+// text that type writes in full; plus one walk of the bodies the texts reach, each entered
+// once, O(n) in their references, to find those a body refers to.
 fn first_named(t: &Table, texts: &[&mut String]) -> HashMap<usize, usize> {
     let mut memo: HashMap<usize, Uses> = HashMap::new();
     let mut seen = Seen::default();
     let mut from: HashMap<usize, usize> = HashMap::new();
+    // The definitions some body reached from the texts refers to; each body is entered once.
+    let mut in_body: HashSet<usize> = HashSet::new();
+    let mut entered: HashSet<usize> = HashSet::new();
+    let mut stack: Vec<usize> = texts.iter().flat_map(|text| refs(text)).collect();
+    while let Some(k) = stack.pop() {
+        if entered.insert(k) {
+            for j in refs(&t.bodies[k]) {
+                in_body.insert(j);
+                stack.push(j);
+            }
+        }
+    }
+    let written_whole = |k: usize| !t.hard[k] && !t.counted[k] && !in_body.contains(&k);
     // Each printed type's number, counting down from the top past every definition's.
     let mut id = u32::MAX;
     for (j, text) in texts.iter().enumerate() {
@@ -549,6 +598,11 @@ fn first_named(t: &Table, texts: &[&mut String]) -> HashMap<usize, usize> {
             at.sort_unstable();
             let mut u = Uses::default();
             for c in at.chunk_by(|a, b| a == b) {
+                if c.len() >= 2 && written_whole(c[0]) {
+                    for k in refs(&t.bodies[c[0]]).filter(|&k| by_count(t, k)) {
+                        from.entry(k).or_insert(j);
+                    }
+                }
                 u = u.union(body_uses(t, c[0], &mut memo));
             }
             assert!(id >= 1 << 31, "fewer printed types than 2^31");

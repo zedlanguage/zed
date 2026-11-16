@@ -69,6 +69,23 @@ fn a_function_wrapped_in_tuples_by_calls_is_one_error_where_it_is_compared() {
 }
 
 #[test]
+fn a_union_in_a_function_written_twice_in_a_type_is_named() {
+    // The function's type is one part of the type graph, held at two places and placed once
+    // (FAIL-nested-display-headline-type-growth); the type writes it in full at both, so the
+    // union in it is written twice and is named, as when the function was written as a tree.
+    let text = "h(positional k: int | String) = 1;\nt1 = (h, 1);\nt2 = (t1, h);\n";
+    assert_eq!(type_errors(text), Vec::<String>::new());
+    assert_eq!(
+        type_errors(&compared(text, "t2")),
+        [
+            "Cannot compare a value that may hold a function: `t2 : ((Part1 -> 1, 1), Part1 -> 1)` \
+          in `t2 == #b`.\n  Part1 stands for a part written more than once:\n    type Part1 = \
+          int | String; [t2 == #b]"
+        ]
+    );
+}
+
+#[test]
 fn two_functions_in_tuples_are_one_error_where_they_are_compared() {
     // The tuples are no error; the `==` on the tuple of both is one. A bare `1` takes the
     // carrier of `x`, so `shift` is generic.
