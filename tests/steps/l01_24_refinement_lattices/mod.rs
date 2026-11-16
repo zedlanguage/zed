@@ -14,6 +14,7 @@ mod complete;
 mod ends;
 mod f32_literal;
 mod float;
+mod hull_sound;
 mod kept_serial;
 mod loops;
 mod num_text;
