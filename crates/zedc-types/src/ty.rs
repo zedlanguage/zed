@@ -14181,20 +14181,80 @@ impl Domains {
         }
     }
 
-    /// Whether `t` holds no function, kind-wide part or variable at any depth: then its meet
-    /// `t.meet(u)` with a type `u` with no variable lies within `t`, the unknown in either read
-    /// as every value (A92), as the kernel reads `_`. Proof, by the parts of [`Ty::meet`]: the
-    /// set is the sets' meet; an atom's payload shapes are met in pairs, or are `u`'s where `t`
-    /// holds that atom with any payload, or are dropped with the atom from the set where `t`
-    /// holds it not at all; tuples are met component by component, each by this argument; a
-    /// side that is the unknown gives the other. What [`Ty::meet`] keeps whole from `u`, which
-    /// is not within `t`, needs what `t` lacks: a row of `u` with no kernel type is kept
-    /// against a kind-wide part of `t`, the functions are met only against functions of `t`,
-    /// and `u` is joined only where `t` holds a variable. A parameter type that is not plain,
-    /// met so, could hold keys outside its arrow's, whose values the arrow would then bound
-    /// wrongly.
+    /// Whether `t` holds, at any depth outside functions (in its rows' components and its
+    /// payload shapes' items and fields), no function or family, no variable, and no tuple or
+    /// struct in its set: then `t.meet(u)`, for a type `u` with no variable, holds every value
+    /// of `t & u` and lies within `t`, the unknown in either read as every value (A92), as the
+    /// kernel reads `_`. [`Domains::meet`] needs both: the first, so that a narrowed arrow
+    /// still bounds every value it bounded; the second, so that it bounds no value at a key
+    /// outside its own, which a function of both sides may give anything at.
+    ///
+    /// Proof (PROOF-domains-plain-meet), by the branches of [`Ty::meet`], by induction on the
+    /// depth of `t`, since a row or payload shape is met component by component through
+    /// [`Ty::meet`] again, and each component of `t` is plain in turn.
+    ///
+    /// - The unknown: where either side holds `_`, the meet is the other side ([`Ty::meet_rest`]
+    ///   and [`Pairs::meet`] look first), which is `t & u` exactly.
+    /// - Scalars and atoms: the set is the kernel's meet of the two sets, exact both ways. An
+    ///   atom name is then taken out only where both sides list its payload shapes and no pair
+    ///   of them meets, below.
+    /// - Payload shapes both sides list: they are paired in groups of one item count and one
+    ///   set of field names, and payloads of different groups share no value (a payload of one
+    ///   item and a field is not one of two items: the place lemma of PROOF-star-pairs). Within
+    ///   a group [`near_pairs`] leaves out only pairs that at some place hold two classes, or
+    ///   two single values, that differ, which share no value; a component holding `_` has no
+    ///   class ([`class`] is `Kind::Open`), so `_` never leaves a pair out, at any depth, as in
+    ///   `#pair(int, _)` against `#pair(_, bool)`, or `#box(#pair(int, _))` against
+    ///   `#box(#pair(_, bool))`. A kept pair is met item by item, by induction, and dropped only
+    ///   where [`Ty::is_empty`] proves an item empty, so only where it shares no value. Each met
+    ///   item lies within `t`'s item by induction, so the met shape lies within `t`'s.
+    /// - Payload shapes one side lists: the other side holds that atom with any payload (or not
+    ///   at all, and then the set has lost it), so the listed shapes hold the meet's payloads;
+    ///   where they are `u`'s, they lie within `t`, which holds the atom with any payload.
+    /// - Rows: rows of both sides are paired as payload shapes are, the same argument. A row
+    ///   of `t` against a tuple or struct in `u`'s set is kept whole, or its kernel type's meet
+    ///   with that part goes into the set: both within `t`, and together they hold the meet.
+    ///   A row of `u` against such a part of `t`'s set would be kept whole where it has no
+    ///   kernel type, which holds the meet but not within `t`: `#t((_, bool))` against
+    ///   `#t((int, int))` held in a set, as `(int | bool, int) & ((..) \ (bool, int))` leaves
+    ///   it, is `#t((_, bool))`, and an arrow over that key would bound the values at
+    ///   `#t((bool, bool))`. So `t` has no such part (FAIL in PROOF-domains-plain-meet: before,
+    ///   only a part that may hold a function was ruled out, through [`Ty::first_order`]).
+    /// - Functions and families: `t` has none, and neither has the meet, which is right, since
+    ///   no value of `t` is one. A family in a component of `t` is ruled out too: its meet with
+    ///   `u`'s is within neither side where [`Domains::meet`] keeps the arrows as they are.
+    /// - Variables: `t` has none, so `u` is not joined; `u`'s are not joined either, which is
+    ///   why `u` must have none: a variable of `u` may stand for values of `t` the meet would
+    ///   drop. [`Domains::of`] keeps a `within` only where it holds no variable, and an exact
+    ///   one holds no variable, function or `_` at all ([`Ty::exact_kernel`]).
+    ///
+    /// A parameter type that is not plain is left as it is; the arrow over it still bounds
+    /// every value it bounded, less narrowly.
+    // Complexity tradeoff: before, the flags kept at the outer level, O(1), which missed a
+    // tuple part held in a set at depth. Used: a walk of the rows and payload shapes of `t`,
+    // each entered once by its node number (rows and shapes are shared), and one kernel meet
+    // with `wide()` at each type reached, O(n) for a type of n nodes: the meet that follows
+    // walks the same rows and shapes, so the order of the cost is unchanged.
     fn plain(t: &Ty) -> bool {
-        t.fns.is_empty() && t.first_order() && !t.holds_vars()
+        let wide = wide();
+        let mut seen = HashSet::new();
+        let mut stack = vec![t];
+        while let Some(t) = stack.pop() {
+            if !t.fns.is_empty() || !t.vars.is_empty() || !(&t.set & &wide).is_empty() {
+                return false;
+            }
+            for r in &t.tuples {
+                if seen.insert(r.node()) {
+                    stack.extend(r.iter());
+                }
+            }
+            for s in t.payload_shapes() {
+                if seen.insert(s.node()) {
+                    stack.extend(s.items.iter().chain(s.fields.values()));
+                }
+            }
+        }
+        true
     }
 
     /// Whether a value of its guarantee was built outside the permission of `other`: then no

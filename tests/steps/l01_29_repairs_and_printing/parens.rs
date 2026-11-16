@@ -1059,6 +1059,130 @@ fn a_meet_of_partial_arrows_narrows_keys_holding_the_unknown() {
     }
 }
 
+/// The narrowing of a key by the meet of partial arrows, case by case of the proof at
+/// `Domains::plain` (PROOF-domains-plain-meet): the unknown in a payload, at any depth, on
+/// either side and on both; several shapes of one atom; payloads of different item counts or
+/// field names, which share no value; and a key holding a function beside its payloads, met
+/// exactly through the kernel. Each text reads as the type written beside it (subtyping both
+/// ways): the narrowing drops no value of the meet and adds none.
+#[test]
+fn a_meet_of_partial_arrows_narrows_payloads_holding_the_unknown_exactly() {
+    let cases = [
+        (
+            "(#box(#b) | (#pair(int, bool) ->? int | #a)) & (#pair(_, bool) ->? int | #c)",
+            "#pair(int, bool) ->? int",
+        ),
+        (
+            "(#box(#b) | (#box(#pair(int, _)) ->? int | #a)) & (#box(#pair(_, bool)) ->? int | #c)",
+            "#box(#pair(int, bool)) ->? int",
+        ),
+        (
+            "(#box(#b) | (#box(#pair(int, _)) ->? int)) & (#box(#pair(int, _)) ->? int)",
+            "#box(#pair(int, _)) ->? int",
+        ),
+        (
+            "(#box(#b) | (#t((int, _)) ->? int)) & ((#t((_, bool)) | #t((bool, bool))) ->? int)",
+            "#t((int, bool)) ->? int",
+        ),
+        (
+            "(#box(#b) | (#box(#box(_)) ->? int)) & ((#box(#box(int)) | #c) ->? int)",
+            "#box(#box(int)) ->? int",
+        ),
+        (
+            "(#box(#b) | ((#pair(int, _) | #q(_)) ->? int)) & ((#pair(_, bool) | #q(bool)) ->? int)",
+            "(#pair(int, bool) | #q(bool)) ->? int",
+        ),
+        (
+            "(#box(#b) | ((#pair(int, _) | #pair(_, int)) ->? int)) & (#pair(bool, _) ->? int)",
+            "#pair(bool, int) ->? int",
+        ),
+        (
+            "(#box(#b) | (#pair(#pair(int, _), _) ->? int)) & (#pair(#pair(_, bool), _) ->? int)",
+            "#pair(#pair(int, bool), _) ->? int",
+        ),
+        (
+            "(#box(#b) | (#pair(_, _) ->? int)) & ((#pair(int, _) | #pair(_, bool)) ->? int)",
+            "(#pair(int, _) | #pair(_, bool)) ->? int",
+        ),
+        (
+            "(#box(#b) | (#q(x: int) ->? int)) & (#q(_) ->? int)",
+            "Never ->? int",
+        ),
+        (
+            "(#box(#b) | (#q(x: _) ->? int)) & (#q(x: int, y: bool) ->? int)",
+            "Never ->? int",
+        ),
+        (
+            "(#box(#b) | (#q(x: _, y: bool) ->? int)) & (#q(x: int, y: _) ->? int)",
+            "#q(x: int, y: bool) ->? int",
+        ),
+        (
+            "(#box(#b) | ((#pair(int, _) | (int -> int)) ->? int)) & (#pair(int, bool) ->? int)",
+            "#pair(int, bool) ->? int",
+        ),
+        (
+            "(#box(#b) | (#box(#pair(_, #pair(_, _))) ->? int)) & (#box(#pair(int, #pair(bool, _))) ->? int)",
+            "#box(#pair(int, #pair(bool, _))) ->? int",
+        ),
+    ];
+    let mut bad = Vec::new();
+    for (text, want) in cases {
+        let (got, want_t) = (parse_type(text).unwrap(), parse_type(want).unwrap());
+        let (a, b) = (got.subtype(&want_t), want_t.subtype(&got));
+        if !(a && b) {
+            bad.push(format!(
+                "`{text}` reads `{got}`, not `{want}`: within it {a}, holding it {b}"
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// Keys the narrowing must leave whole, since their meet with the other key could leave them
+/// (PROOF-domains-plain-meet): a key whose set holds a tuple, here `(int, int)` left by
+/// `(int | bool, int) & ((..) \ (bool, int))`, met with `#t((_, bool))`, whose row has no
+/// kernel type and so is kept whole. Narrowed, the first arrow read `#t((_, bool)) ->? #a` and
+/// bounded the values at `#t((bool, bool))`, which the function `{#t((true, true)) -> 1}`, of
+/// both sides, gives as `1`: the meet lost it. The first text must read as the arrows of both
+/// sides with that key left as it is, written beside it. The checker cannot show the plainer
+/// claim, that the meet `#t((bool, bool)) ->? int` lies within it: it does not find the keys
+/// `#t((int, int))` and `#t((bool, bool))` disjoint for a partial arrow
+/// (FAIL-types-partial-arrow-same-atom-keys). The other two are checked one way, that they
+/// hold the meet written beside them: a key that holds a function is left whole too, and the
+/// type then reads wider than the meet.
+#[test]
+fn a_meet_of_partial_arrows_keeps_a_key_whose_set_holds_tuples_whole() {
+    let text = "(#box(#b) | ((#t((int | bool, int) & ((..) \\ (bool, int))) ->? #a) & (#t((bool, \
+                bool)) ->? int))) & (#t((_, bool)) ->? (int | #a))";
+    let whole = "(#t((int | bool, int) \\ (bool, int)) ->? #a) & (#t((bool, bool)) ->? int) & \
+                 ((#t((_, bool)) | #t((bool, bool))) ->? int | #a)";
+    let (got, want) = (parse_type(text).unwrap(), parse_type(whole).unwrap());
+    assert!(
+        got.subtype(&want) && want.subtype(&got),
+        "`{text}` reads `{got}`, not `{whole}`"
+    );
+    let cases = [
+        (
+            "(#box(#b) | (#t((int | bool, int) & ((..) \\ (bool, int))) ->? #a)) & (#t((_, bool)) ->? (int | #a))",
+            "Never ->? Never",
+        ),
+        (
+            "(#box(#b) | (#pair(int, _) ->? int)) & ((#pair(_, bool) | (_ -> int)) ->? int)",
+            "#pair(int, bool) ->? int",
+        ),
+    ];
+    let mut bad = Vec::new();
+    for (text, want) in cases {
+        let (got, want_t) = (parse_type(text).unwrap(), parse_type(want).unwrap());
+        if !want_t.subtype(&got) {
+            bad.push(format!(
+                "`{text}` reads `{got}`, which lacks values of `{want}`"
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
 /// A body expression of a recursive group built at random, `depth` levels deep at most, from
 /// one-token leaves and the definition `U` itself, with the text it is built from, each
 /// operand in parentheses and `U` written `#u`. Left out for the reader's sake, as in
