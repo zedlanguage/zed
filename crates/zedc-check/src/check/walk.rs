@@ -7681,21 +7681,53 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => given == 1 && named.iter().all(|(n, _)| n == "sep") && named.len() <= 1,
             };
         if !fits {
-            let (shape, form) = match word {
+            // The repair is the call rewritten with the operands as the program wrote them, in
+            // its style: `x.w(…)` with a value before the dot, `w(…)` without. The first
+            // operand is the string or the pieces and the second the separator, whether the
+            // program passed it by position or by another name; an operand the program did not
+            // write, or wrote across lines, is named by its parameter as DESIGN step L3.2
+            // writes the call (`s.split(sep)`, `concat(pieces, sep: s)`), so no separator the
+            // program did not write is offered (plan row FAIL-l01-37a-split-snapshot).
+            let one_line = |c: &'a str| (!c.contains('\n')).then_some(c);
+            let mut written: Vec<Option<&'a str>> = Vec::new();
+            if let Some(x) = &receiver {
+                written.push(self.code(x.at).and_then(one_line));
+            }
+            let operands = positional.iter().chain(named.iter().map(|(_, e)| e));
+            written.extend(operands.map(|e| self.code(Some(e.span)).and_then(one_line)));
+            let first = written.first().copied().flatten();
+            let second = written.get(1).copied().flatten();
+            let subject = first.unwrap_or(if word == "concat" { "pieces" } else { "s" });
+            // `x.w(rest)` or `w(x, rest)`; `x.w` or `w(x)` with no rest.
+            let call = |rest: &str| match (receiver.is_some(), rest) {
+                (true, "") => format!("`{subject}.{word}`"),
+                (true, _) => format!("`{subject}.{word}({rest})`"),
+                (false, "") => format!("`{word}({subject})`"),
+                (false, _) => format!("`{word}({subject}, {rest})`"),
+            };
+            let (shape, forms) = match word {
                 "split" => (
                     "a string and a separator, passed by position",
-                    "`s.split(\",\")`",
+                    vec![call(second.unwrap_or("sep"))],
                 ),
-                "lines" => ("one string", "`s.lines`"),
+                "lines" => ("one string", vec![call("")]),
                 _ => (
                     "a family of strings, and an optional separator `sep:` by name",
-                    "`concat(xs, sep: \", \")`",
+                    match second {
+                        // `""` is the default separator, so the call without it is the same.
+                        Some("\"\"") => vec![call(""), call("sep: \"\"")],
+                        Some(sep) => vec![call(&format!("sep: {sep}"))],
+                        None if written.len() > 1 => vec![call("sep: s")],
+                        None => vec![call("")],
+                    },
                 ),
             };
             self.error_offering(
                 span,
                 format!("`{word}` takes {shape}"),
-                [format!("repair: write {form}")],
+                forms
+                    .into_iter()
+                    .map(|form| format!("repair: write {form}")),
             );
             return m.ty(Ty::empty());
         }

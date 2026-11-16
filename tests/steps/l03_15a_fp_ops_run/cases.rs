@@ -520,6 +520,10 @@ fn split_lines_and_concat() {
                 "true",
             ),
             ("concat(\"\".split(\",\"), sep: \",\") == \"\"", "true"),
+            // The repairs offered below, each run.
+            ("[\"a\", \"b\"].concat", "ab"),
+            ("[\"a\", \"b\"].concat(sep: \"-\")", "a-b"),
+            ("[\"a\", \"b\"].concat(sep: \"\")", "ab"),
         ],
     );
     saying(
@@ -530,6 +534,46 @@ fn split_lines_and_concat() {
             ("[1, 2].split(\",\")", "`split` reads strings"),
             ("\"a\".split()", "`split` takes"),
             ("concat([\"a\"], by: \",\")", "`concat` takes"),
+        ],
+    );
+}
+
+/// A call of `split`, `lines` or `concat` of the wrong shape is repaired with the operands the
+/// program wrote, in its own style, method or function; a missing operand is named by its
+/// parameter, as DESIGN step L3.2 writes it, and no separator the program did not write is
+/// offered (plan row FAIL-l01-37a-split-snapshot).
+#[test]
+fn a_misshapen_string_call_is_repaired_with_the_programs_operands() {
+    saying(
+        "strings_repair",
+        &[
+            (
+                "[\"a\", \"b\"].concat(\"-\")",
+                "repair: write `[\"a\", \"b\"].concat(sep: \"-\")`",
+            ),
+            (
+                "[\"a\", \"b\"].concat(\"\")",
+                "repair: write `[\"a\", \"b\"].concat`",
+            ),
+            (
+                "[\"a\", \"b\"].concat(\"\")",
+                "repair: write `[\"a\", \"b\"].concat(sep: \"\")`",
+            ),
+            (
+                "concat([\"a\"], \",\")",
+                "repair: write `concat([\"a\"], sep: \",\")`",
+            ),
+            (
+                "concat([\"a\"], by: \",\")",
+                "repair: write `concat([\"a\"], sep: \",\")`",
+            ),
+            ("\"a\".split()", "repair: write `\"a\".split(sep)`"),
+            ("split(\"a\")", "repair: write `split(\"a\", sep)`"),
+            (
+                "\"a\".split(\",\", \";\")",
+                "repair: write `\"a\".split(\",\")`",
+            ),
+            ("\"a\".lines(1)", "repair: write `\"a\".lines`"),
         ],
     );
 }
