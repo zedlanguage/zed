@@ -4263,6 +4263,207 @@ mod tests {
         assert!(inside > 100, "{inside} keys inside");
     }
 
+    /// The key `k`, read as lying near the integer `centre`, moved to lie near the 64-bit
+    /// integer `to` by the same offset, `None` when the offset is more than `window` (none for
+    /// no bound). The moved key has the same order against every integer once both are moved:
+    /// an integer stays an integer, any other number becomes the rational of its moved value (a
+    /// number of another kind than the integers is greater than the integer of its value and
+    /// less than every greater integer, whatever its kind, `number_cmp`), and a key of no finite
+    /// number (another kind, a NaN, an infinity) lies on one side of every integer and is kept.
+    fn moved(k: &Value, centre: &BigInt, to: i64, window: Option<i64>) -> Option<Value> {
+        let Some(kind) = k.number_kind() else {
+            return Some(k.clone());
+        };
+        let Exact::Finite(x) = k.exact() else {
+            return Some(k.clone());
+        };
+        let offset = x.sub(&Rat::int(centre.clone())).expect("memory");
+        if let Some(w) = window
+            && (offset > Rat::int(w.into()) || offset < Rat::int((-w).into()))
+        {
+            return None;
+        }
+        let y = offset.add(&Rat::int(to.into())).expect("memory");
+        Some(match kind {
+            0 => Value::integer(y),
+            _ => Value::rat(y),
+        })
+    }
+
+    /// Keys of every number kind near the integer `e`: the floats of each width nearest it and
+    /// one step either side, rationals 1/2 and 2^-200 either side, and the integers within 2.
+    fn named_near(e: &BigInt) -> Vec<Value> {
+        let x = e.to_f64().expect("a finite float");
+        let y = e.to_f32().expect("a finite float");
+        let tiny = Rat::new(BigInt::one(), BigInt::from(2).pow(200u32)).expect("a nonzero den");
+        let half = Rat::new(BigInt::one(), BigInt::from(2)).expect("a nonzero den");
+        let at = Rat::int(e.clone());
+        let mut keys = vec![
+            Value::float(x),
+            Value::float(x.next_up()),
+            Value::float(x.next_down()),
+            Value::float32(y),
+            Value::float32(y.next_up()),
+            Value::float32(y.next_down()),
+        ];
+        for r in [&tiny, &half] {
+            keys.push(Value::rat(at.add(r).expect("memory")));
+            keys.push(Value::rat(at.sub(r).expect("memory")));
+        }
+        keys.extend((-2..=2).map(|d| Value::int(e + d)));
+        keys
+    }
+
+    #[test]
+    fn the_entry_beside_a_key_of_a_wide_range_is_the_one_a_built_set_gives() {
+        // Plan row TEST-wide-range-next-key-order: `Span::beside` on wide ends reads the entry
+        // beside a key from the key's value (`next_integer`); it is compared with a built set
+        // at generated keys and named ones near both ends: floats of both widths near 2^63, 2^64
+        // and 2^100 and their neighbors, rationals just inside and just outside each end,
+        // negative zero, NaN and the infinities of both widths, integers kept as powers, and
+        // values of other kinds. Each span's ends lie near two centres; the ends and each key
+        // near a centre are moved down into the 64-bit range by the same offset (`moved`), so
+        // the built set is small, and the answer moved back. With both ends near one centre
+        // the set of the wide integers themselves is built as well. A key too far from both
+        // ends to move is checked against the binary search `search_beside`, which reads only
+        // the order. And `wide_beside` itself, given the moved ends, agrees with the small set.
+        let mut d = Draw(crate::seed::seed(
+            "the_entry_beside_a_key_of_a_wide_range_is_the_one_a_built_set_gives",
+        ));
+        let two = BigInt::from(2);
+        let centres = [
+            BigInt::zero(),
+            two.pow(63u32),
+            -two.pow(63u32),
+            two.pow(64u32),
+            -two.pow(64u32),
+            two.pow(100u32),
+            -two.pow(100u32),
+        ];
+        // The moved centres of a span whose ends lie near two centres: 0 and `GAP`, with keys
+        // moved only within `WINDOW` of their centre, so a moved key lies on the same side of
+        // the far end as before. `WINDOW` holds a step of an `f64` near 2^64.
+        const GAP: i64 = 1 << 14;
+        const WINDOW: i64 = 1 << 12;
+        let kept_powers: Vec<Value> = ["1e19", "-1e19", "1e30", "-1e30", "18446744073709551616"]
+            .into_iter()
+            .flat_map(|t| {
+                let r = Rat::decimal(t).expect("memory").expect("a decimal");
+                [Value::integer(r.clone()), Value::rat(r)]
+            })
+            .collect();
+        let mut others = keys_near(&[]);
+        others.extend([
+            Value::float32(f32::NAN),
+            Value::float32(-0.0),
+            Value::float32(f32::INFINITY),
+            Value::float32(f32::NEG_INFINITY),
+        ]);
+        let (mut by_set, mut by_search) = (0usize, 0usize);
+        for _ in 0..40 {
+            let mut c = [
+                d.below(centres.len() as u64) as usize,
+                d.below(centres.len() as u64) as usize,
+            ];
+            c.sort_by_key(|&i| centres[i].clone());
+            let mut off = [d.below(81) as i64 - 40, d.below(81) as i64 - 40];
+            let one = c[0] == c[1];
+            if one {
+                off.sort();
+            }
+            let (c_lo, c_hi) = (&centres[c[0]], &centres[c[1]]);
+            let (lo, last) = (c_lo + off[0], c_hi + off[1]);
+            let lazy = Family::range_wide(lo.clone(), last.clone());
+            let to_hi = if one { 0 } else { GAP };
+            let small = Family::set(integers(&off[0].into(), &(to_hi + off[1]).into()));
+            let wide_set = one.then(|| Family::set(integers(&lo, &last)));
+            let (lo_v, last_v) = (Value::int(lo.clone()), Value::int(last.clone()));
+            // Keys near each centre, by the centre they are read near.
+            let mut keys: Vec<(Value, usize)> = Vec::new();
+            for (side, centre) in [c_lo, c_hi].into_iter().enumerate() {
+                for e in [&lo, &last, centre] {
+                    keys.extend(named_near(e).into_iter().map(|k| (k, side)));
+                }
+                for _ in 0..30 {
+                    let at = centre + (d.below(201) as i64 - 100);
+                    let k = match d.below(4) {
+                        0 => Value::int(at),
+                        1 => {
+                            let den = BigInt::from(d.below(8) + 1);
+                            let num = &at * &den + BigInt::from(d.below(8));
+                            Value::rat(Rat::new(num, den).expect("a nonzero den"))
+                        }
+                        2 => Value::float(at.to_f64().expect("a finite float")),
+                        _ => Value::float32(at.to_f32().expect("a finite float")),
+                    };
+                    keys.push((k, side));
+                }
+                keys.extend(kept_powers.iter().map(|k| (k.clone(), side)));
+            }
+            keys.extend(others.iter().map(|k| (k.clone(), 0)));
+            for (k, side) in keys {
+                let at = format!("{lo} ..= {last} at {k}");
+                let (centre, to) = match side {
+                    0 => (c_lo, 0),
+                    _ => (c_hi, to_hi),
+                };
+                let window = (!one).then_some(WINDOW);
+                for after in [false, true] {
+                    let got = lazy.entry_beside(&k, after).map(|(k, _)| k);
+                    if let Some(set) = &wide_set {
+                        let want = set.entry_beside(&k, after).map(|(k, _)| k);
+                        assert_eq!(got, want, "{at}, after {after}, the wide set");
+                    }
+                    match moved(&k, centre, to, window) {
+                        Some(m) => {
+                            by_set += 1;
+                            let small_answer = small.entry_beside(&m, after).map(|(k, _)| k);
+                            let (small_lo, small_last) =
+                                (Value::Int(off[0]), Value::Int(to_hi + off[1]));
+                            assert_eq!(
+                                wide_beside(&small_lo, &small_last, &m, after),
+                                small_answer,
+                                "{at}, moved to {m}, after {after}, `wide_beside` on 64-bit ends"
+                            );
+                            let want = small_answer.map(|j| {
+                                let j = BigInt::from(j.as_int().expect("a 64-bit integer"));
+                                match one || j < BigInt::from(GAP / 2) {
+                                    true => Value::int(j - off[0] + &lo),
+                                    false => Value::int(j - (to_hi + off[1]) + &last),
+                                }
+                            });
+                            assert_eq!(got, want, "{at}, moved to {m}, after {after}");
+                        }
+                        None => {
+                            by_search += 1;
+                            let (near, far) = match after {
+                                true => (&lo_v, &last_v),
+                                false => (&last_v, &lo_v),
+                            };
+                            let want = match (past(far, &k, after), past(near, &k, after)) {
+                                (false, _) => None,
+                                (true, true) => Some(near.clone()),
+                                (true, false) => Some(Value::int(search_beside(
+                                    lo.clone(),
+                                    last.clone(),
+                                    &k,
+                                    after,
+                                ))),
+                            };
+                            assert_eq!(got, want, "{at}, after {after}, by search");
+                        }
+                    }
+                }
+            }
+            assert!(!built_map(&lazy), "a read built {lo} ..= {last}");
+        }
+        // Every span has its named integers near both ends within the window.
+        assert!(
+            by_set > 0,
+            "{by_set} keys checked by a built set, {by_search} by search"
+        );
+    }
+
     #[test]
     fn signed_zeros_differ_and_nans_are_one_value() {
         assert_ne!(Value::float(0.0), Value::float(-0.0));
