@@ -14,8 +14,17 @@
 //! leaves its atom in the type; one never read leaves none), and at run time by `zedc run` and by
 //! a built executable, which must agree with each other and with the rules. The constant
 //! operand (`false`, `true`) is written as a literal, the case a constant fold or an absorption
-//! law (`d && false` to `false`) would change, and `d` is a build-stage constant in
-//! `constant_operands_keep_their_order`, the case partial evaluation folds.
+//! law (`d && false` to `false`) would change. `d` is a build-stage constant that partial
+//! evaluation (`zedc_stage::stage::mix`, which `zedc run` and `zedc build` both run first)
+//! folds to `#divByZero`, as `partial_evaluation_folds_d_before_either_engine_runs` checks on
+//! the staged program. In `constant_operands_keep_their_order` every operand is constant, so
+//! partial evaluation evaluates each whole term with the kernel's evaluator and leaves both
+//! engines only the printed text; that test checks the evaluator's order, not the mixing of
+//! an `if`. In `mixed_operands_keep_their_order` the other operand is known only at run time,
+//! so partial evaluation mixes the `if` of each `&&` and `||` itself, keeping the side it
+//! knows and leaving the other to run: that is where it could swap the operands, and swapping
+//! them there turns that test red (and `run_time_operands_agree_with_the_rules` too), while
+//! `constant_operands_keep_their_order` stays green.
 
 use std::ffi::OsString;
 
@@ -279,6 +288,81 @@ fn run_time_operands_agree_with_the_rules() {
             (&["1", "1", "0"], "1 10 2 10 3 0 4 0 5 1 6 1 7 8 8 8 9 8"),
             // Control: nothing fails; 5 > 3, 5 >= 3, and not 3 > 5.
             (&["1", "9", "3"], "1 10 2 10 3 0 4 0 5 1 6 1 7 1 8 1 9 0"),
+        ],
+    );
+}
+
+/// `d` is `#divByZero`, a constant of the build stage, as in [`CONSTANT_OPERANDS`], and `b` is
+/// read from the first argument, so it is known only at run time. Each `&&` and `||` here
+/// has one operand of each stage: the term is not a build-stage term, and partial evaluation
+/// mixes it as an `if` whose condition or arm it knows (`d` evaluated to `#divByZero`) and
+/// whose other part it leaves to run.
+const MIXED_OPERANDS: &str = "\
+dz(k: int) = (5 div k) > 0;
+
+main(m: MainArgs) {
+  d = dz(k: 0);
+  b = (m.args[0] else \"\") == \"t\";
+  m.stdout <- \"1 ${(if d && b { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"2 ${(if b && d { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"3 ${(if d || b { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"4 ${(if b || d { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"5 ${(if !(d && b) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"6 ${(if (d && b) || true { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"7 ${(if true || (d && b) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"8 ${(if false && (d || b) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"9 ${(if (d || b) && false { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"10 ${(if (b && d) || !b { 1 } else { 0 }) else #divByZero -> 9}\";
+}
+";
+
+/// The text of `main` in `src` after partial evaluation, the program `zedc run` runs and
+/// `zedc build` compiles (`zedc::run::Program::stage`).
+fn staged_main(src: &str) -> String {
+    let (staged, _) = zedc::run::load(src.as_bytes()).unwrap().stage();
+    let main = staged.unit().defs.iter().find(|d| d.name == "main");
+    main.expect("main").term.to_string()
+}
+
+#[test]
+fn partial_evaluation_folds_d_before_either_engine_runs() {
+    // Each `${…}` of `CONSTANT_OPERANDS` reads only `d` and literals, so the build evaluates
+    // it whole, by the kernel's evaluator, and both engines only push the text.
+    let main = staged_main(CONSTANT_OPERANDS);
+    assert!(!main.contains("dz("), "{main}");
+    assert!(
+        main.contains("\"1 9 2 0 3 9 4 1 5 9 6 9 7 9 8 9 9 9 10 9 11 1 12 0 13 9\""),
+        "{main}"
+    );
+    // In `MIXED_OPERANDS` the build evaluates `d` and mixes each `if` the elaborator wrote for
+    // an `&&` or `||` around it: `d && b` and `d || b` become `#divByZero`, while `b && d` and
+    // `b || d` keep `b` first, to be read at run time.
+    let main = staged_main(MIXED_OPERANDS);
+    assert!(!main.contains("dz("), "{main}");
+    assert!(
+        main.contains("\"1 \" ++ String(match #divByZero {"),
+        "{main}"
+    );
+    assert!(
+        main.contains("\"3 \" ++ String(match #divByZero {"),
+        "{main}"
+    );
+    assert!(
+        main.contains("if b { #divByZero } else { false }"),
+        "{main}"
+    );
+    assert!(main.contains("if b { true } else { #divByZero }"), "{main}");
+}
+
+#[test]
+fn mixed_operands_keep_their_order() {
+    // `d` first fails the term whatever `b` is; `b` first decides it where it decides it.
+    both_engines(
+        "mixed_operands",
+        MIXED_OPERANDS,
+        &[
+            (&["t"], "1 9 2 9 3 9 4 1 5 9 6 9 7 1 8 0 9 9 10 9"),
+            (&["f"], "1 9 2 0 3 9 4 9 5 9 6 9 7 1 8 0 9 9 10 1"),
         ],
     );
 }
