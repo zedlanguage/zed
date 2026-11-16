@@ -55,9 +55,14 @@ fn a_line_that_is_not_utf8_ends_the_run_with_status_1_and_writes_nothing() {
 #[test]
 fn a_read_of_a_range_is_handled_before_the_push() {
     // A missed read's atom is the program's own, which it can handle where it makes it: only
-    // `#ioError` bubbles out of a push, and the miss is handled with `else`.
+    // `#ioError` bubbles out of a push, and the miss is handled with `else`. The key is one the
+    // checker cannot know, as the run passes no argument: a read at a literal key outside the
+    // range is a static error (row RANGE-literal-reads).
     let text = |k: u8| {
-        format!("main(m: MainArgs) {{\n    m.stdout <- \"${{(0 ..< 3)[{k}] else -1}}\";\n}}\n")
+        format!(
+            "main(m: MainArgs) {{\n    m.stdout <- \
+             \"${{(0 ..< 3)[if m.args.count > 0 {{ 0 }} else {{ {k} }}] else -1}}\";\n}}\n"
+        )
     };
     let ran = both("range_hit", &text(1), b"");
     assert_eq!((ran.status, ran.stdout.as_str()), (0, "1\n"), "{ran:?}");
@@ -71,7 +76,8 @@ fn a_push_of_an_atom_the_program_makes_is_still_refused() {
     let src = d.join("range_unhandled.zed");
     std::fs::write(
         &src,
-        "main(m: MainArgs) {\n    m.stdout <- \"${(0 ..< 3)[1]}\";\n}\n",
+        // A key the checker cannot know: `(0 ..< 3)[1]` has no miss (row RANGE-literal-reads).
+        "main(m: MainArgs) {\n    m.stdout <- \"${(0 ..< 3)[m.args.count]}\";\n}\n",
     )
     .unwrap();
     let ran = interpreter(&src, &[], b"");

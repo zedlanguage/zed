@@ -16109,6 +16109,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     };
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
+                    let r = match self.exact_key_read(&sig, &x) {
+                        Some(true) => found_inside(r, &x.ty),
+                        _ => r,
+                    };
                     out = out.union(&r);
                 }
                 Piece::Var(_) if self.carriers_only(&p) => {
@@ -16193,6 +16197,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         )
                         .0;
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
+                    let r = match self.exact_key_read(&sig, &x) {
+                        Some(true) => found_inside(r, &x.ty),
+                        _ => r,
+                    };
                     out = out.union(&r);
                 }
                 Piece::Fn(sig) if of.is_some() || site.is_some() => {
@@ -22286,7 +22294,10 @@ impl<'a> Ck<'_, 'a> {
             return None;
         }
         let keys = Ty::union_all(sig.arrows.iter().map(|a| &a.params[0]));
-        if x.ty.meets(&keys) {
+        // A family with exact keys, as `2 ..< 5`, whose arrows say only `int`, is outside where
+        // the key's ints are known and none is one of them (RANGE-literal-reads).
+        let exact = self.exact_key_read(sig, x) == Some(false);
+        if !exact && x.ty.meets(&keys) {
             return None;
         }
         let miss = match dense {
@@ -22295,7 +22306,11 @@ impl<'a> Ck<'_, 'a> {
         };
         let entries = Ty::union_all(sig.arrows.iter().map(|a| &a.result))
             .without(&(&KType::atom("notFound") | &KType::atom("outOfBounds")));
-        let (key, keys_text) = (self.text(&x.ty), self.text(&keys));
+        let keys_text = match (&sig.keys, exact) {
+            (Some(k), true) => exact_keys_text(k),
+            _ => self.text(&keys),
+        };
+        let key = self.text(&x.ty);
         let at = x.at.unwrap_or(span);
         let mut notes = vec![Note {
             span: of,
@@ -22303,7 +22318,8 @@ impl<'a> Ck<'_, 'a> {
         }];
         notes.extend(self.derive(&[at, of]));
         let mut menu = vec![format!("repair: read the map with a key in `{keys_text}`")];
-        if !dense {
+        // The wider keys of a family with exact keys would be its arrows' `int` again.
+        if !dense && !exact {
             // The key's carriers and atoms, so the wider keys are a type the program can write
             // for any key of the key's kind, not only the literal read here.
             let wider = [
@@ -22355,6 +22371,60 @@ impl<'a> Ck<'_, 'a> {
         );
         Some(entries)
     }
+
+    /// Whether the read of the family `sig` at the key `x` finds its key, where `sig` has
+    /// exact keys ([`Sig::keys`], a range whose ends the text fixes) and the key's ints are
+    /// known: `Some(true)` where each is one of the keys, `Some(false)` where none is, `None`
+    /// where some may be and some not, where the keys are not exact, or where the key may be
+    /// a value other than an int or an atom (row RANGE-literal-reads, DESIGN.md
+    /// sec:type_language, the `m[k]` row: `V` if `k : L`, a static error if `k` is disjoint
+    /// from `U`). The key's ints are its value where [`Ck::known`] gives one, whose proof says
+    /// it is the key's value at every evaluation, and else the ints its type lists, as a
+    /// literal key's type `7` does; a key of infinitely many ints, as `int`, gives `None`. The
+    /// key's loose atoms are not looked up: they pass through the read
+    /// ([`found_inside`]). Not read: the ints a test or a ranged parameter bounds a computed
+    /// key to ([`Ck::ints_here`]), which would make `r[k]` exact under `if k >= 2 && k < 5`
+    /// too (row RANGE-read-key-intervals).
+    // Complexity tradeoff: O(k) for a key type listing k ints, each tested against two ends,
+    // and O(1) for a known value; the naive way, the keys listed in the key type and the
+    // subtype test of the two types, is O(b - a) for a range `a ..< b` (row RANGE-literal-keys).
+    fn exact_key_read(&mut self, sig: &Sig, x: &Arg<'a>) -> Option<bool> {
+        let keys = sig.keys.as_ref()?;
+        let key = x.ty.without_loose();
+        if key.lists_nothing() || !key.subtype(&Ty::carrier(Carrier::Int)) {
+            return None;
+        }
+        let known = x.expr.and_then(|e| self.known(e).value);
+        let ints = match known {
+            Some(v) => vec![v],
+            None => key.set.ints_listed()?,
+        };
+        let held = ints.iter().filter(|v| keys.holds(v)).count();
+        match held {
+            0 if !ints.is_empty() => Some(false),
+            n if n == ints.len() && n > 0 => Some(true),
+            _ => None,
+        }
+    }
+}
+
+/// The text of the exact keys `k` ([`Sig::keys`]) as a message prints them, a type the
+/// program can write: `int[2..=4]`, each end inclusive as a signature prints a range
+/// (DESIGN.md L1.24), and `Never` for none, the empty type's name.
+fn exact_keys_text(k: &WrittenRange) -> String {
+    match (&k.low, &k.high) {
+        (Some(l), Some(h)) if l.surface_cmp(h).is_some_and(|o| o.is_gt()) => "Never".to_string(),
+        _ => k.text.to_string(),
+    }
+}
+
+/// `r`, the entry type of a read of a family at a key each of whose ints is one of its keys
+/// ([`Ck::exact_key_read`]), with no miss: neither `#notFound` nor `#outOfBounds`, unless the
+/// key's own loose atoms hold it, which the read passes by and does not make.
+fn found_inside(r: Ty, key: &Ty) -> Ty {
+    let misses = &KType::atom("notFound") | &KType::atom("outOfBounds");
+    let dropped = &misses - &key.loose();
+    r.without(&dropped)
 }
 
 /// `r`, the entry type of a read of a family whose keys are one integer interval, every key

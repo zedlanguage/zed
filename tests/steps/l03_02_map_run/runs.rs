@@ -381,11 +381,15 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         // A range is `int ->? int`: a read may miss, and since its keys are one integer
         // interval, every key present, the miss is `#outOfBounds` whatever its low end
-        // (DESIGN.md sec:type_language, the `m[k]` row, `lst : int[a..<b]`).
+        // (DESIGN.md sec:type_language, the `m[k]` row, `lst : int[a..<b]`). A read of a range
+        // with literal ends at a key known to be outside it is a static error (row
+        // RANGE-literal-reads, `l03_15a_fp_ops_run::cases`), so a miss here reads a key the
+        // checker cannot know, `if m.args.count > 0 { a key } else { the key read }`, one arm
+        // in the keys and one not; these runs pass no argument, so the run reads the second.
         ("a_read_in_a_range", "${(0 ..< 3)[1] else -1}", lit(1)),
         (
             "a_read_past_a_range_from_0",
-            "${(0 ..< 3)[3] is #outOfBounds}",
+            "${(0 ..< 3)[if m.args.count > 0 { 0 } else { 3 }] is #outOfBounds}",
             lit(true),
         ),
         (
@@ -395,29 +399,30 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "a_read_past_a_range_from_2",
-            "${(2 ..< 5)[5] is #outOfBounds}",
+            "${(2 ..< 5)[if m.args.count > 0 { 2 } else { 5 }] is #outOfBounds}",
             lit(true),
         ),
         (
             "a_read_below_a_range_from_2",
-            "${(2 ..< 5)[1] is #outOfBounds}",
+            "${(2 ..< 5)[if m.args.count > 0 { 2 } else { 1 }] is #outOfBounds}",
             lit(true),
         ),
         (
             "a_read_past_a_range_from_a_negative_end",
-            "${(-2 ..= 1)[2] is #outOfBounds}",
+            "${(-2 ..= 1)[if m.args.count > 0 { 0 } else { 2 }] is #outOfBounds}",
             lit(true),
         ),
         (
             "a_read_past_a_range_with_computed_ends",
-            "${(2 - 1 ..< 2 + 1)[0] is #outOfBounds}",
+            "${(2 - 1 ..< 2 + 1)[if m.args.count > 0 { 1 } else { 0 }] is #outOfBounds}",
             lit(true),
         ),
         // `map` keeps the keys, so a mapped range still misses with `#outOfBounds`; `where`
         // may drop any key, so a filtered one misses with `#notFound`.
         (
             "a_read_past_a_mapped_range_from_2",
-            "${(2 ..< 5).map(x -> x * x)[5] is #outOfBounds}",
+            "${(2 ..< 5).map(x -> x * x)[if m.args.count > 0 { 2 } else { 5 }] \
+             is #outOfBounds}",
             lit(true),
         ),
         (
@@ -441,7 +446,8 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "reads_at_both_ends_of_a_negative_range",
-            "${[(-5 ..= -2)[-5] else 0, (-5 ..= -2)[-2] else 0, (-5 ..= -2)[-1] else 0]}",
+            "${[(-5 ..= -2)[-5] else 0, (-5 ..= -2)[-2] else 0, \
+             (-5 ..= -2)[if m.args.count > 0 { -2 } else { -1 }] else 0]}",
             list(&[-5, -2, 0]),
         ),
         (
@@ -532,8 +538,10 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "reads_of_a_range_just_past_64_bits",
             "${[(9223372036854775808 ..< 9223372036854775811)[9223372036854775808] else 0, \
              (9223372036854775808 ..< 9223372036854775811)[9223372036854775810] else 0, \
-             (9223372036854775808 ..< 9223372036854775811)[9223372036854775811] else 0, \
-             (9223372036854775808 ..< 9223372036854775811)[9223372036854775807] else 0]}",
+             (9223372036854775808 ..< 9223372036854775811)\
+             [if m.args.count > 0 { 9223372036854775808 } else { 9223372036854775811 }] else 0, \
+             (9223372036854775808 ..< 9223372036854775811)\
+             [if m.args.count > 0 { 9223372036854775808 } else { 9223372036854775807 }] else 0]}",
             ints(&[wide(0, 0), wide(0, 2), 0.into(), 0.into()]),
         ),
         (

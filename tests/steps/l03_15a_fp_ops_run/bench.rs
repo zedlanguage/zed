@@ -508,6 +508,26 @@ fn ranges_with_literal_ends_check_in_linear_time() {
     );
 }
 
+/// Plan row RANGE-literal-reads: checking n statements, the i-th `(0 ..< i + 1)[i]` and
+/// `(i ..< 2 ^ 70)[i]`, is linear in n. A read of exact keys at a known key tests the key
+/// against the range's two ends, O(1) whatever the range's size; listing the keys, as the key
+/// type of an array display does, would check it in O(n²), and a range past 64 bits not at all.
+#[test]
+fn reads_of_exact_keys_at_known_keys_check_in_linear_time() {
+    const N_UNIT: usize = 300;
+    let units = scaling::inputs(N_UNIT, |k| {
+        let text: String = (0..k)
+            .map(|i| format!("x{i} = (0 ..< {i} + 1)[{i}];\ny{i} = ({i} ..< 2 ^ 70)[{i}];\n"))
+            .collect();
+        checked(&text)
+    });
+    scaling::check(
+        "checking n statements `(0 ..< i + 1)[i]` and `(i ..< 2 ^ 70)[i]`",
+        N_UNIT,
+        |k| assert!(units[&k].check().errors.is_empty()),
+    );
+}
+
 /// A count of entry steps, the work of a walk by its construction: `foldl` over n entries
 /// takes n + 1 frames, so the frames at 8n are near 8 times those at n.
 #[test]

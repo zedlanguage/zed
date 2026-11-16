@@ -946,6 +946,82 @@ fn a_zip_of_ranges_with_unequal_keys_is_rejected() {
     );
 }
 
+/// Plan row RANGE-literal-reads (DESIGN.md sec:type_language, the `m[k]` row): a read of a
+/// range with exact keys at a key whose ints are known is `V` with no miss where each of them
+/// is a key, so it prints with no `else`, and a static error where none is, its message
+/// printing the keys as a type the program can write, `int[2..=4]`. A key whose ints the
+/// checker does not know keeps the miss, as does one with a key on each side.
+#[test]
+fn a_read_of_exact_keys_at_a_known_key_has_no_miss() {
+    prints(
+        "range_reads",
+        &[
+            ("(2 ..< 5)[2]", "2"),
+            ("(2 ..< 5)[4]", "4"),
+            ("(2 ..= 4)[3]", "3"),
+            ("(0 ..< 3)[(1)]", "1"),
+            ("(-3 ..< 0)[-2]", "-2"),
+            ("(0 ..< 3).zip([7, 8, 9])[1][1]", "8"),
+            ("(2 ..< 5).zip(2 ..= 4)[3][1]", "3"),
+            // A key past 64 bits, 2 ^ 70 + 1 written as a literal: `2 ^ 70 + 1` written as an
+            // operation on bare literals is any number kind (row RANGE-read-literal-operation).
+            (
+                "(2 ^ 70 ..< 2 ^ 70 + 2)[1180591620717411303425] - 2 ^ 70",
+                "1",
+            ),
+        ],
+    );
+    saying(
+        "range_reads",
+        &[
+            ("(2 ..< 5)[7]", "the map's keys are `int[2..=4]`"),
+            ("(2 ..< 5)[5]", "the map's keys are `int[2..=4]`"),
+            ("(2 ..< 5)[1]", "the map's keys are `int[2..=4]`"),
+            ("(2 ..< 5)[-1]", "the map's keys are `int[2..=4]`"),
+            ("(5 ..< 2)[3]", "the map's keys are `Never`"),
+            (
+                "(2 ..< 5).zip(2 ..= 4)[5]",
+                "the map's keys are `int[2..=4]`",
+            ),
+        ],
+    );
+    let main = |binds: &str, read: &str| {
+        format!("main(m: MainArgs) {{\n{binds}  r = {read};\n  m.stdout <- \"${{r}}\";\n}}\n")
+    };
+    let accepted = [
+        (main("  n = 4;\n", "(0 ..< n)[n - 1]"), "3\n"),
+        (main("  k = 1 + 1;\n", "(2 ..< 5)[k]"), "2\n"),
+        (main("  n = 1;\n", "(2 ..< 5)[n + 1]"), "2\n"),
+        // Each of the key's ints, 2 and 4, is a key, whichever the run takes.
+        (
+            main("", "(2 ..< 5)[if m.args.count > 0 { 4 } else { 2 }]"),
+            "2\n",
+        ),
+    ];
+    for (i, (src, want)) in accepted.iter().enumerate() {
+        assert_eq!(
+            ran(&format!("range_read_known_{i}"), src),
+            (0, want.to_string()),
+            "{src}"
+        );
+    }
+    let refused = [
+        (
+            main("  n = 4;\n", "(0 ..< n)[n]"),
+            "`int[0..=3]`, which hold no `4`",
+        ),
+        (main("", "(2 ..< 5)[m.args.count]"), "String | #outOfBounds"),
+        (
+            main("", "(2 ..< 5)[if m.args.count > 0 { 5 } else { 2 }]"),
+            "String | #outOfBounds",
+        ),
+    ];
+    for (i, (src, text)) in refused.iter().enumerate() {
+        let (status, said) = ran(&format!("range_read_unknown_{i}"), src);
+        assert!(status != 0 && said.contains(text), "{src}\n{said}");
+    }
+}
+
 /// The misuses of `++` and `zip`, each named in the program's own words: unequal keys, with
 /// the key that is on one side only; a family whose keys are not ranks; a string beside a
 /// list; a wrong argument list.
