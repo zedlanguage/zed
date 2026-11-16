@@ -37,7 +37,9 @@ use super::Refusal;
 // and size of coefficient. It is measured, and the bound is loose for most covers: on the 185
 // calls past 3,100,000 units the CPU time per unit ran from 0.6 to 28 ns, median 16, and 139
 // of them took under 250 ms, so a cover refused at the limit may have needed far less
-// (COMPLEXITY.md, PRES-pugh-work-budget; the refit is row PRES-work-charge-fit).
+// (COMPLEXITY.md, PRES-pugh-work-budget). After the refit of PRES-work-charge-fit
+// ([`SOLVER_STEP`], [`QUESTION_ROW`]) no cover of the step tests or the benchmarks ran past
+// its prediction at loads of 36 to 75; still measured, not proved.
 pub const EXACT_LIMIT: u64 = 3_100_000;
 
 thread_local! {
@@ -132,23 +134,45 @@ thread_local! {
 /// lists (PRES-pugh-work-budget).
 pub const SOLVER_UNIT: u64 = 100;
 
-/// The units of [`EXACT_LIMIT`] one step of the solver counts for ([`charge`]), and the units
-/// one constraint of a question's formula counts for ([`Work::question`]): 100 each, the
-/// charges of PRES-pugh-work-budget. Seat Opus of PRES-pugh-xr round 3 fit 45 and 150 on the
+/// The units of [`EXACT_LIMIT`] one step of the solver counts for ([`charge`]): 100, as
+/// one constraint of a question's formula counted for ([`QUESTION_ROW`]) in
+/// PRES-pugh-work-budget. Seat Opus of PRES-pugh-xr round 3 fit 45 and 150 on the
 /// thread CPU time of whole covers (13,248 covers over 2 ms, loads 54 to 94: none over the
 /// prediction 2 ms + 80 ns a unit, least ratio 1.028, median 1.95), on a tree without that
 /// round's counted shadows (`exact::Work::eliminate`). With those shadows also charged, 45 and
 /// 150 refused `omega::twin_definitions_merge_in_time_near_linear`, which 100 and 100 answer,
-/// so the fit no longer described the charges in force and was not merged: the refit on the
-/// merged charges, per site, is open (PRES-work-charge-fit).
+/// so the fit no longer described the charges in force and was not merged.
+///
+/// The refit on the merged charges (PRES-work-charge-fit) kept a step at 100 and added the
+/// charges the per-site timings showed missing: each atom the Omega test takes from its queue
+/// (`shadow_logged`), each piece of a cell the cover cuts from its gap (`exact::cover`), and
+/// none for a call whose solver answer is already empty (`exact_each`). Replayed on every
+/// cover the step tests and the benchmarks make (28,838 and about 9,030 covers, run with no
+/// limit at loads of 36 to 75 on 32 cores), none then took more CPU time than its prediction;
+/// the least ratio was 1.09 (`bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work`,
+/// record 1, load 62) and in the step tests 1.82. COMPLEXITY.md, PRES-work-charge-fit.
 // Complexity tradeoff: one factor for all solver steps and one for question rows is the
 // naive charge; a factor per site fit by a linear program held on the data it was fit on
 // and not on held-out data (round 3, least ratio 0.42 on the benchmarks), so a per-site fit
 // needs per-site timings (a batch of one site's steps between two reads of
 // `CLOCK_THREAD_CPUTIME_ID`, which reads to 1 ns at about 0.6 µs a read).
 pub(super) const SOLVER_STEP: u64 = 100;
-/// See [`SOLVER_STEP`].
-pub(super) const QUESTION_ROW: u64 = 100;
+/// The units one constraint of a question's formula counts for ([`Work::question`]): the
+/// passes each question makes over its formula before the solver's first charged step
+/// (`signed`, `forced`, `row_sums`, `reduced`, `modular_answer`, `Renamed::of`, `absorbed`,
+/// the hulls of its disjunctions and `drop_by_bounds`), none of which charge the meter. Timed
+/// on the cover of record 1 of `bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work`
+/// (1,001 questions of 10 rows): 23, 2, 8, 18, 17, 14, 6 and 17 µs a question, about 95 µs
+/// with the timer's own cost taken out, 9.5 µs a row; that cover took 84 to 105 ms of CPU time
+/// at loads of 55 to 72.
+// Complexity tradeoff: at 100 (8 µs a row) that cover was charged 1,157,868 units, a
+// prediction of 94.6 ms, and ran 1.02 times it at load 72 and under it (105 ms) at load 62.
+// At 150 it was safe (least ratio 1.43) but refused one more cover of the step tests (s22
+// `remainder_cases_cut_at_their_neighbors_at_modulus_5_seed_1`, 41 ms of CPU time). Used: 125
+// (10 µs a row), the least whole charge measured with no cover over its prediction at both
+// loads and no refusal added (PRES-work-charge-fit). A charge per pass by what it reads is the
+// alternative; each pass reads the formula once, so the rows count it to within that factor.
+pub(super) const QUESTION_ROW: u64 = 125;
 
 /// The units a piece read by `exact::residues` or `exact::outside` is charged: its ends
 /// converted, two residues taken and a set joined or met, measured at 0.6 to 0.8 µs a piece

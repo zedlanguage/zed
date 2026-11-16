@@ -137,6 +137,22 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each) -> Each {
         return found;
     }
     let (each, _) = found;
+    // A set of the solver's that is empty shows that `f` has no point, since each set it
+    // answers holds every value of its symbol with a point: every projection of `f` is then
+    // empty, the answer the covers below give (an empty `h` covered at once, every other
+    // cover's questions finding no point, `has_points` false), and a refusal stays as it was.
+    // Complexity tradeoff: naive version, the covers run as for any `f`, which first splits
+    // `f` into parts (`split`, O(t log t) for t terms, uncharged) and asks `has_points` of
+    // each part, so a call whose every set was empty took 2.4 ms of CPU time at 0 units and
+    // a refusal of `has_points` replaced answers known to be empty (`nest_empty`,
+    // PRES-work-charge-fit: past its prediction, as `split` is not charged). Used: one look at
+    // each answer, O(k) for k symbols, before any work.
+    if each.iter().any(|h| h.as_ref().is_ok_and(IntervalSet::is_empty)) {
+        let out = (each.into_iter())
+            .map(|r| r.map(|_| IntervalSet::empty()))
+            .collect();
+        return (out, Vec::new());
+    }
     let limit = EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT);
     // The conjuncts of `f` grouped into parts that share no atom (`split`): each symbol is
     // covered over its own part, and the answers stand once every part is shown to have a
@@ -562,6 +578,16 @@ fn cover(
                     }
                     c = c.join(&IntervalSet::from_pieces(listed));
                 }
+                // The cell cut from the gap and joined to the values found, charged first,
+                // [`PIECE`] units for each of its pieces and one more.
+                // Complexity tradeoff: naive version, uncharged, its share left to the charges
+                // of what made the cell's pieces; a cell of 2,000 pieces took 1.35 ms here at
+                // load 50 (675 ns a piece), and its cover ran 1.4 times its prediction (the
+                // benchmark of PRES-cover-time-per-unit, cover 0, PRES-work-charge-fit). Used:
+                // `O(m log(n/m + 1))` for a cell of m pieces and sets of n, as `minus` and
+                // `join` say, charged 16 units (1.28 µs predicted) a piece of the cell, the
+                // count read in O(1).
+                work.charge(PIECE.saturating_mul(c.len() as u64 + 1))?;
                 gap = gap.minus(&c);
                 found = found.join(&c);
                 strides.extend(more);

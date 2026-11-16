@@ -10642,6 +10642,17 @@ fn shadow_logged<'a>(
         put!(c.clone());
     }
     while let Some(x) = queue.pop_front() {
+        // With `charged`, each atom taken from the queue is charged one step: the checks below
+        // read its counts and may read its rows (`one_other`) before any pair is charged.
+        // Complexity tradeoff: naive version, only the pairs and the rows an elimination makes
+        // charged, which left these checks uncounted: l01_39 `families::bench::wide_scales`
+        // takes 16,256 atoms from the queue a cover and ran 104 to 113 ms of CPU time at 76,600
+        // units, 13 times its prediction, about 6 µs an atom at load 50 (PRES-work-charge-fit).
+        // Used: one step ([`meter::SOLVER_STEP`] units, 8 µs predicted) an atom taken, a
+        // count, the same on every run; O(1) more work an atom.
+        if charged && meter::charge(1).is_err() {
+            return None;
+        }
         let d = deg.get_mut(&x).expect("a queued atom");
         d.queued = false;
         let (l, u) = (d.lo, d.hi);
