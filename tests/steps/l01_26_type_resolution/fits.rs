@@ -26,7 +26,13 @@ fn a_function_with_the_same_names_in_order_needs_no_fit() {
 #[test]
 fn a_function_with_the_names_reordered_gets_an_adapter() {
     let p = format!("{APPLY}sub(b, a) = a - b;\ny = apply(f: sub);\n");
-    assert_eq!(fits(&p), [Fit::Adapter { from: vec![1, 0] }]);
+    assert_eq!(
+        fits(&p),
+        [Fit::Adapter {
+            from: vec![1, 0],
+            domain: None
+        }]
+    );
     assert_eq!(value(&p, "y"), "-1");
 }
 

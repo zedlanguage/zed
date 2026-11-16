@@ -2300,14 +2300,19 @@ impl<'a> Elab<'a> {
                 m.k(Frame::FitBody(Box::new(ff)));
                 m.body(body);
             }
-            (Fit::Adapter { from }, _) => {
+            (Fit::Adapter { from, domain }, _) => {
                 let ExprKind::Name(n) = &e.kind else {
                     unreachable!("an adapter is recorded on a name")
                 };
                 let t = self.named(n, e.span).map(|f| {
                     let temps: Vec<Arc<str>> = from.iter().map(|_| self.temp()).collect();
                     let args = from.iter().map(|&j| Term::Var(temps[j].clone())).collect();
-                    Term::Lam(temps, Shared::new(Term::App(Shared::new(f), args)))
+                    let call = Term::App(Shared::new(f), args);
+                    let body = match domain {
+                        Some(d) => in_domain(d, &temps, call),
+                        None => call,
+                    };
+                    Term::Lam(temps, Shared::new(body))
                 });
                 m.give(t);
             }
@@ -3529,4 +3534,54 @@ fn renamed(t: &Term, map: &HashMap<Arc<str>, Arc<str>>) -> Term {
         ),
         t => t.clone(),
     }
+}
+
+/// `call` where the arguments `xs` are in the domain `d` of the function it calls, and
+/// `#notFound` elsewhere: the body of the lambda through which a function of exact arrows is
+/// passed as a partial function type ([`Fit::Adapter`]; DESIGN.md sec:type_language,
+/// "Morphism types carry two domain bounds"). The arguments are in it when some arrow's
+/// parameter types each hold its argument, and each argument whose parameter declares a range
+/// lies in it; the range is read only once the type test passed, since a range is declared
+/// only on an `int` parameter.
+///
+/// Complexity tradeoff: the term has one type test per parameter per arrow and two
+/// comparisons per ranged parameter, O(arrows · parameters) in size and at each call, each
+/// test after the first false one skipped. A naive form that copied the miss into each
+/// failing branch of nested matches would grow as the product of the arrows' sizes; the
+/// conjunctions and the disjunction here are `if`s that give a boolean, so nothing is copied.
+fn in_domain(d: &check::Domain, xs: &[Arc<str>], call: Term) -> Term {
+    let yes = || Term::Lit(Value::Bool(true));
+    let no = || Term::Lit(Value::Bool(false));
+    let x = |j: usize| Term::Var(xs[j].clone());
+    let is = |j: usize, k: &KType| {
+        Term::Match(
+            Shared::new(x(j)),
+            vec![(KPattern::Is(k.clone()), yes()), (KPattern::Wild, no())],
+        )
+    };
+    let and = |a: Term, b: Term| Term::If(Shared::new(a), Shared::new(b), Shared::new(no()));
+    let typed = (d.arrows.iter()).rev().fold(no(), |rest, arrow| {
+        let this = (arrow.iter().enumerate())
+            .rev()
+            .fold(yes(), |rest, (j, k)| and(is(j, k), rest));
+        Term::If(Shared::new(this), Shared::new(yes()), Shared::new(rest))
+    });
+    let ranged = (d.ranges.iter().enumerate())
+        .rev()
+        .fold(yes(), |rest, (j, r)| {
+            let Some(r) = r else { return rest };
+            let le = |a: Term, b: Term| Term::Prim(Prim::Le, vec![a, b]);
+            let low = r.low.clone().map(|v| le(Term::Lit(v), x(j)));
+            let high = r.high.clone().map(|v| le(x(j), Term::Lit(v)));
+            [low, high]
+                .into_iter()
+                .flatten()
+                .rev()
+                .fold(rest, |rest, t| and(t, rest))
+        });
+    Term::If(
+        Shared::new(and(typed, ranged)),
+        Shared::new(call),
+        Shared::new(Term::Lit(Value::atom("notFound"))),
+    )
 }

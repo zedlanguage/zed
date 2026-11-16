@@ -323,6 +323,9 @@ pub(super) enum Frame<'a> {
         x: Box<Arg<'a>>,
     },
     ArgOf(&'a Expr),
+    /// A name of function type passed where the function type is expected: records the test
+    /// of its domain a call through that type needs ([`Ck::domain_guard`]).
+    Guarded(&'a Expr, Arc<Sig>),
     Scope(Box<ScopeF<'a>>),
     Tests(Box<ScopeF<'a>>),
     TestArgs(Box<TestF<'a>>),
@@ -1416,6 +1419,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                     branches: branch_lits(e, self.t.text, &self.kept_ops),
                     ..Arg::of(t)
                 });
+            }
+            Frame::Guarded(e, want) => {
+                let t = m.take_ty();
+                // Its parameters are in `want`'s order where it fits: a function type fits
+                // another only with the same parameters in the same order ([`ty::fits_sig`]).
+                if let Some(s) = only_fn(&t)
+                    && s.params.len() == want.params.len()
+                {
+                    let ranges = s.params.iter().map(|p| p.range.clone()).collect();
+                    if let Some(domain) = self.domain_guard(&s, ranges, &want) {
+                        let from = (0..s.params.len()).collect();
+                        let fit = Fit::Adapter {
+                            from,
+                            domain: Some(domain),
+                        };
+                        self.put(Undo::Fit(e.span, Some(fit)));
+                    }
+                }
+                m.ty(t);
             }
             Frame::Scope(s) => {
                 m.take();
@@ -2951,6 +2973,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let t = self.fit_declared(id, &sig, e.span, call);
                 return m.ty(t);
+            }
+            if let ExprKind::Name(_) = &e.kind {
+                m.k(Frame::Guarded(e, sig));
+                return m.job(Job::Expr(e));
             }
         }
         if let (Some(l), Some(c)) = (literal(e, self.t.text), want.num) {
@@ -15633,7 +15659,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             data: s.data,
             dense: s.dense,
             word: s.word.clone(),
-            needs: s.needs.clone(),
+            needs: guarded_needs(&s, e),
             own: s.own.clone(),
             held: s.held.clone(),
             named: s.named,
@@ -15652,7 +15678,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let what = format!("`{}`", f.name);
         let permuted = Arc::new(permuted);
-        if !self.fits_slot(&permuted, e, &what, span) {
+        let fits = self.fits_slot(&permuted, e, &what, span);
+        if !fits {
             if let Some(lambda) = self.lambda_repair(&f.name, &s, &permuted, e, &from, span) {
                 self.wider_domain(&f.name, (&s, &permuted), e, &lambda, (span, call));
                 return Ty::func(e.clone());
@@ -15683,10 +15710,62 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ],
             );
         }
-        if from.iter().enumerate().any(|(i, &j)| i != j) {
-            self.put(Undo::Fit(span, Some(Fit::Adapter { from })));
+        let ranges = inv.iter().map(|&i| s.params[i].range.clone()).collect();
+        let domain = match fits {
+            true => self.domain_guard(&permuted, ranges, e),
+            false => None,
+        };
+        if domain.is_some() || from.iter().enumerate().any(|(i, &j)| i != j) {
+            self.put(Undo::Fit(span, Some(Fit::Adapter { from, domain })));
         }
         Ty::func(e.clone())
+    }
+
+    /// The domain test that a call through the function type `e` needs where a function of
+    /// signature `s` is passed as `e`, at `span`: `s`'s parameters in `e`'s order, `ranges`
+    /// their declared ranges. A key of a partial arrow of `e` need not be in the domain of the
+    /// function passed, and a call of it there gives `#notFound` (DESIGN.md sec:type_language,
+    /// "Morphism types carry two domain bounds"). A function of exact arrows answers every key
+    /// of its parameter types and no other: a call of it outside them would run its body on a
+    /// value it does not take (FAIL-partial-slot-call-outside-domain). So the call is passed
+    /// through a lambda that tests the arguments ([`Fit::Adapter`]).
+    ///
+    /// None where no call can miss: `e` has no partial arrow, or every arrow of `s` is partial
+    /// (a family, or a value of partial type, which answers `#notFound` itself outside its
+    /// domain, since every value of partial type is a family, a lambda that adopted its exact
+    /// domain, or one such adapter), or each partial arrow of `e` has an exact arrow of `s`
+    /// whose parameter types hold its own, no range declared: its keys are all in the domain.
+    /// An unbounded type variable of `s` holds every value. A parameter whose type has no
+    /// kernel type (a function, a bounded variable) cannot be tested at run time, nor can a
+    /// range on the components of a key ([`domain_test`]); there no test is made and the call
+    /// runs as it did before this test existed, a gap of its own (row
+    /// FAIL-partial-slot-untestable-domain), since refusing those programs, which were
+    /// accepted, would break them. [`guarded_needs`] keeps every range need there.
+    ///
+    /// Complexity tradeoff: the cover test is one subtype comparison per parameter per pair of
+    /// arrows of `e` and `s`, O(a_e · a_s · params) comparisons, done once per function
+    /// passed; the naive alternative, a test on every call, costs the same at run time on each
+    /// call where no test is needed. The test itself is O(a_s · params) at each call.
+    fn domain_guard(&self, s: &Sig, ranges: Vec<Option<ParamRange>>, e: &Sig) -> Option<Domain> {
+        if !e.arrows.iter().any(|a| a.partial) || s.arrows.iter().all(|a| a.partial) {
+            return None;
+        }
+        let ranged = ranges.iter().any(Option::is_some);
+        let holds = |x: &Ty, y: &Ty| {
+            x.as_var().is_some_and(|v| !s.bounds.contains_key(v))
+                || y.subtype_with(x, &|v| self.stale(v))
+        };
+        let covered = |qa: &Arrow| {
+            (s.arrows.iter()).any(|sa| {
+                !sa.partial && sa.params.len() == qa.params.len() && {
+                    sa.params.iter().zip(&qa.params).all(|(x, y)| holds(x, y))
+                }
+            })
+        };
+        if !ranged && e.arrows.iter().filter(|a| a.partial).all(covered) {
+            return None;
+        }
+        domain_test(s, ranges)
     }
 
     /// The lambda that passes the parameters of the function type `e` to the declared function
@@ -21941,6 +22020,70 @@ fn in_text_order(edits: &[(Span, String)]) -> Vec<&(Span, String)> {
     sorted
 }
 
+/// The run-time test of the domain of the function `s`, whose parameters have the declared
+/// ranges `ranges`, as [`Domain`]: the kernel type of each parameter of each arrow, and each
+/// int range. `None` where a parameter type has no kernel type (a function, whose own domain a
+/// test of its value cannot read; a bounded type variable, whose instance may be narrower
+/// than its bound, even `Never`, so that a test by the bound would let through keys outside
+/// the domain), or a range is on the components of a key: no test is sound there.
+///
+/// Cost: O(a · params), one kernel type per parameter per arrow.
+fn domain_test(s: &Sig, ranges: Vec<Option<ParamRange>>) -> Option<Domain> {
+    let arrows = (s.arrows.iter())
+        .map(|a| a.params.iter().map(Ty::kernel).collect::<Option<Vec<_>>>())
+        .collect::<Option<Vec<_>>>()?;
+    let ranges = (ranges.into_iter())
+        .map(|r| match r {
+            None => Some(None),
+            Some(ParamRange::Int(r)) => Some(Some(r)),
+            Some(ParamRange::Parts(_)) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Domain { arrows, ranges })
+}
+
+/// The needs of the declared function `s` that hold where it is passed as the function type
+/// `e`: all of them, except where every arrow of `e` is partial and `s` has an exact arrow,
+/// so that each call through `e` reaches `s` only once its arguments passed the test of its
+/// domain, declared ranges included ([`Ck::domain_guard`], FAIL-fn-range-domain-partial-slot),
+/// which is made exactly where that test can be built ([`domain_test`]; a needed range makes
+/// `domain_guard` skip its cover shortcut, so it builds the test whenever this drops a need).
+/// There the need of a parameter declared with a range `R`, that each call pass it an int of
+/// a range `r` holding `R`, is met by that test, and is dropped; every other need is kept.
+///
+/// Proof that the dropped needs hold. A call through `e` runs `s` only where some arrow's
+/// parameter types hold the arguments and each ranged argument lies in its declared range `R`
+/// (`in_domain`, zedc-elab), so the argument is an int in `R`, and `R` lies within `r`. With
+/// an exact arrow of `e` the call may pass any value of its parameter types to `s`, so nothing
+/// is dropped, and `(x: int) -> int` stays refused for `small(x: int[0..<10])`.
+///
+/// Cost: one pass over the needs, O(needs).
+fn guarded_needs(s: &Sig, e: &Sig) -> Vec<Need> {
+    let guarded = !e.arrows.is_empty()
+        && e.arrows.iter().all(|a| a.partial)
+        && s.arrows.iter().any(|a| !a.partial)
+        && domain_test(s, s.params.iter().map(|p| p.range.clone()).collect()).is_some();
+    let met = |n: &Need| match &n.kind {
+        NeedKind::InDomain {
+            domain:
+                IntDomain {
+                    written: Some(r),
+                    key: None,
+                    ..
+                },
+            param,
+            bits: None,
+            ..
+        } => (s.params.get(*param))
+            .and_then(|p| p.range.as_ref()?.int())
+            .is_some_and(|own| own.within(r)),
+        _ => false,
+    };
+    (s.needs.iter())
+        .filter(|n| !(guarded && met(n)))
+        .cloned()
+        .collect()
+}
 /// `s` with no needs, nor any function its arrows return at any depth: what `s` is as a type,
 /// whose needs [`Ck::needs_hold`] checks by calls.
 ///

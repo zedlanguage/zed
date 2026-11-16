@@ -102,11 +102,16 @@ pub enum Fit {
         /// The lambda parameters filled by their defaults.
         extra: Vec<usize>,
     },
-    /// A declared function whose named parameters are in another order: for each of its
-    /// parameters, the index of the type's parameter that fills it.
+    /// A function named where a function type is expected, called through a lambda: a
+    /// declared function whose named parameters are in another order, or whose domain the
+    /// expected type's permission is wider than, or a name of function type whose domain is.
     Adapter {
         /// The type's parameter for each of the function's.
         from: Vec<usize>,
+        /// The function's domain, where a call through a partial arrow of the expected type
+        /// may pass a key outside it: such a call gives `#notFound` and does not reach the
+        /// function (DESIGN.md sec:type_language, "Morphism types carry two domain bounds").
+        domain: Option<Domain>,
     },
     /// A call whose type lists numeric literal values alone, as `g(c)` with `g(positional c:
     /// bool) = if c { 2 } else { 1 }`, at a parameter of the one numeric carrier recorded:
@@ -114,6 +119,17 @@ pub enum Fit {
     /// (L1.26a: "`z: f64 = g(c)` read both branches at `f64`"). Elaboration casts the call's
     /// value to the carrier, which the check proved exact for each value the call can give.
     Read(Carrier),
+}
+
+/// The domain of a function of exact arrows, in the parameter order of the function type it is
+/// passed as ([`Fit::Adapter`]): the arguments are in it when, for some arrow, each is a value
+/// of that arrow's parameter type, and each lies in its parameter's declared range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Domain {
+    /// For each arrow, the type of each parameter.
+    pub arrows: Vec<Vec<KType>>,
+    /// The declared range of each parameter, if it has one.
+    pub ranges: Vec<Option<WrittenRange>>,
 }
 
 /// What a call names, for the repairs of a [`Misfit`]: a declared function, a prelude word, or

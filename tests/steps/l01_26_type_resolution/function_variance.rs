@@ -61,6 +61,100 @@ fn a_partial_slot_takes_a_narrower_domain() {
     );
 }
 
+/// The value of `name` in `src`, from the reference evaluator and from native code, which
+/// agree.
+fn runs_to(src: &str, name: &str, want: &str) {
+    use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
+    use zed_tests::step_helpers::l01_36_cranelift::{kernel, native};
+    let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let t = with_prelude(
+        u.get(name)
+            .unwrap_or_else(|| panic!("no definition `{name}`")),
+    );
+    let k = kernel(&t).map(|v| v.to_string());
+    let n = native(&t).map(|o| o.value.to_string());
+    assert_eq!(k, Ok(want.to_string()), "reference evaluator: {src}");
+    assert_eq!(n, Ok(want.to_string()), "native code: {src}");
+}
+
+/// A call through a partial slot of a value outside the domain of the function passed misses
+/// with `#notFound`, which the caller handles (DESIGN.md sec:type_language, "Morphism types
+/// carry two domain bounds": a key in `U` only yields `V | #notFound`); within the domain the
+/// call is the function's. The empty domain misses on every call.
+#[test]
+fn a_call_through_a_partial_slot_outside_the_domain_misses() {
+    let apply = |arg: &str| {
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {arg}) else 0;\na = apply(f: small);\n"
+        )
+    };
+    runs_to(&apply("2.5"), "a", "0");
+    runs_to(&apply("3"), "a", "4");
+    runs_to(
+        "none(x: Never) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else 0;\na = apply(f: none);\n",
+        "a",
+        "0",
+    );
+    // The miss is the atom `#notFound`, which a handler names.
+    runs_to(
+        "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 7;\na = apply(f: small);\n",
+        "a",
+        "7",
+    );
+    // A parameter of exact function type passed on to a partial slot: its exact domain is
+    // the one the function passed to it has.
+    let passed = |arg: &str| {
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {arg}) else 5;\npass(g: (x: int) -> int) = apply(f: g);\na = pass(g: small);\n"
+        )
+    };
+    runs_to(&passed("2.5"), "a", "5");
+    runs_to(&passed("3"), "a", "4");
+    // Named parameters in another order: the test reads each argument at its own parameter.
+    let reordered = |arg: &str| {
+        format!(
+            "sub(b: int, a: int) = a - b;\napply(f: (a: int | f64, b: int) ->? int) = f(a: {arg}, b: 1) else 0;\na = apply(f: sub);\n"
+        )
+    };
+    runs_to(&reordered("2.5"), "a", "0");
+    runs_to(&reordered("5"), "a", "4");
+}
+
+/// Row FAIL-fn-range-domain-partial-slot: a function whose parameter is declared with a range
+/// fits a partial slot whose parameter type holds the range (`(x: int[0..=9]) -> int[0..=9] <:
+/// (x: int) ->? int`), and a call through the slot outside the range misses with `#notFound`;
+/// an exact slot stays refused, since it may pass any `int`.
+#[test]
+fn a_partial_slot_takes_a_function_on_a_narrower_range() {
+    accepted(
+        "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: 5) else 0;\nr = opt(f: small);\n",
+    );
+    // The exact slot stays refused: `apply` may call `small` with 100.
+    rejected(
+        "small(x: int[0..<10]) = x;\napply(f: (x: int) -> int) = f(x: 100);\nr = apply(f: small);\n",
+    );
+    // A lambda adopts the slot's domain `int`, and its call of `small` is then refused.
+    rejected(
+        "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: 5) else 0;\nr = opt(f: x -> small(x: x));\n",
+    );
+    let opt = |arg: &str| {
+        format!(
+            "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: {arg}) else 0;\na = opt(f: small);\n"
+        )
+    };
+    runs_to(&opt("5"), "a", "5");
+    runs_to(&opt("50"), "a", "0");
+    runs_to(&opt("-1"), "a", "0");
+    runs_to(&opt("9"), "a", "9");
+    runs_to(&opt("10"), "a", "0");
+    // An open end: only the low end is tested.
+    runs_to(
+        "big(x: int[3..]) = x;\nopt(f: (x: int) ->? int) = f(x: 2) else 7;\na = opt(f: big);\n",
+        "a",
+        "7",
+    );
+}
+
 /// A wider exact domain is not a narrower one, as a domain is observable (`::domain`), and not
 /// within a partial slot's `K` either. These programs never fail at run time, and they are
 /// rejected; a lambda written at the slot adopts its domain (sec:type_resolution, rule 2), so

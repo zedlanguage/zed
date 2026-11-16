@@ -14,6 +14,7 @@ mod divisors;
 mod docs;
 mod exact_casts;
 mod fits;
+mod function_variance;
 mod given;
 mod held_functions;
 mod is_chains;
