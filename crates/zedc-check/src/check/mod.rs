@@ -1679,7 +1679,7 @@ struct Ck<'t, 'a> {
     wide_builds: BTreeMap<Span, WideBuild>,
     /// The classes; class `k` is the type variable `$k`. A plain `Vec<Class>` but under
     /// `cfg(test)` and the feature `forward-probe` ([`probe`]).
-    classes: probe::Classes,
+    classes: probe::Classes<Class>,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
     /// they hold at any depth had a data need from it, which the class keeps, so a later check
     /// of data that meets one again has nothing to add and does not enter it. Kept in the log
@@ -3739,7 +3739,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn touch(&mut self, r: usize) {
         if self.trying {
             #[cfg(any(test, feature = "forward-probe"))]
-            self.probe_event(r, "touch-trying");
+            self.classes.event(r, "touch-trying");
             self.log
                 .push(Undo::Class(r, Box::new(self.classes[r].clone())));
         }
@@ -3883,7 +3883,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             #[cfg(any(test, feature = "forward-probe"))]
-            self.probe_event(r, "lower-walk");
+            self.classes.event(r, "lower-walk");
             self.touch(r);
             self.classes[r].level = level;
             let mut more = Vars::default();
