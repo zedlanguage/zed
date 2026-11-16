@@ -2752,11 +2752,18 @@ impl<'a> Elab<'a> {
                 // interval, every key present, misses with `#outOfBounds` (DESIGN.md
                 // sec:type_language, the `m[k]` row).
                 let dense = self.info.dense.get(&span) == Some(&true);
+                // A bracket on a value that may be a function gives it one argument: an
+                // application, or the section over the other parameters of a function of
+                // several (`Info::brackets`; the kernel reads a tuple or a family applied to
+                // one key, so a value that may be either is applied too).
+                let count = self.info.brackets.get(&span).copied();
                 let t = all(m.got()).map(|ts| {
                     let [v, i]: [Term; 2] = ts.try_into().expect("two terms");
-                    match &k.kind {
+                    match (&k.kind, count) {
                         _ if dense => Term::Prim(Prim::At, vec![v, i]),
-                        ExprKind::Int { .. } => Term::Prim(Prim::TupleGet, vec![v, i]),
+                        (_, Some(n)) if n > 1 => self.bracket_section(v, i, n),
+                        (_, Some(_)) => Term::App(Shared::new(v), vec![i]),
+                        (ExprKind::Int { .. }, None) => Term::Prim(Prim::TupleGet, vec![v, i]),
                         _ => Term::App(Shared::new(v), vec![i]),
                     }
                 });
@@ -2795,6 +2802,21 @@ impl<'a> Elab<'a> {
                 m.give(t);
             }
         }
+    }
+
+    /// The section `v[i]` of the function `v` of `n` parameters, `n` above one: `v` and `i`
+    /// evaluated once, in that order, and the function of the other `n - 1` parameters that
+    /// applies `v` to `i` and them, as the bracket on a declared function is
+    /// (`Frame::IndexDeclared`).
+    fn bracket_section(&mut self, v: Term, i: Term, n: usize) -> Term {
+        let (f, k) = (self.temp(), self.temp());
+        let rest: Vec<Arc<str>> = (1..n).map(|_| self.temp()).collect();
+        let mut args = vec![Term::Var(k.clone())];
+        args.extend(rest.iter().map(|r| Term::Var(r.clone())));
+        let call = Term::App(Shared::new(Term::Var(f.clone())), args);
+        let lam = Term::Lam(rest, Shared::new(call));
+        let inner = Term::Let(k, Shared::new(i), Shared::new(lam));
+        Term::Let(f, Shared::new(v), Shared::new(inner))
     }
 
     /// A binary operator's term, its operands elaborated.

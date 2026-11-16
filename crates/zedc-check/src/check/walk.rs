@@ -14603,12 +14603,41 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `#outOfBounds` ([`Self::dense_read`]). With `of`, the span of `v` as written, a key
     /// outside a function's keys is rejected ([`Self::key_outside`]).
     fn at_key(&mut self, v: &Ty, x: Arg<'a>, of: Option<Span>, span: Span, dense: bool) -> Ty {
+        if of.is_some() && !self.bracket_count(v, span) {
+            return Ty::empty();
+        }
         let mut out = self.passing(v, "a call", span, of);
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) => {
                     let r = self.tuple_at(&cs, &x, span);
                     out = out.union(&r);
+                }
+                Piece::Fn(sig) if of.is_some() && !sig.data && sig.params.len() != 1 => {
+                    let r = self.bracket_fn(&sig, &x, span);
+                    out = out.union(&r);
+                }
+                // A replayed `f[k]` (`of` is none) is in a body checked with `f` of a type
+                // variable, so it was elaborated as an application to one argument: a function
+                // of another number of parameters, met at the call, has no section there, and
+                // the kernel would stop at the application.
+                Piece::Fn(sig) if !sig.data && sig.params.len() != 1 => {
+                    let t = self.text(&Ty::func(sig.clone()));
+                    self.error_offering(
+                        span,
+                        format!(
+                            "this value is {t}, a function of {} parameters, and the bracket \
+                             it reaches gives one argument: inside a function, a bracket on \
+                             a parameter whose type is not written applies the value to that \
+                             one argument",
+                            sig.params.len()
+                        ),
+                        [
+                            "repair: write the parameter's function type, so that its bracket \
+                             is a section"
+                                .to_string(),
+                        ],
+                    );
                 }
                 Piece::Fn(sig) => {
                     // A family finds its entry by comparing the key with its keys, so the key
@@ -14707,6 +14736,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         dense: bool,
     ) -> Ty {
+        if of.is_some() && !self.bracket_count(v, span) {
+            return Ty::empty();
+        }
         let mut out = self.passing(v, "an index", span, of);
         let shown = x.ty.to_string();
         for p in v.pieces() {
@@ -14726,6 +14758,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         )
                         .0;
                     let r = if dense { out_of_bounds(r, &x.ty) } else { r };
+                    out = out.union(&r);
+                }
+                Piece::Fn(sig) if of.is_some() => {
+                    let r = self.bracket_fn(&sig, &x, span);
                     out = out.union(&r);
                 }
                 Piece::Tuple(cs) => match i.and_then(|i| cs.get(i)) {
@@ -14773,6 +14809,85 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "repair: index a tuple or a family, or drop `[{shown}]`"
             )],
         )
+    }
+
+    /// Whether the bracket `v[k]` written at `span` has one meaning, recorded in
+    /// [`Info::brackets`] for the elaborator: the functions that are no family among `v`'s
+    /// pieces take one number of parameters, and when that number is above one, `v` may be
+    /// nothing else. A bracket on a function of several parameters is its section, and on a
+    /// tuple, a family or a function of one parameter an application of the whole value to
+    /// the key (the kernel reads a tuple or a family applied to one key), and no one term is
+    /// both. A bracket the checker meets twice keeps one number. Else the bracket is
+    /// rejected. One pass over `v`'s pieces.
+    fn bracket_count(&mut self, v: &Ty, span: Span) -> bool {
+        let mut counts = BTreeSet::new();
+        let mut other = false;
+        for p in v.pieces() {
+            match p {
+                Piece::Fn(sig) if !sig.data => {
+                    counts.insert(sig.params.len());
+                }
+                p if p.is_atoms() => {}
+                _ => other = true,
+            }
+        }
+        let Some(&n) = counts.last() else {
+            return true;
+        };
+        let before = self.info.brackets.get(&span).copied();
+        if counts.len() == 1 && (n < 2 || !other) && before.is_none_or(|m| m == n) {
+            self.info.brackets.insert(span, n);
+            return true;
+        }
+        let m = (counts.iter().copied().chain(before)).find(|&m| m != n);
+        let of = |n: usize| match n {
+            1 => "a function of 1 parameter".to_string(),
+            n => format!("a function of {n} parameters"),
+        };
+        let also = m.map_or_else(|| "a tuple or a family".to_string(), of);
+        let (t, one) = (self.text(v), of(n));
+        self.error_offering(
+            span,
+            format!(
+                "this bracket has no one meaning: the value is {t}, so it may be {one} or \
+                 {also}, and a bracket gives a function its first argument only, leaving the \
+                 others to later brackets"
+            ),
+            [
+                "repair: give the value one of these types before the bracket, with `match`"
+                    .to_string(),
+            ],
+        );
+        false
+    }
+
+    /// The bracket `v[x]` written at `span` on the function `sig`, a piece of `v` that is no
+    /// family: brackets index one level at a time and never fill a default (DESIGN.md
+    /// sec:values_morphisms, "Application is indexing"), so `x` is the first argument, and a
+    /// function of more parameters gives the section over the rest, as the bracket on a
+    /// declared function does ([`Self::index`], `Frame::Section`).
+    fn bracket_fn(&mut self, sig: &Sig, x: &Arg<'a>, span: Span) -> Ty {
+        let n = sig.params.len();
+        if n == 0 {
+            let t = self.text(&Ty::func(Arc::new(sig.clone())));
+            self.error_offering(
+                span,
+                format!(
+                    "this value is {t}, a function that takes no arguments, and this bracket \
+                     gives it one"
+                ),
+                ["repair: drop the bracket".to_string()],
+            );
+            return Ty::empty();
+        }
+        if n == 1 {
+            let label = Label::Text("this function");
+            return self.apply(label, sig, vec![Some(x.clone())], false, span).0;
+        }
+        let mut args = vec![None; n];
+        args[0] = Some(x.clone());
+        let missing: Vec<usize> = (1..n).collect();
+        self.partial(sig, args, &missing, true, CALLED_HERE, span)
     }
 
     /// A declared function in a slot of the function type `e`: the same number of positional

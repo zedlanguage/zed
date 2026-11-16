@@ -520,6 +520,12 @@ pub struct Info {
     /// sec:type_language, the `m[k]` row). A read checked more than once is such a read only
     /// if it is one each time.
     pub dense: HashMap<Span, bool>,
+    /// Each bracket `v[k]` whose receiver may be a function that is no family, by the
+    /// bracket's span: the number of parameters that function takes. A bracket gives it one
+    /// argument, the first, so with one parameter it is an application, and with more it is
+    /// the section over the rest (DESIGN.md sec:values_morphisms, "Application is indexing").
+    /// A bracket with no entry reads a tuple or a family as before.
+    pub brackets: HashMap<Span, usize>,
     /// Each fold `m >< (op)`, by its span: the identity of `op` at the carrier of the
     /// entries, the result of folding an empty level (step L3.2, DESIGN.md sec:reduction).
     pub reduce: HashMap<Span, Value>,

@@ -1,7 +1,7 @@
 //! Calls of declared functions: positional and named arguments, defaults, `...`, uniform
 //! calls and bracket sections.
 
-use super::{term, value};
+use super::{errors, term, value};
 
 const TAX: &str = "tax(positional amount, rate = 8) = amount * rate div 100;\n";
 
@@ -73,4 +73,102 @@ fn brackets_index_one_level_and_fill_no_default() {
     assert_eq!(value(src, "m"), "-5");
     assert_eq!(term(src, "second"), "pair[1]");
     assert_eq!(value(src, "second"), "8");
+}
+
+/// Row FAIL-curried-index: `f(x, y)` is `f[x][y]`, one parameter per bracket, so a bracket on
+/// the section of a declared function applies the section, or makes a section of it while it
+/// takes more than one parameter. A function value's brackets are the same.
+#[test]
+fn curried_indexing_applies_one_parameter_per_level() {
+    let src = "add(positional x: int, positional y: int) = x + y;\n\
+               t = add[1][2];\nb = add[1];\nu = b[2];\nv = add(1, 2);\n\
+               add3(positional x: int, positional y: int, positional z: int) = x + 10 * y + 100 * z;\n\
+               w = add3[1][2][3];\nc = add3[1][2];\nd = c[3];\ne = add3[1];\nf = e[2][3];\n\
+               g = (p: int, q: int) -> p - q;\nh = g[5][2];\n";
+    for (name, want) in [
+        ("v", "3"),
+        ("t", "3"),
+        ("u", "3"),
+        ("w", "321"),
+        ("d", "321"),
+        ("f", "321"),
+        ("h", "3"),
+    ] {
+        assert_eq!(value(src, name), want, "{name} in\n{src}");
+    }
+}
+
+/// A computed key is a bracket too, a function value's named parameters take brackets in
+/// their declared order, a parameter whose function type is written gets a section from its
+/// bracket, and a value that may be a function of one parameter or a tuple is applied, which
+/// reads the tuple.
+#[test]
+fn curried_indexing_with_keys_named_parameters_and_written_types() {
+    let cases = [
+        (
+            "add(positional x: int, positional y: int) = x + y;\nb = add[1];\nk = 2;\n\
+             r = b[k];\nq = add[1][k];\n",
+            &[("r", "3"), ("q", "3")][..],
+        ),
+        (
+            "span(lo: int, hi: int) = hi - lo;\ns = span;\nr = s[4][10];\n",
+            &[("r", "6")],
+        ),
+        (
+            "ap(positional f: (int, int) -> int, positional k: int) = f[k];\n\
+             r = ap((p: int, q: int) -> p - q, 5)[2];\n",
+            &[("r", "3")],
+        ),
+        (
+            "g(positional c: bool) = if c { ((p: int) -> p) } else { (1, 2) };\n\
+             h = g(true)[1];\nj = g(false)[1];\n",
+            &[("h", "1"), ("j", "2")],
+        ),
+    ];
+    for (src, wants) in cases {
+        for &(name, want) in wants {
+            assert_eq!(value(src, name), want, "{name} in\n{src}");
+        }
+    }
+}
+
+/// A bracket with no one term is rejected: a value that may be a function of several
+/// parameters (a section) or a tuple or a function of another number of parameters (an
+/// application); a function of no parameters; and, at a call, a function of other than one
+/// parameter reaching a bracket in a body checked with a type variable, which applies its
+/// value to one argument (the kernel stopped there before this rejection).
+#[test]
+fn a_bracket_with_no_one_term_is_rejected() {
+    let cases = [
+        (
+            "g(positional c: bool) = if c { ((p: int, q: int) -> p + q) } else { (1, 2) };\n\
+             h = g(true)[1];\n",
+            "it may be a function of 2 parameters or a tuple or a family",
+        ),
+        (
+            "g(positional c: bool) = if c { ((p: int, q: int) -> p + q) } else { ((p: int) -> p) };\n\
+             h = g(true)[1];\n",
+            "it may be a function of 2 parameters or a function of 1 parameter",
+        ),
+        (
+            "z() = 1;\ny = z;\nr = y[1];\n",
+            "a function that takes no arguments, and this bracket gives it one",
+        ),
+        (
+            "z() = 1;\ny = z;\nk = 1;\nr = y[k];\n",
+            "a function that takes no arguments, and this bracket gives it one",
+        ),
+        (
+            "ap(positional f, positional k) = f[k];\nr = ap((p: int, q: int) -> p + q, 1);\n",
+            "a function of 2 parameters, and the bracket it reaches gives one argument",
+        ),
+        (
+            "ap(positional f, positional k) = f[k];\nz() = 1;\nr = ap(z, 1);\n",
+            "a function of 0 parameters, and the bracket it reaches gives one argument",
+        ),
+    ];
+    for (src, want) in cases {
+        let es = errors(src).join("\n");
+        assert!(es.contains(want), "{want:?} missing from\n{src}\n{es}");
+    }
 }
