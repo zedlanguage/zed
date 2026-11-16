@@ -1485,3 +1485,57 @@ fn a_function_a_generic_body_passes_on_keeps_its_test_through_staging() {
         }
     }
 }
+
+/// A parameter with no written type whose uses bound it is printed with its bound, not as `_`,
+/// which is every value (QUESTIONS A92), in both messages that print the type the checker found
+/// for a generic function (plan row MSG-bounded-param-printed-underscore).
+#[test]
+fn a_parameter_with_a_bound_is_printed_with_its_bound() {
+    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let twice = format!(
+        "{head}pass2(x, y: int = 1) = apply(f: x) + y;\ntwice(g) = g(x: small);\na = twice(g: pass) + twice(g: pass2);\n"
+    );
+    let errors = type_errors(&twice);
+    let built = errors
+        .iter()
+        .find(|e| e.contains("the call through `g` is built once for both functions"))
+        .unwrap_or_else(|| panic!("{twice}: {errors:#?}"));
+    assert!(!built.contains("(x: _"), "{twice}: {built}");
+    let want = "`g` here is a function of type `(x: (x: int | f64) ->? int, y: int) -> int`, and \
+                at an earlier call one of type `(x: (x: int | f64) ->? int) -> int`";
+    assert!(built.contains(want), "{twice}: {built}");
+
+    let pick = format!(
+        "{head}pick(k: int) = if k > 1 {{ small }} else {{ big }};\ng = pick(k: 2);\na = pass(x: g);\n"
+    );
+    let report = match zedc::run::load(pick.as_bytes()) {
+        Ok(_) => panic!("{pick}: accepted"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        report.contains("the type the checker found for `pass` is"),
+        "{pick}: {report}"
+    );
+    assert!(!report.contains("`(x: _) -> int`"), "{pick}: {report}");
+    let want = "the type the checker found for `pass` is `(x: (x: int | f64) ->? int) -> int`";
+    assert!(report.contains(want), "{pick}: {report}");
+
+    // Passed to two parameters, the value fits both types: their meet. A partial function
+    // whose domain lies in `int` fits `(x: int | f64) ->? int` too.
+    let both = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\napply2(f: (x: int) ->? int) = f(x: 2) else 6;\nboth(x) = apply(f: x) + apply2(f: x);\na = both(x: 3);\n";
+    let report = match zedc::run::load(both.as_bytes()) {
+        Ok(_) => panic!("{both}: accepted"),
+        Err(e) => e.to_string(),
+    };
+    let want = "the type the checker found for `both` is `(x: (x: int) ->? int) -> int`";
+    assert!(report.contains(want), "{both}: {report}");
+    // A use of another kind beside the pass, here `+`, restricts the carrier, and the type
+    // printed is the meet of the two.
+    let num = "takes(n: int | f64 | String) = 1;\nnum(x) = takes(n: x) + x;\nb = num(x: \"s\");\n";
+    let report = match zedc::run::load(num.as_bytes()) {
+        Ok(_) => panic!("{num}: accepted"),
+        Err(e) => e.to_string(),
+    };
+    let want = "the type the checker found for `num` is `(x: int) -> int`";
+    assert!(report.contains(want), "{num}: {report}");
+}

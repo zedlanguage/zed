@@ -748,14 +748,17 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     );
     // A call whose separator is always `""` always fails, and one that passes no string is
     // rejected, each in the word's own message, at the call.
-    // Its repairs name no `s`, which is not in scope at the call.
+    // Its repairs name no `s`, which is not in scope at the call; each marks the argument that
+    // gives the operand and names its parameter, and rewrites that argument in the call (plan
+    // row MSG-generic-call-repair-code).
     let src = format!("{p}{}", main("${p(\"ab\", \"\").count}"));
     rejected_saying(
         "strings_generic_empty",
         &src,
         &[
             "`p(\"ab\", \"\")` always fails with `#emptySeparator`",
-            "repair: pass a separator that is not empty to this call",
+            "this argument, passed as `d`, is the separator, which is always the empty string",
+            "repair: write `p(\"ab\", \",\")`",
         ],
     );
     let (_, err) = ran("strings_generic_empty_names", &src);
@@ -764,7 +767,10 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     rejected_saying(
         "strings_generic_not_string",
         &src,
-        &["`split` reads strings, and this value is 1"],
+        &[
+            "`split` reads strings, and this value, passed as `s`, is 1",
+            "repair: write `p(\"a,b\", \",\")`",
+        ],
     );
     let src = format!(
         "j(positional xs) = concat(xs, sep: \"-\");\n{}",
@@ -773,7 +779,10 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
     rejected_saying(
         "strings_generic_not_strings",
         &src,
-        &["`concat` joins strings, and an entry of this family is"],
+        &[
+            "`concat` joins strings, and this family, passed as `xs`, has an entry that is",
+            "repair: write `j([\"a\", \"b\"])`",
+        ],
     );
     let src = format!(
         "two(positional x) = concat([x, x], sep: \",\");\n{}",
@@ -783,8 +792,9 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
         "strings_generic_entry",
         &src,
         &[
-            "`concat` joins strings, and an entry of this family is 1",
-            "repair: pass a family of strings to this call",
+            "`concat` joins strings, and this value, passed as `x`, is an entry of the family \
+             it joins and is 1",
+            "repair: write `two(\"a\")`",
         ],
     );
     // A part that is not generic is rejected at the definition, and once, not again at the
@@ -807,6 +817,58 @@ fn a_string_word_in_a_generic_function_is_checked_at_each_call() {
             "always fails with `#emptySeparator`",
             "repair: write `l::codepoints`",
         ],
+    );
+}
+
+/// A rejection at a call of a generic function writes its repair as the call, with the
+/// argument that gives the rejected operand replaced (plan row MSG-generic-call-repair-code).
+#[test]
+fn a_repair_at_a_generic_call_is_written_as_the_call() {
+    let main = |body: &str| format!("main(m: MainArgs) {{\n  m.stdout <- \"{body}\";\n}}\n");
+    let p = "p(positional s, positional d) = s.split(d);\n";
+    let src = format!("{p}{}", main("${p(\"ab\", \"\").count}"));
+    rejected_saying(
+        "generic_call_repair_split",
+        &src,
+        &["repair: write `p(\"ab\", \",\")`"],
+    );
+    let src = format!(
+        "two(positional x) = concat([x, x], sep: \",\");\n{}",
+        main("${two(1)}")
+    );
+    rejected_saying(
+        "generic_call_repair_concat",
+        &src,
+        &["repair: write `two(\"a\")`"],
+    );
+    // A call over two lines is not rewritten, since a repair is one line of code; the
+    // argument is still marked and named, and the repair is said in words.
+    let src = format!(
+        "{p}main(m: MainArgs) {{\n  m.stdout <- concat(p(\"ab\",\n    \"\"), sep: \"-\");\n}}\n"
+    );
+    rejected_saying(
+        "generic_call_repair_two_lines",
+        &src,
+        &[
+            "this call always fails with `#emptySeparator`",
+            "this argument, passed as `d`, is the separator",
+            "repair: pass a separator that is not empty to this call",
+        ],
+    );
+}
+
+/// A fold written as the call `sum(x)` is named as the program wrote it, not as `.sum`
+/// (plan row MSG-sum-function-form-headline).
+#[test]
+fn a_sum_written_as_a_call_is_named_as_a_call() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"${sum([\"a\", \"b\"])}\";\n}\n";
+    let out = run("fp_ops/sum_call_headline", src, "", &[]);
+    assert!(out.status != 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("`.sum`"), "{}", out.stderr);
+    assert!(
+        out.stderr.contains("`sum([\"a\", \"b\"])`"),
+        "{}",
+        out.stderr
     );
 }
 
@@ -929,8 +991,128 @@ fn repairs_write_the_operands_as_the_program_wrote_them() {
                 "as `[1] ++ ([\")\"] ++ [\"(\"])`",
             ),
             ("1 ++ [[2]][0]", "as `[1] ++ [[2]][0]`"),
+            // Fragments `in_parens` must read as tokens (plan row
+            // TEST-msg-repair-parens-and-entries): nested brackets and parentheses, a comment
+            // holding a parenthesis, a string holding a quote and a parenthesis, a hole.
+            (
+                "1 ++ (([2]) ++ [[3], [(4)]][0])",
+                "as `[1] ++ (([2]) ++ [[3], [(4)]][0])`",
+            ),
+            (
+                "1 ++ ([2] ++ /* ) */ [3])",
+                "as `[1] ++ ([2] ++ /* ) */ [3])`",
+            ),
+            (
+                "1 ++ ([\"\\\")\"] ++ [\"(\"])",
+                "as `[1] ++ ([\"\\\")\"] ++ [\"(\"])`",
+            ),
+            (
+                "1 ++ ([\"${(2)}\"] ++ [\")\"])",
+                "as `[1] ++ ([\"${(2)}\"] ++ [\")\"])`",
+            ),
+            ("([2]) ++ ([3]) ++ 1", "as `([2]) ++ ([3]) ++ [1]`"),
         ],
     );
+}
+
+/// The `++` repair the checker prints is Zed that runs and means what the program meant: each
+/// faulty expression is run, the form after "as" in its repair is cut out and run in turn,
+/// and it must equal the list written by hand (plan row TEST-msg-repair-parens-and-entries).
+#[test]
+fn a_concat_repair_runs_and_gives_the_list_meant() {
+    let cases = [
+        ("1 ++ [2]", "[1, 2]"),
+        ("[2] ++ [3] ++ 1", "[2, 3, 1]"),
+        ("1 ++ ([2] ++ [3])", "[1, 2, 3]"),
+        ("1 ++ (([2]) ++ [[3], [(4)]][0])", "[1, 2, 3]"),
+        ("1 ++ ([2] ++ /* ) */ [3])", "[1, 2, 3]"),
+        (
+            "\"a\" ++ ([\"\\\")\"] ++ [\"(\"])",
+            "[\"a\", \"\\\")\", \"(\"]",
+        ),
+        (
+            "\"a\" ++ ([\"${(2)}\"] ++ [\")\"])",
+            "[\"a\", \"2\", \")\"]",
+        ),
+        ("([2]) ++ ([3]) ++ 1", "[2, 3, 1]"),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (expr, meant)) in cases.into_iter().enumerate() {
+        let src = format!("main(m: MainArgs) {{\n  m.stdout <- \"${{{expr}}}\";\n}}\n");
+        let out = run(&format!("fp_ops/concat_repair_{i}"), &src, "", &[]);
+        let Some(form) = (out.stderr.split_once("put the value in a list, as `"))
+            .and_then(|(_, rest)| rest.split_once('`'))
+            .map(|(form, _)| form.to_string())
+        else {
+            wrong.push(format!("{expr}: no repair\n  {}", out.stderr.trim_end()));
+            continue;
+        };
+        let src = format!("main(m: MainArgs) {{\n  m.stdout <- \"${{{form} == {meant}}}\";\n}}\n");
+        let ran = run(&format!("fp_ops/concat_repair_ran_{i}"), &src, "", &[]);
+        if ran.status != 0 || ran.stdout.trim_end() != "true" {
+            wrong.push(format!(
+                "{expr}: the repair `{form}` is not {meant}\n  status {}, printed {}\n  {}",
+                ran.status,
+                ran.stdout.trim_end(),
+                ran.stderr.trim_end()
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The note on a lambda parameter that stays generic names what the word gives it (plan rows
+/// MSG-generic-operand-wording and TEST-msg-repair-parens-and-entries). One case per word that
+/// records it (`map`, `flatMap`, `where`, `group`: `Ck::entry_param`'s callers) and per kind
+/// of receiver `Ck::noted_entries` reads: a port's lines, the result of a word, entries that
+/// are families, and a receiver over two lines, which has no one-line text. `zip` on the
+/// parameter is the error, since it is not compiled on a generic operand.
+#[test]
+fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
+    let cases = [
+        (
+            "m.stdout <- m.stdin.map(l -> \"${l.zip([1])}\");",
+            "`l` has a generic type here, and `map` gives it each entry of `m.stdin`, whose type \
+             is String",
+        ),
+        (
+            "m.stdout <- m.stdin.flatMap(l -> [\"${l.zip([1])}\"]);",
+            "`l` has a generic type here, and `flatMap` gives it each entry of `m.stdin`, whose \
+             type is String",
+        ),
+        (
+            "m.stdout <- m.stdin.map(l -> l.trim).where(l -> \"${l.zip([1])}\" == \"\");",
+            "`l` has a generic type here, and `where` gives it each entry of \
+             `m.stdin.map(l -> l.trim)`, whose type is String",
+        ),
+        (
+            "m.stdout <- \"${m.stdin.group(l -> l.zip([1])).count}\";",
+            "`l` has a generic type here, and `group` gives it each entry of `m.stdin`, whose \
+             type is String",
+        ),
+        (
+            "m.stdout <- m.stdin.map(l -> l.split(\",\")).map(p -> \"${p.zip([1])}\");",
+            "`p` has a generic type here, and `map` gives it each entry of \
+             `m.stdin.map(l -> l.split(\",\"))`, whose type is int ->? String",
+        ),
+        (
+            "m.stdout <- m.stdin.map(l ->\n    l.trim).map(l -> \"${l.zip([1])}\");",
+            "`l` has a generic type here, and `map` gives it each entry of the family before \
+             `.map`, whose type is String",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (i, (stmt, want)) in cases.into_iter().enumerate() {
+        let src = format!("main(m: MainArgs) {{\n  {stmt}\n}}\n");
+        let out = run(&format!("fp_ops/entry_note_{i}"), &src, "", &[]);
+        if out.status == 0 || !out.stderr.contains(want) || out.stderr.contains(" is _ here") {
+            wrong.push(format!(
+                "{stmt}\n  want {want}\n  {}",
+                out.stderr.trim_end()
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
 /// The folds' and ends' misuses, each named in the program's own words.

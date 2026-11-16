@@ -512,11 +512,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         need: NeedFn<'t, 'a>,
     ) -> Ty {
+        let sources = std::mem::take(&mut self.strings_from);
         let Some((args, generic)) = self.strings_classes(word, args, span) else {
             return Ty::empty();
         };
         let from = self.errors.len();
-        let Some(out) = self.strings_parts(word, &args, span) else {
+        let Some(out) = self.strings_parts(word, &args, &sources, span) else {
             return Ty::empty();
         };
         match generic {
@@ -530,6 +531,86 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ if word == "concat" => out.union(&Ty::carrier(Carrier::Str)),
             _ => out.union(&strings_rank()),
         }
+    }
+
+    /// For the need of `word` with the operand types `tys` that `meet` checks at the call at
+    /// `span` ([`Ck::strings_from`]): the argument of that call that gives each operand its
+    /// whole value, with its parameter's name and an example string (or family of strings) a
+    /// repair writes in its place. For the pieces of `concat` that are no one argument's
+    /// whole value, it is the argument that gives each entry its whole value, as `x` of
+    /// `concat([x, x], sep: ",")`, and the example an entry. An operand that is not one
+    /// parameter's whole value, as `d ++ ""` or `t[0]`, has none, and its repair stays in
+    /// words: an argument changes such an operand only through the operation the body
+    /// applies to it, so no argument written in its place is known to give the operand the
+    /// example's value. The check of a value that flowed into a class has a frame of no call
+    /// ([`CallFrame::call`]), and so no argument either. O(size of the operands).
+    pub(super) fn strings_sources(
+        &self,
+        word: &str,
+        tys: &[Ty],
+        span: Span,
+    ) -> Vec<Option<ArgRewrite<'a>>> {
+        let Some(frame) = self.call_frames.last().filter(|f| f.call == Some(span)) else {
+            return Vec::new();
+        };
+        let rewrite = |from: ArgFrom<'a>, example: &'static str| {
+            from.map(|(arg, name)| ArgRewrite {
+                arg,
+                name,
+                example,
+                entry: false,
+            })
+        };
+        (tys.iter().enumerate())
+            .map(|(i, t)| match (word, i) {
+                ("split", 0) => rewrite(frame.whole_arg(t), "\"a,b\""),
+                ("split", _) => rewrite(frame.whole_arg(t), "\",\""),
+                ("lines", _) => rewrite(frame.whole_arg(t), "\"a\\nb\""),
+                (_, 0) => rewrite(frame.whole_arg(t), "[\"a\", \"b\"]").or_else(|| {
+                    let sigs: Vec<Arc<Sig>> = (t.pieces().into_iter())
+                        .filter_map(|p| match p {
+                            Piece::Fn(sig) if sig.data => Some(sig),
+                            _ => None,
+                        })
+                        .collect();
+                    match sigs.is_empty() {
+                        true => None,
+                        false => rewrite(frame.whole_arg(&Self::entries_of(&sigs)), "\"a\"")
+                            .map(|r| ArgRewrite { entry: true, ..r }),
+                    }
+                }),
+                _ => rewrite(frame.whole_arg(t), "\", \""),
+            })
+            .collect()
+    }
+
+    /// The call the arguments of `with` were passed to, written with each replaced by its
+    /// example, as code for a repair, where the call is on one line: `p("ab", ",")` for
+    /// `p("ab", "")`. Every argument of `with` is of the one call `strings_sources` read them
+    /// from, whose arguments lie apart in its text, so the edits, put in the order of the
+    /// text, lie apart, as `edited` needs; two operands may be one argument, as both are `s` in
+    /// `s.split(s)`, and that argument is written once, with the first one's example.
+    fn call_with(&self, with: &[&ArgRewrite<'a>]) -> Option<String> {
+        let call = with.first()?.arg.call;
+        let mut edits: Vec<(Span, String)> = (with.iter())
+            .map(|r| (r.arg.at, r.example.to_string()))
+            .collect();
+        edits.sort_by_key(|(s, _)| s.start);
+        edits.dedup_by_key(|(s, _)| *s);
+        let text = edited(self.t.text?, call, &edits.iter().collect::<Vec<_>>())?;
+        let text = text.trim();
+        (!text.contains('\n')).then(|| format!("`{text}`"))
+    }
+
+    /// An error at `at`, with the derivation of the expression there and then the repair
+    /// `repair`, placed at the call `call` it rewrites ([`Self::call_with`]), else at `at`.
+    fn error_repairing(&mut self, at: Span, message: String, repair: String, call: Option<Span>) {
+        let mut notes = self.derive(&[at]);
+        notes.push(Note {
+            span: call.unwrap_or(at),
+            text: repair,
+        });
+        self.error_with(at, message, notes);
     }
 
     /// The operands of `word` with each class that is resolved to a type replaced by that
@@ -611,7 +692,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// gives the loose atoms that pass through and `#emptySeparator` where the separator may
     /// be `""`, and leaves out what the word itself gives. A class is checked at each call,
     /// by the need `strings_end` records. `None` after a rejection.
-    fn strings_parts(&mut self, word: &str, args: &[Arg<'a>], span: Span) -> Option<Ty> {
+    fn strings_parts(
+        &mut self,
+        word: &str,
+        args: &[Arg<'a>],
+        sources: &[Option<ArgRewrite<'a>>],
+        span: Span,
+    ) -> Option<Ty> {
         let quoted = format!("`{word}`");
         let mut out = Ty::empty();
         let (pieces, strings) = match word {
@@ -621,7 +708,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (i, a) in strings.iter().enumerate() {
             out = out.union(&self.passing(&a.ty, &quoted, span, a.at));
             let i = i + usize::from(pieces.is_some());
-            if !self.string_operand(word, args, i, span) {
+            if !self.string_operand(word, args, sources, i, span) {
                 return None;
             }
         }
@@ -635,7 +722,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let empty = Value::str("");
             if value.vars.is_empty() {
                 if !value.lists_nothing() && self.subtype(&value, &Ty::lit(&empty)) {
-                    self.empty_separator(s, sep, span);
+                    self.empty_separator(s, sep, sources, span);
                     return None;
                 }
                 if value.contains(&empty) {
@@ -668,25 +755,46 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error(at, zedc_base::rejection::not_yet(what));
             return None;
         }
+        // At a call of a generic function, whose `concat` `meet` checks on the types the call
+        // gives, the argument that gives the pieces, or each entry, its whole value
+        // ([`Self::strings_sources`]): the rejection marks it and names its parameter, and the
+        // repair is the call with it replaced, where the call is on one line.
+        let source = (sources.first().and_then(Option::as_ref)).filter(|_| p.at.is_none());
+        let at = source.map_or(at, |r| r.arg.at);
+        let rewritten = source.and_then(|r| self.call_with(&[r]));
+        let call = source.map(|r| r.arg.call);
         for e in entries.pieces() {
             match e {
-                Piece::Fn(sig) if sig.data => {
-                    let t = self.text(&p.ty);
-                    self.error_offering(
-                        at,
-                        format!(
-                            "`concat` joins a family of strings, and this value is {t}, a \
-                             family of families"
+                Piece::Fn(ref sig) if sig.data => {
+                    let message = match source {
+                        Some(r) if r.entry => format!(
+                            "`concat` joins a family of strings, and this value, passed as \
+                             `{}`, is an entry of the family it joins and is {}, a family",
+                            r.name,
+                            self.text(&e.ty())
                         ),
-                        [match code {
-                            Some(c) => {
-                                format!("repair: join the inner families first, as `{c} >< (++)`")
-                            }
-                            None => "repair: pass a family of strings to this call, joining \
-                                     the inner families first with `>< (++)`"
-                                .to_string(),
-                        }],
-                    );
+                        Some(r) => format!(
+                            "`concat` joins a family of strings, and this value, passed as \
+                             `{}`, is {}, a family of families",
+                            r.name,
+                            self.text(&p.ty)
+                        ),
+                        None => format!(
+                            "`concat` joins a family of strings, and this value is {}, a family \
+                             of families",
+                            self.text(&p.ty)
+                        ),
+                    };
+                    let repair = match (&rewritten, &code) {
+                        (Some(c), _) => format!("repair: write {c}"),
+                        (None, Some(c)) => {
+                            format!("repair: join the inner families first, as `{c} >< (++)`")
+                        }
+                        (None, None) => "repair: pass a family of strings to this call, joining \
+                                         the inner families first with `>< (++)`"
+                            .to_string(),
+                    };
+                    self.error_repairing(at, message, repair, call);
                     return None;
                 }
                 Piece::Dyn => self.any(&quoted, span),
@@ -696,17 +804,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 e if self.subtype(&e.ty(), &Ty::carrier(Carrier::Str)) => {}
                 e => {
                     let t = self.text(&e.ty());
-                    self.error_offering(
-                        at,
-                        format!("`concat` joins strings, and an entry of this family is {t}"),
-                        [match code {
-                            Some(c) => format!(
-                                "repair: make each entry a string, as \
-                                 `concat({c}.map(x -> String(x)))`"
-                            ),
-                            None => "repair: pass a family of strings to this call".to_string(),
-                        }],
-                    );
+                    let message = match source {
+                        Some(r) if r.entry => format!(
+                            "`concat` joins strings, and this value, passed as `{}`, is an entry \
+                             of the family it joins and is {t}",
+                            r.name
+                        ),
+                        Some(r) => format!(
+                            "`concat` joins strings, and this family, passed as `{}`, has an \
+                             entry that is {t}",
+                            r.name
+                        ),
+                        None => {
+                            format!("`concat` joins strings, and an entry of this family is {t}")
+                        }
+                    };
+                    let repair = match (&rewritten, &code) {
+                        (Some(c), _) => format!("repair: write {c}"),
+                        (None, Some(c)) => format!(
+                            "repair: make each entry a string, as `concat({c}.map(x -> String(x)))`"
+                        ),
+                        // An operand that is no argument's whole value, as `xs ++ ys`
+                        // (`strings_sources`), or a call not on one line, has no rewrite.
+                        (None, None) => "repair: pass a family of strings to this call".to_string(),
+                    };
+                    self.error_repairing(at, message, repair, call);
                     return None;
                 }
             }
@@ -716,10 +838,21 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Whether `args[i]`, a string operand of the built-in `word` (`split`, `lines`, or the
     /// `sep` of `concat`) called at `span` with the operands `args`, may be only strings or
-    /// loose atoms, beside the classes it holds; any other value is rejected.
-    fn string_operand(&mut self, word: &str, args: &[Arg<'a>], i: usize, span: Span) -> bool {
+    /// loose atoms, beside the classes it holds; any other value is rejected. At a call of a
+    /// generic function, `sources` holds the argument that gives each operand its whole value
+    /// ([`Self::strings_sources`]): the rejection marks it and names its parameter, and the
+    /// repair is the call with it replaced by a string.
+    fn string_operand(
+        &mut self,
+        word: &str,
+        args: &[Arg<'a>],
+        sources: &[Option<ArgRewrite<'a>>],
+        i: usize,
+        span: Span,
+    ) -> bool {
         let a = &args[i];
-        let at = a.at.unwrap_or(span);
+        let source = (sources.get(i).and_then(Option::as_ref)).filter(|_| a.at.is_none());
+        let at = source.map_or(a.at.unwrap_or(span), |r| r.arg.at);
         for p in a.ty.without_loose().pieces() {
             match p {
                 Piece::Dyn => self.any(&format!("`{word}`"), span),
@@ -729,12 +862,32 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if self.subtype(&p.ty(), &Ty::carrier(Carrier::Str)) => {}
                 p => {
                     let t = self.text(&p.ty());
-                    let example = self.string_example(word, args, i, span);
-                    self.error_offering(
-                        at,
-                        format!("`{word}` reads strings, and this value is {t}"),
-                        [format!("repair: pass a string, as {example}")],
-                    );
+                    // The separator of `split` written `""` is replaced too, as at
+                    // `string_example`: the repair would be rejected for it.
+                    let empty_sep = (word == "split" && i == 0)
+                        .then(|| sources.get(1).and_then(Option::as_ref))
+                        .flatten()
+                        .filter(|r| self.operand_text(Some(r.arg.at)).as_deref() == Some("\"\""));
+                    let call = source.and_then(|r| {
+                        let with: Vec<&ArgRewrite<'a>> = [r].into_iter().chain(empty_sep).collect();
+                        self.call_with(&with)
+                    });
+                    let message = match source {
+                        Some(r) => format!(
+                            "`{word}` reads strings, and this value, passed as `{}`, is {t}",
+                            r.name
+                        ),
+                        None => format!("`{word}` reads strings, and this value is {t}"),
+                    };
+                    let repair = match call {
+                        Some(call) => format!("repair: write {call}"),
+                        None => {
+                            let example = self.string_example(word, args, i, span);
+                            format!("repair: pass a string, as {example}")
+                        }
+                    };
+                    let call = source.map(|r| r.arg.call);
+                    self.error_repairing(at, message, repair, call);
                     return false;
                 }
             }
@@ -779,22 +932,38 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// repairs name the views that read the characters of `s`, then a separator that is not
     /// empty, then the failure or `#bug` written in place of the call, as the other rejections
     /// of an operation that always fails offer them.
-    fn empty_separator(&mut self, s: &Arg<'a>, sep: &Arg<'a>, span: Span) {
-        let at = sep.at.unwrap_or(span);
-        let call = match self.operand_text(Some(span)) {
-            Some(c) => format!("`{c}`"),
-            None => "`split` here".to_string(),
+    fn empty_separator(
+        &mut self,
+        s: &Arg<'a>,
+        sep: &Arg<'a>,
+        sources: &[Option<ArgRewrite<'a>>],
+        span: Span,
+    ) {
+        // At a call of a generic function, whose `split` `meet` checks on the types the call
+        // gives (plan row FP-ops-generic-strings), the argument that gives the separator its
+        // whole value ([`Self::strings_sources`]): the note marks it and names its parameter,
+        // and the repair is the call with it replaced by a separator that is not empty.
+        let source = (sources.get(1).and_then(Option::as_ref)).filter(|_| sep.at.is_none());
+        let at = source.map_or(sep.at.unwrap_or(span), |r| r.arg.at);
+        // At a call of a generic function `split` is not written at the call: `this call`.
+        let call = match (self.operand_text(Some(span)), source) {
+            (Some(c), _) => format!("`{c}`"),
+            (None, Some(_)) => "this call".to_string(),
+            (None, None) => "`split` here".to_string(),
         };
         let reason = match (sep.expr.map(|e| &e.kind), self.operand_text(sep.at)) {
             (Some(ExprKind::Str(_)), _) | (_, None) => "its separator is the empty string".into(),
             (_, Some(c)) => format!("its separator `{c}` is always the empty string"),
         };
+        let rewritten = source.and_then(|r| self.call_with(&[r]));
         // The repairs that rewrite the `split` name its string by its code. A string with no
-        // code here, as at a call of a generic function, whose `split` `meet` checks on the
-        // types the call gives (plan row FP-ops-generic-strings), is named by no name, which
-        // would not be in scope at the call: the repair there is a separator that is not empty.
-        let rewrites: Vec<String> = match self.operand_text(s.at) {
-            Some(subject) => {
+        // code here, as at a call of a generic function, is named by no name, which would not
+        // be in scope at the call: the repair there is the call with its separator argument
+        // replaced, and where no one argument gives the separator (`s.split(d ++ "")`, see
+        // `strings_sources`) or the call is not on one line, a separator that is not empty.
+        let rewrites: Vec<String> = match (rewritten, self.operand_text(s.at)) {
+            (Some(c), _) => vec![format!("repair: write {c}")],
+            (None, Some(subject)) => {
                 // The call in the program's style: `split(s, sep)` as a function,
                 // `s.split(sep)` as a method.
                 let split = match call.starts_with("`split(") {
@@ -808,12 +977,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                     )])
                     .collect()
             }
-            None => vec!["repair: pass a separator that is not empty to this call".to_string()],
+            (None, None) => {
+                vec!["repair: pass a separator that is not empty to this call".to_string()]
+            }
         };
-        let mut notes = vec![Note {
-            span: at,
-            text: "this separator is always the empty string".to_string(),
-        }];
+        let text = match source {
+            Some(r) => format!(
+                "this argument, passed as `{}`, is the separator, which is always the empty \
+                 string",
+                r.name
+            ),
+            None => "this separator is always the empty string".to_string(),
+        };
+        let mut notes = vec![Note { span: at, text }];
         notes.extend(self.derive(&[at]));
         let menu = rewrites.into_iter().chain([
             "repair: write `#emptySeparator` in place of this call, where the failure is \
@@ -843,8 +1019,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// [`Ck::subject_text`] of the family folded by the fold at `site` (`x.reduce(f)`,
-    /// `x.scan(f)`, `x.sum` or `x >< f`); `xs` for a call `sum(x)`, as its receiver is not
-    /// recorded.
+    /// `x.scan(f)`, `x.sum`, `sum(x)` or `x >< f`).
     pub(in crate::check) fn fold_subject(&self, site: Span) -> String {
         self.subject_text(self.receivers.get(&site).copied())
     }
@@ -1280,5 +1455,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         sig.note_held();
         out.union(&Ty::func(Arc::new(sig)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_parens;
+
+    /// `in_parens` on fragments (plan row TEST-msg-repair-parens-and-entries). A fragment that
+    /// does not lex is not one group, so the `++` repair puts it in parentheses: `(c)` means
+    /// what `c` means wherever `c` is an operand, so the answer `false` is never wrong, only at
+    /// worst a pair of parentheses more. A parenthesis inside a string or a comment is not
+    /// counted.
+    #[test]
+    fn a_fragment_is_one_group_only_when_its_tokens_say_so() {
+        for (c, want) in [
+            ("([2] ++ [3])", true),
+            ("(([2]) ++ [[3], [(4)]][0])", true),
+            ("([2] ++ /* ) */ [3])", true),
+            ("([\"\\\")\"] ++ [\"(\"])", true),
+            ("([\"${(2)}\"] ++ [\")\"])", true),
+            ("([2]) ++ ([3])", false),
+            ("([2]) // )", true),
+            ("[2]", false),
+            ("", false),
+            // Fragments that do not lex.
+            ("([\"a] ++ [3])", false),
+            ("([2] ++ \")", false),
+            ("([2] /* ++ [3])", false),
+            ("(\"${(\")", false),
+        ] {
+            assert_eq!(in_parens(c), want, "{c}");
+        }
     }
 }

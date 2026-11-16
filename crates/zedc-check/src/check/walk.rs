@@ -4627,7 +4627,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 beside = empty;
             }
             let mut out = match rest.without_loose().pieces().iter().all(|p| p.is_atoms()) {
-                true => self.passing(x, "`.sum`", span, None),
+                true => self.passing(x, self.fold_word(FoldForm::Sum, site), span, None),
                 false => self.sum_method(&rest, span, site),
             };
             for v in x.vars.iter() {
@@ -4661,7 +4661,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         };
         if x.fns.iter().any(|s| s.data) {
-            let out = self.passing(x, "`.sum`", span, None);
+            let out = self.passing(x, self.fold_word(FoldForm::Sum, site), span, None);
             let add = Reducer::Op(BinaryOp::Add);
             let x = x.without_loose();
             // A family beside a tuple: each region by its own arrow, the families folded and
@@ -4767,9 +4767,36 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `op`, where a loose atom `x` may be passes through, as at every member call, while
     /// `x >< op` rejects one.
     fn family_fold(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
-        let out = self.passing(x, form.word(), span, None);
+        let out = self.passing(x, self.fold_word(form, span), span, None);
         let t = self.fold_level(op, &x.without_loose(), span, span, form);
         out.union(&t)
+    }
+
+    /// The word of the fold `form` written at `site`, as [`FoldForm::word`] gives it for the
+    /// form the program wrote: a fold written as the call `sum(x)` ([`Ck::sum_calls`]), which
+    /// `FoldForm::Sum` shares with `x.sum`, is `sum`, not `.sum` (plan row
+    /// MSG-sum-function-form-headline). O(1) expected, one lookup.
+    fn fold_word(&self, form: FoldForm, site: Span) -> &'static str {
+        match form == FoldForm::Sum && self.sum_calls.contains(&site) {
+            true => "`sum`",
+            false => form.word(),
+        }
+    }
+
+    /// What the fold [`Self::fold_word`] names is, and an example of it on a family, by the
+    /// function written `written`, as [`FoldForm::what`] and [`FoldForm::example`] give them,
+    /// for a message: a call `sum(x)` is named with `x` as the program wrote it where it is on
+    /// one line, else `xs`.
+    fn fold_what(&self, form: FoldForm, site: Span, written: &str) -> (String, String) {
+        if self.fold_word(form, site) == "`sum`" {
+            let x = self.operand_text(self.receivers.get(&site).copied());
+            let x = x.as_deref().unwrap_or("xs");
+            return (
+                format!("a fold `sum({x})`"),
+                "sum({0 -> 1, 1 -> 2})".to_string(),
+            );
+        }
+        (form.what(written), form.example(written))
     }
 
     /// Records that the fold written at `site` met a family with no entries, as `[]`, for
@@ -4855,6 +4882,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         )
         .without(&misses);
         let written = op.written();
+        let word = self.fold_word(form, site);
         // A class takes the fold as a need, checked at each call of the generic function,
         // as `sum` does (CHK-need-bound); `meet` calls back here with `replaying` set.
         let others = x.pieces().into_iter().any(|p| match p {
@@ -4936,16 +4964,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if others || !x.loose().is_empty() {
             let t = self.text(x);
+            let (_, example) = self.fold_what(form, site, &written);
             self.error_offering(
                 span,
-                format!(
-                    "{} folds the entries of a family, and this value is {t}",
-                    form.word()
-                ),
-                [format!(
-                    "repair: fold a family, as `{}`",
-                    form.example(&written)
-                )],
+                format!("{word} folds the entries of a family, and this value is {t}"),
+                [format!("repair: fold a family, as `{example}`")],
             );
             return Ty::empty();
         }
@@ -4970,9 +4993,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error_offering(
                 span,
                 format!(
-                    "{} folds in any grouping, and `{o}` is not associative: \
-                     `(a {o} b) {o} c` and `a {o} (b {o} c)` differ",
-                    form.word()
+                    "{word} folds in any grouping, and `{o}` is not associative: \
+                     `(a {o} b) {o} c` and `a {o} (b {o} c)` differ"
                 ),
                 [
                     format!("repair: fold left to right, as `{s}.foldl(init, (a, x) -> a {o} x)`"),
@@ -5021,7 +5043,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // (plan row REDUCE-family-entries).
         let Some((c, identity)) = fold else {
             let shown = self.text(&entries);
-            let what = format!("{} of entries of type {shown}", form.what(&written));
+            let (what, _) = self.fold_what(form, site, &written);
+            let what = format!("{what} of entries of type {shown}");
             self.error(span, zedc_base::rejection::not_yet(&what));
             return Ty::empty();
         };
@@ -6642,6 +6665,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // every value it accepts (the proof at `sum_method`). A tuple alone keeps `sum`, whose
         // messages name each component as written.
         if w == "sum" {
+            // The fold's messages name it as written, `sum(x)` with `x` as the program wrote
+            // it ([`Self::fold_word`]).
+            self.sum_calls.insert(span);
+            if let Some(at) = x.at {
+                self.receivers.insert(span, at);
+            }
             if sum_by_region(&x.ty) {
                 self.info.generic_sums.insert(span);
                 return self.sum_method(&x.ty, span, span);
@@ -11488,6 +11517,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .iter()
                     .map(|t| Arg::of(self.bound(t, &mut binds)))
                     .collect();
+                self.strings_from = self.strings_sources(word, tys, span);
                 self.strings_end(word, args, span, Self::need)
             }
             NeedKind::Remap { at, src, .. } => {

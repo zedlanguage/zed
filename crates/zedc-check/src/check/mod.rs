@@ -1826,6 +1826,12 @@ struct Ck<'t, 'a> {
     /// need it is that each of its positional arguments came from, as `-1` in `ap(h, -1)` is
     /// `v` of `g(v)` in `ap(g, v) = g(v)`: a repair at that call names it, not `v`.
     need_from: Option<Vec<Option<Forwarded<'a>>>>,
+    /// For the check of a string word's need ([`NeedKind::Strings`]) that `meet` is about to
+    /// make at a call, the argument of that call that gives each operand its whole value
+    /// (for the pieces of `concat`, else each entry), so that a repair writes the call with
+    /// that argument replaced (plan row MSG-generic-call-repair-code). Set just before the
+    /// check and taken at its start, so no other check reads it; empty otherwise.
+    strings_from: Vec<Option<ArgRewrite<'a>>>,
     /// The parameters of no declared type of the functions being checked, by binder: a value
     /// of one whose ints a use takes at least 0 is passed on to the calls (CHK-need-bound).
     open_params: HashSet<usize>,
@@ -1882,10 +1888,15 @@ struct Ck<'t, 'a> {
     /// alone, so it is kept across trials.
     int_exponents: HashMap<Span, Option<Value>>,
     /// The span of the operand before the `.` of each member call `x.f(…)`, and before the
-    /// `><` of each fold `x >< f`, by the call's span: read off the text alone, so kept across
-    /// trials. A repair names the operand by its code from it ([`Ck::fold_subject`]; plan row
-    /// MSG-example-repairs).
+    /// `><` of each fold `x >< f`, and the argument of each call `sum(x)`, by the call's span:
+    /// read off the text alone, so kept across trials. A repair names the operand by its code
+    /// from it ([`Ck::fold_subject`]; plan rows MSG-example-repairs,
+    /// MSG-sum-function-form-headline).
     receivers: HashMap<Span, Span>,
+    /// The spans of the folds written as the call `sum(x)`, not `x.sum`: their messages name
+    /// the fold as written ([`Ck::fold_word`]; plan row MSG-sum-function-form-headline). Read
+    /// off the text alone, so kept across trials.
+    sum_calls: HashSet<Span>,
     /// For the first parameter of each lambda given to `map`, `where`, `flatMap` or `group`
     /// that stays generic ([`Ck::entry_param`]), by the parameter's span: the word, the span
     /// of the receiver, and the receiver's type, whose entries the word gives the lambda. A note on the
@@ -2122,6 +2133,22 @@ impl<'a> CallFrame<'a> {
         Some((self.args[i]?, self.names.get(i)?.clone()))
     }
 
+    /// The argument whose whole value a value of `t` is, with the name of the parameter that
+    /// takes it: where `t` is a variable that is the whole type of one parameter and that no
+    /// other parameter holds ([`Self::whole`], [`Self::by_var`]), so every value of `t` at the
+    /// call is that argument's value. O(1) expected: two lookups.
+    fn whole_arg(&self, t: &Ty) -> ArgFrom<'a> {
+        let v = t.as_var()?;
+        let i = (*self.by_var.get(v)?)?;
+        if !self.whole.contains(v) {
+            return None;
+        }
+        Some((
+            self.args.get(i).copied().flatten()?,
+            self.names.get(i)?.clone(),
+        ))
+    }
+
     /// The position of the one parameter that holds the variables of `t`, where one alone
     /// does.
     fn slot(&self, t: &Ty) -> Option<usize> {
@@ -2145,6 +2172,21 @@ struct Forwarded<'a> {
     call: Span,
     at: Span,
     expr: Option<&'a Expr>,
+}
+
+/// The argument of a call written in the program that gives an operand its whole value, with
+/// the name of the parameter that takes it ([`CallFrame::whole_arg`]), or `None`.
+type ArgFrom<'a> = Option<(Forwarded<'a>, Arc<str>)>;
+
+/// An argument of a call written in the program that a repair rewrites ([`Ck::strings_from`]):
+/// the argument, the name of the parameter that takes it, the code the repair writes in its
+/// place, and whether the argument is an entry of the operand (of the pieces of `concat`)
+/// rather than the whole operand.
+struct ArgRewrite<'a> {
+    arg: Forwarded<'a>,
+    name: Arc<str>,
+    example: &'static str,
+    entry: bool,
 }
 
 /// A need being checked at a call.
@@ -2245,6 +2287,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             need_args: None,
             call_frames: Vec::new(),
             need_from: None,
+            strings_from: Vec::new(),
             open_params: HashSet::new(),
             floors: HashMap::new(),
             ranged_floors: HashMap::new(),
@@ -2262,6 +2305,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_fits: HashMap::new(),
             int_exponents: HashMap::new(),
             receivers: HashMap::new(),
+            sum_calls: HashSet::new(),
             entry_params: HashMap::new(),
             rat_folds: HashMap::new(),
             top_parts: Vec::new(),
@@ -3318,7 +3362,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|p| format!("`{}`", p.name))
             .collect();
         unwritten.push("its result".into());
-        let sig = sig.solved_with(&|v| self.stale(v));
+        let sig = self.sig_text(sig);
         let name = &f.name;
         format!(
             "`{name}` is declared here with no type written for {}; the type the checker found \
@@ -4578,9 +4622,54 @@ impl<'t, 'a> Ck<'t, 'a> {
             .text_spelled(true, &|v| self.spelling(v))
     }
 
-    /// The text of `s` in a message.
+    /// The text of `s` in a message. A variable of `s` whose every use is an argument at a
+    /// parameter of a closed type ([`NeedKind::Into`]), as `x` in `pass(x) = apply(f: x)`, is
+    /// printed as that type (the meet of them, for several): the values it takes are exactly
+    /// those, where the variable alone, used once, prints `_`, every value (QUESTIONS A92),
+    /// which is not the type found (plan row MSG-bounded-param-printed-underscore). A variable
+    /// with a use of any other kind keeps its printing: the uses of other kinds are needs on
+    /// the call, which no type written in the signature states.
+    // Complexity tradeoff: one pass over the needs with a hash map by variable, O(needs), and
+    // one replacement, O(size of `s`), the order of printing `s`; the naive way, a scan of the
+    // needs for each variable, is O(variables × needs).
     fn sig_text(&self, s: &Sig) -> String {
-        s.solved_with(&|v| self.stale(v)).to_string()
+        let s = s.solved_with(&|v| self.stale(v));
+        let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+        for n in &s.needs {
+            let Some(v) = n.on.as_var() else { continue };
+            let into = match &n.kind {
+                NeedKind::Into { ty, .. } => Some(ty),
+                _ => None,
+            };
+            match passed.entry(v.clone()) {
+                Entry::Vacant(e) => {
+                    e.insert(into.cloned());
+                }
+                Entry::Occupied(mut e) => {
+                    let b = e.get_mut();
+                    *b = match (into, b.take()) {
+                        (Some(ty), Some(b)) if b == *ty => Some(b),
+                        (Some(ty), Some(b)) => Some(b.meet(ty)),
+                        _ => None,
+                    };
+                }
+            }
+        }
+        // A variable bounded by carriers, `for V in int | f64`, takes the values of its type
+        // in those carriers; a bound that lets other values in ([`OTHER`]) bounds nothing.
+        let binds: Binds = (passed.into_iter())
+            .filter_map(|(v, b)| {
+                let b = b?;
+                Some(match s.bounds.get(&v) {
+                    Some(&m) if m & OTHER == 0 => (v, b.meet(&Ty::of_mask(m))),
+                    _ => (v, b),
+                })
+            })
+            .collect();
+        match binds.is_empty() {
+            true => s.to_string(),
+            false => s.replace(&binds).to_string(),
+        }
     }
 
     /// [`Ty::sub`], each solved class variable read as its type ([`Self::stale`]).
