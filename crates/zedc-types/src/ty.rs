@@ -4802,6 +4802,11 @@ struct Cx<'s> {
     /// arrow is left out ([`repeated`]). The permission of `q` is read through it
     /// ([`permitted`], [`instance_within`]).
     wide: Binds,
+    /// The parameter types of each arrow of `s`, in the innermost comparison of function types
+    /// open now ([`fits_in`]), that holds a variable bounded by several carriers and of which
+    /// some cover found an instance within an arrow of `q` ([`instance_within`]): the witness
+    /// [`permitted`] asks of such an arrow where it cannot try each carrier.
+    witnessed: HashSet<Vec<Ty>>,
     /// Whether the comparisons made now, in the innermost comparison of function types open,
     /// bind no variable ([`within_as_is`]): [`accepts`] then binds none, so a search goes on to
     /// a shape that holds a piece as it is, and the memo of rows ([`Cx::compared`]) keeps
@@ -10541,6 +10546,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     let outer = std::mem::replace(&mut c.cx.borrow_mut().free, free);
     let outer_wide = std::mem::replace(&mut c.cx.borrow_mut().wide, wide);
     let outer_bind_none = std::mem::replace(&mut c.cx.borrow_mut().bind_none, false);
+    let outer_witnessed = std::mem::take(&mut c.cx.borrow_mut().witnessed);
     // The bounds of `s` by the names its arrows are read with: a function type inside another
     // whose bounded variable has the name of one the comparison around it reads as itself is
     // read under a new name, and its bound, kept under the name written, was not checked
@@ -10566,7 +10572,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
         // the permission, exact at one parameter, fails, which the verdict was decided by
         // before any cover, so no refusal of a cover tried here is kept.
         let mut why = None;
-        let plain = s.params.len() == 1 && !permitted(s, &sas, &qas, c).await;
+        let plain = s.params.len() == 1 && !permitted(s, &sas, &qas, Pass::Keys, c).await;
         for (k, qa) in qas.iter().enumerate().filter(|_| !plain) {
             if !covers(s, &sas, std::slice::from_ref(qa), c).await {
                 why = refused_cover(s, q, &sas, qa, k, c).await;
@@ -10579,6 +10585,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     cx.free = outer;
     cx.wide = outer_wide;
     cx.bind_none = outer_bind_none;
+    cx.witnessed = outer_witnessed;
     cx.forget(mark);
     fits
 }
@@ -10805,12 +10812,18 @@ async fn every_arrow_fits<'m>(
     // is a plain no and not a refusal the cover may make (`(x0: f64) -> ...` beside an arrow
     // whose cover is refused, where `q` takes no `f64`). It binds nothing and reads only
     // `Cx::wide`, so the cover is the same after it. With more parameters a false from it may
-    // be wrong, and a refusal of the cover, which names the repair, is kept.
+    // be wrong, and a refusal of the cover, which names the repair, is kept. An arrow whose
+    // permission needs an instance a cover found ([`Pass::Witnessed`]) is checked after the
+    // cover, which finds it.
     let exact_permission = s.params.len() == 1;
-    if exact_permission && !permitted(s, sas, qas, c).await {
+    if exact_permission && !permitted(s, sas, qas, Pass::Keys, c).await {
         return false;
     }
-    covers(s, sas, qas, c).await && (exact_permission || permitted(s, sas, qas, c).await)
+    let after = match exact_permission {
+        true => Pass::Witnessed,
+        false => Pass::All,
+    };
+    covers(s, sas, qas, c).await && permitted(s, sas, qas, after, c).await
 }
 
 /// The first two conditions of [`every_arrow_fits`]: each exact arrow of `qas` is covered by
@@ -10913,6 +10926,21 @@ fn holds_bindable(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
 /// one comparison per parameter. What is given up: an instance that takes the keys of two
 /// arrows of `q` at once, `(x: T | bool) -> ...` fitting `(x: int) -> ...` beside `(x: bool)
 /// -> ...`, is refused.
+///
+/// A bounded variable is an instance only where it is bound to whole carriers
+/// ([`whole_carriers`]): a call fixes it to one carrier of its bound (rule 6), so `(x0: B) ->
+/// int` for `B in int | f64`, bound to `1` by the cover of `(x0: 1) -> int`, is called at
+/// `int` and takes every `int`, keys `q` does not take. Such a binding is refused (FAIL-types-
+/// bindable-arrow-permission): the instance compared at it is no instance, and passed where
+/// none was. Refused, not made whole and compared again: the cover took `qa`'s parameters and
+/// answered within its result at the piece, not at the carrier, so a whole binding would need
+/// the cover again. What is given up: a cover whose first fit binds a piece where another
+/// fit binds the whole carrier, as in a parameter that holds the carrier at the variable's
+/// place in one member and a piece in another, is a wrong no; none is known.
+///
+/// An instance found within `qa` is a witness that the arrow takes only keys of `q`
+/// ([`Cx::witnessed`]), kept for an arrow that holds a variable bounded by several carriers,
+/// whose permission [`permitted`] cannot decide alone.
 async fn instance_within<'m>(
     s: &Sig,
     sa: &Arrow,
@@ -10923,6 +10951,13 @@ async fn instance_within<'m>(
     if !holds_bindable(s, sa, &c.cx.borrow()) {
         return true;
     }
+    if !s.bounds.keys().all(|v| b.get(v).is_none_or(whole_carriers)) {
+        return false;
+    }
+    let several = s
+        .bounds
+        .values()
+        .any(|&m| m.count_ones() > 1 || m & OTHER != 0);
     let b = rest_bound(s, b.clone(), c);
     let wide = c.cx.borrow().wide.clone();
     // The instance holds the variables of `q` its cover bound the variables of `s` to, and
@@ -10938,7 +10973,25 @@ async fn instance_within<'m>(
             return false;
         }
     }
+    let mut cx = c.cx.borrow_mut();
+    if several && cx.unchosen.is_none() {
+        cx.witnessed.insert(sa.params.clone());
+    }
     true
+}
+
+/// Whether the scalars of `t`, what a bounded variable is bound to, hold every value of each
+/// carrier they hold a value of: a binding a call may give, as it fixes the variable to whole
+/// carriers (rule 6 of sec:type_resolution; [`instance_within`]). Its variables, rows,
+/// shapes and functions are not read: a rigid variable of `q` is one whole carrier at each
+/// call of `q`, and values of no carrier are what a bound of other values takes as they are.
+/// Cost: a split of the kernel set and a comparison per carrier it holds.
+fn whole_carriers(t: &Ty) -> bool {
+    let split = t.set.split();
+    Carrier::ALL
+        .into_iter()
+        .filter(|c| split.bases[c.base()].is_some())
+        .all(|c| c.ty().subtype(&t.set))
 }
 
 /// `b` with each variable of `s` it leaves unbound bound as an instance of `s` binds it where
@@ -10965,25 +11018,59 @@ fn rest_bound(s: &Sig, mut b: Binds, c: &Comparing<'_, '_>) -> Binds {
     b
 }
 
-/// The arrow `sa` of `s` with each variable the comparison binds in its parameters
-/// ([`holds_bindable`]) bound as a call binds it where no key needs it: an unbounded variable
-/// to `Never` (sec:type_resolution), a variable bounded by one carrier to that carrier (rule 6).
-/// Outside function types a type is monotone in its variables, so the parameters of this
-/// instance are within those of every other: where it takes a key `q` lacks, every instance
-/// does, and the arrow does not fit at any binding ([`permitted`]). A variable bounded by
-/// several carriers has no least instance, one per carrier; it is bound to `Never` too, which
-/// is within each, so a key the result takes is still taken by every instance: refusing on it
-/// is right, but passing is not proof that some instance fits. The arrows that take part in a
-/// cover are compared again at its binding ([`instance_within`]); one that takes part in none
-/// and whose every instance takes, through such a variable, a key `q` lacks is a possible
-/// wrong yes (row FAIL-types-bindable-arrow-permission). Not proved for a variable inside a
-/// function type in a parameter, where `Never` gives the greatest instance there and not the
-/// least: the arrow may then be refused where an instance fits (a wrong no, never a wrong
-/// yes). Cost: a walk of the parameter types and one replacement.
-fn least_instance(s: &Sig, sa: &Arrow, cx: &Cx) -> Arrow {
+/// How the arrow `sa` of `s`, which holds a variable the comparison binds in a parameter
+/// ([`holds_bindable`]), is taken by [`permitted`]: the instances whose permission decides
+/// its own, or none where only a witness does ([`Cx::witnessed`]).
+///
+/// Each variable is bound as a call binds it where no key needs it: an unbounded variable to
+/// `Never` (sec:type_resolution), a variable bounded by one carrier to that carrier (rule 6).
+/// A variable bounded by several carriers, `B in int | f64`, is fixed by a call to one of them
+/// (rule 6): it has no least instance, one per carrier. So the arrow is taken at each carrier
+/// of the one such variable it holds, the others bound as above, and its permission holds
+/// where that of one of them does.
+///
+/// Proof. Write `P(σ)` for the parameter types at the instance `σ`; the arrow's permission
+/// holds where some instance `σ` (one per arrow, [`Binds::of_arrow`]) has `P(σ)` within the
+/// permission `U` of `q`. Outside function types a type is monotone in its variables, and
+/// `Never` is within every type and each carrier of a one-carrier bound is the only instance
+/// of its variable, so with `B` fixed to the carrier `k`, `P` at the instances above is within
+/// `P(σ)` for every `σ` with `B = k`: if it is outside `U`, every such `σ` is. Each `σ` fixes
+/// `B` to some `k`, so the permission holds iff it holds at one of the instances given. Where
+/// a variable bound to `Never` stands inside a function type in a parameter, `Never` is not
+/// the least there (an exact domain is invariant), and the instance may be outside `U` where
+/// another is not: a wrong no, never a wrong yes. `B` itself is fixed exactly, wherever it
+/// stands.
+///
+/// A bound that takes values of no carrier ([`OTHER`]) takes them as they are, as an unbounded
+/// variable does, so `Never` is one more least instance of its variable, beside its carriers.
+///
+/// A bounded variable of `q` that its arrow repeats is read as rigid ([`repeated`]), one
+/// carrier the caller of `q` picks, and an instance of `s` may bind `B` to it: `(x0: #a(B, B))
+/// -> B` is within `(x0: #a(C, C)) -> C` at `B = C`, though at neither `B = int` nor `B = f64`.
+/// The proof above is for `σ` that bind to carriers; one that binds to such a variable is not
+/// tried here. So a yes from the instances given is exact (each is a real instance) and a no
+/// is not: an arrow of several least instances, none permitted, passes where a cover found an
+/// instance of it within an arrow of `q` ([`instance_within`], [`Cx::witnessed`]), and is
+/// refused otherwise.
+///
+/// Not decided here, so `None`: two variables or more of several least instances each, whose
+/// instances combine (`6^v` of them). Such an arrow passes only on a witness of the cover.
+/// What is given up, for these and for the rigid case above: an arrow that takes part in no
+/// cover, none of whose instances tried is permitted, though one that binds to a rigid
+/// variable of `q`, or a combination of carriers, would be. A wrong no, never a wrong yes.
+/// Before (FAIL-types-bindable-arrow-permission), such a variable was bound to `Never` too,
+/// which takes no key, so `(x0: (B,)) -> int` passed beside `(x0: int) -> int` though each
+/// instance takes keys `q` lacks.
+///
+/// Complexity tradeoff: naive version, every combination of the carriers of the variables
+/// tried, exact, `6^v` comparisons for `v` variables; used: at most one comparison for each
+/// carrier of one variable (6), and a hash lookup for the rest, which the cover paid for.
+/// Cost: a walk of the parameter types and one replacement per instance.
+fn instances(s: &Sig, sa: &Arrow, cx: &Cx) -> Option<Vec<Arrow>> {
     let mut vs = Vars::default();
     sa.params.iter().for_each(|p| p.vars_in(&mut vs));
     let mut b = Binds::new();
+    let mut several = None;
     for v in vs.order.iter() {
         let bindable = s.bounds.contains_key(v)
             || cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok()
@@ -10991,17 +11078,52 @@ fn least_instance(s: &Sig, sa: &Arrow, cx: &Cx) -> Arrow {
         if !bindable {
             continue;
         }
-        let t = match s.bounds.get(v) {
-            Some(&m) if m.count_ones() == 1 && m & OTHER == 0 => Ty::of_mask(m),
-            _ => Ty::empty(),
+        // The least instances of `v`: each carrier of its bound, and `Never` for the values of
+        // no carrier a bound with `OTHER` takes as they are, as for an unbounded variable.
+        let mut least: Vec<Ty> = match s.bounds.get(v) {
+            Some(&m) => Carrier::of_mask(m).map(Ty::carrier).collect(),
+            None => vec![],
         };
-        b.insert(v.clone(), t);
+        if least.is_empty() || s.bounds.get(v).is_some_and(|&m| m & OTHER != 0) {
+            least.push(Ty::empty());
+        }
+        match least.len() {
+            1 => {
+                b.insert(v.clone(), least.pop().expect("one"));
+            }
+            _ if several.is_none() => several = Some((v.clone(), least)),
+            _ => return None,
+        }
     }
-    Arrow {
-        params: sa.params.iter().map(|p| p.subst(&b)).collect(),
+    let at = |b: &Binds| Arrow {
+        params: sa.params.iter().map(|p| p.subst(b)).collect(),
         result: sa.result.clone(),
         partial: sa.partial,
-    }
+    };
+    Some(match several {
+        None => vec![at(&b)],
+        Some((v, least)) => least
+            .into_iter()
+            .map(|t| {
+                let mut b = b.clone();
+                b.insert(v.clone(), t);
+                at(&b)
+            })
+            .collect(),
+    })
+}
+
+/// Which arrows of `s` [`permitted`] checks: in [`every_arrow_fits`], those of one least
+/// instance before the cover where the permission is exact, those of several after it, where
+/// a witness of the cover may pass them, or all after the cover.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// The arrows of one least instance ([`instances`]), or of no variable it binds.
+    Keys,
+    /// The arrows of several least instances, or of more than [`instances`] tries.
+    Witnessed,
+    /// Every arrow.
+    All,
 }
 
 /// Whether `x` is within `y` with no variable bound: each variable on either side is compared
@@ -11111,7 +11233,13 @@ fn repeated(qas: &[Arrow], vs: &HashSet<Arc<str>>) -> HashSet<Arc<str>> {
 /// the worst case it is still n·m, the containment join of [`cover`], for which no n^(2-e)
 /// algorithm is expected (the Hitting Set conjecture there). Scaling test
 /// `l01_26_type_resolution::bench::scaling::the_permission_of_an_overload_is_checked_in_linear_time`.
-async fn permitted<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
+async fn permitted<'m>(
+    s: &Sig,
+    sas: &[Arrow],
+    qas: &[Arrow],
+    pass: Pass,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
     let equal: HashSet<&[Ty]> = qas.iter().map(|a| &a.params[..]).collect();
     // The parameters of `q` read with its own variables widened ([`Cx::wide`]); a copy only
     // where `q` has such a variable.
@@ -11135,59 +11263,91 @@ async fn permitted<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'
         if equal.contains(&sa.params[..]) {
             continue;
         }
-        // An arrow that holds a variable the comparison binds is taken at its least instance
-        // ([`least_instance`]): `(x0: (T,) | String) -> ...` at `T = Never` still takes
-        // `String`. The arrows that take part in a cover are also compared at the binding the
-        // cover made ([`instance_within`]).
-        let least;
-        let sa = if holds_bindable(s, sa, &c.cx.borrow()) {
-            least = least_instance(s, sa, &c.cx.borrow());
-            &least
-        } else {
-            sa
+        // An arrow that holds a variable the comparison binds is taken at the instances that
+        // decide its permission ([`instances`]): `(x0: (T,) | String) -> ...` at `T = Never`
+        // still takes `String`, and `(x0: (B,)) -> ...` for `B in int | f64` takes `(int,)` or
+        // `(f64,)`. The arrows that take part in a cover are also compared at the binding the
+        // cover made ([`instance_within`]). An arrow of several least instances, or of more
+        // than [`instances`] tries, passes where one of them is permitted or where a cover
+        // found an instance of it within an arrow of `q` ([`Cx::witnessed`]), and the cover
+        // runs first ([`Pass`]).
+        let taken;
+        let alone = match holds_bindable(s, sa, &c.cx.borrow()) {
+            true => {
+                taken = instances(s, sa, &c.cx.borrow());
+                taken.as_deref()
+            }
+            false => Some(std::slice::from_ref(sa)),
         };
-        // An empty parameter: the parameters are a product, so the arrow takes no key, and the
-        // index of `q` offers no arrow for a type with no key. `(x0: Never) -> ...` was refused.
-        if sa.params.iter().any(Ty::is_empty) {
+        let several = alone.is_none_or(|v| v.len() > 1);
+        let wanted = match pass {
+            Pass::Keys => !several,
+            Pass::Witnessed => several,
+            Pass::All => true,
+        };
+        if !wanted || (several && c.cx.borrow().witnessed.contains(&sa.params)) {
             continue;
         }
-        let index = index.get_or_insert_with(|| ArrowIndex::new(qas, s.params.len()));
-        // The parameter types at `j` of the arrows of `q` that hold `sa`'s at every other.
-        let mut at: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
-        let mut whole = false;
-        'qas: for k in index.covering(sa, false) {
-            let mut miss = None;
-            for (j, (x, y)) in sa.params.iter().zip(&qas[k].params).enumerate() {
-                if !within_as_is(x, y, c).await {
-                    if miss.is_some() {
-                        continue 'qas;
-                    }
-                    miss = Some(j);
-                }
-            }
-            match miss {
-                None => {
-                    whole = true;
-                    break;
-                }
-                Some(j) => at.entry(j).or_default().push(&qas[k].params[j]),
-            }
-        }
-        if whole {
-            continue;
-        }
-        let mut held = false;
-        for (j, ps) in at {
-            if within_as_is(&sa.params[j], &Ty::union_all(ps), c).await {
-                held = true;
+        let mut any = false;
+        for sa in alone.unwrap_or_default() {
+            if arrow_permitted(sa, qas, s.params.len(), &mut index, c).await {
+                any = true;
                 break;
             }
         }
-        if !held {
+        if !any {
             return false;
         }
     }
     true
+}
+
+/// Whether the arrow `sa`, of `width` parameters and holding no variable the comparison binds
+/// or taken at an instance ([`instances`]), takes only keys some arrow of `qas` takes
+/// ([`permitted`]), `index` the index of `qas`, made at the first arrow that needs it.
+async fn arrow_permitted<'m, 'q>(
+    sa: &Arrow,
+    qas: &'q [Arrow],
+    width: usize,
+    index: &mut Option<ArrowIndex<'q>>,
+    c: &'m Comparing<'m, '_>,
+) -> bool {
+    // An empty parameter: the parameters are a product, so the arrow takes no key, and the
+    // index of `q` offers no arrow for a type with no key. `(x0: Never) -> ...` was refused.
+    if sa.params.iter().any(Ty::is_empty) {
+        return true;
+    }
+    let index = index.get_or_insert_with(|| ArrowIndex::new(qas, width));
+    // The parameter types at `j` of the arrows of `q` that hold `sa`'s at every other.
+    let mut at: BTreeMap<usize, Vec<&Ty>> = BTreeMap::new();
+    let mut whole = false;
+    'qas: for k in index.covering(sa, false) {
+        let mut miss = None;
+        for (j, (x, y)) in sa.params.iter().zip(&qas[k].params).enumerate() {
+            if !within_as_is(x, y, c).await {
+                if miss.is_some() {
+                    continue 'qas;
+                }
+                miss = Some(j);
+            }
+        }
+        match miss {
+            None => {
+                whole = true;
+                break;
+            }
+            Some(j) => at.entry(j).or_default().push(&qas[k].params[j]),
+        }
+    }
+    if whole {
+        return true;
+    }
+    for (j, ps) in at {
+        if within_as_is(&sa.params[j], &Ty::union_all(ps), c).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether each arrow `qa` of `qas`, those of `q` as read, is covered by arrows of `sas`, those
@@ -15608,6 +15768,53 @@ mod tests {
             true,
         );
         assert!(!fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    /// FAIL-types-bindable-arrow-permission. A function type's domain is exact (DESIGN
+    /// sec:type_language), so `s` fits `q` only where every key `s` takes is one `q` takes; a
+    /// call fixes a bounded variable to one carrier of its bound (sec:type_resolution rule 6).
+    /// `(x0: (B,)) -> int` for `B in int | f64` takes `(int,)` at one instance and `(f64,)` at
+    /// the other; `q = (x0: int) -> int` takes neither, so `s` does not fit. The permission took
+    /// the arrow at `B = Never`, which takes no key, and the arrow covers no arrow of `q`, so
+    /// nothing compared it again: `fits_sig` answered true.
+    #[test]
+    fn an_arrow_with_a_variable_of_several_carriers_takes_the_keys_of_each() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let extra = |p: Ty| Arrow {
+            params: vec![p],
+            result: int.clone(),
+            partial: false,
+        };
+        let q = one_param(int.clone(), int.clone(), &[], false);
+        let s = one_param(int.clone(), int.clone(), &[extra(tup(v("B")))], true);
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+    }
+
+    /// A bounded variable is fixed by a call to one whole carrier (rule 6), so an arrow of it is
+    /// no instance within an arrow of `q` that takes a piece of the carrier: `B -> int` for `B
+    /// in int | f64` is called at `int` and takes every `int`, not only `1`. The cover bound
+    /// `B` to `1` and passed (FAIL-types-bindable-arrow-permission). At the whole carrier the
+    /// instance is within: `B -> B` fits `int -> int`, at `B = int`.
+    #[test]
+    fn a_bounded_variable_is_an_instance_only_at_whole_carriers() {
+        let v = |x: &str| Ty::var(x.into());
+        let tup = |t: Ty| Ty::tuple(vec![t]);
+        let int = Ty::carrier(Carrier::Int);
+        let one = Ty::lit(&Value::int(1.into()));
+        let s = one_param(tup(v("B")), int.clone(), &[], true);
+        let q = one_param(tup(one.clone()), int.clone(), &[], false);
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        let s = one_param(v("B"), int.clone(), &[], true);
+        let q = one_param(one.clone(), int.clone(), &[], false);
+        assert!(!fits_sig(&s, &q), "{q} in {s}");
+        let s = one_param(v("B"), v("B"), &[], true);
+        let q = one_param(int.clone(), int.clone(), &[], false);
+        assert!(fits_sig(&s, &q), "{q} in {s}");
+        let q = one_param(tup(int.clone()), int.clone(), &[], false);
+        let s = one_param(tup(v("B")), int.clone(), &[], true);
+        assert!(fits_sig(&s, &q), "{q} in {s}");
     }
 
     /// An overload with a bounded variable fits where one of its arrows is expected
