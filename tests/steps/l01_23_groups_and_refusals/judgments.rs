@@ -1575,6 +1575,46 @@ fn nested_function_results_beside_closed_functions_are_decided() {
     }
 }
 
+/// A set of every atom nested in a result beside a function that holds the variable of the
+/// function type around it (FAIL-closed-form-outer-variable).
+#[test]
+fn a_set_of_every_atom_beside_a_function_holding_an_outer_variable_is_compared_as_a_set() {
+    // For each carrier of `T`, the results are `D | (1, T -> T)` written two ways and
+    // `(#_, 1) | (1, T -> T)`, `D` being `(#_, 1) \ (#a, 1)`.
+    let outer_d = "(T -> (((#_, 1) \\ (#a, 1)) | (1, (T -> T))) for T in int)";
+    let outer_d_again = "(T -> ((#_ \\ #a, 1) | (1, (T -> T))) for T in int)";
+    let outer_wider = "(T -> ((#_, 1) | (1, (T -> T))) for T in int)";
+    judge(&[
+        (outer_d, outer_d_again, true),
+        (outer_d_again, outer_d, true),
+        (outer_d, outer_wider, true),
+        (outer_wider, outer_d, false),
+    ]);
+}
+
+/// A generic function over `(#k0 | #k1, T)` within one arrow per atom
+/// (FAIL-types-generic-arrow-overload-cover).
+#[test]
+fn a_generic_function_is_within_an_arrow_for_each_atom_of_its_domain() {
+    judge(&[
+        (
+            "((#k0 | #k1, int) -> int)",
+            "((#k0, int) -> int) & ((#k1, int) -> int)",
+            true,
+        ),
+        (
+            "((#k0 | #k1, T) -> int for T in int)",
+            "((#k0, int) -> int) & ((#k1, int) -> int)",
+            true,
+        ),
+        (
+            "((#k0 | #k1, T) -> int for T in int)",
+            "((#k0, T) -> int for T in int) & ((#k1, U) -> int for U in int)",
+            true,
+        ),
+    ]);
+}
+
 /// A union of `n` rows `((#_, i) \ (#a, i), x)`, each a set of every atom nested beside `x`,
 /// and the union `((#_, int), x) | (1, 2)` that holds it. The row `(1, 2)` shares no value
 /// with a left row, but it splits the first components into two classes, the nested sets and

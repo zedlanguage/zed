@@ -321,6 +321,33 @@ fn nested_function_results_are_compared_in_linear_time() {
     );
 }
 
+/// `nested_function_results_beside_a_row` compared both ways (PERF-types-shared-row-each-level):
+/// the shared row must be read and compared once, not at each of the n levels.
+#[test]
+fn nested_function_results_beside_a_shared_row_are_compared_in_linear_time() {
+    let n = 16;
+    let pairs = scaling::inputs(n, |n| {
+        let left = nested_function_results_beside_a_row(n, "1");
+        (left, nested_function_results_beside_a_row(n, "int"))
+    });
+    scaling::check(
+        "a nest of n function types beside a shared row, left within right",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(left.subtype(right));
+        },
+    );
+    scaling::check(
+        "a nest of n function types beside a shared row, right not within left",
+        n,
+        |m| {
+            let (left, right) = &pairs[&m];
+            assert!(!right.subtype(left));
+        },
+    );
+}
+
 /// `nested_sets_of_every_atom_are_cut_in_linear_time` against the union of the one shape and
 /// `(1, 2)` (PERF-types-cut-rows-union-scaling): the kernel splits the first components into
 /// the class of the `n` nested sets and that of `1`, and decides the class of the nested sets
