@@ -454,8 +454,11 @@ fn the_forms_that_bind_nothing_leave_every_name_free() {
     exact(Term::Read("p".into()), &[]);
 }
 
+/// A binder form by name, and the term it makes with a given part under it.
+type Binder = (&'static str, fn(Shared) -> Term);
+
 /// The binders of one name `x` over a part, as each form writes it; the last binds nothing.
-fn binders() -> Vec<(&'static str, fn(Shared) -> Term)> {
+fn binders() -> Vec<Binder> {
     vec![
         ("lam", |n| Term::Lam(vec!["x".into()], n)),
         ("let", |n| Term::Let("x".into(), sh(lit(0i64)), n)),
