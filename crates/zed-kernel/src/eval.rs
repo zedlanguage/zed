@@ -2024,13 +2024,19 @@ impl<'t> Machine<'_, 't> {
             // A display with an entry that is no data (DESIGN.md sec:values_morphisms: a family
             // is a morphism, and a function may be its value): its keys, data, by the rules of
             // a data display ([`HeldFamily::new`]), and each such entry a part.
+            // A key that is no data is refused, a key left without a value too (an odd count,
+            // which elaboration never builds, but a term from elsewhere may: [`odd_display`]).
             Prim::Entries => {
-                let mut entries = Vec::with_capacity(args.len() / 2);
+                let given = args.len();
+                let mut entries = Vec::with_capacity(given / 2);
                 let mut parts = Vec::new();
                 let mut it = args.into_iter();
-                while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                while let Some(k) = it.next() {
                     let V::Data(k) = k else {
                         return type_err(format!("{} applied to a function", p.named(None)));
+                    };
+                    let Some(v) = it.next() else {
+                        return type_err(odd_display(given));
                     };
                     match v {
                         V::Data(v) => entries.push((k, Some(v))),
@@ -2040,9 +2046,14 @@ impl<'t> Machine<'_, 't> {
                         }
                     }
                 }
+                // Proof that `None` is not reached: `prim`, the one caller, calls `held` for
+                // `Entries` only when some argument is no `V::Data` (a `V::Held` is none). The
+                // loop reads every argument, as a key or a value, and returns at a key that is
+                // no data, so here some value was no data and `parts` is not empty;
+                // `HeldFamily::new` gives `None` only for an empty `parts`.
                 return match HeldFamily::new(entries)? {
                     Some(f) => Ok(Step::Give(held(parts, Shape::Family(f)))),
-                    None => unreachable!("an entry that is no data led here"),
+                    None => unreachable!("a display with a value that is no data has a part"),
                 };
             }
             // The atom is made from marks, its payload's positions, by the rules every atom
@@ -3701,6 +3712,16 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
     }
 }
 
+/// The refusal of a display given `n` arguments, `n` odd, so that its last key has no value.
+/// Elaboration builds a display from pairs, key then value, so no program gives one; a kernel
+/// or ZIR term made elsewhere may, and is refused rather than read with its last key dropped.
+fn odd_display(n: usize) -> String {
+    format!(
+        "{} takes its arguments in pairs, a key then a value, given {n}",
+        Prim::Entries.named(None)
+    )
+}
+
 /// The family of a display's entries, given in pairs, key then value (step L3.2): each key
 /// written as a key (`-0.0` as `0.0`), a value that is a family a level beneath its key, and
 /// two entries at one key a collision, as [`Family::from_leaves`] makes them.
@@ -3709,10 +3730,9 @@ fn prim_data(p: Prim, vals: Vec<Value>) -> Result<Value, KernelError> {
 // `from_leaves` at once, which inserts each into one map, O(n log n), the values moved in.
 // Tradeoff: none beyond the pairing.
 fn entries(vals: Vec<Value>) -> Result<Value, KernelError> {
-    debug_assert!(
-        vals.len().is_multiple_of(2),
-        "a display's entries come in pairs"
-    );
+    if !vals.len().is_multiple_of(2) {
+        return Err(KernelError::Type(odd_display(vals.len())));
+    }
     let mut it = vals.into_iter();
     let mut leaves = Vec::with_capacity(it.len() / 2);
     while let (Some(k), Some(v)) = (it.next(), it.next()) {

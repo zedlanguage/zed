@@ -340,6 +340,53 @@ fn a_key_that_holds_a_function_is_rejected_at_a_read() {
     assert_eq!(value(src, "a"), "5", "{src}");
 }
 
+/// A display takes its arguments in pairs, a key then a value. Elaboration builds no other, but
+/// a kernel term made elsewhere may give it an odd count, which the evaluator refuses with a
+/// type error, never a stop, whether the arguments are all data or one holds a function, and
+/// whatever the count (row FAIL-entries-held-odd-panic: one function as the only argument
+/// stopped the evaluator at an `unreachable!`). A key that is no data is refused as a function
+/// where data is needed, also when it is the last key, left without its value.
+#[test]
+fn a_display_with_a_key_left_without_a_value_is_refused() {
+    let f = Term::Lam(vec!["y".into()], Term::Var("y".into()).into());
+    let n = |i| lit(Value::Int(i));
+    let function = "`{..}` applied to a function";
+    let odd =
+        |k: usize| format!("`{{..}}` takes its arguments in pairs, a key then a value, given {k}");
+    for (what, args, expected) in [
+        ("a function alone", vec![f.clone()], function.to_string()),
+        (
+            "an entry, then a function as a key",
+            vec![n(1), n(2), f.clone()],
+            function.to_string(),
+        ),
+        (
+            "an entry whose value is a function, then a function as a key",
+            vec![n(1), f.clone(), f.clone()],
+            function.to_string(),
+        ),
+        (
+            "an entry whose value is a function, then a key",
+            vec![n(1), f.clone(), n(2)],
+            odd(3),
+        ),
+        ("one key", vec![n(1)], odd(1)),
+        (
+            "two entries and a key",
+            vec![n(1), n(2), n(3), n(4), n(5)],
+            odd(5),
+        ),
+        ("two entries", vec![n(1), n(2), n(3), n(4)], String::new()),
+    ] {
+        let term = prim(Prim::Entries, args);
+        match Evaluator::new(World::new()).run(&term) {
+            Err(KernelError::Type(m)) => assert_eq!(m, expected, "{what}: {term}"),
+            Ok(v) if expected.is_empty() => assert_eq!(v.to_string(), "{1 -> 2, 3 -> 4}"),
+            other => panic!("{what}: {term}: no type error but {other:?}"),
+        }
+    }
+}
+
 /// The evaluator on its own, with no checker before it, never hashes or compares a key that
 /// holds a function: a family is read, tested or built at such a key only to refuse it, with
 /// a type error naming the step, and never a stop or an answer (row
