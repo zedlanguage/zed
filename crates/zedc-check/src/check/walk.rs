@@ -17385,8 +17385,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         w: &Ty,
     ) {
         let merged = match self.info.fits.get(&at) {
-            None => Some(wrapped(&steps, c)),
-            Some(Fit::Coerce(d)) => rebuilt_too(d.clone(), &steps, c),
+            None => Some(wrapped(steps, c)),
+            Some(Fit::Coerce(d)) => rebuilt_too(d.clone(), steps, c),
             Some(_) => None,
         };
         // No program reaches the refusal below (MSG-partial-slot-rebuild-kind-reason, row
