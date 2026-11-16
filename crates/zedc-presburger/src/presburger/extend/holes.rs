@@ -11,15 +11,15 @@
 //! `|scale| - 1` at each end, past no other image, and two holes adjacent over `y` meet.
 
 use std::cmp::Ordering;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use super::{Atom, Con, Formula, Lin, Rel, Shared};
+use zed_kernel::priority::Priorities;
 use zedc_int::int::Int;
 
 /// A treap of disjoint intervals of the base coordinate, ordered by their lower ends, each
-/// node's priority fixed by its ends so that one set of intervals has one shape whatever the
-/// order they were cut in.
+/// node's priority drawn once per run from its ends ([`prio_of`]), so that in a run one set of
+/// intervals has one shape whatever the order they were cut in.
 type Tree = Option<Arc<Node>>;
 
 struct Node {
@@ -31,17 +31,19 @@ struct Node {
     right: Tree,
 }
 
-/// A deterministic splitmix64 priority from an interval's ends. The treap's expected
-/// logarithmic depth assumes these act as independent uniform priorities, which is not proved
-/// and fails for chosen intervals (COMPLEXITY.md K123).
+/// The priorities of the holes, drawn once per run ([`zed_kernel::priority`]).
+static PRIORITIES: Priorities = Priorities::new(8);
+
+/// The priority of the interval `lo..=hi` of the base coordinate: the run's random polynomial
+/// of degree 4 at a random polynomial hash of its ends ([`Priorities::hash`]; `Int`'s stream is
+/// one-to-one, so distinct intervals have distinct streams and tie with probability at most
+/// `(L + 3)/2^64` a pair for streams of `L` 32-bit halves). The priorities are otherwise 5-wise
+/// independent and uniform, and every node's depth is `O(log n)` in expectation for every set
+/// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3
+/// and section 6; the proof is in module [`zed_kernel::priority`]), where the fixed hash this
+/// replaces had no bound for chosen intervals (COMPLEXITY.md K123). The shape is never shown.
 fn prio_of(lo: &Int, hi: &Int) -> u64 {
-    let mut h = DefaultHasher::new();
-    lo.hash(&mut h);
-    hi.hash(&mut h);
-    let mut z = h.finish().wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    PRIORITIES.hash(&(lo, hi))
 }
 
 fn size(t: &Tree) -> usize {

@@ -7,9 +7,11 @@
 //! Unlike the sets of module `set`, these nodes are kept in no table: [`Part::forced`] never asks
 //! whether two sets are one node, so a table lookup per node made would be cost with no use
 //! (PERF-forced-balanced-union measured the shared treaps at 3.4 times these instructions).
-//! A node's priority is a hash of its setting, ties broken by the setting's order, so one set
-//! has one shape whatever order its settings came in. Every walk keeps a stack of its own and a
-//! set is dropped in a loop, so the stack needed does not depend on a set's height.
+//! A node's priority is a function of its setting drawn at random once per run ([`priority`]),
+//! ties broken by the setting's order, so in a run one set has one shape whatever order its
+//! settings came in. The shape is never shown: a set is read only in order. Every walk keeps a
+//! stack of its own and a set is dropped in a loop, so the stack needed does not depend on a
+//! set's height.
 //!
 //! [`Part::forced`]: super::Part::forced
 
@@ -17,7 +19,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::set::Atom;
-use crate::types::hash::mix;
+use crate::priority::Priorities;
 
 /// A setting: an atom and its value.
 pub(super) type Key<A> = (A, bool);
@@ -57,11 +59,19 @@ impl<A: Atom> Drop for Node<A> {
     }
 }
 
-/// The priority of `key`, a fixed hash of its digest. The sets' expected `O(log n)` depth
-/// assumes these act as independent uniform priorities, which is not proved and fails for chosen
-/// settings (COMPLEXITY.md K123).
+/// The priorities of the settings of each value, drawn once per run (module
+/// [`crate::priority`]): two uses, so that the two settings of one atom are two independent
+/// points.
+static PRIORITIES: [Priorities; 2] = [Priorities::new(1), Priorities::new(2)];
+
+/// The priority of `key`: the run's random polynomial of degree 4 at its atom's digest, one for
+/// each value. Distinct digests take 5-wise independent uniform priorities, which bounds every
+/// node's expected depth by `O(log n)` for every set of settings (Seidel and Aragon 1996,
+/// Theorem 3.3 and section 6; the proof is in module [`crate::priority`]), where the fixed hash
+/// this replaces had no bound for chosen settings (COMPLEXITY.md K123). Atoms of one digest share
+/// a point: they tie whatever the draw, and each such atom adds at most one to a depth.
 fn priority<A: Atom>(key: &Key<A>) -> u64 {
-    mix(mix(17, key.0.digest()), u64::from(key.1))
+    PRIORITIES[usize::from(key.1)].of(key.0.digest())
 }
 
 /// Whether node `a` stands above node `b`: the higher priority, ties broken by the setting.

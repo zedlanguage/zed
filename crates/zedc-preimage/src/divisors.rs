@@ -1,17 +1,29 @@
 //! Sets of divisors, as the condition that a term's value is not an atom holds them
 //! (`preimage::Defined`, RUNG2-definedness): canonical treaps whose nodes are each made once.
-//! A node's priority is a hash of its divisor, so a set has one shape whatever order its
-//! divisors were added in, and a node is found by its divisor and its two subtrees before it is
-//! made, so equal sets are one node, compared in O(1). A union ([`Sets::union`]) splits one
-//! set by the other's root and joins the parts; equal subtrees end it at once, and each pair of
-//! sets is joined once, so a union costs O(m log(n/m + 1)) for sets of m ≤ n divisors that
-//! share nothing, and O(1) for each subtree the two share.
+//! A node's priority is drawn at random once per run from its divisor, so in a run a set has
+//! one shape whatever order its divisors were added in, and a node is found by its divisor and
+//! its two subtrees before it is made, so equal sets are one node, compared in O(1). A union
+//! ([`Sets::union`]) splits one set by the other's root and joins the parts; equal subtrees end
+//! it at once, and each pair of sets is joined once, so a union costs O(m log(n/m + 1)) for sets
+//! of m ≤ n divisors that share nothing, and O(1) for each subtree the two share.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
 
+use zed_kernel::priority::Priorities;
 use zedc_presburger::presburger::Lin;
+
+/// The priorities of the divisors, drawn once per run ([`zed_kernel::priority`]): the run's
+/// random polynomial of degree 4 at a random polynomial hash of the divisor's `Hash` stream
+/// ([`Priorities::hash`]). A `Lin`'s stream is its terms and constant, so distinct divisors
+/// have distinct streams and tie with probability at most `(L + 3)/2^64` a pair for streams of
+/// `L` 32-bit halves; the priorities are otherwise 5-wise independent and uniform, and every
+/// node's depth is `O(log n)` in expectation for every set of divisors (Seidel and Aragon,
+/// "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in
+/// module [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen
+/// divisors (COMPLEXITY.md K123). A set's number depends on the shape, and so on the draw, and
+/// is only compared for equality, never ordered or shown.
+static PRIORITIES: Priorities = Priorities::new(5);
 
 /// A set of divisors: the number of its root node, [`EMPTY`] for none.
 pub(crate) type Set = u32;
@@ -64,10 +76,8 @@ impl Sets {
             return k;
         }
         let k = self.keys.len() as u32;
-        // A hash of fixed keys, so that one set has one shape on every run. The treaps' expected
-        // logarithmic depth assumes these act as independent uniform priorities, which is not
-        // proved and fails for chosen divisors (COMPLEXITY.md K123).
-        let priority = BuildHasherDefault::<DefaultHasher>::default().hash_one(d);
+        // The run's random priority of `d` (`PRIORITIES`): one set has one shape in a run.
+        let priority = PRIORITIES.hash(d);
         self.keys.push((d.clone(), priority));
         self.numbers.insert(d.clone(), k);
         k

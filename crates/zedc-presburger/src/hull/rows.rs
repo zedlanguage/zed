@@ -1,14 +1,15 @@
 //! The rows of a hull by their pivots, in a persistent treap whose shape depends only on the
-//! pivots it holds: each node's priority is a hash of its pivot, ties broken by the pivot's
-//! order. A map made from another by a few changes copies the paths to the changed pivots and
-//! shares every other subtree with it, and since both have the one shape their keys give, the
-//! subtrees they share sit at the same places in both. The difference of the two is found by a
-//! walk that passes over a shared subtree at once.
+//! pivots it holds in a run: each node's priority is drawn once per run from its pivot, ties
+//! broken by the pivot's order. A map made from another by a few changes copies the paths to
+//! the changed pivots and shares every other subtree with it, and since both have the one shape
+//! their keys give, the subtrees they share sit at the same places in both. The difference of
+//! the two is found by a walk that passes over a shared subtree at once.
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
+
+use zed_kernel::priority::Priorities;
 
 use crate::presburger::{Atom, Lin};
 
@@ -23,16 +24,19 @@ struct Node {
     right: Tree,
 }
 
-/// A deterministic splitmix64 priority from a pivot. The treap's expected logarithmic depth
-/// assumes these act as independent uniform priorities, which is not proved and fails for chosen
-/// pivots (COMPLEXITY.md K123).
+/// The priorities of the pivots, drawn once per run ([`zed_kernel::priority`]).
+static PRIORITIES: Priorities = Priorities::new(9);
+
+/// The priority of a pivot: the run's random polynomial of degree 4 at a random polynomial hash
+/// of the pivot's `Hash` stream ([`Priorities::hash`]). Distinct pivots have distinct streams
+/// and tie with probability at most `(L + 3)/2^64` a pair for streams of `L` 32-bit halves; the
+/// priorities are otherwise 5-wise independent and uniform, and every node's depth is
+/// `O(log n)` in expectation for every set of pivots (Seidel and Aragon, "Randomized search
+/// trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in module
+/// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen pivots
+/// (COMPLEXITY.md K123). The shape is never shown: [`Rows`] is read and printed in order.
 fn prio_of(key: &Atom) -> u64 {
-    let mut h = DefaultHasher::new();
-    key.hash(&mut h);
-    let mut z = h.finish().wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    PRIORITIES.hash(key)
 }
 
 /// The order of the nodes from the root down: by priority, then by pivot, so no two nodes of a

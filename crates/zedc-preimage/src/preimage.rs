@@ -12249,26 +12249,21 @@ fn compose(inner: (i128, i128), outer: (i128, i128)) -> Option<(i128, i128)> {
     Some((mul, add))
 }
 
-/// A deterministic splitmix64 priority from the piece's ends. The treap's expected logarithmic
-/// depth assumes these act as independent uniform priorities, which is not proved and fails for
-/// chosen pieces (COMPLEXITY.md K123).
+/// The priorities of the pieces, drawn once per run ([`zed_kernel::priority`]).
+static PIECE_PRIORITIES: zed_kernel::priority::Priorities =
+    zed_kernel::priority::Priorities::new(7);
+
+/// The priority of the piece `lo..=hi`: the run's random polynomial of degree 4 at a random
+/// polynomial hash of its ends as numbers ([`key`], one-to-one on the ends [`in_range`] admits).
+/// Distinct pieces tie with probability at most `11/2^64` a pair; the priorities are otherwise
+/// 5-wise independent and uniform, and every node's depth is `O(log n)` in expectation for
+/// every set of pieces (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
+/// Theorem 3.3 and section 6; the proof is in module [`zed_kernel::priority`]), where the fixed
+/// hash this replaces had no bound for chosen pieces (COMPLEXITY.md K123). The shape is never
+/// shown: the nodes' sums (`vals`, `span`, `dense`, `len`) and their tags are the same for every
+/// shape.
 fn prio_of(lo: &End, hi: &End) -> u64 {
-    let code = |e: &End| -> u64 {
-        match e {
-            NegInf => 0,
-            Fin(v) => {
-                // The high word, 0 for every end in `i64`, so that those keep their codes.
-                let w = small(v);
-                let high = ((w >> 64) ^ (w >> 63)) as u64;
-                (w as u64).wrapping_add(1) ^ 0x5555_5555_5555_5555 ^ high.rotate_left(17)
-            }
-            PosInf => u64::MAX,
-        }
-    };
-    let mut z = code(lo).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ code(hi);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    PIECE_PRIORITIES.hash(&(key(lo), key(hi)))
 }
 
 /// `vals` widened to hold `o`.

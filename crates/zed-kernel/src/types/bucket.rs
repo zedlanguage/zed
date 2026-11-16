@@ -28,6 +28,8 @@
 use std::cmp::Ordering;
 use std::sync::{Arc, Weak};
 
+use crate::priority::Priorities;
+
 /// No node: an empty child, the parent of the root, the end of the free slots.
 const NIL: u32 = u32::MAX;
 
@@ -363,15 +365,18 @@ impl<T> Tree<T> {
     }
 }
 
-/// A priority from the bucket's count of changes: splitmix64, untruncated in the build with
-/// short hashes, so that priorities do not follow the nodes' order and the treap's depth is
-/// `O(log b)` in expectation. That expectation assumes the sequence acts as independent uniform
-/// priorities, which is not proved (COMPLEXITY.md K123).
+/// The priorities of the buckets' nodes, drawn once per run (module [`crate::priority`]).
+static PRIORITIES: Priorities = Priorities::new(3);
+
+/// A priority from the bucket's count of changes when the node was put in: the run's random
+/// polynomial of degree 4 at that count. The counts of a bucket's nodes are distinct while it
+/// has had fewer than `2^32` changes, so its priorities are 5-wise independent and uniform, and
+/// the treap's depth is `O(log b)` in expectation for every order of lookups and drops (Seidel
+/// and Aragon 1996, Theorem 3.3 and section 6; the proof is in module [`crate::priority`]).
+/// Counts that wrap past `2^32` meet again and tie, each adding at most one to a depth. The
+/// splitmix64 of the count that this replaces had no proved bound (COMPLEXITY.md K123).
 fn priority(seed: u32) -> u64 {
-    let mut z = u64::from(seed).wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    PRIORITIES.of(u64::from(seed))
 }
 
 #[cfg(test)]

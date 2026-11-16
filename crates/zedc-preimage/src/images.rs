@@ -20,6 +20,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use imbl::ordmap::DiffItem;
+use zed_kernel::priority::Priorities;
 use zedc_lattice::cell::Premises;
 use zedc_lattice::interval::IntervalSet;
 
@@ -76,8 +77,9 @@ impl Sum for Leaf {
 }
 
 /// A treap of the inputs, ordered by name, each node with its leaf and the sum of its
-/// subtree's; a node's priority is a hash of its name, so the tree's shape depends on its
-/// names alone and an update copies the `O(log h)` nodes of one path, expected.
+/// subtree's; a node's priority is drawn at random once per run from its name, so in a run the
+/// tree's shape depends on its names alone and an update copies the `O(log h)` nodes of one
+/// path, expected.
 pub type Tree<L = Leaf> = Option<Arc<Node<L>>>;
 
 /// A node of a [`Tree`].
@@ -188,18 +190,21 @@ fn join<L: Sum>(a: Tree<L>, b: Tree<L>) -> Tree<L> {
     }
 }
 
-/// The priority of `key`: its bytes hashed by FNV-1a and mixed by splitmix64, the same in every
-/// run. The tree's expected `O(log h)` depth assumes these act as independent uniform
-/// priorities, which is not proved and fails for chosen names (COMPLEXITY.md K123).
+/// The priorities of the inputs' names, drawn once per run ([`zed_kernel::priority`]).
+static PRIORITIES: Priorities = Priorities::new(6);
+
+/// The priority of `key`: the run's random polynomial of degree 4 at a random polynomial hash
+/// of the name's bytes ([`Priorities::hash`]). Distinct names have distinct streams and tie with
+/// probability at most `(L + 3)/2^64` a pair for names of `L` 32-bit halves; the priorities are
+/// otherwise 5-wise independent and uniform, and every node's depth is `O(log h)` in
+/// expectation for every set of names (Seidel and Aragon, "Randomized search trees",
+/// Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in module
+/// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen names
+/// (COMPLEXITY.md K123). In a run the shape depends on the names alone; it is never shown, and
+/// a subtree's sum is the same for every shape, since every [`Sum::plus`] here adds exact
+/// integers and joins sets of premises.
 fn prio(key: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in key.bytes() {
-        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
-    }
-    let mut z = h.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    PRIORITIES.hash(key)
 }
 
 /// What a summary read in one scope: the scope's names, what the caller keeps of the summary

@@ -5,6 +5,7 @@
 use super::*;
 use crate::types::Row;
 use crate::types::bdd::tests::atom;
+use crate::types::hash::mix;
 use std::collections::BTreeSet;
 
 /// Every node above its children and its settings in order, and its length right.

@@ -2,9 +2,10 @@
 //! carrying an offset added to all its ends, so that a whole set of intervals moves by a
 //! constant in O(1) (LOAD-max-div-unsolved).
 
-use std::cell::Cell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
+use zed_kernel::priority::Priorities;
 use zedc_int::int::Int;
 
 /// A set of intervals, `None` when empty.
@@ -21,27 +22,28 @@ pub(super) struct Node {
     right: Tree,
 }
 
-thread_local! {
-    /// The state of the splitmix64 sequence of node priorities on this thread.
-    static PRIO: Cell<u64> = const { Cell::new(0) };
-}
+/// The priorities of the intervals, drawn once per run ([`zed_kernel::priority`]).
+static PRIORITIES: Priorities = Priorities::new(10);
 
-/// The next priority of the thread's splitmix64 sequence. A priority fixes only the tree's
-/// shape, never the set it holds, so answers do not depend on it. Not drawn from the ends, as
-/// in `holes`: a node keeps its ends relative to its offset, and a chain repeating one step
-/// makes nodes with the same relative ends at every step, whose equal priorities would make
-/// the tree a path (measured: 17 to 33 times the work at n and 8n on such a chain). The
-/// expected logarithmic depth assumes the sequence acts as independent uniform priorities, which
-/// is not proved (COMPLEXITY.md K123).
+/// The number of priorities taken so far in the process.
+static TAKEN: AtomicU64 = AtomicU64::new(0);
+
+/// A new interval's priority: the run's random polynomial of degree 4 at the next number of a
+/// count kept for the process. A priority fixes only the tree's shape, never the set it holds,
+/// so answers do not depend on it. Not drawn from the ends, as in `holes`: a node keeps its
+/// ends relative to its offset, and a chain repeating one step makes nodes with the same
+/// relative ends at every step, whose equal priorities would make the tree a path (measured:
+/// 17 to 33 times the work at n and 8n on such a chain). Each interval takes its own number,
+/// below `P` for any run, so the priorities of the intervals of a tree are 5-wise independent
+/// and uniform, and every node's depth is `O(log n)` in expectation (Seidel and Aragon,
+/// "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in
+/// module [`zed_kernel::priority`]), where the fixed sequence this replaces had no bound for
+/// chosen intervals (COMPLEXITY.md K123). On one thread the numbers an operation takes depend
+/// only on the intervals, never on the shape. Not proved: while other threads take numbers at
+/// the same time, which number an interval gets depends on their timing, which the draw can
+/// change; the bound assumes it does not.
 fn prio_of() -> u64 {
-    let mut z = PRIO.with(|s| {
-        let z = s.get().wrapping_add(0x9e37_79b9_7f4a_7c15);
-        s.set(z);
-        z
-    });
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    PRIORITIES.of(TAKEN.fetch_add(1, AtomicOrdering::Relaxed))
 }
 
 fn node(lo: Int, hi: Int, off: Int, prio: u64, left: Tree, right: Tree) -> Tree {

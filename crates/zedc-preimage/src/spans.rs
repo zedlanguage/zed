@@ -10,18 +10,19 @@
 //! another at that member cost `Θ(k·m)`. An index by `l` alone, or by `h` alone, visits each
 //! live span that starts (or ends) inside the run, `Θ(k·m)` again. Used: a treap (Seidel and
 //! Aragon, "Randomized search trees", Algorithmica 16, 1996) ordered by `(l, h)` with a
-//! priority from a fixed hash of `(l, h)`, each node holding the least `h` below it, as
-//! McCreight's priority search tree answers a three-sided query ("Priority search trees",
-//! SIAM J. Comput. 14, 1985): the spans with `l` in a range and `h` below a bound in `O((f +
-//! 1) log k)` expected for `f` found, where the tree's depth is `O(log k)` in expectation over
-//! the hash. The shape depends on the set alone, so two trees of one set are equal as values.
-//! Tradeoff: a fixed hash is not random, so an adversary who knows it can make the tree deep;
-//! a McCreight tree would bound the depth for every input, at the cost of rebuilding on
+//! priority drawn at random once per run ([`priority`]), each node holding the least `h` below
+//! it, as McCreight's priority search tree answers a three-sided query ("Priority search
+//! trees", SIAM J. Comput. 14, 1985): the spans with `l` in a range and `h` below a bound in
+//! `O((f + 1) log k)` expected for `f` found, where the tree's depth is `O(log k)` in
+//! expectation over the draw for every set of spans. In a run the shape depends on the set
+//! alone, so two trees of one set are equal as values; the shape is never shown (the tree's
+//! `Debug` lists the spans in order). Tradeoff: the bound holds in expectation, not for every
+//! draw; a McCreight tree would bound the depth for every input, at the cost of rebuilding on
 //! deletion. Test `l01_39_scope_relations::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
+use zed_kernel::priority::Priorities;
 use zedc_lattice::interval::Num;
 
 use crate::address::Address;
@@ -41,19 +42,45 @@ struct Node {
 }
 
 /// A persistent set of spans, each with the tests kept under it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Spans {
     root: Link,
 }
 
-/// The priority of the span `[l, h]`: a hash fixed for every run, so that the tree's shape
-/// depends on its spans alone. The tree's expected logarithmic depth assumes these act as
-/// independent uniform priorities, which is not proved and fails for chosen spans
-/// (COMPLEXITY.md K123).
+/// The spans in order, each with its tests: the shape, which depends on the run's draw of
+/// priorities, is left out.
+impl std::fmt::Debug for Spans {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        let mut stack: Vec<&Node> = Vec::new();
+        let mut cur = self.root.as_deref();
+        loop {
+            while let Some(n) = cur {
+                stack.push(n);
+                cur = n.left.as_deref();
+            }
+            let Some(n) = stack.pop() else { break };
+            list.entry(&(&n.l, &n.h, &n.at));
+            cur = n.right.as_deref();
+        }
+        list.finish()
+    }
+}
+
+/// The priorities of the spans, drawn once per run ([`zed_kernel::priority`]).
+static PRIORITIES: Priorities = Priorities::new(4);
+
+/// The priority of the span `[l, h]`: the run's random polynomial of degree 4 at a random
+/// polynomial hash of `(l, h)` ([`Priorities::hash`]). Spans of distinct hash streams take
+/// priorities that are 5-wise independent and uniform but for a tie of probability at most
+/// `1/2^58` a pair, so every node's depth is `O(log k)` in expectation for every set of spans
+/// (Seidel and Aragon 1996, Theorem 3.3 and section 6; the proof is in module
+/// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen spans
+/// (COMPLEXITY.md K123). A `Num` outside `i128` hashes by its sign alone (`Num`'s `Hash`), so
+/// spans that differ only in such ends tie whatever the draw, each adding at most one to a
+/// depth: not proved small for chosen spans with ends past `i128`.
 fn priority(l: &Num, h: &Num) -> u64 {
-    let mut s = DefaultHasher::new();
-    (l, h).hash(&mut s);
-    s.finish()
+    PRIORITIES.hash(&(l, h))
 }
 
 /// Whether `a` goes above `b` in the heap of priorities: the higher priority, ties by key.
